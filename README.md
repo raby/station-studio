@@ -45,6 +45,19 @@ python -m pytest
 python run.py                          # FastAPI at http://localhost:8001
 ```
 
+## Bootstrapping Rebirth Classics
+
+Once you have the three iTunes XMLs in `from_user/` (see `from_user/README.md`):
+
+```bash
+python -m scripts.bootstrap_classics           # seed + import + generate week 1
+python -m scripts.bootstrap_classics --week 5  # different week
+python -m scripts.bootstrap_classics --skip-missing   # ok if some files absent
+python -m scripts.bootstrap_classics --no-generate    # seed + import only
+```
+
+Idempotent — re-run after replacing an XML and it re-imports cleanly.
+
 ## Design principles
 
 - **Template JSON is the canonical artifact.** The UI reads and writes the same JSON the engine consumes; no hidden UI-only state.
