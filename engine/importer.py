@@ -17,10 +17,24 @@ from pathlib import Path
 
 from sqlalchemy.orm import Session
 
-from engine.models import SourcePlaylist, Track, SourcePlaylistEntry
+from engine.models import SourcePlaylist, Track, SourcePlaylistEntry, Config
 
 
 logger = logging.getLogger(__name__)
+
+
+def _store_library_metadata(db: Session, data: dict) -> None:
+    """Persist library-level iTunes metadata on first import so the exporter
+    can reconstruct an XML file iTunes will accept. First-import wins —
+    subsequent imports do not overwrite.
+    """
+    for config_key, plist_key in [
+        ("library_persistent_id", "Library Persistent ID"),
+        ("music_folder", "Music Folder"),
+    ]:
+        value = data.get(plist_key)
+        if value and not db.query(Config).filter(Config.key == config_key).first():
+            db.add(Config(key=config_key, value=str(value)))
 
 
 def _parse_itunes_xml(path: Path) -> dict:
@@ -82,6 +96,10 @@ def import_source(db: Session, path: Path, name: str) -> dict:
     data = _parse_itunes_xml(path)
     raw_tracks = data.get("Tracks", {})
     playlists = data.get("Playlists", [])
+
+    # Capture library-level metadata from the first source imported.
+    # The exporter needs this to produce an XML file iTunes will accept.
+    _store_library_metadata(db, data)
 
     existing = db.query(SourcePlaylist).filter(SourcePlaylist.name == name).first()
     if existing:

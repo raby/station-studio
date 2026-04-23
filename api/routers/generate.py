@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from engine.models import (
@@ -10,6 +11,7 @@ from engine.models import (
 )
 from engine.template import parse_template, TemplateError
 from engine.generator import generate
+from engine.exporter import export_playlist
 from api.deps import get_db
 from api.schemas import GenerateRequest, GenerateResponse, PlaylistOut, PlaylistEntryOut, TrackOut
 
@@ -112,6 +114,24 @@ def get_playlist(playlist_id: int, db: Session = Depends(get_db)):
         week=p.week,
         trace_id=p.trace_id,
         entries=entries,
+    )
+
+
+@router.get("/api/playlists/{playlist_id}/export")
+def export(playlist_id: int, db: Session = Depends(get_db)):
+    """Export a generated playlist as iTunes XML."""
+    p = db.query(Playlist).filter_by(id=playlist_id).first()
+    if not p:
+        raise HTTPException(404, "playlist not found")
+    try:
+        xml_bytes = export_playlist(db, playlist_id)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+    filename = f"{p.station.slug}-{p.week:03d}.xml"
+    return Response(
+        content=xml_bytes,
+        media_type="application/xml",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 

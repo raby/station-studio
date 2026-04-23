@@ -93,7 +93,12 @@ def load_template(path: Path | str) -> Template:
 
 
 def parse_template(raw: dict) -> Template:
-    _require_keys(raw, {"station", "cadence", "rng", "sources", "cursor", "layout"}, where="template")
+    _require_keys(
+        raw,
+        {"station", "cadence", "rng", "sources", "cursor", "layout"},
+        where="template",
+        optional={"name"},  # UI-only display name; ignored by the engine
+    )
 
     rng = raw["rng"]
     if rng not in SUPPORTED_RNG:
@@ -178,10 +183,17 @@ def _parse_block(raw: dict, *, known_sources: set[str]) -> BlockSpec:
     return BlockSpec(source=raw["source"], strategy=raw["strategy"], size=int(raw["size"]))
 
 
-def _require_keys(raw: dict, keys: set[str], *, where: str) -> None:
+def _require_keys(
+    raw: dict,
+    keys: set[str],
+    *,
+    where: str,
+    optional: set[str] | None = None,
+) -> None:
     missing = keys - set(raw.keys())
     if missing:
         raise TemplateError(f"{where}: missing keys {sorted(missing)}")
-    unknown = set(raw.keys()) - keys
+    allowed = keys | (optional or set())
+    unknown = set(raw.keys()) - allowed
     if unknown:
         raise TemplateError(f"{where}: unknown keys {sorted(unknown)}")

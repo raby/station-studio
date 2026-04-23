@@ -149,6 +149,20 @@ class PlaylistTrace(Base):
     slots = Column(JSON, nullable=False)         # list[TraceSlot as dict]
 
 
+class Config(Base):
+    """Simple key/value store for library-level settings.
+
+    Currently used to persist iTunes library metadata captured during import
+    (library_persistent_id, music_folder) so the exporter can reproduce an
+    XML file that iTunes will accept. General-purpose — other system-wide
+    settings can live here too.
+    """
+    __tablename__ = "config"
+
+    key = Column(Text, primary_key=True)
+    value = Column(Text, nullable=True)
+
+
 class CursorState(Base):
     """Per-station cursor state (if a station wants to persist it)."""
     __tablename__ = "cursor_state"
