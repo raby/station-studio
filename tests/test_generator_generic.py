@@ -1,0 +1,258 @@
+"""Generic generator tests — prove the engine is not Classics-shaped.
+
+These tests exercise templates that look nothing like Rebirth Classics:
+minimal 1-row/1-block stations, pick-only layouts, mixed window+pick rows,
+>2 content sources, non-day units, flat cursors, single-week cycles, etc.
+
+Each test is a small inline template dict parsed via parse_template, with
+synthetic pools constructed on the spot. No external files.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any
+
+import pytest
+
+from engine.template import parse_template
+from engine.generator import generate
+
+
+# ---------- helpers ------------------------------------------------------
+
+
+@dataclass
+class FakeTrack:
+    id: int
+    name: str
+    artist: str | None = None
+
+
+def mk_pool(prefix: str, size: int) -> list[FakeTrack]:
+    return [FakeTrack(id=i, name=f"{prefix}{i:04d}") for i in range(1, size + 1)]
+
+
+def mk_template(**overrides) -> dict[str, Any]:
+    """Build a minimal valid template, override specific keys for variety."""
+    base = {
+        "station": "test",
+        "cadence": "weekly",
+        "rng": "off",
+        "sources": [
+            {"name": "A", "colour": "#111", "role": "content"},
+        ],
+        "cursor": {"base_advance_per_week": 10, "cycle_weeks": 4},
+        "layout": {
+            "unit": "day",
+            "unit_labels": ["Mon"],
+            "row_start_offsets": [0],
+            "row_template": [{"source": "A", "strategy": "window", "size": 3}],
+        },
+    }
+    base.update(overrides)
+    return base
+
+
+# ---------- minimal template --------------------------------------------
+
+
+def test_minimal_station_1_row_1_block():
+    t = parse_template(mk_template())
+    pools = {"A": mk_pool("A", 100)}
+    r = generate(t, pools, week=1)
+    assert len(r.picks) == 3
+    assert r.trace.slots[0].unit == "Mon"
+    assert r.trace.slots[0].row == 1
+    assert r.trace.slots[0].block == 1
+
+
+# ---------- pick-only ----------------------------------------------------
+
+
+def test_pick_only_station_sequential():
+    t = parse_template(mk_template(
+        layout={
+            "unit": "day",
+            "unit_labels": ["Mon"],
+            "row_start_offsets": [0],
+            "row_template": [
+                {"source": "A", "strategy": "pick", "size": 5},
+            ],
+        },
+    ))
+    pools = {"A": mk_pool("A", 20)}
+    r = generate(t, pools, week=1)
+    # Sequential pick from cursor 0 -> pool indices 1..5
+    assert [p.name for p in r.picks] == ["A0001", "A0002", "A0003", "A0004", "A0005"]
+    assert [s.pool_index for s in r.trace.slots] == [1, 2, 3, 4, 5]
+    assert all(s.strategy == "pick" for s in r.trace.slots)
+
+
+# ---------- mixed window + pick in the same row ------------------------
+
+
+def test_mixed_window_and_pick_in_same_row():
+    t = parse_template(mk_template(
+        sources=[
+            {"name": "A", "colour": "#a", "role": "content"},
+            {"name": "B", "colour": "#b", "role": "content"},
+        ],
+        layout={
+            "unit": "day",
+            "unit_labels": ["Mon"],
+            "row_start_offsets": [0],
+            "row_template": [
+                {"source": "A", "strategy": "window", "size": 3},
+                {"source": "B", "strategy": "pick",   "size": 2},
+            ],
+        },
+    ))
+    pools = {"A": mk_pool("A", 50), "B": mk_pool("B", 50)}
+    r = generate(t, pools, week=1)
+    assert [p.name for p in r.picks] == ["A0001", "A0002", "A0003", "B0001", "B0002"]
+    # Strategies per slot match the block spec
+    assert [s.strategy for s in r.trace.slots] == ["window", "window", "window", "pick", "pick"]
+    # Blocks numbered 1 and 2 within the row
+    assert [s.block for s in r.trace.slots] == [1, 1, 1, 2, 2]
+
+
+# ---------- >2 content sources ------------------------------------------
+
+
+def test_four_content_sources():
+    sources = [{"name": n, "colour": "#000", "role": "content"} for n in ("A", "B", "C", "D")]
+    row_template = [{"source": n, "strategy": "window", "size": 2} for n in ("A", "B", "C", "D")]
+    t = parse_template(mk_template(sources=sources, layout={
+        "unit": "day",
+        "unit_labels": ["Mon"],
+        "row_start_offsets": [0],
+        "row_template": row_template,
+    }))
+    pools = {n: mk_pool(n, 10) for n in ("A", "B", "C", "D")}
+    r = generate(t, pools, week=1)
+    assert len(r.picks) == 8
+    assert [s.source for s in r.trace.slots] == ["A", "A", "B", "B", "C", "C", "D", "D"]
+
+
+# ---------- non-day unit (hourly show) -----------------------------------
+
+
+def test_non_day_unit_labels():
+    t = parse_template(mk_template(
+        layout={
+            "unit": "hour",
+            "unit_labels": ["06:00", "07:00", "08:00"],
+            "row_start_offsets": [0, 5, 10],
+            "row_template": [{"source": "A", "strategy": "window", "size": 2}],
+        },
+    ))
+    pools = {"A": mk_pool("A", 50)}
+    r = generate(t, pools, week=1)
+    assert [s.unit for s in r.trace.slots] == ["06:00", "06:00", "07:00", "07:00", "08:00", "08:00"]
+
+
+# ---------- flat cursor (schedule never shifts) --------------------------
+
+
+def test_flat_cursor_identical_every_week():
+    t = parse_template(mk_template(
+        cursor={"base_advance_per_week": 0, "cycle_weeks": 1},
+    ))
+    pools = {"A": mk_pool("A", 50)}
+    r1 = generate(t, pools, week=1)
+    r5 = generate(t, pools, week=5)
+    assert [p.name for p in r1.picks] == [p.name for p in r5.picks]
+
+
+# ---------- single-week cycle -------------------------------------------
+
+
+def test_single_week_cycle_wraps_immediately():
+    """cycle_weeks=1 means every week has the same base_cursor (0)."""
+    t = parse_template(mk_template(
+        cursor={"base_advance_per_week": 7, "cycle_weeks": 1},
+    ))
+    pools = {"A": mk_pool("A", 50)}
+    r1 = generate(t, pools, week=1)
+    r2 = generate(t, pools, week=2)
+    # cycle_weeks=1 -> base is always 0 -> identical
+    assert [p.name for p in r1.picks] == [p.name for p in r2.picks]
+
+
+# ---------- cycle wrap at arbitrary length -------------------------------
+
+
+def test_cycle_wrap_at_seven_weeks():
+    t = parse_template(mk_template(
+        cursor={"base_advance_per_week": 3, "cycle_weeks": 7},
+    ))
+    pools = {"A": mk_pool("A", 100)}
+    r1 = generate(t, pools, week=1)
+    r8 = generate(t, pools, week=8)
+    assert [p.name for p in r1.picks] == [p.name for p in r8.picks]
+
+
+# ---------- cursor progression across many weeks -------------------------
+
+
+def test_cursor_advances_correctly_per_week():
+    t = parse_template(mk_template(
+        cursor={"base_advance_per_week": 5, "cycle_weeks": 10},
+        layout={
+            "unit": "day",
+            "unit_labels": ["Mon"],
+            "row_start_offsets": [0],
+            "row_template": [{"source": "A", "strategy": "window", "size": 1}],
+        },
+    ))
+    pools = {"A": mk_pool("A", 100)}
+    for week in range(1, 11):
+        r = generate(t, pools, week=week)
+        expected_pool_index = (week - 1) * 5 + 1
+        assert r.trace.slots[0].pool_index == expected_pool_index, \
+            f"week {week}: expected {expected_pool_index}, got {r.trace.slots[0].pool_index}"
+
+
+# ---------- multi-row with varied offsets --------------------------------
+
+
+def test_row_start_offsets_applied_correctly():
+    t = parse_template(mk_template(
+        layout={
+            "unit": "slot",
+            "unit_labels": ["r1", "r2", "r3"],
+            "row_start_offsets": [0, 100, 50],
+            "row_template": [{"source": "A", "strategy": "window", "size": 1}],
+        },
+    ))
+    pools = {"A": mk_pool("A", 200)}
+    r = generate(t, pools, week=1)
+    assert [s.pool_index for s in r.trace.slots] == [1, 101, 51]
+
+
+# ---------- trace integrity ---------------------------------------------
+
+
+def test_trace_slot_count_always_matches_picks():
+    t = parse_template(mk_template(
+        layout={
+            "unit": "day",
+            "unit_labels": ["A", "B", "C"],
+            "row_start_offsets": [0, 10, 20],
+            "row_template": [
+                {"source": "A", "strategy": "window", "size": 4},
+                {"source": "A", "strategy": "pick",   "size": 3},
+            ],
+        },
+    ))
+    pools = {"A": mk_pool("A", 50)}
+    r = generate(t, pools, week=1)
+    assert len(r.picks) == 3 * (4 + 3)
+    assert len(r.trace.slots) == len(r.picks)
+
+
+def test_trace_ids_are_unique_across_generations():
+    t = parse_template(mk_template())
+    pools = {"A": mk_pool("A", 50)}
+    seen = {generate(t, pools, week=w).trace.trace_id for w in range(1, 6)}
+    assert len(seen) == 5
