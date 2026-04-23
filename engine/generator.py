@@ -1,0 +1,174 @@
+"""Playlist generator.
+
+Consumes:
+    * a Template (parsed)
+    * source pools as a plain dict[str, list[Track-like]] — the engine is
+      DB-agnostic; callers are responsible for loading pools from wherever.
+    * a week number (1-indexed, monotonically increasing)
+
+Emits:
+    * a list of picked tracks in slot order
+    * a Trace with per-slot rationale and a trace_id
+
+Pure function. No DB, no I/O, no globals. That makes it trivially testable
+with synthetic pools (see tests/test_classics_generation.py).
+
+A Track-like is anything with attributes: id, name, artist. It can be a
+SQLAlchemy Track model or a dataclass. The generator only reads; it does not
+mutate.
+"""
+from __future__ import annotations
+
+import random
+from dataclasses import dataclass
+from typing import Any, Mapping
+
+from engine.template import Template, BlockSpec
+from engine.trace import Trace, TraceSlot
+from engine.strategies import apply_window, apply_pick
+
+
+@dataclass
+class GenerationResult:
+    picks: list[Any]     # list of Track-like objects, one per slot
+    trace: Trace
+
+
+def generate(
+    template: Template,
+    pools: Mapping[str, list[Any]],
+    *,
+    week: int,
+    seed: int | None = None,
+) -> GenerationResult:
+    """Generate one playlist for the given station + week.
+
+    Parameters
+    ----------
+    template : Template
+        Parsed station template.
+    pools : dict[str, list[Track-like]]
+        Source pools keyed by source name. Must include every 'content' source
+        referenced by the layout.
+    week : int
+        1-indexed week number.
+    seed : int | None
+        Only used if template.rng == 'on'. Ignored otherwise.
+    """
+    _check_pools_present(template, pools)
+
+    rng = None
+    if template.rng == "on":
+        if seed is None:
+            raise ValueError("rng='on' template requires a seed")
+        rng = random.Random(seed)
+
+    base_cursor = template.base_cursor_for_week(week)
+
+    trace = Trace(
+        station=template.station,
+        week=week,
+        rng=template.rng,
+        seed=seed if template.rng == "on" else None,
+    )
+    picks: list[Any] = []
+    slot_counter = 0
+
+    for row_idx, row_offset in enumerate(template.layout.row_start_offsets):
+        unit_label = template.layout.unit_labels[row_idx]
+        row_start_in_pool = base_cursor + row_offset
+
+        for block_idx, block in enumerate(template.layout.row_template):
+            pool = pools[block.source]
+            if block.strategy == "window":
+                picked = apply_window(
+                    pool,
+                    start=row_start_in_pool,
+                    size=block.size,
+                    source_name=block.source,
+                )
+                reason_prefix = (
+                    f"window size={block.size} from '{block.source}' "
+                    f"at pool_index {row_start_in_pool + 1}"
+                )
+                for (pool_idx, track) in picked:
+                    slot_counter += 1
+                    picks.append(track)
+                    trace.slots.append(_make_trace_slot(
+                        slot=slot_counter,
+                        unit=unit_label,
+                        row=row_idx + 1,
+                        block=block_idx + 1,
+                        block_spec=block,
+                        pool_index=pool_idx,
+                        track=track,
+                        reason=reason_prefix,
+                    ))
+            elif block.strategy == "pick":
+                cursor = row_start_in_pool
+                for _ in range(block.size):
+                    pool_idx, track, cursor = apply_pick(
+                        pool, cursor=cursor, rng=rng, source_name=block.source
+                    )
+                    slot_counter += 1
+                    picks.append(track)
+                    trace.slots.append(_make_trace_slot(
+                        slot=slot_counter,
+                        unit=unit_label,
+                        row=row_idx + 1,
+                        block=block_idx + 1,
+                        block_spec=block,
+                        pool_index=pool_idx,
+                        track=track,
+                        reason=f"pick from '{block.source}' "
+                               f"({'random' if rng else 'sequential'})",
+                    ))
+            else:
+                # template.parse_template should have rejected this already
+                raise RuntimeError(f"unreachable: unknown strategy {block.strategy!r}")
+
+    return GenerationResult(picks=picks, trace=trace)
+
+
+# ---------- internals ----------------------------------------------------
+
+
+def _check_pools_present(template: Template, pools: Mapping[str, list[Any]]) -> None:
+    required = set()
+    for b in template.layout.row_template:
+        required.add(b.source)
+    missing = required - set(pools.keys())
+    if missing:
+        raise KeyError(
+            f"pools missing for content sources: {sorted(missing)}. "
+            f"Provided: {sorted(pools.keys())}"
+        )
+    for name in required:
+        if not pools[name]:
+            raise ValueError(f"pool '{name}' is empty")
+
+
+def _make_trace_slot(
+    *,
+    slot: int,
+    unit: str,
+    row: int,
+    block: int,
+    block_spec: BlockSpec,
+    pool_index: int,
+    track: Any,
+    reason: str,
+) -> TraceSlot:
+    return TraceSlot(
+        slot=slot,
+        unit=unit,
+        row=row,
+        block=block,
+        source=block_spec.source,
+        strategy=block_spec.strategy,
+        pool_index=pool_index,
+        track_id=getattr(track, "id", None),
+        track_name=getattr(track, "name", "?"),
+        track_artist=getattr(track, "artist", None),
+        reason=reason,
+    )

@@ -1,0 +1,23 @@
+{
+  "station": "rebirth-classics",
+  "cadence": "weekly",
+  "rng": "off",
+  "sources": [
+    { "name": "RG_RADIO",  "colour": "#c0392b", "role": "content"   },
+    { "name": "RG_PARTY",  "colour": "#8e44ad", "role": "content"   },
+    { "name": "RG_MASTER", "colour": "#7f8c8d", "role": "reference" }
+  ],
+  "cursor": {
+    "base_advance_per_week": 60,
+    "cycle_weeks": 16
+  },
+  "layout": {
+    "unit": "day",
+    "unit_labels": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+    "row_start_offsets": [0, 10, 20, 30, 40, 50, 50],
+    "row_template": [
+      { "source": "RG_RADIO", "strategy": "window", "size": 215 },
+      { "source": "RG_PARTY", "strategy": "window", "size": 215 }
+    ]
+  }
+}
