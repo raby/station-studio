@@ -11,7 +11,7 @@ from engine.models import (
 )
 from engine.template import parse_template, TemplateError
 from engine.generator import generate
-from engine.exporter import export_playlist
+from engine.exporter import export_playlist, export_playlist_to_disk
 from api.deps import get_db
 from api.schemas import GenerateRequest, GenerateResponse, PlaylistOut, PlaylistEntryOut, TrackOut
 
@@ -133,6 +133,25 @@ def export(playlist_id: int, db: Session = Depends(get_db)):
         media_type="application/xml",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@router.post("/api/playlists/{playlist_id}/export-to-disk")
+def export_to_disk(playlist_id: int, db: Session = Depends(get_db)):
+    """Export a generated playlist to the configured on-disk output directory.
+
+    Destination: {playlist_output_dir}/{station-slug}/{week:03d}.xml.
+    Directory comes from Config key 'playlist_output_dir' (absolute path
+    recommended); falls back to 'out/' relative to the process CWD.
+    Overwrites silently if the file already exists.
+    """
+    p = db.query(Playlist).filter_by(id=playlist_id).first()
+    if not p:
+        raise HTTPException(404, "playlist not found")
+    try:
+        path = export_playlist_to_disk(db, playlist_id)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+    return {"path": str(path), "bytes": path.stat().st_size}
 
 
 @router.get("/api/playlists/{playlist_id}/trace")

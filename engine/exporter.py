@@ -16,6 +16,7 @@ import re
 from collections import OrderedDict
 from datetime import datetime
 from io import BytesIO
+from pathlib import Path
 
 from sqlalchemy.orm import Session
 
@@ -62,6 +63,11 @@ _PLAYLIST_KEY_ORDER = [
 # Defaults used when no source file has been imported yet (tests, dev).
 _DEFAULT_LIBRARY_PERSISTENT_ID = "STATION_STUDIO"
 _DEFAULT_MUSIC_FOLDER = "file://localhost/"
+
+# Default destination for export_playlist_to_disk when no Config override is
+# set. Relative paths resolve against the process CWD (typically the repo
+# root when running via scripts/* or the API).
+_DEFAULT_OUTPUT_DIR = "out"
 
 
 # ---------- helpers -------------------------------------------------------
@@ -289,3 +295,45 @@ def export_playlist(db: Session, playlist_id: int) -> bytes:
         p.id, station.slug, p.week, len(playlist_items), len(tracks_dict), len(xml_bytes),
     )
     return xml_bytes
+
+
+def _resolve_output_dir(db: Session) -> Path:
+    """Resolve the configured disk-export directory to an absolute path.
+
+    Reads Config key 'playlist_output_dir' if set, else uses _DEFAULT_OUTPUT_DIR.
+    User-supplied paths may be absolute, relative, or '~'-prefixed; all are
+    normalised to an absolute Path.
+    """
+    row = db.query(Config).filter(Config.key == "playlist_output_dir").first()
+    raw = row.value if row and row.value else _DEFAULT_OUTPUT_DIR
+    return Path(raw).expanduser().resolve()
+
+
+def export_playlist_to_disk(db: Session, playlist_id: int) -> Path:
+    """Export a playlist as iTunes XML and write it to disk.
+
+    Layout: {output_dir}/{station_slug}/{week:03d}.xml. Creates parent
+    directories as needed. Overwrites silently — re-exporting the same week
+    is idempotent and mirrors how the underlying playlist is regenerated.
+
+    Returns the absolute path written.
+    """
+    p = db.query(Playlist).filter(Playlist.id == playlist_id).first()
+    if p is None:
+        raise ValueError(f"Playlist {playlist_id} not found")
+
+    xml_bytes = export_playlist(db, playlist_id)
+
+    out_dir = _resolve_output_dir(db)
+    station_dir = out_dir / p.station.slug
+    station_dir.mkdir(parents=True, exist_ok=True)
+    target = station_dir / f"{p.week:03d}.xml"
+
+    existed = target.exists()
+    target.write_bytes(xml_bytes)
+
+    logger.info(
+        "Wrote playlist %d to %s (%s, %d bytes)",
+        playlist_id, target, "overwrote" if existed else "created", len(xml_bytes),
+    )
+    return target

@@ -21,3 +21,6 @@ build/
 # User-dropped iTunes XML exports (large, not repo content)
 from_user/*
 !from_user/README.md
+
+# Generated iTunes XML exports (default disk-export destination)
+out/

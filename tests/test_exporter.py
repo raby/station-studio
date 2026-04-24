@@ -17,7 +17,7 @@ import pytest
 from sqlalchemy.orm import Session
 
 from engine.database import make_engine, make_sessionmaker
-from engine.exporter import export_playlist
+from engine.exporter import export_playlist, export_playlist_to_disk
 from engine.importer import import_source
 from engine.models import (
     Base, Config, Playlist, PlaylistEntry, Station, Track,
@@ -232,3 +232,94 @@ def test_export_round_trip_preserves_positions(db, tmp_path):
         assert [e.track.persistent_id for e in entries] == ["P0001", "P0002", "P0003"]
         assert [e.track.name for e in entries] == ["One", "Two", "Three"]
         assert [e.track.artist for e in entries] == ["A", "B", "C"]
+
+
+# ---------- disk export --------------------------------------------------
+
+
+def test_export_to_disk_writes_to_configured_dir(db, tmp_path):
+    db.add(Config(key="playlist_output_dir", value=str(tmp_path)))
+    db.commit()
+    pl = _make_station_and_playlist(db, slug="cls", name="Classics", week=1,
+        track_data=[{"persistent_id": "P1", "name": "T", "itunes_track_id": 1}])
+
+    path = export_playlist_to_disk(db, pl.id)
+
+    assert path == (tmp_path / "cls" / "001.xml").resolve()
+    assert path.exists()
+    # And the bytes are the same as export_playlist produces
+    assert path.read_bytes() == export_playlist(db, pl.id)
+
+
+def test_export_to_disk_creates_station_subdirectory(db, tmp_path):
+    db.add(Config(key="playlist_output_dir", value=str(tmp_path)))
+    db.commit()
+    pl = _make_station_and_playlist(db, slug="rebirth-classics", name="Rebirth Classics", week=7,
+        track_data=[{"persistent_id": "P1", "name": "T", "itunes_track_id": 1}])
+
+    path = export_playlist_to_disk(db, pl.id)
+
+    assert path.parent == (tmp_path / "rebirth-classics").resolve()
+    assert path.parent.is_dir()
+    assert path.name == "007.xml"
+
+
+def test_export_to_disk_overwrites_on_re_export(db, tmp_path):
+    db.add(Config(key="playlist_output_dir", value=str(tmp_path)))
+    db.commit()
+    pl = _make_station_and_playlist(db, slug="cls", name="Classics", week=1,
+        track_data=[{"persistent_id": "P1", "name": "T", "itunes_track_id": 1}])
+
+    p1 = export_playlist_to_disk(db, pl.id)
+    first_bytes = p1.read_bytes()
+    # Second export to the same (station, week) produces the same path and
+    # overwrites the existing file without error.
+    p2 = export_playlist_to_disk(db, pl.id)
+    assert p2 == p1
+    assert p2.read_bytes() == first_bytes
+
+
+def test_export_to_disk_returns_absolute_path(db, tmp_path, monkeypatch):
+    """Even when Config holds a relative path, the returned Path is absolute."""
+    monkeypatch.chdir(tmp_path)
+    db.add(Config(key="playlist_output_dir", value="relative-out"))
+    db.commit()
+    pl = _make_station_and_playlist(db, slug="cls", name="Classics", week=1,
+        track_data=[{"persistent_id": "P1", "name": "T", "itunes_track_id": 1}])
+
+    path = export_playlist_to_disk(db, pl.id)
+
+    assert path.is_absolute()
+    assert path == (tmp_path / "relative-out" / "cls" / "001.xml").resolve()
+
+
+def test_export_to_disk_uses_default_dir_without_config(db, tmp_path, monkeypatch):
+    """No Config row -> writes to '<cwd>/out/'."""
+    monkeypatch.chdir(tmp_path)
+    pl = _make_station_and_playlist(db, slug="cls", name="Classics", week=1,
+        track_data=[{"persistent_id": "P1", "name": "T", "itunes_track_id": 1}])
+
+    path = export_playlist_to_disk(db, pl.id)
+
+    assert path == (tmp_path / "out" / "cls" / "001.xml").resolve()
+    assert path.exists()
+
+
+def test_export_to_disk_expands_home_prefix(db, tmp_path, monkeypatch):
+    """'~/foo' in Config is expanded against $HOME."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    db.add(Config(key="playlist_output_dir", value="~/exports"))
+    db.commit()
+    pl = _make_station_and_playlist(db, slug="cls", name="Classics", week=1,
+        track_data=[{"persistent_id": "P1", "name": "T", "itunes_track_id": 1}])
+
+    path = export_playlist_to_disk(db, pl.id)
+
+    assert path == (tmp_path / "exports" / "cls" / "001.xml").resolve()
+
+
+def test_export_to_disk_raises_for_missing_playlist(db, tmp_path):
+    db.add(Config(key="playlist_output_dir", value=str(tmp_path)))
+    db.commit()
+    with pytest.raises(ValueError, match="Playlist 999 not found"):
+        export_playlist_to_disk(db, 999)
