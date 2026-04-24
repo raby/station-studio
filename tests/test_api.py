@@ -533,3 +533,55 @@ def test_generate_seed_is_threaded_through_to_trace(api):
     trace = client.get(f"/api/playlists/{r.json()['playlist_id']}/trace").json()
     assert trace["rng"] == "on"
     assert trace["seed"] == 42
+
+
+# ---------- /api/sources -----------------------------------------------
+
+_FIXTURES = Path(__file__).parent / "fixtures"
+
+
+def test_list_sources_empty(api):
+    client, _ = api
+    r = client.get("/api/sources")
+    assert r.status_code == 200
+    assert r.json() == []
+
+
+def test_list_sources_after_import(api):
+    client, _ = api
+    r = client.post("/api/sources/import", json={
+        "path": str(_FIXTURES / "tiny-library.xml"),
+        "name": "tiny",
+    })
+    assert r.status_code == 200, r.text
+    summary = r.json()
+    assert summary["name"] == "tiny"
+    assert summary["tracks_imported"] == 3
+    assert summary["entries_imported"] == 3
+
+    r2 = client.get("/api/sources")
+    assert r2.status_code == 200
+    rows = r2.json()
+    assert len(rows) == 1
+    assert rows[0]["name"] == "tiny"
+    assert rows[0]["track_count"] == 3
+
+
+def test_import_path_not_found_400(api):
+    client, _ = api
+    r = client.post("/api/sources/import", json={
+        "path": "/definitely/does/not/exist.xml",
+        "name": "nope",
+    })
+    assert r.status_code == 400
+    assert "path not found" in r.json()["detail"]
+
+
+def test_import_malformed_xml_500(api):
+    client, _ = api
+    r = client.post("/api/sources/import", json={
+        "path": str(_FIXTURES / "malformed-library.xml"),
+        "name": "broken",
+    })
+    assert r.status_code == 500
+    assert "import failed" in r.json()["detail"]

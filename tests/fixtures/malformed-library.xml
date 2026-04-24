@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Deliberately malformed: unclosed root element. plistlib should raise. -->
+<plist version="1.0">
+<dict>
+	<key>Tracks</key>
+	<dict>

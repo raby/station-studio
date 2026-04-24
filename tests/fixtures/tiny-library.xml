@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple Computer//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Major Version</key><integer>1</integer>
+	<key>Minor Version</key><integer>1</integer>
+	<key>Application Version</key><string>10.3</string>
+	<key>Features</key><integer>5</integer>
+	<key>Show Content Ratings</key><true/>
+	<key>Music Folder</key><string>file://localhost/Users/test/Music/iTunes/iTunes%20Media/</string>
+	<key>Library Persistent ID</key><string>TINYLIBFIXTURE01</string>
+	<key>Tracks</key>
+	<dict>
+		<key>101</key>
+		<dict>
+			<key>Track ID</key><integer>101</integer>
+			<key>Name</key><string>First Track</string>
+			<key>Artist</key><string>Artist One</string>
+			<key>Album</key><string>Album Alpha</string>
+			<key>Genre</key><string>Rock</string>
+			<key>Total Time</key><integer>180000</integer>
+			<key>Persistent ID</key><string>AAAA000000000101</string>
+			<key>Track Type</key><string>File</string>
+		</dict>
+		<key>102</key>
+		<dict>
+			<key>Track ID</key><integer>102</integer>
+			<key>Name</key><string>Second Track</string>
+			<key>Artist</key><string>Artist Two</string>
+			<key>Album</key><string>Album Beta</string>
+			<key>Genre</key><string>Jazz</string>
+			<key>Total Time</key><integer>240000</integer>
+			<key>Persistent ID</key><string>AAAA000000000102</string>
+			<key>Track Type</key><string>File</string>
+		</dict>
+		<key>103</key>
+		<dict>
+			<key>Track ID</key><integer>103</integer>
+			<key>Name</key><string>Third Track</string>
+			<key>Artist</key><string>Artist Three</string>
+			<key>Album</key><string>Album Gamma</string>
+			<key>Genre</key><string>Soul</string>
+			<key>Total Time</key><integer>210000</integer>
+			<key>Persistent ID</key><string>AAAA000000000103</string>
+			<key>Track Type</key><string>File</string>
+		</dict>
+	</dict>
+	<key>Playlists</key>
+	<array>
+		<dict>
+			<key>Name</key><string>Tiny Pool</string>
+			<key>Playlist ID</key><integer>1</integer>
+			<key>Playlist Persistent ID</key><string>TINYPOOL00000001</string>
+			<key>All Items</key><true/>
+			<key>Playlist Items</key>
+			<array>
+				<dict>
+					<key>Track ID</key><integer>101</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key><integer>102</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key><integer>103</integer>
+				</dict>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>
