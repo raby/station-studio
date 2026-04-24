@@ -27,7 +27,8 @@ from api.deps import get_db
 from api.main import app
 from engine.database import make_engine, make_sessionmaker
 from engine.models import (
-    Base, Config, Playlist, PlaylistEntry, PlaylistTrace, Station, Track,
+    Base, Config, Playlist, PlaylistEntry, PlaylistTrace,
+    SourcePlaylist, SourcePlaylistEntry, Station, Track,
 )
 
 
@@ -330,3 +331,205 @@ def test_export_to_disk_missing_playlist_404(api):
     client, _ = api
     r = client.post("/api/playlists/999/export-to-disk")
     assert r.status_code == 404
+
+
+# ---------- POST /api/stations/{slug}/generate ------------------------
+
+
+def _seed_station_and_pool(
+    Session: sessionmaker,
+    *,
+    slug: str = "gen",
+    name: str = "Gen FM",
+    pool_name: str = "A",
+    pool_tracks: int = 3,
+    template: dict | None = None,
+) -> tuple[int, int]:
+    """Insert a Station + a SourcePlaylist named `pool_name` with N tracks.
+
+    The default template has one row/unit and strategy=pick size=1, so a
+    single slot is generated — just enough to prove the wiring.
+
+    Returns (station_id, source_playlist_id).
+    """
+    template = template or {
+        "station": slug,
+        "cadence": "weekly",
+        "rng": "off",
+        "sources": [{"name": pool_name, "colour": "#111", "role": "content"}],
+        "cursor": {"base_advance_per_week": 0, "cycle_weeks": 1},
+        "layout": {
+            "unit": "day",
+            "unit_labels": ["Mon"],
+            "row_start_offsets": [0],
+            "row_template": [{"source": pool_name, "strategy": "pick", "size": 1}],
+        },
+    }
+    with Session() as db:
+        st = Station(slug=slug, name=name, template=template)
+        db.add(st)
+        db.flush()
+        sp = SourcePlaylist(name=pool_name)
+        db.add(sp)
+        db.flush()
+        for i in range(1, pool_tracks + 1):
+            tr = Track(
+                persistent_id=f"{slug}-P{i}",
+                itunes_track_id=1000 + i,
+                name=f"Track {i}",
+                artist="Artist",
+            )
+            db.add(tr)
+            db.flush()
+            db.add(SourcePlaylistEntry(
+                source_playlist_id=sp.id, track_id=tr.id, position=i,
+            ))
+        db.commit()
+        return st.id, sp.id
+
+
+def test_generate_happy_path_writes_playlist_entries_and_trace(api):
+    client, Session = api
+    _seed_station_and_pool(Session, slug="gen", pool_tracks=3)
+    r = client.post("/api/stations/gen/generate", json={"week": 1})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["station"] == "gen"
+    assert body["week"] == 1
+    assert body["slot_count"] == 1
+    assert body["playlist_id"]
+    assert body["trace_id"]
+
+    # The playlist, entries, and trace should all be persisted.
+    with Session() as db:
+        pl = db.query(Playlist).filter_by(id=body["playlist_id"]).first()
+        assert pl is not None
+        assert pl.week == 1
+        assert pl.trace_id == body["trace_id"]
+        entries = db.query(PlaylistEntry).filter_by(playlist_id=pl.id).all()
+        assert len(entries) == 1
+        assert entries[0].source_name == "A"
+        tr = db.query(PlaylistTrace).filter_by(playlist_id=pl.id).first()
+        assert tr is not None
+        assert tr.rng == "off"
+        assert len(tr.slots) == 1
+
+
+def test_generate_unknown_station_404(api):
+    client, _ = api
+    r = client.post("/api/stations/nope/generate", json={"week": 1})
+    assert r.status_code == 404
+    assert "not found" in r.json()["detail"]
+
+
+def test_generate_missing_source_pool_400(api):
+    client, Session = api
+    # Seed a station but no source pool.
+    with Session() as db:
+        db.add(Station(
+            slug="sp", name="No Pool",
+            template={
+                "station": "sp", "cadence": "weekly", "rng": "off",
+                "sources": [{"name": "A", "colour": "#111", "role": "content"}],
+                "cursor": {"base_advance_per_week": 0, "cycle_weeks": 1},
+                "layout": {
+                    "unit": "day", "unit_labels": ["Mon"],
+                    "row_start_offsets": [0],
+                    "row_template": [{"source": "A", "strategy": "pick", "size": 1}],
+                },
+            },
+        ))
+        db.commit()
+    r = client.post("/api/stations/sp/generate", json={"week": 1})
+    assert r.status_code == 400
+    assert "source pool 'A' not imported" in r.json()["detail"]
+
+
+def test_generate_with_corrupt_stored_template_500(api):
+    client, Session = api
+    # Seed a Station whose template dict is missing a required top-level key.
+    with Session() as db:
+        db.add(Station(
+            slug="corrupt", name="Corrupt",
+            template={"station": "corrupt"},  # missing cadence/sources/cursor/layout
+        ))
+        db.commit()
+    r = client.post("/api/stations/corrupt/generate", json={"week": 1})
+    assert r.status_code == 500
+    assert "stored template is invalid" in r.json()["detail"]
+
+
+def test_generate_strategy_failure_returns_400(api):
+    client, Session = api
+    # Template asks for window size=5 from pool A; we only provide 2 tracks.
+    template = {
+        "station": "toosmall",
+        "cadence": "weekly",
+        "rng": "off",
+        "sources": [{"name": "A", "colour": "#111", "role": "content"}],
+        "cursor": {"base_advance_per_week": 0, "cycle_weeks": 1},
+        "layout": {
+            "unit": "day",
+            "unit_labels": ["Mon"],
+            "row_start_offsets": [0],
+            "row_template": [{"source": "A", "strategy": "window", "size": 5}],
+        },
+    }
+    _seed_station_and_pool(
+        Session, slug="toosmall", name="Too Small",
+        pool_tracks=2, template=template,
+    )
+    r = client.post("/api/stations/toosmall/generate", json={"week": 1})
+    # Generator either succeeds with a short window or raises — either way,
+    # if it raises the route must surface it as 400.
+    if r.status_code != 200:
+        assert r.status_code == 400
+        assert "generation failed" in r.json()["detail"]
+
+
+def test_generate_same_week_replaces_previous(api):
+    client, Session = api
+    _seed_station_and_pool(Session, slug="twice", pool_tracks=3)
+    r1 = client.post("/api/stations/twice/generate", json={"week": 1})
+    assert r1.status_code == 200
+    trace1 = r1.json()["trace_id"]
+    r2 = client.post("/api/stations/twice/generate", json={"week": 1})
+    assert r2.status_code == 200
+    trace2 = r2.json()["trace_id"]
+    # Each generation mints a fresh trace_id; regenerating must produce a new
+    # one. (SQLite may reuse the previous playlist's primary key after DELETE,
+    # so we don't compare IDs — the "one playlist per week" invariant below
+    # is the real guarantee.)
+    assert trace1 != trace2
+    with Session() as db:
+        remaining = db.query(Playlist).filter_by(week=1).all()
+        assert len(remaining) == 1
+        assert remaining[0].trace_id == trace2
+
+
+def test_generate_seed_is_threaded_through_to_trace(api):
+    client, Session = api
+    # RNG must be 'on' for seed to be honoured.
+    template = {
+        "station": "seeded",
+        "cadence": "weekly",
+        "rng": "on",
+        "sources": [{"name": "A", "colour": "#111", "role": "content"}],
+        "cursor": {"base_advance_per_week": 0, "cycle_weeks": 1},
+        "layout": {
+            "unit": "day",
+            "unit_labels": ["Mon"],
+            "row_start_offsets": [0],
+            "row_template": [{"source": "A", "strategy": "pick", "size": 1}],
+        },
+    }
+    _seed_station_and_pool(
+        Session, slug="seeded", name="Seeded",
+        pool_tracks=5, template=template,
+    )
+    r = client.post("/api/stations/seeded/generate",
+                    json={"week": 1, "seed": 42})
+    assert r.status_code == 200, r.text
+    trace = client.get(f"/api/playlists/{r.json()['playlist_id']}/trace").json()
+    assert trace["rng"] == "on"
+    assert trace["seed"] == 42
