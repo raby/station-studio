@@ -387,7 +387,8 @@ The trace is stored as JSON alongside the playlist (in a `playlist_trace` table 
 | Item                                        | Status       | Notes                                                   |
 |---------------------------------------------|--------------|---------------------------------------------------------|
 | Visual block editor                         | v2           | Operates on same JSON as wizard                         |
-| Station creation wizard (UI)                | next (14.6)  | Produces the template JSON; reuses `web/src/lib/api.ts` |
+| Station creation wizard (UI)                | done (14.7)  | Produces the template JSON; reuses `web/src/lib/api.ts` |
+| Wizard polish (presets, per-field errors)   | later (14.7) | See 14.7 table; wait for real-user pain                 |
 | Migrate Rebirth Radio onto Station Studio   | long-term    | Needs `weighted`, `prev_ref`, `genre_pick` primitives   |
 | iTunes XML export of Classics playlists     | done (14.1)  | Lifted from weekly, station-scoped; browser + disk paths|
 | Disk-export prune endpoint                  | on demand    | `POST /api/playlists/export/prune` — wait until clutter |
@@ -646,28 +647,90 @@ viewer first** on these grounds:
   `Content-Disposition` download. Keep it that way — no JS needed for a
   one-shot byte download.
 
-### 14.6 Up next: station creation wizard (step 3)
+### 14.6 Station wizard — planning notes (superseded by 14.7)
 
-Not yet started. Sketch of what's expected when we do, so the
-wizard-builder inherits the decisions already made:
+Original sketch is kept for historical context. Decisions that actually
+shipped live in §14.7; read that one first.
 
 - **Produces the same JSON template** that's checked into `stations/`.
   The template is the canonical artefact (see §4.2). The wizard is a
   writer, not a new format. Saving = `POST /api/stations` with the
   validated JSON.
 - **First-screen minimum:** slug, display name, cadence, RNG on/off,
-  and the list of source pools the station will use (with roles). That
-  alone is enough to make a new station addressable and show up on the
-  landing page, even before layout is configured.
+  and the list of source pools the station will use (with roles).
 - **Later screens:** cursor (`base_advance_per_week`, `cycle_weeks`),
   layout (unit, `unit_labels`, `row_start_offsets`, `row_template`
   blocks with source + strategy + size). The visual block editor (§11,
   v2) replaces the layout screen eventually.
-- **Reuse:** the typed client in `web/src/lib/api.ts` and any shared
-  layout/header that emerges during the trace-viewer polish pass.
-- **Validation:** server-side via `engine.template.parse_template`
-  (already wired into `POST /api/stations`). The wizard should surface
-  these errors per-field, not as a blob.
+- **Reuse:** the typed client in `web/src/lib/api.ts`.
+- **Validation:** server-side via `engine.template.parse_template`.
+  Sketch suggested per-field error surfacing; see §14.7 for what
+  actually landed.
+
+### 14.7 Wizard — what shipped, what was punted
+
+**What shipped.**
+
+- **Single-page form at `/stations/new`** — scrollable, not a multi-step
+  flow. Four `<fieldset>` sections: Identity, Sources, Cursor, Layout.
+  Form state lives in the page component; no external state lib.
+- **Every required template field is covered**: slug, display name,
+  cadence, RNG (+ optional seed when RNG = 'on'), sources (dynamic
+  add/remove list of `{name, colour, role}`), cursor
+  (`base_advance_per_week`, `cycle_weeks`), layout (unit, comma-
+  separated `unit_labels`, comma-separated `row_start_offsets`, dynamic
+  list of `row_template` blocks where the `source` dropdown is
+  constrained to content-role sources declared above).
+- **Submit flow.** Client runs a minimal pre-submit sanity check
+  (non-empty slug matching `^[a-z0-9][a-z0-9-]*$`, non-empty name, ≥ 1
+  source, ≥ 1 row-template block, every block references a source).
+  Anything beyond that defers to `engine.template.parse_template` —
+  `POST /api/stations` returns the `TemplateError` message on 400 and
+  the UI shows it at the top of the form.
+- **On success:** `goto('/stations/{slug}')` — immediately into the new
+  station's page, which shows its (empty) playlists table.
+- **createStation() helper** added to `web/src/lib/api.ts` so the
+  frontend still has one typed client covering every API call it makes.
+- **End-to-end verified.** Wizard page HTML loads, POST via Vite proxy
+  creates station, station page renders it, `POST /api/stations/{slug}
+  /generate` produces a 3-slot playlist against the existing RG_RADIO
+  pool, trace viewer shows it. Test station deleted to leave the real
+  DB clean.
+
+**Constants duplicated from engine** (`RNG_OPTIONS`, `STRATEGY_OPTIONS`,
+`ROLE_OPTIONS`, `CADENCE_OPTIONS`) with a "keep in sync with
+engine/template.py" comment. Formalise as `GET /api/meta` when there's
+a second reason to.
+
+**Deliberately punted from this slice — same discipline as §14.5.**
+
+| Area                                 | Missing                                                                          | Trigger                                       |
+|--------------------------------------|----------------------------------------------------------------------------------|-----------------------------------------------|
+| Multi-step wizard flow               | Single-page form; no step-by-step progression / progress bar                     | User reports cognitive overload on the form   |
+| "Start from existing station" preset | No "copy of Rebirth Classics" button                                             | Making a second station like an existing one  |
+| Per-field error highlighting         | Server errors render as a blob at the top                                        | Real-user hits one and can't find which field |
+| Chip / tag inputs                    | `unit_labels` and `row_start_offsets` are comma-separated strings; splitting is  | Users start writing in arrays consistently    |
+|                                      | manual in `buildTemplate()`                                                      |                                               |
+| Live template JSON preview           | No "this is what you're saving" view pre-submit                                  | Users want to inspect before committing       |
+| Draft autosave                       | Reload loses the form                                                            | User reports losing work                      |
+| Edit mode                            | Wizard is create-only; editing a station needs a separate `/stations/[slug]/edit`| First rename / tweak request                  |
+| Slug-collision preview               | Collision is caught server-side with a 409; no "this slug is already taken" hint | Users hit it enough to annoy them             |
+| Accessibility polish                 | Labels present; no ARIA live regions for the error / submit state                | Before real external users                    |
+| Client-side sanity for layout arrays | We don't check `unit_labels.length == row_start_offsets.length`; server does     | Users hit the server error surprisingly often |
+| GET /api/meta endpoint               | RNG/strategy/role/cadence lists hardcoded in the form                            | Third constant list needs to be shared        |
+| Visual block editor                  | Layout still edited as form inputs; §11 deferred item                            | v2 explicit                                   |
+
+**Implementation notes for future pick-up:**
+
+- Form state is four flat variables + two lists. When the form grows
+  (edit mode, presets), a `writable<FormState>` store in
+  `web/src/lib/wizardStore.ts` probably earns its keep; not before.
+- `buildTemplate()` is where the form-state-to-JSON translation lives.
+  If you want a live preview (one of the deferrals), make that function
+  reactive and render its output in a `<pre>` block.
+- The `<a href="/">` cancel link is deliberate — no unsaved-changes
+  confirmation yet. Add a `beforeNavigate` hook once autosave-draft
+  lands.
 
 ---
 
@@ -685,7 +748,7 @@ A quick "where are we" for a future reader. Last updated at commit
 | Bootstrap script         | Shipped. One-command Classics setup.                     |
 | API                      | Stations CRUD, sources, generate, playlist, trace, export|
 | Trace viewer (UI)        | Shipped (first cut). Works end-to-end against real data. |
-| Station creation wizard  | **Not started.** Next piece of UI work.                  |
+| Station creation wizard  | Shipped (first cut). End-to-end verified.                |
 | Visual block editor      | Deferred (v2).                                           |
 | Scheduler                | Deferred (v1.1).                                         |
 | Weekly migration         | Long-term.                                               |

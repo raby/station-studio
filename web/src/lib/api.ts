@@ -108,4 +108,20 @@ export const getPlaylist = (id: number, fetch_ = fetch): Promise<Playlist> =>
 export const getTrace = (id: number, fetch_ = fetch): Promise<Trace> =>
   fetch_(`/api/playlists/${id}/trace`).then((r) => json<Trace>(r));
 
+export interface StationCreatePayload {
+  slug: string;
+  name: string;
+  template: Record<string, unknown>;
+}
+
+export const createStation = (
+  payload: StationCreatePayload,
+  fetch_ = fetch,
+): Promise<Station> =>
+  fetch_('/api/stations', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(payload),
+  }).then((r) => json<Station>(r));
+
 export { ApiError };
