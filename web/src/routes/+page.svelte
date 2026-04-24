@@ -28,7 +28,11 @@
     Playlist-generator authoring tool. See <code>DESIGN.md</code> for the full spec.
   </p>
 
-  <h2>Stations</h2>
+  <header class="section-head">
+    <h2>Stations</h2>
+    <a href="/stations/new" class="button">+ new station</a>
+  </header>
+
   {#if loading}
     <p>Loading…</p>
   {:else if error}
@@ -37,8 +41,8 @@
   {:else if stations.length === 0}
     <p>
       No stations yet. Bootstrap Rebirth Classics with
-      <code>python -m scripts.bootstrap_classics</code>, or
-      <a href="/stations/new">run the wizard</a> (TODO).
+      <code>python -m scripts.bootstrap_classics</code>, or use
+      <a href="/stations/new">+ new station</a> above.
     </p>
   {:else}
     <ul>
@@ -66,8 +70,26 @@
     color: #666;
     margin-top: 0;
   }
-  h2 {
+  .section-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
     margin-top: 2rem;
+  }
+  .section-head h2 {
+    margin: 0;
+  }
+  .button {
+    display: inline-block;
+    padding: 0.35rem 0.8rem;
+    background: #2c3e50;
+    color: white;
+    text-decoration: none;
+    border-radius: 4px;
+    font-size: 0.85rem;
+  }
+  .button:hover {
+    background: #1a252f;
   }
   ul {
     list-style: none;
