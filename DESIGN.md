@@ -320,7 +320,8 @@ SvelteKit also gives:
 | POST   | `/api/stations/{id}/generate`       | Generate a playlist (body: `{week: N}`)   |
 | GET    | `/api/playlists/{id}`               | Fetch a generated playlist                |
 | GET    | `/api/playlists/{id}/trace`         | Fetch the trace by `trace_id`             |
-| GET    | `/api/playlists/{id}/export`        | Export as iTunes XML (later)              |
+| GET    | `/api/playlists/{id}/export`        | Export as iTunes XML (browser download)   |
+| POST   | `/api/playlists/{id}/export-to-disk`| Write iTunes XML to configured on-disk dir|
 
 ---
 
@@ -387,7 +388,7 @@ The trace is stored as JSON alongside the playlist (in a `playlist_trace` table 
 |---------------------------------------------|--------------|---------------------------------------------------------|
 | Visual block editor                         | v2           | Operates on same JSON as wizard                         |
 | Migrate Rebirth Radio onto Station Studio   | long-term    | Needs `weighted`, `prev_ref`, `genre_pick` primitives   |
-| iTunes XML export of Classics playlists     | v1.1         | Lift exporter from weekly, parametrise by station       |
+| iTunes XML export of Classics playlists     | done (14.1)  | Lifted from weekly, station-scoped; browser + disk paths|
 | Scheduler (auto-generate weekly)            | v1.1         | Weekly has APScheduler; port when stable                |
 | Artist aliasing / dedup                     | not needed   | Classics has no dedup; engine grows this when needed    |
 | Excluded-candidates in trace                | v1.1         | Nice-to-have per user                                   |
@@ -426,3 +427,156 @@ Explicit list so future readers can check which have held:
 | Block          | A contiguous group of slots within a row filled from one source with one strategy  |
 | Trace          | Per-slot record of how and why that slot was filled                                |
 | `trace_id`     | UUID linking a generated playlist back to its trace                                |
+
+---
+
+## 14. Session 2 — post-scaffold evolution
+
+This section is appended as we build out functionality after the initial
+scaffold. Each sub-section captures the decisions that shaped a chunk of
+work, with the reasoning preserved so future readers see the rejected
+alternatives too.
+
+### 14.1 Exporter (iTunes XML out)
+
+**Problem.** A generated playlist lives in the DB as `Playlist` +
+`PlaylistEntry` rows. iTunes needs it as an XML plist file. Without an
+exporter, Classics is write-only — the whole point of the tool is
+undermined.
+
+**Approach.** Lifted the weekly/ exporter verbatim and generalised it:
+
+- **Station-scoped playlist identity.** Playlist `Name` is
+  `"{station.name} {week:03d}"` (e.g. `"Rebirth Classics 001"`).
+  `Playlist Persistent ID` is `{slug.upper().replace("-","_")}_{week:03d}`
+  (e.g. `"REBIRTH_CLASSICS_001"`). Previously the weekly/ exporter
+  hardcoded `"WEEKLY PLAYLIST NNN"`.
+- **Track field order preserved via `itunes_metadata`.** On import we
+  store the original iTunes dict insertion-ordered. On export we iterate
+  that dict, letting column values (name/artist/…) override for
+  post-import edits. Unknown keys pass through unchanged.
+- **Library metadata captured at import.** `Config` key/value table
+  stores `library_persistent_id` and `music_folder` on first import
+  (first-import wins). Exporter reads them; falls back to
+  `"STATION_STUDIO"` / `"file://localhost/"` if absent (dev & tests).
+- **iTunes formatting quirks kept.** `Apple Computer` DOCTYPE, leaf
+  `<key>` + value merged onto one line via regex, Tracks dict sorted by
+  numeric Track ID ascending, fixed top-level and playlist key ordering,
+  synthetic Track IDs (≥ 100 000) for fixtures without one.
+
+**Template JSON gained an optional top-level `"name"` field** so the
+seeder can pick up a display name (e.g. `"Rebirth Classics"`) without
+the parser rejecting it as an unknown key. The engine ignores it; it's
+purely for the exporter and UI.
+
+### 14.2 Disk vs browser delivery (the C+A decision)
+
+**Question raised by user.** Where does the exported XML go?
+
+The endpoint `GET /api/playlists/{id}/export` serves XML with
+`Content-Disposition: attachment`, which a browser saves to Downloads.
+Nothing is ever written server-side. Three options surfaced:
+
+- **(a) Browser download only.** Simplest. UI click → Downloads folder.
+- **(b) Configured output directory.** Server writes to a predictable
+  path on disk. Good for sync'd folders (Dropbox / OneDrive feeding the
+  Windows iTunes box).
+- **(c) Both.** Endpoint for ad-hoc download; a separate "export to
+  disk" action for the configured directory.
+
+**Chosen: (c).** Two endpoints, one underlying function
+(`export_playlist(db, id) -> bytes`). `export_playlist_to_disk(db, id)
+-> Path` wraps it and writes to `{configured_dir}/{slug}/{week:03d}.xml`.
+
+**Configured-dir source.** `Config` key `playlist_output_dir`. Absolute,
+relative-to-CWD, or `~`-prefixed all accepted and normalised to an
+absolute Path. Default when unset: `"out"` relative to CWD (the repo
+root when launched via `run.py` or `python -m scripts.*`). Stored in
+`Config` rather than an env var so the UI can set it later without a
+schema change.
+
+**Layout choice.** `{out}/{slug}/{week:03d}.xml` (one subdirectory per
+station) over the flatter `{out}/{slug}-{week:03d}.xml`. Scales better
+as weeks accumulate; easier to drag whole seasons into iTunes.
+
+**Trigger.** Explicit only — user clicks "export to disk". Not
+automatic on generate. Keeps generation fast and non-destructive;
+makes the action visible in the UI.
+
+**Overwrite semantics.** Re-exporting the same `(station, week)`
+overwrites silently. Mirrors how the underlying playlist is regenerated
+(DB unique constraint on `(station_id, week)` means one playlist per
+week; re-generation replaces it).
+
+### 14.3 Retention / "too many files" (deliberately punted)
+
+**User concern.** Won't disk exports accumulate without limit?
+
+**Scale check.** ~870 KB per Classics export. One station × 52 weeks =
+~45 MB/year. Five stations = ~225 MB/year. Not a disk problem; at most
+a tidiness problem.
+
+**Real sources of clutter** (not raw growth):
+
+1. Re-exports of the same week — **not an issue**; overwrite in place.
+2. Orphaned files after a station is renamed (slug changes → old
+   subdir orphaned).
+3. Orphaned weeks (DB playlist deleted but file lingers).
+4. Dev/test artefacts.
+
+**Options considered:**
+
+- **Retention limit (keep last N weeks).** Rejected — the whole point
+  of keeping old files is dragging week 42 into iTunes months later.
+- **Auto-delete on rename.** Rejected — destructive, surprising.
+- **Prune endpoint** (`POST /api/playlists/export/prune`): compare
+  `out/` to the `playlist` table, report/delete files with no DB row.
+  Dry-run by default. **Deferred** until the user actually reports
+  clutter.
+- **No policy + `.gitignore`.** **Chosen for now.** `out/` added to
+  `.gitignore` so real-library exports never accidentally land in the
+  repo. A one-line `logger.info` on each disk-export (path + size +
+  created/overwrote) makes anomalies visible without any UI work. The
+  log line goes to the application logger — **nothing is added to the
+  XML file itself**; the bytes iTunes sees are unchanged.
+
+### 14.4 UI ordering: trace viewer before wizard
+
+Two remaining UI chunks: the station wizard (step 3 of the original
+plan) and the trace viewer (step 5). Decided to build the **trace
+viewer first** on these grounds:
+
+- Reuses existing data. `playlist_id=1` is in the DB from bootstrap;
+  `GET /api/playlists/{id}/trace` already returns the slots. Zero
+  backend work — just a page that renders what's there.
+- Proves the SvelteKit ↔ FastAPI plumbing on a read-only page before
+  we wade into form state.
+- Delivers on the **central promise of the project** — "see your
+  working" — which was the whole motivation for Station Studio over
+  commissioning another bespoke generator.
+- Builds scaffolding (`web/src/lib/api.ts`, shared layout) that the
+  wizard will reuse.
+- The wizard is premature when you've only got one station and no felt
+  need for a second.
+
+**Scope for the first trace-viewer slice:**
+
+1. `npm install` in `web/` so the stub actually runs.
+2. `web/src/lib/api.ts` — typed fetch helpers: `getStations()`,
+   `getPlaylist(id)`, `getTrace(id)`.
+3. `web/src/routes/playlists/[id]/+page.svelte` — fetch playlist +
+   trace, render: header (station · week · trace_id · rng · seed ·
+   generated_at) + list of slots grouped by row (day), each slot showing
+   position · source chip · strategy · pool index · track · artist.
+4. Link the existing landing page through to `/playlists/[id]` (minimal
+   station page or direct URL; decide in-flight).
+
+**Deliberately deferred** from this slice:
+
+- Filtering / search over slots (wait until scanning 3 010 rows actually
+  feels painful).
+- Export buttons in the UI calling `/export` or `/export-to-disk`
+  (trivial to add once the layout is proven; don't conflate).
+- Excluded-candidates display (already on the deferred list in §11).
+- Wizard (step 3) — next, after the viewer lands.
+

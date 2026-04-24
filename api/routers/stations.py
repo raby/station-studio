@@ -4,10 +4,11 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from engine.models import Station
+from engine.models import Station, Playlist, PlaylistEntry
 from engine.template import parse_template, TemplateError
 from api.deps import get_db
-from api.schemas import StationCreate, StationOut
+from api.schemas import StationCreate, StationOut, PlaylistSummary
+from sqlalchemy import func
 
 
 router = APIRouter(prefix="/api/stations", tags=["stations"])
@@ -41,6 +42,34 @@ def create_station(payload: StationCreate, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(s)
     return s
+
+
+@router.get("/{slug}/playlists", response_model=list[PlaylistSummary])
+def list_station_playlists(slug: str, db: Session = Depends(get_db)):
+    """Summarise all generated playlists for a station, one row per week."""
+    s = db.query(Station).filter(Station.slug == slug).first()
+    if not s:
+        raise HTTPException(404, f"station '{slug}' not found")
+
+    # One query: playlists with their entry counts, ordered by week.
+    rows = (
+        db.query(Playlist, func.count(PlaylistEntry.id).label("entry_count"))
+        .outerjoin(PlaylistEntry, PlaylistEntry.playlist_id == Playlist.id)
+        .filter(Playlist.station_id == s.id)
+        .group_by(Playlist.id)
+        .order_by(Playlist.week)
+        .all()
+    )
+    return [
+        PlaylistSummary(
+            id=p.id,
+            week=p.week,
+            trace_id=p.trace_id,
+            generated_at=p.generated_at.isoformat() if p.generated_at else None,
+            entry_count=entry_count,
+        )
+        for p, entry_count in rows
+    ]
 
 
 @router.put("/{slug}", response_model=StationOut)

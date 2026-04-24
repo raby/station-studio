@@ -67,3 +67,12 @@ class PlaylistOut(BaseModel):
     week: int
     trace_id: str
     entries: list[PlaylistEntryOut]
+
+
+class PlaylistSummary(BaseModel):
+    """Lightweight row for station-playlist lists (no entries)."""
+    id: int
+    week: int
+    trace_id: str
+    generated_at: str | None
+    entry_count: int
