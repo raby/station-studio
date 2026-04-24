@@ -323,3 +323,158 @@ def test_export_to_disk_raises_for_missing_playlist(db, tmp_path):
     db.commit()
     with pytest.raises(ValueError, match="Playlist 999 not found"):
         export_playlist_to_disk(db, 999)
+
+
+# ---------- edge branches -----------------------------------------------
+
+
+def test_export_raises_for_missing_playlist(db):
+    """export_playlist must raise ValueError when the playlist id is unknown."""
+    with pytest.raises(ValueError, match="Playlist 999 not found"):
+        export_playlist(db, 999)
+
+
+def test_export_deduplicates_repeated_track(db):
+    """When the same track appears twice in a playlist, the Tracks dict has
+    one entry and Playlist Items has two entries pointing at the same Track ID."""
+    station = Station(
+        slug="dup", name="Dup",
+        template={"station": "dup", "cadence": "weekly", "rng": "off",
+                  "sources": [], "cursor": {"base_advance_per_week": 0, "cycle_weeks": 1},
+                  "layout": {"unit": "day", "unit_labels": [],
+                             "row_start_offsets": [], "row_template": []}},
+    )
+    db.add(station)
+    db.flush()
+    track = Track(persistent_id="DUP1", itunes_track_id=7, name="Loop", artist="A")
+    db.add(track)
+    db.flush()
+    pl = Playlist(station_id=station.id, week=1, trace_id="t-dup-1")
+    db.add(pl)
+    db.flush()
+    # Same track at positions 1 and 2.
+    db.add(PlaylistEntry(playlist_id=pl.id, track_id=track.id, position=1, source_name="A"))
+    db.add(PlaylistEntry(playlist_id=pl.id, track_id=track.id, position=2, source_name="A"))
+    db.commit()
+
+    xml = export_playlist(db, pl.id)
+    parsed = plistlib.loads(xml)
+    assert len(parsed["Tracks"]) == 1         # deduped
+    assert len(parsed["Playlists"][0]["Playlist Items"]) == 2  # both references kept
+    tid = parsed["Playlists"][0]["Playlist Items"][0]["Track ID"]
+    assert parsed["Playlists"][0]["Playlist Items"][1]["Track ID"] == tid
+
+
+def test_export_minimal_fallback_includes_optional_fields_when_set(db):
+    """Tracks with no itunes_metadata hit the minimal-fallback branch.
+    Album/Genre/Total Time are only emitted when set — this exercises all
+    three 'if set' branches together."""
+    pl = _make_station_and_playlist(db, slug="min", name="Min", week=1,
+        track_data=[{
+            "persistent_id": "M1", "name": "Full", "artist": "A",
+            "album": "Alb", "genre": "Rock", "total_time": 180000,
+            "itunes_track_id": 9001,
+            # no 'metadata' key → itunes_metadata is None → minimal fallback
+        }],
+    )
+    xml = export_playlist(db, pl.id)
+    parsed = plistlib.loads(xml)
+    t = list(parsed["Tracks"].values())[0]
+    assert t["Album"] == "Alb"
+    assert t["Genre"] == "Rock"
+    assert t["Total Time"] == 180000
+
+
+def test_export_restores_typed_datetime_metadata(db):
+    """Stored {__type__: 'datetime', value: iso} must deserialise to datetime."""
+    pl = _make_station_and_playlist(db, slug="dt", name="DT", week=1,
+        track_data=[{
+            "persistent_id": "D1", "name": "T", "itunes_track_id": 1,
+            "metadata": {
+                "Track ID": 1,
+                "Name": "T",
+                "Persistent ID": "D1",
+                "Date Added": {"__type__": "datetime", "value": "2024-01-15T10:30:00"},
+            },
+        }],
+    )
+    xml = export_playlist(db, pl.id)
+    parsed = plistlib.loads(xml)
+    t = list(parsed["Tracks"].values())[0]
+    # plistlib parses <date> back to datetime.
+    from datetime import datetime as _dt
+    assert isinstance(t["Date Added"], _dt)
+    assert t["Date Added"].year == 2024
+
+
+def test_export_restores_bad_typed_datetime_as_raw_value(db):
+    """If the stored ISO string is malformed, fall back to the raw value."""
+    pl = _make_station_and_playlist(db, slug="bad", name="Bad", week=1,
+        track_data=[{
+            "persistent_id": "B1", "name": "T", "itunes_track_id": 1,
+            "metadata": {
+                "Track ID": 1, "Name": "T", "Persistent ID": "B1",
+                "Date Added": {"__type__": "datetime", "value": "not-a-date"},
+            },
+        }],
+    )
+    xml = export_playlist(db, pl.id)
+    # We only care that export didn't crash on the malformed datetime;
+    # the value survives as a string in the XML.
+    assert b"not-a-date" in xml
+
+
+def test_export_restores_legacy_string_datetime(db):
+    """Legacy imports stored datetimes as plain ISO strings (no __type__ wrapper).
+    For known DATETIME_KEYS these must still deserialise to datetime."""
+    pl = _make_station_and_playlist(db, slug="leg", name="Leg", week=1,
+        track_data=[{
+            "persistent_id": "L1", "name": "T", "itunes_track_id": 1,
+            "metadata": {
+                "Track ID": 1, "Name": "T", "Persistent ID": "L1",
+                "Date Added": "2024-02-20T11:00:00",
+            },
+        }],
+    )
+    xml = export_playlist(db, pl.id)
+    parsed = plistlib.loads(xml)
+    t = list(parsed["Tracks"].values())[0]
+    from datetime import datetime as _dt
+    assert isinstance(t["Date Added"], _dt)
+    assert t["Date Added"].month == 2
+
+
+def test_export_restores_bad_legacy_string_datetime_as_string(db):
+    """Malformed legacy string datetimes should survive as raw strings."""
+    pl = _make_station_and_playlist(db, slug="leg2", name="Leg2", week=1,
+        track_data=[{
+            "persistent_id": "L2", "name": "T", "itunes_track_id": 1,
+            "metadata": {
+                "Track ID": 1, "Name": "T", "Persistent ID": "L2",
+                "Date Added": "not-a-date-either",
+            },
+        }],
+    )
+    xml = export_playlist(db, pl.id)
+    assert b"not-a-date-either" in xml
+
+
+def test_export_injects_column_override_missing_from_metadata(db):
+    """Legacy imports may lack some column keys in itunes_metadata. The
+    exporter must still inject them from the Track row columns."""
+    pl = _make_station_and_playlist(db, slug="inj", name="Inj", week=1,
+        track_data=[{
+            "persistent_id": "I1", "name": "RealName", "artist": "RealArtist",
+            "itunes_track_id": 1,
+            # metadata has only Name + Persistent ID — Artist must be injected.
+            "metadata": {
+                "Track ID": 1,
+                "Name": "RealName",
+                "Persistent ID": "I1",
+            },
+        }],
+    )
+    xml = export_playlist(db, pl.id)
+    parsed = plistlib.loads(xml)
+    t = list(parsed["Tracks"].values())[0]
+    assert t["Artist"] == "RealArtist"

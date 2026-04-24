@@ -6,6 +6,7 @@ and verify the database state. No dependency on real iTunes exports.
 from __future__ import annotations
 
 import plistlib
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -139,3 +140,75 @@ def test_tracks_shared_across_multiple_pools(db_session, tmp_path):
     a_track_ids = {e.track_id for e in pools["A"].entries}
     b_track_ids = {e.track_id for e in pools["B"].entries}
     assert a_track_ids == b_track_ids
+
+
+# ---------- edge branches ----------------------------------------------
+
+
+def test_datetime_fields_are_stored_with_type_marker(db_session, tmp_path):
+    """plistlib produces datetime objects for <date> elements; the importer
+    must wrap those in {'__type__': 'datetime', 'value': iso}."""
+    xml_path = tmp_path / "dt.xml"
+    dt = datetime(2024, 3, 15, 12, 0, 0, tzinfo=timezone.utc)
+    make_itunes_plist(xml_path, "DT", [{
+        "Track ID": 1, "Persistent ID": "DT000001",
+        "Name": "With date", "Date Added": dt,
+    }])
+    import_source(db_session, xml_path, "DT")
+    t = db_session.query(Track).one()
+    assert t.itunes_metadata is not None
+    stored = t.itunes_metadata["Date Added"]
+    assert isinstance(stored, dict)
+    assert stored["__type__"] == "datetime"
+    assert stored["value"].startswith("2024-03-15")
+
+
+def test_reimport_backfills_missing_itunes_track_id(db_session, tmp_path):
+    """First-import-wins for itunes_track_id: if an existing Track has
+    itunes_track_id=None, the next import must populate it."""
+    # Seed a Track manually with itunes_track_id=None.
+    existing = Track(
+        persistent_id="BACK0001", itunes_track_id=None,
+        name="Old Name", artist="Old",
+    )
+    db_session.add(existing)
+    db_session.commit()
+
+    # Import a plist that references the same Persistent ID with a Track ID.
+    xml_path = tmp_path / "back.xml"
+    make_itunes_plist(xml_path, "BACK", [
+        track(555, "BACK0001", "New Name", "New"),
+    ])
+    import_source(db_session, xml_path, "BACK")
+
+    db_session.refresh(existing)
+    assert existing.itunes_track_id == 555
+    assert existing.name == "New Name"      # mutable fields updated
+    assert existing.artist == "New"
+
+
+def test_playlist_item_referencing_unknown_track_id_is_skipped(
+    db_session, tmp_path,
+):
+    """A Playlist Items entry pointing at a Track ID missing from the Tracks
+    dict is silently skipped — it must not raise and must not create an entry."""
+    xml_path = tmp_path / "skip.xml"
+    # Hand-build the plist: 1 track, but Playlist Items references ID 999 too.
+    data = {
+        "Tracks": {
+            "1": {"Track ID": 1, "Persistent ID": "SKIP001", "Name": "Only"},
+        },
+        "Playlists": [{
+            "Name": "SKIP",
+            "Playlist Items": [
+                {"Track ID": 1},
+                {"Track ID": 999},  # dangling — skipped by the importer
+            ],
+        }],
+    }
+    with open(xml_path, "wb") as f:
+        plistlib.dump(data, f)
+
+    summary = import_source(db_session, xml_path, "SKIP")
+    assert summary["tracks_imported"] == 1
+    assert summary["entries_imported"] == 1  # only the valid one
