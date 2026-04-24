@@ -203,6 +203,17 @@ def test_get_station_missing_returns_404(api):
     assert r.status_code == 404
 
 
+def test_get_station_happy_path(api):
+    client, _ = api
+    client.post("/api/stations", json=_wizard_payload("solo", "Solo FM"))
+    r = client.get("/api/stations/solo")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["slug"] == "solo"
+    assert body["name"] == "Solo FM"
+    assert body["template"]["station"] == "solo"
+
+
 # ---------- GET /api/stations/{slug}/playlists --------------------------
 
 
@@ -331,6 +342,49 @@ def test_export_to_disk_missing_playlist_404(api):
     client, _ = api
     r = client.post("/api/playlists/999/export-to-disk")
     assert r.status_code == 404
+
+
+# ---------- PUT /api/stations/{slug} -----------------------------------
+
+
+def test_update_station_unknown_slug_404(api):
+    client, _ = api
+    r = client.put("/api/stations/nope", json=_wizard_payload("nope", "Nope"))
+    assert r.status_code == 404
+    assert "not found" in r.json()["detail"]
+
+
+def test_update_station_happy_path(api):
+    client, _ = api
+    client.post("/api/stations", json=_wizard_payload("upd", "Old Name"))
+
+    new_payload = _wizard_payload("upd", "New Name")
+    # Tweak the template too so we can prove it was actually replaced.
+    new_payload["template"]["cursor"]["base_advance_per_week"] = 7
+    r = client.put("/api/stations/upd", json=new_payload)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["slug"] == "upd"
+    assert body["name"] == "New Name"
+    assert body["template"]["cursor"]["base_advance_per_week"] == 7
+
+    # And the change is persisted — a fresh GET sees it.
+    r2 = client.get("/api/stations/upd")
+    assert r2.json()["name"] == "New Name"
+
+
+def test_update_station_invalid_template_400(api):
+    client, _ = api
+    client.post("/api/stations", json=_wizard_payload("upd2", "Before"))
+    bad = _wizard_payload("upd2", "After")
+    del bad["template"]["cursor"]  # required field
+    r = client.put("/api/stations/upd2", json=bad)
+    assert r.status_code == 400
+    assert "invalid template" in r.json()["detail"]
+
+    # The bad update must not have leaked through.
+    r2 = client.get("/api/stations/upd2")
+    assert r2.json()["name"] == "Before"
 
 
 # ---------- POST /api/stations/{slug}/generate ------------------------
