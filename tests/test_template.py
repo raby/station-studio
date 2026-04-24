@@ -60,6 +60,12 @@ def test_unknown_top_level_key_rejected():
         parse_template(bad)
 
 
+def test_optional_name_top_level_key_accepted():
+    """UI-only display name; engine ignores but must not reject it."""
+    tmpl = parse_template({**BASE, "name": "Nice Display Name"})
+    assert tmpl.station == "x"  # still parses correctly
+
+
 def test_base_cursor_progression():
     tmpl = parse_template(BASE)  # cycle_weeks=4, advance=10
     assert tmpl.base_cursor_for_week(1) == 0
