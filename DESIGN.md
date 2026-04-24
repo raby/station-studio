@@ -387,12 +387,16 @@ The trace is stored as JSON alongside the playlist (in a `playlist_trace` table 
 | Item                                        | Status       | Notes                                                   |
 |---------------------------------------------|--------------|---------------------------------------------------------|
 | Visual block editor                         | v2           | Operates on same JSON as wizard                         |
+| Station creation wizard (UI)                | next (14.6)  | Produces the template JSON; reuses `web/src/lib/api.ts` |
 | Migrate Rebirth Radio onto Station Studio   | long-term    | Needs `weighted`, `prev_ref`, `genre_pick` primitives   |
 | iTunes XML export of Classics playlists     | done (14.1)  | Lifted from weekly, station-scoped; browser + disk paths|
+| Disk-export prune endpoint                  | on demand    | `POST /api/playlists/export/prune` — wait until clutter |
 | Scheduler (auto-generate weekly)            | v1.1         | Weekly has APScheduler; port when stable                |
 | Artist aliasing / dedup                     | not needed   | Classics has no dedup; engine grows this when needed    |
-| Excluded-candidates in trace                | v1.1         | Nice-to-have per user                                   |
+| Excluded-candidates in trace                | v1.1         | Nice-to-have per user; shown in viewer when added       |
 | Jingles-as-primitive                        | only if      | Only if a future random-selection station needs them    |
+| Trace viewer (UI)                           | done (14.5)  | `/playlists/[id]` — per-slot reasoning, grouped by row  |
+| Trace-viewer polish                         | later (14.5) | Search, virtualisation, SSR, multi-week nav, compare    |
 
 ---
 
@@ -579,4 +583,115 @@ viewer first** on these grounds:
   (trivial to add once the layout is proven; don't conflate).
 - Excluded-candidates display (already on the deferred list in §11).
 - Wizard (step 3) — next, after the viewer lands.
+
+### 14.5 Trace viewer — what shipped, what was punted
+
+**What shipped (commit `f8e6155`).**
+
+- Backend: `GET /api/stations/{slug}/playlists` lists a station's
+  playlists with `{id, week, trace_id, generated_at, entry_count}`. Uses
+  a single grouped query with `COUNT(PlaylistEntry.id)` joined on
+  `Playlist`.
+- `PlaylistSummary` Pydantic schema added.
+- `web/src/lib/api.ts`: typed fetch client (interfaces mirroring the
+  Pydantic schemas; this file is the shared frontend contract the wizard
+  will reuse).
+- Three SvelteKit routes:
+  - `/` — existing landing, upgraded to the typed client.
+  - `/stations/[slug]` — header + a table of the station's playlists
+    linking to the trace viewer.
+  - `/playlists/[id]` — the centrepiece. Header (station · week · RNG ·
+    seed · generated · trace_id), "Download iTunes XML" button hitting
+    the existing `/api/playlists/{id}/export` endpoint, and the slot
+    table **grouped by row** with collapsible headers. Each slot row
+    shows: slot number, source chip (coloured from `template.sources`),
+    strategy, pool index (with the full `reason` string in a `title`
+    tooltip), track name, artist.
+- `svelte-check` clean; 88 backend tests still passing; pages
+  end-to-end smoke-tested against the real Classics DB.
+
+**User confirmed in-browser.** Works; UI and features can improve later.
+
+**Deliberately punted from this slice — revisit when felt, not pre-emptively.**
+
+| Area                           | Missing                                                                             | Trigger to pick up                           |
+|--------------------------------|-------------------------------------------------------------------------------------|----------------------------------------------|
+| Rendering 3 010 rows           | No virtualisation; the full DOM is built on first paint                             | Noticeable scroll lag or first-paint delay   |
+| Initial-load UX                | All fetches in `onMount` (client-only). SSR shows empty shell for a beat            | Flash becomes annoying; or we want SEO/share |
+| Search / filter                | No search box over slots; no filter by source / strategy                            | 3 010 rows makes scanning painful            |
+| Multi-week navigation          | No prev/next-week links inside the viewer; back to station, click in again          | Running ≥3 weeks regularly                   |
+| Week comparison / diff         | No "show what changed from week N-1" — central once there are real-world edits      | First time a week-to-week question comes up  |
+| Excluded-candidate display     | Trace doesn't currently record rejects; viewer has nowhere to show them             | Already deferred in §11; UI slot ready       |
+| Disk-export button in UI       | "Download iTunes XML" hits the browser endpoint; no UI trigger for `export-to-disk` | User wants the OneDrive/Dropbox flow visible |
+| Regenerate from the viewer     | No "regenerate this week" action; must use the CLI or API                           | User wants round-trip editing                |
+| Station page richness          | Shows playlists table only; no template summary, pool stats, cursor position        | Next station starts; user wants comparison   |
+| Accessibility polish           | Keyboard-togglable row headers exist (Enter); no ARIA labels on chips, no skip-link | Before real external users                   |
+| Error UX                       | Errors render as raw message strings; no retry affordance                           | When we see a real-world failure             |
+| Mobile / narrow-viewport CSS   | Table overflows horizontally on small screens; not styled responsively              | When a user tries it on a phone              |
+| End-to-end browser tests       | Only curl-level shell smoke tests were run; no Playwright / similar                 | Once the viewer has more moving parts        |
+| Shared layout / header         | Each page rolls its own title/container styles                                      | When a third similar page appears            |
+
+**Implementation notes worth remembering when picking any of these up:**
+
+- `onMount` runs client-only in SvelteKit. To SSR the trace data, move
+  the three fetches into a `+page.ts` `load` function (`load({ fetch,
+  params })`) and pass `data` in as a prop. The `api.ts` helpers already
+  accept an optional `fetch_` argument exactly for this.
+- Source colours live on `station.template.sources[].colour` and are
+  looked up in the page's `sourceColours` map. Adding a new source to a
+  station automatically gets a chip colour; no code change needed.
+- Row collapse state is in-memory only; reloads reset to "all expanded".
+  If we persist it, `sessionStorage` keyed on `trace_id` is enough.
+- The export button is a plain `<a href>` so the browser handles the
+  `Content-Disposition` download. Keep it that way — no JS needed for a
+  one-shot byte download.
+
+### 14.6 Up next: station creation wizard (step 3)
+
+Not yet started. Sketch of what's expected when we do, so the
+wizard-builder inherits the decisions already made:
+
+- **Produces the same JSON template** that's checked into `stations/`.
+  The template is the canonical artefact (see §4.2). The wizard is a
+  writer, not a new format. Saving = `POST /api/stations` with the
+  validated JSON.
+- **First-screen minimum:** slug, display name, cadence, RNG on/off,
+  and the list of source pools the station will use (with roles). That
+  alone is enough to make a new station addressable and show up on the
+  landing page, even before layout is configured.
+- **Later screens:** cursor (`base_advance_per_week`, `cycle_weeks`),
+  layout (unit, `unit_labels`, `row_start_offsets`, `row_template`
+  blocks with source + strategy + size). The visual block editor (§11,
+  v2) replaces the layout screen eventually.
+- **Reuse:** the typed client in `web/src/lib/api.ts` and any shared
+  layout/header that emerges during the trace-viewer polish pass.
+- **Validation:** server-side via `engine.template.parse_template`
+  (already wired into `POST /api/stations`). The wizard should surface
+  these errors per-field, not as a blob.
+
+---
+
+## 15. Status snapshot
+
+A quick "where are we" for a future reader. Last updated at commit
+`f8e6155`.
+
+| Area                     | State                                                    |
+|--------------------------|----------------------------------------------------------|
+| Engine                   | Shipped. `pick`, `window`. Cursor, trace, RNG on/off.    |
+| Template validation      | Shipped. Strict; optional top-level `name` for UI.       |
+| Importer                 | Shipped. Idempotent, library metadata captured.          |
+| Exporter                 | Shipped. Browser endpoint + disk endpoint, round-trip.   |
+| Bootstrap script         | Shipped. One-command Classics setup.                     |
+| API                      | Stations CRUD, sources, generate, playlist, trace, export|
+| Trace viewer (UI)        | Shipped (first cut). Works end-to-end against real data. |
+| Station creation wizard  | **Not started.** Next piece of UI work.                  |
+| Visual block editor      | Deferred (v2).                                           |
+| Scheduler                | Deferred (v1.1).                                         |
+| Weekly migration         | Long-term.                                               |
+
+Active TODOs live in §11 (deferred) and §14.5 (trace-viewer follow-ups).
+Don't start chipping at those until Station Studio earns them — the
+project's whole premise is "build the smallest thing that proves the
+next decision", not "polish the thing we've got".
 
