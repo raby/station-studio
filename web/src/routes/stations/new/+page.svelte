@@ -1,6 +1,15 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { createStation, ApiError } from '$lib/api';
+
+  // Hydration sentinel for Playwright — `bind:value` only wires up after
+  // onMount, so specs that fill fields before hydration see stale
+  // $contentSourceNames. Adding a data-attribute the spec can wait on is
+  // the Playwright-blessed alternative to waitForLoadState('networkidle').
+  onMount(() => {
+    document.documentElement.setAttribute('data-wizard-ready', '');
+  });
 
   // ---- constants duplicated from engine/template.py ---------------------
   // Keep in sync. When these multiply we'll expose a GET /api/meta endpoint.
@@ -307,7 +316,7 @@
           {#each rowTemplate as b, i}
             <tr>
               <td>
-                <select bind:value={b.source}>
+                <select bind:value={b.source} data-testid="block-source">
                   <option value="" disabled>— pick a source —</option>
                   {#each contentSourceNames as sname}
                     <option value={sname}>{sname}</option>

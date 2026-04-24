@@ -23,7 +23,11 @@ test.describe('station wizard', () => {
     request,
   }) => {
     await page.goto('/stations/new');
-    await page.waitForLoadState('networkidle'); // let Svelte hydrate
+    // Hydration sentinel: +page.svelte sets data-wizard-ready on <html>
+    // in onMount. Needed because `bind:value` only wires up post-hydration,
+    // so fills run against a pre-hydration DOM would silently drop. This
+    // is the Playwright-recommended pattern (`networkidle` is discouraged).
+    await expect(page.locator('html[data-wizard-ready]')).toBeAttached();
 
     // Identity
     await page.getByLabel('Slug').fill('wiz-happy');
@@ -45,11 +49,10 @@ test.describe('station wizard', () => {
     await page.getByPlaceholder('Mon, Tue, Wed, Thu, Fri, Sat, Sun').fill('Mon');
     await page.getByPlaceholder('0, 10, 20, 30, 40, 50, 50').fill('0');
 
-    // Row-template block source dropdown: wait for the 'A' option to appear,
-    // then select it. The option is generated reactively from
-    // `contentSourceNames`, which updates when `sources[0].name` changes.
-    const layoutGroup = page.getByRole('group', { name: 'Layout' });
-    const blockSource = layoutGroup.locator('table tbody tr').first().locator('select').first();
+    // Row-template block source dropdown. The select carries
+    // data-testid="block-source"; the 'A' option is generated reactively
+    // from `contentSourceNames`, so we still need to wait for it to attach.
+    const blockSource = page.getByTestId('block-source');
     await expect(blockSource.locator('option[value="A"]')).toBeAttached({
       timeout: 5_000,
     });

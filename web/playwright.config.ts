@@ -6,9 +6,10 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const REPO_ROOT = path.resolve(__dirname, '..');
 
-// One shared SQLite file per test run. globalSetup wipes it before each run;
-// specs use unique slugs/names to avoid collisions within a run.
-const TEST_DB_PATH = path.join(REPO_ROOT, 'playwright-test.db');
+// Per-process SQLite file. Including the Playwright process PID keeps two
+// concurrent `make test-e2e` runs on the same checkout from stomping each
+// other's DB; the backend command below wipes its own file on boot.
+const TEST_DB_PATH = path.join(REPO_ROOT, `playwright-test.${process.pid}.db`);
 
 export default defineConfig({
   testDir: './e2e',

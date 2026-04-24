@@ -29,5 +29,5 @@ install-e2e-browsers:
 	cd web && npx playwright install chromium
 
 clean-test:
-	rm -f .coverage playwright-test.db*
+	rm -f .coverage playwright-test.*.db playwright-test.*.db-wal playwright-test.*.db-shm
 	rm -rf web/test-results web/playwright-report

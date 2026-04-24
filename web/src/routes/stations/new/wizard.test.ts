@@ -108,14 +108,10 @@ describe('station wizard (new +page.svelte)', () => {
     const offsets = screen.getByPlaceholderText('0, 10, 20, 30, 40, 50, 50');
     await fireEvent.input(offsets, { target: { value: '0' } });
 
-    // Select the 'A' option in the block source dropdown.
-    const blockSelects = screen.getAllByRole('combobox');
-    // combobox order on the page: Cadence, RNG, source Role (×sources), block Source, block Strategy
-    const blockSource = blockSelects.find((el) => {
-      const opts = Array.from((el as HTMLSelectElement).options).map((o) => o.value);
-      return opts.includes('A');
-    }) as HTMLSelectElement;
-    expect(blockSource, 'block-source select should list "A"').toBeTruthy();
+    // Select the 'A' option in the block source dropdown. The select
+    // carries data-testid="block-source" specifically so tests don't have
+    // to enumerate <select> elements and match by option contents.
+    const blockSource = screen.getByTestId('block-source') as HTMLSelectElement;
     await fireEvent.change(blockSource, { target: { value: 'A' } });
 
     await fireEvent.click(screen.getByRole('button', { name: /create station/i }));
@@ -154,11 +150,7 @@ describe('station wizard (new +page.svelte)', () => {
       screen.getByPlaceholderText('0, 10, 20, 30, 40, 50, 50'),
       { target: { value: '0' } },
     );
-    const blockSource = screen
-      .getAllByRole('combobox')
-      .find((el) =>
-        Array.from((el as HTMLSelectElement).options).map((o) => o.value).includes('A'),
-      ) as HTMLSelectElement;
+    const blockSource = screen.getByTestId('block-source') as HTMLSelectElement;
     await fireEvent.change(blockSource, { target: { value: 'A' } });
 
     await fireEvent.click(screen.getByRole('button', { name: /create station/i }));
