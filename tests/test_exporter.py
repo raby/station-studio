@@ -270,13 +270,19 @@ def test_export_to_disk_overwrites_on_re_export(db, tmp_path):
     pl = _make_station_and_playlist(db, slug="cls", name="Classics", week=1,
         track_data=[{"persistent_id": "P1", "name": "T", "itunes_track_id": 1}])
 
-    p1 = export_playlist_to_disk(db, pl.id)
-    first_bytes = p1.read_bytes()
-    # Second export to the same (station, week) produces the same path and
-    # overwrites the existing file without error.
-    p2 = export_playlist_to_disk(db, pl.id)
-    assert p2 == p1
-    assert p2.read_bytes() == first_bytes
+    # Pre-seed the target path with garbage. A regression that wrote to a
+    # sibling path (or appended instead of replacing) would leave this
+    # garbage behind — a deterministic export round-trip alone can't catch
+    # that, since two runs produce identical bytes.
+    target = tmp_path / "cls" / "001.xml"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(b"GARBAGE-FROM-PREVIOUS-RUN")
+
+    path = export_playlist_to_disk(db, pl.id)
+    assert path == target.resolve()
+    bytes_written = path.read_bytes()
+    assert b"GARBAGE" not in bytes_written
+    assert bytes_written == export_playlist(db, pl.id)
 
 
 def test_export_to_disk_returns_absolute_path(db, tmp_path, monkeypatch):

@@ -655,15 +655,20 @@ def test_root_endpoint_identifies_the_service():
 def test_get_db_yields_closable_session(tmp_path, monkeypatch):
     """The real get_db() generator (not the test-override) opens a Session,
     yields it, and closes it on teardown. Verify by driving the generator
-    directly against a temp DB."""
-    # Point the module-level engine at a fresh temp DB.
-    monkeypatch.setenv(
-        "STATION_STUDIO_DB_URL", f"sqlite:///{tmp_path}/deps.db"
-    )
-    # Force re-import so make_engine() picks up the env var.
-    import importlib
+    directly against a temp DB.
+
+    We monkeypatch api.deps._SessionLocal rather than reload() the module,
+    because reload() permanently rebinds deps._engine to the tmp DB for
+    the rest of the pytest process — every subsequent test that touched
+    the real engine would race the tmp_path teardown.
+    """
     import api.deps as deps
-    importlib.reload(deps)
+    from engine.database import make_engine, make_sessionmaker
+    from engine.models import Base
+
+    tmp_engine = make_engine(f"sqlite:///{tmp_path}/deps.db")
+    Base.metadata.create_all(tmp_engine)
+    monkeypatch.setattr(deps, "_SessionLocal", make_sessionmaker(tmp_engine))
 
     gen = deps.get_db()
     db = next(gen)
