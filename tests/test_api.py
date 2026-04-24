@@ -639,3 +639,36 @@ def test_import_malformed_xml_500(api):
     })
     assert r.status_code == 500
     assert "import failed" in r.json()["detail"]
+
+
+# ---------- app plumbing -----------------------------------------------
+
+
+def test_root_endpoint_identifies_the_service():
+    """GET / returns a tiny service-identity blob — covers api/main.root()."""
+    with TestClient(app) as client:
+        r = client.get("/")
+    assert r.status_code == 200
+    assert r.json() == {"service": "station-studio", "version": "0.1.0"}
+
+
+def test_get_db_yields_closable_session(tmp_path, monkeypatch):
+    """The real get_db() generator (not the test-override) opens a Session,
+    yields it, and closes it on teardown. Verify by driving the generator
+    directly against a temp DB."""
+    # Point the module-level engine at a fresh temp DB.
+    monkeypatch.setenv(
+        "STATION_STUDIO_DB_URL", f"sqlite:///{tmp_path}/deps.db"
+    )
+    # Force re-import so make_engine() picks up the env var.
+    import importlib
+    import api.deps as deps
+    importlib.reload(deps)
+
+    gen = deps.get_db()
+    db = next(gen)
+    # It's a live SQLAlchemy Session.
+    assert hasattr(db, "query")
+    # Close it via the generator's finally-block.
+    with pytest.raises(StopIteration):
+        next(gen)
