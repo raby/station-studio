@@ -24,3 +24,7 @@ from_user/*
 
 # Generated iTunes XML exports (default disk-export destination)
 out/
+
+# Playwright
+web/test-results/
+web/playwright-report/
