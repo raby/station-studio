@@ -43,6 +43,9 @@ station-studio/
 pip install -r requirements.txt
 python -m pytest
 python run.py                          # FastAPI at http://localhost:8001
+
+# In a second shell, the SvelteKit app:
+cd web && npm install && npm run dev   # http://localhost:5173
 ```
 
 ## Bootstrapping Rebirth Classics
@@ -57,6 +60,22 @@ python -m scripts.bootstrap_classics --no-generate    # seed + import only
 ```
 
 Idempotent — re-run after replacing an XML and it re-imports cleanly.
+
+## Tests
+
+Four tiers, each catches a different class of regression. See
+`DESIGN.md` §14.8 for the full rationale.
+
+```bash
+make test                # everything
+make test-backend        # pytest: engine + API (98% line coverage)
+make test-frontend       # vitest: 26 SvelteKit component / lib tests
+make test-e2e            # playwright: 9 specs against a real backend
+make coverage            # pytest --cov + vitest --coverage reports
+```
+
+CI mirrors these as three parallel jobs in
+`.github/workflows/ci.yml` (Python 3.14 + Node 20).
 
 ## Design principles
 

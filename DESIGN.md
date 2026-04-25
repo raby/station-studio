@@ -386,9 +386,11 @@ The trace is stored as JSON alongside the playlist (in a `playlist_trace` table 
 
 | Item                                        | Status       | Notes                                                   |
 |---------------------------------------------|--------------|---------------------------------------------------------|
-| Visual block editor                         | v2           | Operates on same JSON as wizard                         |
+| Visual block editor                         | next (§16.2) | v2; operates on same JSON as wizard                     |
 | Station creation wizard (UI)                | done (14.7)  | Produces the template JSON; reuses `web/src/lib/api.ts` |
 | Wizard polish (presets, per-field errors)   | later (14.7) | See 14.7 table; wait for real-user pain                 |
+| In-UI generate button                       | next (§16.1) | Closes wizard → trace-viewer loop without dropping to curl|
+| Reset / regenerate UI                       | next (§16.3) | Overwrite + delete playlist; optional station nuke      |
 | Migrate Rebirth Radio onto Station Studio   | long-term    | Needs `weighted`, `prev_ref`, `genre_pick` primitives   |
 | iTunes XML export of Classics playlists     | done (14.1)  | Lifted from weekly, station-scoped; browser + disk paths|
 | Disk-export prune endpoint                  | on demand    | `POST /api/playlists/export/prune` — wait until clutter |
@@ -398,6 +400,8 @@ The trace is stored as JSON alongside the playlist (in a `playlist_trace` table 
 | Jingles-as-primitive                        | only if      | Only if a future random-selection station needs them    |
 | Trace viewer (UI)                           | done (14.5)  | `/playlists/[id]` — per-slot reasoning, grouped by row  |
 | Trace-viewer polish                         | later (14.5) | Search, virtualisation, SSR, multi-week nav, compare    |
+| Test plan + CI                              | done (14.8)  | 4-tier; backend 98% lines; 26 Vitest + 9 Playwright     |
+| Test follow-ups (coverage gate, viz tests)  | later (14.8) | See 14.8 table                                          |
 
 ---
 
@@ -732,29 +736,319 @@ a second reason to.
   confirmation yet. Add a `beforeNavigate` hook once autosave-draft
   lands.
 
+### 14.8 Test plan and CI — what shipped, what was punted
+
+**Problem.** Up to this point the project had a handful of pytest
+modules around the engine and a one-off shell smoke test against the
+real Classics DB. The frontend had nothing. With the wizard, exporter,
+trace viewer, and three round-trippable surfaces all alive, "manually
+verify in the browser" no longer scaled — and a regression in the
+template parser, the disk-export path, or the wizard wiring would
+silently rot until a real user hit it. The 9-commit test plan addresses
+that.
+
+**Four-tier strategy.** Each layer covers what's cheapest to test
+*there* and nothing else:
+
+1. **Engine unit tests** (`tests/test_*.py`) — pure-function checks of
+   `parse_template`, cursor arithmetic, `window` / `pick` strategies,
+   importer XML→ORM mapping, exporter ORM→plist round-trip. No HTTP,
+   no DB beyond an in-memory SQLite.
+2. **API integration tests** (`tests/test_api.py`) — FastAPI
+   `TestClient` against a per-test SQLite, exercising every endpoint
+   end-to-end including failure cases (404 unknown station, 400 bad
+   template, 409 slug collision, 500 surface for malformed XML).
+3. **Vitest component tests** (`web/src/**/*.test.ts`) — SvelteKit
+   pages mounted under jsdom with `$lib/api` mocked. Each page's
+   render branches (loading / error / empty / populated) hit
+   independently.
+4. **Playwright e2e** (`web/e2e/*.spec.ts`) — real browser against a
+   real backend, real SQLite, real Vite proxy. One spec per UI flow
+   (landing → wizard → station detail → trace viewer → download), so
+   a passing run *is* the manual smoke test we used to do by hand.
+
+**Why all four.** Each tier catches a different failure class. The
+pytest tier catches engine regressions in milliseconds. The API tier
+catches schema drift between Pydantic and the engine. The Vitest tier
+catches Svelte-side render bugs without a backend (fast, works
+offline). Playwright catches integration bugs none of the others can —
+the wizard form submitting through the Vite proxy to a real FastAPI
+that writes a real SQLite row that a follow-up GET reads back. Drop
+any tier and a real bug class becomes invisible.
+
+**What shipped (9 commits, `695f919`..`0fa1c4a`, plus the backfill
+`b44a3f4`).**
+
+- **Backend coverage at 98% lines.** `tests/test_api.py` covers every
+  router branch including the 5xx paths (malformed-XML import, missing
+  source pool on generate, etc.). `tests/test_*.py` modules cover the
+  engine's edge cases: cursor wrap, week 16→17 cycle reset, pool-
+  underflow error, optional-field passthroughs.
+- **Vitest harness.** `web/vite.config.js` gates
+  `resolve.conditions: ['browser']` on `VITEST`, `web/vitest.setup.ts`
+  imports `@testing-library/svelte/vitest` so onMount async work is
+  drained per test, coverage via `@vitest/coverage-v8`. 26 tests
+  across 4 files: `lib/api.test.ts` (8), `routes/stations/new/wizard
+  .test.ts` (5), `routes/landing.test.ts` (5),
+  `routes/stations/[slug]/detail.test.ts` (8).
+- **Playwright harness.** `web/playwright.config.ts` boots both the
+  FastAPI backend (its own per-PID SQLite, wiped before launch) and
+  the Vite dev server as `webServer` entries. 9 specs covering
+  landing, wizard validation + happy path, station detail empty +
+  populated states, trace-viewer rendering + iTunes download.
+- **Make + CI.** `Makefile` targets `test`, `test-backend`,
+  `test-frontend`, `test-e2e`, `coverage`, `clean-test`. GitHub
+  Actions workflow `.github/workflows/ci.yml` runs three jobs in
+  parallel (backend, frontend unit, frontend e2e) on Python 3.14 +
+  Node 20.
+
+**Gotchas captured for future readers** — every one of these cost
+real time to find and the comments in-tree are deliberately verbose:
+
+- **Playwright `webServer` boots before `globalSetup`.** Initial DB-
+  wipe lived in `globalSetup` and got run *after* the backend had
+  already opened a connection pool against the stale DB. Fix: move
+  the `rm -f` into the backend's launch command itself
+  (`rm -f db && exec uvicorn ...`). The DB filename also carries
+  `process.pid` so two devs on the same checkout don't collide.
+- **Hydration sentinel beats `networkidle`.** Playwright maintainers
+  discourage `waitForLoadState('networkidle')` and it lies anyway —
+  the SSR HTML has the form enabled before Svelte hydrates, so fills
+  ran against a dead DOM. The wizard now sets `data-wizard-ready` on
+  `<html>` from `onMount`; specs wait on that attribute.
+- **Svelte 4's onMount is a no-op without `browser` conditions.**
+  Vitest defaults to Svelte's SSR build, which strips onMount. Putting
+  `resolve.conditions` under `test:` doesn't help because SvelteKit's
+  Vite plugin overrides resolution before Vitest's own resolve fires.
+  Fix: top-level `resolve` block, gated on `process.env.VITEST`.
+- **`@testing-library/svelte/vitest`'s afterEach already runs
+  `await act(); cleanup()`.** Adding a per-file `afterEach(cleanup)`
+  on top double-tears the component and races the act flush, which
+  deadlocks any test that holds a deferred promise across cleanup.
+  Solution: don't double up; let the setup hook do it.
+- **Loading-branch testing without a deferred promise.** A pre-
+  resolved `mockResolvedValueOnce(...)` works because the `.then`
+  microtask hasn't fired by the time `render()` returns synchronously
+  — we observe the loading branch first, then `await act()` to drain.
+  Cleaner than the deferred-promise dance.
+- **`importlib.reload(deps)` polluted global state across tests.**
+  Fix: monkeypatch `_SessionLocal` directly. Same pattern any future
+  module-global needs.
+- **Deterministic export ≠ overwrite test.** A re-export test that
+  writes to a sibling path silently passes if the file is identical.
+  Pre-seed the target with garbage bytes, then assert post-export
+  contains none of the garbage.
+
+**Coverage shipping** — last measurement on commit `b44a3f4`:
+
+| Layer        | Coverage                                        |
+|--------------|-------------------------------------------------|
+| Backend      | **98% lines** across `engine/`, `api/`, scripts |
+| Frontend Vitest | landing 100%, station-detail 97.77%, wizard 95.06%, `$lib/api` 100%; trace viewer 0% (Playwright-only by design) |
+| Playwright   | 9 specs, every UI flow                          |
+
+**Deliberately punted from this slice.**
+
+| Area                                | Missing                                                                      | Trigger to pick up                              |
+|-------------------------------------|------------------------------------------------------------------------------|-------------------------------------------------|
+| Vitest tests for trace viewer       | `playlists/[id]/+page.svelte` is 0% lines under Vitest (Playwright covers it)| Trace viewer grows branching that's hard to e2e |
+| Coverage gate in CI                 | Coverage runs but no failing threshold                                       | First time coverage silently drops              |
+| Visual-regression / screenshot tests| None — Playwright only asserts text & DOM                                    | A CSS regression slips past assertions          |
+| Property-based engine tests         | Mentioned in §10; never landed                                               | Engine grows a primitive that's hard to enumerate|
+| Real iTunes XML integration test    | Importer tests use synthesised plists                                        | An iTunes update breaks a real-world XML        |
+| Mutation testing                    | `mutmut` would surface assertions that pass with broken code                 | Confidence in coverage % drops                  |
+| Multi-Python-version CI matrix      | CI pins 3.14; we don't test 3.12 or 3.13                                     | A user reports running on something else        |
+
+**Implementation notes for future pick-up:**
+
+- The `vi.hoisted()` pattern for mock state (used in
+  `wizard.test.ts`, `landing.test.ts`, `detail.test.ts`) is the
+  workaround for `vi.mock()` factory hoisting above imports. Keep
+  using it; the alternative (top-level `let` + assignment in
+  `beforeEach`) trips a "Cannot access X before initialization" race.
+- The `$page` store mock in `detail.test.ts` is a hand-rolled
+  readable store — `subscribe(fn)` calls `fn(value)` synchronously
+  and returns an unsubscribe. If a future page reads more from
+  `$page` (e.g. `$page.url`), extend the value object there.
+- Playwright DB filename includes `process.pid`, so the `Makefile`'s
+  `clean-test` target uses a glob: `rm -f playwright-test.*.db*`.
+- The CI workflow runs Python 3.14 with `allow-prereleases: true`
+  on `actions/setup-python`. Drop that flag once 3.14 GAs.
+
 ---
 
 ## 15. Status snapshot
 
 A quick "where are we" for a future reader. Last updated at commit
-`f8e6155`.
+`b44a3f4` — test-plan delivery + landing/detail backfill.
 
-| Area                     | State                                                    |
-|--------------------------|----------------------------------------------------------|
-| Engine                   | Shipped. `pick`, `window`. Cursor, trace, RNG on/off.    |
-| Template validation      | Shipped. Strict; optional top-level `name` for UI.       |
-| Importer                 | Shipped. Idempotent, library metadata captured.          |
-| Exporter                 | Shipped. Browser endpoint + disk endpoint, round-trip.   |
-| Bootstrap script         | Shipped. One-command Classics setup.                     |
-| API                      | Stations CRUD, sources, generate, playlist, trace, export|
-| Trace viewer (UI)        | Shipped (first cut). Works end-to-end against real data. |
-| Station creation wizard  | Shipped (first cut). End-to-end verified.                |
-| Visual block editor      | Deferred (v2).                                           |
-| Scheduler                | Deferred (v1.1).                                         |
-| Weekly migration         | Long-term.                                               |
+| Area                     | State                                                            |
+|--------------------------|------------------------------------------------------------------|
+| Engine                   | Shipped. `pick`, `window`. Cursor, trace, RNG on/off.            |
+| Template validation      | Shipped. Strict; optional top-level `name` for UI.               |
+| Importer                 | Shipped. Idempotent, library metadata captured.                  |
+| Exporter                 | Shipped. Browser endpoint + disk endpoint, round-trip.           |
+| Bootstrap script         | Shipped. One-command Classics setup.                             |
+| API                      | Stations CRUD, sources, generate, playlist, trace, export.       |
+| Trace viewer (UI)        | Shipped (first cut). Works end-to-end against real data.         |
+| Station creation wizard  | Shipped (first cut). End-to-end verified.                        |
+| Test plan + CI           | Shipped. 4-tier (engine, API, Vitest, Playwright). 98% backend.  |
+| Visual block editor      | Deferred (v2). See §16.2.                                        |
+| In-UI generate button    | Deferred. See §16.1 — next up.                                   |
+| Reset / regenerate flow  | Deferred. See §16.3.                                             |
+| Scheduler                | Deferred (v1.1).                                                 |
+| Weekly migration         | Long-term.                                                       |
 
-Active TODOs live in §11 (deferred) and §14.5 (trace-viewer follow-ups).
-Don't start chipping at those until Station Studio earns them — the
-project's whole premise is "build the smallest thing that proves the
-next decision", not "polish the thing we've got".
+Active TODOs live in §11 (deferred), §14.5 (trace-viewer follow-ups),
+§14.7 (wizard follow-ups), §14.8 (test-plan follow-ups), and §16
+(next up — generate button, block editor, reset). Don't start chipping
+at the follow-ups until Station Studio earns them — the project's
+whole premise is "build the smallest thing that proves the next
+decision", not "polish the thing we've got". §16 is the queue we
+*are* going to chip at.
+
+---
+
+## 16. Next up — planned slices
+
+Three queued slices, in the order we expect to take them. Each section
+is intentionally a short brief, not a spec — the spec gets written
+when the slice lands, in the same §14.x format as the others.
+
+### 16.1 In-UI generate button
+
+**Why next.** Today, `POST /api/stations/{slug}/generate` is the only
+way to materialise a playlist, and the wizard's happy path lands the
+user on an *empty* station-detail page with no obvious next action.
+Bootstrapping a station from the UI but having to drop to `curl` to
+generate the first week is the loudest paper cut left in the v1 loop.
+
+**Smallest thing that proves it.**
+
+- A "Generate week N" control on `/stations/[slug]` — simplest form a
+  number input + button. Default N to `latest_week + 1` (so a fresh
+  station offers week 1, an existing one offers next).
+- POST through the existing API; on success, navigate to
+  `/playlists/{new_id}` (the trace viewer already handles the rest).
+- Surface the engine's pool-underflow error inline (the trace viewer
+  is the wrong place for "couldn't generate"; the failure happens
+  before any playlist exists).
+
+**Decisions to make in-flight (don't pre-decide).**
+
+- **Where the button sits.** Top-right of the playlists table is the
+  obvious slot, but the empty-state ("none generated yet") needs its
+  own variant — a big "Generate week 1" CTA reads better than a
+  small button hidden in a corner.
+- **Form vs one-click.** Almost always you want next week; a single
+  "Generate next week" button covers 95% of cases and a `<details>`
+  disclosure for "advanced — pick a week" stays out of the way.
+- **Optimistic UI?** No. Generation is fast (< 1s for Classics's 3,010
+  slots) but failure modes are real (pool underflow, race against a
+  concurrent generate). Show a spinner; navigate on success only.
+
+**What this earns us.** A station's full lifecycle — create →
+generate → view trace → download — is reachable from the landing page
+without leaving the browser. Closes the v1 loop the wizard opened.
+
+**What stays out of scope.**
+
+- Regenerate / overwrite flow → §16.3.
+- "Generate batch of N weeks" → defer until someone wants it.
+- Auto-generate on station create → no. Generation is a separate,
+  visible action.
+- Scheduler / cron → §11 v1.1.
+
+### 16.2 Visual block editor (v2)
+
+**Why this one matters but not yet.** §11 has named the visual block
+editor as a v2 explicit since the original scaffold. The wizard's
+text-form layout (`row_start_offsets` as a comma-separated string,
+`row_template` as a stacked add/remove list) carries us as long as
+there's only Classics. A second station — especially one with a
+non-uniform layout — turns the form from "boring but tolerable" into
+"the thing that's stopping me from defining the station".
+
+**Trigger to start.** A real second-station layout that's awkward to
+express in the current form, *or* the user explicitly asking for it.
+Don't pre-build.
+
+**Sketch (not a spec).**
+
+- Same JSON in, same JSON out. The editor reads
+  `template.layout.row_template` and writes back into the same shape.
+  Wizard ↔ editor round-trip cleanly via the JSON.
+- Drag-drop lanes per row (one column per row, vertical = within a
+  row). Each block is a coloured chip carrying source + strategy +
+  size; colour comes from `template.sources[].colour`.
+- Inline edit on the chip — click to expand strategy/size; the source
+  swap is a dropdown constrained to content-role sources (same rule
+  as the wizard).
+- Row-start-offset slider per row (or a per-row numeric input) with
+  the +60 cursor advance hinted in the gutter so "row 7 = row 6" is
+  visible at a glance.
+
+**Open questions to settle when we start.**
+
+- Can we drop the wizard's layout fieldset entirely once the editor
+  exists, or do we keep both for accessibility / quick edits?
+- Does the editor live at `/stations/[slug]/edit` (single page) or
+  `/stations/[slug]/edit/layout` (sub-route)? Probably the latter
+  once identity / sources / cursor get their own edit views.
+- Live JSON preview alongside the visual canvas — yes, very probably,
+  reusing the deferred wizard "live template JSON preview" item.
+
+**Reuse from §14.7 wizard.** Form-state-to-JSON lives in
+`buildTemplate()`; the editor probably wants the same translation
+function (extracted to `web/src/lib/template.ts`). The constants
+duplicated from the engine (`STRATEGY_OPTIONS`, `ROLE_OPTIONS`) become
+worth extracting to `GET /api/meta` once a third caller appears — the
+editor is that third caller.
+
+### 16.3 Reset / regenerate flow
+
+**The hole.** Today, regenerating an existing week silently overwrites
+because of the DB unique constraint on `(station_id, week)` — fine.
+But there's no UI affordance: `POST /api/stations/{slug}/generate`
+with an existing week number works, but the user has no way to know
+that, no warning, no confirm. And the disk export overwrites silently
+too (§14.2). For Classics, where the same week is regenerated as the
+user iterates on source pools, this is the *common* case, not the
+edge case.
+
+**Two questions tangled together** — keep them separate:
+
+1. **Regenerate** — replace the DB playlist + trace for an existing
+   `(station, week)`. Common during authoring.
+2. **Reset / delete** — remove the playlist (and disk export?) for a
+   week. Useful for cleaning up wizard test stations.
+
+**Sketch for the slice (when we take it).**
+
+- Regenerate: a button next to each row in the station-detail
+  playlists table. Confirms ("This will replace the current week N
+  trace"); on success, navigate to the new trace viewer.
+- Delete: pinned behind an explicit "Delete" affordance per row, with
+  a typed-confirm or two-click pattern. Optional checkbox "also
+  remove disk export".
+- Backend additions:
+  - `DELETE /api/playlists/{id}` — removes playlist + entries +
+    trace; optionally calls into the export-prune logic for the on-
+    disk file.
+  - `DELETE /api/stations/{slug}` — full station nuke for cleaning
+    up wizard test stations. Cascades through playlists.
+
+**Why this is queued behind 16.1 and 16.2.** Generate-first earns the
+basic loop. Block editor unlocks station #2. Reset only matters once
+either of those is in real use — and even then, the underlying API
+already overwrites correctly; we're just adding UI affordances that
+match the user's mental model.
+
+**Stay-out-of-scope candidates.**
+
+- Trash / soft-delete with restore — overkill for a single-user tool.
+  Hard delete + git history of the template JSON is enough.
+- Bulk delete — wait for it to feel painful.
+- Disk-export prune endpoint — already deferred in §14.3; this slice
+  may or may not pull it forward.
 
