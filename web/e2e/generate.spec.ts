@@ -42,8 +42,11 @@ test.describe('§16.1 generate panel', () => {
     await nextBtn.click();
 
     await expect(page).toHaveURL(/\/playlists\/\d+$/);
-    // Trace viewer renders the week as a zero-padded "002" badge.
-    await expect(page.getByText('002').first()).toBeVisible();
+    // Trace viewer renders the week as a zero-padded "002" badge inside
+    // the h1. Scoped via locator rather than getByText('002').first()
+    // so a future markup change that adds another '002' doesn't silently
+    // pass against the wrong element.
+    await expect(page.locator('h1 .week')).toHaveText('002');
   });
 
   test('advanced disclosure: "Replace week N" + confirm path replaces an existing trace', async ({

@@ -33,8 +33,13 @@
       : Math.max(...playlists.map((p) => p.week)) + 1;
 
   // Reactively keep the advanced-form week pre-filled with nextWeek until the
-  // user opens the disclosure and changes it. Once advancedOpen flips true we
+  // user opens the disclosure and changes it. Once they touch the input we
   // stop tracking so we don't yank a value out from under the user mid-edit.
+  //
+  // Sticky-true: the flag never resets for the page lifetime, so the form
+  // remembers the user's last typed value even after navigating around the
+  // disclosure. Intentional — it would be jarring for a closed-then-reopened
+  // disclosure to silently snap back to nextWeek.
   let userTouchedAdvanced = false;
   $: if (!userTouchedAdvanced) chosenWeek = nextWeek;
 
@@ -78,8 +83,10 @@
     // confirmed (with row-specific copy carrying the existing trace_id).
     // The §16.4 cross-reference belongs in code comments, not the user-
     // facing dialog string — most readers won't know what §16.4 means.
-    if (!opts.skipConfirm && playlists.some((p) => p.week === week)) {
-      const existing = playlists.find((p) => p.week === week)!;
+    const existing = !opts.skipConfirm
+      ? playlists.find((p) => p.week === week)
+      : undefined;
+    if (existing) {
       const ok = confirm(
         `Replace week ${week}? The current trace ${existing.trace_id.slice(0, 8)}… will be deleted. (Trace history across regenerations is on the roadmap — for now this is permanent.)`,
       );
