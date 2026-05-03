@@ -403,6 +403,7 @@ The trace is stored as JSON alongside the playlist (in a `playlist_trace` table 
 | Trace-viewer polish                         | later (14.5) | Search, virtualisation, SSR, multi-week nav, compare    |
 | Test plan + CI                              | done (14.8)  | 4-tier; backend 98% lines; 26 Vitest + 9 Playwright     |
 | Test follow-ups (coverage gate, viz tests)  | later (14.8) | See 14.8 table                                          |
+| Accessibility pass                          | later (§16.5)| Consolidates a11y rows from 14.5/14.7/14.9; one slice   |
 
 ---
 
@@ -1038,6 +1039,7 @@ A quick "where are we" for a future reader. Last updated at commit
 | Visual block editor      | Deferred (v2). See §16.2.                                        |
 | Delete / station-reset   | Deferred. See §16.3.                                             |
 | Trace versioning         | Deferred. See §16.4 (queued behind §16.1 by design).             |
+| Accessibility pass       | Deferred. See §16.5 (consolidates piecemeal a11y notes).         |
 | Scheduler                | Deferred (v1.1).                                                 |
 | Weekly migration         | Long-term.                                                       |
 
@@ -1375,4 +1377,126 @@ plate when we get here):
 - The viewer's per-row collapse state (already in-memory only per
   §14.5) needs to invalidate when switching versions. Reset on every
   navigation; don't try to preserve.
+
+### 16.5 Accessibility pass
+
+**Why this one matters but not yet.** Every shipped slice has noted
+a11y gaps in its own §14.x punt list — §14.5 (trace viewer: ARIA on
+chips, skip-link, expanded-state announcements), §14.7 (wizard:
+`aria-live` errors, required markers, per-field error association),
+§14.9's review N3 (station-detail action columns lack a11y labels).
+Each was reasonable to defer — the alternative (fix piecemeal as we
+ship) leads to inconsistent solutions: one page uses `aria-live`,
+another uses visible-text errors, a third has neither. A focused
+pass over the whole UI gives one set of patterns the next slice can
+hold to, and stops the §14.x punt tables accumulating "a11y" rows.
+
+**Trigger to start.** Any of:
+
+- A real external user requests / needs assistive-tech support (most
+  direct — and the most common reason a11y work actually moves).
+- Before broadening user base beyond the single-user assumption in
+  §12. The current "you" model excuses a lot.
+- A library or hosting context demands WCAG conformance (e.g. the
+  Studio gets embedded in a regulated environment).
+
+**Known gaps consolidated** — pull these in when the slice runs so
+the trail of previous "later" notes converges in one place:
+
+| Surface                               | Gap                                                                 | Source         |
+|---------------------------------------|---------------------------------------------------------------------|----------------|
+| Trace viewer (`/playlists/[id]`)      | No ARIA on source chips; no skip-link; collapsible row headers don't announce expanded state | §14.5         |
+| Wizard (`/stations/new`)              | No `aria-live` for the error block; no `aria-required` on required inputs; server errors not associated with the offending field | §14.7         |
+| Station detail (`/stations/[slug]`)   | Empty `<th></th>` for view + regen action columns lack visually-hidden label text | §16.1 N3      |
+| Generate panel (`/stations/[slug]`)   | Inline error after backend failure has no `aria-live="polite"`      | §14.9 review   |
+| All pages                             | No "skip to main content" link; no shared layout with `<main id="content">` landmark; focus-visible styles not customised | (general)     |
+| Colour contrast                       | Not audited; the `.crumbs` `#666` on white and the red replace button on white may both be borderline AA | (general)     |
+
+**Sketch for the slice (when we take it).**
+
+- **Tooling first.** Add `@axe-core/playwright` so each existing e2e
+  spec runs an automated WCAG audit on its destination page.
+  Failures break CI. Caveat: axe catches roughly 30–40% of real
+  issues; manual screen-reader testing (VoiceOver / NVDA) is still
+  needed for the rest. Don't treat axe-clean as a11y-clean.
+- **Fix the known-gaps table** in one pass — the goal is one merged
+  diff that every reviewer can trace to one set of decisions. Don't
+  scatter across multiple slices.
+- **Introduce a shared `+layout.svelte`** with a "skip to main
+  content" link and `<main id="content">` landmark. Each route's
+  current top-level `<main>` becomes a child or gets the wrapper
+  removed depending on what reads cleaner.
+- **Extract an `<ErrorBanner>` component** — every page renders
+  errors as raw text today (three different inline styles). One
+  component with `aria-live="polite"` (or `assertive` for hard
+  failures) cleans up the punt-list rows simultaneously.
+- **Custom focus-visible styles.** Default browser focus rings are
+  inconsistent across UAs and easy to mistake for "selected"
+  styling. A two-line CSS rule with high contrast goes a long way.
+- **Manual sweep with VoiceOver** — automated tooling won't catch
+  things like "button label reads 'icon' aloud" or "the regen
+  confirm flow disorients screen-reader users". 30 minutes per page
+  with VoiceOver enabled is the test.
+
+**Open question worth deciding upfront when the slice runs.**
+
+- **Wizard per-field error association needs a backend change.**
+  Today `POST /api/stations` returns a single string blob on 400
+  (`engine.template.parse_template`'s `TemplateError.message`). To
+  programmatically associate errors with the offending input —
+  `<input aria-describedby="slug-error">` and friends — the API
+  needs to return a structured response, e.g.
+  `[{field: "slug", message: "..."}]`. Two options:
+  1. **Backend dependency:** make the API change first as a
+     §16.5 prerequisite. Bigger blast radius but cleaner outcome.
+  2. **Punt within the slice:** wrap the existing blob in
+     `aria-live` and call it done; per-field association comes when
+     a real screen-reader user complains.
+  Decide when starting based on whether axe / manual testing
+  flags it as a real friction point. Probably (2) is right for v1.
+
+**What this earns us.**
+
+- Consistent error/loading/success patterns across pages (instead
+  of three different rolls).
+- A baseline future slices can hold to — the §14.x "Accessibility
+  polish" rows can stop accumulating because new code is held to
+  the pattern from day one.
+- CI signal — axe violations show up before merge, not in
+  production.
+
+**Stay-out-of-scope candidates** (decide upfront so the pass stays
+bounded):
+
+- **Full WCAG 2.1 AA conformance certification.** Overkill for a
+  single-user tool. Aim for "no obvious issues with VoiceOver" and
+  "axe clean", not a formal audit.
+- **Translations / RTL support.** Separate concern, much bigger.
+  Don't conflate.
+- **Reduced-motion preferences.** Relevant if we add animations;
+  we currently have none. If §16.2 (block editor) ships drag-drop
+  animations, this becomes a §16.2 concern not a §16.5 one.
+- **Voice control / dictation testing.** Not enough surface area
+  to justify; the keyboard-only sweep is a reasonable proxy.
+
+**Implementation notes for future pick-up.**
+
+- The generate panel's `<details>` element gives keyboard a11y for
+  free; don't replace it with a custom disclosure unless there's a
+  strong reason.
+- The trace viewer's row headers are already keyboard-togglable
+  (Enter handler in §14.5); they need `aria-expanded={open}` on the
+  same element. One-line addition.
+- Don't try to make every piece of text screen-reader friendly
+  without testing. Well-meaning ARIA attributes can make things
+  worse than no attributes ("button button button" disclosed for
+  every nested element). When in doubt: leave the semantic HTML
+  and don't add ARIA.
+- `confirm()` dialogs are browser-native and inherit OS-level a11y;
+  don't rebuild them as custom modals just for "consistency". The
+  inline error rendering (`<p class="error">`) is the part that
+  needs `aria-live`, not the dialog.
+- Svelte's `svelte-check` already surfaces a11y warnings during
+  build (missing alts, label-for, etc) — gauge the starting point
+  by running it on the current tree before the slice begins.
 
