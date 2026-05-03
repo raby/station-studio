@@ -33,6 +33,14 @@ class Station(Base):
         onupdate=lambda: datetime.now(timezone.utc),
     )
 
+    # ORM-level cascade ensures playlists are deleted even on sessions that
+    # don't have PRAGMA foreign_keys=ON (e.g. direct SQLite connections).
+    playlists = relationship(
+        "Playlist",
+        back_populates="station",
+        cascade="all, delete-orphan",
+    )
+
 
 class SourcePlaylist(Base):
     """A named pool of tracks imported from an iTunes XML file."""
@@ -71,10 +79,12 @@ class SourcePlaylistEntry(Base):
 
     id = Column(Integer, primary_key=True)
     source_playlist_id = Column(
-        Integer, ForeignKey("source_playlist.id", ondelete="CASCADE"), nullable=False,
+        Integer, ForeignKey("source_playlist.id", ondelete="CASCADE"),
+        nullable=False, index=True,
     )
     track_id = Column(
-        Integer, ForeignKey("track.id", ondelete="CASCADE"), nullable=False,
+        Integer, ForeignKey("track.id", ondelete="CASCADE"),
+        nullable=False, index=True,
     )
     position = Column(Integer, nullable=False)
 
@@ -92,14 +102,15 @@ class Playlist(Base):
 
     id = Column(Integer, primary_key=True)
     station_id = Column(
-        Integer, ForeignKey("station.id", ondelete="CASCADE"), nullable=False,
+        Integer, ForeignKey("station.id", ondelete="CASCADE"),
+        nullable=False, index=True,
     )
     week = Column(Integer, nullable=False)
     generated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     seed = Column(Integer, nullable=True)
     trace_id = Column(Text, nullable=False)  # UUID; links to PlaylistTrace
 
-    station = relationship("Station")
+    station = relationship("Station", back_populates="playlists")
     entries = relationship(
         "PlaylistEntry",
         back_populates="playlist",
@@ -117,10 +128,12 @@ class PlaylistEntry(Base):
 
     id = Column(Integer, primary_key=True)
     playlist_id = Column(
-        Integer, ForeignKey("playlist.id", ondelete="CASCADE"), nullable=False,
+        Integer, ForeignKey("playlist.id", ondelete="CASCADE"),
+        nullable=False, index=True,
     )
     track_id = Column(
-        Integer, ForeignKey("track.id", ondelete="CASCADE"), nullable=False,
+        Integer, ForeignKey("track.id", ondelete="CASCADE"),
+        nullable=False, index=True,
     )
     position = Column(Integer, nullable=False)
     source_name = Column(Text, nullable=True)  # which pool supplied this slot
@@ -139,7 +152,8 @@ class PlaylistTrace(Base):
 
     trace_id = Column(Text, primary_key=True)
     playlist_id = Column(
-        Integer, ForeignKey("playlist.id", ondelete="CASCADE"), nullable=False,
+        Integer, ForeignKey("playlist.id", ondelete="CASCADE"),
+        nullable=False, index=True,
     )
     station_slug = Column(Text, nullable=False)
     week = Column(Integer, nullable=False)
@@ -169,7 +183,8 @@ class CursorState(Base):
 
     id = Column(Integer, primary_key=True)
     station_id = Column(
-        Integer, ForeignKey("station.id", ondelete="CASCADE"), nullable=False,
+        Integer, ForeignKey("station.id", ondelete="CASCADE"),
+        nullable=False, index=True,
     )
     name = Column(Text, nullable=False)
     position = Column(Integer, nullable=False, default=0)

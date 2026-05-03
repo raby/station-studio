@@ -12,6 +12,14 @@
 
   $: id = Number($page.params.id);
 
+  // Guard against non-numeric route params (e.g. /playlists/abc).
+  // Number('abc') === NaN — catch it before the fetch so the error is
+  // meaningful rather than a FastAPI 422 from an invalid path segment.
+  $: if (isNaN(id)) {
+    error = 'Invalid playlist ID';
+    loading = false;
+  }
+
   // Group slots by row. Each group carries its unit label (Mon/Tue/...).
   interface RowGroup {
     row: number;
@@ -30,6 +38,7 @@
   let collapsed: Record<number, boolean> = {};
 
   onMount(async () => {
+    if (isNaN(id)) return; // reactive block above already set the error
     try {
       trace = await getTrace(id);
       // Playlist and station fetches aren't strictly needed for the trace
@@ -69,11 +78,8 @@
 
   function fmtDate(iso: string | null | undefined): string {
     if (!iso) return '';
-    try {
-      return new Date(iso).toLocaleString();
-    } catch {
-      return iso;
-    }
+    const d = new Date(iso);
+    return isNaN(d.getTime()) ? iso : d.toLocaleString();
   }
 
   function chipStyle(source: string): string {
@@ -134,7 +140,12 @@
 
     {#each rowGroups as g}
       <section class="row" class:collapsed={collapsed[g.row]}>
-        <header on:click={() => toggleRow(g.row)} on:keypress={(e) => e.key === 'Enter' && toggleRow(g.row)} role="button" tabindex="0">
+        <header
+          on:click={() => toggleRow(g.row)}
+          on:keydown={(e) => (e.key === 'Enter' || e.key === ' ') && toggleRow(g.row)}
+          role="button"
+          tabindex="0"
+        >
           <span class="caret">{collapsed[g.row] ? '▸' : '▾'}</span>
           <span class="unit-label">{g.unit}</span>
           <span class="row-meta">Row {g.row} · {g.slots.length} slots</span>

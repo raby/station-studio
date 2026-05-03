@@ -76,8 +76,8 @@ def test_base_cursor_progression():
 
 def test_duplicate_source_names_rejected():
     bad = {**BASE, "sources": [
-        {"name": "A", "colour": "#1", "role": "content"},
-        {"name": "A", "colour": "#2", "role": "content"},
+        {"name": "A", "colour": "#111", "role": "content"},
+        {"name": "A", "colour": "#222", "role": "content"},
     ]}
     with pytest.raises(TemplateError, match="duplicate"):
         parse_template(bad)

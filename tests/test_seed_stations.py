@@ -43,7 +43,7 @@ def _write_template(path: Path, station: str = "x", extra: dict | None = None) -
         "station": station,
         "cadence": "weekly",
         "rng": "off",
-        "sources": [{"name": "A", "colour": "#a", "role": "content"}],
+        "sources": [{"name": "A", "colour": "#aaa", "role": "content"}],
         "cursor": {"base_advance_per_week": 10, "cycle_weeks": 4},
         "layout": {
             "unit": "day",

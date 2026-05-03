@@ -94,8 +94,8 @@ def test_pick_only_station_sequential():
 def test_mixed_window_and_pick_in_same_row():
     t = parse_template(mk_template(
         sources=[
-            {"name": "A", "colour": "#a", "role": "content"},
-            {"name": "B", "colour": "#b", "role": "content"},
+            {"name": "A", "colour": "#aaa", "role": "content"},
+            {"name": "B", "colour": "#bbb", "role": "content"},
         ],
         layout={
             "unit": "day",

@@ -27,7 +27,7 @@ BASE_TEMPLATE = {
     "station": "x",
     "cadence": "weekly",
     "rng": "off",
-    "sources": [{"name": "A", "colour": "#a", "role": "content"}],
+    "sources": [{"name": "A", "colour": "#aaa", "role": "content"}],
     "cursor": {"base_advance_per_week": 0, "cycle_weeks": 1},
     "layout": {
         "unit": "day",

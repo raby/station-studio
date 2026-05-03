@@ -2,23 +2,24 @@
 from __future__ import annotations
 
 from typing import Any
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class StationCreate(BaseModel):
-    slug: str
+    # Slug is immutable after creation. Pattern mirrors the wizard's client-side
+    # validation: lowercase alphanumeric + hyphens, must start with [a-z0-9].
+    slug: str = Field(pattern=r"^[a-z0-9][a-z0-9-]*$")
     name: str
     template: dict[str, Any]
 
 
 class StationOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     slug: str
     name: str
     template: dict[str, Any]
-
-    class Config:
-        from_attributes = True
 
 
 class SourceOut(BaseModel):
@@ -46,13 +47,12 @@ class GenerateResponse(BaseModel):
 
 
 class TrackOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     name: str
     artist: str | None
     album: str | None
-
-    class Config:
-        from_attributes = True
 
 
 class PlaylistEntryOut(BaseModel):

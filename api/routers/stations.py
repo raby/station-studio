@@ -4,7 +4,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from engine.models import Station, Playlist, PlaylistEntry, PlaylistTrace, CursorState
+from engine.models import Station, Playlist, PlaylistEntry
 from engine.template import parse_template, TemplateError
 from api.deps import get_db
 from api.schemas import StationCreate, StationOut, PlaylistSummary
@@ -87,6 +87,8 @@ def update_station(slug: str, payload: StationCreate, db: Session = Depends(get_
     s = db.query(Station).filter(Station.slug == slug).first()
     if not s:
         raise HTTPException(404, f"station '{slug}' not found")
+    if payload.slug != slug:
+        raise HTTPException(400, "slug is immutable; create a new station to change it")
     try:
         parse_template(payload.template)
     except TemplateError as e:

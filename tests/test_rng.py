@@ -29,7 +29,7 @@ def mk_rng_template(rng: str = "on") -> dict:
         "station": "rng-test",
         "cadence": "weekly",
         "rng": rng,
-        "sources": [{"name": "A", "colour": "#a", "role": "content"}],
+        "sources": [{"name": "A", "colour": "#aaa", "role": "content"}],
         "cursor": {"base_advance_per_week": 0, "cycle_weeks": 1},
         "layout": {
             "unit": "day",

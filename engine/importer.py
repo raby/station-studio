@@ -92,8 +92,14 @@ def import_source(db: Session, path: Path, name: str) -> dict:
     """Import an iTunes XML file as a named source pool.
 
     Returns a summary with tracks / entries imported.
+    Raises ValueError if the file is not an iTunes library XML.
     """
     data = _parse_itunes_xml(path)
+    if "Tracks" not in data:
+        raise ValueError(
+            f"not an iTunes library XML: 'Tracks' key missing in {path.name}. "
+            "Export a library or playlist from iTunes/Music and try again."
+        )
     raw_tracks = data.get("Tracks", {})
     playlists = data.get("Playlists", [])
 

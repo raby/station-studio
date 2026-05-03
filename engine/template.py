@@ -9,12 +9,16 @@ but are silently ignored are a footgun we reject up-front.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
 
 SUPPORTED_STRATEGIES = {"window", "pick"}  # v1. Add more as new stations need them.
 SUPPORTED_RNG = {"off", "on"}
+
+# Hex colour: #RGB, #RRGGBB, or #RRGGBBAA. Case-insensitive.
+_COLOUR_RE = re.compile(r"^#[0-9a-fA-F]{3}([0-9a-fA-F]{3}([0-9a-fA-F]{2})?)?$")
 
 
 class TemplateError(ValueError):
@@ -148,6 +152,11 @@ def _parse_source(raw: dict) -> SourceSpec:
     _require_keys(raw, {"name", "colour", "role"}, where="source")
     if raw["role"] not in {"content", "reference"}:
         raise TemplateError(f"source role must be 'content' or 'reference', got {raw['role']!r}")
+    if not _COLOUR_RE.match(raw["colour"]):
+        raise TemplateError(
+            f"source colour must be a hex colour (#RGB, #RRGGBB, or #RRGGBBAA), "
+            f"got {raw['colour']!r}"
+        )
     return SourceSpec(name=raw["name"], colour=raw["colour"], role=raw["role"])
 
 

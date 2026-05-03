@@ -347,6 +347,20 @@ def test_export_to_disk_missing_playlist_404(api):
 # ---------- PUT /api/stations/{slug} -----------------------------------
 
 
+def test_update_station_slug_change_returns_400(api):
+    """Slug is immutable — attempting to rename via PUT must be rejected."""
+    client, _ = api
+    client.post("/api/stations", json=_wizard_payload("original", "Original"))
+    r = client.put("/api/stations/original", json=_wizard_payload("renamed", "Renamed"))
+    assert r.status_code == 400
+    assert "slug is immutable" in r.json()["detail"]
+
+    # The station must be unchanged.
+    r2 = client.get("/api/stations/original")
+    assert r2.status_code == 200
+    assert r2.json()["name"] == "Original"
+
+
 def test_update_station_unknown_slug_404(api):
     client, _ = api
     r = client.put("/api/stations/nope", json=_wizard_payload("nope", "Nope"))
@@ -446,7 +460,7 @@ def test_generate_happy_path_writes_playlist_entries_and_trace(api):
     client, Session = api
     _seed_station_and_pool(Session, slug="gen", pool_tracks=3)
     r = client.post("/api/stations/gen/generate", json={"week": 1})
-    assert r.status_code == 200, r.text
+    assert r.status_code == 201, r.text
     body = r.json()
     assert body["station"] == "gen"
     assert body["week"] == 1
@@ -545,10 +559,10 @@ def test_generate_same_week_replaces_previous(api):
     client, Session = api
     _seed_station_and_pool(Session, slug="twice", pool_tracks=3)
     r1 = client.post("/api/stations/twice/generate", json={"week": 1})
-    assert r1.status_code == 200
+    assert r1.status_code == 201
     trace1 = r1.json()["trace_id"]
     r2 = client.post("/api/stations/twice/generate", json={"week": 1})
-    assert r2.status_code == 200
+    assert r2.status_code == 201
     trace2 = r2.json()["trace_id"]
     # Each generation mints a fresh trace_id; regenerating must produce a new
     # one. (SQLite may reuse the previous playlist's primary key after DELETE,
@@ -583,7 +597,7 @@ def test_generate_seed_is_threaded_through_to_trace(api):
     )
     r = client.post("/api/stations/seeded/generate",
                     json={"week": 1, "seed": 42})
-    assert r.status_code == 200, r.text
+    assert r.status_code == 201, r.text
     trace = client.get(f"/api/playlists/{r.json()['playlist_id']}/trace").json()
     assert trace["rng"] == "on"
     assert trace["seed"] == 42
@@ -759,6 +773,116 @@ def test_delete_station_with_no_playlists(api):
 
 
 # ---------- end of delete tests ----------------------------------------
+
+
+# ---------- DELETE /api/sources/{id} -----------------------------------
+
+
+def test_delete_source_happy_path(api):
+    client, _ = api
+    r = client.post("/api/sources/import", json={
+        "path": str(_FIXTURES / "tiny-library.xml"),
+        "name": "to-delete",
+    })
+    assert r.status_code == 200
+    source_id = client.get("/api/sources").json()[0]["id"]
+
+    r = client.delete(f"/api/sources/{source_id}")
+    assert r.status_code == 204
+    assert r.content == b""
+    assert client.get("/api/sources").json() == []
+
+
+def test_delete_source_missing_404(api):
+    client, _ = api
+    r = client.delete("/api/sources/9999")
+    assert r.status_code == 404
+
+
+# ---------- StationCreate slug validation ------------------------------
+
+
+def test_create_station_invalid_slug_returns_422(api):
+    """Slug must match ^[a-z0-9][a-z0-9-]*$ — Pydantic rejects it before the handler."""
+    client, _ = api
+    for bad_slug in ("", "Has-Uppercase", "-starts-with-dash", "has spaces"):
+        payload = _wizard_payload("placeholder", "X")
+        payload["slug"] = bad_slug
+        r = client.post("/api/stations", json=payload)
+        assert r.status_code == 422, f"expected 422 for slug={bad_slug!r}, got {r.status_code}"
+
+
+# ---------- import path validation ------------------------------------
+
+
+def test_import_path_traversal_blocked_by_env(api, monkeypatch, tmp_path):
+    """When STATION_STUDIO_IMPORT_BASE_DIR is set, paths outside it are rejected."""
+    client, _ = api
+    monkeypatch.setenv("STATION_STUDIO_IMPORT_BASE_DIR", str(tmp_path / "allowed"))
+    r = client.post("/api/sources/import", json={
+        "path": str(_FIXTURES / "tiny-library.xml"),
+        "name": "blocked",
+    })
+    assert r.status_code == 400
+    assert "must be within" in r.json()["detail"]
+
+
+def test_import_non_itunes_xml_returns_400(api, tmp_path):
+    """A valid plist that isn't an iTunes library must be rejected with 400."""
+    client, _ = api
+    # Write a minimal plist without a 'Tracks' key.
+    non_itunes = tmp_path / "other.xml"
+    non_itunes.write_text(
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
+        '"http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
+        '<plist version="1.0"><dict>'
+        '<key>ApplicationVersion</key><string>1.0</string>'
+        '</dict></plist>',
+        encoding="utf-8",
+    )
+    r = client.post("/api/sources/import", json={"path": str(non_itunes), "name": "x"})
+    assert r.status_code == 400
+    assert "not an iTunes library XML" in r.json()["detail"]
+
+
+# ---------- template colour validation ---------------------------------
+
+
+def test_create_station_invalid_colour_returns_400(api):
+    """Source colour must be a valid hex — the template validator rejects bad values."""
+    client, _ = api
+    payload = _wizard_payload("coltest", "Colour Test")
+    payload["template"]["sources"][0]["colour"] = "red"  # not a hex colour
+    r = client.post("/api/stations", json=payload)
+    assert r.status_code == 400
+    assert "hex colour" in r.json()["detail"]
+
+
+# ---------- generate returns 201 -------------------------------------
+
+
+def test_generate_returns_201(api):
+    client, Session = api
+    _seed_station_and_pool(Session, slug="s201", pool_tracks=3)
+    r = client.post("/api/stations/s201/generate", json={"week": 1})
+    assert r.status_code == 201, r.text
+
+
+# ---------- list_sources uses single query (no N+1) ------------------
+
+
+def test_list_sources_count_correct_after_import(api):
+    """list_sources must return accurate track_count for each pool."""
+    client, _ = api
+    client.post("/api/sources/import", json={
+        "path": str(_FIXTURES / "tiny-library.xml"),
+        "name": "tiny2",
+    })
+    sources = client.get("/api/sources").json()
+    assert len(sources) == 1
+    assert sources[0]["name"] == "tiny2"
+    assert sources[0]["track_count"] == 3
 
 
 def test_get_db_yields_closable_session(tmp_path, monkeypatch):

@@ -3,12 +3,11 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from engine.models import (
-    Station, SourcePlaylist, SourcePlaylistEntry,
-    Playlist, PlaylistEntry, PlaylistTrace,
-)
+from engine.models import Station, Playlist, PlaylistTrace
+from engine.persistence import load_pools, save_playlist
 from engine.template import parse_template, TemplateError
 from engine.generator import generate
 from engine.exporter import export_playlist, export_playlist_to_disk
@@ -19,7 +18,7 @@ from api.schemas import GenerateRequest, GenerateResponse, PlaylistOut, Playlist
 router = APIRouter(tags=["generate"])
 
 
-@router.post("/api/stations/{slug}/generate", response_model=GenerateResponse)
+@router.post("/api/stations/{slug}/generate", response_model=GenerateResponse, status_code=201)
 def generate_playlist(slug: str, payload: GenerateRequest, db: Session = Depends(get_db)):
     station = db.query(Station).filter(Station.slug == slug).first()
     if not station:
@@ -30,61 +29,25 @@ def generate_playlist(slug: str, payload: GenerateRequest, db: Session = Depends
     except TemplateError as e:
         raise HTTPException(500, f"stored template is invalid: {e}")
 
-    # Load pools from DB for every content source the template references
-    pools: dict[str, list] = {}
-    for src_name in template.content_source_names:
-        sp = db.query(SourcePlaylist).filter(SourcePlaylist.name == src_name).first()
-        if not sp:
-            raise HTTPException(400, f"source pool '{src_name}' not imported")
-        entries = (
-            db.query(SourcePlaylistEntry)
-            .filter_by(source_playlist_id=sp.id)
-            .order_by(SourcePlaylistEntry.position)
-            .all()
-        )
-        pools[src_name] = [e.track for e in entries]
+    try:
+        pools = load_pools(db, template)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
 
     try:
         result = generate(template, pools, week=payload.week, seed=payload.seed)
     except Exception as e:
         raise HTTPException(400, f"generation failed: {e}")
 
-    # Replace any existing playlist for this (station, week)
-    existing = db.query(Playlist).filter_by(station_id=station.id, week=payload.week).first()
-    if existing:
-        db.delete(existing)
-        db.flush()
-
-    playlist = Playlist(
-        station_id=station.id,
-        week=payload.week,
-        seed=payload.seed,
-        trace_id=result.trace.trace_id,
-    )
-    db.add(playlist)
-    db.flush()
-
-    # Populate entries; look up source name per slot from the trace
-    for i, (track, slot) in enumerate(zip(result.picks, result.trace.slots), start=1):
-        db.add(PlaylistEntry(
-            playlist_id=playlist.id,
-            track_id=track.id,
-            position=i,
-            source_name=slot.source,
-        ))
-
-    db.add(PlaylistTrace(
-        trace_id=result.trace.trace_id,
-        playlist_id=playlist.id,
-        station_slug=station.slug,
-        week=payload.week,
-        rng=result.trace.rng,
-        seed=result.trace.seed,
-        generated_at=result.trace.generated_at,
-        slots=[s.to_dict() for s in result.trace.slots],
-    ))
-
-    db.commit()
+    try:
+        playlist = save_playlist(db, station, result, week=payload.week)
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            409,
+            "a playlist for this station and week was concurrently generated; retry",
+        )
 
     return GenerateResponse(
         playlist_id=playlist.id,

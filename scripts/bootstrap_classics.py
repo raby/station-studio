@@ -35,10 +35,8 @@ from sqlalchemy.orm import Session
 from engine.database import make_engine, make_sessionmaker
 from engine.importer import import_source
 from engine.generator import generate
-from engine.models import (
-    Base, Station, SourcePlaylist, SourcePlaylistEntry,
-    Playlist, PlaylistEntry, PlaylistTrace,
-)
+from engine.models import Base, Station
+from engine.persistence import load_pools, save_playlist
 from engine.template import parse_template
 from scripts.seed_stations import seed_station
 
@@ -113,48 +111,9 @@ def bootstrap(
         )
 
     # 4. Generate
-    pools: dict[str, list] = {}
-    for src_name in template.content_source_names:
-        sp = db.query(SourcePlaylist).filter_by(name=src_name).one()
-        entries = (
-            db.query(SourcePlaylistEntry)
-            .filter_by(source_playlist_id=sp.id)
-            .order_by(SourcePlaylistEntry.position)
-            .all()
-        )
-        pools[src_name] = [e.track for e in entries]
-
+    pools = load_pools(db, template)
     result = generate(template, pools, week=week)
-
-    # Replace any existing playlist for this (station, week)
-    existing = db.query(Playlist).filter_by(station_id=station.id, week=week).first()
-    if existing:
-        db.delete(existing)
-        db.flush()
-
-    playlist = Playlist(
-        station_id=station.id, week=week, trace_id=result.trace.trace_id,
-    )
-    db.add(playlist)
-    db.flush()
-
-    for i, (track, slot) in enumerate(zip(result.picks, result.trace.slots), start=1):
-        db.add(PlaylistEntry(
-            playlist_id=playlist.id,
-            track_id=track.id,
-            position=i,
-            source_name=slot.source,
-        ))
-    db.add(PlaylistTrace(
-        trace_id=result.trace.trace_id,
-        playlist_id=playlist.id,
-        station_slug=CLASSICS_SLUG,
-        week=week,
-        rng=result.trace.rng,
-        seed=result.trace.seed,
-        generated_at=result.trace.generated_at,
-        slots=[s.to_dict() for s in result.trace.slots],
-    ))
+    playlist = save_playlist(db, station, result, week=week)
     db.commit()
 
     return BootstrapResult(

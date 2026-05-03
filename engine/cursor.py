@@ -6,6 +6,10 @@ cursors (e.g. ported Rebirth Radio with its 9 independent cursors).
 
 v1 has no live users; this module defines the interface and leaves storage
 to callers via the CursorState ORM model.
+
+TODO: wire these helpers into the generate endpoint and the station-detail
+page when porting Rebirth Radio (which has 9 independent cursors for
+COMMERCIAL, NIGHT, MIXES, etc.). At that point add tests in tests/test_cursor.py.
 """
 from __future__ import annotations
 
