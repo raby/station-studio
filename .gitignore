@@ -28,3 +28,7 @@ out/
 # Playwright
 web/test-results/
 web/playwright-report/
+
+# Coverage output
+.coverage
+web/coverage/

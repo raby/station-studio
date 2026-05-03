@@ -7,6 +7,7 @@ import {
   getPlaylist,
   getTrace,
   createStation,
+  generatePlaylist,
 } from './api';
 
 /**
@@ -126,6 +127,55 @@ describe('api client', () => {
       expect(err).toBeInstanceOf(ApiError);
       expect(err.status).toBe(400);
       expect(err.message).toContain('invalid template');
+    });
+  });
+
+  describe('generatePlaylist', () => {
+    // The wider `generate panel` Vitest suite mocks $lib/api, so the real
+    // body of generatePlaylist never executes there. This block exists to
+    // close that gap — the body shape (week, optional seed) and the URL
+    // build (slug encoded) are the load-bearing details for both the
+    // station-detail page and any future caller.
+
+    it('POSTs week + omits seed when undefined', async () => {
+      const { fetch_, calls } = makeSpy({
+        body: { playlist_id: 7, trace_id: 't', station: 'cls', week: 1, slot_count: 3010 },
+      });
+      const out = await generatePlaylist('cls', 1, undefined, fetch_);
+
+      expect(calls[0].input).toBe('/api/stations/cls/generate');
+      expect(calls[0].init?.method).toBe('POST');
+      expect(JSON.parse(calls[0].init?.body as string)).toEqual({ week: 1 });
+      expect(out.playlist_id).toBe(7);
+    });
+
+    it('includes seed in the body when provided (rng:on path)', async () => {
+      const { fetch_, calls } = makeSpy({
+        body: { playlist_id: 8, trace_id: 't', station: 'cls', week: 2, slot_count: 3010 },
+      });
+      await generatePlaylist('cls', 2, 4242, fetch_);
+      expect(JSON.parse(calls[0].init?.body as string)).toEqual({ week: 2, seed: 4242 });
+    });
+
+    it('URL-encodes the slug', async () => {
+      const { fetch_, calls } = makeSpy({
+        body: { playlist_id: 9, trace_id: 't', station: 'a b', week: 1, slot_count: 0 },
+      });
+      await generatePlaylist('a b', 1, undefined, fetch_);
+      expect(calls[0].input).toBe('/api/stations/a%20b/generate');
+    });
+
+    it('raises ApiError on engine failure (e.g. pool underflow → 400)', async () => {
+      const { fetch_ } = makeSpy({
+        ok: false,
+        status: 400,
+        statusText: 'Bad Request',
+        text: 'generation failed: pool underflow at index 985 of RG_RADIO',
+      });
+      const err = await generatePlaylist('cls', 13, undefined, fetch_).catch((e) => e);
+      expect(err).toBeInstanceOf(ApiError);
+      expect(err.status).toBe(400);
+      expect(err.message).toContain('pool underflow');
     });
   });
 

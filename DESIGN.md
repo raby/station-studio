@@ -924,13 +924,22 @@ landing → wizard → station detail → generate (week 1) → trace
 viewer → download iTunes XML. Three clicks from landing to a
 playable file. The §16.1 brief's "loudest paper cut" is closed.
 
-**Coverage shipping** — last measurement on commit `<this>`:
+**Coverage shipping** — measured post-review-fix commit (39 Vitest tests):
 
-| Layer        | Coverage                                                   |
-|--------------|------------------------------------------------------------|
-| Backend      | 98% lines (unchanged — no backend changes this slice)      |
-| Frontend Vitest | landing 100%, station-detail ~99%, wizard 95%, lib/api 100% |
-| Playwright   | 15 specs across 6 files                                    |
+| Layer        | Coverage                                                            |
+|--------------|---------------------------------------------------------------------|
+| Backend      | 98% lines (unchanged — no backend changes this slice)               |
+| Frontend Vitest | landing 100%, station-detail 94.49%, wizard 95.06%, `lib/api` 100%; trace viewer 0% (Playwright-only by design) |
+| Playwright   | 15 specs across 6 files                                             |
+
+**Note on the lib/api 100% figure.** The wider §16.1 detail-test suite
+mocks the `$lib/api` module so the real `generatePlaylist` body never
+executes there. To close that gap a dedicated unit-test block for
+`generatePlaylist` was added in `web/src/lib/api.test.ts` (URL build,
+seed-omit-when-undefined, slug encoding, ApiError on 4xx). Without
+that block, `api.ts` sat at ~84% lines because the new function was
+invisible to the test layer it shipped with — easy trap to miss when
+mocking out a module you also added a function to.
 
 **Deliberately punted from this slice** — these match §16.1's
 pre-flight punt list, restated here for the §11 cross-reference:
