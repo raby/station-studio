@@ -389,8 +389,9 @@ The trace is stored as JSON alongside the playlist (in a `playlist_trace` table 
 | Visual block editor                         | next (§16.2) | v2; operates on same JSON as wizard                     |
 | Station creation wizard (UI)                | done (14.7)  | Produces the template JSON; reuses `web/src/lib/api.ts` |
 | Wizard polish (presets, per-field errors)   | later (14.7) | See 14.7 table; wait for real-user pain                 |
-| In-UI generate button                       | next (§16.1) | Closes wizard → trace-viewer loop without dropping to curl|
-| Reset / regenerate UI                       | next (§16.3) | Overwrite + delete playlist; optional station nuke      |
+| In-UI generate button + per-row regenerate  | next (§16.1) | Closes wizard → trace-viewer loop; per-row regen too    |
+| Delete / station-reset UI                   | next (§16.3) | Delete playlist; full station nuke; cascades            |
+| Trace versioning (history of regenerations) | later (§16.4)| Schema change; only after §16.1 lands and bites         |
 | Migrate Rebirth Radio onto Station Studio   | long-term    | Needs `weighted`, `prev_ref`, `genre_pick` primitives   |
 | iTunes XML export of Classics playlists     | done (14.1)  | Lifted from weekly, station-scoped; browser + disk paths|
 | Disk-export prune endpoint                  | on demand    | `POST /api/playlists/export/prune` — wait until clutter |
@@ -895,7 +896,8 @@ A quick "where are we" for a future reader. Last updated at commit
 | Test plan + CI           | Shipped. 4-tier (engine, API, Vitest, Playwright). 98% backend.  |
 | Visual block editor      | Deferred (v2). See §16.2.                                        |
 | In-UI generate button    | Deferred. See §16.1 — next up.                                   |
-| Reset / regenerate flow  | Deferred. See §16.3.                                             |
+| Delete / station-reset   | Deferred. See §16.3.                                             |
+| Trace versioning         | Deferred. See §16.4 (queued behind §16.1 by design).             |
 | Scheduler                | Deferred (v1.1).                                                 |
 | Weekly migration         | Long-term.                                                       |
 
@@ -915,49 +917,143 @@ Three queued slices, in the order we expect to take them. Each section
 is intentionally a short brief, not a spec — the spec gets written
 when the slice lands, in the same §14.x format as the others.
 
-### 16.1 In-UI generate button
+### 16.1 In-UI generate button (and per-row regenerate)
 
 **Why next.** Today, `POST /api/stations/{slug}/generate` is the only
 way to materialise a playlist, and the wizard's happy path lands the
 user on an *empty* station-detail page with no obvious next action.
 Bootstrapping a station from the UI but having to drop to `curl` to
 generate the first week is the loudest paper cut left in the v1 loop.
+Plus: each subsequent week (week 3, 4, 5…) costs another shell drop.
+This slice closes both.
 
-**Smallest thing that proves it.**
+**Use cases enumerated.** Working through this in advance because the
+generate button is deceptively simple — it's actually a confluence of
+several user intents that need different UX.
 
-- A "Generate week N" control on `/stations/[slug]` — simplest form a
-  number input + button. Default N to `latest_week + 1` (so a fresh
-  station offers week 1, an existing one offers next).
-- POST through the existing API; on success, navigate to
-  `/playlists/{new_id}` (the trace viewer already handles the rest).
-- Surface the engine's pool-underflow error inline (the trace viewer
-  is the wrong place for "couldn't generate"; the failure happens
-  before any playlist exists).
+| # | Use case                                     | Today                | Risk if ignored             |
+|---|----------------------------------------------|----------------------|-----------------------------|
+| 1 | Generate the next week (the 95% case)        | API works            | None — main path            |
+| 2 | Generate week 1 from an empty station        | API works            | UX hole post-wizard         |
+| 3 | Regenerate an existing week                  | Silently overwrites  | **Trace lost without warning** |
+| 4 | Generate an arbitrary week (e.g. skip ahead) | API works            | None                        |
+| 5 | Accidentally generated                       | Playlist now exists  | Mild — non-destructive      |
+| 6 | "Go back" to a previous week                 | Click row in table   | Already covered for viewing |
+| 7 | Regenerate with a specific seed (rng:on)     | API supports seed    | Classics is rng:off; design now |
+| 8 | Re-roll seed until happy (rng:on)            | Manual reissue       | Same                        |
+| 9 | Reproduce a previous generation byte-for-byte| Trace stores seed    | Already covered             |
+| 10| Pool-underflow failure (week 13+ on Classics)| API returns 400      | UI must surface inline      |
+| 11| Concurrent click — two tabs both POST week 3 | Last-write-wins      | Single-user; not a problem  |
+| 12| Disk export now stale after regenerate       | Disk file untouched  | Footgun — flagged           |
+| 13| "I want the old trace from before regen"     | Gone forever         | **§16.4 — separate slice**  |
+| 14| Generate weeks N..M in batch                 | No                   | Wait until asked            |
 
-**Decisions to make in-flight (don't pre-decide).**
+**Decisions taken** (D1–D7 — D8 is its own slice §16.4):
 
-- **Where the button sits.** Top-right of the playlists table is the
-  obvious slot, but the empty-state ("none generated yet") needs its
-  own variant — a big "Generate week 1" CTA reads better than a
-  small button hidden in a corner.
-- **Form vs one-click.** Almost always you want next week; a single
-  "Generate next week" button covers 95% of cases and a `<details>`
-  disclosure for "advanced — pick a week" stays out of the way.
-- **Optimistic UI?** No. Generation is fast (< 1s for Classics's 3,010
-  slots) but failure modes are real (pool underflow, race against a
-  concurrent generate). Show a spinner; navigate on success only.
+- **D1. Two affordances, different places.** A "Generate" panel at
+  the top of `/stations/[slug]` for next-week-or-arbitrary-week flow.
+  A per-row "↻ Regen" link in the playlists table for redoing a
+  specific existing week. Top button stays simple; the row action
+  carries the regen-specific semantics (warning copy, confirm).
+- **D2. Layered overwrite guard.** When the chosen week already
+  exists: button label flips to "Replace week N" with red styling
+  *and* a `confirm("Replace week N? Current trace `…` will be deleted.")`
+  fires before the POST. No backend 409 handshake — single-user, the
+  client-side check is sufficient. Add the 409 path if/when we
+  multi-user.
+- **D3. Seed UI gated on `template.rng === 'on'`.** Classics is
+  rng:off; rendering a seed input would be misleading (no effect).
+  When rng is on, render: `<input type="number">` prefilled with a
+  fresh random 32-bit int + 🎲 reroll button (re-randomises the field
+  without submitting). The trace already persists `seed`; reproducing
+  a generation byte-for-byte is an existing capability via the
+  advanced form. Per-row regen always uses a fresh random seed —
+  users who care about specific seeds use the advanced form.
+- **D4. Empty-state CTA is big and primary.** When
+  `playlists.length === 0`, the small "Generate" button is replaced
+  by a big primary "Generate week 1 →". The wizard → station-detail
+  → click → trace-viewer flow becomes the canonical first run, three
+  clicks total.
+- **D5. Disk-export staleness: do nothing this slice, document.** If
+  a user regenerates and forgets to re-click "Export to disk", the
+  next click overwrites correctly. Adding a "⚠ stale" badge couples
+  the web layer to filesystem mtime checks; not worth it until a
+  real user reports forgetting. Will note in the punted-items table.
+- **D6. Accidental forward generation needs nothing.** Non-destructive;
+  next "Generate next week" click does the right thing. Cleanup of
+  unwanted weeks is the *delete* affordance — §16.3.
+- **D7. "Go back" is three readings, two solved.** Navigate to
+  prior-week trace = already works (click row). Regenerate prior
+  week = D1's per-row action. Delete prior week to "rewind" = §16.3.
+
+**Decision deliberately deferred.**
+
+- **D8. Trace history / versioning** — see §16.4. Today, regenerating
+  drops the prior `PlaylistTrace` row. Recovering "what did week 5
+  look like before I re-imported the source XMLs?" requires a schema
+  change and a viewer that surfaces multiple traces per week. That's
+  its own slice; calling it out here so the regen confirm dialog can
+  be honest about what it's destroying.
+
+**Scope — three commits.**
+
+1. **`web/src/lib/api.ts` + station-detail generate panel.**
+   - `generatePlaylist(slug, week, seed?)` typed client.
+   - On `/stations/[slug]`, above the playlists table:
+     - Empty state: big primary "Generate week 1 →".
+     - Populated: "Generate next week (N+1)" primary, plus
+       `<details>` advanced disclosure with week input (default
+       `nextWeek`) and conditional seed input + 🎲 reroll for
+       `rng === 'on'`.
+     - When chosen week exists: red "Replace week N" label +
+       `confirm()` before POST.
+   - Spinner + disabled state during fetch.
+   - Success → `goto('/playlists/{playlist_id}')`.
+   - Failure → inline `ApiError.message` rendering, no navigation.
+
+2. **Per-row "↻ Regen" link in the playlists table.**
+   - Click → `confirm("Replace week N? Trace `…` will be deleted.")`
+   - POST with fresh random seed for rng:on, no seed for rng:off.
+   - Success → `goto('/playlists/{new_id}')`.
+
+3. **Tests + §14.9 docs.**
+   - Vitest: 4–6 new cases on `detail.test.ts` covering empty-state
+     CTA, populated-state next-week label, advanced-disclosure toggle,
+     seed-input visible only on rng:on, "Replace week N" label on
+     conflict, per-row regen present.
+   - Playwright: new spec — empty → generate week 1 → trace viewer;
+     populated → next-week → trace viewer; per-row regen → confirm →
+     new trace_id; underflow → inline error, no nav.
+   - DESIGN.md §14.9 captures what shipped (same convention as
+     14.5/14.7/14.8); §15 ticks 16.1 done.
+
+**What stays out of scope (re-stated for the §14.9 punt table).**
+
+| Area                             | Status               | Trigger                            |
+|----------------------------------|----------------------|------------------------------------|
+| Delete a playlist                | §16.3                | Common enough to bother            |
+| Server-side 409 on overwrite     | not now              | Multi-user / multi-tab use         |
+| Disk-export staleness warning    | not now              | User reports forgetting to re-export|
+| Trace versioning                 | §16.4                | First "I want the old one" report  |
+| Batch "generate weeks N..M"      | not now              | Real ask appears                   |
+| Custom seed for per-row regen    | not now              | User wants it; advanced form works |
+| Auto-disk-export on generate     | rejected             | Couples concerns, surprising       |
+| Concurrent-tab race              | not now              | Single-user tool                   |
+| Auto-generate on station create  | rejected             | Generation is a visible action     |
+| Scheduler / cron                 | §11 v1.1             | Weekly migration matures           |
 
 **What this earns us.** A station's full lifecycle — create →
 generate → view trace → download — is reachable from the landing page
-without leaving the browser. Closes the v1 loop the wizard opened.
+without leaving the browser. Closes the v1 loop the wizard opened,
+and the per-row regen handles the iterate-on-source-pools flow that
+will dominate Classics's authoring use.
 
-**What stays out of scope.**
-
-- Regenerate / overwrite flow → §16.3.
-- "Generate batch of N weeks" → defer until someone wants it.
-- Auto-generate on station create → no. Generation is a separate,
-  visible action.
-- Scheduler / cron → §11 v1.1.
+**Pool-capacity ceiling worth mentioning to the user before week 13.**
+With current pools (`RG_RADIO=958`, `RG_PARTY=959`), the highest
+1-indexed position needed for week W is `(W-1)*60 + 265`. Weeks 1–12
+generate cleanly; week 13 needs index 985 → engine raises pool-
+underflow per §5.5. The inline error rendering tested in commit 3
+makes this visible; user adds tracks and re-clicks.
 
 ### 16.2 Visual block editor (v2)
 
@@ -1005,44 +1101,33 @@ duplicated from the engine (`STRATEGY_OPTIONS`, `ROLE_OPTIONS`) become
 worth extracting to `GET /api/meta` once a third caller appears — the
 editor is that third caller.
 
-### 16.3 Reset / regenerate flow
+### 16.3 Delete / station reset
 
-**The hole.** Today, regenerating an existing week silently overwrites
-because of the DB unique constraint on `(station_id, week)` — fine.
-But there's no UI affordance: `POST /api/stations/{slug}/generate`
-with an existing week number works, but the user has no way to know
-that, no warning, no confirm. And the disk export overwrites silently
-too (§14.2). For Classics, where the same week is regenerated as the
-user iterates on source pools, this is the *common* case, not the
-edge case.
+**Scope narrowed.** Originally framed as "reset / regenerate". The
+regenerate half migrated into §16.1 (per-row regen + advanced-form
+overwrite); this slice is now just *delete*. Two affordances:
 
-**Two questions tangled together** — keep them separate:
+1. **Delete a single playlist.** Per-row "Delete" link in the
+   station-detail playlists table. Pinned behind a typed-confirm or
+   two-click pattern. Optional checkbox "also remove disk export".
+2. **Delete a station entirely.** From the landing page or station-
+   detail header. Cascades through every playlist + trace + entry.
+   Useful for cleaning up wizard test stations (today the only way
+   is direct SQL).
 
-1. **Regenerate** — replace the DB playlist + trace for an existing
-   `(station, week)`. Common during authoring.
-2. **Reset / delete** — remove the playlist (and disk export?) for a
-   week. Useful for cleaning up wizard test stations.
+**Backend additions.**
 
-**Sketch for the slice (when we take it).**
+- `DELETE /api/playlists/{id}` — removes playlist + entries + trace.
+  Optional `also_disk=true` query param triggers `out/{slug}/{week:03d}.xml`
+  removal (lives behind a flag because most users don't disk-export).
+- `DELETE /api/stations/{slug}` — full station nuke. Cascades. Returns
+  `204 No Content` on success, `404` if slug unknown.
 
-- Regenerate: a button next to each row in the station-detail
-  playlists table. Confirms ("This will replace the current week N
-  trace"); on success, navigate to the new trace viewer.
-- Delete: pinned behind an explicit "Delete" affordance per row, with
-  a typed-confirm or two-click pattern. Optional checkbox "also
-  remove disk export".
-- Backend additions:
-  - `DELETE /api/playlists/{id}` — removes playlist + entries +
-    trace; optionally calls into the export-prune logic for the on-
-    disk file.
-  - `DELETE /api/stations/{slug}` — full station nuke for cleaning
-    up wizard test stations. Cascades through playlists.
-
-**Why this is queued behind 16.1 and 16.2.** Generate-first earns the
-basic loop. Block editor unlocks station #2. Reset only matters once
+**Why queued behind 16.1 and 16.2.** Generate-first earns the basic
+loop. Block editor unlocks station #2. Delete only matters once
 either of those is in real use — and even then, the underlying API
-already overwrites correctly; we're just adding UI affordances that
-match the user's mental model.
+overwrites correctly via §16.1's regen, so this is a
+clean-up-after-yourself affordance, not a critical-path one.
 
 **Stay-out-of-scope candidates.**
 
@@ -1051,4 +1136,103 @@ match the user's mental model.
 - Bulk delete — wait for it to feel painful.
 - Disk-export prune endpoint — already deferred in §14.3; this slice
   may or may not pull it forward.
+
+### 16.4 Trace versioning (D8 from §16.1)
+
+**The hole.** Today, when §16.1's regenerate flow fires, the prior
+`PlaylistTrace` row is hard-deleted via the cascade on the
+`Playlist` row's replacement. The old `trace_id` is unrecoverable —
+gone forever. The `confirm()` dialog in §16.1 is honest about this
+("Trace `abcd…` will be deleted"), but for any authoring workflow
+where the user iterates on source pools and wants to compare "what
+did week 5 look like before I re-imported RG_RADIO?", today's
+behaviour is destructive in a way that can't be undone.
+
+**Why this is its own slice and not part of 16.1.** Versioning a
+playlist is a real piece of work:
+
+1. **Schema change.** `playlist_trace.playlist_id` is a unique FK
+   today; needs to become a multi-row relation. Probably introduce a
+   `playlist_version` table keyed `(playlist_id, version_no, trace_id)`
+   with the slot JSON, and reduce `PlaylistTrace` to a view (or
+   denormalise the latest into `Playlist` for query speed).
+2. **Regeneration semantics shift.** Regenerate stops being
+   destructive — the prior version becomes `version_no=1`, the new
+   one `version_no=2`. The "current" pointer needs an explicit
+   column or is implicitly max(version_no).
+3. **Viewer UX.** The trace viewer needs a version picker (dropdown,
+   prev/next arrows, or a side-by-side diff for "show me what
+   changed between v1 and v2"). The diff view is genuinely
+   interesting — once it exists, "did my XML re-import actually
+   change anything for week 5?" becomes answerable in one glance.
+4. **Disk export ambiguity.** `out/{slug}/{week:03d}.xml` is a single
+   file today. Versioned playlists either pin disk to "always the
+   latest" (simplest) or grow `{week:03d}-v{version_no}.xml`
+   (preserves history but multiplies files). Probably the former,
+   with a versioned export as an explicit power-user action.
+5. **Storage cost.** Each Classics trace is ~3,010 slot dicts
+   (~600 KB JSON). Five regenerations of fifty-two weeks = ~150 MB
+   per station. Not a problem for SQLite, but worth knowing before
+   anyone runs hundreds of regenerations.
+
+**Sketch for the slice (when we take it).**
+
+- **Schema migration:** add `PlaylistVersion(id, playlist_id,
+  version_no, trace_id, generated_at, rng, seed, slots_json)`,
+  one-to-many from `Playlist`. `PlaylistTrace` keeps existing shape
+  for backwards-compat but reads from the latest version.
+- **Backfill:** existing rows become `version_no=1`. Idempotent
+  migration script that's safe to re-run.
+- **Generate router:** instead of `db.delete(existing)`, append a
+  new `PlaylistVersion` and bump `current_version_no`.
+- **Viewer:** version picker in the header of `/playlists/{id}`.
+  URL grows `?v=N` for permalinks. Default = latest.
+- **Diff (stretch):** `/playlists/{id}/compare?from=N&to=M` page.
+  Shows per-slot track-changed / source-changed / pool-index-changed
+  rows. Probably the most interesting bit of this whole slice.
+- **§16.1 regen confirm dialog updates:** copy flips from "Trace
+  `…` will be deleted" to "Saved as version N+1; the current
+  trace will still be available." Honest.
+
+**Why this is queued at §16.4 and not earlier.** It only matters
+once §16.1 has shipped *and* the user has experienced "I regenerated
+and now I wish I hadn't" at least once. Building it pre-emptively
+risks designing the wrong shape. The §16.1 confirm dialog gives the
+user the "are you sure?" guard rail that, for a single-user tool,
+is *probably* enough — and we'll know after a few weeks of real use
+whether that's true.
+
+**Triggers to pick this up.**
+
+- User reports wanting an old trace back (the most direct signal).
+- The diff-between-versions question gets asked ("did my re-import
+  actually change anything?").
+- A second user joins and "I overwrote your trace" becomes a
+  collaboration problem.
+
+**Stay-out-of-scope candidates** (capture upfront so we don't gold-
+plate when we get here):
+
+- Branching versions / tags (vN-experimental). Linear history is
+  enough; users can clone the station if they need a what-if.
+- Cross-station diff. Way out of scope.
+- A "rollback" button that mutates current to a prior version. Add
+  if asked, not before — it's surprisingly subtle (rolling back v3
+  to v1 makes v3 either disappear or become v4 with v1's content;
+  pick wrong and users get confused).
+
+**Implementation notes for future pick-up.**
+
+- The DB cascade today is `Playlist → PlaylistEntry` and `Playlist →
+  PlaylistTrace`, both via SQLAlchemy `relationship(cascade=...)`.
+  Look at `engine/models.py` and the relevant cascade configs before
+  changing schema; the cascades implicitly drive the "regen replaces
+  silently" behaviour today.
+- The trace JSON is large; consider gzipping `slots_json` if
+  multi-version growth becomes a real cost. SQLite has no built-in
+  compressed-blob type but `gzip.compress()` on the way in / out is
+  trivial.
+- The viewer's per-row collapse state (already in-memory only per
+  §14.5) needs to invalidate when switching versions. Reset on every
+  navigation; don't try to preserve.
 
