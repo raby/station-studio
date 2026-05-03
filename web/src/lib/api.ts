@@ -124,4 +124,35 @@ export const createStation = (
     body: JSON.stringify(payload),
   }).then((r) => json<Station>(r));
 
+export interface GenerateResponse {
+  playlist_id: number;
+  trace_id: string;
+  station: string;
+  week: number;
+  slot_count: number;
+}
+
+/**
+ * Generate (or regenerate) a playlist for `(slug, week)`.
+ *
+ * If a playlist already exists for that pair the backend silently overwrites
+ * — the calling UI is expected to confirm with the user first (see DESIGN.md
+ * §16.1 D2). `seed` is only honoured for stations whose template is
+ * `rng: "on"`; otherwise it's ignored by the engine.
+ */
+export const generatePlaylist = (
+  slug: string,
+  week: number,
+  seed?: number,
+  fetch_ = fetch,
+): Promise<GenerateResponse> => {
+  const body: { week: number; seed?: number } = { week };
+  if (seed !== undefined) body.seed = seed;
+  return fetch_(`/api/stations/${encodeURIComponent(slug)}/generate`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  }).then((r) => json<GenerateResponse>(r));
+};
+
 export { ApiError };

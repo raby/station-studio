@@ -1,6 +1,12 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { getStation, getStationPlaylists, ApiError } from '$lib/api';
+  import { goto } from '$app/navigation';
+  import {
+    getStation,
+    getStationPlaylists,
+    generatePlaylist,
+    ApiError,
+  } from '$lib/api';
   import type { Station, PlaylistSummary } from '$lib/api';
   import { page } from '$app/stores';
 
@@ -9,9 +15,44 @@
   let error: string | null = null;
   let loading = true;
 
+  // Generate-panel state. See DESIGN.md §16.1 for the decision matrix.
+  let advancedOpen = false;
+  let chosenWeek = 1; // populated post-load
+  let seedInput = randomSeed();
+  let generating = false;
+  let generateError: string | null = null;
+
   // SvelteKit guarantees `slug` is present because this route only matches
   // when the param exists, but the param type is `string | undefined`.
   $: slug = $page.params.slug ?? '';
+
+  // The 95% case — what the primary button generates.
+  $: nextWeek =
+    playlists.length === 0
+      ? 1
+      : Math.max(...playlists.map((p) => p.week)) + 1;
+
+  // Reactively keep the advanced-form week pre-filled with nextWeek until the
+  // user opens the disclosure and changes it. Once advancedOpen flips true we
+  // stop tracking so we don't yank a value out from under the user mid-edit.
+  let userTouchedAdvanced = false;
+  $: if (!userTouchedAdvanced) chosenWeek = nextWeek;
+
+  // Does the chosen week already exist? Drives the "Replace week N" affordance.
+  $: chosenWeekExists = playlists.some((p) => p.week === chosenWeek);
+
+  // Show the seed input only for rng:on stations (DESIGN.md §16.1 D3).
+  $: rngOn = (station?.template?.rng as string | undefined) === 'on';
+
+  function randomSeed(): number {
+    // 32-bit positive int — matches what `random.Random(seed)` accepts on the
+    // backend without overflow worries.
+    return Math.floor(Math.random() * 2 ** 31);
+  }
+
+  function rerollSeed() {
+    seedInput = randomSeed();
+  }
 
   onMount(async () => {
     if (!slug) {
@@ -30,6 +71,31 @@
       loading = false;
     }
   });
+
+  async function generate(week: number) {
+    // Confirm-on-overwrite (DESIGN.md §16.1 D2). Only for the form path; the
+    // empty-state CTA can never hit this because nothing exists yet.
+    if (playlists.some((p) => p.week === week)) {
+      const existing = playlists.find((p) => p.week === week)!;
+      const ok = confirm(
+        `Replace week ${week}? The current trace ${existing.trace_id.slice(0, 8)}… will be deleted (see DESIGN.md §16.4 for the trace-history feature).`,
+      );
+      if (!ok) return;
+    }
+
+    generating = true;
+    generateError = null;
+    try {
+      const seed = rngOn ? seedInput : undefined;
+      const r = await generatePlaylist(slug, week, seed);
+      // Lands on the trace viewer for the freshly generated playlist.
+      await goto(`/playlists/${r.playlist_id}`);
+    } catch (e) {
+      generateError = e instanceof ApiError ? e.message : String(e);
+      generating = false;
+    }
+    // Note: no `generating = false` on success — we're navigating away.
+  }
 
   function fmtDate(iso: string | null): string {
     if (!iso) return '';
@@ -57,10 +123,85 @@
     <p class="slug">{station.slug}</p>
 
     <h2>Playlists</h2>
+
+    <!--
+      Generate panel. Two visual variants:
+        - Empty state: big primary "Generate week 1 →" CTA.
+        - Populated:   inline button + advanced disclosure.
+      See DESIGN.md §16.1 D1/D4.
+    -->
+    <section class="generate" data-testid="generate-panel">
+      {#if playlists.length === 0}
+        <button
+          class="cta"
+          type="button"
+          disabled={generating}
+          on:click={() => generate(1)}
+        >
+          {generating ? 'Generating…' : 'Generate week 1 →'}
+        </button>
+      {:else}
+        <button
+          class="primary"
+          type="button"
+          disabled={generating}
+          on:click={() => generate(nextWeek)}
+        >
+          {generating ? 'Generating…' : `Generate next week (${nextWeek})`}
+        </button>
+      {/if}
+
+      <details bind:open={advancedOpen} class="advanced">
+        <summary>advanced — pick a week{rngOn ? ' / seed' : ''}</summary>
+        <div class="advanced-body">
+          <label>
+            Week
+            <input
+              type="number"
+              min="1"
+              data-testid="advanced-week"
+              bind:value={chosenWeek}
+              on:input={() => (userTouchedAdvanced = true)}
+            />
+          </label>
+          {#if rngOn}
+            <label>
+              Seed
+              <input
+                type="number"
+                data-testid="advanced-seed"
+                bind:value={seedInput}
+              />
+            </label>
+            <button type="button" class="ghost" on:click={rerollSeed}>
+              🎲 reroll
+            </button>
+          {/if}
+          <button
+            type="button"
+            class={chosenWeekExists ? 'replace' : 'primary'}
+            data-testid="advanced-submit"
+            disabled={generating || chosenWeek < 1}
+            on:click={() => generate(chosenWeek)}
+          >
+            {generating
+              ? 'Generating…'
+              : chosenWeekExists
+                ? `Replace week ${chosenWeek}`
+                : `Generate week ${chosenWeek}`}
+          </button>
+        </div>
+      </details>
+
+      {#if generateError}
+        <p class="error" data-testid="generate-error">{generateError}</p>
+      {/if}
+    </section>
+
     {#if playlists.length === 0}
-      <p>
-        None generated yet. From the repo root:
-        <code>python -m scripts.bootstrap_classics</code>.
+      <p class="hint">
+        None generated yet — click the button above, or run
+        <code>python -m scripts.bootstrap_classics</code> from the repo root.
       </p>
     {:else}
       <table>
@@ -118,6 +259,86 @@
   h2 {
     margin-top: 2rem;
   }
+  .generate {
+    margin: 1rem 0 1.5rem;
+    padding: 0.75rem 1rem;
+    background: #fafafa;
+    border: 1px solid #eee;
+    border-radius: 6px;
+  }
+  .cta {
+    font-size: 1.1rem;
+    padding: 0.75rem 1.5rem;
+    background: #2c7a7b;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  .cta:hover:not(:disabled) {
+    background: #285e61;
+  }
+  .primary {
+    padding: 0.5rem 1rem;
+    background: #2c7a7b;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  .primary:hover:not(:disabled) {
+    background: #285e61;
+  }
+  .replace {
+    padding: 0.5rem 1rem;
+    background: #c0392b;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  .replace:hover:not(:disabled) {
+    background: #962d22;
+  }
+  .ghost {
+    padding: 0.5rem 0.75rem;
+    background: white;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .advanced {
+    margin-top: 0.75rem;
+  }
+  .advanced summary {
+    font-size: 0.85rem;
+    color: #555;
+    cursor: pointer;
+  }
+  .advanced-body {
+    display: flex;
+    align-items: end;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    margin-top: 0.5rem;
+  }
+  .advanced-body label {
+    display: flex;
+    flex-direction: column;
+    font-size: 0.85rem;
+    color: #555;
+  }
+  .advanced-body input[type='number'] {
+    padding: 0.4rem;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    width: 7rem;
+    font-variant-numeric: tabular-nums;
+  }
   table {
     border-collapse: collapse;
     width: 100%;
@@ -145,6 +366,11 @@
   }
   .error {
     color: crimson;
+    margin-top: 0.5rem;
+  }
+  .hint {
+    color: #666;
+    font-size: 0.9rem;
   }
   code {
     background: #f4f4f4;
