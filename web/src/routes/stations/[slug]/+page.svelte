@@ -76,10 +76,12 @@
     // Confirm-on-overwrite (DESIGN.md §16.1 D2). The per-row regen path
     // bypasses this because the row's own click handler has already
     // confirmed (with row-specific copy carrying the existing trace_id).
+    // The §16.4 cross-reference belongs in code comments, not the user-
+    // facing dialog string — most readers won't know what §16.4 means.
     if (!opts.skipConfirm && playlists.some((p) => p.week === week)) {
       const existing = playlists.find((p) => p.week === week)!;
       const ok = confirm(
-        `Replace week ${week}? The current trace ${existing.trace_id.slice(0, 8)}… will be deleted (see DESIGN.md §16.4 for the trace-history feature).`,
+        `Replace week ${week}? The current trace ${existing.trace_id.slice(0, 8)}… will be deleted. (Trace history across regenerations is on the roadmap — for now this is permanent.)`,
       );
       if (!ok) return;
     }
@@ -102,15 +104,16 @@
     // Note: no `generating = false` on success — we're navigating away.
   }
 
-  function regenRow(p: PlaylistSummary) {
+  async function regenRow(p: PlaylistSummary) {
     const ok = confirm(
-      `Regenerate week ${p.week}? The current trace ${p.trace_id.slice(0, 8)}… will be deleted (see DESIGN.md §16.4 for the trace-history feature).`,
+      `Regenerate week ${p.week}? The current trace ${p.trace_id.slice(0, 8)}… will be deleted. (Trace history across regenerations is on the roadmap — for now this is permanent.)`,
     );
     if (!ok) return;
     // Per-row regen always uses a fresh random seed for rng:on (D3); the
     // explicit-seed path is the advanced form. Skip the generate()-level
-    // confirm because we just asked.
-    generate(p.week, { seed: rngOn ? randomSeed() : undefined, skipConfirm: true });
+    // confirm because we just asked. Awaited so any future code added
+    // after this call is correctly sequenced after the navigation.
+    await generate(p.week, { seed: rngOn ? randomSeed() : undefined, skipConfirm: true });
   }
 
   function fmtDate(iso: string | null): string {
@@ -199,7 +202,7 @@
             type="button"
             class={chosenWeekExists ? 'replace' : 'primary'}
             data-testid="advanced-submit"
-            disabled={generating || chosenWeek < 1}
+            disabled={generating || !Number.isFinite(chosenWeek) || chosenWeek < 1}
             on:click={() => generate(chosenWeek)}
           >
             {generating

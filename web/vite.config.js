@@ -1,5 +1,9 @@
 import { sveltekit } from '@sveltejs/kit/vite';
-import { defineConfig } from 'vite';
+// `defineConfig` from 'vitest/config' is the Vite one with the `test` block
+// typed in. Importing from 'vite' makes svelte-check warn that `test` isn't a
+// known property; importing from 'vitest/config' is the documented fix and is
+// drop-in compatible (it re-exports Vite's defineConfig).
+import { defineConfig } from 'vitest/config';
 
 const isTest = !!process.env.VITEST;
 
