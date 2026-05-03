@@ -2,14 +2,17 @@ import { test, expect } from '@playwright/test';
 import { createStation, importTinyPool, generate } from './fixtures';
 
 test.describe('station detail page', () => {
-  test('shows "none generated yet" when the station is fresh', async ({
+  test('shows the empty-state CTA when the station is fresh', async ({
     page,
     request,
   }) => {
     await createStation(request, 'det-empty', 'Det Empty');
     await page.goto('/stations/det-empty');
     await expect(page.getByRole('heading', { name: 'Det Empty' })).toBeVisible();
-    await expect(page.getByText('None generated yet.')).toBeVisible();
+    // The §16.1 empty-state replaces the old hint-only copy with a primary
+    // CTA. The hint sentence is still there, just rephrased.
+    await expect(page.getByTestId('generate-empty-cta')).toBeVisible();
+    await expect(page.getByText(/none generated yet/i)).toBeVisible();
   });
 
   test('lists generated playlists in a table with week, slots, trace', async ({

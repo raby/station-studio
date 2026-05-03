@@ -151,6 +151,7 @@
         <button
           class="cta"
           type="button"
+          data-testid="generate-empty-cta"
           disabled={generating}
           on:click={() => generate(1)}
         >
@@ -160,6 +161,7 @@
         <button
           class="primary"
           type="button"
+          data-testid="generate-next"
           disabled={generating}
           on:click={() => generate(nextWeek)}
         >

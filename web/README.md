@@ -55,9 +55,10 @@ DESIGN.md §14.8 is the long-form rationale for all of the above.
 | `/stations/new`                | shipped      | Wizard — single-page form; produces template JSON         |
 | `/stations/[slug]`             | shipped      | Station detail — header + playlists table                 |
 | `/playlists/[id]`              | shipped      | Trace viewer — slot-by-slot reasoning, iTunes download    |
-| In-UI generate button          | next (§16.1) | Closes the wizard → trace-viewer loop without curl        |
+| Generate / regenerate UI       | shipped      | Empty-state CTA + next-week + advanced + per-row ↻ regen  |
 | Visual block editor            | v2 (§16.2)   | Drag-drop over the same JSON the wizard produces          |
-| Reset / regenerate UI          | next (§16.3) | Overwrite + delete playlist; optional station nuke        |
+| Delete / station-reset UI      | next (§16.3) | DELETE playlist + station; cascades                       |
+| Trace versioning               | later (§16.4)| Schema change so regen stops being destructive            |
 
 ## Design note
 

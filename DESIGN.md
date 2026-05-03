@@ -389,7 +389,7 @@ The trace is stored as JSON alongside the playlist (in a `playlist_trace` table 
 | Visual block editor                         | next (§16.2) | v2; operates on same JSON as wizard                     |
 | Station creation wizard (UI)                | done (14.7)  | Produces the template JSON; reuses `web/src/lib/api.ts` |
 | Wizard polish (presets, per-field errors)   | later (14.7) | See 14.7 table; wait for real-user pain                 |
-| In-UI generate button + per-row regenerate  | next (§16.1) | Closes wizard → trace-viewer loop; per-row regen too    |
+| In-UI generate button + per-row regenerate  | done (14.9)  | Closes wizard → trace-viewer loop; per-row regen too    |
 | Delete / station-reset UI                   | next (§16.3) | Delete playlist; full station nuke; cascades            |
 | Trace versioning (history of regenerations) | later (§16.4)| Schema change; only after §16.1 lands and bites         |
 | Migrate Rebirth Radio onto Station Studio   | long-term    | Needs `weighted`, `prev_ref`, `genre_pick` primitives   |
@@ -840,6 +840,137 @@ real time to find and the comments in-tree are deliberately verbose:
   Pre-seed the target with garbage bytes, then assert post-export
   contains none of the garbage.
 
+### 14.9 In-UI generate button — what shipped, what was punted
+
+**What shipped (3 commits, follow-on to §16.1's plan).**
+
+Backed by the planning round in §16.1 (decisions D1–D7 captured
+there); this section records *what actually landed* and the small
+in-flight surprises.
+
+- **`generatePlaylist(slug, week, seed?)`** in `web/src/lib/api.ts`.
+  Wraps `POST /api/stations/{slug}/generate`. Seed is optional; the
+  helper omits it from the request body when undefined (engine
+  ignores it for rng:off anyway, but cleaner-on-the-wire).
+- **Generate panel on `/stations/[slug]`.** Two visual variants:
+  - Empty state: a big primary "Generate week 1 →" CTA with
+    `data-testid="generate-empty-cta"`.
+  - Populated state: inline "Generate next week (N+1)" primary
+    button with `data-testid="generate-next"`, plus a `<details>`
+    advanced disclosure for `pick a week` (and `seed` when rng:on).
+  - "Replace week N" red label fires when the chosen week already
+    exists, with a `confirm()` dialog before the POST. The dialog
+    copy points users at §16.4 so the destructive-by-design nature
+    of regen-without-versioning is visible.
+- **Per-row "↻ regen" link** in the playlists table
+  (`data-testid="regen-row-{week}"`). Confirm → POST → `goto`. Uses
+  a fresh random seed for rng:on (different output, not byte-
+  identical replay); no seed for rng:off.
+- **Inline error rendering** (`data-testid="generate-error"`) when
+  the backend returns 4xx. Page does not navigate on failure. The
+  pool-underflow path (week 13+ on Classics) flows through this.
+- **35 Vitest tests** (was 26): 9 new on `detail.test.ts` covering
+  the empty-state CTA, populated next-week label, advanced
+  disclosure, seed gating on rng, "Replace week N" label on
+  conflict, confirm-yes/no paths, per-row regen with seed-presence
+  check, and the inline-error path.
+- **15 Playwright tests** (was 13, with 1 also rewritten): a new
+  `e2e/generate.spec.ts` covers empty → CTA → trace viewer;
+  populated → next-week → trace viewer; replace via advanced
+  form (with confirm accept); per-row regen; cancel path; engine
+  underflow → inline error → no nav. Existing
+  `station-detail.spec.ts` updated for the new empty-state copy.
+
+**Decisions in-flight that the §16.1 brief didn't pre-decide.**
+
+- **CTA needed its own testid.** The empty-state CTA *and* the
+  advanced-form submit both render "Generate week 1" by default
+  when nothing exists, so `findByRole('button', { name: /generate
+  week 1/ })` matched both and threw "Found multiple". Added
+  `data-testid="generate-empty-cta"` and switched to testid-based
+  selection. Lesson: when role-name selectors collide because two
+  controls converge on the same default text, reach for testid
+  before fighting the regex.
+- **Landing spec lost its empty-state assertion.** Playwright's
+  `webServer` shares one DB across the whole suite. Adding
+  `e2e/generate.spec.ts` (alphabetically before `landing.spec.ts`)
+  meant by the time the landing test ran, several stations
+  existed, so the empty-state hint copy was no longer visible. The
+  empty-state assertion was already covered at the Vitest layer
+  (`landing.test.ts` mocks the API response), so I dropped it from
+  the Playwright spec rather than imposing test ordering or DB
+  isolation. Captured in a comment on the test.
+- **Trace-viewer week assertion uses `'002'` (zero-padded).** The
+  trace viewer renders week as `String(trace.week).padStart(3, '0')`
+  — `'002'`, not `'2'`. Initial regex `/week\s*2/` failed. Lesson:
+  read the rendered output, not the model, when writing e2e
+  assertions.
+- **`generate()` function gained an `opts` arg.** Per-row regen
+  needs to bypass the generic overwrite-confirm (because we
+  already asked, in row-specific copy) and pass a different seed
+  than `seedInput` (which is the form's state, not the row's).
+  `generate(week, { seed?, skipConfirm? })` — feels like a small
+  thing but worth flagging because the next caller will be tempted
+  to pass an entire bag instead of two named flags.
+- **Per-row regen uses fresh-random seed for rng:on.** Concrete
+  consequence of D3: the user wanting a *specific* seed uses the
+  advanced form; the per-row path is for "redo this week with
+  whatever current state of the world is". This is unobservable
+  for Classics (rng:off) but locks in the contract for the first
+  rng:on station.
+
+**What's now reachable from the UI.** The full v1 lifecycle:
+landing → wizard → station detail → generate (week 1) → trace
+viewer → download iTunes XML. Three clicks from landing to a
+playable file. The §16.1 brief's "loudest paper cut" is closed.
+
+**Coverage shipping** — last measurement on commit `<this>`:
+
+| Layer        | Coverage                                                   |
+|--------------|------------------------------------------------------------|
+| Backend      | 98% lines (unchanged — no backend changes this slice)      |
+| Frontend Vitest | landing 100%, station-detail ~99%, wizard 95%, lib/api 100% |
+| Playwright   | 15 specs across 6 files                                    |
+
+**Deliberately punted from this slice** — these match §16.1's
+pre-flight punt list, restated here for the §11 cross-reference:
+
+| Area                             | Status               | Trigger                              |
+|----------------------------------|----------------------|--------------------------------------|
+| Delete a playlist                | §16.3                | Common enough to bother              |
+| Server-side 409 on overwrite     | not now              | Multi-user / multi-tab use           |
+| Disk-export staleness warning    | not now              | User reports forgetting to re-export |
+| Trace versioning                 | §16.4                | First "I want the old one" report    |
+| Batch "generate weeks N..M"      | not now              | Real ask appears                     |
+| Custom seed for per-row regen    | not now              | Advanced form already covers it      |
+| Auto-disk-export on generate     | rejected             | Couples concerns, surprising         |
+| Concurrent-tab race              | not now              | Single-user tool                     |
+| Auto-generate on station create  | rejected             | Generation is a visible action       |
+| Scheduler / cron                 | §11 v1.1             | Weekly migration matures             |
+
+**Implementation notes for future pick-up.**
+
+- `nextWeek` is a derived `$:` reactive — `Math.max(...weeks) + 1`
+  on the array, with `0` as the empty-state default. The advanced
+  form's `chosenWeek` mirrors `nextWeek` until the user touches
+  the input (via `userTouchedAdvanced` flag); after that, the
+  reactive backs off to avoid yanking values mid-edit. If you
+  extend to multi-week batch generation, the same flag pattern
+  works for the "from"/"to" inputs.
+- The confirm copy points users at `DESIGN.md §16.4` *by name*.
+  When §16.4 ships and regen becomes non-destructive, update the
+  copy in `+page.svelte`'s `generate()` and `regenRow()` — it'll
+  be a search for the literal string "§16.4".
+- The `generate-empty-cta` testid is what the empty-state
+  Playwright spec hangs on; if you ever change the empty-state to
+  not be a button (e.g. a multi-step wizard for the first
+  generation), keep the testid attached to the entry-point
+  control or update the spec.
+- Per-row regen uses `regen-row-{week}` not `regen-row-{playlist_id}`
+  because `week` is more stable across regenerations (the playlist
+  id changes each time). Tests can therefore re-target the same
+  control by week even after a regen has shifted ids underneath.
+
 **Coverage shipping** — last measurement on commit `b44a3f4`:
 
 | Layer        | Coverage                                        |
@@ -894,8 +1025,8 @@ A quick "where are we" for a future reader. Last updated at commit
 | Trace viewer (UI)        | Shipped (first cut). Works end-to-end against real data.         |
 | Station creation wizard  | Shipped (first cut). End-to-end verified.                        |
 | Test plan + CI           | Shipped. 4-tier (engine, API, Vitest, Playwright). 98% backend.  |
+| In-UI generate button    | Shipped (14.9). Empty-CTA + next-week + advanced + per-row regen.|
 | Visual block editor      | Deferred (v2). See §16.2.                                        |
-| In-UI generate button    | Deferred. See §16.1 — next up.                                   |
 | Delete / station-reset   | Deferred. See §16.3.                                             |
 | Trace versioning         | Deferred. See §16.4 (queued behind §16.1 by design).             |
 | Scheduler                | Deferred (v1.1).                                                 |
