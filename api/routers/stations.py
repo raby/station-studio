@@ -4,7 +4,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from engine.models import Station, Playlist, PlaylistEntry
+from engine.models import Station, Playlist, PlaylistEntry, PlaylistTrace, CursorState
 from engine.template import parse_template, TemplateError
 from api.deps import get_db
 from api.schemas import StationCreate, StationOut, PlaylistSummary
@@ -70,6 +70,16 @@ def list_station_playlists(slug: str, db: Session = Depends(get_db)):
         )
         for p, entry_count in rows
     ]
+
+
+@router.delete("/{slug}", status_code=204)
+def delete_station(slug: str, db: Session = Depends(get_db)):
+    """Delete a station and all its playlists, entries, traces and cursor state."""
+    s = db.query(Station).filter(Station.slug == slug).first()
+    if not s:
+        raise HTTPException(404, f"station '{slug}' not found")
+    db.delete(s)
+    db.commit()
 
 
 @router.put("/{slug}", response_model=StationOut)

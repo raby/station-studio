@@ -154,6 +154,16 @@ def export_to_disk(playlist_id: int, db: Session = Depends(get_db)):
     return {"path": str(path), "bytes": path.stat().st_size}
 
 
+@router.delete("/api/playlists/{playlist_id}", status_code=204)
+def delete_playlist(playlist_id: int, db: Session = Depends(get_db)):
+    """Delete a playlist and its entries + trace."""
+    p = db.query(Playlist).filter_by(id=playlist_id).first()
+    if not p:
+        raise HTTPException(404, "playlist not found")
+    db.delete(p)
+    db.commit()
+
+
 @router.get("/api/playlists/{playlist_id}/trace")
 def get_trace(playlist_id: int, db: Session = Depends(get_db)):
     t = db.query(PlaylistTrace).filter_by(playlist_id=playlist_id).first()

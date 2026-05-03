@@ -652,6 +652,115 @@ def test_root_endpoint_identifies_the_service():
     assert r.json() == {"service": "station-studio", "version": "0.1.0"}
 
 
+# ---------- DELETE /api/playlists/{id} --------------------------------
+
+
+def test_delete_playlist_happy_path(api):
+    client, Session = api
+    _, pid = _seed_station_with_playlist(Session, slug="del", week=1)
+
+    r = client.delete(f"/api/playlists/{pid}")
+    assert r.status_code == 204
+    assert r.content == b""
+
+    # Subsequent GET returns 404.
+    assert client.get(f"/api/playlists/{pid}").status_code == 404
+
+
+def test_delete_playlist_missing_404(api):
+    client, _ = api
+    r = client.delete("/api/playlists/999")
+    assert r.status_code == 404
+
+
+def test_delete_playlist_cascades_entries_and_trace(api):
+    client, Session = api
+    _, pid = _seed_station_with_playlist(
+        Session, slug="casc", week=1,
+        tracks=[
+            {"persistent_id": "P1", "name": "One", "artist": "A", "itunes_track_id": 1},
+            {"persistent_id": "P2", "name": "Two", "artist": "A", "itunes_track_id": 2},
+        ],
+        with_trace=True,
+    )
+
+    r = client.delete(f"/api/playlists/{pid}")
+    assert r.status_code == 204
+
+    with Session() as db:
+        assert db.query(PlaylistEntry).filter_by(playlist_id=pid).count() == 0
+        assert db.query(PlaylistTrace).filter_by(playlist_id=pid).first() is None
+
+
+def test_delete_playlist_leaves_station_intact(api):
+    client, Session = api
+    _, pid = _seed_station_with_playlist(Session, slug="keep", week=1)
+
+    client.delete(f"/api/playlists/{pid}")
+
+    assert client.get("/api/stations/keep").status_code == 200
+
+
+# ---------- DELETE /api/stations/{slug} --------------------------------
+
+
+def test_delete_station_happy_path(api):
+    client, _ = api
+    client.post("/api/stations", json=_wizard_payload("nuke", "Nuke FM"))
+
+    r = client.delete("/api/stations/nuke")
+    assert r.status_code == 204
+    assert r.content == b""
+
+    assert client.get("/api/stations/nuke").status_code == 404
+
+
+def test_delete_station_missing_404(api):
+    client, _ = api
+    r = client.delete("/api/stations/ghost")
+    assert r.status_code == 404
+    assert "not found" in r.json()["detail"]
+
+
+def test_delete_station_cascades_playlists_entries_traces(api):
+    client, Session = api
+    # Two playlists under the same station.
+    sid, pid1 = _seed_station_with_playlist(Session, slug="full", week=1, with_trace=True)
+    with Session() as db:
+        st = db.query(Station).filter_by(id=sid).first()
+        pl2 = Playlist(station_id=st.id, week=2, trace_id="trace-full-2")
+        db.add(pl2)
+        db.flush()
+        db.add(PlaylistTrace(
+            trace_id="trace-full-2", playlist_id=pl2.id,
+            station_slug="full", week=2, rng="off", seed=None,
+            generated_at=datetime.now(timezone.utc).isoformat(),
+            slots=[],
+        ))
+        db.commit()
+        pid2 = pl2.id
+
+    r = client.delete("/api/stations/full")
+    assert r.status_code == 204
+
+    with Session() as db:
+        assert db.query(Playlist).filter(Playlist.id.in_([pid1, pid2])).count() == 0
+        assert db.query(PlaylistEntry).filter_by(playlist_id=pid1).count() == 0
+        assert db.query(PlaylistTrace).filter(
+            PlaylistTrace.playlist_id.in_([pid1, pid2])
+        ).count() == 0
+
+
+def test_delete_station_with_no_playlists(api):
+    client, _ = api
+    client.post("/api/stations", json=_wizard_payload("empty-nuke", "Empty Nuke"))
+    r = client.delete("/api/stations/empty-nuke")
+    assert r.status_code == 204
+
+
+# ---------- end of delete tests ----------------------------------------
+
+
 def test_get_db_yields_closable_session(tmp_path, monkeypatch):
     """The real get_db() generator (not the test-override) opens a Session,
     yields it, and closes it on teardown. Verify by driving the generator
