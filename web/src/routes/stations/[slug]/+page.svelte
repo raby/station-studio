@@ -72,10 +72,11 @@
     }
   });
 
-  async function generate(week: number) {
-    // Confirm-on-overwrite (DESIGN.md §16.1 D2). Only for the form path; the
-    // empty-state CTA can never hit this because nothing exists yet.
-    if (playlists.some((p) => p.week === week)) {
+  async function generate(week: number, opts: { seed?: number; skipConfirm?: boolean } = {}) {
+    // Confirm-on-overwrite (DESIGN.md §16.1 D2). The per-row regen path
+    // bypasses this because the row's own click handler has already
+    // confirmed (with row-specific copy carrying the existing trace_id).
+    if (!opts.skipConfirm && playlists.some((p) => p.week === week)) {
       const existing = playlists.find((p) => p.week === week)!;
       const ok = confirm(
         `Replace week ${week}? The current trace ${existing.trace_id.slice(0, 8)}… will be deleted (see DESIGN.md §16.4 for the trace-history feature).`,
@@ -86,7 +87,11 @@
     generating = true;
     generateError = null;
     try {
-      const seed = rngOn ? seedInput : undefined;
+      // Per D3: seed only goes on the wire for rng:on stations. The advanced
+      // form passes the user-chosen seed; per-row regen passes a fresh
+      // random one (so the user lands on a *different* output, not a
+      // byte-identical replay). For rng:off, the seed is omitted entirely.
+      const seed = rngOn ? (opts.seed ?? seedInput) : undefined;
       const r = await generatePlaylist(slug, week, seed);
       // Lands on the trace viewer for the freshly generated playlist.
       await goto(`/playlists/${r.playlist_id}`);
@@ -95,6 +100,17 @@
       generating = false;
     }
     // Note: no `generating = false` on success — we're navigating away.
+  }
+
+  function regenRow(p: PlaylistSummary) {
+    const ok = confirm(
+      `Regenerate week ${p.week}? The current trace ${p.trace_id.slice(0, 8)}… will be deleted (see DESIGN.md §16.4 for the trace-history feature).`,
+    );
+    if (!ok) return;
+    // Per-row regen always uses a fresh random seed for rng:on (D3); the
+    // explicit-seed path is the advanced form. Skip the generate()-level
+    // confirm because we just asked.
+    generate(p.week, { seed: rngOn ? randomSeed() : undefined, skipConfirm: true });
   }
 
   function fmtDate(iso: string | null): string {
@@ -212,6 +228,7 @@
             <th>Generated</th>
             <th>Trace</th>
             <th></th>
+            <th></th>
           </tr>
         </thead>
         <tbody>
@@ -222,6 +239,18 @@
               <td>{fmtDate(p.generated_at)}</td>
               <td class="mono">{p.trace_id.slice(0, 8)}…</td>
               <td><a href="/playlists/{p.id}">view →</a></td>
+              <td>
+                <button
+                  type="button"
+                  class="link-btn"
+                  data-testid="regen-row-{p.week}"
+                  disabled={generating}
+                  on:click={() => regenRow(p)}
+                  title="Regenerate this week — replaces the current trace"
+                >
+                  ↻ regen
+                </button>
+              </td>
             </tr>
           {/each}
         </tbody>
@@ -363,6 +392,20 @@
     font-family: ui-monospace, monospace;
     font-size: 0.85rem;
     color: #666;
+  }
+  .link-btn {
+    background: none;
+    border: none;
+    color: #c0392b;
+    cursor: pointer;
+    font-size: 0.85rem;
+    padding: 0;
+  }
+  .link-btn:hover:not(:disabled) {
+    text-decoration: underline;
+  }
+  .link-btn:disabled {
+    color: #999;
   }
   .error {
     color: crimson;
