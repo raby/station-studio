@@ -8,6 +8,8 @@ import {
   getTrace,
   createStation,
   generatePlaylist,
+  deletePlaylist,
+  deleteStation,
 } from './api';
 
 /**
@@ -176,6 +178,56 @@ describe('api client', () => {
       expect(err).toBeInstanceOf(ApiError);
       expect(err.status).toBe(400);
       expect(err.message).toContain('pool underflow');
+    });
+  });
+
+  describe('deletePlaylist', () => {
+    // 204 No Content responses have empty bodies — calling .json() on them
+    // throws. The `noContent` helper exists exactly to skip that parse;
+    // these tests prove it does the right thing on success and still maps
+    // failures to ApiError so the UI can render them inline.
+
+    it('issues DELETE /api/playlists/{id} and resolves on 204', async () => {
+      const { fetch_, calls } = makeSpy({ status: 204, statusText: 'No Content' });
+      await deletePlaylist(42, fetch_);
+
+      expect(calls[0].input).toBe('/api/playlists/42');
+      expect(calls[0].init?.method).toBe('DELETE');
+    });
+
+    it('raises ApiError on 404 (someone else already deleted, or wrong id)', async () => {
+      const { fetch_ } = makeSpy({
+        ok: false,
+        status: 404,
+        statusText: 'Not Found',
+        text: 'playlist not found',
+      });
+      const err = await deletePlaylist(999, fetch_).catch((e) => e);
+      expect(err).toBeInstanceOf(ApiError);
+      expect(err.status).toBe(404);
+      expect(err.message).toContain('playlist not found');
+    });
+  });
+
+  describe('deleteStation', () => {
+    it('URL-encodes the slug and issues DELETE /api/stations/{slug}', async () => {
+      const { fetch_, calls } = makeSpy({ status: 204, statusText: 'No Content' });
+      await deleteStation('a b', fetch_);
+
+      expect(calls[0].input).toBe('/api/stations/a%20b');
+      expect(calls[0].init?.method).toBe('DELETE');
+    });
+
+    it('raises ApiError on 404 unknown slug', async () => {
+      const { fetch_ } = makeSpy({
+        ok: false,
+        status: 404,
+        statusText: 'Not Found',
+        text: "station 'ghost' not found",
+      });
+      const err = await deleteStation('ghost', fetch_).catch((e) => e);
+      expect(err).toBeInstanceOf(ApiError);
+      expect(err.status).toBe(404);
     });
   });
 

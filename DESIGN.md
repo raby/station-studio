@@ -390,7 +390,7 @@ The trace is stored as JSON alongside the playlist (in a `playlist_trace` table 
 | Station creation wizard (UI)                | done (14.7)  | Produces the template JSON; reuses `web/src/lib/api.ts` |
 | Wizard polish (presets, per-field errors)   | later (14.7) | See 14.7 table; wait for real-user pain                 |
 | In-UI generate button + per-row regenerate  | done (14.9)  | Closes wizard → trace-viewer loop; per-row regen too    |
-| Delete / station-reset UI                   | next (§16.3) | Delete playlist; full station nuke; cascades            |
+| Delete / station-reset UI                   | done (14.10) | Per-row delete + station-nuke header; both with confirm |
 | Trace versioning (history of regenerations) | later (§16.4)| Schema change; only after §16.1 lands and bites         |
 | Migrate Rebirth Radio onto Station Studio   | long-term    | Needs `weighted`, `prev_ref`, `genre_pick` primitives   |
 | iTunes XML export of Classics playlists     | done (14.1)  | Lifted from weekly, station-scoped; browser + disk paths|
@@ -1017,9 +1017,129 @@ pre-flight punt list, restated here for the §11 cross-reference:
 - The CI workflow runs Python 3.14 with `allow-prereleases: true`
   on `actions/setup-python`. Drop that flag once 3.14 GAs.
 
----
+### 14.10 Delete / station reset — what shipped, what was punted
 
-## 15. Status snapshot
+**What shipped (5 commits, follow-on to §16.3's plan).**
+
+The plan in §16.3 captured D1–D7 ahead of execution; this section
+records what actually landed and the in-flight surprises.
+
+- **Backend (already in place via earlier commits).** Two DELETE
+  endpoints, both 204 No Content with cascade through SQLAlchemy
+  relationships:
+  - `DELETE /api/playlists/{id}` (commit `805ac48`)
+  - `DELETE /api/stations/{slug}` (commit `805ac48`)
+  - ORM cascade on `Station → Playlist` declared in `engine/models.py`
+    (commit `1302218`) — previously relying on the SQLite FK PRAGMA,
+    which isn't always emitted per-connection by SQLAlchemy.
+  - 9 backend tests covering happy paths, 404, cascade behaviour,
+    and the leave-siblings-intact direction.
+- **`web/src/lib/api.ts`** — `deletePlaylist(id)` and
+  `deleteStation(slug)` typed clients. Plus a small `noContent`
+  helper alongside `json` to skip the JSON parse on 204 responses
+  (calling `.json()` on an empty body throws).
+- **Per-row `✕ delete` link** in the playlists table on
+  `/stations/[slug]`, peer to the existing `↻ regen`. Confirms with
+  the trace_id fragment per D2; on 204 refetches playlists in place
+  so the row vanishes; on error renders inline via
+  `data-testid="delete-error"`. `data-testid="delete-row-{week}"`.
+- **"Delete station →" button** in the page header, right-aligned,
+  outlined-red turning red-fill on hover. The
+  `nukeStation()` handler composes the D2 dialog text from page
+  state — `playlists.length` for the count, `playlists.reduce`
+  for the entry total — no extra fetch. On 204 navigates to `/`.
+  `data-testid="delete-station"`.
+- **`deleting` flag** disables both regen and delete buttons across
+  all rows while a delete is in flight. One delete at a time.
+- **11 new Vitest tests** (was 39 → 50): 4 on `lib/api.test.ts` for
+  `deletePlaylist` and `deleteStation`, 7 on `detail.test.ts`
+  covering both affordances' confirm-yes/no paths, computed-count
+  copy, pluralisation, and inline error rendering.
+- **4 new Playwright tests** (was 15 → 19) in `e2e/delete.spec.ts`:
+  per-row delete and cancel, station nuke and cancel.
+
+**Decisions in-flight that the §16.3 brief didn't pre-decide.**
+
+- **Single shared `deleteError` slot, not two.** The plan had a
+  per-row error and a station-level error as two separate concerns.
+  In practice only one delete runs at a time — `deleting` ensures
+  both buttons are disabled while one is in flight — so the second
+  error slot was redundant. One `<p data-testid="delete-error">`
+  renders the message regardless of which delete failed.
+- **Per-row delete refetches via `getStationPlaylists()` rather
+  than splicing local state.** Considered the local splice for
+  speed, but a refetch is one extra round-trip and keeps the page
+  in sync with anything else that changed server-side (regen from
+  another tab, schema migrations, etc.). One less subtle bug to
+  watch for. Same pattern any future "delete and stay" flow should
+  follow.
+- **Pluralisation handled inline in the dialog string.** Tempting
+  to reach for a tiny `pluralize()` utility; for two cases ("1
+  playlist" / "N playlists") it's overkill. The Vitest test
+  explicitly asserts the singular form so a future regression
+  (e.g. accidentally adding an `s`) shows up.
+- **`.locale.toLocaleString()` for the entry-count number**
+  (e.g. `36,030`) — small touch, but at 30k+ entries the comma
+  matters for readability. The Vitest assertion uses a
+  comma-tolerant regex so a future locale tweak doesn't break it.
+- **Disk-export removal stayed out of scope per D3** but I noticed
+  the Classics `out/rebirth-classics/001.xml` and `002.xml` files
+  still exist after a hypothetical station nuke. Captured this in
+  the punt table as the trigger for the disk-prune slice (§14.3
+  follow-up).
+- **Header layout uses flex with `align-items: flex-start`** so the
+  nuke button sits flush with the top of `<h1>` rather than
+  vertically-centred against the slug subtitle. Reads better; the
+  button is *associated* with the station name, not the slug.
+
+**What's now reachable from the UI.** The full station-lifecycle
+loop now closes on both ends: create → generate → view trace →
+delete. Empty wizard test stations and accidentally-generated
+playlists no longer require dropping to `curl -X DELETE`.
+
+**Coverage shipping** — last measurement post-§16.3:
+
+| Layer        | Coverage                                                     |
+|--------------|--------------------------------------------------------------|
+| Backend      | unchanged from §14.9 (no new backend code in this slice)     |
+| Frontend Vitest | landing 100%, station-detail ~95%, wizard 95%, `lib/api` 100% |
+| Playwright   | 19 specs across 7 files                                      |
+
+**Deliberately punted from this slice** — match §16.3's pre-flight
+punt list:
+
+| Area                                | Status               | Trigger                              |
+|-------------------------------------|----------------------|--------------------------------------|
+| Trash / soft-delete with restore    | rejected             | Single-user; git history of templates is enough |
+| Bulk delete (multiple weeks)        | not now              | Real ask appears                     |
+| Typed-confirm ("type the slug")     | not now              | "I nuked the wrong station" report   |
+| Disk-export removal flag            | §14.3 disk-prune     | Disk-prune slice lands               |
+| Audit log of deletes                | rejected             | Single-user                          |
+| Delete from trace viewer            | not now              | Felt friction with station-detail-only path |
+| Concurrent-tab race / 409           | not now              | Multi-user / multi-tab use           |
+
+**Implementation notes for future pick-up.**
+
+- The `noContent` helper is `null`-returning by signature
+  (`Promise<void>`) — for endpoints that *sometimes* return JSON
+  and sometimes 204, you'd want a third helper or a discriminated
+  return. None exist today; cross that bridge when one does.
+- The `deleteRow` and `nukeStation` handlers both use the same
+  `deleting` and `deleteError` state — adding a third delete
+  flow (e.g. delete-from-trace-viewer if §16.3's punt-list
+  trigger fires) should reuse them rather than introducing a
+  third tier of state.
+- The header `.station-header` flex assumes the title fits on one
+  line. If a station gets a very long display name, the nuke
+  button will wrap below — `white-space: nowrap` on the button
+  prevents *its* text wrapping, but the layout still reflows.
+  Acceptable; revisit if real names get long.
+- The disk-export side: `out/{slug}/{week:03d}.xml` files are
+  orphaned after a delete. The user's existing workflow notices
+  this naturally (the file still appears in their iTunes folder)
+  but a future disk-prune slice should clean up. §14.3 already
+  has the policy ("No policy + .gitignore"); the prune endpoint
+  was deferred there.
 
 A quick "where are we" for a future reader. Last updated at commit
 `b44a3f4` — test-plan delivery + landing/detail backfill.
@@ -1036,8 +1156,8 @@ A quick "where are we" for a future reader. Last updated at commit
 | Station creation wizard  | Shipped (first cut). End-to-end verified.                        |
 | Test plan + CI           | Shipped. 4-tier (engine, API, Vitest, Playwright). 98% backend.  |
 | In-UI generate button    | Shipped (14.9). Empty-CTA + next-week + advanced + per-row regen.|
+| Delete / station-reset   | Shipped (14.10). Per-row delete + station nuke; cascades.        |
 | Visual block editor      | Deferred (v2). See §16.2.                                        |
-| Delete / station-reset   | Deferred. See §16.3.                                             |
 | Trace versioning         | Deferred. See §16.4 (queued behind §16.1 by design).             |
 | Accessibility pass       | Deferred. See §16.5 (consolidates piecemeal a11y notes).         |
 | Scheduler                | Deferred (v1.1).                                                 |

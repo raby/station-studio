@@ -9,6 +9,8 @@ const {
   getStationMock,
   getStationPlaylistsMock,
   generatePlaylistMock,
+  deletePlaylistMock,
+  deleteStationMock,
   gotoMock,
   FakeApiError,
   pageStore,
@@ -39,6 +41,8 @@ const {
     getStationMock: vi.fn(),
     getStationPlaylistsMock: vi.fn(),
     generatePlaylistMock: vi.fn(),
+    deletePlaylistMock: vi.fn(),
+    deleteStationMock: vi.fn(),
     gotoMock: vi.fn(),
     FakeApiError,
     pageStore,
@@ -50,6 +54,8 @@ vi.mock('$lib/api', () => ({
   getStation: (...args: unknown[]) => getStationMock(...args),
   getStationPlaylists: (...args: unknown[]) => getStationPlaylistsMock(...args),
   generatePlaylist: (...args: unknown[]) => generatePlaylistMock(...args),
+  deletePlaylist: (...args: unknown[]) => deletePlaylistMock(...args),
+  deleteStation: (...args: unknown[]) => deleteStationMock(...args),
   ApiError: FakeApiError,
 }));
 
@@ -76,6 +82,8 @@ describe('station detail +page.svelte', () => {
     getStationMock.mockReset();
     getStationPlaylistsMock.mockReset();
     generatePlaylistMock.mockReset();
+    deletePlaylistMock.mockReset();
+    deleteStationMock.mockReset();
     gotoMock.mockReset();
     setSlug('cls'); // default for tests that don't care
   });
@@ -220,6 +228,8 @@ describe('station detail — §16.1 generate panel', () => {
     getStationMock.mockReset();
     getStationPlaylistsMock.mockReset();
     generatePlaylistMock.mockReset();
+    deletePlaylistMock.mockReset();
+    deleteStationMock.mockReset();
     gotoMock.mockReset();
     setSlug('cls');
   });
@@ -393,5 +403,153 @@ describe('station detail — §16.1 generate panel', () => {
       /pool underflow.*RG_RADIO/i,
     );
     expect(gotoMock).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * §16.3 Delete affordances — both per-row and station-nuke flows.
+ *
+ * Vitest covers the wiring: confirm() yes/no paths, refetch on success
+ * (per-row), goto('/') on success (station), inline error rendering.
+ * Playwright covers integration in delete.spec.ts.
+ */
+describe('station detail — §16.3 delete affordances', () => {
+  beforeEach(() => {
+    getStationMock.mockReset();
+    getStationPlaylistsMock.mockReset();
+    generatePlaylistMock.mockReset();
+    deletePlaylistMock.mockReset();
+    deleteStationMock.mockReset();
+    gotoMock.mockReset();
+    setSlug('cls');
+  });
+
+  const stubStation = () => ({
+    id: 1,
+    slug: 'cls',
+    name: 'Classics',
+    template: { rng: 'off' },
+  });
+
+  const playlistFixture = () => [
+    { id: 5, week: 5, trace_id: 'feedface1234', generated_at: null, entry_count: 3010 },
+    { id: 6, week: 6, trace_id: 'baadf00dabcd', generated_at: null, entry_count: 3010 },
+  ];
+
+  // ---- per-row delete -------------------------------------------------
+
+  it('per-row delete: confirms with the trace fragment then DELETEs', async () => {
+    getStationMock.mockResolvedValueOnce(stubStation());
+    getStationPlaylistsMock.mockResolvedValueOnce(playlistFixture());
+    // After delete the page refetches; return the shrunken list.
+    getStationPlaylistsMock.mockResolvedValueOnce([playlistFixture()[1]]);
+    deletePlaylistMock.mockResolvedValueOnce(undefined);
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+    render(Page);
+    const btn = await screen.findByTestId('delete-row-5');
+    await fireEvent.click(btn);
+
+    expect(confirmSpy).toHaveBeenCalledWith(
+      expect.stringMatching(/delete week 5.*feedface/i),
+    );
+    expect(deletePlaylistMock).toHaveBeenCalledWith(5);
+    confirmSpy.mockRestore();
+  });
+
+  it('per-row delete: cancel skips the API call entirely', async () => {
+    getStationMock.mockResolvedValueOnce(stubStation());
+    getStationPlaylistsMock.mockResolvedValueOnce(playlistFixture());
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+
+    render(Page);
+    await fireEvent.click(await screen.findByTestId('delete-row-5'));
+
+    expect(deletePlaylistMock).not.toHaveBeenCalled();
+    confirmSpy.mockRestore();
+  });
+
+  it('per-row delete: 404 renders inline, no navigation', async () => {
+    getStationMock.mockResolvedValueOnce(stubStation());
+    getStationPlaylistsMock.mockResolvedValueOnce(playlistFixture());
+    deletePlaylistMock.mockRejectedValueOnce(
+      new FakeApiError(404, '404 Not Found: playlist not found'),
+    );
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+    render(Page);
+    await fireEvent.click(await screen.findByTestId('delete-row-5'));
+    await act();
+
+    expect(await screen.findByTestId('delete-error')).toHaveTextContent(/playlist not found/i);
+    expect(gotoMock).not.toHaveBeenCalled();
+    confirmSpy.mockRestore();
+  });
+
+  // ---- station nuke ---------------------------------------------------
+
+  it('station nuke: confirm copy includes computed counts', async () => {
+    getStationMock.mockResolvedValueOnce(stubStation());
+    getStationPlaylistsMock.mockResolvedValueOnce(playlistFixture()); // 2 × 3010 = 6020
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+
+    render(Page);
+    await fireEvent.click(await screen.findByTestId('delete-station'));
+
+    // The dialog text mentions both the playlist count (2) and the entry
+    // total (6,020 with locale separator). Loose regex so a future copy
+    // tweak doesn't break this.
+    expect(confirmSpy).toHaveBeenCalledWith(
+      expect.stringMatching(/'cls'.*2 playlists.*6,?020/i),
+    );
+    expect(deleteStationMock).not.toHaveBeenCalled();
+    confirmSpy.mockRestore();
+  });
+
+  it('station nuke: pluralisation handles the single-playlist case', async () => {
+    getStationMock.mockResolvedValueOnce(stubStation());
+    getStationPlaylistsMock.mockResolvedValueOnce([playlistFixture()[0]]);
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+
+    render(Page);
+    await fireEvent.click(await screen.findByTestId('delete-station'));
+
+    // "1 playlist" — singular — not "1 playlists".
+    expect(confirmSpy).toHaveBeenCalledWith(
+      expect.stringMatching(/1 playlist[^s]/i),
+    );
+    confirmSpy.mockRestore();
+  });
+
+  it('station nuke: success navigates to landing', async () => {
+    getStationMock.mockResolvedValueOnce(stubStation());
+    getStationPlaylistsMock.mockResolvedValueOnce(playlistFixture());
+    deleteStationMock.mockResolvedValueOnce(undefined);
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+    render(Page);
+    await fireEvent.click(await screen.findByTestId('delete-station'));
+    await act();
+
+    expect(deleteStationMock).toHaveBeenCalledWith('cls');
+    expect(gotoMock).toHaveBeenCalledWith('/');
+    confirmSpy.mockRestore();
+  });
+
+  it('station nuke: 4xx renders inline, no navigation', async () => {
+    getStationMock.mockResolvedValueOnce(stubStation());
+    getStationPlaylistsMock.mockResolvedValueOnce(playlistFixture());
+    deleteStationMock.mockRejectedValueOnce(
+      new FakeApiError(500, '500 Internal Server Error: db locked'),
+    );
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+    render(Page);
+    await fireEvent.click(await screen.findByTestId('delete-station'));
+    await act();
+
+    expect(await screen.findByTestId('delete-error')).toHaveTextContent(/db locked/i);
+    expect(gotoMock).not.toHaveBeenCalled();
+    confirmSpy.mockRestore();
   });
 });
