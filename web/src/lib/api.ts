@@ -86,6 +86,18 @@ async function json<T>(res: Response): Promise<T> {
   return (await res.json()) as T;
 }
 
+/**
+ * Like `json`, but for endpoints that return 204 No Content (DELETE). Skips
+ * the JSON parse — calling `.json()` on an empty body throws. Errors still
+ * map through ApiError so the caller can surface them inline.
+ */
+async function noContent(res: Response): Promise<void> {
+  if (!res.ok) {
+    const body = await res.text();
+    throw new ApiError(res.status, `${res.status} ${res.statusText}: ${body}`);
+  }
+}
+
 // ---- public API ---------------------------------------------------------
 
 export const getStations = (fetch_ = fetch): Promise<Station[]> =>
@@ -154,5 +166,24 @@ export const generatePlaylist = (
     body: JSON.stringify(body),
   }).then((r) => json<GenerateResponse>(r));
 };
+
+/**
+ * Delete a single playlist + its entries + its trace (DESIGN.md §16.3 D1).
+ * Hard delete — no undo. Caller must confirm with the user first; the
+ * backend silently destroys on 204.
+ */
+export const deletePlaylist = (id: number, fetch_ = fetch): Promise<void> =>
+  fetch_(`/api/playlists/${id}`, { method: 'DELETE' }).then((r) => noContent(r));
+
+/**
+ * Delete a station and cascade through every playlist + entry + trace +
+ * cursor state (DESIGN.md §16.3 D1). Same destructive semantics as
+ * `deletePlaylist`; caller must confirm and ideally surface counts in the
+ * dialog (D2).
+ */
+export const deleteStation = (slug: string, fetch_ = fetch): Promise<void> =>
+  fetch_(`/api/stations/${encodeURIComponent(slug)}`, { method: 'DELETE' }).then(
+    (r) => noContent(r),
+  );
 
 export { ApiError };

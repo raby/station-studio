@@ -5,6 +5,7 @@
     getStation,
     getStationPlaylists,
     generatePlaylist,
+    deletePlaylist,
     ApiError,
   } from '$lib/api';
   import type { Station, PlaylistSummary } from '$lib/api';
@@ -21,6 +22,12 @@
   let seedInput = randomSeed();
   let generating = false;
   let generateError: string | null = null;
+
+  // Delete state (DESIGN.md §16.3). One inline-error slot is reused for both
+  // per-row playlist deletes and the station-nuke control — only one delete
+  // can be in flight at a time and the message location is consistent.
+  let deleting = false;
+  let deleteError: string | null = null;
 
   // SvelteKit guarantees `slug` is present because this route only matches
   // when the param exists, but the param type is `string | undefined`.
@@ -121,6 +128,31 @@
     // confirm because we just asked. Awaited so any future code added
     // after this call is correctly sequenced after the navigation.
     await generate(p.week, { seed: rngOn ? randomSeed() : undefined, skipConfirm: true });
+  }
+
+  /**
+   * Per-row playlist delete (DESIGN.md §16.3 D1, D2, D4, D5). Confirms with
+   * the trace_id fragment so the user knows *which* trace is going. On 204:
+   * stays on the page, refetches the playlist list (the row vanishes). On
+   * error: inline error rendering, no navigation.
+   */
+  async function deleteRow(p: PlaylistSummary) {
+    const ok = confirm(
+      `Delete week ${p.week} (trace ${p.trace_id.slice(0, 8)}…)? This is permanent.`,
+    );
+    if (!ok) return;
+    deleting = true;
+    deleteError = null;
+    try {
+      await deletePlaylist(p.id);
+      // Refetch — cheaper than a local splice and keeps the page in sync
+      // with whatever else might have changed server-side.
+      playlists = await getStationPlaylists(slug);
+    } catch (e) {
+      deleteError = e instanceof ApiError ? e.message : String(e);
+    } finally {
+      deleting = false;
+    }
   }
 
   function fmtDate(iso: string | null): string {
@@ -241,6 +273,7 @@
             <th>Trace</th>
             <th></th>
             <th></th>
+            <th></th>
           </tr>
         </thead>
         <tbody>
@@ -256,17 +289,32 @@
                   type="button"
                   class="link-btn"
                   data-testid="regen-row-{p.week}"
-                  disabled={generating}
+                  disabled={generating || deleting}
                   on:click={() => regenRow(p)}
                   title="Regenerate this week — replaces the current trace"
                 >
                   ↻ regen
                 </button>
               </td>
+              <td>
+                <button
+                  type="button"
+                  class="link-btn delete-row"
+                  data-testid="delete-row-{p.week}"
+                  disabled={generating || deleting}
+                  on:click={() => deleteRow(p)}
+                  title="Delete this playlist permanently"
+                >
+                  ✕ delete
+                </button>
+              </td>
             </tr>
           {/each}
         </tbody>
       </table>
+      {#if deleteError}
+        <p class="error" data-testid="delete-error">{deleteError}</p>
+      {/if}
     {/if}
   {/if}
 </main>
