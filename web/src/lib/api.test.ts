@@ -10,6 +10,7 @@ import {
   generatePlaylist,
   deletePlaylist,
   deleteStation,
+  exportPlaylistToDisk,
 } from './api';
 
 /**
@@ -228,6 +229,37 @@ describe('api client', () => {
       const err = await deleteStation('ghost', fetch_).catch((e) => e);
       expect(err).toBeInstanceOf(ApiError);
       expect(err.status).toBe(404);
+    });
+  });
+
+  describe('exportPlaylistToDisk', () => {
+    // The trace viewer wires this to the "Export to disk" button (DESIGN
+    // §16.6); these tests pin the URL build, the response shape parse, and
+    // the ApiError mapping that drives the inline-error rendering.
+
+    it('POSTs to /api/playlists/{id}/export-to-disk and returns {path, bytes}', async () => {
+      const { fetch_, calls } = makeSpy({
+        body: { path: '/abs/out/cls/001.xml', bytes: 868990 },
+      });
+      const r = await exportPlaylistToDisk(42, fetch_);
+
+      expect(calls[0].input).toBe('/api/playlists/42/export-to-disk');
+      expect(calls[0].init?.method).toBe('POST');
+      expect(r.path).toBe('/abs/out/cls/001.xml');
+      expect(r.bytes).toBe(868990);
+    });
+
+    it('raises ApiError when the destination is unwritable (404 / 500)', async () => {
+      const { fetch_ } = makeSpy({
+        ok: false,
+        status: 500,
+        statusText: 'Internal Server Error',
+        text: 'permission denied: /readonly/cls/001.xml',
+      });
+      const err = await exportPlaylistToDisk(42, fetch_).catch((e) => e);
+      expect(err).toBeInstanceOf(ApiError);
+      expect(err.status).toBe(500);
+      expect(err.message).toContain('permission denied');
     });
   });
 

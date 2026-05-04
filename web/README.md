@@ -57,6 +57,7 @@ DESIGN.md §14.8 is the long-form rationale for all of the above.
 | `/playlists/[id]`              | shipped      | Trace viewer — slot-by-slot reasoning, iTunes download    |
 | Generate / regenerate UI       | shipped      | Empty-state CTA + next-week + advanced + per-row ↻ regen  |
 | Delete / station-reset UI      | shipped      | Per-row ✕ delete + "Delete station →" nuke; cascades      |
+| Disk-export UI button          | shipped      | Trace viewer "Export to disk" + inline path/size status    |
 | Visual block editor            | v2 (§16.2)   | Drag-drop over the same JSON the wizard produces          |
 | Trace versioning               | later (§16.4)| Schema change so regen stops being destructive            |
 

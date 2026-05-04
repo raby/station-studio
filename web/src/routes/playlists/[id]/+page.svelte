@@ -1,6 +1,12 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { getPlaylist, getTrace, getStation, ApiError } from '$lib/api';
+  import {
+    getPlaylist,
+    getTrace,
+    getStation,
+    exportPlaylistToDisk,
+    ApiError,
+  } from '$lib/api';
   import type { Playlist, Trace, TraceSlot, Station } from '$lib/api';
   import { page } from '$app/stores';
 
@@ -9,6 +15,12 @@
   let station: Station | null = null;
   let error: string | null = null;
   let loading = true;
+
+  // Disk-export state (DESIGN.md §16.6 D3). Two reactive vars rather than a
+  // single string-with-flag so the template can apply distinct styles cleanly.
+  let diskExporting = false;
+  let diskExportStatus: string | null = null;
+  let diskExportError: string | null = null;
 
   $: id = Number($page.params.id);
 
@@ -86,6 +98,29 @@
     const colour = sourceColours[source] ?? '#888';
     return `background: ${colour}; color: white;`;
   }
+
+  /**
+   * Disk-export handler (DESIGN.md §16.6). POST to the existing endpoint;
+   * surface the returned `{path, bytes}` inline as a status line. Failures
+   * (no permission, missing dir, IO error) render as a red error in the
+   * same slot. No confirmation — disk-write is non-destructive in the §16.3
+   * sense (overwrites only its own file at a predictable path).
+   */
+  async function exportToDisk() {
+    if (!playlist) return;
+    diskExporting = true;
+    diskExportStatus = null;
+    diskExportError = null;
+    try {
+      const r = await exportPlaylistToDisk(playlist.id);
+      const kb = Math.round(r.bytes / 1024);
+      diskExportStatus = `Wrote to ${r.path} (${kb.toLocaleString()} KB)`;
+    } catch (e) {
+      diskExportError = e instanceof ApiError ? e.message : String(e);
+    } finally {
+      diskExporting = false;
+    }
+  }
 </script>
 
 <svelte:head>
@@ -133,7 +168,26 @@
       <a href="/api/playlists/{playlist.id}/export" class="button">
         Download iTunes XML
       </a>
+      <button
+        type="button"
+        class="button"
+        data-testid="export-to-disk"
+        disabled={diskExporting}
+        on:click={exportToDisk}
+      >
+        {diskExporting ? 'Writing…' : 'Export to disk'}
+      </button>
     </div>
+    {#if diskExportStatus}
+      <p class="disk-status success" data-testid="disk-export-status">
+        {diskExportStatus}
+      </p>
+    {/if}
+    {#if diskExportError}
+      <p class="disk-status error" data-testid="disk-export-error">
+        {diskExportError}
+      </p>
+    {/if}
 
     <h2>Your working</h2>
     <p class="hint">Each row below is one unit of the layout (a day for Classics). Click a row header to collapse it.</p>
@@ -228,7 +282,9 @@
     font-size: 0.85rem;
   }
   .actions {
-    margin: 1rem 0 1.5rem;
+    margin: 1rem 0 0.5rem;
+    display: flex;
+    gap: 0.5rem;
   }
   .button {
     display: inline-block;
@@ -238,9 +294,34 @@
     text-decoration: none;
     border-radius: 4px;
     font-size: 0.9rem;
+    border: none;
+    cursor: pointer;
+    font-family: inherit;
   }
-  .button:hover {
+  .button:hover:not(:disabled) {
     background: #1a252f;
+  }
+  .button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .disk-status {
+    margin: 0 0 1.5rem;
+    padding: 0.4rem 0.6rem;
+    border-radius: 4px;
+    font-size: 0.85rem;
+    font-family: ui-monospace, monospace;
+    word-break: break-all;
+  }
+  .disk-status.success {
+    background: #e8f5e9;
+    color: #1b5e20;
+    border: 1px solid #c8e6c9;
+  }
+  .disk-status.error {
+    background: #ffebee;
+    color: #b71c1c;
+    border: 1px solid #ffcdd2;
   }
   h2 {
     margin-top: 2rem;

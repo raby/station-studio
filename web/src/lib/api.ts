@@ -186,4 +186,26 @@ export const deleteStation = (slug: string, fetch_ = fetch): Promise<void> =>
     (r) => noContent(r),
   );
 
+export interface DiskExportResponse {
+  /** Absolute path the iTunes XML was written to. */
+  path: string;
+  /** Size of the file on disk, in bytes. */
+  bytes: number;
+}
+
+/**
+ * Write the playlist's iTunes XML to the configured server-side output
+ * directory (DESIGN.md §16.6, originally §14.2). Non-destructive — overwrites
+ * only the file at `{playlist_output_dir}/{slug}/{week:03d}.xml`. The browser-
+ * download counterpart is `/api/playlists/{id}/export` (a plain `<a href>`
+ * per §14.5).
+ */
+export const exportPlaylistToDisk = (
+  id: number,
+  fetch_ = fetch,
+): Promise<DiskExportResponse> =>
+  fetch_(`/api/playlists/${id}/export-to-disk`, { method: 'POST' }).then((r) =>
+    json<DiskExportResponse>(r),
+  );
+
 export { ApiError };

@@ -394,6 +394,7 @@ The trace is stored as JSON alongside the playlist (in a `playlist_trace` table 
 | Trace versioning (history of regenerations) | later (§16.4)| Schema change; only after §16.1 lands and bites         |
 | Migrate Rebirth Radio onto Station Studio   | long-term    | Needs `weighted`, `prev_ref`, `genre_pick` primitives   |
 | iTunes XML export of Classics playlists     | done (14.1)  | Lifted from weekly, station-scoped; browser + disk paths|
+| Disk-export UI button on trace viewer       | done (14.11) | "Export to disk" button + status line; closes prod loop |
 | Disk-export prune endpoint                  | on demand    | `POST /api/playlists/export/prune` — wait until clutter |
 | Scheduler (auto-generate weekly)            | v1.1         | Weekly has APScheduler; port when stable                |
 | Artist aliasing / dedup                     | not needed   | Classics has no dedup; engine grows this when needed    |
@@ -1156,6 +1157,108 @@ punt list:
   has the policy ("No policy + .gitignore"); the prune endpoint
   was deferred there.
 
+### 14.11 Disk-export button on trace viewer — what shipped
+
+**What shipped (single commit, follow-on to §16.6's plan).**
+
+The disk-export endpoint has lived since §14.2; this slice adds
+the UI hookup that closes Classics's production loop (write to
+the OneDrive/Dropbox folder feeding the Windows iTunes box).
+
+- **`exportPlaylistToDisk(id)`** in `web/src/lib/api.ts`. Returns
+  the typed `DiskExportResponse = {path, bytes}` matching the
+  endpoint's JSON.
+- **"Export to disk" button** in `/playlists/[id]`'s `.actions`
+  strip, peer to the existing "Download iTunes XML" link. The
+  download is a plain `<a href>` (browser handles
+  Content-Disposition); disk-export needs JS so it's a proper
+  `<button>` styled `.button` for visual parity.
+  `data-testid="export-to-disk"`.
+- **Inline status rendering** below the actions strip — green
+  success (`"Wrote to /abs/.../cls/001.xml (847 KB)"`) or red
+  error (`ApiError.message`). Two reactive vars
+  (`diskExportStatus`, `diskExportError`) so the template can
+  apply distinct styles cleanly. `data-testid="disk-export-status"`
+  and `data-testid="disk-export-error"`.
+- **Spinner during fetch** via `disabled={diskExporting}` on the
+  button + a `'Writing…'` label swap. Disable prevents a
+  double-click queueing two writes on a slow filesystem.
+- **2 new Vitest cases** (was 51 → 53) on `lib/api.test.ts`:
+  URL build + response shape on success, ApiError on 5xx (e.g.
+  permission denied). Trace viewer is still 0% under Vitest by
+  design (§14.5); not adding component tests here.
+- **1 new Playwright case** (was 19 → 20) extending
+  `e2e/trace-viewer.spec.ts`: click the button, assert the
+  status line contains the station-slug + week-suffix path
+  fragment and the "KB" units. The exact path varies (CWD-
+  relative without configured dir) so the assertion is
+  loose-but-sufficient.
+
+**Decisions in-flight that the §16.6 brief didn't pre-decide.**
+
+- **`.actions` became flex with a 0.5rem gap.** Previously a single
+  `<a>` so display:inline-block was fine. Two siblings need spacing
+  + alignment; flex is the cheapest way. The bottom margin moved
+  from `.actions` to `.disk-status` so the success/error banner
+  doesn't push the heading down when there's no banner showing.
+- **`.button` rule got `:disabled` styling and `cursor: pointer`.**
+  Before this slice the rule only targeted `<a>` (no disabled
+  state, browser-default cursor). Adding the `<button>` sibling
+  needed both. Same `.button` class still works for the anchor;
+  CSS selectors don't care about element type.
+- **Path string broken across long URLs via `word-break: break-all`.**
+  Real paths on the user's machine include `/Users/raby/Library/
+  CloudStorage/OneDrive-...` which without breakage stretch the
+  layout. Word-break-all is ugly but reliable; better than a
+  truncation that hides the actual path the user wants to verify.
+- **Bytes formatted as KB via `Math.round(bytes / 1024)`.** "847 KB"
+  reads better than "868990 bytes" for the verify-the-file-landed
+  signal. No need for MB / GB cases — Classics XMLs are ~850 KB,
+  even an extreme station won't hit MB territory.
+
+**What's now reachable from the UI.** Classics's production loop —
+generate → trace viewer → write to OneDrive/Dropbox-synced folder
+→ Windows iTunes picks it up — is finally one-click from the
+trace viewer. Before this, the last step was `curl -X POST`.
+
+**Stay-out-of-scope candidates** (from §16.6's punt table):
+
+| Area                                       | Status               | Trigger                                    |
+|--------------------------------------------|----------------------|--------------------------------------------|
+| Configure `playlist_output_dir` from the UI| not now              | User wants change without DB SQL           |
+| Last-exported-when indicator               | §14.5 staleness item | Multi-week confusion about which is current |
+| Disk-prune endpoint                        | §14.3                | `out/` clutter becomes painful             |
+| Auto-export on regen                       | rejected             | §14.9 D5                                   |
+| Multi-playlist batch ("export all weeks")  | not now              | Real ask                                   |
+| Checksum / file-vs-DB verification         | not now              | Real bytes-don't-match-trace report        |
+| Toast / notification framework             | rejected             | Inline status node is enough               |
+
+**Implementation notes for future pick-up.**
+
+- The status string `"Wrote to {path} ({KB} KB)"` is built
+  inside `exportToDisk()` rather than a derived reactive — keeps
+  the localisation surface minimal (one template literal, one
+  number format). If/when the staleness indicator (§14.5)
+  ships, it'll want a structured object (last-export-time +
+  path) rather than a pre-formatted string; refactor at that
+  time.
+- The `<button class="button">` and `<a class="button">` share
+  the same CSS rule. Browsers' default button styling
+  (`font-family: -webkit-buttons`, sometimes a system tint) is
+  reset via `font-family: inherit; border: none;`. If a future
+  CSS reset / framework lands, double-check both elements
+  still render identically.
+- Errors from the endpoint can include long stack-trace-like
+  bodies in dev (FastAPI without a reverse proxy returns the
+  full traceback). The inline error renders the whole string;
+  in production deployments behind nginx etc. the body would
+  be the JSON `{"detail": "..."}` and the ApiError message
+  parser would render it. Acceptable for v1.
+
+---
+
+## 15. Status snapshot
+
 A quick "where are we" for a future reader. Last updated at commit
 `b44a3f4` — test-plan delivery + landing/detail backfill.
 
@@ -1172,6 +1275,7 @@ A quick "where are we" for a future reader. Last updated at commit
 | Test plan + CI           | Shipped. 4-tier (engine, API, Vitest, Playwright). 98% backend.  |
 | In-UI generate button    | Shipped (14.9). Empty-CTA + next-week + advanced + per-row regen.|
 | Delete / station-reset   | Shipped (14.10). Per-row delete + station nuke; cascades.        |
+| Disk-export UI button    | Shipped (14.11). Trace viewer "Export to disk" + status line.    |
 | Visual block editor      | Deferred (v2). See §16.2.                                        |
 | Trace versioning         | Deferred. See §16.4 (queued behind §16.1 by design).             |
 | Accessibility pass       | Deferred. See §16.5 (consolidates piecemeal a11y notes).         |
@@ -1746,4 +1850,110 @@ bounded):
 - Svelte's `svelte-check` already surfaces a11y warnings during
   build (missing alts, label-for, etc) — gauge the starting point
   by running it on the current tree before the slice begins.
+
+### 16.6 Disk-export button on trace viewer
+
+**Why this matters.** The disk-export endpoint
+(`POST /api/playlists/{id}/export-to-disk`) has existed since
+§14.2 and writes the iTunes XML to a configured directory on the
+server's filesystem. Classics's actual production loop depends on
+this — the user keeps a OneDrive/Dropbox folder synced to a
+Windows iTunes box, points `Config.playlist_output_dir` at that
+folder, and each generated week shows up there. Today the only
+trigger is `curl -X POST`. The trace viewer has the browser-
+download button (§14.5) but nothing for the disk path. Closing
+this gap is the loudest paper cut left in Classics's day-to-day.
+
+**Use cases enumerated.**
+
+| # | Use case                                                  | Today                       | Risk if ignored                            |
+|---|-----------------------------------------------------------|-----------------------------|--------------------------------------------|
+| 1 | Click → write to disk → see where the file landed         | Endpoint exists; no UI path | Mild — main path, works via curl           |
+| 2 | Re-export the same week (overwrite)                       | Endpoint silently overwrites| None — mirrors regen semantics             |
+| 3 | Disk write fails (no permission, IO error, dir missing)   | Backend 4xx/5xx             | UI must surface; user blamed for stale file |
+| 4 | Output dir not configured                                 | Falls back to `out/` per §14.2 | None — covered by backend                |
+| 5 | "When was this last exported, and to where?"              | No record                   | Stale file confusion (deferred — §14.5 staleness) |
+| 6 | Configure the output dir from the UI                      | DB Config key only          | User wants OneDrive flow without SQL       |
+| 7 | Auto-export on regen                                      | No                          | **Rejected** per §14.9 D5                  |
+| 8 | Verify the disk file matches the DB after export          | No checksum                 | Out of scope; trust the bytes              |
+| 9 | Multi-playlist batch ("export all weeks of cls")          | No                          | Wait for ask                               |
+
+**Decisions taken** (D1–D6):
+
+- **D1. Button sits next to "Download iTunes XML"** on the trace
+  viewer. Same `.actions` strip; same visual weight. The two
+  represent the two delivery paths (browser download vs disk).
+- **D2. Plain `<button>`, not `<a>`.** The browser-download is an
+  `<a href>` because §14.5 explicitly noted "no JS needed for a
+  one-shot byte download". Disk-export is POST + JSON response —
+  needs JS. Use `<button on:click>` and reach for `.button`
+  styling for parity.
+- **D3. Inline status, not toast.** On success, render the
+  returned path + size as a small status line below the button:
+  `Wrote to /abs/.../cls/001.xml (847 KB)`. On failure, render
+  the ApiError message in the same slot but red. No modal, no
+  toast library — single status node mirrors the §16.1
+  `generate-error` pattern.
+- **D4. No confirmation dialog.** Disk-write is non-destructive
+  in the §16.3 sense (overwrites only its own file at the
+  predictable path). No unrecoverable consequence. User's mental
+  model is "save", not "delete".
+- **D5. Spinner during fetch.** The endpoint should be fast
+  (<1s) but on slow filesystems (Dropbox sync, network share)
+  could pause briefly. Disable the button during the call so a
+  double-click can't queue two writes.
+- **D6. `bytes` formatted as KB.** The endpoint returns
+  `{path, bytes}`. `Math.round(bytes / 1024)` reads better than
+  raw bytes ("868990" vs "849 KB") for humans verifying the file
+  landed sanely.
+
+**Scope — single commit (small slice).**
+
+- **`web/src/lib/api.ts`** — `exportPlaylistToDisk(id)` typed
+  client. Returns the response shape `{path: string; bytes:
+  number}`. POST, no body, JSON response.
+- **`web/src/routes/playlists/[id]/+page.svelte`** — second
+  button "Export to disk" in the existing `.actions` strip,
+  plus inline `diskExportStatus` state for success / error
+  rendering. Spinner on the button while the request is in
+  flight.
+- **Vitest** — one new case on `lib/api.test.ts` for
+  `exportPlaylistToDisk` (URL build, response parse, ApiError
+  on 4xx). Trace viewer is still 0% under Vitest by design
+  (§14.5 — "Playwright covers it"); not adding component tests
+  here as that's a separate slice in §14.8's punt list.
+- **Playwright** — extend `e2e/trace-viewer.spec.ts` with a
+  case that clicks the new button and asserts the success
+  status renders.
+- **Docs** — DESIGN.md §14.11 shipped doc + §15 ticks 16.6
+  done. web/README's surface table picks up the disk-export row.
+
+**Stay-out-of-scope candidates.**
+
+| Area                                       | Status               | Trigger                                    |
+|--------------------------------------------|----------------------|--------------------------------------------|
+| Configure output dir from the UI           | not now              | User wants OneDrive flow without DB SQL    |
+| Last-exported-when indicator               | §14.5 staleness item | Multi-week confusion about which is current |
+| Disk-prune endpoint                        | §14.3                | `out/` clutter becomes painful             |
+| Auto-export on regen                       | rejected             | §14.9 D5                                   |
+| Multi-playlist batch ("export all weeks")  | not now              | Real ask                                   |
+| Checksum / file-vs-DB verification         | not now              | Real bytes-don't-match-trace report        |
+| Toast / notification framework             | rejected             | Inline status node is enough               |
+
+**Implementation notes for future pick-up.**
+
+- The endpoint reads the destination from `Config.playlist_output_dir`
+  (per §14.2). When that's unset, falls back to `out/` relative
+  to the process CWD. Tests set the dir to a `tmp_path` via direct
+  DB write; production users configure it once via SQL or whatever
+  the future UI from "Configure output dir" punt-row lands.
+- The status rendering uses two reactive vars
+  (`diskExportStatus: string | null`, `diskExportError: string |
+  null`) rather than a single string-with-flag, so the template
+  can apply different styles cleanly (`.success` vs `.error`).
+- If/when the staleness indicator (§14.5 / §16.5 punt items) gets
+  built, the natural place to surface it is alongside the disk-
+  export button in this same `.actions` strip — keeping all
+  disk-related UX in one cluster.
+
 
