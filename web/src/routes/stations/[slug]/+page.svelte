@@ -6,6 +6,7 @@
     getStationPlaylists,
     generatePlaylist,
     deletePlaylist,
+    deleteStation,
     ApiError,
   } from '$lib/api';
   import type { Station, PlaylistSummary } from '$lib/api';
@@ -155,6 +156,31 @@
     }
   }
 
+  /**
+   * Station nuke (DESIGN.md §16.3 D1, D2, D4, D5). Heavier dialog text per
+   * D2 — includes computed playlist + entry counts so the user understands
+   * the blast radius before clicking through. Counts come from page state;
+   * no extra fetch needed. On 204: navigate to landing.
+   */
+  async function nukeStation() {
+    if (!station) return;
+    const totalEntries = playlists.reduce((a, p) => a + p.entry_count, 0);
+    const ok = confirm(
+      `Delete station '${station.slug}' and all ${playlists.length} playlist${playlists.length === 1 ? '' : 's'}, ${totalEntries.toLocaleString()} total entries? This is permanent.`,
+    );
+    if (!ok) return;
+    deleting = true;
+    deleteError = null;
+    try {
+      await deleteStation(slug);
+      await goto('/');
+    } catch (e) {
+      deleteError = e instanceof ApiError ? e.message : String(e);
+      deleting = false;
+    }
+    // No deleting = false on success — navigating away.
+  }
+
   function fmtDate(iso: string | null): string {
     if (!iso) return '';
     try {
@@ -177,8 +203,26 @@
   {:else if error}
     <p class="error">{error}</p>
   {:else if station}
-    <h1>{station.name}</h1>
-    <p class="slug">{station.slug}</p>
+    <header class="station-header">
+      <div>
+        <h1>{station.name}</h1>
+        <p class="slug">{station.slug}</p>
+      </div>
+      <!--
+        Station-nuke (DESIGN.md §16.3 D1). Right-aligned, distinct
+        red styling — the visual hierarchy matches blast radius (D7).
+        The dialog inside nukeStation() composes the count copy.
+      -->
+      <button
+        type="button"
+        class="nuke"
+        data-testid="delete-station"
+        disabled={deleting || generating}
+        on:click={nukeStation}
+      >
+        Delete station →
+      </button>
+    </header>
 
     <h2>Playlists</h2>
 
@@ -344,6 +388,34 @@
     color: #888;
     font-family: ui-monospace, monospace;
     margin-top: 0.1rem;
+  }
+  .station-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 2rem;
+  }
+  .nuke {
+    /* Distinct from the per-row .link-btn delete: this is a properly
+       red destructive button so it's hard to misclick from anything
+       else (DESIGN.md §16.3 D7). At least 1rem of gap from the
+       title via the .station-header flex `gap`. */
+    padding: 0.5rem 1rem;
+    background: white;
+    color: #c0392b;
+    border: 1px solid #c0392b;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    white-space: nowrap;
+  }
+  .nuke:hover:not(:disabled) {
+    background: #c0392b;
+    color: white;
+  }
+  .nuke:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
   h2 {
     margin-top: 2rem;
