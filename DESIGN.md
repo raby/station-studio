@@ -1092,6 +1092,21 @@ records what actually landed and the in-flight surprises.
   vertically-centred against the slug subtitle. Reads better; the
   button is *associated* with the station name, not the slug.
 
+**Application logging vs structured audit log.** The §16.3 review
+flagged the absence of any logging on the delete endpoints; the
+follow-up commit added `logger.info(...)` calls on both
+`delete_playlist` and `delete_station` (matching the existing
+pattern in `engine/importer.py` and `engine/exporter.py`). This is
+*application logging* — visible in the FastAPI server's stderr,
+useful for debugging "did the delete actually fire?" — and is now
+present. It is **not** a structured audit log: there's no
+`delete_audit` table, no per-user attribution, no retention
+policy. That heavier feature is the row in the punt table below
+("Audit log of deletes — rejected — single-user"); it stays
+rejected because Station Studio is a single-user tool and the
+journey from "I deleted by mistake" goes via the regen / template
+git-history paths, not via undeleting from an audit table.
+
 **What's now reachable from the UI.** The full station-lifecycle
 loop now closes on both ends: create → generate → view trace →
 delete. Empty wizard test stations and accidentally-generated
