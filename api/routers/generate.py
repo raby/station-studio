@@ -62,7 +62,7 @@ def generate_playlist(slug: str, payload: GenerateRequest, db: Session = Depends
 def get_playlist(playlist_id: int, db: Session = Depends(get_db)):
     p = db.query(Playlist).filter_by(id=playlist_id).first()
     if not p:
-        raise HTTPException(404, "playlist not found")
+        raise HTTPException(404, f"playlist {playlist_id} not found")
     entries = [
         PlaylistEntryOut(
             position=e.position,
@@ -85,7 +85,7 @@ def export(playlist_id: int, db: Session = Depends(get_db)):
     """Export a generated playlist as iTunes XML."""
     p = db.query(Playlist).filter_by(id=playlist_id).first()
     if not p:
-        raise HTTPException(404, "playlist not found")
+        raise HTTPException(404, f"playlist {playlist_id} not found")
     try:
         xml_bytes = export_playlist(db, playlist_id)
     except ValueError as e:
@@ -109,7 +109,7 @@ def export_to_disk(playlist_id: int, db: Session = Depends(get_db)):
     """
     p = db.query(Playlist).filter_by(id=playlist_id).first()
     if not p:
-        raise HTTPException(404, "playlist not found")
+        raise HTTPException(404, f"playlist {playlist_id} not found")
     try:
         path = export_playlist_to_disk(db, playlist_id)
     except ValueError as e:
@@ -122,7 +122,7 @@ def delete_playlist(playlist_id: int, db: Session = Depends(get_db)):
     """Delete a playlist and its entries + trace."""
     p = db.query(Playlist).filter_by(id=playlist_id).first()
     if not p:
-        raise HTTPException(404, "playlist not found")
+        raise HTTPException(404, f"playlist {playlist_id} not found")
     db.delete(p)
     db.commit()
 
@@ -131,7 +131,7 @@ def delete_playlist(playlist_id: int, db: Session = Depends(get_db)):
 def get_trace(playlist_id: int, db: Session = Depends(get_db)):
     t = db.query(PlaylistTrace).filter_by(playlist_id=playlist_id).first()
     if not t:
-        raise HTTPException(404, "trace not found")
+        raise HTTPException(404, f"trace for playlist {playlist_id} not found")
     return {
         "trace_id": t.trace_id,
         "station": t.station_slug,
