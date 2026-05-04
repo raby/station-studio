@@ -117,6 +117,16 @@ class Playlist(Base):
         cascade="all, delete-orphan",
         order_by="PlaylistEntry.position",
     )
+    # ORM-level cascade for the trace mirrors the Station→Playlist setup:
+    # the FK already has ondelete=CASCADE, but ORM cascade is belt-and-
+    # braces against any future Session created without the
+    # PRAGMA foreign_keys=ON event listener. one-to-one => uselist=False.
+    trace = relationship(
+        "PlaylistTrace",
+        back_populates="playlist",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
 
     __table_args__ = (
         UniqueConstraint("station_id", "week"),
@@ -161,6 +171,8 @@ class PlaylistTrace(Base):
     seed = Column(Integer, nullable=True)
     generated_at = Column(Text, nullable=False)  # ISO8601
     slots = Column(JSON, nullable=False)         # list[TraceSlot as dict]
+
+    playlist = relationship("Playlist", back_populates="trace")
 
 
 class Config(Base):

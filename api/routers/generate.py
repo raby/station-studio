@@ -1,6 +1,8 @@
 """Generate a playlist for a station + week."""
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 from sqlalchemy.exc import IntegrityError
@@ -14,6 +16,8 @@ from engine.exporter import export_playlist, export_playlist_to_disk
 from api.deps import get_db
 from api.schemas import GenerateRequest, GenerateResponse, PlaylistOut, PlaylistEntryOut, TrackOut
 
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["generate"])
 
@@ -123,8 +127,15 @@ def delete_playlist(playlist_id: int, db: Session = Depends(get_db)):
     p = db.query(Playlist).filter_by(id=playlist_id).first()
     if not p:
         raise HTTPException(404, f"playlist {playlist_id} not found")
+    # Capture identifying fields before delete — `p.station.slug` requires
+    # a query through the relationship, which becomes invalid post-delete.
+    week, station_slug = p.week, p.station.slug
     db.delete(p)
     db.commit()
+    logger.info(
+        "Deleted playlist %d (week %d) of station '%s'",
+        playlist_id, week, station_slug,
+    )
 
 
 @router.get("/api/playlists/{playlist_id}/trace")

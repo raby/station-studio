@@ -238,7 +238,7 @@
           class="cta"
           type="button"
           data-testid="generate-empty-cta"
-          disabled={generating}
+          disabled={generating || deleting}
           on:click={() => generate(1)}
         >
           {generating ? 'Generating…' : 'Generate week 1 →'}
@@ -248,7 +248,7 @@
           class="primary"
           type="button"
           data-testid="generate-next"
-          disabled={generating}
+          disabled={generating || deleting}
           on:click={() => generate(nextWeek)}
         >
           {generating ? 'Generating…' : `Generate next week (${nextWeek})`}
@@ -285,7 +285,7 @@
             type="button"
             class={chosenWeekExists ? 'replace' : 'primary'}
             data-testid="advanced-submit"
-            disabled={generating || !Number.isFinite(chosenWeek) || chosenWeek < 1}
+            disabled={generating || deleting || !Number.isFinite(chosenWeek) || chosenWeek < 1}
             on:click={() => generate(chosenWeek)}
           >
             {generating
@@ -343,7 +343,7 @@
               <td>
                 <button
                   type="button"
-                  class="link-btn delete-row"
+                  class="link-btn"
                   data-testid="delete-row-{p.week}"
                   disabled={generating || deleting}
                   on:click={() => deleteRow(p)}

@@ -536,7 +536,42 @@ describe('station detail — §16.3 delete affordances', () => {
     confirmSpy.mockRestore();
   });
 
-  it('station nuke: 4xx renders inline, no navigation', async () => {
+  it('generate buttons disable while a delete is in flight (S1 race fix)', async () => {
+    // The §16.3 review caught a window where a user could click "Delete
+    // station" then quickly click "Generate next week" before the delete
+    // returned, racing the backend. The fix: every generate-related button
+    // also disables on `deleting`. This test pins that contract — a
+    // deferred-promise on deletePlaylist holds `deleting = true`, and we
+    // assert generate-next is disabled before resolving.
+    getStationMock.mockResolvedValueOnce(stubStation());
+    // First call populates the page; second handles the post-delete refetch
+    // once the deferred promise resolves below. Without the second value
+    // the refetch returns undefined, the `playlists` array reactive crashes
+    // on `playlists.length` and the test produces an unhandled rejection.
+    getStationPlaylistsMock
+      .mockResolvedValueOnce(playlistFixture())
+      .mockResolvedValueOnce([playlistFixture()[1]]);
+
+    let resolveDelete!: () => void;
+    deletePlaylistMock.mockImplementationOnce(
+      () => new Promise<void>((res) => { resolveDelete = res; }),
+    );
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+    render(Page);
+    await fireEvent.click(await screen.findByTestId('delete-row-5'));
+    // `deleting = true` is set synchronously in deleteRow() before the await.
+    // Generate-next should be disabled now even though the DELETE is still
+    // pending. Same for the advanced-form submit.
+    expect(screen.getByTestId('generate-next')).toBeDisabled();
+    expect(screen.getByTestId('advanced-submit')).toBeDisabled();
+
+    // Drain the pending delete so afterEach's act() flush doesn't hang.
+    resolveDelete();
+    confirmSpy.mockRestore();
+  });
+
+  it('station nuke: 5xx renders inline, no navigation', async () => {
     getStationMock.mockResolvedValueOnce(stubStation());
     getStationPlaylistsMock.mockResolvedValueOnce(playlistFixture());
     deleteStationMock.mockRejectedValueOnce(

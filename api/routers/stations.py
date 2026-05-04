@@ -1,6 +1,8 @@
 """Stations CRUD."""
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
@@ -10,6 +12,8 @@ from api.deps import get_db
 from api.schemas import StationCreate, StationOut, PlaylistSummary
 from sqlalchemy import func
 
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/stations", tags=["stations"])
 
@@ -78,8 +82,15 @@ def delete_station(slug: str, db: Session = Depends(get_db)):
     s = db.query(Station).filter(Station.slug == slug).first()
     if not s:
         raise HTTPException(404, f"station '{slug}' not found")
+    # Capture the cascade fan-out before delete — accessing `s.playlists`
+    # post-commit returns an empty/detached collection.
+    playlist_count = len(s.playlists)
     db.delete(s)
     db.commit()
+    logger.info(
+        "Deleted station '%s' (cascaded %d playlist%s)",
+        slug, playlist_count, "" if playlist_count == 1 else "s",
+    )
 
 
 @router.put("/{slug}", response_model=StationOut)
