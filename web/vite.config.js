@@ -39,8 +39,34 @@ export default defineConfig({
         'src/**/*.{test,spec}.{js,ts}',
         'src/**/*.d.ts',
         'src/app.html',
+        // Trace viewer is Playwright-only by §14.5 / §16.6 design — the
+        // page does layout work that's awkward to assert in jsdom and
+        // `playlists/[id]/+page.svelte` is well-covered by the e2e
+        // suite. Excluded so its 0% lines don't drag the aggregate
+        // and the per-file thresholds below stay meaningful.
+        'src/routes/playlists/[id]/+page.svelte',
       ],
-      reporter: ['text', 'text-summary']
+      reporter: ['text', 'text-summary'],
+      // Coverage gates (DESIGN.md §14.12). The §14.9 M1 finding — the
+      // lib/api claim was 100% but actual was 84% — would have been
+      // caught here had this gate existed.
+      //
+      // Per-file `lines` threshold catches single-file regressions like
+      // M1 (a 15pp drop on lib/api would fail the build, not silently
+      // pass aggregate). Lines is the most reliable v8-over-Svelte
+      // metric; statements/branches/functions count noisy compile
+      // artifacts (reactive update points etc.) and are gated at the
+      // aggregate level instead, where the noise averages out.
+      thresholds: {
+        // Per-file lines: every included file >= 85%. The current files
+        // sit at 95% / 100% / 100% / 100% — a real regression in any one
+        // would land below 85% well before slipping past code review.
+        'src/**/*': { lines: 85 },
+        // Aggregate gates as a backstop for the noisier metrics.
+        statements: 80,
+        functions: 80,
+        branches: 70,
+      },
     }
   }
 });

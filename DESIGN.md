@@ -403,7 +403,8 @@ The trace is stored as JSON alongside the playlist (in a `playlist_trace` table 
 | Trace viewer (UI)                           | done (14.5)  | `/playlists/[id]` — per-slot reasoning, grouped by row  |
 | Trace-viewer polish                         | later (14.5) | Search, virtualisation, SSR, multi-week nav, compare    |
 | Test plan + CI                              | done (14.8)  | 4-tier; backend 98% lines; 26 Vitest + 9 Playwright     |
-| Test follow-ups (coverage gate, viz tests)  | later (14.8) | See 14.8 table                                          |
+| Coverage gate in CI                         | done (14.12) | Backend 90% aggregate; frontend per-file lines ≥ 85%    |
+| Test follow-ups (viz tests, mutation)       | later (14.8) | See 14.8 table; per-file lines now gated, mutation isn't|
 | Accessibility pass                          | later (§16.5)| Consolidates a11y rows from 14.5/14.7/14.9; one slice   |
 
 ---
@@ -1255,6 +1256,115 @@ trace viewer. Before this, the last step was `curl -X POST`.
   be the JSON `{"detail": "..."}` and the ApiError message
   parser would render it. Acceptable for v1.
 
+### 14.12 Coverage gate in CI — what shipped
+
+**Why this matters.** The §14.9 review caught a real
+documentation-vs-actual mismatch: the `lib/api` line was claimed
+at 100% but actual was 84.61% because `vi.mock('$lib/api', ...)`
+in detail.test.ts was substituting the real module and the new
+`generatePlaylist` body never executed under tests. The doc was
+guesswork; nothing was watching for the silent drop. This slice
+adds gates so that class of regression now breaks CI instead of
+slipping past code review.
+
+**What shipped.**
+
+- **Backend gate (already existed, threshold tuned).** `make
+  test-backend` runs `coverage run -m pytest` then
+  `coverage report --fail-under=90`. The threshold was 95% but
+  actual sits at 94.86% (the `bootstrap_classics` and
+  `seed_stations` CLI scripts pull the aggregate down, ~66–69%
+  each). 95% would have failed CI on a non-regression. Lowered
+  to 90% — fires on a real drop, not on the resting state.
+- **`requirements-dev.txt` pins `coverage>=7.0`.** Was
+  installed transitively (luck) — CI was working but only
+  because Python's dependency resolution happened to pull it.
+- **`.coveragerc` excludes `tests/`** from the source set.
+  Tests covering themselves is meaningless self-confirmation
+  noise; previously inflated the aggregate from 95% to 98%.
+- **Frontend gate (new).** `vite.config.js` gains
+  `coverage.thresholds`. `make test-frontend-unit` now passes
+  `--coverage` so the gate actually fires (without it, vitest
+  skips the report and the threshold check is dead code).
+- **Per-file `lines` threshold of 85%.** Every file in
+  `coverage.include` has to clear it. Current files sit at
+  93.75% / 95.06% / 100% / 100% — a §14.9 M1-style 15-point
+  drop on any one file lands well below 85% and breaks CI.
+- **Trace viewer excluded from coverage** —
+  `playlists/[id]/+page.svelte` is Playwright-only by §14.5
+  / §16.6 design. Its 0% Vitest coverage was dragging the
+  aggregate from 95% lines to 73%; excluding it keeps the
+  per-file gate meaningful for the files we *can* unit-test.
+- **Aggregate gates for the noisier metrics**
+  (`statements: 80, functions: 80, branches: 70`). Lines is
+  the cleanest v8-over-Svelte signal; statements and branches
+  count compile artifacts (reactive update points etc.) that
+  the source can't directly exercise. Aggregate-only there;
+  per-file would generate noise without catching real bugs.
+
+**Decisions in flight.**
+
+- **Why not gate per-file on every metric?** Tried first;
+  failed immediately on landing (`+page.svelte`) which has
+  100% lines but 36% branches because of Svelte-compiled
+  reactive update branches that aren't source-level
+  branches. Per-file lines is meaningful, per-file branches
+  is whack-a-mole. The compromise — per-file lines, aggregate
+  branches — catches the M1-style bug without forcing tail-
+  chasing on the others.
+- **Why 85% per-file lines and not 95%?** The wizard sits at
+  95.06%; one untested branch addition lands below 95% and
+  fires the gate as a false positive. 85% is the
+  documentation-mismatch detection bar — anything below is
+  "the doc lied" territory.
+- **Why 90% backend aggregate and not 95%?** With `tests/`
+  excluded the actual was 94.86%, displayed as "95%" by
+  rounding. `--fail-under=95` happened to pass only because
+  coverage rounds in the report. 90% gives a real cushion;
+  the gate fires on regression, not on noise.
+- **Backend per-file gates would be ideal but Python's
+  `coverage` doesn't natively support them.** Tools like
+  `pytest-coverage-decorator` can do per-file but adding
+  another tool for one feature wasn't worth it. The aggregate
+  gate suffices; the asymmetry between layers (frontend
+  per-file, backend aggregate) is a tooling fact rather
+  than a deliberate design.
+
+**Verification — the gate actually fires.** Smoke-tested by
+temporarily setting per-file lines to 99% (above wizard's
+95.06%); CI exit code 1. Restored to 85%; CI exit code 0.
+
+**What's now caught automatically.** Any future change that
+silently drops a file's line coverage below 85%. The §14.9 M1
+finding (lib/api 100%→84%) would have broken CI on the offending
+commit, not been discovered three review rounds later.
+
+**Stay-out-of-scope.**
+
+| Area                                        | Status               | Trigger                              |
+|---------------------------------------------|----------------------|--------------------------------------|
+| Per-file backend gates                      | not now              | `coverage` adds the feature, or a third-party plugin earns its install |
+| Mutation testing (mutmut)                   | §14.8                | "85% lines passes but the assertions don't actually check anything" report |
+| Coverage badges / README integration        | not now              | External-user demand                 |
+| Codecov / Coveralls integration             | not now              | Cross-PR diff visualisation becomes a felt need |
+| Trace-viewer Vitest coverage                | §14.8 / §16.6 punt   | Trace viewer grows enough branching that Playwright is too slow for the cycle |
+
+**Implementation notes for future pick-up.**
+
+- Vitest's coverage thresholds support both flat (e.g.
+  `lines: 85`) — applies to aggregate — and glob-keyed (e.g.
+  `'src/**/*': { lines: 85 }`) — applies per-file. They can
+  coexist in the same `thresholds` object; that's the
+  current setup.
+- The `coverage.exclude` glob pattern is matched against the
+  file path relative to the project root — relative paths
+  with leading `src/` work. SvelteKit-generated files in
+  `.svelte-kit/` are auto-excluded by the v8 provider.
+- `coverage report --fail-under` rounds the aggregate before
+  comparing, which is why 94.86% passed `--fail-under=95`.
+  Don't trust the rounded display; if you need a tight gate,
+  inspect the precise figure.
+
 ---
 
 ## 15. Status snapshot
@@ -1273,6 +1383,7 @@ A quick "where are we" for a future reader. Last updated at commit
 | Trace viewer (UI)        | Shipped (first cut). Works end-to-end against real data.         |
 | Station creation wizard  | Shipped (first cut). End-to-end verified.                        |
 | Test plan + CI           | Shipped. 4-tier (engine, API, Vitest, Playwright). 98% backend.  |
+| Coverage gate in CI      | Shipped (14.12). Backend 90% aggregate; frontend per-file lines ≥85%. |
 | In-UI generate button    | Shipped (14.9). Empty-CTA + next-week + advanced + per-row regen.|
 | Delete / station-reset   | Shipped (14.10). Per-row delete + station nuke; cascades.        |
 | Disk-export UI button    | Shipped (14.11). Trace viewer "Export to disk" + status line.    |

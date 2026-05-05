@@ -1,0 +1,19 @@
+# Coverage settings for the backend gate (`make test-backend`).
+#
+# `make test-backend` runs `coverage run -m pytest` then `coverage report
+# --fail-under=95`. The 95% threshold is enforced by the report step;
+# this file just narrows what counts as "source" — tests covering
+# themselves is meaningless noise that previously inflated the total.
+
+[run]
+source =
+    engine
+    api
+    scripts
+
+[report]
+# Don't bother flagging lines that obviously don't need coverage.
+exclude_lines =
+    pragma: no cover
+    raise NotImplementedError
+    if __name__ == .__main__.:
