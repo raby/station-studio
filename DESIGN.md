@@ -386,8 +386,9 @@ The trace is stored as JSON alongside the playlist (in a `playlist_trace` table 
 
 | Item                                        | Status       | Notes                                                   |
 |---------------------------------------------|--------------|---------------------------------------------------------|
-| Visual block editor                         | next (§16.2) | v2; operates on same JSON as wizard                     |
+| Visual block editor                         | later (§16.2)| v2; operates on same JSON as wizard; needs §16.7 first  |
 | Station creation wizard (UI)                | done (14.7)  | Produces the template JSON; reuses `web/src/lib/api.ts` |
+| Edit mode for stations                      | next (§16.7) | Extracts `<StationForm>`; unblocks §16.2                |
 | Wizard polish (presets, per-field errors)   | later (14.7) | See 14.7 table; wait for real-user pain                 |
 | In-UI generate button + per-row regenerate  | done (14.9)  | Closes wizard → trace-viewer loop; per-row regen too    |
 | Delete / station-reset UI                   | done (14.10) | Per-row delete + station-nuke header; both with confirm |
@@ -1387,7 +1388,8 @@ A quick "where are we" for a future reader. Last updated at commit
 | In-UI generate button    | Shipped (14.9). Empty-CTA + next-week + advanced + per-row regen.|
 | Delete / station-reset   | Shipped (14.10). Per-row delete + station nuke; cascades.        |
 | Disk-export UI button    | Shipped (14.11). Trace viewer "Export to disk" + status line.    |
-| Visual block editor      | Deferred (v2). See §16.2.                                        |
+| Edit mode for stations   | Deferred. See §16.7 — next-up; unblocks §16.2.                   |
+| Visual block editor      | Deferred (v2). See §16.2 — queued behind §16.7.                  |
 | Trace versioning         | Deferred. See §16.4 (queued behind §16.1 by design).             |
 | Accessibility pass       | Deferred. See §16.5 (consolidates piecemeal a11y notes).         |
 | Scheduler                | Deferred (v1.1).                                                 |
@@ -2066,5 +2068,220 @@ this gap is the loudest paper cut left in Classics's day-to-day.
   built, the natural place to surface it is alongside the disk-
   export button in this same `.actions` strip — keeping all
   disk-related UX in one cluster.
+
+### 16.7 Edit mode for stations
+
+**Why this matters.** Stations are create-only today. The wizard
+at `/stations/new` writes a template once via POST; after that,
+tweaking the RNG, swapping a source pool name, or adding a row
+means hand-editing `stations/{slug}.json` and re-seeding, OR a
+direct DB write to `Station.template`, OR `curl -X PUT`. The
+`update_station` endpoint already exists (and was hardened in
+commit `1302218` to reject slug changes); the gap is purely UI.
+For Classics today the template is locked in — but the second
+the user wants to fix something ("row 7 should be `[60]` not
+`[50]`", "let me try `rng: 'on'` for a week"), they're back to
+JSON-by-hand. This slice closes that.
+
+**It's also the slice that unblocks the visual block editor
+(§16.2).** Without an edit-mode page, a future drag-drop layout
+editor's output has nowhere meaningful to go (it can only
+create, not modify). Build the edit shell now, drop the visual
+editor into the layout fieldset later — see D10.
+
+**Use cases enumerated.**
+
+| # | Use case                                                 | Today              | Risk if ignored                              |
+|---|----------------------------------------------------------|--------------------|----------------------------------------------|
+| 1 | Rename the display name (typo / better name)            | DB SQL             | Mild — workaround exists                     |
+| 2 | Flip RNG on/off, set/change seed                        | DB SQL or curl PUT | Locked-in — no path for "try a week with rng:on" |
+| 3 | Tweak `row_start_offsets`                               | JSON-by-hand       | Painful — error-prone retype                 |
+| 4 | Add or remove a row (different week shape)              | JSON-by-hand       | Same                                         |
+| 5 | Add or remove a source pool from the template           | JSON-by-hand       | Same                                         |
+| 6 | Change cursor (`base_advance_per_week`, `cycle_weeks`)  | JSON-by-hand       | Same                                         |
+| 7 | Rename the slug                                         | **Rejected** (400) | Slug is immutable — UI must communicate it   |
+| 8 | Edit a station that already has 12 generated playlists  | Allowed silently   | User doesn't realise existing playlists used a different template |
+| 9 | Cancel after exploring the form                         | No state to lose   | Need cancel-without-save path                |
+| 10| Lose unsaved changes by navigating                      | No safety net      | Punted — see §14.7                           |
+| 11| Roll back to the previously saved template              | No undo            | Worth a "Reset to saved" button              |
+| 12| See what's actually changing before saving              | Mental comparison  | Worth a diff view                            |
+| 13| Share form with `/stations/new` to avoid duplication    | Duplicate code     | Architectural — extract `<StationForm>`      |
+
+**Decisions taken** (D1–D10):
+
+- **D1. New route `/stations/[slug]/edit`.** Bookmarkable; URL
+  communicates state; no `?slug=...` query params; the wizard
+  stays single-purpose POST. Inline editing on the detail page
+  rejected: form is too big (4 fieldsets — Identity / Sources
+  / Cursor / Layout) and would dwarf the playlists table.
+- **D2. Extract `<StationForm>` Svelte component shared with
+  `/stations/new`.** Component takes
+  `{mode: 'create' | 'edit', initial?: StationCreatePayload, onSubmit: (payload) => Promise<void>}`.
+  Both routes import it and own their submit handler. Extraction
+  is the right move regardless because the visual block editor
+  (§16.2) and a future "Start from existing" preset (§14.7
+  punt) reuse the same form.
+- **D3. Slug rendered `readonly` with hint text.** Backend 400
+  is the failsafe (and stays so — single-user UI shouldn't be
+  the only enforcement). Hint copy:
+  `"Slug is immutable. Create a new station to use a different one."`
+  The form doesn't include `slug` in the PUT body — it's
+  already in the URL. Why the slug *can't* change: it's
+  embedded in the iTunes `Playlist Persistent ID` for every
+  exported playlist, in `out/{slug}/` disk paths, in
+  `PlaylistTrace.station_slug`, and in `stations/{slug}.json`.
+  Changing it would either break the user's iTunes library
+  (renamed playlists would appear as "new" alongside the old)
+  or require a coordinated multi-system migration not worth
+  building for a single-user tool.
+- **D4. Display name + everything else editable.** Name is
+  presentational; cadence / rng / seed / sources / cursor /
+  layout flow through `parse_template` validation server-side.
+  The wizard's existing client-side sanity checks (slug regex,
+  ≥1 source, ≥1 row block) apply to edit too.
+- **D5. "Save changes" / "Cancel" buttons.** Cancel =
+  `goto('/stations/[slug]')` without save; no `beforeNavigate`
+  hook (D9 below). Save: PUT → on 200 `goto('/stations/[slug]')`;
+  on 400 inline error rendering same as the wizard.
+- **D6. Live JSON preview** in a `<details>` disclosure,
+  available in BOTH create and edit modes (closes the §14.7
+  punt). Renders `JSON.stringify(buildTemplate(state), null, 2)`
+  in a `<pre>`. ~10 LoC. Useful for verification, debugging
+  save failures, and educating users on the canonical JSON
+  shape.
+- **D7. Diff view** in a second `<details>` disclosure,
+  edit-mode-only. Custom field-by-field comparator over the
+  known schema (`name`, `cadence`, `rng`, `seed`, `sources`,
+  `cursor`, `layout`). Shows only changed fields:
+  ```
+  rng: "off" → "on"
+  seed: (unset) → 42
+  row_start_offsets:
+    [0, 10, 20, 30, 40, 50, 50]
+    [0, 12, 24, 36, 48, 60, 60]
+  Sources, Cursor: unchanged
+  ```
+  ~80 LoC of comparison + render, no library dep. Tailored
+  output beats `diff`-package whitespace lines.
+- **D8. "Reset to saved" button** edit-mode-only. Snaps the
+  form back to the originally loaded template. Uses
+  `confirm()` if the form is dirty. Counterpart to D7's diff:
+  see what's changing → decide it's wrong → reset.
+- **D9. No `beforeNavigate` "unsaved changes" hook this slice.**
+  Cancel + Reset cover the intentional flows. The browser
+  back-button has no warning, but accidentally losing edits
+  is recoverable (re-load the form, fields repopulate from
+  server state). §14.7's "Draft autosave" punt is the real
+  fix — defer until a real "I lost my edits" report appears.
+- **D10. Extract `<LayoutFieldset>` Svelte component** (sub-
+  extraction of D2). The wizard's layout fieldset
+  (`unit_labels` + `row_start_offsets` + `row_template` list)
+  becomes its own component. When §16.2 ships,
+  `<LayoutFieldset>` is replaced with `<VisualBlockEditor>`
+  in *one* place — both create and edit pages get the new
+  UX in a single swap, no duplicated migration work.
+
+**Decisions deliberately deferred.**
+
+- **Confirm-on-save when the station has existing playlists.**
+  Considered: dialog warning "this template change won't
+  retro-apply to the 12 existing playlists; regenerate them
+  via §16.1 to use the new template." Rejected for v1 — the
+  user already has §16.1's per-row ↻ regen for the
+  retro-apply story, and the existing playlists' content is
+  unchanged by the edit (the trace JSON is denormalised).
+  Add the confirm if a real "I edited and the old playlists
+  didn't update" report comes in.
+
+**Backend (already shipped — see §14.7 + §1302218).**
+
+- `PUT /api/stations/{slug}` exists in `api/routers/stations.py:85`
+  since the original wizard slice (§14.7).
+- Rejects slug changes with 400 (commit `1302218`).
+- Validates the template via `parse_template`; returns 400
+  with TemplateError message on invalid.
+- Existing tests cover happy path + 400 paths.
+
+No backend work in this slice. Pure frontend.
+
+**Frontend scope — three commits.**
+
+1. **Extract `<StationForm>` and `<LayoutFieldset>` from the
+   wizard.** Pure refactor, no new behaviour. Both components
+   live in `web/src/lib/components/`. The wizard at
+   `/stations/new` is rewritten as a thin parent that imports
+   `<StationForm mode="create">` and owns the POST handler.
+   *All wizard tests must continue to pass unchanged* — they
+   are the safety net for this extraction.
+
+2. **Add `/stations/[slug]/edit` route + Edit button on station
+   detail header.** New route loads the existing template via
+   `getStation(slug)`, mounts `<StationForm mode="edit" initial={...}>`,
+   owns the PUT handler. Header on `/stations/[slug]` gets
+   `[Edit station →]` button next to `[Delete station →]`
+   (visual order per D1: edit first, delete last). Edit
+   styling: dark-slate filled `.button` (matches trace
+   viewer's "Download iTunes XML"); delete keeps its outlined-
+   red `.nuke` styling. Hierarchy: safe = filled, destructive
+   = outlined.
+
+3. **JSON preview + diff + reset + tests + DESIGN.md §14.13.**
+   The two disclosures and the reset button. Vitest cases for
+   the diff comparator (it's a pure function — many edge
+   cases worth pinning: unchanged, single-field, array
+   diff, removed-source, added-source). Playwright e2e for
+   the round-trip (edit form → save → station detail shows
+   the new template).
+
+**Stay-out-of-scope candidates.**
+
+| Area                                              | Status              | Trigger                                      |
+|---------------------------------------------------|---------------------|----------------------------------------------|
+| Visual block editor                               | §16.2               | Real second-station with awkward layout      |
+| `beforeNavigate` unsaved-changes warning          | §14.7 punt          | "I lost my edits" report                     |
+| Draft autosave                                    | §14.7 punt          | Same                                         |
+| Slug rename (recreate-and-delete flow)            | rejected            | iTunes Persistent ID would double in library |
+| Confirm on save with existing playlists           | not now             | "Old playlists didn't update" report         |
+| Per-field error association (a11y)                | §16.5               | A11y pass runs                               |
+| Auto-regenerate playlists on template change      | rejected            | Generation is a visible action (§16.1 D7)    |
+| Migrate disk-exported XMLs after layout change    | rejected            | User re-exports via §16.6                    |
+
+**Implementation notes for future pick-up.**
+
+- The `<StationForm>` extraction is the architectural pivot —
+  the place §16.2 plugs in, the place "Start from existing"
+  (§14.7) plugs in. Get the props shape right
+  (`mode`, `initial`, `onSubmit`) and the rest is rote.
+- The diff comparator is a pure function over
+  `StationCreatePayload`. Test it standalone with a
+  representative set of edits before wiring it into the
+  page; render is just a `<dl>` over its output.
+- "Reset to saved" needs to be careful about reference-equal
+  vs deep-equal — the loaded template is an object;
+  resetting via `Object.assign({}, initial)` won't reset
+  nested arrays/objects unless deep-cloned. Use
+  `structuredClone(initial)`.
+- The wizard's existing 5 Vitest cases (`wizard.test.ts`)
+  and 2 Playwright cases (`wizard.spec.ts`) are the
+  safety net for commit 1's extraction. If any of them
+  fails after extraction, the extraction missed
+  something — read the failure, fix the component, don't
+  weaken the test.
+- The `Edit station →` button uses dark-slate filled
+  `.button` (matches trace viewer's "Download iTunes XML"),
+  NOT the outlined-red `.nuke`. Visual hierarchy: safe is
+  filled, destructive is outlined-red.
+- The diff view's "Sources unchanged" row is the
+  signal-vs-noise test — if the diff just dumps every
+  field whether changed or not, it stops being useful.
+  Lean towards over-collapsing ("Layout: 1 change to
+  row_start_offsets") rather than under-collapsing.
+
+**What this earns us.** The full station lifecycle —
+create → edit → generate → view → delete — finally closes
+in the UI. Combined with §16.6 (disk-export button), the
+Classics production loop gains "I want to tweak the
+template and re-export" as a one-route flow instead of
+"edit JSON / re-import / re-generate / curl-export".
 
 
