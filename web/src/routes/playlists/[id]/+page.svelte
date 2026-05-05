@@ -101,10 +101,12 @@
 
   /**
    * Disk-export handler (DESIGN.md §16.6). POST to the existing endpoint;
-   * surface the returned `{path, bytes}` inline as a status line. Failures
-   * (no permission, missing dir, IO error) render as a red error in the
-   * same slot. No confirmation — disk-write is non-destructive in the §16.3
-   * sense (overwrites only its own file at a predictable path).
+   * surface the returned `{path, bytes}` inline as a status line. The
+   * backend translates "playlist not found" to 404; other server-side
+   * IO problems (permission denied, directory missing, disk full) surface
+   * as a generic 500 with FastAPI's default body. No confirmation —
+   * disk-write is non-destructive in the §16.3 sense (overwrites only
+   * its own file at a predictable path).
    */
   async function exportToDisk() {
     if (!playlist) return;
@@ -113,13 +115,25 @@
     diskExportError = null;
     try {
       const r = await exportPlaylistToDisk(playlist.id);
-      const kb = Math.round(r.bytes / 1024);
-      diskExportStatus = `Wrote to ${r.path} (${kb.toLocaleString()} KB)`;
+      diskExportStatus = `Wrote to ${r.path} (${formatBytes(r.bytes)})`;
     } catch (e) {
       diskExportError = e instanceof ApiError ? e.message : String(e);
     } finally {
       diskExporting = false;
     }
+  }
+
+  /**
+   * Format a byte count for human display. Sub-KB values render as raw
+   * bytes ("847 bytes") because rounding to KB at this scale yields "0 KB"
+   * which reads like the write didn't happen. KB rendering kicks in at
+   * ≥1024 bytes. Classics XMLs land around 850 KB so this branches once
+   * for nearly every real export, but the small-file path matters for
+   * future tiny stations / empty-week edge cases.
+   */
+  function formatBytes(bytes: number): string {
+    if (bytes < 1024) return `${bytes} bytes`;
+    return `${Math.round(bytes / 1024).toLocaleString()} KB`;
   }
 </script>
 

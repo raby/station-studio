@@ -249,7 +249,24 @@ describe('api client', () => {
       expect(r.bytes).toBe(868990);
     });
 
-    it('raises ApiError when the destination is unwritable (404 / 500)', async () => {
+    it('raises ApiError on 404 when the playlist id is unknown', async () => {
+      // The backend's `if not p: raise HTTPException(404, ...)` branch.
+      // Surfaces the message verbatim — see DESIGN.md §16.6 D3.
+      const { fetch_ } = makeSpy({
+        ok: false,
+        status: 404,
+        statusText: 'Not Found',
+        text: 'playlist 999 not found',
+      });
+      const err = await exportPlaylistToDisk(999, fetch_).catch((e) => e);
+      expect(err).toBeInstanceOf(ApiError);
+      expect(err.status).toBe(404);
+      expect(err.message).toContain('playlist 999 not found');
+    });
+
+    it('raises ApiError on 5xx (server-side IO failure)', async () => {
+      // FastAPI's default 500 body for an untranslated PermissionError /
+      // OSError. The trace viewer renders this as the inline error.
       const { fetch_ } = makeSpy({
         ok: false,
         status: 500,
