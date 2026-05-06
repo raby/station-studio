@@ -405,7 +405,8 @@ The trace is stored as JSON alongside the playlist (in a `playlist_trace` table 
 | Trace-viewer polish                         | later (14.5) | Search, virtualisation, SSR, multi-week nav, compare    |
 | Test plan + CI                              | done (14.8)  | 4-tier; backend 98% lines; 26 Vitest + 9 Playwright     |
 | Coverage gate in CI                         | done (14.12) | Backend 90% aggregate; frontend per-file lines ≥ 85%    |
-| Test follow-ups (viz tests, mutation)       | later (14.8) | See 14.8 table; per-file lines now gated, mutation isn't|
+| Trace-viewer Vitest backfill                | done (14.14) | 0% → 96.49% lines; closes §14.8's last 0%-file row      |
+| Test follow-ups (viz tests, mutation)       | later (14.8) | See 14.8 table; perf / a11y / mutation remain           |
 | Accessibility pass                          | later (§16.5)| Consolidates a11y rows from 14.5/14.7/14.9; one slice   |
 
 ---
@@ -996,8 +997,8 @@ pre-flight punt list, restated here for the §11 cross-reference:
 
 | Area                                | Missing                                                                      | Trigger to pick up                              |
 |-------------------------------------|------------------------------------------------------------------------------|-------------------------------------------------|
-| Vitest tests for trace viewer       | `playlists/[id]/+page.svelte` is 0% lines under Vitest (Playwright covers it)| Trace viewer grows branching that's hard to e2e |
-| Coverage gate in CI                 | Coverage runs but no failing threshold                                       | First time coverage silently drops              |
+| Vitest tests for trace viewer       | done in §14.14 — was 0%, now 96.49% lines via `trace-viewer.test.ts`         | n/a (closed)                                    |
+| Coverage gate in CI                 | done in §14.12 — backend ≥90% aggregate, frontend per-file lines ≥85%        | n/a (closed)                                    |
 | Visual-regression / screenshot tests| None — Playwright only asserts text & DOM                                    | A CSS regression slips past assertions          |
 | Property-based engine tests         | Mentioned in §10; never landed                                               | Engine grows a primitive that's hard to enumerate|
 | Real iTunes XML integration test    | Importer tests use synthesised plists                                        | An iTunes update breaks a real-world XML        |
@@ -1543,9 +1544,100 @@ new wizard → save → station detail → generate → trace viewer
 - `<StationForm>` styles aren't scoped tighter than they
   need to be — generic selectors like `fieldset { ... }` or
   `label { ... }` will hit elements rendered by the parent
-  route too. Acceptable today (the styles are visually
-  appropriate for either context); if a future parent
-  conflicts, scope tighter via classes.
+  route too. *(Update: addressed in the §16.7 review fix
+  pass — generic selectors moved into `_form-shared.css`
+  scoped under `.station-form`. See review S1+S2 in commit
+  `79f1ea0`.)*
+
+### 14.14 Trace viewer Vitest backfill — what shipped
+
+**Why.** The trace viewer (`/playlists/[id]/+page.svelte`) was
+the last 0%-Vitest file in the project, deliberately punted by
+§14.5 / §16.6 with the rationale "Playwright covers it; jsdom
+doesn't render layout faithfully". The §14.8 "Test follow-ups"
+punt table named it explicitly. Closing the gap now means a
+component-level regression in the trace viewer fails fast
+(vitest milliseconds) instead of slow (Playwright seconds, only
+on full e2e runs).
+
+**What shipped (single commit).**
+
+- **`web/src/routes/playlists/[id]/trace-viewer.test.ts`** —
+  10 Vitest cases covering:
+  - **Render branches**: invalid playlist id (`/playlists/abc`),
+    loading state, ApiError 404 from `getTrace`, non-ApiError
+    failure stringification, populated render with header /
+    meta / row groups / slot rows, rng:on with seed display,
+    row-collapse toggle.
+  - **Disk-export wiring (§16.6)**: success path renders the
+    path + KB size, sub-KB sizes render as raw bytes (S1 from
+    the §16.6 review), failure renders inline with no nav
+    side-effect.
+- **`vite.config.js`** removes the trace viewer from
+  `coverage.exclude`. Per-file lines threshold (≥85%) now fires
+  for it; current coverage is 96.49% lines, comfortable
+  headroom.
+
+**Decisions in flight.**
+
+- **Mock the `$app/stores` page store the same way as
+  `detail.test.ts`.** Hoisted holder + `setId(s)` helper so
+  individual tests can swap the route param. Same shape as
+  the existing pattern; nothing new.
+- **No dedicated test for the chip colour rendering.** The
+  `chipStyle()` function builds an inline `style="..."` string
+  from the `sourceColours` lookup — testing the actual colour
+  in jsdom would assert on the inline-style attribute, not on
+  the visible colour, which is what we'd actually care about.
+  Deferred to Playwright (where the `.chip` class exists in
+  the existing `trace-viewer.spec.ts`). The fallback grey
+  `#888` for unknown sources is similarly visual-only.
+- **The row-collapse test walks up via `.closest('header')`.**
+  `getByRole('button', { name: 'Mon' })` would match because
+  the header has `role="button"`, but the matcher's name
+  strategy is brittle when the header has multiple text
+  children (caret + unit-label + row-meta). Walking up from
+  the unit-label text is more robust.
+- **The §16.6 disk-export tests assert via `data-testid`,
+  not text content.** Status / error elements both render text
+  that includes the path; testid-targeting avoids the multiple-
+  matches problem when the path itself contains words like
+  "error" or "status".
+
+**What stays Playwright-only by design.**
+
+- **CSS / layout assertions** — chip colours, table widths,
+  scroll behaviour, mobile-narrow CSS (§14.5 punt). jsdom
+  doesn't compute styles faithfully; assertions in unit tests
+  would test the wrong thing. The existing
+  `e2e/trace-viewer.spec.ts` covers the visual contract.
+- **The browser-download `<a href>`** — handled entirely by
+  the browser's `Content-Disposition` machinery; no JS to
+  unit-test.
+
+**Coverage shipping** — last measurement post-§14.14:
+
+| File                                 | Lines  | Trend                          |
+|--------------------------------------|--------|--------------------------------|
+| `playlists/[id]/+page.svelte`        | 96.49% | was 0% (excluded); now gated   |
+| Aggregate                            | 96.16% | unchanged-ish (small uptick)   |
+
+**Implementation notes for future pick-up.**
+
+- The fixture stations (`stubStation`, `stubPlaylist`,
+  `stubTrace`) are deliberately small — three slots across two
+  rows, two source pools. Enough to exercise grouping +
+  collapse + rng-flag rendering. Don't grow them unless a new
+  branch genuinely needs more shape.
+- The disk-export test for sub-KB sizes (47 bytes → "47
+  bytes") is the unit-level pin for §16.6's S1 review fix.
+  If a future change reverts the bytes-vs-KB branching in
+  `formatBytes()`, this test fails; the formatter stays
+  honest.
+- If §16.4 (trace versioning) ever lands and the viewer
+  grows a version picker, expect to mock another endpoint
+  and add per-version render branches here. The hoisted
+  mock holder pattern accommodates that without restructure.
 
 ---
 
@@ -1566,6 +1658,7 @@ A quick "where are we" for a future reader. Last updated at commit
 | Station creation wizard  | Shipped (first cut). End-to-end verified.                        |
 | Test plan + CI           | Shipped. 4-tier (engine, API, Vitest, Playwright). 98% backend.  |
 | Coverage gate in CI      | Shipped (14.12). Backend 90% aggregate; frontend per-file lines ≥85%. |
+| Trace-viewer Vitest      | Shipped (14.14). 0% → 96.49% lines; closes §14.8's last gap.     |
 | In-UI generate button    | Shipped (14.9). Empty-CTA + next-week + advanced + per-row regen.|
 | Delete / station-reset   | Shipped (14.10). Per-row delete + station nuke; cascades.        |
 | Disk-export UI button    | Shipped (14.11). Trace viewer "Export to disk" + status line.    |

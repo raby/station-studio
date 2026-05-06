@@ -39,19 +39,19 @@ export default defineConfig({
         'src/**/*.{test,spec}.{js,ts}',
         'src/**/*.d.ts',
         'src/app.html',
-        // Trace viewer is Playwright-only by §14.5 / §16.6 design — the
-        // page does layout work that's awkward to assert in jsdom and
-        // `playlists/[id]/+page.svelte` is well-covered by the e2e
-        // suite. Excluded so its 0% lines don't drag the aggregate
-        // and the per-file thresholds below stay meaningful.
-        'src/routes/playlists/[id]/+page.svelte',
-        // Edit route is Playwright-only for the same reason: it's a
-        // thin parent over <StationForm> that loads data via the API
-        // and dispatches the PUT — both well-tested at the unit and
-        // e2e layers respectively. The component's behaviour is
-        // pinned in StationForm.test.ts (§16.7 commit 3); the route
-        // wiring is pinned in e2e/edit.spec.ts.
+        // Edit route is Playwright-only — it's a thin parent over
+        // <StationForm> that loads data via the API and dispatches
+        // the PUT. Both well-tested at the unit (StationForm.test.ts)
+        // and e2e (edit.spec.ts) layers; including it would only
+        // re-test the parent wiring at the cost of mocking
+        // $app/stores.
         'src/routes/stations/[slug]/edit/+page.svelte',
+        // Note: the trace viewer (`playlists/[id]/+page.svelte`) was
+        // previously excluded too. As of §14.14 it's covered by
+        // trace-viewer.test.ts under jsdom — render-branch + disk-
+        // export wiring assertions. Layout/CSS-shaped behaviour is
+        // still Playwright's job, but the component's state machine
+        // now has Vitest coverage.
       ],
       reporter: ['text', 'text-summary'],
       // Coverage gates (DESIGN.md §14.12). The §14.9 M1 finding — the
