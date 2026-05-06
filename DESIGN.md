@@ -388,7 +388,7 @@ The trace is stored as JSON alongside the playlist (in a `playlist_trace` table 
 |---------------------------------------------|--------------|---------------------------------------------------------|
 | Visual block editor                         | later (§16.2)| v2; operates on same JSON as wizard; needs §16.7 first  |
 | Station creation wizard (UI)                | done (14.7)  | Produces the template JSON; reuses `web/src/lib/api.ts` |
-| Edit mode for stations                      | next (§16.7) | Extracts `<StationForm>`; unblocks §16.2                |
+| Edit mode for stations                      | done (14.13) | `<StationForm>` extracted; JSON preview + diff + reset  |
 | Wizard polish (presets, per-field errors)   | later (14.7) | See 14.7 table; wait for real-user pain                 |
 | In-UI generate button + per-row regenerate  | done (14.9)  | Closes wizard → trace-viewer loop; per-row regen too    |
 | Delete / station-reset UI                   | done (14.10) | Per-row delete + station-nuke header; both with confirm |
@@ -1366,6 +1366,165 @@ commit, not been discovered three review rounds later.
   Don't trust the rounded display; if you need a tight gate,
   inspect the precise figure.
 
+### 14.13 Edit mode for stations — what shipped
+
+**What shipped (3 commits, follow-on to §16.7's plan).**
+
+The §16.7 brief committed all 10 decisions ahead of execution;
+this section records what actually landed and the in-flight
+surprises.
+
+- **Backend (already shipped — no work this slice).** `PUT
+  /api/stations/{slug}` from §14.7 + slug-immutable enforcement
+  from `1302218`.
+- **`updateStation(slug, payload)`** typed client in
+  `web/src/lib/api.ts`. Mirrors `createStation`; doc-string
+  flags slug-immutability + the iTunes Persistent ID
+  consequence.
+- **Extracted `<StationForm>`** at
+  `web/src/lib/components/StationForm.svelte` (~445 LoC). All
+  form state, client-side validation, and template-build logic
+  live here. Props:
+  `{mode: 'create'|'edit', initial?: Station, onSubmit: callback, cancelHref?}`.
+  Both `/stations/new` and `/stations/[slug]/edit` use it; the
+  parents own the API call (POST vs PUT) and the navigation
+  destination.
+- **Extracted `<LayoutFieldset>`** at
+  `web/src/lib/components/LayoutFieldset.svelte`. The §16.2
+  swap-point — when the visual block editor lands it replaces
+  this one component, both create and edit pages get drag-drop
+  in a single change. Style rules duplicated from
+  `<StationForm>` because Svelte's per-component scoping
+  doesn't reach into a child.
+- **`/stations/[slug]/edit` route** — loads via `getStation(slug)`,
+  mounts `<StationForm mode="edit" initial={station}>`, owns
+  the PUT handler. Loading + 404 paths covered.
+- **"Edit station →" button** on the station-detail header,
+  left of the existing "Delete station →". Visual order per
+  D1: edit first (safe, dark-slate filled), delete last
+  (destructive, outlined-red). It's a plain `<a href>` (not
+  `<button>`) because edit is a navigation, not an action —
+  let the browser handle right-click / middle-click /
+  open-in-new-tab.
+- **Slug input is `readonly` in edit mode** with explicit hint
+  copy explaining *why* it's immutable (embedded in iTunes
+  Persistent IDs and disk paths). Greyed-out background
+  (`#f4f4f4`, `cursor: not-allowed`) reinforces the signal.
+  D3 failsafe: backend rejects slug changes with 400; the
+  form just doesn't allow trying.
+- **Live JSON preview** (D6, both modes) — `<details>`
+  disclosure showing `JSON.stringify(buildTemplate(), null, 2)`
+  in a styled `<pre>` block. Closes the §14.7 punt.
+- **Diff disclosure** (D7, edit-mode only) — header shows
+  "what's changing" + a pill (`unsaved` red, `no changes`
+  grey). Body groups changes under Identity / Sources /
+  Cursor / Layout headings. Backed by the
+  `templateDiff(before, after)` pure function in
+  `web/src/lib/templateDiff.ts`. 10 Vitest cases pin the
+  comparator's contract: section ordering, identity changes,
+  RNG flip, source add/remove/modify with name-based matching
+  (reorder is no-diff), cursor scalar changes, layout array
+  changes, row_template compact summary, malformed-template
+  resilience.
+- **"Reset to saved" button** (D8, edit-mode only) — disabled
+  when clean, prompts a `confirm()` when dirty, restores the
+  form via `unpack(structuredClone(initial))`. Shallow copy
+  via spread/map alone left nested arrays shared with
+  `initial`; subsequent edits mutated the original. The
+  `structuredClone` is the deep-copy fix.
+
+**Decisions in flight that the §16.7 brief didn't pre-decide.**
+
+- **Edit route excluded from Vitest coverage.** Mirrors the
+  trace viewer pattern (§14.5 / §16.6). The route is a thin
+  parent (load → mount component → callback) whose behaviour
+  is pinned by Vitest tests on `<StationForm>` (8 cases) and
+  Playwright tests on the round-trip (5 cases). Adding
+  Vitest mounts of the route itself would only re-test the
+  parent wiring at the cost of mocking `$app/stores` etc.
+  Excluded in `vite.config.js` `coverage.exclude` to keep
+  the per-file gate meaningful.
+- **The dirty-pill targets `.dirty-pill` / `.clean-pill`
+  classes for tests, not the text content.** First write of
+  the test used `screen.getByText(/no changes/i)` — but the
+  body has "No changes yet — everything matches" prose too,
+  so it matched twice and threw "Found multiple". Switched
+  to class-targeted `container.querySelector('.clean-pill')`
+  which is the correct way to disambiguate visual states
+  that share copy.
+- **`structuredClone` over `Object.assign({}, initial)` for
+  reset.** Caught during dev: shallow-cloning `initial` and
+  reassigning the form variables left `sources` / `rowTemplate`
+  pointing at the same arrays as `initial`, so subsequent
+  edits mutated the loaded reference. After a reset, the
+  diff thought everything was clean even though the form
+  showed edits. `structuredClone` deep-copies and resolves
+  it cleanly. Comment in `resetToSaved()` flags this so the
+  next person doesn't repeat.
+- **JSON-preview pre-tag uses `white-space: pre`** instead of
+  `pre-wrap`. The output is small (~20 lines for Classics)
+  and reads better with horizontal scroll than wrap-on-comma
+  garbage. If templates ever grow huge enough that this
+  matters, switch to `pre-wrap` and accept the wrapping.
+- **Diff "before"/"after" colour palette uses Material-style
+  red (`#b71c1c`) + green (`#1b5e20`)** matching the
+  §14.11 disk-status palette. This means we now have two
+  established palettes in the codebase (the old crimson /
+  `#666` and Material), which §16.5's a11y pass should
+  consolidate. Noted there.
+
+**What's now reachable from the UI.** The full station
+lifecycle — create → edit → generate → view → delete — is
+finally reachable end-to-end without dropping to JSON-by-hand
+or curl. Combined with §16.6 (disk-export button), the
+Classics production loop now flows:
+
+```
+new wizard → save → station detail → generate → trace viewer
+       ↓                    ↑                 ↓
+       └─── edit ───────────┘            export to disk
+```
+
+…all from the browser, no shell.
+
+**Stay-out-of-scope candidates** (re-stated for traceability):
+
+| Area                                              | Status              | Trigger                                      |
+|---------------------------------------------------|---------------------|----------------------------------------------|
+| Visual block editor                               | §16.2               | Real second-station with awkward layout      |
+| `beforeNavigate` unsaved-changes warning          | §14.7 punt          | "I lost my edits" report                     |
+| Draft autosave                                    | §14.7 punt          | Same                                         |
+| Confirm on save with existing playlists           | not now             | "Old playlists didn't update" report         |
+| Per-field error association (a11y)                | §16.5               | A11y pass runs                               |
+| Auto-regenerate playlists on template change      | rejected            | Generation is a visible action (§16.1 D7)    |
+
+**Implementation notes for future pick-up.**
+
+- The `unpack()` helper in `<StationForm>` is the
+  template→form-state translation. If the canonical template
+  shape grows a field, update `unpack` *and* `buildTemplate`
+  in lockstep — they're the inverse-pair.
+- The diff comparator's `Sources` matching is by `name`. If
+  a future edit allows renaming a source, that rename will
+  appear as `(removed)` + `(added)` rather than a single
+  rename row. Acceptable for v1; switch to a smarter match
+  (e.g. by colour-stable identity) if rename UX matters.
+- `<LayoutFieldset>` style rules are duplicated from
+  `<StationForm>` because of Svelte scoping. Comment in both
+  files notes "tweak in StationForm, mirror here". When
+  §16.2 replaces LayoutFieldset wholesale that duplication
+  goes away.
+- The hydration sentinel (`data-wizard-ready` on `<html>`)
+  moved from the wizard route into `<StationForm>`'s
+  `onMount`. Both consumers benefit and the existing
+  Playwright spec keeps working unchanged.
+- `<StationForm>` styles aren't scoped tighter than they
+  need to be — generic selectors like `fieldset { ... }` or
+  `label { ... }` will hit elements rendered by the parent
+  route too. Acceptable today (the styles are visually
+  appropriate for either context); if a future parent
+  conflicts, scope tighter via classes.
+
 ---
 
 ## 15. Status snapshot
@@ -1388,8 +1547,8 @@ A quick "where are we" for a future reader. Last updated at commit
 | In-UI generate button    | Shipped (14.9). Empty-CTA + next-week + advanced + per-row regen.|
 | Delete / station-reset   | Shipped (14.10). Per-row delete + station nuke; cascades.        |
 | Disk-export UI button    | Shipped (14.11). Trace viewer "Export to disk" + status line.    |
-| Edit mode for stations   | Deferred. See §16.7 — next-up; unblocks §16.2.                   |
-| Visual block editor      | Deferred (v2). See §16.2 — queued behind §16.7.                  |
+| Edit mode for stations   | Shipped (14.13). Shared `<StationForm>` + JSON preview + diff + reset. |
+| Visual block editor      | Deferred (v2). See §16.2 — `<LayoutFieldset>` is the swap-point.  |
 | Trace versioning         | Deferred. See §16.4 (queued behind §16.1 by design).             |
 | Accessibility pass       | Deferred. See §16.5 (consolidates piecemeal a11y notes).         |
 | Scheduler                | Deferred (v1.1).                                                 |

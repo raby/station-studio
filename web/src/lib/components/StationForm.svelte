@@ -17,6 +17,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { ApiError } from '$lib/api';
+  import { templateDiff, isClean } from '$lib/templateDiff';
+  import type { Section as DiffSection } from '$lib/templateDiff';
   import LayoutFieldset from './LayoutFieldset.svelte';
 
   // ---- props ------------------------------------------------------------
@@ -270,6 +272,48 @@
   // "Save changes" are the natural defaults for the two consumers.
   $: submitLabel = mode === 'edit' ? 'Save changes' : 'Create station';
   $: submittingLabel = mode === 'edit' ? 'Saving…' : 'Creating…';
+
+  // ---- Live JSON preview (D6) ------------------------------------------
+  // Re-derived on every form-state change; renders in a <details>
+  // disclosure. Cheap — buildTemplate() is O(form-size).
+
+  $: previewJSON = JSON.stringify(buildTemplate(), null, 2);
+
+  // ---- Diff view (D7, edit-mode only) ----------------------------------
+  // Compares the live form state against the originally loaded template.
+  // The diff is structured (Sections × Changes); render iterates.
+
+  $: liveStation = {
+    slug: slug.trim() || (initial?.slug ?? ''),
+    name: name.trim() || (initial?.name ?? ''),
+    template: buildTemplate(),
+  };
+  $: diff = mode === 'edit' && initial ? templateDiff(initial, liveStation) : null;
+  $: dirty = diff ? !isClean(diff) : false;
+
+  // ---- Reset to saved (D8, edit-mode only) -----------------------------
+
+  function resetToSaved() {
+    if (!initial) return;
+    if (dirty && !confirm('Discard changes and reset to the saved template?')) return;
+    // structuredClone deep-copies — Object spread / Array map alone leaves
+    // nested arrays/objects shared with `initial`, so subsequent edits
+    // would mutate the original (caught me once during dev).
+    const reset = unpack(structuredClone(initial));
+    slug = reset.slug;
+    name = reset.name;
+    cadence = reset.cadence;
+    rng = reset.rng;
+    seedStr = reset.seedStr;
+    sources = reset.sources;
+    baseAdvancePerWeek = reset.baseAdvancePerWeek;
+    cycleWeeks = reset.cycleWeeks;
+    unit = reset.unit;
+    unitLabelsStr = reset.unitLabelsStr;
+    rowStartOffsetsStr = reset.rowStartOffsetsStr;
+    rowTemplate = reset.rowTemplate;
+    error = null;
+  }
 </script>
 
 {#if error}
@@ -395,10 +439,66 @@
     {contentSourceNames}
   />
 
+  <!-- ---- diff (edit mode only) -------------------------------- -->
+  {#if mode === 'edit' && diff}
+    <details class="disclosure" data-testid="diff-disclosure">
+      <summary>
+        what's changing
+        {#if dirty}
+          <span class="dirty-pill">unsaved</span>
+        {:else}
+          <span class="clean-pill">no changes</span>
+        {/if}
+      </summary>
+      <div class="disclosure-body">
+        {#if !dirty}
+          <p class="hint">No changes yet — everything matches the saved template.</p>
+        {:else}
+          {#each diff as section}
+            <h4>{section.name}</h4>
+            {#if section.changes.length === 0}
+              <p class="unchanged">unchanged</p>
+            {:else}
+              <dl class="diff-list">
+                {#each section.changes as c}
+                  <dt>{c.label}</dt>
+                  <dd>
+                    <span class="before">{c.before}</span>
+                    <span class="arrow">→</span>
+                    <span class="after">{c.after}</span>
+                  </dd>
+                {/each}
+              </dl>
+            {/if}
+          {/each}
+        {/if}
+      </div>
+    </details>
+  {/if}
+
+  <!-- ---- live JSON preview (both modes) -------------------------- -->
+  <details class="disclosure" data-testid="json-preview">
+    <summary>JSON preview (what will be saved)</summary>
+    <div class="disclosure-body">
+      <pre class="json">{previewJSON}</pre>
+    </div>
+  </details>
+
   <div class="actions">
     <button type="submit" disabled={submitting}>
       {submitting ? submittingLabel : submitLabel}
     </button>
+    {#if mode === 'edit'}
+      <button
+        type="button"
+        class="ghost"
+        data-testid="reset-to-saved"
+        on:click={resetToSaved}
+        disabled={submitting || !dirty}
+      >
+        Reset to saved
+      </button>
+    {/if}
     <a href={cancelHref} class="ghost-link">cancel</a>
   </div>
 </form>
@@ -529,5 +629,98 @@
     border: 1px solid #fed7d7;
     padding: 0.5rem 0.75rem;
     border-radius: 4px;
+  }
+
+  /* ---- disclosures (JSON preview + diff) ---------------------------- */
+  .disclosure {
+    border: 1px solid #e4e4e4;
+    border-radius: 4px;
+    margin: 1rem 0;
+    background: #fafafa;
+  }
+  .disclosure summary {
+    padding: 0.5rem 0.75rem;
+    cursor: pointer;
+    user-select: none;
+    font-size: 0.9rem;
+  }
+  .disclosure summary:hover { background: #f0f0f0; }
+  .disclosure-body {
+    padding: 0.5rem 0.75rem;
+    border-top: 1px solid #e4e4e4;
+    background: white;
+  }
+  .disclosure-body h4 {
+    margin: 0.75rem 0 0.25rem;
+    font-size: 0.85rem;
+    color: #555;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .disclosure-body h4:first-child { margin-top: 0; }
+  .disclosure-body .unchanged { color: #888; font-style: italic; margin: 0 0 0.5rem; }
+
+  .json {
+    margin: 0;
+    padding: 0.75rem;
+    background: #fafafa;
+    border: 1px solid #e4e4e4;
+    border-radius: 3px;
+    font-family: ui-monospace, monospace;
+    font-size: 0.8rem;
+    white-space: pre;
+    overflow-x: auto;
+  }
+
+  /* ---- diff list --------------------------------------------------- */
+  .diff-list {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    column-gap: 1rem;
+    row-gap: 0.2rem;
+    margin: 0 0 0.5rem;
+    font-size: 0.85rem;
+    font-family: ui-monospace, monospace;
+  }
+  .diff-list dt {
+    color: #555;
+    white-space: nowrap;
+  }
+  .diff-list dd {
+    margin: 0;
+    word-break: break-all;
+  }
+  .diff-list .before {
+    color: #b71c1c;
+    text-decoration: line-through;
+  }
+  .diff-list .arrow {
+    color: #666;
+    margin: 0 0.4rem;
+  }
+  .diff-list .after {
+    color: #1b5e20;
+  }
+
+  /* ---- pills next to "what's changing" ----------------------------- */
+  .dirty-pill, .clean-pill {
+    display: inline-block;
+    margin-left: 0.4rem;
+    padding: 0.05em 0.5em;
+    border-radius: 999px;
+    font-size: 0.7rem;
+    font-family: ui-monospace, monospace;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  .dirty-pill {
+    background: #fff5f5;
+    color: #b71c1c;
+    border: 1px solid #fed7d7;
+  }
+  .clean-pill {
+    background: #f4f4f4;
+    color: #888;
+    border: 1px solid #e4e4e4;
   }
 </style>

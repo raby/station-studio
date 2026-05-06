@@ -45,6 +45,13 @@ export default defineConfig({
         // suite. Excluded so its 0% lines don't drag the aggregate
         // and the per-file thresholds below stay meaningful.
         'src/routes/playlists/[id]/+page.svelte',
+        // Edit route is Playwright-only for the same reason: it's a
+        // thin parent over <StationForm> that loads data via the API
+        // and dispatches the PUT — both well-tested at the unit and
+        // e2e layers respectively. The component's behaviour is
+        // pinned in StationForm.test.ts (§16.7 commit 3); the route
+        // wiring is pinned in e2e/edit.spec.ts.
+        'src/routes/stations/[slug]/edit/+page.svelte',
       ],
       reporter: ['text', 'text-summary'],
       // Coverage gates (DESIGN.md §14.12). The §14.9 M1 finding — the
