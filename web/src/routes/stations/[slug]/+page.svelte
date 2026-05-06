@@ -209,19 +209,29 @@
         <p class="slug">{station.slug}</p>
       </div>
       <!--
-        Station-nuke (DESIGN.md §16.3 D1). Right-aligned, distinct
-        red styling — the visual hierarchy matches blast radius (D7).
-        The dialog inside nukeStation() composes the count copy.
+        Header actions (DESIGN.md §16.7 D1 + §16.3 D1). Visual order:
+        Edit first (safe, filled), Delete last (destructive, outlined-red).
+        Hierarchy matches blast radius (§16.3 D7) — safe = filled,
+        destructive = outlined.
       -->
-      <button
-        type="button"
-        class="nuke"
-        data-testid="delete-station"
-        disabled={deleting || generating}
-        on:click={nukeStation}
-      >
-        Delete station →
-      </button>
+      <div class="header-actions">
+        <a
+          href="/stations/{slug}/edit"
+          class="edit-link"
+          data-testid="edit-station"
+        >
+          Edit station →
+        </a>
+        <button
+          type="button"
+          class="nuke"
+          data-testid="delete-station"
+          disabled={deleting || generating}
+          on:click={nukeStation}
+        >
+          Delete station →
+        </button>
+      </div>
     </header>
 
     <h2>Playlists</h2>
@@ -394,6 +404,27 @@
     align-items: flex-start;
     justify-content: space-between;
     gap: 2rem;
+  }
+  .header-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-shrink: 0;
+  }
+  /* Edit link mirrors the trace viewer's `.button` styling — safe = filled,
+     paired with the .nuke destructive button on its right (§16.7 D1). */
+  .edit-link {
+    display: inline-block;
+    padding: 0.5rem 1rem;
+    background: #2c3e50;
+    color: white;
+    text-decoration: none;
+    border-radius: 4px;
+    font-size: 0.9rem;
+    white-space: nowrap;
+  }
+  .edit-link:hover {
+    background: #1a252f;
   }
   .nuke {
     /* Distinct from the per-row .link-btn delete: this is a properly

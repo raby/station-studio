@@ -136,6 +136,24 @@ export const createStation = (
     body: JSON.stringify(payload),
   }).then((r) => json<Station>(r));
 
+/**
+ * Update an existing station's display name + template (DESIGN.md §16.7).
+ * The slug is part of the URL and must not be in the body — the backend
+ * rejects slug changes with 400 (slug is immutable; iTunes Persistent IDs
+ * embed it). The shape mirrors `createStation` because both wrap the same
+ * server-side validator (`engine.template.parse_template`).
+ */
+export const updateStation = (
+  slug: string,
+  payload: StationCreatePayload,
+  fetch_ = fetch,
+): Promise<Station> =>
+  fetch_(`/api/stations/${encodeURIComponent(slug)}`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(payload),
+  }).then((r) => json<Station>(r));
+
 export interface GenerateResponse {
   playlist_id: number;
   trace_id: string;

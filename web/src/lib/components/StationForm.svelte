@@ -67,29 +67,98 @@
   type Source = { name: string; colour: string; role: Role };
 
   // ---- form state -------------------------------------------------------
-  // Initialised from `initial` if edit mode supplies it (commit 2 of §16.7);
-  // otherwise the create-mode defaults match the original wizard exactly.
+  // For edit mode, populate from `initial.template` via the unpack helper
+  // below; for create mode, fall back to defaults that match the original
+  // wizard exactly. Initialiser runs once at component mount; subsequent
+  // bindings come from the form inputs themselves.
 
-  let slug = '';
-  let name = '';
-  let cadence: (typeof CADENCE_OPTIONS)[number] = 'weekly';
-  let rng: Rng = 'off';
-  let seedStr = ''; // string so we can tell empty from 0
+  type FormState = {
+    slug: string;
+    name: string;
+    cadence: (typeof CADENCE_OPTIONS)[number];
+    rng: Rng;
+    seedStr: string;
+    sources: Source[];
+    baseAdvancePerWeek: number;
+    cycleWeeks: number;
+    unit: string;
+    unitLabelsStr: string;
+    rowStartOffsetsStr: string;
+    rowTemplate: RowBlock[];
+  };
 
-  let sources: Source[] = [
-    { name: '', colour: '#c0392b', role: 'content' },
-  ];
+  function defaults(): FormState {
+    return {
+      slug: '',
+      name: '',
+      cadence: 'weekly',
+      rng: 'off',
+      seedStr: '',
+      sources: [{ name: '', colour: '#c0392b', role: 'content' }],
+      baseAdvancePerWeek: 0,
+      cycleWeeks: 1,
+      unit: 'day',
+      unitLabelsStr: 'Mon, Tue, Wed, Thu, Fri, Sat, Sun',
+      rowStartOffsetsStr: '0, 0, 0, 0, 0, 0, 0',
+      rowTemplate: [{ source: '', strategy: 'pick', size: 1 }],
+    };
+  }
 
-  let baseAdvancePerWeek = 0;
-  let cycleWeeks = 1;
+  /**
+   * Convert a stored template (the `Record<string, unknown>` blob from the
+   * API) back into the form-shaped FormState. The reverse of buildTemplate().
+   * Defensive: any missing field falls back to its default so a malformed
+   * stored template doesn't blank the whole form.
+   */
+  function unpack(initial: NonNullable<typeof $$props.initial>): FormState {
+    const t = initial.template as Record<string, unknown>;
+    const cursor = (t.cursor as Record<string, unknown>) ?? {};
+    const layout = (t.layout as Record<string, unknown>) ?? {};
+    const tplSources = (t.sources as Source[] | undefined) ?? [];
+    const tplRowTemplate = (layout.row_template as RowBlock[] | undefined) ?? [];
+    const tplUnitLabels = (layout.unit_labels as string[] | undefined) ?? [];
+    const tplOffsets = (layout.row_start_offsets as number[] | undefined) ?? [];
 
-  let unit = 'day';
-  let unitLabelsStr = 'Mon, Tue, Wed, Thu, Fri, Sat, Sun';
-  let rowStartOffsetsStr = '0, 0, 0, 0, 0, 0, 0';
+    const d = defaults();
+    return {
+      slug: initial.slug,
+      name: initial.name,
+      cadence: (t.cadence as FormState['cadence']) ?? d.cadence,
+      rng: (t.rng as Rng) ?? d.rng,
+      seedStr: t.seed != null ? String(t.seed) : '',
+      sources: tplSources.length > 0
+        ? tplSources.map((s) => ({ name: s.name, colour: s.colour, role: s.role }))
+        : d.sources,
+      baseAdvancePerWeek:
+        Number(cursor.base_advance_per_week) || d.baseAdvancePerWeek,
+      cycleWeeks: Number(cursor.cycle_weeks) || d.cycleWeeks,
+      unit: (layout.unit as string) ?? d.unit,
+      unitLabelsStr:
+        tplUnitLabels.length > 0 ? tplUnitLabels.join(', ') : d.unitLabelsStr,
+      rowStartOffsetsStr:
+        tplOffsets.length > 0 ? tplOffsets.join(', ') : d.rowStartOffsetsStr,
+      rowTemplate: tplRowTemplate.length > 0
+        ? tplRowTemplate.map((b) => ({ source: b.source, strategy: b.strategy, size: b.size }))
+        : d.rowTemplate,
+    };
+  }
 
-  let rowTemplate: RowBlock[] = [
-    { source: '', strategy: 'pick', size: 1 },
-  ];
+  // Initial state — `initial` is consumed once at mount; the form is the
+  // source of truth thereafter.
+  const _init = initial ? unpack(initial) : defaults();
+
+  let slug = _init.slug;
+  let name = _init.name;
+  let cadence = _init.cadence;
+  let rng = _init.rng;
+  let seedStr = _init.seedStr;
+  let sources: Source[] = _init.sources;
+  let baseAdvancePerWeek = _init.baseAdvancePerWeek;
+  let cycleWeeks = _init.cycleWeeks;
+  let unit = _init.unit;
+  let unitLabelsStr = _init.unitLabelsStr;
+  let rowStartOffsetsStr = _init.rowStartOffsetsStr;
+  let rowTemplate: RowBlock[] = _init.rowTemplate;
 
   // Only content sources can fill layout blocks (enforced server-side).
   $: contentSourceNames = sources
@@ -214,8 +283,22 @@
 
     <label>
       <span>Slug</span>
-      <input bind:value={slug} placeholder="rebirth-classics" autocomplete="off" />
-      <small>lowercase, digits, dashes. Used in URLs and filenames.</small>
+      <input
+        bind:value={slug}
+        placeholder="rebirth-classics"
+        autocomplete="off"
+        readonly={mode === 'edit'}
+        class:readonly={mode === 'edit'}
+      />
+      {#if mode === 'edit'}
+        <small>
+          Slug is immutable — create a new station to use a different one.
+          (It's embedded in iTunes Persistent IDs and disk paths; changing it
+          would either break your iTunes library or require coordinated migration.)
+        </small>
+      {:else}
+        <small>lowercase, digits, dashes. Used in URLs and filenames.</small>
+      {/if}
     </label>
 
     <label>
@@ -364,6 +447,13 @@
     border: 1px solid #ccc;
     border-radius: 3px;
     min-width: 18rem;
+  }
+  /* Slug input in edit mode — visually signal immutability so the user
+     understands why typing is rejected. */
+  input.readonly {
+    background: #f4f4f4;
+    color: #888;
+    cursor: not-allowed;
   }
   input[type='color'] {
     width: 3rem;
