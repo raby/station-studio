@@ -28,25 +28,32 @@
 
   // ---- props ------------------------------------------------------------
 
+  /**
+   * The slug + name + template-blob shape used both for the prop input
+   * (loaded via getStation) and the submit-handler output (built from
+   * the form). Matches `StationCreatePayload` from $lib/api.
+   *
+   * Not exported — `export type` is rejected from Svelte 4's instance
+   * <script>. Consumers get the shape via inference on `initial` /
+   * `onSubmit`, which is enough for both call-sites.
+   */
+  type StationFormPayload = {
+    slug: string;
+    name: string;
+    template: Record<string, unknown>;
+  };
+
   /** Drives slug-readonly + button labels. 'create' for /stations/new. */
   export let mode: 'create' | 'edit' = 'create';
 
   /** Pre-populates the form when mode='edit'. Ignored when mode='create'. */
-  export let initial: {
-    slug: string;
-    name: string;
-    template: Record<string, unknown>;
-  } | null = null;
+  export let initial: StationFormPayload | null = null;
 
   /**
    * Caller's submit handler. Receives the validated payload; throws an
    * ApiError on backend failure (caught here and rendered inline).
    */
-  export let onSubmit: (payload: {
-    slug: string;
-    name: string;
-    template: Record<string, unknown>;
-  }) => Promise<void>;
+  export let onSubmit: (payload: StationFormPayload) => Promise<void>;
 
   /** Visible target on the cancel link. Sensible defaults per mode. */
   export let cancelHref: string = mode === 'edit' && initial
@@ -117,7 +124,7 @@
    * Defensive: any missing field falls back to its default so a malformed
    * stored template doesn't blank the whole form.
    */
-  function unpack(initial: NonNullable<typeof $$props.initial>): FormState {
+  function unpack(initial: StationFormPayload): FormState {
     const t = initial.template as Record<string, unknown>;
     const cursor = (t.cursor as Record<string, unknown>) ?? {};
     const layout = (t.layout as Record<string, unknown>) ?? {};

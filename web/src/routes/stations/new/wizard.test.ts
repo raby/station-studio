@@ -158,4 +158,15 @@ describe('station wizard (new +page.svelte)', () => {
     expect(await screen.findByText(/invalid template: bad/i)).toBeInTheDocument();
     expect(gotoMock).not.toHaveBeenCalled();
   });
+
+  it('renders the JSON preview disclosure in create mode (N4 anti-regression)', () => {
+    // The JSON preview ships in both create and edit modes (DESIGN.md §16.7
+    // D6) but only edit-mode is tested in StationForm.test.ts. Without this
+    // case, a future change that accidentally gated the preview on
+    // `mode === 'edit'` would silently break the wizard preview without
+    // breaking either test layer. One assertion is enough — content
+    // verification happens in StationForm.test.ts.
+    render(Page);
+    expect(screen.getByTestId('json-preview')).toBeInTheDocument();
+  });
 });

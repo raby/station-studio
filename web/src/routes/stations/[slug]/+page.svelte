@@ -216,7 +216,7 @@
       -->
       <div class="header-actions">
         <a
-          href="/stations/{slug}/edit"
+          href="/stations/{encodeURIComponent(slug)}/edit"
           class="edit-link"
           data-testid="edit-station"
         >
