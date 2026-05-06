@@ -21,6 +21,11 @@
   import type { Section as DiffSection } from '$lib/templateDiff';
   import LayoutFieldset from './LayoutFieldset.svelte';
 
+  // Shared form rules for both this component and <LayoutFieldset>. See
+  // _form-shared.css for the full rationale. The rules are scoped under
+  // `.station-form`, so the wrapper div around the <form> is load-bearing.
+  import './_form-shared.css';
+
   // ---- props ------------------------------------------------------------
 
   /** Drives slug-readonly + button labels. 'create' for /stations/new. */
@@ -316,12 +321,19 @@
   }
 </script>
 
-{#if error}
-  <p class="error">{error}</p>
-{/if}
+<!--
+  Wrapper is load-bearing — _form-shared.css scopes every rule under
+  `.station-form`, so removing this div would silently strip the form's
+  styling. <LayoutFieldset> rendered inside this wrapper inherits the
+  rules transitively (CSS doesn't care about Svelte's component tree).
+-->
+<div class="station-form">
+  {#if error}
+    <p class="error">{error}</p>
+  {/if}
 
-<form on:submit|preventDefault={handleSubmit}>
-  <!-- ---- identity ----------------------------------------------- -->
+  <form on:submit|preventDefault={handleSubmit}>
+    <!-- ---- identity ----------------------------------------------- -->
   <fieldset>
     <legend>Identity</legend>
 
@@ -502,101 +514,19 @@
     <a href={cancelHref} class="ghost-link">cancel</a>
   </div>
 </form>
+</div>
 
 <style>
-  .hint { color: #666; font-size: 0.85rem; margin-top: 0; }
-  code {
-    background: #f4f4f4;
-    padding: 0.1em 0.3em;
-    border-radius: 3px;
-    font-size: 0.85em;
-  }
+  /*
+    Most form rules live in _form-shared.css under `.station-form` scoping
+    so <LayoutFieldset> can reuse them without per-component duplication.
+    Only the rules unique to <StationForm> (action area, submit button,
+    error banner, disclosures, diff list, pills) live here. They're scoped
+    via the global wrapper's class so they don't leak.
+  */
 
-  fieldset {
-    border: 1px solid #e4e4e4;
-    border-radius: 4px;
-    padding: 1rem 1.25rem;
-    margin: 1rem 0;
-  }
-  legend {
-    font-weight: 600;
-    padding: 0 0.35rem;
-  }
-
-  label {
-    display: block;
-    margin: 0.6rem 0;
-  }
-  label > span {
-    display: inline-block;
-    min-width: 12rem;
-    font-size: 0.9rem;
-    color: #333;
-    vertical-align: middle;
-  }
-  label small {
-    display: block;
-    color: #888;
-    font-size: 0.8rem;
-    margin-top: 0.15rem;
-    margin-left: 12rem;
-  }
-  input:not([type]), input[type='number'], select {
-    padding: 0.3rem 0.5rem;
-    font: inherit;
-    border: 1px solid #ccc;
-    border-radius: 3px;
-    min-width: 18rem;
-  }
-  /* Slug input in edit mode — visually signal immutability so the user
-     understands why typing is rejected. */
-  input.readonly {
-    background: #f4f4f4;
-    color: #888;
-    cursor: not-allowed;
-  }
-  input[type='color'] {
-    width: 3rem;
-    height: 1.8rem;
-    padding: 0;
-    border: 1px solid #ccc;
-    border-radius: 3px;
-    vertical-align: middle;
-  }
-
-  table.list {
-    border-collapse: collapse;
-    margin: 0.5rem 0;
-    width: 100%;
-  }
-  table.list th, table.list td {
-    padding: 0.3rem 0.5rem;
-    text-align: left;
-    border-bottom: 1px solid #f0f0f0;
-    vertical-align: middle;
-  }
-  table.list th {
-    font-size: 0.8rem;
-    color: #666;
-    font-weight: 600;
-  }
-  table.list input,
-  table.list select {
-    min-width: 0;
-    width: 100%;
-  }
-  table.list td:last-child {
-    width: 6rem;
-    text-align: right;
-  }
-
-  .actions {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-    margin-top: 1.5rem;
-  }
-  button[type='submit'] {
+  /* The submit button is only on <StationForm>, not in <LayoutFieldset>. */
+  :global(.station-form button[type='submit']) {
     padding: 0.5rem 1.1rem;
     background: #2c3e50;
     color: white;
@@ -605,21 +535,16 @@
     font-size: 0.95rem;
     cursor: pointer;
   }
-  button[type='submit']:disabled {
+  :global(.station-form button[type='submit']:disabled) {
     opacity: 0.5;
     cursor: not-allowed;
   }
-  button.ghost {
-    padding: 0.25rem 0.55rem;
-    background: none;
-    border: 1px solid #ccc;
-    color: #333;
-    border-radius: 3px;
-    cursor: pointer;
-    font-size: 0.85rem;
+  .actions {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-top: 1.5rem;
   }
-  button.ghost:hover:not(:disabled) { background: #f4f4f4; }
-  button.ghost:disabled { opacity: 0.5; cursor: not-allowed; }
   .ghost-link { color: #666; text-decoration: none; font-size: 0.9rem; }
   .ghost-link:hover { text-decoration: underline; }
 

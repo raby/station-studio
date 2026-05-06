@@ -1391,11 +1391,33 @@ surprises.
   destination.
 - **Extracted `<LayoutFieldset>`** at
   `web/src/lib/components/LayoutFieldset.svelte`. The §16.2
-  swap-point — when the visual block editor lands it replaces
-  this one component, both create and edit pages get drag-drop
-  in a single change. Style rules duplicated from
-  `<StationForm>` because Svelte's per-component scoping
-  doesn't reach into a child.
+  swap-point — when the visual block editor lands, both
+  consumer routes (`/stations/new` and `/stations/[slug]/edit`)
+  get drag-drop in a single change, with no per-route migration
+  duplicated.
+
+  **Caveat — this is not a literal one-component swap.**
+  `<LayoutFieldset>` currently binds the form-input strings
+  (`unitLabelsStr`, `rowStartOffsetsStr` — comma-separated) and
+  `<StationForm>`'s `buildTemplate()` translates them to arrays
+  on save. A drag-drop visual editor would naturally bind arrays
+  directly. So §16.2's actual swap will involve:
+    1. Replacing `<LayoutFieldset>` with `<VisualBlockEditor>`
+       in `<StationForm>`'s markup
+    2. Refactoring `<StationForm>`'s state to arrays
+    3. Removing `parseStringList` / `parseIntList` from
+       `buildTemplate()` and joining-back from `unpack()`
+
+  None of that work is duplicated across consumer routes — that's
+  the value of the extraction. But it's not a single-line edit.
+  The string-vs-array shape choice is deliberate for now (the
+  comma-separated input UX matches the wizard's other text inputs)
+  and the cleanup naturally lands with §16.2.
+
+  Style rules previously duplicated from `<StationForm>`'s
+  `<style>` were extracted to `_form-shared.css` (review S2)
+  scoped under `.station-form` so both components reuse them
+  via CSS ancestor matching, not via duplication.
 - **`/stations/[slug]/edit` route** — loads via `getStation(slug)`,
   mounts `<StationForm mode="edit" initial={station}>`, owns
   the PUT handler. Loading + 404 paths covered.
@@ -2335,10 +2357,14 @@ editor into the layout fieldset later — see D10.
 - **D10. Extract `<LayoutFieldset>` Svelte component** (sub-
   extraction of D2). The wizard's layout fieldset
   (`unit_labels` + `row_start_offsets` + `row_template` list)
-  becomes its own component. When §16.2 ships,
-  `<LayoutFieldset>` is replaced with `<VisualBlockEditor>`
-  in *one* place — both create and edit pages get the new
-  UX in a single swap, no duplicated migration work.
+  becomes its own component. When §16.2 ships, the migration
+  is *not duplicated across the two consumer routes* — that's
+  the value. The actual change is more than swapping one
+  component file though: see §14.13 for the post-shipping
+  caveat (the comma-separated string state in
+  `<LayoutFieldset>` becomes array state when the visual
+  editor takes its place; that's a `<StationForm>`-internal
+  refactor that lands alongside §16.2).
 
 **Decisions deliberately deferred.**
 

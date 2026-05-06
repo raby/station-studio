@@ -144,4 +144,66 @@ describe('<StationForm mode="edit" /> — §16.7 edit-mode', () => {
     expect(parsed.station).toBe('cls');
     expect(parsed.cadence).toBe('weekly');
   });
+
+  it('round-trip: unpack(buildTemplate(state)) ≈ identity (S3 anti-divergence)', async () => {
+    // The §16.7 review S3 finding: unpack() and buildTemplate() are an
+    // inverse pair; if a future contributor adds a field to one but
+    // forgets the other, edit mode silently drops/duplicates fields on
+    // every save. This test catches that whole class of regression by
+    // round-tripping a representative form state through both functions.
+    //
+    // Strategy: render in edit mode with a complex initial template,
+    // submit immediately (no edits) to capture buildTemplate's output,
+    // re-render with that output as the new initial, submit again. The
+    // two payloads must be deep-equal — any field unpack misses on the
+    // second render won't survive the second buildTemplate.
+    const complexInitial = {
+      slug: 'roundtrip',
+      name: 'Round Trip',
+      template: {
+        station: 'roundtrip',
+        cadence: 'weekly',
+        rng: 'on',
+        seed: 12345,
+        sources: [
+          { name: 'A', colour: '#c0392b', role: 'content' },
+          { name: 'B', colour: '#8e44ad', role: 'content' },
+          { name: 'C', colour: '#7f8c8d', role: 'reference' },
+        ],
+        cursor: { base_advance_per_week: 60, cycle_weeks: 16 },
+        layout: {
+          unit: 'day',
+          unit_labels: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+          row_start_offsets: [0, 10, 20, 30, 40, 50, 50],
+          row_template: [
+            { source: 'A', strategy: 'window', size: 215 },
+            { source: 'B', strategy: 'window', size: 215 },
+          ],
+        },
+      },
+    };
+
+    // First render: capture buildTemplate output.
+    const onSubmit1 = vi.fn().mockResolvedValueOnce(undefined);
+    const { unmount } = render(StationForm, {
+      mode: 'edit',
+      initial: complexInitial,
+      onSubmit: onSubmit1,
+    });
+    await fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+    await vi.waitFor(() => expect(onSubmit1).toHaveBeenCalledOnce());
+    const firstPayload = onSubmit1.mock.calls[0][0];
+    unmount();
+
+    // Second render: feed that output back as `initial`, capture again.
+    const onSubmit2 = vi.fn().mockResolvedValueOnce(undefined);
+    render(StationForm, { mode: 'edit', initial: firstPayload, onSubmit: onSubmit2 });
+    await fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+    await vi.waitFor(() => expect(onSubmit2).toHaveBeenCalledOnce());
+    const secondPayload = onSubmit2.mock.calls[0][0];
+
+    // The two payloads must be deep-equal. If unpack() ever drops a
+    // field, the second payload won't have it.
+    expect(secondPayload).toEqual(firstPayload);
+  });
 });
