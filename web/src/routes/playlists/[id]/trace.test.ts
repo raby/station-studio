@@ -146,6 +146,18 @@ const stubTrace = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
+/**
+ * Convenience: seeds the three fetches with the default stubs and
+ * renders the page. Used by the populated-render tests so each
+ * focused assertion can stand alone with one line of setup.
+ */
+function renderPopulated() {
+  getTraceMock.mockResolvedValueOnce(stubTrace());
+  getPlaylistMock.mockResolvedValueOnce(stubPlaylist());
+  getStationMock.mockResolvedValueOnce(stubStation());
+  return render(Page);
+}
+
 // ---- render-branch tests --------------------------------------------------
 
 describe('trace viewer +page.svelte — render branches', () => {
@@ -191,31 +203,57 @@ describe('trace viewer +page.svelte — render branches', () => {
     expect(await screen.findByText(/network down/i)).toBeInTheDocument();
   });
 
-  it('renders header + meta + slot rows grouped by row when populated', async () => {
-    getTraceMock.mockResolvedValueOnce(stubTrace());
-    getPlaylistMock.mockResolvedValueOnce(stubPlaylist());
-    getStationMock.mockResolvedValueOnce(stubStation());
-    render(Page);
+  // ---- populated-render assertions, split per concern (review S2) -------
+  // The previous "renders header + meta + slot rows grouped by row" test
+  // asserted ~10 things in one block. Splitting per concern means a
+  // failure tells you "the rng cell stopped rendering" rather than "this
+  // big test broke" — easier diagnosis at the cost of a few extra mounts.
 
-    // Header shows the station name + zero-padded week ("003" for week 3).
+  it('populated: renders the station heading and zero-padded week', async () => {
+    renderPopulated();
     await screen.findByRole('heading', { name: /Classics/ });
+    // Week 3 → "003" badge inside the h1.
     expect(screen.getByText('003')).toBeInTheDocument();
+  });
 
-    // Trace metadata is laid out as <dl class="meta">.
+  it('populated: renders the breadcrumb with a station-detail link', async () => {
+    // Review N4 — the trace viewer's <p class="crumbs"> has three pieces;
+    // the station-name link is the navigationally meaningful one. Pinning
+    // its href catches breadcrumb wiring regressions.
+    renderPopulated();
+    const crumb = await screen.findByRole('link', { name: 'Classics' });
+    expect(crumb).toHaveAttribute('href', '/stations/cls');
+  });
+
+  it('populated: renders trace metadata (trace_id and rng) in the meta dl', async () => {
+    renderPopulated();
+    await screen.findByRole('heading', { name: /Classics/ });
     expect(screen.getByText(/abc12345-trace-id/)).toBeInTheDocument();
+    // rng cell renders just "off" when seed is null.
     expect(screen.getByText(/^off$/)).toBeInTheDocument();
+  });
 
-    // Each row is a <section.row> with its own header. groupByRow sorts
-    // by row index, so Mon (row 1) comes before Tue (row 2).
-    expect(screen.getByText('Mon')).toBeInTheDocument();
-    expect(screen.getByText('Tue')).toBeInTheDocument();
+  it('populated: groups slots by row with each row\'s unit label', async () => {
+    renderPopulated();
+    await screen.findByRole('heading', { name: /Classics/ });
+    // groupByRow sorts by row index, so Mon (row 1) precedes Tue (row 2).
+    // Scope to .unit-label so a future fixture introducing "Mon" in a track
+    // name doesn't trigger the multi-match guard (same lesson as the
+    // collapse test below).
+    expect(screen.getByText('Mon', { selector: '.unit-label' })).toBeInTheDocument();
+    expect(screen.getByText('Tue', { selector: '.unit-label' })).toBeInTheDocument();
+  });
 
-    // Slots from row 1 are present; slot 3 (Tue) is in its own group.
+  it('populated: renders track name + artist; null artist falls back to empty', async () => {
+    renderPopulated();
+    await screen.findByRole('heading', { name: /Classics/ });
+    // All three slots' track names appear (two Mon + one Tue).
     expect(screen.getByText('Track Mon-1')).toBeInTheDocument();
     expect(screen.getByText('Track Mon-2')).toBeInTheDocument();
     expect(screen.getByText('Track Tue-1')).toBeInTheDocument();
+    // Mon-1's artist is set; Mon-2's is null and renders as empty
+    // (no literal "null" string in the DOM).
     expect(screen.getByText('Artist 1')).toBeInTheDocument();
-    // null artist renders as empty, not the literal "null".
     expect(screen.queryByText('null')).not.toBeInTheDocument();
   });
 
