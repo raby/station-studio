@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, act, fireEvent, within } from '@testing-library/svelte';
+import { render, screen, act, fireEvent } from '@testing-library/svelte';
 import '@testing-library/jest-dom/vitest';
 
 /**
@@ -219,6 +219,39 @@ describe('trace viewer +page.svelte — render branches', () => {
     expect(screen.queryByText('null')).not.toBeInTheDocument();
   });
 
+  it('renders empty for null generated_at (fmtDate guard branch)', async () => {
+    // Defensive branch in fmtDate: `if (!iso) return ''`. Without this
+    // test the branch is uncovered (review N3) and a regression that
+    // returned `null` or `'null'` from fmtDate wouldn't break a test.
+    getTraceMock.mockResolvedValueOnce(stubTrace({ generated_at: null }));
+    getPlaylistMock.mockResolvedValueOnce(stubPlaylist());
+    getStationMock.mockResolvedValueOnce(stubStation());
+    render(Page);
+
+    // Page renders without throwing; trace-id meta is still present.
+    await screen.findByRole('heading', { name: /Classics/ });
+    expect(screen.getByText(/abc12345-trace-id/)).toBeInTheDocument();
+    // The generated_at <dd> renders as empty — we don't see "null" or
+    // "Invalid Date" in the DOM.
+    expect(screen.queryByText(/null/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/invalid date/i)).not.toBeInTheDocument();
+  });
+
+  it('falls back to the raw ISO when Date parsing returns NaN (fmtDate try branch)', async () => {
+    // The other defensive branch: `isNaN(d.getTime()) ? iso : ...`.
+    // A malformed ISO string round-trips as the raw input rather than
+    // rendering "Invalid Date" — keeps debug-from-the-page possible
+    // when a clock drifts or a backend bug emits garbage timestamps.
+    getTraceMock.mockResolvedValueOnce(stubTrace({ generated_at: 'not-an-iso-string' }));
+    getPlaylistMock.mockResolvedValueOnce(stubPlaylist());
+    getStationMock.mockResolvedValueOnce(stubStation());
+    render(Page);
+
+    await screen.findByRole('heading', { name: /Classics/ });
+    // The raw garbage string surfaces verbatim in the meta dl.
+    expect(screen.getByText('not-an-iso-string')).toBeInTheDocument();
+  });
+
   it('shows seed when the trace has one (rng:on path)', async () => {
     getTraceMock.mockResolvedValueOnce(stubTrace({ rng: 'on', seed: 42 }));
     getPlaylistMock.mockResolvedValueOnce(stubPlaylist());
@@ -238,10 +271,11 @@ describe('trace viewer +page.svelte — render branches', () => {
     // Pre-collapse: row 1's Mon slot is rendered.
     await screen.findByText('Track Mon-1');
 
-    // Click the Mon row header (the <header role="button"> wrapping "Mon").
-    // getByText returns the <span class="unit-label"> inside; the role=button
-    // is the parent. Walk up via .closest('header').
-    const monLabel = screen.getByText('Mon');
+    // Click the Mon row header. Scoping `getByText('Mon')` to `.unit-label`
+    // because in a future fixture "Mon" could appear in a track name
+    // ("Mondays in May") and unscoped getByText would match multiple. The
+    // header element is the parent; walk up via .closest('header').
+    const monLabel = screen.getByText('Mon', { selector: '.unit-label' });
     const monHeader = monLabel.closest('header')!;
     await fireEvent.click(monHeader);
 
