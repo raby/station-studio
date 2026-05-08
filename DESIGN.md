@@ -402,8 +402,8 @@ The trace is stored as JSON alongside the playlist (in a `playlist_trace` table 
 | Excluded-candidates in trace                | v1.1         | Nice-to-have per user; shown in viewer when added       |
 | Jingles-as-primitive                        | only if      | Only if a future random-selection station needs them    |
 | Trace viewer (UI)                           | done (14.5)  | `/playlists/[id]` — per-slot reasoning, grouped by row  |
-| Trace-viewer search / filter                | next (§16.8) | Free-text + source/strategy filters; counter; clear     |
-| Trace-viewer polish (virtualisation, SSR…)  | later (14.5) | Search shipping; virtualisation / multi-week / compare remain |
+| Trace-viewer search / filter                | done (14.15) | Free-text + source/strategy + ANDed filters + counter   |
+| Trace-viewer polish (virtualisation, SSR…)  | later (14.5) | Virtualisation / multi-week nav / week-compare remain   |
 | Test plan + CI                              | done (14.8)  | 4-tier; backend 98% lines; 26 Vitest + 9 Playwright     |
 | Coverage gate in CI                         | done (14.12) | Backend 90% aggregate; frontend per-file lines ≥ 85%    |
 | Trace-viewer Vitest backfill                | done (14.14) | 0% → 96.49% lines; closes §14.8's last 0%-file row      |
@@ -1640,6 +1640,141 @@ on full e2e runs).
   and add per-version render branches here. The hoisted
   mock holder pattern accommodates that without restructure.
 
+### 14.15 Trace viewer search / filter — what shipped
+
+**What shipped (2 commits, follow-on to §16.8's plan).**
+
+The §16.8 brief committed all 10 decisions ahead of execution;
+this section records what actually landed and the in-flight
+surprises.
+
+- **Filter bar** between the "Your working" header and the row
+  sections (D4). Three inputs that AND together (D3): free-text
+  search across track-name + artist (case-insensitive), source
+  dropdown, strategy dropdown.
+- **Source / strategy options derived from trace content** —
+  `[...new Set(trace.slots.map((s) => s.source))].sort()` — not
+  from the station template. A trace can reference pools the
+  template no longer lists (renamed / removed); deriving from
+  the trace shows what's actually present.
+- **Match counter** ("Showing N of M slots") with
+  `toLocaleString()` for thousands separators (D10) — at 3,010
+  slots the comma matters for readability.
+- **Clear button** hidden when no filters active; the dedicated
+  bar button and the empty-state's recovery button share one
+  handler — single source of truth for "reset filter state".
+- **Row sections with 0 matching slots hide entirely** (D8).
+- **Empty-state copy** ("No slots match the current filters")
+  with an inline clear button when filters yield zero matches.
+- **No URL state, no debounce, no sticky bar** (D5 / D6 / D4
+  end-note). Each is on the punt list with explicit triggers.
+- **10 new Vitest cases** (was 16 → 26 on `trace.test.ts`):
+  filter bar options derivation, counter formatting, search by
+  track name, search case-insensitive against artist, source
+  filter, AND combinations, row-hide D8, empty state, atomic
+  clear, clear-button hidden when no filters.
+- **1 new Playwright case** in `e2e/trace-viewer.spec.ts`:
+  type → counter goes 0/N → empty state visible → clear →
+  counter restored. Round-trip pin.
+
+**Decisions in flight that the §16.8 brief didn't pre-decide.**
+
+- **The filter predicate must be inlined inside the
+  reactive `$:` block, NOT extracted to a named function.**
+  This was the only real surprise — caught when 6 of the new
+  Vitest cases failed on first run with "expected element not
+  to be in the document".
+
+  Svelte's `$:` dependency tracker introspects the AST of the
+  reactive block, not the bodies of functions it calls. With
+  a named `matchesFilters(slot)` reading `searchQuery` /
+  `sourceFilter` / `strategyFilter` via closure, the compiler
+  saw only the function name and `rowGroups` — searchQuery
+  changes wouldn't re-fire the reactive, so the filtered
+  groups stayed stale.
+
+  Inlining the predicate inside an IIFE inside the `$:`
+  block makes every variable read visible to the dependency
+  tracker:
+  ```ts
+  $: filteredRowGroups = (() => {
+    const q = searchQuery.trim().toLowerCase();
+    return rowGroups.map(...).filter(...);
+  })();
+  ```
+
+  The source has a long comment flagging this trap so the
+  next contributor doesn't repeat. Worth knowing for ANY
+  future Svelte 4 reactive block that depends on multiple
+  inputs via a helper function.
+
+- **`fireEvent.input` returns a promise that awaits Svelte's
+  tick.** The Vitest cases use `await fireEvent.input(...)`
+  and the assertion that follows reads the post-update DOM.
+  Was concerned this wouldn't work; it does cleanly. Same
+  pattern works for `fireEvent.change` on the dropdowns.
+
+- **The `<select>` "All sources" option uses empty string
+  as its value, not a sentinel like `"*"`.** Empty matches
+  the `if (sourceFilter && ...)` predicate truthiness check
+  — falsy = no constraint. Cleaner than a sentinel; would
+  bite if a real source were ever named `""` (it can't be,
+  source-name validation rejects empty).
+
+**Coverage shipping** — last measurement post-§14.15:
+
+| File / metric                        | Before | After  |
+|--------------------------------------|--------|--------|
+| `playlists/[id]/+page.svelte` lines  | 97.36% | 98.08% |
+| `playlists/[id]/+page.svelte` branches | 54.37% | 83.63% |
+| Aggregate branches                   | 71.60% | 79.16% |
+| Aggregate lines                      | 96.32% | 96.56% |
+
+Branch coverage is dramatically better — the filter code adds
+many small branches all of which are exercised by the new
+Vitest cases. The aggregate-branches figure is now well above
+the 70% gate (had been 1.6pp above; now 9.16pp).
+
+**Stay-out-of-scope candidates** (re-stated for traceability;
+all already in §16.8's punt table):
+
+| Area                                        | Status              |
+|---------------------------------------------|---------------------|
+| URL state / shareable filter links          | not now (§16.4 prereq) |
+| Slot-number / pool-index range filters      | not now             |
+| Highlight-in-place mode (vs hide)           | not now             |
+| Saved filter presets                        | not now             |
+| Regex search                                | rejected            |
+| Export-filtered-view                        | rejected            |
+| Cross-week search                           | not now (§16.4)     |
+| Debounced search                            | not now             |
+| Sticky filter bar                           | not now             |
+| Find-rejected-candidates                    | §11 v1.1            |
+
+**Implementation notes for future pick-up.**
+
+- The dependency-tracking trap (named function vs inlined
+  predicate) is documented in the source. If you add more
+  filters and want to factor them out for readability, do
+  so by computing the *result* first (e.g. compute a
+  `Set<number>` of matching slot ids ahead of the reactive)
+  rather than calling a predicate function from inside the
+  reactive.
+- The empty-state copy is intentionally short. If the punt
+  list's "saved filter presets" lands, the empty-state could
+  grow a "Did you mean…?" suggestion based on common preset
+  matches.
+- The new Playwright test creates `trv-filter` station and
+  generates one playlist. Like the disk-export test, it leaves
+  `<repo>/out/trv-filter/001.xml` behind on every run (the
+  same gitignored side-effect documented in the §14.11
+  disk-export spec comment).
+- If Vitest aggregate-branches ever drops below 70% again,
+  the first place to look is whether a new file was added
+  with low branch coverage — adding one more inlined-predicate
+  reactive (like the filter) is one of the fastest ways to
+  lift the figure.
+
 ---
 
 ## 15. Status snapshot
@@ -1660,7 +1795,7 @@ A quick "where are we" for a future reader. Last updated at commit
 | Test plan + CI           | Shipped. 4-tier (engine, API, Vitest, Playwright). 98% backend.  |
 | Coverage gate in CI      | Shipped (14.12). Backend 90% aggregate; frontend per-file lines ≥85%. |
 | Trace-viewer Vitest      | Shipped (14.14). 0% → 96.49% lines; closes §14.8's last gap.     |
-| Trace-viewer search/filter | Deferred. See §16.8 — next-up; closes the 3,010-rows pain.     |
+| Trace-viewer search/filter | Shipped (14.15). Free-text + source/strategy filters; ANDed; counter; clear. |
 | In-UI generate button    | Shipped (14.9). Empty-CTA + next-week + advanced + per-row regen.|
 | Delete / station-reset   | Shipped (14.10). Per-row delete + station nuke; cascades.        |
 | Disk-export UI button    | Shipped (14.11). Trace viewer "Export to disk" + status line.    |

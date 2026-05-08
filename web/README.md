@@ -59,7 +59,7 @@ DESIGN.md §14.8 is the long-form rationale for all of the above.
 | Delete / station-reset UI      | shipped      | Per-row ✕ delete + "Delete station →" nuke; cascades      |
 | Disk-export UI button          | shipped      | Trace viewer "Export to disk" + inline path/size status    |
 | Edit mode for stations         | shipped      | `/stations/[slug]/edit` — shared `<StationForm>` + JSON preview + diff + reset |
-| Trace viewer search / filter   | next (§16.8) | Free-text + source/strategy filters; AND combine; counter |
+| Trace viewer search / filter   | shipped      | Free-text + source/strategy filters; AND combine; counter |
 | Visual block editor            | v2 (§16.2)   | Drag-drop over the same JSON the wizard produces          |
 | Trace versioning               | later (§16.4)| Schema change so regen stops being destructive            |
 

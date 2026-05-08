@@ -74,4 +74,37 @@ test.describe('trace viewer', () => {
     );
     await expect(page.getByTestId('disk-export-status')).toContainText(/KB/);
   });
+
+  test('§16.8 search / filter: typing narrows visible rows; clear restores them', async ({
+    page,
+    request,
+  }) => {
+    // Round-trip pin: Vitest covers the predicate combinations via
+    // mocked $lib/api; this spec covers the integration — real backend,
+    // real reactive cycle, real DOM update — so the wiring can't break
+    // in a way Vitest misses.
+    await importTinyPool(request, 'A');
+    await createStation(request, 'trv-filter', 'Filter Station');
+    const { playlist_id } = await generate(request, 'trv-filter', 1);
+
+    await page.goto(`/playlists/${playlist_id}`);
+    await expect(page.getByTestId('filter-bar')).toBeVisible();
+
+    // Initial state: counter shows "Showing N of N" with the same number
+    // on each side (no filter active). The tiny-library fixture has 3
+    // tracks total, so a 1-slot pick from pool A means N=1.
+    const counter = page.getByTestId('filter-counter');
+    await expect(counter).toHaveText(/showing\s+1\s+of\s+1/i);
+
+    // Type a search that matches no tracks → empty state appears,
+    // counter goes to 0.
+    await page.getByTestId('filter-search').fill('zzz-no-such-track');
+    await expect(page.getByTestId('filter-empty')).toBeVisible();
+    await expect(counter).toHaveText(/showing\s+0\s+of\s+1/i);
+
+    // Clear button restores the original view.
+    await page.getByTestId('filter-clear').click();
+    await expect(page.getByTestId('filter-empty')).not.toBeVisible();
+    await expect(counter).toHaveText(/showing\s+1\s+of\s+1/i);
+  });
 });
