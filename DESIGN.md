@@ -403,7 +403,8 @@ The trace is stored as JSON alongside the playlist (in a `playlist_trace` table 
 | Jingles-as-primitive                        | only if      | Only if a future random-selection station needs them    |
 | Trace viewer (UI)                           | done (14.5)  | `/playlists/[id]` — per-slot reasoning, grouped by row  |
 | Trace-viewer search / filter                | done (14.15) | Free-text + source/strategy + ANDed filters + counter   |
-| Trace-viewer polish (virtualisation, SSR…)  | later (14.5) | Virtualisation / multi-week nav / week-compare remain   |
+| Trace-viewer multi-week prev/next nav       | next (§16.9) | `← week NNN | week NNN →` in header; closes §14.5 punt  |
+| Trace-viewer polish (virtualisation, SSR…)  | later (14.5) | Virtualisation / week-compare remain after §16.9        |
 | Test plan + CI                              | done (14.8)  | 4-tier; backend 98% lines; 26 Vitest + 9 Playwright     |
 | Coverage gate in CI                         | done (14.12) | Backend 90% aggregate; frontend per-file lines ≥ 85%    |
 | Trace-viewer Vitest backfill                | done (14.14) | 0% → 96.49% lines; closes §14.8's last 0%-file row      |
@@ -1796,6 +1797,7 @@ A quick "where are we" for a future reader. Last updated at commit
 | Coverage gate in CI      | Shipped (14.12). Backend 90% aggregate; frontend per-file lines ≥85%. |
 | Trace-viewer Vitest      | Shipped (14.14). 0% → 96.49% lines; closes §14.8's last gap.     |
 | Trace-viewer search/filter | Shipped (14.15). Free-text + source/strategy filters; ANDed; counter; clear. |
+| Trace-viewer multi-week nav| Deferred. See §16.9 — next-up; prev/next links in header.        |
 | In-UI generate button    | Shipped (14.9). Empty-CTA + next-week + advanced + per-row regen.|
 | Delete / station-reset   | Shipped (14.10). Per-row delete + station nuke; cascades.        |
 | Disk-export UI button    | Shipped (14.11). Trace viewer "Export to disk" + status line.    |
@@ -2005,6 +2007,31 @@ function (extracted to `web/src/lib/template.ts`). The constants
 duplicated from the engine (`STRATEGY_OPTIONS`, `ROLE_OPTIONS`) become
 worth extracting to `GET /api/meta` once a third caller appears — the
 editor is that third caller.
+
+**Update — §16.7 set up the swap-point.** As of §14.13 the
+wizard's layout fieldset is extracted as
+`web/src/lib/components/LayoutFieldset.svelte`. Both
+`/stations/new` and `/stations/[slug]/edit` use it. **However**,
+the swap from `<LayoutFieldset>` to `<VisualBlockEditor>` is
+not a one-line edit — see the §16.7 D10 caveat: `<LayoutFieldset>`
+binds comma-separated *strings* whereas a drag-drop visual editor
+naturally binds *arrays*, so the swap also entails:
+  1. Replace the component in `<StationForm>`'s markup
+  2. Refactor `<StationForm>`'s state from strings to arrays
+  3. Drop `parseStringList` / `parseIntList` from `buildTemplate`
+     and join-back from `unpack`
+
+None of that work is duplicated across consumer routes — that's
+the value of the §16.7 extraction. But it's a real piece of work
+that lands alongside §16.2 itself, not before. The §16.7 D10
+caveat in §14.13 has the full text.
+
+**This brief is intentionally light** — the use-cases / decisions
+format the later slices use isn't applied here because the trigger
+is "real second station with awkward layout", and pre-deciding
+D1–D10 without that station's needs in hand risks designing for
+hypothetical pain. When the trigger fires, expand to the full
+brief shape using §16.7 / §16.8 as templates.
 
 ### 16.3 Delete / station reset
 
@@ -2856,5 +2883,109 @@ two reads cleaner if the implementation evolves during execution.
 - The empty-state "Clear filters" button uses the same handler
   as a dedicated clear button next to the inputs. One source
   of truth for "reset all filter state".
+
+### 16.9 Multi-week prev / next navigation in trace viewer
+
+**Why this matters.** Classics generates multiple weeks. With
+2+ weeks in the database, jumping between traces means: back
+to station detail → scroll to find the row → click → back →
+scroll → click. The §14.5 punt list named "Multi-week
+navigation" with the trigger "running ≥3 weeks regularly" —
+that trigger is now active. A `← week NNN | week NNN →` pair
+in the viewer header is one of the cheapest UX wins left.
+
+**Use cases enumerated.**
+
+| # | Use case                                                 | Today                  | Importance |
+|---|----------------------------------------------------------|------------------------|------------|
+| 1 | Jump to next week's trace from the current viewer        | Back × 2, click row    | Common (the dominant pain) |
+| 2 | Jump to previous week's trace                            | Back × 2, click row    | Common     |
+| 3 | Skip to the first / last available week                  | Back, scroll, click    | Occasional |
+| 4 | Compare slot N across two weeks side-by-side             | Two windows            | Punt — §16.4 / §14.5 punt |
+| 5 | Keyboard shortcut for prev/next (j/k or arrows)          | n/a                    | Punt — power-user feature |
+| 6 | Disable prev when at first week / next when at last      | n/a                    | Real        |
+| 7 | Show the prev/next week numbers (not just arrows)        | n/a                    | Real — context > brevity at this scale |
+| 8 | Current week's position ("week 3 of 12")                 | n/a                    | Nice-to-have |
+
+**Decisions to take when this slice runs** — drafted lightly
+because the slice is small and the design surface is real but
+narrow. Confirm in-flight:
+
+- **D1. Position**: in the trace viewer's header area, near
+  the meta dl. Probably as a small `< prev | next >` pair
+  beside the existing week badge (`<span class="week">003</span>`).
+- **D2. Data source**: fetch `getStationPlaylists(trace.station)`
+  in `onMount`, find the current playlist's index in the
+  sorted-by-week list, derive prev/next playlist IDs.
+  Alternative: pre-compute server-side as part of the trace
+  response (would need a backend change). Client-side is
+  simpler for v1.
+- **D3. Disabled state**: prev disabled at first week, next
+  disabled at last. Visual styling matches the existing
+  `.button:disabled` pattern.
+- **D4. Show week numbers, not just arrows**. `← week 002 |
+  week 004 →` reads as one glance "where am I, where can I
+  go". Pure-arrow nav is brisk but loses context.
+- **D5. Use `<a href>` not `<button>`** — same reasoning as
+  §16.7 D1's "Edit station →" anchor: navigation, not action;
+  let the browser handle middle-click / open-in-new-tab.
+- **D6. No keyboard shortcuts v1** — punt to a real "I want
+  j/k" report. Browser arrows / scroll behaviour stays
+  uninterrupted.
+- **D7. Position indicator is optional**. "Week 3 of 12"
+  context could go alongside the meta dl. Defer if the
+  prev/next links alone read clearly enough.
+
+**Scope — likely 1 commit.**
+
+- Trace viewer page (`playlists/[id]/+page.svelte`):
+  - Fetch the station's playlist list in `onMount`
+  - Derive `prevPlaylistId` / `nextPlaylistId` from current
+    week's index
+  - Render the prev/next pair in the header (or under it)
+  - Visual + disabled states for boundaries
+- Vitest cases: middle week (both links present), first week
+  (prev disabled), last week (next disabled), single-week
+  station (both disabled).
+- Playwright case: load week 2 of 3, click next → week 3
+  loads; click prev → back to 2.
+- DESIGN.md §14.x captures shipping decisions.
+
+No backend work. No schema change.
+
+**Stay-out-of-scope candidates.**
+
+| Area                                              | Status      | Trigger                                  |
+|---------------------------------------------------|-------------|------------------------------------------|
+| Side-by-side multi-week comparison                | §14.5 / §16.4 | Real "what changed week to week" report |
+| Slot-level diff across weeks                      | §16.4       | Trace versioning lands first             |
+| Keyboard shortcuts (j/k, arrows)                  | not now     | Real "I want j/k" report                 |
+| URL state for the current week (already in URL via id) | n/a — the playlist id is the URL | already done |
+| Position indicator ("Week 3 of 12")               | not now     | If user reports loss of context          |
+| Cross-station navigation                          | rejected    | Different concern; users shouldn't navigate between stations via week prev/next |
+
+**Implementation notes for future pick-up.**
+
+- The data fetch can ride on the same `onMount` as
+  `getTrace` / `getPlaylist` / `getStation`; one extra call
+  to `getStationPlaylists`. Cheaper than reshaping the
+  trace endpoint to include siblings.
+- The "find current week's index" logic is small but deserves
+  pinning in a Vitest case — sort by week number, find
+  matching playlist by id, derive prev/next neighbours. A
+  malformed list (no current playlist found) should fall
+  through with both nav links disabled.
+- If §16.4 (trace versioning) ever lands, the prev/next
+  navigation should respect the current `?v=N` if present
+  — clicking next on `/playlists/3?v=2` could go to
+  `/playlists/4?v=2` if v=2 exists for week 4, or fall
+  back to v=latest. Decide when §16.4 lands; this slice
+  doesn't pre-decide.
+- The links use the same `.button` styling family as
+  §16.7's "Edit station →" — pre-existing pattern, no new
+  CSS duplication. Reuse.
+- The rendered text "← week 002" should match the existing
+  `String(week).padStart(3, '0')` zero-padding for visual
+  consistency with the heading badge.
 
 
