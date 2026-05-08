@@ -1,18 +1,19 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
   import {
     getPlaylist,
     getTrace,
     getStation,
+    getStationPlaylists,
     exportPlaylistToDisk,
     ApiError,
   } from '$lib/api';
-  import type { Playlist, Trace, TraceSlot, Station } from '$lib/api';
+  import type { Playlist, PlaylistSummary, Trace, TraceSlot, Station } from '$lib/api';
   import { page } from '$app/stores';
 
   let trace: Trace | null = null;
   let playlist: Playlist | null = null;
   let station: Station | null = null;
+  let stationPlaylists: PlaylistSummary[] = [];
   let error: string | null = null;
   let loading = true;
 
@@ -55,15 +56,30 @@
   // is visible on page load. Click the header to collapse noisy rows.
   let collapsed: Record<number, boolean> = {};
 
-  onMount(async () => {
-    if (isNaN(id)) return; // reactive block above already set the error
+  /**
+   * Fetch the trace + sibling data for a given playlist id. Extracted from
+   * onMount so it can also be re-fired when the user navigates between
+   * sibling weeks via §16.9's prev/next links — SvelteKit reuses the same
+   * component for `/playlists/3` → `/playlists/4` (same route), so onMount
+   * only fires once on the initial load. The reactive watcher below
+   * re-invokes loadAll() whenever the id changes; without that, navigation
+   * to a sibling week leaves the previous week's data on screen.
+   */
+  async function loadAll(playlistId: number) {
+    if (isNaN(playlistId)) return;
+    loading = true;
+    error = null;
     try {
-      trace = await getTrace(id);
-      // Playlist and station fetches aren't strictly needed for the trace
+      trace = await getTrace(playlistId);
+      // Playlist + station fetches aren't strictly needed for the trace
       // view, but they give us the station display name + source colours
-      // without another lookup.
-      playlist = await getPlaylist(id);
+      // without another lookup. The playlist list (§16.9) drives the
+      // prev/next nav links — fetched here rather than reshaping the
+      // trace endpoint to include siblings (per D2's "client-side"
+      // decision).
+      playlist = await getPlaylist(playlistId);
       station = await getStation(trace.station);
+      stationPlaylists = await getStationPlaylists(trace.station);
 
       // Build colour map from the template's `sources` list.
       const sources = (station.template.sources as { name: string; colour: string }[]) ?? [];
@@ -75,7 +91,36 @@
     } finally {
       loading = false;
     }
-  });
+  }
+
+  // Reactive: re-fetch whenever the route param changes. Fires once on
+  // initial mount AND on every subsequent navigation between sibling
+  // playlists. The `void` annotation is just to acknowledge the dropped
+  // promise — errors land in `error` via loadAll's catch.
+  $: if (!isNaN(id)) void loadAll(id);
+
+  // ---- prev / next sibling derivation (DESIGN.md §16.9 D2) ---------------
+  // Sort the station's playlists by week, find current's index, derive
+  // neighbours. Returns nulls when no neighbour exists (boundaries) or
+  // when the current playlist is somehow missing from the list (defensive
+  // — shouldn't happen but a malformed list shouldn't crash the page).
+
+  $: siblings = (() => {
+    // Capture into a local so TS narrowing carries through the
+    // findIndex closure (otherwise svelte-check sees `playlist`
+    // as `Playlist | null` inside the arrow).
+    const current = playlist;
+    if (!current || stationPlaylists.length === 0) {
+      return { prev: null as PlaylistSummary | null, next: null as PlaylistSummary | null };
+    }
+    const sorted = [...stationPlaylists].sort((a, b) => a.week - b.week);
+    const idx = sorted.findIndex((p) => p.id === current.id);
+    if (idx < 0) return { prev: null, next: null };
+    return {
+      prev: idx > 0 ? sorted[idx - 1] : null,
+      next: idx < sorted.length - 1 ? sorted[idx + 1] : null,
+    };
+  })();
 
   function groupByRow(slots: TraceSlot[]): RowGroup[] {
     const groups: Map<number, RowGroup> = new Map();
@@ -221,6 +266,46 @@
       {station?.name ?? trace.station}
       <span class="week">{String(trace.week).padStart(3, '0')}</span>
     </h1>
+
+    <!--
+      Multi-week navigation (DESIGN.md §16.9). Per D5 the prev/next are
+      <a href> not <button>s — they're navigations, not actions, so
+      browser middle-click / open-in-new-tab work as expected. Per D3
+      the disabled-edge state is a styled <span> rather than an
+      anchor with no href (avoids a focusable "navigate to nowhere").
+      Per D4 we show the week number, not just an arrow — context
+      beats brevity at this scale.
+    -->
+    {#if siblings.prev || siblings.next}
+      <nav class="week-nav" data-testid="week-nav" aria-label="adjacent weeks">
+        {#if siblings.prev}
+          <a
+            href="/playlists/{siblings.prev.id}"
+            class="week-nav-link"
+            data-testid="week-nav-prev"
+          >
+            ← week {String(siblings.prev.week).padStart(3, '0')}
+          </a>
+        {:else}
+          <span class="week-nav-link disabled" data-testid="week-nav-prev-disabled">
+            ← (first week)
+          </span>
+        {/if}
+        {#if siblings.next}
+          <a
+            href="/playlists/{siblings.next.id}"
+            class="week-nav-link"
+            data-testid="week-nav-next"
+          >
+            week {String(siblings.next.week).padStart(3, '0')} →
+          </a>
+        {:else}
+          <span class="week-nav-link disabled" data-testid="week-nav-next-disabled">
+            (last week) →
+          </span>
+        {/if}
+      </nav>
+    {/if}
 
     <dl class="meta">
       <dt>Slots</dt>
@@ -414,6 +499,32 @@
     font-family: ui-monospace, monospace;
     font-size: 0.85rem;
   }
+  /* §16.9 multi-week prev/next nav. Sits between the h1 and the meta dl. */
+  .week-nav {
+    display: flex;
+    gap: 0.75rem;
+    margin: 0.4rem 0 1rem;
+    font-size: 0.85rem;
+  }
+  .week-nav-link {
+    display: inline-block;
+    padding: 0.25rem 0.6rem;
+    background: #f4f4f4;
+    border: 1px solid #e0e0e0;
+    border-radius: 3px;
+    color: #2c3e50;
+    text-decoration: none;
+    font-variant-numeric: tabular-nums;
+  }
+  .week-nav-link:hover {
+    background: #e8e8e8;
+  }
+  .week-nav-link.disabled {
+    color: #999;
+    background: #fafafa;
+    cursor: not-allowed;
+  }
+
   .actions {
     margin: 1rem 0 0.5rem;
     display: flex;

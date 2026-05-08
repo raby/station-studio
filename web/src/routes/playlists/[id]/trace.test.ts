@@ -21,6 +21,7 @@ const {
   getPlaylistMock,
   getTraceMock,
   getStationMock,
+  getStationPlaylistsMock,
   exportPlaylistToDiskMock,
   FakeApiError,
   pageStore,
@@ -52,6 +53,7 @@ const {
     getPlaylistMock: vi.fn(),
     getTraceMock: vi.fn(),
     getStationMock: vi.fn(),
+    getStationPlaylistsMock: vi.fn(),
     exportPlaylistToDiskMock: vi.fn(),
     FakeApiError,
     pageStore,
@@ -63,6 +65,7 @@ vi.mock('$lib/api', () => ({
   getPlaylist: (...args: unknown[]) => getPlaylistMock(...args),
   getTrace: (...args: unknown[]) => getTraceMock(...args),
   getStation: (...args: unknown[]) => getStationMock(...args),
+  getStationPlaylists: (...args: unknown[]) => getStationPlaylistsMock(...args),
   exportPlaylistToDisk: (...args: unknown[]) => exportPlaylistToDiskMock(...args),
   ApiError: FakeApiError,
 }));
@@ -165,6 +168,12 @@ describe('trace viewer +page.svelte — render branches', () => {
     getPlaylistMock.mockReset();
     getTraceMock.mockReset();
     getStationMock.mockReset();
+    getStationPlaylistsMock.mockReset();
+    // Default: an empty playlist list. The §16.9 nav tests override with
+    // multi-week fixtures via mockResolvedValueOnce. Without this default,
+    // tests that don't seed the mock would resolve `undefined`, causing
+    // the page's `stationPlaylists.length` reactive to crash.
+    getStationPlaylistsMock.mockResolvedValue([]);
     exportPlaylistToDiskMock.mockReset();
     setId('1');
   });
@@ -330,6 +339,12 @@ describe('trace viewer — §16.6 disk-export wiring', () => {
     getPlaylistMock.mockReset();
     getTraceMock.mockReset();
     getStationMock.mockReset();
+    getStationPlaylistsMock.mockReset();
+    // Default: an empty playlist list. The §16.9 nav tests override with
+    // multi-week fixtures via mockResolvedValueOnce. Without this default,
+    // tests that don't seed the mock would resolve `undefined`, causing
+    // the page's `stationPlaylists.length` reactive to crash.
+    getStationPlaylistsMock.mockResolvedValue([]);
     exportPlaylistToDiskMock.mockReset();
     setId('1');
   });
@@ -397,6 +412,12 @@ describe('trace viewer — §16.8 search / filter', () => {
     getPlaylistMock.mockReset();
     getTraceMock.mockReset();
     getStationMock.mockReset();
+    getStationPlaylistsMock.mockReset();
+    // Default: an empty playlist list. The §16.9 nav tests override with
+    // multi-week fixtures via mockResolvedValueOnce. Without this default,
+    // tests that don't seed the mock would resolve `undefined`, causing
+    // the page's `stationPlaylists.length` reactive to crash.
+    getStationPlaylistsMock.mockResolvedValue([]);
     exportPlaylistToDiskMock.mockReset();
     setId('1');
   });
@@ -616,5 +637,131 @@ describe('trace viewer — §16.8 search / filter', () => {
 
     expect(screen.getByTestId('filter-empty')).toBeInTheDocument();
     expect(screen.getByTestId('filter-counter')).toHaveTextContent(/showing 0 of 3/i);
+  });
+});
+
+// ---- §16.9 multi-week prev / next nav -----------------------------------
+
+describe('trace viewer — §16.9 multi-week prev/next nav', () => {
+  beforeEach(() => {
+    getPlaylistMock.mockReset();
+    getTraceMock.mockReset();
+    getStationMock.mockReset();
+    getStationPlaylistsMock.mockReset();
+    exportPlaylistToDiskMock.mockReset();
+    setId('1');
+  });
+
+  /**
+   * A station with 3 weeks. Tests pick which one is "current" by setting
+   * the route param + matching playlist id. Sorted-by-week is deterministic.
+   */
+  const threeWeekStation = (): Array<{
+    id: number;
+    week: number;
+    trace_id: string;
+    generated_at: string | null;
+    entry_count: number;
+  }> => [
+    { id: 10, week: 1, trace_id: 'wk1', generated_at: null, entry_count: 3 },
+    { id: 20, week: 2, trace_id: 'wk2', generated_at: null, entry_count: 3 },
+    { id: 30, week: 3, trace_id: 'wk3', generated_at: null, entry_count: 3 },
+  ];
+
+  /**
+   * Helper: render the viewer at a given playlist id with a list of
+   * station playlists. trace.week and playlist.id are aligned.
+   */
+  function renderForNav(opts: {
+    currentId: number;
+    currentWeek: number;
+    siblings?: ReturnType<typeof threeWeekStation>;
+  }) {
+    setId(String(opts.currentId));
+    getTraceMock.mockResolvedValueOnce(stubTrace({ week: opts.currentWeek }));
+    getPlaylistMock.mockResolvedValueOnce({ ...stubPlaylist(), id: opts.currentId, week: opts.currentWeek });
+    getStationMock.mockResolvedValueOnce(stubStation());
+    getStationPlaylistsMock.mockResolvedValueOnce(opts.siblings ?? threeWeekStation());
+    return render(Page);
+  }
+
+  it('middle week: both prev and next links render with correct hrefs', async () => {
+    // Current = id 20 / week 2; siblings are week 1 (id 10) and week 3 (id 30).
+    renderForNav({ currentId: 20, currentWeek: 2 });
+
+    const prev = await screen.findByTestId('week-nav-prev');
+    expect(prev).toHaveAttribute('href', '/playlists/10');
+    expect(prev).toHaveTextContent(/week 001/i);
+
+    const next = screen.getByTestId('week-nav-next');
+    expect(next).toHaveAttribute('href', '/playlists/30');
+    expect(next).toHaveTextContent(/week 003/i);
+  });
+
+  it('first week: prev shows the disabled placeholder, next is a link', async () => {
+    renderForNav({ currentId: 10, currentWeek: 1 });
+
+    // Prev disabled — rendered as <span> not <a>.
+    expect(await screen.findByTestId('week-nav-prev-disabled')).toBeInTheDocument();
+    expect(screen.queryByTestId('week-nav-prev')).not.toBeInTheDocument();
+
+    // Next still active.
+    expect(screen.getByTestId('week-nav-next')).toHaveAttribute(
+      'href',
+      '/playlists/20',
+    );
+  });
+
+  it('last week: next shows the disabled placeholder, prev is a link', async () => {
+    renderForNav({ currentId: 30, currentWeek: 3 });
+
+    expect(await screen.findByTestId('week-nav-next-disabled')).toBeInTheDocument();
+    expect(screen.queryByTestId('week-nav-next')).not.toBeInTheDocument();
+    expect(screen.getByTestId('week-nav-prev')).toHaveAttribute(
+      'href',
+      '/playlists/20',
+    );
+  });
+
+  it('single-week station: nav strip is suppressed (no prev or next)', async () => {
+    // Only one playlist exists for the station — `{#if siblings.prev || siblings.next}`
+    // gates the whole nav, so neither link nor disabled placeholder renders.
+    renderForNav({
+      currentId: 10,
+      currentWeek: 1,
+      siblings: [
+        { id: 10, week: 1, trace_id: 'wk1', generated_at: null, entry_count: 3 },
+      ],
+    });
+    await screen.findByRole('heading', { name: /Classics/ });
+
+    expect(screen.queryByTestId('week-nav')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('week-nav-prev')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('week-nav-next')).not.toBeInTheDocument();
+  });
+
+  it('out-of-order playlist list still finds the right siblings', async () => {
+    // The list comes back in some order; sorting happens client-side.
+    // Pass an out-of-order list to make sure findIndex hits the right
+    // neighbour after sort, not before.
+    renderForNav({
+      currentId: 20,
+      currentWeek: 2,
+      siblings: [
+        // Week 3 first, then 1, then 2 — wire-order; we expect sorted (1,2,3).
+        { id: 30, week: 3, trace_id: 'wk3', generated_at: null, entry_count: 3 },
+        { id: 10, week: 1, trace_id: 'wk1', generated_at: null, entry_count: 3 },
+        { id: 20, week: 2, trace_id: 'wk2', generated_at: null, entry_count: 3 },
+      ],
+    });
+
+    expect(await screen.findByTestId('week-nav-prev')).toHaveAttribute(
+      'href',
+      '/playlists/10',
+    );
+    expect(screen.getByTestId('week-nav-next')).toHaveAttribute(
+      'href',
+      '/playlists/30',
+    );
   });
 });

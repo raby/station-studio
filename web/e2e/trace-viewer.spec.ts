@@ -75,6 +75,41 @@ test.describe('trace viewer', () => {
     await expect(page.getByTestId('disk-export-status')).toContainText(/KB/);
   });
 
+  test('§16.9 multi-week prev/next: link navigates to sibling trace', async ({
+    page,
+    request,
+  }) => {
+    // Round-trip pin: Vitest covers the prev/next derivation against
+    // mocked $lib/api; this spec covers the integration — the
+    // getStationPlaylists fetch lands real data, the link's href
+    // resolves correctly, and SvelteKit's client-side navigation
+    // loads the sibling trace without a full page reload.
+    await importTinyPool(request, 'A');
+    await createStation(request, 'trv-nav', 'Nav Station');
+    const wk1 = await generate(request, 'trv-nav', 1);
+    const wk2 = await generate(request, 'trv-nav', 2);
+
+    // Land on week 1's trace. Prev should be disabled; next should
+    // point at week 2's playlist id.
+    await page.goto(`/playlists/${wk1.playlist_id}`);
+    await expect(page.getByTestId('week-nav-prev-disabled')).toBeVisible();
+    const next = page.getByTestId('week-nav-next');
+    await expect(next).toHaveAttribute(
+      'href',
+      `/playlists/${wk2.playlist_id}`,
+    );
+
+    // Click next → end up on week 2; prev now points back to week 1,
+    // next is the disabled placeholder.
+    await next.click();
+    await expect(page).toHaveURL(`/playlists/${wk2.playlist_id}`);
+    await expect(page.getByTestId('week-nav-prev')).toHaveAttribute(
+      'href',
+      `/playlists/${wk1.playlist_id}`,
+    );
+    await expect(page.getByTestId('week-nav-next-disabled')).toBeVisible();
+  });
+
   test('§16.8 search / filter: typing narrows visible rows; clear restores them', async ({
     page,
     request,

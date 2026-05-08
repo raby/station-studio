@@ -403,8 +403,8 @@ The trace is stored as JSON alongside the playlist (in a `playlist_trace` table 
 | Jingles-as-primitive                        | only if      | Only if a future random-selection station needs them    |
 | Trace viewer (UI)                           | done (14.5)  | `/playlists/[id]` — per-slot reasoning, grouped by row  |
 | Trace-viewer search / filter                | done (14.15) | Free-text + source/strategy + ANDed filters + counter   |
-| Trace-viewer multi-week prev/next nav       | next (§16.9) | `← week NNN | week NNN →` in header; closes §14.5 punt  |
-| Trace-viewer polish (virtualisation, SSR…)  | later (14.5) | Virtualisation / week-compare remain after §16.9        |
+| Trace-viewer multi-week prev/next nav       | done (14.16) | `← week NNN | week NNN →` in header; closes §14.5 punt  |
+| Trace-viewer polish (virtualisation, SSR…)  | later (14.5) | Virtualisation / week-compare remain                    |
 | Test plan + CI                              | done (14.8)  | 4-tier; backend 98% lines; 26 Vitest + 9 Playwright     |
 | Coverage gate in CI                         | done (14.12) | Backend 90% aggregate; frontend per-file lines ≥ 85%    |
 | Trace-viewer Vitest backfill                | done (14.14) | 0% → 96.49% lines; closes §14.8's last 0%-file row      |
@@ -1776,6 +1776,139 @@ all already in §16.8's punt table):
   reactive (like the filter) is one of the fastest ways to
   lift the figure.
 
+### 14.16 Trace viewer multi-week prev/next nav — what shipped
+
+**What shipped (single commit, follow-on to §16.9's plan).**
+
+The §16.9 brief committed all 7 decisions ahead of execution;
+this section records what actually landed and the in-flight
+surprises.
+
+- **`getStationPlaylists(slug)` fetched in the trace viewer**
+  alongside the existing trace / playlist / station calls.
+  D2's "client-side derivation" — no backend reshape; the
+  list query was already an existing endpoint.
+- **`siblings` reactive** (IIFE inside `$:` per the §14.15
+  trap-doc) returns `{ prev, next }` as `PlaylistSummary | null`.
+  Sort by week, find current's index, derive neighbours.
+  Defensive against missing-current-from-list (returns both
+  null → nav suppressed entirely per the single-week branch).
+- **Nav strip** between the `<h1>` and the meta `<dl>`. Renders
+  `← week NNN` / `week NNN →` with zero-padded weeks (D4),
+  inside `<nav aria-label="adjacent weeks">` for assistive tech.
+  Disabled boundaries render as styled `<span>`s, not anchors-
+  with-no-href — keeps focus order sane and avoids "navigate
+  to nowhere" links.
+- **`<a href>` not `<button>`** (D5) — same rationale as §16.7's
+  "Edit station →": browser middle-click / open-in-new-tab.
+- **Single-week station: nav suppressed entirely** via
+  `{#if siblings.prev || siblings.next}`. Reads cleaner than
+  rendering both placeholders for a one-week station.
+- **5 new Vitest cases** in `trace.test.ts`: middle week (both
+  hrefs correct), first week (prev disabled), last week (next
+  disabled), single-week station (no nav at all), out-of-order
+  list (sort happens client-side). 33 trace tests total
+  (was 28).
+- **1 new Playwright case** in `trace-viewer.spec.ts`: real
+  backend, generate weeks 1+2, navigate from week 1 to week 2
+  via the next link, assert prev now points back to week 1
+  and next is the disabled placeholder.
+
+**Decisions in flight that the §16.9 brief didn't pre-decide.**
+
+- **The `onMount` → reactive-watch refactor was forced.**
+  This was the load-bearing surprise. SvelteKit reuses the
+  same `+page.svelte` instance when navigating between sibling
+  routes (`/playlists/3` → `/playlists/4` is the same `[id]`
+  route), so `onMount` only fires once on initial load. The
+  fetched data stays from the first render even though
+  `$page.params.id` updates. Caught by the Playwright spec
+  immediately — clicking next changed the URL but
+  `week-nav-prev` didn't update.
+
+  Fix: extracted the fetch logic into `loadAll(playlistId)`
+  and replaced `onMount(...)` with a reactive watcher
+  `$: if (!isNaN(id)) void loadAll(id);`. Fires once on
+  initial mount AND on every subsequent id change. The
+  `void` annotation acknowledges the dropped promise; errors
+  flow into `error` via `loadAll`'s own catch.
+
+  This pattern is the right answer for any future
+  same-route-different-id navigation (e.g. when §16.4's
+  trace versioning adds `?v=N` and back/forward between
+  versions becomes a thing). Worth knowing for the next
+  contributor who hits the trap.
+
+- **Disabled state rendered as `<span>` not `<a>`.** Two
+  alternatives considered: `<a>` with no `href` attribute
+  (focusable but unnavigable — confusing for keyboard users)
+  or `<a aria-disabled="true">` (still focusable, still
+  technically a link). `<span class="disabled">` keeps focus
+  order honest — boundaries skip past the disabled placeholder
+  on Tab.
+
+- **The placeholder copy is "← (first week)" / "(last week) →".**
+  Considered "← week 000" but that reads as a real week.
+  Considered just hiding the disabled side, but losing one
+  side of the nav strip looks broken. Showing parens-wrapped
+  context is the cheapest "this doesn't go anywhere" signal.
+
+- **`getStationPlaylistsMock.mockResolvedValue([])` default in
+  beforeEach** so existing tests that don't seed the mock
+  don't crash. The page's `stationPlaylists.length` reactive
+  would throw on `undefined.length` otherwise. The §16.9 nav
+  tests override with `mockResolvedValueOnce([...])`. Pattern
+  is generic — apply to any new mock that the page calls
+  unconditionally.
+
+**Coverage shipping** — last measurement post-§14.16:
+
+| File / metric                          | Before | After  |
+|----------------------------------------|--------|--------|
+| `playlists/[id]/+page.svelte` lines    | 98.08% | ~98%   |
+| `playlists/[id]/+page.svelte` branches | 83.63% | ~85%   |
+| Aggregate lines                        | 96.56% | ~96.5% |
+| Aggregate branches                     | 79.16% | ~80%   |
+
+Coverage stays comfortably above gates; new derivation has
+many small branches all exercised by the new Vitest cases.
+
+**Stay-out-of-scope candidates** (re-stated for traceability;
+all already in §16.9's punt table):
+
+| Area                                              | Status              |
+|---------------------------------------------------|---------------------|
+| Side-by-side multi-week comparison                | §14.5 / §16.4       |
+| Slot-level diff across weeks                      | §16.4               |
+| Keyboard shortcuts (j/k, arrows)                  | not now             |
+| Position indicator ("Week 3 of 12")               | not now             |
+| Cross-station navigation                          | rejected            |
+
+**Implementation notes for future pick-up.**
+
+- The `loadAll` + reactive-watch pattern is the project's
+  blueprint for any same-route-different-id navigation. If
+  §16.4 (trace versioning) lands and `/playlists/3?v=2` →
+  `/playlists/3?v=3` becomes a thing, fold the version into
+  `loadAll`'s args and add it to the reactive deps. Don't
+  go back to onMount-only — bug class re-emerges.
+- The `siblings` reactive's defensive "current not in list"
+  case (returns both null) handles a malformed playlist list
+  without crashing the page. Untested directly but exercised
+  by the single-week test (current is in the list of length 1
+  but no siblings exist either side). If a real "current
+  missing" report comes in, add a test seeded with siblings
+  that don't include the current playlist id.
+- The nav copy uses `String(week).padStart(3, '0')` matching
+  the existing h1 week-badge rendering. If the project ever
+  drops zero-padding on week numbers, search for that
+  literal everywhere — it appears in the h1, the nav, and
+  the station-detail playlists table.
+- The `trv-nav` station leaves `<repo>/out/trv-nav/00{1,2}.xml`
+  on disk via the implicit disk-export side-effect of the
+  fixture's tiny library. Same gitignored footprint as the
+  §14.11 disk-export spec; no cleanup required.
+
 ---
 
 ## 15. Status snapshot
@@ -1797,7 +1930,7 @@ A quick "where are we" for a future reader. Last updated at commit
 | Coverage gate in CI      | Shipped (14.12). Backend 90% aggregate; frontend per-file lines ≥85%. |
 | Trace-viewer Vitest      | Shipped (14.14). 0% → 96.49% lines; closes §14.8's last gap.     |
 | Trace-viewer search/filter | Shipped (14.15). Free-text + source/strategy filters; ANDed; counter; clear. |
-| Trace-viewer multi-week nav| Deferred. See §16.9 — next-up; prev/next links in header.        |
+| Trace-viewer multi-week nav| Shipped (14.16). Prev/next links + disabled boundaries; closes §14.5 punt. |
 | In-UI generate button    | Shipped (14.9). Empty-CTA + next-week + advanced + per-row regen.|
 | Delete / station-reset   | Shipped (14.10). Per-row delete + station nuke; cascades.        |
 | Disk-export UI button    | Shipped (14.11). Trace viewer "Export to disk" + status line.    |
