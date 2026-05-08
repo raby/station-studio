@@ -28,6 +28,8 @@ out/
 # Playwright
 web/test-results/
 web/playwright-report/
+test-results/
+playwright-report/
 
 # Coverage output
 .coverage

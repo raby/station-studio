@@ -86,34 +86,34 @@
     loading = true;
     error = null;
     try {
+      // getTrace must come first — its `station` field is the slug we
+      // need for the next three fetches. Once we have it, the playlist /
+      // station / playlist-list fetches are independent and parallelise:
+      //   getPlaylist(id)             — depends on playlistId only
+      //   getStation(trace.station)   — depends on trace.station
+      //   getStationPlaylists(...)    — depends on trace.station
+      // Sequential: 4 round-trips. Parallel: 1 + max(other 3) = 2
+      // round-trips on slow networks. Negligible on localhost; real
+      // win on user-deployment latency (review N2).
       const t = await getTrace(playlistId);
       if (myGen !== loadGeneration) return;
       trace = t;
-      // Playlist + station fetches aren't strictly needed for the trace
-      // view, but they give us the station display name + source colours
-      // without another lookup. The playlist list (§16.9) drives the
-      // prev/next nav links — fetched here rather than reshaping the
-      // trace endpoint to include siblings (per D2's "client-side"
-      // decision).
-      const p = await getPlaylist(playlistId);
-      if (myGen !== loadGeneration) return;
-      playlist = p;
-      const s = await getStation(t.station);
-      if (myGen !== loadGeneration) return;
-      station = s;
 
       // The playlist list is non-essential — if the endpoint flakes,
       // still render the trace; the nav strip just won't appear.
-      // Review S2: previously a getStationPlaylists 5xx killed the
-      // whole page even though the trace itself loaded fine.
-      try {
-        const list = await getStationPlaylists(t.station);
-        if (myGen !== loadGeneration) return;
-        stationPlaylists = list;
-      } catch {
-        if (myGen !== loadGeneration) return;
-        stationPlaylists = [];
-      }
+      // Review S2: wrap inline so it can return [] without aborting
+      // the Promise.all. Throwing inside the .catch would still
+      // propagate; returning [] keeps the page's primary content
+      // viewable.
+      const [p, s, list] = await Promise.all([
+        getPlaylist(playlistId),
+        getStation(t.station),
+        getStationPlaylists(t.station).catch(() => [] as PlaylistSummary[]),
+      ]);
+      if (myGen !== loadGeneration) return;
+      playlist = p;
+      station = s;
+      stationPlaylists = list;
 
       // Build colour map from the template's `sources` list.
       const sources = (s.template.sources as { name: string; colour: string }[]) ?? [];
