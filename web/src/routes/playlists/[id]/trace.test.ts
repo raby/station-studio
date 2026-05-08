@@ -551,4 +551,70 @@ describe('trace viewer — §16.8 search / filter', () => {
     await screen.findByText('Track Mon-1');
     expect(screen.queryByTestId('filter-clear')).not.toBeInTheDocument();
   });
+
+  it('strategy filter narrows correctly (review S1)', async () => {
+    // The default fixture has 3 slots all with strategy='window' so
+    // setting strategyFilter='window' wouldn't narrow anything. Use a
+    // fixture variant with mixed strategies so the predicate's strategy
+    // gate has discriminating power. Setting filter='pick' should hide
+    // the window slots; counter goes from 3 to 1.
+    getTraceMock.mockResolvedValueOnce(
+      stubTrace({
+        slots: [
+          {
+            slot: 1, unit: 'Mon', row: 1, block: 1,
+            source: 'A', strategy: 'window', pool_index: 1,
+            track_id: 100, track_name: 'Track Window-1',
+            track_artist: null, reason: 'window slot',
+          },
+          {
+            slot: 2, unit: 'Mon', row: 1, block: 1,
+            source: 'A', strategy: 'pick', pool_index: 2,
+            track_id: 101, track_name: 'Track Pick-1',
+            track_artist: null, reason: 'pick slot',
+          },
+          {
+            slot: 3, unit: 'Tue', row: 2, block: 1,
+            source: 'A', strategy: 'window', pool_index: 1,
+            track_id: 102, track_name: 'Track Window-2',
+            track_artist: null, reason: 'window slot',
+          },
+        ],
+      }),
+    );
+    getPlaylistMock.mockResolvedValueOnce(stubPlaylist());
+    getStationMock.mockResolvedValueOnce(stubStation());
+    render(Page);
+    await screen.findByText('Track Window-1');
+
+    // Strategy dropdown now has both options ['', 'pick', 'window'].
+    const strategySelect = screen.getByTestId('filter-strategy') as HTMLSelectElement;
+    await fireEvent.change(strategySelect, { target: { value: 'pick' } });
+
+    // Only the 'pick' slot survives.
+    expect(screen.queryByText('Track Window-1')).not.toBeInTheDocument();
+    expect(screen.queryByText('Track Window-2')).not.toBeInTheDocument();
+    expect(screen.getByText('Track Pick-1')).toBeInTheDocument();
+    expect(screen.getByTestId('filter-counter')).toHaveTextContent(/showing 1 of 3/i);
+  });
+
+  it('combined filters with no match show the empty state (review N4)', async () => {
+    // The empty-state test above uses search-only. This one combines
+    // source + search where neither filter is empty individually but
+    // their AND yields zero. Catches a hypothetical regression that
+    // OR'd filters instead of AND'ing them — single-filter empty-state
+    // would still pass, only the combined-empty case would surface it.
+    renderForFilter();
+    await screen.findByText('Track Mon-1');
+
+    // Source A keeps Mon-1 + Mon-2 only. Search 'Tue-1' would normally
+    // match the Tue slot — but Tue is from source B, not A. AND = 0.
+    const sourceSelect = screen.getByTestId('filter-source') as HTMLSelectElement;
+    await fireEvent.change(sourceSelect, { target: { value: 'A' } });
+    const search = screen.getByTestId('filter-search') as HTMLInputElement;
+    await fireEvent.input(search, { target: { value: 'Tue-1' } });
+
+    expect(screen.getByTestId('filter-empty')).toBeInTheDocument();
+    expect(screen.getByTestId('filter-counter')).toHaveTextContent(/showing 0 of 3/i);
+  });
 });

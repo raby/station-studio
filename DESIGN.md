@@ -2891,8 +2891,10 @@ two reads cleaner if the implementation evolves during execution.
 to station detail → scroll to find the row → click → back →
 scroll → click. The §14.5 punt list named "Multi-week
 navigation" with the trigger "running ≥3 weeks regularly" —
-that trigger is now active. A `← week NNN | week NNN →` pair
-in the viewer header is one of the cheapest UX wins left.
+that bar isn't quite met yet (Classics has 2 weeks at time of
+writing) but the pain is starting to feel real and acute by
+week 3+ is inevitable. A `← week NNN | week NNN →` pair in
+the viewer header is one of the cheapest UX wins left.
 
 **Use cases enumerated.**
 

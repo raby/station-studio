@@ -307,14 +307,24 @@
     </div>
 
     {#if filtersActive && visibleSlotCount === 0}
-      <p class="empty-filter" data-testid="filter-empty">
+      <!--
+        <div> not <p>: a <button> inside <p> is "interactive in flow text"
+        and reads weirdly to assistive tech. Same visual; cleaner semantics.
+      -->
+      <div class="empty-filter" data-testid="filter-empty" role="status">
         No slots match the current filters.
         <button type="button" class="clear-btn" on:click={clearFilters}>
           Clear filters
         </button>
-      </p>
+      </div>
     {:else}
-    {#each filteredRowGroups as g}
+    <!--
+      Keyed iteration — bind row identity to `g.row` (a stable integer)
+      not to the array index, which shifts when filters hide rows. Future-
+      proofs against §14.5's virtualisation punt where keyed `{#each}`
+      becomes load-bearing.
+    -->
+    {#each filteredRowGroups as g (g.row)}
       <section class="row" class:collapsed={collapsed[g.row]}>
         <header
           on:click={() => toggleRow(g.row)}
