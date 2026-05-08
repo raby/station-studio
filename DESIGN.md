@@ -402,7 +402,8 @@ The trace is stored as JSON alongside the playlist (in a `playlist_trace` table 
 | Excluded-candidates in trace                | v1.1         | Nice-to-have per user; shown in viewer when added       |
 | Jingles-as-primitive                        | only if      | Only if a future random-selection station needs them    |
 | Trace viewer (UI)                           | done (14.5)  | `/playlists/[id]` — per-slot reasoning, grouped by row  |
-| Trace-viewer polish                         | later (14.5) | Search, virtualisation, SSR, multi-week nav, compare    |
+| Trace-viewer search / filter                | next (§16.8) | Free-text + source/strategy filters; counter; clear     |
+| Trace-viewer polish (virtualisation, SSR…)  | later (14.5) | Search shipping; virtualisation / multi-week / compare remain |
 | Test plan + CI                              | done (14.8)  | 4-tier; backend 98% lines; 26 Vitest + 9 Playwright     |
 | Coverage gate in CI                         | done (14.12) | Backend 90% aggregate; frontend per-file lines ≥ 85%    |
 | Trace-viewer Vitest backfill                | done (14.14) | 0% → 96.49% lines; closes §14.8's last 0%-file row      |
@@ -1659,6 +1660,7 @@ A quick "where are we" for a future reader. Last updated at commit
 | Test plan + CI           | Shipped. 4-tier (engine, API, Vitest, Playwright). 98% backend.  |
 | Coverage gate in CI      | Shipped (14.12). Backend 90% aggregate; frontend per-file lines ≥85%. |
 | Trace-viewer Vitest      | Shipped (14.14). 0% → 96.49% lines; closes §14.8's last gap.     |
+| Trace-viewer search/filter | Deferred. See §16.8 — next-up; closes the 3,010-rows pain.     |
 | In-UI generate button    | Shipped (14.9). Empty-CTA + next-week + advanced + per-row regen.|
 | Delete / station-reset   | Shipped (14.10). Per-row delete + station nuke; cascades.        |
 | Disk-export UI button    | Shipped (14.11). Trace viewer "Export to disk" + status line.    |
@@ -2561,5 +2563,163 @@ in the UI. Combined with §16.6 (disk-export button), the
 Classics production loop gains "I want to tweak the
 template and re-export" as a one-route flow instead of
 "edit JSON / re-import / re-generate / curl-export".
+
+### 16.8 Trace viewer search / filter
+
+**Why this matters.** Classics's trace viewer renders **3,010
+slot rows** grouped across 7 days. The §14.5 punt list flagged
+"Search / filter — 3 010 rows makes scanning painful" with the
+trigger "noticeable scroll lag or first-paint delay" — and the
+day-to-day pain is "where did track X go in this week?" or
+"show me only the RG_RADIO slots". Today, the answer is
+Cmd-F + manual scroll. With filtering in place, those questions
+become one keystroke.
+
+**Use cases enumerated.**
+
+| # | Use case                                                              | Today                  | Importance |
+|---|-----------------------------------------------------------------------|------------------------|------------|
+| 1 | Find all slots with a track-name substring                            | Cmd-F                  | Common     |
+| 2 | Find all slots with an artist substring                               | Cmd-F                  | Common     |
+| 3 | Show only slots from one source pool (e.g. RG_PARTY)                  | Visual scan            | Common     |
+| 4 | Show only slots filled by one strategy (window vs pick)               | Visual scan            | Less common — usually 1:1 with source for Classics |
+| 5 | Find a specific slot number (e.g. "what's at slot 1842?")             | Cmd-F or scroll        | Occasional |
+| 6 | Find a specific pool index ("what came from RG_RADIO[100]?")          | Visual scan            | Occasional |
+| 7 | Show only one row/day (e.g. "just Saturday")                          | Collapse the others    | Already partial via §14.5 collapse |
+| 8 | Combine filters (source RG_PARTY + track name "love")                 | Not possible           | Real       |
+| 9 | Preserve context — "what's around this match?"                        | Filter loses neighbours| Punt — see D1 |
+| 10| Share a filtered view with someone                                    | Screenshot             | Punt — URL state, see D5 |
+| 11| Highlight matches in place rather than hide non-matches               | n/a                    | Punt — see D1 |
+| 12| Find rejected candidates                                              | n/a — trace doesn't record them | Out of scope (§11 v1.1) |
+
+**Decisions taken** (D1–D10):
+
+- **D1. Filter (hide non-matching), not highlight in place.** The
+  95% case is "where did X go" — a compact list of matches reads
+  faster than the full 3,010 rows with yellow underlines. The
+  context-preservation use case (#9) is real but rare; serving
+  it would mean either toggling between filter / highlight modes
+  (UI complexity) or showing N±1 rows around each match
+  (heuristic with edge cases). v1 is filter-only; revisit when
+  someone reports the "what's around this match" pain.
+- **D2. Three filter inputs**: free-text search (track name OR
+  artist substring, case-insensitive), source dropdown, strategy
+  dropdown. Each input is independent; combinations AND together
+  (D3). The free-text covers use cases 1+2 with one input —
+  splitting them adds an OR/AND toggle that's overkill for v1.
+- **D3. Filters AND together.** A slot must match *every* active
+  filter to render. Predictable, matches user expectation.
+  Empty-string / unselected = no constraint, not a wildcard.
+- **D4. Filter bar sits between the "Your working" header and
+  the row sections.** Above the rows is the right cognitive
+  position; sticky-on-scroll considered but rejected for v1
+  (Classics has 7 rows, scrolling-back is mild; sticky has
+  z-index gotchas; revisit when a station has 50+ rows).
+- **D5. No URL state for v1.** Filters are local component state;
+  reload clears them. URL persistence (`?q=love&src=RG_PARTY`)
+  is bookmarkable + shareable but adds complexity (parse, sync,
+  encode-special-chars) without a real driver yet. Revisit when
+  §16.4 trace versioning lands and we already need `?v=N`.
+- **D6. No debounce on the search input.** Filtering 3,010
+  Svelte-rendered nodes per keystroke benchmarks under 50ms in
+  modern browsers; user-perceptible lag is not a v1 concern.
+  Revisit if a real "typing in search feels laggy" report comes
+  in or once a station has 30k slots.
+- **D7. Empty-result state**: "No slots match the current
+  filters." with an inline "Clear filters" button. Counter copy
+  (D10) tells the user the impact ("Showing 0 of 3,010"); the
+  clear button is the recovery path.
+- **D8. Row sections with 0 matching slots are hidden entirely.**
+  Showing every row header with "0 slots" is noise; hiding
+  collapses the visible list to just the rows that have
+  something. Header still appears for rows with ≥1 match, even
+  if the user had collapsed it manually (D9).
+- **D9. Collapse state survives filtering.** A row collapsed
+  before the user typed a filter stays collapsed; when they
+  expand it, only matching slots render inside. The collapse map
+  (already keyed by row index) doesn't change shape.
+- **D10. Match counter visible**: "Showing N of M slots" near
+  the filter inputs, where N is matches-after-filter and M is
+  total. Updates reactively. Tells the user "your filter
+  worked" and "your filter is too aggressive" without them
+  having to count.
+
+**Decisions deliberately deferred.**
+
+- **Slot-number / pool-index range filters** (use cases 5+6).
+  Could add a 4th filter input for "show slots N..M". Real but
+  niche; the free-text search handles "I'm looking for track
+  X" which is the dominant phrasing. Add when someone wants
+  contiguous-range slicing.
+- **Highlight mode toggle** (use case 11). Implemented as a
+  filter v1; toggle to "highlight in place" later if the
+  context-preservation pain comes in.
+- **Saved filter presets** ("RG_PARTY only" as a one-click
+  button). Defer until presets exist for two more screens.
+
+**Backend.** No backend work. Filtering is purely client-side
+over the trace JSON the page already has (`trace.slots`).
+
+**Frontend scope — likely 2 commits.**
+
+1. **Filter implementation + Vitest.** New filter bar above
+   the row sections; reactive `filteredRowGroups` derivation
+   joining the existing `rowGroups`; match-counter + clear-
+   filters affordance; empty-state copy. Vitest cases for
+   each filter type, AND combinations, empty result state,
+   counter accuracy.
+
+2. **Playwright e2e + DESIGN.md §14.15.** One round-trip
+   spec asserting that typing "Mon-1" in the search box
+   collapses the visible slots; clearing the filter restores
+   them. §14.15 captures the shipping decisions + any in-
+   flight surprises.
+
+Could merge both into one commit if the diff stays small;
+two reads cleaner if the implementation evolves during execution.
+
+**Stay-out-of-scope candidates.**
+
+| Area                                              | Status              | Trigger                                    |
+|---------------------------------------------------|---------------------|--------------------------------------------|
+| URL state / shareable filtered links              | not now             | §16.4 lands and we already need `?v=N`     |
+| Slot-number / pool-index range inputs             | not now             | Real "I want slots 100-200" report         |
+| Highlight-in-place mode (vs filter)               | not now             | "I lose context when filtering" report     |
+| Saved filter presets                              | not now             | Multiple screens have presets              |
+| Regex search                                      | rejected            | 99% of users want substring; regex is power-tool feature |
+| Export-filtered-view (download iTunes XML)        | rejected            | Filter is a viewing concern, not a content one |
+| Search across multiple weeks at once              | not now             | §16.4 trace versioning would precede       |
+| Debounced search                                  | not now             | "typing feels laggy" report                |
+| Sticky filter bar                                 | not now             | Station with 50+ rows                      |
+| Find-rejected-candidates                          | §11 v1.1            | excluded-candidates trace feature lands    |
+
+**Implementation notes for future pick-up.**
+
+- The filter logic is a pure derivation off `rowGroups` — keep
+  it that way. Don't mutate `trace.slots`. The reactive
+  pattern is `$: filteredRowGroups = rowGroups.map(...).filter(...)`
+  with a `matchesFilters(slot)` predicate.
+- Source / strategy dropdown options should be derived from the
+  trace's actual content (`[...new Set(trace.slots.map(s =>
+  s.source))]`), not from the station template's source list.
+  A trace might reference sources the template no longer lists
+  (renamed pool, removed pool); deriving from the trace shows
+  what's actually present.
+- The clear-filters button resets all three filter states in one
+  click. Tests should pin this — a regression that only resets
+  the search box would be a real UX bug.
+- The match-counter copy uses `toLocaleString()` for thousands
+  separators ("Showing 47 of 3,010"). At 3,010 slots the comma
+  matters for readability — same reasoning as §14.11 disk-status.
+- Filter inputs disabled state isn't needed — there's no async
+  operation that races with filtering. Keep them always
+  interactive.
+- A future cross-row filter (e.g. "show only slots that match X
+  AND are in row Y") would be a new dimension on the
+  predicate. The current shape — predicate over slot, not
+  predicate over row — supports it without restructuring.
+- The empty-state "Clear filters" button uses the same handler
+  as a dedicated clear button next to the inputs. One source
+  of truth for "reset all filter state".
 
 
