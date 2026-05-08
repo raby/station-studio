@@ -22,6 +22,12 @@
   let diskExportStatus: string | null = null;
   let diskExportError: string | null = null;
 
+  // Filter state (DESIGN.md §16.8). Three independent inputs that AND
+  // together (D3); empty string = no constraint, not wildcard.
+  let searchQuery = '';
+  let sourceFilter = '';
+  let strategyFilter = '';
+
   $: id = Number($page.params.id);
 
   // Guard against non-numeric route params (e.g. /playlists/abc).
@@ -97,6 +103,58 @@
   function chipStyle(source: string): string {
     const colour = sourceColours[source] ?? '#888';
     return `background: ${colour}; color: white;`;
+  }
+
+  // ---- filter logic (DESIGN.md §16.8) -----------------------------------
+  // Pure derivations off `rowGroups`; `trace.slots` is never mutated.
+  // Source / strategy options come from the trace's actual content rather
+  // than the station template — handles renamed / removed pools gracefully.
+
+  $: sourceOptions = trace
+    ? [...new Set(trace.slots.map((s) => s.source))].sort()
+    : [];
+  $: strategyOptions = trace
+    ? [...new Set(trace.slots.map((s) => s.strategy))].sort()
+    : [];
+
+  // Filtered groups: each group's slots narrowed by the predicate, then
+  // groups with 0 surviving slots dropped (D8). The predicate is INLINED
+  // (rather than a named function) because Svelte's `$:` dependency
+  // tracking introspects the AST of the reactive block, not the bodies
+  // of functions it calls. With a named `matchesFilters(slot)` reading
+  // `searchQuery` etc. via closure, the compiler sees only the function
+  // name and `rowGroups` — searchQuery changes wouldn't re-fire the
+  // reactive. Inlining makes every variable read visible to the tracker.
+  $: filteredRowGroups = (() => {
+    const q = searchQuery.trim().toLowerCase();
+    return rowGroups
+      .map((g) => ({
+        ...g,
+        slots: g.slots.filter((s) => {
+          if (sourceFilter && s.source !== sourceFilter) return false;
+          if (strategyFilter && s.strategy !== strategyFilter) return false;
+          if (q) {
+            const trackHit = s.track_name.toLowerCase().includes(q);
+            const artistHit = (s.track_artist ?? '').toLowerCase().includes(q);
+            if (!trackHit && !artistHit) return false;
+          }
+          return true;
+        }),
+      }))
+      .filter((g) => g.slots.length > 0);
+  })();
+
+  $: totalSlotCount = trace?.slots.length ?? 0;
+  $: visibleSlotCount = filteredRowGroups.reduce((a, g) => a + g.slots.length, 0);
+  $: filtersActive = !!(searchQuery.trim() || sourceFilter || strategyFilter);
+
+  function clearFilters() {
+    // Reset all three filter states atomically — the empty-state copy and
+    // the dedicated "Clear" button share this handler so there's one
+    // source of truth for "reset filter state".
+    searchQuery = '';
+    sourceFilter = '';
+    strategyFilter = '';
   }
 
   /**
@@ -206,7 +264,57 @@
     <h2>Your working</h2>
     <p class="hint">Each row below is one unit of the layout (a day for Classics). Click a row header to collapse it.</p>
 
-    {#each rowGroups as g}
+    <!--
+      Filter bar (DESIGN.md §16.8). Three independent inputs that AND
+      together (D3); options for source / strategy come from the trace's
+      actual content. Counter shows "Showing N of M" with locale-aware
+      thousands separator (D10). Clear button only renders when at least
+      one filter is active.
+    -->
+    <div class="filters" data-testid="filter-bar">
+      <input
+        type="text"
+        placeholder="Search track or artist…"
+        data-testid="filter-search"
+        autocomplete="off"
+        bind:value={searchQuery}
+      />
+      <select data-testid="filter-source" bind:value={sourceFilter}>
+        <option value="">All sources</option>
+        {#each sourceOptions as opt}
+          <option value={opt}>{opt}</option>
+        {/each}
+      </select>
+      <select data-testid="filter-strategy" bind:value={strategyFilter}>
+        <option value="">All strategies</option>
+        {#each strategyOptions as opt}
+          <option value={opt}>{opt}</option>
+        {/each}
+      </select>
+      <span class="counter" data-testid="filter-counter">
+        Showing {visibleSlotCount.toLocaleString()} of {totalSlotCount.toLocaleString()}
+      </span>
+      {#if filtersActive}
+        <button
+          type="button"
+          class="clear-btn"
+          data-testid="filter-clear"
+          on:click={clearFilters}
+        >
+          Clear
+        </button>
+      {/if}
+    </div>
+
+    {#if filtersActive && visibleSlotCount === 0}
+      <p class="empty-filter" data-testid="filter-empty">
+        No slots match the current filters.
+        <button type="button" class="clear-btn" on:click={clearFilters}>
+          Clear filters
+        </button>
+      </p>
+    {:else}
+    {#each filteredRowGroups as g}
       <section class="row" class:collapsed={collapsed[g.row]}>
         <header
           on:click={() => toggleRow(g.row)}
@@ -247,6 +355,7 @@
         {/if}
       </section>
     {/each}
+    {/if}
   {/if}
 </main>
 
@@ -414,5 +523,65 @@
 
   .error {
     color: crimson;
+  }
+
+  /* ---- §16.8 filter bar ---------------------------------------------- */
+  .filters {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    flex-wrap: wrap;
+    margin: 0.5rem 0 1rem;
+    padding: 0.5rem 0.75rem;
+    background: #fafafa;
+    border: 1px solid #e4e4e4;
+    border-radius: 4px;
+    font-size: 0.9rem;
+  }
+  .filters input[type='text'] {
+    flex: 1 1 14rem;
+    min-width: 12rem;
+    padding: 0.4rem 0.6rem;
+    border: 1px solid #ccc;
+    border-radius: 3px;
+    font: inherit;
+  }
+  .filters select {
+    padding: 0.4rem 0.6rem;
+    border: 1px solid #ccc;
+    border-radius: 3px;
+    font: inherit;
+    background: white;
+  }
+  .filters .counter {
+    margin-left: auto;
+    color: #666;
+    font-size: 0.85rem;
+    font-variant-numeric: tabular-nums;
+  }
+  .clear-btn {
+    padding: 0.3rem 0.7rem;
+    background: white;
+    border: 1px solid #ccc;
+    border-radius: 3px;
+    cursor: pointer;
+    font: inherit;
+    font-size: 0.85rem;
+  }
+  .clear-btn:hover {
+    background: #f4f4f4;
+  }
+
+  .empty-filter {
+    margin: 1rem 0;
+    padding: 1.25rem;
+    background: #fafafa;
+    border: 1px solid #e4e4e4;
+    border-radius: 4px;
+    text-align: center;
+    color: #666;
+  }
+  .empty-filter .clear-btn {
+    margin-left: 0.5rem;
   }
 </style>

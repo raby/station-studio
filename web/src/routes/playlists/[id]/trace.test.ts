@@ -389,3 +389,166 @@ describe('trace viewer — §16.6 disk-export wiring', () => {
     expect(screen.queryByTestId('disk-export-status')).not.toBeInTheDocument();
   });
 });
+
+// ---- §16.8 search / filter ----------------------------------------------
+
+describe('trace viewer — §16.8 search / filter', () => {
+  beforeEach(() => {
+    getPlaylistMock.mockReset();
+    getTraceMock.mockReset();
+    getStationMock.mockReset();
+    exportPlaylistToDiskMock.mockReset();
+    setId('1');
+  });
+
+  /**
+   * Render with the default fixture: 3 slots across 2 row groups.
+   *   Mon: Track Mon-1 (Artist 1, source A, window) + Track Mon-2 (null, A, window)
+   *   Tue: Track Tue-1 (Artist 2, source B, window)
+   * Total = 3, distinct sources = ['A', 'B'], distinct strategies = ['window'].
+   */
+  function renderForFilter() {
+    getTraceMock.mockResolvedValueOnce(stubTrace());
+    getPlaylistMock.mockResolvedValueOnce(stubPlaylist());
+    getStationMock.mockResolvedValueOnce(stubStation());
+    return render(Page);
+  }
+
+  it('renders the filter bar with source / strategy options derived from trace', async () => {
+    renderForFilter();
+    await screen.findByRole('heading', { name: /Classics/ });
+
+    // The bar is present.
+    expect(screen.getByTestId('filter-bar')).toBeInTheDocument();
+
+    // Source dropdown carries one "All sources" + one option per distinct
+    // source in the trace. Order is sorted (so 'A' before 'B').
+    const sourceSelect = screen.getByTestId('filter-source') as HTMLSelectElement;
+    const sourceValues = Array.from(sourceSelect.options).map((o) => o.value);
+    expect(sourceValues).toEqual(['', 'A', 'B']);
+
+    const strategySelect = screen.getByTestId('filter-strategy') as HTMLSelectElement;
+    const strategyValues = Array.from(strategySelect.options).map((o) => o.value);
+    expect(strategyValues).toEqual(['', 'window']);
+  });
+
+  it('counter shows "Showing N of M" with locale-formatted thousands', async () => {
+    renderForFilter();
+    const counter = await screen.findByTestId('filter-counter');
+    // 3 of 3 with no filters active.
+    expect(counter).toHaveTextContent(/showing 3 of 3/i);
+  });
+
+  it('search filter narrows to slots whose track name matches', async () => {
+    renderForFilter();
+    await screen.findByText('Track Mon-1');
+
+    const search = screen.getByTestId('filter-search') as HTMLInputElement;
+    await fireEvent.input(search, { target: { value: 'Mon-1' } });
+
+    // Mon-1 visible; Mon-2 + Tue-1 hidden.
+    expect(screen.getByText('Track Mon-1')).toBeInTheDocument();
+    expect(screen.queryByText('Track Mon-2')).not.toBeInTheDocument();
+    expect(screen.queryByText('Track Tue-1')).not.toBeInTheDocument();
+    // Counter updates: 1 of 3.
+    expect(screen.getByTestId('filter-counter')).toHaveTextContent(/showing 1 of 3/i);
+  });
+
+  it('search filter also matches against artist (case-insensitive)', async () => {
+    renderForFilter();
+    await screen.findByText('Track Tue-1');
+
+    // 'Artist 2' belongs only to Tue-1; uppercase to confirm case-insensitive.
+    const search = screen.getByTestId('filter-search') as HTMLInputElement;
+    await fireEvent.input(search, { target: { value: 'ARTIST 2' } });
+
+    expect(screen.getByText('Track Tue-1')).toBeInTheDocument();
+    expect(screen.queryByText('Track Mon-1')).not.toBeInTheDocument();
+  });
+
+  it('source filter narrows to slots from the chosen pool', async () => {
+    renderForFilter();
+    await screen.findByText('Track Mon-1');
+
+    const sourceSelect = screen.getByTestId('filter-source') as HTMLSelectElement;
+    await fireEvent.change(sourceSelect, { target: { value: 'B' } });
+
+    // Only Tue-1 is from source B.
+    expect(screen.queryByText('Track Mon-1')).not.toBeInTheDocument();
+    expect(screen.queryByText('Track Mon-2')).not.toBeInTheDocument();
+    expect(screen.getByText('Track Tue-1')).toBeInTheDocument();
+  });
+
+  it('combined filters AND together (search + source narrows further)', async () => {
+    renderForFilter();
+    await screen.findByText('Track Mon-1');
+
+    // Source A leaves Mon-1 + Mon-2; search 'Mon-2' narrows to one row.
+    const sourceSelect = screen.getByTestId('filter-source') as HTMLSelectElement;
+    await fireEvent.change(sourceSelect, { target: { value: 'A' } });
+    const search = screen.getByTestId('filter-search') as HTMLInputElement;
+    await fireEvent.input(search, { target: { value: 'Mon-2' } });
+
+    expect(screen.queryByText('Track Mon-1')).not.toBeInTheDocument();
+    expect(screen.getByText('Track Mon-2')).toBeInTheDocument();
+    expect(screen.queryByText('Track Tue-1')).not.toBeInTheDocument();
+  });
+
+  it('row sections with 0 matching slots are hidden entirely (D8)', async () => {
+    renderForFilter();
+    await screen.findByText('Mon', { selector: '.unit-label' });
+
+    // Filter to source B: only Tue-1 matches → Mon row should disappear.
+    const sourceSelect = screen.getByTestId('filter-source') as HTMLSelectElement;
+    await fireEvent.change(sourceSelect, { target: { value: 'B' } });
+
+    // Mon row header gone; Tue still there.
+    expect(
+      screen.queryByText('Mon', { selector: '.unit-label' }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText('Tue', { selector: '.unit-label' })).toBeInTheDocument();
+  });
+
+  it('shows the empty-state copy when filters match nothing', async () => {
+    renderForFilter();
+    await screen.findByText('Track Mon-1');
+
+    const search = screen.getByTestId('filter-search') as HTMLInputElement;
+    await fireEvent.input(search, { target: { value: 'no such track' } });
+
+    expect(await screen.findByTestId('filter-empty')).toHaveTextContent(
+      /no slots match/i,
+    );
+    expect(screen.getByTestId('filter-counter')).toHaveTextContent(/showing 0 of 3/i);
+  });
+
+  it('clear button resets all three filter states atomically', async () => {
+    renderForFilter();
+    await screen.findByText('Track Mon-1');
+
+    // Set all three filters.
+    const search = screen.getByTestId('filter-search') as HTMLInputElement;
+    const sourceSelect = screen.getByTestId('filter-source') as HTMLSelectElement;
+    const strategySelect = screen.getByTestId('filter-strategy') as HTMLSelectElement;
+    await fireEvent.input(search, { target: { value: 'love' } });
+    await fireEvent.change(sourceSelect, { target: { value: 'A' } });
+    await fireEvent.change(strategySelect, { target: { value: 'window' } });
+
+    // Clear button should now be visible (filters active).
+    const clearBtn = screen.getByTestId('filter-clear');
+    await fireEvent.click(clearBtn);
+
+    // All inputs back to empty.
+    expect(search.value).toBe('');
+    expect(sourceSelect.value).toBe('');
+    expect(strategySelect.value).toBe('');
+    // Counter back to full.
+    expect(screen.getByTestId('filter-counter')).toHaveTextContent(/showing 3 of 3/i);
+  });
+
+  it('clear button hidden when no filters active', async () => {
+    renderForFilter();
+    await screen.findByText('Track Mon-1');
+    expect(screen.queryByTestId('filter-clear')).not.toBeInTheDocument();
+  });
+});
