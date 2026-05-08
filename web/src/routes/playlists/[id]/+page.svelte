@@ -83,42 +83,48 @@
   async function loadAll(playlistId: number) {
     if (isNaN(playlistId)) return;
     const myGen = ++loadGeneration;
-    loading = true;
+
+    // Initial load (no trace yet) shows the "Loading…" branch. Subsequent
+    // navigations between sibling weeks keep the previous week's content
+    // visible until the atomic swap below — no flicker, no blank-screen
+    // flash on every prev/next click (review N3). Stale data with the
+    // URL already updated reads as "transitioning"; the new data lands
+    // atomically when all fetches resolve.
+    const isInitialLoad = trace === null;
+    if (isInitialLoad) loading = true;
     error = null;
+
     try {
       // getTrace must come first — its `station` field is the slug we
       // need for the next three fetches. Once we have it, the playlist /
-      // station / playlist-list fetches are independent and parallelise:
-      //   getPlaylist(id)             — depends on playlistId only
-      //   getStation(trace.station)   — depends on trace.station
-      //   getStationPlaylists(...)    — depends on trace.station
-      // Sequential: 4 round-trips. Parallel: 1 + max(other 3) = 2
-      // round-trips on slow networks. Negligible on localhost; real
-      // win on user-deployment latency (review N2).
+      // station / playlist-list fetches are independent and parallelise
+      // (review N2). Buffer all results in locals; swap to component
+      // state at the end so reloads don't flash a half-state where the
+      // header is week 4 but the rows are still week 3.
       const t = await getTrace(playlistId);
       if (myGen !== loadGeneration) return;
-      trace = t;
 
       // The playlist list is non-essential — if the endpoint flakes,
-      // still render the trace; the nav strip just won't appear.
-      // Review S2: wrap inline so it can return [] without aborting
-      // the Promise.all. Throwing inside the .catch would still
-      // propagate; returning [] keeps the page's primary content
-      // viewable.
+      // still render the trace; the nav strip just won't appear (S2).
+      // .catch inside the Promise.all so a flaky list endpoint doesn't
+      // poison the others.
       const [p, s, list] = await Promise.all([
         getPlaylist(playlistId),
         getStation(t.station),
         getStationPlaylists(t.station).catch(() => [] as PlaylistSummary[]),
       ]);
       if (myGen !== loadGeneration) return;
+
+      // Atomic swap. All component state updates here, after every fetch
+      // has resolved. Stale content stays visible during the transition;
+      // new content snaps in as one. The {:else if trace && playlist}
+      // gate flips the render path on the same tick.
+      const sources = (s.template.sources as { name: string; colour: string }[]) ?? [];
+      trace = t;
       playlist = p;
       station = s;
       stationPlaylists = list;
-
-      // Build colour map from the template's `sources` list.
-      const sources = (s.template.sources as { name: string; colour: string }[]) ?? [];
       sourceColours = Object.fromEntries(sources.map((src) => [src.name, src.colour]));
-
       rowGroups = groupByRow(t.slots);
     } catch (e) {
       if (myGen !== loadGeneration) return;

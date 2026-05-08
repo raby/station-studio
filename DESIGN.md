@@ -1901,6 +1901,15 @@ all already in §16.9's punt table):
   reset call inside `loadAll` (or pin to a station-change,
   not a week-change). The `collapsed[]` per-row state is
   similarly cross-week — same reasoning.
+- **Atomic-swap pattern in `loadAll` (review N3).** Initial
+  loads still show the `<p>Loading…</p>` branch (when
+  `trace === null`). Subsequent navigations skip the loading
+  flag entirely — stale content stays visible while the new
+  fetches run, then all component state swaps in one tick at
+  the end of the try block. Avoids the half-state flash
+  where the header reads "week 4" but the rows are still
+  from week 3. Generation tracking (S1) cancels the swap if
+  a newer invocation has bumped the counter.
 - The `siblings` reactive's defensive "current not in list"
   case (returns both null) handles a malformed playlist list
   without crashing the page. Untested directly but exercised
