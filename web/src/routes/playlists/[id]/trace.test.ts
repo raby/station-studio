@@ -212,6 +212,33 @@ describe('trace viewer +page.svelte — render branches', () => {
     expect(await screen.findByText(/network down/i)).toBeInTheDocument();
   });
 
+  it('getStationPlaylists failure degrades gracefully (review S2)', async () => {
+    // Non-essential fetch — the trace itself loaded fine, but the
+    // siblings list (which only drives the §16.9 nav strip) flaked.
+    // Pre-S2 the catch killed the whole page render. Post-S2 the
+    // page still shows the trace; the nav strip is suppressed because
+    // siblings.prev / .next are both null.
+    getTraceMock.mockResolvedValueOnce(stubTrace());
+    getPlaylistMock.mockResolvedValueOnce(stubPlaylist());
+    getStationMock.mockResolvedValueOnce(stubStation());
+    getStationPlaylistsMock.mockRejectedValueOnce(
+      new FakeApiError(500, 'db locked'),
+    );
+    render(Page);
+
+    // Trace renders normally — heading + first slot visible.
+    await screen.findByRole('heading', { name: /Classics/ });
+    expect(screen.getByText('Track Mon-1')).toBeInTheDocument();
+
+    // No error banner — the failure was swallowed by the inner catch.
+    expect(screen.queryByText(/db locked/i)).not.toBeInTheDocument();
+
+    // Nav strip suppressed — single playlist (the current one isn't even
+    // in the empty list) means siblings = {prev: null, next: null}, and
+    // the {#if siblings.prev || siblings.next} gate hides the whole nav.
+    expect(screen.queryByTestId('week-nav')).not.toBeInTheDocument();
+  });
+
   // ---- populated-render assertions, split per concern (review S2) -------
   // The previous "renders header + meta + slot rows grouped by row" test
   // asserted ~10 things in one block. Splitting per concern means a

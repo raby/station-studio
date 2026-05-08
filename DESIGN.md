@@ -1892,6 +1892,15 @@ all already in §16.9's punt table):
   `/playlists/3?v=3` becomes a thing, fold the version into
   `loadAll`'s args and add it to the reactive deps. Don't
   go back to onMount-only — bug class re-emerges.
+- **Filter state (§16.8) is intentionally cross-week.**
+  `searchQuery` / `sourceFilter` / `strategyFilter` aren't
+  reset by `loadAll`. Useful — "find Bohemian across all
+  my weeks" is a real workflow. May surprise users expecting
+  filter-bar reset on context change. If "I keep getting
+  confused by leftover filters" reports come in, add a
+  reset call inside `loadAll` (or pin to a station-change,
+  not a week-change). The `collapsed[]` per-row state is
+  similarly cross-week — same reasoning.
 - The `siblings` reactive's defensive "current not in list"
   case (returns both null) handles a malformed playlist list
   without crashing the page. Untested directly but exercised

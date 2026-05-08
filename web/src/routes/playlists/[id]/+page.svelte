@@ -57,6 +57,17 @@
   let collapsed: Record<number, boolean> = {};
 
   /**
+   * Generation counter for stale-write protection (review S1). Each
+   * loadAll() invocation captures its own generation; if a later
+   * invocation has bumped the counter by the time an await resolves,
+   * the older invocation bails out before writing to component state.
+   * Without this, rapid prev/next clicks could let a slow getTrace(3)
+   * resolve AFTER getTrace(4) — leaving trace=trace3 even though the
+   * URL is /playlists/4.
+   */
+  let loadGeneration = 0;
+
+  /**
    * Fetch the trace + sibling data for a given playlist id. Extracted from
    * onMount so it can also be re-fired when the user navigates between
    * sibling weeks via §16.9's prev/next links — SvelteKit reuses the same
@@ -64,32 +75,56 @@
    * only fires once on the initial load. The reactive watcher below
    * re-invokes loadAll() whenever the id changes; without that, navigation
    * to a sibling week leaves the previous week's data on screen.
+   *
+   * Each await is followed by a generation check (review S1) so that a
+   * stale invocation can't overwrite state that a newer invocation has
+   * already updated.
    */
   async function loadAll(playlistId: number) {
     if (isNaN(playlistId)) return;
+    const myGen = ++loadGeneration;
     loading = true;
     error = null;
     try {
-      trace = await getTrace(playlistId);
+      const t = await getTrace(playlistId);
+      if (myGen !== loadGeneration) return;
+      trace = t;
       // Playlist + station fetches aren't strictly needed for the trace
       // view, but they give us the station display name + source colours
       // without another lookup. The playlist list (§16.9) drives the
       // prev/next nav links — fetched here rather than reshaping the
       // trace endpoint to include siblings (per D2's "client-side"
       // decision).
-      playlist = await getPlaylist(playlistId);
-      station = await getStation(trace.station);
-      stationPlaylists = await getStationPlaylists(trace.station);
+      const p = await getPlaylist(playlistId);
+      if (myGen !== loadGeneration) return;
+      playlist = p;
+      const s = await getStation(t.station);
+      if (myGen !== loadGeneration) return;
+      station = s;
+
+      // The playlist list is non-essential — if the endpoint flakes,
+      // still render the trace; the nav strip just won't appear.
+      // Review S2: previously a getStationPlaylists 5xx killed the
+      // whole page even though the trace itself loaded fine.
+      try {
+        const list = await getStationPlaylists(t.station);
+        if (myGen !== loadGeneration) return;
+        stationPlaylists = list;
+      } catch {
+        if (myGen !== loadGeneration) return;
+        stationPlaylists = [];
+      }
 
       // Build colour map from the template's `sources` list.
-      const sources = (station.template.sources as { name: string; colour: string }[]) ?? [];
-      sourceColours = Object.fromEntries(sources.map((s) => [s.name, s.colour]));
+      const sources = (s.template.sources as { name: string; colour: string }[]) ?? [];
+      sourceColours = Object.fromEntries(sources.map((src) => [src.name, src.colour]));
 
-      rowGroups = groupByRow(trace.slots);
+      rowGroups = groupByRow(t.slots);
     } catch (e) {
+      if (myGen !== loadGeneration) return;
       error = e instanceof ApiError ? e.message : String(e);
     } finally {
-      loading = false;
+      if (myGen === loadGeneration) loading = false;
     }
   }
 
