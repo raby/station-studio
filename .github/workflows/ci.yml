@@ -22,6 +22,11 @@ jobs:
           .venv/bin/pip install -r requirements.txt -r requirements-dev.txt
       - name: pytest + coverage gate
         run: make test-backend
+      - name: alembic ↔ create_all schema parity
+        # Catches "added a model class but forgot make alembic-revision"
+        # (DESIGN.md §17 review S2). Both produce the same schema from
+        # engine/models.py at HEAD; drift = a migration is missing.
+        run: make migration-parity
 
   frontend-unit:
     name: frontend unit (vitest)

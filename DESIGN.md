@@ -2042,10 +2042,17 @@ off it.
   `Base.metadata.create_all` directly. If a future migration
   depends on data ordering or specific column defaults that
   diverge from the ORM declaration, tests would silently
-  pass against a different schema than production. Worth
-  monitoring once #5 / #2 land — possibly add a CI smoke
-  job that runs migrations on a temp DB and asserts
-  schema-parity with `create_all`.
+  pass against a different schema than production.
+  *(Update per §17 review S2: a CI smoke job now runs
+  `make migration-parity` after `make test-backend` —
+  `scripts/check_migration_parity.py` does a structural
+  comparison via SQLAlchemy's Inspector. Catches the
+  "added a model class but forgot to alembic-revision"
+  regression class. Structural rather than text-diff
+  because alembic and create_all order CREATE TABLE
+  constraints differently — same content, different
+  declaration order. The Inspector normalises by extracting
+  columns / pk / FKs / uniques / indexes as sorted tuples.)*
 
 ### 14.18 Backup / restore tooling — what shipped (§17 Phase A #9)
 

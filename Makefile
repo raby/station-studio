@@ -8,7 +8,7 @@
 # `make test` runs all three in order; CI does the same.
 
 .PHONY: test test-backend test-frontend-unit test-e2e install-e2e-browsers clean-test \
-        migrate alembic-stamp alembic-revision alembic-current \
+        migrate alembic-stamp alembic-revision alembic-current migration-parity \
         backup backups restore
 
 PY := .venv/bin/python
@@ -75,6 +75,19 @@ alembic-revision:
 
 alembic-current:
 	$(ALEMBIC) current
+
+# Compare `alembic upgrade head` schema against `Base.metadata.create_all`.
+# Catches the "added a model class but forgot alembic-revision" regression
+# class (DESIGN.md §14.17 implementation note + §17 review S2). Both are
+# the same source of truth at HEAD; this guard fires if a contributor
+# updates engine/models.py without also generating a migration.
+#
+# The comparison runs against two fresh empty SQLite files at $$TMPDIR,
+# enumerates objects via sqlite_master excluding alembic_version (the
+# expected-to-differ tracking table). Diff is name + type + flattened
+# CREATE-SQL — catches missing tables, columns, indexes, FK changes.
+migration-parity:
+	$(PY) scripts/check_migration_parity.py
 
 # Backup / restore for the SQLite DB (DESIGN.md §14.18 / §17 #9).
 #
