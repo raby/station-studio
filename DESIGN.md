@@ -396,7 +396,7 @@ The trace is stored as JSON alongside the playlist (in a `playlist_trace` table 
 | Trace versioning (history of regenerations) | later (§16.4)| Schema change; only after §16.1 lands and bites         |
 | Migrate Rebirth Radio onto Station Studio   | long-term    | §17 Phase C; needs `weighted`, `prev_ref`, `genre_pick` |
 | Schema migrations (Alembic)                 | done (14.17) | Baseline migration captures current schema; future deltas via `make alembic-revision` |
-| Backup/restore tooling for SQLite           | next (§17 #9)| `make backup` + `make restore <date>`; cheap insurance  |
+| Backup/restore tooling for SQLite           | done (14.18) | `make backup` (WAL-aware) + `make restore date=...`; pre-restore safety copy |
 | `GET /api/meta` (shared template constants) | next (§17 #3)| §14.7 third-caller trigger met (editor would be #3)     |
 | iTunes XML export of Classics playlists     | done (14.1)  | Lifted from weekly, station-scoped; browser + disk paths|
 | Disk-export UI button on trace viewer       | done (14.11) | "Export to disk" button + status line; closes prod loop |
@@ -2043,6 +2043,128 @@ off it.
   job that runs migrations on a temp DB and asserts
   schema-parity with `create_all`.
 
+### 14.18 Backup / restore tooling — what shipped (§17 Phase A #9)
+
+**Why.** Station Studio is single-user, but the data it holds
+is precious. One accidental `DELETE /api/stations/cls` (now
+that §16.3 made deletion a one-click affordance) and 12+
+weeks of generated playlists vanish. The trace JSON alone is
+~150 MB after a season; regenerating from sources is
+deterministic but slow. A 5-line Makefile target removes that
+class of "I just lost everything" event.
+
+**What shipped (single commit).**
+
+- **`make backup`** — uses `sqlite3`'s `.backup` command,
+  which is **WAL-aware** (safe to run while uvicorn is using
+  the DB). Output: `backups/YYYY-MM-DD-HHMMSS.db`. Plain
+  `cp` of the live DB risks catching half-flushed WAL state;
+  `.backup` checkpoints the WAL into the snapshot file
+  transparently.
+- **`make backups`** — lists existing backups newest-first
+  (`ls -lht`). Empty-state copy: "No backups yet — run
+  'make backup'."
+- **`make restore date=YYYY-MM-DD-HHMMSS`** — three steps:
+  - **Pre-restore safety copy** of the current DB to
+    `backups/pre-restore-YYYY-MM-DD-HHMMSS.db` (so the
+    restore is itself recoverable if it was the wrong one).
+  - **Clear stale `-wal` / `-shm` files** — restoring just
+    the `.db` file with companion WAL state from a different
+    schema version corrupts. Removed before the cp.
+  - **`cp backup → DB_FILE`** — straight overwrite. User
+    must stop `run.py` first; concurrent writes during
+    restore corrupt. The output reminds them to restart.
+- **`backups/` directory gitignored.** Backup files contain
+  user data; never repo content.
+- **`DB_FILE` configurable** via `make backup DB_FILE=...`
+  for ad-hoc inspection of e.g. Playwright per-PID DBs.
+  Default is `station_studio.db`.
+
+**Decisions in flight.**
+
+- **`sqlite3 .backup` over `cp`.** SQLite WAL mode is enabled
+  in `engine/database.py:25`; while uvicorn is running, the
+  authoritative state is across `.db` + `.db-wal` + `.db-shm`.
+  Naive `cp station_studio.db backups/...` skips the WAL
+  data and produces an inconsistent snapshot. `.backup` runs
+  a hot consistency-checkpoint into a single output file.
+- **Pre-restore safety copy.** Asymmetric: backup is hot,
+  restore is cold (must stop `run.py`). The pre-restore copy
+  is hot — captures whatever state the DB is in at the
+  moment of the restore call, even if uvicorn is running.
+  If the user runs `make restore` against an actively-
+  written DB, the pre-restore copy is still consistent;
+  only the post-cp result is risky (and only if uvicorn
+  keeps writing during the cp). The output message says to
+  stop run.py.
+- **`restore` clears `-wal` / `-shm` before the cp.** Stale
+  WAL files from before the restore can carry pages that
+  belong to the now-replaced schema. Even with the same
+  schema version, the WAL pages would re-apply on the next
+  open and corrupt the freshly-restored snapshot. Cheapest
+  fix is `rm -f` of the companions; SQLite recreates them
+  empty on first open.
+- **No automatic backup before destructive ops.** Considered:
+  hooking `make backup` into a pre-commit, or auto-backup
+  before every `DELETE` API call. Both rejected — the
+  former is annoying for non-data commits, the latter
+  couples the API path to filesystem ops. The convention
+  is "run `make backup` before risky ops"; the §16.3
+  delete-station confirm dialog could grow a "tip: run
+  `make backup` first" mention if users start losing data
+  to it.
+- **Hash-named backups (`YYYY-MM-DD-HHMMSS.db`) over
+  rolling `latest.db` or numbered `001.db` style.** The
+  timestamp lets users see which backup is which without
+  inspecting; rolling files would lose context.
+- **No retention policy / pruning.** Backup files
+  accumulate indefinitely. Each is ~9 MB on the current
+  Classics DB; even daily backups for a year = ~3.3 GB.
+  Real but not pressing. If clutter becomes felt, a
+  `make backup-prune` target could keep last-N + monthly
+  archives. Currently: user manages the directory.
+
+**Stay-out-of-scope.**
+
+| Area                                    | Status      | Trigger                                  |
+|-----------------------------------------|-------------|------------------------------------------|
+| Automated backup-before-destructive-op  | rejected    | Couples API to filesystem; user-driven by convention |
+| Backup-pruning / retention policy       | not now     | Disk usage becomes felt                  |
+| Off-site / cloud backup                 | rejected    | Single-user; user can `cp` to wherever   |
+| Restore from a backup taken on a different machine | not now | Slugs / paths in trace JSON could be machine-specific |
+| Backup encryption                       | rejected    | Single-user; user encrypts the backups/ folder if needed |
+| `make backup-and-tag-with-message`      | not now     | If someone wants annotated backups       |
+
+**Implementation notes for future pick-up.**
+
+- **Recovery story**: if `station_studio.db` is corrupted
+  beyond restore, the *worst* case is "regenerate every
+  playlist from sources". Templates live in `stations/*.json`
+  (committed), source pools live in `from_user/*.xml`
+  (re-importable), and generation is deterministic
+  (`rng:off`). The trace JSON is the only truly-lost data;
+  it can be regenerated but the original `trace_id` UUIDs
+  are gone.
+- **Backups should not be stamped at any Alembic revision.**
+  When the user restores a backup taken at revision X and
+  the code is now at revision Y, `make migrate` should run
+  the deltas X→Y on the restored DB. The `alembic_version`
+  table inside the backup file naturally carries X with it,
+  so this works without any special handling — just
+  remember to `make migrate` after restoring to a different
+  code state.
+- **The pre-restore safety copy** is named
+  `pre-restore-YYYY-MM-DD-HHMMSS.db` not just
+  `pre-restore.db` — concurrent restores within the same
+  second are unlikely but possible (re-running the command
+  after a misclick). The timestamp prevents
+  silent-overwrite of the safety copy itself.
+- **Cross-platform note**: the `date +%Y-%m-%d-%H%M%S`
+  format is POSIX. Works on macOS (BSD date) and Linux
+  (GNU date). Avoid `date -Iseconds` (GNU-only) or
+  `date +%Y%m%dT%H%M%S` (less human-readable). The current
+  format is the standard sortable timestamp.
+
 ---
 
 ## 15. Status snapshot
@@ -2069,7 +2191,7 @@ A quick "where are we" for a future reader. Last updated at commit
 | Delete / station-reset   | Shipped (14.10). Per-row delete + station nuke; cascades.        |
 | Disk-export UI button    | Shipped (14.11). Trace viewer "Export to disk" + status line.    |
 | Edit mode for stations   | Shipped (14.13). Shared `<StationForm>` + JSON preview + diff + reset. |
-| **Pre-§16.2 / port roadmap** | **In flight. §17 Phase A — #8 Alembic baseline shipped (14.17). Next: #9 backups, then #3 /api/meta.** |
+| **Pre-§16.2 / port roadmap** | **In flight. §17 Phase A — #8 Alembic (14.17) + #9 backups (14.18) shipped. Next: #3 /api/meta.** |
 | Visual block editor      | Deferred (v2). Lands as §17 Phase B after Phase A unblocks.      |
 | Trace versioning         | Deferred. See §16.4 (queued behind §16.1 by design).             |
 | Accessibility pass       | Deferred. §17 Phase D — single sweep after §16.2 + port.         |
@@ -3359,7 +3481,7 @@ reduces cleanup later. Numbers map to the tier tables above.
 **Phase A — pre-block-editor unblocks** (~6 commits):
 
 1. ~~**Alembic baseline** (#8)~~ — **shipped (§14.17)**
-2. **Backup tooling** (#9) — cheap insurance, parallel to anything else
+2. ~~**Backup tooling** (#9)~~ — **shipped (§14.18)**
 3. **`GET /api/meta`** (#3) — small, removes the duplicated constants
 4. **Extract `template.ts`** (#4) — moves `buildTemplate` / `unpack` out of the component
 5. **`<LayoutFieldset>` arrays refactor** (#1) — makes §16.2's swap a real one-component swap

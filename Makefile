@@ -8,10 +8,12 @@
 # `make test` runs all three in order; CI does the same.
 
 .PHONY: test test-backend test-frontend-unit test-e2e install-e2e-browsers clean-test \
-        migrate alembic-stamp alembic-revision alembic-current
+        migrate alembic-stamp alembic-revision alembic-current \
+        backup backups restore
 
 PY := .venv/bin/python
 ALEMBIC := .venv/bin/alembic
+DB_FILE := station_studio.db
 
 test: test-backend test-frontend-unit test-e2e
 
@@ -73,3 +75,60 @@ alembic-revision:
 
 alembic-current:
 	$(ALEMBIC) current
+
+# Backup / restore for the SQLite DB (DESIGN.md §14.18 / §17 #9).
+#
+# Why bother on a single-user tool: one accidental DELETE
+# /api/stations/cls and 12+ weeks of generated playlists vanish. Trace
+# data alone (~150 MB after a season) is regeneratable but slow. Cheap
+# insurance.
+#
+# All three targets operate on $(DB_FILE) — `station_studio.db` by
+# default. To target a different DB file (e.g. a Playwright per-PID DB
+# for ad-hoc inspection) pass DB_FILE=...:
+#     make backup DB_FILE=playwright-test.12345.db
+#
+# `make backup` uses sqlite3's `.backup` command, which is WAL-aware —
+# safe to run while uvicorn is using the DB. Plain `cp` would risk
+# catching a half-flushed WAL state.
+#
+# `make restore date=YYYY-MM-DD-HHMMSS` overwrites the live DB. STOP
+# uvicorn first — concurrent writes during restore corrupt. The target
+# makes a pre-restore safety copy and clears stale -wal/-shm files
+# before the cp.
+
+backup:
+	@mkdir -p backups
+	@TS=$$(date +%Y-%m-%d-%H%M%S); \
+	  echo "Backing up $(DB_FILE) → backups/$$TS.db"; \
+	  sqlite3 $(DB_FILE) ".backup backups/$$TS.db" && \
+	  echo "Done — $$(du -h backups/$$TS.db | cut -f1)"
+
+backups:
+	@if ls backups/*.db 1>/dev/null 2>&1; then \
+	  ls -lht backups/*.db | head -20; \
+	else \
+	  echo "No backups yet — run 'make backup'."; \
+	fi
+
+restore:
+	@if [ -z "$(date)" ]; then \
+	  echo "Usage: make restore date=YYYY-MM-DD-HHMMSS"; \
+	  echo ""; \
+	  echo "Available backups:"; \
+	  ls backups/*.db 2>/dev/null | sed 's|backups/|  |;s|\.db$$||' | head -10; \
+	  exit 1; \
+	fi
+	@if [ ! -f "backups/$(date).db" ]; then \
+	  echo "No backup found at backups/$(date).db"; \
+	  echo "Run 'make backups' for the list."; \
+	  exit 1; \
+	fi
+	@TS=$$(date +%Y-%m-%d-%H%M%S); \
+	  echo "Pre-restore safety copy → backups/pre-restore-$$TS.db"; \
+	  sqlite3 $(DB_FILE) ".backup backups/pre-restore-$$TS.db"; \
+	  echo "Clearing any stale -wal / -shm files…"; \
+	  rm -f $(DB_FILE)-wal $(DB_FILE)-shm; \
+	  echo "Restoring backups/$(date).db → $(DB_FILE)"; \
+	  cp backups/$(date).db $(DB_FILE); \
+	  echo "Done. If you stopped run.py for the restore, you can restart it now."

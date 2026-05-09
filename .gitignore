@@ -34,3 +34,6 @@ playwright-report/
 # Coverage output
 .coverage
 web/coverage/
+
+# Database backups (DESIGN.md §14.18). User-data; never repo content.
+backups/
