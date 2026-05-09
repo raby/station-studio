@@ -61,7 +61,8 @@ DESIGN.md §14.8 is the long-form rationale for all of the above.
 | Edit mode for stations         | shipped      | `/stations/[slug]/edit` — shared `<StationForm>` + JSON preview + diff + reset |
 | Trace viewer search / filter   | shipped      | Free-text + source/strategy filters; AND combine; counter |
 | Trace viewer multi-week nav    | shipped      | `← week NNN | week NNN →` in header; disabled at boundaries |
-| Visual block editor            | v2 (§16.2)   | Drag-drop over the same JSON the wizard produces          |
+| **Pre-§16.2 unblocks**         | **next (§17 Phase A)** | **Alembic + backups + /api/meta + template.ts + LayoutFieldset arrays** |
+| Visual block editor            | v2 (§16.2)   | Drag-drop over the same JSON; lands after §17 Phase A     |
 | Trace versioning               | later (§16.4)| Schema change so regen stops being destructive            |
 
 ## Design note

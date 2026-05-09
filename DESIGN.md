@@ -386,20 +386,24 @@ The trace is stored as JSON alongside the playlist (in a `playlist_trace` table 
 
 | Item                                        | Status       | Notes                                                   |
 |---------------------------------------------|--------------|---------------------------------------------------------|
-| Visual block editor                         | later (§16.2)| v2; operates on same JSON as wizard; needs §16.7 first  |
+| Visual block editor                         | later (§16.2)| v2; operates on same JSON as wizard; needs §17 Phase A  |
+| Pre-§16.2 / pre-port roadmap                | next (§17)   | Phase A: Alembic + backups + /api/meta + template.ts + LayoutFieldset arrays |
 | Station creation wizard (UI)                | done (14.7)  | Produces the template JSON; reuses `web/src/lib/api.ts` |
 | Edit mode for stations                      | done (14.13) | `<StationForm>` extracted; JSON preview + diff + reset  |
 | Wizard polish (presets, per-field errors)   | later (14.7) | See 14.7 table; wait for real-user pain                 |
 | In-UI generate button + per-row regenerate  | done (14.9)  | Closes wizard → trace-viewer loop; per-row regen too    |
 | Delete / station-reset UI                   | done (14.10) | Per-row delete + station-nuke header; both with confirm |
 | Trace versioning (history of regenerations) | later (§16.4)| Schema change; only after §16.1 lands and bites         |
-| Migrate Rebirth Radio onto Station Studio   | long-term    | Needs `weighted`, `prev_ref`, `genre_pick` primitives   |
+| Migrate Rebirth Radio onto Station Studio   | long-term    | §17 Phase C; needs `weighted`, `prev_ref`, `genre_pick` |
+| Schema migrations (Alembic)                 | next (§17 #8)| Currently `Base.metadata.create_all`; non-additive changes need real migrations |
+| Backup/restore tooling for SQLite           | next (§17 #9)| `make backup` + `make restore <date>`; cheap insurance  |
+| `GET /api/meta` (shared template constants) | next (§17 #3)| §14.7 third-caller trigger met (editor would be #3)     |
 | iTunes XML export of Classics playlists     | done (14.1)  | Lifted from weekly, station-scoped; browser + disk paths|
 | Disk-export UI button on trace viewer       | done (14.11) | "Export to disk" button + status line; closes prod loop |
 | Disk-export prune endpoint                  | on demand    | `POST /api/playlists/export/prune` — wait until clutter |
 | Scheduler (auto-generate weekly)            | v1.1         | Weekly has APScheduler; port when stable                |
 | Artist aliasing / dedup                     | not needed   | Classics has no dedup; engine grows this when needed    |
-| Excluded-candidates in trace                | v1.1         | Nice-to-have per user; shown in viewer when added       |
+| Excluded-candidates in trace                | next (§17 #5)| Prereq for `weighted`-debugability ahead of port        |
 | Jingles-as-primitive                        | only if      | Only if a future random-selection station needs them    |
 | Trace viewer (UI)                           | done (14.5)  | `/playlists/[id]` — per-slot reasoning, grouped by row  |
 | Trace-viewer search / filter                | done (14.15) | Free-text + source/strategy + ANDed filters + counter   |
@@ -1953,19 +1957,26 @@ A quick "where are we" for a future reader. Last updated at commit
 | Delete / station-reset   | Shipped (14.10). Per-row delete + station nuke; cascades.        |
 | Disk-export UI button    | Shipped (14.11). Trace viewer "Export to disk" + status line.    |
 | Edit mode for stations   | Shipped (14.13). Shared `<StationForm>` + JSON preview + diff + reset. |
-| Visual block editor      | Deferred (v2). See §16.2 — `<LayoutFieldset>` is the swap-point.  |
+| **Pre-§16.2 / port roadmap** | **Next-up. See §17 — Phase A unblocks §16.2; Phase C unblocks the port.** |
+| Visual block editor      | Deferred (v2). Lands as §17 Phase B after Phase A unblocks.      |
 | Trace versioning         | Deferred. See §16.4 (queued behind §16.1 by design).             |
-| Accessibility pass       | Deferred. See §16.5 (consolidates piecemeal a11y notes).         |
+| Accessibility pass       | Deferred. §17 Phase D — single sweep after §16.2 + port.         |
 | Scheduler                | Deferred (v1.1).                                                 |
-| Weekly migration         | Long-term.                                                       |
+| Weekly migration         | Long-term — §17 Phase C; needs three new engine primitives.      |
 
 Active TODOs live in §11 (deferred), §14.5 (trace-viewer follow-ups),
-§14.7 (wizard follow-ups), §14.8 (test-plan follow-ups), and §16
-(next up — generate button, block editor, reset). Don't start chipping
-at the follow-ups until Station Studio earns them — the project's
-whole premise is "build the smallest thing that proves the next
-decision", not "polish the thing we've got". §16 is the queue we
-*are* going to chip at.
+§14.7 (wizard follow-ups), §14.8 (test-plan follow-ups), §16 (per-slice
+briefs), and **§17 (the actual execution roadmap before §16.2 + the
+port)**. The original top-10 next-up list is fully cleared; the
+remaining queued slices are the three big pieces (§16.2 block
+editor, §16.4 trace versioning, §16.5 a11y pass) plus the long-
+term port. §17 captures what should land before / between those.
+
+Don't start chipping at the follow-ups until Station Studio earns
+them — the project's whole premise is "build the smallest thing
+that proves the next decision", not "polish the thing we've got".
+§17 is the queue we *are* going to chip at; everything else stays
+trigger-gated.
 
 ---
 
@@ -3140,5 +3151,190 @@ No backend work. No schema change.
 - The rendered text "← week 002" should match the existing
   `String(week).padStart(3, '0')` zero-padding for visual
   consistency with the heading badge.
+
+---
+
+## 17. Pre-§16.2 / pre-port roadmap
+
+**Why this section exists.** The original top-10 of next-up
+slices is fully cleared (§16.3 → §16.9, §14.12, §14.14). The
+remaining queued work is three big pieces: §16.2 visual block
+editor, §16.4 trace versioning, §16.5 accessibility pass. Plus
+the long-term "port Rebirth Radio onto Station Studio" goal
+named in §11. Before charging at §16.2 + the port, a handful of
+smaller pieces should land to unblock them cleanly. This section
+is the prioritised list, captured so the next session can pick
+up cold.
+
+### What the upcoming big slices actually need
+
+**Visual block editor (§16.2)** — the §16.7 D10 caveat is
+honest: today `<LayoutFieldset>` binds comma-separated *strings*
+for `unitLabelsStr` and `rowStartOffsetsStr`; `<StationForm>`'s
+`buildTemplate()` parses them to arrays at save time. A drag-
+drop visual editor naturally binds *arrays*. So §16.2's "swap"
+actually entails refactoring `<StationForm>`'s state too. Plus
+the editor would be the third caller of `STRATEGY_OPTIONS` /
+`ROLE_OPTIONS` / `RNG_OPTIONS` — `GET /api/meta` (§14.7 punt's
+"third caller appears" trigger) is met. And `buildTemplate` /
+`unpack` need to live in a sibling module so the editor can
+consume them as pure functions.
+
+**Rebirth Radio port (§11 long-term)** — weekly's template uses
+weighted commercial-music selection, previous-week references,
+and genre-tagged picks. None are expressible with Classics's
+`window` + `pick` primitive set. Three new engine primitives
+are *required*: `weighted`, `prev_ref`, `genre_pick`. Plus
+weighted picks are uninterpretable without trace excluded-
+candidates (§11 v1.1 punt) — "why didn't it pick X?" is the
+dominant authoring question. Plus some import path so the
+existing `weekly` template JSON can land in `stations/` without
+hand-retyping.
+
+### Tier 1 — Hard prerequisites
+
+These slices literally cannot ship without these.
+
+| # | Item | For | Cost | Reference |
+|---|------|-----|------|-----------|
+| 1 | `<LayoutFieldset>` state-shape refactor (strings → arrays) | §16.2 | ~50 LoC; tests already pin the round-trip via §16.7 S3 | §16.7 D10, §14.13 caveat |
+| 2 | Engine primitives: `weighted`, `prev_ref`, `genre_pick` | port | 3–4 commits per primitive | §11, §4.3 |
+
+### Tier 2 — Soft prerequisites
+
+The slices work without these, but landing them first removes
+real friction.
+
+| # | Item | Why | Cost | Reference |
+|---|------|-----|------|-----------|
+| 3 | `GET /api/meta` (shared template constants) | The §14.7 "third caller" trigger is met by §16.2; landing now keeps wizard + edit + editor on one source of truth | ~30 LoC backend + ~20 LoC frontend | §14.7 punt |
+| 4 | Extract `buildTemplate` / `unpack` to `web/src/lib/template.ts` | Editor needs them as pure functions, not `<StationForm>`-closure state | ~40 LoC refactor; existing tests catch regressions | §16.2 reuse note |
+| 5 | Excluded-candidates in trace | Weighted picks are uninterpretable without "why not X?"; primary debug-loop for port | ~50 LoC across `engine/trace.py`, weighted strategy, viewer | §11 v1.1 |
+| 6 | "Start from existing" preset OR raw-JSON import in wizard | Makes the port concrete — copy weekly's template JSON, edit, save; otherwise port is hand-retyping a 200-line template | ~30 LoC for preset; ~50 for JSON-paste import | §14.7 punt |
+
+### Tier 3 — Cross-cutting cleanups
+
+Worthwhile independent of the upcoming slices, but the timing
+matters because each one's blast radius grows after §16.2 lands.
+
+| # | Item | Why now | Cost | Reference |
+|---|------|---------|------|-----------|
+| 7 | §16.5 accessibility pass | Doing it before §16.2 means §16.5 is retroactive only; doing it after means §16.5 also has to audit the new editor. Either order works — see "ordering tradeoff" below | 4–5 commits | §16.5 |
+| 8 | Schema migrations via Alembic | `Base.metadata.create_all()` doesn't handle column changes; the moment §16.4 / weighted / genre_pick / excluded-candidates lands, schema *will* change. First migration is trivial if Alembic is set up; painful catch-up later | ~1 commit (config + baseline migration) | (gap — not in any prior punt list) |
+| 9 | Backup / restore tooling for `station_studio.db` | Single-user but precious. One `DELETE /api/stations/cls` and 12+ weeks of generated playlists vanish. Trivial `make backup` / `make restore <date>` targets that copy the SQLite file | ~5 LoC of Makefile | (gap) |
+
+### Tier 4 — Defer-able
+
+Real value, but no current pain and not unblocking anything
+specific.
+
+| # | Item | Defer until | Reference |
+|---|------|-------------|-----------|
+| 10 | `+page.ts` `load` functions for SSR / prefetch | "first paint feels slow" or "want share-link previews" report | §14.5 punt |
+| 11 | Trace versioning (§16.4) | "I want my old trace back" report; or after §16.2 if iterative authoring loses too much trace history | §16.4 brief |
+| 12 | Property-based engine tests (Hypothesis) | A primitive ships that's hard to enumerate (likely with `weighted` in #2) | §14.8 punt |
+| 13 | Real iTunes XML integration test | An iTunes update breaks a real-world XML | §14.8 punt |
+| 14 | Mutation testing (mutmut) | Confidence in coverage % drops | §14.8 punt |
+| 15 | Visual-regression / screenshot tests | A CSS regression slips past Playwright DOM assertions | §14.8 punt |
+| 16 | Multi-Python-version CI matrix | A user reports running on something other than 3.14 | §14.8 punt |
+| 17 | API authentication / rate limiting | Station Studio runs anywhere outside localhost | (gap) |
+
+### Recommended ordering
+
+Stable execution path; each step listed unblocks the next or
+reduces cleanup later. Numbers map to the tier tables above.
+
+**Phase A — pre-block-editor unblocks** (~6 commits):
+
+1. **Alembic baseline** (#8) — cheapest unblock; first migration is a no-op
+2. **Backup tooling** (#9) — cheap insurance, parallel to anything else
+3. **`GET /api/meta`** (#3) — small, removes the duplicated constants
+4. **Extract `template.ts`** (#4) — moves `buildTemplate` / `unpack` out of the component
+5. **`<LayoutFieldset>` arrays refactor** (#1) — makes §16.2's swap a real one-component swap
+
+**Phase B — visual block editor (§16.2)**
+
+The slice itself, lands cleanly on Phase A's groundwork. Real
+second-station layout will surface the design shape; until then
+§16.2's brief stays intentionally light per its own framing.
+
+**Phase C — port prep + the port** (probably 6–8 commits):
+
+6. **Excluded-candidates in trace** (#5) — prereq for #2's weighted being authoriable
+7. **Engine primitives** (#2) — `prev_ref` first (smallest), `genre_pick` second (needs Track.genre_tags column — Alembic earns its keep), `weighted` third (biggest, depends on excluded-candidates)
+8. **"Start from existing" / template-JSON import** (#6) — makes the port concrete instead of hand-retyping
+9. **The port itself** — express weekly's template as `stations/rebirth-radio.json`, run weekly's existing byte-equality check against the new engine, retire weekly's hardcoded generator
+
+**Phase D — accessibility (§16.5)**
+
+Run §16.5's full pass last so it sweeps both retroactive a11y
+gaps AND any new surface area added by §16.2 + the port. Single
+audit, single set of fixes, single set of axe-clean assertions
+in CI.
+
+### Ordering tradeoff: §16.5 timing
+
+Two coherent placements considered:
+
+- **Phase A position** (pre-§16.2): §16.5 only audits what's
+  already shipped; cleaner scope. But block editor lands after
+  and adds new a11y debt — eventually a "second pass" is needed.
+- **Phase D position** (post-port, current recommendation): one
+  comprehensive sweep. But the existing a11y debt sits longer
+  before being fixed. And the existing §16.5 brief explicitly
+  says "wait for trigger" (real assistive-tech user request).
+
+The current ordering puts §16.5 last because: (a) its trigger
+hasn't fired (no real a11y user report), and (b) doing it last
+absorbs the new editor + port surface into one sweep rather
+than fragmenting across two.
+
+If a real assistive-tech user lands before §16.2 ships, jump
+§16.5 to Phase A. The single-pass-vs-two-pass tradeoff isn't
+worth deferring a real user need.
+
+### Skipped / explicitly deferred
+
+| Item | Why skipped |
+|------|-------------|
+| API auth / rate limiting | Single-user tool; out of scope until cross-network deployment |
+| Cross-station diff in trace viewer | Way out of scope; the within-station search/filter (§14.15) covers the realistic use cases |
+| Soft-delete with restore for stations | §16.3 already considered and rejected; git history of templates + deterministic regen are enough |
+| Auto-generate weekly via scheduler | §11 v1.1; weekly migration matures first |
+
+### Implementation notes for cold pickup
+
+- **Phase A is small and parallelisable.** #8 + #9 + #3 are
+  independent; could land in any order or even one combined
+  commit if a single review is preferred. #4 and #1 are the
+  load-bearing refactors that actually shape what §16.2
+  becomes.
+- **#1 / #4 should be paired with the round-trip test from
+  §16.7 S3** — that test is the safety net for the refactor.
+  Read `web/src/lib/components/StationForm.test.ts` for the
+  pattern; the round-trip case will catch most regressions.
+- **#2 weighted needs care around RNG seed handling.** Weekly's
+  existing `random.Random(seed)` pattern works; reproduce it
+  exactly. Don't introduce a different RNG provider mid-port
+  — byte-equality check against the old generator is the port's
+  acceptance criterion.
+- **#5 excluded-candidates** changes the `playlist_trace.slots`
+  JSON shape. Older traces won't have `excluded` fields; the
+  viewer must handle the optional. New schema migration via
+  #8's Alembic.
+- **The port's byte-equality check** is the goal: `weekly`'s
+  existing test suite generates a known week and compares the
+  output against an iTunes XML file. The same week generated
+  via station-studio's engine must produce the same bytes.
+  When that passes, the port is done; weekly's hardcoded
+  generator can be retired.
+- **§16.4 (trace versioning) is a wildcard.** Could land
+  before §16.2 if iterative authoring loses too much trace
+  history. Defer-decide based on §16.2's authoring pain.
+- **The §16.5 ordering decision is reversible.** If the next
+  session prefers Phase A position for §16.5, the existing
+  brief covers retroactive-only audit cleanly; the §16.2
+  block-editor a11y becomes its own follow-up under §16.5's
+  same toolchain.
 
 
