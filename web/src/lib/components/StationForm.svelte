@@ -17,6 +17,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { ApiError } from '$lib/api';
+  import type { Meta } from '$lib/api';
   import { templateDiff, isClean } from '$lib/templateDiff';
   import type { Section as DiffSection } from '$lib/templateDiff';
   import LayoutFieldset from './LayoutFieldset.svelte';
@@ -67,15 +68,10 @@
    * for fetching this (typically via `loadMeta()` from `$lib/meta`)
    * before mounting <StationForm>.
    *
-   * The `Meta` type lives in $lib/api; mirroring the prop type avoids
-   * an import here that would only be needed for the type annotation.
+   * The `Meta` type is imported from $lib/api so this file and api.ts
+   * share one definition (post-§14.19 review N1 — was inline before).
    */
-  export let meta: {
-    strategies: string[];
-    rng: string[];
-    roles: string[];
-    cadences: string[];
-  };
+  export let meta: Meta;
 
   // Hydration sentinel for Playwright — `bind:value` only wires up after
   // onMount, so specs that fill fields before hydration see stale state.

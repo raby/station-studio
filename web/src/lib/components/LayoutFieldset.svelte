@@ -18,6 +18,8 @@
   // this component's elements via CSS ancestor matching.
   import './_form-shared.css';
 
+  import type { Meta } from '$lib/api';
+
   type Strategy = 'pick' | 'window';
   type RowBlock = { source: string; strategy: Strategy; size: number };
 
@@ -36,10 +38,13 @@
 
   // Strategy options come from `GET /api/meta` (DESIGN.md §14.19) via
   // <StationForm>'s `meta` prop. The string-literal type stays inline
-  // for tight bind-narrowing; the *runtime values* come from the prop.
-  // Default falls back to current engine support so the component still
-  // renders if a parent forgets to wire `strategies` through.
-  export let strategies: string[] = ['pick', 'window'];
+  // for tight bind-narrowing; the *runtime values* come from this prop.
+  // Typed via `Meta['strategies']` rather than `string[]` so a future
+  // shape change to Meta surfaces here as a TS error, not a silent
+  // mismatch (post-§14.19 review N1+N6). Default falls back to current
+  // engine support so the component still renders if a parent forgets
+  // to wire `strategies` through.
+  export let strategies: Meta['strategies'] = ['pick', 'window'];
 
   function addBlock() {
     rowTemplate = [
