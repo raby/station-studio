@@ -395,7 +395,7 @@ The trace is stored as JSON alongside the playlist (in a `playlist_trace` table 
 | Delete / station-reset UI                   | done (14.10) | Per-row delete + station-nuke header; both with confirm |
 | Trace versioning (history of regenerations) | later (§16.4)| Schema change; only after §16.1 lands and bites         |
 | Migrate Rebirth Radio onto Station Studio   | long-term    | §17 Phase C; needs `weighted`, `prev_ref`, `genre_pick` |
-| Schema migrations (Alembic)                 | next (§17 #8)| Currently `Base.metadata.create_all`; non-additive changes need real migrations |
+| Schema migrations (Alembic)                 | done (14.17) | Baseline migration captures current schema; future deltas via `make alembic-revision` |
 | Backup/restore tooling for SQLite           | next (§17 #9)| `make backup` + `make restore <date>`; cheap insurance  |
 | `GET /api/meta` (shared template constants) | next (§17 #3)| §14.7 third-caller trigger met (editor would be #3)     |
 | iTunes XML export of Classics playlists     | done (14.1)  | Lifted from weekly, station-scoped; browser + disk paths|
@@ -1931,6 +1931,118 @@ all already in §16.9's punt table):
   fixture's tiny library. Same gitignored footprint as the
   §14.11 disk-export spec; no cleanup required.
 
+### 14.17 Alembic baseline — what shipped (§17 Phase A #8)
+
+**Why.** `Base.metadata.create_all()` handles initial DB creation
+but doesn't track schema changes. Any non-additive change (column
+type swap, drop, rename) is impossible to deploy cleanly without
+either hand-written SQL or a migration tool. §17 Phase A names
+this as the cheapest unblock — the first migration is a no-op
+baseline; future schema work (§16.4 trace versioning, §17 #5
+excluded-candidates, §17 #2 weighted's `Track.genre_tags`) hangs
+off it.
+
+**What shipped (single commit).**
+
+- **`alembic>=1.13` pinned in `requirements.txt`** (runtime dep
+  rather than dev-only — `make migrate` is a deploy op, not a
+  test-only op).
+- **`alembic.ini` + `migrations/env.py` configured** to use the
+  project's `Base` from `engine/models.py` and the same DB-URL
+  resolution as `engine/database.py` (env var
+  `STATION_STUDIO_DB_URL` falling back to
+  `sqlite:///station_studio.db`).
+- **SQLite batch mode enabled** in env.py
+  (`render_as_batch=True` for sqlite URLs). Critical for any
+  future migration that isn't purely additive — SQLite rejects
+  most ALTER TABLE flavours, batch mode wraps them in
+  rename+rebuild transparently.
+- **Baseline migration `0f76cfb45e8d_baseline.py`** generated
+  via `--autogenerate` against an empty DB. Captures every
+  table, index, FK cascade and unique constraint from
+  `engine/models.py`. Verified: `alembic upgrade head` on a
+  fresh DB produces a byte-identical schema to
+  `Base.metadata.create_all()` (only diff is Alembic's own
+  `alembic_version` tracking table, which is the point).
+- **Make targets**: `make migrate` (apply pending migrations),
+  `make alembic-stamp` (one-time op for existing dev DBs to
+  mark them at-baseline without re-running the create-all),
+  `make alembic-revision msg="..."` (autogenerate a new
+  revision against the live DB), `make alembic-current`
+  (which revision is the DB at?).
+
+**Decisions in flight.**
+
+- **`create_all()` is NOT removed from the codebase.** Tests
+  still call it (it's faster than running migrations on every
+  test run), `bootstrap_classics.py` still calls it for the
+  init step. Alembic is *additive* infrastructure — it tracks
+  deltas going forward, doesn't replace the create-all path.
+  The intent: `create_all` for fresh-DB creation, `migrate`
+  for deltas. Tests use `create_all`; production uses
+  `create_all` then `alembic stamp head`; future schema
+  changes use real revisions.
+- **`render_as_batch=True` is gated on `DB_URL.startswith('sqlite')`**
+  — no-op for non-SQLite if the project ever migrates off.
+  Cheap defensive check; alembic ignores the flag for
+  backends that support real ALTER.
+- **Baseline migration uses the auto-generated hash filename
+  (`0f76cfb45e8d_baseline.py`) not a numeric `0001_baseline.py`.**
+  Standard alembic practice; numeric prefixes create
+  ordering-by-number expectations that break if migrations
+  ever branch (rare but possible). The `revision` /
+  `down_revision` fields inside the file are alembic's source
+  of truth, not the filename.
+- **No `__init__.py` in `migrations/` or `migrations/versions/`.**
+  Alembic loads them dynamically; making them packages breaks
+  alembic's loader. The directory IS in the project but is
+  NOT a Python package.
+- **Alembic-generated `__pycache__` in `migrations/versions/`**
+  is gitignored via the existing `__pycache__/` rule.
+
+**Stay-out-of-scope.**
+
+| Area                                     | Status      | Trigger                                  |
+|------------------------------------------|-------------|------------------------------------------|
+| Replace `create_all` with `upgrade head` | not now     | First time `create_all` and `migrate` drift |
+| Auto-run migrate on `run.py` startup     | rejected    | Couples app boot to schema state; surprising on rollback |
+| Migration smoke-test in CI               | later       | First non-trivial migration ships        |
+| Online migrations (no downtime)          | n/a         | Single-user; downtime is fine            |
+| Data migrations alongside schema         | as needed   | First migration that needs to backfill   |
+
+**Implementation notes for future schema changes.**
+
+- **Adding a column**: run `make alembic-revision msg="..."`
+  to autogenerate against the live DB; review the output;
+  commit. Apply via `make migrate`. SQLite batch mode handles
+  it.
+- **Dropping a column**: same flow, but the autogen output
+  uses `op.drop_column` inside a `batch_alter_table`. Manual
+  review essential — SQLite's batch rebuild can be slow on
+  large tables.
+- **Renaming a column**: alembic's autogenerate sees this as
+  drop + add, losing data. Hand-edit the migration to use
+  `op.alter_column(..., new_column_name=...)` inside
+  `batch_alter_table`. Standard alembic gotcha; documented in
+  alembic's own docs.
+- **Backfilling data**: separate the schema-shape migration
+  from the data-fill migration if possible. Schema first,
+  then a data migration that uses `op.execute` or the
+  ORM session via `op.get_bind()`.
+- **The §16.4 trace-versioning slice will produce the first
+  real revision.** Expect a `playlist_trace` table change
+  (move `slots` JSON to a new `playlist_trace_version` table
+  with a version_no column). Will exercise SQLite batch mode
+  in earnest.
+- **Tests don't run migrations.** `tests/conftest.py` calls
+  `Base.metadata.create_all` directly. If a future migration
+  depends on data ordering or specific column defaults that
+  diverge from the ORM declaration, tests would silently
+  pass against a different schema than production. Worth
+  monitoring once #5 / #2 land — possibly add a CI smoke
+  job that runs migrations on a temp DB and asserts
+  schema-parity with `create_all`.
+
 ---
 
 ## 15. Status snapshot
@@ -1957,7 +2069,7 @@ A quick "where are we" for a future reader. Last updated at commit
 | Delete / station-reset   | Shipped (14.10). Per-row delete + station nuke; cascades.        |
 | Disk-export UI button    | Shipped (14.11). Trace viewer "Export to disk" + status line.    |
 | Edit mode for stations   | Shipped (14.13). Shared `<StationForm>` + JSON preview + diff + reset. |
-| **Pre-§16.2 / port roadmap** | **Next-up. See §17 — Phase A unblocks §16.2; Phase C unblocks the port.** |
+| **Pre-§16.2 / port roadmap** | **In flight. §17 Phase A — #8 Alembic baseline shipped (14.17). Next: #9 backups, then #3 /api/meta.** |
 | Visual block editor      | Deferred (v2). Lands as §17 Phase B after Phase A unblocks.      |
 | Trace versioning         | Deferred. See §16.4 (queued behind §16.1 by design).             |
 | Accessibility pass       | Deferred. §17 Phase D — single sweep after §16.2 + port.         |
@@ -3246,7 +3358,7 @@ reduces cleanup later. Numbers map to the tier tables above.
 
 **Phase A — pre-block-editor unblocks** (~6 commits):
 
-1. **Alembic baseline** (#8) — cheapest unblock; first migration is a no-op
+1. ~~**Alembic baseline** (#8)~~ — **shipped (§14.17)**
 2. **Backup tooling** (#9) — cheap insurance, parallel to anything else
 3. **`GET /api/meta`** (#3) — small, removes the duplicated constants
 4. **Extract `template.ts`** (#4) — moves `buildTemplate` / `unpack` out of the component

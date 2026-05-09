@@ -7,9 +7,11 @@
 #
 # `make test` runs all three in order; CI does the same.
 
-.PHONY: test test-backend test-frontend-unit test-e2e install-e2e-browsers clean-test
+.PHONY: test test-backend test-frontend-unit test-e2e install-e2e-browsers clean-test \
+        migrate alembic-stamp alembic-revision alembic-current
 
 PY := .venv/bin/python
+ALEMBIC := .venv/bin/alembic
 
 test: test-backend test-frontend-unit test-e2e
 
@@ -39,3 +41,35 @@ install-e2e-browsers:
 clean-test:
 	rm -f .coverage playwright-test.*.db playwright-test.*.db-wal playwright-test.*.db-shm
 	rm -rf web/test-results web/playwright-report
+
+# Alembic schema migrations (DESIGN.md §14.17 / §17 #8).
+#
+# `make migrate` is the everyday command: applies all unapplied migrations
+# from migrations/versions/ to the DB at $$STATION_STUDIO_DB_URL (or the
+# default sqlite:///station_studio.db if unset).
+#
+# `make alembic-stamp` is the one-time op for an existing dev DB that
+# already has the schema (created via Base.metadata.create_all). Marks
+# the DB as caught up to head without trying to re-apply the baseline.
+# Run once after pulling §14.17 onto a long-lived dev DB.
+#
+# `make alembic-revision msg="..."` creates a new revision file via
+# autogenerate. Usage:
+#   make alembic-revision msg="add excluded_candidates to playlist_trace"
+#
+# `make alembic-current` shows which revision the current DB is at.
+migrate:
+	$(ALEMBIC) upgrade head
+
+alembic-stamp:
+	$(ALEMBIC) stamp head
+
+alembic-revision:
+	@if [ -z "$(msg)" ]; then \
+		echo "Usage: make alembic-revision msg=\"description of change\""; \
+		exit 1; \
+	fi
+	$(ALEMBIC) revision --autogenerate -m "$(msg)"
+
+alembic-current:
+	$(ALEMBIC) current
