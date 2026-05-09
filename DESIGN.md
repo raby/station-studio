@@ -827,7 +827,11 @@ real time to find and the comments in-tree are deliberately verbose:
   discourage `waitForLoadState('networkidle')` and it lies anyway —
   the SSR HTML has the form enabled before Svelte hydrates, so fills
   ran against a dead DOM. The wizard now sets `data-wizard-ready` on
-  `<html>` from `onMount`; specs wait on that attribute.
+  `<html>` from `onMount`; specs wait on that attribute. *(Update
+  per §14.19: the sentinel's meaning has broadened — `<StationForm>`
+  now only mounts after `loadMeta()` resolves, so the attribute's
+  appearance signals "meta loaded AND form hydrated AND ready". Tests
+  still work; the broader meaning is what they actually want.)*
 - **Svelte 4's onMount is a no-op without `browser` conditions.**
   Vitest defaults to Svelte's SSR build, which strips onMount. Putting
   `resolve.conditions` under `test:` doesn't help because SvelteKit's
@@ -2164,6 +2168,17 @@ class of "I just lost everything" event.
   (GNU date). Avoid `date -Iseconds` (GNU-only) or
   `date +%Y%m%dT%H%M%S` (less human-readable). The current
   format is the standard sortable timestamp.
+- **`DB_FILE` is independent of `STATION_STUDIO_DB_URL`**
+  (post-commit-review S1). The Alembic targets
+  (`make migrate`, `make alembic-revision`) honour the env
+  var via `migrations/env.py`; the backup/restore targets
+  use the literal `DB_FILE` make-variable. A user with a
+  non-default DB URL who runs `make backup` without also
+  passing `DB_FILE=` would silently back up the wrong file.
+  The Makefile comment now flags this; the chosen design
+  is "explicit override only" rather than env-var
+  carry-through (would need a SQLite-URL parser shim for
+  marginal value at single-user scale).
 
 ### 14.19 GET /api/meta — what shipped (§17 Phase A #3)
 
@@ -2307,6 +2322,19 @@ the endpoint now means §16.2 doesn't grow a fourth duplicate.
   the meta ever needs to be reactive (e.g. a future admin
   panel adds new strategies at runtime), promote to a store
   then.
+- **Hydration sentinel meaning broadened post-§14.19**
+  (post-commit-review S3). Pre-§14.19, `<StationForm>`'s
+  `onMount` set `data-wizard-ready` on `<html>` when the
+  form was hydrated and ready to interact. Post-§14.19,
+  `<StationForm>` only mounts after `loadMeta()` resolves —
+  so the sentinel now means "meta loaded AND form hydrated
+  AND ready to interact". Tests still work (they wait for
+  the sentinel before interacting; the broader meaning is
+  what they actually want), but if a future contributor reads
+  §14.8's "Hydration sentinel beats `networkidle`" rationale
+  expecting just-hydration semantics, the answer is no longer
+  pure. If the meta endpoint ever gets slow, the sentinel-
+  wait would extend Playwright runtime accordingly.
 
 ---
 

@@ -88,6 +88,14 @@ alembic-current:
 # for ad-hoc inspection) pass DB_FILE=...:
 #     make backup DB_FILE=playwright-test.12345.db
 #
+# DB_FILE does NOT auto-track $$STATION_STUDIO_DB_URL — they're
+# independent vars. Alembic targets read STATION_STUDIO_DB_URL via
+# migrations/env.py; backup/restore takes a raw filesystem path. If
+# you've overridden STATION_STUDIO_DB_URL for a non-default DB,
+# pass DB_FILE explicitly here too. The reasoning is single-user-tool
+# pragmatism: the env-var carry-through would need a SQLite-URL parser
+# (sed shim) for marginal value.
+#
 # `make backup` uses sqlite3's `.backup` command, which is WAL-aware —
 # safe to run while uvicorn is using the DB. Plain `cp` would risk
 # catching a half-flushed WAL state.
