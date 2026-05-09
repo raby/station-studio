@@ -3,13 +3,13 @@ import { render, fireEvent, screen, cleanup } from '@testing-library/svelte';
 import '@testing-library/jest-dom/vitest';
 
 // --- mocks -------------------------------------------------------------
-// $app/navigation and $lib/api need stubbing because the wizard's submit
-// handler calls both. We replace them at module-mock level so the wizard
-// renders as a plain component under jsdom.
+// $app/navigation, $lib/api and $lib/meta need stubbing because the wizard's
+// submit handler calls them. We replace them at module-mock level so the
+// wizard renders as a plain component under jsdom.
 
 // vi.mock factories are hoisted above imports — any values they reference
 // must be declared via vi.hoisted so they're available at hoist time.
-const { gotoMock, createStationMock, FakeApiError } = vi.hoisted(() => {
+const { gotoMock, createStationMock, getMetaMock, loadMetaMock, FakeApiError } = vi.hoisted(() => {
   class FakeApiError extends Error {
     status: number;
     constructor(status: number, message: string) {
@@ -18,9 +18,22 @@ const { gotoMock, createStationMock, FakeApiError } = vi.hoisted(() => {
       this.status = status;
     }
   }
+  // Standard meta fixture mirroring `GET /api/meta` (DESIGN.md §14.19).
+  // loadMeta returns a Promise; tests that need failure paths can replace
+  // via .mockRejectedValueOnce.
+  const META = {
+    strategies: ['pick', 'window'],
+    rng: ['off', 'on'],
+    roles: ['content', 'reference'],
+    cadences: ['weekly'],
+  };
+  const loadMetaMock = vi.fn().mockResolvedValue(META);
+  const getMetaMock = vi.fn().mockResolvedValue(META);
   return {
     gotoMock: vi.fn(),
     createStationMock: vi.fn(),
+    getMetaMock,
+    loadMetaMock,
     FakeApiError,
   };
 });
@@ -30,7 +43,12 @@ vi.mock('$app/navigation', () => ({
 }));
 vi.mock('$lib/api', () => ({
   createStation: (...args: unknown[]) => createStationMock(...args),
+  getMeta: (...args: unknown[]) => getMetaMock(...args),
   ApiError: FakeApiError,
+}));
+vi.mock('$lib/meta', () => ({
+  loadMeta: (...args: unknown[]) => loadMetaMock(...args),
+  _resetMetaCache: vi.fn(),
 }));
 
 // Import after the mocks are registered.
@@ -54,14 +72,19 @@ describe('station wizard (new +page.svelte)', () => {
 
   it('shows "slug is required" when submitting with an empty slug', async () => {
     render(Page);
-    await fireEvent.click(screen.getByRole('button', { name: /create station/i }));
+    // Form renders only after loadMeta() resolves (§14.19); wait for the
+    // submit button before interacting. Same pattern in the cases below
+    // — first findBy waits, subsequent gets work synchronously.
+    await fireEvent.click(
+      await screen.findByRole('button', { name: /create station/i }),
+    );
     expect(await screen.findByText(/slug is required/i)).toBeInTheDocument();
     expect(createStationMock).not.toHaveBeenCalled();
   });
 
   it('rejects slugs with uppercase / spaces before hitting the API', async () => {
     render(Page);
-    const slug = screen.getByPlaceholderText('rebirth-classics');
+    const slug = await screen.findByPlaceholderText('rebirth-classics');
     await fireEvent.input(slug, { target: { value: 'Bad Slug' } });
     await fireEvent.click(screen.getByRole('button', { name: /create station/i }));
     expect(
@@ -72,9 +95,10 @@ describe('station wizard (new +page.svelte)', () => {
 
   it('requires at least one content source with a name', async () => {
     render(Page);
-    await fireEvent.input(screen.getByPlaceholderText('rebirth-classics'), {
-      target: { value: 'good-slug' },
-    });
+    await fireEvent.input(
+      await screen.findByPlaceholderText('rebirth-classics'),
+      { target: { value: 'good-slug' } },
+    );
     await fireEvent.input(screen.getByPlaceholderText('Rebirth Classics'), {
       target: { value: 'Good Name' },
     });
@@ -89,9 +113,10 @@ describe('station wizard (new +page.svelte)', () => {
     createStationMock.mockResolvedValueOnce({ id: 1, slug: 'ok', name: 'OK', template: {} });
 
     render(Page);
-    await fireEvent.input(screen.getByPlaceholderText('rebirth-classics'), {
-      target: { value: 'ok' },
-    });
+    await fireEvent.input(
+      await screen.findByPlaceholderText('rebirth-classics'),
+      { target: { value: 'ok' } },
+    );
     await fireEvent.input(screen.getByPlaceholderText('Rebirth Classics'), {
       target: { value: 'OK' },
     });
@@ -133,9 +158,10 @@ describe('station wizard (new +page.svelte)', () => {
     );
 
     render(Page);
-    await fireEvent.input(screen.getByPlaceholderText('rebirth-classics'), {
-      target: { value: 'ok' },
-    });
+    await fireEvent.input(
+      await screen.findByPlaceholderText('rebirth-classics'),
+      { target: { value: 'ok' } },
+    );
     await fireEvent.input(screen.getByPlaceholderText('Rebirth Classics'), {
       target: { value: 'OK' },
     });
@@ -159,7 +185,7 @@ describe('station wizard (new +page.svelte)', () => {
     expect(gotoMock).not.toHaveBeenCalled();
   });
 
-  it('renders the JSON preview disclosure in create mode (N4 anti-regression)', () => {
+  it('renders the JSON preview disclosure in create mode (N4 anti-regression)', async () => {
     // The JSON preview ships in both create and edit modes (DESIGN.md §16.7
     // D6) but only edit-mode is tested in StationForm.test.ts. Without this
     // case, a future change that accidentally gated the preview on
@@ -167,6 +193,6 @@ describe('station wizard (new +page.svelte)', () => {
     // breaking either test layer. One assertion is enough — content
     // verification happens in StationForm.test.ts.
     render(Page);
-    expect(screen.getByTestId('json-preview')).toBeInTheDocument();
+    expect(await screen.findByTestId('json-preview')).toBeInTheDocument();
   });
 });

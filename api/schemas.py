@@ -5,6 +5,20 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 
+class MetaResponse(BaseModel):
+    """Response shape for GET /api/meta — see DESIGN.md §14.19.
+
+    Lists are server-side sorted for deterministic dropdown order. The
+    frontend treats this as cacheable static data (constants don't
+    change without a deploy); see web/src/lib/meta.ts.
+    """
+
+    strategies: list[str]
+    rng: list[str]
+    roles: list[str]
+    cadences: list[str]
+
+
 class StationCreate(BaseModel):
     # Slug is immutable after creation. Pattern mirrors the wizard's client-side
     # validation: lowercase alphanumeric + hyphens, must start with [a-z0-9].

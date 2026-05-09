@@ -16,6 +16,14 @@ from pathlib import Path
 
 SUPPORTED_STRATEGIES = {"window", "pick"}  # v1. Add more as new stations need them.
 SUPPORTED_RNG = {"off", "on"}
+SUPPORTED_ROLES = {"content", "reference"}
+# Cadence is purely metadata for the engine — `weekly` is the only value
+# in use today, and the validator doesn't reject other strings. Listed
+# here for the GET /api/meta endpoint (§14.19) so the frontend dropdowns
+# stay in sync with what the project intends to support. Engine does not
+# (yet) close-set-validate this; if a future cadence needs scheduling
+# semantics, add the validation alongside the scheduler punt (§11 v1.1).
+SUGGESTED_CADENCES = {"weekly"}
 
 # Hex colour: #RGB, #RRGGBB, or #RRGGBBAA. Case-insensitive.
 _COLOUR_RE = re.compile(r"^#[0-9a-fA-F]{3}([0-9a-fA-F]{3}([0-9a-fA-F]{2})?)?$")
@@ -150,8 +158,10 @@ def parse_template(raw: dict) -> Template:
 
 def _parse_source(raw: dict) -> SourceSpec:
     _require_keys(raw, {"name", "colour", "role"}, where="source")
-    if raw["role"] not in {"content", "reference"}:
-        raise TemplateError(f"source role must be 'content' or 'reference', got {raw['role']!r}")
+    if raw["role"] not in SUPPORTED_ROLES:
+        raise TemplateError(
+            f"source role must be one of {sorted(SUPPORTED_ROLES)}, got {raw['role']!r}"
+        )
     if not _COLOUR_RE.match(raw["colour"]):
         raise TemplateError(
             f"source colour must be a hex colour (#RGB, #RRGGBB, or #RRGGBBAA), "

@@ -397,7 +397,7 @@ The trace is stored as JSON alongside the playlist (in a `playlist_trace` table 
 | Migrate Rebirth Radio onto Station Studio   | long-term    | §17 Phase C; needs `weighted`, `prev_ref`, `genre_pick` |
 | Schema migrations (Alembic)                 | done (14.17) | Baseline migration captures current schema; future deltas via `make alembic-revision` |
 | Backup/restore tooling for SQLite           | done (14.18) | `make backup` (WAL-aware) + `make restore date=...`; pre-restore safety copy |
-| `GET /api/meta` (shared template constants) | next (§17 #3)| §14.7 third-caller trigger met (editor would be #3)     |
+| `GET /api/meta` (shared template constants) | done (14.19) | Removes 3-way constant duplication; loadMeta() module-cached |
 | iTunes XML export of Classics playlists     | done (14.1)  | Lifted from weekly, station-scoped; browser + disk paths|
 | Disk-export UI button on trace viewer       | done (14.11) | "Export to disk" button + status line; closes prod loop |
 | Disk-export prune endpoint                  | on demand    | `POST /api/playlists/export/prune` — wait until clutter |
@@ -2165,6 +2165,149 @@ class of "I just lost everything" event.
   `date +%Y%m%dT%H%M%S` (less human-readable). The current
   format is the standard sortable timestamp.
 
+### 14.19 GET /api/meta — what shipped (§17 Phase A #3)
+
+**Why.** Four template-shaped option lists (`STRATEGY_OPTIONS`,
+`RNG_OPTIONS`, `ROLE_OPTIONS`, `CADENCE_OPTIONS`) lived in the
+frontend `<StationForm>` and `<LayoutFieldset>` components, each
+with a "keep in sync with `engine/template.py`" comment. The
+§14.7 punt named the trigger to extract: "third caller appears".
+The visual block editor (§16.2) is that third caller. Landing
+the endpoint now means §16.2 doesn't grow a fourth duplicate.
+
+**What shipped (single commit).**
+
+- **Backend** — `GET /api/meta` returns a sorted `MetaResponse`
+  with the four lists. Lives in `api/routers/meta.py`; pulls
+  the values from `engine/template.py`'s constants. The endpoint
+  has no DB dependency — pure metadata over a route.
+- **Three engine-side constant cleanups** (`engine/template.py`):
+  - `SUPPORTED_ROLES = {"content", "reference"}` extracted from
+    the inline check at line 161 (was a literal set in
+    `_parse_source`).
+  - `SUGGESTED_CADENCES = {"weekly"}` introduced as a forward-
+    looking constant. Engine doesn't yet close-set-validate
+    cadence (§11 v1.1 scheduler will likely tighten this); the
+    frontend dropdown sources from this so it's the single
+    source of truth even though the validator is permissive.
+  - The role-validation error message now uses
+    `sorted(SUPPORTED_ROLES)` instead of a hardcoded list,
+    matching the strategy-validation error.
+- **Frontend** — `getMeta()` typed client in
+  `web/src/lib/api.ts`; module-cached promise loader
+  in `web/src/lib/meta.ts` (`loadMeta()` + the test-only
+  `_resetMetaCache()`). Both consumer routes
+  (`/stations/new`, `/stations/[slug]/edit`) fetch meta in
+  `onMount` and pass it as a `meta` prop into `<StationForm>`.
+  The edit route parallels meta + station via `Promise.all`
+  for the same reason §14.16 did so for the trace viewer
+  (one round-trip latency for two independent fetches).
+- **`<StationForm>` and `<LayoutFieldset>` accept `meta` /
+  `strategies` as required props.** All three hardcoded
+  constant blocks removed; the markup loops over the
+  prop-supplied lists.
+- **Tests**:
+  - Backend: 2 new cases on `tests/test_api.py` —
+    sorted-ness + parity with engine constants. The parity
+    test catches the "contributor adds 'sequential' to
+    `SUPPORTED_STRATEGIES` but forgets the meta endpoint"
+    drift class.
+  - Frontend: 2 new cases on `lib/api.test.ts` for `getMeta`
+    URL build + ApiError on 5xx; new `lib/meta.test.ts`
+    with 3 cases pinning the cache contract (single fetch
+    across N callers, `_resetMetaCache` forces refetch,
+    rejected fetch caches the rejection too — important
+    contract documented in the test).
+  - Existing `wizard.test.ts` updated to mock `$lib/meta`'s
+    `loadMeta` returning a fixed META blob; first sync
+    `getBy*` call per test became `await screen.findBy*`
+    because the form renders only after meta resolves.
+  - Existing `StationForm.test.ts` adds the `meta` fixture
+    to every render call.
+
+**Decisions in flight.**
+
+- **Cadence stays open server-side, listed only in the meta
+  response.** Considered closing the loop (`if cadence not in
+  SUPPORTED_CADENCES: raise`). Rejected because the engine
+  doesn't actually use the value — it's metadata, no
+  scheduling semantics behind it yet. Naming the constant
+  `SUGGESTED_CADENCES` rather than `SUPPORTED_CADENCES`
+  signals the asymmetry: the others are validator-enforced,
+  this is a UI-presentation set. When §11's scheduler v1.1
+  lands, the constant gets renamed and the validator gets
+  tightened in lockstep.
+- **`Strategy` / `Role` / `Rng` types stay inline as string-
+  literal unions** (`'pick' | 'window'`, etc.) inside the
+  Svelte components. Svelte 4's `bind:value` narrowing works
+  better with literal types than `string`. The runtime
+  *values* come from the meta prop; the types stay tight at
+  compile time. Slight asymmetry: the literals have to be
+  updated in lockstep with the engine constants if a new
+  primitive ever lands. The existing parity test (backend)
+  catches the values; svelte-check would catch a missing
+  literal-union update.
+- **`<LayoutFieldset>`'s `strategies` prop has a default**
+  (`['pick', 'window']`) so the component still renders if
+  a parent forgets to wire it through. Defensive — the
+  default mirrors current engine support, so degrades to
+  status-quo rather than blank dropdown.
+- **`loadMeta()` caches the rejection.** Important contract:
+  if the user is offline at first paint, every subsequent
+  `loadMeta()` call would otherwise hammer the backend.
+  Caching the rejection is symmetric with caching the
+  resolution. To retry, callers (or a future "Retry"
+  button) call `_resetMetaCache()` before re-`loadMeta()`.
+  Pinned in the meta.test.ts contract test.
+- **The test-only `_resetMetaCache` is exported with a
+  leading underscore** to signal "not part of the public
+  API". Production code shouldn't reach for it; the only
+  legitimate caller is the meta.test.ts `beforeEach`.
+
+**Stay-out-of-scope.**
+
+| Area                                          | Status      | Trigger                                  |
+|-----------------------------------------------|-------------|------------------------------------------|
+| Server-Sent Events for live meta updates      | rejected    | Constants don't change without a deploy  |
+| Inline meta in HTML at SSR time               | not now     | After §14.5's `+page.ts` refactor (still punted) |
+| Versioning the meta endpoint                  | not now     | First time the response shape needs a breaking change |
+| Tightening cadence validation                 | §11 v1.1    | Scheduler lands and gives cadences semantics |
+| Localised option labels                       | not now     | Real i18n requirement                    |
+| Auto-retry of rejected loadMeta               | not now     | "Frequent flaky network" report          |
+
+**Implementation notes for future pick-up.**
+
+- **The §16.2 visual block editor will be the third route**
+  using `<StationForm>` (or `<VisualBlockEditor>` over the
+  same data model). It should `loadMeta()` the same way
+  `/stations/new` and `/stations/[slug]/edit` do — the cache
+  ensures no extra fetch even though it's a third call site.
+- **A new engine primitive** (e.g. `weighted` per §17 #2)
+  needs to be added in three places:
+  1. `engine/template.py` `SUPPORTED_STRATEGIES`
+  2. `engine/strategies/<name>.py` (the actual implementation)
+  3. The Svelte literal union in `<StationForm>` /
+     `<LayoutFieldset>` (`type Strategy = 'pick' | 'window'
+     | 'weighted'`)
+  Item 3 is the manual step. The backend parity test catches
+  if (1) and (2) aren't aligned with the meta response;
+  svelte-check catches if (3) doesn't include a value the
+  meta sends. So: add the engine constant, fix the resulting
+  svelte-check error, ship.
+- **The `meta` prop is required** on `<StationForm>` (no
+  default). Test-time fixtures construct one inline; runtime
+  callers fetch via `loadMeta()`. This is the right rigidity
+  — a missing meta means the component can't render dropdowns
+  meaningfully, and TS catches it at build time.
+- **Why module-level cache rather than a Svelte store**:
+  considered; rejected. A store invites consumers to
+  subscribe and re-fetch on subscription. The cache contract
+  is "fetch exactly once per page session"; a plain promise
+  enforces it without the subscribe/unsubscribe ceremony. If
+  the meta ever needs to be reactive (e.g. a future admin
+  panel adds new strategies at runtime), promote to a store
+  then.
+
 ---
 
 ## 15. Status snapshot
@@ -2191,7 +2334,7 @@ A quick "where are we" for a future reader. Last updated at commit
 | Delete / station-reset   | Shipped (14.10). Per-row delete + station nuke; cascades.        |
 | Disk-export UI button    | Shipped (14.11). Trace viewer "Export to disk" + status line.    |
 | Edit mode for stations   | Shipped (14.13). Shared `<StationForm>` + JSON preview + diff + reset. |
-| **Pre-§16.2 / port roadmap** | **In flight. §17 Phase A — #8 Alembic (14.17) + #9 backups (14.18) shipped. Next: #3 /api/meta.** |
+| **Pre-§16.2 / port roadmap** | **In flight. §17 Phase A — #8 + #9 + #3 shipped (14.17-14.19). Next: #4 extract template.ts, then #1 LayoutFieldset arrays.** |
 | Visual block editor      | Deferred (v2). Lands as §17 Phase B after Phase A unblocks.      |
 | Trace versioning         | Deferred. See §16.4 (queued behind §16.1 by design).             |
 | Accessibility pass       | Deferred. §17 Phase D — single sweep after §16.2 + port.         |
@@ -3482,7 +3625,7 @@ reduces cleanup later. Numbers map to the tier tables above.
 
 1. ~~**Alembic baseline** (#8)~~ — **shipped (§14.17)**
 2. ~~**Backup tooling** (#9)~~ — **shipped (§14.18)**
-3. **`GET /api/meta`** (#3) — small, removes the duplicated constants
+3. ~~**`GET /api/meta`** (#3)~~ — **shipped (§14.19)**
 4. **Extract `template.ts`** (#4) — moves `buildTemplate` / `unpack` out of the component
 5. **`<LayoutFieldset>` arrays refactor** (#1) — makes §16.2's swap a real one-component swap
 

@@ -60,6 +60,23 @@
     ? `/stations/${encodeURIComponent(initial.slug)}`
     : '/';
 
+  /**
+   * Canonical option lists for the form's dropdowns. Comes from
+   * `GET /api/meta` (DESIGN.md §14.19) so the dropdowns can't drift
+   * from what `engine/template.py` accepts. Parent route is responsible
+   * for fetching this (typically via `loadMeta()` from `$lib/meta`)
+   * before mounting <StationForm>.
+   *
+   * The `Meta` type lives in $lib/api; mirroring the prop type avoids
+   * an import here that would only be needed for the type annotation.
+   */
+  export let meta: {
+    strategies: string[];
+    rng: string[];
+    roles: string[];
+    cadences: string[];
+  };
+
   // Hydration sentinel for Playwright — `bind:value` only wires up after
   // onMount, so specs that fill fields before hydration see stale state.
   // The Playwright spec waits on this attribute (see §14.8 lessons).
@@ -67,15 +84,12 @@
     document.documentElement.setAttribute('data-wizard-ready', '');
   });
 
-  // ---- constants duplicated from engine/template.py ---------------------
-  // Keep in sync. When these multiply we'll expose a GET /api/meta endpoint.
-  const RNG_OPTIONS = ['off', 'on'] as const;
-  const ROLE_OPTIONS = ['content', 'reference'] as const;
-  // Engine currently only exercises 'weekly'. Listed for forward-compat.
-  const CADENCE_OPTIONS = ['weekly'] as const;
-
-  type Rng = (typeof RNG_OPTIONS)[number];
-  type Role = (typeof ROLE_OPTIONS)[number];
+  // Strategy / Role / Rng types are kept inline as string-literal unions
+  // because Svelte 4 type-narrowing across <select bind:value> works
+  // best with literal types rather than `string`. The runtime *values*
+  // come from `meta` (server-validated), but the types stay tight.
+  type Rng = 'off' | 'on';
+  type Role = 'content' | 'reference';
   type Strategy = 'pick' | 'window';
   type RowBlock = { source: string; strategy: Strategy; size: number };
   type Source = { name: string; colour: string; role: Role };
@@ -89,7 +103,9 @@
   type FormState = {
     slug: string;
     name: string;
-    cadence: (typeof CADENCE_OPTIONS)[number];
+    // Cadence is open server-side (see §14.19 / SUGGESTED_CADENCES); the
+    // dropdown's options come from `meta.cadences` at render time.
+    cadence: string;
     rng: Rng;
     seedStr: string;
     sources: Source[];
@@ -372,7 +388,7 @@
     <label>
       <span>Cadence</span>
       <select bind:value={cadence}>
-        {#each CADENCE_OPTIONS as c}
+        {#each meta.cadences as c}
           <option value={c}>{c}</option>
         {/each}
       </select>
@@ -381,7 +397,7 @@
     <label>
       <span>RNG</span>
       <select bind:value={rng}>
-        {#each RNG_OPTIONS as r}
+        {#each meta.rng as r}
           <option value={r}>{r}</option>
         {/each}
       </select>
@@ -416,7 +432,7 @@
             <td><input type="color" bind:value={s.colour} /></td>
             <td>
               <select bind:value={s.role}>
-                {#each ROLE_OPTIONS as r}
+                {#each meta.roles as r}
                   <option value={r}>{r}</option>
                 {/each}
               </select>
@@ -456,6 +472,7 @@
     bind:rowStartOffsetsStr
     bind:rowTemplate
     {contentSourceNames}
+    strategies={meta.strategies}
   />
 
   <!-- ---- diff (edit mode only) -------------------------------- -->

@@ -11,6 +11,7 @@ import {
   deletePlaylist,
   deleteStation,
   exportPlaylistToDisk,
+  getMeta,
 } from './api';
 
 /**
@@ -277,6 +278,45 @@ describe('api client', () => {
       expect(err).toBeInstanceOf(ApiError);
       expect(err.status).toBe(500);
       expect(err.message).toContain('permission denied');
+    });
+  });
+
+  describe('getMeta', () => {
+    // The /api/meta endpoint exposes the canonical option lists for the
+    // form dropdowns (DESIGN.md §14.19). Tests pin URL build, response
+    // parse, and ApiError mapping so a backend regression breaks here
+    // before it cascades into wizard UX failures.
+
+    it('GETs /api/meta and returns the four lists', async () => {
+      const { fetch_, calls } = makeSpy({
+        body: {
+          strategies: ['pick', 'window'],
+          rng: ['off', 'on'],
+          roles: ['content', 'reference'],
+          cadences: ['weekly'],
+        },
+      });
+      const meta = await getMeta(fetch_);
+
+      expect(calls[0].input).toBe('/api/meta');
+      expect(calls[0].init).toBeUndefined(); // plain GET
+      expect(meta.strategies).toEqual(['pick', 'window']);
+      expect(meta.rng).toEqual(['off', 'on']);
+      expect(meta.roles).toEqual(['content', 'reference']);
+      expect(meta.cadences).toEqual(['weekly']);
+    });
+
+    it('raises ApiError on a 5xx so the page can render the error inline', async () => {
+      const { fetch_ } = makeSpy({
+        ok: false,
+        status: 503,
+        statusText: 'Service Unavailable',
+        text: 'meta endpoint down',
+      });
+      const err = await getMeta(fetch_).catch((e) => e);
+      expect(err).toBeInstanceOf(ApiError);
+      expect(err.status).toBe(503);
+      expect(err.message).toContain('meta endpoint down');
     });
   });
 

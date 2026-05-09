@@ -34,9 +34,12 @@
   // engine/template.py). Empty when no content sources exist yet.
   export let contentSourceNames: string[] = [];
 
-  // STRATEGY_OPTIONS duplicated from engine/template.py — keep in sync.
-  // When this list grows again we'll expose GET /api/meta.
-  const STRATEGY_OPTIONS = ['pick', 'window'] as const;
+  // Strategy options come from `GET /api/meta` (DESIGN.md §14.19) via
+  // <StationForm>'s `meta` prop. The string-literal type stays inline
+  // for tight bind-narrowing; the *runtime values* come from the prop.
+  // Default falls back to current engine support so the component still
+  // renders if a parent forgets to wire `strategies` through.
+  export let strategies: string[] = ['pick', 'window'];
 
   function addBlock() {
     rowTemplate = [
@@ -88,7 +91,7 @@
           </td>
           <td>
             <select bind:value={b.strategy}>
-              {#each STRATEGY_OPTIONS as s}
+              {#each strategies as s}
                 <option value={s}>{s}</option>
               {/each}
             </select>

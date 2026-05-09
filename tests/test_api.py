@@ -910,3 +910,48 @@ def test_get_db_yields_closable_session(tmp_path, monkeypatch):
     # Close it via the generator's finally-block.
     with pytest.raises(StopIteration):
         next(gen)
+
+
+# ---------- GET /api/meta (§14.19) -----------------------------------------
+
+
+def test_meta_returns_all_four_lists_sorted(api):
+    """Meta endpoint exposes the constants the frontend needs.
+
+    The lists must be sorted (Python set iteration order isn't stable
+    across runs/deploys; deterministic order is required so dropdown
+    `<option>` ordering doesn't shuffle).
+    """
+    client, _ = api
+    r = client.get("/api/meta")
+    assert r.status_code == 200
+    body = r.json()
+
+    assert set(body.keys()) == {"strategies", "rng", "roles", "cadences"}
+    # Sorted-ness: each list equals its own sort.
+    for key, value in body.items():
+        assert value == sorted(value), f"{key} list is not sorted: {value}"
+
+
+def test_meta_matches_engine_constants(api):
+    """The endpoint's lists must match what engine/template.py validates.
+
+    If a contributor adds 'sequential' to SUPPORTED_STRATEGIES but
+    forgets to update the meta endpoint (or vice versa), this test
+    catches the drift. Pulls the imports here so failure surfaces as
+    "engine has X, endpoint exposes Y" rather than a vague mismatch.
+    """
+    from engine.template import (
+        SUPPORTED_ROLES,
+        SUPPORTED_RNG,
+        SUPPORTED_STRATEGIES,
+        SUGGESTED_CADENCES,
+    )
+
+    client, _ = api
+    body = client.get("/api/meta").json()
+
+    assert set(body["strategies"]) == SUPPORTED_STRATEGIES
+    assert set(body["rng"]) == SUPPORTED_RNG
+    assert set(body["roles"]) == SUPPORTED_ROLES
+    assert set(body["cadences"]) == SUGGESTED_CADENCES

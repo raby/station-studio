@@ -17,6 +17,15 @@ describe('<StationForm mode="edit" /> — §16.7 edit-mode', () => {
     cleanup();
   });
 
+  // Meta fixture — matches what GET /api/meta returns. Fixed values
+  // (rather than fetching) so tests don't depend on the cache state.
+  const meta = {
+    strategies: ['pick', 'window'],
+    rng: ['off', 'on'],
+    roles: ['content', 'reference'],
+    cadences: ['weekly'],
+  };
+
   const initial = {
     slug: 'cls',
     name: 'Classics',
@@ -36,7 +45,7 @@ describe('<StationForm mode="edit" /> — §16.7 edit-mode', () => {
   };
 
   it('renders slug input as readonly with the immutability hint', () => {
-    render(StationForm, { mode: 'edit', initial, onSubmit: vi.fn() });
+    render(StationForm, { mode: 'edit', initial, onSubmit: vi.fn(), meta });
 
     const slugInput = screen.getByPlaceholderText('rebirth-classics') as HTMLInputElement;
     expect(slugInput).toHaveAttribute('readonly');
@@ -45,7 +54,7 @@ describe('<StationForm mode="edit" /> — §16.7 edit-mode', () => {
   });
 
   it('populates display name + cursor + layout fields from initial', () => {
-    render(StationForm, { mode: 'edit', initial, onSubmit: vi.fn() });
+    render(StationForm, { mode: 'edit', initial, onSubmit: vi.fn(), meta });
 
     expect(
       (screen.getByPlaceholderText('Rebirth Classics') as HTMLInputElement).value,
@@ -61,7 +70,7 @@ describe('<StationForm mode="edit" /> — §16.7 edit-mode', () => {
   });
 
   it('shows "no changes" pill until the user edits a field, then "unsaved"', async () => {
-    const { container } = render(StationForm, { mode: 'edit', initial, onSubmit: vi.fn() });
+    const { container } = render(StationForm, { mode: 'edit', initial, onSubmit: vi.fn(), meta });
 
     // Target the pill specifically — the body has "no changes" prose too.
     const cleanPill = container.querySelector('.clean-pill');
@@ -78,7 +87,7 @@ describe('<StationForm mode="edit" /> — §16.7 edit-mode', () => {
   });
 
   it('"Reset to saved" button is disabled when clean and enabled when dirty', async () => {
-    render(StationForm, { mode: 'edit', initial, onSubmit: vi.fn() });
+    render(StationForm, { mode: 'edit', initial, onSubmit: vi.fn(), meta });
 
     const resetBtn = screen.getByTestId('reset-to-saved') as HTMLButtonElement;
     expect(resetBtn).toBeDisabled();
@@ -89,7 +98,7 @@ describe('<StationForm mode="edit" /> — §16.7 edit-mode', () => {
   });
 
   it('"Reset to saved" reverts the form when the user accepts the confirm', async () => {
-    render(StationForm, { mode: 'edit', initial, onSubmit: vi.fn() });
+    render(StationForm, { mode: 'edit', initial, onSubmit: vi.fn(), meta });
     const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
 
     const nameInput = screen.getByPlaceholderText('Rebirth Classics') as HTMLInputElement;
@@ -104,7 +113,7 @@ describe('<StationForm mode="edit" /> — §16.7 edit-mode', () => {
   });
 
   it('"Reset to saved" leaves the form untouched if the user cancels', async () => {
-    render(StationForm, { mode: 'edit', initial, onSubmit: vi.fn() });
+    render(StationForm, { mode: 'edit', initial, onSubmit: vi.fn(), meta });
     const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
 
     const nameInput = screen.getByPlaceholderText('Rebirth Classics') as HTMLInputElement;
@@ -117,7 +126,7 @@ describe('<StationForm mode="edit" /> — §16.7 edit-mode', () => {
 
   it('submit calls onSubmit with the slug-from-initial + edited fields', async () => {
     const onSubmit = vi.fn().mockResolvedValueOnce(undefined);
-    render(StationForm, { mode: 'edit', initial, onSubmit });
+    render(StationForm, { mode: 'edit', initial, onSubmit, meta });
 
     const nameInput = screen.getByPlaceholderText('Rebirth Classics') as HTMLInputElement;
     await fireEvent.input(nameInput, { target: { value: 'Classics REISSUE' } });
@@ -131,7 +140,7 @@ describe('<StationForm mode="edit" /> — §16.7 edit-mode', () => {
   });
 
   it('shows the JSON preview disclosure with a parseable JSON body', async () => {
-    render(StationForm, { mode: 'edit', initial, onSubmit: vi.fn() });
+    render(StationForm, { mode: 'edit', initial, onSubmit: vi.fn(), meta });
 
     const preview = screen.getByTestId('json-preview');
     expect(preview).toBeInTheDocument();
@@ -189,6 +198,7 @@ describe('<StationForm mode="edit" /> — §16.7 edit-mode', () => {
       mode: 'edit',
       initial: complexInitial,
       onSubmit: onSubmit1,
+      meta,
     });
     await fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
     await vi.waitFor(() => expect(onSubmit1).toHaveBeenCalledOnce());
@@ -197,7 +207,7 @@ describe('<StationForm mode="edit" /> — §16.7 edit-mode', () => {
 
     // Second render: feed that output back as `initial`, capture again.
     const onSubmit2 = vi.fn().mockResolvedValueOnce(undefined);
-    render(StationForm, { mode: 'edit', initial: firstPayload, onSubmit: onSubmit2 });
+    render(StationForm, { mode: 'edit', initial: firstPayload, onSubmit: onSubmit2, meta });
     await fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
     await vi.waitFor(() => expect(onSubmit2).toHaveBeenCalledOnce());
     const secondPayload = onSubmit2.mock.calls[0][0];

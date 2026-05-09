@@ -15,10 +15,12 @@
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
   import { getStation, updateStation, ApiError } from '$lib/api';
-  import type { Station } from '$lib/api';
+  import type { Station, Meta } from '$lib/api';
+  import { loadMeta } from '$lib/meta';
   import StationForm from '$lib/components/StationForm.svelte';
 
   let station: Station | null = null;
+  let meta: Meta | null = null;
   let loadError: string | null = null;
   let loading = true;
 
@@ -33,7 +35,10 @@
       return;
     }
     try {
-      station = await getStation(slug);
+      // Parallel: station metadata + meta (template constants) per §14.19.
+      // loadMeta is module-cached so the second mount on the same client
+      // doesn't re-hit the network.
+      [station, meta] = await Promise.all([getStation(slug), loadMeta()]);
     } catch (e) {
       loadError = e instanceof ApiError ? e.message : String(e);
     } finally {
@@ -71,7 +76,7 @@
     <p>Loading…</p>
   {:else if loadError}
     <p class="error">{loadError}</p>
-  {:else if station}
+  {:else if station && meta}
     <h1>Edit {station.name}</h1>
     <p class="sub">
       Template JSON is the canonical artifact (DESIGN.md §4.2). Validation runs
@@ -81,6 +86,7 @@
     <StationForm
       mode="edit"
       initial={station}
+      {meta}
       onSubmit={handleSave}
     />
   {/if}

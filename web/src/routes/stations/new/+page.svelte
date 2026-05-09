@@ -13,9 +13,26 @@
   uses the same <StationForm> with mode="edit" and PUT semantics.
 -->
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
-  import { createStation } from '$lib/api';
+  import { createStation, ApiError } from '$lib/api';
+  import type { Meta } from '$lib/api';
+  import { loadMeta } from '$lib/meta';
   import StationForm from '$lib/components/StationForm.svelte';
+
+  // Meta loads once, shared with the edit route via the lib/meta cache
+  // (DESIGN.md §14.19). Fetch in onMount; render the form only after the
+  // meta is available so dropdowns aren't briefly blank.
+  let meta: Meta | null = null;
+  let metaError: string | null = null;
+
+  onMount(async () => {
+    try {
+      meta = await loadMeta();
+    } catch (e) {
+      metaError = e instanceof ApiError ? e.message : String(e);
+    }
+  });
 
   /**
    * Create-mode submit handler. <StationForm> calls this with the
@@ -44,7 +61,13 @@
     Validation runs server-side against <code>engine.template.parse_template</code>.
   </p>
 
-  <StationForm mode="create" onSubmit={handleCreate} />
+  {#if metaError}
+    <p class="error">Could not load meta: {metaError}</p>
+  {:else if meta}
+    <StationForm mode="create" {meta} onSubmit={handleCreate} />
+  {:else}
+    <p>Loading…</p>
+  {/if}
 </main>
 
 <style>
@@ -72,4 +95,5 @@
     border-radius: 3px;
     font-size: 0.85em;
   }
+  .error { color: crimson; }
 </style>

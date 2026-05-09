@@ -226,4 +226,25 @@ export const exportPlaylistToDisk = (
     json<DiskExportResponse>(r),
   );
 
+/**
+ * Canonical option lists for template-shaped UI dropdowns. Sourced from
+ * `engine/template.py` via GET /api/meta (DESIGN.md §14.19) so the
+ * <StationForm> and <LayoutFieldset> dropdowns can't drift from what
+ * the validator accepts. Each list is sorted server-side.
+ */
+export interface Meta {
+  strategies: string[];
+  rng: string[];
+  roles: string[];
+  cadences: string[];
+}
+
+/**
+ * Fetch the canonical option lists. Treat the response as cacheable
+ * static data — see `web/src/lib/meta.ts` for the module-level cache
+ * the page components share.
+ */
+export const getMeta = (fetch_ = fetch): Promise<Meta> =>
+  fetch_('/api/meta').then((r) => json<Meta>(r));
+
 export { ApiError };
