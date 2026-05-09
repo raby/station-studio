@@ -2010,9 +2010,11 @@ off it.
 |------------------------------------------|-------------|------------------------------------------|
 | Replace `create_all` with `upgrade head` | not now     | First time `create_all` and `migrate` drift |
 | Auto-run migrate on `run.py` startup     | rejected    | Couples app boot to schema state; surprising on rollback |
-| Migration smoke-test in CI               | later       | First non-trivial migration ships        |
+| Migration smoke-test in CI               | done (§14.17 review S2) | Shipped via `scripts/check_migration_parity.py` |
 | Online migrations (no downtime)          | n/a         | Single-user; downtime is fine            |
 | Data migrations alongside schema         | as needed   | First migration that needs to backfill   |
+| `migrations/README` is alembic boilerplate (§17 N3) | NIT         | Cosmetic; replace with project-specific guidance when convenient |
+| `make alembic-revision` produces an empty migration silently when nothing changed (§17 N4) | NIT | Run `alembic check` first to bail if no pending changes; ~3 LoC of bash |
 
 **Implementation notes for future schema changes.**
 
@@ -2145,6 +2147,9 @@ class of "I just lost everything" event.
 | Restore from a backup taken on a different machine | not now | Slugs / paths in trace JSON could be machine-specific |
 | Backup encryption                       | rejected    | Single-user; user encrypts the backups/ folder if needed |
 | `make backup-and-tag-with-message`      | not now     | If someone wants annotated backups       |
+| Automated round-trip test for backup/restore (§17 N2) | NIT | Shell-script regression risk; `tests/` could exercise `make backup && make restore` via subprocess, ~30 LoC |
+| Pre-restore safety copy filename uses RESTORE-time timestamp, not BACKUP-of-time (§17 N5) | NIT | Reading the listing later, "what does pre-restore-2026-05-09-104500 contain?" isn't obvious. Could rename `pre-restore-of-{requested}-at-{now}.db` for clarity |
+| Integrity check after restore           | NIT         | `sqlite3 PRAGMA integrity_check;` post-cp would catch corrupt-backup-file case; cheap defensive add |
 
 **Implementation notes for future pick-up.**
 
@@ -2296,6 +2301,7 @@ the endpoint now means §16.2 doesn't grow a fourth duplicate.
 | Tightening cadence validation                 | §11 v1.1    | Scheduler lands and gives cadences semantics |
 | Localised option labels                       | not now     | Real i18n requirement                    |
 | Auto-retry of rejected loadMeta               | not now     | "Frequent flaky network" report          |
+| Content-type guard on api.ts helpers (§17 N7) | NIT         | Cross-cutting — every api.ts helper assumes `r.json()` won't throw on HTML/text bodies (e.g. proxy 502 page). `JSONParseError` would surface as `String(e)` in the consumer's `instanceof ApiError ? ...` ternary, which is ugly but visible. Fix at the `json<T>()` helper level: try/catch around `r.json()`, wrap as ApiError(r.status, ...). One-place change |
 
 **Implementation notes for future pick-up.**
 
