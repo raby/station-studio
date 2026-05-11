@@ -19,9 +19,7 @@
   import './_form-shared.css';
 
   import type { Meta } from '$lib/api';
-
-  type Strategy = 'pick' | 'window';
-  type RowBlock = { source: string; strategy: Strategy; size: number };
+  import type { Strategy, RowBlock } from '$lib/template';
 
   // Two-way bindings — parent owns the values.
   export let unit: string = 'day';

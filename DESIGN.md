@@ -2349,6 +2349,142 @@ the endpoint now means §16.2 doesn't grow a fourth duplicate.
   pure. If the meta endpoint ever gets slow, the sentinel-
   wait would extend Playwright runtime accordingly.
 
+### 14.20 Extract template.ts — what shipped (§17 Phase A #4)
+
+**Why.** `buildTemplate()`, `unpack()`, `defaults()`,
+`parseIntList()`, `parseStringList()`, and `preSubmitProblem()`
+lived as closure-captured functions inside `<StationForm.svelte>`.
+The visual block editor (§16.2) needs them as importable pure
+functions — an editor component can't import a Svelte
+component's internal helpers. The §17 roadmap named this as
+Phase A #4, the last soft-prerequisite before #1
+(`<LayoutFieldset>` arrays refactor).
+
+**What shipped (single commit).**
+
+- **`web/src/lib/template.ts`** — new module exporting all six
+  functions plus their types (`FormState`, `StationFormPayload`,
+  `Rng`, `Role`, `Strategy`, `Source`, `RowBlock`). Pure
+  functions, no Svelte dependency, no side effects.
+- **`buildTemplate(state: FormState)`** now takes an explicit
+  `FormState` argument instead of closing over component
+  variables. This makes it a pure function: same input, same
+  output, testable without rendering a component.
+- **`preSubmitProblem(state: FormState)`** similarly takes
+  explicit state. The `contentSourceNames` derivation that
+  was previously a `$:` reactive is now computed inline inside
+  the function.
+- **`<StationForm.svelte>` refactored** to import from
+  `$lib/template`. All local type aliases, `defaults()`,
+  `unpack()`, `buildTemplate()`, `parseIntList()`,
+  `parseStringList()`, and `preSubmitProblem()` removed from
+  the component script. A new `currentFormState(): FormState`
+  helper snapshots the component's `let` bindings into a
+  `FormState` struct for passing to the pure functions.
+- **Reactive blocks updated** to use the IIFE pattern (per
+  the §14.15 Svelte dependency-tracking trap). The `$:`
+  blocks for `previewJSON` and `liveStation` now construct
+  a `FormState` inline inside an IIFE so Svelte's compiler
+  sees every variable read and re-fires correctly on any
+  change.
+- **`web/src/lib/template.test.ts`** — 23 new Vitest cases
+  covering:
+  - `parseIntList` / `parseStringList`: happy paths, edge
+    cases (trailing comma, non-finite values, empty string).
+  - `defaults()`: shape check + fresh-object-per-call
+    (no shared references).
+  - `buildTemplate()`: full shape, seed inclusion/omission
+    gated on rng, whitespace trimming.
+  - `unpack()`: well-formed payload round-trip, fallback
+    to defaults for missing fields.
+  - Round-trip: `unpack(buildTemplate(state)) ≈ identity`
+    — the S3 anti-divergence test from §16.7, now at the
+    pure-function level without needing a component render.
+  - `preSubmitProblem()`: null for valid state, catches
+    empty slug, invalid slug format, empty name, no content
+    sources, empty row template, block without source.
+
+**Test results.** 137 Vitest tests pass (was 113; +24 new).
+All 9 existing StationForm.test.ts cases pass unchanged —
+the component-level round-trip test (S3) continues to work
+as the safety net for the extraction. `svelte-check` clean,
+0 errors 0 warnings.
+
+**Decisions in flight.**
+
+- **`currentFormState()` helper over direct arg-passing.**
+  Considered: making `handleSubmit` and the reactive blocks
+  each construct the `FormState` struct inline. That's 12
+  fields × 3 call sites = 36 lines of boilerplate. The
+  `currentFormState()` closure-over-component-variables
+  helper centralises it for imperative paths (`handleSubmit`,
+  `resetToSaved`).
+- **Single reactive `$: formState` eliminates IIFE duplication
+  (review N2).** Initially the extraction had 3 copies of
+  the inline `FormState` construction (one IIFE per `$:`
+  block). Review caught this — consolidated to a single
+  `$: formState` IIFE. Downstream reactives (`previewJSON`,
+  `liveStation`) reference `formState` directly; Svelte
+  tracks reactive-to-reactive deps without the IIFE trick.
+  The 12-field list now appears exactly once.
+- **Types exported from `template.ts`, not from the Svelte
+  component.** Svelte 4 rejects `export type` from instance
+  `<script>` blocks. Previously the types were inferred by
+  consumers via the `initial` / `onSubmit` props. Now they're
+  properly exported from a `.ts` module — any future consumer
+  (§16.2 block editor, "start from existing" preset, template
+  JSON import) can `import type { FormState } from '$lib/template'`
+  without touching the component.
+- **`preSubmitProblem` computes `contentSourceNames` internally
+  (review N3 — intentional duplication, documented).**
+  The component's `$: contentSourceNames` reactive feeds the
+  `<LayoutFieldset>` dropdown (render concern). The pure
+  function's inline filter validates before submit (validation
+  concern). Merging them would couple the pure function to
+  component state. 2-line duplication; documented in
+  `template.ts` with a comment explaining why it stays.
+- **`LayoutFieldset.svelte` now imports `Strategy` and
+  `RowBlock` from `$lib/template` (review S2).** Previously
+  had duplicate local type aliases that could drift from the
+  canonical definitions. Single source of truth now.
+- **rng:off round-trip test added (review N4).** The original
+  round-trip only exercised `rng: 'on'` with a seed. The new
+  case pins the seed-omission path: `buildTemplate` omits
+  `seed` entirely → `unpack` sees no `seed` → `seedStr`
+  stays `''`. 24 pure-function tests total.
+
+**Stay-out-of-scope.**
+
+| Area                                            | Status      | Trigger                                 |
+|-------------------------------------------------|-------------|-----------------------------------------|
+| Extract to a shared package (e.g. `@station-studio/template`) | rejected | Single-consumer repo; module path is enough |
+| Move `templateDiff.ts` into `template.ts`       | not now     | They have different responsibilities     |
+| SSR-side template building (for `+page.ts` load)| not now     | §14.5 SSR punt; no `+page.ts` load yet  |
+| Shared `FormState` ↔ API schema validation      | not now     | Server-side `parse_template` is the source of truth |
+
+**Implementation notes for future pick-up.**
+
+- **The `$: formState` IIFE is the single point of truth for
+  dependency tracking.** If a future contributor adds a new
+  form field, they must add it to the IIFE's inline
+  `FormState` construction. The round-trip test catches
+  `buildTemplate`/`unpack` drift; but forgetting the IIFE
+  field means the reactive won't re-fire (only caught by
+  manual testing or Playwright). Worth knowing.
+- **`currentFormState()` is NOT reactive.** It snapshots at
+  call time. Using it inside a `$:` block won't track —
+  that's what `$: formState` is for. Inside `handleSubmit`
+  and `resetToSaved` (imperative, not reactive) it's fine.
+- **§17 #1 (`<LayoutFieldset>` arrays refactor)** is the
+  natural next step. `FormState` already has `unitLabelsStr`
+  and `rowStartOffsetsStr` as strings; #1 changes them to
+  `string[]` and `number[]` respectively, updating
+  `buildTemplate` and `unpack` in lockstep. The round-trip
+  test in `template.test.ts` is the safety net.
+- **The 24 new tests run in ~8ms** (pure functions, no DOM).
+  This is the fastest test file in the suite — validates the
+  "extract for testability" motivation.
+
 ---
 
 ## 15. Status snapshot
@@ -2375,7 +2511,7 @@ A quick "where are we" for a future reader. Last updated at commit
 | Delete / station-reset   | Shipped (14.10). Per-row delete + station nuke; cascades.        |
 | Disk-export UI button    | Shipped (14.11). Trace viewer "Export to disk" + status line.    |
 | Edit mode for stations   | Shipped (14.13). Shared `<StationForm>` + JSON preview + diff + reset. |
-| **Pre-§16.2 / port roadmap** | **In flight. §17 Phase A — #8 + #9 + #3 shipped (14.17-14.19). Next: #4 extract template.ts, then #1 LayoutFieldset arrays.** |
+| **Pre-§16.2 / port roadmap** | **In flight. §17 Phase A — #8 + #9 + #3 + #4 shipped (14.17-14.20). Next: #1 LayoutFieldset arrays.** |
 | Visual block editor      | Deferred (v2). Lands as §17 Phase B after Phase A unblocks.      |
 | Trace versioning         | Deferred. See §16.4 (queued behind §16.1 by design).             |
 | Accessibility pass       | Deferred. §17 Phase D — single sweep after §16.2 + port.         |
@@ -3667,7 +3803,7 @@ reduces cleanup later. Numbers map to the tier tables above.
 1. ~~**Alembic baseline** (#8)~~ — **shipped (§14.17)**
 2. ~~**Backup tooling** (#9)~~ — **shipped (§14.18)**
 3. ~~**`GET /api/meta`** (#3)~~ — **shipped (§14.19)**
-4. **Extract `template.ts`** (#4) — moves `buildTemplate` / `unpack` out of the component
+4. ~~**Extract `template.ts`** (#4)~~ — **shipped (§14.20)** — moves `buildTemplate` / `unpack` out of the component
 5. **`<LayoutFieldset>` arrays refactor** (#1) — makes §16.2's swap a real one-component swap
 
 **Phase B — visual block editor (§16.2)**
