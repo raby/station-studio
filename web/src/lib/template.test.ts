@@ -79,8 +79,8 @@ describe('buildTemplate', () => {
       baseAdvancePerWeek: 60,
       cycleWeeks: 16,
       unit: 'day',
-      unitLabelsStr: 'Mon, Tue',
-      rowStartOffsetsStr: '0, 10',
+      unitLabels: ['Mon', 'Tue'],
+      rowStartOffsets: [0, 10],
       rowTemplate: [{ source: 'RG_RADIO', strategy: 'window', size: 215 }],
     };
 
@@ -158,8 +158,8 @@ describe('unpack', () => {
     expect(s.sources).toHaveLength(2);
     expect(s.baseAdvancePerWeek).toBe(60);
     expect(s.cycleWeeks).toBe(16);
-    expect(s.unitLabelsStr).toBe('Mon, Tue, Wed');
-    expect(s.rowStartOffsetsStr).toBe('0, 10, 20');
+    expect(s.unitLabels).toEqual(['Mon', 'Tue', 'Wed']);
+    expect(s.rowStartOffsets).toEqual([0, 10, 20]);
     expect(s.rowTemplate).toHaveLength(1);
   });
 
@@ -174,7 +174,7 @@ describe('unpack', () => {
     expect(s.cadence).toBe(d.cadence);
     expect(s.rng).toBe(d.rng);
     expect(s.sources).toEqual(d.sources);
-    expect(s.unitLabelsStr).toBe(d.unitLabelsStr);
+    expect(s.unitLabels).toEqual(d.unitLabels);
   });
 });
 
@@ -198,8 +198,8 @@ describe('round-trip: unpack ↔ buildTemplate', () => {
       baseAdvancePerWeek: 60,
       cycleWeeks: 16,
       unit: 'day',
-      unitLabelsStr: 'Mon, Tue, Wed, Thu, Fri, Sat, Sun',
-      rowStartOffsetsStr: '0, 10, 20, 30, 40, 50, 50',
+      unitLabels: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+      rowStartOffsets: [0, 10, 20, 30, 40, 50, 50],
       rowTemplate: [
         { source: 'A', strategy: 'window', size: 215 },
         { source: 'B', strategy: 'window', size: 215 },
@@ -231,8 +231,8 @@ describe('round-trip: unpack ↔ buildTemplate', () => {
       baseAdvancePerWeek: 60,
       cycleWeeks: 16,
       unit: 'day',
-      unitLabelsStr: 'Mon, Tue',
-      rowStartOffsetsStr: '0, 10',
+      unitLabels: ['Mon', 'Tue'],
+      rowStartOffsets: [0, 10],
       rowTemplate: [{ source: 'A', strategy: 'window', size: 215 }],
     };
 
@@ -266,8 +266,8 @@ describe('preSubmitProblem', () => {
       baseAdvancePerWeek: 60,
       cycleWeeks: 16,
       unit: 'day',
-      unitLabelsStr: 'Mon',
-      rowStartOffsetsStr: '0',
+      unitLabels: ['Mon'],
+      rowStartOffsets: [0],
       rowTemplate: [{ source: 'A', strategy: 'window', size: 1 }],
     };
     expect(preSubmitProblem(state)).toBeNull();

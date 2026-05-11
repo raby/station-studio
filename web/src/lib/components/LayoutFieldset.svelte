@@ -20,14 +20,65 @@
 
   import type { Meta } from '$lib/api';
   import type { Strategy, RowBlock } from '$lib/template';
+  import { parseStringList, parseIntList } from '$lib/template';
 
-  // Two-way bindings — parent owns the values.
+  // Two-way bindings — parent owns the values as arrays.
   export let unit: string = 'day';
-  export let unitLabelsStr: string = 'Mon, Tue, Wed, Thu, Fri, Sat, Sun';
-  export let rowStartOffsetsStr: string = '0, 0, 0, 0, 0, 0, 0';
+  /** Array of labels, one per row. */
+  export let unitLabels: string[] = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  /** Array of per-row start offsets. */
+  export let rowStartOffsets: number[] = [0, 0, 0, 0, 0, 0, 0];
   export let rowTemplate: RowBlock[] = [
     { source: '', strategy: 'pick', size: 1 },
   ];
+
+  // ---- text ↔ array bridging ------------------------------------------
+  // The parent binds arrays; the text inputs show comma-separated strings.
+  // Two concerns compete:
+  //   1. Typing: the user types "Mon, Tu" mid-word — we must NOT snap the
+  //      input back to the join of parseStringList("Mon, Tu") because that
+  //      would eat trailing commas / whitespace and make typing impossible.
+  //   2. External reset: when the parent resets the array (e.g. "Reset to
+  //      saved"), the text input must update.
+  //
+  // Solution: local `let` strings initialised from the array. on:input
+  // handlers update BOTH the local string AND the exported array prop.
+  // A reactive watches the array prop for external changes (where the
+  // array identity changes but doesn't match our last-parsed value) and
+  // re-syncs the local string. The identity check prevents the reactive
+  // from firing on our own on:input writes.
+
+  let unitLabelsStr = unitLabels.join(', ');
+  let rowStartOffsetsStr = rowStartOffsets.join(', ');
+
+  // Track the last array we produced from the text input, so we can
+  // distinguish "parent reset the array" from "our own on:input fired".
+  let lastParsedLabels = unitLabels;
+  let lastParsedOffsets = rowStartOffsets;
+
+  // External reset detection: if the array prop changed and it's NOT
+  // the same reference we last produced, re-sync the string.
+  $: if (unitLabels !== lastParsedLabels) {
+    unitLabelsStr = unitLabels.join(', ');
+    lastParsedLabels = unitLabels;
+  }
+  $: if (rowStartOffsets !== lastParsedOffsets) {
+    rowStartOffsetsStr = rowStartOffsets.join(', ');
+    lastParsedOffsets = rowStartOffsets;
+  }
+
+  function onUnitLabelsInput(e: Event) {
+    unitLabelsStr = (e.target as HTMLInputElement).value;
+    const parsed = parseStringList(unitLabelsStr);
+    unitLabels = parsed;
+    lastParsedLabels = parsed;
+  }
+  function onRowStartOffsetsInput(e: Event) {
+    rowStartOffsetsStr = (e.target as HTMLInputElement).value;
+    const parsed = parseIntList(rowStartOffsetsStr);
+    rowStartOffsets = parsed;
+    lastParsedOffsets = parsed;
+  }
 
   // One-way: derived from the StationForm's `sources` list. Only content-
   // role pools can fill layout blocks (enforced server-side in
@@ -67,12 +118,12 @@
   </label>
   <label>
     <span>unit_labels</span>
-    <input bind:value={unitLabelsStr} placeholder="Mon, Tue, Wed, Thu, Fri, Sat, Sun" autocomplete="off" />
+    <input value={unitLabelsStr} on:input={onUnitLabelsInput} placeholder="Mon, Tue, Wed, Thu, Fri, Sat, Sun" autocomplete="off" />
     <small>comma-separated; length must match row_start_offsets.</small>
   </label>
   <label>
     <span>row_start_offsets</span>
-    <input bind:value={rowStartOffsetsStr} placeholder="0, 10, 20, 30, 40, 50, 50" autocomplete="off" />
+    <input value={rowStartOffsetsStr} on:input={onRowStartOffsetsInput} placeholder="0, 10, 20, 30, 40, 50, 50" autocomplete="off" />
     <small>comma-separated integers. Duplicates intentionally repeat a row.</small>
   </label>
 

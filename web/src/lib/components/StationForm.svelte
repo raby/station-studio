@@ -95,8 +95,8 @@
   let baseAdvancePerWeek = _init.baseAdvancePerWeek;
   let cycleWeeks = _init.cycleWeeks;
   let unit = _init.unit;
-  let unitLabelsStr = _init.unitLabelsStr;
-  let rowStartOffsetsStr = _init.rowStartOffsetsStr;
+  let unitLabels = _init.unitLabels;
+  let rowStartOffsets = _init.rowStartOffsets;
   let rowTemplate: RowBlock[] = _init.rowTemplate;
 
   // Only content sources can fill layout blocks (enforced server-side).
@@ -123,7 +123,7 @@
     return {
       slug, name, cadence, rng, seedStr, sources,
       baseAdvancePerWeek, cycleWeeks, unit,
-      unitLabelsStr, rowStartOffsetsStr, rowTemplate,
+      unitLabels, rowStartOffsets, rowTemplate,
     };
   }
 
@@ -168,7 +168,7 @@
     const s: FormState = {
       slug, name, cadence, rng, seedStr, sources,
       baseAdvancePerWeek, cycleWeeks, unit,
-      unitLabelsStr, rowStartOffsetsStr, rowTemplate,
+      unitLabels, rowStartOffsets, rowTemplate,
     };
     return s;
   })();
@@ -209,8 +209,8 @@
     baseAdvancePerWeek = reset.baseAdvancePerWeek;
     cycleWeeks = reset.cycleWeeks;
     unit = reset.unit;
-    unitLabelsStr = reset.unitLabelsStr;
-    rowStartOffsetsStr = reset.rowStartOffsetsStr;
+    unitLabels = reset.unitLabels;
+    rowStartOffsets = reset.rowStartOffsets;
     rowTemplate = reset.rowTemplate;
     error = null;
   }
@@ -340,8 +340,8 @@
   <!-- ---- layout ------------------------------------------------ -->
   <LayoutFieldset
     bind:unit
-    bind:unitLabelsStr
-    bind:rowStartOffsetsStr
+    bind:unitLabels
+    bind:rowStartOffsets
     bind:rowTemplate
     {contentSourceNames}
     strategies={meta.strategies}

@@ -39,8 +39,10 @@ export type FormState = {
   baseAdvancePerWeek: number;
   cycleWeeks: number;
   unit: string;
-  unitLabelsStr: string;
-  rowStartOffsetsStr: string;
+  /** Array of labels, one per row (e.g. ['Mon', 'Tue', ...]). */
+  unitLabels: string[];
+  /** Array of per-row start offsets (e.g. [0, 10, 20, ...]). */
+  rowStartOffsets: number[];
   rowTemplate: RowBlock[];
 };
 
@@ -86,8 +88,8 @@ export function defaults(): FormState {
     baseAdvancePerWeek: 0,
     cycleWeeks: 1,
     unit: 'day',
-    unitLabelsStr: 'Mon, Tue, Wed, Thu, Fri, Sat, Sun',
-    rowStartOffsetsStr: '0, 0, 0, 0, 0, 0, 0',
+    unitLabels: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+    rowStartOffsets: [0, 0, 0, 0, 0, 0, 0],
     rowTemplate: [{ source: '', strategy: 'pick', size: 1 }],
   };
 }
@@ -123,10 +125,10 @@ export function unpack(initial: StationFormPayload): FormState {
       Number(cursor.base_advance_per_week) || d.baseAdvancePerWeek,
     cycleWeeks: Number(cursor.cycle_weeks) || d.cycleWeeks,
     unit: (layout.unit as string) ?? d.unit,
-    unitLabelsStr:
-      tplUnitLabels.length > 0 ? tplUnitLabels.join(', ') : d.unitLabelsStr,
-    rowStartOffsetsStr:
-      tplOffsets.length > 0 ? tplOffsets.join(', ') : d.rowStartOffsetsStr,
+    unitLabels:
+      tplUnitLabels.length > 0 ? [...tplUnitLabels] : d.unitLabels,
+    rowStartOffsets:
+      tplOffsets.length > 0 ? [...tplOffsets] : d.rowStartOffsets,
     rowTemplate: tplRowTemplate.length > 0
       ? tplRowTemplate.map((b) => ({ source: b.source, strategy: b.strategy, size: b.size }))
       : d.rowTemplate,
@@ -157,8 +159,8 @@ export function buildTemplate(state: FormState): Record<string, unknown> {
     },
     layout: {
       unit: state.unit,
-      unit_labels: parseStringList(state.unitLabelsStr),
-      row_start_offsets: parseIntList(state.rowStartOffsetsStr),
+      unit_labels: [...state.unitLabels],
+      row_start_offsets: [...state.rowStartOffsets],
       row_template: state.rowTemplate.map((b) => ({
         source: b.source,
         strategy: b.strategy,

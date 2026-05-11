@@ -2487,6 +2487,59 @@ as the safety net for the extraction. `svelte-check` clean,
 
 ---
 
+### 14.21 LayoutFieldset arrays refactor — what shipped (§17 Phase A #1)
+
+**Goal.** Change `FormState`'s `unitLabelsStr: string` /
+`rowStartOffsetsStr: string` to `unitLabels: string[]` /
+`rowStartOffsets: number[]`. This eliminates the parse-at-save /
+join-at-load string↔array dance in `buildTemplate` / `unpack`
+and makes `<LayoutFieldset>`'s props match the domain shape —
+the §16.2 visual block editor naturally binds arrays.
+
+**Files touched (3):**
+
+1. **`template.ts`** — `FormState` type changed. `defaults()`
+   returns arrays. `buildTemplate()` spreads arrays directly
+   instead of calling `parseStringList`/`parseIntList`.
+   `unpack()` spreads the JSON arrays directly instead of
+   `.join(', ')`. `parseStringList`/`parseIntList` remain
+   exported — still used by `<LayoutFieldset>` for text→array
+   parsing.
+
+2. **`StationForm.svelte`** — local state variables renamed
+   (`unitLabelsStr` → `unitLabels`, etc.). `currentFormState()`,
+   `$: formState`, `resetToSaved()` all updated. Passes arrays
+   to `<LayoutFieldset>` via `bind:unitLabels`/`bind:rowStartOffsets`.
+
+3. **`LayoutFieldset.svelte`** — props changed from strings to
+   arrays. Local `let` strings derive the comma-separated text
+   for the `<input>` elements. `on:input` handlers parse the
+   text back to arrays. External resets (parent reassigning the
+   array prop) detected via reference-identity tracking
+   (`lastParsedLabels`/`lastParsedOffsets`) — the reactive only
+   re-syncs the string when the array identity differs from what
+   the `on:input` handler last produced, preventing the reactive
+   from eating trailing commas / whitespace while the user types.
+
+**Design decision — avoiding the cursor-snap problem.**
+A naïve `$: str = arr.join(', ')` reactive snaps the text input
+to the canonical form on every keystroke (because the `on:input`
+handler parses and reassigns the array, triggering the reactive).
+This makes it impossible to type a trailing comma or trailing
+space. The identity-tracking pattern breaks the cycle: the
+reactive only fires for *external* array changes, not for the
+handler's own writes.
+
+**Test impact:** All 24 `template.test.ts` fixtures updated
+(string fields → array fields). All 9 `StationForm.test.ts`
+tests pass without changes (they operate at the JSON level,
+which was already arrays). 137/137 Vitest tests green.
+`svelte-check` clean.
+
+**Punts:** None.
+
+---
+
 ## 15. Status snapshot
 
 A quick "where are we" for a future reader. Last updated at commit
@@ -2511,7 +2564,7 @@ A quick "where are we" for a future reader. Last updated at commit
 | Delete / station-reset   | Shipped (14.10). Per-row delete + station nuke; cascades.        |
 | Disk-export UI button    | Shipped (14.11). Trace viewer "Export to disk" + status line.    |
 | Edit mode for stations   | Shipped (14.13). Shared `<StationForm>` + JSON preview + diff + reset. |
-| **Pre-§16.2 / port roadmap** | **In flight. §17 Phase A — #8 + #9 + #3 + #4 shipped (14.17-14.20). Next: #1 LayoutFieldset arrays.** |
+| **Pre-§16.2 / port roadmap** | **In flight. §17 Phase A — #8 + #9 + #3 + #4 + #1 shipped (14.17-14.21). Phase A complete. Next: Phase B (§16.2).** |
 | Visual block editor      | Deferred (v2). Lands as §17 Phase B after Phase A unblocks.      |
 | Trace versioning         | Deferred. See §16.4 (queued behind §16.1 by design).             |
 | Accessibility pass       | Deferred. §17 Phase D — single sweep after §16.2 + port.         |
@@ -3722,12 +3775,13 @@ up cold.
 
 ### What the upcoming big slices actually need
 
-**Visual block editor (§16.2)** — the §16.7 D10 caveat is
+**Visual block editor (§16.2)** — ~~the §16.7 D10 caveat is
 honest: today `<LayoutFieldset>` binds comma-separated *strings*
 for `unitLabelsStr` and `rowStartOffsetsStr`; `<StationForm>`'s
 `buildTemplate()` parses them to arrays at save time. A drag-
 drop visual editor naturally binds *arrays*. So §16.2's "swap"
-actually entails refactoring `<StationForm>`'s state too. Plus
+actually entails refactoring `<StationForm>`'s state too.~~ (This
+refactor shipped as §14.21.) Plus
 the editor would be the third caller of `STRATEGY_OPTIONS` /
 `ROLE_OPTIONS` / `RNG_OPTIONS` — `GET /api/meta` (§14.7 punt's
 "third caller appears" trigger) is met. And `buildTemplate` /
@@ -3751,7 +3805,7 @@ These slices literally cannot ship without these.
 
 | # | Item | For | Cost | Reference |
 |---|------|-----|------|-----------|
-| 1 | `<LayoutFieldset>` state-shape refactor (strings → arrays) | §16.2 | ~50 LoC; tests already pin the round-trip via §16.7 S3 | §16.7 D10, §14.13 caveat |
+| 1 | ~~`<LayoutFieldset>` state-shape refactor (strings → arrays)~~ | §16.2 | **shipped (§14.21)** | §16.7 D10, §14.13 caveat |
 | 2 | Engine primitives: `weighted`, `prev_ref`, `genre_pick` | port | 3–4 commits per primitive | §11, §4.3 |
 
 ### Tier 2 — Soft prerequisites
@@ -3804,7 +3858,7 @@ reduces cleanup later. Numbers map to the tier tables above.
 2. ~~**Backup tooling** (#9)~~ — **shipped (§14.18)**
 3. ~~**`GET /api/meta`** (#3)~~ — **shipped (§14.19)**
 4. ~~**Extract `template.ts`** (#4)~~ — **shipped (§14.20)** — moves `buildTemplate` / `unpack` out of the component
-5. **`<LayoutFieldset>` arrays refactor** (#1) — makes §16.2's swap a real one-component swap
+5. ~~**`<LayoutFieldset>` arrays refactor** (#1)~~ — **shipped (§14.21)** — makes §16.2's swap a real one-component swap
 
 **Phase B — visual block editor (§16.2)**
 
