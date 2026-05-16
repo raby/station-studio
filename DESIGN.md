@@ -387,7 +387,9 @@ The trace is stored as JSON alongside the playlist (in a `playlist_trace` table 
 | Item                                        | Status       | Notes                                                   |
 |---------------------------------------------|--------------|---------------------------------------------------------|
 | Visual block editor                         | later (§16.2)| v2; operates on same JSON as wizard; needs §17 Phase A  |
-| Pre-§16.2 / pre-port roadmap                | next (§17)   | Phase A: Alembic + backups + /api/meta + template.ts + LayoutFieldset arrays |
+| Pre-port roadmap (§17 Phase A)              | done         | All 5 unblocks shipped (§14.17–§14.21)                  |
+| Weekly study findings                       | done (§17.1) | Port is bigger than §17 estimated; §16.2 lands AFTER port |
+| Weekly port (§17 Phase B, was C)            | next         | 20–26 commits; engine primitives + constraints + schema additions + port artifact |
 | Station creation wizard (UI)                | done (14.7)  | Produces the template JSON; reuses `web/src/lib/api.ts` |
 | Edit mode for stations                      | done (14.13) | `<StationForm>` extracted; JSON preview + diff + reset  |
 | Wizard polish (presets, per-field errors)   | later (14.7) | See 14.7 table; wait for real-user pain                 |
@@ -2564,7 +2566,7 @@ A quick "where are we" for a future reader. Last updated at commit
 | Delete / station-reset   | Shipped (14.10). Per-row delete + station nuke; cascades.        |
 | Disk-export UI button    | Shipped (14.11). Trace viewer "Export to disk" + status line.    |
 | Edit mode for stations   | Shipped (14.13). Shared `<StationForm>` + JSON preview + diff + reset. |
-| **Pre-§16.2 / port roadmap** | **In flight. §17 Phase A — #8 + #9 + #3 + #4 + #1 shipped (14.17-14.21). Phase A complete. Next: Phase B (§16.2).** |
+| **§17 pre-port roadmap** | **Phase A complete (§14.17–§14.21). §17.1 weekly study done; phase order revised (port before §16.2). Next: Phase B = the weekly port.** |
 | Visual block editor      | Deferred (v2). Lands as §17 Phase B after Phase A unblocks.      |
 | Trace versioning         | Deferred. See §16.4 (queued behind §16.1 by design).             |
 | Accessibility pass       | Deferred. §17 Phase D — single sweep after §16.2 + port.         |
@@ -3852,26 +3854,45 @@ specific.
 Stable execution path; each step listed unblocks the next or
 reduces cleanup later. Numbers map to the tier tables above.
 
-**Phase A — pre-block-editor unblocks** (~6 commits):
+**Phase A — pre-port unblocks** (~6 commits, all shipped):
 
 1. ~~**Alembic baseline** (#8)~~ — **shipped (§14.17)**
 2. ~~**Backup tooling** (#9)~~ — **shipped (§14.18)**
 3. ~~**`GET /api/meta`** (#3)~~ — **shipped (§14.19)**
-4. ~~**Extract `template.ts`** (#4)~~ — **shipped (§14.20)** — moves `buildTemplate` / `unpack` out of the component
-5. ~~**`<LayoutFieldset>` arrays refactor** (#1)~~ — **shipped (§14.21)** — makes §16.2's swap a real one-component swap
+4. ~~**Extract `template.ts`** (#4)~~ — **shipped (§14.20)**
+5. ~~**`<LayoutFieldset>` arrays refactor** (#1)~~ — **shipped (§14.21)**
 
-**Phase B — visual block editor (§16.2)**
+**Phase B — weekly port (was Phase C; reordered per §17.1)** (20–26 commits):
 
-The slice itself, lands cleanly on Phase A's groundwork. Real
-second-station layout will surface the design shape; until then
-§16.2's brief stays intentionally light per its own framing.
+Was previously named "Phase C" with the block editor (§16.2)
+in Phase B. After the §17.1 weekly study, the order flipped:
+weekly's design constraints are what shape §16.2, so the
+port lands first.
 
-**Phase C — port prep + the port** (probably 6–8 commits):
+Sub-slice ordering (engine work in dependency order):
 
-6. **Excluded-candidates in trace** (#5) — prereq for #2's weighted being authoriable
-7. **Engine primitives** (#2) — `prev_ref` first (smallest), `genre_pick` second (needs Track.genre_tags column — Alembic earns its keep), `weighted` third (biggest, depends on excluded-candidates)
-8. **"Start from existing" / template-JSON import** (#6) — makes the port concrete instead of hand-retyping
-9. **The port itself** — express weekly's template as `stations/rebirth-radio.json`, run weekly's existing byte-equality check against the new engine, retire weekly's hardcoded generator
+6. **Excluded-candidates in trace** (#5) — prereq for #2.3 weighted
+7. **`sequential` strategy + multi-cursor support** — generalise from `window`
+8. **`jingle` strategy** — simplest non-window slot type
+9. **`mix` strategy + MixUsage table + Alembic** — first cross-week state
+10. **Artist-match subsystem** (port `artist_match.py` ~187 LoC) + ArtistAlias table
+11. **`weighted` commercial strategy** — two-tier with squared-remaining + dedup
+12. **`prev_ref` strategy** — cross-playlist lookup with fallback
+13. **Rule table (per-station) + CRUD**
+14. **`PlaylistEntry.slot_type` column + Alembic**
+15. **Template slot-shape generalisation** — flat slot list expression form alongside row-template
+16. **"Start from existing" / template-JSON import** (#6) — read weekly's existing template
+17. **The port itself** — `stations/rebirth-radio.json` + byte-equality verification
+
+See §17.1 for the per-sub-slice rationale + commit estimate
+breakdown.
+
+**Phase C — visual block editor (§16.2)** (was Phase B):
+
+After the port, two real stations (Classics + Rebirth Radio)
+shape the editor's design surface. Designing now (one-station-
+informed) would risk rework. The §16.2 brief stays intentionally
+light until Phase B reveals the actual layout vocabulary.
 
 **Phase D — accessibility (§16.5)**
 
@@ -3944,5 +3965,333 @@ worth deferring a real user need.
   brief covers retroactive-only audit cleanly; the §16.2
   block-editor a11y becomes its own follow-up under §16.5's
   same toolchain.
+
+### 17.1 Weekly study — findings (Option-C design pass)
+
+**Why this section.** Before committing to Phase B (§16.2 block
+editor) vs Phase C (weekly port), we read weekly/'s codebase to
+understand what station-studio's engine actually needs to absorb.
+The study turned up enough architectural surprises that the §17
+estimates need revising and the §16.2-vs-port ordering decision
+gets a clearer answer.
+
+**Sources read** in `~/code/rebirth/weekly/`:
+- `README.md` (architecture overview)
+- `app/services/template.py` (the 2,196-slot template builder)
+- `app/services/generator.py` (the generation engine, 692 LoC —
+  read function map + the load-balanced `_pick_commercial`)
+- `app/services/artist_match.py` (collaboration parsing + alias
+  resolution)
+- `app/services/rules.py` (configurable rule defaults)
+- `app/models.py` (10 ORM tables — schema scope)
+- `weekly-desktop/README.md` + `weeklyui/README.md` (just
+  packaging + UI — no new engine architecture)
+
+**The big picture.** Weekly is meaningfully *more complex* than
+Classics. The §17 brief understated the scope. Concrete diffs:
+
+| Dimension              | Classics                          | Weekly                                           |
+|------------------------|-----------------------------------|--------------------------------------------------|
+| Slot count             | 3,010 per week                    | 2,196 per week                                   |
+| Source pools           | 3 (RG_RADIO, RG_PARTY, RG_MASTER) | 6 (COMMERCIAL, NIGHT, WEEKEND, MIXES, JINGLES, MASTER) |
+| Slot types             | 1 (`window`)                      | 5 (jingle, commercial, mix, prev_ref, sequential-block) |
+| Cursors                | 1                                 | 9 (NIGHT_1…NIGHT_7 + WEEKEND_1, WEEKEND_2)       |
+| RNG                    | off                               | on, seeded                                       |
+| Selection strategies   | sequential window                 | weighted with two-tier fallback, sequential, genre-tagged random, prev-week lookup |
+| Cross-slot constraints | none                              | artist dedup window (10 picks), track shuffle-bag |
+| Cross-week constraints | none                              | mix exclusion window (20 weeks)                  |
+| Cross-playlist deps    | none                              | prev_ref reads previous week's slot N            |
+| Configurable rules     | (template constants)              | 4 DB-stored rules with API CRUD                  |
+| Aliases                | none                              | artist alias table with collaboration-aware lookup |
+
+**Finding 1 — template shape diverges.**
+
+- Classics uses a *compact row-template*: `layout.row_template`
+  is a small list of blocks (`[{source, strategy, size}]`)
+  applied to N rows, expanded at parse time.
+- Weekly uses a *flat slot list*: `build_template()` produces
+  2,196 explicit slot dicts, each with its own `type` + params.
+
+Station-studio's current internal representation can't carry
+weekly. To unify:
+
+(a) **Engine internal representation** becomes "flat list of
+    typed slots", consistent across both stations.
+(b) **Template JSON public shape** stays plural — Classics's
+    row-template is one expression form, weekly's flat slot list
+    is another. Both lower into the same internal flat list at
+    `parse_template()` time.
+
+This is a real generalisation of `engine/template.py`. Roughly:
+
+```
+template.layout = {
+  # Classics: compact row-template (existing)
+  unit, unit_labels, row_start_offsets, row_template: [...]
+  # OR (weekly):
+  slots: [
+    { type: "jingle", genre: "Daytime" },
+    { type: "commercial" },                                     # ×200
+    { type: "mix", genre: "01Alphastate", exclusion_window: 20 },
+    { type: "prev_ref", position: 1742, fallback_genre: "..." },
+    { type: "sequential", cursor_id: "NIGHT_1" },               # ×N
+    ...
+  ]
+}
+```
+
+The expanded form is `list[SlotSpec]` regardless of expression.
+
+**Finding 2 — five slot types, each with their own resolver.**
+
+Weekly's slot type vocabulary, in rough order of complexity:
+
+| Type            | Resolver                                                            | New for station-studio? |
+|-----------------|---------------------------------------------------------------------|--------------------------|
+| `sequential`    | Read cursor for the named cursor; take N tracks from source starting at cursor position; advance cursor at end of generation | Mostly — Classics has `window` which is similar but bound to row-offsets not named cursors |
+| `jingle`        | Plain genre-tagged pick from JINGLES source                         | Yes (no random)          |
+| `mix`           | Random pick from a genre-tagged subset of MIXES, excluding tracks used in last N weeks | Yes (needs MixUsage table) |
+| `commercial`    | Two-tier weighted with track dedup (shuffle-bag = pool_size-1) AND artist dedup (window=10), with collaboration parsing + alias resolution | Yes (the biggest new strategy) |
+| `prev_ref`      | Look up previous playlist's slot at position P; fall back to a genre-tagged mix pick if previous doesn't exist or position invalid | Yes (cross-playlist dependency) |
+
+Each of these maps to an engine strategy module in `engine/strategies/`.
+The current strategies (`pick`, `window`) cover only the simplest case
+(roughly station-studio's `sequential` minus cursor naming).
+
+**Finding 3 — constraints are NOT slot-level primitives.**
+
+Artist dedup and mix exclusion operate ACROSS slots, not WITHIN
+them. The engine architecture station-studio has so far fills
+each slot independently — `pick` / `window` produces a track
+without consulting what other slots placed.
+
+Weekly's `_pick_commercial` reads `recent_artist_keys` (a sliding
+window of the last N picks' artist key-sets) and `used_track_ids`
+(a shuffle-bag of recent track ids). The MIX strategy reads
+`excluded_mix_ids` (a set of track ids used in the last N weeks
+of MixUsage). These are *state carried alongside generation*.
+
+This means the engine's generation loop needs:
+
+- A state container: `recent_artist_keys: list[frozenset[str]]`,
+  `used_track_ids: list[int]`, `excluded_mix_ids: set[int]`, etc.
+- The state container is passed to each strategy's resolver.
+- Strategies that mutate the state (i.e. `weighted commercial`)
+  append to it after picking.
+- Strategies that consult the state (i.e. `mix`) read from it.
+
+Plus the **artist-match subsystem** (`artist_match.py`, 187 LoC):
+collaboration parsing (`feat.`, `ft.`, `&`, `vs`, `with`, `x` as
+standalone, parentheticals, `;`, `,`), alias resolution
+(`Plastikman → Richie Hawtin`), case-insensitive set-overlap
+test. Substantial.
+
+**Finding 4 — cursors are richer and per-template-named.**
+
+Classics: `cursor.base_advance_per_week = 60` advances one global
+cursor. Each row's `row_start_offset` is an offset from that base.
+
+Weekly: 9 named cursors, each with its own initial position
+(`NIGHT_1: 0`, `NIGHT_2: 10`, ..., `WEEKEND_1: 0`, `WEEKEND_2: 120`),
+all advance by the same `cursor_advance_step` (default 120) per
+week. Persisted in the `cursor_state` table — already exists in
+station-studio's schema.
+
+To port, the template's cursor block grows from
+`{base_advance_per_week, cycle_weeks}` to something like:
+
+```
+cursors: {
+  advance_step: 120,
+  reset_cycle: 0,        # 0 = wrap, N = reset every N weeks
+  initial_positions: {
+    NIGHT_1: 0, NIGHT_2: 10, ..., WEEKEND_2: 120,
+  }
+}
+```
+
+Classics's single-cursor case becomes `initial_positions: { default: 0 }`
+or similar.
+
+**Finding 5 — configurable rules.**
+
+Weekly's 4 rules are stored in a `rule` table:
+- `artist_dedup_window` (default 10)
+- `mix_exclusion_weeks` (default 20)
+- `cursor_advance_step` (default 120)
+- `cursor_reset_cycle` (default 0)
+
+Read via `get_rule_value(db, key)`; CRUD via `/api/rules`. The
+rules are *global*, not per-station, because weekly is single-
+station by design.
+
+For station-studio to absorb this, rules become *per-station*
+(stored alongside the template, or in a `station_rule` table
+keyed by station + rule_key). Or: rules are template fields
+(part of the JSON document). Decision deferred — both are
+viable.
+
+**Finding 6 — schema additions.**
+
+Weekly's 10 ORM tables vs station-studio's 9:
+
+| Table                  | In station-studio? | Notes                                |
+|------------------------|-------------------|--------------------------------------|
+| SourcePlaylist         | ✓                 | Same                                  |
+| Track                  | ✓                 | Same (already has `genre` column)     |
+| SourcePlaylistEntry    | ✓                 | Same                                  |
+| WeeklyPlaylist         | → Playlist        | Maps to station-studio's `playlist`   |
+| WeeklyPlaylistEntry    | → PlaylistEntry   | Add `slot_type` column                |
+| CursorState            | ✓                 | Same (existing)                       |
+| Config                 | ✓                 | Same                                  |
+| **MixUsage**           | NEW               | (weekly_id, track_id, genre) — cross-week mix history |
+| **ArtistAlias**        | NEW               | (alias_name, canonical_name)          |
+| **Rule**               | NEW               | (key, value, description) — per-station? |
+
+The schema additions all need Alembic migrations (Phase A #8
+earns its keep — first real revision uses it).
+
+**Finding 7 — PREV_REF semantics matter for the port.**
+
+`PREV_REF` is the most station-studio-novel piece. Mechanics:
+- Each prev_ref slot specifies `position` (1-based slot in the
+  *previous* week's playlist) and `fallback_genre` (a mix
+  genre to pick from if previous-week lookup fails).
+- On generation of week N, the engine reads week N-1's entries
+  table to find the track at position P.
+- If week N-1 doesn't exist (e.g. first generation) OR position
+  P is out of range (e.g. previous template was different
+  length), fall back to a random mix pick with the specified
+  genre.
+- The fallback is what makes the FIRST EVER generation work
+  — no chicken-and-egg.
+
+In Classics's template, the closest analogue is "row 7 duplicates
+row 6 to avoid cross-week-boundary repeats" — that's a structural
+template trick, not a per-slot reference. Different mechanism;
+needs new engine work.
+
+### Implications
+
+**For §16.2 visual block editor.**
+
+The current §16.2 brief is intentionally light. The study makes
+it lighter still — designing for Classics's row-template alone
+would produce an editor that can't represent weekly. Key
+realities:
+
+- **2,196 slots is too many to drag-drop individually.** Weekly's
+  template has 7 segments + repeated mix sections. The editor
+  needs SEGMENT-level abstraction at least; possibly a
+  "macro-block" or "section" primitive that the user can
+  define once and reuse (e.g. `mix-section(8 pairs)` would be
+  one composite block).
+- **Slot type vocabulary expands.** Each chip in the editor
+  needs a type (jingle / commercial / mix / prev_ref /
+  sequential), not just a source. The chip's editable fields
+  vary by type (mix has `genre` + `exclusion_window`;
+  prev_ref has `position` + `fallback_genre`; etc.).
+- **Cross-slot constraints don't have a natural UI place.** Artist
+  dedup window is template-level (or station-level), not
+  slot-level. The editor needs a "rules / constraints"
+  fieldset alongside the visual canvas.
+
+The right move: **defer §16.2 detailed design until AFTER the
+port lands**. The port is the design-shaping work; without it,
+§16.2 would be designed against one station's patterns and
+likely need rework when weekly arrives.
+
+**For §17 Phase C (port).**
+
+The §17 brief estimated 10–15 commits. The realistic estimate
+after the study is 20–25 commits, broken roughly:
+
+| Sub-slice                                                | Est. commits | Notes                                           |
+|----------------------------------------------------------|--------------|-------------------------------------------------|
+| Engine slot-type architecture refactor                   | 2-3          | Generalise template internal repr; expand strategy registry |
+| `sequential` strategy with named cursors                  | 1-2          | Generalise from current `window`                 |
+| Multi-cursor template support                            | 1            | `cursors.initial_positions` map + schema       |
+| `jingle` strategy + genre-on-Track flow                   | 1            | Trivial; already have Track.genre              |
+| `mix` strategy + MixUsage table + Alembic                | 2-3          | Cross-week state; first non-trivial migration   |
+| `prev_ref` strategy + fallback path + tests             | 2-3          | Cross-playlist lookup; the genuinely novel one |
+| Artist-match subsystem (port from weekly)                 | 2            | 187 LoC plus tests; mostly verbatim port        |
+| `weighted` commercial strategy with two-tier fallback     | 3-4          | The biggest single strategy; squared-remaining + dedup |
+| ArtistAlias table + CRUD + Alembic                       | 1-2          | Standard CRUD pattern                            |
+| Rule table (per-station) + CRUD + Alembic                | 1-2          | Pattern from weekly                              |
+| PlaylistEntry slot_type column + Alembic                 | 1            | Schema change; backfill optional                 |
+| Excluded-candidates in trace (§17 #5)                    | 1            | Re-affirms its place — needed for weighted-debug |
+| Import path: read weekly's template JSON                  | 1-2          | "Start from existing" preset variant            |
+| Express weekly's template as `stations/rebirth-radio.json`| 1-2          | The actual port artifact                         |
+| Byte-equality verification harness                       | 1            | Weekly's existing tests verify this; reuse them  |
+
+Total: **20-26 commits**. The big-ticket sub-slices are
+`weighted` (the commercial selection engine) and `prev_ref` (the
+cross-playlist dependency).
+
+**Ordering decision (confirmed): Port → §16.2.**
+
+Reasoning:
+
+- §16.2 designed without weekly's slot types would need rework.
+- The port doesn't author weekly's template visually — it
+  *imports* the existing template. So §16.2 isn't on the port's
+  critical path.
+- Each port sub-slice is independently shippable. The engine
+  generalisations are useful even without the final port
+  artifact (other future stations get them too).
+
+**Ordering decision (revised): finish Phase A → execute Phase
+C in sub-slice order → THEN write §16.2 design doc → THEN
+§16.2 implementation → THEN §16.5 a11y pass over the
+expanded surface.**
+
+The current §17 phase ordering had §16.2 ahead of the port (Phase
+B before Phase C). That ordering is now revised: Phase B
+becomes "after Phase C" or, more honestly, "Phase E" — there's
+no compelling case for §16.2 to lead.
+
+### Revised §17 phase ordering
+
+| Phase | Was                    | Now (post-§17.1)                          | Status     |
+|-------|------------------------|-------------------------------------------|------------|
+| A     | Unblocks (#8,#9,#3,#4,#1) | Same                                    | 3/5 done   |
+| **B** | **§16.2 block editor** | **§17 Phase C (port) — was C**            | next       |
+| **C** | **Port (was)**         | **§17.1 design + §16.2 brief tightening** | post-port  |
+| D     | §16.5 a11y pass        | §16.5 a11y pass (sweeps port + editor)    | last       |
+
+The block editor stays valuable; it just lands when its design
+surface is real (two stations + slot-type variety) rather than
+imagined (one station + window only).
+
+### Implementation notes for future pick-up
+
+- **Start the port with Phase A finish (#4 + #5)** — independent
+  of weekly, both small. Get them out of the way first so the
+  engine work doesn't bump into them mid-flight.
+- **Then sequence the engine work in dependency order**:
+  `sequential` (generalises `window`) → multi-cursor →
+  `jingle` (simplest non-window strategy) → `mix` + MixUsage
+  (first cross-week state) → artist-match (subsystem only,
+  no strategy uses it yet) → `weighted` (consumes artist-match
+  + needs excluded-candidates per §17 #5) → `prev_ref`
+  (cross-playlist). Each is independently shippable; each
+  failure mode is isolated.
+- **Don't pre-design §16.2 during the port.** Keep §16.2's
+  existing brief (light by design). Revisit when the port
+  has shipped — the design constraints become concrete then.
+- **The byte-equality harness from weekly** is the gold-standard
+  acceptance criterion. Weekly's existing tests generate a
+  known week and compare against an iTunes XML fixture. When
+  station-studio produces the same bytes, the port is done;
+  weekly's hardcoded generator can be retired.
+- **Engine refactors should preserve Classics's existing
+  behaviour byte-for-byte.** Classics's tests are the safety
+  net for "we changed the engine without breaking the existing
+  station". If a Classics test starts failing, the engine
+  refactor went too far.
+- **Read `weekly/CODE_REVIEW.md` and `CODE_REVIEW_2.md`** before
+  starting the port — they likely capture latent bugs and
+  edge cases the port should preserve (or deliberately not
+  preserve).
 
 
