@@ -1,11 +1,13 @@
 """SQLAlchemy ORM models.
 
 Generalised from weekly/app/models.py. Key differences:
-  * No station-specific tables (no MixUsage, no ArtistAlias in v1 — added per station
-    as the engine grows new primitives).
   * Playlist + PlaylistEntry are station-scoped.
   * PlaylistTrace table holds the persisted trace keyed by trace_id.
   * Station template JSON lives on the Station row.
+  * MixUsage shipped in §14.25 (cross-week mix dedup, station-scoped via
+    playlist_id rather than weekly's weekly_playlist_id).
+  * ArtistAlias shipped in §14.26 (kept global rather than station-scoped;
+    see the model's docstring for the rationale).
 """
 from __future__ import annotations
 
@@ -204,6 +206,31 @@ class CursorState(Base):
     __table_args__ = (
         UniqueConstraint("station_id", "name"),
     )
+
+
+class ArtistAlias(Base):
+    """Maps an alias artist name to a canonical artist name (§14.26).
+
+    Used by the artist-dedup subsystem ported in §14.26: if "Plastikman"
+    is an alias for "Richie Hawtin", a track tagged with either name is
+    treated as the same artist in the §17.1 commercial dedup window
+    (which sub-slice #11 `weighted` consumes via engine.artist_match).
+
+    Global (not station-scoped). The premise is that artist identity is a
+    library-wide fact — "Plastikman is Richie Hawtin" doesn't change
+    between Classics and Rebirth Radio. If a future station genuinely
+    wants to treat the two as separate, scope per-station via a new
+    column (punt; revisit only on real demand).
+
+    Both names stored as-is for display; matching is done case-insensitively
+    at runtime via the alias_map's lowercase keys (see persistence.
+    load_alias_map and engine.artist_match.build_alias_map).
+    """
+    __tablename__ = "artist_alias"
+
+    id = Column(Integer, primary_key=True)
+    alias_name = Column(Text, nullable=False, unique=True)
+    canonical_name = Column(Text, nullable=False)
 
 
 class MixUsage(Base):

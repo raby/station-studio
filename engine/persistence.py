@@ -7,8 +7,9 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session, joinedload
 
+from engine.artist_match import build_alias_map
 from engine.models import (
-    MixUsage, Playlist, PlaylistEntry, PlaylistTrace,
+    ArtistAlias, MixUsage, Playlist, PlaylistEntry, PlaylistTrace,
     SourcePlaylist, SourcePlaylistEntry, Station,
 )
 from engine.template import Template
@@ -143,6 +144,20 @@ def max_mix_exclusion_window(template: Template) -> int:
         if b.strategy == "mix" and b.exclusion_window is not None
     ]
     return max(windows) if windows else 0
+
+
+def load_alias_map(db: Session) -> dict[str, str]:
+    """Load the global ArtistAlias table into the dict shape that
+    ``engine.artist_match.resolve_artist_keys`` consumes.
+
+    Returns ``{lowercase_alias: lowercase_canonical}`` with self-mappings
+    included for canonical names (so resolving the canonical itself
+    yields the same key as resolving any of its aliases). Empty dict
+    when the table has no rows. Ported from weekly's `app/services/
+    generator.py:load_alias_map` (a one-liner that wraps build_alias_map).
+    """
+    rows = db.query(ArtistAlias.alias_name, ArtistAlias.canonical_name).all()
+    return build_alias_map([(a, c) for (a, c) in rows])
 
 
 def load_excluded_mix_ids(db: Session, *, station_id: int, window: int) -> set[int]:

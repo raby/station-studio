@@ -3085,6 +3085,122 @@ phrasing).
 
 ---
 
+### 14.26 artist-match subsystem + ArtistAlias table — what shipped (§17 Phase B sub-slice #10)
+
+**Goal.** Port the `artist_match.py` subsystem from weekly verbatim so the
+upcoming `weighted` commercial strategy (sub-slice #11) has the same
+artist-conflict semantics. The eventual byte-equality harness against
+weekly's real playlists requires identical splitting of collaboration
+strings (`feat.`, `ft.`, `&`, `vs`, `with`, `x` as standalone,
+parentheticals, `,`, `;`) and identical alias resolution behaviour.
+
+This slice is intentionally low-creativity: ~187 LoC of regex + helper
+functions ports almost verbatim from weekly. Where station-studio
+diverges is in *how the alias table is loaded* (multi-station ORM
+context vs weekly's single-station global) and *where the module lives*
+(`engine/artist_match.py` vs weekly's `app/services/artist_match.py`).
+
+**Engine module (`engine/artist_match.py`):**
+
+Public API mirrors weekly exactly:
+
+- `extract_artist_keys(artist: str | None) -> frozenset[str]` — splits
+  a raw artist string into lowercase keys. Handles parentheticals,
+  feat./ft. credits inside parens, comma/semicolon, standalone `x`
+  vs `xcx`, ampersand-only-when-space-padded.
+- `resolve_artist_keys(artist, alias_map)` — same plus alias resolution
+  via `{lowercase_alias: lowercase_canonical}`.
+- `artists_conflict(keys_a, keys_b) -> bool` — set overlap test.
+- `build_alias_map(aliases)` — list of `(alias, canonical)` pairs →
+  dict, with self-mappings for canonicals.
+
+Regex behaviour locked at line level — the weekly tests verify edge
+cases like `"Charli xcx"` not splitting, `"Olly Alexander (Years &
+Years)"` preserving the parenthetical act name, `"(feat. A & B)"`
+splitting on `&` inside the parenthetical. All 95 tests ported and
+pass against station-studio's port.
+
+**Schema (`engine/models.py` + Alembic migration `6db55f2a13af`):**
+
+```
+artist_alias(id PK, alias_name TEXT NOT NULL UNIQUE, canonical_name TEXT NOT NULL)
+```
+
+Global, not station-scoped. Rationale: artist identity is a library-
+wide fact. "Plastikman is Richie Hawtin" doesn't change between
+Classics and Rebirth Radio. If a future station genuinely wants two
+artists treated separately, scope per-station via a new column — but
+that's a punt, revisit only on real demand.
+
+Migration filename trimmed to `6db55f2a13af_artist_alias.py`. Body
+trimmed of autogen's spurious index re-creations (same baseline-style
+mismatch artefact as §14.25's migration).
+
+**Persistence (`engine/persistence.py`):**
+
+`load_alias_map(db) -> dict[str, str]` reads every ArtistAlias row,
+calls `build_alias_map`, returns the resolved dict ready for
+`resolve_artist_keys`. One-liner wrapper; lives next to
+`load_excluded_mix_ids` because both are cross-slot/cross-week state
+loaders the eventual `weighted` strategy will need together.
+
+**Module docstring fix.** `engine/models.py`'s top-level docstring
+still claimed "No station-specific tables (no MixUsage, no
+ArtistAlias)". Updated to reflect that both shipped — MixUsage in
+§14.25 (station-scoped) and ArtistAlias here (global). Old text
+would have misled a future reader.
+
+**No API endpoints yet.** ArtistAlias CRUD belongs with the Rule
+table CRUD (sub-slice #13) — both are "settings the user manages
+outside template authoring". Until the wizard / settings UI grows
+a place for them, aliases are populated via direct SQL or fixtures.
+Defer endpoint design until #13 makes the UI shape concrete.
+
+**No `weighted` integration yet.** The whole point of this subsystem
+is to feed `weighted` (sub-slice #11). That landing is what proves
+the port works end-to-end. For now, the helper + DB plumbing are
+"loaded gun, no trigger yet" — proven correct by the byte-equivalent
+test fixtures.
+
+**Tests added (100 new, total 331):**
+
+- 95 tests in `test_artist_match.py` — ported verbatim from weekly's
+  `tests/test_artist_match.py` (extract / resolve / conflict / build_
+  alias_map classes + a parametrised real-world commercial-pool data
+  test + a collaboration-conflicts integration class). Updated only
+  the import path (`engine.artist_match` ← `app.services.artist_match`).
+- 5 tests in `test_alias_persistence.py` (new file) — load_alias_map
+  empty/single/multi-aliases-same-canonical; end-to-end load_alias_map
+  → resolve_artist_keys; alias_name UNIQUE constraint enforced at the
+  schema layer.
+
+**Backward compatibility.** Pure addition. No existing code paths
+touched. Classics generation byte-for-byte unchanged (Classics
+templates don't use the `weighted` strategy that will eventually
+consume artist-match).
+
+**Punts:**
+
+- **CRUD endpoints for ArtistAlias.** Defer to sub-slice #13 (Rule
+  table + CRUD) — both deserve the same wizard / settings surface.
+- **Per-station aliases.** Single global table for now. Add a
+  station_id FK column when a real station asks for it.
+- **Alias chains** (A → B → C). The current `build_alias_map`
+  resolves one level deep. Weekly's behaviour is the same; if a
+  future entry maps `Plastikman → Richie Hawtin` AND `Richie
+  Hawtin → Different Person`, the second mapping is what wins for
+  "Plastikman" (because `Plastikman → Richie Hawtin` then
+  `Richie Hawtin` is keyed and… actually it would resolve to
+  Richie Hawtin, since the dict lookup doesn't recurse). Document
+  if a user reports surprise; otherwise leave as-is — single-level
+  is simpler and matches weekly.
+- **Alias map caching across requests.** Loaded per-request today.
+  Move to a process-level cache (`functools.lru_cache` on a
+  bound query, with invalidation on CRUD) only if the load
+  shows up in a profile.
+
+---
+
 ## 15. Status snapshot
 
 A quick "where are we" for a future reader. Last updated at commit
@@ -3109,7 +3225,7 @@ A quick "where are we" for a future reader. Last updated at commit
 | Delete / station-reset   | Shipped (14.10). Per-row delete + station nuke; cascades.        |
 | Disk-export UI button    | Shipped (14.11). Trace viewer "Export to disk" + status line.    |
 | Edit mode for stations   | Shipped (14.13). Shared `<StationForm>` + JSON preview + diff + reset. |
-| **§17 pre-port roadmap** | **Phase A complete (§14.17–§14.21). Phase B underway: sub-slices #5 (§14.23), #7 (§14.22), #8 (§14.24), #9 (§14.25) shipped. **Next: sub-slice #10 = artist-match subsystem port (`artist_match.py` ~187 LoC) + ArtistAlias table.** |
+| **§17 pre-port roadmap** | **Phase A complete (§14.17–§14.21). Phase B underway: sub-slices #5 (§14.23), #7 (§14.22), #8 (§14.24), #9 (§14.25), #10 (§14.26) shipped. **Next: sub-slice #11 = `weighted` commercial strategy — the biggest single strategy (3–4 commits estimated); first consumer of the §14.26 artist-match subsystem.** |
 | Visual block editor      | Deferred (v2). Lands as §17 Phase B after Phase A unblocks.      |
 | Trace versioning         | Deferred. See §16.4 (queued behind §16.1 by design).             |
 | Accessibility pass       | Deferred. §17 Phase D — single sweep after §16.2 + port.         |
@@ -4418,7 +4534,7 @@ Sub-slice ordering (engine work in dependency order):
 7. ~~**`sequential` strategy + multi-cursor support**~~ — **shipped (§14.22)**
 8. ~~**`jingle` strategy**~~ — **shipped (§14.24)**
 9. ~~**`mix` strategy + MixUsage table + Alembic**~~ — **shipped (§14.25)**
-10. **Artist-match subsystem** (port `artist_match.py` ~187 LoC) + ArtistAlias table
+10. ~~**Artist-match subsystem** (port `artist_match.py` ~187 LoC) + ArtistAlias table~~ — **shipped (§14.26)**
 11. **`weighted` commercial strategy** — two-tier with squared-remaining + dedup
 12. **`prev_ref` strategy** — cross-playlist lookup with fallback
 13. **Rule table (per-station) + CRUD**
