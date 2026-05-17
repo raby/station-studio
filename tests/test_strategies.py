@@ -503,6 +503,34 @@ def test_weighted_excluded_marks_both_blocked_with_suffix():
     assert "also in shuffle-bag" in by_id[1].reason
 
 
+def test_weighted_excluded_reason_string_is_deterministic_under_multi_key_collision():
+    """The reason format `sorted(colliding_keys)` is load-bearing for
+    snapshot/byte-equality testing — a future refactor that drops the
+    sort would silently break reproducibility. This pins the contract."""
+    # Track has TWO artist keys (a collaboration); BOTH are in the
+    # window. The reason must always cite them in sorted order
+    # regardless of insertion order.
+    pool = [
+        CommercialTrack(id=1, name="X", artist="Zed feat. Aaron"),
+        CommercialTrack(id=2, name="Y", artist="Other"),
+    ]
+    lookups = build_lookups(pool)
+    # Put BOTH 'aaron' and 'zed' in the window via prior picks. The
+    # collision set for track 1 is {'aaron', 'zed'}; sorted output
+    # must always be 'aaron', 'zed'.
+    _, info = apply_weighted(
+        pool, lookups=lookups,
+        recent_artist_keys=[frozenset({"aaron"}), frozenset({"zed"})],
+        used_track_ids=[],
+        rng=None, window=10, source_name="COMM",
+    )
+    by_id = {ec.track_id: ec for ec in info.excluded_candidates}
+    assert 1 in by_id
+    # 'aaron' before 'zed' — alphabetical, not insertion order ('zed' first).
+    assert by_id[1].reason.index("'aaron'") < by_id[1].reason.index("'zed'")
+    assert "artist keys" in by_id[1].reason  # plural form for multi-key
+
+
 def test_weighted_excluded_uses_resolved_aliases_in_reason():
     """When an alias map is in play, the reason cites the CANONICAL
     key (which is what's actually in the dedup window), not the raw
