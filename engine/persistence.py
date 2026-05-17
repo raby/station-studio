@@ -155,6 +155,11 @@ def load_alias_map(db: Session) -> dict[str, str]:
     yields the same key as resolving any of its aliases). Empty dict
     when the table has no rows. Ported from weekly's `app/services/
     generator.py:load_alias_map` (a one-liner that wraps build_alias_map).
+
+    Whitespace + casing normalisation happens inside ``build_alias_map``
+    (both names are ``strip().lower()``-ed), so callers can trust the
+    returned dict's keys are already canonical-form. Don't re-normalise
+    at the call site.
     """
     rows = db.query(ArtistAlias.alias_name, ArtistAlias.canonical_name).all()
     return build_alias_map([(a, c) for (a, c) in rows])
