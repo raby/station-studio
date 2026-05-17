@@ -14,13 +14,18 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 
-SUPPORTED_STRATEGIES = {"window", "pick", "sequential"}
+SUPPORTED_STRATEGIES = {"window", "pick", "sequential", "jingle"}
 # v1 had {"window", "pick"} only. `sequential` lands in §14.22 (§17 Phase B
 # first bit) as the Weekly-port generalisation: a slot that reads its start
 # position from a NAMED CURSOR (declared in layout.cursors_init) instead of
 # the row-offsets list. Same algorithm as `window`; different start-position
 # source. Cursors advance by the same base_advance_per_week as the main
 # cursor — see Template.cursor_position().
+#
+# `jingle` lands in §14.24 (§17 Phase B sub-slice #8). Genre-filtered pick
+# from a source pool — addresses the pool by the per-track `genre`
+# attribute rather than position. Requires a `genre` field on the block
+# spec; forbidden for any other strategy.
 SUPPORTED_RNG = {"off", "on"}
 SUPPORTED_ROLES = {"content", "reference"}
 # Cadence is purely metadata for the engine — `weekly` is the only value
@@ -61,6 +66,11 @@ class BlockSpec:
     # forbidden for 'window' / 'pick' (the row-offset style). Validated by the
     # parser. None = "no named cursor; use row_offset[row_idx]" (existing).
     cursor_id: str | None = None
+    # genre is required for strategy='jingle' (§14.24) and forbidden for any
+    # other strategy. Filters the source pool to tracks whose `genre`
+    # attribute equals this value (case-sensitive exact match). None for
+    # non-jingle blocks.
+    genre: str | None = None
 
 
 @dataclass
@@ -274,7 +284,10 @@ def _parse_block(
         raw,
         {"source", "strategy", "size"},
         where="block",
-        optional={"cursor_id"},  # §14.22 — required when strategy='sequential'
+        optional={
+            "cursor_id",  # §14.22 — required when strategy='sequential'
+            "genre",      # §14.24 — required when strategy='jingle'
+        },
     )
     if raw["source"] not in known_sources:
         raise TemplateError(f"block references unknown source '{raw['source']}'")
@@ -283,7 +296,7 @@ def _parse_block(
 
     # Strategy ↔ cursor_id coupling (§14.22):
     #   strategy='sequential' requires cursor_id; the cursor must be declared
-    #   strategy='window' / 'pick' forbid cursor_id (row-offset addressing only)
+    #   strategy='window' / 'pick' / 'jingle' forbid cursor_id
     strategy = raw["strategy"]
     cursor_id = raw.get("cursor_id")
     if strategy == "sequential":
@@ -303,11 +316,28 @@ def _parse_block(
                 f"(got strategy={strategy!r}, cursor_id={cursor_id!r})"
             )
 
+    # Strategy ↔ genre coupling (§14.24):
+    #   strategy='jingle' requires a non-empty genre string
+    #   any other strategy forbids genre (would silently no-op otherwise)
+    genre = raw.get("genre")
+    if strategy == "jingle":
+        if not isinstance(genre, str) or not genre:
+            raise TemplateError(
+                "block with strategy='jingle' must specify a non-empty genre"
+            )
+    else:
+        if genre is not None:
+            raise TemplateError(
+                f"block genre is only valid when strategy='jingle' "
+                f"(got strategy={strategy!r}, genre={genre!r})"
+            )
+
     return BlockSpec(
         source=raw["source"],
         strategy=strategy,
         size=int(raw["size"]),
         cursor_id=cursor_id,
+        genre=genre,
     )
 
 

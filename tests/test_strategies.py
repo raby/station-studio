@@ -9,8 +9,11 @@ from __future__ import annotations
 import random
 import pytest
 
+from dataclasses import dataclass
+
 from engine.strategies.window import apply_window, WindowOutOfRangeError
 from engine.strategies.pick import apply_pick
+from engine.strategies.jingle import apply_jingle, JingleGenreNotFoundError
 
 
 # ---------- window -------------------------------------------------------
@@ -96,3 +99,67 @@ def test_pick_random_does_not_advance_cursor():
 def test_pick_empty_pool_raises():
     with pytest.raises(IndexError, match="pool is empty"):
         apply_pick([], cursor=0, rng=None, source_name="X")
+
+
+# ---------- jingle (§14.24) ---------------------------------------------
+
+
+@dataclass
+class GenreTrack:
+    id: int
+    name: str
+    genre: str | None = None
+
+
+def _jingle_pool() -> list[GenreTrack]:
+    return [
+        GenreTrack(id=1, name="Day-A", genre="Daytime"),
+        GenreTrack(id=2, name="Night-A", genre="Nighttime"),
+        GenreTrack(id=3, name="Day-B", genre="Daytime"),
+        GenreTrack(id=4, name="Mix-A", genre="Mixzone"),
+        GenreTrack(id=5, name="Day-C", genre="Daytime"),
+    ]
+
+
+def test_jingle_deterministic_returns_first_genre_match():
+    # No rng: first matching pool entry wins. 1-indexed pool position.
+    idx, track = apply_jingle(_jingle_pool(), genre="Daytime", source_name="JINGLES")
+    assert (idx, track.name) == (1, "Day-A")
+
+
+def test_jingle_random_seeded_is_reproducible():
+    pool = _jingle_pool()
+    rng_a = random.Random(7)
+    rng_b = random.Random(7)
+    a = apply_jingle(pool, genre="Daytime", rng=rng_a, source_name="JINGLES")
+    b = apply_jingle(pool, genre="Daytime", rng=rng_b, source_name="JINGLES")
+    assert a == b
+
+
+def test_jingle_random_only_picks_from_matching_genre():
+    pool = _jingle_pool()
+    rng = random.Random(123)
+    # Run many picks; every result must be a Daytime track.
+    for _ in range(50):
+        idx, track = apply_jingle(pool, genre="Daytime", rng=rng, source_name="JINGLES")
+        assert track.genre == "Daytime"
+        # 1-indexed positions for Daytime entries: 1, 3, 5.
+        assert idx in {1, 3, 5}
+
+
+def test_jingle_unknown_genre_raises_with_pool_context():
+    with pytest.raises(JingleGenreNotFoundError, match="MY_JINGLES.*no track with genre 'Banger'"):
+        apply_jingle(_jingle_pool(), genre="Banger", source_name="MY_JINGLES")
+
+
+def test_jingle_skips_tracks_with_no_genre_attribute():
+    pool = [GenreTrack(id=1, name="X", genre=None), GenreTrack(id=2, name="Y", genre="Daytime")]
+    idx, track = apply_jingle(pool, genre="Daytime", source_name="JINGLES")
+    assert (idx, track.name) == (2, "Y")
+
+
+def test_jingle_genre_match_is_case_sensitive():
+    # 'daytime' != 'Daytime'; we want loud failure on case drift rather
+    # than silently matching against a stale/typo'd genre tag.
+    with pytest.raises(JingleGenreNotFoundError):
+        apply_jingle(_jingle_pool(), genre="daytime", source_name="JINGLES")

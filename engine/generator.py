@@ -25,7 +25,7 @@ from typing import Any, Mapping
 
 from engine.template import Template, BlockSpec
 from engine.trace import Trace, TraceSlot
-from engine.strategies import apply_window, apply_pick
+from engine.strategies import apply_window, apply_pick, apply_jingle
 
 
 @dataclass
@@ -133,6 +133,34 @@ def generate(
                         pool_index=pool_idx,
                         track=track,
                         reason=reason_prefix,
+                    ))
+            elif block.strategy == "jingle":
+                # §14.24 Weekly-port: genre-filtered pick from the pool.
+                # Pool position is determined by which entries carry the
+                # requested genre tag, not by the row/cursor cursor —
+                # row_start_offsets[row_idx] is ignored. block.size loops
+                # in case a template ever wants N back-to-back jingles
+                # from the same genre, but size=1 is the typical case.
+                for _ in range(block.size):
+                    pool_idx, track = apply_jingle(
+                        pool,
+                        genre=block.genre,  # type: ignore[arg-type]
+                        rng=rng,
+                        source_name=block.source,
+                    )
+                    slot_counter += 1
+                    picks.append(track)
+                    trace.slots.append(_make_trace_slot(
+                        slot=slot_counter,
+                        unit=unit_label,
+                        row=row_idx + 1,
+                        block=block_idx + 1,
+                        block_spec=block,
+                        pool_index=pool_idx,
+                        track=track,
+                        reason=f"jingle from '{block.source}' "
+                               f"genre='{block.genre}' "
+                               f"({'random' if rng else 'first match'})",
                     ))
             elif block.strategy == "pick":
                 cursor = row_start_in_pool

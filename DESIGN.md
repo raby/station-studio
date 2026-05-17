@@ -2768,6 +2768,115 @@ chooses its own message format — same convention as the existing
 
 ---
 
+### 14.24 jingle strategy — what shipped (§17 Phase B sub-slice #8)
+
+**Goal.** Add the simplest non-window slot type from Weekly's vocabulary:
+a genre-filtered pick from a source pool. Lands as a stand-alone slice
+because (a) it exercises the `Track.genre` flow end-to-end without any
+cross-slot state (b) it shakes out the parser's "strategy requires an
+extra field" pattern that `mix`, `prev_ref`, and `weighted` will all
+reuse with their own per-strategy field needs.
+
+Mirrors weekly's `_resolve_jingle(rng, jingle_map, genre)` — but instead
+of pre-grouping by genre into a separate map structure, station-studio's
+`apply_jingle` filters the standard ordered pool at pick time. Same
+result; one less data structure to keep in sync.
+
+**Strategy module (`engine/strategies/jingle.py`):**
+
+```python
+def apply_jingle(pool, *, genre, rng=None, source_name) -> (int, track):
+    candidates = [(i+1, t) for i, t in enumerate(pool) if getattr(t, "genre", None) == genre]
+    if not candidates:
+        raise JingleGenreNotFoundError(...)
+    return candidates[0] if rng is None else rng.choice(candidates)
+```
+
+- `rng=None` (template's `rng: "off"`) → first matching track. Deterministic,
+  useful for station-studio's own dev fixtures and the bootstrap path.
+- `rng` set → `rng.choice(candidates)`. Mirrors weekly exactly, which is
+  what the eventual byte-equality harness needs.
+- Genre comparison is case-sensitive exact match. Tracks with `genre=None`
+  are invisible to the strategy regardless of slot — protects against a
+  typo'd genre tag silently matching null.
+- Failure mode is loud: `JingleGenreNotFoundError(IndexError)` includes
+  the source name + the requested genre + the pool size. Same shape as
+  `WindowOutOfRangeError` so callers can catch `IndexError` uniformly
+  for "missing pool data."
+
+**Template grammar additions (`engine/template.py`):**
+
+1. `SUPPORTED_STRATEGIES` adds `"jingle"`.
+2. `BlockSpec.genre: str | None = None` — required when
+   `strategy == "jingle"`, forbidden otherwise. Same pattern as the
+   §14.22 `cursor_id` ↔ `sequential` coupling.
+3. `_parse_block` validates the coupling with clear error messages.
+   Empty-string genre is also rejected (alongside `None`) — saves the
+   downstream strategy from a "no track with genre ''" head-scratcher.
+
+**Generator dispatch (`engine/generator.py`):**
+
+Added a `block.strategy == "jingle"` branch. Loops `block.size` times
+in case a template wants N back-to-back jingles from the same genre,
+but size=1 is the documented typical case (and weekly's templates
+always use size=1 for jingles — N-of-the-same would just emit the
+same track N times in `rng=off` mode). The block's row's
+`row_start_offsets[row_idx]` is **ignored** for jingle blocks — the
+pool addressing comes from the genre tag, not the cursor.
+
+Trace reason captures `genre='<G>'` + the mode (`random` vs `first
+match`) so the §16.8 search/filter and §14.23 excluded-candidates
+viewer can answer "why this jingle?" without re-running.
+
+**Backward compatibility.** Classics templates byte-for-byte unchanged:
+no jingle blocks, `BlockSpec.genre` defaults to `None`. Existing
+strategies skip the new validation branch. `FakeTrack` in
+`tests/test_generator_generic.py` gained an optional `genre: str | None
+= None` field — default `None` keeps every pre-existing pool fixture
+behaviour identical.
+
+**Tests added (14 new):**
+
+- 4 parser tests (`test_template.py`): jingle with genre accepted;
+  missing genre rejected; empty-string genre rejected; genre on
+  non-jingle strategy rejected.
+- 6 strategy tests (`test_strategies.py`): deterministic first-match;
+  seeded random reproducibility; rng mode only picks from matching
+  genre across many trials; unknown-genre error includes pool name +
+  requested genre; None-genre tracks skipped; case-sensitive matching.
+- 4 generator tests (`test_generator_generic.py`): rng=off picks
+  first match with trace reason intact; rng=on seeded run is
+  reproducible; unknown genre surfaces as IndexError from generator;
+  jingle block coexists with window in the same row addressing a
+  different source pool.
+
+**Why "no random" notation in §17.1 Finding 2 was a docs simplification.**
+The §17.1 weekly study table listed jingle's "New for station-studio?"
+as "Yes (no random)". That parenthetical was misleading — weekly's
+`_resolve_jingle` is randomised. The station-studio implementation
+mirrors that, with the additional rng=off path as a deterministic
+escape hatch. The Finding 2 table doesn't need rewriting; this entry
+documents the actual behaviour for future readers.
+
+**Punts:**
+
+- **Genre validation against the pool at template-parse time.** The
+  parser doesn't know which tracks are in the pool — pools are loaded
+  by `engine.persistence.load_pools` at generation time. Weekly's
+  generator has a separate `validate_template` step that cross-checks
+  jingle genres against `JINGLES` source contents before generation;
+  that's a sensible add but lands as its own slice once the API needs
+  it. Until then, the strategy's loud failure at generation is
+  sufficient.
+- **Multi-genre jingle blocks** (e.g. `genre: ["Daytime", "Mixzone"]`).
+  Not in any weekly template; revisit only if a real station wants
+  "any of these genres" semantics.
+- **Genre-prefix or regex matching.** Same rationale as above —
+  weekly's templates use exact strings, and a typo'd genre should
+  fail loud rather than near-match silently.
+
+---
+
 ## 15. Status snapshot
 
 A quick "where are we" for a future reader. Last updated at commit
@@ -4099,7 +4208,7 @@ Sub-slice ordering (engine work in dependency order):
 
 6. ~~**Excluded-candidates in trace** (#5)~~ — **shipped (§14.23)**
 7. ~~**`sequential` strategy + multi-cursor support**~~ — **shipped (§14.22)**
-8. **`jingle` strategy** — simplest non-window slot type
+8. ~~**`jingle` strategy**~~ — **shipped (§14.24)**
 9. **`mix` strategy + MixUsage table + Alembic** — first cross-week state
 10. **Artist-match subsystem** (port `artist_match.py` ~187 LoC) + ArtistAlias table
 11. **`weighted` commercial strategy** — two-tier with squared-remaining + dedup

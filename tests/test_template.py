@@ -222,6 +222,41 @@ def test_cursor_position_unknown_id_raises():
         tmpl.cursor_position("nope", 1)
 
 
+# ---------- §14.24: jingle strategy + genre coupling --------------------
+
+
+def test_jingle_block_with_genre_accepted():
+    tmpl = parse_template({**BASE, "layout": {**BASE["layout"], "row_template": [
+        {"source": "A", "strategy": "jingle", "size": 1, "genre": "Daytime"},
+    ]}})
+    assert tmpl.layout.row_template[0].strategy == "jingle"
+    assert tmpl.layout.row_template[0].genre == "Daytime"
+
+
+def test_jingle_block_missing_genre_rejected():
+    bad = {**BASE, "layout": {**BASE["layout"], "row_template": [
+        {"source": "A", "strategy": "jingle", "size": 1},
+    ]}}
+    with pytest.raises(TemplateError, match="must specify a non-empty genre"):
+        parse_template(bad)
+
+
+def test_jingle_block_empty_string_genre_rejected():
+    bad = {**BASE, "layout": {**BASE["layout"], "row_template": [
+        {"source": "A", "strategy": "jingle", "size": 1, "genre": ""},
+    ]}}
+    with pytest.raises(TemplateError, match="must specify a non-empty genre"):
+        parse_template(bad)
+
+
+def test_genre_on_non_jingle_strategy_rejected():
+    bad = {**BASE, "layout": {**BASE["layout"], "row_template": [
+        {"source": "A", "strategy": "window", "size": 3, "genre": "Daytime"},
+    ]}}
+    with pytest.raises(TemplateError, match="only valid when strategy='jingle'"):
+        parse_template(bad)
+
+
 def test_source_by_name_unknown_raises():
     """source_by_name is defensive — upstream validation catches most cases,
     but the method itself must raise when called with an unknown name."""

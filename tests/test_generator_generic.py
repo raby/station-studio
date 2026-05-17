@@ -26,6 +26,9 @@ class FakeTrack:
     id: int
     name: str
     artist: str | None = None
+    # Optional — only the §14.24 jingle tests set this. Default None
+    # keeps every pre-existing test's pool layout untouched.
+    genre: str | None = None
 
 
 def mk_pool(prefix: str, size: int) -> list[FakeTrack]:
@@ -368,6 +371,108 @@ def test_trace_ids_are_unique_across_generations():
     pools = {"A": mk_pool("A", 50)}
     seen = {generate(t, pools, week=w).trace.trace_id for w in range(1, 6)}
     assert len(seen) == 5
+
+
+# ---------- §14.24: jingle strategy via generator ----------------------
+
+
+def _mk_jingle_pool() -> list[FakeTrack]:
+    """A small pool with multiple genres + some untagged entries."""
+    return [
+        FakeTrack(id=1, name="Day-1",   genre="Daytime"),
+        FakeTrack(id=2, name="Night-1", genre="Nighttime"),
+        FakeTrack(id=3, name="Day-2",   genre="Daytime"),
+        FakeTrack(id=4, name="Notag",   genre=None),
+        FakeTrack(id=5, name="Day-3",   genre="Daytime"),
+    ]
+
+
+def test_jingle_strategy_picks_first_genre_match_when_rng_off():
+    t = parse_template(mk_template(
+        rng="off",
+        layout={
+            "unit": "day",
+            "unit_labels": ["Mon"],
+            "row_start_offsets": [0],
+            "row_template": [
+                {"source": "A", "strategy": "jingle", "size": 1, "genre": "Daytime"},
+            ],
+        },
+    ))
+    r = generate(t, {"A": _mk_jingle_pool()}, week=1)
+    assert len(r.picks) == 1
+    assert r.picks[0].name == "Day-1"
+    # Trace records 1-indexed pool position of the matched track.
+    assert r.trace.slots[0].pool_index == 1
+    assert r.trace.slots[0].strategy == "jingle"
+    # Reason captures the genre + the mode for debuggability.
+    assert "genre='Daytime'" in r.trace.slots[0].reason
+    assert "first match" in r.trace.slots[0].reason
+
+
+def test_jingle_strategy_random_seeded_is_reproducible():
+    t = parse_template(mk_template(
+        rng="on",
+        layout={
+            "unit": "day",
+            "unit_labels": ["Mon"],
+            "row_start_offsets": [0],
+            "row_template": [
+                {"source": "A", "strategy": "jingle", "size": 1, "genre": "Daytime"},
+            ],
+        },
+    ))
+    pools = {"A": _mk_jingle_pool()}
+    r1 = generate(t, pools, week=1, seed=99)
+    r2 = generate(t, pools, week=1, seed=99)
+    assert [p.id for p in r1.picks] == [p.id for p in r2.picks]
+    # Whatever was picked must carry the requested genre.
+    assert r1.picks[0].genre == "Daytime"
+
+
+def test_jingle_strategy_unknown_genre_propagates_error():
+    t = parse_template(mk_template(
+        layout={
+            "unit": "day",
+            "unit_labels": ["Mon"],
+            "row_start_offsets": [0],
+            "row_template": [
+                {"source": "A", "strategy": "jingle", "size": 1, "genre": "NoSuchGenre"},
+            ],
+        },
+    ))
+    # Generator surfaces the underlying JingleGenreNotFoundError as an
+    # IndexError subclass — same shape as window's out-of-range error
+    # so callers handle "missing pool data" uniformly.
+    with pytest.raises(IndexError, match="no track with genre 'NoSuchGenre'"):
+        generate(t, {"A": _mk_jingle_pool()}, week=1)
+
+
+def test_jingle_coexists_with_window_in_same_row():
+    """Backward-compat check: jingle blocks slot in alongside other strategies."""
+    t = parse_template(mk_template(
+        sources=[
+            {"name": "A", "colour": "#aaa", "role": "content"},
+            {"name": "J", "colour": "#fc0", "role": "content"},
+        ],
+        layout={
+            "unit": "day",
+            "unit_labels": ["Mon"],
+            "row_start_offsets": [0],
+            "row_template": [
+                {"source": "A", "strategy": "window", "size": 2},
+                {"source": "J", "strategy": "jingle", "size": 1, "genre": "Daytime"},
+            ],
+        },
+    ))
+    pools = {"A": mk_pool("A", 10), "J": _mk_jingle_pool()}
+    r = generate(t, pools, week=1)
+    # Window pulls A0001/A0002 from source A's row start; jingle pulls
+    # first 'Daytime' track from source J. Independent pool addressing.
+    assert [p.name for p in r.picks] == ["A0001", "A0002", "Day-1"]
+    assert [s.strategy for s in r.trace.slots] == ["window", "window", "jingle"]
+    # Slot 3's source is the jingle pool, not the window pool.
+    assert r.trace.slots[2].source == "J"
 
 
 # ---------- §14.23: excluded-candidates trace field ---------------------
