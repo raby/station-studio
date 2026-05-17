@@ -14,7 +14,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 
-SUPPORTED_STRATEGIES = {"window", "pick", "sequential", "jingle", "mix", "weighted"}
+SUPPORTED_STRATEGIES = {
+    "window", "pick", "sequential", "jingle", "mix", "weighted", "prev_ref",
+}
 # v1 had {"window", "pick"} only. `sequential` lands in §14.22 (§17 Phase B
 # first bit) as the Weekly-port generalisation: a slot that reads its start
 # position from a NAMED CURSOR (declared in layout.cursors_init) instead of
@@ -32,6 +34,14 @@ SUPPORTED_STRATEGIES = {"window", "pick", "sequential", "jingle", "mix", "weight
 # value default will be sourced from a station-wide rule; per-block
 # `window` overrides the rule (keeping per-block flexibility for
 # templates that want it).
+#
+# `prev_ref` (§14.28) mirrors a slot from the previous playlist.
+# Required field: `position` (1-indexed lookup into the previous
+# playlist's slot order). Optional field: `fallback_genre` (when set,
+# the strategy falls back to a mix-style pick from the same source
+# filtered to that genre; when absent, falls back via the weighted
+# strategy — defensive code that weekly's templates never actually
+# trigger but the port keeps for byte-equality fidelity).
 #
 # The strategy ↔ required-field coupling is enforced by
 # _require_strategy_field; see that helper for the source of truth on
@@ -90,6 +100,16 @@ class BlockSpec:
     # 10 when absent. Sub-slice #13's Rule table will provide a station-
     # wide default; per-block `window` overrides it.
     window: int | None = None
+    # position is required for strategy='prev_ref' (§14.28); forbidden
+    # for any other strategy. 1-indexed slot lookup into the previous
+    # playlist for this station.
+    position: int | None = None
+    # fallback_genre is optional for strategy='prev_ref' (§14.28);
+    # forbidden for any other strategy. When set, the mirror-miss
+    # fallback picks a mix from the same source filtered to this
+    # genre. When absent, the fallback uses the weighted strategy
+    # (defensive — weekly's actual templates never trigger this).
+    fallback_genre: str | None = None
 
 
 @dataclass
@@ -308,6 +328,8 @@ def _parse_block(
             "genre",              # §14.24/§14.25 — required when strategy in {'jingle', 'mix'}
             "exclusion_window",   # §14.25 — required when strategy='mix'
             "window",             # §14.27 — optional when strategy='weighted' (default 10)
+            "position",           # §14.28 — required when strategy='prev_ref'
+            "fallback_genre",     # §14.28 — optional when strategy='prev_ref'
         },
     )
     if raw["source"] not in known_sources:
@@ -320,6 +342,8 @@ def _parse_block(
     genre = raw.get("genre")
     exclusion_window = raw.get("exclusion_window")
     window = raw.get("window")
+    position = raw.get("position")
+    fallback_genre = raw.get("fallback_genre")
 
     # Strategy ↔ required-field coupling. Each strategy declares which extra
     # fields it requires; every other strategy forbids them. The helper
@@ -358,6 +382,25 @@ def _parse_block(
             f"block window must be a non-negative integer, got {v!r}"
         ),
     )
+    # §14.28 — prev_ref couplings:
+    #   `position`: required for prev_ref (1-indexed positive integer)
+    #   `fallback_genre`: optional for prev_ref; when set, must be a
+    #                     non-empty string (drives mix-fallback path)
+    _require_strategy_field(
+        strategy, "position", position,
+        required_for={"prev_ref"},
+        validator=lambda v: v if (isinstance(v, int) and not isinstance(v, bool) and v >= 1) else _err(
+            f"block position must be a positive integer (1-indexed), got {v!r}"
+        ),
+    )
+    _require_strategy_field(
+        strategy, "fallback_genre", fallback_genre,
+        required_for=set(),
+        optional_for={"prev_ref"},
+        validator=lambda v: v if (isinstance(v, str) and v) else _err(
+            f"block fallback_genre must be a non-empty string, got {v!r}"
+        ),
+    )
 
     return BlockSpec(
         source=raw["source"],
@@ -367,6 +410,8 @@ def _parse_block(
         genre=genre,
         exclusion_window=exclusion_window,
         window=window,
+        position=position,
+        fallback_genre=fallback_genre,
     )
 
 

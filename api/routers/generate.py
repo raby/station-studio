@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from engine.models import Station, Playlist, PlaylistTrace
 from engine.persistence import (
     load_alias_map, load_excluded_mix_ids, load_pools,
-    max_mix_exclusion_window, save_playlist,
+    load_previous_playlist, max_mix_exclusion_window, save_playlist,
 )
 from engine.template import parse_template, TemplateError
 from engine.generator import generate
@@ -56,11 +56,20 @@ def generate_playlist(slug: str, payload: GenerateRequest, db: Session = Depends
     # are no weighted blocks in the template.
     alias_map = load_alias_map(db)
 
+    # §14.28: previous playlist for prev_ref slots. Always loaded so the
+    # generator can pass it through; templates without prev_ref blocks
+    # silently ignore it. None when no prior playlist exists for this
+    # station (first generation, or regenerating before any prior week).
+    previous_playlist = load_previous_playlist(
+        db, station_id=station.id, current_week=payload.week,
+    )
+
     try:
         result = generate(
             template, pools, week=payload.week, seed=payload.seed,
             excluded_mix_ids=excluded_mix_ids,
             alias_map=alias_map,
+            previous_playlist=previous_playlist,
         )
     except Exception as e:
         raise HTTPException(400, f"generation failed: {e}")

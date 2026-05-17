@@ -10,8 +10,12 @@ from engine.strategies.mix import apply_mix
 from engine.strategies.weighted import (
     apply_weighted, build_lookups, WeightedLookups, WeightedPickInfo,
 )
+from engine.strategies.prev_ref import (
+    try_prev_ref_mirror, PrevRefMirrorFailure, PrevRefPositionOutOfRangeError,
+)
 
 __all__ = [
     "apply_window", "apply_pick", "apply_jingle", "apply_mix",
     "apply_weighted", "build_lookups", "WeightedLookups", "WeightedPickInfo",
+    "try_prev_ref_mirror", "PrevRefMirrorFailure", "PrevRefPositionOutOfRangeError",
 ]

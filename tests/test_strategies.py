@@ -16,6 +16,9 @@ from engine.strategies.pick import apply_pick
 from engine.strategies.jingle import apply_jingle, JingleGenreNotFoundError
 from engine.strategies.mix import apply_mix, MixGenreNotFoundError
 from engine.strategies.weighted import apply_weighted, build_lookups
+from engine.strategies.prev_ref import (
+    try_prev_ref_mirror, PrevRefMirrorFailure, PrevRefPositionOutOfRangeError,
+)
 
 
 # ---------- window -------------------------------------------------------
@@ -683,3 +686,89 @@ def test_build_lookups_handles_missing_artist():
     lookups = build_lookups(pool)
     assert lookups.track_keys[1] == frozenset()
     assert lookups.track_id_to_artist[1] == ""
+
+
+# ---------- prev_ref (§14.28) -------------------------------------------
+
+
+@dataclass
+class PrevTrack:
+    id: int
+    name: str
+
+
+def _source_pool() -> list[PrevTrack]:
+    return [
+        PrevTrack(id=10, name="M-1"),
+        PrevTrack(id=11, name="M-2"),
+        PrevTrack(id=12, name="M-3"),
+    ]
+
+
+def test_prev_ref_mirror_returns_track_when_position_in_source():
+    """Happy path: previous playlist's slot at position resolves to a
+    track that IS in this slot's source pool → mirror succeeds."""
+    source = _source_pool()
+    previous = [
+        PrevTrack(id=99, name="other"),  # position 1 — not in source
+        source[1],                        # position 2 — IS in source
+        PrevTrack(id=100, name="another"),
+    ]
+    track, failure = try_prev_ref_mirror(
+        previous, position=2, source_pool=source,
+    )
+    assert failure is None
+    assert track is source[1]
+
+
+def test_prev_ref_mirror_returns_none_in_source_for_non_source_track():
+    """When the resolved track is NOT in the source pool, fallback
+    fires and the resolved track is captured for diagnostic context."""
+    source = _source_pool()
+    foreign = PrevTrack(id=99, name="not-a-mix")
+    previous = [foreign]
+    track, failure = try_prev_ref_mirror(
+        previous, position=1, source_pool=source,
+    )
+    assert track is None
+    assert failure is not None
+    assert failure.kind == "not_in_source"
+    assert failure.resolved_track is foreign
+
+
+def test_prev_ref_mirror_returns_no_previous_when_playlist_is_none():
+    track, failure = try_prev_ref_mirror(
+        None, position=1, source_pool=_source_pool(),
+    )
+    assert track is None
+    assert failure is not None
+    assert failure.kind == "no_previous"
+    assert failure.resolved_track is None
+
+
+def test_prev_ref_mirror_position_out_of_range_raises():
+    """Position beyond the previous playlist's length is a template
+    error — surfaces upstream as a generation failure."""
+    previous = [PrevTrack(id=1, name="x")]
+    with pytest.raises(PrevRefPositionOutOfRangeError, match="position 5 out of range"):
+        try_prev_ref_mirror(previous, position=5, source_pool=_source_pool())
+
+
+def test_prev_ref_mirror_zero_position_raises():
+    # Position is 1-indexed; 0 is below the range (the parser should
+    # reject this earlier, but the strategy guards too).
+    previous = [PrevTrack(id=1, name="x")]
+    with pytest.raises(PrevRefPositionOutOfRangeError):
+        try_prev_ref_mirror(previous, position=0, source_pool=_source_pool())
+
+
+def test_prev_ref_mirror_empty_source_pool_falls_back():
+    """Empty source pool → every previous track fails the membership
+    check; fallback kind is not_in_source."""
+    previous = [PrevTrack(id=1, name="x")]
+    track, failure = try_prev_ref_mirror(
+        previous, position=1, source_pool=[],
+    )
+    assert track is None
+    assert failure is not None
+    assert failure.kind == "not_in_source"

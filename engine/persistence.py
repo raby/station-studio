@@ -127,6 +127,23 @@ def _save_mix_usages(db: Session, *, playlist_id: int, template: Template, resul
             genre=block_spec.genre,  # required by parser for mix blocks
         ))
 
+    # §14.28: prev_ref slots that fell back to a mix-style pick are
+    # ALSO recorded — the fallback hit apply_mix and consumed an
+    # exclusion-window slot, so it should join MixUsage too. Mirror
+    # outcomes (the resolved track came straight from the previous
+    # playlist) are explicitly NOT recorded, matching weekly's
+    # behaviour: a mirror is "the same content as last week" and
+    # shouldn't double-count against the exclusion window. The
+    # generator publishes the fallback list on result.prev_ref_fallback_mixes
+    # because we can't tell from the trace slot's strategy field alone
+    # ("prev_ref" covers all three outcomes).
+    for (_slot_idx, genre, track) in getattr(result, "prev_ref_fallback_mixes", ()):
+        db.add(MixUsage(
+            playlist_id=playlist_id,
+            track_id=track.id,
+            genre=genre,
+        ))
+
 
 def max_mix_exclusion_window(template: Template) -> int:
     """Return the widest exclusion_window across all mix blocks (0 if none).
@@ -144,6 +161,45 @@ def max_mix_exclusion_window(template: Template) -> int:
         if b.strategy == "mix" and b.exclusion_window is not None
     ]
     return max(windows) if windows else 0
+
+
+def load_previous_playlist(
+    db: Session,
+    *,
+    station_id: int,
+    current_week: int,
+) -> list | None:
+    """Load the most recent playlist *prior to current_week* for this
+    station, as an ordered list of Track objects.
+
+    Powers the §14.28 `prev_ref` strategy. Returns None when no prior
+    playlist exists (first generation for this station, or regenerating
+    week 1). Most-recent-prior semantics match weekly's
+    `_load_previous_weekly`, but station-scoped via Playlist.station_id
+    since station-studio is multi-station.
+
+    `current_week` is excluded explicitly. Otherwise a regeneration of
+    the current week (which deletes the existing playlist before
+    saving the new one — see save_playlist) would race with the
+    "most recent" query, and a regenerated week W shouldn't reference
+    its own pre-deletion contents.
+    """
+    prev = (
+        db.query(Playlist)
+        .filter(Playlist.station_id == station_id, Playlist.week < current_week)
+        .order_by(Playlist.week.desc())
+        .first()
+    )
+    if prev is None:
+        return None
+    entries = (
+        db.query(PlaylistEntry)
+        .options(joinedload(PlaylistEntry.track))
+        .filter_by(playlist_id=prev.id)
+        .order_by(PlaylistEntry.position)
+        .all()
+    )
+    return [e.track for e in entries]
 
 
 def load_alias_map(db: Session) -> dict[str, str]:

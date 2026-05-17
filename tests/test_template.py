@@ -364,6 +364,78 @@ def test_window_on_non_weighted_strategy_rejected():
         parse_template(bad)
 
 
+# ---------- §14.28: prev_ref strategy ----------------------------------
+
+
+def test_prev_ref_block_with_position_and_fallback_accepted():
+    tmpl = parse_template({**BASE, "layout": {**BASE["layout"], "row_template": [
+        {"source": "A", "strategy": "prev_ref", "size": 1,
+         "position": 1742, "fallback_genre": "22Universal"},
+    ]}})
+    b = tmpl.layout.row_template[0]
+    assert (b.strategy, b.position, b.fallback_genre) == ("prev_ref", 1742, "22Universal")
+
+
+def test_prev_ref_block_without_fallback_genre_accepted():
+    """fallback_genre is optional; absent → weighted-fallback path
+    (commit 2 will implement, currently raises NotImplementedError at
+    generation time)."""
+    tmpl = parse_template({**BASE, "layout": {**BASE["layout"], "row_template": [
+        {"source": "A", "strategy": "prev_ref", "size": 1, "position": 100},
+    ]}})
+    b = tmpl.layout.row_template[0]
+    assert (b.position, b.fallback_genre) == (100, None)
+
+
+def test_prev_ref_block_missing_position_rejected():
+    bad = {**BASE, "layout": {**BASE["layout"], "row_template": [
+        {"source": "A", "strategy": "prev_ref", "size": 1},
+    ]}}
+    with pytest.raises(TemplateError, match="must specify position"):
+        parse_template(bad)
+
+
+def test_prev_ref_block_zero_position_rejected():
+    bad = {**BASE, "layout": {**BASE["layout"], "row_template": [
+        {"source": "A", "strategy": "prev_ref", "size": 1, "position": 0},
+    ]}}
+    with pytest.raises(TemplateError, match="position must be a positive integer"):
+        parse_template(bad)
+
+
+def test_prev_ref_block_negative_position_rejected():
+    bad = {**BASE, "layout": {**BASE["layout"], "row_template": [
+        {"source": "A", "strategy": "prev_ref", "size": 1, "position": -5},
+    ]}}
+    with pytest.raises(TemplateError, match="position must be a positive integer"):
+        parse_template(bad)
+
+
+def test_prev_ref_block_empty_fallback_genre_rejected():
+    bad = {**BASE, "layout": {**BASE["layout"], "row_template": [
+        {"source": "A", "strategy": "prev_ref", "size": 1,
+         "position": 100, "fallback_genre": ""},
+    ]}}
+    with pytest.raises(TemplateError, match="fallback_genre must be a non-empty string"):
+        parse_template(bad)
+
+
+def test_position_on_non_prev_ref_strategy_rejected():
+    bad = {**BASE, "layout": {**BASE["layout"], "row_template": [
+        {"source": "A", "strategy": "window", "size": 3, "position": 100},
+    ]}}
+    with pytest.raises(TemplateError, match=r"only valid when strategy in \['prev_ref'\]"):
+        parse_template(bad)
+
+
+def test_fallback_genre_on_non_prev_ref_strategy_rejected():
+    bad = {**BASE, "layout": {**BASE["layout"], "row_template": [
+        {"source": "A", "strategy": "window", "size": 3, "fallback_genre": "X"},
+    ]}}
+    with pytest.raises(TemplateError, match=r"only valid when strategy in \['prev_ref'\]"):
+        parse_template(bad)
+
+
 def test_source_by_name_unknown_raises():
     """source_by_name is defensive — upstream validation catches most cases,
     but the method itself must raise when called with an unknown name."""

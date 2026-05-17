@@ -28,6 +28,7 @@ from engine.trace import Trace, TraceSlot
 from engine.strategies import (
     apply_window, apply_pick, apply_jingle, apply_mix,
     apply_weighted, build_lookups, WeightedLookups,
+    try_prev_ref_mirror, PrevRefPositionOutOfRangeError,
 )
 
 
@@ -42,6 +43,13 @@ DEFAULT_WEIGHTED_WINDOW = 10
 class GenerationResult:
     picks: list[Any]     # list of Track-like objects, one per slot
     trace: Trace
+    # §14.28 — slots whose prev_ref dispatch fell back to a mix-style
+    # pick (rather than mirroring an existing previous-playlist track).
+    # Each entry: (1-indexed slot number, fallback_genre, picked track).
+    # Persistence reads this to record MixUsage rows for the fallback
+    # picks; the trace's "strategy" field can't distinguish mirror from
+    # fallback-mix because both still record strategy='prev_ref'.
+    prev_ref_fallback_mixes: list[tuple[int, str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -71,6 +79,7 @@ def generate(
     seed: int | None = None,
     excluded_mix_ids: set[int] | frozenset[int] | None = None,
     alias_map: dict[str, str] | None = None,
+    previous_playlist: list[Any] | None = None,
 ) -> GenerationResult:
     """Generate one playlist for the given station + week.
 
@@ -96,6 +105,12 @@ def generate(
         `weighted` strategy (§14.27) reads it, for resolving artist
         keys before applying the dedup window. None = empty dict;
         templates with no weighted blocks never read this anyway.
+    previous_playlist : list[Track-like] | None
+        Ordered tracks of the most recent prior playlist for this
+        station (§14.28). Only the `prev_ref` strategy reads it;
+        templates without prev_ref blocks ignore it. None = no
+        previous playlist exists (first generation for this
+        station) — prev_ref then takes its fallback path.
     """
     _check_pools_present(template, pools)
 
@@ -122,6 +137,13 @@ def generate(
     # generation (no per-block alias overrides exist); if that ever
     # changes, the cache key needs to grow an alias_map dimension.
     weighted_lookups: dict[str, WeightedLookups] = {}
+
+    # §14.28 — prev_ref slots that fell back to a mix-style pick get
+    # appended here. Persistence reads it post-generation to record
+    # MixUsage rows (mirrors don't enter MixUsage; only fallback picks
+    # do, matching weekly). Each entry: (slot_counter, fallback_genre,
+    # picked track).
+    prev_ref_fallback_mixes: list[tuple[int, str, Any]] = []
 
     base_cursor = template.base_cursor_for_week(week)
 
@@ -314,6 +336,114 @@ def generate(
                         # rejections are mechanical noise.
                         excluded=info.excluded_candidates,
                     ))
+            elif block.strategy == "prev_ref":
+                # §14.28 — three outcomes per slot:
+                #   MIRROR: previous playlist had a track at the position
+                #     AND it's in this slot's source pool → use it.
+                #   FALLBACK_MIX: mirror missed AND block.fallback_genre
+                #     is set → apply_mix from this source filtered to
+                #     fallback_genre. Records into prev_ref_fallback_mixes
+                #     so persistence can write a MixUsage row.
+                #   FALLBACK_WEIGHTED: mirror missed AND no fallback_genre
+                #     → defer to weighted strategy. Defensive: weekly's
+                #     actual templates never trigger this (every real
+                #     prev_ref has a fallback_genre). Implementation
+                #     ships in commit 2 of this slice; for now, raise
+                #     loudly so any template that hits the path is
+                #     surfaced rather than silently misbehaving.
+                for _ in range(block.size):
+                    try:
+                        mirror, failure = try_prev_ref_mirror(
+                            previous_playlist,
+                            position=block.position,  # type: ignore[arg-type]
+                            source_pool=pool,
+                        )
+                    except PrevRefPositionOutOfRangeError as e:
+                        raise ValueError(
+                            f"template error in prev_ref slot "
+                            f"(row {row_idx + 1}, block {block_idx + 1}): {e}"
+                        )
+
+                    if mirror is not None:
+                        # MIRROR outcome.
+                        # Pool position lookup matches weekly's expectation:
+                        # the slot reports where the track is in THIS slot's
+                        # source pool, not the previous-playlist position
+                        # (that's in the trace reason).
+                        pool_idx = next(
+                            i + 1 for i, t in enumerate(pool)
+                            if getattr(t, "id", None) == getattr(mirror, "id", None)
+                        )
+                        slot_counter += 1
+                        picks.append(mirror)
+                        trace.slots.append(_make_trace_slot(
+                            slot=slot_counter,
+                            unit=unit_label,
+                            row=row_idx + 1,
+                            block=block_idx + 1,
+                            block_spec=block,
+                            pool_index=pool_idx,
+                            track=mirror,
+                            reason=(
+                                f"prev_ref mirror from previous playlist "
+                                f"position {block.position}"
+                            ),
+                        ))
+                    elif block.fallback_genre is not None:
+                        # FALLBACK_MIX outcome — invoke apply_mix on the
+                        # same source filtered to fallback_genre. Reuses
+                        # the cross-week excluded_mix_ids set the
+                        # generator already threads through.
+                        pool_idx, track, relaxed, n_cand, n_elig = apply_mix(
+                            pool,
+                            genre=block.fallback_genre,
+                            excluded_ids=excluded_mix_ids,
+                            rng=rng,
+                            source_name=block.source,
+                        )
+                        slot_counter += 1
+                        picks.append(track)
+                        prev_ref_fallback_mixes.append(
+                            (slot_counter, block.fallback_genre, track)
+                        )
+                        miss_note = (
+                            "no previous playlist"
+                            if failure and failure.kind == "no_previous"
+                            else f"resolved track not in source '{block.source}'"
+                        )
+                        excl_note = (
+                            " (mix relaxed — exclusion saturated genre)"
+                            if relaxed else ""
+                        )
+                        trace.slots.append(_make_trace_slot(
+                            slot=slot_counter,
+                            unit=unit_label,
+                            row=row_idx + 1,
+                            block=block_idx + 1,
+                            block_spec=block,
+                            pool_index=pool_idx,
+                            track=track,
+                            reason=(
+                                f"prev_ref fallback (position {block.position}: "
+                                f"{miss_note}); picked mix of genre "
+                                f"'{block.fallback_genre}' eligible {n_elig} "
+                                f"of {n_cand}{excl_note}"
+                            ),
+                        ))
+                    else:
+                        # FALLBACK_WEIGHTED outcome — commit 2 of this
+                        # slice. Surface loudly until then; the only way
+                        # a template reaches this branch is by omitting
+                        # fallback_genre AND having no/incompatible
+                        # previous playlist — both rare and the user
+                        # should see the gap rather than silent failure.
+                        raise NotImplementedError(
+                            "prev_ref fallback without fallback_genre "
+                            "(weighted fallback path) is not yet "
+                            "implemented; ships in §14.28 commit 2. "
+                            "Workaround: declare a fallback_genre on "
+                            "this prev_ref block."
+                        )
             elif block.strategy == "pick":
                 cursor = row_start_in_pool
                 for _ in range(block.size):
@@ -337,7 +467,11 @@ def generate(
                 # template.parse_template should have rejected this already
                 raise RuntimeError(f"unreachable: unknown strategy {block.strategy!r}")
 
-    return GenerationResult(picks=picks, trace=trace)
+    return GenerationResult(
+        picks=picks,
+        trace=trace,
+        prev_ref_fallback_mixes=prev_ref_fallback_mixes,
+    )
 
 
 # ---------- internals ----------------------------------------------------

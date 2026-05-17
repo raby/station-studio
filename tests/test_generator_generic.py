@@ -638,6 +638,147 @@ def test_weighted_dedup_does_not_pollute_across_generations():
     assert [p.id for p in r1.picks] == [p.id for p in r2.picks]
 
 
+# ---------- §14.28: prev_ref strategy via generator --------------------
+
+
+def _prev_ref_pool_with_genres() -> list[FakeTrack]:
+    """A small source pool with two genre-tagged mix-style tracks +
+    one that won't appear in any previous-playlist scenario."""
+    return [
+        FakeTrack(id=500, name="House-1", genre="House"),
+        FakeTrack(id=501, name="House-2", genre="House"),
+        FakeTrack(id=502, name="Trance-1", genre="Trance"),
+    ]
+
+
+def _prev_ref_template(*, position=1, fallback_genre="House", size=1) -> dict:
+    block = {"source": "A", "strategy": "prev_ref", "size": size, "position": position}
+    if fallback_genre is not None:
+        block["fallback_genre"] = fallback_genre
+    return mk_template(
+        rng="off",
+        layout={
+            "unit": "day",
+            "unit_labels": ["Mon"],
+            "row_start_offsets": [0],
+            "row_template": [block],
+        },
+    )
+
+
+def test_prev_ref_mirror_uses_track_from_previous_playlist():
+    """Happy path: previous playlist's slot at position is in our
+    source pool → mirror succeeds, no fallback fires."""
+    pool = _prev_ref_pool_with_genres()
+    # Previous playlist: position 1 happens to be one of our pool tracks.
+    previous = [pool[1]]  # id 501
+    t = parse_template(_prev_ref_template(position=1))
+    r = generate(t, {"A": pool}, week=2, previous_playlist=previous)
+    assert r.picks[0].id == 501
+    assert "mirror from previous playlist position 1" in r.trace.slots[0].reason
+    # Mirrors do NOT record into prev_ref_fallback_mixes.
+    assert r.prev_ref_fallback_mixes == []
+
+
+def test_prev_ref_falls_back_to_mix_when_no_previous_playlist():
+    """No previous → fallback path picks a mix from fallback_genre."""
+    pool = _prev_ref_pool_with_genres()
+    t = parse_template(_prev_ref_template(position=1, fallback_genre="House"))
+    r = generate(t, {"A": pool}, week=1, previous_playlist=None)
+    # First eligible House track (rng=off → deterministic first match).
+    assert r.picks[0].id == 500
+    assert "prev_ref fallback" in r.trace.slots[0].reason
+    assert "no previous playlist" in r.trace.slots[0].reason
+    assert "genre 'House'" in r.trace.slots[0].reason
+    # Fallback to a mix MUST record into prev_ref_fallback_mixes.
+    assert r.prev_ref_fallback_mixes == [(1, "House", pool[0])]
+
+
+def test_prev_ref_falls_back_to_mix_when_resolved_track_not_in_source():
+    """Previous playlist exists but the slot's track isn't in the
+    source pool → fallback path fires with 'not in source' note."""
+    pool = _prev_ref_pool_with_genres()
+    foreign = FakeTrack(id=999, name="Unrelated", genre="Pop")
+    previous = [foreign]
+    t = parse_template(_prev_ref_template(position=1, fallback_genre="Trance"))
+    r = generate(t, {"A": pool}, week=2, previous_playlist=previous)
+    assert r.picks[0].id == 502
+    assert "not in source 'A'" in r.trace.slots[0].reason
+    assert r.prev_ref_fallback_mixes == [(1, "Trance", pool[2])]
+
+
+def test_prev_ref_position_out_of_range_raises():
+    """Template error — should surface as a generation failure, not
+    silently skip the slot."""
+    pool = _prev_ref_pool_with_genres()
+    previous = [pool[0]]  # only one slot
+    t = parse_template(_prev_ref_template(position=99, fallback_genre="House"))
+    with pytest.raises(ValueError, match="prev_ref position 99 out of range"):
+        generate(t, {"A": pool}, week=2, previous_playlist=previous)
+
+
+def test_prev_ref_without_fallback_genre_raises_not_implemented():
+    """Commit 1 of §14.28: the weighted-fallback path is deferred to
+    commit 2. Templates that omit fallback_genre AND miss the mirror
+    must surface loudly rather than misbehave silently."""
+    pool = _prev_ref_pool_with_genres()
+    t = parse_template(_prev_ref_template(position=1, fallback_genre=None))
+    with pytest.raises(NotImplementedError, match="weighted fallback"):
+        generate(t, {"A": pool}, week=1, previous_playlist=None)
+
+
+def test_prev_ref_falls_back_respects_mix_exclusion():
+    """The fallback path threads through excluded_mix_ids (same as a
+    regular mix slot), so a recently-used track is excluded."""
+    pool = _prev_ref_pool_with_genres()
+    t = parse_template(_prev_ref_template(position=1, fallback_genre="House"))
+    r = generate(
+        t, {"A": pool}, week=1, previous_playlist=None,
+        excluded_mix_ids={500},  # exclude House-1; should pick House-2
+    )
+    assert r.picks[0].id == 501
+    assert r.prev_ref_fallback_mixes == [(1, "House", pool[1])]
+
+
+def test_prev_ref_coexists_with_mix_and_window():
+    """Smoke test: prev_ref alongside mix + window in the same template."""
+    pool_a = mk_pool("A", 10)
+    pool_b = _prev_ref_pool_with_genres()
+    previous = [pool_b[0]]  # House-1 at position 1 of previous
+
+    t = parse_template(mk_template(
+        sources=[
+            {"name": "A", "colour": "#aaa", "role": "content"},
+            {"name": "B", "colour": "#0cf", "role": "content"},
+        ],
+        rng="off",
+        # Flat cursor (advance=0, cycle=1) so the window block stays at
+        # pool index 0 across weeks. Otherwise mk_template's default
+        # advance=10 + week=2 would push the window beyond pool A.
+        cursor={"base_advance_per_week": 0, "cycle_weeks": 1},
+        layout={
+            "unit": "day",
+            "unit_labels": ["Mon"],
+            "row_start_offsets": [0],
+            "row_template": [
+                {"source": "A", "strategy": "window", "size": 1},
+                {"source": "B", "strategy": "prev_ref", "size": 1,
+                 "position": 1, "fallback_genre": "House"},
+                {"source": "B", "strategy": "mix", "size": 1,
+                 "genre": "Trance", "exclusion_window": 5},
+            ],
+        },
+    ))
+    r = generate(t, {"A": pool_a, "B": pool_b}, week=2, previous_playlist=previous)
+    assert [s.strategy for s in r.trace.slots] == ["window", "prev_ref", "mix"]
+    # Slot 2: mirror succeeded because the previous's position 1 IS in B.
+    assert r.picks[1].id == 500
+    # Slot 3: regular mix pick from B, Trance.
+    assert r.picks[2].id == 502
+    # No fallback fired → empty list.
+    assert r.prev_ref_fallback_mixes == []
+
+
 # ---------- §14.25: mix strategy via generator --------------------------
 
 
