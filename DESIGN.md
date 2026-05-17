@@ -3201,7 +3201,7 @@ consume artist-match).
 
 ---
 
-### 14.27 weighted commercial strategy + cross-slot state (§17 Phase B sub-slice #11, commit 1 of 2)
+### 14.27 weighted commercial strategy + cross-slot state (§17 Phase B sub-slice #11)
 
 **Goal.** Port weekly's `_pick_commercial` — the most behaviourally
 complex single strategy in the upcoming port. Two-tier selection
@@ -3212,12 +3212,13 @@ resolution). Introduces the engine's first genuinely **cross-slot
 mutable state** — every prior weighted pick in the same generation
 affects the next pick's eligibility.
 
-This is "commit 1 of 2" for sub-slice #11. The follow-on (commit 2)
-populates §14.23 `ExcludedCandidate` entries per pick so the trace
-viewer can show "why didn't it pick X?" for each rejection. Splitting
-the slice in two keeps the architectural piece (state plumbing +
-strategy) reviewable on its own before the trace-payload layering
-lands on top.
+Shipped in two commits with a mid-slice review checkpoint between
+them. **Commit 1** (`c75966c` + review-fix `15d24d9`) landed the
+architectural piece: strategy + state plumbing + parser + API +
+generator dispatch + base tests. **Commit 2** (this section's
+*Excluded-candidates population* sub-section below) layered the
+§14.23 `ExcludedCandidate` payload on top, so the trace viewer can
+show per-pick "why didn't it pick X?" answers.
 
 **Strategy module (`engine/strategies/weighted.py`):**
 
@@ -3315,34 +3316,77 @@ Pre-generation, `load_alias_map(db)` loads the ArtistAlias table
 to `generate(..., alias_map=...)`. Cheap even when no weighted blocks
 exist — empty table reads cleanly.
 
-**No `excluded` field populated yet.** The §14.23 ExcludedCandidate
-slot stays empty for weighted picks in this commit. Tier 1 rejections
-are *known* (the strategy classifies them via `WeightedPickInfo`'s
-counts), but converting "this track was rejected" into a populated
-ExcludedCandidate entry is commit 2 of the slice. The trace reason
-carries the summary counts in the meantime.
+**Excluded-candidates population (commit 2 of the slice).**
 
-**Tests added (22 new, total 353):**
+Every weighted pick now emits an `ExcludedCandidate` entry per
+*artist-blocked* track — both pure artist-blocks AND
+artist+shuffle-bag-both-blocked. Track-shuffle-bag-only rejections
+are deliberately omitted; they're mechanical bookkeeping ("track
+used 50 slots ago, blocked until cycle wraps") that generates noise
+without authoring value.
+
+`WeightedPickInfo` gained an `excluded_candidates:
+list[ExcludedCandidate]` field. The classification pass in
+`apply_weighted` builds the list inline; the generator threads it
+into `TraceSlot.excluded` via `_make_trace_slot(..., excluded=…)`.
+
+Reason format:
+- `"artist key 'alex warren' in dedup window"` (single colliding key)
+- `"artist keys 'alex warren', 'ella henderson' in dedup window"`
+  (multiple — happens when a collaboration's resolved keys overlap)
+- `"; also in shuffle-bag"` suffix when the track is BOTH blocked.
+
+Quoting the specific colliding key (not just the artist name as
+shown on the track) is what makes the "why didn't it pick X?"
+question answerable from the trace alone — the user can scroll back
+to find which prior pick put that key in the window. Alias
+resolution flows through: a `Plastikman` pick produces an
+ExcludedCandidate citing `'richie hawtin'` on subsequent
+Richie-Hawtin tracks, because the canonical is what's actually in
+`blocked_keys`.
+
+**Tier 2 picked-track filter.** When Tier 2 relaxes the artist
+constraint, the chosen track might itself be artist-blocked. Such a
+track gets stripped from `excluded_candidates` before return so the
+viewer never shows the same track as both selected and rejected on
+the same slot row. Tier 1 picks never need this filter (Tier 1
+candidates aren't artist-blocked by definition).
+
+Scale: a Rebirth-Radio-sized 210-track commercial pool with a
+10-pick window typically produces ~10–30 ExcludedCandidate entries
+per weighted slot, or ~6 KB of JSON per slot. Over 200 commercial
+slots in one generation that's ~1 MB of trace JSON — manageable
+for SQLite JSON columns; the §16.8 viewer's collapsed-by-default
+disclosure UI already handles long lists cleanly.
+
+**Tests added (29 new across both commits, total 361):**
 
 - 5 parser tests (`test_template.py`): weighted without window
   accepted (default); with explicit window; zero window accepted
   (disables artist dedup); negative window rejected; window on
   non-weighted strategy rejected.
-- 9 strategy tests (`test_strategies.py`): Tier 1 happy path;
+- 15 strategy tests (`test_strategies.py`): Tier 1 happy path;
   artist dedup blocks within window; shuffle-bag rotates through
   pool with rng=None; Tier 2 relaxation when all artists blocked;
   resolved keys block via collaboration splitting; alias map blocks
   Plastikman↔Richie Hawtin; seeded rng reproducible; empty pool
-  raises; build_lookups handles artist=None.
-- 8 generator tests (`test_generator_generic.py`): single weighted
+  raises; build_lookups handles artist=None; Tier 2 tie-break with
+  4 same-artist tracks. Plus commit-2 excluded-candidates coverage:
+  no history → empty excluded; shuffle-bag-only blocks omitted;
+  reason quotes the colliding key; both-blocked tracks get the
+  "also in shuffle-bag" suffix; aliased canonical surfaces in
+  reason (not raw alias).
+- 9 generator tests (`test_generator_generic.py`): single weighted
   pick at size=1; state persists across size iterations; seeded
   generation reproducible; default window=10 in trace; explicit
   window overrides; alias_map threads through; coexists with window
-  + jingle in one template; state doesn't pollute across generations.
+  + jingle in one template; state doesn't pollute across
+  generations. Plus the commit-2 end-to-end test: ExcludedCandidate
+  entries reach TraceSlot.excluded with the right shape and the
+  picked track is correctly absent from its own excluded list.
 
-**Punts (commit 2 will address one of these):**
+**Punts:**
 
-- **ExcludedCandidate population for weighted picks.** Commit 2.
 - **Rule-table-sourced default window.** Sub-slice #13. The
   `DEFAULT_WEIGHTED_WINDOW = 10` constant in `generator.py` is the
   source of truth until then.
@@ -3357,6 +3401,18 @@ carries the summary counts in the meantime.
   (first eligible track, first stalest artist). Real generation
   paths always pass a seeded rng; the rng=None path is intentionally
   divergent from weekly's behaviour and only useful for unit testing.
+- **Per-slot cap on ExcludedCandidate entries.** Currently records
+  every artist-blocked track. Worst case on a 210-track Rebirth
+  Radio pool is ~30 per slot, ~6 KB JSON each. If a real template
+  produces pathological sizes (or trace JSON columns become slow to
+  read for unrelated reasons), add a per-slot cap with a synthetic
+  trailing entry like `ExcludedCandidate(reason="(plus N more
+  artist-blocked candidates not shown)")` to preserve the count.
+- **Slot-number provenance in `reason`.** The reason cites the
+  colliding artist key but not which prior slot put it in the
+  window. The user can scroll to find it; if "which slot caused
+  this collision?" becomes a frequent question, thread slot numbers
+  through the state lists and surface them in the reason.
 
 ---
 
@@ -3384,7 +3440,7 @@ A quick "where are we" for a future reader. Last updated at commit
 | Delete / station-reset   | Shipped (14.10). Per-row delete + station nuke; cascades.        |
 | Disk-export UI button    | Shipped (14.11). Trace viewer "Export to disk" + status line.    |
 | Edit mode for stations   | Shipped (14.13). Shared `<StationForm>` + JSON preview + diff + reset. |
-| **§17 pre-port roadmap** | **Phase A complete (§14.17–§14.21). Phase B underway: sub-slices #5 (§14.23), #7 (§14.22), #8 (§14.24), #9 (§14.25), #10 (§14.26) shipped; #11 in progress — commit 1 of 2 shipped (§14.27 strategy + state plumbing); commit 2 pending (§14.23 ExcludedCandidate population for weighted picks).** |
+| **§17 pre-port roadmap** | **Phase A complete (§14.17–§14.21). Phase B underway: sub-slices #5 (§14.23), #7 (§14.22), #8 (§14.24), #9 (§14.25), #10 (§14.26), #11 (§14.27) shipped. **Next: sub-slice #12 = `prev_ref` strategy — cross-playlist lookup with genre fallback (the cross-playlist dependency).** |
 | Visual block editor      | Deferred (v2). Lands as §17 Phase B after Phase A unblocks.      |
 | Trace versioning         | Deferred. See §16.4 (queued behind §16.1 by design).             |
 | Accessibility pass       | Deferred. §17 Phase D — single sweep after §16.2 + port.         |
@@ -4694,7 +4750,7 @@ Sub-slice ordering (engine work in dependency order):
 8. ~~**`jingle` strategy**~~ — **shipped (§14.24)**
 9. ~~**`mix` strategy + MixUsage table + Alembic**~~ — **shipped (§14.25)**
 10. ~~**Artist-match subsystem** (port `artist_match.py` ~187 LoC) + ArtistAlias table~~ — **shipped (§14.26)**
-11. **`weighted` commercial strategy** — in progress; commit 1 of 2 shipped (§14.27 strategy + state plumbing); commit 2 pending (ExcludedCandidate population for weighted picks)
+11. ~~**`weighted` commercial strategy** — two-tier with squared-remaining + dedup~~ — **shipped (§14.27, 2 commits + 1 review-fix + 1 follow-on)**
 12. **`prev_ref` strategy** — cross-playlist lookup with fallback
 13. **Rule table (per-station) + CRUD**
 14. **`PlaylistEntry.slot_type` column + Alembic**

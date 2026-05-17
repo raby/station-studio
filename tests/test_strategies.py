@@ -373,6 +373,160 @@ def test_weighted_tier2_relaxes_when_all_artists_blocked():
     assert track.id == 2
 
 
+def test_weighted_tier1_no_history_emits_no_excluded():
+    """First pick: nothing blocked, so the excluded list is empty."""
+    pool = _weighted_pool()
+    lookups = build_lookups(pool)
+    _, info = apply_weighted(
+        pool, lookups=lookups,
+        recent_artist_keys=[], used_track_ids=[],
+        rng=None, source_name="COMM",
+    )
+    assert info.excluded_candidates == []
+
+
+def test_weighted_excluded_skips_shuffle_bag_only_rejections():
+    """A track blocked ONLY by shuffle-bag (not artist) should NOT appear
+    in excluded_candidates — those are mechanical bookkeeping noise."""
+    pool = _weighted_pool()
+    lookups = build_lookups(pool)
+    # Pick id=1 (Artist A). Track 1 is now shuffle-bag-blocked. Artist A
+    # is also in the window — so tracks 2 and 3 are artist+shuffle blocked.
+    # Track 1 itself is artist+shuffle. Tracks 4 (B), 5 (C), 6 (C) are
+    # Tier 1 candidates.
+    _, info = apply_weighted(
+        pool, lookups=lookups,
+        recent_artist_keys=[lookups.track_keys[1]],
+        used_track_ids=[1],
+        rng=None, window=10, source_name="COMM",
+    )
+    # Track 1 itself: both blocked. Track 2, 3: both blocked (artist + bag).
+    # Excluded contains all artist-blocked tracks: 1, 2, 3.
+    excluded_ids = {ec.track_id for ec in info.excluded_candidates}
+    assert excluded_ids == {1, 2, 3}
+    # No track is shuffle-bag-only blocked here (Artist A's tracks are
+    # all in window). To get a shuffle-bag-only block, we need a track
+    # whose artist is NOT in the window but whose id IS in the shuffle
+    # bag — see the next test for that.
+
+
+def test_weighted_excluded_omits_track_with_only_shuffle_bag_block():
+    """Construct a case where some tracks are shuffle-bag-blocked but
+    NOT artist-blocked — verify they do NOT appear in excluded
+    (shuffle-bag-only rejections are mechanical noise)."""
+    # 6 tracks. Artists A-D for tracks 1-4 (one each). Artist E has TWO
+    # tracks (ids 5 and 6) — gives us an artist-blocked track that
+    # ISN'T the picked one, so the assertion isn't masked by the
+    # picked-track filter on Tier 2.
+    pool = [
+        CommercialTrack(id=1, name="A1", artist="Artist A"),
+        CommercialTrack(id=2, name="B1", artist="Artist B"),
+        CommercialTrack(id=3, name="C1", artist="Artist C"),
+        CommercialTrack(id=4, name="D1", artist="Artist D"),
+        CommercialTrack(id=5, name="E1", artist="Artist E"),
+        CommercialTrack(id=6, name="E2", artist="Artist E"),
+    ]
+    lookups = build_lookups(pool)
+    # State: ids [1,2,3,4] are in the shuffle-bag (last 5 = pool_size-1).
+    # Artist E in the window via the recent_artist_keys entry.
+    # → Tracks 1-4: shuffle-bag-blocked ONLY (their artists A-D aren't in
+    #   the window). Should NOT appear in excluded.
+    # → Tracks 5 and 6: artist-blocked ONLY (not in shuffle-bag). Both
+    #   are Tier 1 ineligible, so Tier 2 fires and picks one of them.
+    #   The other remains in excluded.
+    _, info = apply_weighted(
+        pool, lookups=lookups,
+        recent_artist_keys=[lookups.track_keys[5]],
+        used_track_ids=[1, 2, 3, 4],
+        rng=None, window=10, source_name="COMM",
+    )
+    assert info.tier == 2  # confirms relaxation fired
+    excluded_ids = {ec.track_id for ec in info.excluded_candidates}
+    # Tracks 1-4 (shuffle-bag-only) must NOT appear — the rule under test.
+    assert excluded_ids.isdisjoint({1, 2, 3, 4})
+    # Exactly one of {5, 6} should appear — the one that wasn't picked.
+    assert excluded_ids in ({5}, {6})
+
+
+def test_weighted_excluded_reason_quotes_colliding_artist_key():
+    """The reason field cites the SPECIFIC colliding key so the user
+    can scroll back through the trace and find the originating pick."""
+    pool = [
+        CommercialTrack(id=1, name="X", artist="Alex Warren"),
+        CommercialTrack(id=2, name="Y", artist="Alex Warren feat. Someone"),
+        CommercialTrack(id=3, name="Z", artist="Daft Punk"),
+    ]
+    lookups = build_lookups(pool)
+    # Pick #1 puts {alex warren} in the window. Track 2 should be
+    # artist-blocked via 'alex warren'.
+    _, info = apply_weighted(
+        pool, lookups=lookups,
+        recent_artist_keys=[lookups.track_keys[1]],
+        used_track_ids=[1],
+        rng=None, window=10, source_name="COMM",
+    )
+    # Track 1 and track 2 both have 'alex warren' in their keys. Track 1
+    # is in window already (and shuffle-bag), track 2 is artist-blocked
+    # only. Both should appear in excluded.
+    excluded = {ec.track_id: ec for ec in info.excluded_candidates}
+    assert 2 in excluded
+    assert "'alex warren'" in excluded[2].reason
+    assert "in dedup window" in excluded[2].reason
+
+
+def test_weighted_excluded_marks_both_blocked_with_suffix():
+    """Both-blocked tracks get a '; also in shuffle-bag' suffix on the
+    reason — distinguishes from artist-only blocks."""
+    pool = [
+        CommercialTrack(id=1, name="A1", artist="Artist A"),
+        CommercialTrack(id=2, name="A2", artist="Artist A"),
+    ]
+    lookups = build_lookups(pool)
+    # Pick id=1 → Artist A's key in window; id=1 in shuffle-bag.
+    # On next call, id=1 is BOTH blocked; id=2 is artist-only blocked.
+    # Tier 1 has no candidates → Tier 2 fires and picks id=2.
+    _, info = apply_weighted(
+        pool, lookups=lookups,
+        recent_artist_keys=[lookups.track_keys[1]],
+        used_track_ids=[1],
+        rng=None, window=10, source_name="COMM",
+    )
+    assert info.tier == 2  # confirms relaxation fired
+    # The picked track (id=2) is filtered out of excluded — Tier 2 may
+    # have picked an artist-blocked track, and the viewer should not
+    # show it as both selected and rejected.
+    excluded_ids = {ec.track_id for ec in info.excluded_candidates}
+    assert 2 not in excluded_ids
+    # id=1 (both-blocked) is in the list with the suffix.
+    assert 1 in excluded_ids
+    by_id = {ec.track_id: ec for ec in info.excluded_candidates}
+    assert "also in shuffle-bag" in by_id[1].reason
+
+
+def test_weighted_excluded_uses_resolved_aliases_in_reason():
+    """When an alias map is in play, the reason cites the CANONICAL
+    key (which is what's actually in the dedup window), not the raw
+    alias string."""
+    alias_map = {"plastikman": "richie hawtin", "richie hawtin": "richie hawtin"}
+    pool = [
+        CommercialTrack(id=1, name="Sheet One", artist="Plastikman"),
+        CommercialTrack(id=2, name="DE9", artist="Richie Hawtin"),
+        CommercialTrack(id=3, name="Other", artist="Daft Punk"),
+    ]
+    lookups = build_lookups(pool, alias_map=alias_map)
+    _, info = apply_weighted(
+        pool, lookups=lookups,
+        recent_artist_keys=[lookups.track_keys[1]],
+        used_track_ids=[1],
+        rng=None, window=10, source_name="COMM",
+    )
+    # Track 2 (Richie Hawtin) blocked because Plastikman pick resolved
+    # to 'richie hawtin' canonical. Reason should cite that canonical.
+    by_id = {ec.track_id: ec for ec in info.excluded_candidates}
+    assert 2 in by_id
+    assert "'richie hawtin'" in by_id[2].reason
+
+
 def test_weighted_tier2_tie_break_when_all_artists_have_equal_gap():
     """Force a genuine Tier 2 tie: all candidates' artists were played
     at the same step in the window. rng.choice picks among them, so

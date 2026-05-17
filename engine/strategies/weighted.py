@@ -50,6 +50,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from engine.artist_match import resolve_artist_keys
+from engine.trace import ExcludedCandidate
 
 
 @dataclass
@@ -57,8 +58,8 @@ class WeightedPickInfo:
     """Provenance + diagnostics for one weighted pick.
 
     Returned alongside the picked track so the caller (generator) can
-    surface it in the trace reason and (sub-slice #11 follow-on) emit
-    ExcludedCandidate entries for the §14.23 viewer.
+    surface it in the trace reason and populate §14.23 ExcludedCandidate
+    entries for the viewer.
 
     Tier:
         1 = both constraints satisfied; weighted random selection
@@ -71,6 +72,15 @@ class WeightedPickInfo:
     track_blocked_count: int = 0     # tracks blocked by shuffle-bag only
     both_blocked_count: int = 0      # tracks blocked by BOTH constraints
     relaxed: bool = False            # Tier 2 fallback fired
+    # Per-candidate rejection rationale, scoped to ARTIST-blocked tracks
+    # (the audibly meaningful rejections). Track-shuffle-bag-only
+    # rejections are skipped intentionally — they're mechanical
+    # bookkeeping ("used 50 slots ago, blocked until cycle wraps") that
+    # generates noise without authoring value. The picked track itself
+    # is filtered out before this list is returned (Tier 2 might pick
+    # an artist-blocked track via relaxation; including it as both
+    # "rejected" and "selected" would be confusing).
+    excluded_candidates: list[ExcludedCandidate] = field(default_factory=list)
 
 
 @dataclass
@@ -175,27 +185,33 @@ def apply_weighted(
     def _remaining(artist: str) -> int:
         return artist_counts.get(artist, 1) - cycle_used.get(artist, 0)
 
-    # --- single pass: classify + collect Tier 1 eligibles ----------------
+    # --- single pass: classify + collect Tier 1 eligibles + excluded ----
     # We do BOTH in one walk to (a) keep the per-track work in cache and
     # (b) avoid rebuilding the eligible list later. The classification
-    # counters feed WeightedPickInfo for the trace reason now, and (commit
-    # 2 of sub-slice #11) drive ExcludedCandidate population. The pass
-    # uses no rng — rng state is identical to weekly's single-pass list-
-    # comp construction at this point, so byte-equality is preserved.
+    # counters feed WeightedPickInfo's summary; the per-track excluded
+    # candidates (artist-blocked only — track-shuffle-bag-only rejections
+    # are mechanical noise) drive §14.23 ExcludedCandidate population.
+    # The pass uses no rng — rng state is identical to weekly's single-
+    # pass list-comp construction at this point, so byte-equality holds.
     artist_blocked = 0
     track_blocked = 0
     both_blocked = 0
     eligible: list[tuple[int, Any]] = []  # (pool_idx_1based, track)
+    excluded_candidates: list[ExcludedCandidate] = []
     for i, t in enumerate(pool, start=1):
         tid = getattr(t, "id", None)
         is_track_blocked = tid in blocked_track_ids if tid is not None else False
-        is_artist_blocked_ = _artist_blocked(t)
+        keys = track_keys.get(tid, frozenset()) if tid is not None else frozenset()
+        colliding = keys & blocked_keys
+        is_artist_blocked_ = bool(colliding)
         if is_track_blocked and is_artist_blocked_:
             both_blocked += 1
+            excluded_candidates.append(_excluded(t, i, colliding, also_in_bag=True))
         elif is_track_blocked:
-            track_blocked += 1
+            track_blocked += 1  # mechanical noise — no ExcludedCandidate
         elif is_artist_blocked_:
             artist_blocked += 1
+            excluded_candidates.append(_excluded(t, i, colliding, also_in_bag=False))
         else:
             eligible.append((i, t))
 
@@ -214,6 +230,9 @@ def apply_weighted(
             track_blocked_count=track_blocked,
             both_blocked_count=both_blocked,
             relaxed=False,
+            # Tier 1 picks are never artist-blocked, so no need to filter
+            # the chosen track out of excluded_candidates.
+            excluded_candidates=excluded_candidates,
         )
 
     # --- Tier 2: relax artist, pick stalest --------------------------------
@@ -233,6 +252,13 @@ def apply_weighted(
         track_keys=track_keys,
         rng=rng,
     )
+    # Tier 2 relaxation might have picked an artist-blocked track. Strip
+    # it from the excluded list so the viewer never shows the picked
+    # track as "rejected" alongside its own slot row.
+    picked_id = getattr(picked_track, "id", None)
+    tier2_excluded = [
+        ec for ec in excluded_candidates if ec.track_id != picked_id
+    ]
     return picked_track, WeightedPickInfo(
         tier=2,
         pool_index=picked_idx,
@@ -241,6 +267,7 @@ def apply_weighted(
         track_blocked_count=track_blocked,
         both_blocked_count=both_blocked,
         relaxed=True,
+        excluded_candidates=tier2_excluded,
     )
 
 
@@ -318,3 +345,29 @@ def _pick_stalest(
         return chosen_tracks[0]
     _, chosen_tracks = rng.choice(stalest)
     return rng.choice(chosen_tracks)
+
+
+def _excluded(
+    track: Any,
+    pool_index: int,
+    colliding_keys: frozenset[str] | set[str],
+    *,
+    also_in_bag: bool,
+) -> ExcludedCandidate:
+    """Build the ExcludedCandidate row for one artist-blocked rejection.
+
+    The `reason` quotes the specific colliding artist key(s) so the
+    user can scroll back through the trace and find the prior pick
+    that put them in the window — answers "why didn't it pick X?"
+    without re-running the generator.
+    """
+    keys_str = ", ".join(f"'{k}'" for k in sorted(colliding_keys))
+    plural = "keys" if len(colliding_keys) > 1 else "key"
+    suffix = "; also in shuffle-bag" if also_in_bag else ""
+    return ExcludedCandidate(
+        pool_index=pool_index,
+        track_id=getattr(track, "id", None),
+        track_name=getattr(track, "name", "?"),
+        track_artist=getattr(track, "artist", None),
+        reason=f"artist {plural} {keys_str} in dedup window{suffix}",
+    )

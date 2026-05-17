@@ -594,6 +594,37 @@ def test_weighted_coexists_with_window_and_jingle_strategies():
     assert len(r.picks) == 3
 
 
+def test_weighted_generator_threads_excluded_into_trace_slot():
+    """§14.23 + §14.27 integration: artist-blocked candidates from
+    apply_weighted reach TraceSlot.excluded so the viewer can render
+    them."""
+    pool = [
+        FakeTrack(id=401, name="X", artist="Artist X"),
+        FakeTrack(id=402, name="X2", artist="Artist X"),  # same artist as 401
+        FakeTrack(id=403, name="Y", artist="Artist Y"),
+    ]
+    # size=2 ensures the second pick has prior state to dedup against.
+    t = parse_template(_weighted_template(size=2, window=10))
+    r = generate(t, {"A": pool}, week=1, seed=42)
+
+    # Slot 1: no prior state, no excluded.
+    assert r.trace.slots[0].excluded == []
+    # Slot 2: pick #1 placed Artist X's key in the window. Whichever
+    # track wasn't picked by slot 1 (id=401 or 402, whichever wasn't
+    # chosen by the weighted rng + the picked-track-stays out of
+    # excluded rule) should appear in slot 2's excluded list.
+    slot2 = r.trace.slots[1]
+    excluded_ids = {ec.track_id for ec in slot2.excluded}
+    # At least one Artist X track is recorded as artist-blocked.
+    assert excluded_ids & {401, 402}
+    # The picked track itself is not in its own excluded list.
+    assert r.picks[1].id not in excluded_ids
+    # The reason cites the artist key (resolved to lowercase).
+    sample = next(iter(slot2.excluded))
+    assert "artist key" in sample.reason or "artist keys" in sample.reason
+    assert "in dedup window" in sample.reason
+
+
 def test_weighted_dedup_does_not_pollute_across_generations():
     """Two separate generate() calls should not share state — each gets
     a fresh _GenState. Tested by running the same seeded generation

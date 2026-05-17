@@ -308,6 +308,11 @@ def generate(
                         pool_index=info.pool_index,
                         track=track,
                         reason=_weighted_reason(info, effective_window),
+                        # §14.23 ExcludedCandidate population for weighted
+                        # (commit 2 of sub-slice #11). Only artist-blocked
+                        # rejections are recorded; the shuffle-bag-only
+                        # rejections are mechanical noise.
+                        excluded=info.excluded_candidates,
                     ))
             elif block.strategy == "pick":
                 cursor = row_start_in_pool
