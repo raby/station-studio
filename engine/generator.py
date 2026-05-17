@@ -25,7 +25,7 @@ from typing import Any, Mapping
 
 from engine.template import Template, BlockSpec
 from engine.trace import Trace, TraceSlot
-from engine.strategies import apply_window, apply_pick, apply_jingle
+from engine.strategies import apply_window, apply_pick, apply_jingle, apply_mix
 
 
 @dataclass
@@ -40,6 +40,7 @@ def generate(
     *,
     week: int,
     seed: int | None = None,
+    excluded_mix_ids: set[int] | frozenset[int] | None = None,
 ) -> GenerationResult:
     """Generate one playlist for the given station + week.
 
@@ -54,6 +55,11 @@ def generate(
         1-indexed week number.
     seed : int | None
         Only used if template.rng == 'on'. Ignored otherwise.
+    excluded_mix_ids : set[int] | None
+        Track ids to exclude from `mix` strategy candidates (§14.25).
+        Populated by the persistence layer from the station's recent
+        MixUsage rows (window = block.exclusion_window). None = empty set;
+        templates with no mix blocks never read this anyway.
     """
     _check_pools_present(template, pools)
 
@@ -62,6 +68,11 @@ def generate(
         if seed is None:
             raise ValueError("rng='on' template requires a seed")
         rng = random.Random(seed)
+
+    # Normalise None → frozenset so the mix branch can pass it as-is to
+    # apply_mix without a per-call truthy check. Frozen because the
+    # generator never writes to it (the strategy reads only).
+    excluded_mix_ids = frozenset(excluded_mix_ids or ())
 
     base_cursor = template.base_cursor_for_week(week)
 
@@ -139,6 +150,40 @@ def generate(
                         pool_index=pool_idx,
                         track=track,
                         reason=reason_prefix,
+                    ))
+            elif block.strategy == "mix":
+                # §14.25 Weekly-port: genre-filtered random pick with cross-
+                # week exclusion. Caller pre-builds excluded_mix_ids from
+                # MixUsage of the station's last block.exclusion_window
+                # playlists. apply_mix relaxes the exclusion if it would
+                # drain the candidate set; we surface that in the trace
+                # reason so authoring can spot exclusion-window saturation.
+                for _ in range(block.size):
+                    pool_idx, track, relaxed = apply_mix(
+                        pool,
+                        genre=block.genre,  # type: ignore[arg-type]
+                        excluded_ids=excluded_mix_ids,
+                        rng=rng,
+                        source_name=block.source,
+                    )
+                    slot_counter += 1
+                    picks.append(track)
+                    mode = "random" if rng else "first match"
+                    excl_note = (
+                        f" (relaxed — exclusion window of {len(excluded_mix_ids)} "
+                        "saturated genre)" if relaxed else ""
+                    )
+                    trace.slots.append(_make_trace_slot(
+                        slot=slot_counter,
+                        unit=unit_label,
+                        row=row_idx + 1,
+                        block=block_idx + 1,
+                        block_spec=block,
+                        pool_index=pool_idx,
+                        track=track,
+                        reason=f"mix from '{block.source}' "
+                               f"genre='{block.genre}' "
+                               f"excluded={len(excluded_mix_ids)} ({mode}){excl_note}",
                     ))
             elif block.strategy == "jingle":
                 # §14.24 Weekly-port: genre-filtered pick from the pool.

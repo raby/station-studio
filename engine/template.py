@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 
-SUPPORTED_STRATEGIES = {"window", "pick", "sequential", "jingle"}
+SUPPORTED_STRATEGIES = {"window", "pick", "sequential", "jingle", "mix"}
 # v1 had {"window", "pick"} only. `sequential` lands in §14.22 (§17 Phase B
 # first bit) as the Weekly-port generalisation: a slot that reads its start
 # position from a NAMED CURSOR (declared in layout.cursors_init) instead of
@@ -22,10 +22,11 @@ SUPPORTED_STRATEGIES = {"window", "pick", "sequential", "jingle"}
 # source. Cursors advance by the same base_advance_per_week as the main
 # cursor — see Template.cursor_position().
 #
-# `jingle` lands in §14.24 (§17 Phase B sub-slice #8). Genre-filtered pick
-# from a source pool — addresses the pool by the per-track `genre`
-# attribute rather than position. Requires a `genre` field on the block
-# spec; forbidden for any other strategy.
+# `jingle` (§14.24) and `mix` (§14.25) both require a per-block `genre`
+# string; `mix` additionally requires an `exclusion_window` integer (count
+# of prior playlists to exclude from). The strategy ↔ required-field
+# coupling is enforced by _require_strategy_field; see that helper for
+# the source of truth on which fields belong to which strategies.
 SUPPORTED_RNG = {"off", "on"}
 SUPPORTED_ROLES = {"content", "reference"}
 # Cadence is purely metadata for the engine — `weekly` is the only value
@@ -66,11 +67,15 @@ class BlockSpec:
     # forbidden for 'window' / 'pick' (the row-offset style). Validated by the
     # parser. None = "no named cursor; use row_offset[row_idx]" (existing).
     cursor_id: str | None = None
-    # genre is required for strategy='jingle' (§14.24) and forbidden for any
-    # other strategy. Filters the source pool to tracks whose `genre`
-    # attribute equals this value (case-sensitive exact match). None for
-    # non-jingle blocks.
+    # genre is required for strategy='jingle' (§14.24) or 'mix' (§14.25),
+    # forbidden otherwise. Filters the source pool to tracks whose `genre`
+    # attribute equals this value (case-sensitive exact match).
     genre: str | None = None
+    # exclusion_window is required for strategy='mix' only (§14.25). Count
+    # of the station's most recent playlists whose MixUsage rows are
+    # treated as excluded track ids. Persistence-time: the generator's
+    # excluded_mix_ids parameter is populated from this window.
+    exclusion_window: int | None = None
 
 
 @dataclass
@@ -285,8 +290,9 @@ def _parse_block(
         {"source", "strategy", "size"},
         where="block",
         optional={
-            "cursor_id",  # §14.22 — required when strategy='sequential'
-            "genre",      # §14.24 — required when strategy='jingle'
+            "cursor_id",          # §14.22 — required when strategy='sequential'
+            "genre",              # §14.24/§14.25 — required when strategy in {'jingle', 'mix'}
+            "exclusion_window",   # §14.25 — required when strategy='mix'
         },
     )
     if raw["source"] not in known_sources:
@@ -294,43 +300,37 @@ def _parse_block(
     if raw["size"] < 1:
         raise TemplateError("block size must be >= 1")
 
-    # Strategy ↔ cursor_id coupling (§14.22):
-    #   strategy='sequential' requires cursor_id; the cursor must be declared
-    #   strategy='window' / 'pick' / 'jingle' forbid cursor_id
     strategy = raw["strategy"]
     cursor_id = raw.get("cursor_id")
-    if strategy == "sequential":
-        if cursor_id is None:
-            raise TemplateError(
-                "block with strategy='sequential' must specify cursor_id"
-            )
-        if cursor_id not in known_cursor_ids:
-            raise TemplateError(
-                f"block cursor_id '{cursor_id}' not in layout.cursors_init "
-                f"(declared: {sorted(known_cursor_ids) or '[]'})"
-            )
-    else:
-        if cursor_id is not None:
-            raise TemplateError(
-                f"block cursor_id is only valid when strategy='sequential' "
-                f"(got strategy={strategy!r}, cursor_id={cursor_id!r})"
-            )
-
-    # Strategy ↔ genre coupling (§14.24):
-    #   strategy='jingle' requires a non-empty genre string
-    #   any other strategy forbids genre (would silently no-op otherwise)
     genre = raw.get("genre")
-    if strategy == "jingle":
-        if not isinstance(genre, str) or not genre:
-            raise TemplateError(
-                "block with strategy='jingle' must specify a non-empty genre"
-            )
-    else:
-        if genre is not None:
-            raise TemplateError(
-                f"block genre is only valid when strategy='jingle' "
-                f"(got strategy={strategy!r}, genre={genre!r})"
-            )
+    exclusion_window = raw.get("exclusion_window")
+
+    # Strategy ↔ required-field coupling. Each strategy declares which extra
+    # fields it requires; every other strategy forbids them. The helper
+    # standardises the error messages and keeps the table of strategy-field
+    # rules in one place.
+    _require_strategy_field(
+        strategy, "cursor_id", cursor_id,
+        required_for={"sequential"},
+        validator=lambda v: v if v in known_cursor_ids else _err(
+            f"block cursor_id '{v}' not in layout.cursors_init "
+            f"(declared: {sorted(known_cursor_ids) or '[]'})"
+        ),
+    )
+    _require_strategy_field(
+        strategy, "genre", genre,
+        required_for={"jingle", "mix"},
+        validator=lambda v: v if (isinstance(v, str) and v) else _err(
+            f"block with strategy={strategy!r} must specify a non-empty genre"
+        ),
+    )
+    _require_strategy_field(
+        strategy, "exclusion_window", exclusion_window,
+        required_for={"mix"},
+        validator=lambda v: v if (isinstance(v, int) and not isinstance(v, bool) and v >= 0) else _err(
+            f"block exclusion_window must be a non-negative integer, got {v!r}"
+        ),
+    )
 
     return BlockSpec(
         source=raw["source"],
@@ -338,7 +338,45 @@ def _parse_block(
         size=int(raw["size"]),
         cursor_id=cursor_id,
         genre=genre,
+        exclusion_window=exclusion_window,
     )
+
+
+def _require_strategy_field(
+    strategy: str,
+    field_name: str,
+    value,
+    *,
+    required_for: set[str],
+    validator,
+) -> None:
+    """Enforce the "this field belongs only to these strategies" rule.
+
+    Pattern shared by sequential ↔ cursor_id, jingle/mix ↔ genre, mix ↔
+    exclusion_window. Captures: (1) required-when-listed, (2) forbidden-
+    when-absent, (3) field-specific validity check via the validator
+    callable. The validator is only invoked when the field is required;
+    forbidden-strategy paths just check `value is None` and raise a
+    standard "only valid when strategy in …" error.
+    """
+    if strategy in required_for:
+        if value is None:
+            raise TemplateError(
+                f"block with strategy={strategy!r} must specify {field_name}"
+            )
+        validator(value)  # raises TemplateError on its own conditions
+    else:
+        if value is not None:
+            raise TemplateError(
+                f"block {field_name} is only valid when strategy in "
+                f"{sorted(required_for)} (got strategy={strategy!r}, "
+                f"{field_name}={value!r})"
+            )
+
+
+def _err(msg: str):
+    """Helper for lambda validators: raise TemplateError with a custom message."""
+    raise TemplateError(msg)
 
 
 def _require_keys(

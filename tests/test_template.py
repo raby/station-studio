@@ -186,7 +186,7 @@ def test_window_block_with_cursor_id_rejected():
         {"c1": 0},
         [{"source": "A", "strategy": "window", "size": 3, "cursor_id": "c1"}],
     )
-    with pytest.raises(TemplateError, match="only valid when strategy='sequential'"):
+    with pytest.raises(TemplateError, match=r"only valid when strategy in \['sequential'\]"):
         parse_template(bad)
 
 
@@ -237,7 +237,7 @@ def test_jingle_block_missing_genre_rejected():
     bad = {**BASE, "layout": {**BASE["layout"], "row_template": [
         {"source": "A", "strategy": "jingle", "size": 1},
     ]}}
-    with pytest.raises(TemplateError, match="must specify a non-empty genre"):
+    with pytest.raises(TemplateError, match="must specify genre"):
         parse_template(bad)
 
 
@@ -253,8 +253,69 @@ def test_genre_on_non_jingle_strategy_rejected():
     bad = {**BASE, "layout": {**BASE["layout"], "row_template": [
         {"source": "A", "strategy": "window", "size": 3, "genre": "Daytime"},
     ]}}
-    with pytest.raises(TemplateError, match="only valid when strategy='jingle'"):
+    with pytest.raises(TemplateError, match=r"only valid when strategy in \['jingle', 'mix'\]"):
         parse_template(bad)
+
+
+# ---------- §14.25: mix strategy + genre + exclusion_window -------------
+
+
+def test_mix_block_with_genre_and_window_accepted():
+    tmpl = parse_template({**BASE, "layout": {**BASE["layout"], "row_template": [
+        {"source": "A", "strategy": "mix", "size": 1, "genre": "01Alphastate", "exclusion_window": 20},
+    ]}})
+    b = tmpl.layout.row_template[0]
+    assert (b.strategy, b.genre, b.exclusion_window) == ("mix", "01Alphastate", 20)
+
+
+def test_mix_block_missing_genre_rejected():
+    bad = {**BASE, "layout": {**BASE["layout"], "row_template": [
+        {"source": "A", "strategy": "mix", "size": 1, "exclusion_window": 20},
+    ]}}
+    with pytest.raises(TemplateError, match="must specify genre"):
+        parse_template(bad)
+
+
+def test_mix_block_missing_exclusion_window_rejected():
+    bad = {**BASE, "layout": {**BASE["layout"], "row_template": [
+        {"source": "A", "strategy": "mix", "size": 1, "genre": "01Alphastate"},
+    ]}}
+    with pytest.raises(TemplateError, match="must specify exclusion_window"):
+        parse_template(bad)
+
+
+def test_mix_block_negative_exclusion_window_rejected():
+    bad = {**BASE, "layout": {**BASE["layout"], "row_template": [
+        {"source": "A", "strategy": "mix", "size": 1, "genre": "01Alphastate", "exclusion_window": -1},
+    ]}}
+    with pytest.raises(TemplateError, match="exclusion_window must be a non-negative integer"):
+        parse_template(bad)
+
+
+def test_mix_block_zero_exclusion_window_accepted():
+    """Window of 0 = no exclusion. Valid (e.g. weekly's old default for new
+    stations). Engine treats as 'no MixUsage lookup needed'."""
+    tmpl = parse_template({**BASE, "layout": {**BASE["layout"], "row_template": [
+        {"source": "A", "strategy": "mix", "size": 1, "genre": "01Alphastate", "exclusion_window": 0},
+    ]}})
+    assert tmpl.layout.row_template[0].exclusion_window == 0
+
+
+def test_exclusion_window_on_non_mix_strategy_rejected():
+    bad = {**BASE, "layout": {**BASE["layout"], "row_template": [
+        {"source": "A", "strategy": "window", "size": 3, "exclusion_window": 20},
+    ]}}
+    with pytest.raises(TemplateError, match=r"only valid when strategy in \['mix'\]"):
+        parse_template(bad)
+
+
+def test_genre_on_mix_strategy_accepted():
+    """Regression: §14.24 only allowed genre for jingle. §14.25 widens the
+    coupling so mix also accepts it."""
+    tmpl = parse_template({**BASE, "layout": {**BASE["layout"], "row_template": [
+        {"source": "A", "strategy": "mix", "size": 1, "genre": "01Alphastate", "exclusion_window": 0},
+    ]}})
+    assert tmpl.layout.row_template[0].genre == "01Alphastate"
 
 
 def test_source_by_name_unknown_raises():

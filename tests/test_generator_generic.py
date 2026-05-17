@@ -475,6 +475,104 @@ def test_jingle_coexists_with_window_in_same_row():
     assert r.trace.slots[2].source == "J"
 
 
+# ---------- §14.25: mix strategy via generator --------------------------
+
+
+def _mk_mix_pool() -> list[FakeTrack]:
+    return [
+        FakeTrack(id=100, name="H-1", genre="House"),
+        FakeTrack(id=101, name="T-1", genre="Trance"),
+        FakeTrack(id=102, name="H-2", genre="House"),
+        FakeTrack(id=103, name="H-3", genre="House"),
+    ]
+
+
+def _mix_template_one_block(rng: str = "off") -> dict:
+    return mk_template(
+        rng=rng,
+        layout={
+            "unit": "day",
+            "unit_labels": ["Mon"],
+            "row_start_offsets": [0],
+            "row_template": [
+                {"source": "A", "strategy": "mix", "size": 1, "genre": "House", "exclusion_window": 5},
+            ],
+        },
+    )
+
+
+def test_mix_strategy_no_exclusion_picks_first_genre_match():
+    t = parse_template(_mix_template_one_block())
+    r = generate(t, {"A": _mk_mix_pool()}, week=1)
+    assert r.picks[0].id == 100
+    assert r.trace.slots[0].strategy == "mix"
+    assert "excluded=0" in r.trace.slots[0].reason
+    assert "relaxed" not in r.trace.slots[0].reason
+
+
+def test_mix_strategy_with_excluded_ids_skips_them():
+    t = parse_template(_mix_template_one_block())
+    r = generate(
+        t, {"A": _mk_mix_pool()},
+        week=1,
+        excluded_mix_ids={100},  # exclude H-1; should pick H-2 next
+    )
+    assert r.picks[0].id == 102
+    assert "excluded=1" in r.trace.slots[0].reason
+    assert "relaxed" not in r.trace.slots[0].reason
+
+
+def test_mix_strategy_relaxation_surfaces_in_trace_reason():
+    t = parse_template(_mix_template_one_block())
+    # Exclude every House track — strategy relaxes back to candidates[0].
+    r = generate(
+        t, {"A": _mk_mix_pool()},
+        week=1,
+        excluded_mix_ids={100, 102, 103},
+    )
+    assert r.picks[0].genre == "House"
+    assert "relaxed" in r.trace.slots[0].reason
+    assert "saturated genre" in r.trace.slots[0].reason
+
+
+def test_mix_strategy_rng_seeded_is_reproducible():
+    t = parse_template(_mix_template_one_block(rng="on"))
+    pools = {"A": _mk_mix_pool()}
+    r1 = generate(t, pools, week=1, seed=7)
+    r2 = generate(t, pools, week=1, seed=7)
+    assert [p.id for p in r1.picks] == [p.id for p in r2.picks]
+
+
+def test_mix_coexists_with_jingle_and_window_in_same_template():
+    """Smoke test: three different non-trivial strategies in one row."""
+    t = parse_template(mk_template(
+        sources=[
+            {"name": "A", "colour": "#aaa", "role": "content"},
+            {"name": "J", "colour": "#fc0", "role": "content"},
+            {"name": "M", "colour": "#0cf", "role": "content"},
+        ],
+        layout={
+            "unit": "day",
+            "unit_labels": ["Mon"],
+            "row_start_offsets": [0],
+            "row_template": [
+                {"source": "A", "strategy": "window", "size": 1},
+                {"source": "J", "strategy": "jingle", "size": 1, "genre": "Daytime"},
+                {"source": "M", "strategy": "mix", "size": 1, "genre": "House", "exclusion_window": 5},
+            ],
+        },
+    ))
+    pools = {
+        "A": mk_pool("A", 10),
+        "J": _mk_jingle_pool(),
+        "M": _mk_mix_pool(),
+    }
+    r = generate(t, pools, week=1, excluded_mix_ids={100})
+    assert [s.strategy for s in r.trace.slots] == ["window", "jingle", "mix"]
+    # Mix picked H-2 (id=102) because H-1 (id=100) was excluded.
+    assert r.picks[2].id == 102
+
+
 # ---------- §14.23: excluded-candidates trace field ---------------------
 
 

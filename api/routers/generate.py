@@ -9,7 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from engine.models import Station, Playlist, PlaylistTrace
-from engine.persistence import load_pools, save_playlist
+from engine.persistence import load_excluded_mix_ids, load_pools, save_playlist
 from engine.template import parse_template, TemplateError
 from engine.generator import generate
 from engine.exporter import export_playlist, export_playlist_to_disk
@@ -38,13 +38,32 @@ def generate_playlist(slug: str, payload: GenerateRequest, db: Session = Depends
     except ValueError as e:
         raise HTTPException(400, str(e))
 
+    # §14.25: build mix-exclusion set from the station's recent playlists.
+    # If the template has no mix blocks, the window is 0 and the query is
+    # skipped. When multiple mix blocks declare different exclusion_windows,
+    # take the max — the strategy only sees one exclusion set per generation,
+    # and a wider window is a stricter constraint (which the per-block setting
+    # is asking for).
+    mix_windows = [
+        b.exclusion_window for b in template.layout.row_template
+        if b.strategy == "mix" and b.exclusion_window is not None
+    ]
+    excluded_mix_ids: set[int] = set()
+    if mix_windows:
+        excluded_mix_ids = load_excluded_mix_ids(
+            db, station_id=station.id, window=max(mix_windows),
+        )
+
     try:
-        result = generate(template, pools, week=payload.week, seed=payload.seed)
+        result = generate(
+            template, pools, week=payload.week, seed=payload.seed,
+            excluded_mix_ids=excluded_mix_ids,
+        )
     except Exception as e:
         raise HTTPException(400, f"generation failed: {e}")
 
     try:
-        playlist = save_playlist(db, station, result, week=payload.week)
+        playlist = save_playlist(db, station, result, week=payload.week, template=template)
         db.commit()
     except IntegrityError:
         db.rollback()

@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from engine.strategies.window import apply_window, WindowOutOfRangeError
 from engine.strategies.pick import apply_pick
 from engine.strategies.jingle import apply_jingle, JingleGenreNotFoundError
+from engine.strategies.mix import apply_mix, MixGenreNotFoundError
 
 
 # ---------- window -------------------------------------------------------
@@ -163,3 +164,86 @@ def test_jingle_genre_match_is_case_sensitive():
     # than silently matching against a stale/typo'd genre tag.
     with pytest.raises(JingleGenreNotFoundError):
         apply_jingle(_jingle_pool(), genre="daytime", source_name="JINGLES")
+
+
+# ---------- mix (§14.25) -------------------------------------------------
+
+
+@dataclass
+class MixTrack:
+    id: int
+    name: str
+    genre: str | None = None
+
+
+def _mix_pool() -> list[MixTrack]:
+    return [
+        MixTrack(id=10, name="House-A", genre="House"),
+        MixTrack(id=11, name="Trance-A", genre="Trance"),
+        MixTrack(id=12, name="House-B", genre="House"),
+        MixTrack(id=13, name="House-C", genre="House"),
+        MixTrack(id=14, name="Trance-B", genre="Trance"),
+    ]
+
+
+def test_mix_deterministic_picks_first_eligible_genre_match():
+    idx, track, relaxed = apply_mix(
+        _mix_pool(), genre="House", excluded_ids=set(), source_name="MIXES",
+    )
+    assert (idx, track.id, relaxed) == (1, 10, False)
+
+
+def test_mix_skips_excluded_track_ids():
+    # Exclude House-A; first eligible should now be House-B at pool idx 3.
+    idx, track, relaxed = apply_mix(
+        _mix_pool(), genre="House", excluded_ids={10}, source_name="MIXES",
+    )
+    assert (idx, track.id, relaxed) == (3, 12, False)
+
+
+def test_mix_relaxes_when_exclusion_drains_candidates():
+    # Exclude every House track; strategy falls back to all genre matches.
+    idx, track, relaxed = apply_mix(
+        _mix_pool(), genre="House", excluded_ids={10, 12, 13}, source_name="MIXES",
+    )
+    assert relaxed is True
+    assert track.genre == "House"
+    # In deterministic mode this is the first candidate (pool idx 1).
+    assert idx == 1
+
+
+def test_mix_random_seeded_is_reproducible():
+    pool = _mix_pool()
+    rng_a = random.Random(11)
+    rng_b = random.Random(11)
+    a = apply_mix(pool, genre="House", excluded_ids=set(), rng=rng_a, source_name="MIXES")
+    b = apply_mix(pool, genre="House", excluded_ids=set(), rng=rng_b, source_name="MIXES")
+    assert a == b
+
+
+def test_mix_random_respects_exclusion():
+    pool = _mix_pool()
+    rng = random.Random(42)
+    # Exclude two of the three House tracks; only House-C (id=13) eligible.
+    for _ in range(30):
+        idx, track, relaxed = apply_mix(
+            pool, genre="House", excluded_ids={10, 12}, rng=rng, source_name="MIXES",
+        )
+        assert track.id == 13
+        assert relaxed is False
+
+
+def test_mix_unknown_genre_raises_with_pool_context():
+    with pytest.raises(MixGenreNotFoundError, match="MY_MIXES.*'Drum'"):
+        apply_mix(_mix_pool(), genre="Drum", excluded_ids=set(), source_name="MY_MIXES")
+
+
+def test_mix_accepts_frozenset_as_excluded_ids():
+    """Generator passes frozenset (normalised from caller-provided set/None)."""
+    idx, track, relaxed = apply_mix(
+        _mix_pool(), genre="House",
+        excluded_ids=frozenset({10}),
+        source_name="MIXES",
+    )
+    assert track.id != 10
+    assert relaxed is False

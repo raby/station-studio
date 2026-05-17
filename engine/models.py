@@ -204,3 +204,29 @@ class CursorState(Base):
     __table_args__ = (
         UniqueConstraint("station_id", "name"),
     )
+
+
+class MixUsage(Base):
+    """Per-playlist record of which mix tracks were used + their genre tag.
+
+    Powers the §14.25 `mix` strategy's cross-week dedup: when generating week
+    W of a station, the exclusion set is the union of MixUsage.track_id over
+    that station's last N playlists (N = block.exclusion_window). Genre is
+    redundant with template knowledge but stored so historical exclusion
+    analysis works without re-resolving the template version that produced
+    the row. Mirrors weekly's `mix_usage` table; station-scoped via
+    playlist_id rather than weekly's weekly_playlist_id since station-studio
+    is multi-station.
+    """
+    __tablename__ = "mix_usage"
+
+    id = Column(Integer, primary_key=True)
+    playlist_id = Column(
+        Integer, ForeignKey("playlist.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    track_id = Column(
+        Integer, ForeignKey("track.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    genre = Column(Text, nullable=False)

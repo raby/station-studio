@@ -2885,6 +2885,206 @@ documents the actual behaviour for future readers.
 
 ---
 
+### 14.25 mix strategy + MixUsage table + Alembic migration — what shipped (§17 Phase B sub-slice #9)
+
+**Goal.** Add the first cross-week-stateful slot type: `mix`, a genre-
+filtered random pick that excludes tracks already used in the station's
+last N playlists. This is the engine's first slice that *needs to know
+what happened in the past* — every earlier strategy was a pure function
+of `(template, pools, week)`. Mix needs the MixUsage table to remember,
+the Alembic migration to create it, and a state-handoff path between
+persistence ↔ generator.
+
+Ports weekly's `_pick_mix` and `_load_excluded_mix_ids`. Station-scoped
+(weekly is single-station; station-studio is multi-station) — the
+exclusion lookup filters MixUsage by the playlists of the *current
+station* only, so two stations sharing the same MIXES source pool can
+each maintain their own mix rotation independently.
+
+**Schema (`engine/models.py` + Alembic migration `8353f29ac95e`):**
+
+New `MixUsage` table:
+
+```
+(id PK, playlist_id FK→playlist ON DELETE CASCADE, track_id FK→track
+ ON DELETE CASCADE, genre TEXT)
+```
+
+Index on `playlist_id` (covers the load-by-recent-playlists query) and
+on `track_id` (covers any future "where was this track used?" lookup).
+No composite index — working set per playlist is small (low hundreds).
+`genre` stored despite being derivable from the template at the time of
+generation: a station's template can change, and historical exclusion
+analysis should not break when it does.
+
+Migration filename trimmed to `8353f29ac95e_mix_usage.py` (autogen
+emitted the long form). Migration body manually trimmed to drop
+autogen's spurious "missing" index entries that already exist in
+baseline — explained inline in the migration's docstring. `make
+migration-parity` passes against the model.
+
+**Strategy module (`engine/strategies/mix.py`):**
+
+```python
+def apply_mix(pool, *, genre, excluded_ids, rng=None, source_name)
+    -> (pool_index_1based, track, relaxed: bool)
+```
+
+Filter pool to tracks with the requested genre → filter again by
+`id not in excluded_ids` → if drained, fall back to the unfiltered
+genre set and set `relaxed=True`. Picks deterministically (first
+eligible) when `rng=None`, `rng.choice` otherwise. The `relaxed`
+flag surfaces in the trace reason so the user can spot exclusion-
+window saturation without re-running the generator.
+
+Failure mode is loud: `MixGenreNotFoundError(IndexError)` when the
+pool has *no* tracks of the requested genre (typo guard).
+
+**Template grammar additions (`engine/template.py`):**
+
+1. `SUPPORTED_STRATEGIES` adds `"mix"`.
+2. `BlockSpec.genre` (already added in §14.24 for jingle) is now
+   *also* required for `mix`. The strategy ↔ genre coupling widens
+   from `{jingle}` to `{jingle, mix}`.
+3. `BlockSpec.exclusion_window: int | None = None` — required for
+   mix only; non-negative integer. `0` is valid and means "no
+   exclusion" (the strategy never queries MixUsage; the persistence
+   layer skips the lookup entirely).
+4. Parser refactored: the duplicated if/else coupling validation
+   from §14.22 + §14.24 is now a `_require_strategy_field(strategy,
+   field_name, value, *, required_for, validator)` helper. The
+   table of strategy → required fields lives in one call site each.
+   The §14.24 "refactor when 3rd case lands" punt note is what
+   triggered this — three cases (`sequential⇔cursor_id`, `{jingle,
+   mix}⇔genre`, `mix⇔exclusion_window`) make the abstraction's
+   shape clear. Error message phrasing shifted slightly (now
+   `"only valid when strategy in [...]"` instead of `"only valid
+   when strategy='...'"`); three existing tests updated.
+
+**Generator dispatch (`engine/generator.py`):**
+
+`generate(...)` now accepts `excluded_mix_ids: set[int] | None`.
+Normalised to a `frozenset()` at function entry so the strategy
+branch never sees `None`. The mix dispatch loops `block.size` times
+(typical: 1), surfacing `excluded=N` and `(relaxed ...)` notes in
+the trace reason for each slot. Templates with no mix blocks never
+read the set; callers pass `None` and the cost is zero.
+
+**Pre/post-generation state plumbing (`engine/persistence.py`):**
+
+Two new helpers:
+
+- `load_excluded_mix_ids(db, *, station_id, window) -> set[int]` —
+  joins Playlist (filtered to station, ordered by week desc, limited
+  to `window` rows) with MixUsage; returns the union of track_ids.
+  Empty when window=0 or station has no playlists.
+- `_save_mix_usages(db, *, playlist_id, template, result)` — walks
+  the generation result's slots, looks up each slot's BlockSpec via
+  `(row, block)` coordinates, and inserts one MixUsage row per slot
+  whose strategy is `mix`. Genre comes from the BlockSpec (not the
+  slot) — keeps TraceSlot's schema unchanged.
+
+`save_playlist(...)` gains an optional `template: Template | None`
+kwarg. When provided, `_save_mix_usages` runs after the playlist
+row + entries + trace land. When omitted (Classics / bootstrap
+script path), it's a no-op — Classics templates have no mix blocks,
+so no data is lost.
+
+**API integration (`api/routers/generate.py`):**
+
+Before generation, scan the parsed template for mix blocks. If any
+exist, take `max(exclusion_window)` across all of them and call
+`load_excluded_mix_ids` once. Templates with multiple mix blocks
+declaring different windows get the *strictest* (widest) lookup —
+the strategy only sees one exclusion set per generation, and a
+larger window is a stronger constraint, which is what the per-block
+setting was asking for.
+
+After generation, `save_playlist(..., template=tmpl)` records the
+MixUsage rows. This couples the API path; the bootstrap script's
+`save_playlist(...)` call deliberately omits `template=` because
+Classics has no mix blocks.
+
+**Backward compatibility.** Classics templates byte-for-byte
+unchanged: no mix blocks, no exclusion_window field, parser skips
+the new validation. Existing 201 tests pass without modification
+once the three error-message-format tests are updated for the
+refactored phrasing (kept clearer messages — `"only valid when
+strategy in ['jingle', 'mix']"` instead of stale single-strategy
+phrasing).
+
+**Tests added (26 new, total 227):**
+
+- 8 parser tests (`test_template.py`): mix with genre+window
+  accepted; missing genre rejected; missing exclusion_window
+  rejected; negative exclusion_window rejected; zero accepted;
+  exclusion_window on non-mix strategy rejected; genre on mix
+  accepted (regression for the §14.24-only coupling).
+- 8 strategy tests (`test_strategies.py`): deterministic first
+  eligible; exclusion skips IDs; relaxation when drained; seeded
+  random reproducible; random respects exclusion across trials;
+  unknown genre raises with pool context; frozenset accepted as
+  excluded_ids (the generator's normalised type).
+- 5 generator tests (`test_generator_generic.py`): no-exclusion
+  baseline; with-exclusion skips IDs; relaxation surfaces in
+  trace reason; seeded run reproducible; mix coexists with window
+  + jingle in the same template.
+- 5 persistence tests (`test_mix_persistence.py`, new file):
+  save_playlist records MixUsage rows; without template= the
+  recording is skipped; load_excluded_mix_ids assembles across
+  multiple weeks with rotation; window=0 returns empty;
+  load_excluded_mix_ids respects window limit; FK cascade clears
+  stale MixUsage when a playlist is replaced.
+
+**Design decisions.**
+
+- *Why station-scoped MixUsage (vs. weekly's single-playlist FK).*
+  Station-studio is multi-station. Two stations' exclusion
+  windows must not bleed into each other even if they share a
+  source pool. Joining MixUsage → Playlist → station_id is the
+  cleanest way without denormalising.
+- *Why the `relaxed` flag returned by `apply_mix`.* The trace
+  carries the rationale; without surfacing relaxation, a user
+  seeing the same track repeat within their exclusion window
+  would think the strategy was broken. The flag costs almost
+  nothing (one bool in the return tuple) and makes "saturated
+  pool" a debuggable state.
+- *Why genre lives on BlockSpec, not on the TraceSlot.* TraceSlot's
+  schema is already two slices (§14.22 + §14.23) deep into Phase B;
+  adding genre per-slot would have rippled into the viewer + the
+  trace JSON shape + backwards compatibility. The (row, block)
+  coordinate on the slot is enough to look up the genre at
+  recording time, and the result round-trips correctly.
+- *Why max(exclusion_window) instead of per-block windows.* Weekly's
+  templates always have one window per mix block (and historically
+  one value across all of them). Templates with mixed windows are
+  hypothetical; if a real station ever wants per-block windows,
+  apply_mix would need per-call exclusion sets — defer until that
+  shape is actually requested.
+
+**Punts:**
+
+- **Per-block exclusion windows.** See last design decision.
+  Defer until a template that genuinely wants this shape arrives.
+- **Surfacing the excluded track set in the §14.23 excluded-
+  candidates viewer panel.** The strategy currently emits no
+  `ExcludedCandidate` entries — the cross-week exclusion is part
+  of the candidate filtering, not per-pick rejection rationale.
+  Could be added later: every excluded track becomes one
+  `ExcludedCandidate` with reason `"recently used in week N"`.
+  Worth doing once `weighted` lands so the viewer's excluded UI
+  has consistent population across strategies.
+- **Mix-usage analytics endpoint.** "Show me how this track has
+  rotated through the last 20 weeks" would be a useful authoring
+  aid; reaches into UI territory and isn't blocking the port.
+- **Drop unused MixUsage.genre column.** Genre is preserved
+  redundantly. We could derive it from the template at the time
+  the row was written. Kept for historical-analysis robustness
+  per the schema rationale above; reconsider if storage becomes
+  an issue (it won't).
+
+---
+
 ## 15. Status snapshot
 
 A quick "where are we" for a future reader. Last updated at commit
@@ -2909,7 +3109,7 @@ A quick "where are we" for a future reader. Last updated at commit
 | Delete / station-reset   | Shipped (14.10). Per-row delete + station nuke; cascades.        |
 | Disk-export UI button    | Shipped (14.11). Trace viewer "Export to disk" + status line.    |
 | Edit mode for stations   | Shipped (14.13). Shared `<StationForm>` + JSON preview + diff + reset. |
-| **§17 pre-port roadmap** | **Phase A complete (§14.17–§14.21). Phase B underway: sub-slices #5 (§14.23 excluded-candidates), #7 (§14.22 sequential + multi-cursor), #8 (§14.24 jingle) shipped. **Next: sub-slice #9 = `mix` strategy + MixUsage table + Alembic** — first cross-week state slice.** |
+| **§17 pre-port roadmap** | **Phase A complete (§14.17–§14.21). Phase B underway: sub-slices #5 (§14.23), #7 (§14.22), #8 (§14.24), #9 (§14.25) shipped. **Next: sub-slice #10 = artist-match subsystem port (`artist_match.py` ~187 LoC) + ArtistAlias table.** |
 | Visual block editor      | Deferred (v2). Lands as §17 Phase B after Phase A unblocks.      |
 | Trace versioning         | Deferred. See §16.4 (queued behind §16.1 by design).             |
 | Accessibility pass       | Deferred. §17 Phase D — single sweep after §16.2 + port.         |
@@ -4217,7 +4417,7 @@ Sub-slice ordering (engine work in dependency order):
 6. ~~**Excluded-candidates in trace** (#5)~~ — **shipped (§14.23)**
 7. ~~**`sequential` strategy + multi-cursor support**~~ — **shipped (§14.22)**
 8. ~~**`jingle` strategy**~~ — **shipped (§14.24)**
-9. **`mix` strategy + MixUsage table + Alembic** — first cross-week state
+9. ~~**`mix` strategy + MixUsage table + Alembic**~~ — **shipped (§14.25)**
 10. **Artist-match subsystem** (port `artist_match.py` ~187 LoC) + ArtistAlias table
 11. **`weighted` commercial strategy** — two-tier with squared-remaining + dedup
 12. **`prev_ref` strategy** — cross-playlist lookup with fallback
