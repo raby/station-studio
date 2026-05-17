@@ -13,6 +13,26 @@ from datetime import datetime, timezone
 
 
 @dataclass
+class ExcludedCandidate:
+    """A track the strategy *considered* but did not pick, with rationale.
+
+    Populated by strategies that evaluate multiple candidates (weighted,
+    dedup-aware, etc.). Empty for deterministic strategies (window, pick
+    in sequential mode, sequential). Recording these makes the otherwise
+    opaque "why didn't it pick X?" question answerable from the trace
+    alone, without re-running the generator. See DESIGN.md §14.23.
+    """
+    pool_index: int         # 1-indexed position in the source pool
+    track_id: int | None
+    track_name: str
+    track_artist: str | None
+    reason: str             # why this candidate was rejected
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+@dataclass
 class TraceSlot:
     slot: int               # 1-indexed position in the generated playlist
     unit: str               # e.g. "Mon"; from template.layout.unit_labels
@@ -25,6 +45,12 @@ class TraceSlot:
     track_name: str
     track_artist: str | None
     reason: str             # free-text rationale
+    # Candidates considered but rejected (§14.23). Empty for the current
+    # deterministic strategies; populated by future weighted/dedup-aware
+    # strategies. `asdict` includes this in to_dict; legacy traces persisted
+    # before §14.23 lack the field and round-trip back without it (the
+    # frontend treats missing as empty).
+    excluded: list[ExcludedCandidate] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return asdict(self)

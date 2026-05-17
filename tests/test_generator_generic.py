@@ -368,3 +368,33 @@ def test_trace_ids_are_unique_across_generations():
     pools = {"A": mk_pool("A", 50)}
     seen = {generate(t, pools, week=w).trace.trace_id for w in range(1, 6)}
     assert len(seen) == 5
+
+
+# ---------- §14.23: excluded-candidates trace field ---------------------
+
+
+def test_deterministic_strategies_emit_empty_excluded_lists():
+    """window/pick/sequential don't reject candidates, so excluded stays []."""
+    t = parse_template(mk_template(
+        sources=[
+            {"name": "A", "colour": "#aaa", "role": "content"},
+            {"name": "B", "colour": "#bbb", "role": "content"},
+        ],
+        layout={
+            "unit": "day",
+            "unit_labels": ["Mon"],
+            "row_start_offsets": [0],
+            "cursors_init": {"c1": 0},
+            "row_template": [
+                {"source": "A", "strategy": "window", "size": 2},
+                {"source": "A", "strategy": "pick",   "size": 1},
+                {"source": "B", "strategy": "sequential", "size": 2, "cursor_id": "c1"},
+            ],
+        },
+    ))
+    pools = {"A": mk_pool("A", 50), "B": mk_pool("B", 50)}
+    r = generate(t, pools, week=1)
+    assert all(s.excluded == [] for s in r.trace.slots)
+    # And it serialises through to_dict.
+    for s_dict in r.trace.to_dict()["slots"]:
+        assert s_dict["excluded"] == []

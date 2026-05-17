@@ -2648,6 +2648,126 @@ trip the parser.
 
 ---
 
+### 14.23 excluded-candidates trace field — what shipped (§17 Phase B prereq #5)
+
+**Goal.** Add the schema-level slot for "candidates the strategy considered
+but rejected" so the persisted trace can carry that detail when a strategy
+that actually produces rejections lands. Critically: ship the JSON-shape
+change *before* `weighted`/dedup-aware strategies do, so older persisted
+traces don't have to migrate later — they round-trip back through the
+viewer as if `excluded` were always there (it's optional/empty).
+
+The DESIGN-time motivation: "why didn't it pick X?" is the dominant
+authoring question for weighted picks, and answering it without re-running
+the generator (with different RNG state) needs the rejection log to live
+in the trace.
+
+**Engine changes (`engine/trace.py`):**
+
+1. New dataclass `ExcludedCandidate` with `(pool_index, track_id,
+   track_name, track_artist, reason)`. Mirrors the picked-track fields
+   on `TraceSlot` so the viewer can render rejected candidates with the
+   same column layout.
+2. `TraceSlot.excluded: list[ExcludedCandidate] = field(default_factory=list)`.
+   `asdict` includes the field in `to_dict()`.
+3. `engine/generator._make_trace_slot` gained an optional `excluded` kwarg
+   (defaults to `[]`). All three existing strategies (window, pick,
+   sequential) pass nothing — they're deterministic and don't reject.
+
+No strategy populates `excluded` yet. That's by design: this slice lays
+the JSON-shape foundation, and the population will land with `weighted`
+(Phase B sub-slice 11) and dedup-aware strategies. Splitting these
+avoids a combined commit where the trace shape change + the strategy
+logic ride together and a viewer regression in either blast-radiuses
+both surfaces.
+
+**API:** no schema change required. `GET /api/playlists/{id}/trace`
+already returns the raw `slots` JSON column verbatim. Old persisted
+rows lack the `excluded` field; new ones include it (as `[]` until a
+populating strategy ships).
+
+**Frontend (`web/src/lib/api.ts` + viewer):**
+
+1. New `ExcludedCandidate` interface; `TraceSlot.excluded?:
+   ExcludedCandidate[]` (optional — legacy traces lack it, viewer
+   treats `undefined` as empty).
+2. Viewer renders a small `▸ N rejected` disclosure button inline with
+   the track name when `slot.excluded?.length > 0`. Default state:
+   collapsed (excluded lists can run hundreds of candidates for a
+   weighted pick; most reads are answered by the picked slot's
+   `reason`). Clicking expands a sub-row beneath the slot with a
+   per-candidate table (pool / track / artist / why-rejected). Each
+   slot's open/closed state is independent via
+   `excludedOpen: Record<slot, boolean>`.
+3. The toggle is omitted entirely when `excluded` is empty or absent —
+   no "0 rejected" noise, no UI for slots that have nothing to disclose.
+
+**Design decision — inline disclosure vs. modal.**
+Considered: a modal that lists all excluded candidates for the whole
+playlist, or a dedicated "rejections" tab. Chose inline because the
+"why didn't it pick X?" question is *about a specific slot*; anchoring
+the disclosure to that slot keeps the rationale visually adjacent to
+the pick it explains, and supports comparing pick vs. rejection side
+by side without losing context.
+
+**Design decision — keep the toggle button collapsed by default.**
+A weighted pick over a 200-track pool can reject 199 candidates per
+slot. Auto-expanding would dominate the trace view with rejection
+noise on every weighted-strategy template (i.e. Rebirth Radio's whole
+playlist once the port lands). The "N rejected" badge keeps the
+information one click away without ever costing more than a button's
+worth of vertical space when the user doesn't care.
+
+**Tests added (6 new):**
+
+- 3 engine tests (`tests/test_trace.py` + `tests/test_generator_generic.py`):
+  - `TraceSlot.to_dict()` round-trips with `excluded: []` for the
+    deterministic strategies' output.
+  - Per-instance `default_factory=list` — two slots' excluded lists
+    don't share storage.
+  - `ExcludedCandidate` round-trips through `to_dict()` with synthetic
+    rejection entries.
+- 3 viewer tests (`web/src/routes/playlists/[id]/trace.test.ts`):
+  - Toggle renders only when `excluded.length > 0`; correct count text.
+  - Click expands sub-row with rejected entries + reasons; aria-expanded
+    flips false→true.
+  - Legacy trace fixture (no `excluded` field) renders without crashing
+    or showing the toggle.
+
+**Backward compatibility.** Per-row migration is unnecessary:
+- Engine: existing strategies pass nothing → default `[]`. Classics
+  generation is byte-for-byte identical.
+- Persistence: SQLite JSON column stores whatever was serialised.
+  Old rows lack `excluded`; the API returns them verbatim.
+- API: no schema mismatch — the endpoint already returns the raw
+  JSON column, no Pydantic model rewriting the shape.
+- Frontend: `excluded?:` optional on the `TraceSlot` interface; the
+  viewer's render gate is `s.excluded && s.excluded.length > 0`,
+  which short-circuits cleanly on `undefined`.
+
+**What this unblocks.**
+
+Phase B's `weighted` strategy (sub-slice 11) and dedup-aware strategies
+can now populate `excluded` without a coordinated frontend/backend
+deploy. The rationale per candidate is free-text and the strategy
+chooses its own message format — same convention as the existing
+`reason` field on TraceSlot.
+
+**Punts:**
+
+- **Pagination for very long excluded lists.** The sub-table renders
+  all entries; if a single slot rejects 500+ candidates it'll be slow
+  to render. Defer until a real station produces lists that big.
+- **Filtering inside the excluded sub-table.** The page's main
+  filter bar (§16.8) only narrows picked slots, not rejected
+  candidates. Could matter for "why did it never pick this artist?"
+  investigations; defer until the question gets asked.
+- **CSV export of excluded candidates.** "Send me the rejection log
+  for week 12" — keeping it inline-only for now; export joins the
+  general trace-export wish list.
+
+---
+
 ## 15. Status snapshot
 
 A quick "where are we" for a future reader. Last updated at commit
@@ -3977,7 +4097,7 @@ port lands first.
 
 Sub-slice ordering (engine work in dependency order):
 
-6. **Excluded-candidates in trace** (#5) — prereq for #2.3 weighted
+6. ~~**Excluded-candidates in trace** (#5)~~ — **shipped (§14.23)**
 7. ~~**`sequential` strategy + multi-cursor support**~~ — **shipped (§14.22)**
 8. **`jingle` strategy** — simplest non-window slot type
 9. **`mix` strategy + MixUsage table + Alembic** — first cross-week state

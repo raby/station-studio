@@ -667,6 +667,106 @@ describe('trace viewer — §16.8 search / filter', () => {
   });
 });
 
+// ---- §14.23 excluded-candidates disclosure ------------------------------
+
+describe('trace viewer — §14.23 excluded-candidates disclosure', () => {
+  beforeEach(() => {
+    getPlaylistMock.mockReset();
+    getTraceMock.mockReset();
+    getStationMock.mockReset();
+    getStationPlaylistsMock.mockReset();
+    getStationPlaylistsMock.mockResolvedValue([]);
+    exportPlaylistToDiskMock.mockReset();
+    setId('1');
+  });
+
+  /**
+   * Trace where slot 2 has two rejected candidates. Mirrors what a
+   * future `weighted` strategy will emit: pool indices considered, the
+   * track / artist that was rejected, and the per-candidate reason.
+   */
+  const traceWithExcluded = () =>
+    stubTrace({
+      slots: [
+        {
+          slot: 1, unit: 'Mon', row: 1, block: 1,
+          source: 'A', strategy: 'window', pool_index: 1,
+          track_id: 100, track_name: 'Track Mon-1',
+          track_artist: 'Artist 1', reason: 'window slot 1',
+        },
+        {
+          slot: 2, unit: 'Mon', row: 1, block: 1,
+          source: 'A', strategy: 'weighted', pool_index: 5,
+          track_id: 105, track_name: 'Picked Track',
+          track_artist: 'Picked Artist', reason: 'highest weight',
+          excluded: [
+            {
+              pool_index: 3, track_id: 103, track_name: 'Rejected Alpha',
+              track_artist: 'Alpha Artist',
+              reason: 'artist already in dedup window',
+            },
+            {
+              pool_index: 4, track_id: 104, track_name: 'Rejected Beta',
+              track_artist: 'Beta Artist',
+              reason: 'recently used in week 2',
+            },
+          ],
+        },
+      ],
+    });
+
+  it('renders the "N rejected" toggle only when excluded list is non-empty', async () => {
+    getTraceMock.mockResolvedValueOnce(traceWithExcluded());
+    getPlaylistMock.mockResolvedValueOnce(stubPlaylist());
+    getStationMock.mockResolvedValueOnce(stubStation());
+    render(Page);
+
+    await screen.findByText('Picked Track');
+    // Slot 2 has two excluded — one toggle. Slot 1 has none — no toggle.
+    const toggles = screen.getAllByTestId('excluded-toggle');
+    expect(toggles).toHaveLength(1);
+    expect(toggles[0]).toHaveTextContent(/2 rejected/i);
+  });
+
+  it('clicking the toggle reveals the per-candidate reject table', async () => {
+    getTraceMock.mockResolvedValueOnce(traceWithExcluded());
+    getPlaylistMock.mockResolvedValueOnce(stubPlaylist());
+    getStationMock.mockResolvedValueOnce(stubStation());
+    render(Page);
+
+    const toggle = await screen.findByTestId('excluded-toggle');
+    // Sub-row not yet rendered (default collapsed).
+    expect(screen.queryByTestId('excluded-row')).not.toBeInTheDocument();
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+
+    await fireEvent.click(toggle);
+
+    // Sub-row appears with both rejected entries + their reasons.
+    expect(screen.getByTestId('excluded-row')).toBeInTheDocument();
+    expect(screen.getByText('Rejected Alpha')).toBeInTheDocument();
+    expect(screen.getByText('Rejected Beta')).toBeInTheDocument();
+    expect(
+      screen.getByText(/artist already in dedup window/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/recently used in week 2/i)).toBeInTheDocument();
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  });
+
+  it('legacy trace without excluded field renders without crashing or toggles', async () => {
+    // §14.23 backwards-compat: traces persisted before this release lack
+    // the `excluded` field on slots. The viewer treats missing as empty —
+    // no toggle, no sub-row, no console warning.
+    getTraceMock.mockResolvedValueOnce(stubTrace());  // default fixture: no `excluded`
+    getPlaylistMock.mockResolvedValueOnce(stubPlaylist());
+    getStationMock.mockResolvedValueOnce(stubStation());
+    render(Page);
+
+    await screen.findByText('Track Mon-1');
+    expect(screen.queryByTestId('excluded-toggle')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('excluded-row')).not.toBeInTheDocument();
+  });
+});
+
 // ---- §16.9 multi-week prev / next nav -----------------------------------
 
 describe('trace viewer — §16.9 multi-week prev/next nav', () => {

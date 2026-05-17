@@ -43,6 +43,19 @@ export interface Playlist {
   entries: PlaylistEntry[];
 }
 
+/**
+ * A track the strategy considered but did not pick, with rationale
+ * (DESIGN.md §14.23). Populated by future weighted/dedup-aware strategies;
+ * empty for the current deterministic ones (window/pick/sequential).
+ */
+export interface ExcludedCandidate {
+  pool_index: number;
+  track_id: number | null;
+  track_name: string;
+  track_artist: string | null;
+  reason: string;
+}
+
 export interface TraceSlot {
   slot: number;
   unit: string;
@@ -55,6 +68,11 @@ export interface TraceSlot {
   track_name: string;
   track_artist: string | null;
   reason: string;
+  /**
+   * Optional — added in §14.23. Traces persisted before that release lack
+   * this field; the viewer treats missing/undefined as an empty list.
+   */
+  excluded?: ExcludedCandidate[];
 }
 
 export interface Trace {

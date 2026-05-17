@@ -57,6 +57,17 @@
   let collapsed: Record<number, boolean> = {};
 
   /**
+   * Per-slot excluded-candidates disclosure state (§14.23). Keyed by slot
+   * number (1-indexed). Default: collapsed — excluded lists can be long
+   * (a weighted pick over 200 candidates) and most authoring questions are
+   * answered by the picked slot's `reason`. Click "N rejected" to expand.
+   */
+  let excludedOpen: Record<number, boolean> = {};
+  function toggleExcluded(slot: number) {
+    excludedOpen[slot] = !excludedOpen[slot];
+  }
+
+  /**
    * Generation counter for stale-write protection (review S1). Each
    * loadAll() invocation captures its own generation; if a later
    * invocation has bumped the counter by the time an await resolves,
@@ -482,9 +493,57 @@
                   <td><span class="chip" style={chipStyle(s.source)}>{s.source}</span></td>
                   <td class="mono">{s.strategy}</td>
                   <td class="num mono" title={s.reason}>{s.pool_index}</td>
-                  <td>{s.track_name}</td>
+                  <td>
+                    {s.track_name}
+                    <!--
+                      §14.23 excluded-candidates disclosure. Only renders when
+                      a strategy populated the list (currently empty for
+                      window/pick/sequential — lights up with `weighted` and
+                      dedup-aware strategies). Inline button + sub-table so
+                      the rejection rationale stays anchored to the picked
+                      slot it explains.
+                    -->
+                    {#if s.excluded && s.excluded.length > 0}
+                      <button
+                        type="button"
+                        class="excluded-toggle"
+                        data-testid="excluded-toggle"
+                        aria-expanded={!!excludedOpen[s.slot]}
+                        on:click={() => toggleExcluded(s.slot)}
+                      >
+                        {excludedOpen[s.slot] ? '▾' : '▸'} {s.excluded.length} rejected
+                      </button>
+                    {/if}
+                  </td>
                   <td class="muted">{s.track_artist ?? ''}</td>
                 </tr>
+                {#if s.excluded && s.excluded.length > 0 && excludedOpen[s.slot]}
+                  <tr class="excluded-row" data-testid="excluded-row">
+                    <td></td>
+                    <td colspan="5">
+                      <table class="excluded-table">
+                        <thead>
+                          <tr>
+                            <th>Pool</th>
+                            <th>Track</th>
+                            <th>Artist</th>
+                            <th>Why rejected</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {#each s.excluded as ex}
+                            <tr>
+                              <td class="num mono">{ex.pool_index}</td>
+                              <td>{ex.track_name}</td>
+                              <td class="muted">{ex.track_artist ?? ''}</td>
+                              <td class="muted">{ex.reason}</td>
+                            </tr>
+                          {/each}
+                        </tbody>
+                      </table>
+                    </td>
+                  </tr>
+                {/if}
               {/each}
             </tbody>
           </table>
@@ -745,5 +804,44 @@
   }
   .empty-filter .clear-btn {
     margin-left: 0.5rem;
+  }
+
+  /* ---- §14.23 excluded-candidates disclosure ------------------------- */
+  .excluded-toggle {
+    margin-left: 0.5rem;
+    padding: 0 0.35rem;
+    background: transparent;
+    border: 1px solid #d8d8d8;
+    border-radius: 3px;
+    color: #888;
+    font: inherit;
+    font-size: 0.75rem;
+    cursor: pointer;
+    vertical-align: baseline;
+  }
+  .excluded-toggle:hover {
+    background: #f4f4f4;
+    color: #555;
+  }
+  .excluded-row > td {
+    /* Strip the default row border so the sub-table reads as a
+       continuation of the slot above, not a separate row. */
+    border-bottom: none;
+    background: #fafafa;
+    padding: 0.4rem 0.5rem 0.6rem;
+  }
+  .excluded-table {
+    font-size: 0.82rem;
+    background: white;
+    border: 1px solid #ececec;
+    border-radius: 3px;
+  }
+  .excluded-table th {
+    background: #f4f4f4;
+    font-size: 0.72rem;
+  }
+  .excluded-table td,
+  .excluded-table th {
+    padding: 0.2rem 0.55rem;
   }
 </style>

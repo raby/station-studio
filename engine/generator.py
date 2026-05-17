@@ -188,6 +188,7 @@ def _make_trace_slot(
     pool_index: int,
     track: Any,
     reason: str,
+    excluded: list | None = None,
 ) -> TraceSlot:
     return TraceSlot(
         slot=slot,
@@ -201,4 +202,5 @@ def _make_trace_slot(
         track_name=getattr(track, "name", "?"),
         track_artist=getattr(track, "artist", None),
         reason=reason,
+        excluded=excluded or [],
     )
