@@ -106,9 +106,21 @@ def test_negative_base_advance_rejected():
         parse_template(bad)
 
 
-def test_zero_cycle_weeks_rejected():
-    bad = {**BASE, "cursor": {"base_advance_per_week": 10, "cycle_weeks": 0}}
-    with pytest.raises(TemplateError, match="cycle_weeks must be >= 1"):
+def test_zero_cycle_weeks_now_accepted():
+    # Post-§14.22: cycle_weeks=0 means "no cycle, position grows linearly"
+    # (Weekly-style — base_cursor_for_week handles the 0 case). Was rejected
+    # in v1 when Classics was the only station and always wrapped at N weeks.
+    tmpl = parse_template({**BASE, "cursor": {"base_advance_per_week": 10, "cycle_weeks": 0}})
+    assert tmpl.cursor.cycle_weeks == 0
+    # Verify the no-wrap behaviour: week W just gives (W-1) * advance.
+    assert tmpl.base_cursor_for_week(1) == 0
+    assert tmpl.base_cursor_for_week(5) == 40  # (5-1) * 10
+    assert tmpl.base_cursor_for_week(100) == 990  # no wrap
+
+
+def test_negative_cycle_weeks_rejected():
+    bad = {**BASE, "cursor": {"base_advance_per_week": 10, "cycle_weeks": -1}}
+    with pytest.raises(TemplateError, match="cycle_weeks must be >= 0"):
         parse_template(bad)
 
 
@@ -126,6 +138,88 @@ def test_block_size_zero_rejected():
     ]}}
     with pytest.raises(TemplateError, match="size must be >= 1"):
         parse_template(bad)
+
+
+# ---------- §14.22: sequential strategy + named cursors -----------------
+
+
+def _with_cursors(cursors_init: dict, row_template: list) -> dict:
+    return {
+        **BASE,
+        "layout": {
+            **BASE["layout"],
+            "cursors_init": cursors_init,
+            "row_template": row_template,
+        },
+    }
+
+
+def test_sequential_block_with_declared_cursor_accepted():
+    tmpl = parse_template(_with_cursors(
+        {"c1": 5},
+        [{"source": "A", "strategy": "sequential", "size": 3, "cursor_id": "c1"}],
+    ))
+    assert tmpl.layout.cursors_init == {"c1": 5}
+    assert tmpl.layout.row_template[0].cursor_id == "c1"
+
+
+def test_sequential_block_missing_cursor_id_rejected():
+    bad = _with_cursors(
+        {"c1": 0},
+        [{"source": "A", "strategy": "sequential", "size": 3}],
+    )
+    with pytest.raises(TemplateError, match="must specify cursor_id"):
+        parse_template(bad)
+
+
+def test_sequential_block_unknown_cursor_id_rejected():
+    bad = _with_cursors(
+        {"c1": 0},
+        [{"source": "A", "strategy": "sequential", "size": 3, "cursor_id": "nope"}],
+    )
+    with pytest.raises(TemplateError, match="not in layout.cursors_init"):
+        parse_template(bad)
+
+
+def test_window_block_with_cursor_id_rejected():
+    bad = _with_cursors(
+        {"c1": 0},
+        [{"source": "A", "strategy": "window", "size": 3, "cursor_id": "c1"}],
+    )
+    with pytest.raises(TemplateError, match="only valid when strategy='sequential'"):
+        parse_template(bad)
+
+
+def test_cursors_init_negative_position_rejected():
+    bad = _with_cursors(
+        {"c1": -1},
+        [{"source": "A", "strategy": "sequential", "size": 3, "cursor_id": "c1"}],
+    )
+    with pytest.raises(TemplateError, match="non-negative integer"):
+        parse_template(bad)
+
+
+def test_cursors_init_must_be_dict():
+    bad = {**BASE, "layout": {**BASE["layout"], "cursors_init": [1, 2, 3]}}
+    with pytest.raises(TemplateError, match="must be an object"):
+        parse_template(bad)
+
+
+def test_cursor_position_uses_init_plus_base_advance():
+    tmpl = parse_template(_with_cursors(
+        {"c1": 7},
+        [{"source": "A", "strategy": "sequential", "size": 3, "cursor_id": "c1"}],
+    ))
+    # cycle_weeks=4, advance=10 (from BASE)
+    assert tmpl.cursor_position("c1", 1) == 7        # init + 0
+    assert tmpl.cursor_position("c1", 2) == 17       # init + 10
+    assert tmpl.cursor_position("c1", 5) == 7        # init + wrap(0)
+
+
+def test_cursor_position_unknown_id_raises():
+    tmpl = parse_template(BASE)
+    with pytest.raises(TemplateError, match="unknown cursor_id"):
+        tmpl.cursor_position("nope", 1)
 
 
 def test_source_by_name_unknown_raises():

@@ -251,6 +251,118 @@ def test_trace_slot_count_always_matches_picks():
     assert len(r.trace.slots) == len(r.picks)
 
 
+# ---------- §14.22: sequential strategy + named cursors -----------------
+
+
+def test_sequential_block_starts_at_cursor_init_in_week1():
+    t = parse_template(mk_template(
+        layout={
+            "unit": "day",
+            "unit_labels": ["Mon"],
+            "row_start_offsets": [0],
+            "cursors_init": {"c1": 20},
+            "row_template": [
+                {"source": "A", "strategy": "sequential", "size": 3, "cursor_id": "c1"},
+            ],
+        },
+    ))
+    pools = {"A": mk_pool("A", 100)}
+    r = generate(t, pools, week=1)
+    # init=20, advance=0 in week 1 -> pool indices 21..23
+    assert [s.pool_index for s in r.trace.slots] == [21, 22, 23]
+    assert all(s.strategy == "sequential" for s in r.trace.slots)
+
+
+def test_sequential_block_advances_with_base_advance():
+    t = parse_template(mk_template(
+        cursor={"base_advance_per_week": 10, "cycle_weeks": 0},  # no wrap
+        layout={
+            "unit": "day",
+            "unit_labels": ["Mon"],
+            "row_start_offsets": [0],
+            "cursors_init": {"c1": 5},
+            "row_template": [
+                {"source": "A", "strategy": "sequential", "size": 2, "cursor_id": "c1"},
+            ],
+        },
+    ))
+    pools = {"A": mk_pool("A", 200)}
+    # week 1: start=5, picks 6..7
+    # week 2: start=15, picks 16..17
+    # week 5: start=45, picks 46..47 (no wrap because cycle_weeks=0)
+    assert [s.pool_index for s in generate(t, pools, week=1).trace.slots] == [6, 7]
+    assert [s.pool_index for s in generate(t, pools, week=2).trace.slots] == [16, 17]
+    assert [s.pool_index for s in generate(t, pools, week=5).trace.slots] == [46, 47]
+
+
+def test_sequential_block_ignores_row_start_offset():
+    """Sequential blocks address by named cursor, not row offset."""
+    t = parse_template(mk_template(
+        cursor={"base_advance_per_week": 0, "cycle_weeks": 1},
+        layout={
+            "unit": "day",
+            "unit_labels": ["A", "B"],
+            "row_start_offsets": [0, 999],  # would blow past pool if applied
+            "cursors_init": {"c1": 10},
+            "row_template": [
+                {"source": "A", "strategy": "sequential", "size": 1, "cursor_id": "c1"},
+            ],
+        },
+    ))
+    pools = {"A": mk_pool("A", 50)}
+    r = generate(t, pools, week=1)
+    # Both rows draw from cursor c1 (offset 10) — row 2 does NOT use 999.
+    assert [s.pool_index for s in r.trace.slots] == [11, 11]
+
+
+def test_multi_cursor_template_each_cursor_addresses_independently():
+    t = parse_template(mk_template(
+        sources=[
+            {"name": "A", "colour": "#aaa", "role": "content"},
+            {"name": "B", "colour": "#bbb", "role": "content"},
+        ],
+        cursor={"base_advance_per_week": 0, "cycle_weeks": 1},
+        layout={
+            "unit": "day",
+            "unit_labels": ["Mon"],
+            "row_start_offsets": [0],
+            "cursors_init": {"a_cur": 5, "b_cur": 30},
+            "row_template": [
+                {"source": "A", "strategy": "sequential", "size": 2, "cursor_id": "a_cur"},
+                {"source": "B", "strategy": "sequential", "size": 2, "cursor_id": "b_cur"},
+            ],
+        },
+    ))
+    pools = {"A": mk_pool("A", 50), "B": mk_pool("B", 50)}
+    r = generate(t, pools, week=1)
+    assert [p.name for p in r.picks] == ["A0006", "A0007", "B0031", "B0032"]
+
+
+def test_sequential_coexists_with_window_in_same_template():
+    """Backward-compat: window+sequential side-by-side both work."""
+    t = parse_template(mk_template(
+        sources=[
+            {"name": "A", "colour": "#aaa", "role": "content"},
+            {"name": "B", "colour": "#bbb", "role": "content"},
+        ],
+        cursor={"base_advance_per_week": 0, "cycle_weeks": 1},
+        layout={
+            "unit": "day",
+            "unit_labels": ["Mon"],
+            "row_start_offsets": [0],
+            "cursors_init": {"b_cur": 40},
+            "row_template": [
+                {"source": "A", "strategy": "window", "size": 3},
+                {"source": "B", "strategy": "sequential", "size": 2, "cursor_id": "b_cur"},
+            ],
+        },
+    ))
+    pools = {"A": mk_pool("A", 50), "B": mk_pool("B", 50)}
+    r = generate(t, pools, week=1)
+    assert [s.pool_index for s in r.trace.slots] == [1, 2, 3, 41, 42]
+    assert [s.strategy for s in r.trace.slots] == ["window", "window", "window", "sequential", "sequential"]
+
+
 def test_trace_ids_are_unique_across_generations():
     t = parse_template(mk_template())
     pools = {"A": mk_pool("A", 50)}

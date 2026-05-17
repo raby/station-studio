@@ -14,7 +14,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 
-SUPPORTED_STRATEGIES = {"window", "pick"}  # v1. Add more as new stations need them.
+SUPPORTED_STRATEGIES = {"window", "pick", "sequential"}
+# v1 had {"window", "pick"} only. `sequential` lands in §14.22 (§17 Phase B
+# first bit) as the Weekly-port generalisation: a slot that reads its start
+# position from a NAMED CURSOR (declared in layout.cursors_init) instead of
+# the row-offsets list. Same algorithm as `window`; different start-position
+# source. Cursors advance by the same base_advance_per_week as the main
+# cursor — see Template.cursor_position().
 SUPPORTED_RNG = {"off", "on"}
 SUPPORTED_ROLES = {"content", "reference"}
 # Cadence is purely metadata for the engine — `weekly` is the only value
@@ -51,6 +57,10 @@ class BlockSpec:
     source: str
     strategy: str
     size: int
+    # cursor_id is required for strategy='sequential' (Weekly-port style) and
+    # forbidden for 'window' / 'pick' (the row-offset style). Validated by the
+    # parser. None = "no named cursor; use row_offset[row_idx]" (existing).
+    cursor_id: str | None = None
 
 
 @dataclass
@@ -59,6 +69,10 @@ class LayoutSpec:
     unit_labels: list[str]
     row_start_offsets: list[int]
     row_template: list[BlockSpec]
+    # Named-cursor initial positions, one entry per cursor referenced by any
+    # sequential block. Optional — Classics-style templates leave this empty.
+    # See Template.cursor_position() for the per-week computation.
+    cursors_init: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass
@@ -88,10 +102,37 @@ class Template:
         return per_row * len(self.layout.row_start_offsets)
 
     def base_cursor_for_week(self, week: int) -> int:
-        """Week 1 = 0; advances base_advance_per_week each week; wraps at cycle_weeks."""
+        """Week 1 = 0; advances base_advance_per_week each week.
+
+        Wrap policy:
+          - cycle_weeks >= 1: wrap every cycle_weeks (Classics, §5.4)
+          - cycle_weeks == 0: no wrap; position grows linearly until the
+            source pool would underflow at slot-fill time (§14.22 / Weekly
+            style — pool-size becomes the implicit ceiling; engine fails
+            loud per §5.5 when a window runs off the end).
+        """
         if week < 1:
             raise TemplateError(f"week must be >= 1, got {week}")
+        if self.cursor.cycle_weeks == 0:
+            return (week - 1) * self.cursor.base_advance_per_week
         return ((week - 1) % self.cursor.cycle_weeks) * self.cursor.base_advance_per_week
+
+    def cursor_position(self, cursor_id: str, week: int) -> int:
+        """Compute a named cursor's 0-indexed position for a given week.
+
+        Used by `sequential` slots (§14.22). Each named cursor has an
+        initial position declared in `layout.cursors_init`; the per-week
+        advance is shared with the main cursor (base_advance_per_week)
+        and respects the same cycle_weeks wrap policy.
+
+        Raises TemplateError if the cursor_id is unknown.
+        """
+        if cursor_id not in self.layout.cursors_init:
+            raise TemplateError(
+                f"unknown cursor_id '{cursor_id}'. "
+                f"Declared: {sorted(self.layout.cursors_init)}"
+            )
+        return self.layout.cursors_init[cursor_id] + self.base_cursor_for_week(week)
 
 
 # ---------- loading + validation -----------------------------------------
@@ -174,8 +215,11 @@ def _parse_cursor(raw: dict) -> CursorSpec:
     _require_keys(raw, {"base_advance_per_week", "cycle_weeks"}, where="cursor")
     if raw["base_advance_per_week"] < 0:
         raise TemplateError("cursor.base_advance_per_week must be >= 0")
-    if raw["cycle_weeks"] < 1:
-        raise TemplateError("cursor.cycle_weeks must be >= 1")
+    # cycle_weeks=0 is valid post-§14.22 — means "no cycle wrap, position
+    # grows until the pool underflows" (Weekly-style). cycle_weeks>=1 keeps
+    # the Classics behaviour (wrap every N weeks).
+    if raw["cycle_weeks"] < 0:
+        raise TemplateError("cursor.cycle_weeks must be >= 0 (0 = no cycle)")
     return CursorSpec(
         base_advance_per_week=int(raw["base_advance_per_week"]),
         cycle_weeks=int(raw["cycle_weeks"]),
@@ -183,23 +227,88 @@ def _parse_cursor(raw: dict) -> CursorSpec:
 
 
 def _parse_layout(raw: dict, *, known_sources: set[str]) -> LayoutSpec:
-    _require_keys(raw, {"unit", "unit_labels", "row_start_offsets", "row_template"}, where="layout")
-    row_template = [_parse_block(b, known_sources=known_sources) for b in raw["row_template"]]
+    _require_keys(
+        raw,
+        {"unit", "unit_labels", "row_start_offsets", "row_template"},
+        where="layout",
+        optional={"cursors_init"},  # §14.22 — for sequential strategy
+    )
+
+    # cursors_init: dict[str, int] for named cursors used by sequential blocks.
+    # Each value must be >= 0 (cursor positions are 0-indexed into pools).
+    cursors_init_raw = raw.get("cursors_init", {})
+    if not isinstance(cursors_init_raw, dict):
+        raise TemplateError(
+            f"layout.cursors_init must be an object, got {type(cursors_init_raw).__name__}"
+        )
+    cursors_init: dict[str, int] = {}
+    for cid, pos in cursors_init_raw.items():
+        if not isinstance(cid, str) or not cid:
+            raise TemplateError(f"layout.cursors_init keys must be non-empty strings, got {cid!r}")
+        if not isinstance(pos, int) or pos < 0:
+            raise TemplateError(
+                f"layout.cursors_init['{cid}'] must be a non-negative integer, got {pos!r}"
+            )
+        cursors_init[cid] = pos
+
+    row_template = [
+        _parse_block(b, known_sources=known_sources, known_cursor_ids=set(cursors_init))
+        for b in raw["row_template"]
+    ]
     return LayoutSpec(
         unit=raw["unit"],
         unit_labels=list(raw["unit_labels"]),
         row_start_offsets=list(raw["row_start_offsets"]),
         row_template=row_template,
+        cursors_init=cursors_init,
     )
 
 
-def _parse_block(raw: dict, *, known_sources: set[str]) -> BlockSpec:
-    _require_keys(raw, {"source", "strategy", "size"}, where="block")
+def _parse_block(
+    raw: dict,
+    *,
+    known_sources: set[str],
+    known_cursor_ids: set[str],
+) -> BlockSpec:
+    _require_keys(
+        raw,
+        {"source", "strategy", "size"},
+        where="block",
+        optional={"cursor_id"},  # §14.22 — required when strategy='sequential'
+    )
     if raw["source"] not in known_sources:
         raise TemplateError(f"block references unknown source '{raw['source']}'")
     if raw["size"] < 1:
         raise TemplateError("block size must be >= 1")
-    return BlockSpec(source=raw["source"], strategy=raw["strategy"], size=int(raw["size"]))
+
+    # Strategy ↔ cursor_id coupling (§14.22):
+    #   strategy='sequential' requires cursor_id; the cursor must be declared
+    #   strategy='window' / 'pick' forbid cursor_id (row-offset addressing only)
+    strategy = raw["strategy"]
+    cursor_id = raw.get("cursor_id")
+    if strategy == "sequential":
+        if cursor_id is None:
+            raise TemplateError(
+                "block with strategy='sequential' must specify cursor_id"
+            )
+        if cursor_id not in known_cursor_ids:
+            raise TemplateError(
+                f"block cursor_id '{cursor_id}' not in layout.cursors_init "
+                f"(declared: {sorted(known_cursor_ids) or '[]'})"
+            )
+    else:
+        if cursor_id is not None:
+            raise TemplateError(
+                f"block cursor_id is only valid when strategy='sequential' "
+                f"(got strategy={strategy!r}, cursor_id={cursor_id!r})"
+            )
+
+    return BlockSpec(
+        source=raw["source"],
+        strategy=strategy,
+        size=int(raw["size"]),
+        cursor_id=cursor_id,
+    )
 
 
 def _require_keys(

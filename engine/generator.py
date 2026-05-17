@@ -104,6 +104,36 @@ def generate(
                         track=track,
                         reason=reason_prefix,
                     ))
+            elif block.strategy == "sequential":
+                # §14.22 Weekly-port: same algorithm as window, but the start
+                # position comes from a NAMED cursor (declared in
+                # layout.cursors_init) instead of the row-offset list.
+                # row_start_offsets[row_idx] is ignored for sequential blocks —
+                # the cursor is the addressing mechanism.
+                seq_start = template.cursor_position(block.cursor_id, week)  # type: ignore[arg-type]
+                picked = apply_window(
+                    pool,
+                    start=seq_start,
+                    size=block.size,
+                    source_name=block.source,
+                )
+                reason_prefix = (
+                    f"sequential size={block.size} from '{block.source}' "
+                    f"cursor='{block.cursor_id}' at pool_index {seq_start + 1}"
+                )
+                for (pool_idx, track) in picked:
+                    slot_counter += 1
+                    picks.append(track)
+                    trace.slots.append(_make_trace_slot(
+                        slot=slot_counter,
+                        unit=unit_label,
+                        row=row_idx + 1,
+                        block=block_idx + 1,
+                        block_spec=block,
+                        pool_index=pool_idx,
+                        track=track,
+                        reason=reason_prefix,
+                    ))
             elif block.strategy == "pick":
                 cursor = row_start_in_pool
                 for _ in range(block.size):

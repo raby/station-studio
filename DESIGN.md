@@ -2542,6 +2542,112 @@ which was already arrays). 137/137 Vitest tests green.
 
 ---
 
+### 14.22 sequential strategy + multi-cursor support — what shipped (§17 Phase B first bit)
+
+**Goal.** Lay the engine foundation needed by the Weekly port.
+Weekly's template addresses slots by **named cursors** (e.g. `mix_cursor`,
+`commercial_cursor`) rather than the single base cursor + per-row offset
+that Classics uses. This bit doesn't port any Weekly slot types — it
+just teaches the engine the cursor + strategy vocabulary they'll need.
+
+Pure-function generator stays pure: cursor positions are computed each
+call as `cursors_init[id] + base_cursor_for_week(week)`. No DB cursor
+state, no per-station persistence — Weekly itself drifted into a
+per-week stored-cursor model and the §17.1 study singled it out as the
+piece we should *not* port. Stateless first.
+
+**Template grammar additions (`engine/template.py`):**
+
+1. **`SUPPORTED_STRATEGIES`** adds `"sequential"`. Same algorithm as
+   `window` (take `size` items starting at `start`); the only
+   difference is *where `start` comes from*.
+
+2. **`BlockSpec.cursor_id: str | None`** — required when
+   `strategy == "sequential"`, forbidden otherwise. The parser
+   enforces both directions with a clear error message.
+
+3. **`LayoutSpec.cursors_init: dict[str, int]`** — optional
+   (Classics templates leave it empty). Each value is a 0-indexed
+   pool position. Negative values rejected. Keys must be non-empty
+   strings. Validated up-front in `_parse_layout`.
+
+4. **`cycle_weeks == 0` now accepted** by `_parse_cursor`. Means
+   "no wrap, position grows linearly with week" (Weekly style).
+   `cycle_weeks >= 1` keeps the Classics wrap-every-N-weeks behaviour.
+   `base_cursor_for_week` branches on this. Negative still rejected.
+
+5. **`Template.cursor_position(cursor_id, week)`** — computes
+   `cursors_init[id] + base_cursor_for_week(week)`. Used by the
+   generator's sequential dispatch. Raises `TemplateError` for
+   unknown `cursor_id` (defensive — parser should catch most cases).
+
+**Generator (`engine/generator.py`):**
+
+Added a `block.strategy == "sequential"` branch alongside `window`
+and `pick`. It calls `template.cursor_position(block.cursor_id, week)`
+to compute the start position, then delegates to the existing
+`apply_window` (same algorithm). The block's row's
+`row_start_offsets[row_idx]` is **ignored** for sequential blocks —
+the cursor is the addressing mechanism. Trace reason includes the
+`cursor_id` and resolved 1-indexed pool position.
+
+**Backward compatibility.** Classics templates are byte-for-byte
+identical and produce byte-for-byte identical playlists. The
+`row_template[*].cursor_id` field is absent (defaulting to `None`),
+`layout.cursors_init` is absent (defaulting to `{}`), and no block
+uses `strategy="sequential"`. The 184-test suite (including
+`test_classics_generation.py` and `test_bootstrap_classics.py`) passes
+without modification.
+
+**Tests added (14 new):**
+
+- 9 parser tests in `test_template.py`: accept sequential with
+  declared cursor; reject missing `cursor_id` on sequential; reject
+  unknown `cursor_id`; reject `cursor_id` on `window`/`pick`; reject
+  negative cursor init; reject non-dict `cursors_init`; verify
+  `cursor_position` math (init + base advance + wrap); verify
+  unknown `cursor_id` raises at lookup; updated the old
+  `cycle_weeks==0` rejection test to two new tests (accepts 0,
+  rejects negative).
+- 5 generator tests in `test_generator_generic.py`: sequential
+  starts at `cursors_init`; sequential advances by `base_advance`;
+  sequential ignores `row_start_offsets`; multi-cursor template
+  addresses each cursor independently; sequential coexists with
+  `window` in the same row.
+
+**What this unblocks (Phase B subsequent bits):**
+
+The engine can now express "this row of the playlist reads from a
+shared cursor that lives outside the row geometry." That's the
+shape Weekly's mix/commercial/prev_ref slots need. Next bits add the
+slot-type vocabulary (jingle/commercial/mix/prev_ref) and the
+cross-slot constraint layer (artist dedup, mix exclusion, prev_ref
+fallback) on top of this foundation. None of those need any further
+changes to the cursor model.
+
+**UI impact:** None this slice. `<LayoutFieldset>` still only
+exposes `pick`/`window` because `Meta['strategies']` is computed
+from a frontend constant — it'll pick up `sequential` automatically
+once `GET /api/meta` learns to surface it (a one-liner when the UI
+is ready to render the cursor_id picker). Holding that for now;
+shipping a strategy without a way to pick the cursor would just
+trip the parser.
+
+**Punts:**
+
+- **Per-station persisted cursor state** (Weekly's `current.json` /
+  `cursors` table). The §17.1 study explicitly argues against this
+  — stateless is simpler and good enough for the slot types that
+  follow. Revisit only if a slot type emerges that genuinely cannot
+  be computed from week number.
+- **UI cursor_id picker.** Held until a slot type that the wizard
+  actually wants to expose lands.
+- **Weighted random within a sequential window.** Sequential is
+  deterministic ordered take, by design. The randomised variants
+  belong with `pick` (the eventual `weighted` strategy).
+
+---
+
 ## 15. Status snapshot
 
 A quick "where are we" for a future reader. Last updated at commit
@@ -3872,7 +3978,7 @@ port lands first.
 Sub-slice ordering (engine work in dependency order):
 
 6. **Excluded-candidates in trace** (#5) — prereq for #2.3 weighted
-7. **`sequential` strategy + multi-cursor support** — generalise from `window`
+7. ~~**`sequential` strategy + multi-cursor support**~~ — **shipped (§14.22)**
 8. **`jingle` strategy** — simplest non-window slot type
 9. **`mix` strategy + MixUsage table + Alembic** — first cross-week state
 10. **Artist-match subsystem** (port `artist_match.py` ~187 LoC) + ArtistAlias table
