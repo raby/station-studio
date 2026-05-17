@@ -20,18 +20,47 @@ mutate.
 from __future__ import annotations
 
 import random
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Mapping
 
 from engine.template import Template, BlockSpec
 from engine.trace import Trace, TraceSlot
-from engine.strategies import apply_window, apply_pick, apply_jingle, apply_mix
+from engine.strategies import (
+    apply_window, apply_pick, apply_jingle, apply_mix,
+    apply_weighted, build_lookups, WeightedLookups,
+)
+
+
+# Default artist-dedup window for the `weighted` strategy when a block
+# doesn't set its own `window`. Matches weekly's Rule.artist_dedup_window
+# default (10). Sub-slice #13's Rule table will eventually let a station
+# override this; until then, the constant is the source of truth.
+DEFAULT_WEIGHTED_WINDOW = 10
 
 
 @dataclass
 class GenerationResult:
     picks: list[Any]     # list of Track-like objects, one per slot
     trace: Trace
+
+
+@dataclass
+class _GenState:
+    """Mutable cross-slot state for one generation pass (§14.27).
+
+    `weighted` slots both READ this (to apply track + artist dedup) and
+    WRITE this (to record the pick for subsequent slots in the same
+    pass). Other strategies (window/pick/sequential/jingle/mix) neither
+    read nor write — their decisions are independent of prior picks
+    within the same generation, so they leave the state untouched.
+
+    Lives on the stack inside generate(); resets to empty for every
+    call. Weekly's behaviour: dedup state does NOT persist across
+    playlist generations. Cross-week mix exclusion is its own thing
+    (MixUsage table, §14.25).
+    """
+    recent_artist_keys: list[frozenset[str]] = field(default_factory=list)
+    used_track_ids: list[int] = field(default_factory=list)
 
 
 def generate(
@@ -41,6 +70,7 @@ def generate(
     week: int,
     seed: int | None = None,
     excluded_mix_ids: set[int] | frozenset[int] | None = None,
+    alias_map: dict[str, str] | None = None,
 ) -> GenerationResult:
     """Generate one playlist for the given station + week.
 
@@ -60,6 +90,12 @@ def generate(
         Populated by the persistence layer from the station's recent
         MixUsage rows (window = block.exclusion_window). None = empty set;
         templates with no mix blocks never read this anyway.
+    alias_map : dict[str, str] | None
+        Artist alias lookup ({lowercase_alias: lowercase_canonical})
+        from `engine.persistence.load_alias_map` (§14.26). Only the
+        `weighted` strategy (§14.27) reads it, for resolving artist
+        keys before applying the dedup window. None = empty dict;
+        templates with no weighted blocks never read this anyway.
     """
     _check_pools_present(template, pools)
 
@@ -73,6 +109,16 @@ def generate(
     # apply_mix without a per-call truthy check. Frozen because the
     # generator never writes to it (the strategy reads only).
     excluded_mix_ids = frozenset(excluded_mix_ids or ())
+    alias_map = alias_map or {}
+
+    # Cross-slot state for the weighted strategy (§14.27). Reset per
+    # generation; see _GenState's docstring for the rationale.
+    state = _GenState()
+
+    # Lazy per-pool lookups for weighted (§14.27). Built on first
+    # weighted block encounter for that pool; reused for every
+    # subsequent slot from the same pool in this generation.
+    weighted_lookups: dict[str, WeightedLookups] = {}
 
     base_cursor = template.base_cursor_for_week(week)
 
@@ -217,6 +263,49 @@ def generate(
                                f"genre='{block.genre}' "
                                f"({'random' if rng else 'first match'})",
                     ))
+            elif block.strategy == "weighted":
+                # §14.27 Weekly-port: two-tier dedup (track shuffle-bag +
+                # artist sliding window), squared-remaining weighting.
+                # State (recent_artist_keys, used_track_ids) is shared
+                # across ALL weighted picks in this generation; READ by
+                # apply_weighted, WRITTEN here after each successful pick.
+                if block.source not in weighted_lookups:
+                    weighted_lookups[block.source] = build_lookups(
+                        pool, alias_map=alias_map,
+                    )
+                effective_window = (
+                    block.window if block.window is not None
+                    else DEFAULT_WEIGHTED_WINDOW
+                )
+                for _ in range(block.size):
+                    track, info = apply_weighted(
+                        pool,
+                        lookups=weighted_lookups[block.source],
+                        recent_artist_keys=state.recent_artist_keys,
+                        used_track_ids=state.used_track_ids,
+                        window=effective_window,
+                        rng=rng,
+                        source_name=block.source,
+                    )
+                    # Mutate state AFTER the pick (the strategy only reads).
+                    state.recent_artist_keys.append(
+                        weighted_lookups[block.source].track_keys.get(
+                            getattr(track, "id", -1), frozenset()
+                        )
+                    )
+                    state.used_track_ids.append(getattr(track, "id", -1))
+                    slot_counter += 1
+                    picks.append(track)
+                    trace.slots.append(_make_trace_slot(
+                        slot=slot_counter,
+                        unit=unit_label,
+                        row=row_idx + 1,
+                        block=block_idx + 1,
+                        block_spec=block,
+                        pool_index=info.pool_index,
+                        track=track,
+                        reason=_weighted_reason(info, effective_window),
+                    ))
             elif block.strategy == "pick":
                 cursor = row_start_in_pool
                 for _ in range(block.size):
@@ -286,4 +375,30 @@ def _make_trace_slot(
         track_artist=getattr(track, "artist", None),
         reason=reason,
         excluded=excluded or [],
+    )
+
+
+def _weighted_reason(info, window: int) -> str:
+    """Compose the trace reason string for a weighted pick.
+
+    Captures the tier + the filtering pressure (how many tracks each
+    constraint blocked). When sub-slice #11 follow-on ships, the
+    per-candidate ExcludedCandidate entries land alongside this
+    summary — the reason stays the at-a-glance overview.
+    """
+    if info.tier == 1:
+        return (
+            f"weighted tier 1: eligible {info.eligible_count}, "
+            f"blocked artist={info.artist_blocked_count} "
+            f"track={info.track_blocked_count} "
+            f"both={info.both_blocked_count} "
+            f"(window={window})"
+        )
+    return (
+        f"weighted tier 2 (artist constraint relaxed): "
+        f"eligible {info.eligible_count}, "
+        f"blocked artist={info.artist_blocked_count} "
+        f"track={info.track_blocked_count} "
+        f"both={info.both_blocked_count} "
+        f"(window={window})"
     )

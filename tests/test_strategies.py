@@ -15,6 +15,7 @@ from engine.strategies.window import apply_window, WindowOutOfRangeError
 from engine.strategies.pick import apply_pick
 from engine.strategies.jingle import apply_jingle, JingleGenreNotFoundError
 from engine.strategies.mix import apply_mix, MixGenreNotFoundError
+from engine.strategies.weighted import apply_weighted, build_lookups
 
 
 # ---------- window -------------------------------------------------------
@@ -253,3 +254,204 @@ def test_mix_accepts_frozenset_as_excluded_ids():
     )
     assert track.id != 10
     assert relaxed is False
+
+
+# ---------- weighted (§14.27) -------------------------------------------
+
+
+@dataclass
+class CommercialTrack:
+    id: int
+    name: str
+    artist: str | None = None
+
+
+def _weighted_pool() -> list[CommercialTrack]:
+    """Small commercial-style pool with deliberate artist concentrations.
+
+    - Artist A has 3 tracks (ids 1,2,3)
+    - Artist B has 1 track (id 4)
+    - Artist C has 2 tracks (ids 5,6)
+
+    Gives us cases for: shuffle-bag rotation, artist dedup,
+    multi-track artist weighting.
+    """
+    return [
+        CommercialTrack(id=1, name="A-1", artist="Artist A"),
+        CommercialTrack(id=2, name="A-2", artist="Artist A"),
+        CommercialTrack(id=3, name="A-3", artist="Artist A"),
+        CommercialTrack(id=4, name="B-1", artist="Artist B"),
+        CommercialTrack(id=5, name="C-1", artist="Artist C"),
+        CommercialTrack(id=6, name="C-2", artist="Artist C"),
+    ]
+
+
+def test_weighted_tier1_with_no_history_picks_eligible():
+    """First pick: nothing blocked; Tier 1 fires with eligible=full pool."""
+    pool = _weighted_pool()
+    lookups = build_lookups(pool)
+    track, info = apply_weighted(
+        pool, lookups=lookups,
+        recent_artist_keys=[], used_track_ids=[],
+        rng=None, source_name="COMM",
+    )
+    assert info.tier == 1
+    assert info.eligible_count == 6
+    assert info.artist_blocked_count == 0
+    assert info.track_blocked_count == 0
+    # rng=None → first eligible track in pool order.
+    assert track.id == 1
+
+
+def test_weighted_blocks_artist_within_window():
+    """After picking Artist A, next pick within window=10 must NOT be Artist A."""
+    pool = _weighted_pool()
+    lookups = build_lookups(pool)
+    rng = random.Random(123)
+    track1, info1 = apply_weighted(
+        pool, lookups=lookups,
+        recent_artist_keys=[], used_track_ids=[],
+        rng=rng, source_name="COMM",
+    )
+    track2, info2 = apply_weighted(
+        pool, lookups=lookups,
+        recent_artist_keys=[lookups.track_keys[track1.id]],
+        used_track_ids=[track1.id],
+        rng=rng, source_name="COMM",
+    )
+    assert info1.tier == 1
+    assert info2.tier == 1
+    assert track2.artist != track1.artist
+
+
+def test_weighted_shuffle_bag_rotates_through_pool():
+    """With rng=None and a 6-track pool, each track is picked once before
+    any repeat. (rng=None bypasses random selection so this is fully
+    deterministic — picks the first eligible track each call.)"""
+    pool = _weighted_pool()
+    lookups = build_lookups(pool)
+    state_keys: list[frozenset[str]] = []
+    state_ids: list[int] = []
+    picked = []
+    for _ in range(6):
+        # Use window=0 (artist dedup off) so we isolate the track-shuffle
+        # behaviour. Artist dedup is tested separately above.
+        t, _ = apply_weighted(
+            pool, lookups=lookups,
+            recent_artist_keys=state_keys, used_track_ids=state_ids,
+            window=0, rng=None, source_name="COMM",
+        )
+        picked.append(t.id)
+        state_keys.append(lookups.track_keys[t.id])
+        state_ids.append(t.id)
+    # All 6 tracks picked exactly once (the shuffle-bag invariant).
+    assert sorted(picked) == [1, 2, 3, 4, 5, 6]
+
+
+def test_weighted_tier2_relaxes_when_all_artists_blocked():
+    """A 2-track pool where both tracks share an artist key, after the
+    first pick, has no Tier 1 candidates (artist is in the window).
+    Must fall back to Tier 2 (relaxed) and pick the only available
+    track that isn't track-blocked."""
+    pool = [
+        CommercialTrack(id=1, name="A-1", artist="Same Person"),
+        CommercialTrack(id=2, name="A-2", artist="Same Person"),
+    ]
+    lookups = build_lookups(pool)
+    # After picking id=1, the artist's keys are in the window so the
+    # second pick would have zero Tier 1 candidates.
+    track, info = apply_weighted(
+        pool, lookups=lookups,
+        recent_artist_keys=[lookups.track_keys[1]],
+        used_track_ids=[1],
+        window=10, rng=None, source_name="COMM",
+    )
+    assert info.tier == 2
+    assert info.relaxed is True
+    # Track id 1 is shuffle-blocked (pool_size - 1 = 1 → it's in the
+    # last-1 window). Track id 2 is the only candidate.
+    assert track.id == 2
+
+
+def test_weighted_artist_dedup_uses_resolved_keys():
+    """Collaboration strings are split, so "Solo A feat. B" conflicts
+    with subsequent "Artist B" picks via the shared "b" key."""
+    pool = [
+        CommercialTrack(id=1, name="X", artist="Alpha feat. Beta"),
+        CommercialTrack(id=2, name="Y", artist="Beta"),
+        CommercialTrack(id=3, name="Z", artist="Charlie"),
+    ]
+    lookups = build_lookups(pool)
+    # Pick #1 leaves keys {alpha, beta} in the window. Pick #2 must
+    # not be id=2 ("Beta" key) — only id=3 (Charlie) is eligible Tier 1.
+    track, info = apply_weighted(
+        pool, lookups=lookups,
+        recent_artist_keys=[lookups.track_keys[1]],
+        used_track_ids=[1],
+        window=10, rng=None, source_name="COMM",
+    )
+    assert info.tier == 1
+    assert track.id == 3
+
+
+def test_weighted_alias_resolution_blocks_aliased_artist():
+    """alias_map at build_lookups time resolves both names to the same
+    key, so a pick of Plastikman blocks subsequent Richie Hawtin picks."""
+    alias_map = {"plastikman": "richie hawtin", "richie hawtin": "richie hawtin"}
+    pool = [
+        CommercialTrack(id=1, name="Sheet One", artist="Plastikman"),
+        CommercialTrack(id=2, name="DE9", artist="Richie Hawtin"),
+        CommercialTrack(id=3, name="Other", artist="Daft Punk"),
+    ]
+    lookups = build_lookups(pool, alias_map=alias_map)
+    # Pick Plastikman → window contains {richie hawtin}. Richie Hawtin
+    # track must now be blocked from Tier 1.
+    track, info = apply_weighted(
+        pool, lookups=lookups,
+        recent_artist_keys=[lookups.track_keys[1]],
+        used_track_ids=[1],
+        window=10, rng=None, source_name="COMM",
+    )
+    assert info.tier == 1
+    assert track.id == 3  # Daft Punk; not Richie Hawtin
+
+
+def test_weighted_seeded_rng_is_reproducible():
+    """Same seed → same selection sequence (the byte-equality guarantee)."""
+    pool = _weighted_pool()
+    lookups = build_lookups(pool)
+    def run(seed):
+        rng = random.Random(seed)
+        state_keys: list[frozenset[str]] = []
+        state_ids: list[int] = []
+        picks = []
+        for _ in range(5):
+            t, _ = apply_weighted(
+                pool, lookups=lookups,
+                recent_artist_keys=state_keys, used_track_ids=state_ids,
+                rng=rng, source_name="COMM",
+            )
+            picks.append(t.id)
+            state_keys.append(lookups.track_keys[t.id])
+            state_ids.append(t.id)
+        return picks
+    assert run(42) == run(42)
+
+
+def test_weighted_empty_pool_raises():
+    lookups = build_lookups([])
+    with pytest.raises(IndexError, match="pool is empty"):
+        apply_weighted(
+            [], lookups=lookups,
+            recent_artist_keys=[], used_track_ids=[],
+            source_name="COMM",
+        )
+
+
+def test_build_lookups_handles_missing_artist():
+    """Tracks with artist=None get an empty key-set but still index;
+    avoids None.id-or-similar crashes at pick time."""
+    pool = [CommercialTrack(id=1, name="X", artist=None)]
+    lookups = build_lookups(pool)
+    assert lookups.track_keys[1] == frozenset()
+    assert lookups.track_id_to_artist[1] == ""

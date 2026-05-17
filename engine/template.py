@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 
-SUPPORTED_STRATEGIES = {"window", "pick", "sequential", "jingle", "mix"}
+SUPPORTED_STRATEGIES = {"window", "pick", "sequential", "jingle", "mix", "weighted"}
 # v1 had {"window", "pick"} only. `sequential` lands in §14.22 (§17 Phase B
 # first bit) as the Weekly-port generalisation: a slot that reads its start
 # position from a NAMED CURSOR (declared in layout.cursors_init) instead of
@@ -24,9 +24,18 @@ SUPPORTED_STRATEGIES = {"window", "pick", "sequential", "jingle", "mix"}
 #
 # `jingle` (§14.24) and `mix` (§14.25) both require a per-block `genre`
 # string; `mix` additionally requires an `exclusion_window` integer (count
-# of prior playlists to exclude from). The strategy ↔ required-field
-# coupling is enforced by _require_strategy_field; see that helper for
-# the source of truth on which fields belong to which strategies.
+# of prior playlists to exclude from).
+#
+# `weighted` (§14.27) is the two-tier commercial strategy. Optionally
+# accepts a `window` integer (artist-dedup sliding-window size; defaults
+# to 10 if absent). When sub-slice #13's Rule table lands, the missing-
+# value default will be sourced from a station-wide rule; per-block
+# `window` overrides the rule (keeping per-block flexibility for
+# templates that want it).
+#
+# The strategy ↔ required-field coupling is enforced by
+# _require_strategy_field; see that helper for the source of truth on
+# which fields belong to which strategies.
 SUPPORTED_RNG = {"off", "on"}
 SUPPORTED_ROLES = {"content", "reference"}
 # Cadence is purely metadata for the engine — `weekly` is the only value
@@ -76,6 +85,11 @@ class BlockSpec:
     # treated as excluded track ids. Persistence-time: the generator's
     # excluded_mix_ids parameter is populated from this window.
     exclusion_window: int | None = None
+    # window is optional for strategy='weighted' (§14.27); forbidden for
+    # any other strategy. Artist-dedup sliding-window size; defaults to
+    # 10 when absent. Sub-slice #13's Rule table will provide a station-
+    # wide default; per-block `window` overrides it.
+    window: int | None = None
 
 
 @dataclass
@@ -293,6 +307,7 @@ def _parse_block(
             "cursor_id",          # §14.22 — required when strategy='sequential'
             "genre",              # §14.24/§14.25 — required when strategy in {'jingle', 'mix'}
             "exclusion_window",   # §14.25 — required when strategy='mix'
+            "window",             # §14.27 — optional when strategy='weighted' (default 10)
         },
     )
     if raw["source"] not in known_sources:
@@ -304,6 +319,7 @@ def _parse_block(
     cursor_id = raw.get("cursor_id")
     genre = raw.get("genre")
     exclusion_window = raw.get("exclusion_window")
+    window = raw.get("window")
 
     # Strategy ↔ required-field coupling. Each strategy declares which extra
     # fields it requires; every other strategy forbids them. The helper
@@ -331,6 +347,17 @@ def _parse_block(
             f"block exclusion_window must be a non-negative integer, got {v!r}"
         ),
     )
+    # `window` is the first "optional for X, forbidden for everyone else"
+    # field. Uses optional_for= rather than required_for=; validator only
+    # fires when a value is actually supplied.
+    _require_strategy_field(
+        strategy, "window", window,
+        required_for=set(),
+        optional_for={"weighted"},
+        validator=lambda v: v if (isinstance(v, int) and not isinstance(v, bool) and v >= 0) else _err(
+            f"block window must be a non-negative integer, got {v!r}"
+        ),
+    )
 
     return BlockSpec(
         source=raw["source"],
@@ -339,6 +366,7 @@ def _parse_block(
         cursor_id=cursor_id,
         genre=genre,
         exclusion_window=exclusion_window,
+        window=window,
     )
 
 
@@ -348,28 +376,38 @@ def _require_strategy_field(
     value,
     *,
     required_for: set[str],
+    optional_for: set[str] | None = None,
     validator,
 ) -> None:
     """Enforce the "this field belongs only to these strategies" rule.
 
-    Pattern shared by sequential ↔ cursor_id, jingle/mix ↔ genre, mix ↔
-    exclusion_window. Captures: (1) required-when-listed, (2) forbidden-
-    when-absent, (3) field-specific validity check via the validator
-    callable. The validator is only invoked when the field is required;
-    forbidden-strategy paths just check `value is None` and raise a
-    standard "only valid when strategy in …" error.
+    Three buckets per strategy/field combination:
+
+    - In ``required_for``: value MUST be present (non-None); validator
+      runs.
+    - In ``optional_for``: value MAY be present; if supplied, validator
+      runs; if absent, no error (caller fills in the default).
+    - Otherwise (forbidden): value MUST be None.
+
+    Shared by sequential ↔ cursor_id, jingle/mix ↔ genre, mix ↔
+    exclusion_window (required-or-forbidden shape) and weighted ↔
+    window (optional-or-forbidden shape).
     """
+    allowed_for = required_for | (optional_for or set())
     if strategy in required_for:
         if value is None:
             raise TemplateError(
                 f"block with strategy={strategy!r} must specify {field_name}"
             )
-        validator(value)  # raises TemplateError on its own conditions
+        validator(value)
+    elif strategy in (optional_for or set()):
+        if value is not None:
+            validator(value)
     else:
         if value is not None:
             raise TemplateError(
                 f"block {field_name} is only valid when strategy in "
-                f"{sorted(required_for)} (got strategy={strategy!r}, "
+                f"{sorted(allowed_for)} (got strategy={strategy!r}, "
                 f"{field_name}={value!r})"
             )
 

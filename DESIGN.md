@@ -3201,6 +3201,165 @@ consume artist-match).
 
 ---
 
+### 14.27 weighted commercial strategy + cross-slot state (§17 Phase B sub-slice #11, commit 1 of 2)
+
+**Goal.** Port weekly's `_pick_commercial` — the most behaviourally
+complex single strategy in the upcoming port. Two-tier selection
+(track shuffle-bag + artist sliding window) with squared-remaining
+weighting on Tier 1 and stalest-artist tie-break on Tier 2. Consumes
+the §14.26 artist-match subsystem (collaboration splitting + alias
+resolution). Introduces the engine's first genuinely **cross-slot
+mutable state** — every prior weighted pick in the same generation
+affects the next pick's eligibility.
+
+This is "commit 1 of 2" for sub-slice #11. The follow-on (commit 2)
+populates §14.23 `ExcludedCandidate` entries per pick so the trace
+viewer can show "why didn't it pick X?" for each rejection. Splitting
+the slice in two keeps the architectural piece (state plumbing +
+strategy) reviewable on its own before the trace-payload layering
+lands on top.
+
+**Strategy module (`engine/strategies/weighted.py`):**
+
+```python
+def apply_weighted(
+    pool, *,
+    lookups: WeightedLookups,
+    recent_artist_keys: list[frozenset[str]],   # caller-owned, read-only here
+    used_track_ids: list[int],                   # caller-owned, read-only here
+    window: int = 10,
+    rng, source_name,
+) -> tuple[track, WeightedPickInfo]
+```
+
+Two-tier logic:
+
+- **Tier 1.** Build the eligible set: pool minus `blocked_track_ids`
+  (set of last `pool_size - 1` track ids — the shuffle-bag) minus
+  any track whose resolved artist keys intersect `blocked_keys` (the
+  union of artist keys from the last `window` picks). Pick weighted-
+  random where `weight = remaining²`. `remaining` is `artist_counts -
+  cycle_used` — how many of this artist's tracks haven't been played
+  this shuffle cycle. Squaring spreads multi-track artists evenly.
+- **Tier 2.** When Tier 1 is empty (every eligible track is artist-
+  blocked), drop the artist constraint. From the remaining set,
+  compute each candidate's "gap" (how many slots ago its artist's
+  most-recent key was played); pick the stalest artist; rng.choice
+  among that artist's tracks if there's a tie. Mirrors weekly's
+  two-step `rng.choice(stalest) → rng.choice(chosen_tracks)`.
+- **Edge case** (`pool_size <= 1`): track window is 0, no shuffle
+  blocking; Tier 1 or Tier 2 handles the rest.
+
+Returns the track plus `WeightedPickInfo(tier, pool_index,
+eligible_count, artist_blocked_count, track_blocked_count,
+both_blocked_count, relaxed)` — diagnostics the generator surfaces in
+the trace reason and (commit 2) uses to emit ExcludedCandidates.
+
+**Per-pool lookups (`build_lookups`):**
+
+Pre-computes `track_id_to_artist`, `artist_counts`, `track_keys` once
+per pool. The generator caches the result per source in a per-
+generation dict — for a 200-slot weighted block, this avoids rebuilding
+three dicts of size `pool_size` on every call. Each pool builds its
+lookups lazily on first weighted-block encounter; once built they're
+reused for every subsequent pick from that source.
+
+**Cross-slot state (`_GenState` in `engine/generator.py`):**
+
+The first mutable cross-slot state the engine has needed. Two lists:
+
+```python
+@dataclass
+class _GenState:
+    recent_artist_keys: list[frozenset[str]] = field(default_factory=list)
+    used_track_ids: list[int] = field(default_factory=list)
+```
+
+Lives on the stack inside `generate()`; resets to empty for every
+call. Weekly's behaviour confirmed: dedup state does NOT persist
+across playlist generations. Only the `weighted` strategy reads and
+writes; other strategies (window/pick/sequential/jingle/mix) leave
+it untouched, so a mix slot in the middle of a weighted run does
+NOT pollute the artist window (matches weekly).
+
+The strategy itself only reads — the generator appends after each
+successful pick. This keeps `_GenState`'s mutation discipline in the
+generator's control (one place to audit) and means `apply_weighted`
+stays a pure function for testing.
+
+**Template grammar additions (`engine/template.py`):**
+
+1. `SUPPORTED_STRATEGIES` adds `"weighted"`.
+2. `BlockSpec.window: int | None = None` — *optional* for weighted
+   (defaults to `DEFAULT_WEIGHTED_WINDOW = 10`), *forbidden* for any
+   other strategy. This is a new coupling shape (optional-or-forbidden);
+   `_require_strategy_field` gained an `optional_for` parameter that
+   complements the existing `required_for`.
+3. **Forward contract for sub-slice #13 (Rule table).** Per-block
+   `window` will OVERRIDE the station-wide default sourced from the
+   Rule table; absent both, the constant default fires. Captured here
+   so #13's implementation doesn't lose the per-block flexibility.
+
+**Generator integration (`engine/generator.py`):**
+
+The `weighted` dispatch branch builds the per-pool lookups on first
+encounter, loops `block.size` times, and after each pick appends to
+`_GenState` so subsequent slots see updated dedup state. The trace
+reason includes the tier, the eligible count, and a per-constraint
+block breakdown (`blocked artist=N track=M both=K`).
+
+**API plumbing (`api/routers/generate.py`):**
+
+Pre-generation, `load_alias_map(db)` loads the ArtistAlias table
+(§14.26) into the dict shape `resolve_artist_keys` consumes. Passed
+to `generate(..., alias_map=...)`. Cheap even when no weighted blocks
+exist — empty table reads cleanly.
+
+**No `excluded` field populated yet.** The §14.23 ExcludedCandidate
+slot stays empty for weighted picks in this commit. Tier 1 rejections
+are *known* (the strategy classifies them via `WeightedPickInfo`'s
+counts), but converting "this track was rejected" into a populated
+ExcludedCandidate entry is commit 2 of the slice. The trace reason
+carries the summary counts in the meantime.
+
+**Tests added (22 new, total 353):**
+
+- 5 parser tests (`test_template.py`): weighted without window
+  accepted (default); with explicit window; zero window accepted
+  (disables artist dedup); negative window rejected; window on
+  non-weighted strategy rejected.
+- 9 strategy tests (`test_strategies.py`): Tier 1 happy path;
+  artist dedup blocks within window; shuffle-bag rotates through
+  pool with rng=None; Tier 2 relaxation when all artists blocked;
+  resolved keys block via collaboration splitting; alias map blocks
+  Plastikman↔Richie Hawtin; seeded rng reproducible; empty pool
+  raises; build_lookups handles artist=None.
+- 8 generator tests (`test_generator_generic.py`): single weighted
+  pick at size=1; state persists across size iterations; seeded
+  generation reproducible; default window=10 in trace; explicit
+  window overrides; alias_map threads through; coexists with window
+  + jingle in one template; state doesn't pollute across generations.
+
+**Punts (commit 2 will address one of these):**
+
+- **ExcludedCandidate population for weighted picks.** Commit 2.
+- **Rule-table-sourced default window.** Sub-slice #13. The
+  `DEFAULT_WEIGHTED_WINDOW = 10` constant in `generator.py` is the
+  source of truth until then.
+- **Multi-source weighted blocks within one generation.** Supported
+  by the per-source lookup cache, but the cross-slot state
+  `_GenState` is single (not per-source). Weekly only has one
+  commercial source so this is fine; if a future template wants
+  two distinct weighted sources whose dedup windows shouldn't
+  intersect, the state needs to grow a source dimension. Revisit
+  only on real demand.
+- **rng=None determinism in production.** Supported for tests
+  (first eligible track, first stalest artist). Real generation
+  paths always pass a seeded rng; the rng=None path is intentionally
+  divergent from weekly's behaviour and only useful for unit testing.
+
+---
+
 ## 15. Status snapshot
 
 A quick "where are we" for a future reader. Last updated at commit
@@ -3225,7 +3384,7 @@ A quick "where are we" for a future reader. Last updated at commit
 | Delete / station-reset   | Shipped (14.10). Per-row delete + station nuke; cascades.        |
 | Disk-export UI button    | Shipped (14.11). Trace viewer "Export to disk" + status line.    |
 | Edit mode for stations   | Shipped (14.13). Shared `<StationForm>` + JSON preview + diff + reset. |
-| **§17 pre-port roadmap** | **Phase A complete (§14.17–§14.21). Phase B underway: sub-slices #5 (§14.23), #7 (§14.22), #8 (§14.24), #9 (§14.25), #10 (§14.26) shipped. **Next: sub-slice #11 = `weighted` commercial strategy — the biggest single strategy (3–4 commits estimated); first consumer of the §14.26 artist-match subsystem.** |
+| **§17 pre-port roadmap** | **Phase A complete (§14.17–§14.21). Phase B underway: sub-slices #5 (§14.23), #7 (§14.22), #8 (§14.24), #9 (§14.25), #10 (§14.26) shipped; #11 in progress — commit 1 of 2 shipped (§14.27 strategy + state plumbing); commit 2 pending (§14.23 ExcludedCandidate population for weighted picks).** |
 | Visual block editor      | Deferred (v2). Lands as §17 Phase B after Phase A unblocks.      |
 | Trace versioning         | Deferred. See §16.4 (queued behind §16.1 by design).             |
 | Accessibility pass       | Deferred. §17 Phase D — single sweep after §16.2 + port.         |
@@ -4535,7 +4694,7 @@ Sub-slice ordering (engine work in dependency order):
 8. ~~**`jingle` strategy**~~ — **shipped (§14.24)**
 9. ~~**`mix` strategy + MixUsage table + Alembic**~~ — **shipped (§14.25)**
 10. ~~**Artist-match subsystem** (port `artist_match.py` ~187 LoC) + ArtistAlias table~~ — **shipped (§14.26)**
-11. **`weighted` commercial strategy** — two-tier with squared-remaining + dedup
+11. **`weighted` commercial strategy** — in progress; commit 1 of 2 shipped (§14.27 strategy + state plumbing); commit 2 pending (ExcludedCandidate population for weighted picks)
 12. **`prev_ref` strategy** — cross-playlist lookup with fallback
 13. **Rule table (per-station) + CRUD**
 14. **`PlaylistEntry.slot_type` column + Alembic**

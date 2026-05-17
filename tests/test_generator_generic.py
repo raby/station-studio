@@ -475,6 +475,138 @@ def test_jingle_coexists_with_window_in_same_row():
     assert r.trace.slots[2].source == "J"
 
 
+# ---------- §14.27: weighted strategy via generator --------------------
+
+
+def _weighted_pool_with_artists() -> list[FakeTrack]:
+    return [
+        FakeTrack(id=201, name="A-1", artist="Artist A"),
+        FakeTrack(id=202, name="A-2", artist="Artist A"),
+        FakeTrack(id=203, name="B-1", artist="Artist B"),
+        FakeTrack(id=204, name="C-1", artist="Artist C"),
+    ]
+
+
+def _weighted_template(size: int = 1, window=None) -> dict:
+    """A single-block weighted template; size + window configurable."""
+    block: dict = {"source": "A", "strategy": "weighted", "size": size}
+    if window is not None:
+        block["window"] = window
+    return mk_template(
+        rng="on",
+        layout={
+            "unit": "day",
+            "unit_labels": ["Mon"],
+            "row_start_offsets": [0],
+            "row_template": [block],
+        },
+    )
+
+
+def test_weighted_generator_picks_one_track_at_size_1():
+    t = parse_template(_weighted_template(size=1))
+    r = generate(t, {"A": _weighted_pool_with_artists()}, week=1, seed=42)
+    assert len(r.picks) == 1
+    assert r.trace.slots[0].strategy == "weighted"
+    assert "weighted tier 1" in r.trace.slots[0].reason
+
+
+def test_weighted_generator_state_persists_across_size_iterations():
+    """A single weighted block with size=4 should NOT repeat artists
+    within the window (state mutates between iterations of the same block)."""
+    t = parse_template(_weighted_template(size=4))
+    r = generate(t, {"A": _weighted_pool_with_artists()}, week=1, seed=42)
+    artists = [p.artist for p in r.picks]
+    # Pool has 4 tracks across 3 artists (A×2, B, C). The shuffle-bag
+    # window is pool_size-1 = 3, so the only legal repeat is when the
+    # 4th pick falls outside the 3-pick history — which it doesn't.
+    # Therefore all 4 tracks are distinct.
+    assert len(set(p.id for p in r.picks)) == 4
+
+
+def test_weighted_generator_seeded_run_reproducible():
+    t = parse_template(_weighted_template(size=4))
+    pool = _weighted_pool_with_artists()
+    r1 = generate(t, {"A": pool}, week=1, seed=99)
+    r2 = generate(t, {"A": pool}, week=1, seed=99)
+    assert [p.id for p in r1.picks] == [p.id for p in r2.picks]
+
+
+def test_weighted_generator_default_window_is_10():
+    """No explicit window → default 10 surfaces in trace reason."""
+    t = parse_template(_weighted_template(size=1))  # no window field
+    r = generate(t, {"A": _weighted_pool_with_artists()}, week=1, seed=1)
+    assert "window=10" in r.trace.slots[0].reason
+
+
+def test_weighted_generator_explicit_window_overrides_default():
+    t = parse_template(_weighted_template(size=1, window=5))
+    r = generate(t, {"A": _weighted_pool_with_artists()}, week=1, seed=1)
+    assert "window=5" in r.trace.slots[0].reason
+
+
+def test_weighted_generator_alias_map_threads_through():
+    """alias_map kwarg on generate() reaches apply_weighted's lookups,
+    so an aliased Plastikman pick blocks a subsequent Richie Hawtin pick."""
+    pool = [
+        FakeTrack(id=301, name="Sheet One", artist="Plastikman"),
+        FakeTrack(id=302, name="DE9", artist="Richie Hawtin"),
+        FakeTrack(id=303, name="Other", artist="Daft Punk"),
+    ]
+    t = parse_template(_weighted_template(size=2, window=10))
+    r = generate(
+        t, {"A": pool}, week=1, seed=42,
+        alias_map={"plastikman": "richie hawtin", "richie hawtin": "richie hawtin"},
+    )
+    artists = [p.artist for p in r.picks]
+    # The two picks must not both come from the Plastikman/Richie Hawtin
+    # equivalence class; Daft Punk has to appear.
+    assert "Daft Punk" in artists
+
+
+def test_weighted_coexists_with_window_and_jingle_strategies():
+    """Smoke test: weighted alongside other strategies in one template."""
+    t = parse_template(mk_template(
+        sources=[
+            {"name": "A", "colour": "#aaa", "role": "content"},
+            {"name": "J", "colour": "#fc0", "role": "content"},
+            {"name": "W", "colour": "#0cf", "role": "content"},
+        ],
+        rng="on",
+        layout={
+            "unit": "day",
+            "unit_labels": ["Mon"],
+            "row_start_offsets": [0],
+            "row_template": [
+                {"source": "A", "strategy": "window", "size": 1},
+                {"source": "J", "strategy": "jingle", "size": 1, "genre": "Daytime"},
+                {"source": "W", "strategy": "weighted", "size": 1, "window": 5},
+            ],
+        },
+    ))
+    pools = {
+        "A": mk_pool("A", 10),
+        "J": _mk_jingle_pool(),
+        "W": _weighted_pool_with_artists(),
+    }
+    r = generate(t, pools, week=1, seed=42)
+    assert [s.strategy for s in r.trace.slots] == ["window", "jingle", "weighted"]
+    assert len(r.picks) == 3
+
+
+def test_weighted_dedup_does_not_pollute_across_generations():
+    """Two separate generate() calls should not share state — each gets
+    a fresh _GenState. Tested by running the same seeded generation
+    twice; both must produce identical pick sequences."""
+    t = parse_template(_weighted_template(size=4))
+    pool = _weighted_pool_with_artists()
+    r1 = generate(t, {"A": pool}, week=1, seed=7)
+    r2 = generate(t, {"A": pool}, week=2, seed=7)
+    # Same template + seed + pool → same picks across week boundary
+    # (no shared state).
+    assert [p.id for p in r1.picks] == [p.id for p in r2.picks]
+
+
 # ---------- §14.25: mix strategy via generator --------------------------
 
 

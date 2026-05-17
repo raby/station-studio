@@ -33,8 +33,11 @@ def test_base_template_parses():
 
 
 def test_unknown_strategy_rejected():
+    # 'fnord' isn't a real strategy; until something genuinely unsupported
+    # exists for this test to call out, use an obvious nonsense name. Was
+    # 'weighted' pre-§14.27 — that strategy is now supported.
     bad = {**BASE, "layout": {**BASE["layout"], "row_template": [
-        {"source": "A", "strategy": "weighted", "size": 3},
+        {"source": "A", "strategy": "fnord", "size": 3},
     ]}}
     with pytest.raises(TemplateError, match="strategy"):
         parse_template(bad)
@@ -316,6 +319,49 @@ def test_genre_on_mix_strategy_accepted():
         {"source": "A", "strategy": "mix", "size": 1, "genre": "01Alphastate", "exclusion_window": 0},
     ]}})
     assert tmpl.layout.row_template[0].genre == "01Alphastate"
+
+
+# ---------- §14.27: weighted strategy + optional window -----------------
+
+
+def test_weighted_block_without_window_accepted():
+    """`weighted` blocks may omit `window` — generator defaults to 10."""
+    tmpl = parse_template({**BASE, "layout": {**BASE["layout"], "row_template": [
+        {"source": "A", "strategy": "weighted", "size": 1},
+    ]}})
+    b = tmpl.layout.row_template[0]
+    assert (b.strategy, b.window) == ("weighted", None)
+
+
+def test_weighted_block_with_explicit_window_accepted():
+    tmpl = parse_template({**BASE, "layout": {**BASE["layout"], "row_template": [
+        {"source": "A", "strategy": "weighted", "size": 1, "window": 20},
+    ]}})
+    assert tmpl.layout.row_template[0].window == 20
+
+
+def test_weighted_block_zero_window_accepted():
+    """window=0 disables artist dedup entirely (track dedup still applies)."""
+    tmpl = parse_template({**BASE, "layout": {**BASE["layout"], "row_template": [
+        {"source": "A", "strategy": "weighted", "size": 1, "window": 0},
+    ]}})
+    assert tmpl.layout.row_template[0].window == 0
+
+
+def test_weighted_block_negative_window_rejected():
+    bad = {**BASE, "layout": {**BASE["layout"], "row_template": [
+        {"source": "A", "strategy": "weighted", "size": 1, "window": -1},
+    ]}}
+    with pytest.raises(TemplateError, match="window must be a non-negative integer"):
+        parse_template(bad)
+
+
+def test_window_on_non_weighted_strategy_rejected():
+    bad = {**BASE, "layout": {**BASE["layout"], "row_template": [
+        {"source": "A", "strategy": "window", "size": 3, "window": 10},
+    ]}}
+    with pytest.raises(TemplateError, match=r"only valid when strategy in \['weighted'\]"):
+        parse_template(bad)
 
 
 def test_source_by_name_unknown_raises():

@@ -7,5 +7,11 @@ from engine.strategies.window import apply_window
 from engine.strategies.pick import apply_pick
 from engine.strategies.jingle import apply_jingle
 from engine.strategies.mix import apply_mix
+from engine.strategies.weighted import (
+    apply_weighted, build_lookups, WeightedLookups, WeightedPickInfo,
+)
 
-__all__ = ["apply_window", "apply_pick", "apply_jingle", "apply_mix"]
+__all__ = [
+    "apply_window", "apply_pick", "apply_jingle", "apply_mix",
+    "apply_weighted", "build_lookups", "WeightedLookups", "WeightedPickInfo",
+]

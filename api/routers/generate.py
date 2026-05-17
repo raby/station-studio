@@ -10,7 +10,8 @@ from sqlalchemy.orm import Session
 
 from engine.models import Station, Playlist, PlaylistTrace
 from engine.persistence import (
-    load_excluded_mix_ids, load_pools, max_mix_exclusion_window, save_playlist,
+    load_alias_map, load_excluded_mix_ids, load_pools,
+    max_mix_exclusion_window, save_playlist,
 )
 from engine.template import parse_template, TemplateError
 from engine.generator import generate
@@ -49,10 +50,17 @@ def generate_playlist(slug: str, payload: GenerateRequest, db: Session = Depends
         window=max_mix_exclusion_window(template),
     )
 
+    # §14.26 + §14.27: alias map for the `weighted` strategy's artist-key
+    # resolution. Cheap to load even when no weighted blocks exist (just
+    # an empty ArtistAlias table read); the strategy ignores it if there
+    # are no weighted blocks in the template.
+    alias_map = load_alias_map(db)
+
     try:
         result = generate(
             template, pools, week=payload.week, seed=payload.seed,
             excluded_mix_ids=excluded_mix_ids,
+            alias_map=alias_map,
         )
     except Exception as e:
         raise HTTPException(400, f"generation failed: {e}")
