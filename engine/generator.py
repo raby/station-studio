@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from typing import Any, Mapping
 
 from engine.template import Template, BlockSpec
-from engine.trace import Trace, TraceSlot
+from engine.trace import Trace, TraceSlot, ExcludedCandidate
 from engine.strategies import (
     apply_window, apply_pick, apply_jingle, apply_mix,
     apply_weighted, build_lookups, WeightedLookups,
@@ -359,12 +359,18 @@ def generate(
                 #     fallback_genre. Records into prev_ref_fallback_mixes
                 #     so persistence can write a MixUsage row.
                 #   FALLBACK_WEIGHTED: mirror missed AND no fallback_genre
-                #     → defer to weighted strategy. Defensive: weekly's
+                #     → defer to weighted strategy. Defensive — weekly's
                 #     actual templates never trigger this (every real
-                #     prev_ref has a fallback_genre). Implementation
-                #     ships in commit 2 of this slice; for now, raise
-                #     loudly so any template that hits the path is
-                #     surfaced rather than silently misbehaving.
+                #     prev_ref has a fallback_genre) but the port keeps
+                #     the branch for byte-equality.
+                #
+                # On fallback (either kind), the failed-mirror context is
+                # surfaced via a single §14.23 ExcludedCandidate entry
+                # describing what the previous-playlist resolution turned
+                # up. For FALLBACK_WEIGHTED the slot's `excluded` list
+                # combines that one entry with whatever
+                # apply_weighted populated (artist-blocked rejections from
+                # the dedup window — see §14.27 commit 2).
                 for _ in range(block.size):
                     try:
                         mirror, failure = try_prev_ref_mirror(
@@ -403,7 +409,21 @@ def generate(
                                 f"position {block.position}"
                             ),
                         ))
-                    elif block.fallback_genre is not None:
+                        continue
+
+                    # Fallback path — build the failed-mirror diagnostic
+                    # entry once; both fallback branches surface it in
+                    # the slot's `excluded` list.
+                    failure_excluded = _prev_ref_failure_excluded(
+                        failure, position=block.position, source_name=block.source,
+                    )
+                    miss_note = (
+                        "no previous playlist"
+                        if failure and failure.kind == "no_previous"
+                        else f"resolved track not in source '{block.source}'"
+                    )
+
+                    if block.fallback_genre is not None:
                         # FALLBACK_MIX outcome — invoke apply_mix on the
                         # same source filtered to fallback_genre. Reuses
                         # the cross-week excluded_mix_ids set the
@@ -428,11 +448,6 @@ def generate(
                         prev_ref_fallback_mixes.append(
                             (slot_counter, block.fallback_genre, track)
                         )
-                        miss_note = (
-                            "no previous playlist"
-                            if failure and failure.kind == "no_previous"
-                            else f"resolved track not in source '{block.source}'"
-                        )
                         excl_note = (
                             " (mix relaxed — exclusion saturated genre)"
                             if relaxed else ""
@@ -451,21 +466,60 @@ def generate(
                                 f"'{block.fallback_genre}' eligible {n_elig} "
                                 f"of {n_cand}{excl_note}"
                             ),
+                            excluded=failure_excluded,
                         ))
                     else:
-                        # FALLBACK_WEIGHTED outcome — commit 2 of this
-                        # slice. Surface loudly until then; the only way
-                        # a template reaches this branch is by omitting
-                        # fallback_genre AND having no/incompatible
-                        # previous playlist — both rare and the user
-                        # should see the gap rather than silent failure.
-                        raise NotImplementedError(
-                            "prev_ref fallback without fallback_genre "
-                            "(weighted fallback path) is not yet "
-                            "implemented; ships in §14.28 commit 2. "
-                            "Workaround: declare a fallback_genre on "
-                            "this prev_ref block."
+                        # FALLBACK_WEIGHTED outcome (§14.28 commit 2).
+                        # Defer to the weighted strategy using the SAME
+                        # state machinery a regular weighted dispatch
+                        # would: per-source lookup cache, _GenState
+                        # (recent_artist_keys + used_track_ids),
+                        # DEFAULT_WEIGHTED_WINDOW. Weekly's templates
+                        # don't trigger this path, but the port keeps
+                        # the branch implemented for byte-equality.
+                        if block.source not in weighted_lookups:
+                            weighted_lookups[block.source] = build_lookups(
+                                pool, alias_map=alias_map,
+                            )
+                        track, info = apply_weighted(
+                            pool,
+                            lookups=weighted_lookups[block.source],
+                            recent_artist_keys=state.recent_artist_keys,
+                            used_track_ids=state.used_track_ids,
+                            window=DEFAULT_WEIGHTED_WINDOW,
+                            rng=rng,
+                            source_name=block.source,
                         )
+                        # Mutate _GenState same as the regular weighted
+                        # dispatch — the prev_ref fallback's pick must
+                        # affect subsequent weighted slots in the same
+                        # generation.
+                        state.recent_artist_keys.append(
+                            weighted_lookups[block.source].track_keys.get(
+                                getattr(track, "id", -1), frozenset()
+                            )
+                        )
+                        state.used_track_ids.append(getattr(track, "id", -1))
+                        slot_counter += 1
+                        picks.append(track)
+                        trace.slots.append(_make_trace_slot(
+                            slot=slot_counter,
+                            unit=unit_label,
+                            row=row_idx + 1,
+                            block=block_idx + 1,
+                            block_spec=block,
+                            pool_index=info.pool_index,
+                            track=track,
+                            reason=(
+                                f"prev_ref fallback (position {block.position}: "
+                                f"{miss_note}); picked weighted "
+                                f"{_weighted_reason(info, DEFAULT_WEIGHTED_WINDOW)}"
+                            ),
+                            # Combine the failed-mirror diagnostic with
+                            # the artist-blocked rejections the weighted
+                            # strategy populated.
+                            excluded=failure_excluded + info.excluded_candidates,
+                        ))
             elif block.strategy == "pick":
                 cursor = row_start_in_pool
                 for _ in range(block.size):
@@ -566,3 +620,56 @@ def _weighted_reason(info, window: int) -> str:
         f"both={info.both_blocked_count} "
         f"(window={window})"
     )
+
+
+def _prev_ref_failure_excluded(
+    failure,
+    *,
+    position: int,
+    source_name: str,
+) -> list:
+    """Build the single ExcludedCandidate row describing the failed
+    prev_ref mirror, for the §14.23 disclosure UI.
+
+    Two cases produce a row:
+      - no_previous: no track to record (no previous playlist existed),
+        so we emit a *placeholder* entry with track_id=None — the
+        user still sees "this slot fell back because no previous
+        playlist" in the excluded panel rather than wondering why
+        a fallback fired with empty diagnostics.
+      - not_in_source: a track WAS resolved from the previous playlist
+        but rejected because it's not in this slot's source pool.
+        Record it with its id/name/artist so the user can scroll
+        back to the originating slot.
+
+    pool_index=0 is the agreed convention for "track not addressable
+    in this slot's source pool" — the §14.23 ExcludedCandidate type
+    requires an int, and 0 (an invalid 1-indexed position) signals
+    "see the reason for context" without inventing a misleading
+    pool position.
+    """
+    if failure is None:
+        return []
+    if failure.kind == "no_previous":
+        return [ExcludedCandidate(
+            pool_index=0,
+            track_id=None,
+            track_name="(no previous playlist)",
+            track_artist=None,
+            reason=(
+                f"prev_ref position {position} could not mirror — "
+                f"no previous playlist for this station"
+            ),
+        )]
+    # not_in_source
+    rt = failure.resolved_track
+    return [ExcludedCandidate(
+        pool_index=0,
+        track_id=getattr(rt, "id", None),
+        track_name=getattr(rt, "name", "?"),
+        track_artist=getattr(rt, "artist", None),
+        reason=(
+            f"resolved from previous playlist position {position} "
+            f"but not in source '{source_name}'"
+        ),
+    )]

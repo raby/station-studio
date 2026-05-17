@@ -717,14 +717,136 @@ def test_prev_ref_position_out_of_range_raises():
         generate(t, {"A": pool}, week=2, previous_playlist=previous)
 
 
-def test_prev_ref_without_fallback_genre_raises_not_implemented():
-    """Commit 1 of §14.28: the weighted-fallback path is deferred to
-    commit 2. Templates that omit fallback_genre AND miss the mirror
-    must surface loudly rather than misbehave silently."""
-    pool = _prev_ref_pool_with_genres()
+def test_prev_ref_without_fallback_genre_uses_weighted_fallback():
+    """§14.28 commit 2: when fallback_genre is absent AND the mirror
+    misses, prev_ref defers to the weighted strategy. Uses the same
+    state machinery as a regular weighted dispatch (lookups +
+    _GenState mutation)."""
+    pool = _weighted_pool_with_artists()  # 4 tracks across 3 artists
     t = parse_template(_prev_ref_template(position=1, fallback_genre=None))
-    with pytest.raises(NotImplementedError, match="weighted fallback"):
-        generate(t, {"A": pool}, week=1, previous_playlist=None)
+    r = generate(t, {"A": pool}, week=1, previous_playlist=None, seed=42)
+    assert len(r.picks) == 1
+    # Track must come from the pool — weighted picks from `source`.
+    assert r.picks[0].id in {201, 202, 203, 204}
+    # Trace reason carries the weighted dispatch info, not a mix reason.
+    assert "weighted" in r.trace.slots[0].reason
+    assert "tier" in r.trace.slots[0].reason
+
+
+def test_prev_ref_weighted_fallback_mutates_gen_state():
+    """The weighted-fallback path must mutate _GenState so a
+    subsequent regular weighted slot in the same generation respects
+    the prev_ref pick's artist + track dedup."""
+    pool = _weighted_pool_with_artists()
+    t = parse_template(mk_template(
+        sources=[{"name": "A", "colour": "#aaa", "role": "content"}],
+        rng="on",
+        layout={
+            "unit": "day",
+            "unit_labels": ["Mon"],
+            "row_start_offsets": [0],
+            "row_template": [
+                # prev_ref with no fallback_genre → weighted-fallback path.
+                {"source": "A", "strategy": "prev_ref", "size": 1, "position": 1},
+                # Then a regular weighted slot: must NOT repeat artist or
+                # track from the prev_ref's fallback pick.
+                {"source": "A", "strategy": "weighted", "size": 1, "window": 10},
+            ],
+        },
+    ))
+    r = generate(t, {"A": pool}, week=1, previous_playlist=None, seed=42)
+    # Both slots picked from the same pool but should not repeat the
+    # same track or share an artist key within the dedup window.
+    assert r.picks[0].id != r.picks[1].id
+    assert r.picks[0].artist != r.picks[1].artist
+
+
+def test_prev_ref_fallback_mix_emits_excluded_for_failed_mirror():
+    """§14.28 commit 2: when prev_ref falls back, the slot's TraceSlot
+    .excluded carries one ExcludedCandidate describing the failed
+    mirror (for the §14.23 viewer disclosure)."""
+    pool = _prev_ref_pool_with_genres()
+    foreign = FakeTrack(id=999, name="Unrelated", genre="Pop", artist="Pop Star")
+    previous = [foreign]
+    t = parse_template(_prev_ref_template(position=1, fallback_genre="House"))
+    r = generate(t, {"A": pool}, week=2, previous_playlist=previous)
+    # Fallback fired. The slot's excluded list has exactly one entry —
+    # the failed-mirror diagnostic.
+    slot = r.trace.slots[0]
+    assert len(slot.excluded) == 1
+    ec = slot.excluded[0]
+    assert ec.track_id == 999
+    assert ec.track_name == "Unrelated"
+    assert ec.track_artist == "Pop Star"
+    assert "not in source 'A'" in ec.reason
+    assert "position 1" in ec.reason
+
+
+def test_prev_ref_no_previous_emits_placeholder_excluded():
+    """When no previous playlist exists, the excluded entry is a
+    placeholder (track_id=None, descriptive reason) so the user sees
+    the fallback rationale rather than wondering why excluded is empty."""
+    pool = _prev_ref_pool_with_genres()
+    t = parse_template(_prev_ref_template(position=1, fallback_genre="House"))
+    r = generate(t, {"A": pool}, week=1, previous_playlist=None)
+    slot = r.trace.slots[0]
+    assert len(slot.excluded) == 1
+    ec = slot.excluded[0]
+    assert ec.track_id is None
+    assert ec.track_name == "(no previous playlist)"
+    assert "no previous playlist" in ec.reason
+
+
+def test_prev_ref_weighted_fallback_combines_excluded_lists():
+    """Weighted-fallback's slot.excluded = [failed-mirror entry]
+    PLUS weighted's own artist-blocked rejections."""
+    # Pool where the weighted dispatch will produce SOME artist-blocked
+    # rejections: two tracks share an artist, so picking one blocks
+    # the other from subsequent considerations.
+    pool = [
+        FakeTrack(id=601, name="X1", artist="Artist X"),
+        FakeTrack(id=602, name="X2", artist="Artist X"),
+        FakeTrack(id=603, name="Y1", artist="Artist Y"),
+    ]
+    foreign = FakeTrack(id=999, name="Foreign", genre="Pop", artist="None")
+    previous = [foreign]
+    t = parse_template(mk_template(
+        sources=[{"name": "A", "colour": "#aaa", "role": "content"}],
+        rng="on",
+        layout={
+            "unit": "day",
+            "unit_labels": ["Mon"],
+            "row_start_offsets": [0],
+            "row_template": [
+                # First a regular weighted to seed the dedup window with
+                # Artist X — so the prev_ref-weighted-fallback will see
+                # X-tracks as artist-blocked rejections.
+                {"source": "A", "strategy": "weighted", "size": 1, "window": 10},
+                {"source": "A", "strategy": "prev_ref", "size": 1, "position": 1},
+            ],
+        },
+    ))
+    r = generate(t, {"A": pool}, week=2, previous_playlist=previous, seed=42)
+    # Slot 2 is the prev_ref weighted-fallback. Its excluded list must
+    # include at least the failed-mirror entry; if Artist X was already
+    # in the dedup window, additional artist-blocked entries appear too.
+    slot2 = r.trace.slots[1]
+    # First entry is always the failed-mirror diagnostic.
+    assert slot2.excluded[0].track_id == 999
+    assert "not in source 'A'" in slot2.excluded[0].reason
+    # Remaining entries (if any) are weighted's artist-blocked rejections.
+    for ec in slot2.excluded[1:]:
+        assert "dedup window" in ec.reason
+
+
+def test_prev_ref_mirror_emits_no_excluded():
+    """Successful mirrors don't emit ExcludedCandidate entries — there's
+    no rejection to surface (the resolved track was used as-is)."""
+    pool = _prev_ref_pool_with_genres()
+    previous = [pool[1]]
+    t = parse_template(_prev_ref_template(position=1))
+    r = generate(t, {"A": pool}, week=2, previous_playlist=previous)
+    assert r.trace.slots[0].excluded == []
 
 
 def test_prev_ref_falls_back_respects_mix_exclusion():

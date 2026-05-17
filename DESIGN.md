@@ -3429,7 +3429,7 @@ disclosure UI already handles long lists cleanly.
 
 ---
 
-### 14.28 prev_ref strategy + previous-playlist loader (§17 Phase B sub-slice #12, commit 1 of 2)
+### 14.28 prev_ref strategy + previous-playlist loader (§17 Phase B sub-slice #12)
 
 **Goal.** Port weekly's `_resolve_prev_ref` — the engine's first slice
 with a **cross-playlist dependency** (the dependency on a *prior
@@ -3438,16 +3438,19 @@ playlists). Mirrors a slot from the previous playlist's content;
 falls back to a fresh pick when the mirror is impossible or the
 resolved track isn't compatible.
 
-Shipped in two commits like §14.27:
-
-- **Commit 1 (this entry)** lands the architectural piece: the
-  strategy module, previous-playlist persistence loader, parser
-  additions, generator dispatch with MIRROR + FALLBACK_MIX paths,
-  MixUsage recording for fallback-mix, and base tests. The
-  FALLBACK_WEIGHTED path raises `NotImplementedError` for now.
-- **Commit 2** (follow-on) will land the FALLBACK_WEIGHTED path
-  (defensive — weekly's actual templates never trigger it) plus
-  ExcludedCandidate population for the failed-mirror diagnostic.
+Shipped in two commits with a mid-slice review checkpoint between
+them (same pattern as §14.27). **Commit 1** (`e59698d`) landed the
+architectural piece: strategy module, previous-playlist persistence
+loader, parser additions, generator dispatch with MIRROR +
+FALLBACK_MIX paths, MixUsage recording for fallback-mix, base tests.
+The mid-slice review (commit `c99d13e`) surfaced a §14.25
+byte-equality bug — `excluded_mix_ids` had been normalised to a
+frozenset and never mutated during the loop, diverging from weekly
+which accumulates within-generation. Fixed in the review-fix
+commit. **Commit 2** (this section's *Weighted fallback + excluded-
+candidates population* sub-section) implements the FALLBACK_WEIGHTED
+path and populates §14.23 `ExcludedCandidate` entries for failed
+mirrors.
 
 **Strategy module (`engine/strategies/prev_ref.py`):**
 
@@ -3547,6 +3550,46 @@ cross-week" — that was wrong about weekly's behaviour. Weekly's
 `generator.py` lines 555 and 590 mutate excluded_mix_ids in-place
 after every mix pick.
 
+**Weighted fallback + excluded-candidates population (commit 2 of
+the slice).**
+
+Mirror-misses with no `fallback_genre` set now defer to the
+weighted strategy, completing the byte-equality story for prev_ref.
+The dispatch reuses the SAME state machinery a regular weighted
+dispatch would: the per-source `weighted_lookups` cache, the
+shared `_GenState` (`recent_artist_keys` + `used_track_ids`), and
+the `DEFAULT_WEIGHTED_WINDOW` default. The prev_ref-fallback pick
+mutates `_GenState` post-pick so subsequent weighted slots in the
+same generation respect it — same convention as the regular
+weighted dispatch.
+
+Every fallback slot (mix OR weighted) now emits one
+`ExcludedCandidate` row describing the failed mirror, surfaced via
+the §14.23 viewer disclosure. Two cases:
+
+- *`not_in_source`*: previous playlist DID have a track at the
+  slot's position, but that track isn't in this slot's source
+  pool. The ExcludedCandidate carries the resolved track's id /
+  name / artist + a reason citing the position and the source
+  name. Users can scroll back to the originating slot to see
+  what was there.
+- *`no_previous`*: no previous playlist existed for this station.
+  The ExcludedCandidate is a placeholder (`track_id=None`,
+  `track_name="(no previous playlist)"`) so the viewer's panel
+  isn't mysteriously empty — the user sees the fallback rationale
+  rather than wondering why diagnostics are missing.
+
+`pool_index=0` is the convention for "track not addressable in
+this slot's source pool" (the §14.23 schema requires an int; 0
+is an invalid 1-indexed position and signals "see the reason for
+context").
+
+For FALLBACK_WEIGHTED slots specifically, `excluded` combines the
+single failed-mirror entry with whatever artist-blocked rejections
+the weighted strategy populated (§14.27 commit 2). Order:
+failed-mirror entry first, then weighted's per-candidate
+rejections.
+
 **Backward compatibility.** Classics templates byte-for-byte
 unchanged: no prev_ref blocks, no position/fallback_genre fields,
 parser skips the new validation. All 362 prior tests pass without
@@ -3554,7 +3597,7 @@ modification. `GenerationResult.prev_ref_fallback_mixes` defaults
 to an empty list so existing callers that destructure
 `GenerationResult(picks, trace)` continue to work.
 
-**Tests added (28 new, total 390):**
+**Tests added (34 new across both commits, total 398):**
 
 - 8 parser tests (`test_template.py`): prev_ref with position +
   fallback_genre accepted; without fallback_genre accepted; missing
@@ -3565,28 +3608,24 @@ to an empty list so existing callers that destructure
   not_in_source failure carries resolved track; no_previous
   failure when playlist is None; position out of range raises;
   zero position raises; empty source pool falls back.
-- 7 generator tests (`test_generator_generic.py`): mirror uses
+- 13 generator tests (`test_generator_generic.py`): mirror uses
   track from previous; falls back when no previous; falls back
   when not in source; position out of range raises ValueError;
-  no-fallback-genre raises NotImplementedError; fallback respects
-  excluded_mix_ids; coexists with mix + window in one template.
-- 7 persistence tests (`test_prev_ref_persistence.py`, new file):
+  fallback respects excluded_mix_ids; coexists with mix + window
+  in one template. Plus commit-2 additions: weighted-fallback
+  picks from source; weighted-fallback mutates _GenState so
+  subsequent weighted slots respect it; failed-mirror emits one
+  ExcludedCandidate per fallback slot (mix path); no_previous
+  emits placeholder ExcludedCandidate; weighted-fallback's
+  excluded list combines failed-mirror + weighted's artist-blocked
+  rejections; successful mirrors emit no ExcludedCandidate.
+- 7 persistence tests (`test_prev_ref_persistence.py`):
   load_previous_playlist returns None / most-recent-prior /
   excludes-current-week / station-scoped; fallback-mix records
   MixUsage; mirror does NOT record MixUsage; fallback respects
   cross-week exclusion across generations.
 
-**Punts (commit 2 will address one, the rest are documented for
-future flexibility):**
-
-- **FALLBACK_WEIGHTED path implementation.** Commit 2. Today
-  templates that try this combination raise NotImplementedError;
-  weekly's actual templates never trigger it, so the port reaches
-  byte-equality without it.
-- **§14.23 ExcludedCandidate population for failed mirrors.** Commit
-  2. The strategy already captures the resolved-but-rejected track
-  in `PrevRefMirrorFailure.resolved_track`; commit 2 surfaces it
-  as one `ExcludedCandidate` per fallback slot.
+**Punts:**
 - **Separate validation + fallback pools** (`fallback_source` on
   BlockSpec). Today: the resolved track must be in the same `source`
   pool the fallback picks from. Weekly's behaviour. A future station
@@ -3633,7 +3672,7 @@ A quick "where are we" for a future reader. Last updated at commit
 | Delete / station-reset   | Shipped (14.10). Per-row delete + station nuke; cascades.        |
 | Disk-export UI button    | Shipped (14.11). Trace viewer "Export to disk" + status line.    |
 | Edit mode for stations   | Shipped (14.13). Shared `<StationForm>` + JSON preview + diff + reset. |
-| **§17 pre-port roadmap** | **Phase A complete (§14.17–§14.21). Phase B underway: sub-slices #5 (§14.23), #7 (§14.22), #8 (§14.24), #9 (§14.25), #10 (§14.26), #11 (§14.27) shipped; #12 in progress — commit 1 of 2 shipped (§14.28 strategy + persistence + MIRROR/FALLBACK_MIX paths); commit 2 pending (FALLBACK_WEIGHTED path + ExcludedCandidate population).** |
+| **§17 pre-port roadmap** | **Phase A complete (§14.17–§14.21). Phase B underway: sub-slices #5 (§14.23), #7 (§14.22), #8 (§14.24), #9 (§14.25), #10 (§14.26), #11 (§14.27), #12 (§14.28) shipped. **Next: sub-slice #13 = Rule table + CRUD — first user-managed config table; will hoist DEFAULT_WEIGHTED_WINDOW and exclusion_window defaults to per-station overrides.** |
 | Visual block editor      | Deferred (v2). Lands as §17 Phase B after Phase A unblocks.      |
 | Trace versioning         | Deferred. See §16.4 (queued behind §16.1 by design).             |
 | Accessibility pass       | Deferred. §17 Phase D — single sweep after §16.2 + port.         |
@@ -4944,7 +4983,7 @@ Sub-slice ordering (engine work in dependency order):
 9. ~~**`mix` strategy + MixUsage table + Alembic**~~ — **shipped (§14.25)**
 10. ~~**Artist-match subsystem** (port `artist_match.py` ~187 LoC) + ArtistAlias table~~ — **shipped (§14.26)**
 11. ~~**`weighted` commercial strategy** — two-tier with squared-remaining + dedup~~ — **shipped (§14.27, 2 commits + 1 review-fix + 1 follow-on)**
-12. **`prev_ref` strategy** — in progress; commit 1 of 2 shipped (§14.28 strategy + persistence + MIRROR/FALLBACK_MIX paths); commit 2 pending (FALLBACK_WEIGHTED + ExcludedCandidate)
+12. ~~**`prev_ref` strategy** — cross-playlist lookup with fallback~~ — **shipped (§14.28, 2 commits + 1 mid-slice review-fix + 1 follow-on)**
 13. **Rule table (per-station) + CRUD**
 14. **`PlaylistEntry.slot_type` column + Alembic**
 15. **Template slot-shape generalisation** — flat slot list expression form alongside row-template
