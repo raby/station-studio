@@ -127,6 +127,24 @@ def _save_mix_usages(db: Session, *, playlist_id: int, template: Template, resul
         ))
 
 
+def max_mix_exclusion_window(template: Template) -> int:
+    """Return the widest exclusion_window across all mix blocks (0 if none).
+
+    The generator only sees one excluded_mix_ids set per generation, and a
+    wider window is a strictly stronger constraint (the strategy can always
+    ignore extra excluded ids, but can't manufacture missing ones). So when
+    a template carries multiple mix blocks with different windows, the
+    union — `max(...)` — is the safe choice; per-block window enforcement
+    is a punt (§14.25). Extracted so the API route reads as a one-liner
+    and the multi-mix semantics get unit coverage.
+    """
+    windows = [
+        b.exclusion_window for b in template.layout.row_template
+        if b.strategy == "mix" and b.exclusion_window is not None
+    ]
+    return max(windows) if windows else 0
+
+
 def load_excluded_mix_ids(db: Session, *, station_id: int, window: int) -> set[int]:
     """Build the §14.25 exclusion set: track ids used as mixes in the
     station's last `window` playlists.

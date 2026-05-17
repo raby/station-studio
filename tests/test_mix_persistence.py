@@ -20,7 +20,7 @@ from engine.models import (
     Station, Track,
 )
 from engine.persistence import (
-    load_excluded_mix_ids, load_pools, save_playlist,
+    load_excluded_mix_ids, load_pools, max_mix_exclusion_window, save_playlist,
 )
 from engine.template import parse_template
 
@@ -185,6 +185,62 @@ def test_load_excluded_mix_ids_window_limits_lookback(session_factory):
         wide = load_excluded_mix_ids(db, station_id=station_id, window=5)
         assert len(wide) == 2
         assert narrow.issubset(wide)
+
+
+# ---------- max_mix_exclusion_window (multi-mix templates) --------------
+
+
+def _template_with_mix_blocks(*windows: int) -> dict:
+    """Build a template carrying one mix block per supplied exclusion_window."""
+    return {
+        "station": "x",
+        "cadence": "weekly",
+        "rng": "off",
+        "sources": [{"name": "M", "colour": "#111", "role": "content"}],
+        "cursor": {"base_advance_per_week": 0, "cycle_weeks": 1},
+        "layout": {
+            "unit": "slot",
+            "unit_labels": ["1"],
+            "row_start_offsets": [0],
+            "row_template": [
+                {"source": "M", "strategy": "mix", "size": 1,
+                 "genre": f"G{i}", "exclusion_window": w}
+                for i, w in enumerate(windows, start=1)
+            ],
+        },
+    }
+
+
+def test_max_mix_exclusion_window_no_mix_blocks_returns_zero():
+    # Plain window-only template — no mix blocks.
+    tmpl = parse_template({
+        "station": "x", "cadence": "weekly", "rng": "off",
+        "sources": [{"name": "A", "colour": "#111", "role": "content"}],
+        "cursor": {"base_advance_per_week": 0, "cycle_weeks": 1},
+        "layout": {
+            "unit": "slot", "unit_labels": ["1"],
+            "row_start_offsets": [0],
+            "row_template": [{"source": "A", "strategy": "window", "size": 1}],
+        },
+    })
+    assert max_mix_exclusion_window(tmpl) == 0
+
+
+def test_max_mix_exclusion_window_single_mix_block_returns_its_window():
+    tmpl = parse_template(_template_with_mix_blocks(7))
+    assert max_mix_exclusion_window(tmpl) == 7
+
+
+def test_max_mix_exclusion_window_multiple_blocks_returns_max():
+    # The wider window dominates — strategy only sees one exclusion set per
+    # generation, and wider = stronger constraint.
+    tmpl = parse_template(_template_with_mix_blocks(3, 11, 5))
+    assert max_mix_exclusion_window(tmpl) == 11
+
+
+def test_max_mix_exclusion_window_zero_windows_returns_zero():
+    tmpl = parse_template(_template_with_mix_blocks(0, 0))
+    assert max_mix_exclusion_window(tmpl) == 0
 
 
 def test_save_playlist_replacing_existing_clears_old_mix_usage(session_factory):

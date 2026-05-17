@@ -159,7 +159,7 @@ def generate(
                 # drain the candidate set; we surface that in the trace
                 # reason so authoring can spot exclusion-window saturation.
                 for _ in range(block.size):
-                    pool_idx, track, relaxed = apply_mix(
+                    pool_idx, track, relaxed, n_cand, n_elig = apply_mix(
                         pool,
                         genre=block.genre,  # type: ignore[arg-type]
                         excluded_ids=excluded_mix_ids,
@@ -169,9 +169,13 @@ def generate(
                     slot_counter += 1
                     picks.append(track)
                     mode = "random" if rng else "first match"
+                    # Report genre-specific filtering pressure rather than the
+                    # opaque total exclusion-set size. `eligible N of M` is
+                    # the actionable number — when N approaches 1 the user
+                    # knows to bump exclusion_window or add tracks.
                     excl_note = (
-                        f" (relaxed — exclusion window of {len(excluded_mix_ids)} "
-                        "saturated genre)" if relaxed else ""
+                        " (relaxed — exclusion saturated genre)"
+                        if relaxed else ""
                     )
                     trace.slots.append(_make_trace_slot(
                         slot=slot_counter,
@@ -183,7 +187,7 @@ def generate(
                         track=track,
                         reason=f"mix from '{block.source}' "
                                f"genre='{block.genre}' "
-                               f"excluded={len(excluded_mix_ids)} ({mode}){excl_note}",
+                               f"eligible {n_elig} of {n_cand} ({mode}){excl_note}",
                     ))
             elif block.strategy == "jingle":
                 # §14.24 Weekly-port: genre-filtered pick from the pool.

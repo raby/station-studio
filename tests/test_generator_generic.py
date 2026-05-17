@@ -506,7 +506,8 @@ def test_mix_strategy_no_exclusion_picks_first_genre_match():
     r = generate(t, {"A": _mk_mix_pool()}, week=1)
     assert r.picks[0].id == 100
     assert r.trace.slots[0].strategy == "mix"
-    assert "excluded=0" in r.trace.slots[0].reason
+    # Pool has 3 House tracks; nothing excluded ⇒ eligible 3 of 3.
+    assert "eligible 3 of 3" in r.trace.slots[0].reason
     assert "relaxed" not in r.trace.slots[0].reason
 
 
@@ -518,7 +519,8 @@ def test_mix_strategy_with_excluded_ids_skips_them():
         excluded_mix_ids={100},  # exclude H-1; should pick H-2 next
     )
     assert r.picks[0].id == 102
-    assert "excluded=1" in r.trace.slots[0].reason
+    # 3 House candidates, 1 excluded ⇒ eligible 2 of 3.
+    assert "eligible 2 of 3" in r.trace.slots[0].reason
     assert "relaxed" not in r.trace.slots[0].reason
 
 
@@ -532,7 +534,9 @@ def test_mix_strategy_relaxation_surfaces_in_trace_reason():
     )
     assert r.picks[0].genre == "House"
     assert "relaxed" in r.trace.slots[0].reason
-    assert "saturated genre" in r.trace.slots[0].reason
+    assert "exclusion saturated genre" in r.trace.slots[0].reason
+    # Relaxation falls back to all candidates ⇒ eligible 3 of 3 again.
+    assert "eligible 3 of 3" in r.trace.slots[0].reason
 
 
 def test_mix_strategy_rng_seeded_is_reproducible():

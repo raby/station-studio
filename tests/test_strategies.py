@@ -187,29 +187,35 @@ def _mix_pool() -> list[MixTrack]:
 
 
 def test_mix_deterministic_picks_first_eligible_genre_match():
-    idx, track, relaxed = apply_mix(
+    idx, track, relaxed, n_cand, n_elig = apply_mix(
         _mix_pool(), genre="House", excluded_ids=set(), source_name="MIXES",
     )
     assert (idx, track.id, relaxed) == (1, 10, False)
+    # 3 House tracks in pool; nothing excluded ⇒ all 3 eligible.
+    assert (n_cand, n_elig) == (3, 3)
 
 
 def test_mix_skips_excluded_track_ids():
     # Exclude House-A; first eligible should now be House-B at pool idx 3.
-    idx, track, relaxed = apply_mix(
+    idx, track, relaxed, n_cand, n_elig = apply_mix(
         _mix_pool(), genre="House", excluded_ids={10}, source_name="MIXES",
     )
     assert (idx, track.id, relaxed) == (3, 12, False)
+    # 3 House candidates; 1 excluded ⇒ 2 eligible (the actionable count).
+    assert (n_cand, n_elig) == (3, 2)
 
 
 def test_mix_relaxes_when_exclusion_drains_candidates():
     # Exclude every House track; strategy falls back to all genre matches.
-    idx, track, relaxed = apply_mix(
+    idx, track, relaxed, n_cand, n_elig = apply_mix(
         _mix_pool(), genre="House", excluded_ids={10, 12, 13}, source_name="MIXES",
     )
     assert relaxed is True
     assert track.genre == "House"
     # In deterministic mode this is the first candidate (pool idx 1).
     assert idx == 1
+    # Relaxation falls back to candidates, so n_eligible == n_candidates.
+    assert (n_cand, n_elig) == (3, 3)
 
 
 def test_mix_random_seeded_is_reproducible():
@@ -226,7 +232,7 @@ def test_mix_random_respects_exclusion():
     rng = random.Random(42)
     # Exclude two of the three House tracks; only House-C (id=13) eligible.
     for _ in range(30):
-        idx, track, relaxed = apply_mix(
+        idx, track, relaxed, *_ = apply_mix(
             pool, genre="House", excluded_ids={10, 12}, rng=rng, source_name="MIXES",
         )
         assert track.id == 13
@@ -240,7 +246,7 @@ def test_mix_unknown_genre_raises_with_pool_context():
 
 def test_mix_accepts_frozenset_as_excluded_ids():
     """Generator passes frozenset (normalised from caller-provided set/None)."""
-    idx, track, relaxed = apply_mix(
+    idx, track, relaxed, *_ = apply_mix(
         _mix_pool(), genre="House",
         excluded_ids=frozenset({10}),
         source_name="MIXES",

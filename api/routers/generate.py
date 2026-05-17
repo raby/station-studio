@@ -9,7 +9,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from engine.models import Station, Playlist, PlaylistTrace
-from engine.persistence import load_excluded_mix_ids, load_pools, save_playlist
+from engine.persistence import (
+    load_excluded_mix_ids, load_pools, max_mix_exclusion_window, save_playlist,
+)
 from engine.template import parse_template, TemplateError
 from engine.generator import generate
 from engine.exporter import export_playlist, export_playlist_to_disk
@@ -39,20 +41,13 @@ def generate_playlist(slug: str, payload: GenerateRequest, db: Session = Depends
         raise HTTPException(400, str(e))
 
     # §14.25: build mix-exclusion set from the station's recent playlists.
-    # If the template has no mix blocks, the window is 0 and the query is
-    # skipped. When multiple mix blocks declare different exclusion_windows,
-    # take the max — the strategy only sees one exclusion set per generation,
-    # and a wider window is a stricter constraint (which the per-block setting
-    # is asking for).
-    mix_windows = [
-        b.exclusion_window for b in template.layout.row_template
-        if b.strategy == "mix" and b.exclusion_window is not None
-    ]
-    excluded_mix_ids: set[int] = set()
-    if mix_windows:
-        excluded_mix_ids = load_excluded_mix_ids(
-            db, station_id=station.id, window=max(mix_windows),
-        )
+    # See engine.persistence.max_mix_exclusion_window for the multi-mix-block
+    # semantics. Window=0 short-circuits to an empty set in load_*.
+    excluded_mix_ids = load_excluded_mix_ids(
+        db,
+        station_id=station.id,
+        window=max_mix_exclusion_window(template),
+    )
 
     try:
         result = generate(

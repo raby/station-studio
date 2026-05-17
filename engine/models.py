@@ -217,6 +217,19 @@ class MixUsage(Base):
     the row. Mirrors weekly's `mix_usage` table; station-scoped via
     playlist_id rather than weekly's weekly_playlist_id since station-studio
     is multi-station.
+
+    No `created_at` column. The parent Playlist's `generated_at` is the
+    authoritative timestamp for "when was this MixUsage row written" — the
+    two are written in the same transaction. Add a column here only when a
+    feature genuinely needs per-row write time (e.g. partial-regeneration
+    scenarios that touch some MixUsage rows but not others — none today).
+
+    `genre` is a point-in-time snapshot, not a live join with Track.genre.
+    If a track's genre is corrected in the Track table after a MixUsage row
+    is written, this row keeps the genre that was *used* for exclusion when
+    that historical playlist was generated. Analysis tools should treat
+    MixUsage.genre as the source of truth for "which genre slot did this
+    track fill?" — do NOT join with Track.genre, which can drift.
     """
     __tablename__ = "mix_usage"
 

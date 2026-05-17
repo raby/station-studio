@@ -39,14 +39,22 @@ def apply_mix(
     excluded_ids: set[int] | frozenset[int] = frozenset(),
     rng: random.Random | None = None,
     source_name: str,
-) -> tuple[int, Any, bool]:
-    """Return (pool_index_1based, track, relaxed) for a mix slot.
+) -> tuple[int, Any, bool, int, int]:
+    """Return (pool_index_1based, track, relaxed, n_candidates, n_eligible).
 
-    `relaxed` is True when the exclusion set was bypassed because it
-    would have drained the candidate set to empty — caller (the
-    generator) surfaces this in the trace reason so the authoring
-    question "why did it repeat a track within the exclusion window?"
-    is answerable from the trace alone.
+    - `n_candidates`: how many tracks in the pool match the genre. This is
+      the upper bound on what the exclusion could filter — useful to spot
+      "the source pool has only 3 House tracks, no wonder we keep
+      repeating".
+    - `n_eligible`: how many of those candidates survived the exclusion.
+      Equal to n_candidates when `relaxed=True` (the fallback branch).
+    - `relaxed`: True when the exclusion set was bypassed because it
+      would have drained the candidate set to empty. Weekly behaviour:
+      a repeat is better than a generation failure.
+
+    The two counts are surfaced so the trace reason can report
+    genre-specific filtering pressure (`eligible 2 of 12`) rather than
+    just the opaque total exclusion-set size — review fix for §14.25 r2.
     """
     candidates = [
         (i + 1, t) for i, t in enumerate(pool)
@@ -61,10 +69,6 @@ def apply_mix(
     eligible = [c for c in candidates if getattr(c[1], "id", None) not in excluded_ids]
     relaxed = False
     if not eligible:
-        # Weekly's behaviour: a repeat is better than a generation
-        # failure. The trace surfaces relaxed=True so the user can
-        # spot the saturation (and bump exclusion_window or add more
-        # tracks to the source pool).
         eligible = candidates
         relaxed = True
 
@@ -72,4 +76,4 @@ def apply_mix(
         idx, track = eligible[0]
     else:
         idx, track = rng.choice(eligible)
-    return idx, track, relaxed
+    return idx, track, relaxed, len(candidates), len(eligible)
