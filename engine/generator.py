@@ -390,6 +390,17 @@ def generate(
                         # the slot reports where the track is in THIS slot's
                         # source pool, not the previous-playlist position
                         # (that's in the trace reason).
+                        #
+                        # The `next()` is guaranteed to find a match here:
+                        # `try_prev_ref_mirror` only returns a non-None
+                        # mirror when `mirror.id` was confirmed present in
+                        # `source_pool` (it builds the id-set from
+                        # source_pool, then checks membership before
+                        # returning). If a future refactor breaks that
+                        # invariant — e.g. by passing a different pool
+                        # object to the lookup vs the strategy — this
+                        # would raise StopIteration; the strategy's
+                        # docstring is the canonical contract.
                         pool_idx = next(
                             i + 1 for i, t in enumerate(pool)
                             if getattr(t, "id", None) == getattr(mirror, "id", None)

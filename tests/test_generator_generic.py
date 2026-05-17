@@ -839,6 +839,90 @@ def test_prev_ref_weighted_fallback_combines_excluded_lists():
         assert "dedup window" in ec.reason
 
 
+def test_prev_ref_all_three_outcomes_interleaved_in_one_generation():
+    """End-to-end smoke test: a single template with three prev_ref
+    slots — one mirrors, one falls back to mix, one falls back to
+    weighted — all in the same generation pass. Real Rebirth Radio
+    templates have many prev_ref slots; this proves the dispatch
+    correctly handles a mixture of outcomes interleaved (including
+    state plumbing flowing through all three paths)."""
+    # Pool that supports all three paths:
+    # - Has a House-genre track (for fallback_genre='House' path)
+    # - Has multiple Artists (for weighted-fallback path's dedup)
+    # - At pool[0] sits a track that ALSO appears in the previous
+    #   playlist at position 1 (for the mirror path)
+    pool = [
+        FakeTrack(id=701, name="Mirror-Target", artist="Artist M", genre="House"),
+        FakeTrack(id=702, name="House-B", artist="Artist B", genre="House"),
+        FakeTrack(id=703, name="House-C", artist="Artist C", genre="House"),
+        FakeTrack(id=704, name="Filler", artist="Artist D", genre="Filler"),
+    ]
+    foreign = FakeTrack(id=999, name="Foreign", artist="Stranger", genre="Pop")
+    # Previous playlist:
+    #   position 1 → pool[0] (mirror hits — Artist M House)
+    #   position 2 → foreign (not in source → fallback fires)
+    #   position 3 → foreign (not in source → fallback fires)
+    previous = [pool[0], foreign, foreign]
+
+    t = parse_template(mk_template(
+        sources=[{"name": "A", "colour": "#aaa", "role": "content"}],
+        rng="on",
+        layout={
+            "unit": "day",
+            "unit_labels": ["Mon"],
+            "row_start_offsets": [0],
+            "row_template": [
+                # Slot 1: prev_ref position=1, with fallback_genre.
+                # Mirror SUCCEEDS (pool[0] is in source).
+                {"source": "A", "strategy": "prev_ref", "size": 1,
+                 "position": 1, "fallback_genre": "House"},
+                # Slot 2: prev_ref position=2, with fallback_genre.
+                # Mirror MISSES (foreign not in source); FALLBACK_MIX fires.
+                {"source": "A", "strategy": "prev_ref", "size": 1,
+                 "position": 2, "fallback_genre": "House"},
+                # Slot 3: prev_ref position=3, NO fallback_genre.
+                # Mirror MISSES; FALLBACK_WEIGHTED fires.
+                {"source": "A", "strategy": "prev_ref", "size": 1, "position": 3},
+            ],
+        },
+    ))
+    r = generate(t, {"A": pool}, week=2, previous_playlist=previous, seed=42)
+    assert len(r.picks) == 3
+
+    # Slot 1 — MIRROR: picked exactly what previous[0] held.
+    assert r.picks[0].id == 701
+    assert "mirror from previous playlist position 1" in r.trace.slots[0].reason
+    assert r.trace.slots[0].excluded == []  # Mirrors emit no diagnostics.
+
+    # Slot 2 — FALLBACK_MIX: picked SOME House track from the source.
+    # With rng='on' the choice is rng.choice over the eligible set
+    # (matching weekly), so the exact id depends on the seed, but
+    # it must be a House track. Mirrors don't add to excluded_mix_ids
+    # (no apply_mix call), so all 3 House tracks remain eligible.
+    assert r.picks[1].genre == "House"
+    assert r.picks[1].id in {701, 702, 703}
+    assert "fallback" in r.trace.slots[1].reason
+    assert "genre 'House'" in r.trace.slots[1].reason
+    assert "not in source 'A'" in r.trace.slots[1].reason
+    # Fallback-mix slot has the failed-mirror ExcludedCandidate.
+    assert len(r.trace.slots[1].excluded) == 1
+    assert r.trace.slots[1].excluded[0].track_id == 999  # the foreign track
+    # The fallback-mix recorded in prev_ref_fallback_mixes for MixUsage.
+    assert (2, "House", r.picks[1]) in r.prev_ref_fallback_mixes
+
+    # Slot 3 — FALLBACK_WEIGHTED: no fallback_genre, weighted fallback
+    # fires. The pick comes from the whole pool (genre-agnostic).
+    assert r.picks[2].id in {701, 702, 703, 704}
+    assert "weighted" in r.trace.slots[2].reason
+    assert "tier" in r.trace.slots[2].reason
+    # Slot 3's excluded list starts with the failed-mirror entry.
+    assert r.trace.slots[2].excluded[0].track_id == 999
+
+    # No regression: prev_ref_fallback_mixes has exactly one entry
+    # (the FALLBACK_MIX from slot 2). FALLBACK_WEIGHTED doesn't record.
+    assert len(r.prev_ref_fallback_mixes) == 1
+
+
 def test_prev_ref_mirror_emits_no_excluded():
     """Successful mirrors don't emit ExcludedCandidate entries — there's
     no rejection to surface (the resolved track was used as-is)."""
