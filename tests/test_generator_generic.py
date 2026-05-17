@@ -828,6 +828,89 @@ def test_mix_strategy_with_excluded_ids_skips_them():
     assert "relaxed" not in r.trace.slots[0].reason
 
 
+def test_mix_within_generation_picks_dedupe_across_slots():
+    """Byte-equality with weekly: two mix slots same genre in one
+    generation pick DIFFERENT tracks because excluded_mix_ids
+    accumulates as picks happen. (Weekly's generator.py line 555
+    mutates excluded_mix_ids in-place after each mix pick.) The prior
+    §14.25 design wrongly claimed mix dedup was 'purely cross-week' —
+    that divergence surfaced during §14.28 mid-slice review and is
+    fixed here."""
+    t = parse_template(mk_template(
+        rng="off",
+        layout={
+            "unit": "day",
+            "unit_labels": ["Mon"],
+            "row_start_offsets": [0],
+            "row_template": [
+                {"source": "A", "strategy": "mix", "size": 1,
+                 "genre": "House", "exclusion_window": 5},
+                {"source": "A", "strategy": "mix", "size": 1,
+                 "genre": "House", "exclusion_window": 5},
+            ],
+        },
+    ))
+    pool = _mk_mix_pool()  # H-1, T-1, H-2, H-3 (3 House tracks)
+    r = generate(t, {"A": pool}, week=1)
+    # Two House slots; without within-gen accumulation both would
+    # pick H-1. With it, slot 2 sees H-1 excluded and picks H-2.
+    assert r.picks[0].id != r.picks[1].id
+
+
+def test_mix_within_generation_relaxes_when_genre_exhausted():
+    """When within-gen accumulation drains the genre, the relaxation
+    path fires for the last slot (matches apply_mix's relaxed=True
+    semantics — better to repeat than fail generation)."""
+    t = parse_template(mk_template(
+        rng="off",
+        layout={
+            "unit": "day",
+            "unit_labels": ["Mon"],
+            "row_start_offsets": [0],
+            "row_template": [
+                # 4 House slots; pool has only 3 House tracks.
+                {"source": "A", "strategy": "mix", "size": 4,
+                 "genre": "House", "exclusion_window": 5},
+            ],
+        },
+    ))
+    pool = _mk_mix_pool()  # 3 House tracks
+    r = generate(t, {"A": pool}, week=1)
+    # First 3 picks distinct; 4th relaxes and repeats one.
+    first_three_ids = {p.id for p in r.picks[:3]}
+    assert len(first_three_ids) == 3
+    assert r.picks[3].id in first_three_ids
+    # The relaxation surfaces in the 4th slot's trace reason.
+    assert "relaxed" in r.trace.slots[3].reason
+
+
+def test_prev_ref_fallback_mix_accumulates_with_regular_mix_slots():
+    """Within-gen accumulation crosses strategy boundaries: a regular
+    mix slot's pick excludes the same track from a prev_ref-fallback-
+    mix slot that runs later, and vice versa."""
+    pool = _mk_mix_pool()  # H-1, T-1, H-2, H-3
+    t = parse_template(mk_template(
+        rng="off",
+        layout={
+            "unit": "day",
+            "unit_labels": ["Mon"],
+            "row_start_offsets": [0],
+            "row_template": [
+                # Regular mix slot first picks H-1.
+                {"source": "A", "strategy": "mix", "size": 1,
+                 "genre": "House", "exclusion_window": 5},
+                # prev_ref with no previous → fallback path. Must pick
+                # something OTHER than H-1 (since H-1 was just used).
+                {"source": "A", "strategy": "prev_ref", "size": 1,
+                 "position": 1, "fallback_genre": "House"},
+            ],
+        },
+    ))
+    r = generate(t, {"A": pool}, week=1, previous_playlist=None)
+    assert r.picks[0].id == 100  # H-1 (first eligible)
+    assert r.picks[1].id != 100   # fallback skips H-1
+
+
 def test_mix_strategy_relaxation_surfaces_in_trace_reason():
     t = parse_template(_mix_template_one_block())
     # Exclude every House track — strategy relaxes back to candidates[0].

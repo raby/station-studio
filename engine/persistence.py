@@ -137,7 +137,10 @@ def _save_mix_usages(db: Session, *, playlist_id: int, template: Template, resul
     # generator publishes the fallback list on result.prev_ref_fallback_mixes
     # because we can't tell from the trace slot's strategy field alone
     # ("prev_ref" covers all three outcomes).
-    for (_slot_idx, genre, track) in getattr(result, "prev_ref_fallback_mixes", ()):
+    # `prev_ref_fallback_mixes` always exists on a freshly-constructed
+    # GenerationResult (dataclass field with default_factory=list); no
+    # defensive getattr needed.
+    for (_slot_idx, genre, track) in result.prev_ref_fallback_mixes:
         db.add(MixUsage(
             playlist_id=playlist_id,
             track_id=track.id,

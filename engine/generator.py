@@ -120,10 +120,17 @@ def generate(
             raise ValueError("rng='on' template requires a seed")
         rng = random.Random(seed)
 
-    # Normalise None → frozenset so the mix branch can pass it as-is to
-    # apply_mix without a per-call truthy check. Frozen because the
-    # generator never writes to it (the strategy reads only).
-    excluded_mix_ids = frozenset(excluded_mix_ids or ())
+    # Mutable set so within-generation mix picks ACCUMULATE — matches
+    # weekly's behaviour (weekly mutates excluded_mix_ids in-place after
+    # each mix and prev_ref-fallback-mix pick; see weekly's generator.py
+    # lines 555 and 590). Two mix slots same genre in one generation
+    # pick DIFFERENT tracks because slot 2 sees slot 1's pick in the
+    # exclusion set. The strategy itself (apply_mix) reads but doesn't
+    # mutate; the generator mutates after each successful pick.
+    #
+    # Prior §14.25 design claimed "purely cross-week" — that was wrong
+    # about weekly's behaviour. Surfaced during §14.28 mid-slice review.
+    excluded_mix_ids = set(excluded_mix_ids or ())
     alias_map = alias_map or {}
 
     # Cross-slot state for the weighted strategy (§14.27). Reset per
@@ -237,6 +244,13 @@ def generate(
                         rng=rng,
                         source_name=block.source,
                     )
+                    # Accumulate within-generation: subsequent mix +
+                    # prev_ref-fallback-mix slots see this pick excluded.
+                    # Matches weekly's `excluded_mix_ids.add(track.id)`
+                    # after every successful mix pick.
+                    picked_id = getattr(track, "id", None)
+                    if picked_id is not None:
+                        excluded_mix_ids.add(picked_id)
                     slot_counter += 1
                     picks.append(track)
                     mode = "random" if rng else "first match"
@@ -401,6 +415,14 @@ def generate(
                             rng=rng,
                             source_name=block.source,
                         )
+                        # Within-generation accumulation: prev_ref-fallback-
+                        # mix picks count toward subsequent slots' exclusion,
+                        # matching weekly's behaviour (line 590 in weekly's
+                        # generator). Mirrors do NOT accumulate (no apply_mix
+                        # call, no MixUsage row).
+                        picked_id = getattr(track, "id", None)
+                        if picked_id is not None:
+                            excluded_mix_ids.add(picked_id)
                         slot_counter += 1
                         picks.append(track)
                         prev_ref_fallback_mixes.append(

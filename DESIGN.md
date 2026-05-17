@@ -3062,6 +3062,19 @@ phrasing).
   apply_mix would need per-call exclusion sets — defer until that
   shape is actually requested.
 
+**Post-ship correction (surfaced during §14.28 mid-slice review).**
+The original implementation normalised `excluded_mix_ids` to a
+`frozenset` at generation start and never mutated it during the
+loop, on the (mistaken) assumption that mix dedup was "purely
+cross-week." That's wrong: weekly's `generator.py` mutates
+`excluded_mix_ids` in-place after every mix pick (line 555) and
+every prev_ref-fallback-mix pick (line 590), so two mix slots in
+the same generation pick DIFFERENT tracks. Fixed in §14.28's
+review-fix commit (mutable set + accumulate after each pick);
+three regression tests added covering same-genre back-to-back
+mixes, exhaustion-relaxation, and cross-strategy interaction with
+prev_ref-fallback-mix.
+
 **Punts:**
 
 - **Per-block exclusion windows.** See last design decision.
@@ -3518,9 +3531,21 @@ playlist). Result passed via the new `previous_playlist=` kwarg.
 
 The fallback-mix path reuses the same `excluded_mix_ids` set the
 generator already threads through, and `apply_mix`'s relaxation
-behaviour. A prev_ref-fallback-mix that picks track X causes X to
-appear in next week's `excluded_mix_ids` lookup via the new
-MixUsage rows.
+behaviour. Per the within-generation accumulation fix surfaced
+during this slice's mid-slice review (see commit `<TBD>`),
+`excluded_mix_ids` is a mutable set that the generator mutates
+after every successful mix-style pick (regular mix or prev_ref-
+fallback-mix). So:
+
+- Within the same generation: slot 1's mix pick excludes the same
+  track from slot 2's mix or prev_ref-fallback-mix picks.
+- Across generations: the new MixUsage rows feed the next week's
+  cross-week exclusion lookup.
+
+This corrects a prior §14.25 claim that the dedup was "purely
+cross-week" — that was wrong about weekly's behaviour. Weekly's
+`generator.py` lines 555 and 590 mutate excluded_mix_ids in-place
+after every mix pick.
 
 **Backward compatibility.** Classics templates byte-for-byte
 unchanged: no prev_ref blocks, no position/fallback_genre fields,
