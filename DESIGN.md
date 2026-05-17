@@ -2874,6 +2874,14 @@ documents the actual behaviour for future readers.
 - **Genre-prefix or regex matching.** Same rationale as above —
   weekly's templates use exact strings, and a typo'd genre should
   fail loud rather than near-match silently.
+- **Parser pattern refactor (strategy ↔ required-field coupling).**
+  `_parse_block` now has two near-identical if/else blocks: one for
+  `sequential ⇔ cursor_id` (§14.22) and one for `jingle ⇔ genre`
+  (§14.24). Sub-slice #9 (`mix`) and #12 (`prev_ref`) will add two
+  more. Worth extracting a `_validate_strategy_field(strategy,
+  field_name, value, *, required, known_ids=None)` helper when #9
+  lands — duplication is real but premature today (only 2 cases;
+  the abstraction's shape becomes clear with the 3rd).
 
 ---
 
@@ -2901,7 +2909,7 @@ A quick "where are we" for a future reader. Last updated at commit
 | Delete / station-reset   | Shipped (14.10). Per-row delete + station nuke; cascades.        |
 | Disk-export UI button    | Shipped (14.11). Trace viewer "Export to disk" + status line.    |
 | Edit mode for stations   | Shipped (14.13). Shared `<StationForm>` + JSON preview + diff + reset. |
-| **§17 pre-port roadmap** | **Phase A complete (§14.17–§14.21). §17.1 weekly study done; phase order revised (port before §16.2). Next: Phase B = the weekly port.** |
+| **§17 pre-port roadmap** | **Phase A complete (§14.17–§14.21). Phase B underway: sub-slices #5 (§14.23 excluded-candidates), #7 (§14.22 sequential + multi-cursor), #8 (§14.24 jingle) shipped. **Next: sub-slice #9 = `mix` strategy + MixUsage table + Alembic** — first cross-week state slice.** |
 | Visual block editor      | Deferred (v2). Lands as §17 Phase B after Phase A unblocks.      |
 | Trace versioning         | Deferred. See §16.4 (queued behind §16.1 by design).             |
 | Accessibility pass       | Deferred. §17 Phase D — single sweep after §16.2 + port.         |

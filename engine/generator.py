@@ -74,6 +74,12 @@ def generate(
     picks: list[Any] = []
     slot_counter = 0
 
+    # Pool-addressing convention. `window` + `pick` use row_start_in_pool
+    # (base cursor + per-row offset). `sequential` reads from a named
+    # cursor (§14.22) and ignores the row offset; `jingle` filters by
+    # genre tag (§14.24) and likewise ignores it. A template author who
+    # mixes both styles within a row sees the offset apply only to
+    # window/pick blocks — by design.
     for row_idx, row_offset in enumerate(template.layout.row_start_offsets):
         unit_label = template.layout.unit_labels[row_idx]
         row_start_in_pool = base_cursor + row_offset
