@@ -117,7 +117,10 @@ def generate(
 
     # Lazy per-pool lookups for weighted (§14.27). Built on first
     # weighted block encounter for that pool; reused for every
-    # subsequent slot from the same pool in this generation.
+    # subsequent slot from the same pool in this generation. Caching
+    # by source name is safe because `alias_map` is immutable per
+    # generation (no per-block alias overrides exist); if that ever
+    # changes, the cache key needs to grow an alias_map dimension.
     weighted_lookups: dict[str, WeightedLookups] = {}
 
     base_cursor = template.base_cursor_for_week(week)

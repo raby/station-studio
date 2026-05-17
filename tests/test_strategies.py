@@ -373,6 +373,52 @@ def test_weighted_tier2_relaxes_when_all_artists_blocked():
     assert track.id == 2
 
 
+def test_weighted_tier2_tie_break_when_all_artists_have_equal_gap():
+    """Force a genuine Tier 2 tie: all candidates' artists were played
+    at the same step in the window. rng.choice picks among them, so
+    the result is rng-dependent — verify reproducibility under seed."""
+    # 4 tracks, 4 distinct artists, but only the LAST 2 picks count
+    # toward the window. Both came from the same multi-track artist
+    # (id 1 then id 2, both Artist X), so the window contains a single
+    # key-set. Tracks 3 and 4 (Artist Y, Artist Z) are both Tier-1
+    # eligible. To force Tier 2: bump window down so dedup catches
+    # everything, and exclude tracks 3,4 via shuffle-bag.
+    pool = [
+        CommercialTrack(id=1, name="X1", artist="Artist X"),
+        CommercialTrack(id=2, name="X2", artist="Artist X"),
+        CommercialTrack(id=3, name="X3", artist="Artist X"),
+        CommercialTrack(id=4, name="X4", artist="Artist X"),
+    ]
+    # All same artist. After any pick, every remaining track is
+    # artist-blocked. Tier 2 must always fire on pick #2+.
+    lookups = build_lookups(pool)
+    # Last 3 ids (1,2,3) are shuffle-blocked; track 4 is the only one
+    # not shuffle-blocked. Artist X is in the window. Tier 1 = ∅
+    # (track 4 IS artist-blocked). Tier 2 fires with one eligible
+    # (track 4 — not shuffle-blocked).
+    track, info = apply_weighted(
+        pool, lookups=lookups,
+        recent_artist_keys=[
+            lookups.track_keys[1], lookups.track_keys[2], lookups.track_keys[3],
+        ],
+        used_track_ids=[1, 2, 3],
+        window=10, rng=random.Random(0), source_name="COMM",
+    )
+    assert info.tier == 2
+    assert info.relaxed is True
+    assert track.id == 4
+    # Reproducibility under same seed.
+    again, _ = apply_weighted(
+        pool, lookups=lookups,
+        recent_artist_keys=[
+            lookups.track_keys[1], lookups.track_keys[2], lookups.track_keys[3],
+        ],
+        used_track_ids=[1, 2, 3],
+        window=10, rng=random.Random(0), source_name="COMM",
+    )
+    assert again.id == track.id
+
+
 def test_weighted_artist_dedup_uses_resolved_keys():
     """Collaboration strings are split, so "Solo A feat. B" conflicts
     with subsequent "Artist B" picks via the shared "b" key."""

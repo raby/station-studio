@@ -175,8 +175,13 @@ def apply_weighted(
     def _remaining(artist: str) -> int:
         return artist_counts.get(artist, 1) - cycle_used.get(artist, 0)
 
-    # --- counting passes (for the diagnostic info) ----------------------
-    # Walk once to classify each track and emit Tier-1 candidates.
+    # --- single pass: classify + collect Tier 1 eligibles ----------------
+    # We do BOTH in one walk to (a) keep the per-track work in cache and
+    # (b) avoid rebuilding the eligible list later. The classification
+    # counters feed WeightedPickInfo for the trace reason now, and (commit
+    # 2 of sub-slice #11) drive ExcludedCandidate population. The pass
+    # uses no rng — rng state is identical to weekly's single-pass list-
+    # comp construction at this point, so byte-equality is preserved.
     artist_blocked = 0
     track_blocked = 0
     both_blocked = 0
@@ -291,8 +296,13 @@ def _pick_stalest(
         by_artist[getattr(t, "artist", None) or ""].append((idx, t))
 
     def _gap(raw_artist: str) -> int:
-        tid = by_artist[raw_artist][0][1]
-        ks = track_keys.get(getattr(tid, "id", -1), frozenset())
+        # `first_track` is the leading Track for this artist's group — any
+        # track for the artist works since they all share the resolved
+        # key-set (artists are grouped by raw artist string). We pull `id`
+        # to look up its key-set; mirrors weekly's
+        # `next(t.id for t in by_raw_artist[raw_artist])`.
+        first_track = by_artist[raw_artist][0][1]
+        ks = track_keys.get(getattr(first_track, "id", -1), frozenset())
         if not ks:
             return 99999
         known = [key_last_pos[k] for k in ks if k in key_last_pos]
