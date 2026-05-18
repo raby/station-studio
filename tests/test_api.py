@@ -955,3 +955,88 @@ def test_meta_matches_engine_constants(api):
     assert set(body["rng"]) == SUPPORTED_RNG
     assert set(body["roles"]) == SUPPORTED_ROLES
     assert set(body["cadences"]) == SUGGESTED_CADENCES
+
+
+# ---------- §14.30: end-to-end cursor advance via HTTP -----------------
+
+
+def test_generate_persistent_cursor_advances_via_http(api):
+    """Full HTTP path: POST /generate against a cursor.persist=true
+    template. Verifies cursor_state is read pre-gen + written post-save
+    with the correct generation_count semantics.
+
+    Closes the gap the mid-slice review flagged: cursor-persistence
+    unit tests don't exercise the API's `payload.week - 1` derivation;
+    this one does, end-to-end.
+    """
+    from engine.models import CursorState
+    client, Session = api
+    template = {
+        "station": "rb", "cadence": "weekly", "rng": "off",
+        "sources": [{"name": "A", "colour": "#111", "role": "content"}],
+        "cursor": {"base_advance_per_week": 0, "cycle_weeks": 1, "persist": True},
+        "layout": {
+            "unit": "slot",
+            "unit_labels": ["1"],
+            "row_start_offsets": [0],
+            "cursors_init": {"C1": 0},
+            "row_template": [
+                {"source": "A", "strategy": "sequential", "size": 1,
+                 "cursor_id": "C1"},
+            ],
+        },
+    }
+    station_id, _ = _seed_station_and_pool(
+        Session, slug="rb", pool_name="A", pool_tracks=100, template=template,
+    )
+
+    # Default rules apply: cursor_advance_step=120, cursor_reset_cycle=0.
+    # Week 1: cursor reads cursors_init (0); pick at pool[0] = Track 1.
+    #         Post-save advance: gen=0, advance to (0+120)%100 = 20.
+    r1 = client.post("/api/stations/rb/generate", json={"week": 1})
+    assert r1.status_code == 201
+
+    with Session() as db:
+        cs = db.query(CursorState).filter_by(station_id=station_id, name="C1").one()
+        assert cs.position == 20
+
+    # Week 2: cursor reads 20; pick at pool[20] = Track 21.
+    #         Post-save: gen=1, advance to (20+120)%100 = 40.
+    r2 = client.post("/api/stations/rb/generate", json={"week": 2})
+    assert r2.status_code == 201
+
+    with Session() as db:
+        cs = db.query(CursorState).filter_by(station_id=station_id, name="C1").one()
+        assert cs.position == 40
+
+
+def test_generate_stateless_cursor_does_not_write_cursor_state(api):
+    """A persist=false template never writes to cursor_state. Confirms
+    advance_cursors's no-op short-circuit fires for the default case."""
+    from engine.models import CursorState
+    client, Session = api
+    template = {
+        "station": "cls", "cadence": "weekly", "rng": "off",
+        "sources": [{"name": "A", "colour": "#111", "role": "content"}],
+        # persist defaults to False — also explicit here for clarity.
+        "cursor": {"base_advance_per_week": 0, "cycle_weeks": 1, "persist": False},
+        "layout": {
+            "unit": "slot",
+            "unit_labels": ["1"],
+            "row_start_offsets": [0],
+            "cursors_init": {"C1": 0},
+            "row_template": [
+                {"source": "A", "strategy": "sequential", "size": 1,
+                 "cursor_id": "C1"},
+            ],
+        },
+    }
+    _seed_station_and_pool(
+        Session, slug="cls", pool_name="A", pool_tracks=20, template=template,
+    )
+
+    client.post("/api/stations/cls/generate", json={"week": 1})
+    client.post("/api/stations/cls/generate", json={"week": 2})
+
+    with Session() as db:
+        assert db.query(CursorState).count() == 0

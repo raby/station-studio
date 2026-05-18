@@ -465,6 +465,42 @@ def test_cursor_persist_non_bool_rejected():
         }})
 
 
+def test_cursor_multi_source_conflict_rejected():
+    """§14.30 review fix: a named cursor referenced by two sequential
+    blocks with DIFFERENT sources is a template error. advance_cursors
+    would silently pick one source's pool-length for wrap math; the
+    other block's cursor advance would be wrong. Parser rejects up
+    front."""
+    bad = {**BASE, "sources": [
+        {"name": "A", "colour": "#111", "role": "content"},
+        {"name": "B", "colour": "#222", "role": "content"},
+    ], "layout": {
+        **BASE["layout"],
+        "cursors_init": {"shared": 0},
+        "row_template": [
+            {"source": "A", "strategy": "sequential", "size": 1, "cursor_id": "shared"},
+            {"source": "B", "strategy": "sequential", "size": 1, "cursor_id": "shared"},
+        ],
+    }}
+    with pytest.raises(TemplateError, match="conflicting sources"):
+        parse_template(bad)
+
+
+def test_cursor_same_source_two_blocks_accepted():
+    """Multiple sequential blocks sharing a cursor + a SOURCE is the
+    normal weekly pattern — accepted."""
+    tmpl = parse_template({**BASE, "layout": {
+        **BASE["layout"],
+        "cursors_init": {"shared": 0},
+        "row_template": [
+            {"source": "A", "strategy": "sequential", "size": 1, "cursor_id": "shared"},
+            {"source": "A", "strategy": "sequential", "size": 2, "cursor_id": "shared"},
+        ],
+    }})
+    assert tmpl.layout.row_template[0].cursor_id == "shared"
+    assert tmpl.layout.row_template[1].cursor_id == "shared"
+
+
 def test_source_by_name_unknown_raises():
     """source_by_name is defensive — upstream validation catches most cases,
     but the method itself must raise when called with an unknown name."""

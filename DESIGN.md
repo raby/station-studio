@@ -3958,6 +3958,75 @@ generation, immaterial.
   positions; end-to-end round-trip matches weekly's cursor evolution
   (5 generations, advance=15, expected positions 0/15/30/45/60).
 
+**Post-ship review fixes (consolidated here for searchability):**
+
+- **Test gen-count alignment.** The round-trip test originally
+  passed `generation_count=gen` (1..5) but the API passes
+  `generation_count=payload.week - 1` (0..4). With reset_cycle=0
+  the picked positions are identical either way (advance fires
+  unconditionally); with reset_cycle > 0 they aren't. Test now uses
+  `generation_count=week - 1` to match production semantics, plus a
+  new `test_persistent_cursor_reset_fires_at_correct_generation`
+  validates the reset boundary with reset_cycle=3.
+- **API end-to-end cursor tests.** Two new tests in
+  `test_api.py` POST against the generate route with persistent and
+  stateless templates respectively, verifying `cursor_state` rows are
+  written/not-written + numerical positions match expectations
+  (week 1 advances to step, week 2 to 2*step).
+- **Multi-source cursor validation.** A named cursor referenced by
+  two sequential blocks pointing at DIFFERENT sources is now rejected
+  at parse time. `advance_cursors` wraps on the source's pool length;
+  two sources would mean wrap math is wrong for one block. Weekly
+  templates trivially avoid this (each cursor is tied to one source
+  by convention) so byte-equality is unaffected; the validation
+  guards future authors against a silent footgun.
+
+**Week-numbering mapping with weekly (port-harness consideration).**
+
+Weekly has a fundamental concept station-studio doesn't: WEEKLY_001
+is an IMPORTED SEED (not generated). The cursor advances start with
+WEEKLY_002 (the first generated playlist, `next_number - 1 = 1`).
+Station-studio's week 1 IS the first generated playlist —
+`payload.week - 1 = 0` post-save.
+
+The numerical correspondence for byte-equality:
+
+| Weekly       | Station-studio | Cursor position at pick time |
+|--------------|----------------|------------------------------|
+| WEEKLY_001 (seed) | (no equivalent; not generated) | cursors_init (set by initialize_cursors post_first=False) |
+| WEEKLY_002 (first generated) | week 1 | cursors_init |
+| WEEKLY_003 | week 2 | cursors_init + step |
+| WEEKLY_N (N >= 2) | week (N - 1) | cursors_init + (N - 2) × step |
+
+The port harness should map weekly WEEKLY_(N+1) → station-studio
+week N. Two implications for the eventual byte-equality test:
+
+1. The harness can't compare WEEKLY_001 directly — there is no
+   "week 0" in station-studio. The seed playlist either gets
+   ingested as week 1 (with cursor state pre-advanced once to
+   absorb the seed-import implicit advance), OR the harness skips
+   WEEKLY_001 and starts comparison at WEEKLY_002 ↔ week 1.
+2. Reset cycle semantics: weekly's "generations 002-017 advance,
+   018 resets" (interpreted via the CODE not the comment — see
+   `weekly/app/services/generator.py` lines 666–676; the comment is
+   off-by-one) maps to station-studio's weeks 1-16 advance, week 17
+   resets. Verify with the byte-equality harness when it lands.
+
+**Migration scenarios (per-station persist flip):**
+
+- *Stateless → persistent.* The first persistent generation reads
+  cursor_state, finds no rows for any cursor, falls back to
+  `cursors_init`. Equivalent to starting fresh — the prior stateless
+  math is discarded.
+- *Persistent → stateless.* The stateless math fires regardless of
+  what's in `cursor_state`. Existing rows are orphaned (not deleted;
+  flipping back to persistent later would resume from those rows).
+- *Regeneration of a prior week.* `payload.week - 1` is fixed
+  regardless of how many times week W is regenerated, so the cursor
+  advance is deterministic. The `save_playlist` delete-then-insert
+  path doesn't touch `cursor_state`; the post-save advance just
+  computes the same new position again. No double-advance.
+
 **Punts:**
 
 - **Per-cursor persist opt-in.** Today `cursor.persist=true` flips
@@ -3976,7 +4045,13 @@ generation, immaterial.
   starts persistent mode from `cursors_init` (not from the
   effective position the stateless math would have produced at week
   N). Cleanest fresh start. If a user wants the smooth transition,
-  they can SET cursor_state rows manually first.
+  they can SET cursor_state rows manually first. (See "Migration
+  scenarios" above for the detailed table.)
+- **Orphan cursor validation.** Cursors declared in `cursors_init`
+  but never referenced by any sequential block are silently skipped
+  by `advance_cursors`. Matches weekly's tolerant behaviour and
+  permits staging a cursor for a not-yet-written block. The parser
+  doesn't reject orphans; a future "strict mode" validation could.
 
 ---
 

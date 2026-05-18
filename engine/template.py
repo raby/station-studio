@@ -258,6 +258,33 @@ def parse_template(raw: dict) -> Template:
                 "only 'content' sources can be referenced by the layout"
             )
 
+    # §14.30 — cross-block cursor↔source consistency. Persistent cursors
+    # advance against the pool of their referencing sequential block's
+    # source; if two blocks reference the same cursor with DIFFERENT
+    # sources, advance_cursors picks one silently and the other's pool
+    # wrap math is wrong. Stateless templates don't have this risk
+    # (cursors advance by a fixed per-week base regardless of source),
+    # but the parser enforces consistency uniformly so a future flip
+    # to persist=true doesn't surface the issue late. Orphan cursors
+    # (declared in cursors_init but never referenced) are allowed —
+    # advance_cursors silently skips them; this matches weekly's
+    # tolerant behaviour and avoids breaking templates that staged a
+    # cursor for a not-yet-written block.
+    cursor_to_source: dict[str, str] = {}
+    for b in layout.row_template:
+        if b.strategy != "sequential" or b.cursor_id is None:
+            continue
+        existing = cursor_to_source.get(b.cursor_id)
+        if existing is None:
+            cursor_to_source[b.cursor_id] = b.source
+        elif existing != b.source:
+            raise TemplateError(
+                f"cursor '{b.cursor_id}' is referenced by sequential blocks "
+                f"with conflicting sources: {existing!r} and {b.source!r}. "
+                f"A named cursor must address a single source pool — "
+                f"advance_cursors wraps on the source's length."
+            )
+
     return tmpl
 
 

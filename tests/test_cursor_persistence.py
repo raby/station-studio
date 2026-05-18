@@ -267,7 +267,15 @@ def test_persistent_cursor_round_trip_matches_weekly_semantics(session_factory):
     """End-to-end: a persistent cursor at position P advances by step
     after generation; next generation starts from the wrapped result.
     Verifies the API-equivalent flow (load → generate → advance) gives
-    weekly-identical cursor evolution."""
+    weekly-identical cursor evolution.
+
+    Uses `generation_count = week - 1` to match the production API
+    flow exactly (see api/routers/generate.py — the post-save call
+    passes `payload.week - 1` to advance_cursors). The week→
+    generation_count off-by-one matters when reset_cycle > 0 fires; an
+    earlier version of this test passed gen directly and survived only
+    because reset_cycle=0 makes the reset branch a no-op regardless.
+    """
     Session = session_factory
     tmpl_dict = _persist_template(persist=True, cursors_init={"C1": 0})
     station_id = _seed_station(Session, tmpl_dict)
@@ -276,22 +284,66 @@ def test_persistent_cursor_round_trip_matches_weekly_semantics(session_factory):
 
     # Mimic the API flow for 5 generations.
     picked_positions: list[int] = []
-    for gen in range(1, 6):
+    for week in range(1, 6):
         with Session() as db:
             positions = load_cursor_positions(
                 db, station_id=station_id, template=tmpl,
             )
             r = generate(
-                tmpl, {"S": pool}, week=gen,
+                tmpl, {"S": pool}, week=week,
                 named_cursor_positions=positions,
             )
             picked_positions.append(positions["C1"])
+            # Match the API: generation_count = week - 1 (weekly's
+            # next_number - 1 convention, station-studio's week
+            # numbering one less since there's no imported seed).
             advance_cursors(
                 db, station_id=station_id, template=tmpl, pools={"S": pool},
-                advance_step=15, reset_cycle=0, generation_count=gen,
+                advance_step=15, reset_cycle=0, generation_count=week - 1,
             )
             db.commit()
 
-    # Weekly's behaviour: gen 1 picks at 0, gen 2 at 15, gen 3 at 30,
-    # gen 4 at 45, gen 5 at 60.
+    # Each week reads the post-advance cursor of the previous week.
+    # Week 1: 0 (cursors_init). Then advance to 15.
+    # Week 2: 15. Then advance to 30. Etc.
     assert picked_positions == [0, 15, 30, 45, 60]
+
+
+def test_persistent_cursor_reset_fires_at_correct_generation(session_factory):
+    """Belt-and-braces test that catches the off-by-one the reset
+    branch is sensitive to. With reset_cycle=3, the reset must fire at
+    generation_count=3 (which is week 4 per the week-1 convention).
+
+    Validates the API's `generation_count = week - 1` derivation is
+    aligned with weekly's `next_number - 1`. If station-studio were
+    off-by-one (passing week directly instead of week-1), the reset
+    would fire at week 3 (generation_count=3) instead of week 4 —
+    detectably wrong outcome here.
+    """
+    Session = session_factory
+    tmpl_dict = _persist_template(persist=True, cursors_init={"C1": 50})
+    station_id = _seed_station(Session, tmpl_dict)
+    tmpl = parse_template(tmpl_dict)
+    pool = _seq_pool("X", 1000)
+
+    picked_positions: list[int] = []
+    for week in range(1, 7):
+        with Session() as db:
+            positions = load_cursor_positions(
+                db, station_id=station_id, template=tmpl,
+            )
+            picked_positions.append(positions["C1"])
+            generate(tmpl, {"S": pool}, week=week, named_cursor_positions=positions)
+            advance_cursors(
+                db, station_id=station_id, template=tmpl, pools={"S": pool},
+                advance_step=10, reset_cycle=3, generation_count=week - 1,
+            )
+            db.commit()
+
+    # week 1: pick at 50 (init). Advance(gen=0): (50+10)%1000 = 60.
+    # week 2: pick at 60. Advance(gen=1): 60+10 = 70.
+    # week 3: pick at 70. Advance(gen=2): 70+10 = 80.
+    # week 4: pick at 80. Advance(gen=3): RESET (3 > 0 and 3%3 == 0) → back to 50.
+    # week 5: pick at 50. Advance(gen=4): 50+10 = 60.
+    # week 6: pick at 60. Advance(gen=5): 60+10 = 70.
+    assert picked_positions == [50, 60, 70, 80, 50, 60]
