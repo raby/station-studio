@@ -10,8 +10,9 @@ from sqlalchemy.orm import Session
 
 from engine.models import Station, Playlist, PlaylistTrace
 from engine.persistence import (
-    load_alias_map, load_excluded_mix_ids, load_pools,
-    load_previous_playlist, max_mix_exclusion_window, save_playlist,
+    advance_cursors, load_alias_map, load_cursor_positions,
+    load_excluded_mix_ids, load_pools, load_previous_playlist,
+    max_mix_exclusion_window, save_playlist,
 )
 from engine.rules import get_rule_value
 from engine.template import parse_template, TemplateError
@@ -51,6 +52,17 @@ def generate_playlist(slug: str, payload: GenerateRequest, db: Session = Depends
     mix_exclusion_weeks = get_rule_value(
         db, station_id=station.id, key="mix_exclusion_weeks",
     )
+    # §14.30: cursor rules are read regardless of template.cursor.persist
+    # so the values are available for the post-save advance call. For
+    # stateless templates the values are stored-but-not-applied (the
+    # generator's stateless cursor math isn't influenced by these);
+    # for persistent templates they drive advance + reset semantics.
+    cursor_advance_step = get_rule_value(
+        db, station_id=station.id, key="cursor_advance_step",
+    )
+    cursor_reset_cycle = get_rule_value(
+        db, station_id=station.id, key="cursor_reset_cycle",
+    )
 
     # §14.25: build mix-exclusion set from the station's recent playlists.
     # See engine.persistence.max_mix_exclusion_window for the multi-mix-block
@@ -78,6 +90,15 @@ def generate_playlist(slug: str, payload: GenerateRequest, db: Session = Depends
         db, station_id=station.id, current_week=payload.week,
     )
 
+    # §14.30: load persistent named-cursor positions when the template
+    # opts in. Stateless templates ignore this — the generator falls
+    # back to the §14.22 stateless computation.
+    named_cursor_positions = None
+    if template.cursor.persist:
+        named_cursor_positions = load_cursor_positions(
+            db, station_id=station.id, template=template,
+        )
+
     try:
         result = generate(
             template, pools, week=payload.week, seed=payload.seed,
@@ -88,6 +109,8 @@ def generate_playlist(slug: str, payload: GenerateRequest, db: Session = Depends
             # the station rule. The generator's _resolve_weighted_window
             # helper makes this precedence explicit.
             weighted_window_default=artist_dedup_window,
+            # §14.30: stateful cursor positions when persist=True.
+            named_cursor_positions=named_cursor_positions,
         )
     except Exception as e:
         raise HTTPException(400, f"generation failed: {e}")
@@ -101,6 +124,24 @@ def generate_playlist(slug: str, payload: GenerateRequest, db: Session = Depends
             409,
             "a playlist for this station and week was concurrently generated; retry",
         )
+
+    # §14.30: advance persistent named cursors AFTER the playlist
+    # commits. `generation_count = week - 1` matches weekly's
+    # `next_number - 1` convention: WEEKLY_001 = generation 0,
+    # WEEKLY_002 = generation 1, etc. Regenerating week W keeps the
+    # same generation count → deterministic byte-equality with weekly's
+    # stateful cursor model.
+    if template.cursor.persist:
+        advance_cursors(
+            db,
+            station_id=station.id,
+            template=template,
+            pools=dict(pools),
+            advance_step=cursor_advance_step,
+            reset_cycle=cursor_reset_cycle,
+            generation_count=payload.week - 1,
+        )
+        db.commit()
 
     return GenerateResponse(
         playlist_id=playlist.id,

@@ -83,6 +83,7 @@ def generate(
     alias_map: dict[str, str] | None = None,
     previous_playlist: list[Any] | None = None,
     weighted_window_default: int | None = None,
+    named_cursor_positions: dict[str, int] | None = None,
 ) -> GenerationResult:
     """Generate one playlist for the given station + week.
 
@@ -121,6 +122,17 @@ def generate(
         to the engine constant DEFAULT_WEIGHTED_WINDOW when None.
         Populated by the API layer from the `artist_dedup_window`
         rule.
+    named_cursor_positions : dict[str, int] | None
+        Pre-loaded positions for `sequential` named cursors (§14.30).
+        ONLY consulted when `template.cursor.persist` is True; for
+        stateless templates the generator computes positions directly
+        from `cursors_init + week`, matching §14.22. The API layer
+        populates this from the `cursor_state` table via
+        `engine.persistence.load_cursor_positions` BEFORE generation;
+        the API also calls `engine.persistence.advance_cursors` AFTER
+        save_playlist to mutate the table for the next generation.
+        Engine stays DB-agnostic — for tests without a DB, pass the
+        dict directly.
     """
     _check_pools_present(template, pools)
 
@@ -215,7 +227,15 @@ def generate(
                 # layout.cursors_init) instead of the row-offset list.
                 # row_start_offsets[row_idx] is ignored for sequential blocks —
                 # the cursor is the addressing mechanism.
-                seq_start = template.cursor_position(block.cursor_id, week)  # type: ignore[arg-type]
+                #
+                # §14.30 — when template.cursor.persist is True and the
+                # caller passed `named_cursor_positions`, use the loaded
+                # value (which the API got from cursor_state). Otherwise
+                # fall back to the §14.22 stateless computation.
+                if template.cursor.persist and named_cursor_positions is not None:
+                    seq_start = named_cursor_positions[block.cursor_id]  # type: ignore[index]
+                else:
+                    seq_start = template.cursor_position(block.cursor_id, week)  # type: ignore[arg-type]
                 picked = apply_window(
                     pool,
                     start=seq_start,

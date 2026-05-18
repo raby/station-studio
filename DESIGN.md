@@ -3834,6 +3834,152 @@ in their generation output.
 
 ---
 
+### 14.30 stateful named cursors + cursor rule wiring (§17 Phase B sub-slice #13 follow-on)
+
+**Goal.** Close the cursor-rules-not-wired gap surfaced during §14.29's
+post-ship discussion. Make weekly's *stateful, source-length-wrapping,
+reset-every-N-generations* cursor model available as an opt-in mode
+in station-studio, fully wiring `cursor_advance_step` +
+`cursor_reset_cycle` rules. Achieves UX-faithful weekly emulation for
+the eventual port; preserves byte-equality with weekly's long-running
+cursor evolution (not just the first ~10–15 weeks before any source
+wrap fires).
+
+This is a follow-on to §14.29 rather than a fresh sub-slice — the
+roadmap entry for sub-slice #13 covers both.
+
+**Why this needed a separate slice.** §14.22 chose a **stateless,
+computed** cursor model: `position = cursors_init[id] + (week-1) *
+base_advance_per_week`, no DB roundtrip. Weekly's is **stateful**:
+positions live in `cursor_state` table, mutate post-generation, wrap
+on source length. The two models *happen to match numerically* for
+the first ~10–15 weeks of a typical station before any wrap fires —
+beyond that window they diverge. The cursor rules being "stored but
+unwired" hid this; the user pushed back on calling that "weekly
+emulation."
+
+**The two cursor models now coexist:**
+
+- **Computed mode (default, current §14.22 behaviour).** Stateless,
+  no DB access. Classics keeps this. Position = `cursors_init[id] +
+  base_cursor_for_week(week)`. `cursor.cycle_weeks` controls wrap.
+- **Persistent mode (§14.30 opt-in).** Stateful via `cursor_state`.
+  Mutates post-generation. Wraps on source-pool length. Resets every
+  `cursor_reset_cycle` generations. Rebirth Radio's port will set
+  `cursor.persist=true` in its template.
+
+**Template grammar (`engine/template.py`):**
+
+New optional field `cursor.persist: bool = False`. When `true`,
+the engine uses persistent mode for **named cursors** (sequential
+blocks). The main base cursor (window/pick blocks) is unaffected —
+weekly doesn't have a "main base cursor" concept; Classics templates
+that use the main base cursor keep their existing stateless behaviour
+regardless of `persist`.
+
+**Persistence helpers (`engine/persistence.py`):**
+
+- `load_cursor_positions(db, *, station_id, template) -> dict[str, int]`
+  reads every declared cursor's current position from `cursor_state`,
+  falling back to `cursors_init` for cursors without a DB row yet
+  (matches weekly's `initialize_cursors` first-generation behaviour).
+- `advance_cursors(db, *, station_id, template, pools, advance_step,
+  reset_cycle, generation_count)` mutates `cursor_state` after a
+  generation. Branches on `reset_cycle`:
+  - If `reset_cycle > 0` AND `generation_count > 0` AND
+    `generation_count % reset_cycle == 0` → reset every cursor to its
+    `cursors_init` position. Matches weekly's
+    `reset_cursors_to_initial` flow.
+  - Otherwise → advance each cursor by `advance_step`, wrapping on
+    its source's pool length: `(pos + step) % len(pool)`. Matches
+    weekly's `advance_cursor`.
+- `_cursors_to_sources(template)` builds the cursor-name → source-
+  name map from sequential blocks, so `advance_cursors` knows which
+  pool length each cursor wraps against.
+
+Cursors declared in `cursors_init` but never referenced by a
+sequential block are silently skipped in the advance pass (no source
+to wrap against). The parser doesn't forbid orphan cursors; this
+follows weekly's tolerant behaviour.
+
+**Generator integration (`engine/generator.py`):**
+
+`generate(...)` gains `named_cursor_positions: dict[str, int] | None`.
+The sequential dispatch branches:
+
+```python
+if template.cursor.persist and named_cursor_positions is not None:
+    seq_start = named_cursor_positions[block.cursor_id]
+else:
+    seq_start = template.cursor_position(block.cursor_id, week)  # §14.22 stateless
+```
+
+Engine stays DB-agnostic — for tests without a DB, callers pass the
+dict directly. For production, the API resolves positions from
+`cursor_state` pre-generation.
+
+**API plumbing (`api/routers/generate.py`):**
+
+1. Pre-generation: read `cursor_advance_step` + `cursor_reset_cycle`
+   rules. If `template.cursor.persist`, load positions via
+   `load_cursor_positions` and pass them to `generate(...)`.
+2. Post-save_playlist: if persistent, call `advance_cursors(...)`
+   with `generation_count = week - 1`. Matches weekly's
+   `next_number - 1` convention so regenerating week W is
+   deterministic (same generation_count → same cursor advance).
+
+The `cursor_advance_step` / `cursor_reset_cycle` rules now drive
+real behaviour for `persist=true` templates. For `persist=false`
+templates the rules are read but not applied (template fields
+control cursor behaviour) — read cost is one indexed query per
+generation, immaterial.
+
+**Backward compatibility — three guarantees:**
+
+1. Classics templates (no `cursor.persist`, defaults to False) →
+   byte-for-byte unchanged. The stateless §14.22 math fires;
+   `cursor_state` never gets written.
+2. Existing weekly-style station-studio templates (none yet exist,
+   but the §14.22 sequential strategy users) → unchanged.
+3. The `cursor_state` table was created in §14.17's baseline migration
+   but never written until §14.30. No schema migration required.
+
+**Tests added (14 new, total 447):**
+
+- 3 parser tests (`test_template.py`): persist defaults to False;
+  persist=True accepted; non-bool rejected.
+- 11 cursor-persistence tests (`test_cursor_persistence.py`, new
+  file): load falls back to `cursors_init` when no rows; load uses
+  persisted when present; mixed persisted/initial; advance wraps on
+  source length; reset_cycle=0 never resets; reset boundary
+  triggers; generation_count=0 advances (no reset on gen 0); no-op
+  for stateless template; generator's persistent branch reads
+  passed positions; generator's stateless branch ignores passed
+  positions; end-to-end round-trip matches weekly's cursor evolution
+  (5 generations, advance=15, expected positions 0/15/30/45/60).
+
+**Punts:**
+
+- **Per-cursor persist opt-in.** Today `cursor.persist=true` flips
+  ALL named cursors in the template to persistent. Granular
+  per-cursor persistence (some persistent, some stateless) isn't
+  supported. Defer until a real template wants the mix.
+- **Cursor advance step varying by cursor.** Weekly uses a single
+  `cursor_advance_step` for every cursor. If a future station wants
+  different steps per cursor, add a per-cursor `advance_step`
+  override in `cursors_init`'s value shape. Not needed for the
+  Rebirth Radio port.
+- **`cursor_reset_cycle` not yet exposed in the UI.** Same UI punt
+  as §14.29's rule-settings panel — defer to a follow-on UI slice.
+- **Migration tool from stateless → persistent.** A station that
+  flips `cursor.persist=true` after running stateless for N weeks
+  starts persistent mode from `cursors_init` (not from the
+  effective position the stateless math would have produced at week
+  N). Cleanest fresh start. If a user wants the smooth transition,
+  they can SET cursor_state rows manually first.
+
+---
+
 ## 15. Status snapshot
 
 A quick "where are we" for a future reader. Last updated at commit
@@ -3858,7 +4004,7 @@ A quick "where are we" for a future reader. Last updated at commit
 | Delete / station-reset   | Shipped (14.10). Per-row delete + station nuke; cascades.        |
 | Disk-export UI button    | Shipped (14.11). Trace viewer "Export to disk" + status line.    |
 | Edit mode for stations   | Shipped (14.13). Shared `<StationForm>` + JSON preview + diff + reset. |
-| **§17 pre-port roadmap** | **Phase A complete (§14.17–§14.21). Phase B underway: sub-slices #5 (§14.23), #7 (§14.22), #8 (§14.24), #9 (§14.25), #10 (§14.26), #11 (§14.27), #12 (§14.28), #13 (§14.29) shipped. **Next: sub-slice #14 = `PlaylistEntry.slot_type` column + Alembic — adds a per-entry strategy tag so historical playlists carry their slot vocabulary alongside the trace.** |
+| **§17 pre-port roadmap** | **Phase A complete (§14.17–§14.21). Phase B underway: sub-slices #5 (§14.23), #7 (§14.22), #8 (§14.24), #9 (§14.25), #10 (§14.26), #11 (§14.27), #12 (§14.28), #13 (§14.29 + §14.30 cursor wiring follow-on) shipped. **Next: sub-slice #14 = `PlaylistEntry.slot_type` column + Alembic — adds a per-entry strategy tag so historical playlists carry their slot vocabulary alongside the trace.** |
 | Visual block editor      | Deferred (v2). Lands as §17 Phase B after Phase A unblocks.      |
 | Trace versioning         | Deferred. See §16.4 (queued behind §16.1 by design).             |
 | Accessibility pass       | Deferred. §17 Phase D — single sweep after §16.2 + port.         |

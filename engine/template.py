@@ -77,6 +77,19 @@ class SourceSpec:
 class CursorSpec:
     base_advance_per_week: int
     cycle_weeks: int
+    # §14.30 — when True, NAMED cursors (those referenced by sequential
+    # blocks via cursors_init) are PERSISTENT: their positions live in
+    # the `cursor_state` table per (station, name), mutate after every
+    # generation by `cursor_advance_step` (station rule, default 120),
+    # wrap on source-pool length, and reset to `cursors_init` every
+    # `cursor_reset_cycle` generations (rule, default 0 = never reset).
+    # Matches weekly's exact cursor semantics for the eventual byte-
+    # equality harness.
+    #
+    # When False (default — current §14.22 behaviour), named cursors
+    # are stateless: position = cursors_init[id] + base_cursor_for_week(week).
+    # Classics keeps False; Rebirth Radio's port sets True.
+    persist: bool = False
 
 
 @dataclass
@@ -263,7 +276,10 @@ def _parse_source(raw: dict) -> SourceSpec:
 
 
 def _parse_cursor(raw: dict) -> CursorSpec:
-    _require_keys(raw, {"base_advance_per_week", "cycle_weeks"}, where="cursor")
+    _require_keys(
+        raw, {"base_advance_per_week", "cycle_weeks"}, where="cursor",
+        optional={"persist"},  # §14.30 — opt-in stateful named cursors
+    )
     if raw["base_advance_per_week"] < 0:
         raise TemplateError("cursor.base_advance_per_week must be >= 0")
     # cycle_weeks=0 is valid post-§14.22 — means "no cycle wrap, position
@@ -271,9 +287,15 @@ def _parse_cursor(raw: dict) -> CursorSpec:
     # the Classics behaviour (wrap every N weeks).
     if raw["cycle_weeks"] < 0:
         raise TemplateError("cursor.cycle_weeks must be >= 0 (0 = no cycle)")
+    persist = raw.get("persist", False)
+    if not isinstance(persist, bool):
+        raise TemplateError(
+            f"cursor.persist must be a boolean, got {persist!r}"
+        )
     return CursorSpec(
         base_advance_per_week=int(raw["base_advance_per_week"]),
         cycle_weeks=int(raw["cycle_weeks"]),
+        persist=persist,
     )
 
 

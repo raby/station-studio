@@ -443,6 +443,28 @@ def test_fallback_genre_on_non_prev_ref_strategy_rejected():
         parse_template(bad)
 
 
+# ---------- §14.30: cursor.persist field ----------------------------
+
+
+def test_cursor_persist_defaults_to_false():
+    tmpl = parse_template(BASE)
+    assert tmpl.cursor.persist is False
+
+
+def test_cursor_persist_can_be_set_true():
+    tmpl = parse_template({**BASE, "cursor": {
+        "base_advance_per_week": 10, "cycle_weeks": 4, "persist": True,
+    }})
+    assert tmpl.cursor.persist is True
+
+
+def test_cursor_persist_non_bool_rejected():
+    with pytest.raises(TemplateError, match="cursor.persist must be a boolean"):
+        parse_template({**BASE, "cursor": {
+            "base_advance_per_week": 10, "cycle_weeks": 4, "persist": "yes",
+        }})
+
+
 def test_source_by_name_unknown_raises():
     """source_by_name is defensive — upstream validation catches most cases,
     but the method itself must raise when called with an unknown name."""

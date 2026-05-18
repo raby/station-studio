@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from engine.artist_match import build_alias_map
 from engine.models import (
-    ArtistAlias, MixUsage, Playlist, PlaylistEntry, PlaylistTrace,
+    ArtistAlias, CursorState, MixUsage, Playlist, PlaylistEntry, PlaylistTrace,
     SourcePlaylist, SourcePlaylistEntry, Station,
 )
 from engine.template import Template
@@ -259,3 +259,129 @@ def load_excluded_mix_ids(db: Session, *, station_id: int, window: int) -> set[i
         .all()
     )
     return {tid for (tid,) in rows}
+
+
+# ---------- §14.30 stateful named-cursor persistence --------------------
+
+
+def load_cursor_positions(
+    db: Session,
+    *,
+    station_id: int,
+    template: Template,
+) -> dict[str, int]:
+    """Read persistent named-cursor positions from cursor_state for this
+    station; fall back to `template.layout.cursors_init` for cursors
+    that don't yet have a row.
+
+    Only called when `template.cursor.persist` is True (§14.30). For
+    stateless templates the generator computes positions directly from
+    `cursors_init + week`, ignoring this helper.
+
+    Returns a complete `{name: position}` dict covering every cursor
+    declared in `cursors_init`. New cursors (no DB row yet) get their
+    `cursors_init` value verbatim — matching weekly's `initialize_cursors`
+    behaviour on a fresh database.
+    """
+    init = dict(template.layout.cursors_init)
+    rows = (
+        db.query(CursorState.name, CursorState.position)
+        .filter(CursorState.station_id == station_id)
+        .all()
+    )
+    persisted = {name: pos for (name, pos) in rows}
+    return {name: persisted.get(name, init[name]) for name in init}
+
+
+def advance_cursors(
+    db: Session,
+    *,
+    station_id: int,
+    template: Template,
+    pools: dict[str, list],
+    advance_step: int,
+    reset_cycle: int,
+    generation_count: int,
+) -> None:
+    """Mutate cursor_state after a generation (§14.30, called by the
+    API post-save_playlist).
+
+    Logic matches weekly's `advance_cursors` flow:
+
+    1. If `reset_cycle > 0` and `generation_count > 0` and `generation_count
+       % reset_cycle == 0`, reset every cursor to its `cursors_init`
+       position. (See weekly's generator.py lines 666–676 + cursor.py
+       `reset_cursors_to_initial`.)
+    2. Otherwise advance each cursor by `advance_step`, wrapping on the
+       source-pool length (`(position + step) % len(pool)`).
+
+    Caller commits. No-op if `template.cursor.persist` is False — the
+    API layer is responsible for not calling this for stateless
+    templates, but we double-check defensively.
+    """
+    if not template.cursor.persist:
+        return  # stateless template — nothing to advance
+
+    cursor_to_source = _cursors_to_sources(template)
+    init = template.layout.cursors_init
+
+    if reset_cycle > 0 and generation_count > 0 and generation_count % reset_cycle == 0:
+        # Reset all cursors to their initial positions.
+        for name, init_pos in init.items():
+            _upsert_cursor_position(db, station_id=station_id, name=name, position=init_pos)
+        db.flush()
+        return
+
+    # Advance each cursor by `advance_step`, wrapping on its source's
+    # pool length. Cursors not yet persisted use cursors_init as the
+    # starting point (matches weekly's first-generation behaviour).
+    current = load_cursor_positions(db, station_id=station_id, template=template)
+    for name, pos in current.items():
+        source_name = cursor_to_source.get(name)
+        if source_name is None or source_name not in pools:
+            # Cursor declared but never referenced by a sequential block,
+            # OR the pool wasn't loaded. Skip — no source to wrap against.
+            continue
+        source_len = len(pools[source_name])
+        if source_len <= 0:
+            continue
+        new_pos = (pos + advance_step) % source_len
+        _upsert_cursor_position(
+            db, station_id=station_id, name=name, position=new_pos,
+        )
+    db.flush()
+
+
+def _upsert_cursor_position(
+    db: Session,
+    *,
+    station_id: int,
+    name: str,
+    position: int,
+) -> None:
+    """Idempotent upsert into cursor_state for (station_id, name).
+
+    Helper used by advance_cursors. No commit; caller batches.
+    """
+    row = (
+        db.query(CursorState)
+        .filter(CursorState.station_id == station_id, CursorState.name == name)
+        .first()
+    )
+    if row is None:
+        db.add(CursorState(station_id=station_id, name=name, position=position))
+    else:
+        row.position = position
+
+
+def _cursors_to_sources(template: Template) -> dict[str, str]:
+    """Map cursor_id → source_name based on the template's sequential
+    blocks. A cursor referenced by multiple sequential blocks is assumed
+    to point at the SAME source on all of them — weekly's behaviour. The
+    parser should enforce this if it ever proves contestable (TODO).
+    """
+    mapping: dict[str, str] = {}
+    for b in template.layout.row_template:
+        if b.strategy == "sequential" and b.cursor_id is not None:
+            mapping.setdefault(b.cursor_id, b.source)
+    return mapping
