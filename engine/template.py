@@ -25,8 +25,10 @@ SUPPORTED_STRATEGIES = {
 # cursor — see Template.cursor_position().
 #
 # `jingle` (§14.24) and `mix` (§14.25) both require a per-block `genre`
-# string; `mix` additionally requires an `exclusion_window` integer (count
-# of prior playlists to exclude from).
+# string. `mix` optionally accepts an `exclusion_window` integer
+# (count of prior playlists to exclude from); when absent (§14.29),
+# the value falls back to the station's `mix_exclusion_weeks` rule,
+# then to an engine constant.
 #
 # `weighted` (§14.27) is the two-tier commercial strategy. Optionally
 # accepts a `window` integer (artist-dedup sliding-window size; defaults
@@ -364,9 +366,14 @@ def _parse_block(
             f"block with strategy={strategy!r} must specify a non-empty genre"
         ),
     )
+    # §14.29: exclusion_window is now OPTIONAL for mix (was required).
+    # Weekly's port still sets it explicitly on every mix slot, so
+    # byte-equality is unaffected. Other stations can omit the field
+    # and inherit the per-station `mix_exclusion_weeks` rule default.
     _require_strategy_field(
         strategy, "exclusion_window", exclusion_window,
-        required_for={"mix"},
+        required_for=set(),
+        optional_for={"mix"},
         validator=lambda v: v if (isinstance(v, int) and not isinstance(v, bool) and v >= 0) else _err(
             f"block exclusion_window must be a non-negative integer, got {v!r}"
         ),

@@ -90,3 +90,31 @@ class PlaylistSummary(BaseModel):
     trace_id: str
     generated_at: str | None
     entry_count: int
+
+
+# §14.29 — per-station rules CRUD
+
+
+class RuleOut(BaseModel):
+    """One rule's effective state for a station.
+
+    `value` is what the engine will see; `default_value` is the
+    engine's fallback when no override exists; `is_override` tells
+    a UI whether to render "set" vs "default" controls.
+    """
+    key: str
+    value: int
+    default_value: int
+    description: str
+    max_value: int | None
+    is_override: bool
+
+
+class RuleListResponse(BaseModel):
+    """All known rules, sorted by key for deterministic UI rendering."""
+    rules: list[RuleOut]
+
+
+class RuleValueIn(BaseModel):
+    """PUT body — just the new integer value."""
+    value: int

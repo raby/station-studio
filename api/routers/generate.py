@@ -13,6 +13,7 @@ from engine.persistence import (
     load_alias_map, load_excluded_mix_ids, load_pools,
     load_previous_playlist, max_mix_exclusion_window, save_playlist,
 )
+from engine.rules import get_rule_value
 from engine.template import parse_template, TemplateError
 from engine.generator import generate
 from engine.exporter import export_playlist, export_playlist_to_disk
@@ -41,13 +42,26 @@ def generate_playlist(slug: str, payload: GenerateRequest, db: Session = Depends
     except ValueError as e:
         raise HTTPException(400, str(e))
 
+    # §14.29: per-station rule defaults. Resolved BEFORE the mix
+    # exclusion set so a station that omits BlockSpec.exclusion_window
+    # on some mix slots still feeds the right lookback into the query.
+    artist_dedup_window = get_rule_value(
+        db, station_id=station.id, key="artist_dedup_window",
+    )
+    mix_exclusion_weeks = get_rule_value(
+        db, station_id=station.id, key="mix_exclusion_weeks",
+    )
+
     # §14.25: build mix-exclusion set from the station's recent playlists.
     # See engine.persistence.max_mix_exclusion_window for the multi-mix-block
     # semantics. Window=0 short-circuits to an empty set in load_*.
+    # §14.29: mix blocks whose BlockSpec.exclusion_window is None
+    # inherit the station's `mix_exclusion_weeks` rule via the
+    # `default=` argument.
     excluded_mix_ids = load_excluded_mix_ids(
         db,
         station_id=station.id,
-        window=max_mix_exclusion_window(template),
+        window=max_mix_exclusion_window(template, default=mix_exclusion_weeks),
     )
 
     # §14.26 + §14.27: alias map for the `weighted` strategy's artist-key
@@ -70,6 +84,10 @@ def generate_playlist(slug: str, payload: GenerateRequest, db: Session = Depends
             excluded_mix_ids=excluded_mix_ids,
             alias_map=alias_map,
             previous_playlist=previous_playlist,
+            # §14.29: weighted blocks without BlockSpec.window inherit
+            # the station rule. The generator's _resolve_weighted_window
+            # helper makes this precedence explicit.
+            weighted_window_default=artist_dedup_window,
         )
     except Exception as e:
         raise HTTPException(400, f"generation failed: {e}")

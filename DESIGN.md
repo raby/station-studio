@@ -3648,6 +3648,192 @@ to an empty list so existing callers that destructure
 
 ---
 
+### 14.29 per-station Rule table + CRUD (§17 Phase B sub-slice #13)
+
+**Goal.** Replace engine-only constants (`DEFAULT_WEIGHTED_WINDOW`, the
+implicit "20 weeks of mix exclusion") with **per-station configurable
+rules** + CRUD endpoints. First user-managed config table in
+station-studio. Ports weekly's `app/services/rules.py` but station-
+scoped (weekly is single-station; station-studio is multi-station and
+Classics shouldn't share Rebirth Radio's tuning).
+
+This slice deliberately keeps the engine **DB-agnostic**: the
+`generate()` function gains optional default-value kwargs but still
+runs without a DB session, falling back to engine-level constants
+when callers don't pass rule values. The API route is the only
+component that touches the Rule table; the engine reads the
+resolved values via kwargs.
+
+**Schema (`engine/models.py` + migration `54570900ed97`):**
+
+```
+rule(id PK,
+     station_id FK→station ON DELETE CASCADE,
+     key TEXT NOT NULL,
+     value TEXT NOT NULL,
+     UNIQUE(station_id, key))
+```
+
+Index on `station_id` so `get_all_rules(db, station_id=...)` is a
+single indexed scan per station. Value column is TEXT (not INTEGER)
+so a future rule with a different shape (string enum, list-of-int,
+JSON blob) doesn't need a schema change — accessors handle the parse.
+
+Stations with no rows fall back to defaults — only divergence is
+persisted. Default-shipping behaviour is unchanged (Classics never
+created any rules; its generation reads engine constants exactly
+as before).
+
+**Rule registry (`engine/rules.py`):**
+
+`RULE_DEFAULTS: dict[str, RuleDefault]` — the canonical list. Each
+entry carries `value` (default), `description` (UI-facing), and
+optional `max_value` (override ceiling). Validation drives off this
+dict; adding a future rule is a one-entry change with no schema
+migration.
+
+Four rules ship now, all from weekly's vocabulary:
+
+| Key | Default | Max | Wired to engine? |
+|---|---|---|---|
+| `artist_dedup_window` | 10 | 1000 | ✓ weighted strategy (§14.27) |
+| `mix_exclusion_weeks` | 20 | 1000 | ✓ mix strategy (§14.25) |
+| `cursor_advance_step` | 120 | 10000 | ✗ stored only (template controls cursor) |
+| `cursor_reset_cycle` | 0 | — | ✗ stored only (template controls cursor) |
+
+The two cursor rules are stored but **not currently consumed by the
+engine** — station-studio's templates already control cursor
+advance/reset via the per-template cursor block (§14.22). They're
+carried in the registry for forward-compatibility: a future slice
+that wants per-station cursor overrides bypassing the template will
+have somewhere to put the value. Documented in `engine/rules.py`
+docstrings so future maintainers don't wire them by mistake.
+
+**Engine accessors (`engine/rules.py`):**
+
+- `get_rule_value(db, *, station_id, key) -> int` — overlay lookup
+  (override → default). Raises `UnknownRuleError` for keys not in
+  the registry; callers validate.
+- `set_rule_value(db, *, station_id, key, value)` — upsert. Caller
+  commits. Raises `InvalidRuleValueError` for out-of-bounds
+  (negative or > max_value), `UnknownRuleError` for unknown keys.
+- `clear_rule(db, *, station_id, key) -> bool` — delete override
+  (revert to default). Returns True on actual delete, False if no
+  override existed (idempotent).
+- `get_all_rules(db, *, station_id) -> list[dict]` — every known
+  rule's effective state, sorted by key. Drives the GET endpoint
+  + future UI.
+
+**Grammar relaxation (`engine/template.py`):**
+
+`BlockSpec.exclusion_window` is now **optional** for mix blocks (was
+required). Permissive change only — weekly's port templates still
+set the field explicitly on every mix slot, so byte-equality is
+unaffected. Other station templates can now omit it and inherit
+the station's `mix_exclusion_weeks` rule. Same precedence pattern
+as §14.27's `BlockSpec.window` for weighted.
+
+`_require_strategy_field` was already extended in §14.27 with
+`optional_for=`, so the change is a single call-site update from
+`required_for={"mix"}` to `optional_for={"mix"}`.
+
+**Generator integration (`engine/generator.py`):**
+
+`generate()` gains `weighted_window_default: int | None = None`. New
+helper `_resolve_weighted_window(block_window, station_default)` 
+encodes the three-step precedence:
+
+```
+per-block field → station rule → engine constant
+```
+
+Used in two places: the regular `weighted` dispatch (reads
+`block.window`) AND the `prev_ref` FALLBACK_WEIGHTED branch (no
+per-block window, jumps straight to station rule). The engine
+constant `DEFAULT_WEIGHTED_WINDOW = 10` stays as the last-resort
+fallback so the engine remains DB-agnostic.
+
+Note: `mix_exclusion_weeks` doesn't flow through `generate()` — it's
+needed only by `max_mix_exclusion_window` at the API layer to size
+the cross-week exclusion query. The generator's mix dispatch reads
+the **set** of excluded ids; it never needs the window-depth value.
+
+`max_mix_exclusion_window` gained a `default: int = 0` kwarg.
+The API passes the resolved `mix_exclusion_weeks` rule value here;
+mix blocks with `exclusion_window=None` inherit it.
+
+**API endpoints (`api/routers/rules.py`):**
+
+```
+GET    /api/stations/{slug}/rules         → list every known rule
+PUT    /api/stations/{slug}/rules/{key}   → upsert override (body: {value})
+DELETE /api/stations/{slug}/rules/{key}   → clear override (idempotent)
+```
+
+`api/routers/generate.py` now reads both wired rules pre-generation,
+passes them through the appropriate channels (`get_rule_value` →
+`weighted_window_default` kwarg / `max_mix_exclusion_window` default).
+Templates that don't use weighted/mix never observe the rule reads
+in their generation output.
+
+**Backward compatibility.**
+
+- Classics templates byte-for-byte unchanged: no weighted or mix
+  blocks, so generation never consults the rules.
+- Existing mix templates that set `exclusion_window` explicitly:
+  unchanged. The grammar relaxation is permissive.
+- Existing weighted templates with explicit `window`: unchanged.
+- Bootstrap script + non-API generate paths (which don't read rules):
+  unchanged. The engine constants still apply when `generate()`
+  is called without the new kwargs.
+
+**Tests added (34 new, total 433):**
+
+- 15 engine.rules tests (`test_rules.py`): registry shape; defaults
+  match weekly; `get_rule_value` returns default or override or
+  raises UnknownRule; `set_rule_value` upserts, rejects negative and
+  above-max, station-scoped; `clear_rule` reverts to default, is
+  idempotent, rejects unknown keys; `get_all_rules` lists every
+  known rule sorted by key with override flags + description + max;
+  Rule rows cascade on station deletion.
+- 3 generator-precedence tests (`test_generator_generic.py`):
+  `weighted_window_default` overrides engine constant when set;
+  per-block `BlockSpec.window` overrides station default; engine
+  constant fallback when neither set.
+- 3 max_mix_exclusion_window tests (`test_mix_persistence.py`):
+  the new `default` kwarg applies to mix blocks with
+  `exclusion_window=None`; mixed explicit + default windows take
+  max correctly.
+- 13 API CRUD tests (`test_rules_api.py`): GET returns all defaults
+  initially; unknown station 404; PUT creates override, upserts,
+  rejects unknown keys / negative / above-max values; DELETE
+  reverts, is idempotent, rejects unknown keys, station-scoped
+  isolation between two stations.
+
+**Punts:**
+
+- **UI rules-settings panel.** API enables the front-end work but no
+  UI ships this slice. Lands when a real workflow needs it —
+  probably alongside the Rebirth Radio port artifact (sub-slice #17),
+  since that's the first non-Classics station that will need
+  per-station rule tuning.
+- **Wiring `cursor_advance_step` / `cursor_reset_cycle` to the
+  engine.** Stored but unused. The template's per-template cursor
+  block already controls these. Wire only if a real station emerges
+  that wants to override template behaviour with station-level
+  knobs.
+- **Non-int rule values.** The value column is TEXT-capable, but the
+  accessors and validation hardcode int parsing. A future rule with
+  a string enum or list shape will need a per-rule parser dispatch
+  in `get_rule_value`. Defer until needed.
+- **Rule history / audit log.** No "who changed this rule when"
+  tracking. Add only if multi-user station-studio happens.
+- **Bulk PUT (multiple rules in one request).** Single-key PUT only.
+  Bulk-edit UX can land with the settings panel if it ever shows
+  one-form-with-N-fields.
+
+---
+
 ## 15. Status snapshot
 
 A quick "where are we" for a future reader. Last updated at commit
@@ -3672,7 +3858,7 @@ A quick "where are we" for a future reader. Last updated at commit
 | Delete / station-reset   | Shipped (14.10). Per-row delete + station nuke; cascades.        |
 | Disk-export UI button    | Shipped (14.11). Trace viewer "Export to disk" + status line.    |
 | Edit mode for stations   | Shipped (14.13). Shared `<StationForm>` + JSON preview + diff + reset. |
-| **§17 pre-port roadmap** | **Phase A complete (§14.17–§14.21). Phase B underway: sub-slices #5 (§14.23), #7 (§14.22), #8 (§14.24), #9 (§14.25), #10 (§14.26), #11 (§14.27), #12 (§14.28) shipped. **Next: sub-slice #13 = Rule table + CRUD — first user-managed config table; will hoist DEFAULT_WEIGHTED_WINDOW and exclusion_window defaults to per-station overrides.** |
+| **§17 pre-port roadmap** | **Phase A complete (§14.17–§14.21). Phase B underway: sub-slices #5 (§14.23), #7 (§14.22), #8 (§14.24), #9 (§14.25), #10 (§14.26), #11 (§14.27), #12 (§14.28), #13 (§14.29) shipped. **Next: sub-slice #14 = `PlaylistEntry.slot_type` column + Alembic — adds a per-entry strategy tag so historical playlists carry their slot vocabulary alongside the trace.** |
 | Visual block editor      | Deferred (v2). Lands as §17 Phase B after Phase A unblocks.      |
 | Trace versioning         | Deferred. See §16.4 (queued behind §16.1 by design).             |
 | Accessibility pass       | Deferred. §17 Phase D — single sweep after §16.2 + port.         |
@@ -4984,7 +5170,7 @@ Sub-slice ordering (engine work in dependency order):
 10. ~~**Artist-match subsystem** (port `artist_match.py` ~187 LoC) + ArtistAlias table~~ — **shipped (§14.26)**
 11. ~~**`weighted` commercial strategy** — two-tier with squared-remaining + dedup~~ — **shipped (§14.27, 2 commits + 1 review-fix + 1 follow-on)**
 12. ~~**`prev_ref` strategy** — cross-playlist lookup with fallback~~ — **shipped (§14.28, 2 commits + 1 mid-slice review-fix + 1 follow-on)**
-13. **Rule table (per-station) + CRUD**
+13. ~~**Rule table (per-station) + CRUD**~~ — **shipped (§14.29)**
 14. **`PlaylistEntry.slot_type` column + Alembic**
 15. **Template slot-shape generalisation** — flat slot list expression form alongside row-template
 16. **"Start from existing" / template-JSON import** (#6) — read weekly's existing template

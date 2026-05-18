@@ -32,10 +32,12 @@ from engine.strategies import (
 )
 
 
-# Default artist-dedup window for the `weighted` strategy when a block
-# doesn't set its own `window`. Matches weekly's Rule.artist_dedup_window
-# default (10). Sub-slice #13's Rule table will eventually let a station
-# override this; until then, the constant is the source of truth.
+# Engine-level fallback for the `weighted` strategy's artist-dedup
+# window when neither a per-block BlockSpec.window nor a station-level
+# `artist_dedup_window` rule is set. Matches weekly's
+# Rule.artist_dedup_window default (10). §14.29 added the rule layer
+# between BlockSpec and this constant; the constant stays as the
+# last-resort fallback so the engine remains DB-agnostic.
 DEFAULT_WEIGHTED_WINDOW = 10
 
 
@@ -80,6 +82,7 @@ def generate(
     excluded_mix_ids: set[int] | frozenset[int] | None = None,
     alias_map: dict[str, str] | None = None,
     previous_playlist: list[Any] | None = None,
+    weighted_window_default: int | None = None,
 ) -> GenerationResult:
     """Generate one playlist for the given station + week.
 
@@ -111,6 +114,13 @@ def generate(
         templates without prev_ref blocks ignore it. None = no
         previous playlist exists (first generation for this
         station) — prev_ref then takes its fallback path.
+    weighted_window_default : int | None
+        Station-level default for the weighted strategy's artist-
+        dedup window (§14.29). When a `weighted` block doesn't set
+        its own `BlockSpec.window`, this value is used; falls back
+        to the engine constant DEFAULT_WEIGHTED_WINDOW when None.
+        Populated by the API layer from the `artist_dedup_window`
+        rule.
     """
     _check_pools_present(template, pools)
 
@@ -312,9 +322,11 @@ def generate(
                     weighted_lookups[block.source] = build_lookups(
                         pool, alias_map=alias_map,
                     )
-                effective_window = (
-                    block.window if block.window is not None
-                    else DEFAULT_WEIGHTED_WINDOW
+                # §14.29 precedence: per-block field → station rule
+                # (via weighted_window_default kwarg) → engine constant.
+                effective_window = _resolve_weighted_window(
+                    block_window=block.window,
+                    station_default=weighted_window_default,
                 )
                 for _ in range(block.size):
                     track, info = apply_weighted(
@@ -492,12 +504,23 @@ def generate(
                             weighted_lookups[block.source] = build_lookups(
                                 pool, alias_map=alias_map,
                             )
+                        # §14.29 — same precedence as the regular
+                        # weighted dispatch: station rule (passed via
+                        # weighted_window_default) overrides the engine
+                        # constant. The prev_ref block has no `window`
+                        # field of its own (window is reserved for
+                        # weighted blocks only — see template parser
+                        # coupling) so we skip the per-block level.
+                        fallback_window = _resolve_weighted_window(
+                            block_window=None,
+                            station_default=weighted_window_default,
+                        )
                         track, info = apply_weighted(
                             pool,
                             lookups=weighted_lookups[block.source],
                             recent_artist_keys=state.recent_artist_keys,
                             used_track_ids=state.used_track_ids,
-                            window=DEFAULT_WEIGHTED_WINDOW,
+                            window=fallback_window,
                             rng=rng,
                             source_name=block.source,
                         )
@@ -524,7 +547,7 @@ def generate(
                             reason=(
                                 f"prev_ref fallback (position {block.position}: "
                                 f"{miss_note}); picked weighted "
-                                f"{_weighted_reason(info, DEFAULT_WEIGHTED_WINDOW)}"
+                                f"{_weighted_reason(info, fallback_window)}"
                             ),
                             # Combine the failed-mirror diagnostic with
                             # the artist-blocked rejections the weighted
@@ -631,6 +654,30 @@ def _weighted_reason(info, window: int) -> str:
         f"both={info.both_blocked_count} "
         f"(window={window})"
     )
+
+
+def _resolve_weighted_window(
+    *,
+    block_window: int | None,
+    station_default: int | None,
+) -> int:
+    """§14.29 precedence model for the weighted artist-dedup window.
+
+    1. `block_window` (per-block BlockSpec.window) — set in the template.
+    2. `station_default` — passed via generate()'s
+       weighted_window_default kwarg, populated by the API from the
+       station's `artist_dedup_window` rule.
+    3. `DEFAULT_WEIGHTED_WINDOW` — engine constant, last resort.
+
+    The engine constant fallback keeps `generate()` DB-agnostic — a
+    caller without DB access (synthetic tests, the bootstrap script)
+    can call generate() without first resolving a rule.
+    """
+    if block_window is not None:
+        return block_window
+    if station_default is not None:
+        return station_default
+    return DEFAULT_WEIGHTED_WINDOW
 
 
 def _prev_ref_failure_excluded(

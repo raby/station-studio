@@ -532,6 +532,40 @@ def test_weighted_generator_seeded_run_reproducible():
     assert [p.id for p in r1.picks] == [p.id for p in r2.picks]
 
 
+def test_weighted_window_default_kwarg_overrides_engine_constant():
+    """§14.29: weighted_window_default kwarg sits BETWEEN per-block
+    BlockSpec.window and the engine constant. When the block doesn't
+    set its own window, the kwarg value wins over the engine default."""
+    t = parse_template(_weighted_template(size=1))  # no window set
+    r = generate(
+        t, {"A": _weighted_pool_with_artists()},
+        week=1, seed=42, weighted_window_default=25,
+    )
+    # Trace reason carries the effective window for diagnostics.
+    assert "window=25" in r.trace.slots[0].reason
+
+
+def test_weighted_block_window_overrides_station_default():
+    """Precedence: per-block window beats the station default kwarg."""
+    t = parse_template(_weighted_template(size=1, window=5))
+    r = generate(
+        t, {"A": _weighted_pool_with_artists()},
+        week=1, seed=42, weighted_window_default=25,
+    )
+    assert "window=5" in r.trace.slots[0].reason
+
+
+def test_weighted_falls_back_to_engine_constant_when_neither_set():
+    """No per-block window AND no station default → engine constant (10)."""
+    t = parse_template(_weighted_template(size=1))
+    r = generate(
+        t, {"A": _weighted_pool_with_artists()},
+        week=1, seed=42,
+        # weighted_window_default unset
+    )
+    assert "window=10" in r.trace.slots[0].reason
+
+
 def test_weighted_generator_default_window_is_10():
     """No explicit window → default 10 surfaces in trace reason."""
     t = parse_template(_weighted_template(size=1))  # no window field

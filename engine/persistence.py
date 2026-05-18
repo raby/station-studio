@@ -148,7 +148,7 @@ def _save_mix_usages(db: Session, *, playlist_id: int, template: Template, resul
         ))
 
 
-def max_mix_exclusion_window(template: Template) -> int:
+def max_mix_exclusion_window(template: Template, *, default: int = 0) -> int:
     """Return the widest exclusion_window across all mix blocks (0 if none).
 
     The generator only sees one excluded_mix_ids set per generation, and a
@@ -158,10 +158,18 @@ def max_mix_exclusion_window(template: Template) -> int:
     union — `max(...)` — is the safe choice; per-block window enforcement
     is a punt (§14.25). Extracted so the API route reads as a one-liner
     and the multi-mix semantics get unit coverage.
+
+    `default` (§14.29) is applied to mix blocks whose exclusion_window is
+    None — i.e. the per-block field was omitted and the runtime should
+    inherit the station's `mix_exclusion_weeks` rule. Callers (the API
+    route) pass the resolved rule value here so the lookback depth
+    reflects per-station configuration. Templates with no mix blocks
+    still return 0 regardless of default.
     """
     windows = [
-        b.exclusion_window for b in template.layout.row_template
-        if b.strategy == "mix" and b.exclusion_window is not None
+        (b.exclusion_window if b.exclusion_window is not None else default)
+        for b in template.layout.row_template
+        if b.strategy == "mix"
     ]
     return max(windows) if windows else 0
 

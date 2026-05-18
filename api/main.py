@@ -4,7 +4,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from api.routers import stations, sources, generate, meta
+from api.routers import stations, sources, generate, meta, rules
 
 
 app = FastAPI(
@@ -26,6 +26,7 @@ app.include_router(stations.router)
 app.include_router(sources.router)
 app.include_router(generate.router)
 app.include_router(meta.router)
+app.include_router(rules.router)
 
 
 @app.get("/")

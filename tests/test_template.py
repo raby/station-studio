@@ -279,12 +279,19 @@ def test_mix_block_missing_genre_rejected():
         parse_template(bad)
 
 
-def test_mix_block_missing_exclusion_window_rejected():
-    bad = {**BASE, "layout": {**BASE["layout"], "row_template": [
+def test_mix_block_without_exclusion_window_accepted():
+    """§14.29: exclusion_window is now OPTIONAL on mix blocks. When
+    absent, the runtime falls back to the station's
+    `mix_exclusion_weeks` rule (then to the engine default constant).
+    Weekly's port templates still set it explicitly per slot, so
+    byte-equality is unaffected; this grammar relaxation just lets
+    simpler templates inherit the station default."""
+    tmpl = parse_template({**BASE, "layout": {**BASE["layout"], "row_template": [
         {"source": "A", "strategy": "mix", "size": 1, "genre": "01Alphastate"},
-    ]}}
-    with pytest.raises(TemplateError, match="must specify exclusion_window"):
-        parse_template(bad)
+    ]}})
+    b = tmpl.layout.row_template[0]
+    assert b.strategy == "mix"
+    assert b.exclusion_window is None
 
 
 def test_mix_block_negative_exclusion_window_rejected():

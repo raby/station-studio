@@ -8,6 +8,8 @@ Generalised from weekly/app/models.py. Key differences:
     playlist_id rather than weekly's weekly_playlist_id).
   * ArtistAlias shipped in §14.26 (kept global rather than station-scoped;
     see the model's docstring for the rationale).
+  * Rule shipped in §14.29 (per-station config overrides; weekly's
+    equivalent is global — station-studio is multi-station).
 """
 from __future__ import annotations
 
@@ -270,3 +272,38 @@ class MixUsage(Base):
         nullable=False, index=True,
     )
     genre = Column(Text, nullable=False)
+
+
+class Rule(Base):
+    """Per-station configuration overrides (§14.29).
+
+    Stores ONLY user overrides. The full set of valid rule keys + their
+    default values lives in `engine.rules.RULE_DEFAULTS`. Stations with
+    no rows in this table fall back to defaults exactly; only divergence
+    from defaults is persisted.
+
+    Station-scoped (composite UNIQUE on station_id + key) rather than
+    weekly's global single-key shape — station-studio is multi-station
+    and per-station overrides are the whole reason this slice exists.
+    Classics could keep defaults while Rebirth Radio overrides
+    `artist_dedup_window`, etc.
+
+    Value stored as TEXT so the column can later carry non-int rules
+    (string enums, list-of-int durations, etc.) without a schema
+    migration. The engine.rules accessor parses to int for the current
+    four rules; future rule types parse to whatever shape they declare
+    in RULE_DEFAULTS.
+    """
+    __tablename__ = "rule"
+
+    id = Column(Integer, primary_key=True)
+    station_id = Column(
+        Integer, ForeignKey("station.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    key = Column(Text, nullable=False)
+    value = Column(Text, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("station_id", "key"),
+    )

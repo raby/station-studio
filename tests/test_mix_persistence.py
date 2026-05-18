@@ -243,6 +243,55 @@ def test_max_mix_exclusion_window_zero_windows_returns_zero():
     assert max_mix_exclusion_window(tmpl) == 0
 
 
+# ---------- §14.29: per-block None falls back to default ----------------
+
+
+def _template_with_mix_block_no_window() -> dict:
+    """Mix block without exclusion_window (§14.29 grammar relaxation)."""
+    return {
+        "station": "x", "cadence": "weekly", "rng": "off",
+        "sources": [{"name": "M", "colour": "#111", "role": "content"}],
+        "cursor": {"base_advance_per_week": 0, "cycle_weeks": 1},
+        "layout": {
+            "unit": "slot", "unit_labels": ["1"],
+            "row_start_offsets": [0],
+            "row_template": [
+                {"source": "M", "strategy": "mix", "size": 1, "genre": "House"},
+            ],
+        },
+    }
+
+
+def test_max_mix_exclusion_window_uses_default_when_block_field_is_none():
+    """A mix block without exclusion_window inherits the `default` kwarg
+    (sourced from the station's `mix_exclusion_weeks` rule at the API)."""
+    tmpl = parse_template(_template_with_mix_block_no_window())
+    assert max_mix_exclusion_window(tmpl, default=20) == 20
+    assert max_mix_exclusion_window(tmpl, default=0) == 0
+
+
+def test_max_mix_exclusion_window_max_of_mixed_explicit_and_default():
+    """One mix block sets exclusion_window=5; another omits it (inherits
+    default=20). Max wins."""
+    template = {
+        "station": "x", "cadence": "weekly", "rng": "off",
+        "sources": [{"name": "M", "colour": "#111", "role": "content"}],
+        "cursor": {"base_advance_per_week": 0, "cycle_weeks": 1},
+        "layout": {
+            "unit": "slot", "unit_labels": ["1"],
+            "row_start_offsets": [0],
+            "row_template": [
+                {"source": "M", "strategy": "mix", "size": 1,
+                 "genre": "G1", "exclusion_window": 5},
+                {"source": "M", "strategy": "mix", "size": 1, "genre": "G2"},
+            ],
+        },
+    }
+    tmpl = parse_template(template)
+    assert max_mix_exclusion_window(tmpl, default=20) == 20
+    assert max_mix_exclusion_window(tmpl, default=3) == 5
+
+
 def test_save_playlist_replacing_existing_clears_old_mix_usage(session_factory):
     """save_playlist's "replace existing playlist for (station, week)" path
     should ON DELETE CASCADE drop the prior MixUsage rows too — otherwise
