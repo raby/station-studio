@@ -120,11 +120,26 @@ def _save_mix_usages(db: Session, *, playlist_id: int, template: Template, resul
     Genre lives on the spec (not the slot) because slot-level redundancy
     would have required a TraceSlot schema change — keeping it derivable
     from the template is cheaper and the data round-trips identically.
+
+    §14.32: works in both layout forms (row_template + flat_slots).
+    The block-list source switches based on which form the template
+    carries — parser enforces XOR so only one is non-empty.
     """
-    row_template = template.layout.row_template
+    # The trace slot's `block` index is 1-indexed into whichever
+    # BlockSpec list the layout form provides. For row_template form,
+    # that's the per-row block list (slots from the same block across
+    # different rows share a block index, matching the dispatch order).
+    # For flat_slots form, each slot's block index is its position in
+    # the flat list — also 1-indexed. Either way, the indexing math is
+    # identical; only the SOURCE list changes.
+    block_list = (
+        template.layout.flat_slots
+        if template.layout.flat_slots
+        else template.layout.row_template
+    )
     for track, slot in zip(result.picks, result.trace.slots):
         # block / row are 1-indexed on the slot.
-        block_spec = row_template[slot.block - 1]
+        block_spec = block_list[slot.block - 1]
         if block_spec.strategy != "mix":
             continue
         db.add(MixUsage(

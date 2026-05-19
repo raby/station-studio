@@ -1417,3 +1417,39 @@ def test_slots_per_week_for_flat_slots_template():
          "genre": "H", "exclusion_window": 5},
     ]))
     assert t.slots_per_week() == 8  # 1 + 5 + 2
+
+
+def test_flat_slots_weighted_populates_excluded_candidates():
+    """§14.32 × §14.23 integration: a weighted slot in flat_slots form
+    must populate trace.slots[].excluded with the artist-blocked
+    candidates, identically to a weighted slot in row_template form.
+
+    Forward-compat: ensures the §14.23 ExcludedCandidate machinery
+    threads correctly through the flat dispatch path. Surfaces
+    regressions if a future refactor accidentally drops the excluded
+    list for one form but not the other.
+    """
+    # Three tracks, two by the same artist. After picking the first,
+    # the second should land in excluded for the second weighted slot.
+    pool = [
+        FakeTrack(id=1, name="A1", artist="Artist A"),
+        FakeTrack(id=2, name="A2", artist="Artist A"),
+        FakeTrack(id=3, name="B1", artist="Artist B"),
+    ]
+    t = parse_template(_flat_slots_template([
+        {"source": "A", "strategy": "weighted", "size": 1, "window": 10},
+        {"source": "A", "strategy": "weighted", "size": 1, "window": 10},
+    ]))
+    r = generate(t, {"A": pool}, week=1, seed=42)
+    # Slot 1: no prior state → no excluded.
+    assert r.trace.slots[0].excluded == []
+    # Slot 2: whichever Artist A track wasn't picked must appear in
+    # excluded (artist-blocked by slot 1's pick).
+    slot2_excluded_ids = {ec.track_id for ec in r.trace.slots[1].excluded}
+    assert slot2_excluded_ids & {1, 2}  # at least one Artist A track blocked
+    # Picked track itself is filtered out of its own excluded list.
+    assert r.picks[1].id not in slot2_excluded_ids
+    # Reason cites the artist key.
+    sample = next(iter(r.trace.slots[1].excluded))
+    assert "artist key" in sample.reason or "artist keys" in sample.reason
+    assert "in dedup window" in sample.reason

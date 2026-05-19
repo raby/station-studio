@@ -4354,6 +4354,45 @@ to the old formula when `flat_slots` is empty.
   Real demand zero today. Programmatic generation (sub-slice #16
   and beyond) covers it via Python.
 
+**Field-name mapping notes for sub-slice #16 (template-JSON import):**
+
+Weekly's slot dicts use the field name `type` (e.g. `{"type":
+"commercial", ...}`); station-studio's BlockSpec uses `strategy`.
+Plus one strategy is renamed entirely: weekly's `"commercial"`
+corresponds to station-studio's `"weighted"` (the porting reason —
+station-studio's vocabulary is strategy-shape-named, not domain-
+named). The full translation table for the import slice:
+
+| Weekly `type` | Station-studio `strategy` | Notes |
+|---|---|---|
+| `"jingle"` | `"jingle"` | direct map; genre stays |
+| `"commercial"` | `"weighted"` | renamed |
+| `"mix"` | `"mix"` | direct map; genre + exclusion_window stay |
+| `"prev_ref"` | `"prev_ref"` | direct map; position + fallback_genre stay |
+| `"night"` / `"weekend"` | `"sequential"` | both port to sequential w/ cursor_id (weekly distinguishes night vs weekend via cursor name) |
+
+The other field renames are direct (e.g. `cursor_id` stays
+`cursor_id`). Captured here so sub-slice #16's translator has the
+authoritative reference.
+
+**Post-ship review fix (caught a real bug):**
+
+The full-slice review surfaced an interaction bug between §14.32 +
+§14.25: `engine.persistence._save_mix_usages` was indexing into
+`template.layout.row_template` to look up block specs by the trace
+slot's `block` index. For flat_slots templates the row_template
+list is empty, so a mix block's MixUsage recording crashed with
+IndexError mid-save.
+
+Fixed: `_save_mix_usages` now selects the correct block-list source
+based on which layout form the template carries (XOR-enforced by
+parser, so exactly one is non-empty). Identical indexing math —
+just the source list differs. Two integration tests added to catch
+regressions: weighted+ExcludedCandidate in flat form (already
+covered cross-strategy state plumbing for §14.27) and
+slot_type+flat_slots persistence round-trip (the test that
+surfaced the bug). Total test count: 485 (483 + 2 new).
+
 ---
 
 ## 15. Status snapshot

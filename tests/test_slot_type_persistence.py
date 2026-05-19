@@ -443,6 +443,56 @@ def test_backfill_corrupted_trace_slot_skips_without_crashing(session_factory, c
 # ---------- §14.31 design semantic: slot_type reflects block.strategy ---
 
 
+def test_flat_slots_template_records_slot_type_per_entry(api):
+    """§14.32 × §14.31 integration: a flat_slots template generates
+    PlaylistEntry rows with slot_type populated identically to a
+    row_template generation. Verifies the persistence chain
+    (BlockSpec.strategy → TraceSlot.strategy → PlaylistEntry.slot_type)
+    works for the flat dispatch path.
+    """
+    client, Session = api
+    template = {
+        "station": "flat", "cadence": "weekly", "rng": "off",
+        "sources": [{"name": "A", "colour": "#111", "role": "content"}],
+        "cursor": {"base_advance_per_week": 0, "cycle_weeks": 1},
+        "layout": {
+            "unit": "slot", "unit_labels": [], "row_start_offsets": [],
+            "flat_slots": [
+                {"source": "A", "strategy": "jingle", "size": 1, "genre": "Daytime"},
+                {"source": "A", "strategy": "weighted", "size": 1, "window": 10},
+                {"source": "A", "strategy": "mix", "size": 1,
+                 "genre": "Daytime", "exclusion_window": 5},
+            ],
+        },
+    }
+    with Session() as db:
+        st = Station(slug="flat", name="Flat", template=template)
+        db.add(st)
+        db.flush()
+        sp = SourcePlaylist(name="A")
+        db.add(sp)
+        db.flush()
+        for i, (pid, name) in enumerate([
+            ("F-D1", "D-1"), ("F-D2", "D-2"), ("F-D3", "D-3"),
+        ], start=1):
+            tr = Track(persistent_id=pid, name=name, genre="Daytime")
+            db.add(tr)
+            db.flush()
+            db.add(SourcePlaylistEntry(
+                source_playlist_id=sp.id, track_id=tr.id, position=i,
+            ))
+        db.commit()
+
+    r = client.post("/api/stations/flat/generate", json={"week": 1})
+    assert r.status_code == 201
+    playlist_id = r.json()["playlist_id"]
+
+    body = client.get(f"/api/playlists/{playlist_id}").json()
+    slot_types = [e["slot_type"] for e in body["entries"]]
+    # Three slots, each gets its block's declared strategy as slot_type.
+    assert slot_types == ["jingle", "weighted", "mix"]
+
+
 def test_prev_ref_block_records_slot_type_prev_ref_even_for_fallback_mix(api):
     """Design choice (DESIGN.md §14.31): slot_type reflects the
     block's declared strategy, NOT the strategy that actually fired.
