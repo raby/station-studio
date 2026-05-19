@@ -191,26 +191,259 @@ def generate(
     # genre tag (§14.24) and likewise ignores it. A template author who
     # mixes both styles within a row sees the offset apply only to
     # window/pick blocks — by design.
-    for row_idx, row_offset in enumerate(template.layout.row_start_offsets):
-        unit_label = template.layout.unit_labels[row_idx]
-        row_start_in_pool = base_cursor + row_offset
+    #
+    # §14.32 — the iteration helper below yields tuples in BOTH layout
+    # forms (row_template vs flat_slots), so the dispatch body stays a
+    # single loop. For flat_slots: row_idx=0 (→ trace.row = 1), unit
+    # label = "", no row offset (row_start_in_pool = base_cursor; the
+    # parser forbids window/pick in flat_slots so this value is
+    # untouched in the dispatch branches flat templates actually use).
+    for row_idx, unit_label, row_start_in_pool, block_idx, block in (
+        _iterate_slots(template, base_cursor)
+    ):
+        pool = pools[block.source]
+        if block.strategy == "window":
+            picked = apply_window(
+                pool,
+                start=row_start_in_pool,
+                size=block.size,
+                source_name=block.source,
+            )
+            reason_prefix = (
+                f"window size={block.size} from '{block.source}' "
+                f"at pool_index {row_start_in_pool + 1}"
+            )
+            for (pool_idx, track) in picked:
+                slot_counter += 1
+                picks.append(track)
+                trace.slots.append(_make_trace_slot(
+                    slot=slot_counter,
+                    unit=unit_label,
+                    row=row_idx + 1,
+                    block=block_idx + 1,
+                    block_spec=block,
+                    pool_index=pool_idx,
+                    track=track,
+                    reason=reason_prefix,
+                ))
+        elif block.strategy == "sequential":
+            # §14.22 Weekly-port: same algorithm as window, but the start
+            # position comes from a NAMED cursor (declared in
+            # layout.cursors_init) instead of the row-offset list.
+            # row_start_offsets[row_idx] is ignored for sequential blocks —
+            # the cursor is the addressing mechanism.
+            #
+            # §14.30 — when template.cursor.persist is True and the
+            # caller passed `named_cursor_positions`, use the loaded
+            # value (which the API got from cursor_state). Otherwise
+            # fall back to the §14.22 stateless computation.
+            if template.cursor.persist and named_cursor_positions is not None:
+                seq_start = named_cursor_positions[block.cursor_id]  # type: ignore[index]
+            else:
+                seq_start = template.cursor_position(block.cursor_id, week)  # type: ignore[arg-type]
+            picked = apply_window(
+                pool,
+                start=seq_start,
+                size=block.size,
+                source_name=block.source,
+            )
+            reason_prefix = (
+                f"sequential size={block.size} from '{block.source}' "
+                f"cursor='{block.cursor_id}' at pool_index {seq_start + 1}"
+            )
+            for (pool_idx, track) in picked:
+                slot_counter += 1
+                picks.append(track)
+                trace.slots.append(_make_trace_slot(
+                    slot=slot_counter,
+                    unit=unit_label,
+                    row=row_idx + 1,
+                    block=block_idx + 1,
+                    block_spec=block,
+                    pool_index=pool_idx,
+                    track=track,
+                    reason=reason_prefix,
+                ))
+        elif block.strategy == "mix":
+            # §14.25 Weekly-port: genre-filtered random pick with cross-
+            # week exclusion. Caller pre-builds excluded_mix_ids from
+            # MixUsage of the station's last block.exclusion_window
+            # playlists. apply_mix relaxes the exclusion if it would
+            # drain the candidate set; we surface that in the trace
+            # reason so authoring can spot exclusion-window saturation.
+            for _ in range(block.size):
+                pool_idx, track, relaxed, n_cand, n_elig = apply_mix(
+                    pool,
+                    genre=block.genre,  # type: ignore[arg-type]
+                    excluded_ids=excluded_mix_ids,
+                    rng=rng,
+                    source_name=block.source,
+                )
+                # Accumulate within-generation: subsequent mix +
+                # prev_ref-fallback-mix slots see this pick excluded.
+                # Matches weekly's `excluded_mix_ids.add(track.id)`
+                # after every successful mix pick.
+                picked_id = getattr(track, "id", None)
+                if picked_id is not None:
+                    excluded_mix_ids.add(picked_id)
+                slot_counter += 1
+                picks.append(track)
+                mode = "random" if rng else "first match"
+                # Report genre-specific filtering pressure rather than the
+                # opaque total exclusion-set size. `eligible N of M` is
+                # the actionable number — when N approaches 1 the user
+                # knows to bump exclusion_window or add tracks.
+                excl_note = (
+                    " (relaxed — exclusion saturated genre)"
+                    if relaxed else ""
+                )
+                trace.slots.append(_make_trace_slot(
+                    slot=slot_counter,
+                    unit=unit_label,
+                    row=row_idx + 1,
+                    block=block_idx + 1,
+                    block_spec=block,
+                    pool_index=pool_idx,
+                    track=track,
+                    reason=f"mix from '{block.source}' "
+                           f"genre='{block.genre}' "
+                           f"eligible {n_elig} of {n_cand} ({mode}){excl_note}",
+                ))
+        elif block.strategy == "jingle":
+            # §14.24 Weekly-port: genre-filtered pick from the pool.
+            # Pool position is determined by which entries carry the
+            # requested genre tag, not by the row/cursor cursor —
+            # row_start_offsets[row_idx] is ignored. block.size loops
+            # in case a template ever wants N back-to-back jingles
+            # from the same genre, but size=1 is the typical case.
+            for _ in range(block.size):
+                pool_idx, track = apply_jingle(
+                    pool,
+                    genre=block.genre,  # type: ignore[arg-type]
+                    rng=rng,
+                    source_name=block.source,
+                )
+                slot_counter += 1
+                picks.append(track)
+                trace.slots.append(_make_trace_slot(
+                    slot=slot_counter,
+                    unit=unit_label,
+                    row=row_idx + 1,
+                    block=block_idx + 1,
+                    block_spec=block,
+                    pool_index=pool_idx,
+                    track=track,
+                    reason=f"jingle from '{block.source}' "
+                           f"genre='{block.genre}' "
+                           f"({'random' if rng else 'first match'})",
+                ))
+        elif block.strategy == "weighted":
+            # §14.27 Weekly-port: two-tier dedup (track shuffle-bag +
+            # artist sliding window), squared-remaining weighting.
+            # State (recent_artist_keys, used_track_ids) is shared
+            # across ALL weighted picks in this generation; READ by
+            # apply_weighted, WRITTEN here after each successful pick.
+            if block.source not in weighted_lookups:
+                weighted_lookups[block.source] = build_lookups(
+                    pool, alias_map=alias_map,
+                )
+            # §14.29 precedence: per-block field → station rule
+            # (via weighted_window_default kwarg) → engine constant.
+            effective_window = _resolve_weighted_window(
+                block_window=block.window,
+                station_default=weighted_window_default,
+            )
+            for _ in range(block.size):
+                track, info = apply_weighted(
+                    pool,
+                    lookups=weighted_lookups[block.source],
+                    recent_artist_keys=state.recent_artist_keys,
+                    used_track_ids=state.used_track_ids,
+                    window=effective_window,
+                    rng=rng,
+                    source_name=block.source,
+                )
+                # Mutate state AFTER the pick (the strategy only reads).
+                state.recent_artist_keys.append(
+                    weighted_lookups[block.source].track_keys.get(
+                        getattr(track, "id", -1), frozenset()
+                    )
+                )
+                state.used_track_ids.append(getattr(track, "id", -1))
+                slot_counter += 1
+                picks.append(track)
+                trace.slots.append(_make_trace_slot(
+                    slot=slot_counter,
+                    unit=unit_label,
+                    row=row_idx + 1,
+                    block=block_idx + 1,
+                    block_spec=block,
+                    pool_index=info.pool_index,
+                    track=track,
+                    reason=_weighted_reason(info, effective_window),
+                    # §14.23 ExcludedCandidate population for weighted
+                    # (commit 2 of sub-slice #11). Only artist-blocked
+                    # rejections are recorded; the shuffle-bag-only
+                    # rejections are mechanical noise.
+                    excluded=info.excluded_candidates,
+                ))
+        elif block.strategy == "prev_ref":
+            # §14.28 — three outcomes per slot:
+            #   MIRROR: previous playlist had a track at the position
+            #     AND it's in this slot's source pool → use it.
+            #   FALLBACK_MIX: mirror missed AND block.fallback_genre
+            #     is set → apply_mix from this source filtered to
+            #     fallback_genre. Records into prev_ref_fallback_mixes
+            #     so persistence can write a MixUsage row.
+            #   FALLBACK_WEIGHTED: mirror missed AND no fallback_genre
+            #     → defer to weighted strategy. Defensive — weekly's
+            #     actual templates never trigger this (every real
+            #     prev_ref has a fallback_genre) but the port keeps
+            #     the branch for byte-equality.
+            #
+            # On fallback (either kind), the failed-mirror context is
+            # surfaced via a single §14.23 ExcludedCandidate entry
+            # describing what the previous-playlist resolution turned
+            # up. For FALLBACK_WEIGHTED the slot's `excluded` list
+            # combines that one entry with whatever
+            # apply_weighted populated (artist-blocked rejections from
+            # the dedup window — see §14.27 commit 2).
+            for _ in range(block.size):
+                try:
+                    mirror, failure = try_prev_ref_mirror(
+                        previous_playlist,
+                        position=block.position,  # type: ignore[arg-type]
+                        source_pool=pool,
+                    )
+                except PrevRefPositionOutOfRangeError as e:
+                    raise ValueError(
+                        f"template error in prev_ref slot "
+                        f"(row {row_idx + 1}, block {block_idx + 1}): {e}"
+                    )
 
-        for block_idx, block in enumerate(template.layout.row_template):
-            pool = pools[block.source]
-            if block.strategy == "window":
-                picked = apply_window(
-                    pool,
-                    start=row_start_in_pool,
-                    size=block.size,
-                    source_name=block.source,
-                )
-                reason_prefix = (
-                    f"window size={block.size} from '{block.source}' "
-                    f"at pool_index {row_start_in_pool + 1}"
-                )
-                for (pool_idx, track) in picked:
+                if mirror is not None:
+                    # MIRROR outcome.
+                    # Pool position lookup matches weekly's expectation:
+                    # the slot reports where the track is in THIS slot's
+                    # source pool, not the previous-playlist position
+                    # (that's in the trace reason).
+                    #
+                    # The `next()` is guaranteed to find a match here:
+                    # `try_prev_ref_mirror` only returns a non-None
+                    # mirror when `mirror.id` was confirmed present in
+                    # `source_pool` (it builds the id-set from
+                    # source_pool, then checks membership before
+                    # returning). If a future refactor breaks that
+                    # invariant — e.g. by passing a different pool
+                    # object to the lookup vs the strategy — this
+                    # would raise StopIteration; the strategy's
+                    # docstring is the canonical contract.
+                    pool_idx = next(
+                        i + 1 for i, t in enumerate(pool)
+                        if getattr(t, "id", None) == getattr(mirror, "id", None)
+                    )
                     slot_counter += 1
-                    picks.append(track)
+                    picks.append(mirror)
                     trace.slots.append(_make_trace_slot(
                         slot=slot_counter,
                         unit=unit_label,
@@ -218,78 +451,53 @@ def generate(
                         block=block_idx + 1,
                         block_spec=block,
                         pool_index=pool_idx,
-                        track=track,
-                        reason=reason_prefix,
+                        track=mirror,
+                        reason=(
+                            f"prev_ref mirror from previous playlist "
+                            f"position {block.position}"
+                        ),
                     ))
-            elif block.strategy == "sequential":
-                # §14.22 Weekly-port: same algorithm as window, but the start
-                # position comes from a NAMED cursor (declared in
-                # layout.cursors_init) instead of the row-offset list.
-                # row_start_offsets[row_idx] is ignored for sequential blocks —
-                # the cursor is the addressing mechanism.
-                #
-                # §14.30 — when template.cursor.persist is True and the
-                # caller passed `named_cursor_positions`, use the loaded
-                # value (which the API got from cursor_state). Otherwise
-                # fall back to the §14.22 stateless computation.
-                if template.cursor.persist and named_cursor_positions is not None:
-                    seq_start = named_cursor_positions[block.cursor_id]  # type: ignore[index]
-                else:
-                    seq_start = template.cursor_position(block.cursor_id, week)  # type: ignore[arg-type]
-                picked = apply_window(
-                    pool,
-                    start=seq_start,
-                    size=block.size,
-                    source_name=block.source,
+                    continue
+
+                # Fallback path — build the failed-mirror diagnostic
+                # entry once; both fallback branches surface it in
+                # the slot's `excluded` list.
+                failure_excluded = _prev_ref_failure_excluded(
+                    failure, position=block.position, source_name=block.source,
                 )
-                reason_prefix = (
-                    f"sequential size={block.size} from '{block.source}' "
-                    f"cursor='{block.cursor_id}' at pool_index {seq_start + 1}"
+                miss_note = (
+                    "no previous playlist"
+                    if failure and failure.kind == "no_previous"
+                    else f"resolved track not in source '{block.source}'"
                 )
-                for (pool_idx, track) in picked:
-                    slot_counter += 1
-                    picks.append(track)
-                    trace.slots.append(_make_trace_slot(
-                        slot=slot_counter,
-                        unit=unit_label,
-                        row=row_idx + 1,
-                        block=block_idx + 1,
-                        block_spec=block,
-                        pool_index=pool_idx,
-                        track=track,
-                        reason=reason_prefix,
-                    ))
-            elif block.strategy == "mix":
-                # §14.25 Weekly-port: genre-filtered random pick with cross-
-                # week exclusion. Caller pre-builds excluded_mix_ids from
-                # MixUsage of the station's last block.exclusion_window
-                # playlists. apply_mix relaxes the exclusion if it would
-                # drain the candidate set; we surface that in the trace
-                # reason so authoring can spot exclusion-window saturation.
-                for _ in range(block.size):
+
+                if block.fallback_genre is not None:
+                    # FALLBACK_MIX outcome — invoke apply_mix on the
+                    # same source filtered to fallback_genre. Reuses
+                    # the cross-week excluded_mix_ids set the
+                    # generator already threads through.
                     pool_idx, track, relaxed, n_cand, n_elig = apply_mix(
                         pool,
-                        genre=block.genre,  # type: ignore[arg-type]
+                        genre=block.fallback_genre,
                         excluded_ids=excluded_mix_ids,
                         rng=rng,
                         source_name=block.source,
                     )
-                    # Accumulate within-generation: subsequent mix +
-                    # prev_ref-fallback-mix slots see this pick excluded.
-                    # Matches weekly's `excluded_mix_ids.add(track.id)`
-                    # after every successful mix pick.
+                    # Within-generation accumulation: prev_ref-fallback-
+                    # mix picks count toward subsequent slots' exclusion,
+                    # matching weekly's behaviour (line 590 in weekly's
+                    # generator). Mirrors do NOT accumulate (no apply_mix
+                    # call, no MixUsage row).
                     picked_id = getattr(track, "id", None)
                     if picked_id is not None:
                         excluded_mix_ids.add(picked_id)
                     slot_counter += 1
                     picks.append(track)
-                    mode = "random" if rng else "first match"
-                    # Report genre-specific filtering pressure rather than the
-                    # opaque total exclusion-set size. `eligible N of M` is
-                    # the actionable number — when N approaches 1 the user
-                    # knows to bump exclusion_window or add tracks.
+                    prev_ref_fallback_mixes.append(
+                        (slot_counter, block.fallback_genre, track)
+                    )
                     excl_note = (
-                        " (relaxed — exclusion saturated genre)"
+                        " (mix relaxed — exclusion saturated genre)"
                         if relaxed else ""
                     )
                     trace.slots.append(_make_trace_slot(
@@ -300,65 +508,51 @@ def generate(
                         block_spec=block,
                         pool_index=pool_idx,
                         track=track,
-                        reason=f"mix from '{block.source}' "
-                               f"genre='{block.genre}' "
-                               f"eligible {n_elig} of {n_cand} ({mode}){excl_note}",
+                        reason=(
+                            f"prev_ref fallback (position {block.position}: "
+                            f"{miss_note}); picked mix of genre "
+                            f"'{block.fallback_genre}' eligible {n_elig} "
+                            f"of {n_cand}{excl_note}"
+                        ),
+                        excluded=failure_excluded,
                     ))
-            elif block.strategy == "jingle":
-                # §14.24 Weekly-port: genre-filtered pick from the pool.
-                # Pool position is determined by which entries carry the
-                # requested genre tag, not by the row/cursor cursor —
-                # row_start_offsets[row_idx] is ignored. block.size loops
-                # in case a template ever wants N back-to-back jingles
-                # from the same genre, but size=1 is the typical case.
-                for _ in range(block.size):
-                    pool_idx, track = apply_jingle(
-                        pool,
-                        genre=block.genre,  # type: ignore[arg-type]
-                        rng=rng,
-                        source_name=block.source,
+                else:
+                    # FALLBACK_WEIGHTED outcome (§14.28 commit 2).
+                    # Defer to the weighted strategy using the SAME
+                    # state machinery a regular weighted dispatch
+                    # would: per-source lookup cache, _GenState
+                    # (recent_artist_keys + used_track_ids),
+                    # DEFAULT_WEIGHTED_WINDOW. Weekly's templates
+                    # don't trigger this path, but the port keeps
+                    # the branch implemented for byte-equality.
+                    if block.source not in weighted_lookups:
+                        weighted_lookups[block.source] = build_lookups(
+                            pool, alias_map=alias_map,
+                        )
+                    # §14.29 — same precedence as the regular
+                    # weighted dispatch: station rule (passed via
+                    # weighted_window_default) overrides the engine
+                    # constant. The prev_ref block has no `window`
+                    # field of its own (window is reserved for
+                    # weighted blocks only — see template parser
+                    # coupling) so we skip the per-block level.
+                    fallback_window = _resolve_weighted_window(
+                        block_window=None,
+                        station_default=weighted_window_default,
                     )
-                    slot_counter += 1
-                    picks.append(track)
-                    trace.slots.append(_make_trace_slot(
-                        slot=slot_counter,
-                        unit=unit_label,
-                        row=row_idx + 1,
-                        block=block_idx + 1,
-                        block_spec=block,
-                        pool_index=pool_idx,
-                        track=track,
-                        reason=f"jingle from '{block.source}' "
-                               f"genre='{block.genre}' "
-                               f"({'random' if rng else 'first match'})",
-                    ))
-            elif block.strategy == "weighted":
-                # §14.27 Weekly-port: two-tier dedup (track shuffle-bag +
-                # artist sliding window), squared-remaining weighting.
-                # State (recent_artist_keys, used_track_ids) is shared
-                # across ALL weighted picks in this generation; READ by
-                # apply_weighted, WRITTEN here after each successful pick.
-                if block.source not in weighted_lookups:
-                    weighted_lookups[block.source] = build_lookups(
-                        pool, alias_map=alias_map,
-                    )
-                # §14.29 precedence: per-block field → station rule
-                # (via weighted_window_default kwarg) → engine constant.
-                effective_window = _resolve_weighted_window(
-                    block_window=block.window,
-                    station_default=weighted_window_default,
-                )
-                for _ in range(block.size):
                     track, info = apply_weighted(
                         pool,
                         lookups=weighted_lookups[block.source],
                         recent_artist_keys=state.recent_artist_keys,
                         used_track_ids=state.used_track_ids,
-                        window=effective_window,
+                        window=fallback_window,
                         rng=rng,
                         source_name=block.source,
                     )
-                    # Mutate state AFTER the pick (the strategy only reads).
+                    # Mutate _GenState same as the regular weighted
+                    # dispatch — the prev_ref fallback's pick must
+                    # affect subsequent weighted slots in the same
+                    # generation.
                     state.recent_artist_keys.append(
                         weighted_lookups[block.source].track_keys.get(
                             getattr(track, "id", -1), frozenset()
@@ -375,227 +569,38 @@ def generate(
                         block_spec=block,
                         pool_index=info.pool_index,
                         track=track,
-                        reason=_weighted_reason(info, effective_window),
-                        # §14.23 ExcludedCandidate population for weighted
-                        # (commit 2 of sub-slice #11). Only artist-blocked
-                        # rejections are recorded; the shuffle-bag-only
-                        # rejections are mechanical noise.
-                        excluded=info.excluded_candidates,
+                        reason=(
+                            f"prev_ref fallback (position {block.position}: "
+                            f"{miss_note}); picked weighted "
+                            f"{_weighted_reason(info, fallback_window)}"
+                        ),
+                        # Combine the failed-mirror diagnostic with
+                        # the artist-blocked rejections the weighted
+                        # strategy populated.
+                        excluded=failure_excluded + info.excluded_candidates,
                     ))
-            elif block.strategy == "prev_ref":
-                # §14.28 — three outcomes per slot:
-                #   MIRROR: previous playlist had a track at the position
-                #     AND it's in this slot's source pool → use it.
-                #   FALLBACK_MIX: mirror missed AND block.fallback_genre
-                #     is set → apply_mix from this source filtered to
-                #     fallback_genre. Records into prev_ref_fallback_mixes
-                #     so persistence can write a MixUsage row.
-                #   FALLBACK_WEIGHTED: mirror missed AND no fallback_genre
-                #     → defer to weighted strategy. Defensive — weekly's
-                #     actual templates never trigger this (every real
-                #     prev_ref has a fallback_genre) but the port keeps
-                #     the branch for byte-equality.
-                #
-                # On fallback (either kind), the failed-mirror context is
-                # surfaced via a single §14.23 ExcludedCandidate entry
-                # describing what the previous-playlist resolution turned
-                # up. For FALLBACK_WEIGHTED the slot's `excluded` list
-                # combines that one entry with whatever
-                # apply_weighted populated (artist-blocked rejections from
-                # the dedup window — see §14.27 commit 2).
-                for _ in range(block.size):
-                    try:
-                        mirror, failure = try_prev_ref_mirror(
-                            previous_playlist,
-                            position=block.position,  # type: ignore[arg-type]
-                            source_pool=pool,
-                        )
-                    except PrevRefPositionOutOfRangeError as e:
-                        raise ValueError(
-                            f"template error in prev_ref slot "
-                            f"(row {row_idx + 1}, block {block_idx + 1}): {e}"
-                        )
-
-                    if mirror is not None:
-                        # MIRROR outcome.
-                        # Pool position lookup matches weekly's expectation:
-                        # the slot reports where the track is in THIS slot's
-                        # source pool, not the previous-playlist position
-                        # (that's in the trace reason).
-                        #
-                        # The `next()` is guaranteed to find a match here:
-                        # `try_prev_ref_mirror` only returns a non-None
-                        # mirror when `mirror.id` was confirmed present in
-                        # `source_pool` (it builds the id-set from
-                        # source_pool, then checks membership before
-                        # returning). If a future refactor breaks that
-                        # invariant — e.g. by passing a different pool
-                        # object to the lookup vs the strategy — this
-                        # would raise StopIteration; the strategy's
-                        # docstring is the canonical contract.
-                        pool_idx = next(
-                            i + 1 for i, t in enumerate(pool)
-                            if getattr(t, "id", None) == getattr(mirror, "id", None)
-                        )
-                        slot_counter += 1
-                        picks.append(mirror)
-                        trace.slots.append(_make_trace_slot(
-                            slot=slot_counter,
-                            unit=unit_label,
-                            row=row_idx + 1,
-                            block=block_idx + 1,
-                            block_spec=block,
-                            pool_index=pool_idx,
-                            track=mirror,
-                            reason=(
-                                f"prev_ref mirror from previous playlist "
-                                f"position {block.position}"
-                            ),
-                        ))
-                        continue
-
-                    # Fallback path — build the failed-mirror diagnostic
-                    # entry once; both fallback branches surface it in
-                    # the slot's `excluded` list.
-                    failure_excluded = _prev_ref_failure_excluded(
-                        failure, position=block.position, source_name=block.source,
-                    )
-                    miss_note = (
-                        "no previous playlist"
-                        if failure and failure.kind == "no_previous"
-                        else f"resolved track not in source '{block.source}'"
-                    )
-
-                    if block.fallback_genre is not None:
-                        # FALLBACK_MIX outcome — invoke apply_mix on the
-                        # same source filtered to fallback_genre. Reuses
-                        # the cross-week excluded_mix_ids set the
-                        # generator already threads through.
-                        pool_idx, track, relaxed, n_cand, n_elig = apply_mix(
-                            pool,
-                            genre=block.fallback_genre,
-                            excluded_ids=excluded_mix_ids,
-                            rng=rng,
-                            source_name=block.source,
-                        )
-                        # Within-generation accumulation: prev_ref-fallback-
-                        # mix picks count toward subsequent slots' exclusion,
-                        # matching weekly's behaviour (line 590 in weekly's
-                        # generator). Mirrors do NOT accumulate (no apply_mix
-                        # call, no MixUsage row).
-                        picked_id = getattr(track, "id", None)
-                        if picked_id is not None:
-                            excluded_mix_ids.add(picked_id)
-                        slot_counter += 1
-                        picks.append(track)
-                        prev_ref_fallback_mixes.append(
-                            (slot_counter, block.fallback_genre, track)
-                        )
-                        excl_note = (
-                            " (mix relaxed — exclusion saturated genre)"
-                            if relaxed else ""
-                        )
-                        trace.slots.append(_make_trace_slot(
-                            slot=slot_counter,
-                            unit=unit_label,
-                            row=row_idx + 1,
-                            block=block_idx + 1,
-                            block_spec=block,
-                            pool_index=pool_idx,
-                            track=track,
-                            reason=(
-                                f"prev_ref fallback (position {block.position}: "
-                                f"{miss_note}); picked mix of genre "
-                                f"'{block.fallback_genre}' eligible {n_elig} "
-                                f"of {n_cand}{excl_note}"
-                            ),
-                            excluded=failure_excluded,
-                        ))
-                    else:
-                        # FALLBACK_WEIGHTED outcome (§14.28 commit 2).
-                        # Defer to the weighted strategy using the SAME
-                        # state machinery a regular weighted dispatch
-                        # would: per-source lookup cache, _GenState
-                        # (recent_artist_keys + used_track_ids),
-                        # DEFAULT_WEIGHTED_WINDOW. Weekly's templates
-                        # don't trigger this path, but the port keeps
-                        # the branch implemented for byte-equality.
-                        if block.source not in weighted_lookups:
-                            weighted_lookups[block.source] = build_lookups(
-                                pool, alias_map=alias_map,
-                            )
-                        # §14.29 — same precedence as the regular
-                        # weighted dispatch: station rule (passed via
-                        # weighted_window_default) overrides the engine
-                        # constant. The prev_ref block has no `window`
-                        # field of its own (window is reserved for
-                        # weighted blocks only — see template parser
-                        # coupling) so we skip the per-block level.
-                        fallback_window = _resolve_weighted_window(
-                            block_window=None,
-                            station_default=weighted_window_default,
-                        )
-                        track, info = apply_weighted(
-                            pool,
-                            lookups=weighted_lookups[block.source],
-                            recent_artist_keys=state.recent_artist_keys,
-                            used_track_ids=state.used_track_ids,
-                            window=fallback_window,
-                            rng=rng,
-                            source_name=block.source,
-                        )
-                        # Mutate _GenState same as the regular weighted
-                        # dispatch — the prev_ref fallback's pick must
-                        # affect subsequent weighted slots in the same
-                        # generation.
-                        state.recent_artist_keys.append(
-                            weighted_lookups[block.source].track_keys.get(
-                                getattr(track, "id", -1), frozenset()
-                            )
-                        )
-                        state.used_track_ids.append(getattr(track, "id", -1))
-                        slot_counter += 1
-                        picks.append(track)
-                        trace.slots.append(_make_trace_slot(
-                            slot=slot_counter,
-                            unit=unit_label,
-                            row=row_idx + 1,
-                            block=block_idx + 1,
-                            block_spec=block,
-                            pool_index=info.pool_index,
-                            track=track,
-                            reason=(
-                                f"prev_ref fallback (position {block.position}: "
-                                f"{miss_note}); picked weighted "
-                                f"{_weighted_reason(info, fallback_window)}"
-                            ),
-                            # Combine the failed-mirror diagnostic with
-                            # the artist-blocked rejections the weighted
-                            # strategy populated.
-                            excluded=failure_excluded + info.excluded_candidates,
-                        ))
-            elif block.strategy == "pick":
-                cursor = row_start_in_pool
-                for _ in range(block.size):
-                    pool_idx, track, cursor = apply_pick(
-                        pool, cursor=cursor, rng=rng, source_name=block.source
-                    )
-                    slot_counter += 1
-                    picks.append(track)
-                    trace.slots.append(_make_trace_slot(
-                        slot=slot_counter,
-                        unit=unit_label,
-                        row=row_idx + 1,
-                        block=block_idx + 1,
-                        block_spec=block,
-                        pool_index=pool_idx,
-                        track=track,
-                        reason=f"pick from '{block.source}' "
-                               f"({'random' if rng else 'sequential'})",
-                    ))
-            else:
-                # template.parse_template should have rejected this already
-                raise RuntimeError(f"unreachable: unknown strategy {block.strategy!r}")
+        elif block.strategy == "pick":
+            cursor = row_start_in_pool
+            for _ in range(block.size):
+                pool_idx, track, cursor = apply_pick(
+                    pool, cursor=cursor, rng=rng, source_name=block.source
+                )
+                slot_counter += 1
+                picks.append(track)
+                trace.slots.append(_make_trace_slot(
+                    slot=slot_counter,
+                    unit=unit_label,
+                    row=row_idx + 1,
+                    block=block_idx + 1,
+                    block_spec=block,
+                    pool_index=pool_idx,
+                    track=track,
+                    reason=f"pick from '{block.source}' "
+                           f"({'random' if rng else 'sequential'})",
+                ))
+        else:
+            # template.parse_template should have rejected this already
+            raise RuntimeError(f"unreachable: unknown strategy {block.strategy!r}")
 
     return GenerationResult(
         picks=picks,
@@ -608,8 +613,14 @@ def generate(
 
 
 def _check_pools_present(template: Template, pools: Mapping[str, list[Any]]) -> None:
+    """Verify every source referenced by any block in the layout has a
+    pool entry. §14.32: walks BOTH row_template and flat_slots —
+    parser enforces XOR so one of them contributes 0 blocks.
+    """
     required = set()
     for b in template.layout.row_template:
+        required.add(b.source)
+    for b in template.layout.flat_slots:
         required.add(b.source)
     missing = required - set(pools.keys())
     if missing:
@@ -620,6 +631,33 @@ def _check_pools_present(template: Template, pools: Mapping[str, list[Any]]) -> 
     for name in required:
         if not pools[name]:
             raise ValueError(f"pool '{name}' is empty")
+
+
+def _iterate_slots(template: Template, base_cursor: int):
+    """Yield per-slot dispatch tuples for both layout forms (§14.32).
+
+    Yields ``(row_idx, unit_label, row_start_in_pool, block_idx, block)``
+    so the dispatch loop is form-agnostic.
+
+    - **row_template form** (existing): outer loop over rows, inner
+      loop over the per-row template. row_idx, unit_label,
+      row_start_in_pool reflect the row dimension; block_idx is
+      0-indexed within the row.
+    - **flat_slots form** (§14.32): single linear loop. row_idx=0
+      (→ trace.row = 1), unit_label="" (→ trace.unit = ""),
+      row_start_in_pool=base_cursor (unused — parser forbids
+      window/pick in flat_slots, which are the only branches that
+      read this value). block_idx is the slot index (0-indexed).
+    """
+    if template.layout.flat_slots:
+        for block_idx, block in enumerate(template.layout.flat_slots):
+            yield 0, "", base_cursor, block_idx, block
+    else:
+        for row_idx, row_offset in enumerate(template.layout.row_start_offsets):
+            unit_label = template.layout.unit_labels[row_idx]
+            row_start_in_pool = base_cursor + row_offset
+            for block_idx, block in enumerate(template.layout.row_template):
+                yield row_idx, unit_label, row_start_in_pool, block_idx, block
 
 
 def _make_trace_slot(

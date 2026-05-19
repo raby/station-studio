@@ -4207,6 +4207,155 @@ All 452 prior tests pass without modification.
 
 ---
 
+### 14.32 template slot-shape generalisation — flat_slots form (§17 Phase B sub-slice #15)
+
+**Goal.** Add a flat slot-list expression form (`flat_slots`)
+alongside the existing per-row template form (`row_template`) so
+Weekly-style templates can express their ~2200 interleaved slots
+naturally. Mutually exclusive — the parser enforces XOR: a template
+uses one form or the other, never both, never neither.
+
+This slice is the **prereq for sub-slice #16 (template-JSON
+import)**: importing Rebirth Radio's existing weekly template
+becomes a near-mechanical translation of weekly's flat list into
+station-studio's `flat_slots`. The grammar shape locks in here so
+the import slice is just code, not design.
+
+Shipped in two commits with a mid-slice review checkpoint:
+- **Commit 1 (`59dc5b8`):** parser grammar extension + XOR
+  validation + window/pick rejection + 11 parser tests.
+- **Review fix (within commit 2 below):** defensive `isinstance`
+  type-guards on `row_template` / `flat_slots` raw values (matches
+  the existing `cursors_init` type-check pattern).
+- **Commit 2:** generator dispatch refactor via a layout-form-
+  agnostic `_iterate_slots` helper; 8 new integration tests + the
+  DESIGN entry you're reading.
+
+**Two forms, same vocabulary:**
+
+| Template carries | Iteration shape | Use case |
+|---|---|---|
+| `row_template: [...]` (current) | Outer loop over rows × inner loop over per-row template; row offset addresses pool position | Classics: weekday pattern with cursor-based shifts per day |
+| `flat_slots: [...]` (§14.32) | Single linear loop over the slot list; no row dimension | Rebirth Radio: ~2200 interleaved slots with cursor / genre / position addressing |
+
+The two forms produce IDENTICAL `BlockSpec` objects — only the
+container differs. All §14.22–§14.30 features (cursor_id, genre,
+exclusion_window, window, position, fallback_genre, cursor.persist,
+rule precedence, alias resolution, etc.) work in both forms
+identically.
+
+**Parser additions (`engine/template.py`):**
+
+- `LayoutSpec.flat_slots: list[BlockSpec]` defaults to `[]`. Either
+  this or `row_template` must be non-empty (XOR).
+- `_parse_layout` now treats `row_template` AND `flat_slots` both
+  as optional at the `_require_keys` level; the post-parse XOR
+  check enforces "exactly one non-empty."
+- Type-guards on both `raw["row_template"]` and `raw["flat_slots"]`
+  ensure malformed templates (e.g. `flat_slots: "oops"`) surface a
+  clear `TemplateError` rather than a confusing iteration crash.
+- When `flat_slots` is non-empty:
+  - `row_start_offsets` must be `[]` (no row dimension)
+  - `unit_labels` must be `[]` (no row dimension)
+  - `window` and `pick` strategies are rejected (they depend on
+    row-offset addressing)
+- `Template.slots_per_week()` sums both forms (one always
+  contributes 0 because of XOR).
+
+`cursors_init` stays meaningful in both forms — sequential blocks
+in `flat_slots` reference declared cursors just like in
+`row_template`.
+
+**Generator dispatch (`engine/generator.py`):**
+
+The main loop went from nested-`for row × for block` to a single
+`for ... in _iterate_slots(template, base_cursor)`. The new helper
+yields `(row_idx, unit_label, row_start_in_pool, block_idx, block)`
+tuples in both forms:
+
+- **row_template form:** `row_idx` reflects the row; `unit_label`
+  is the per-row label; `row_start_in_pool = base_cursor +
+  row_offset`. Identical to pre-§14.32 behaviour.
+- **flat_slots form:** `row_idx = 0` (→ trace.row = 1);
+  `unit_label = ""` (→ trace.unit = ""); `row_start_in_pool =
+  base_cursor` (unused — parser forbids window/pick in flat_slots,
+  which are the only branches that consult this value); `block_idx`
+  is the slot index.
+
+The dispatch body itself (window / pick / sequential / mix / jingle
+/ weighted / prev_ref branches) is unchanged. The refactor is a
+**pure abstraction over iteration** — every strategy's logic stays
+where it was, just now reached via a single outer loop.
+
+`_check_pools_present` extended to walk both forms (one contributes
+0 sources by XOR).
+
+**TraceSlot semantics in flat form:**
+
+- `row = 1` for every slot (no row dimension)
+- `unit = ""` for every slot (no row label)
+- `block` is the 1-indexed slot index (when a flat_slots entry has
+  `size > 1`, multiple emitted slots share the same `block`
+  number — they came from the same flat_slots entry, just like
+  multi-size blocks in row_template form)
+- `slot` is the global slot counter (1-indexed across the whole
+  generation)
+- All other fields (source, strategy, pool_index, track_id,
+  track_name, track_artist, reason, excluded) work identically
+
+The §16.8 trace viewer's row-grouping degenerates to a single
+group named "" for flat_slots templates — acceptable; future UI
+work for flat-form templates can swap to a different grouping
+(e.g. by slot chunks of N) without changing the data shape.
+
+**Backward compatibility.** Classics templates byte-for-byte
+unchanged. All 464 prior tests pass without modification. The
+existing row_template iteration is preserved verbatim inside
+`_iterate_slots`'s else branch. The slots_per_week formula reduces
+to the old formula when `flat_slots` is empty.
+
+**Tests added (19 new, total 483):**
+
+- 11 parser tests (`test_template.py`): flat_slots accepted with
+  empty row machinery; key omission still works; both-set
+  rejected; neither-set rejected; non-empty row_start_offsets
+  rejected; non-empty unit_labels rejected; window in flat_slots
+  rejected; pick in flat_slots rejected; all 5 non-window/pick
+  strategies parse; cursors_init still applies; unknown cursor_id
+  still rejected.
+- 8 generator tests (`test_generator_generic.py`): minimal flat
+  dispatch (jingle, single slot); multi-strategy interleaved
+  (jingle/mix/weighted/sequential, with trace fields verified);
+  size>1 emits multiple slots with shared block index; prev_ref
+  mirror works in flat form; weighted dedup accumulates across
+  flat slots; flat_slots + cursor.persist=true coexist correctly;
+  row_template regression-after-refactor guard;
+  slots_per_week math for varying block sizes.
+
+**Punts:**
+
+- **Repetition / count markers in flat_slots.** Today the list is
+  literal — 200 commercial slots = 200 entries. Sub-slice #16
+  (template-JSON import) generates the flat list programmatically
+  from weekly's existing template builder; hand-authoring 2200
+  entries is impractical but not the v1 problem. Add `{count: N}`
+  desugaring if a hand-authoring use case shows up.
+- **Mixed row_template + flat_slots within one template.** XOR
+  enforced. A future hybrid template (e.g. Classics-style weekday
+  pattern + a Weekly-style flat appendix) would need grammar
+  changes. No real use case today.
+- **TraceSlot.unit per-slot in flat form.** Today unit="" for every
+  flat_slot. If a future use case wants to label slot chunks (e.g.
+  "morning" / "afternoon" / "evening" sections of a flat
+  schedule), add an optional `chunk` field on BlockSpec or a
+  `flat_slot_labels` parallel list. Defer until real demand.
+- **Sourced slot expression DSL.** Some templates might want
+  patterns like "10 commercials, then a jingle, repeat 20 times."
+  Real demand zero today. Programmatic generation (sub-slice #16
+  and beyond) covers it via Python.
+
+---
+
 ## 15. Status snapshot
 
 A quick "where are we" for a future reader. Last updated at commit
@@ -4231,7 +4380,7 @@ A quick "where are we" for a future reader. Last updated at commit
 | Delete / station-reset   | Shipped (14.10). Per-row delete + station nuke; cascades.        |
 | Disk-export UI button    | Shipped (14.11). Trace viewer "Export to disk" + status line.    |
 | Edit mode for stations   | Shipped (14.13). Shared `<StationForm>` + JSON preview + diff + reset. |
-| **§17 pre-port roadmap** | **Phase A complete (§14.17–§14.21). Phase B underway: sub-slices #5 (§14.23), #7 (§14.22), #8 (§14.24), #9 (§14.25), #10 (§14.26), #11 (§14.27), #12 (§14.28), #13 (§14.29 + §14.30), #14 (§14.31) shipped. **Next: sub-slice #15 = template slot-shape generalisation — flat slot-list expression form alongside the existing row-template, the prereq for the Rebirth Radio template port artifact.** |
+| **§17 pre-port roadmap** | **Phase A complete (§14.17–§14.21). Phase B underway: sub-slices #5 (§14.23), #7 (§14.22), #8 (§14.24), #9 (§14.25), #10 (§14.26), #11 (§14.27), #12 (§14.28), #13 (§14.29 + §14.30), #14 (§14.31), #15 (§14.32) shipped. **Next: sub-slice #16 = "Start from existing" / template-JSON import — read weekly's existing template and produce a station-studio flat_slots template.** |
 | Visual block editor      | Deferred (v2). Lands as §17 Phase B after Phase A unblocks.      |
 | Trace versioning         | Deferred. See §16.4 (queued behind §16.1 by design).             |
 | Accessibility pass       | Deferred. §17 Phase D — single sweep after §16.2 + port.         |
@@ -5545,7 +5694,7 @@ Sub-slice ordering (engine work in dependency order):
 12. ~~**`prev_ref` strategy** — cross-playlist lookup with fallback~~ — **shipped (§14.28, 2 commits + 1 mid-slice review-fix + 1 follow-on)**
 13. ~~**Rule table (per-station) + CRUD**~~ — **shipped (§14.29)**
 14. ~~**`PlaylistEntry.slot_type` column + Alembic**~~ — **shipped (§14.31)**
-15. **Template slot-shape generalisation** — flat slot list expression form alongside row-template
+15. ~~**Template slot-shape generalisation** — flat slot list expression form alongside row-template~~ — **shipped (§14.32)**
 16. **"Start from existing" / template-JSON import** (#6) — read weekly's existing template
 17. **The port itself** — `stations/rebirth-radio.json` + byte-equality verification
 

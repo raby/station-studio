@@ -383,13 +383,29 @@ def _parse_layout(raw: dict, *, known_sources: set[str]) -> LayoutSpec:
             )
         cursors_init[cid] = pos
 
+    # Type-guard both list inputs before iteration so a malformed
+    # template (e.g. `row_template: "oops"`) surfaces a clear
+    # TemplateError instead of a downstream AttributeError when the
+    # list comp iterates over string chars or dict keys. Matches the
+    # `cursors_init` type-check pattern above.
+    rt_raw = raw.get("row_template", [])
+    if not isinstance(rt_raw, list):
+        raise TemplateError(
+            f"layout.row_template must be a list, got {type(rt_raw).__name__}"
+        )
+    fs_raw = raw.get("flat_slots", [])
+    if not isinstance(fs_raw, list):
+        raise TemplateError(
+            f"layout.flat_slots must be a list, got {type(fs_raw).__name__}"
+        )
+
     row_template = [
         _parse_block(b, known_sources=known_sources, known_cursor_ids=set(cursors_init))
-        for b in raw.get("row_template", [])
+        for b in rt_raw
     ]
     flat_slots = [
         _parse_block(b, known_sources=known_sources, known_cursor_ids=set(cursors_init))
-        for b in raw.get("flat_slots", [])
+        for b in fs_raw
     ]
 
     # §14.32 XOR enforcement: exactly one of row_template / flat_slots

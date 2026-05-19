@@ -1232,3 +1232,188 @@ def test_deterministic_strategies_emit_empty_excluded_lists():
     # And it serialises through to_dict.
     for s_dict in r.trace.to_dict()["slots"]:
         assert s_dict["excluded"] == []
+
+
+# ---------- §14.32: flat_slots dispatch ---------------------------------
+
+
+def _flat_slots_template(slots: list[dict], **layout_overrides) -> dict:
+    """Build a template using the flat_slots layout form. The caller
+    supplies the slot list; the function fills in the (empty) row
+    machinery the §14.32 parser requires for the form."""
+    layout = {
+        "unit": "slot",
+        "unit_labels": [],
+        "row_start_offsets": [],
+        "flat_slots": slots,
+    }
+    layout.update(layout_overrides)
+    return mk_template(
+        rng="off",
+        cursor={"base_advance_per_week": 0, "cycle_weeks": 1},
+        layout=layout,
+    )
+
+
+def test_flat_slots_minimal_dispatch():
+    """Smallest flat_slots template: one jingle slot. Verifies the
+    flat dispatch loop runs at all + the trace.row/unit values match
+    the §14.32 design (row=1, unit="")."""
+    pool = [FakeTrack(id=1, name="D-1", genre="Daytime")]
+    t = parse_template(_flat_slots_template([
+        {"source": "A", "strategy": "jingle", "size": 1, "genre": "Daytime"},
+    ]))
+    r = generate(t, {"A": pool}, week=1)
+    assert len(r.picks) == 1
+    assert r.picks[0].id == 1
+    assert r.trace.slots[0].row == 1
+    assert r.trace.slots[0].unit == ""
+    assert r.trace.slots[0].block == 1
+    assert r.trace.slots[0].strategy == "jingle"
+
+
+def test_flat_slots_multi_strategy_interleaved():
+    """Real-world-shaped flat template: jingle / mix / weighted /
+    sequential / prev_ref interleaved. Each slot's trace fields
+    reflect its position in the flat list."""
+    pool = [
+        FakeTrack(id=10, name="D1", genre="Daytime"),
+        FakeTrack(id=20, name="H1", artist="Artist X", genre="House"),
+        FakeTrack(id=30, name="X1", artist="Artist Y"),
+        FakeTrack(id=40, name="N1", artist="Artist Z"),
+    ]
+    t = parse_template(_flat_slots_template(
+        [
+            {"source": "A", "strategy": "jingle", "size": 1, "genre": "Daytime"},
+            {"source": "A", "strategy": "mix", "size": 1, "genre": "House", "exclusion_window": 5},
+            {"source": "A", "strategy": "weighted", "size": 1, "window": 10},
+            {"source": "A", "strategy": "sequential", "size": 1, "cursor_id": "NIGHT_1"},
+        ],
+        cursors_init={"NIGHT_1": 3},  # → pool[3] = N1
+    ))
+    r = generate(t, {"A": pool}, week=1, seed=42)
+    assert len(r.picks) == 4
+    # All slots report row=1 / unit="" (no row dim in flat form).
+    assert all(s.row == 1 for s in r.trace.slots)
+    assert all(s.unit == "" for s in r.trace.slots)
+    # block is 1-indexed slot position.
+    assert [s.block for s in r.trace.slots] == [1, 2, 3, 4]
+    # Strategies threaded through correctly.
+    assert [s.strategy for s in r.trace.slots] == [
+        "jingle", "mix", "weighted", "sequential",
+    ]
+    # Sequential reads from cursors_init["NIGHT_1"]=3 → pool[3] = N1.
+    assert r.picks[3].id == 40
+
+
+def test_flat_slots_size_greater_than_one():
+    """A flat_slots entry with size>1 emits multiple slots, each with
+    its own incrementing block index."""
+    pool = [FakeTrack(id=i, name=f"D{i}", genre="Daytime") for i in range(1, 6)]
+    t = parse_template(_flat_slots_template([
+        {"source": "A", "strategy": "jingle", "size": 3, "genre": "Daytime"},
+    ]))
+    r = generate(t, {"A": pool}, week=1)
+    # size=3 → 3 slots from this single block entry. With rng="off"
+    # the jingle strategy picks first match every time, so all three
+    # are the same track. (size>1 + jingle is unusual but parser-legal.)
+    assert len(r.picks) == 3
+    # All three slots share the SAME block_idx (1) because they came
+    # from a single flat_slots entry. trace.block stays = 1.
+    assert [s.block for s in r.trace.slots] == [1, 1, 1]
+    # But slot counter increments.
+    assert [s.slot for s in r.trace.slots] == [1, 2, 3]
+
+
+def test_flat_slots_prev_ref_mirror():
+    """prev_ref in flat_slots: mirror reads from previous playlist."""
+    pool = [
+        FakeTrack(id=100, name="X", genre="House"),
+        FakeTrack(id=101, name="Y", genre="House"),
+    ]
+    previous = [pool[1]]  # position 1 → pool[1] = Y, in source ✓
+    t = parse_template(_flat_slots_template([
+        {"source": "A", "strategy": "prev_ref", "size": 1,
+         "position": 1, "fallback_genre": "House"},
+    ]))
+    r = generate(t, {"A": pool}, week=2, previous_playlist=previous)
+    assert r.picks[0].id == 101  # mirror succeeded
+    assert "mirror from previous playlist position 1" in r.trace.slots[0].reason
+
+
+def test_flat_slots_weighted_dedup_works_across_flat_list():
+    """Weighted's cross-slot state (_GenState) accumulates between
+    flat_slots picks just as it does in row_template form."""
+    pool = [
+        FakeTrack(id=1, name="A1", artist="Artist A"),
+        FakeTrack(id=2, name="A2", artist="Artist A"),
+        FakeTrack(id=3, name="B1", artist="Artist B"),
+        FakeTrack(id=4, name="C1", artist="Artist C"),
+    ]
+    # 3 consecutive weighted slots. The artist dedup window must
+    # prevent repeats.
+    t = parse_template(_flat_slots_template(
+        [
+            {"source": "A", "strategy": "weighted", "size": 1, "window": 10},
+            {"source": "A", "strategy": "weighted", "size": 1, "window": 10},
+            {"source": "A", "strategy": "weighted", "size": 1, "window": 10},
+        ],
+    ))
+    r = generate(t, {"A": pool}, week=1, seed=42)
+    # 3 unique artists across the 3 slots.
+    artists = [p.artist for p in r.picks]
+    assert len(set(artists)) == 3
+
+
+def test_flat_slots_with_cursor_persist_true():
+    """§14.30 stateful cursor mode + §14.32 flat_slots coexist
+    correctly. The sequential dispatch reads from named_cursor_positions
+    regardless of layout form."""
+    pool = mk_pool("X", 10)  # X0001 .. X0010 (zero-padded per mk_pool)
+    t = parse_template({
+        "station": "rb", "cadence": "weekly", "rng": "off",
+        "sources": [{"name": "A", "colour": "#111", "role": "content"}],
+        "cursor": {
+            "base_advance_per_week": 0, "cycle_weeks": 1, "persist": True,
+        },
+        "layout": {
+            "unit": "slot", "unit_labels": [], "row_start_offsets": [],
+            "cursors_init": {"C1": 0},
+            "flat_slots": [
+                {"source": "A", "strategy": "sequential", "size": 1, "cursor_id": "C1"},
+            ],
+        },
+    })
+    r = generate(
+        t, {"A": pool}, week=1,
+        named_cursor_positions={"C1": 5},  # → pool[5] = X0006
+    )
+    assert r.picks[0].name == "X0006"
+
+
+def test_row_template_still_works_unchanged():
+    """The §14.32 generator refactor must not regress the existing
+    row_template path. This test mirrors the original
+    test_minimal_station_1_row_1_block but as an explicit
+    regression-after-refactor guard."""
+    t = parse_template(mk_template())
+    pools = {"A": mk_pool("A", 100)}
+    r = generate(t, pools, week=1)
+    # 3 slots from window size=3. unit/row/block values come from the
+    # row_template form's iteration.
+    assert len(r.picks) == 3
+    assert all(s.unit == "Mon" for s in r.trace.slots)
+    assert all(s.row == 1 for s in r.trace.slots)
+    assert [s.block for s in r.trace.slots] == [1, 1, 1]
+
+
+def test_slots_per_week_for_flat_slots_template():
+    """slots_per_week() sums block sizes in flat_slots (no row
+    multiplier)."""
+    t = parse_template(_flat_slots_template([
+        {"source": "A", "strategy": "jingle", "size": 1, "genre": "D"},
+        {"source": "A", "strategy": "jingle", "size": 5, "genre": "D"},
+        {"source": "A", "strategy": "mix", "size": 2,
+         "genre": "H", "exclusion_window": 5},
+    ]))
+    assert t.slots_per_week() == 8  # 1 + 5 + 2
