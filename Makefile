@@ -9,6 +9,7 @@
 
 .PHONY: test test-backend test-frontend-unit test-e2e install-e2e-browsers clean-test \
         migrate alembic-stamp alembic-revision alembic-current migration-parity \
+        backfill-slot-types \
         backup backups restore
 
 PY := .venv/bin/python
@@ -88,6 +89,13 @@ alembic-current:
 # CREATE-SQL — catches missing tables, columns, indexes, FK changes.
 migration-parity:
 	$(PY) scripts/check_migration_parity.py
+
+# §14.31 backfill: populate PlaylistEntry.slot_type for playlists
+# generated before the column existed. Idempotent — re-running after
+# the first pass is a no-op. Use --dry-run flag (`make
+# backfill-slot-types ARGS=--dry-run`) to preview without writing.
+backfill-slot-types:
+	$(PY) -m scripts.backfill_slot_types $(ARGS)
 
 # Backup / restore for the SQLite DB (DESIGN.md §14.18 / §17 #9).
 #

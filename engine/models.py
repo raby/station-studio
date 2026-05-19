@@ -10,6 +10,8 @@ Generalised from weekly/app/models.py. Key differences:
     see the model's docstring for the rationale).
   * Rule shipped in §14.29 (per-station config overrides; weekly's
     equivalent is global — station-studio is multi-station).
+  * PlaylistEntry.slot_type added in §14.31 (denormalised strategy tag;
+    nullable for pre-§14.31 rows, backfillable from PlaylistTrace.slots).
 """
 from __future__ import annotations
 
@@ -151,6 +153,14 @@ class PlaylistEntry(Base):
     )
     position = Column(Integer, nullable=False)
     source_name = Column(Text, nullable=True)  # which pool supplied this slot
+    # §14.31 — per-entry strategy tag (window/pick/sequential/jingle/mix/
+    # weighted/prev_ref). Denormalises the trace's slot.strategy onto the
+    # entry so queries like "show me all mix entries from week 12" don't
+    # need a JOIN with playlist_trace.slots JSON. Nullable so existing
+    # rows (pre-§14.31 playlists) remain valid pre-backfill; new rows
+    # always populate via save_playlist. Run scripts/backfill_slot_types.py
+    # to populate historical entries from their persisted traces.
+    slot_type = Column(Text, nullable=True)
 
     playlist = relationship("Playlist", back_populates="entries")
     track = relationship("Track")

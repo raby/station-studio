@@ -161,6 +161,7 @@ def get_playlist(playlist_id: int, db: Session = Depends(get_db)):
         PlaylistEntryOut(
             position=e.position,
             source_name=e.source_name,
+            slot_type=e.slot_type,
             track=TrackOut.model_validate(e.track),
         )
         for e in p.entries

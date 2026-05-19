@@ -32,6 +32,13 @@ export interface Track {
 export interface PlaylistEntry {
   position: number;
   source_name: string | null;
+  /**
+   * Strategy tag (window/pick/sequential/jingle/mix/weighted/prev_ref),
+   * denormalised from the trace's slot.strategy (§14.31). Null for
+   * entries created before §14.31 that haven't been backfilled via
+   * `scripts/backfill_slot_types.py`.
+   */
+  slot_type: string | null;
   track: Track;
 }
 

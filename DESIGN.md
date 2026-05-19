@@ -4055,6 +4055,135 @@ week N. Two implications for the eventual byte-equality test:
 
 ---
 
+### 14.31 PlaylistEntry.slot_type column + backfill (§17 Phase B sub-slice #14)
+
+**Goal.** Denormalise the strategy tag (window/pick/sequential/jingle/
+mix/weighted/prev_ref) from the persisted trace JSON onto the entry
+itself so SQL queries can filter playlists by slot type without
+cracking JSON. Backwards-compatible — pre-§14.31 entries get a
+nullable column + a backfill script.
+
+This is the simplest slice in Phase B so far: ~150 LoC across schema,
+persistence, API, and backfill, plus tests. No architectural surgery,
+no weekly-emulation subtlety. Pre-port-harness housekeeping that makes
+playlist analysis substantially easier for both the byte-equality
+harness (sub-slice #17) and any future UI that wants per-strategy
+filtering.
+
+**Why now.** Three drivers:
+- The §16.8 trace viewer's source/strategy filter already exists, but
+  builds its options from the trace JSON. A per-entry slot_type means
+  the FUTURE playlist list view + per-strategy queries don't need to
+  duplicate that work.
+- The byte-equality harness for the eventual port (#17) compares
+  station-studio's playlists with weekly's. Both sides need to agree
+  on "this is a mix slot" — having it on the entry simplifies cross-
+  system comparison without JSON gymnastics.
+- Trivial slice between the heavy §14.29 + §14.30 lift and the next
+  port-prep items (#15 template slot-shape generalisation, #16
+  template-JSON import).
+
+**Schema (`engine/models.py` + migration `1cafcc971152`):**
+
+```
+ALTER TABLE playlist_entry ADD COLUMN slot_type TEXT NULL;
+```
+
+Nullable. The full Strategies enum (window/pick/sequential/jingle/mix/
+weighted/prev_ref) is the value space; the column doesn't enforce —
+the parser already guarantees `block.strategy ∈ SUPPORTED_STRATEGIES`
+at template load time. Carrying a CHECK constraint here would be
+belt-and-braces for the same invariant, at the cost of a schema
+migration whenever a future strategy lands. Skip.
+
+No index. The expected query shapes are:
+- "all entries for playlist X" — covered by existing `(playlist_id)`
+  index.
+- "all entries of slot_type Y for playlist X" — sequential scan
+  after the playlist-id filter narrows to <2200 rows. Cheap.
+- "all entries of slot_type Y across stations" — possible future
+  analytical use; add an index then if it shows up in a profile.
+
+**Engine persistence (`engine/persistence.py`):**
+
+`save_playlist`'s PlaylistEntry construction adds `slot_type=
+slot.strategy`. One-line change. The trace's slot.strategy is already
+the right vocabulary — it's been recorded since §14.22 (the trace
+shape inherits from `BlockSpec.strategy`). No new validation; the
+trace is already validated upstream.
+
+**API surface (`api/schemas.py` + `api/routers/generate.py`):**
+
+`PlaylistEntryOut.slot_type: str | None` joins the existing
+`(position, source_name, track)` fields. GET /api/playlists/{id}
+populates it from the entry. Null for pre-§14.31 + unbackfilled rows.
+
+**Frontend type (`web/src/lib/api.ts`):**
+
+`PlaylistEntry.slot_type: string | null` to match. No viewer changes
+this slice — the §16.8 trace filter still drives off the trace's
+slot.strategy. Future filter UI can use either source equivalently.
+
+**Backfill (`scripts/backfill_slot_types.py` + Makefile target):**
+
+`make backfill-slot-types` walks every PlaylistTrace, populates
+`PlaylistEntry.slot_type` from the trace's slots by position, and
+commits. Idempotent: entries that already have slot_type are skipped.
+`--dry-run` reports without writing; `--station <slug>` filters to
+one station's playlists.
+
+Defensive on data oddities:
+- No trace for a playlist → log warning, skip.
+- Trace slot count doesn't match entry count → per-entry position
+  lookup handles it; missing entries log a warning.
+- Unknown station for `--station` filter → log error, return (0,0)
+  rather than crash.
+
+**Backward compatibility:** purely additive schema. Existing
+playlists keep functioning with `slot_type=NULL`. The API + frontend
+handle the null gracefully (typed as `str | None` / `string | null`).
+All 452 prior tests pass without modification.
+
+**Tests added (9 new, total 461):**
+
+`tests/test_slot_type_persistence.py` (new file):
+
+- `save_playlist` records slot_type per strategy for a mixed
+  window+pick template.
+- The column accepts NULL (legacy-row simulation).
+- `GET /api/playlists/{id}` returns slot_type per entry via the
+  generate→retrieve round-trip.
+- `GET /api/playlists/{id}` handles NULL slot_type cleanly
+  (Pydantic doesn't choke).
+- Backfill populates NULL slot_types from PlaylistTrace.
+- Backfill is idempotent (re-run = 0 updates).
+- `--dry-run` counts but doesn't write.
+- `--station <slug>` filter scopes correctly; other stations
+  untouched.
+- Unknown station slug returns (0, 0) gracefully.
+
+**Punts:**
+
+- **Add an index on `slot_type`.** Premature; the query shapes that
+  would benefit (cross-station analytics) don't exist yet. Add when
+  a real workload hits the table.
+- **CHECK constraint enforcing the strategy enum at the column
+  level.** Template parser already guarantees the invariant; the
+  CHECK would be redundant + cost a migration per new strategy.
+- **Frontend filter UI for "show only mix entries" on the playlist
+  page.** Available via the §16.8 trace viewer (which filters slots
+  by strategy). The entry-level filter is a future UI thing — wire
+  when there's a workflow that needs it (probably alongside the
+  Rebirth Radio port artifact).
+- **Backfill on import.** If a user imports playlists from weekly
+  via a future migration tool (sub-slice #16's "template-JSON
+  import" or later), slot_type would need to be set from the
+  imported trace. Cover in that slice; not relevant today since the
+  only ingestion path is generation, which already populates the
+  column.
+
+---
+
 ## 15. Status snapshot
 
 A quick "where are we" for a future reader. Last updated at commit
@@ -4079,7 +4208,7 @@ A quick "where are we" for a future reader. Last updated at commit
 | Delete / station-reset   | Shipped (14.10). Per-row delete + station nuke; cascades.        |
 | Disk-export UI button    | Shipped (14.11). Trace viewer "Export to disk" + status line.    |
 | Edit mode for stations   | Shipped (14.13). Shared `<StationForm>` + JSON preview + diff + reset. |
-| **§17 pre-port roadmap** | **Phase A complete (§14.17–§14.21). Phase B underway: sub-slices #5 (§14.23), #7 (§14.22), #8 (§14.24), #9 (§14.25), #10 (§14.26), #11 (§14.27), #12 (§14.28), #13 (§14.29 + §14.30 cursor wiring follow-on) shipped. **Next: sub-slice #14 = `PlaylistEntry.slot_type` column + Alembic — adds a per-entry strategy tag so historical playlists carry their slot vocabulary alongside the trace.** |
+| **§17 pre-port roadmap** | **Phase A complete (§14.17–§14.21). Phase B underway: sub-slices #5 (§14.23), #7 (§14.22), #8 (§14.24), #9 (§14.25), #10 (§14.26), #11 (§14.27), #12 (§14.28), #13 (§14.29 + §14.30), #14 (§14.31) shipped. **Next: sub-slice #15 = template slot-shape generalisation — flat slot-list expression form alongside the existing row-template, the prereq for the Rebirth Radio template port artifact.** |
 | Visual block editor      | Deferred (v2). Lands as §17 Phase B after Phase A unblocks.      |
 | Trace versioning         | Deferred. See §16.4 (queued behind §16.1 by design).             |
 | Accessibility pass       | Deferred. §17 Phase D — single sweep after §16.2 + port.         |
@@ -5392,7 +5521,7 @@ Sub-slice ordering (engine work in dependency order):
 11. ~~**`weighted` commercial strategy** — two-tier with squared-remaining + dedup~~ — **shipped (§14.27, 2 commits + 1 review-fix + 1 follow-on)**
 12. ~~**`prev_ref` strategy** — cross-playlist lookup with fallback~~ — **shipped (§14.28, 2 commits + 1 mid-slice review-fix + 1 follow-on)**
 13. ~~**Rule table (per-station) + CRUD**~~ — **shipped (§14.29)**
-14. **`PlaylistEntry.slot_type` column + Alembic**
+14. ~~**`PlaylistEntry.slot_type` column + Alembic**~~ — **shipped (§14.31)**
 15. **Template slot-shape generalisation** — flat slot list expression form alongside row-template
 16. **"Start from existing" / template-JSON import** (#6) — read weekly's existing template
 17. **The port itself** — `stations/rebirth-radio.json` + byte-equality verification

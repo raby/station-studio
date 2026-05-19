@@ -82,11 +82,17 @@ def save_playlist(
     db.flush()
 
     for i, (track, slot) in enumerate(zip(result.picks, result.trace.slots), start=1):
+        # §14.31: slot_type denormalises the trace's strategy onto the
+        # entry so SQL queries like "all mix entries this week" don't
+        # need to crack the trace JSON. Trace remains the source of
+        # truth (carries diagnostic detail this column doesn't); the
+        # entry's slot_type is a fast-path tag.
         db.add(PlaylistEntry(
             playlist_id=playlist.id,
             track_id=track.id,
             position=i,
             source_name=slot.source,
+            slot_type=slot.strategy,
         ))
     db.add(PlaylistTrace(
         trace_id=result.trace.trace_id,

@@ -72,6 +72,9 @@ class TrackOut(BaseModel):
 class PlaylistEntryOut(BaseModel):
     position: int
     source_name: str | None
+    # §14.31 — strategy tag (window/pick/sequential/jingle/mix/weighted/
+    # prev_ref). Null for pre-§14.31 entries that haven't been backfilled.
+    slot_type: str | None
     track: TrackOut
 
 
