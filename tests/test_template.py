@@ -501,6 +501,210 @@ def test_cursor_same_source_two_blocks_accepted():
     assert tmpl.layout.row_template[1].cursor_id == "shared"
 
 
+# ---------- §14.32: flat_slots vs row_template XOR --------------------
+
+
+def test_flat_slots_template_accepted_without_row_machinery():
+    """A flat_slots template omits row_template + has empty row_start_offsets
+    and unit_labels (no row dimension). Parser accepts."""
+    tmpl = parse_template({
+        "station": "rb", "cadence": "weekly", "rng": "off",
+        "sources": [{"name": "A", "colour": "#111", "role": "content"}],
+        "cursor": {"base_advance_per_week": 0, "cycle_weeks": 1},
+        "layout": {
+            "unit": "slot",
+            "unit_labels": [],
+            "row_start_offsets": [],
+            "flat_slots": [
+                {"source": "A", "strategy": "jingle", "size": 1, "genre": "Daytime"},
+                {"source": "A", "strategy": "mix", "size": 1,
+                 "genre": "House", "exclusion_window": 5},
+            ],
+        },
+    })
+    assert tmpl.layout.flat_slots[0].strategy == "jingle"
+    assert tmpl.layout.flat_slots[1].strategy == "mix"
+    assert tmpl.layout.row_template == []  # XOR partner empty
+    assert tmpl.slots_per_week() == 2
+
+
+def test_flat_slots_omitted_key_still_works():
+    """flat_slots key can be entirely absent — defaults to empty list,
+    XOR with row_template still works as before."""
+    tmpl = parse_template(BASE)  # BASE has no flat_slots key
+    assert tmpl.layout.flat_slots == []
+    assert tmpl.layout.row_template  # the existing row_template still parsed
+
+
+def test_row_template_and_flat_slots_both_set_rejected():
+    """XOR violation: both forms non-empty is ambiguous."""
+    bad = {
+        "station": "x", "cadence": "weekly", "rng": "off",
+        "sources": [{"name": "A", "colour": "#111", "role": "content"}],
+        "cursor": {"base_advance_per_week": 0, "cycle_weeks": 1},
+        "layout": {
+            "unit": "day", "unit_labels": ["Mon"], "row_start_offsets": [0],
+            "row_template": [{"source": "A", "strategy": "pick", "size": 1}],
+            "flat_slots": [{"source": "A", "strategy": "pick", "size": 1}],
+        },
+    }
+    with pytest.raises(TemplateError, match="EXACTLY one"):
+        parse_template(bad)
+
+
+def test_neither_row_template_nor_flat_slots_rejected():
+    """XOR violation: both forms empty (or absent) has no slots to
+    generate."""
+    bad = {
+        "station": "x", "cadence": "weekly", "rng": "off",
+        "sources": [{"name": "A", "colour": "#111", "role": "content"}],
+        "cursor": {"base_advance_per_week": 0, "cycle_weeks": 1},
+        "layout": {
+            "unit": "day", "unit_labels": [], "row_start_offsets": [],
+            # No row_template, no flat_slots.
+        },
+    }
+    with pytest.raises(TemplateError, match="got neither"):
+        parse_template(bad)
+
+
+def test_flat_slots_with_nonempty_row_start_offsets_rejected():
+    bad = {
+        "station": "x", "cadence": "weekly", "rng": "off",
+        "sources": [{"name": "A", "colour": "#111", "role": "content"}],
+        "cursor": {"base_advance_per_week": 0, "cycle_weeks": 1},
+        "layout": {
+            "unit": "slot",
+            "unit_labels": [],
+            "row_start_offsets": [0, 5],  # non-empty — invalid with flat_slots
+            "flat_slots": [{"source": "A", "strategy": "jingle", "size": 1,
+                            "genre": "Daytime"}],
+        },
+    }
+    with pytest.raises(TemplateError, match="row_start_offsets must be empty"):
+        parse_template(bad)
+
+
+def test_flat_slots_with_nonempty_unit_labels_rejected():
+    bad = {
+        "station": "x", "cadence": "weekly", "rng": "off",
+        "sources": [{"name": "A", "colour": "#111", "role": "content"}],
+        "cursor": {"base_advance_per_week": 0, "cycle_weeks": 1},
+        "layout": {
+            "unit": "slot",
+            "unit_labels": ["Mon"],  # non-empty — invalid with flat_slots
+            "row_start_offsets": [],
+            "flat_slots": [{"source": "A", "strategy": "jingle", "size": 1,
+                            "genre": "Daytime"}],
+        },
+    }
+    with pytest.raises(TemplateError, match="unit_labels must be empty"):
+        parse_template(bad)
+
+
+def test_flat_slots_window_strategy_rejected():
+    """window depends on row_start_offsets — meaningless in flat form."""
+    bad = {
+        "station": "x", "cadence": "weekly", "rng": "off",
+        "sources": [{"name": "A", "colour": "#111", "role": "content"}],
+        "cursor": {"base_advance_per_week": 0, "cycle_weeks": 1},
+        "layout": {
+            "unit": "slot", "unit_labels": [], "row_start_offsets": [],
+            "flat_slots": [
+                {"source": "A", "strategy": "window", "size": 3},
+            ],
+        },
+    }
+    with pytest.raises(TemplateError, match="strategy 'window' requires row-offset"):
+        parse_template(bad)
+
+
+def test_flat_slots_pick_strategy_rejected():
+    """Same: pick depends on row_start_offsets."""
+    bad = {
+        "station": "x", "cadence": "weekly", "rng": "off",
+        "sources": [{"name": "A", "colour": "#111", "role": "content"}],
+        "cursor": {"base_advance_per_week": 0, "cycle_weeks": 1},
+        "layout": {
+            "unit": "slot", "unit_labels": [], "row_start_offsets": [],
+            "flat_slots": [
+                {"source": "A", "strategy": "pick", "size": 1},
+            ],
+        },
+    }
+    with pytest.raises(TemplateError, match="strategy 'pick' requires row-offset"):
+        parse_template(bad)
+
+
+def test_flat_slots_supports_all_weekly_strategies():
+    """Smoke test: a flat_slots template can carry every non-window/pick
+    strategy. Verifies the parser threads each through correctly."""
+    tmpl = parse_template({
+        "station": "rb", "cadence": "weekly", "rng": "off",
+        "sources": [{"name": "A", "colour": "#111", "role": "content"}],
+        "cursor": {"base_advance_per_week": 0, "cycle_weeks": 1},
+        "layout": {
+            "unit": "slot",
+            "unit_labels": [],
+            "row_start_offsets": [],
+            "cursors_init": {"NIGHT_1": 0},
+            "flat_slots": [
+                {"source": "A", "strategy": "jingle", "size": 1, "genre": "Daytime"},
+                {"source": "A", "strategy": "mix", "size": 1, "genre": "House", "exclusion_window": 5},
+                {"source": "A", "strategy": "weighted", "size": 1, "window": 10},
+                {"source": "A", "strategy": "sequential", "size": 1, "cursor_id": "NIGHT_1"},
+                {"source": "A", "strategy": "prev_ref", "size": 1,
+                 "position": 1, "fallback_genre": "House"},
+            ],
+        },
+    })
+    strategies = [b.strategy for b in tmpl.layout.flat_slots]
+    assert strategies == ["jingle", "mix", "weighted", "sequential", "prev_ref"]
+
+
+def test_flat_slots_cursors_init_still_applies():
+    """Sequential blocks in flat_slots can reference declared cursors —
+    the cursors_init machinery is not row-form-specific."""
+    tmpl = parse_template({
+        "station": "rb", "cadence": "weekly", "rng": "off",
+        "sources": [{"name": "A", "colour": "#111", "role": "content"}],
+        "cursor": {"base_advance_per_week": 0, "cycle_weeks": 1},
+        "layout": {
+            "unit": "slot",
+            "unit_labels": [],
+            "row_start_offsets": [],
+            "cursors_init": {"NIGHT_1": 0, "NIGHT_2": 10},
+            "flat_slots": [
+                {"source": "A", "strategy": "sequential", "size": 1, "cursor_id": "NIGHT_1"},
+                {"source": "A", "strategy": "sequential", "size": 1, "cursor_id": "NIGHT_2"},
+            ],
+        },
+    })
+    assert tmpl.layout.cursors_init == {"NIGHT_1": 0, "NIGHT_2": 10}
+
+
+def test_flat_slots_unknown_cursor_id_still_rejected():
+    """Sequential block validation (cursor_id ∈ cursors_init) applies in
+    flat_slots just like in row_template."""
+    bad = {
+        "station": "x", "cadence": "weekly", "rng": "off",
+        "sources": [{"name": "A", "colour": "#111", "role": "content"}],
+        "cursor": {"base_advance_per_week": 0, "cycle_weeks": 1},
+        "layout": {
+            "unit": "slot",
+            "unit_labels": [],
+            "row_start_offsets": [],
+            "cursors_init": {"NIGHT_1": 0},
+            "flat_slots": [
+                {"source": "A", "strategy": "sequential", "size": 1,
+                 "cursor_id": "PHANTOM"},
+            ],
+        },
+    }
+    with pytest.raises(TemplateError, match="cursor_id 'PHANTOM' not in"):
+        parse_template(bad)
+
+
 def test_source_by_name_unknown_raises():
     """source_by_name is defensive — upstream validation catches most cases,
     but the method itself must raise when called with an unknown name."""

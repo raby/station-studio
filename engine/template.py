@@ -137,6 +137,23 @@ class LayoutSpec:
     # sequential block. Optional — Classics-style templates leave this empty.
     # See Template.cursor_position() for the per-week computation.
     cursors_init: dict[str, int] = field(default_factory=dict)
+    # §14.32 — flat slot-list expression form. Mutually exclusive with
+    # row_template: exactly one of the two must be non-empty (parser
+    # enforces XOR). Templates with `flat_slots` set use linear slot
+    # iteration (no row dimension); templates with `row_template` set
+    # use the existing per-row-per-block iteration. The flat form is
+    # the natural shape for Weekly-style templates (~2200 slots in a
+    # specific interleaved sequence — jingle/commercial/mix/prev_ref/
+    # sequential — none of which need row offsets). Classics keeps
+    # row_template.
+    #
+    # When flat_slots is set:
+    #   - row_start_offsets and unit_labels must be EMPTY (no row dim)
+    #   - cursors_init still applies (sequential reads from it)
+    #   - window/pick blocks are forbidden (they need row offsets)
+    #   - TraceSlot.row = 1 and TraceSlot.unit = "" for every slot
+    #     (no row grouping)
+    flat_slots: list[BlockSpec] = field(default_factory=list)
 
 
 @dataclass
@@ -162,8 +179,12 @@ class Template:
         raise TemplateError(f"Unknown source '{name}'")
 
     def slots_per_week(self) -> int:
+        # §14.32: flat_slots and row_template are mutually exclusive
+        # (parser enforces XOR), so summing both is safe — one of them
+        # contributes 0.
+        flat_total = sum(b.size for b in self.layout.flat_slots)
         per_row = sum(b.size for b in self.layout.row_template)
-        return per_row * len(self.layout.row_start_offsets)
+        return flat_total + per_row * len(self.layout.row_start_offsets)
 
     def base_cursor_for_week(self, week: int) -> int:
         """Week 1 = 0; advances base_advance_per_week each week.
@@ -327,11 +348,22 @@ def _parse_cursor(raw: dict) -> CursorSpec:
 
 
 def _parse_layout(raw: dict, *, known_sources: set[str]) -> LayoutSpec:
+    # §14.32: `row_template` and `flat_slots` are both optional at the
+    # _require_keys level so either form is acceptable. The post-parse
+    # XOR check below enforces exactly one of them is non-empty —
+    # neither + both both produce a TemplateError. This keeps existing
+    # row_template templates working without modification (row_template
+    # present → flat_slots defaults to empty → XOR passes) while
+    # letting Weekly-style flat_slots templates omit the row machinery.
     _require_keys(
         raw,
-        {"unit", "unit_labels", "row_start_offsets", "row_template"},
+        {"unit", "unit_labels", "row_start_offsets"},
         where="layout",
-        optional={"cursors_init"},  # §14.22 — for sequential strategy
+        optional={
+            "cursors_init",  # §14.22 — for sequential strategy
+            "row_template",  # §14.32 — XOR with flat_slots
+            "flat_slots",    # §14.32 — Weekly-style flat list form
+        },
     )
 
     # cursors_init: dict[str, int] for named cursors used by sequential blocks.
@@ -353,14 +385,71 @@ def _parse_layout(raw: dict, *, known_sources: set[str]) -> LayoutSpec:
 
     row_template = [
         _parse_block(b, known_sources=known_sources, known_cursor_ids=set(cursors_init))
-        for b in raw["row_template"]
+        for b in raw.get("row_template", [])
     ]
+    flat_slots = [
+        _parse_block(b, known_sources=known_sources, known_cursor_ids=set(cursors_init))
+        for b in raw.get("flat_slots", [])
+    ]
+
+    # §14.32 XOR enforcement: exactly one of row_template / flat_slots
+    # must be non-empty. Both-empty templates are useless (no slots to
+    # generate). Both-non-empty templates are ambiguous (which form
+    # drives generation?). Both cases raise rather than silently
+    # picking a winner.
+    row_template_present = bool(row_template)
+    flat_slots_present = bool(flat_slots)
+    if row_template_present and flat_slots_present:
+        raise TemplateError(
+            "layout must specify EXACTLY one of `row_template` or "
+            "`flat_slots`, not both — they're mutually exclusive layout "
+            "expression forms (§14.32). Classics-style templates use "
+            "row_template; Weekly-style flat-list templates use "
+            "flat_slots."
+        )
+    if not row_template_present and not flat_slots_present:
+        raise TemplateError(
+            "layout must specify a non-empty `row_template` or "
+            "`flat_slots` — got neither (§14.32). Templates without "
+            "any slots can't be generated."
+        )
+
+    # When flat_slots is the active form, row_start_offsets and
+    # unit_labels are meaningless (the flat form has no row dimension).
+    # Reject non-empty values so a template author isn't silently
+    # carrying dead config.
+    if flat_slots_present:
+        if list(raw["row_start_offsets"]):
+            raise TemplateError(
+                "layout.row_start_offsets must be empty when `flat_slots` "
+                "is used — the flat form has no row dimension."
+            )
+        if list(raw["unit_labels"]):
+            raise TemplateError(
+                "layout.unit_labels must be empty when `flat_slots` "
+                "is used — the flat form has no row dimension."
+            )
+        # `window` and `pick` strategies depend on row_start_offsets;
+        # they're nonsensical in flat form. Force authors to use
+        # row_template if they want those.
+        for i, b in enumerate(flat_slots):
+            if b.strategy in {"window", "pick"}:
+                raise TemplateError(
+                    f"layout.flat_slots[{i}]: strategy "
+                    f"{b.strategy!r} requires row-offset addressing "
+                    f"and is only valid inside row_template. Use "
+                    f"row_template instead, or pick a different "
+                    f"strategy (sequential / jingle / mix / weighted "
+                    f"/ prev_ref)."
+                )
+
     return LayoutSpec(
         unit=raw["unit"],
         unit_labels=list(raw["unit_labels"]),
         row_start_offsets=list(raw["row_start_offsets"]),
         row_template=row_template,
         cursors_init=cursors_init,
+        flat_slots=flat_slots,
     )
 
 
