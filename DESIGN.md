@@ -4136,15 +4136,38 @@ Defensive on data oddities:
 - No trace for a playlist → log warning, skip.
 - Trace slot count doesn't match entry count → per-entry position
   lookup handles it; missing entries log a warning.
+- Trace slot dict missing the `slot` or `strategy` field → log
+  warning, skip that slot, keep processing. Belt-and-braces against
+  corrupted / legacy / future-imported traces; the §14.22+ pipeline
+  always populates both fields.
 - Unknown station for `--station` filter → log error, return (0,0)
   rather than crash.
+
+**Design semantic (prev_ref): `slot_type` reflects the BLOCK'S
+declared strategy, not the dispatch sub-path that actually fired.**
+
+For a `prev_ref` block whose mirror missed and fell back to a mix
+(or weighted) pick, the entry's `slot_type` is `"prev_ref"` — not
+`"mix"` or `"weighted"`. Reasoning:
+
+- The denormalised column is meant to support questions of the form
+  "which entries came from `prev_ref` blocks?" — answer should
+  include every prev_ref-block-sourced entry regardless of which
+  sub-path resolved it.
+- The trace JSON remains the source of truth for the actual
+  dispatch (MIRROR / FALLBACK_MIX / FALLBACK_WEIGHTED — recorded in
+  the trace's `reason` field per §14.28).
+- Pinning this as a test
+  (`test_prev_ref_block_records_slot_type_prev_ref_even_for_fallback_mix`)
+  so a future refactor toward "actual-fired strategy" breaks
+  loudly.
 
 **Backward compatibility:** purely additive schema. Existing
 playlists keep functioning with `slot_type=NULL`. The API + frontend
 handle the null gracefully (typed as `str | None` / `string | null`).
 All 452 prior tests pass without modification.
 
-**Tests added (9 new, total 461):**
+**Tests added (12 new across initial slice + review-fix, total 464):**
 
 `tests/test_slot_type_persistence.py` (new file):
 

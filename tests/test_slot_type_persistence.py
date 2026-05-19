@@ -344,3 +344,158 @@ def test_backfill_unknown_station_is_noop(session_factory):
     _seed_legacy_playlist_with_trace(Session, slug="alpha")
     playlists, rows = backfill(Session, station_slug="does-not-exist")
     assert (playlists, rows) == (0, 0)
+
+
+def test_backfill_position_mismatch_skips_entry_and_warns(session_factory, caplog):
+    """A playlist whose trace has fewer slots than the playlist has
+    entries: the script should log + skip the unmatched entries
+    rather than crash. Defensive path on data corruption — the
+    happy-path flow guarantees alignment, but legacy/imported data
+    might not."""
+    Session = session_factory
+    station_id, playlist_id = _seed_legacy_playlist_with_trace(
+        Session, slot_strategies=["window", "pick", "jingle"],
+    )
+    # Add a 4th entry that has NO matching trace slot.
+    with Session() as db:
+        tr = Track(persistent_id="extra", name="Extra")
+        db.add(tr)
+        db.flush()
+        db.add(PlaylistEntry(
+            playlist_id=playlist_id, track_id=tr.id, position=4,
+            source_name="A",  # slot_type null
+        ))
+        db.commit()
+
+    import logging
+    with caplog.at_level(logging.WARNING):
+        playlists, rows = backfill(Session)
+
+    # Three entries populated (positions 1–3); the 4th entry is
+    # skipped + a warning logged.
+    assert (playlists, rows) == (1, 3)
+    assert any(
+        "position 4" in record.message and "no matching trace slot"
+        in record.message for record in caplog.records
+    )
+
+    with Session() as db:
+        entries = (
+            db.query(PlaylistEntry)
+            .filter_by(playlist_id=playlist_id)
+            .order_by(PlaylistEntry.position)
+            .all()
+        )
+        # Positions 1–3 got their strategies; position 4 stays null.
+        assert [e.slot_type for e in entries] == ["window", "pick", "jingle", None]
+
+
+def test_backfill_corrupted_trace_slot_skips_without_crashing(session_factory, caplog):
+    """A trace slot with `strategy` missing from the JSON shouldn't
+    crash the script — it logs + skips. Belt-and-braces for legacy /
+    imported traces; the §14.22+ pipeline always populates strategy."""
+    Session = session_factory
+    with Session() as db:
+        st = Station(
+            slug="corrupt", name="C",
+            template={
+                "station": "corrupt", "cadence": "weekly", "rng": "off",
+                "sources": [], "cursor": {"base_advance_per_week": 0, "cycle_weeks": 1},
+                "layout": {"unit": "s", "unit_labels": [],
+                           "row_start_offsets": [], "row_template": []},
+            },
+        )
+        db.add(st)
+        db.flush()
+        tr = Track(persistent_id="CP1", name="CT1")
+        db.add(tr)
+        db.flush()
+        pl = Playlist(station_id=st.id, week=1, trace_id="bad-trace")
+        db.add(pl)
+        db.flush()
+        db.add(PlaylistEntry(
+            playlist_id=pl.id, track_id=tr.id, position=1, source_name="A",
+        ))
+        db.add(PlaylistTrace(
+            trace_id="bad-trace",
+            playlist_id=pl.id,
+            station_slug="corrupt",
+            week=1,
+            rng="off",
+            seed=None,
+            generated_at="2026-05-19T00:00:00Z",
+            slots=[{"slot": 1, "unit": "Mon", "row": 1, "block": 1}],
+            # ↑ slot dict is missing both `strategy` AND many other
+            # fields. The script should log + skip rather than crash.
+        ))
+        db.commit()
+
+    import logging
+    with caplog.at_level(logging.WARNING):
+        playlists, rows = backfill(Session)
+
+    assert (playlists, rows) == (0, 0)  # nothing updated; no crash
+    assert any(
+        "missing required fields" in record.message for record in caplog.records
+    )
+
+
+# ---------- §14.31 design semantic: slot_type reflects block.strategy ---
+
+
+def test_prev_ref_block_records_slot_type_prev_ref_even_for_fallback_mix(api):
+    """Design choice (DESIGN.md §14.31): slot_type reflects the
+    block's declared strategy, NOT the strategy that actually fired.
+
+    For a prev_ref block whose mirror missed and fell back to a mix
+    pick, the PlaylistEntry's slot_type is 'prev_ref' (not 'mix').
+    Reasoning: a UI/SQL query asking "which entries are from prev_ref
+    blocks?" should include all of them regardless of which sub-path
+    fired. The trace JSON remains the source of truth for the actual
+    dispatch (mirror vs FALLBACK_MIX vs FALLBACK_WEIGHTED).
+
+    This test cements the semantic so a future refactor that switches
+    to "actual-fired strategy" breaks the test loudly.
+    """
+    client, Session = api
+    template = {
+        "station": "pr", "cadence": "weekly", "rng": "off",
+        "sources": [{"name": "A", "colour": "#111", "role": "content"}],
+        "cursor": {"base_advance_per_week": 0, "cycle_weeks": 1},
+        "layout": {
+            "unit": "slot", "unit_labels": ["1"],
+            "row_start_offsets": [0],
+            "row_template": [
+                # prev_ref with no previous playlist → fallback_mix
+                # fires. The entry's slot_type still says "prev_ref".
+                {"source": "A", "strategy": "prev_ref", "size": 1,
+                 "position": 1, "fallback_genre": "House"},
+            ],
+        },
+    }
+    with Session() as db:
+        st = Station(slug="pr", name="PR", template=template)
+        db.add(st)
+        db.flush()
+        sp = SourcePlaylist(name="A")
+        db.add(sp)
+        db.flush()
+        # Need at least one House-genre track for the fallback to find.
+        tr = Track(persistent_id="HP1", name="House-1", genre="House")
+        db.add(tr)
+        db.flush()
+        db.add(SourcePlaylistEntry(
+            source_playlist_id=sp.id, track_id=tr.id, position=1,
+        ))
+        db.commit()
+
+    r = client.post("/api/stations/pr/generate", json={"week": 1})
+    assert r.status_code == 201
+    playlist_id = r.json()["playlist_id"]
+
+    body = client.get(f"/api/playlists/{playlist_id}").json()
+    # ONE entry; the prev_ref dispatch fell back to mix (no previous
+    # playlist on week 1) but the slot_type still records the block's
+    # declared strategy.
+    assert len(body["entries"]) == 1
+    assert body["entries"][0]["slot_type"] == "prev_ref"

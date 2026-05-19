@@ -77,9 +77,24 @@ def backfill(
             # position→strategy map; the trace's slot order must match
             # the entry's position order, but use the dict lookup
             # defensively in case ordering ever diverges.
-            slot_strategies: dict[int, str] = {
-                int(s["slot"]): s["strategy"] for s in trace.slots
-            }
+            #
+            # Robust against corrupted trace entries — a slot missing
+            # either `slot` or `strategy` is logged + skipped rather
+            # than crashing the whole backfill mid-walk. Trace
+            # validation since §14.22 should make this unreachable;
+            # belt-and-braces for legacy data + future-imported traces.
+            slot_strategies: dict[int, str] = {}
+            for s in trace.slots:
+                pos = s.get("slot")
+                strat = s.get("strategy")
+                if pos is None or strat is None:
+                    logger.warning(
+                        "playlist %d: trace slot missing required fields "
+                        "(slot=%r, strategy=%r); skipping that slot",
+                        pl.id, pos, strat,
+                    )
+                    continue
+                slot_strategies[int(pos)] = strat
 
             entries: list[PlaylistEntry] = pl.entries
             updated_this_playlist = 0
