@@ -290,9 +290,14 @@ def test_load_pools_raises_when_db_pool_is_reference_but_template_says_content(
     db_session, tmp_path,
 ):
     """The dangerous-direction mismatch (§14.35). Engine would otherwise
-    sample from a pool the importer explicitly marked not-for-sampling."""
+    sample from a pool the importer explicitly marked not-for-sampling.
+
+    Raises TemplateError specifically — distinct from the ValueError
+    raised for missing-pool. Callers + API error mapping can
+    distinguish "run the importer" from "fix the config drift".
+    """
     from engine.persistence import load_pools
-    from engine.template import parse_template
+    from engine.template import parse_template, TemplateError
 
     xml_path = tmp_path / "pool.xml"
     make_itunes_plist(xml_path, "P", [track(1, "PPPP000000000099A", "T1")])
@@ -302,7 +307,36 @@ def test_load_pools_raises_when_db_pool_is_reference_but_template_says_content(
     # config drift).
     tmpl = parse_template(_minimal_template_dict("P", role="content"))
 
-    with pytest.raises(ValueError, match="role='reference'.*declares it as content"):
+    with pytest.raises(TemplateError, match="role='reference'.*declares it as content"):
+        load_pools(db_session, tmpl)
+
+
+def test_load_pools_cross_check_fires_on_second_of_multiple_sources(
+    db_session, tmp_path,
+):
+    """Multi-source variant: source A imports OK + content, source B
+    is the dangerous-direction mismatch. Confirms the loop doesn't
+    short-circuit on the first success or leave `pools` in a
+    partial state."""
+    from engine.persistence import load_pools
+    from engine.template import parse_template, TemplateError
+
+    a_path = tmp_path / "a.xml"
+    make_itunes_plist(a_path, "A", [track(1, "AAAA000000000001A", "T1")])
+    import_source(db_session, a_path, "A", role="content")
+
+    b_path = tmp_path / "b.xml"
+    make_itunes_plist(b_path, "B", [track(2, "BBBB000000000001A", "T2")])
+    import_source(db_session, b_path, "B", role="reference")  # dangerous
+
+    tmpl_dict = _minimal_template_dict("A", role="content")
+    tmpl_dict["sources"].append({"name": "B", "colour": "#bbb", "role": "content"})
+    tmpl_dict["layout"]["flat_slots"].append(
+        {"source": "B", "strategy": "weighted", "size": 1},
+    )
+    tmpl = parse_template(tmpl_dict)
+
+    with pytest.raises(TemplateError, match="'B'.*role='reference'"):
         load_pools(db_session, tmpl)
 
 

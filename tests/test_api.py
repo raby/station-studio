@@ -651,18 +651,46 @@ def test_import_with_role_reference_persists_via_api(api):
     assert rows[0]["role"] == "reference"
 
 
-def test_import_with_invalid_role_returns_400(api):
-    """Importer's role validation surfaces as a 400 (the API maps
-    ValueError → 400 already; this just confirms the role check
-    hits that branch)."""
+def test_import_with_invalid_role_returns_422(api):
+    """Pydantic's Literal type rejects invalid roles at the validation
+    layer (HTTP 422). The engine's runtime check in import_source is
+    defense-in-depth for non-API callers (e.g. the manifest CLI in
+    commit 2). Mirrors §14.32/§14.34's "strict allowlist at the
+    earliest layer" pattern."""
     client, _ = api
     r = client.post("/api/sources/import", json={
         "path": str(_FIXTURES / "tiny-library.xml"),
         "name": "tiny",
         "role": "banana",
     })
-    assert r.status_code == 400
-    assert "invalid role" in r.json()["detail"]
+    assert r.status_code == 422
+    # Pydantic's error body identifies the bad field + the allowed values.
+    body = r.json()
+    assert any("role" in str(err.get("loc", [])) for err in body["detail"])
+
+
+def test_reimport_via_api_can_change_role(api):
+    """POST role=content, then POST role=reference → GET reflects the
+    new role. Mirrors the engine-layer test_reimport_can_change_role
+    through the API surface."""
+    client, _ = api
+    r1 = client.post("/api/sources/import", json={
+        "path": str(_FIXTURES / "tiny-library.xml"),
+        "name": "swap", "role": "content",
+    })
+    assert r1.status_code == 200, r1.text
+    assert r1.json()["role"] == "content"
+
+    r2 = client.post("/api/sources/import", json={
+        "path": str(_FIXTURES / "tiny-library.xml"),
+        "name": "swap", "role": "reference",
+    })
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["role"] == "reference"
+
+    rows = client.get("/api/sources").json()
+    swap = next(r for r in rows if r["name"] == "swap")
+    assert swap["role"] == "reference"
 
 
 def test_import_path_not_found_400(api):

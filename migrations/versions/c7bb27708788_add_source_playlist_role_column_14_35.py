@@ -8,9 +8,9 @@ common case need no extra wiring.
 
 The template's `sources[].role` field carries the same information
 at layout-validation time; the DB column is the source-of-truth at
-generation time. A consistency check at generation raises
-TemplateError when the two disagree in the dangerous direction
-(layout=content, DB=reference) — see engine.generator._check_pools_present.
+generation time. A consistency check raises TemplateError when the
+two disagree in the dangerous direction (layout=content,
+DB=reference) — see engine.persistence.load_pools.
 
 Trimmed manually: alembic autogen also flagged adding indexes to
 cursor_state / playlist / playlist_entry / playlist_trace /

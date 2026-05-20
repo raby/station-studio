@@ -57,10 +57,13 @@ becomes ops work, not engineering.
 
 5. **Reference-check semantics**: Cross-check between template's
    `sources[].role` and DB pool's `role`. Raise `TemplateError`
-   at generation time when template says `content` but DB pool is
-   `reference` (the dangerous direction — engine would sample
-   from a pool the template marked as not-for-sampling). Opposite
-   direction is benign and silently OK.
+   at generation time (in `engine.persistence.load_pools`) when
+   template says `content` but DB pool is `reference` (the dangerous
+   direction — engine would sample from a pool the template marked
+   as not-for-sampling). Opposite direction is benign and silently
+   OK. `TemplateError` (not `ValueError`) so callers can distinguish
+   missing-pool ("run the importer") from role-mismatch ("fix the
+   config drift").
 
 6. **Manifest role declaration**: Explicit per pool (no default).
    Reads better in code review; prevents the "forgot to set role

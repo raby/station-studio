@@ -1,7 +1,7 @@
 """Pydantic request/response schemas."""
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -42,7 +42,7 @@ class SourceOut(BaseModel):
     track_count: int
     # §14.35: "content" (default — engine samples from this pool) or
     # "reference" (declared for cross-reference but never sampled).
-    role: str = "content"
+    role: Literal["content", "reference"] = "content"
 
 
 class ImportRequest(BaseModel):
@@ -50,7 +50,9 @@ class ImportRequest(BaseModel):
     name: str
     # §14.35: optional; defaults to "content". Pass "reference" for
     # pools imported only for cross-reference (e.g. weekly's MASTER).
-    role: str = "content"
+    # Literal so Pydantic rejects invalid values at 422 (validation
+    # layer) before the engine's defense-in-depth check fires.
+    role: Literal["content", "reference"] = "content"
 
 
 class GenerateRequest(BaseModel):

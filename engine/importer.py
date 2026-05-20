@@ -101,8 +101,8 @@ def import_source(
     declared only for cross-reference — weekly's MASTER pool is the
     canonical case (§14.35). Reference pools are imported the same
     way content pools are; the role lives on SourcePlaylist.role and
-    drives the generator's role-mismatch check (see
-    `_check_pools_present`).
+    drives the role-mismatch check at generation time (see
+    `engine.persistence.load_pools`).
 
     Re-importing with a different role is allowed: the existing
     SourcePlaylist row is dropped and recreated, picking up the new
@@ -114,7 +114,8 @@ def import_source(
     """
     if role not in _VALID_ROLES:
         raise ValueError(
-            f"invalid role {role!r}: must be one of {sorted(_VALID_ROLES)}"
+            f"invalid role {role!r}: allowed values are {sorted(_VALID_ROLES)}. "
+            f"Strict allowlist mirrors §14.32 / §14.34 parser policy."
         )
     data = _parse_itunes_xml(path)
     if "Tracks" not in data:

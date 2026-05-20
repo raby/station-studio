@@ -12,7 +12,7 @@ from engine.models import (
     ArtistAlias, CursorState, MixUsage, Playlist, PlaylistEntry, PlaylistTrace,
     SourcePlaylist, SourcePlaylistEntry, Station,
 )
-from engine.template import Template
+from engine.template import Template, TemplateError
 
 
 def load_pools(db: Session, template) -> dict[str, list]:
@@ -24,14 +24,19 @@ def load_pools(db: Session, template) -> dict[str, list]:
     Uses joinedload to avoid an N+1 query (one per entry) when accessing
     track metadata.
 
-    Raises ValueError if a required content pool hasn't been imported,
-    or if a content-role template source maps to a DB pool flagged
-    `role='reference'` (§14.35 cross-check — the dangerous direction
-    where the engine would sample from a pool that the importer
-    explicitly marked as not-for-sampling). The opposite direction
-    (template says reference, DB says content) is silently OK: the
-    template skips loading it, so the DB-side role is moot — usually
-    just config drift from a reimport.
+    Raises ValueError if a required content pool hasn't been imported.
+    Raises TemplateError (§14.35 cross-check) if a content-role template
+    source maps to a DB pool flagged `role='reference'` — the dangerous
+    direction where the engine would otherwise sample from a pool the
+    importer explicitly marked as not-for-sampling. The opposite
+    direction (template says reference, DB says content) is silently
+    OK: the template skips loading it, so the DB-side role is moot —
+    usually just config drift from a reimport.
+
+    The two errors are deliberately different types: missing-pool is
+    a setup problem (run the importer), role-mismatch is a config-
+    consistency problem (fix the template OR re-import with the right
+    role). Callers and the API error mapping can distinguish them.
     """
     pools: dict[str, list] = {}
     for src_name in template.content_source_names:
@@ -39,7 +44,7 @@ def load_pools(db: Session, template) -> dict[str, list]:
         if sp is None:
             raise ValueError(f"source pool '{src_name}' not imported")
         if sp.role == "reference":
-            raise ValueError(
+            raise TemplateError(
                 f"source pool '{src_name}' is imported with role='reference' "
                 f"but the template declares it as content. Either re-import "
                 f"the pool with role='content' (the generator would otherwise "

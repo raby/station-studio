@@ -61,8 +61,10 @@ class SourcePlaylist(Base):
     consistency check raises TemplateError when the two disagree in
     the dangerous direction (layout=content, DB=reference).
 
-    Default is `content` so existing rows + non-reference imports
-    require no changes; only the explicit-reference path is new.
+    The mismatch check lives in `engine.persistence.load_pools`
+    (raises `TemplateError` on the dangerous direction). Default is
+    `content` so existing rows + non-reference imports require no
+    changes; only the explicit-reference path is new.
     """
     __tablename__ = "source_playlist"
 
