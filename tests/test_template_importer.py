@@ -313,3 +313,127 @@ def test_sample_fixture_translates_to_valid_station_studio_template(sample_weekl
     }
     # Persistent cursors (§14.30) for the Rebirth Radio pattern.
     assert tmpl.cursor.persist is True
+
+
+# ---------- review fix F5: undeclared cursor surfaces user-side --------
+
+
+def test_slot_references_undeclared_cursor_rejected_with_clear_message():
+    """A weekly export whose night/weekend slot points at a cursor not
+    listed in initial_cursors is a user-data mismatch, NOT a translator
+    bug. The importer catches this pre-parse so the error reads as
+    user-facing input validation rather than the misleading
+    'translator produced an invalid template — file an issue' wrapper.
+    """
+    weekly = {
+        "slots": [
+            {"type": "night", "cursor_id": "NIGHT_1"},
+            {"type": "weekend", "cursor_id": "WEEKEND_99"},  # not declared
+        ],
+        "initial_cursors": {"NIGHT_1": 0, "WEEKEND_1": 0},
+    }
+    with pytest.raises(WeeklyImportError) as exc_info:
+        import_weekly_template(weekly, slug="x", name="X")
+    msg = str(exc_info.value)
+    assert "WEEKEND_99" in msg
+    assert "not declared in initial_cursors" in msg
+    # And critically: NOT phrased as a translator/station-studio bug.
+    assert "station-studio bug" not in msg
+
+
+# ---------- review fix F6: 9-cursor variant (Rebirth Radio shape) -----
+
+
+def test_nine_cursor_fixture_round_trips():
+    """Rebirth Radio's production weekly template carries 9 named
+    cursors (5 NIGHT_*, 4 WEEKEND_*). The sample fixture is the
+    minimal 4-cursor variant; this test exercises the wider shape
+    inline so the parser's cursor-set bookkeeping is verified against
+    the real-world cardinality.
+    """
+    weekly = {
+        "initial_cursors": {
+            "NIGHT_1": 0, "NIGHT_2": 10, "NIGHT_3": 20, "NIGHT_4": 30, "NIGHT_5": 40,
+            "WEEKEND_1": 0, "WEEKEND_2": 120, "WEEKEND_3": 240, "WEEKEND_4": 360,
+        },
+        "slots": (
+            [{"type": "night", "cursor_id": f"NIGHT_{i}"} for i in range(1, 6)]
+            + [{"type": "weekend", "cursor_id": f"WEEKEND_{i}"} for i in range(1, 5)]
+        ),
+    }
+    out = import_weekly_template(weekly, slug="rb9", name="Rebirth9")
+    tmpl = parse_template(out)
+    assert set(tmpl.layout.cursors_init.keys()) == set(weekly["initial_cursors"].keys())
+    assert len(tmpl.layout.flat_slots) == 9
+    # All 9 are sequential — every cursor gets exactly one referencing slot.
+    assert all(b.strategy == "sequential" for b in tmpl.layout.flat_slots)
+    referenced = {b.cursor_id for b in tmpl.layout.flat_slots}
+    assert referenced == set(weekly["initial_cursors"].keys())
+
+
+# ---------- review fix F4: generator integration smoke test ------------
+
+
+def test_imported_template_generates_against_synthetic_pools():
+    """End-to-end: import_weekly_template → generate() against synthetic
+    pools. Catches the class of bug where the translator output is
+    parse_template-valid but breaks at generation time (e.g. a strategy
+    field mapped to the wrong key, a source name typo that parses but
+    can't be sampled). Without this, sub-slice #16's first integration
+    point is the production import script — surfacing failures there
+    forces a much harder bisect than a 30-line synthetic-pool test."""
+    from dataclasses import dataclass
+
+    from engine.generator import generate
+
+    @dataclass
+    class FakeTrack:
+        id: int
+        name: str
+        artist: str | None = None
+        genre: str | None = None
+
+    def mk_pool(prefix: str, size: int, genre: str | None = None) -> list:
+        return [
+            FakeTrack(id=i, name=f"{prefix}{i:04d}", artist=f"{prefix}-art{i}", genre=genre)
+            for i in range(1, size + 1)
+        ]
+
+    weekly = {
+        "initial_cursors": {"NIGHT_1": 0, "WEEKEND_1": 0},
+        "slots": [
+            {"type": "jingle", "genre": "Daytime"},
+            {"type": "commercial"},
+            {"type": "mix", "genre": "House", "exclusion_window": 20},
+            {"type": "night", "cursor_id": "NIGHT_1"},
+            {"type": "weekend", "cursor_id": "WEEKEND_1"},
+        ],
+    }
+    out = import_weekly_template(weekly, slug="smoke", name="Smoke")
+    tmpl = parse_template(out)
+
+    pools = {
+        "JINGLES": mk_pool("J", 10, genre="Daytime"),
+        "COMMERCIAL": mk_pool("C", 50),
+        "MIXES": mk_pool("M", 100, genre="House"),
+        "NIGHT": mk_pool("N", 50),
+        "WEEKEND": mk_pool("W", 50),
+        # MASTER is reference-role; generator never samples it but the
+        # pool argument must be present (or absent for reference) per
+        # _check_pools_present. The check exempts reference sources.
+    }
+    r = generate(
+        tmpl, pools, week=1, seed=1234,
+        named_cursor_positions={"NIGHT_1": 0, "WEEKEND_1": 0},
+    )
+    assert len(r.picks) == 5
+    # Strategies recorded on the trace match the imported template.
+    assert [s.strategy for s in r.trace.slots] == [
+        "jingle", "weighted", "mix", "sequential", "sequential",
+    ]
+    # Each pick comes from the correct pool (name prefix is the tell).
+    assert r.picks[0].name.startswith("J")  # jingle ← JINGLES
+    assert r.picks[1].name.startswith("C")  # commercial ← COMMERCIAL
+    assert r.picks[2].name.startswith("M")  # mix ← MIXES
+    assert r.picks[3].name.startswith("N")  # night ← NIGHT
+    assert r.picks[4].name.startswith("W")  # weekend ← WEEKEND

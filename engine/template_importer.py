@@ -106,11 +106,27 @@ def import_weekly_template(
         raise WeeklyImportError(
             f"weekly_data must be a dict, got {type(weekly_data).__name__}"
         )
-    missing = {"slots", "initial_cursors"} - set(weekly_data.keys())
+    # §14.34 review fix F1: strict-mode top-level keys. Mirrors the §14.32
+    # parser's "unknown keys rejected" policy — silent acceptance of
+    # typos (`slot` for `slots`) would mask the empty-slots error case
+    # behind misleading downstream errors.
+    required = {"slots", "initial_cursors"}
+    allowed_extras = {
+        "_comment",       # JSON-friendly inline doc, conventional
+        "schema_version", # forward-compat for a future dump-script versioning
+    }
+    missing = required - set(weekly_data.keys())
     if missing:
         raise WeeklyImportError(
             f"weekly_data missing required keys: {sorted(missing)}. "
             f"Got: {sorted(weekly_data.keys())}"
+        )
+    unknown = set(weekly_data.keys()) - required - allowed_extras
+    if unknown:
+        raise WeeklyImportError(
+            f"weekly_data has unknown top-level keys: {sorted(unknown)}. "
+            f"Allowed: {sorted(required | allowed_extras)}. "
+            f"Strict mode prevents silent typos (e.g. 'slot' instead of 'slots')."
         )
     if not isinstance(weekly_data["slots"], list):
         raise WeeklyImportError(
@@ -122,8 +138,34 @@ def import_weekly_template(
             f"weekly_data['initial_cursors'] must be a dict, got "
             f"{type(weekly_data['initial_cursors']).__name__}"
         )
+    # §14.34 review fix F3: explicit error for empty slots. Otherwise the
+    # post-translation parse_template raises "layout must specify a
+    # non-empty row_template or flat_slots" wrapped as "translator
+    # produced an invalid station-studio template" — phrased as a bug
+    # when it's actually user input.
+    if not weekly_data["slots"]:
+        raise WeeklyImportError(
+            "weekly_data['slots'] must contain at least one slot. "
+            "An empty template can't be generated against."
+        )
 
     flat_slots = [_translate_slot(s, i) for i, s in enumerate(weekly_data["slots"])]
+
+    # §14.34 review fix F5: surface a clear user-facing error when a slot
+    # references a cursor not declared in initial_cursors. Without this
+    # check the post-translation parse_template raises (correctly) but
+    # the message gets wrapped as "translator produced an invalid station-
+    # studio template — file an issue", phrasing it as a station-studio
+    # bug when it's actually a mismatch in the input JSON.
+    declared = set(weekly_data["initial_cursors"].keys())
+    referenced = {s["cursor_id"] for s in flat_slots if "cursor_id" in s}
+    undeclared = referenced - declared
+    if undeclared:
+        raise WeeklyImportError(
+            f"slots reference cursor(s) {sorted(undeclared)} not declared in "
+            f"initial_cursors {sorted(declared)}. Every night/weekend slot's "
+            f"cursor_id must have a matching key in initial_cursors."
+        )
 
     template = {
         "station": slug,
@@ -169,6 +211,23 @@ def import_weekly_template(
     return template
 
 
+# §14.34 review fix F2: per-type allowlist of weekly slot-dict keys. The
+# value sets are the EXACT keys weekly's build_template() emits for
+# each type — verified against weekly/app/services/template.py. Any
+# slot field outside the allowlist for its type triggers a strict-
+# mode rejection so a typo (`exclusin_window`, `cursorid`) surfaces at
+# import time instead of as a silent field-drop. Matches §14.32
+# parser's "unknown keys rejected" policy.
+_SLOT_FIELDS_BY_TYPE: dict[str, set[str]] = {
+    "jingle":     {"type", "genre"},
+    "commercial": {"type"},
+    "mix":        {"type", "genre", "exclusion_window"},
+    "prev_ref":   {"type", "position", "fallback_genre"},
+    "night":      {"type", "cursor_id"},
+    "weekend":    {"type", "cursor_id"},
+}
+
+
 def _translate_slot(slot: dict[str, Any], idx: int) -> dict[str, Any]:
     """Translate one weekly slot dict to a station-studio BlockSpec dict.
 
@@ -184,6 +243,20 @@ def _translate_slot(slot: dict[str, Any], idx: int) -> dict[str, Any]:
         raise WeeklyImportError(
             f"slot {idx + 1}: missing 'type' field. "
             f"Weekly slots must declare their type."
+        )
+    if type_ not in _SLOT_FIELDS_BY_TYPE:
+        raise WeeklyImportError(
+            f"slot {idx + 1}: unknown weekly slot type {type_!r}. "
+            f"Supported: jingle, commercial, mix, prev_ref, night, weekend."
+        )
+    # F2: reject unknown fields per type.
+    unknown = set(slot.keys()) - _SLOT_FIELDS_BY_TYPE[type_]
+    if unknown:
+        raise WeeklyImportError(
+            f"slot {idx + 1} (type={type_!r}): unknown fields "
+            f"{sorted(unknown)}. Allowed for this type: "
+            f"{sorted(_SLOT_FIELDS_BY_TYPE[type_])}. "
+            f"Strict mode catches typos like 'cursorid' or 'exclusin_window'."
         )
 
     if type_ == "jingle":
@@ -237,9 +310,12 @@ def _translate_slot(slot: dict[str, Any], idx: int) -> dict[str, Any]:
             "cursor_id": slot["cursor_id"],
         }
 
-    raise WeeklyImportError(
-        f"slot {idx + 1}: unknown weekly slot type {type_!r}. "
-        f"Supported: jingle, commercial, mix, prev_ref, night, weekend."
+    # Unreachable — the type-check above this block already rejects
+    # unknown types. Defensive `assert False` would also work but
+    # raising mirrors the helper's idiom.
+    raise WeeklyImportError(  # pragma: no cover
+        f"slot {idx + 1}: unhandled weekly slot type {type_!r} "
+        f"(in _SLOT_FIELDS_BY_TYPE but no translation branch)."
     )
 
 
