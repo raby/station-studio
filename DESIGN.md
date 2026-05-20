@@ -4779,9 +4779,13 @@ re-import — benign.
 
 `TemplateError` (not `ValueError`) is deliberate: missing-pool
 remains `ValueError` ("run the importer"), role-mismatch is
-`TemplateError` ("fix the template or re-import"). The API error
-mapping + manifest CLI can distinguish them with `except (TypeError,
-TemplateError)` clauses.
+`TemplateError` ("fix the template or re-import"). Callers that want
+to distinguish the two — e.g. a future API endpoint returning 422 vs
+400, or a CLI surfacing different remediation hints — can `except
+TemplateError` before `except ValueError`. Today the API
+(`api/routers/generate.py`) maps both to HTTP 400 with the engine's
+message body; the distinction is preserved at the exception-type
+layer for future refinement without a breaking change.
 
 **Manifest format.** Strict-mode JSON (mirrors §14.32 / §14.34
 parser policy):
@@ -4820,6 +4824,25 @@ mirrors §14.34's `_SLOT_FIELDS_BY_TYPE` allowlist.
 
 The distinct exit codes let the user tell "fix your JSON" from
 "fix your XML" without reading the error message text.
+
+**Partial-commit semantics on mid-loop failure.** `import_source`
+commits per pool (the existing single-pool importer's behaviour;
+inherited unchanged). If pool 3 of 6 has a broken XML, pools 1–2
+are already committed before the error surfaces. The CLI exits
+with code 3, but the partially-imported state is safe:
+
+* Re-running the corrected manifest reports pools 1–2 as `updated`
+  (the existing rows exist) and pools 3+ as `created`.
+* `_check_pools_present` at generation time will still fire on
+  any missing pool, so a partial state can't produce a corrupt
+  playlist — it just can't generate yet.
+* The auto-backup target (Makefile-side) catches this in the rare
+  case where rollback is preferable to forward-retry.
+
+If atomic-or-nothing semantics ever become important, the right
+shape is to refactor `import_source` to take a flag for "flush
+without commit" and let the CLI orchestrate a single transaction
+across all pools. Not needed today.
 
 **What shipped (commit 2):**
 

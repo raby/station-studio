@@ -232,14 +232,15 @@ def main(argv: list[str] | None = None) -> int:
             db.commit()
     except ManifestError as e:
         # User-input problem with the manifest itself — phrased so the
-        # user knows to fix the JSON, not the XMLs.
-        print(f"manifest error: {e}", file=sys.stderr)
+        # user knows to fix the JSON, not the XMLs. Phrasing mirrors
+        # scripts/import_station.py's "import failed (XYZ): ..." pattern.
+        print(f"import failed (manifest problem): {e}", file=sys.stderr)
         return 2
     except ValueError as e:
         # Importer error: malformed XML, invalid role at runtime
         # (Pydantic Literal would have caught this on the API path,
         # but the CLI calls import_source directly).
-        print(f"import error: {e}", file=sys.stderr)
+        print(f"import failed (XML problem): {e}", file=sys.stderr)
         return 3
 
     for s in summaries:

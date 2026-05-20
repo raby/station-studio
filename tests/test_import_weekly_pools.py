@@ -280,7 +280,7 @@ def test_main_returns_code_2_for_malformed_manifest(tmp_path, monkeypatch, capsy
     rc = main([str(bad)])
     assert rc == 2
     err = capsys.readouterr().err
-    assert "manifest error" in err
+    assert "import failed (manifest problem)" in err
     assert "invalid role 'banana'" in err
     assert "station-studio bug" not in err
 
@@ -299,5 +299,5 @@ def test_main_returns_code_3_for_malformed_xml(tmp_path, monkeypatch, capsys):
     rc = main([str(manifest)])
     assert rc == 3
     err = capsys.readouterr().err
-    assert "import error" in err
+    assert "import failed (XML problem)" in err
     assert "not an iTunes library XML" in err
