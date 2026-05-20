@@ -1,0 +1,24 @@
+{
+  "_comment": "Synthetic weekly-shaped template export for §14.34 importer tests. Mirrors the shape produced by scripts/dump_weekly_template.py running inside a weekly/ checkout — slots list + initial_cursors dict. 13 slots covering every weekly slot type (jingle, commercial, mix, prev_ref, night, weekend) so the translator's per-type branch is exercised end-to-end.",
+  "initial_cursors": {
+    "NIGHT_1": 0,
+    "NIGHT_2": 10,
+    "WEEKEND_1": 0,
+    "WEEKEND_2": 120
+  },
+  "slots": [
+    {"type": "jingle", "genre": "Daytime"},
+    {"type": "commercial"},
+    {"type": "commercial"},
+    {"type": "commercial"},
+    {"type": "jingle", "genre": "Mixzone"},
+    {"type": "mix", "genre": "01Alphastate", "exclusion_window": 20},
+    {"type": "prev_ref", "position": 5, "fallback_genre": "22Universal"},
+    {"type": "mix", "genre": "02DnB", "exclusion_window": 20},
+    {"type": "night", "cursor_id": "NIGHT_1"},
+    {"type": "night", "cursor_id": "NIGHT_1"},
+    {"type": "night", "cursor_id": "NIGHT_2"},
+    {"type": "weekend", "cursor_id": "WEEKEND_1"},
+    {"type": "weekend", "cursor_id": "WEEKEND_2"}
+  ]
+}
