@@ -4478,15 +4478,33 @@ Frontend (14 new, vitest total 154):
   non-empty cursors_init, non-v1 strategies, each of the 6
   advanced block fields).
 
-**Remaining review findings (deferred to commits 2 + 3):**
+**Shipped across all three review-fix commits:**
 
-- 🟡 (commit 2): rule precedence end-to-end integration test;
-  frontend rules CRUD client; CI nits (svelte-check, alembic
-  silent-no-op guard); `make dev` orchestration.
-- 🟢 (commit 3): delete obsolete `engine/cursor.py`; extract
-  `_apply_prev_ref_dispatch` from generator.py; `make
-  import-station` Makefile stub for sub-slice #16; minor
-  `TraceSlot.track_id` type drift.
+- **Commit 1 (this section):** 🔴 persistence bugs + StationForm
+  Edit guard + close-paired docs.
+- **Commit 2:** 🟡 sweep —
+  `test_rule_override_threads_through_to_generate` (the missing
+  rule-precedence end-to-end test), frontend rules CRUD client
+  (`getStationRules` / `setStationRule` / `clearStationRule` in
+  api.ts + 6 vitest cases), `npx svelte-check` added to CI's
+  frontend-unit job, `alembic check` guard against silent-no-op
+  empty migrations on `make alembic-revision`, `make dev`
+  orchestration of uvicorn + vite in parallel.
+- **Commit 3:** 🟢 nice-to-haves — deleted obsolete
+  `engine/cursor.py` (functionality superseded by §14.30's
+  `load_cursor_positions` + `advance_cursors`) and its 7-test
+  module (patterns all covered by §14.30 tests); fixed minor
+  `TraceSlot.track_id: number` → `number | null` drift in
+  `web/src/lib/api.ts`; added `make import-station` Makefile stub
+  (fails clearly until sub-slice #16 implements
+  `scripts/import_station.py`).
+
+**Deferred (not in this sweep):** extracting
+`_apply_prev_ref_dispatch` from `engine/generator.py`'s ~600-line
+dispatch — flagged 🟢 by the reviewer as "would help future
+readers" but a real ~200-LoC refactor; best held for sub-slice
+#16 if its work naturally touches the prev_ref branch, or for
+§17 Phase D's broader generator cleanup.
 
 **The pattern lesson.** This is the fourth case in Phase B where a
 "forward-compat suggestion" or cross-slice review surfaced a real

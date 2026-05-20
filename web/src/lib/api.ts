@@ -71,7 +71,14 @@ export interface TraceSlot {
   source: string;
   strategy: string;
   pool_index: number;
-  track_id: number;
+  /**
+   * Mirrors `engine.trace.TraceSlot.track_id: int | None`. Null for
+   * dry-run / synthetic generations where the track wasn't ID'd in
+   * the DB; not currently produced by any live code path but the
+   * engine reserves None. §14.33 fix: was `number`, drifted from
+   * the engine's `int | None` declaration.
+   */
+  track_id: number | null;
   track_name: string;
   track_artist: string | null;
   reason: string;
