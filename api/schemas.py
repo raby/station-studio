@@ -40,11 +40,17 @@ class SourceOut(BaseModel):
     id: int
     name: str
     track_count: int
+    # §14.35: "content" (default — engine samples from this pool) or
+    # "reference" (declared for cross-reference but never sampled).
+    role: str = "content"
 
 
 class ImportRequest(BaseModel):
     path: str
     name: str
+    # §14.35: optional; defaults to "content". Pass "reference" for
+    # pools imported only for cross-reference (e.g. weekly's MASTER).
+    role: str = "content"
 
 
 class GenerateRequest(BaseModel):

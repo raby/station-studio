@@ -78,9 +78,13 @@ def test_round_trip_imports_tracks_and_entries(db_session, tmp_path):
     ])
 
     summary = import_source(db_session, xml_path, "SAMPLE")
-    assert summary == {"name": "SAMPLE", "tracks_imported": 3, "entries_imported": 3}
+    assert summary == {
+        "name": "SAMPLE", "role": "content",
+        "tracks_imported": 3, "entries_imported": 3,
+    }
 
     sp = db_session.query(SourcePlaylist).filter_by(name="SAMPLE").one()
+    assert sp.role == "content"  # default role
     entries = db_session.query(SourcePlaylistEntry).filter_by(source_playlist_id=sp.id).order_by(SourcePlaylistEntry.position).all()
     assert [e.position for e in entries] == [0, 1, 2]
     assert [e.track.name for e in entries] == ["One", "Two", "Three"]
@@ -212,3 +216,142 @@ def test_playlist_item_referencing_unknown_track_id_is_skipped(
     summary = import_source(db_session, xml_path, "SKIP")
     assert summary["tracks_imported"] == 1
     assert summary["entries_imported"] == 1  # only the valid one
+
+
+# ---------- §14.35 role parameter ---------------------------------------
+
+
+def test_import_with_role_reference_persists_role_to_db(db_session, tmp_path):
+    """Pools imported with role='reference' (e.g. weekly's MASTER) carry
+    the role on SourcePlaylist.role. The engine never samples from
+    them but the iTunes XML import path is identical."""
+    xml_path = tmp_path / "master.xml"
+    make_itunes_plist(xml_path, "MASTER", [
+        track(1, "MAST000000000001A", "Track 1"),
+        track(2, "MAST000000000002A", "Track 2"),
+    ])
+    summary = import_source(db_session, xml_path, "MASTER", role="reference")
+    assert summary["role"] == "reference"
+    assert summary["tracks_imported"] == 2
+    assert summary["entries_imported"] == 2
+
+    sp = db_session.query(SourcePlaylist).filter_by(name="MASTER").one()
+    assert sp.role == "reference"
+
+
+def test_import_with_invalid_role_raises(db_session, tmp_path):
+    xml_path = tmp_path / "bad.xml"
+    make_itunes_plist(xml_path, "BAD", [track(1, "BAD0000000000001A", "X")])
+    with pytest.raises(ValueError, match="invalid role 'banana'"):
+        import_source(db_session, xml_path, "BAD", role="banana")  # type: ignore[arg-type]
+
+
+def test_reimport_can_change_role(db_session, tmp_path):
+    """Re-importing the same pool name with a different role updates
+    the role on the recreated SourcePlaylist row. (The existing
+    idempotency drops + recreates the row; role flows through.)"""
+    xml_path = tmp_path / "p.xml"
+    make_itunes_plist(xml_path, "P", [track(1, "PPPP000000000001A", "X")])
+
+    import_source(db_session, xml_path, "P", role="content")
+    sp = db_session.query(SourcePlaylist).filter_by(name="P").one()
+    assert sp.role == "content"
+
+    # Re-import as reference — same name, different role.
+    import_source(db_session, xml_path, "P", role="reference")
+    sp = db_session.query(SourcePlaylist).filter_by(name="P").one()
+    assert sp.role == "reference"
+
+
+# ---------- §14.35 load_pools cross-check -------------------------------
+
+
+def _minimal_template_dict(source_name: str, role: str = "content") -> dict:
+    """Build a parse_template-valid template referencing a single source."""
+    return {
+        "station": "test",
+        "cadence": "weekly",
+        "rng": "off",
+        "sources": [{"name": source_name, "colour": "#aaa", "role": role}],
+        "cursor": {"base_advance_per_week": 0, "cycle_weeks": 1},
+        "layout": {
+            "unit": "slot",
+            "unit_labels": [],
+            "row_start_offsets": [],
+            "cursors_init": {},
+            "flat_slots": [
+                {"source": source_name, "strategy": "weighted", "size": 1},
+            ],
+        },
+    }
+
+
+def test_load_pools_raises_when_db_pool_is_reference_but_template_says_content(
+    db_session, tmp_path,
+):
+    """The dangerous-direction mismatch (§14.35). Engine would otherwise
+    sample from a pool the importer explicitly marked not-for-sampling."""
+    from engine.persistence import load_pools
+    from engine.template import parse_template
+
+    xml_path = tmp_path / "pool.xml"
+    make_itunes_plist(xml_path, "P", [track(1, "PPPP000000000099A", "T1")])
+    # Import as reference …
+    import_source(db_session, xml_path, "P", role="reference")
+    # … but build a template that declares P as content (the dangerous
+    # config drift).
+    tmpl = parse_template(_minimal_template_dict("P", role="content"))
+
+    with pytest.raises(ValueError, match="role='reference'.*declares it as content"):
+        load_pools(db_session, tmpl)
+
+
+def test_load_pools_silent_when_db_pool_is_content_but_template_says_reference(
+    db_session, tmp_path,
+):
+    """The benign-direction mismatch: template skips loading the pool
+    (reference-role sources aren't in content_source_names), so the
+    DB-side role is moot. load_pools returns the (empty) dict cleanly."""
+    from engine.persistence import load_pools
+    from engine.template import parse_template
+
+    xml_path = tmp_path / "pool.xml"
+    make_itunes_plist(xml_path, "P", [track(1, "PPPP00000000099BA", "T1")])
+    import_source(db_session, xml_path, "P", role="content")
+    # Template declares P as reference + uses no content sources. Need
+    # a second source to satisfy parse_template (a layout with no
+    # content blocks fails the empty-slots check).
+    tmpl_dict = _minimal_template_dict("P", role="reference")
+    # Swap the layout to use a different content source so P isn't referenced.
+    tmpl_dict["sources"].append({"name": "Q", "colour": "#bbb", "role": "content"})
+    tmpl_dict["layout"]["flat_slots"] = [
+        {"source": "Q", "strategy": "weighted", "size": 1},
+    ]
+    # Q hasn't been imported — load_pools will raise on Q. But the
+    # important thing is that it does NOT raise on the P role mismatch.
+    # Easier test: just import Q too, then verify load_pools succeeds.
+    q_path = tmp_path / "q.xml"
+    make_itunes_plist(q_path, "Q", [track(2, "QQQQ000000000099A", "T1")])
+    import_source(db_session, q_path, "Q", role="content")
+    tmpl = parse_template(tmpl_dict)
+    pools = load_pools(db_session, tmpl)
+    # P is not in pools (template's content_source_names skips reference).
+    assert "P" not in pools
+    assert "Q" in pools
+
+
+def test_load_pools_happy_path_when_roles_agree(db_session, tmp_path):
+    """Sanity: roles aligned on both sides → load_pools just works."""
+    from engine.persistence import load_pools
+    from engine.template import parse_template
+
+    xml_path = tmp_path / "p.xml"
+    make_itunes_plist(xml_path, "P", [
+        track(1, "PPPP000000000901A", "T1"),
+        track(2, "PPPP000000000902A", "T2"),
+    ])
+    import_source(db_session, xml_path, "P", role="content")
+    tmpl = parse_template(_minimal_template_dict("P", role="content"))
+    pools = load_pools(db_session, tmpl)
+    assert "P" in pools
+    assert len(pools["P"]) == 2

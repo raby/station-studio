@@ -49,7 +49,10 @@ def list_sources(db: Session = Depends(get_db)):
         .order_by(SourcePlaylist.name)
         .all()
     )
-    return [SourceOut(id=sp.id, name=sp.name, track_count=count) for sp, count in rows]
+    return [
+        SourceOut(id=sp.id, name=sp.name, track_count=count, role=sp.role)
+        for sp, count in rows
+    ]
 
 
 @router.post("/import")
@@ -58,7 +61,7 @@ def post_import(payload: ImportRequest, db: Session = Depends(get_db)):
     if not path.exists():
         raise HTTPException(400, f"path not found: {path}")
     try:
-        return import_source(db, path, payload.name)
+        return import_source(db, path, payload.name, role=payload.role)
     except ValueError as e:
         raise HTTPException(400, str(e))
     except Exception as e:

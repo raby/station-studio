@@ -49,11 +49,26 @@ class Station(Base):
 
 
 class SourcePlaylist(Base):
-    """A named pool of tracks imported from an iTunes XML file."""
+    """A named pool of tracks imported from an iTunes XML file.
+
+    `role` distinguishes pools the engine samples from (`content`) from
+    pools imported only for cross-reference (`reference`, §14.35). The
+    canonical example is weekly's MASTER pool — its iTunes Persistent
+    IDs let the exporter resolve PIDs across pools, but the playlist
+    generator never samples it. Templates' `sources[].role` field
+    carries the same information at the layout level; the DB column
+    is the authoritative source-of-truth at generation time, and a
+    consistency check raises TemplateError when the two disagree in
+    the dangerous direction (layout=content, DB=reference).
+
+    Default is `content` so existing rows + non-reference imports
+    require no changes; only the explicit-reference path is new.
+    """
     __tablename__ = "source_playlist"
 
     id = Column(Integer, primary_key=True)
     name = Column(Text, unique=True, nullable=False)
+    role = Column(Text, nullable=False, server_default="content", default="content")
     imported_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     entries = relationship(

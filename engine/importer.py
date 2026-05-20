@@ -88,12 +88,34 @@ def _get_or_create_track(db: Session, raw: dict) -> Track:
     return track
 
 
-def import_source(db: Session, path: Path, name: str) -> dict:
+_VALID_ROLES = frozenset({"content", "reference"})
+
+
+def import_source(
+    db: Session, path: Path, name: str, *, role: str = "content",
+) -> dict:
     """Import an iTunes XML file as a named source pool.
 
+    `role` is keyword-only and defaults to "content" (engine samples
+    from this pool during generation). Pass role="reference" for pools
+    declared only for cross-reference — weekly's MASTER pool is the
+    canonical case (§14.35). Reference pools are imported the same
+    way content pools are; the role lives on SourcePlaylist.role and
+    drives the generator's role-mismatch check (see
+    `_check_pools_present`).
+
+    Re-importing with a different role is allowed: the existing
+    SourcePlaylist row is dropped and recreated, picking up the new
+    role. No special migration is needed.
+
     Returns a summary with tracks / entries imported.
-    Raises ValueError if the file is not an iTunes library XML.
+    Raises ValueError if the file is not an iTunes library XML or
+    `role` is not one of "content" / "reference".
     """
+    if role not in _VALID_ROLES:
+        raise ValueError(
+            f"invalid role {role!r}: must be one of {sorted(_VALID_ROLES)}"
+        )
     data = _parse_itunes_xml(path)
     if "Tracks" not in data:
         raise ValueError(
@@ -113,7 +135,9 @@ def import_source(db: Session, path: Path, name: str) -> dict:
         db.delete(existing)
         db.flush()
 
-    sp = SourcePlaylist(name=name, imported_at=datetime.now(timezone.utc))
+    sp = SourcePlaylist(
+        name=name, role=role, imported_at=datetime.now(timezone.utc),
+    )
     db.add(sp)
     db.flush()
 
@@ -148,6 +172,7 @@ def import_source(db: Session, path: Path, name: str) -> dict:
 
     return {
         "name": name,
+        "role": role,
         "tracks_imported": len(id_to_track),
         "entries_imported": entries_created,
     }

@@ -624,6 +624,7 @@ def test_list_sources_after_import(api):
     assert r.status_code == 200, r.text
     summary = r.json()
     assert summary["name"] == "tiny"
+    assert summary["role"] == "content"  # §14.35 default
     assert summary["tracks_imported"] == 3
     assert summary["entries_imported"] == 3
 
@@ -633,6 +634,35 @@ def test_list_sources_after_import(api):
     assert len(rows) == 1
     assert rows[0]["name"] == "tiny"
     assert rows[0]["track_count"] == 3
+    assert rows[0]["role"] == "content"  # §14.35 default surfaces on GET
+
+
+def test_import_with_role_reference_persists_via_api(api):
+    """§14.35: API accepts role='reference' and the GET surfaces it."""
+    client, _ = api
+    r = client.post("/api/sources/import", json={
+        "path": str(_FIXTURES / "tiny-library.xml"),
+        "name": "tiny-ref",
+        "role": "reference",
+    })
+    assert r.status_code == 200, r.text
+    assert r.json()["role"] == "reference"
+    rows = client.get("/api/sources").json()
+    assert rows[0]["role"] == "reference"
+
+
+def test_import_with_invalid_role_returns_400(api):
+    """Importer's role validation surfaces as a 400 (the API maps
+    ValueError → 400 already; this just confirms the role check
+    hits that branch)."""
+    client, _ = api
+    r = client.post("/api/sources/import", json={
+        "path": str(_FIXTURES / "tiny-library.xml"),
+        "name": "tiny",
+        "role": "banana",
+    })
+    assert r.status_code == 400
+    assert "invalid role" in r.json()["detail"]
 
 
 def test_import_path_not_found_400(api):

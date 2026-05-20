@@ -24,13 +24,28 @@ def load_pools(db: Session, template) -> dict[str, list]:
     Uses joinedload to avoid an N+1 query (one per entry) when accessing
     track metadata.
 
-    Raises ValueError if a required content pool hasn't been imported.
+    Raises ValueError if a required content pool hasn't been imported,
+    or if a content-role template source maps to a DB pool flagged
+    `role='reference'` (§14.35 cross-check — the dangerous direction
+    where the engine would sample from a pool that the importer
+    explicitly marked as not-for-sampling). The opposite direction
+    (template says reference, DB says content) is silently OK: the
+    template skips loading it, so the DB-side role is moot — usually
+    just config drift from a reimport.
     """
     pools: dict[str, list] = {}
     for src_name in template.content_source_names:
         sp = db.query(SourcePlaylist).filter_by(name=src_name).first()
         if sp is None:
             raise ValueError(f"source pool '{src_name}' not imported")
+        if sp.role == "reference":
+            raise ValueError(
+                f"source pool '{src_name}' is imported with role='reference' "
+                f"but the template declares it as content. Either re-import "
+                f"the pool with role='content' (the generator would otherwise "
+                f"sample from a pool marked not-for-sampling) or fix the "
+                f"template's sources[] entry."
+            )
         entries = (
             db.query(SourcePlaylistEntry)
             .options(joinedload(SourcePlaylistEntry.track))
