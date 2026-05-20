@@ -4519,10 +4519,172 @@ sites whenever a new layout form lands.
 
 ---
 
+### 14.34 weekly-template import — translator + CLI (§17 Phase B sub-slice #16)
+
+**Goal.** Read weekly's existing 2,196-slot template (its 25-year-old
+hand-tuned authoring artifact) and produce a station-studio
+flat_slots template that round-trips through `parse_template` and
+generates byte-identical playlists once pools are loaded. This is
+the "start from existing" UX promised in §16.2 and the prerequisite
+for the long-tail port (§17 Phase C — eventually migrating Rebirth
+Radio off weekly's bespoke generator onto station-studio entirely).
+
+**Shape.** Two artifacts on the station-studio side, one on the
+weekly side. All decoupled via a JSON file:
+
+```
+   weekly/                                          station-studio/
+   ├── app/services/template.py                     ├── engine/template_importer.py
+   │   (build_template + INITIAL_CURSORS)           │   (pure-function translator)
+   │                                                ├── scripts/import_station.py
+   │                                                │   (CLI: load JSON → upsert Station)
+   └── (run dump_weekly_template.py from here) ───→ │   weekly-template.json
+                                                    │           │
+                                                    │           ▼
+                                                    │   make import-station slug=... json=...
+                                                    │           │
+                                                    │           ▼
+                                                    └── Station table row
+```
+
+The dump script (`scripts/dump_weekly_template.py`) lives in
+station-studio but is **designed to run inside a weekly/ checkout**
+with weekly's venv active — it imports `app.services.template`
+from weekly. The decoupling means station-studio doesn't take a
+runtime dependency on weekly's package layout; the JSON file is the
+sole interface.
+
+**Translation table** (matches the §14.32 mapping notes):
+
+| Weekly `type` | Strategy   | Source pool | Field map                          |
+|---------------|------------|-------------|------------------------------------|
+| jingle        | jingle     | JINGLES     | genre                              |
+| commercial    | weighted   | COMMERCIAL  | (no per-block fields — rule default)|
+| mix           | mix        | MIXES       | genre, exclusion_window            |
+| prev_ref      | prev_ref   | MIXES       | position, fallback_genre           |
+| night         | sequential | NIGHT       | cursor_id                          |
+| weekend       | sequential | WEEKEND     | cursor_id                          |
+
+Source pool names are **hardcoded to match weekly's vocabulary
+verbatim** (JINGLES / COMMERCIAL / MIXES / NIGHT / WEEKEND / MASTER).
+The user picked "hardcode verbatim" during the design discussion —
+the alternative ("translate weekly's `commercial_pool` to station-
+studio's `commercials`") was rejected as needless rename churn that
+would surface in iTunes XML import paths too. MASTER is the
+reference-role source (weekly's third XML file containing canonical
+iTunes Persistent IDs across all tracks); declared so the iTunes
+XML import has a place to land but never sampled into playlists.
+
+**Cursor mode = persist.** Imported templates set
+`cursor.persist=true` (§14.30 stateful mode). Weekly's named cursors
+live in a DB table that advances after each generation; station-
+studio's equivalent (`cursor_state`) drives the same semantics when
+`cursor.persist=true`. Without persist=true, the imported template
+would use stateless `cursors_init + base_cursor_for_week(week)` math
+— which doesn't match weekly's advance-by-step behaviour.
+
+**Layout form = flat_slots.** Weekly's template is a flat 2,196-slot
+list with no row dimension. Forcing it into `row_template` would
+require either inventing fake row boundaries (lossy) or 2,196 single-
+slot rows (verbose + misleading). §14.32's flat_slots form was
+designed for exactly this case.
+
+**Idempotent upsert.** `import_station.py` uses the same upsert
+pattern as `seed_stations.py`: action ∈ {created, updated, unchanged}.
+Re-importing the same JSON is a no-op; re-importing a modified JSON
+overwrites the `template` field. Does NOT touch `cursor_state` or
+playlists — the first generation after import hydrates cursor_state
+lazily from `cursors_init`.
+
+**Strict-mode parsing** (§14.34 mid-slice review fixes F1+F2+F3).
+Like §14.32's parser, the translator rejects unknown top-level keys
+(allowed: slots, initial_cursors, plus _comment and schema_version
+as documented future-friendly extras) AND unknown per-slot fields
+via `_SLOT_FIELDS_BY_TYPE`. A typo like `cursorid` or
+`exclusin_window` raises at import time with a helpful message,
+not as a silent field-drop discovered at generation time. Pre-flight
+checks also surface empty-slots and undeclared-cursor errors as
+user-facing input problems rather than as the misleading "translator
+produced an invalid template — file a bug" wrapper.
+
+**What shipped:**
+
+* `engine/template_importer.py` — pure-function `import_weekly_template(weekly_data, *, slug, name) → dict`. Round-trips its output through `parse_template` internally; raises `WeeklyImportError` on malformed input or `TemplateError` if its own output is invalid (which would be a station-studio bug, not user error). 280 LoC.
+* `tests/test_template_importer.py` — 31 tests covering per-slot translation, template-level shape, error paths, fixture-driven E2E, undeclared-cursor pre-flight, 9-cursor variant, and generator integration smoke test.
+* `tests/fixtures/sample_weekly_template.json` — 13-slot synthetic fixture covering every weekly slot type. Committed as the regression artifact for the importer's expected input shape.
+* `scripts/dump_weekly_template.py` — runs inside a weekly/ checkout; dumps `build_template()` + `INITIAL_CURSORS` to JSON. ~100 LoC.
+* `scripts/import_station.py` — CLI that takes a slug + JSON path + optional `--name` + optional `--no-backup`. Exit codes: 0 success, 1 file-not-found, 2 user-input problem (`WeeklyImportError`), 3 translator-bug (`TemplateError`). ~175 LoC.
+* `tests/test_import_station.py` — 8 tests covering the CLI/DB shim (idempotent upsert, explicit/default name, error paths, end-to-end with the sample fixture).
+* `Makefile` — `import-station` target replaces the §14.33 stub with the real invocation; honours `slug=`, `json=`, `name=`, and `ARGS=--no-backup`. Pre-import DB backup runs by default per §14.18.
+
+**Verified against real weekly.** During development I ran
+`dump_weekly_template.py` inside a real weekly checkout and imported
+the result via `import_station.py rebirth-radio …`. The
+2,196-slot, 9-cursor template imported successfully (action:
+created) — confirming the importer handles weekly's actual data
+shape, not just the synthetic 13-slot fixture.
+
+**Two-commit slice with mid-slice review.** Per the design
+discussion choice:
+* Commit 1 (c09b27b): translator + tests + sample fixture (`import_weekly_template` pure-function + 28 tests + JSON fixture).
+* Mid-slice code review (3 SHOULD FIX + 3 NICE-TO-HAVE → all applied in 4ea8b2e): strict top-level keys, per-type strict slot fields, empty-slots user error, generator integration smoke test, undeclared-cursor pre-flight, 9-cursor variant test.
+* Commit 2 (this slice's second commit): CLI script + dump-from-weekly helper + DESIGN.md + roadmap.
+
+**Why the mid-slice review caught real bugs (again).** This is the
+fourth slice where the mid-slice checkpoint surfaced issues a slice-
+level review would have missed (§14.25 frozenset, §14.28 mutable
+excluded_mix_ids, §14.32 parser strictness, now §14.34 strictness).
+Pattern: after commit 1 the structure is settled and the second
+reader notices "this allowlist is asymmetric with §14.32's parser
+policy" — a kind of consistency check that's easier across two
+commits than within one. Keeping mid-slice review as project hygiene
+for the rest of Phase B.
+
+**Decisions punted (not regressions):**
+
+* **No round-trip dump back to weekly.** The translator is one-way
+  (weekly → station-studio). Round-trip would need a `dump_station.py`
+  on the station-studio side that produces weekly's `type:`-tagged
+  format — not needed for the port direction.
+* **No iTunes-XML pool import as part of the same flow.** Pools land
+  via the existing `engine.importer` flow (§14.14). The two are
+  intentionally decoupled — re-importing a template doesn't reset
+  pools, and re-importing pools doesn't reset templates. The
+  `MASTER` source declaration is the seam: station-studio knows
+  weekly will eventually import three XML files (JINGLES, MIXES-like
+  pools, and the MASTER reference file) but the importer doesn't
+  enforce that they exist at template-import time.
+* **No automatic backup of the input JSON.** Weekly's
+  `app/services/template.py` is already in git (the JSON dump is just
+  derived data). The pre-import DB backup covers the destination
+  side; the source side is the weekly repo itself.
+
+**Carry-forward for sub-slice #17 (or wherever pools land):**
+
+* The hardcoded source-name list in `_PORT_SOURCES` should match
+  the iTunes-XML import's pool naming convention 1:1. If weekly's
+  XML file naming differs (e.g. `Master.xml` vs `MASTER.xml`),
+  station-studio's XML importer needs to map filename → source name
+  using the same vocabulary. Captured here so the next slice's
+  author finds the constraint.
+* The first generation against an imported template will fail with
+  "missing pool 'JINGLES'" until pools are loaded. That's the
+  expected UX — `_check_pools_present` raises with a clear message.
+  No special handling needed; just documented.
+
+| Punt                                                | Severity    | Notes                                                                                                                                  |
+|-----------------------------------------------------|-------------|----------------------------------------------------------------------------------------------------------------------------------------|
+| Round-trip dump back to weekly                      | LOW         | Not needed for port direction. Would land as `scripts/dump_station.py` if weekly→station-studio→weekly survival becomes a requirement. |
+| Auto-import iTunes XML pools after template import  | LOW         | Decoupled by design (§14.14 import flow exists). Could chain into `make import-station` if the two-step UX bites in practice.          |
+| UI-side template import (upload JSON via wizard)    | LATER (§16.2) | Wizard currently only generates row_template-style templates. Adding "Upload weekly JSON" is a §16.2 wizard expansion.                |
+| Backup of source weekly JSON file before import     | LOW         | Source-of-truth is weekly's git repo; the JSON dump is regeneratable from it.                                                          |
+
+---
+
 ## 15. Status snapshot
 
 A quick "where are we" for a future reader. Last updated alongside
-the whole-project review fixes (post-§14.32, pre-#16 import slice).
+the §14.34 weekly-template import slice (sub-slice #16 shipped).
 
 | Area                     | State                                                            |
 |--------------------------|------------------------------------------------------------------|
@@ -4541,7 +4703,7 @@ the whole-project review fixes (post-§14.32, pre-#16 import slice).
 | Delete / station-reset   | Shipped (14.10). Per-row delete + station nuke; cascades.        |
 | Disk-export UI button    | Shipped (14.11). Trace viewer "Export to disk" + status line.    |
 | Backup / restore         | Shipped (§14.18). `make backup` / `make restore date=...` with WAL-aware sqlite3 .backup + pre-restore safety copy. |
-| **§17 pre-port roadmap** | **Phase A complete (§14.17–§14.21). Phase B underway: sub-slices #5 (§14.23), #7 (§14.22), #8 (§14.24), #9 (§14.25), #10 (§14.26), #11 (§14.27), #12 (§14.28), #13 (§14.29 + §14.30), #14 (§14.31), #15 (§14.32) shipped + §14.33 whole-project review fixes (3 🔴 persistence bugs + StationForm guard + doc drift). **Next: sub-slice #16 = "Start from existing" / template-JSON import — read weekly's existing template and produce a station-studio flat_slots template.** |
+| **§17 pre-port roadmap** | **Phase A complete (§14.17–§14.21). Phase B underway: sub-slices #5 (§14.23), #7 (§14.22), #8 (§14.24), #9 (§14.25), #10 (§14.26), #11 (§14.27), #12 (§14.28), #13 (§14.29 + §14.30), #14 (§14.31), #15 (§14.32), #16 (§14.34) shipped + §14.33 whole-project review fixes (3 🔴 persistence bugs + StationForm guard + doc drift). Sub-slice #16 verified end-to-end against real weekly: 2,196-slot, 9-cursor template imports cleanly. **Next: sub-slice #17 — TBD (likely iTunes XML pool import path, since #16 lands the template but pools are still empty for imported stations).** |
 | Visual block editor      | Deferred (v2). Lands as §17 Phase B after Phase A unblocks.      |
 | Trace versioning         | Deferred. See §16.4 (queued behind §16.1 by design).             |
 | Accessibility pass       | Deferred. §17 Phase D — single sweep after §16.2 + port.         |

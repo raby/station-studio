@@ -201,33 +201,29 @@ dev-backend:
 dev-frontend:
 	cd web && npm run dev
 
-# §14.33 review fix: forward-readiness stub for sub-slice #16
-# (template-JSON import). The actual `scripts/import_station.py`
-# script lands with #16; this target establishes the
-# CLI UX pattern so #16 doesn't invent a one-off command and the
-# Makefile stays the consistent entry point.
+# Import a weekly-format template JSON as a station-studio station
+# (§14.34 / §17 Phase B sub-slice #16). Reads JSON produced by
+# `scripts/dump_weekly_template.py` (run inside a weekly/ checkout)
+# and upserts the translated template into the Station table.
 #
-# Convention: takes a slug + a path to weekly's template JSON. Backs
-# up the DB before writing unless --no-backup is passed (destructive
-# operations get a safety net per §14.18). Idempotent re-runs.
+# Pre-import DB backup runs by default — destructive ops get a safety
+# net per §14.18. Pass `ARGS=--no-backup` to suppress.
 #
-# Usage (post-#16):
-#   make import-station slug=rebirth-radio json=path/to/weekly-template.json
-#   make import-station slug=... json=... ARGS=--no-backup
+# Optional `name="Display Name"` overrides the default slug-title-cased
+# display name.
+#
+# Usage:
+#   make import-station slug=rebirth-radio json=weekly-template.json
+#   make import-station slug=rebirth-radio json=weekly-template.json \
+#       name="Rebirth Radio" ARGS=--no-backup
 import-station:
 	@if [ -z "$(slug)" ] || [ -z "$(json)" ]; then \
-		echo "Usage: make import-station slug=<slug> json=<path> [ARGS=--no-backup]"; \
-		echo "Imports a weekly-format template JSON as a station-studio station."; \
-		echo "Sub-slice #16 implements scripts/import_station.py; this target is a stub."; \
-		exit 1; \
-	fi
-	@if [ ! -f scripts/import_station.py ]; then \
-		echo "scripts/import_station.py not yet implemented — lands with §17 Phase B sub-slice #16."; \
-		echo "DESIGN.md §14.32 carries the field-name mapping table for the import logic."; \
+		echo "Usage: make import-station slug=<slug> json=<path> [name=\"Display Name\"] [ARGS=--no-backup]"; \
+		echo "Imports a weekly-format template JSON as a station-studio station (§14.34)."; \
 		exit 1; \
 	fi
 	@if ! echo "$(ARGS)" | grep -q -- "--no-backup"; then \
 		echo "Pre-import safety backup → backups/pre-import-$$(date +%Y-%m-%d-%H%M%S).db"; \
 		$(MAKE) backup; \
 	fi
-	$(PY) -m scripts.import_station "$(slug)" "$(json)" $(ARGS)
+	$(PY) -m scripts.import_station "$(slug)" "$(json)" $(if $(name),--name "$(name)",) $(ARGS)
