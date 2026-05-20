@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Library Persistent ID</key>
+	<string>FIXMIXSLIBRARY00</string>
+	<key>Playlists</key>
+	<array>
+		<dict>
+			<key>Name</key>
+			<string>MIXES</string>
+			<key>Playlist Items</key>
+			<array>
+				<dict>
+					<key>Track ID</key>
+					<integer>77001</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>77002</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>77003</integer>
+				</dict>
+			</array>
+		</dict>
+	</array>
+	<key>Tracks</key>
+	<dict>
+		<key>77001</key>
+		<dict>
+			<key>Artist</key>
+			<string>MIXES Artist 01</string>
+			<key>Genre</key>
+			<string>House</string>
+			<key>Name</key>
+			<string>MIXES Track 01</string>
+			<key>Persistent ID</key>
+			<string>MIXS000000000001</string>
+			<key>Track ID</key>
+			<integer>77001</integer>
+		</dict>
+		<key>77002</key>
+		<dict>
+			<key>Artist</key>
+			<string>MIXES Artist 02</string>
+			<key>Genre</key>
+			<string>House</string>
+			<key>Name</key>
+			<string>MIXES Track 02</string>
+			<key>Persistent ID</key>
+			<string>MIXS000000000002</string>
+			<key>Track ID</key>
+			<integer>77002</integer>
+		</dict>
+		<key>77003</key>
+		<dict>
+			<key>Artist</key>
+			<string>MIXES Artist 03</string>
+			<key>Genre</key>
+			<string>House</string>
+			<key>Name</key>
+			<string>MIXES Track 03</string>
+			<key>Persistent ID</key>
+			<string>MIXS000000000003</string>
+			<key>Track ID</key>
+			<integer>77003</integer>
+		</dict>
+	</dict>
+</dict>
+</plist>

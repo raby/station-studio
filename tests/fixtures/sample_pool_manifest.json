@@ -1,0 +1,12 @@
+{
+  "_comment": "Synthetic manifest for §14.35 importer tests. Mirrors the shape produced for weekly's 6-pool import (JINGLES / COMMERCIAL / MIXES / NIGHT / WEEKEND content + MASTER reference). Each XML under itunes_xml/ contains 3 tracks; persistent IDs are unique across pools so Track-table dedup is exercised.",
+  "schema_version": 1,
+  "pools": {
+    "JINGLES":    {"path": "itunes_xml/JINGLES.xml",    "role": "content"},
+    "COMMERCIAL": {"path": "itunes_xml/COMMERCIAL.xml", "role": "content"},
+    "MIXES":      {"path": "itunes_xml/MIXES.xml",      "role": "content"},
+    "NIGHT":      {"path": "itunes_xml/NIGHT.xml",      "role": "content"},
+    "WEEKEND":    {"path": "itunes_xml/WEEKEND.xml",    "role": "content"},
+    "MASTER":     {"path": "itunes_xml/MASTER.xml",     "role": "reference"}
+  }
+}

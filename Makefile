@@ -12,7 +12,7 @@
         backfill-slot-types \
         backup backups restore \
         dev dev-backend dev-frontend \
-        import-station
+        import-station import-weekly-pools
 
 PY := .venv/bin/python
 ALEMBIC := .venv/bin/alembic
@@ -227,3 +227,27 @@ import-station:
 		$(MAKE) backup; \
 	fi
 	$(PY) -m scripts.import_station "$(slug)" "$(json)" $(if $(name),--name "$(name)",) $(ARGS)
+
+# Import weekly's 6 iTunes XML source pools via a manifest JSON
+# (§14.35 / §17 Phase B sub-slice #17). The manifest declares each
+# pool's path + role (content for samplable pools, reference for
+# MASTER); relative paths in the manifest resolve against its parent
+# directory.
+#
+# Pre-import DB backup runs by default — pool import is a heavy write
+# (~10K rows across 6 pools); ARGS=--no-backup suppresses.
+#
+# Usage:
+#   make import-weekly-pools manifest=path/to/manifest.json
+#   make import-weekly-pools manifest=path/to/manifest.json ARGS=--no-backup
+import-weekly-pools:
+	@if [ -z "$(manifest)" ]; then \
+		echo "Usage: make import-weekly-pools manifest=<path> [ARGS=--no-backup]"; \
+		echo "Imports weekly's 6 source pools via a manifest JSON (§14.35)."; \
+		exit 1; \
+	fi
+	@if ! echo "$(ARGS)" | grep -q -- "--no-backup"; then \
+		echo "Pre-import safety backup → backups/pre-import-$$(date +%Y-%m-%d-%H%M%S).db"; \
+		$(MAKE) backup; \
+	fi
+	$(PY) -m scripts.import_weekly_pools "$(manifest)" $(ARGS)

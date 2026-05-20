@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Library Persistent ID</key>
+	<string>FIXJINGLIBRARY00</string>
+	<key>Playlists</key>
+	<array>
+		<dict>
+			<key>Name</key>
+			<string>JINGLES</string>
+			<key>Playlist Items</key>
+			<array>
+				<dict>
+					<key>Track ID</key>
+					<integer>74001</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>74002</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>74003</integer>
+				</dict>
+			</array>
+		</dict>
+	</array>
+	<key>Tracks</key>
+	<dict>
+		<key>74001</key>
+		<dict>
+			<key>Artist</key>
+			<string>JINGLES Artist 01</string>
+			<key>Genre</key>
+			<string>Daytime</string>
+			<key>Name</key>
+			<string>JINGLES Track 01</string>
+			<key>Persistent ID</key>
+			<string>JING000000000001</string>
+			<key>Track ID</key>
+			<integer>74001</integer>
+		</dict>
+		<key>74002</key>
+		<dict>
+			<key>Artist</key>
+			<string>JINGLES Artist 02</string>
+			<key>Genre</key>
+			<string>Daytime</string>
+			<key>Name</key>
+			<string>JINGLES Track 02</string>
+			<key>Persistent ID</key>
+			<string>JING000000000002</string>
+			<key>Track ID</key>
+			<integer>74002</integer>
+		</dict>
+		<key>74003</key>
+		<dict>
+			<key>Artist</key>
+			<string>JINGLES Artist 03</string>
+			<key>Genre</key>
+			<string>Daytime</string>
+			<key>Name</key>
+			<string>JINGLES Track 03</string>
+			<key>Persistent ID</key>
+			<string>JING000000000003</string>
+			<key>Track ID</key>
+			<integer>74003</integer>
+		</dict>
+	</dict>
+</dict>
+</plist>

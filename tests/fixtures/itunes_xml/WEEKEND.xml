@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Library Persistent ID</key>
+	<string>FIXWKNDLIBRARY00</string>
+	<key>Playlists</key>
+	<array>
+		<dict>
+			<key>Name</key>
+			<string>WEEKEND</string>
+			<key>Playlist Items</key>
+			<array>
+				<dict>
+					<key>Track ID</key>
+					<integer>87001</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>87002</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>87003</integer>
+				</dict>
+			</array>
+		</dict>
+	</array>
+	<key>Tracks</key>
+	<dict>
+		<key>87001</key>
+		<dict>
+			<key>Artist</key>
+			<string>WEEKEND Artist 01</string>
+			<key>Genre</key>
+			<string>Disco</string>
+			<key>Name</key>
+			<string>WEEKEND Track 01</string>
+			<key>Persistent ID</key>
+			<string>WKND000000000001</string>
+			<key>Track ID</key>
+			<integer>87001</integer>
+		</dict>
+		<key>87002</key>
+		<dict>
+			<key>Artist</key>
+			<string>WEEKEND Artist 02</string>
+			<key>Genre</key>
+			<string>Disco</string>
+			<key>Name</key>
+			<string>WEEKEND Track 02</string>
+			<key>Persistent ID</key>
+			<string>WKND000000000002</string>
+			<key>Track ID</key>
+			<integer>87002</integer>
+		</dict>
+		<key>87003</key>
+		<dict>
+			<key>Artist</key>
+			<string>WEEKEND Artist 03</string>
+			<key>Genre</key>
+			<string>Disco</string>
+			<key>Name</key>
+			<string>WEEKEND Track 03</string>
+			<key>Persistent ID</key>
+			<string>WKND000000000003</string>
+			<key>Track ID</key>
+			<integer>87003</integer>
+		</dict>
+	</dict>
+</dict>
+</plist>

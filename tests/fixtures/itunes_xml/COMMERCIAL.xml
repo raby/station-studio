@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Library Persistent ID</key>
+	<string>FIXCOMMLIBRARY00</string>
+	<key>Playlists</key>
+	<array>
+		<dict>
+			<key>Name</key>
+			<string>COMMERCIAL</string>
+			<key>Playlist Items</key>
+			<array>
+				<dict>
+					<key>Track ID</key>
+					<integer>67001</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>67002</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>67003</integer>
+				</dict>
+			</array>
+		</dict>
+	</array>
+	<key>Tracks</key>
+	<dict>
+		<key>67001</key>
+		<dict>
+			<key>Artist</key>
+			<string>COMMERCIAL Artist 01</string>
+			<key>Genre</key>
+			<string>Pop</string>
+			<key>Name</key>
+			<string>COMMERCIAL Track 01</string>
+			<key>Persistent ID</key>
+			<string>COMM000000000001</string>
+			<key>Track ID</key>
+			<integer>67001</integer>
+		</dict>
+		<key>67002</key>
+		<dict>
+			<key>Artist</key>
+			<string>COMMERCIAL Artist 02</string>
+			<key>Genre</key>
+			<string>Pop</string>
+			<key>Name</key>
+			<string>COMMERCIAL Track 02</string>
+			<key>Persistent ID</key>
+			<string>COMM000000000002</string>
+			<key>Track ID</key>
+			<integer>67002</integer>
+		</dict>
+		<key>67003</key>
+		<dict>
+			<key>Artist</key>
+			<string>COMMERCIAL Artist 03</string>
+			<key>Genre</key>
+			<string>Pop</string>
+			<key>Name</key>
+			<string>COMMERCIAL Track 03</string>
+			<key>Persistent ID</key>
+			<string>COMM000000000003</string>
+			<key>Track ID</key>
+			<integer>67003</integer>
+		</dict>
+	</dict>
+</dict>
+</plist>

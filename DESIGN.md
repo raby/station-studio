@@ -4681,10 +4681,233 @@ for the rest of Phase B.
 
 ---
 
+### 14.35 iTunes XML pool import — manifest CLI + SourcePlaylist.role (§17 Phase B sub-slice #17)
+
+**Goal.** Bridge from the imported template (§14.34) to a station
+that can actually generate. After #16, weekly's 2,196-slot template
+exists in the DB but `_check_pools_present` raises on the first
+generate — the 6 source pools (JINGLES / COMMERCIAL / MIXES / NIGHT
+/ WEEKEND / MASTER) aren't loaded. #17 lands a manifest-driven CLI
+that imports all six in one command, plus a DB-side `role` column
+that distinguishes content (sampled) from reference (declared but
+never sampled) pools.
+
+**Shape.**
+
+```
+   weekly/from_user/*.xml              tests/fixtures/itunes_xml/*.xml
+        │                                   │
+        ▼                                   ▼
+   weekly_pool_manifest.json    ◄──── sample_pool_manifest.json
+        │
+        │ make import-weekly-pools manifest=…
+        ▼
+   import_weekly_pools.py
+        │ per-pool loop
+        ▼
+   engine.importer.import_source(role=…)
+        │
+        ▼
+   SourcePlaylist rows + entries (role column distinguishes content vs reference)
+        │
+        ▼
+   engine.persistence.load_pools (cross-check: template-content + DB-reference → TemplateError)
+```
+
+**Two-commit slice with mid-slice review** (matches §14.34's
+pattern):
+
+* **Commit 1 (e15f58c)**: schema + engine plumbing — SourcePlaylist.role
+  column + Alembic + import_source role param + load_pools
+  cross-check + API surface + 8 new tests.
+* **Mid-slice review (6dfe6cd)**: 4 🟡 + 2 🟢 applied — TemplateError
+  (not ValueError) for the cross-check, Pydantic Literal role
+  constraint, error-message phrasing aligned with §14.32/§14.34,
+  doc cross-refs fixed, multi-source cross-check test, API re-import
+  role-change test.
+* **Commit 2 (this slice's second commit)**: manifest CLI +
+  fixtures + Makefile target + DESIGN entry.
+
+**MASTER reference-role decision.** Weekly's MASTER pool exists to
+provide canonical iTunes Persistent IDs across all tracks — its
+PIDs let the exporter reconcile cross-pool track identity. The
+generator never samples from it. Three modelling options surfaced
+during the design discussion:
+
+(a) Import as a normal pool; role lives only on the template's
+    `sources[].role` field. Minimal change, but the DB has no way
+    to distinguish a content pool from a reference one — a future
+    importer or migration can't tell them apart.
+
+(b) Add `role` column to SourcePlaylist + a `role=` parameter to
+    import_source. Schema change + Alembic migration. Models the
+    role at the DB level.
+
+(c) Skip MASTER entirely. Station-studio's exporter doesn't need
+    weekly's PID-reconciliation trick because Track has a unified
+    persistent_id column.
+
+We picked (b). Reasoning:
+- Future importer paths (e.g. UI-driven imports, partial re-imports)
+  benefit from the DB knowing role intrinsically rather than
+  re-deriving from each template.
+- Adds a meaningful cross-check at generation time: if a content-
+  role template source resolves to a reference-role DB pool, the
+  engine would sample from a pool marked not-for-sampling — a real
+  data-corruption risk that the new check catches.
+- The schema cost is one column with `server_default='content'` —
+  existing rows + non-reference imports require no extra wiring.
+
+**The cross-check (the actually-useful invariant).** Lives in
+`engine.persistence.load_pools` (not in `engine.generator._check_pools_present`
+— different check entirely; `_check_pools_present` is the
+missing-pool guard). At generation time, when a content-role
+template source maps to a DB pool with `role='reference'`,
+`load_pools` raises `TemplateError`:
+
+```
+source pool 'JINGLES' is imported with role='reference' but the
+template declares it as content. Either re-import the pool with
+role='content' (the generator would otherwise sample from a pool
+marked not-for-sampling) or fix the template's sources[] entry.
+```
+
+The opposite direction (template-`reference` + DB-`content`) is
+silently OK: `template.content_source_names` skips reference-role
+sources, so the DB-side role is moot. Usually config drift from a
+re-import — benign.
+
+`TemplateError` (not `ValueError`) is deliberate: missing-pool
+remains `ValueError` ("run the importer"), role-mismatch is
+`TemplateError` ("fix the template or re-import"). The API error
+mapping + manifest CLI can distinguish them with `except (TypeError,
+TemplateError)` clauses.
+
+**Manifest format.** Strict-mode JSON (mirrors §14.32 / §14.34
+parser policy):
+
+```json
+{
+  "_comment": "Optional inline documentation",
+  "schema_version": 1,
+  "pools": {
+    "JINGLES":    {"path": "from_user/JINGLES.xml",    "role": "content"},
+    "COMMERCIAL": {"path": "from_user/COMMERCIAL.xml", "role": "content"},
+    "MIXES":      {"path": "from_user/MIXES.xml",      "role": "content"},
+    "NIGHT":      {"path": "from_user/NIGHT.xml",      "role": "content"},
+    "WEEKEND":    {"path": "from_user/WEEKEND.xml",    "role": "content"},
+    "MASTER":     {"path": "from_user/MASTER.xml",     "role": "reference"}
+  }
+}
+```
+
+Both `path` and `role` are required per pool — no defaults. The
+explicit-role-per-pool choice (vs. defaulting role to content)
+prevents the "forgot to set role on MASTER" silent-error class.
+Relative `path` values resolve against the manifest file's parent
+directory (typical workflow: manifest sits next to the XML files).
+
+Allowed top-level keys: `pools` (required), `_comment`,
+`schema_version`. Unknown keys reject with a clear error. Allowed
+per-pool keys: `path`, `role`. Unknown per-pool keys also reject —
+mirrors §14.34's `_SLOT_FIELDS_BY_TYPE` allowlist.
+
+**CLI exit codes** (parallel to `import_station.py`):
+* 0 — success
+* 1 — manifest file not found
+* 2 — `ManifestError` (manifest is malformed — fix the JSON)
+* 3 — importer `ValueError` (malformed XML or non-iTunes file — fix the XML)
+
+The distinct exit codes let the user tell "fix your JSON" from
+"fix your XML" without reading the error message text.
+
+**What shipped (commit 2):**
+
+* `scripts/import_weekly_pools.py` — manifest-driven CLI. Strict-mode
+  manifest parsing (~120 LoC of validation alone), per-pool action
+  reporting (created / updated), exit-code discipline. ~230 LoC.
+* `tests/fixtures/sample_pool_manifest.json` — 6-pool fixture
+  manifest with role=content × 5 + role=reference × 1.
+* `tests/fixtures/itunes_xml/*.xml` — 6 tiny synthetic iTunes XMLs
+  (3 tracks each), one per weekly pool. Generated once + committed.
+* `tests/test_import_weekly_pools.py` — 19 tests covering strict-mode
+  parsing (10 error paths), import_manifest end-to-end (5 cases),
+  CLI exit codes + error phrasing (4 cases). Verifies relative-path
+  resolution against the manifest's parent dir.
+* `Makefile` — `import-weekly-pools manifest=…` target with
+  auto-backup default + `ARGS=--no-backup` escape hatch. Pattern
+  mirrors `import-station`.
+
+**Verified end-to-end against real weekly.** During development I
+ran `make import-weekly-pools` against Rebirth Radio's actual 6
+pools (from `weekly/from_user/`):
+
+```
+created  JINGLES          content        3 tracks,     3 entries
+created  COMMERCIAL       content      210 tracks,   210 entries
+created  MIXES            content      755 tracks,   755 entries
+created  NIGHT            content      943 tracks,  1911 entries
+created  WEEKEND          content      433 tracks,   960 entries
+created  MASTER           reference   7103 tracks,  7103 entries
+```
+
+Then dumped + imported the template (#16's chain) and ran
+`load_pools` — got the expected 5 content pools (MASTER correctly
+excluded) with the right cardinality. The next step (sub-slice #18
+or #19) is the first actual `generate()` call against this state.
+
+**Decisions punted (not regressions):**
+
+* **No UI for pool import.** The wizard's single-pool form
+  (`POST /api/sources/import` with role) works — but multi-pool
+  upload via a single UI flow is a §16.2 wizard concern.
+* **No glob-style "import all XMLs in this directory".** Manifest
+  remains explicit. Glob would silently miss the role declaration
+  + force a default that contradicts the "explicit role" choice.
+* **No "unchanged" action label.** `import_source`'s drop-and-recreate
+  semantics make field-level idempotency tracking expensive
+  (compare every entry before drop); not worth the complexity for
+  a single-user tool. Created / updated is sufficient feedback.
+* **No content-validation guards** (e.g. "JINGLES.xml must have
+  genre tags", "MASTER must have ≥N tracks"). These are
+  station-specific invariants; would belong in a hypothetical
+  station validator slice, not the generic import path.
+* **No automated test against real weekly XMLs.** The committed
+  fixtures stand in for #17's purposes; #18 (commit
+  `stations/rebirth-radio.json`) + #19 (byte-equality harness)
+  carry the production-data verification.
+
+| Punt                                             | Severity    | Notes                                                                                                                |
+|--------------------------------------------------|-------------|----------------------------------------------------------------------------------------------------------------------|
+| UI for multi-pool import                          | LATER (§16.2)| Wizard concern; existing single-pool API form works in the meantime.                                                |
+| Glob-style "import all XMLs in dir"               | LOW         | Manifest stays explicit. Glob would conflict with the per-pool role declaration.                                     |
+| "Unchanged" action label                          | LOW         | Drop-and-recreate semantics make field-level diff expensive for single-user-tool value.                              |
+| Content-validation guards (genre tags, min count) | LOW         | Station-specific invariants; would land as a separate validator slice if reuse demand emerged.                       |
+| Tests against real weekly XMLs                    | MOVED       | #18 + #19 carry production-data verification; #17's job is the path-and-mapping layer.                              |
+
+**Phase B closeout (queued):**
+
+* **Sub-slice #18** — Commit `stations/rebirth-radio.json` as the
+  port artifact. `make seed-stations` picks it up automatically.
+  Trivial post-#17 work: dump weekly's template via §14.34's
+  helper, commit the result. Note: #18 ships ONLY the template
+  artifact, not the XML files (which are user data, not for the
+  repo).
+* **Sub-slice #19** — Byte-equality verification harness. The
+  acceptance criterion for the whole port: same pools + same
+  seed + same week → station-studio's generator produces the
+  same bytes as weekly's. Closes Phase B.
+
+After #19 ships, Phase B is done. Phase C (operational cutover —
+retire weekly's generator, point production at station-studio)
+becomes ops work, not engineering.
+
+---
+
 ## 15. Status snapshot
 
 A quick "where are we" for a future reader. Last updated alongside
-the §14.34 weekly-template import slice (sub-slice #16 shipped).
+the §14.35 iTunes-XML pool import slice (sub-slice #17 shipped).
 
 | Area                     | State                                                            |
 |--------------------------|------------------------------------------------------------------|
@@ -4697,13 +4920,13 @@ the §14.34 weekly-template import slice (sub-slice #16 shipped).
 | Trace viewer (UI)        | Shipped. Row grouping, filter (§16.8), prev/next nav (§16.9), excluded-candidates disclosure (§14.23). |
 | Station creation wizard  | Shipped (v1 vocab only). Supports `pick` / `window` strategies and the row_template form. **Edit route gates advanced templates** (§14.33: any post-§14.22 field shows "edit JSON directly" message instead of mounting lossy form). Full editor support deferred to §16.2 / §17 Phase D. |
 | Rule overrides           | Shipped (§14.29 + §14.30). Engine-side accessors + per-station CRUD endpoints. Four keys: artist_dedup_window + mix_exclusion_weeks (live precedence: BlockSpec → rule → engine constant); cursor_advance_step + cursor_reset_cycle (drive persistent cursor advance/reset when cursor.persist=true). **No UI panel yet** — deferred to §17 Phase D. |
-| Persistence tables       | Shipped. 12 tables. Migrations 0f76cfb45e8d (baseline) → 8353f29ac95e (mix_usage) → 6db55f2a13af (artist_alias) → 54570900ed97 (rule) → 1cafcc971152 (slot_type column). Migration parity check in CI. |
+| Persistence tables       | Shipped. 12 tables. Migrations 0f76cfb45e8d (baseline) → 8353f29ac95e (mix_usage) → 6db55f2a13af (artist_alias) → 54570900ed97 (rule) → 1cafcc971152 (slot_type column) → c7bb27708788 (source_playlist.role column, §14.35). Migration parity check in CI. |
 | Test plan + CI           | Shipped. 4-tier (engine, API, Vitest, Playwright). 90% backend aggregate gate; frontend per-file lines ≥85%. |
 | In-UI generate button    | Shipped (14.9). Empty-CTA + next-week + advanced + per-row regen.|
 | Delete / station-reset   | Shipped (14.10). Per-row delete + station nuke; cascades.        |
 | Disk-export UI button    | Shipped (14.11). Trace viewer "Export to disk" + status line.    |
 | Backup / restore         | Shipped (§14.18). `make backup` / `make restore date=...` with WAL-aware sqlite3 .backup + pre-restore safety copy. |
-| **§17 pre-port roadmap** | **Phase A complete (§14.17–§14.21). Phase B underway: sub-slices #5 (§14.23), #7 (§14.22), #8 (§14.24), #9 (§14.25), #10 (§14.26), #11 (§14.27), #12 (§14.28), #13 (§14.29 + §14.30), #14 (§14.31), #15 (§14.32), #16 (§14.34) shipped + §14.33 whole-project review fixes (3 🔴 persistence bugs + StationForm guard + doc drift). Sub-slice #16 verified end-to-end against real weekly: 2,196-slot, 9-cursor template imports cleanly. **Next: sub-slice #17 — TBD (likely iTunes XML pool import path, since #16 lands the template but pools are still empty for imported stations).** |
+| **§17 pre-port roadmap** | **Phase A complete (§14.17–§14.21). Phase B underway: sub-slices #5 (§14.23), #7 (§14.22), #8 (§14.24), #9 (§14.25), #10 (§14.26), #11 (§14.27), #12 (§14.28), #13 (§14.29 + §14.30), #14 (§14.31), #15 (§14.32), #16 (§14.34), #17 (§14.35) shipped + §14.33 whole-project review fixes. Sub-slice #17 verified end-to-end against real weekly: 6 pools (2,344 content tracks + 7,103 MASTER reference tracks) imported in seconds; load_pools resolves the 5 content pools cleanly with MASTER correctly excluded. **Next: sub-slice #18 = commit `stations/rebirth-radio.json` artifact + #19 = byte-equality verification harness (Phase B's acceptance criterion).** |
 | Visual block editor      | Deferred (v2). Lands as §17 Phase B after Phase A unblocks.      |
 | Trace versioning         | Deferred. See §16.4 (queued behind §16.1 by design).             |
 | Accessibility pass       | Deferred. §17 Phase D — single sweep after §16.2 + port.         |
