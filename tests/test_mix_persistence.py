@@ -270,6 +270,45 @@ def test_max_mix_exclusion_window_uses_default_when_block_field_is_none():
     assert max_mix_exclusion_window(tmpl, default=0) == 0
 
 
+def test_max_mix_exclusion_window_walks_flat_slots():
+    """Regression test for the §14.32 review-fix sweep: pre-fix, this
+    function only walked `row_template`, so flat_slots templates with
+    mix blocks silently returned 0 → load_excluded_mix_ids saw no
+    lookback → cross-week mix exclusion never fired. Rebirth Radio's
+    port is the primary class of flat_slots+mix templates.
+
+    Same bug shape as §14.32's caught _save_mix_usages issue; this is
+    the second instance in persistence.py the sweep audit caught.
+    """
+    template = {
+        "station": "rb", "cadence": "weekly", "rng": "off",
+        "sources": [{"name": "M", "colour": "#111", "role": "content"}],
+        "cursor": {"base_advance_per_week": 0, "cycle_weeks": 1},
+        "layout": {
+            "unit": "slot",
+            "unit_labels": [],
+            "row_start_offsets": [],
+            "flat_slots": [
+                {"source": "M", "strategy": "mix", "size": 1,
+                 "genre": "House", "exclusion_window": 7},
+                {"source": "M", "strategy": "mix", "size": 1,
+                 "genre": "Trance", "exclusion_window": 12},
+            ],
+        },
+    }
+    tmpl = parse_template(template)
+    # Pre-fix: returned 0 (only walked row_template, which is empty for
+    # flat templates). Post-fix: returns max(7, 12) = 12.
+    assert max_mix_exclusion_window(tmpl, default=20) == 12
+    # Same with explicit + missing exclusion_window via default kwarg.
+    template["layout"]["flat_slots"][1] = {
+        "source": "M", "strategy": "mix", "size": 1, "genre": "Trance",
+        # exclusion_window omitted — should inherit default=20
+    }
+    tmpl = parse_template(template)
+    assert max_mix_exclusion_window(tmpl, default=20) == 20  # max(7, 20)
+
+
 def test_max_mix_exclusion_window_max_of_mixed_explicit_and_default():
     """One mix block sets exclusion_window=5; another omits it (inherits
     default=20). Max wins."""

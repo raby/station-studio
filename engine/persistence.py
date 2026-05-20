@@ -130,13 +130,10 @@ def _save_mix_usages(db: Session, *, playlist_id: int, template: Template, resul
     # that's the per-row block list (slots from the same block across
     # different rows share a block index, matching the dispatch order).
     # For flat_slots form, each slot's block index is its position in
-    # the flat list — also 1-indexed. Either way, the indexing math is
-    # identical; only the SOURCE list changes.
-    block_list = (
-        template.layout.flat_slots
-        if template.layout.flat_slots
-        else template.layout.row_template
-    )
+    # the flat list — also 1-indexed. all_blocks() returns the active
+    # form's list (XOR-enforced so one is always empty); same indexing
+    # math regardless.
+    block_list = template.layout.all_blocks()
     for track, slot in zip(result.picks, result.trace.slots):
         # block / row are 1-indexed on the slot.
         block_spec = block_list[slot.block - 1]
@@ -187,9 +184,14 @@ def max_mix_exclusion_window(template: Template, *, default: int = 0) -> int:
     reflects per-station configuration. Templates with no mix blocks
     still return 0 regardless of default.
     """
+    # §14.32: walk both layout forms via all_blocks() — the §14.32-era
+    # _save_mix_usages bug taught us "only iterating row_template" is
+    # a footgun on flat_slots templates. Rebirth Radio's port uses
+    # flat_slots; its mix blocks would silently get window=0 here
+    # without the all_blocks() switch.
     windows = [
         (b.exclusion_window if b.exclusion_window is not None else default)
-        for b in template.layout.row_template
+        for b in template.layout.all_blocks()
         if b.strategy == "mix"
     ]
     return max(windows) if windows else 0
@@ -397,12 +399,19 @@ def _upsert_cursor_position(
 
 def _cursors_to_sources(template: Template) -> dict[str, str]:
     """Map cursor_id → source_name based on the template's sequential
-    blocks. A cursor referenced by multiple sequential blocks is assumed
-    to point at the SAME source on all of them — weekly's behaviour. The
-    parser should enforce this if it ever proves contestable (TODO).
+    blocks. A cursor referenced by multiple sequential blocks must
+    point at the SAME source on all of them (parser enforces this
+    cross-block consistency check; see engine.template).
+
+    §14.32 fix: walks both layout forms via all_blocks(). Before this
+    fix, flat_slots templates with sequential blocks + cursor.persist
+    silently saw `cursor_to_source = {}`, and advance_cursors skipped
+    every cursor without advancing — meaning persistent cursors never
+    moved for the very class of template (Rebirth Radio's port) that
+    needs them most.
     """
     mapping: dict[str, str] = {}
-    for b in template.layout.row_template:
+    for b in template.layout.all_blocks():
         if b.strategy == "sequential" and b.cursor_id is not None:
             mapping.setdefault(b.cursor_id, b.source)
     return mapping

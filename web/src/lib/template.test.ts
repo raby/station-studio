@@ -320,3 +320,108 @@ describe('preSubmitProblem', () => {
     expect(preSubmitProblem(state)).toMatch(/source/i);
   });
 });
+
+
+// §14.33 — isAdvancedTemplate (review fix from whole-project audit)
+//
+// The StationForm UI handles only v1 strategies (pick/window) + the
+// row_template layout form. isAdvancedTemplate flags templates that
+// would be silently truncated on save via buildTemplate(). Sub-slice
+// #16 (template-JSON import) lands users on the Edit route for
+// advanced templates; the guard blocks the lossy form path.
+
+import { isAdvancedTemplate } from './template';
+
+
+describe('isAdvancedTemplate', () => {
+  const v1Template = {
+    station: 'cls',
+    cadence: 'weekly',
+    rng: 'off',
+    sources: [{ name: 'A', colour: '#111', role: 'content' }],
+    cursor: { base_advance_per_week: 60, cycle_weeks: 4 },
+    layout: {
+      unit: 'day',
+      unit_labels: ['Mon'],
+      row_start_offsets: [0],
+      row_template: [{ source: 'A', strategy: 'pick', size: 1 }],
+    },
+  };
+
+  it('returns false for null/undefined/empty template', () => {
+    expect(isAdvancedTemplate(null)).toBe(false);
+    expect(isAdvancedTemplate(undefined)).toBe(false);
+    expect(isAdvancedTemplate({})).toBe(false);
+  });
+
+  it('returns false for a v1 Classics-shaped template', () => {
+    expect(isAdvancedTemplate(v1Template)).toBe(false);
+  });
+
+  it('flags a template with flat_slots set', () => {
+    const tpl = {
+      ...v1Template,
+      layout: {
+        ...v1Template.layout,
+        flat_slots: [{ source: 'A', strategy: 'jingle', size: 1, genre: 'D' }],
+      },
+    };
+    expect(isAdvancedTemplate(tpl)).toBe(true);
+  });
+
+  it('does not flag an empty flat_slots array (XOR no-op)', () => {
+    const tpl = {
+      ...v1Template,
+      layout: { ...v1Template.layout, flat_slots: [] },
+    };
+    expect(isAdvancedTemplate(tpl)).toBe(false);
+  });
+
+  it('flags a template with cursor.persist=true', () => {
+    const tpl = {
+      ...v1Template,
+      cursor: { ...v1Template.cursor, persist: true },
+    };
+    expect(isAdvancedTemplate(tpl)).toBe(true);
+  });
+
+  it('does NOT flag cursor.persist=false (default)', () => {
+    const tpl = {
+      ...v1Template,
+      cursor: { ...v1Template.cursor, persist: false },
+    };
+    expect(isAdvancedTemplate(tpl)).toBe(false);
+  });
+
+  it('flags a template with non-empty cursors_init', () => {
+    const tpl = {
+      ...v1Template,
+      layout: { ...v1Template.layout, cursors_init: { NIGHT_1: 0 } },
+    };
+    expect(isAdvancedTemplate(tpl)).toBe(true);
+  });
+
+  it('flags a row_template block with a non-v1 strategy', () => {
+    const tpl = {
+      ...v1Template,
+      layout: {
+        ...v1Template.layout,
+        row_template: [{ source: 'A', strategy: 'weighted', size: 1 }],
+      },
+    };
+    expect(isAdvancedTemplate(tpl)).toBe(true);
+  });
+
+  it.each([
+    'cursor_id', 'genre', 'exclusion_window', 'window', 'position', 'fallback_genre',
+  ])('flags a row_template block carrying an advanced field: %s', (field) => {
+    const tpl = {
+      ...v1Template,
+      layout: {
+        ...v1Template.layout,
+        row_template: [{ source: 'A', strategy: 'pick', size: 1, [field]: 'x' }],
+      },
+    };
+    expect(isAdvancedTemplate(tpl)).toBe(true);
+  });
+});

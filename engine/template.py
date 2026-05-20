@@ -155,6 +155,24 @@ class LayoutSpec:
     #     (no row grouping)
     flat_slots: list[BlockSpec] = field(default_factory=list)
 
+    def all_blocks(self) -> list[BlockSpec]:
+        """Every block declared by the layout, regardless of form.
+
+        XOR-enforced by the parser: exactly one of `flat_slots` /
+        `row_template` is non-empty, so this returns the active list
+        with the empty one contributing nothing. Use this anywhere a
+        function needs to iterate "all blocks" without caring about
+        the layout form (the §14.32 review surfaced three sites —
+        `max_mix_exclusion_window`, `_cursors_to_sources`, the parser
+        cursor↔source consistency check — that only walked
+        row_template and silently mis-behaved for flat templates).
+
+        Adding a future layout form (sub-slice #15 ruled out, but
+        the door isn't closed) → extend this single method and every
+        consumer adapts.
+        """
+        return [*self.flat_slots, *self.row_template]
+
 
 @dataclass
 class Template:
@@ -291,8 +309,12 @@ def parse_template(raw: dict) -> Template:
     # advance_cursors silently skips them; this matches weekly's
     # tolerant behaviour and avoids breaking templates that staged a
     # cursor for a not-yet-written block.
+    # Walk both layout forms via all_blocks(). Before §14.32's review-
+    # fix sweep, this check only looked at row_template and silently
+    # ignored conflicts in flat_slots — same bug class as the
+    # max_mix_exclusion_window / _cursors_to_sources sites.
     cursor_to_source: dict[str, str] = {}
-    for b in layout.row_template:
+    for b in layout.all_blocks():
         if b.strategy != "sequential" or b.cursor_id is None:
             continue
         existing = cursor_to_source.get(b.cursor_id)

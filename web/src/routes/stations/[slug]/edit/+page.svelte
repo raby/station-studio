@@ -17,6 +17,7 @@
   import { getStation, updateStation, ApiError } from '$lib/api';
   import type { Station, Meta } from '$lib/api';
   import { loadMeta } from '$lib/meta';
+  import { isAdvancedTemplate } from '$lib/template';
   import StationForm from '$lib/components/StationForm.svelte';
 
   let station: Station | null = null;
@@ -77,18 +78,58 @@
   {:else if loadError}
     <p class="error">{loadError}</p>
   {:else if station && meta}
+    {@const advanced = isAdvancedTemplate(station.template)}
     <h1>Edit {station.name}</h1>
     <p class="sub">
       Template JSON is the canonical artifact (DESIGN.md §4.2). Validation runs
       server-side against <code>engine.template.parse_template</code>.
     </p>
 
-    <StationForm
-      mode="edit"
-      initial={station}
-      {meta}
-      onSubmit={handleSave}
-    />
+    {#if advanced}
+      <!--
+        §14.33 (review-fix from whole-project audit): the StationForm UI
+        only handles v1 strategies (pick / window) and the row_template
+        layout form. Any template carrying §14.22–§14.32 features
+        (sequential / jingle / mix / weighted / prev_ref, flat_slots,
+        cursor.persist, cursors_init, per-block cursor_id / genre /
+        exclusion_window / window / position / fallback_genre) would be
+        silently stripped on save by buildTemplate(). The §17 Phase D
+        visual block editor will extend the form; until then, block the
+        Edit UI for advanced templates with a clear path forward:
+        update the template via the PUT /api/stations/{slug} endpoint
+        directly.
+      -->
+      <section class="advanced-guard" data-testid="advanced-template-guard">
+        <h2>This template uses advanced features.</h2>
+        <p>
+          The station's template carries fields the form UI doesn't
+          yet support (advanced strategies, flat-slot layout, named
+          cursors, or per-block overrides). Saving from this form
+          would strip those fields silently.
+        </p>
+        <p>
+          Update the template directly via the API instead:
+        </p>
+        <pre>PUT /api/stations/{slug}
+{`Content-Type: application/json`}
+
+{`{ "slug": "${slug}", "name": "${station.name}", "template": { ... } }`}</pre>
+        <p>
+          Or wait for the visual block editor (§17 Phase D). The
+          station's current configuration is unaffected.
+        </p>
+        <p>
+          <a href="/stations/{slug}">← Back to station details</a>
+        </p>
+      </section>
+    {:else}
+      <StationForm
+        mode="edit"
+        initial={station}
+        {meta}
+        onSubmit={handleSave}
+      />
+    {/if}
   {/if}
 </main>
 
@@ -123,5 +164,26 @@
     border: 1px solid #fed7d7;
     padding: 0.5rem 0.75rem;
     border-radius: 4px;
+  }
+
+  .advanced-guard {
+    background: #fffbeb;
+    border: 1px solid #fde68a;
+    border-radius: 6px;
+    padding: 1rem 1.25rem;
+    margin: 1rem 0;
+  }
+  .advanced-guard h2 {
+    margin-top: 0;
+    font-size: 1.1rem;
+    color: #92400e;
+  }
+  .advanced-guard pre {
+    background: #1f2937;
+    color: #e5e7eb;
+    padding: 0.75rem;
+    border-radius: 4px;
+    overflow-x: auto;
+    font-size: 0.85rem;
   }
 </style>

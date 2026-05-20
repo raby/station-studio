@@ -82,37 +82,36 @@ RULE_DEFAULTS: dict[str, RuleDefault] = {
         ),
         max_value=1000,
     ),
-    # The two cursor rules below are stored but NOT YET WIRED INTO THE
-    # ENGINE. station-studio's templates already control cursor advance
-    # + reset behaviour via the per-template cursor block (§14.22):
-    # cursor.base_advance_per_week and cursor.cycle_weeks. A future
-    # slice could wire these rules as station-wide overrides if a real
-    # use case wants per-station tuning that bypasses the template,
-    # but no current code path consumes them. Carried in the registry
-    # so the schema is forward-compatible and CRUD endpoints can list
-    # them; the values round-trip but have no effect on generation
-    # today.
+    # §14.30 wired both cursor rules: when `template.cursor.persist=true`
+    # the engine reads these rules at generation time and uses them to
+    # drive the post-save cursor advance (cursor_advance_step) + reset
+    # cadence (cursor_reset_cycle). For STATELESS templates (the §14.22
+    # default), the engine's cursor math reads from the template's
+    # cursor block (base_advance_per_week, cycle_weeks) and these rule
+    # values are stored-but-ignored. The full precedence chain is:
+    #   - cursor.persist=true template → station rule drives advance/reset
+    #   - cursor.persist=false template → template fields drive advance/reset
+    # (Earlier docstrings on these two rules wrongly claimed they were
+    # "not yet wired"; §14.30 closed that gap. See engine.persistence.
+    # advance_cursors + api/routers/generate.py:60-65.)
     "cursor_advance_step": RuleDefault(
         value=120,
         description=(
-            "How far sequential-strategy cursors would advance per "
-            "generation (weekly's NIGHT/WEEKEND cursor step). "
-            "**Currently unused by the engine** — station-studio's "
-            "templates control cursor advance via "
-            "cursor.base_advance_per_week in the template's cursor "
-            "block. Stored for forward-compatibility with future "
-            "per-station cursor overrides."
+            "How far sequential-strategy cursors advance per generation "
+            "(weekly's NIGHT/WEEKEND cursor step). Active for templates "
+            "with cursor.persist=true (§14.30). Stateless templates "
+            "ignore this — they control advance via "
+            "cursor.base_advance_per_week in the template's cursor block."
         ),
         max_value=10000,
     ),
     "cursor_reset_cycle": RuleDefault(
         value=0,
         description=(
-            "How often cursors reset to their initial positions "
-            "(0 = never reset; wrap-only). **Currently unused by the "
-            "engine** — station-studio's templates control wrap "
-            "behaviour via cursor.cycle_weeks. Stored for forward-"
-            "compatibility with future per-station cursor overrides."
+            "How often persistent cursors reset to their initial "
+            "positions (0 = never reset; wrap-only). Active for "
+            "templates with cursor.persist=true (§14.30). Stateless "
+            "templates ignore this."
         ),
         max_value=None,
     ),

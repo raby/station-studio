@@ -614,14 +614,10 @@ def generate(
 
 def _check_pools_present(template: Template, pools: Mapping[str, list[Any]]) -> None:
     """Verify every source referenced by any block in the layout has a
-    pool entry. §14.32: walks BOTH row_template and flat_slots —
-    parser enforces XOR so one of them contributes 0 blocks.
+    pool entry. Uses `layout.all_blocks()` to cover both layout forms
+    (row_template + flat_slots, XOR-enforced).
     """
-    required = set()
-    for b in template.layout.row_template:
-        required.add(b.source)
-    for b in template.layout.flat_slots:
-        required.add(b.source)
+    required = {b.source for b in template.layout.all_blocks()}
     missing = required - set(pools.keys())
     if missing:
         raise KeyError(

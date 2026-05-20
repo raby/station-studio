@@ -208,3 +208,74 @@ export function preSubmitProblem(state: FormState): string | null {
     return 'each block must reference a source';
   return null;
 }
+
+
+// ---- advanced-template detection ---------------------------------------
+
+/**
+ * V1 strategy vocabulary the StationForm + LayoutFieldset UI handles
+ * losslessly. Templates using ANY strategy outside this set, OR any of
+ * the post-§14.22 block fields (cursor_id, genre, exclusion_window,
+ * window, position, fallback_genre), OR a non-empty `flat_slots` /
+ * `cursors_init`, OR `cursor.persist=true` are "advanced" templates
+ * the form can't faithfully round-trip — calling `unpack()` then
+ * `buildTemplate()` on them would silently strip the advanced fields
+ * on save, destroying user data.
+ *
+ * Sub-slice #16 (template-JSON import) will land users on the Edit
+ * route for stations whose templates carry advanced features.
+ * `isAdvancedTemplate` lets the Edit route detect this and show a
+ * read-only / "edit via JSON" message instead of mounting the
+ * lossy form. Full editor support lands with §17 Phase D's visual
+ * block editor.
+ */
+const V1_STRATEGIES = new Set(['pick', 'window']);
+const ADVANCED_BLOCK_FIELDS = [
+  'cursor_id',
+  'genre',
+  'exclusion_window',
+  'window',
+  'position',
+  'fallback_genre',
+];
+
+export function isAdvancedTemplate(
+  template: Record<string, unknown> | null | undefined,
+): boolean {
+  if (!template) return false;
+  const layout = template.layout as Record<string, unknown> | undefined;
+  if (!layout) return false;
+
+  // 1. flat_slots form (§14.32) — UI can't roundtrip these.
+  const flatSlots = layout.flat_slots;
+  if (Array.isArray(flatSlots) && flatSlots.length > 0) return true;
+
+  // 2. cursor.persist=true (§14.30) — stateful cursor mode.
+  const cursor = template.cursor as Record<string, unknown> | undefined;
+  if (cursor && cursor.persist === true) return true;
+
+  // 3. cursors_init declared (§14.22 named cursors).
+  const cursorsInit = layout.cursors_init;
+  if (
+    cursorsInit !== null &&
+    cursorsInit !== undefined &&
+    typeof cursorsInit === 'object' &&
+    Object.keys(cursorsInit as object).length > 0
+  ) {
+    return true;
+  }
+
+  // 4. Any row_template block with advanced fields or non-v1 strategy.
+  const rowTemplate = layout.row_template;
+  if (Array.isArray(rowTemplate)) {
+    for (const blk of rowTemplate as Array<Record<string, unknown>>) {
+      const strat = blk.strategy as string | undefined;
+      if (strat && !V1_STRATEGIES.has(strat)) return true;
+      for (const f of ADVANCED_BLOCK_FIELDS) {
+        if (f in blk) return true;
+      }
+    }
+  }
+
+  return false;
+}

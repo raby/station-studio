@@ -347,3 +347,84 @@ def test_persistent_cursor_reset_fires_at_correct_generation(session_factory):
     # week 5: pick at 50. Advance(gen=4): 50+10 = 60.
     # week 6: pick at 60. Advance(gen=5): 60+10 = 70.
     assert picked_positions == [50, 60, 70, 80, 50, 60]
+
+
+def test_advance_cursors_works_for_flat_slots_templates(session_factory):
+    """Regression test for the §14.32 review-fix sweep: pre-fix,
+    `_cursors_to_sources` only walked `row_template`, so a flat_slots
+    template with `cursor.persist=true` + sequential blocks silently
+    saw `cursor_to_source = {}` and `advance_cursors` skipped every
+    cursor (no source → no wrap math → no advance). Persistent cursors
+    on Rebirth Radio's port-shaped templates would NEVER move.
+
+    Same bug shape as the max_mix_exclusion_window flat_slots issue
+    caught in the same review.
+    """
+    Session = session_factory
+    template_dict = {
+        "station": "rb", "cadence": "weekly", "rng": "off",
+        "sources": [{"name": "S", "colour": "#111", "role": "content"}],
+        "cursor": {
+            "base_advance_per_week": 0, "cycle_weeks": 1, "persist": True,
+        },
+        "layout": {
+            "unit": "slot",
+            "unit_labels": [],
+            "row_start_offsets": [],
+            "cursors_init": {"NIGHT_1": 0},
+            "flat_slots": [
+                {"source": "S", "strategy": "sequential", "size": 1,
+                 "cursor_id": "NIGHT_1"},
+            ],
+        },
+    }
+    station_id = _seed_station(Session, template_dict)
+    tmpl = parse_template(template_dict)
+    pool = _seq_pool("X", 100)
+
+    with Session() as db:
+        # Cursor starts at 0 (cursors_init). Advance with step=15,
+        # generation_count=1 (week 1's post-save call). Expected new
+        # position: (0 + 15) % 100 = 15.
+        advance_cursors(
+            db, station_id=station_id, template=tmpl, pools={"S": pool},
+            advance_step=15, reset_cycle=0, generation_count=1,
+        )
+        db.commit()
+        positions = load_cursor_positions(db, station_id=station_id, template=tmpl)
+        # Pre-fix: positions["NIGHT_1"] would be 0 (cursors_init fallback;
+        # no advance happened because _cursors_to_sources returned {}).
+        # Post-fix: 15, matching weekly's behaviour.
+        assert positions["NIGHT_1"] == 15
+
+
+def test_parser_rejects_cursor_source_conflict_in_flat_slots():
+    """Regression for the parser's cursor↔source consistency check
+    (§14.30 review fix): pre-§14.32-sweep, the check only walked
+    `row_template`, so a flat_slots template with the same cursor_id
+    pointed at two sources got through validation.
+    """
+    bad = {
+        "station": "x", "cadence": "weekly", "rng": "off",
+        "sources": [
+            {"name": "A", "colour": "#111", "role": "content"},
+            {"name": "B", "colour": "#222", "role": "content"},
+        ],
+        "cursor": {"base_advance_per_week": 0, "cycle_weeks": 1},
+        "layout": {
+            "unit": "slot",
+            "unit_labels": [],
+            "row_start_offsets": [],
+            "cursors_init": {"shared": 0},
+            "flat_slots": [
+                {"source": "A", "strategy": "sequential", "size": 1,
+                 "cursor_id": "shared"},
+                {"source": "B", "strategy": "sequential", "size": 1,
+                 "cursor_id": "shared"},
+            ],
+        },
+    }
+    import pytest as _pytest
+    from engine.template import TemplateError
+    with _pytest.raises(TemplateError, match="conflicting sources"):
+        parse_template(bad)

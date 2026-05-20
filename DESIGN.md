@@ -4395,31 +4395,135 @@ surfaced the bug). Total test count: 485 (483 + 2 new).
 
 ---
 
+### 14.33 whole-project review sweep — pre-#16 (post-§14.32)
+
+**Goal.** Before sub-slice #16 (template-JSON import) lands, the
+user requested a comprehensive whole-project review across weekly-
+emulation, test coverage, documentation, architecture, and build
+pipelines. Three review agents went in parallel; one agent surfaced
+two new BLOCKING bugs of the same pattern as the §14.32 ×
+§14.25 `_save_mix_usages` bug — sites that walked
+`template.layout.row_template` directly instead of accommodating
+both layout forms. The §14.32 review caught one; this sweep caught
+the other two.
+
+**Fixed in this slice (commit 1 of 3 review-fix commits):**
+
+🔴 **Three BLOCKING bugs:**
+
+1. `engine.persistence.max_mix_exclusion_window` walked only
+   `row_template`. For a flat_slots template with mix blocks, it
+   returned 0 → `load_excluded_mix_ids` saw window=0 → cross-week
+   mix exclusion silently never fired. Rebirth Radio's port (the
+   primary class of flat_slots+mix templates) would have run
+   without mix dedup.
+2. `engine.persistence._cursors_to_sources` walked only
+   `row_template`. For a flat_slots template with `cursor.persist=true`
+   + sequential blocks, `advance_cursors` saw an empty cursor→source
+   map and silently skipped every cursor → persistent cursors NEVER
+   advanced. Rebirth Radio's port (the only template that's both
+   flat_slots AND persist=true) was the exact target.
+3. Frontend `StationForm` / `template.ts` only handled v1 strategies
+   (`pick` / `window`) and the `row_template` form. After sub-slice
+   #16 imports a Weekly template, clicking Edit would have stripped
+   every advanced field on save → silent data loss. Fixed by gating
+   the Edit route with `isAdvancedTemplate()`: when the template
+   carries any post-§14.22 feature, the form is replaced by a
+   "this template uses advanced features; edit via PUT
+   /api/stations/{slug} directly" message until the visual block
+   editor (§17 Phase D) extends the UI.
+
+**Refactor: `LayoutSpec.all_blocks()` method.**
+
+To prevent another row_template-only-walk bug, all four sites that
+iterate "every block in the layout" now go through a single
+`LayoutSpec.all_blocks()` method:
+
+```python
+def all_blocks(self) -> list[BlockSpec]:
+    """Every block declared by the layout, regardless of form.
+    XOR-enforced by the parser: exactly one of flat_slots /
+    row_template is non-empty."""
+    return [*self.flat_slots, *self.row_template]
+```
+
+Adopted by: `max_mix_exclusion_window`, `_cursors_to_sources`,
+`_save_mix_usages`, the parser's cursor↔source consistency check,
+and `_check_pools_present`. Future layout forms (none planned) add
+to `all_blocks()` once; every consumer adapts.
+
+**Close-paired doc fixes:**
+
+- `engine/rules.py` lines 85–118 claimed `cursor_advance_step` and
+  `cursor_reset_cycle` were "NOT YET WIRED INTO THE ENGINE." §14.30
+  wired them. Comment rewritten to accurately reflect: they're
+  active for `cursor.persist=true` templates via `advance_cursors`,
+  ignored for stateless templates.
+- DESIGN.md §15 status snapshot was severely stale — "Engine:
+  Shipped. pick, window" when 7 strategies actually ship; "Station
+  creation wizard: shipped, end-to-end verified" when the wizard
+  can't author any field added in §14.22–§14.32. Rewritten with
+  current scope + the §14.33 Edit-guard note.
+
+**Tests added:**
+
+Backend (3 new, pytest total 488):
+- `tests/test_mix_persistence.py::test_max_mix_exclusion_window_walks_flat_slots`
+- `tests/test_cursor_persistence.py::test_advance_cursors_works_for_flat_slots_templates`
+- `tests/test_cursor_persistence.py::test_parser_rejects_cursor_source_conflict_in_flat_slots`
+
+Frontend (14 new, vitest total 154):
+- `web/src/lib/template.test.ts` — every detection branch of
+  `isAdvancedTemplate` (flat_slots presence, cursor.persist=true,
+  non-empty cursors_init, non-v1 strategies, each of the 6
+  advanced block fields).
+
+**Remaining review findings (deferred to commits 2 + 3):**
+
+- 🟡 (commit 2): rule precedence end-to-end integration test;
+  frontend rules CRUD client; CI nits (svelte-check, alembic
+  silent-no-op guard); `make dev` orchestration.
+- 🟢 (commit 3): delete obsolete `engine/cursor.py`; extract
+  `_apply_prev_ref_dispatch` from generator.py; `make
+  import-station` Makefile stub for sub-slice #16; minor
+  `TraceSlot.track_id` type drift.
+
+**The pattern lesson.** This is the fourth case in Phase B where a
+"forward-compat suggestion" or cross-slice review surfaced a real
+bug (§14.25 frozenset, §14.29 cursor rules unwired, §14.32 ×
+§14.25 `_save_mix_usages`, now §14.32 × §14.25/§14.30
+`max_mix_exclusion_window` + `_cursors_to_sources`). The common
+shape: prior-slice helper assumes a layout/data form, later slice
+introduces a new form, the helper's assumption goes stale silently.
+`all_blocks()` is the structural fix for the layout-form variant;
+the broader instinct is to grep for `template.layout.row_template`
+sites whenever a new layout form lands.
+
+---
+
 ## 15. Status snapshot
 
-A quick "where are we" for a future reader. Last updated at commit
-`b44a3f4` — test-plan delivery + landing/detail backfill.
+A quick "where are we" for a future reader. Last updated alongside
+the whole-project review fixes (post-§14.32, pre-#16 import slice).
 
 | Area                     | State                                                            |
 |--------------------------|------------------------------------------------------------------|
-| Engine                   | Shipped. `pick`, `window`. Cursor, trace, RNG on/off.            |
-| Template validation      | Shipped. Strict; optional top-level `name` for UI.               |
-| Importer                 | Shipped. Idempotent, library metadata captured.                  |
+| Engine                   | Shipped. 7 strategies: window, pick, sequential (§14.22), jingle (§14.24), mix (§14.25), weighted (§14.27), prev_ref (§14.28). Cursor (stateless + persistent §14.30), trace, RNG on/off, cross-slot dedup state. |
+| Template validation      | Shipped. Two layout forms — row_template (Classics) + flat_slots (§14.32 Weekly-style). XOR-enforced. Strict per-strategy field coupling via _require_strategy_field. |
+| Importer (XML)           | Shipped. Idempotent iTunes XML → SourcePlaylist + Track; library metadata captured. |
 | Exporter                 | Shipped. Browser endpoint + disk endpoint, round-trip.           |
 | Bootstrap script         | Shipped. One-command Classics setup.                             |
-| API                      | Stations CRUD, sources, generate, playlist, trace, export.       |
-| Trace viewer (UI)        | Shipped (first cut). Works end-to-end against real data.         |
-| Station creation wizard  | Shipped (first cut). End-to-end verified.                        |
-| Test plan + CI           | Shipped. 4-tier (engine, API, Vitest, Playwright). 98% backend.  |
-| Coverage gate in CI      | Shipped (14.12). Backend 90% aggregate; frontend per-file lines ≥85%. |
-| Trace-viewer Vitest      | Shipped (14.14). 0% → 96.49% lines; closes §14.8's last gap.     |
-| Trace-viewer search/filter | Shipped (14.15). Free-text + source/strategy filters; ANDed; counter; clear. |
-| Trace-viewer multi-week nav| Shipped (14.16). Prev/next links + disabled boundaries; closes §14.5 punt. |
+| API                      | Stations CRUD, sources, generate, playlist, trace, export, rules (§14.29 CRUD per station). |
+| Trace viewer (UI)        | Shipped. Row grouping, filter (§16.8), prev/next nav (§16.9), excluded-candidates disclosure (§14.23). |
+| Station creation wizard  | Shipped (v1 vocab only). Supports `pick` / `window` strategies and the row_template form. **Edit route gates advanced templates** (§14.33: any post-§14.22 field shows "edit JSON directly" message instead of mounting lossy form). Full editor support deferred to §16.2 / §17 Phase D. |
+| Rule overrides           | Shipped (§14.29 + §14.30). Engine-side accessors + per-station CRUD endpoints. Four keys: artist_dedup_window + mix_exclusion_weeks (live precedence: BlockSpec → rule → engine constant); cursor_advance_step + cursor_reset_cycle (drive persistent cursor advance/reset when cursor.persist=true). **No UI panel yet** — deferred to §17 Phase D. |
+| Persistence tables       | Shipped. 12 tables. Migrations 0f76cfb45e8d (baseline) → 8353f29ac95e (mix_usage) → 6db55f2a13af (artist_alias) → 54570900ed97 (rule) → 1cafcc971152 (slot_type column). Migration parity check in CI. |
+| Test plan + CI           | Shipped. 4-tier (engine, API, Vitest, Playwright). 90% backend aggregate gate; frontend per-file lines ≥85%. |
 | In-UI generate button    | Shipped (14.9). Empty-CTA + next-week + advanced + per-row regen.|
 | Delete / station-reset   | Shipped (14.10). Per-row delete + station nuke; cascades.        |
 | Disk-export UI button    | Shipped (14.11). Trace viewer "Export to disk" + status line.    |
-| Edit mode for stations   | Shipped (14.13). Shared `<StationForm>` + JSON preview + diff + reset. |
-| **§17 pre-port roadmap** | **Phase A complete (§14.17–§14.21). Phase B underway: sub-slices #5 (§14.23), #7 (§14.22), #8 (§14.24), #9 (§14.25), #10 (§14.26), #11 (§14.27), #12 (§14.28), #13 (§14.29 + §14.30), #14 (§14.31), #15 (§14.32) shipped. **Next: sub-slice #16 = "Start from existing" / template-JSON import — read weekly's existing template and produce a station-studio flat_slots template.** |
+| Backup / restore         | Shipped (§14.18). `make backup` / `make restore date=...` with WAL-aware sqlite3 .backup + pre-restore safety copy. |
+| **§17 pre-port roadmap** | **Phase A complete (§14.17–§14.21). Phase B underway: sub-slices #5 (§14.23), #7 (§14.22), #8 (§14.24), #9 (§14.25), #10 (§14.26), #11 (§14.27), #12 (§14.28), #13 (§14.29 + §14.30), #14 (§14.31), #15 (§14.32) shipped + §14.33 whole-project review fixes (3 🔴 persistence bugs + StationForm guard + doc drift). **Next: sub-slice #16 = "Start from existing" / template-JSON import — read weekly's existing template and produce a station-studio flat_slots template.** |
 | Visual block editor      | Deferred (v2). Lands as §17 Phase B after Phase A unblocks.      |
 | Trace versioning         | Deferred. See §16.4 (queued behind §16.1 by design).             |
 | Accessibility pass       | Deferred. §17 Phase D — single sweep after §16.2 + port.         |
