@@ -41,6 +41,12 @@ jobs:
       - name: install
         working-directory: web
         run: npm ci
+      - name: svelte-check (typecheck + template parse)
+        # §14.33 review fix: catches template syntax errors + cross-file
+        # type drift that vitest doesn't see (vitest tests against the
+        # compiled output). Threshold: error — warnings don't block.
+        working-directory: web
+        run: npx svelte-check --threshold error
       - name: vitest
         run: make test-frontend-unit
 

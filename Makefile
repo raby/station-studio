@@ -10,7 +10,8 @@
 .PHONY: test test-backend test-frontend-unit test-e2e install-e2e-browsers clean-test \
         migrate alembic-stamp alembic-revision alembic-current migration-parity \
         backfill-slot-types \
-        backup backups restore
+        backup backups restore \
+        dev dev-backend dev-frontend
 
 PY := .venv/bin/python
 ALEMBIC := .venv/bin/alembic
@@ -70,6 +71,18 @@ alembic-stamp:
 alembic-revision:
 	@if [ -z "$(msg)" ]; then \
 		echo "Usage: make alembic-revision msg=\"description of change\""; \
+		exit 1; \
+	fi
+	# §14.33 review fix: guard against the silent-no-op trap. If
+	# nothing has changed since the prior migration, alembic
+	# autogenerate writes an empty `upgrade() pass / downgrade() pass`
+	# migration with no warning, and the developer can land an empty
+	# commit before noticing. `alembic check` exits non-zero when the
+	# schema matches the registered head (i.e. no pending changes);
+	# we invert that — a zero exit here is the bad case.
+	@if $(ALEMBIC) check >/dev/null 2>&1; then \
+		echo "No schema changes detected — alembic-revision would emit an empty migration."; \
+		echo "Did you forget to edit engine/models.py first?"; \
 		exit 1; \
 	fi
 	$(ALEMBIC) revision --autogenerate -m "$(msg)"
@@ -161,3 +174,28 @@ restore:
 	  echo "Restoring backups/$(date).db → $(DB_FILE)"; \
 	  cp backups/$(date).db $(DB_FILE); \
 	  echo "Done. If you stopped run.py for the restore, you can restart it now."
+
+# §14.33 review fix: `make dev` orchestrates the backend + frontend dev
+# servers in parallel so the solo developer doesn't have to juggle two
+# shells. Each background process gets a clear label; Ctrl-C kills both
+# (the `trap` ensures the cleanup runs on any signal).
+#
+# Backend: uvicorn on :8001 with reload. Frontend: vite on :5173 with
+# its existing proxy pointed at :8001 (web/vite.config.js).
+#
+# `dev-backend` / `dev-frontend` are also exposed as standalone
+# targets so the user can run one without the other (e.g. testing a
+# backend change against a previously-built frontend).
+dev:
+	@echo "Starting backend (:8001) and frontend (:5173)…"
+	@echo "Ctrl-C to stop both."
+	@trap 'kill 0' EXIT INT TERM; \
+	  ($(PY) run.py 2>&1 | sed -u 's/^/[backend] /') & \
+	  (cd web && npm run dev 2>&1 | sed -u 's/^/[frontend] /') & \
+	  wait
+
+dev-backend:
+	$(PY) run.py
+
+dev-frontend:
+	cd web && npm run dev

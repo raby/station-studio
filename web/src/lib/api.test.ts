@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   ApiError,
   getStations,
@@ -12,6 +12,9 @@ import {
   deleteStation,
   exportPlaylistToDisk,
   getMeta,
+  getStationRules,
+  setStationRule,
+  clearStationRule,
 } from './api';
 
 /**
@@ -326,6 +329,107 @@ describe('api client', () => {
       expect(e.status).toBe(500);
       expect(e.name).toBe('ApiError');
       expect(e).toBeInstanceOf(Error);
+    });
+  });
+
+
+  // §14.33 review fix — per-station rule CRUD client functions added to
+  // api.ts. The CRUD route shipped in §14.29 but the frontend never
+  // called it; future UI work (rule-settings panel) builds on these.
+
+  describe('getStationRules', () => {
+    it('GETs the per-station rules endpoint with the slug URL-encoded', async () => {
+      const fetch_ = (async (url: string) => ({
+        ok: true,
+        status: 200,
+        json: async () => ({ rules: [] }),
+      })) as unknown as typeof fetch;
+      const spy = vi.fn(fetch_);
+      await getStationRules('a b', spy);
+      expect(spy).toHaveBeenCalledWith('/api/stations/a%20b/rules');
+    });
+
+    it('parses the RuleListResponse shape', async () => {
+      const payload = {
+        rules: [
+          {
+            key: 'artist_dedup_window',
+            value: 25,
+            default_value: 10,
+            description: 'X',
+            max_value: 1000,
+            is_override: true,
+          },
+        ],
+      };
+      const fetch_ = (async () => ({
+        ok: true,
+        status: 200,
+        json: async () => payload,
+      })) as unknown as typeof fetch;
+      const out = await getStationRules('cls', fetch_);
+      expect(out.rules[0].is_override).toBe(true);
+      expect(out.rules[0].value).toBe(25);
+    });
+  });
+
+  describe('setStationRule', () => {
+    it('PUTs to the rule endpoint with JSON body {value}', async () => {
+      const fetch_ = (async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          key: 'artist_dedup_window',
+          value: 50,
+          default_value: 10,
+          description: '',
+          max_value: 1000,
+          is_override: true,
+        }),
+      })) as unknown as typeof fetch;
+      const spy = vi.fn(fetch_);
+      await setStationRule('cls', 'artist_dedup_window', 50, spy);
+      const [url, init] = spy.mock.calls[0];
+      expect(url).toBe('/api/stations/cls/rules/artist_dedup_window');
+      expect((init as RequestInit).method).toBe('PUT');
+      expect(JSON.parse((init as RequestInit).body as string)).toEqual({ value: 50 });
+    });
+
+    it('surfaces ApiError on 400 (bounds violation)', async () => {
+      const fetch_ = (async () => ({
+        ok: false,
+        status: 400,
+        statusText: 'Bad Request',
+        text: async () => '{"detail":"value must be at most 1000, got 9999"}',
+      })) as unknown as typeof fetch;
+      const err = await setStationRule('cls', 'artist_dedup_window', 9999, fetch_).catch(
+        (e) => e,
+      );
+      expect(err).toBeInstanceOf(ApiError);
+      expect(err.status).toBe(400);
+    });
+  });
+
+  describe('clearStationRule', () => {
+    it('DELETEs the rule endpoint and returns void on 204', async () => {
+      const fetch_ = (async () => ({
+        ok: true,
+        status: 204,
+      })) as unknown as typeof fetch;
+      const spy = vi.fn(fetch_);
+      const out = await clearStationRule('cls', 'artist_dedup_window', spy);
+      expect(out).toBeUndefined();
+      const [url, init] = spy.mock.calls[0];
+      expect(url).toBe('/api/stations/cls/rules/artist_dedup_window');
+      expect((init as RequestInit).method).toBe('DELETE');
+    });
+
+    it('idempotent — 204 even when no override existed', async () => {
+      const fetch_ = (async () => ({
+        ok: true,
+        status: 204,
+      })) as unknown as typeof fetch;
+      await expect(clearStationRule('cls', 'mix_exclusion_weeks', fetch_)).resolves.toBeUndefined();
     });
   });
 });

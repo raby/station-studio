@@ -272,4 +272,64 @@ export interface Meta {
 export const getMeta = (fetch_ = fetch): Promise<Meta> =>
   fetch_('/api/meta').then((r) => json<Meta>(r));
 
+
+// ---- §14.29 + §14.30 per-station rule CRUD ----------------------------
+
+/**
+ * One rule's effective state for a station. Mirrors the backend's
+ * RuleOut Pydantic schema. `value` is what the engine sees; if
+ * `is_override` is false, value equals default_value.
+ */
+export interface Rule {
+  key: string;
+  value: number;
+  default_value: number;
+  description: string;
+  max_value: number | null;
+  is_override: boolean;
+}
+
+export interface RuleListResponse {
+  rules: Rule[];
+}
+
+/** List every known rule with its effective value + override flag. */
+export const getStationRules = (
+  slug: string,
+  fetch_ = fetch,
+): Promise<RuleListResponse> =>
+  fetch_(`/api/stations/${encodeURIComponent(slug)}/rules`).then((r) =>
+    json<RuleListResponse>(r),
+  );
+
+/**
+ * Upsert a per-station override. Backend validates `value`: must be
+ * non-negative; capped at the rule's `max_value` if present (4xx on
+ * violation, surfaced via ApiError per the rest of the api.ts shape).
+ */
+export const setStationRule = (
+  slug: string,
+  key: string,
+  value: number,
+  fetch_ = fetch,
+): Promise<Rule> =>
+  fetch_(`/api/stations/${encodeURIComponent(slug)}/rules/${encodeURIComponent(key)}`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ value }),
+  }).then((r) => json<Rule>(r));
+
+/**
+ * Clear a per-station override (revert to default). Idempotent on
+ * the backend — clearing a non-existent override returns 204.
+ */
+export const clearStationRule = (
+  slug: string,
+  key: string,
+  fetch_ = fetch,
+): Promise<void> =>
+  fetch_(`/api/stations/${encodeURIComponent(slug)}/rules/${encodeURIComponent(key)}`, {
+    method: 'DELETE',
+  }).then((r) => noContent(r));
+
 export { ApiError };

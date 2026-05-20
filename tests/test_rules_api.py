@@ -195,3 +195,76 @@ def test_rule_overrides_dont_bleed_between_stations(api):
     client.delete("/api/stations/a/rules/artist_dedup_window")
     a_rules = {r["key"]: r for r in client.get("/api/stations/a/rules").json()["rules"]}
     assert a_rules["artist_dedup_window"]["value"] == 10
+
+
+# ---------- §14.33 review fix: rule precedence end-to-end ---------------
+
+
+def test_rule_override_threads_through_to_generate(api):
+    """Closes the §14.33 review's identified gap: there was no test
+    exercising "PUT a rule → generate → assert override applied."
+    Engine-level precedence is unit-tested; this hits the full HTTP
+    chain (rules router writes → generate router reads → engine
+    consumes via weighted_window_default kwarg → trace records
+    effective window).
+
+    Uses a weighted slot since artist_dedup_window is the most
+    visibly-wired rule. Default window=10; this test sets the rule
+    to 25 and verifies the trace's window reflects the override.
+    """
+    from engine.models import Base, SourcePlaylist, SourcePlaylistEntry, Station, Track
+    client, Session = api
+
+    # Seed a station whose template has ONE weighted block (no per-block
+    # BlockSpec.window override — so the rule's value is the effective
+    # window).
+    template = {
+        "station": "rb", "cadence": "weekly", "rng": "off",
+        "sources": [{"name": "A", "colour": "#111", "role": "content"}],
+        "cursor": {"base_advance_per_week": 0, "cycle_weeks": 1},
+        "layout": {
+            "unit": "slot", "unit_labels": ["1"], "row_start_offsets": [0],
+            "row_template": [
+                {"source": "A", "strategy": "weighted", "size": 1},
+            ],
+        },
+    }
+    with Session() as db:
+        st = Station(slug="rb", name="Rebirth", template=template)
+        db.add(st)
+        db.flush()
+        sp = SourcePlaylist(name="A")
+        db.add(sp)
+        db.flush()
+        for i, name in enumerate(["A1", "A2", "A3"], start=1):
+            tr = Track(persistent_id=f"P{i}", name=name, artist="Artist X")
+            db.add(tr)
+            db.flush()
+            db.add(SourcePlaylistEntry(
+                source_playlist_id=sp.id, track_id=tr.id, position=i,
+            ))
+        db.commit()
+
+    # Baseline: no rule override; effective window = engine default 10.
+    r = client.post("/api/stations/rb/generate", json={"week": 1})
+    assert r.status_code == 201
+    trace = client.get(f"/api/playlists/{r.json()['playlist_id']}/trace").json()
+    assert "window=10" in trace["slots"][0]["reason"]
+
+    # Set the rule override.
+    r = client.put("/api/stations/rb/rules/artist_dedup_window", json={"value": 25})
+    assert r.status_code == 200
+
+    # Re-generate; effective window now = 25 (rule overrides engine constant).
+    r = client.post("/api/stations/rb/generate", json={"week": 2})
+    assert r.status_code == 201
+    trace = client.get(f"/api/playlists/{r.json()['playlist_id']}/trace").json()
+    assert "window=25" in trace["slots"][0]["reason"]
+
+    # Clear the override; back to engine default.
+    r = client.delete("/api/stations/rb/rules/artist_dedup_window")
+    assert r.status_code == 204
+
+    r = client.post("/api/stations/rb/generate", json={"week": 3})
+    trace = client.get(f"/api/playlists/{r.json()['playlist_id']}/trace").json()
+    assert "window=10" in trace["slots"][0]["reason"]
