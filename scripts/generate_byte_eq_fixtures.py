@@ -203,14 +203,28 @@ def _commercial_pool() -> list[tuple]:
 
 
 def _mixes_pool() -> list[tuple]:
-    """8 tracks per genre × 4 genres = 32 tracks. Big enough for the
-    5-week mix exclusion window to wrap correctly (8 weeks × 1 pick
-    per genre per week = 8 picks within an 8-track pool with the
-    5-week window forces wrap on weeks 6+)."""
+    """5 tracks per genre × 4 genres = 20 tracks.
+
+    Sized so the §14.25 mix exclusion window genuinely fires the
+    "relax" branch of `engine.strategies.mix.apply_mix` during the
+    8-week chain:
+
+      * Week 1: pick 1 of 5 (excluded set empty).
+      * Weeks 2-5: pick from {5} \\ (1..N picks) — shrinking eligible.
+      * Week 6: excluded set covers weeks 1-5 = all 5 tracks. With
+        window=5 + pool=5, eligible is empty → `relaxed=True` path
+        in mix.py fires (the strategy returns to the un-excluded
+        candidate set rather than failing).
+      * Weeks 7-8: relax continues firing.
+
+    A larger pool (the prior 8 tracks/genre) never drained the
+    eligible set and silently bypassed the relax branch — the
+    §14.37 review caught this.
+    """
     out = []
     tid = 3001
     for genre_idx, genre in enumerate(["AlphaMix", "BetaMix", "GammaMix", "DeltaMix"], start=1):
-        for track_idx in range(1, 9):
+        for track_idx in range(1, 6):
             out.append((
                 tid,
                 f"MMIX{genre_idx:01d}{track_idx:02d}00000A",

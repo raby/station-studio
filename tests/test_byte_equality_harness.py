@@ -170,10 +170,22 @@ def test_assert_chain_equal_passes_when_all_weeks_match():
 
 
 def test_assert_chain_equal_raises_on_week_set_mismatch():
+    """Expected has extra weeks → mismatch."""
     with pytest.raises(AssertionError, match="week-set mismatch"):
         assert_chain_equal(
             {1: ["A"], 2: ["B"]},
             {1: ["A"]},
+            {1: _slot_refs(1, week=1), 2: _slot_refs(1, week=2)},
+        )
+
+
+def test_assert_chain_equal_raises_when_actual_has_extra_weeks():
+    """Actual has extra weeks → mismatch. Symmetry with the prior
+    test; the set-comparison is bidirectional."""
+    with pytest.raises(AssertionError, match="week-set mismatch"):
+        assert_chain_equal(
+            {1: ["A"]},
+            {1: ["A"], 2: ["B"]},
             {1: _slot_refs(1, week=1), 2: _slot_refs(1, week=2)},
         )
 

@@ -55,8 +55,9 @@ from engine.database import make_engine, make_sessionmaker
 from engine.generator import generate
 from engine.models import Base, Station, Track
 from engine.persistence import (
-    advance_cursors, load_cursor_positions, load_excluded_mix_ids,
-    load_pools, load_previous_playlist, save_playlist,
+    advance_cursors, load_alias_map, load_cursor_positions,
+    load_excluded_mix_ids, load_pools, load_previous_playlist,
+    max_mix_exclusion_window, save_playlist,
 )
 from engine.template import parse_template
 from scripts.import_weekly_pools import import_manifest
@@ -88,7 +89,22 @@ RESET_CYCLE = 0
 
 
 def _bootstrap_mode() -> bool:
+    """Bootstrap (fixture-regeneration) mode is active when
+    ``BOOTSTRAP_BYTE_EQ_FIXTURES`` is set to the literal string ``"1"``.
+
+    Other truthy-looking values (`true`, `yes`, etc.) are silently
+    treated as off — narrow accept is deliberate to keep accidental
+    activation impossible.
+    """
     return os.environ.get("BOOTSTRAP_BYTE_EQ_FIXTURES", "").strip() == "1"
+
+
+def _is_ci() -> bool:
+    """Detect whether we're running in CI (GitHub Actions and most
+    other providers set ``CI=true``). Used to guard the bootstrap
+    branch — a leaked env var in CI would silently re-record fixtures
+    and skip-pass the build."""
+    return os.environ.get("CI", "").strip().lower() in {"1", "true", "yes"}
 
 
 @pytest.fixture
@@ -116,13 +132,36 @@ def chain_db(tmp_path) -> Session:
 
 
 def _generate_chain(db: Session) -> dict[int, list[str]]:
-    """Run the full multi-week chain. Returns week → list of PIDs."""
+    """Run the full multi-week chain. Returns week → list of PIDs.
+
+    Mirrors `api/routers/generate.py`'s call sequence EXACTLY — the
+    test's "determinism floor" claim hinges on it. Any deviation
+    means the test passes while the API path silently regresses.
+    The relevant API inputs threaded through here:
+
+      * `load_alias_map(db)` — §14.26. The synthetic Commercials have
+        no aliases today, but the path needs to be live so a future
+        alias-related regression in `weighted` would fail.
+      * `max_mix_exclusion_window(tmpl)` — §14.32 review fix; walks
+        layout.all_blocks() to handle BOTH row_template + flat_slots
+        forms. Hardcoding `window=5` would bypass exactly the kind of
+        prior-slice-helper-staleness bug that's bitten this project.
+      * `weighted_window_default=None` — no station-rule set in the
+        chain DB, so the engine falls back to its DEFAULT_WEIGHTED_WINDOW
+        constant. Passing None explicitly documents the path.
+      * `previous_playlist=load_previous_playlist(current_week=week)` —
+        prev_ref reads week N-1; week 1 falls back.
+    """
     station = db.query(Station).filter_by(slug="synthetic-byte-eq").one()
     tmpl = parse_template(station.template)
     pools = load_pools(db, tmpl)
+    alias_map = load_alias_map(db)
     # Build a track_id → persistent_id lookup once. Picks return Track
-    # objects (with .persistent_id); we capture PIDs as the comparison
-    # surface (cross-import-run invariant).
+    # objects (with .persistent_id); we resolve through this dict to
+    # defend against the stale-Track-in-identity-map bug class noted
+    # in §14.26's persistence review (ORM identity map can hand back a
+    # detached object after a re-import; the explicit lookup forces a
+    # fresh read).
     track_pids = {
         t.id: t.persistent_id
         for t in db.query(Track).all()
@@ -131,10 +170,9 @@ def _generate_chain(db: Session) -> dict[int, list[str]]:
     pids_by_week: dict[int, list[str]] = {}
     for week in range(1, CHAIN_LENGTH + 1):
         positions = load_cursor_positions(db, station_id=station.id, template=tmpl)
-        # mix exclusion window — read from the template's mix blocks.
-        # All mix blocks share exclusion_window=5 in the synthetic fixture.
         excluded_mix_ids = load_excluded_mix_ids(
-            db, station_id=station.id, window=5,
+            db, station_id=station.id,
+            window=max_mix_exclusion_window(tmpl),
         )
         previous_playlist = load_previous_playlist(
             db, station_id=station.id, current_week=week,
@@ -144,12 +182,14 @@ def _generate_chain(db: Session) -> dict[int, list[str]]:
             week=week,
             seed=SEED_BASE + week,
             excluded_mix_ids=excluded_mix_ids,
+            alias_map=alias_map,
             previous_playlist=previous_playlist,
+            weighted_window_default=None,
             named_cursor_positions=positions,
         )
-        # Capture this week's PIDs before the save (in case save_playlist
-        # mutates anything we care about).
-        pids_by_week[week] = [t.persistent_id for t in result.picks]
+        # Resolve via track_pids lookup (see comment above) rather than
+        # result.picks[i].persistent_id direct attribute access.
+        pids_by_week[week] = [track_pids[t.id] for t in result.picks]
         save_playlist(db, station=station, result=result, week=week, template=tmpl)
         advance_cursors(
             db, station_id=station.id, template=tmpl, pools=pools,
@@ -157,13 +197,6 @@ def _generate_chain(db: Session) -> dict[int, list[str]]:
             generation_count=week - 1,
         )
         db.commit()
-
-    # Sanity: the track_pids lookup confirms the picks' persistent IDs
-    # match what's in the DB (paranoia — caught a bug once where the
-    # ORM session's identity map returned a stale Track for a re-import).
-    for week, pids in pids_by_week.items():
-        for pid in pids:
-            assert pid is not None, f"week {week}: null PID in picks"
 
     return pids_by_week
 
@@ -221,6 +254,18 @@ def test_synthetic_chain_matches_committed_fixtures(chain_db):
     base_refs = _slot_refs_for_template(tmpl)
 
     if _bootstrap_mode():
+        if _is_ci():
+            # §14.37 mid-slice review fix Y1: a leaked env var in CI
+            # would silently re-record fixtures and skip-pass the
+            # build — silently corrupting the regression net. Fail
+            # loud instead.
+            pytest.fail(
+                "BOOTSTRAP_BYTE_EQ_FIXTURES=1 detected in a CI "
+                "environment (CI=$CI). Bootstrap mode rewrites the "
+                "committed expected-output fixtures and is intended "
+                "for explicit local dev workflow only. Unset the env "
+                "var to run the assertion path."
+            )
         for week in ASSERTED_WEEKS:
             _write_expected(week, pids_by_week[week])
         pytest.skip(

@@ -71,7 +71,7 @@ def slot_ref_from_block(week: int, slot_index: int, block) -> SlotRef:
     """
     extra: dict[str, Any] = {}
     for k in ("genre", "exclusion_window", "cursor_id",
-              "position", "fallback_genre"):
+              "position", "fallback_genre", "size"):
         v = getattr(block, k, None) if not isinstance(block, dict) else block.get(k)
         if v is not None:
             extra[k] = v
@@ -163,9 +163,9 @@ def assert_pids_equal(
         raise AssertionError(
             f"{prefix}sequence-length mismatch: "
             f"expected {len(expected_pids)} pids, got {len(actual_pids)}. "
-            f"This is usually a template-slot-count drift, not an "
-            f"engine bug — check the synthetic template hasn't been "
-            f"edited without regenerating the fixture."
+            f"Usually a template-slot-count drift (the synthetic template "
+            f"was edited without regenerating the fixture), or a strategy "
+            f"raised mid-loop and the chain truncated. Check both."
         )
 
     div = find_first_divergence(expected_pids, actual_pids)
