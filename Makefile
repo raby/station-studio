@@ -287,9 +287,9 @@ refresh-rebirth-radio:
 		exit 1; \
 	fi
 	@TMP=$$(mktemp -t weekly-template.XXXXXX.json); \
+	  trap "rm -f $$TMP" EXIT; \
 	  echo "Dumping weekly template → $$TMP …"; \
 	  PYTHONPATH=$(WEEKLY_DIR) $(WEEKLY_DIR)/.venv/bin/python scripts/dump_weekly_template.py --out "$$TMP" && \
 	  echo "Translating → stations/rebirth-radio.json …" && \
 	  $(PY) -m scripts.import_station rebirth-radio "$$TMP" --output stations/rebirth-radio.json && \
-	  rm -f "$$TMP" && \
 	  echo 'Done. Diff against the previous version with: git diff stations/rebirth-radio.json'
