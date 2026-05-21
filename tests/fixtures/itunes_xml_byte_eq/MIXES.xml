@@ -1,0 +1,565 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Library Persistent ID</key>
+	<string>BEFIXXXXXXXMIXES</string>
+	<key>Playlists</key>
+	<array>
+		<dict>
+			<key>Name</key>
+			<string>MIXES</string>
+			<key>Playlist Items</key>
+			<array>
+				<dict>
+					<key>Track ID</key>
+					<integer>3001</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>3002</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>3003</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>3004</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>3005</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>3006</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>3007</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>3008</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>3009</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>3010</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>3011</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>3012</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>3013</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>3014</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>3015</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>3016</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>3017</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>3018</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>3019</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>3020</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>3021</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>3022</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>3023</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>3024</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>3025</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>3026</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>3027</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>3028</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>3029</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>3030</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>3031</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>3032</integer>
+				</dict>
+			</array>
+		</dict>
+	</array>
+	<key>Tracks</key>
+	<dict>
+		<key>3001</key>
+		<dict>
+			<key>Artist</key>
+			<string>Mix Artist 1-1</string>
+			<key>Genre</key>
+			<string>AlphaMix</string>
+			<key>Name</key>
+			<string>AlphaMix Track 01</string>
+			<key>Persistent ID</key>
+			<string>MMIX10100000A</string>
+			<key>Track ID</key>
+			<integer>3001</integer>
+		</dict>
+		<key>3002</key>
+		<dict>
+			<key>Artist</key>
+			<string>Mix Artist 1-2</string>
+			<key>Genre</key>
+			<string>AlphaMix</string>
+			<key>Name</key>
+			<string>AlphaMix Track 02</string>
+			<key>Persistent ID</key>
+			<string>MMIX10200000A</string>
+			<key>Track ID</key>
+			<integer>3002</integer>
+		</dict>
+		<key>3003</key>
+		<dict>
+			<key>Artist</key>
+			<string>Mix Artist 1-3</string>
+			<key>Genre</key>
+			<string>AlphaMix</string>
+			<key>Name</key>
+			<string>AlphaMix Track 03</string>
+			<key>Persistent ID</key>
+			<string>MMIX10300000A</string>
+			<key>Track ID</key>
+			<integer>3003</integer>
+		</dict>
+		<key>3004</key>
+		<dict>
+			<key>Artist</key>
+			<string>Mix Artist 1-4</string>
+			<key>Genre</key>
+			<string>AlphaMix</string>
+			<key>Name</key>
+			<string>AlphaMix Track 04</string>
+			<key>Persistent ID</key>
+			<string>MMIX10400000A</string>
+			<key>Track ID</key>
+			<integer>3004</integer>
+		</dict>
+		<key>3005</key>
+		<dict>
+			<key>Artist</key>
+			<string>Mix Artist 1-5</string>
+			<key>Genre</key>
+			<string>AlphaMix</string>
+			<key>Name</key>
+			<string>AlphaMix Track 05</string>
+			<key>Persistent ID</key>
+			<string>MMIX10500000A</string>
+			<key>Track ID</key>
+			<integer>3005</integer>
+		</dict>
+		<key>3006</key>
+		<dict>
+			<key>Artist</key>
+			<string>Mix Artist 1-6</string>
+			<key>Genre</key>
+			<string>AlphaMix</string>
+			<key>Name</key>
+			<string>AlphaMix Track 06</string>
+			<key>Persistent ID</key>
+			<string>MMIX10600000A</string>
+			<key>Track ID</key>
+			<integer>3006</integer>
+		</dict>
+		<key>3007</key>
+		<dict>
+			<key>Artist</key>
+			<string>Mix Artist 1-7</string>
+			<key>Genre</key>
+			<string>AlphaMix</string>
+			<key>Name</key>
+			<string>AlphaMix Track 07</string>
+			<key>Persistent ID</key>
+			<string>MMIX10700000A</string>
+			<key>Track ID</key>
+			<integer>3007</integer>
+		</dict>
+		<key>3008</key>
+		<dict>
+			<key>Artist</key>
+			<string>Mix Artist 1-8</string>
+			<key>Genre</key>
+			<string>AlphaMix</string>
+			<key>Name</key>
+			<string>AlphaMix Track 08</string>
+			<key>Persistent ID</key>
+			<string>MMIX10800000A</string>
+			<key>Track ID</key>
+			<integer>3008</integer>
+		</dict>
+		<key>3009</key>
+		<dict>
+			<key>Artist</key>
+			<string>Mix Artist 2-1</string>
+			<key>Genre</key>
+			<string>BetaMix</string>
+			<key>Name</key>
+			<string>BetaMix Track 01</string>
+			<key>Persistent ID</key>
+			<string>MMIX20100000A</string>
+			<key>Track ID</key>
+			<integer>3009</integer>
+		</dict>
+		<key>3010</key>
+		<dict>
+			<key>Artist</key>
+			<string>Mix Artist 2-2</string>
+			<key>Genre</key>
+			<string>BetaMix</string>
+			<key>Name</key>
+			<string>BetaMix Track 02</string>
+			<key>Persistent ID</key>
+			<string>MMIX20200000A</string>
+			<key>Track ID</key>
+			<integer>3010</integer>
+		</dict>
+		<key>3011</key>
+		<dict>
+			<key>Artist</key>
+			<string>Mix Artist 2-3</string>
+			<key>Genre</key>
+			<string>BetaMix</string>
+			<key>Name</key>
+			<string>BetaMix Track 03</string>
+			<key>Persistent ID</key>
+			<string>MMIX20300000A</string>
+			<key>Track ID</key>
+			<integer>3011</integer>
+		</dict>
+		<key>3012</key>
+		<dict>
+			<key>Artist</key>
+			<string>Mix Artist 2-4</string>
+			<key>Genre</key>
+			<string>BetaMix</string>
+			<key>Name</key>
+			<string>BetaMix Track 04</string>
+			<key>Persistent ID</key>
+			<string>MMIX20400000A</string>
+			<key>Track ID</key>
+			<integer>3012</integer>
+		</dict>
+		<key>3013</key>
+		<dict>
+			<key>Artist</key>
+			<string>Mix Artist 2-5</string>
+			<key>Genre</key>
+			<string>BetaMix</string>
+			<key>Name</key>
+			<string>BetaMix Track 05</string>
+			<key>Persistent ID</key>
+			<string>MMIX20500000A</string>
+			<key>Track ID</key>
+			<integer>3013</integer>
+		</dict>
+		<key>3014</key>
+		<dict>
+			<key>Artist</key>
+			<string>Mix Artist 2-6</string>
+			<key>Genre</key>
+			<string>BetaMix</string>
+			<key>Name</key>
+			<string>BetaMix Track 06</string>
+			<key>Persistent ID</key>
+			<string>MMIX20600000A</string>
+			<key>Track ID</key>
+			<integer>3014</integer>
+		</dict>
+		<key>3015</key>
+		<dict>
+			<key>Artist</key>
+			<string>Mix Artist 2-7</string>
+			<key>Genre</key>
+			<string>BetaMix</string>
+			<key>Name</key>
+			<string>BetaMix Track 07</string>
+			<key>Persistent ID</key>
+			<string>MMIX20700000A</string>
+			<key>Track ID</key>
+			<integer>3015</integer>
+		</dict>
+		<key>3016</key>
+		<dict>
+			<key>Artist</key>
+			<string>Mix Artist 2-8</string>
+			<key>Genre</key>
+			<string>BetaMix</string>
+			<key>Name</key>
+			<string>BetaMix Track 08</string>
+			<key>Persistent ID</key>
+			<string>MMIX20800000A</string>
+			<key>Track ID</key>
+			<integer>3016</integer>
+		</dict>
+		<key>3017</key>
+		<dict>
+			<key>Artist</key>
+			<string>Mix Artist 3-1</string>
+			<key>Genre</key>
+			<string>GammaMix</string>
+			<key>Name</key>
+			<string>GammaMix Track 01</string>
+			<key>Persistent ID</key>
+			<string>MMIX30100000A</string>
+			<key>Track ID</key>
+			<integer>3017</integer>
+		</dict>
+		<key>3018</key>
+		<dict>
+			<key>Artist</key>
+			<string>Mix Artist 3-2</string>
+			<key>Genre</key>
+			<string>GammaMix</string>
+			<key>Name</key>
+			<string>GammaMix Track 02</string>
+			<key>Persistent ID</key>
+			<string>MMIX30200000A</string>
+			<key>Track ID</key>
+			<integer>3018</integer>
+		</dict>
+		<key>3019</key>
+		<dict>
+			<key>Artist</key>
+			<string>Mix Artist 3-3</string>
+			<key>Genre</key>
+			<string>GammaMix</string>
+			<key>Name</key>
+			<string>GammaMix Track 03</string>
+			<key>Persistent ID</key>
+			<string>MMIX30300000A</string>
+			<key>Track ID</key>
+			<integer>3019</integer>
+		</dict>
+		<key>3020</key>
+		<dict>
+			<key>Artist</key>
+			<string>Mix Artist 3-4</string>
+			<key>Genre</key>
+			<string>GammaMix</string>
+			<key>Name</key>
+			<string>GammaMix Track 04</string>
+			<key>Persistent ID</key>
+			<string>MMIX30400000A</string>
+			<key>Track ID</key>
+			<integer>3020</integer>
+		</dict>
+		<key>3021</key>
+		<dict>
+			<key>Artist</key>
+			<string>Mix Artist 3-5</string>
+			<key>Genre</key>
+			<string>GammaMix</string>
+			<key>Name</key>
+			<string>GammaMix Track 05</string>
+			<key>Persistent ID</key>
+			<string>MMIX30500000A</string>
+			<key>Track ID</key>
+			<integer>3021</integer>
+		</dict>
+		<key>3022</key>
+		<dict>
+			<key>Artist</key>
+			<string>Mix Artist 3-6</string>
+			<key>Genre</key>
+			<string>GammaMix</string>
+			<key>Name</key>
+			<string>GammaMix Track 06</string>
+			<key>Persistent ID</key>
+			<string>MMIX30600000A</string>
+			<key>Track ID</key>
+			<integer>3022</integer>
+		</dict>
+		<key>3023</key>
+		<dict>
+			<key>Artist</key>
+			<string>Mix Artist 3-7</string>
+			<key>Genre</key>
+			<string>GammaMix</string>
+			<key>Name</key>
+			<string>GammaMix Track 07</string>
+			<key>Persistent ID</key>
+			<string>MMIX30700000A</string>
+			<key>Track ID</key>
+			<integer>3023</integer>
+		</dict>
+		<key>3024</key>
+		<dict>
+			<key>Artist</key>
+			<string>Mix Artist 3-8</string>
+			<key>Genre</key>
+			<string>GammaMix</string>
+			<key>Name</key>
+			<string>GammaMix Track 08</string>
+			<key>Persistent ID</key>
+			<string>MMIX30800000A</string>
+			<key>Track ID</key>
+			<integer>3024</integer>
+		</dict>
+		<key>3025</key>
+		<dict>
+			<key>Artist</key>
+			<string>Mix Artist 4-1</string>
+			<key>Genre</key>
+			<string>DeltaMix</string>
+			<key>Name</key>
+			<string>DeltaMix Track 01</string>
+			<key>Persistent ID</key>
+			<string>MMIX40100000A</string>
+			<key>Track ID</key>
+			<integer>3025</integer>
+		</dict>
+		<key>3026</key>
+		<dict>
+			<key>Artist</key>
+			<string>Mix Artist 4-2</string>
+			<key>Genre</key>
+			<string>DeltaMix</string>
+			<key>Name</key>
+			<string>DeltaMix Track 02</string>
+			<key>Persistent ID</key>
+			<string>MMIX40200000A</string>
+			<key>Track ID</key>
+			<integer>3026</integer>
+		</dict>
+		<key>3027</key>
+		<dict>
+			<key>Artist</key>
+			<string>Mix Artist 4-3</string>
+			<key>Genre</key>
+			<string>DeltaMix</string>
+			<key>Name</key>
+			<string>DeltaMix Track 03</string>
+			<key>Persistent ID</key>
+			<string>MMIX40300000A</string>
+			<key>Track ID</key>
+			<integer>3027</integer>
+		</dict>
+		<key>3028</key>
+		<dict>
+			<key>Artist</key>
+			<string>Mix Artist 4-4</string>
+			<key>Genre</key>
+			<string>DeltaMix</string>
+			<key>Name</key>
+			<string>DeltaMix Track 04</string>
+			<key>Persistent ID</key>
+			<string>MMIX40400000A</string>
+			<key>Track ID</key>
+			<integer>3028</integer>
+		</dict>
+		<key>3029</key>
+		<dict>
+			<key>Artist</key>
+			<string>Mix Artist 4-5</string>
+			<key>Genre</key>
+			<string>DeltaMix</string>
+			<key>Name</key>
+			<string>DeltaMix Track 05</string>
+			<key>Persistent ID</key>
+			<string>MMIX40500000A</string>
+			<key>Track ID</key>
+			<integer>3029</integer>
+		</dict>
+		<key>3030</key>
+		<dict>
+			<key>Artist</key>
+			<string>Mix Artist 4-6</string>
+			<key>Genre</key>
+			<string>DeltaMix</string>
+			<key>Name</key>
+			<string>DeltaMix Track 06</string>
+			<key>Persistent ID</key>
+			<string>MMIX40600000A</string>
+			<key>Track ID</key>
+			<integer>3030</integer>
+		</dict>
+		<key>3031</key>
+		<dict>
+			<key>Artist</key>
+			<string>Mix Artist 4-7</string>
+			<key>Genre</key>
+			<string>DeltaMix</string>
+			<key>Name</key>
+			<string>DeltaMix Track 07</string>
+			<key>Persistent ID</key>
+			<string>MMIX40700000A</string>
+			<key>Track ID</key>
+			<integer>3031</integer>
+		</dict>
+		<key>3032</key>
+		<dict>
+			<key>Artist</key>
+			<string>Mix Artist 4-8</string>
+			<key>Genre</key>
+			<string>DeltaMix</string>
+			<key>Name</key>
+			<string>DeltaMix Track 08</string>
+			<key>Persistent ID</key>
+			<string>MMIX40800000A</string>
+			<key>Track ID</key>
+			<integer>3032</integer>
+		</dict>
+	</dict>
+</dict>
+</plist>

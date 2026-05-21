@@ -1,0 +1,151 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Library Persistent ID</key>
+	<string>BEFIXXXXXXMASTER</string>
+	<key>Playlists</key>
+	<array>
+		<dict>
+			<key>Name</key>
+			<string>MASTER</string>
+			<key>Playlist Items</key>
+			<array>
+				<dict>
+					<key>Track ID</key>
+					<integer>6001</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>6002</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>6003</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>6004</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>6005</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>6006</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>6007</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>6008</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>6009</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>6010</integer>
+				</dict>
+			</array>
+		</dict>
+	</array>
+	<key>Tracks</key>
+	<dict>
+		<key>6001</key>
+		<dict>
+			<key>Name</key>
+			<string>Master Ref 01</string>
+			<key>Persistent ID</key>
+			<string>REFX000100000000</string>
+			<key>Track ID</key>
+			<integer>6001</integer>
+		</dict>
+		<key>6002</key>
+		<dict>
+			<key>Name</key>
+			<string>Master Ref 02</string>
+			<key>Persistent ID</key>
+			<string>REFX000200000000</string>
+			<key>Track ID</key>
+			<integer>6002</integer>
+		</dict>
+		<key>6003</key>
+		<dict>
+			<key>Name</key>
+			<string>Master Ref 03</string>
+			<key>Persistent ID</key>
+			<string>REFX000300000000</string>
+			<key>Track ID</key>
+			<integer>6003</integer>
+		</dict>
+		<key>6004</key>
+		<dict>
+			<key>Name</key>
+			<string>Master Ref 04</string>
+			<key>Persistent ID</key>
+			<string>REFX000400000000</string>
+			<key>Track ID</key>
+			<integer>6004</integer>
+		</dict>
+		<key>6005</key>
+		<dict>
+			<key>Name</key>
+			<string>Master Ref 05</string>
+			<key>Persistent ID</key>
+			<string>REFX000500000000</string>
+			<key>Track ID</key>
+			<integer>6005</integer>
+		</dict>
+		<key>6006</key>
+		<dict>
+			<key>Name</key>
+			<string>Master Ref 06</string>
+			<key>Persistent ID</key>
+			<string>REFX000600000000</string>
+			<key>Track ID</key>
+			<integer>6006</integer>
+		</dict>
+		<key>6007</key>
+		<dict>
+			<key>Name</key>
+			<string>Master Ref 07</string>
+			<key>Persistent ID</key>
+			<string>REFX000700000000</string>
+			<key>Track ID</key>
+			<integer>6007</integer>
+		</dict>
+		<key>6008</key>
+		<dict>
+			<key>Name</key>
+			<string>Master Ref 08</string>
+			<key>Persistent ID</key>
+			<string>REFX000800000000</string>
+			<key>Track ID</key>
+			<integer>6008</integer>
+		</dict>
+		<key>6009</key>
+		<dict>
+			<key>Name</key>
+			<string>Master Ref 09</string>
+			<key>Persistent ID</key>
+			<string>REFX000900000000</string>
+			<key>Track ID</key>
+			<integer>6009</integer>
+		</dict>
+		<key>6010</key>
+		<dict>
+			<key>Name</key>
+			<string>Master Ref 10</string>
+			<key>Persistent ID</key>
+			<string>REFX001000000000</string>
+			<key>Track ID</key>
+			<integer>6010</integer>
+		</dict>
+	</dict>
+</dict>
+</plist>

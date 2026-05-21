@@ -10,6 +10,12 @@ source =
     engine
     api
     scripts
+omit =
+    # One-shot fixture generator (§14.37) — committed to make fixture
+    # provenance auditable, but the FIXTURES are what's under test, not
+    # the generator that produced them. Running it from CI would only
+    # confirm we can still write JSON.
+    scripts/generate_byte_eq_fixtures.py
 
 [report]
 # Don't bother flagging lines that obviously don't need coverage.

@@ -1,0 +1,724 @@
+{
+  "station": "synthetic-byte-eq",
+  "name": "Synthetic Byte-Equality Floor",
+  "cadence": "weekly",
+  "rng": "on",
+  "sources": [
+    {
+      "name": "JINGLES",
+      "colour": "#fb8500",
+      "role": "content"
+    },
+    {
+      "name": "COMMERCIAL",
+      "colour": "#219ebc",
+      "role": "content"
+    },
+    {
+      "name": "MIXES",
+      "colour": "#8338ec",
+      "role": "content"
+    },
+    {
+      "name": "NIGHT",
+      "colour": "#3a86ff",
+      "role": "content"
+    },
+    {
+      "name": "WEEKEND",
+      "colour": "#ff006e",
+      "role": "content"
+    },
+    {
+      "name": "MASTER",
+      "colour": "#888888",
+      "role": "reference"
+    }
+  ],
+  "cursor": {
+    "base_advance_per_week": 0,
+    "cycle_weeks": 1,
+    "persist": true
+  },
+  "layout": {
+    "unit": "slot",
+    "unit_labels": [],
+    "row_start_offsets": [],
+    "cursors_init": {
+      "NIGHT_1": 0,
+      "NIGHT_2": 5,
+      "WEEKEND_1": 0,
+      "WEEKEND_2": 10
+    },
+    "flat_slots": [
+      {
+        "source": "JINGLES",
+        "strategy": "jingle",
+        "size": 1,
+        "genre": "Daytime"
+      },
+      {
+        "source": "COMMERCIAL",
+        "strategy": "weighted",
+        "size": 1
+      },
+      {
+        "source": "COMMERCIAL",
+        "strategy": "weighted",
+        "size": 1
+      },
+      {
+        "source": "COMMERCIAL",
+        "strategy": "weighted",
+        "size": 1
+      },
+      {
+        "source": "COMMERCIAL",
+        "strategy": "weighted",
+        "size": 1
+      },
+      {
+        "source": "COMMERCIAL",
+        "strategy": "weighted",
+        "size": 1
+      },
+      {
+        "source": "COMMERCIAL",
+        "strategy": "weighted",
+        "size": 1
+      },
+      {
+        "source": "COMMERCIAL",
+        "strategy": "weighted",
+        "size": 1
+      },
+      {
+        "source": "COMMERCIAL",
+        "strategy": "weighted",
+        "size": 1
+      },
+      {
+        "source": "COMMERCIAL",
+        "strategy": "weighted",
+        "size": 1
+      },
+      {
+        "source": "COMMERCIAL",
+        "strategy": "weighted",
+        "size": 1
+      },
+      {
+        "source": "COMMERCIAL",
+        "strategy": "weighted",
+        "size": 1
+      },
+      {
+        "source": "COMMERCIAL",
+        "strategy": "weighted",
+        "size": 1
+      },
+      {
+        "source": "COMMERCIAL",
+        "strategy": "weighted",
+        "size": 1
+      },
+      {
+        "source": "COMMERCIAL",
+        "strategy": "weighted",
+        "size": 1
+      },
+      {
+        "source": "COMMERCIAL",
+        "strategy": "weighted",
+        "size": 1
+      },
+      {
+        "source": "JINGLES",
+        "strategy": "jingle",
+        "size": 1,
+        "genre": "Mixzone"
+      },
+      {
+        "source": "MIXES",
+        "strategy": "prev_ref",
+        "size": 1,
+        "position": 5,
+        "fallback_genre": "AlphaMix"
+      },
+      {
+        "source": "JINGLES",
+        "strategy": "jingle",
+        "size": 1,
+        "genre": "Mixzone"
+      },
+      {
+        "source": "MIXES",
+        "strategy": "mix",
+        "size": 1,
+        "genre": "AlphaMix",
+        "exclusion_window": 5
+      },
+      {
+        "source": "NIGHT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "NIGHT_1"
+      },
+      {
+        "source": "NIGHT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "NIGHT_1"
+      },
+      {
+        "source": "NIGHT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "NIGHT_1"
+      },
+      {
+        "source": "NIGHT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "NIGHT_1"
+      },
+      {
+        "source": "NIGHT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "NIGHT_1"
+      },
+      {
+        "source": "NIGHT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "NIGHT_1"
+      },
+      {
+        "source": "NIGHT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "NIGHT_1"
+      },
+      {
+        "source": "NIGHT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "NIGHT_1"
+      },
+      {
+        "source": "NIGHT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "NIGHT_1"
+      },
+      {
+        "source": "NIGHT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "NIGHT_1"
+      },
+      {
+        "source": "JINGLES",
+        "strategy": "jingle",
+        "size": 1,
+        "genre": "Daytime"
+      },
+      {
+        "source": "COMMERCIAL",
+        "strategy": "weighted",
+        "size": 1
+      },
+      {
+        "source": "COMMERCIAL",
+        "strategy": "weighted",
+        "size": 1
+      },
+      {
+        "source": "COMMERCIAL",
+        "strategy": "weighted",
+        "size": 1
+      },
+      {
+        "source": "COMMERCIAL",
+        "strategy": "weighted",
+        "size": 1
+      },
+      {
+        "source": "COMMERCIAL",
+        "strategy": "weighted",
+        "size": 1
+      },
+      {
+        "source": "COMMERCIAL",
+        "strategy": "weighted",
+        "size": 1
+      },
+      {
+        "source": "COMMERCIAL",
+        "strategy": "weighted",
+        "size": 1
+      },
+      {
+        "source": "COMMERCIAL",
+        "strategy": "weighted",
+        "size": 1
+      },
+      {
+        "source": "COMMERCIAL",
+        "strategy": "weighted",
+        "size": 1
+      },
+      {
+        "source": "COMMERCIAL",
+        "strategy": "weighted",
+        "size": 1
+      },
+      {
+        "source": "COMMERCIAL",
+        "strategy": "weighted",
+        "size": 1
+      },
+      {
+        "source": "COMMERCIAL",
+        "strategy": "weighted",
+        "size": 1
+      },
+      {
+        "source": "COMMERCIAL",
+        "strategy": "weighted",
+        "size": 1
+      },
+      {
+        "source": "COMMERCIAL",
+        "strategy": "weighted",
+        "size": 1
+      },
+      {
+        "source": "COMMERCIAL",
+        "strategy": "weighted",
+        "size": 1
+      },
+      {
+        "source": "JINGLES",
+        "strategy": "jingle",
+        "size": 1,
+        "genre": "Mixzone"
+      },
+      {
+        "source": "MIXES",
+        "strategy": "prev_ref",
+        "size": 1,
+        "position": 20,
+        "fallback_genre": "BetaMix"
+      },
+      {
+        "source": "JINGLES",
+        "strategy": "jingle",
+        "size": 1,
+        "genre": "Mixzone"
+      },
+      {
+        "source": "MIXES",
+        "strategy": "mix",
+        "size": 1,
+        "genre": "BetaMix",
+        "exclusion_window": 5
+      },
+      {
+        "source": "NIGHT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "NIGHT_2"
+      },
+      {
+        "source": "NIGHT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "NIGHT_2"
+      },
+      {
+        "source": "NIGHT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "NIGHT_2"
+      },
+      {
+        "source": "NIGHT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "NIGHT_2"
+      },
+      {
+        "source": "NIGHT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "NIGHT_2"
+      },
+      {
+        "source": "NIGHT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "NIGHT_2"
+      },
+      {
+        "source": "NIGHT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "NIGHT_2"
+      },
+      {
+        "source": "NIGHT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "NIGHT_2"
+      },
+      {
+        "source": "NIGHT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "NIGHT_2"
+      },
+      {
+        "source": "NIGHT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "NIGHT_2"
+      },
+      {
+        "source": "JINGLES",
+        "strategy": "jingle",
+        "size": 1,
+        "genre": "Daytime"
+      },
+      {
+        "source": "COMMERCIAL",
+        "strategy": "weighted",
+        "size": 1
+      },
+      {
+        "source": "COMMERCIAL",
+        "strategy": "weighted",
+        "size": 1
+      },
+      {
+        "source": "COMMERCIAL",
+        "strategy": "weighted",
+        "size": 1
+      },
+      {
+        "source": "COMMERCIAL",
+        "strategy": "weighted",
+        "size": 1
+      },
+      {
+        "source": "COMMERCIAL",
+        "strategy": "weighted",
+        "size": 1
+      },
+      {
+        "source": "COMMERCIAL",
+        "strategy": "weighted",
+        "size": 1
+      },
+      {
+        "source": "COMMERCIAL",
+        "strategy": "weighted",
+        "size": 1
+      },
+      {
+        "source": "COMMERCIAL",
+        "strategy": "weighted",
+        "size": 1
+      },
+      {
+        "source": "COMMERCIAL",
+        "strategy": "weighted",
+        "size": 1
+      },
+      {
+        "source": "COMMERCIAL",
+        "strategy": "weighted",
+        "size": 1
+      },
+      {
+        "source": "COMMERCIAL",
+        "strategy": "weighted",
+        "size": 1
+      },
+      {
+        "source": "COMMERCIAL",
+        "strategy": "weighted",
+        "size": 1
+      },
+      {
+        "source": "COMMERCIAL",
+        "strategy": "weighted",
+        "size": 1
+      },
+      {
+        "source": "COMMERCIAL",
+        "strategy": "weighted",
+        "size": 1
+      },
+      {
+        "source": "COMMERCIAL",
+        "strategy": "weighted",
+        "size": 1
+      },
+      {
+        "source": "JINGLES",
+        "strategy": "jingle",
+        "size": 1,
+        "genre": "Mixzone"
+      },
+      {
+        "source": "MIXES",
+        "strategy": "prev_ref",
+        "size": 1,
+        "position": 50,
+        "fallback_genre": "GammaMix"
+      },
+      {
+        "source": "JINGLES",
+        "strategy": "jingle",
+        "size": 1,
+        "genre": "Mixzone"
+      },
+      {
+        "source": "MIXES",
+        "strategy": "mix",
+        "size": 1,
+        "genre": "GammaMix",
+        "exclusion_window": 5
+      },
+      {
+        "source": "WEEKEND",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "WEEKEND_1"
+      },
+      {
+        "source": "WEEKEND",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "WEEKEND_1"
+      },
+      {
+        "source": "WEEKEND",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "WEEKEND_1"
+      },
+      {
+        "source": "WEEKEND",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "WEEKEND_1"
+      },
+      {
+        "source": "WEEKEND",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "WEEKEND_1"
+      },
+      {
+        "source": "WEEKEND",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "WEEKEND_1"
+      },
+      {
+        "source": "WEEKEND",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "WEEKEND_1"
+      },
+      {
+        "source": "WEEKEND",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "WEEKEND_1"
+      },
+      {
+        "source": "WEEKEND",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "WEEKEND_1"
+      },
+      {
+        "source": "WEEKEND",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "WEEKEND_1"
+      },
+      {
+        "source": "JINGLES",
+        "strategy": "jingle",
+        "size": 1,
+        "genre": "Daytime"
+      },
+      {
+        "source": "COMMERCIAL",
+        "strategy": "weighted",
+        "size": 1
+      },
+      {
+        "source": "COMMERCIAL",
+        "strategy": "weighted",
+        "size": 1
+      },
+      {
+        "source": "COMMERCIAL",
+        "strategy": "weighted",
+        "size": 1
+      },
+      {
+        "source": "COMMERCIAL",
+        "strategy": "weighted",
+        "size": 1
+      },
+      {
+        "source": "COMMERCIAL",
+        "strategy": "weighted",
+        "size": 1
+      },
+      {
+        "source": "COMMERCIAL",
+        "strategy": "weighted",
+        "size": 1
+      },
+      {
+        "source": "COMMERCIAL",
+        "strategy": "weighted",
+        "size": 1
+      },
+      {
+        "source": "COMMERCIAL",
+        "strategy": "weighted",
+        "size": 1
+      },
+      {
+        "source": "COMMERCIAL",
+        "strategy": "weighted",
+        "size": 1
+      },
+      {
+        "source": "COMMERCIAL",
+        "strategy": "weighted",
+        "size": 1
+      },
+      {
+        "source": "COMMERCIAL",
+        "strategy": "weighted",
+        "size": 1
+      },
+      {
+        "source": "COMMERCIAL",
+        "strategy": "weighted",
+        "size": 1
+      },
+      {
+        "source": "COMMERCIAL",
+        "strategy": "weighted",
+        "size": 1
+      },
+      {
+        "source": "COMMERCIAL",
+        "strategy": "weighted",
+        "size": 1
+      },
+      {
+        "source": "COMMERCIAL",
+        "strategy": "weighted",
+        "size": 1
+      },
+      {
+        "source": "JINGLES",
+        "strategy": "jingle",
+        "size": 1,
+        "genre": "Mixzone"
+      },
+      {
+        "source": "MIXES",
+        "strategy": "prev_ref",
+        "size": 1,
+        "position": 80,
+        "fallback_genre": "DeltaMix"
+      },
+      {
+        "source": "JINGLES",
+        "strategy": "jingle",
+        "size": 1,
+        "genre": "Mixzone"
+      },
+      {
+        "source": "MIXES",
+        "strategy": "mix",
+        "size": 1,
+        "genre": "DeltaMix",
+        "exclusion_window": 5
+      },
+      {
+        "source": "WEEKEND",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "WEEKEND_2"
+      },
+      {
+        "source": "WEEKEND",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "WEEKEND_2"
+      },
+      {
+        "source": "WEEKEND",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "WEEKEND_2"
+      },
+      {
+        "source": "WEEKEND",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "WEEKEND_2"
+      },
+      {
+        "source": "WEEKEND",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "WEEKEND_2"
+      },
+      {
+        "source": "WEEKEND",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "WEEKEND_2"
+      },
+      {
+        "source": "WEEKEND",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "WEEKEND_2"
+      },
+      {
+        "source": "WEEKEND",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "WEEKEND_2"
+      },
+      {
+        "source": "WEEKEND",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "WEEKEND_2"
+      },
+      {
+        "source": "WEEKEND",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "WEEKEND_2"
+      }
+    ]
+  }
+}

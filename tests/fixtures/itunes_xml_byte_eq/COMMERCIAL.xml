@@ -1,0 +1,471 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Library Persistent ID</key>
+	<string>BEFIXXCOMMERCIAL</string>
+	<key>Playlists</key>
+	<array>
+		<dict>
+			<key>Name</key>
+			<string>COMMERCIAL</string>
+			<key>Playlist Items</key>
+			<array>
+				<dict>
+					<key>Track ID</key>
+					<integer>2001</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>2002</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>2003</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>2004</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>2005</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>2006</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>2007</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>2008</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>2009</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>2010</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>2011</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>2012</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>2013</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>2014</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>2015</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>2016</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>2017</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>2018</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>2019</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>2020</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>2021</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>2022</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>2023</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>2024</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>2025</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>2026</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>2027</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>2028</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>2029</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>2030</integer>
+				</dict>
+			</array>
+		</dict>
+	</array>
+	<key>Tracks</key>
+	<dict>
+		<key>2001</key>
+		<dict>
+			<key>Artist</key>
+			<string>Artist 01</string>
+			<key>Name</key>
+			<string>Commercial A01-T01</string>
+			<key>Persistent ID</key>
+			<string>CCOM01010000A</string>
+			<key>Track ID</key>
+			<integer>2001</integer>
+		</dict>
+		<key>2002</key>
+		<dict>
+			<key>Artist</key>
+			<string>Artist 01</string>
+			<key>Name</key>
+			<string>Commercial A01-T02</string>
+			<key>Persistent ID</key>
+			<string>CCOM01020000A</string>
+			<key>Track ID</key>
+			<integer>2002</integer>
+		</dict>
+		<key>2003</key>
+		<dict>
+			<key>Artist</key>
+			<string>Artist 01</string>
+			<key>Name</key>
+			<string>Commercial A01-T03</string>
+			<key>Persistent ID</key>
+			<string>CCOM01030000A</string>
+			<key>Track ID</key>
+			<integer>2003</integer>
+		</dict>
+		<key>2004</key>
+		<dict>
+			<key>Artist</key>
+			<string>Artist 02</string>
+			<key>Name</key>
+			<string>Commercial A02-T01</string>
+			<key>Persistent ID</key>
+			<string>CCOM02010000A</string>
+			<key>Track ID</key>
+			<integer>2004</integer>
+		</dict>
+		<key>2005</key>
+		<dict>
+			<key>Artist</key>
+			<string>Artist 02</string>
+			<key>Name</key>
+			<string>Commercial A02-T02</string>
+			<key>Persistent ID</key>
+			<string>CCOM02020000A</string>
+			<key>Track ID</key>
+			<integer>2005</integer>
+		</dict>
+		<key>2006</key>
+		<dict>
+			<key>Artist</key>
+			<string>Artist 02</string>
+			<key>Name</key>
+			<string>Commercial A02-T03</string>
+			<key>Persistent ID</key>
+			<string>CCOM02030000A</string>
+			<key>Track ID</key>
+			<integer>2006</integer>
+		</dict>
+		<key>2007</key>
+		<dict>
+			<key>Artist</key>
+			<string>Artist 03</string>
+			<key>Name</key>
+			<string>Commercial A03-T01</string>
+			<key>Persistent ID</key>
+			<string>CCOM03010000A</string>
+			<key>Track ID</key>
+			<integer>2007</integer>
+		</dict>
+		<key>2008</key>
+		<dict>
+			<key>Artist</key>
+			<string>Artist 03</string>
+			<key>Name</key>
+			<string>Commercial A03-T02</string>
+			<key>Persistent ID</key>
+			<string>CCOM03020000A</string>
+			<key>Track ID</key>
+			<integer>2008</integer>
+		</dict>
+		<key>2009</key>
+		<dict>
+			<key>Artist</key>
+			<string>Artist 03</string>
+			<key>Name</key>
+			<string>Commercial A03-T03</string>
+			<key>Persistent ID</key>
+			<string>CCOM03030000A</string>
+			<key>Track ID</key>
+			<integer>2009</integer>
+		</dict>
+		<key>2010</key>
+		<dict>
+			<key>Artist</key>
+			<string>Artist 04</string>
+			<key>Name</key>
+			<string>Commercial A04-T01</string>
+			<key>Persistent ID</key>
+			<string>CCOM04010000A</string>
+			<key>Track ID</key>
+			<integer>2010</integer>
+		</dict>
+		<key>2011</key>
+		<dict>
+			<key>Artist</key>
+			<string>Artist 04</string>
+			<key>Name</key>
+			<string>Commercial A04-T02</string>
+			<key>Persistent ID</key>
+			<string>CCOM04020000A</string>
+			<key>Track ID</key>
+			<integer>2011</integer>
+		</dict>
+		<key>2012</key>
+		<dict>
+			<key>Artist</key>
+			<string>Artist 04</string>
+			<key>Name</key>
+			<string>Commercial A04-T03</string>
+			<key>Persistent ID</key>
+			<string>CCOM04030000A</string>
+			<key>Track ID</key>
+			<integer>2012</integer>
+		</dict>
+		<key>2013</key>
+		<dict>
+			<key>Artist</key>
+			<string>Artist 05</string>
+			<key>Name</key>
+			<string>Commercial A05-T01</string>
+			<key>Persistent ID</key>
+			<string>CCOM05010000A</string>
+			<key>Track ID</key>
+			<integer>2013</integer>
+		</dict>
+		<key>2014</key>
+		<dict>
+			<key>Artist</key>
+			<string>Artist 05</string>
+			<key>Name</key>
+			<string>Commercial A05-T02</string>
+			<key>Persistent ID</key>
+			<string>CCOM05020000A</string>
+			<key>Track ID</key>
+			<integer>2014</integer>
+		</dict>
+		<key>2015</key>
+		<dict>
+			<key>Artist</key>
+			<string>Artist 05</string>
+			<key>Name</key>
+			<string>Commercial A05-T03</string>
+			<key>Persistent ID</key>
+			<string>CCOM05030000A</string>
+			<key>Track ID</key>
+			<integer>2015</integer>
+		</dict>
+		<key>2016</key>
+		<dict>
+			<key>Artist</key>
+			<string>Artist 06</string>
+			<key>Name</key>
+			<string>Commercial A06-T01</string>
+			<key>Persistent ID</key>
+			<string>CCOM06010000A</string>
+			<key>Track ID</key>
+			<integer>2016</integer>
+		</dict>
+		<key>2017</key>
+		<dict>
+			<key>Artist</key>
+			<string>Artist 06</string>
+			<key>Name</key>
+			<string>Commercial A06-T02</string>
+			<key>Persistent ID</key>
+			<string>CCOM06020000A</string>
+			<key>Track ID</key>
+			<integer>2017</integer>
+		</dict>
+		<key>2018</key>
+		<dict>
+			<key>Artist</key>
+			<string>Artist 06</string>
+			<key>Name</key>
+			<string>Commercial A06-T03</string>
+			<key>Persistent ID</key>
+			<string>CCOM06030000A</string>
+			<key>Track ID</key>
+			<integer>2018</integer>
+		</dict>
+		<key>2019</key>
+		<dict>
+			<key>Artist</key>
+			<string>Artist 07</string>
+			<key>Name</key>
+			<string>Commercial A07-T01</string>
+			<key>Persistent ID</key>
+			<string>CCOM07010000A</string>
+			<key>Track ID</key>
+			<integer>2019</integer>
+		</dict>
+		<key>2020</key>
+		<dict>
+			<key>Artist</key>
+			<string>Artist 07</string>
+			<key>Name</key>
+			<string>Commercial A07-T02</string>
+			<key>Persistent ID</key>
+			<string>CCOM07020000A</string>
+			<key>Track ID</key>
+			<integer>2020</integer>
+		</dict>
+		<key>2021</key>
+		<dict>
+			<key>Artist</key>
+			<string>Artist 07</string>
+			<key>Name</key>
+			<string>Commercial A07-T03</string>
+			<key>Persistent ID</key>
+			<string>CCOM07030000A</string>
+			<key>Track ID</key>
+			<integer>2021</integer>
+		</dict>
+		<key>2022</key>
+		<dict>
+			<key>Artist</key>
+			<string>Artist 08</string>
+			<key>Name</key>
+			<string>Commercial A08-T01</string>
+			<key>Persistent ID</key>
+			<string>CCOM08010000A</string>
+			<key>Track ID</key>
+			<integer>2022</integer>
+		</dict>
+		<key>2023</key>
+		<dict>
+			<key>Artist</key>
+			<string>Artist 08</string>
+			<key>Name</key>
+			<string>Commercial A08-T02</string>
+			<key>Persistent ID</key>
+			<string>CCOM08020000A</string>
+			<key>Track ID</key>
+			<integer>2023</integer>
+		</dict>
+		<key>2024</key>
+		<dict>
+			<key>Artist</key>
+			<string>Artist 08</string>
+			<key>Name</key>
+			<string>Commercial A08-T03</string>
+			<key>Persistent ID</key>
+			<string>CCOM08030000A</string>
+			<key>Track ID</key>
+			<integer>2024</integer>
+		</dict>
+		<key>2025</key>
+		<dict>
+			<key>Artist</key>
+			<string>Artist 09</string>
+			<key>Name</key>
+			<string>Commercial A09-T01</string>
+			<key>Persistent ID</key>
+			<string>CCOM09010000A</string>
+			<key>Track ID</key>
+			<integer>2025</integer>
+		</dict>
+		<key>2026</key>
+		<dict>
+			<key>Artist</key>
+			<string>Artist 09</string>
+			<key>Name</key>
+			<string>Commercial A09-T02</string>
+			<key>Persistent ID</key>
+			<string>CCOM09020000A</string>
+			<key>Track ID</key>
+			<integer>2026</integer>
+		</dict>
+		<key>2027</key>
+		<dict>
+			<key>Artist</key>
+			<string>Artist 09</string>
+			<key>Name</key>
+			<string>Commercial A09-T03</string>
+			<key>Persistent ID</key>
+			<string>CCOM09030000A</string>
+			<key>Track ID</key>
+			<integer>2027</integer>
+		</dict>
+		<key>2028</key>
+		<dict>
+			<key>Artist</key>
+			<string>Artist 10</string>
+			<key>Name</key>
+			<string>Commercial A10-T01</string>
+			<key>Persistent ID</key>
+			<string>CCOM10010000A</string>
+			<key>Track ID</key>
+			<integer>2028</integer>
+		</dict>
+		<key>2029</key>
+		<dict>
+			<key>Artist</key>
+			<string>Artist 10</string>
+			<key>Name</key>
+			<string>Commercial A10-T02</string>
+			<key>Persistent ID</key>
+			<string>CCOM10020000A</string>
+			<key>Track ID</key>
+			<integer>2029</integer>
+		</dict>
+		<key>2030</key>
+		<dict>
+			<key>Artist</key>
+			<string>Artist 10</string>
+			<key>Name</key>
+			<string>Commercial A10-T03</string>
+			<key>Persistent ID</key>
+			<string>CCOM10030000A</string>
+			<key>Track ID</key>
+			<integer>2030</integer>
+		</dict>
+	</dict>
+</dict>
+</plist>

@@ -1,0 +1,30 @@
+{
+  "_comment": "Synthetic pool manifest for \u00a714.37 byte-equality floor. Paths are relative to this manifest's parent directory (tests/fixtures/). All 6 pools are exercised by synthetic_weekly_station.json; MASTER is reference-role.",
+  "schema_version": 1,
+  "pools": {
+    "JINGLES": {
+      "path": "itunes_xml_byte_eq/JINGLES.xml",
+      "role": "content"
+    },
+    "COMMERCIAL": {
+      "path": "itunes_xml_byte_eq/COMMERCIAL.xml",
+      "role": "content"
+    },
+    "MIXES": {
+      "path": "itunes_xml_byte_eq/MIXES.xml",
+      "role": "content"
+    },
+    "NIGHT": {
+      "path": "itunes_xml_byte_eq/NIGHT.xml",
+      "role": "content"
+    },
+    "WEEKEND": {
+      "path": "itunes_xml_byte_eq/WEEKEND.xml",
+      "role": "content"
+    },
+    "MASTER": {
+      "path": "itunes_xml_byte_eq/MASTER.xml",
+      "role": "reference"
+    }
+  }
+}
