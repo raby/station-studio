@@ -16,11 +16,12 @@ from sqlalchemy.orm import Session
 
 from engine.database import make_engine, make_sessionmaker
 from engine.models import Base, Station
-from scripts.seed_stations import seed_station, seed_all
+from scripts.seed_stations import seed_station, seed_all, _collect_paths
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CLASSICS_JSON = REPO_ROOT / "stations" / "rebirth-classics.json"
+REBIRTH_RADIO_JSON = REPO_ROOT / "stations" / "rebirth-radio.json"
 
 
 @pytest.fixture
@@ -146,3 +147,52 @@ def test_seed_all_batches_multiple_files(db, tmp_path):
     assert [s["slug"] for s in summaries] == ["one", "two", "three"]
     assert {s["action"] for s in summaries} == {"created"}
     assert db.query(Station).count() == 3
+
+
+# ---------- §14.36 committed rebirth-radio.json + pool-manifest glob filter
+
+
+def test_seed_rebirth_radio_from_checked_in_json(db):
+    """The committed port artifact (§14.36) seeds successfully end-to-end.
+    Pair to test_seed_classics_from_checked_in_json — proves the
+    artifact is `parse_template`-valid AND that seed_stations's upsert
+    path handles the weekly-shaped (flat_slots + cursor.persist=true)
+    template just as well as Classics's row_template form."""
+    summary = seed_station(db, REBIRTH_RADIO_JSON)
+    db.commit()
+
+    assert summary["action"] == "created"
+    assert summary["slug"] == "rebirth-radio"
+    assert summary["slot_count"] == 2196  # weekly's 2,196-slot template
+
+    row = db.query(Station).filter_by(slug="rebirth-radio").one()
+    assert row.template["cadence"] == "weekly"
+    assert row.template["cursor"]["persist"] is True
+    assert row.template["layout"]["flat_slots"]  # flat_slots form, not row_template
+    # 9 named cursors (Rebirth Radio's NIGHT_1..7 + WEEKEND_1..2 pattern).
+    assert len(row.template["layout"]["cursors_init"]) == 9
+
+
+def test_collect_paths_skips_pool_manifest_files():
+    """seed_stations's default glob picks up stations/*.json — but
+    *.pool-manifest.json files (§14.36) sit alongside their template
+    JSON and would fail parse_template if seeded. The glob filter
+    excludes them; explicit-argv mode is unaffected."""
+    paths = _collect_paths([])
+    names = [p.name for p in paths]
+    # Both station templates land in the glob.
+    assert "rebirth-classics.json" in names
+    assert "rebirth-radio.json" in names
+    # The co-located pool manifest does NOT.
+    assert "rebirth-radio.pool-manifest.json" not in names
+    # No name in the result ends with .pool-manifest.json (defensive
+    # check in case a new station gets one).
+    assert all(not n.endswith(".pool-manifest.json") for n in names)
+
+
+def test_collect_paths_honours_explicit_argv_for_pool_manifest():
+    """Explicit argv mode bypasses the glob filter — useful for testing
+    or one-off ops that intentionally want the manifest file."""
+    paths = _collect_paths([str(REPO_ROOT / "stations" / "rebirth-radio.pool-manifest.json")])
+    assert len(paths) == 1
+    assert paths[0].name == "rebirth-radio.pool-manifest.json"

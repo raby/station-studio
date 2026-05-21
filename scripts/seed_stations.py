@@ -72,9 +72,21 @@ def seed_all(db: Session, paths: list[Path]) -> list[dict]:
 
 
 def _collect_paths(argv: list[str]) -> list[Path]:
+    """Resolve the station JSONs to seed.
+
+    Explicit args override the glob. Default: every `*.json` under
+    `stations/` EXCEPT `*.pool-manifest.json` — those are §14.36 pool
+    manifests co-located with their station's template JSON (e.g.
+    `rebirth-radio.json` + `rebirth-radio.pool-manifest.json`).
+    Filtering by suffix here keeps the manifest next to its station
+    without it being mis-parsed as a template.
+    """
     if argv:
         return [Path(a).resolve() for a in argv]
-    return sorted(STATIONS_DIR.glob("*.json"))
+    return sorted(
+        p for p in STATIONS_DIR.glob("*.json")
+        if not p.name.endswith(".pool-manifest.json")
+    )
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session
 
 from engine.database import make_engine, make_sessionmaker
 from engine.models import Base, Station
-from scripts.import_station import _default_name, import_one, main
+from scripts.import_station import _default_name, import_one, main, translate_only
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -180,3 +180,96 @@ def test_main_returns_code_2_for_malformed_weekly_json(tmp_path, monkeypatch, ca
     assert "input data problem" in err
     assert "unknown weekly slot type" in err
     assert "station-studio bug" not in err
+
+
+# ---------- --output mode (§14.36) -------------------------------------
+
+
+def test_translate_only_returns_station_studio_format():
+    """translate_only is the pure-function helper that backs --output;
+    its output is byte-identical to what import_one would upsert."""
+    out = translate_only(slug="x", json_path=SAMPLE_FIXTURE, name=None)
+    assert out["station"] == "x"
+    assert out["name"] == "X"
+    assert out["cadence"] == "weekly"
+    assert out["cursor"]["persist"] is True
+    assert len(out["layout"]["flat_slots"]) == 13
+
+
+def test_main_output_mode_writes_json_without_touching_db(tmp_path, monkeypatch, capsys):
+    """--output FILE writes the translated JSON + does NOT create a
+    Station row. This is the path the refresh-rebirth-radio Makefile
+    target drives."""
+    db_url = f"sqlite:///{tmp_path}/should_stay_empty.db"
+    monkeypatch.setenv("STATION_STUDIO_DB_URL", db_url)
+    out_path = tmp_path / "out.json"
+
+    rc = main(["sample-rb", str(SAMPLE_FIXTURE), "--output", str(out_path)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "wrote" in out
+    assert str(out_path) in out
+
+    # File exists + parses cleanly.
+    written = json.loads(out_path.read_text())
+    assert written["station"] == "sample-rb"
+    assert len(written["layout"]["flat_slots"]) == 13
+
+    # No DB file was ever created — --output mode short-circuits before
+    # make_engine() runs. The file path was set via STATION_STUDIO_DB_URL
+    # specifically so this absence is testable.
+    db_file = tmp_path / "should_stay_empty.db"
+    assert not db_file.exists()
+
+
+def test_main_output_mode_handles_translator_errors(tmp_path, monkeypatch, capsys):
+    """--output mode shares the same error surface as the DB-write path:
+    malformed weekly JSON exits with code 2 + user-facing message."""
+    monkeypatch.setenv("STATION_STUDIO_DB_URL", f"sqlite:///{tmp_path}/cli.db")
+    bad = tmp_path / "bad.json"
+    bad.write_text(json.dumps({
+        "slots": [{"type": "banana"}],
+        "initial_cursors": {},
+    }))
+    rc = main(["x", str(bad), "--output", str(tmp_path / "out.json")])
+    assert rc == 2
+    assert not (tmp_path / "out.json").exists()  # file not written on error
+    err = capsys.readouterr().err
+    assert "input data problem" in err
+
+
+# ---------- committed stations/rebirth-radio.json artifact -------------
+
+
+def test_committed_rebirth_radio_template_parses_cleanly():
+    """The shipped port artifact (stations/rebirth-radio.json) parses
+    via parse_template + has the structure §14.34's translator
+    promises. Catches regressions if the translator output shape
+    changes without the committed artifact being refreshed."""
+    from engine.template import parse_template
+
+    artifact = REPO_ROOT / "stations" / "rebirth-radio.json"
+    tmpl_dict = json.loads(artifact.read_text())
+    tmpl = parse_template(tmpl_dict)
+
+    assert tmpl.station == "rebirth-radio"
+    assert tmpl.cadence == "weekly"
+    assert tmpl.rng == "on"
+    # Real weekly is 2,196 slots / 9 cursors — the dump+translate
+    # pipeline preserves both. Fixed numbers because the artifact is
+    # committed; if weekly's template changes, run
+    # `make refresh-rebirth-radio WEEKLY_DIR=/path/to/weekly`.
+    assert len(tmpl.layout.flat_slots) == 2196
+    assert len(tmpl.layout.cursors_init) == 9
+    assert set(tmpl.layout.cursors_init.keys()) == {
+        "NIGHT_1", "NIGHT_2", "NIGHT_3", "NIGHT_4",
+        "NIGHT_5", "NIGHT_6", "NIGHT_7",
+        "WEEKEND_1", "WEEKEND_2",
+    }
+    # §14.30 persistent cursors — required for weekly's stateful mode.
+    assert tmpl.cursor.persist is True
+    # §14.35: 5 content sources + MASTER reference role.
+    by_name = {s.name: s for s in tmpl.sources}
+    assert by_name["MASTER"].role == "reference"
+    for content_name in ["JINGLES", "COMMERCIAL", "MIXES", "NIGHT", "WEEKEND"]:
+        assert by_name[content_name].role == "content"

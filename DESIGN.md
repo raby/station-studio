@@ -4927,10 +4927,166 @@ becomes ops work, not engineering.
 
 ---
 
+### 14.36 committed `stations/rebirth-radio.json` artifact (§17 Phase B sub-slice #18)
+
+**Goal.** Ship Rebirth Radio's 2,196-slot template in the repo so
+`make seed-stations` produces a ready-to-import station on a fresh
+install. Alongside it, commit a placeholder pool manifest pointing
+the operator at the `make import-weekly-pools` flow with their own
+XML files (the XMLs themselves stay out of the repo for the
+copyright reason called out in §14.35).
+
+**Shape.** Single commit, no mid-slice review — this slice is an
+artifact + a tiny CLI flag, not engine work. Three artifacts:
+
+1. **`stations/rebirth-radio.json`** — the translated, station-
+   studio-format port template. ~250 KB; 2,196 flat slots; 9
+   named cursors (NIGHT_1..7 + WEEKEND_1..2); `cursor.persist=true`
+   (§14.30 stateful mode); 6 sources (5 content + MASTER reference).
+   Generated from weekly's `app/services/template.py` via the
+   §14.34 dump helper + §14.34 translator.
+
+2. **`stations/rebirth-radio.pool-manifest.json`** — placeholder
+   manifest. Paths are `from_user/*.xml` relative to the manifest's
+   location; `_comment` instructs operators to edit before running.
+   The strict-mode manifest parser (§14.35) will produce a clear
+   "file not found at /resolved/path/..." error if anyone runs it
+   unedited.
+
+3. **`scripts/import_station.py --output FILE`** — new flag.
+   Translates the weekly-format JSON to station-studio format and
+   writes to a file instead of upserting to the DB. The new
+   `translate_only()` helper backs the flag; the existing
+   `import_one()` is unchanged. This is the path
+   `make refresh-rebirth-radio` drives.
+
+**Co-location decision: same directory, glob filter.** The pool
+manifest sits in `stations/` next to the station template
+(`rebirth-radio.json` + `rebirth-radio.pool-manifest.json`). The
+mental model is "everything for Rebirth Radio in one place." But
+`seed_stations.py` defaults to `STATIONS_DIR.glob("*.json")`, so
+the manifest would otherwise get fed to `parse_template()` and
+fail. Two options surfaced:
+
+- Move the manifest to a `manifests/` dir or rename it to a
+  non-`.json` suffix. Cleaner separation but a new convention to
+  remember.
+- Co-locate + filter `*.pool-manifest.json` from the seed glob.
+
+Picked the latter. `_collect_paths` now excludes any file whose
+name ends with `.pool-manifest.json` from the default glob; explicit
+`argv` mode is unaffected (so the manifest can be passed
+deliberately if someone wants it for testing). The filter is one
+generator expression in `scripts/seed_stations.py` plus two tests.
+
+If a future station also needs a pool manifest, the naming
+convention scales: `foo.json` + `foo.pool-manifest.json` follows
+the same pattern. No directory restructure needed.
+
+**Refresh workflow.** `make refresh-rebirth-radio
+WEEKLY_DIR=/path/to/weekly` regenerates the committed JSON:
+
+1. Runs `scripts/dump_weekly_template.py` *under weekly's venv*
+   (`PYTHONPATH=$WEEKLY_DIR $WEEKLY_DIR/.venv/bin/python …`)
+   to dump `build_template()` + `INITIAL_CURSORS` to a `mktemp`
+   file.
+2. Pipes the dump through `import_station.py --output stations/
+   rebirth-radio.json` — runs the §14.34 translator, writes
+   station-studio-format JSON.
+3. Suggests `git diff stations/rebirth-radio.json` to see what
+   weekly changed.
+
+The Makefile target validates the weekly path before running
+(checks `app/services/` exists + `.venv/bin/python` is executable);
+clear errors if either is missing. The end-to-end smoke test
+during development confirmed an idempotent re-run produces
+byte-identical output — the committed artifact and the live
+regeneration agree.
+
+**Drift detection isn't automated.** Weekly's
+`app/services/template.py` evolves in a separate repo; station-
+studio commits a snapshot. Three approaches considered:
+
+(a) CI compares committed JSON vs live weekly dump — requires
+    weekly in CI (it isn't); cross-repo coupling.
+(b) Every test run does the dump — same dependency problem.
+(c) Manual `make refresh-rebirth-radio` when needed; drift caught
+    later by #19's byte-equality harness comparing generator
+    output, not the template artifact.
+
+Picked (c). #19 is the real safety net: if the committed template
+goes stale, generation output stops matching weekly's, and the
+harness fires. The template-artifact-level drift detection adds
+infrastructure cost without buying anything #19 won't catch.
+
+**Why ship the placeholder manifest at all?** The pool import flow
+(§14.35) takes a manifest path. Without a committed starter,
+operators authoring their own from scratch hit the same surface
+area as on first import — they need to know the 6 pool names + the
+MASTER role decision + the manifest schema. The placeholder
+manifest documents all three by example. The "file not found"
+error path is documented in the placeholder's `_comment`; that's
+the worst-case UX failure, and it's mild.
+
+**What shipped:**
+
+* `scripts/import_station.py` — `--output FILE` flag + `translate_only()`
+  helper. ~30 LoC added.
+* `scripts/seed_stations.py` — `_collect_paths` skips
+  `*.pool-manifest.json`. ~5 LoC + docstring.
+* `stations/rebirth-radio.json` — committed port artifact, ~250 KB.
+* `stations/rebirth-radio.pool-manifest.json` — placeholder pool
+  manifest with instructive `_comment`.
+* `Makefile` — `refresh-rebirth-radio WEEKLY_DIR=...` target.
+* `tests/test_import_station.py` — +4 tests for `--output` mode +
+  the committed artifact's structural invariants.
+* `tests/test_seed_stations.py` — +3 tests for the committed
+  artifact end-to-end + the pool-manifest glob filter.
+
+**Verified end-to-end.** `make refresh-rebirth-radio
+WEEKLY_DIR=…/weekly` regenerates the artifact byte-identical to
+the original generation (idempotent). `seed_station` reads the
+committed file + creates the Station row with all expected
+properties (2,196 slots, 9 cursors, `persist=true`, MASTER role).
+
+**Decisions punted (not regressions):**
+
+* **No auto-discovery of weekly via `WEEKLY_DIR` env var default.**
+  The Makefile target requires explicit `WEEKLY_DIR=` because
+  weekly's path is not a station-studio property — it lives in
+  the operator's local layout. A sensible default would just be
+  wrong on someone else's machine.
+* **No `--input -` (stdin) for piping dump → translate.** The
+  current Makefile uses a `mktemp` intermediary. Stdin would let
+  the refresh target be one pipeline, but the intermediate file
+  is good for debugging ("what did weekly actually dump?") and
+  the `mktemp` is auto-cleaned.
+* **No `dry-run` for the artifact regeneration.** `--output` to a
+  scratch path effectively IS a dry run; no separate flag needed.
+
+| Punt                                              | Severity   | Notes                                                                                                                          |
+|---------------------------------------------------|------------|--------------------------------------------------------------------------------------------------------------------------------|
+| Auto-discover weekly path                          | LOW        | Cross-repo path can't have a useful default. Explicit `WEEKLY_DIR=` is honest.                                                 |
+| `--input -` stdin support                          | LOW        | mktemp intermediary is a useful debug artifact and gets cleaned automatically.                                                 |
+| CI drift check vs weekly                           | DEFERRED   | #19's byte-equality harness catches generator-output drift; template-level drift adds infra cost for diminishing return.       |
+| Real Rebirth Radio iTunes XMLs in repo             | NEVER      | Copyright; documented in §14.35. Operators import their own via `make import-weekly-pools manifest=...`.                       |
+| Auto-link station artifact ↔ pool manifest         | LATER      | The naming convention (`X.json` + `X.pool-manifest.json`) is the link today. A future "stations registry" could formalise it. |
+
+**Phase B closeout (queued):** **Sub-slice #19** — byte-equality
+verification harness. Same pools + same seed + same week →
+station-studio's generator produces the same bytes as weekly's.
+Closes Phase B. Bigger and harder of the two remaining (#18 was
+trivial; #19 needs a fixture or live-weekly path + an `output_bytes
+== expected_bytes` test that survives RNG-on determinism).
+
+After #19 ships, Phase B is done.
+
+---
+
 ## 15. Status snapshot
 
 A quick "where are we" for a future reader. Last updated alongside
-the §14.35 iTunes-XML pool import slice (sub-slice #17 shipped).
+the §14.36 port artifact commit (sub-slice #18 shipped).
 
 | Area                     | State                                                            |
 |--------------------------|------------------------------------------------------------------|
@@ -4949,7 +5105,7 @@ the §14.35 iTunes-XML pool import slice (sub-slice #17 shipped).
 | Delete / station-reset   | Shipped (14.10). Per-row delete + station nuke; cascades.        |
 | Disk-export UI button    | Shipped (14.11). Trace viewer "Export to disk" + status line.    |
 | Backup / restore         | Shipped (§14.18). `make backup` / `make restore date=...` with WAL-aware sqlite3 .backup + pre-restore safety copy. |
-| **§17 pre-port roadmap** | **Phase A complete (§14.17–§14.21). Phase B underway: sub-slices #5 (§14.23), #7 (§14.22), #8 (§14.24), #9 (§14.25), #10 (§14.26), #11 (§14.27), #12 (§14.28), #13 (§14.29 + §14.30), #14 (§14.31), #15 (§14.32), #16 (§14.34), #17 (§14.35) shipped + §14.33 whole-project review fixes. Sub-slice #17 verified end-to-end against real weekly: 6 pools (2,344 content tracks + 7,103 MASTER reference tracks) imported in seconds; load_pools resolves the 5 content pools cleanly with MASTER correctly excluded. **Next: sub-slice #18 = commit `stations/rebirth-radio.json` artifact + #19 = byte-equality verification harness (Phase B's acceptance criterion).** |
+| **§17 pre-port roadmap** | **Phase A complete (§14.17–§14.21). Phase B underway: sub-slices #5 (§14.23), #7 (§14.22), #8 (§14.24), #9 (§14.25), #10 (§14.26), #11 (§14.27), #12 (§14.28), #13 (§14.29 + §14.30), #14 (§14.31), #15 (§14.32), #16 (§14.34), #17 (§14.35), #18 (§14.36) shipped + §14.33 whole-project review fixes. Sub-slice #18 ships `stations/rebirth-radio.json` (2,196 slots, 9 cursors, MASTER reference role) + placeholder pool manifest; `make refresh-rebirth-radio` regenerates the artifact from a live weekly checkout. **Next + last: sub-slice #19 = byte-equality verification harness (Phase B's acceptance criterion). After #19, Phase B is done.** |
 | Visual block editor      | Deferred (v2). Lands as §17 Phase B after Phase A unblocks.      |
 | Trace versioning         | Deferred. See §16.4 (queued behind §16.1 by design).             |
 | Accessibility pass       | Deferred. §17 Phase D — single sweep after §16.2 + port.         |

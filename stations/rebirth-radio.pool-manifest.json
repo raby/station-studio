@@ -1,0 +1,12 @@
+{
+  "_comment": "Pool manifest for Rebirth Radio (§14.36). EDIT THE PATHS BELOW to point at your weekly/from_user/ directory (or wherever you keep the iTunes-XML exports), THEN run `make import-weekly-pools manifest=stations/rebirth-radio.pool-manifest.json`. The relative paths assume the XMLs sit in a `from_user/` directory next to this file; if your layout differs, either copy/symlink this manifest next to the XMLs or change `path` to an absolute filesystem path. Running the manifest as-shipped will produce a clear 'file not found' error with the resolved path — that's the safety net, but edit it first to avoid the round-trip. The XML files themselves are NOT committed: weekly's pool exports contain copyrighted track metadata (artist names, album titles) — operators import their own.",
+  "schema_version": 1,
+  "pools": {
+    "JINGLES":    {"path": "from_user/JINGLES.xml",    "role": "content"},
+    "COMMERCIAL": {"path": "from_user/COMMERCIAL.xml", "role": "content"},
+    "MIXES":      {"path": "from_user/MIXES.xml",      "role": "content"},
+    "NIGHT":      {"path": "from_user/NIGHT.xml",      "role": "content"},
+    "WEEKEND":    {"path": "from_user/WEEKEND.xml",    "role": "content"},
+    "MASTER":     {"path": "from_user/MASTER.xml",     "role": "reference"}
+  }
+}

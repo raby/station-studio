@@ -70,6 +70,24 @@ def _default_name(slug: str) -> str:
     return " ".join(part.capitalize() for part in slug.split("-"))
 
 
+def translate_only(
+    *,
+    slug: str,
+    json_path: Path,
+    name: str | None,
+) -> dict:
+    """Run the weekly→station-studio translation only, no DB writes.
+
+    Pure-function wrapper around `import_weekly_template`; identical
+    output to what `import_one` would write to the DB minus the upsert.
+    Used by the `--output FILE` CLI mode (§14.36) to produce the
+    committed port artifact `stations/rebirth-radio.json`.
+    """
+    raw = json.loads(json_path.read_text())
+    display_name = name if name is not None else _default_name(slug)
+    return import_weekly_template(raw, slug=slug, name=display_name)
+
+
 def import_one(
     db: Session,
     *,
@@ -130,11 +148,46 @@ def main(argv: list[str] | None = None) -> int:
         "honours this flag; this script reads it only for `--help` "
         "documentation parity with the Makefile UX.",
     )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=None,
+        help="If set, translate and write the station-studio template JSON "
+        "to FILE — DOES NOT touch the DB. Used to refresh the committed "
+        "port artifact `stations/rebirth-radio.json` (§14.36). The output "
+        "is exactly what would have been upserted to the Station row's "
+        "`template` column.",
+    )
     args = parser.parse_args(argv)
 
     if not args.json_path.is_file():
         print(f"error: no such file: {args.json_path}", file=sys.stderr)
         return 1
+
+    # --output: translate-only path, no DB writes.
+    if args.output is not None:
+        try:
+            template = translate_only(
+                slug=args.slug, json_path=args.json_path, name=args.name,
+            )
+        except WeeklyImportError as e:
+            print(f"import failed (input data problem): {e}", file=sys.stderr)
+            return 2
+        except TemplateError as e:
+            print(
+                f"import failed (station-studio bug): translator produced an "
+                f"invalid template that parse_template later rejected: {e}",
+                file=sys.stderr,
+            )
+            return 3
+        # Pretty-printed + trailing newline for clean diff/grep ergonomics.
+        args.output.write_text(json.dumps(template, indent=2) + "\n")
+        print(
+            f"  wrote     {args.slug:<30}  "
+            f"{len(template['layout']['flat_slots']):>6} slots, "
+            f"{len(template['layout']['cursors_init']):>2} cursors  → {args.output}"
+        )
+        return 0
 
     engine = make_engine()
     Base.metadata.create_all(engine)

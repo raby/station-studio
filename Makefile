@@ -12,7 +12,7 @@
         backfill-slot-types \
         backup backups restore \
         dev dev-backend dev-frontend \
-        import-station import-weekly-pools
+        import-station import-weekly-pools refresh-rebirth-radio
 
 PY := .venv/bin/python
 ALEMBIC := .venv/bin/alembic
@@ -251,3 +251,45 @@ import-weekly-pools:
 		$(MAKE) backup; \
 	fi
 	$(PY) -m scripts.import_weekly_pools "$(manifest)" $(ARGS)
+
+# Refresh stations/rebirth-radio.json from a live weekly checkout
+# (§14.36). The committed JSON is a snapshot of weekly's
+# build_template() + INITIAL_CURSORS at a point in time; this target
+# regenerates it. Requires WEEKLY_DIR pointing at a weekly checkout
+# with its venv active (the dump runs INSIDE weekly so it can import
+# app.services.template).
+#
+# Usage:
+#   make refresh-rebirth-radio WEEKLY_DIR=/path/to/weekly
+#
+# What happens:
+#   1. Dump weekly's build_template() to /tmp/weekly-template.json
+#      via scripts/dump_weekly_template.py running under weekly's venv
+#   2. Translate weekly→station-studio format via the existing
+#      import_station.py --output mode (no DB writes)
+#   3. Overwrite stations/rebirth-radio.json with the result
+#
+# Drift detection isn't automated — re-run this target when weekly's
+# template changes. Sub-slice #19 (byte-equality harness) is what
+# actually catches drift via comparing generation output.
+refresh-rebirth-radio:
+	@if [ -z "$(WEEKLY_DIR)" ]; then \
+		echo "Usage: make refresh-rebirth-radio WEEKLY_DIR=/path/to/weekly"; \
+		echo "Refreshes stations/rebirth-radio.json from a live weekly checkout (§14.36)."; \
+		exit 1; \
+	fi
+	@if [ ! -d "$(WEEKLY_DIR)/app/services" ]; then \
+		echo "error: $(WEEKLY_DIR) doesn't look like a weekly checkout (missing app/services/)."; \
+		exit 1; \
+	fi
+	@if [ ! -x "$(WEEKLY_DIR)/.venv/bin/python" ]; then \
+		echo "error: $(WEEKLY_DIR)/.venv/bin/python not executable. Set up weekly's venv first."; \
+		exit 1; \
+	fi
+	@TMP=$$(mktemp -t weekly-template.XXXXXX.json); \
+	  echo "Dumping weekly template → $$TMP …"; \
+	  PYTHONPATH=$(WEEKLY_DIR) $(WEEKLY_DIR)/.venv/bin/python scripts/dump_weekly_template.py --out "$$TMP" && \
+	  echo "Translating → stations/rebirth-radio.json …" && \
+	  $(PY) -m scripts.import_station rebirth-radio "$$TMP" --output stations/rebirth-radio.json && \
+	  rm -f "$$TMP" && \
+	  echo 'Done. Diff against the previous version with: git diff stations/rebirth-radio.json'
