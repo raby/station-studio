@@ -50,7 +50,13 @@ from engine.models import (
 )
 from engine.template import parse_template
 from tests.byte_equality import (
-    assert_chain_equal, expand_block_slot_refs, generate_chain,
+    PriorSeedError,
+    assert_chain_equal,
+    expand_block_slot_refs,
+    generate_chain,
+    trace_id_for_prior,
+    validate_prior_cursor_names,
+    validate_prior_seed_fixture,
 )
 
 
@@ -102,15 +108,12 @@ def _check_xmls_or_skip(from_user: Path | None) -> Path:
     return from_user
 
 
-# ---------- §14.38 prior-seed validator + loader (R1+R2+R3+R4 sweep-up) -
+# §14.38 prior-seed validator + loader. The strict-validation helpers
+# (validate_prior_seed_fixture, validate_prior_cursor_names,
+# trace_id_for_prior, PriorSeedError) live in tests/byte_equality.py
+# for cross-station reuse — see the §14.40 review sweep-up that hoisted
+# them. Only port-specific knobs (the drop-rate threshold) stay here.
 
-
-_ALLOWED_FIXTURE_TOP_LEVEL = {
-    "schema_version", "seed_base", "weeks_generated", "weeks_asserted",
-    "priors", "weeks", "_comment",
-}
-_REQUIRED_PRIOR_KEYS = {"week", "pids", "cursors"}
-_ALLOWED_PRIOR_KEYS = {"week", "pids", "cursors"}
 
 # Max fraction of PID-resolution drops before the loader fails. A few
 # drops are expected (weekly's WEEKLY 001 references historical tracks
@@ -118,130 +121,6 @@ _ALLOWED_PRIOR_KEYS = {"week", "pids", "cursors"}
 # Many drops mean the fixture is stale OR pools were imported from a
 # different XML revision. R2 sweep-up.
 _MAX_PID_DROP_FRACTION = 0.05
-
-
-class _PriorSeedError(AssertionError):
-    """Raised when fixture validation fails (§14.38)."""
-
-
-def _validate_prior_seed_fixture(fixture: dict) -> None:
-    """Strict-mode fixture validation (§14.38 R1 sweep-up).
-
-    Calibrated against the §14.32 / §14.34 / §14.35 strict-parser
-    pattern: top-level allowlist + per-prior allowlist + per-field
-    type checks. Catches typos that would otherwise silently drop
-    data downstream.
-
-    Allows `len(priors) in {0, 1}` so §14.40 can use the same loader
-    for a stateless Classics fixture (no prior seed needed). Multi-
-    prior (`len > 1`) is queued as §14.38b.
-    """
-    if not isinstance(fixture, dict):
-        raise _PriorSeedError(
-            f"fixture must be a JSON object, got {type(fixture).__name__}"
-        )
-    if fixture.get("schema_version") != 2:
-        raise _PriorSeedError(
-            f"fixture schema_version={fixture.get('schema_version')!r}; "
-            f"expected 2 (§14.38). Regenerate via "
-            f"`make refresh-port-fixture …`."
-        )
-    unknown_top = set(fixture.keys()) - _ALLOWED_FIXTURE_TOP_LEVEL
-    if unknown_top:
-        raise _PriorSeedError(
-            f"fixture has unknown top-level keys: {sorted(unknown_top)}. "
-            f"Allowed: {sorted(_ALLOWED_FIXTURE_TOP_LEVEL)}."
-        )
-    priors = fixture.get("priors")
-    if not isinstance(priors, list):
-        raise _PriorSeedError(
-            f"fixture 'priors' must be a list, got {type(priors).__name__}"
-        )
-    if len(priors) > 1:
-        raise _PriorSeedError(
-            f"fixture has {len(priors)} priors; loader supports 0 or 1 "
-            f"(multi-prior is §14.38b — queued)."
-        )
-    for i, prior in enumerate(priors):
-        if not isinstance(prior, dict):
-            raise _PriorSeedError(
-                f"priors[{i}] must be an object, got {type(prior).__name__}"
-            )
-        missing = _REQUIRED_PRIOR_KEYS - set(prior.keys())
-        if missing:
-            raise _PriorSeedError(
-                f"priors[{i}] missing required keys: {sorted(missing)}. "
-                f"Required: {sorted(_REQUIRED_PRIOR_KEYS)}."
-            )
-        unknown = set(prior.keys()) - _ALLOWED_PRIOR_KEYS
-        if unknown:
-            raise _PriorSeedError(
-                f"priors[{i}] has unknown keys: {sorted(unknown)}. "
-                f"Allowed: {sorted(_ALLOWED_PRIOR_KEYS)}."
-            )
-        if not isinstance(prior["week"], int):
-            raise _PriorSeedError(
-                f"priors[{i}].week must be int, got "
-                f"{type(prior['week']).__name__}"
-            )
-        if not isinstance(prior["pids"], list):
-            raise _PriorSeedError(
-                f"priors[{i}].pids must be a list, got "
-                f"{type(prior['pids']).__name__}"
-            )
-        for j, pid in enumerate(prior["pids"]):
-            if not isinstance(pid, str):
-                raise _PriorSeedError(
-                    f"priors[{i}].pids[{j}] must be a string, got "
-                    f"{type(pid).__name__}"
-                )
-        if not isinstance(prior["cursors"], dict):
-            raise _PriorSeedError(
-                f"priors[{i}].cursors must be an object, got "
-                f"{type(prior['cursors']).__name__}"
-            )
-        for name, pos in prior["cursors"].items():
-            if not isinstance(name, str) or not name:
-                raise _PriorSeedError(
-                    f"priors[{i}].cursors key must be a non-empty string, "
-                    f"got {name!r}"
-                )
-            if not isinstance(pos, int):
-                raise _PriorSeedError(
-                    f"priors[{i}].cursors[{name!r}] must be int, got "
-                    f"{type(pos).__name__}"
-                )
-
-
-def _validate_prior_cursor_names(prior: dict, template_cursors: set[str]) -> None:
-    """Cross-check prior's cursor names against the station template's
-    `cursors_init`. A typo would otherwise create a dead
-    `cursor_state` row that runtime silently ignores — exactly the
-    silent-field-drop class of bug this slice fights against. R1
-    sweep-up.
-    """
-    declared = set(prior["cursors"].keys())
-    unknown = declared - template_cursors
-    if unknown:
-        raise _PriorSeedError(
-            f"prior declares cursors {sorted(unknown)} that are NOT in "
-            f"the station template's cursors_init (declared: "
-            f"{sorted(template_cursors)}). A typo here would create a "
-            f"dead cursor_state row that runtime ignores — fail loud "
-            f"instead."
-        )
-
-
-def _trace_id_for_prior(week: int) -> str:
-    """Build a clearly-non-UUID trace_id for an imported prior playlist.
-
-    Format: `imported-prior:week{N}`. The `imported-prior:` prefix
-    documents intent + distinguishes from generation traces (full
-    UUIDs). Any future code that filters `Playlist.trace_id` on UUID
-    shape will skip these correctly; explicit prior-aware filters can
-    pattern-match the prefix. R3 sweep-up.
-    """
-    return f"imported-prior:week{week}"
 
 
 @pytest.fixture
@@ -276,8 +155,8 @@ def port_db(tmp_path) -> Session:
     # pattern. A fixture typo (`cursor` for `cursors`, missing field,
     # wrong types) now fails loud with a clear message.
     try:
-        _validate_prior_seed_fixture(fixture)
-    except _PriorSeedError as e:
+        validate_prior_seed_fixture(fixture)
+    except PriorSeedError as e:
         pytest.fail(f"fixture validation: {e}")
 
     engine = make_engine(f"sqlite:///{tmp_path}/port.db")
@@ -311,8 +190,8 @@ def port_db(tmp_path) -> Session:
                 tmpl_dict.get("layout", {}).get("cursors_init", {}).keys()
             )
             try:
-                _validate_prior_cursor_names(prior, template_cursors)
-            except _PriorSeedError as e:
+                validate_prior_cursor_names(prior, template_cursors)
+            except PriorSeedError as e:
                 pytest.fail(f"fixture validation: {e}")
 
             # 3a. Pre-seed Playlist(week=N) + PlaylistEntry rows. Some
@@ -344,7 +223,7 @@ def port_db(tmp_path) -> Session:
 
             prior_playlist = Playlist(
                 station_id=station.id, week=prior_week,
-                trace_id=_trace_id_for_prior(prior_week),
+                trace_id=trace_id_for_prior(prior_week),
             )
             db.add(prior_playlist)
             db.flush()
@@ -461,14 +340,14 @@ def _valid_minimal_fixture(priors: list[dict] | None = None) -> dict:
 
 def test_validate_accepts_minimal_zero_prior_fixture():
     """R4: priors=[] is valid (§14.40 stateless-station case)."""
-    _validate_prior_seed_fixture(_valid_minimal_fixture(priors=[]))
+    validate_prior_seed_fixture(_valid_minimal_fixture(priors=[]))
 
 
 def test_validate_accepts_one_prior_with_empty_cursors():
     """R5: cursors={} is valid (stateless station's prior seed
     declaration). Loader writes zero rows; runtime falls back to
     template's cursors_init."""
-    _validate_prior_seed_fixture(_valid_minimal_fixture(priors=[
+    validate_prior_seed_fixture(_valid_minimal_fixture(priors=[
         {"week": 1, "pids": [], "cursors": {}},
     ]))
 
@@ -476,15 +355,15 @@ def test_validate_accepts_one_prior_with_empty_cursors():
 def test_validate_rejects_unknown_schema_version():
     bad = _valid_minimal_fixture()
     bad["schema_version"] = 1
-    with pytest.raises(_PriorSeedError, match="schema_version=1"):
-        _validate_prior_seed_fixture(bad)
+    with pytest.raises(PriorSeedError, match="schema_version=1"):
+        validate_prior_seed_fixture(bad)
 
 
 def test_validate_rejects_unknown_top_level_keys():
     bad = _valid_minimal_fixture()
     bad["bogus_field"] = 42
-    with pytest.raises(_PriorSeedError, match="unknown top-level keys.*bogus_field"):
-        _validate_prior_seed_fixture(bad)
+    with pytest.raises(PriorSeedError, match="unknown top-level keys.*bogus_field"):
+        validate_prior_seed_fixture(bad)
 
 
 def test_validate_rejects_multi_prior_pending_14_38b():
@@ -493,22 +372,22 @@ def test_validate_rejects_multi_prior_pending_14_38b():
         {"week": 1, "pids": [], "cursors": {}},
         {"week": 2, "pids": [], "cursors": {}},
     ])
-    with pytest.raises(_PriorSeedError, match="2 priors.*supports 0 or 1"):
-        _validate_prior_seed_fixture(bad)
+    with pytest.raises(PriorSeedError, match="2 priors.*supports 0 or 1"):
+        validate_prior_seed_fixture(bad)
 
 
 def test_validate_rejects_prior_missing_required_field():
     bad = _valid_minimal_fixture(priors=[{"week": 1, "pids": []}])
-    with pytest.raises(_PriorSeedError, match="missing required keys.*cursors"):
-        _validate_prior_seed_fixture(bad)
+    with pytest.raises(PriorSeedError, match="missing required keys.*cursors"):
+        validate_prior_seed_fixture(bad)
 
 
 def test_validate_rejects_prior_with_unknown_field():
     bad = _valid_minimal_fixture(priors=[{
         "week": 1, "pids": [], "cursors": {}, "typo_field": True,
     }])
-    with pytest.raises(_PriorSeedError, match="unknown keys.*typo_field"):
-        _validate_prior_seed_fixture(bad)
+    with pytest.raises(PriorSeedError, match="unknown keys.*typo_field"):
+        validate_prior_seed_fixture(bad)
 
 
 def test_validate_rejects_pids_not_list():
@@ -517,16 +396,16 @@ def test_validate_rejects_pids_not_list():
     bad = _valid_minimal_fixture(priors=[
         {"week": 1, "pids": "ABCDEF", "cursors": {}},
     ])
-    with pytest.raises(_PriorSeedError, match="pids must be a list"):
-        _validate_prior_seed_fixture(bad)
+    with pytest.raises(PriorSeedError, match="pids must be a list"):
+        validate_prior_seed_fixture(bad)
 
 
 def test_validate_rejects_non_string_pid():
     bad = _valid_minimal_fixture(priors=[
         {"week": 1, "pids": ["GOOD_PID", 12345], "cursors": {}},
     ])
-    with pytest.raises(_PriorSeedError, match=r"pids\[1\] must be a string"):
-        _validate_prior_seed_fixture(bad)
+    with pytest.raises(PriorSeedError, match=r"pids\[1\] must be a string"):
+        validate_prior_seed_fixture(bad)
 
 
 def test_validate_rejects_non_int_cursor_position():
@@ -535,8 +414,8 @@ def test_validate_rejects_non_int_cursor_position():
     bad = _valid_minimal_fixture(priors=[
         {"week": 1, "pids": [], "cursors": {"NIGHT_1": "120"}},
     ])
-    with pytest.raises(_PriorSeedError, match="cursors.*must be int"):
-        _validate_prior_seed_fixture(bad)
+    with pytest.raises(PriorSeedError, match="cursors.*must be int"):
+        validate_prior_seed_fixture(bad)
 
 
 def test_validate_cursor_names_against_template_catches_typos():
@@ -546,8 +425,8 @@ def test_validate_cursor_names_against_template_catches_typos():
     prior = {"week": 1, "pids": [],
              "cursors": {"NIGHT_1": 120, "NITE_2": 130}}
     template_cursors = {"NIGHT_1", "NIGHT_2"}
-    with pytest.raises(_PriorSeedError, match=r"cursors \['NITE_2'\].*NOT in"):
-        _validate_prior_cursor_names(prior, template_cursors)
+    with pytest.raises(PriorSeedError, match=r"cursors \['NITE_2'\].*NOT in"):
+        validate_prior_cursor_names(prior, template_cursors)
 
 
 def test_validate_cursor_names_passes_subset_of_template():
@@ -556,16 +435,16 @@ def test_validate_cursor_names_passes_subset_of_template():
     ones — verified separately by load_cursor_positions's behavior."""
     prior = {"week": 1, "pids": [], "cursors": {"NIGHT_1": 120}}
     template_cursors = {"NIGHT_1", "NIGHT_2", "WEEKEND_1"}
-    _validate_prior_cursor_names(prior, template_cursors)  # no raise
+    validate_prior_cursor_names(prior, template_cursors)  # no raise
 
 
-def test_trace_id_for_prior_uses_explicit_prefix():
+def testtrace_id_for_prior_uses_explicit_prefix():
     """R3: trace_id is clearly-non-UUID so future filters/code paths
     that pattern-match UUID shape skip imported priors correctly."""
-    assert _trace_id_for_prior(1) == "imported-prior:week1"
-    assert _trace_id_for_prior(42) == "imported-prior:week42"
+    assert trace_id_for_prior(1) == "imported-prior:week1"
+    assert trace_id_for_prior(42) == "imported-prior:week42"
     # Doesn't look anything like a UUID — failure mode is "future
     # code expects UUID, breaks loud" rather than "silently matches
     # a real generation."
-    assert "-" in _trace_id_for_prior(1)
-    assert len(_trace_id_for_prior(1)) != 36  # UUIDs are 36 chars
+    assert "-" in trace_id_for_prior(1)
+    assert len(trace_id_for_prior(1)) != 36  # UUIDs are 36 chars

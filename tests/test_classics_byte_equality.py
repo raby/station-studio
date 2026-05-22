@@ -44,7 +44,6 @@ re-record the regression net.
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 
 import pytest
@@ -55,7 +54,13 @@ from engine.models import Base, Station
 from engine.template import parse_template
 from scripts.import_weekly_pools import import_manifest
 from tests.byte_equality import (
-    assert_chain_equal, expand_block_slot_refs, generate_chain,
+    PriorSeedError,
+    assert_chain_equal,
+    bootstrap_mode,
+    expand_block_slot_refs,
+    generate_chain,
+    is_ci,
+    validate_prior_seed_fixture,
 )
 
 
@@ -77,14 +82,9 @@ WEEKS_ASSERTED = list(range(1, 17))
 SEED_BASE = 0
 
 
-def _bootstrap_mode() -> bool:
-    """Bootstrap mode active when ``BOOTSTRAP_BYTE_EQ_FIXTURES=1``."""
-    return os.environ.get("BOOTSTRAP_BYTE_EQ_FIXTURES", "").strip() == "1"
-
-
-def _is_ci() -> bool:
-    """Detect CI (most providers set ``CI=true``)."""
-    return os.environ.get("CI", "").strip().lower() in {"1", "true", "yes"}
+# §14.40 review sweep-up: `bootstrap_mode` and `is_ci` are shared
+# helpers in tests/byte_equality.py. Same definitions previously
+# duplicated here — eliminated.
 
 
 @pytest.fixture
@@ -165,8 +165,8 @@ def test_classics_chain_matches_committed_fixture(classics_db):
         reset_cycle=0,
     )
 
-    if _bootstrap_mode():
-        if _is_ci():
+    if bootstrap_mode():
+        if is_ci():
             pytest.fail(
                 "BOOTSTRAP_BYTE_EQ_FIXTURES=1 detected in a CI "
                 "environment. Bootstrap mode rewrites the committed "
@@ -181,6 +181,14 @@ def test_classics_chain_matches_committed_fixture(classics_db):
         )
 
     fixture = json.loads(EXPECTED_FIXTURE.read_text())
+    # §14.40 review sweep-up: run the §14.38 R1 strict validator (which
+    # R4 explicitly opened up for `priors=[]` — exactly Classics's
+    # case). Same validation rigor for both stations; drift caught
+    # loud at fixture-load time.
+    try:
+        validate_prior_seed_fixture(fixture)
+    except PriorSeedError as e:
+        pytest.fail(f"fixture validation: {e}")
     expected_by_week = {w["week"]: w["pids"] for w in fixture["weeks"]}
 
     tmpl = parse_template(json.loads(CLASSICS_TEMPLATE.read_text()))

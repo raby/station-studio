@@ -45,7 +45,6 @@ is mirrored in commit 2's real-XML test for symmetry.
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 
 import pytest
@@ -56,7 +55,8 @@ from engine.models import Base, Station
 from engine.template import parse_template
 from scripts.import_weekly_pools import import_manifest
 from tests.byte_equality import (
-    assert_chain_equal, expand_block_slot_refs, generate_chain,
+    assert_chain_equal, bootstrap_mode, expand_block_slot_refs,
+    generate_chain, is_ci,
 )
 
 
@@ -82,23 +82,9 @@ ADVANCE_STEP = 3
 RESET_CYCLE = 0
 
 
-def _bootstrap_mode() -> bool:
-    """Bootstrap (fixture-regeneration) mode is active when
-    ``BOOTSTRAP_BYTE_EQ_FIXTURES`` is set to the literal string ``"1"``.
-
-    Other truthy-looking values (`true`, `yes`, etc.) are silently
-    treated as off — narrow accept is deliberate to keep accidental
-    activation impossible.
-    """
-    return os.environ.get("BOOTSTRAP_BYTE_EQ_FIXTURES", "").strip() == "1"
-
-
-def _is_ci() -> bool:
-    """Detect whether we're running in CI (GitHub Actions and most
-    other providers set ``CI=true``). Used to guard the bootstrap
-    branch — a leaked env var in CI would silently re-record fixtures
-    and skip-pass the build."""
-    return os.environ.get("CI", "").strip().lower() in {"1", "true", "yes"}
+# §14.40 review sweep-up: `bootstrap_mode` and `is_ci` are shared
+# helpers in tests/byte_equality.py (kills the drift risk between
+# this test and the Classics one).
 
 
 @pytest.fixture
@@ -182,8 +168,8 @@ def test_synthetic_chain_matches_committed_fixtures(chain_db):
     # grows size>1 blocks, the diagnostic stays accurate.
     tmpl = parse_template(json.loads(STATION_TEMPLATE.read_text()))
 
-    if _bootstrap_mode():
-        if _is_ci():
+    if bootstrap_mode():
+        if is_ci():
             # §14.37 mid-slice review fix Y1: a leaked env var in CI
             # would silently re-record fixtures and skip-pass the
             # build — silently corrupting the regression net. Fail
