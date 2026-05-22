@@ -45,7 +45,9 @@ from sqlalchemy.orm import Session
 
 from engine.database import make_engine, make_sessionmaker
 from engine.importer import import_source
-from engine.models import Base, Playlist, PlaylistEntry, Station, Track
+from engine.models import (
+    Base, CursorState, Playlist, PlaylistEntry, Station, Track,
+)
 from engine.template import parse_template
 from tests.byte_equality import (
     assert_chain_equal, expand_block_slot_refs, generate_chain,
@@ -102,16 +104,18 @@ def _check_xmls_or_skip(from_user: Path | None) -> Path:
 
 @pytest.fixture
 def port_db(tmp_path) -> Session:
-    """Build a DB matching weekly's `loaded_db` fixture shape:
+    """Build a DB with weekly's imported prior seed (§14.38):
 
       1. Import the 6 content pools (JINGLES/COMMERCIAL/MIXES/NIGHT/
          WEEKEND content, MASTER reference).
       2. Seed the rebirth-radio station from the committed template.
-      3. Pre-seed Playlist(week=1) with the committed
-         `weekly_001_pids` fixture — analogous to weekly's
-         `loaded_db` importing WEEKLY PLAYLIST 001 as the imported
-         prior. This is the prior that station-studio's prev_ref
-         lookups (in weeks 2+) read.
+      3. Load `priors[0]` from the fixture (§14.38 prior-seed contract):
+         - Create Playlist(week=1) + PlaylistEntry rows from
+           `priors[0].pids` (prev_ref reads these).
+         - Create CursorState rows from `priors[0].cursors` (so
+           NIGHT_1 starts at the post-WEEKLY-001-import position
+           weekly's `initialize_cursors(post_first=True)` produced,
+           = 120 by default — captured verbatim in the fixture).
 
     The chain then runs weeks 2-9 (matching weekly's WEEKLY 002-009).
     """
@@ -125,6 +129,23 @@ def port_db(tmp_path) -> Session:
             f"`make refresh-port-fixture WEEKLY_DIR=… WEEKLY_FROM_USER_DIR=…`"
         )
     fixture = json.loads(EXPECTED_FIXTURE.read_text())
+
+    # §14.38: validate the fixture's prior-seed shape. The loader is
+    # single-prior only (multi-prior is queued as §14.38b).
+    schema = fixture.get("schema_version")
+    if schema != 2:
+        pytest.fail(
+            f"fixture schema_version={schema!r}; expected 2 (§14.38). "
+            f"Regenerate via `make refresh-port-fixture …`."
+        )
+    priors = fixture.get("priors")
+    if not isinstance(priors, list) or len(priors) != 1:
+        pytest.fail(
+            f"fixture must contain exactly 1 prior (§14.38 single-prior "
+            f"limit; multi-prior support queued as §14.38b). "
+            f"Got: len(priors)={len(priors) if isinstance(priors, list) else 'n/a'}."
+        )
+    prior = priors[0]
 
     engine = make_engine(f"sqlite:///{tmp_path}/port.db")
     Base.metadata.create_all(engine)
@@ -147,44 +168,56 @@ def port_db(tmp_path) -> Session:
         db.add(station)
         db.flush()
 
-        # Step 3 — pre-seed Playlist(week=1) with WEEKLY 001's PIDs.
-        # Look up Track ids by persistent_id (the comparison-stable
-        # cross-pool identifier). Some WEEKLY 001 tracks aren't in the
-        # 6 imported pools (weekly's WEEKLY 001 references tracks from
-        # earlier playlists that aren't in the active pools); those
-        # entries are skipped, mirroring weekly's import_source which
-        # silently skips unresolved track refs.
-        weekly_001_pids = fixture["weekly_001_pids"]
+        # Step 3 — load the §14.38 prior seed.
+        #
+        # 3a. Pre-seed Playlist(week=N) + PlaylistEntry rows. Look
+        # up Track ids by persistent_id (cross-pool stable identifier).
+        # Some WEEKLY 001 tracks aren't in the 6 imported pools (weekly
+        # has historical tracks no longer in active rotation); those
+        # entries are skipped, mirroring weekly's import_source.
+        prior_week = prior["week"]
+        prior_pids = prior["pids"]
+        prior_cursors = prior.get("cursors", {})
+
         pid_to_track = {
             t.persistent_id: t
             for t in db.query(Track).filter(
-                Track.persistent_id.in_(weekly_001_pids)
+                Track.persistent_id.in_(prior_pids)
             ).all()
         }
-        # Sentinel trace_id: the imported seed playlist has no real
-        # trace (it's not a station-studio generation; it's weekly's
-        # imported WEEKLY 001 standing in as the prior). The Playlist
-        # row requires a non-null trace_id, so we use a marker string
-        # that's clearly not a UUID. prev_ref doesn't read the trace.
-        prior = Playlist(
-            station_id=station.id, week=1,
-            trace_id="imported-weekly-001",
+        # Sentinel trace_id: imported priors are not station-studio
+        # generations and have no trace. Playlist.trace_id is non-null;
+        # the marker string is clearly not a UUID. prev_ref doesn't
+        # read it.
+        prior_playlist = Playlist(
+            station_id=station.id, week=prior_week,
+            trace_id="imported-prior-seed",
         )
-        db.add(prior)
+        db.add(prior_playlist)
         db.flush()
-        for position, pid in enumerate(weekly_001_pids):
+        for position, pid in enumerate(prior_pids):
             track = pid_to_track.get(pid)
             if track is None:
-                # Defensive: weekly's WEEKLY 001 XML references some
-                # tracks that aren't in the 6 active pools.
-                # Skipping mirrors weekly's own import behaviour.
                 continue
             db.add(PlaylistEntry(
-                playlist_id=prior.id,
+                playlist_id=prior_playlist.id,
                 track_id=track.id,
                 position=position,
                 slot_type="imported",
             ))
+
+        # 3b. Seed CursorState from prior['cursors']. Each entry maps
+        # cursor name → integer position. Loader is dumb: writes
+        # verbatim, no derivation. Weekly's quirk of hardcoding
+        # advance_step=120 in `initialize_cursors(post_first=True)`
+        # lives in the dumped values, not here.
+        for cursor_name, position in prior_cursors.items():
+            db.add(CursorState(
+                station_id=station.id,
+                name=cursor_name,
+                position=position,
+            ))
+
         db.commit()
         yield db
     finally:

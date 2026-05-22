@@ -23,27 +23,47 @@ Workflow
   3. The driver `make refresh-port-fixture WEEKLY_DIR=… WEEKLY_FROM_USER_DIR=…`
      wraps the invocation.
 
-What gets captured
-------------------
+What gets captured (schema_version 2; §14.38)
+---------------------------------------------
 
   {
-    "seed_base": 42,                                  // each week = SEED_BASE + week
-    "weeks_asserted": [2, 3, 5, 9],                   // station-studio asserts these
-    "weeks_generated": [2, 3, 4, 5, 6, 7, 8, 9],      // full chain for state
-    "weekly_001_pids": ["...", ...],                  // imported seed (slot_type="imported")
+    "schema_version": 2,
+    "seed_base": 42,
+    "weeks_asserted": [2, 3, 5, 9],
+    "weeks_generated": [2, 3, 4, 5, 6, 7, 8, 9],
+    "priors": [
+      {
+        "week": 1,
+        "pids": ["...persistent IDs in playlist position order..."],
+        "cursors": {"NIGHT_1": 120, "NIGHT_2": 130, ..., "WEEKEND_2": 240}
+      }
+    ],
     "weeks": [
-      {"week": 2, "seed": 44, "pids": ["...", ...]},  // weekly's WEEKLY 002
+      {"week": 2, "seed": 44, "pids": ["...", ...]},
       ...
     ]
   }
 
+The `priors` list carries imported playlists (today: weekly's WEEKLY
+001, length 1) — see DESIGN §14.38 for the contract. Each prior
+declares its PERSISTED CURSOR STATE post-import; station-studio's
+loader writes the values verbatim to CursorState, no derivation.
+Weekly's quirk of hardcoding `advance_step=120` in
+`initialize_cursors(post_first=True)` is captured in the dumped
+values; station-studio is insulated from it.
+
 Why weeks start at 2: weekly's WEEKLY 001 is the IMPORTED prior-week
 playlist (slot_type="imported"), not a generated one. The first
 GENERATED playlist is WEEKLY 002. To compare against weekly,
-station-studio pre-seeds its own "week 1" with WEEKLY 001's tracks
-(so prev_ref reads the same prior) then generates weeks 2-9 with the
-same seeds. The fixture captures both halves: weekly_001_pids (for
-station-studio to use as the imported seed) + the 8 generated weeks.
+station-studio pre-seeds its own "week 1" with `priors[0].pids` (so
+prev_ref reads the same prior) AND seeds `cursor_state` from
+`priors[0].cursors` (so NIGHT_1 starts at 120 for the first
+generation, matching weekly's post-initialize_cursors state). Then
+generates weeks 2-9 with the same seeds.
+
+Schema bump: v1 had `weekly_001_pids` at top level; v2 unifies under
+`priors[]` and adds `cursors`. No production consumers; the breaking
+change is internal-only.
 
 Implementation note: imports weekly's `app.services.generator` lazily
 so `--help` works outside a weekly checkout (mirrors
@@ -80,7 +100,8 @@ def _import_weekly_modules():
         from sqlalchemy.pool import StaticPool
 
         from app.models import (
-            Base, SourcePlaylist, Track, WeeklyPlaylist, WeeklyPlaylistEntry,
+            Base, CursorState, SourcePlaylist, Track,
+            WeeklyPlaylist, WeeklyPlaylistEntry,
         )
         from app.services.importer import import_source
         from app.services.cursor import initialize_cursors
@@ -89,6 +110,7 @@ def _import_weekly_modules():
             "create_engine": create_engine, "event": event,
             "sessionmaker": sessionmaker, "StaticPool": StaticPool,
             "Base": Base, "SourcePlaylist": SourcePlaylist,
+            "CursorState": CursorState,
             "Track": Track, "WeeklyPlaylist": WeeklyPlaylist,
             "WeeklyPlaylistEntry": WeeklyPlaylistEntry,
             "import_source": import_source,
@@ -178,6 +200,23 @@ def _weekly_001_pids(session, mods: dict) -> list[str]:
     return [pid_by_id[tid] for tid in track_ids]
 
 
+def _capture_cursors(session, mods: dict) -> dict[str, int]:
+    """Read all CursorState rows. Called AFTER `initialize_cursors(
+    post_first=True)` has run in `_setup_db_with_pools` — so the
+    returned positions are weekly's post-WEEKLY-001-import state
+    (== INITIAL_CURSORS[id] + advance_step for each cursor, with
+    weekly's hardcoded advance_step=120).
+
+    The dump captures whatever weekly's `initialize_cursors` produced
+    verbatim. Station-studio's loader writes these to its own
+    CursorState table without re-deriving — insulating station-studio
+    from weekly's specific quirk where `initialize_cursors` ignores
+    rule-configured advance_step. See DESIGN §14.38.
+    """
+    rows = session.query(mods["CursorState"]).all()
+    return {r.cursor_id: r.position for r in rows}
+
+
 def _capture_week(session, week: int, mods: dict) -> list[str]:
     """Read the entries for `week` (weekly's `number` column) in
     position order, return the persistent IDs."""
@@ -221,8 +260,17 @@ def dump(from_user: Path, out_path: Path, seed_base: int) -> int:
     print(f"setting up weekly DB from {from_user} …", file=sys.stderr)
     _eng, session = _setup_db_with_pools(from_user, mods)
 
-    weekly_001_pids = _weekly_001_pids(session, mods)
-    print(f"WEEKLY 001 seed: {len(weekly_001_pids)} tracks", file=sys.stderr)
+    # Capture the "prior seed" (§14.38): WEEKLY 001's playlist content
+    # + the cursor state weekly's `initialize_cursors(post_first=True)`
+    # produced post-import. Both must be captured BEFORE the first
+    # generation runs — generation mutates cursor state.
+    prior_pids = _weekly_001_pids(session, mods)
+    prior_cursors = _capture_cursors(session, mods)
+    print(
+        f"WEEKLY 001 prior seed: {len(prior_pids)} tracks, "
+        f"{len(prior_cursors)} cursors (e.g. NIGHT_1={prior_cursors.get('NIGHT_1', 'n/a')})",
+        file=sys.stderr,
+    )
 
     weeks_out = []
     for week in WEEKS_GENERATED:
@@ -237,24 +285,31 @@ def dump(from_user: Path, out_path: Path, seed_base: int) -> int:
     data = {
         "_comment": (
             "Captured from weekly's app.services.generator.generate via "
-            "station-studio/scripts/dump_weekly_playlist.py. WEEKLY 001 "
-            "is the imported seed (slot_type='imported' in weekly); "
-            "weeks 2-9 are generated. station-studio's "
-            "test_port_byte_equality.py pre-seeds week 1 with weekly_001_pids "
-            "then asserts station-studio weeks 2/3/5/9 match the listed "
-            "PIDs byte-for-byte (§14.37 commit 2)."
+            "station-studio/scripts/dump_weekly_playlist.py. The `priors` "
+            "list carries imported playlists (today: WEEKLY 001, length 1) "
+            "with their post-import cursor state. Weeks 2-9 are generated. "
+            "station-studio's test_port_byte_equality.py loads priors[0] "
+            "(pids + cursors) then asserts station-studio weeks 2/3/5/9 "
+            "match the listed PIDs byte-for-byte. See DESIGN §14.38 for "
+            "the prior-seed contract; §14.37 for the harness."
         ),
-        "schema_version": 1,
+        "schema_version": 2,
         "seed_base": seed_base,
         "weeks_generated": WEEKS_GENERATED,
         "weeks_asserted": WEEKS_ASSERTED,
-        "weekly_001_pids": weekly_001_pids,
+        "priors": [
+            {
+                "week": 1,
+                "pids": prior_pids,
+                "cursors": prior_cursors,
+            }
+        ],
         "weeks": weeks_out,
     }
     out_path.write_text(json.dumps(data, indent=2) + "\n")
     print(
-        f"wrote {out_path} — WEEKLY 001 ({len(weekly_001_pids)} pids) + "
-        f"{len(weeks_out)} generated weeks",
+        f"wrote {out_path} — 1 prior seed ({len(prior_pids)} pids, "
+        f"{len(prior_cursors)} cursors) + {len(weeks_out)} generated weeks",
         file=sys.stderr,
     )
     return 0

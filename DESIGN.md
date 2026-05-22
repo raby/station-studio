@@ -5380,13 +5380,234 @@ the discovery this slice landed to the genuine closeout.
 
 ---
 
+### 14.38 prior seed: importing a playlist + its cursor state (§17 Phase B byte-equality follow-on #1 of 3)
+
+**Goal.** Close the first model gap the §14.37 byte-equality harness
+surfaced: **what does it mean to import a playlist from another
+generator as a prior?** Weekly's WEEKLY 001 is one instance — imported
+not generated, used by prev_ref + mix-exclusion lookups. The slice
+gives the import path explicit semantics for cursor state, which
+weekly handles implicitly via `initialize_cursors(post_first=True)`.
+
+This is the first of three slices to close Phase B byte-equality.
+§14.39 will replace the §14.37 coalescing patch with a per-cursor
+within-generation offset (architectural fix). §14.40 lifts the
+xfail/loud-fail on the port acceptance test and adds a SECOND
+station fixture to prove "weekly is one instance" rather than the
+shape.
+
+#### The product framing
+
+Station-studio is meant to represent any station's configuration —
+weekly, Rebirth Classics, and arbitrary future stations. Imports
+from external generators must therefore be agnostic to what that
+external generator's quirks are. Weekly's `initialize_cursors`
+hardcodes `advance_step=120` even when station rules say otherwise;
+station-studio shouldn't inherit that — it should ask the EXPORTING
+side to declare the cursor state explicitly.
+
+#### Concept: prior seed
+
+A **prior seed** is a playlist that station-studio didn't generate
+itself but treats as if it had — for purposes of:
+
+* `prev_ref` strategy's "previous-week lookup" (reads
+  `load_previous_playlist`).
+* `mix` strategy's cross-week exclusion window
+  (`load_excluded_mix_ids` scans the last N weeks of `MixUsage`;
+  imported seeds don't have MixUsage rows by design — `slot_type =
+  "imported"` blocks contribute nothing, matching weekly's behaviour
+  where WEEKLY 001 was imported and so its tracks aren't on the
+  "recently used as mix" list).
+* Cursor-state initialisation: the prior seed declares the cursor
+  positions that should be in effect AFTER its import. The next
+  generated playlist reads from those positions.
+
+Three framings considered for cursor semantics:
+
+| Framing | What | Why rejected (or chosen) |
+|---|---|---|
+| A. Exporter declares cursor end-state | Dump captures `cursors: {NIGHT_1: 120, ...}` after weekly's `initialize_cursors` runs. Loader seeds `cursor_state` from the explicit map. | **Chosen.** Most general. Insulates station-studio from exporting generators' quirks. Hand-authored seeds declare both explicitly. Future UI could show + edit. |
+| B. Import implies N elapsed generations | Each prior carries `generations_elapsed=1`; station-studio applies its own cursor-advance rules N times to derive state. | Rejected. Couples cursor state to current rules — if rules CHANGED between the imported playlist's original generation and now, cursors would be wrong. Also: doesn't generalise to imports where the exporter doesn't have an analogous "advance step" concept. |
+| C. Cursors orthogonal to imports | Imports are just playlist content; cursor state configured separately. | Rejected. Two manual steps; loses the natural linkage that "imported prior + cursor state representing post-import" travel together. |
+
+The contract: **the exporter declares cursors; the loader is dumb**.
+
+#### Format spec (test fixture today, future production import shape)
+
+The committed fixture `tests/fixtures/expected/port_byte_eq.json`
+(produced by `scripts/dump_weekly_playlist.py`) carries:
+
+```json
+{
+  "_comment": "...",
+  "schema_version": 2,
+  "seed_base": 42,
+  "priors": [
+    {
+      "week": 1,
+      "pids": ["...persistent IDs in playlist order..."],
+      "cursors": {"NIGHT_1": 120, "NIGHT_2": 130, ...}
+    }
+  ],
+  "weeks_generated": [2, 3, 4, 5, 6, 7, 8, 9],
+  "weeks_asserted": [2, 3, 5, 9],
+  "weeks": [{"week": 2, "seed": 44, "pids": [...]}, ...]
+}
+```
+
+Key fields:
+
+* `priors`: **list** (future-proof for multi-prior — see §14.38b
+  queued below; today this list has length 1).
+* `priors[i].week`: which station-studio Playlist.week this prior
+  represents. Station-studio's first generated week is `max(priors[*].week) + 1`.
+* `priors[i].pids`: persistent IDs in playlist position order.
+  Loader resolves PID → Track.id via the imported pool tables;
+  unmatched PIDs are silently skipped (mirrors weekly's importer
+  for the same reason — tracks in WEEKLY 001 that aren't in any
+  currently-imported pool can't be referenced).
+* `priors[i].cursors`: cursor name → integer position. Loader
+  writes one `CursorState(station_id, name, position)` row per
+  entry. **Only for `template.cursor.persist=True` templates** —
+  stateless templates (Classics) ignore cursor state at runtime,
+  so the field is meaningless and should be empty `{}` or absent.
+
+Schema bumped to 2 (from 1) — the v1 format had
+`weekly_001_pids` at top level; v2 unifies under `priors[]`. No
+production consumers exist; the breaking change is internal-only.
+
+#### Loader behaviour
+
+`tests/test_port_byte_equality.py:port_db` reads the fixture and:
+
+1. Imports the 6 content pools from `from_user/`.
+2. Seeds the rebirth-radio station from `stations/rebirth-radio.json`.
+3. Validates `len(priors) == 1` — errors clean on `> 1` (§14.38b
+   queued). Length 0 is also rejected — a port test against weekly
+   without WEEKLY 001 is a config error.
+4. For each `prior` (length 1 today):
+   - Creates `Playlist(station_id, week=prior['week'], trace_id='imported-prior-seed')` with `PlaylistEntry` rows resolved by PID.
+   - Creates `CursorState(station_id, name=k, position=v)` rows from `prior['cursors']`.
+5. Yields the session ready for the chain.
+
+#### Production import-prior CLI: future, not slice-blocking
+
+The fixture format is **designed to be reused** by an eventual
+`scripts/import_prior_seed.py` or `POST /api/stations/{slug}/priors`
+endpoint. Today no such CLI/endpoint exists — the test fixture
+loader is the only consumer. Naming + structure are decided so
+that future production path doesn't need a redesign.
+
+If/when the production path lands, expected shape:
+
+```bash
+make import-prior-seed slug=rebirth-radio json=path/to/prior-seed.json
+```
+
+…which takes the same JSON shape as `priors[i]` from the fixture
+(a single prior; multi-prior arrives with §14.38b). Production
+deployment of weekly's WEEKLY 001 onto a fresh station-studio
+install would use this CLI; today the test fixture covers the
+same loader logic.
+
+#### What ships in §14.38
+
+* `scripts/dump_weekly_playlist.py`: extended to capture
+  `CursorState` rows post-`initialize_cursors(post_first=True)`.
+  Emits `priors: [{week, pids, cursors}]` instead of `weekly_001_pids`
+  top-level. Schema bumped to 2.
+* `tests/fixtures/expected/port_byte_eq.json`: regenerated.
+* `tests/test_port_byte_equality.py:port_db`: reads `priors[0]`,
+  seeds Playlist + CursorState. Clean error on `len(priors) != 1`.
+* DESIGN.md §14.38 entry (this section).
+* §15 status snapshot updated.
+
+Single commit, no mid-slice review (small scope; no engine change).
+Slice-level review after it lands.
+
+#### Verification outcome
+
+**The port byte-equality test PASSES** after this slice. Station-
+studio = weekly byte-for-byte for the asserted weeks (2/3/5/9 of
+the 8-week chain). Cursor bootstrap was the only remaining model
+gap; the harness from §14.37 surfaced it cleanly + this slice
+resolved it with a generalised contract.
+
+Phase B's byte-equality MILESTONE is hit. **Phase B itself remains
+open** — the user's productisation framing requires more than
+"weekly works":
+
+* §14.39 — replace §14.37's coalescing patch with proper per-cursor
+  within-generation offset. The coalescing currently works for
+  weekly's specific case (one contiguous block per cursor) but
+  doesn't generalise (any station with interleaved same-cursor
+  sequential blocks fails). Architectural fix.
+* §14.40 — second station fixture (Rebirth Classics through the
+  same engine path). Closes the productisation acceptance: "weekly
+  is one instance, not the shape."
+
+After §14.40, Phase B closes.
+
+#### Decisions punted
+
+* **Production `import-prior-seed` CLI** — format decided here;
+  CLI built when there's actual demand (operator wants to import
+  external playlist into station-studio). Today the test fixture
+  loader covers the path.
+* **§14.38b multi-prior** — separate queued slice (named below);
+  no demand today, but the format supports it. Loader extension
+  is small once needed.
+* **Cursor state for stateless templates** — current behaviour:
+  `priors[*].cursors` is ignored (Classics's stateless flow
+  doesn't read CursorState). Should be `{}` or absent in fixtures
+  for stateless templates. No validation in this slice; might be
+  worth adding if a future fixture confusingly carries cursors for
+  a stateless template.
+* **MixUsage rows for imported priors** — none captured. Weekly's
+  WEEKLY 001 has `slot_type="imported"` and produces no MixUsage;
+  the resulting "first 20 weeks of generation have smaller
+  exclusion set" is real and matches station-studio's port. No
+  bug to fix.
+
+| Punt | Severity | Notes |
+|---|---|---|
+| Production `import-prior-seed` CLI | LATER | Format decided; build when demand surfaces. |
+| Multi-prior loader (§14.38b) | LATER | Queued explicitly. |
+| Stateless-template cursor-state validation | LOW | Today: ignored. Could become a "cursor field forbidden for stateless template" check in the loader. |
+| MixUsage for imported priors | NEVER | Imported priors have no generated MixUsage by design; matches weekly. |
+
+#### Queued: §14.38b — multi-prior support
+
+When a station wants to import multiple weeks of seed history
+(e.g. last 3 weeks of weekly's output to bootstrap mix exclusion
+over a richer window), the loader needs to handle `len(priors) > 1`:
+
+* Iterate `priors` in week order; create one Playlist per prior.
+* Cursor state from the LATEST prior (latest `week`) is what the
+  next generation reads. Earlier priors don't contribute cursor
+  state (the latest already encodes the post-final-prior state).
+* Open design question for that slice: ERROR if multiple priors
+  declare `cursors` (ambiguous), or just use the latest? Probably
+  use the latest with a warning.
+* Touches: loader (multi-prior iteration), dump script (capture
+  the full sequence weekly has, or accept range arg), test
+  fixture (longer `priors` list).
+* Estimated: small (1-2 commits).
+
+---
+
 ## 15. Status snapshot
 
 A quick "where are we" for a future reader. Last updated alongside
-the §14.37 byte-equality harness + sweep-up commit. Phase B is
-NOT yet closed — the harness surfaced a cursor-bootstrap model
-gap that §14.38–§14.40 will resolve before the port acceptance
-test goes green.
+the §14.38 prior-seed slice. **Port byte-equality test now passes
+against real weekly** — station-studio generates byte-identical
+output to weekly for the same `(seed, week)` inputs across the
+asserted weeks (2/3/5/9). Phase B's byte-equality MILESTONE is
+hit; Phase B itself remains open until §14.39 (kill the §14.37
+coalescing patch, replace with proper per-cursor offset) and
+§14.40 (second station fixture proving "weekly is one instance")
+land.
 
 | Area                     | State                                                            |
 |--------------------------|------------------------------------------------------------------|
@@ -5405,7 +5626,7 @@ test goes green.
 | Delete / station-reset   | Shipped (14.10). Per-row delete + station nuke; cascades.        |
 | Disk-export UI button    | Shipped (14.11). Trace viewer "Export to disk" + status line.    |
 | Backup / restore         | Shipped (§14.18). `make backup` / `make restore date=...` with WAL-aware sqlite3 .backup + pre-restore safety copy. |
-| **§17 pre-port roadmap** | **Phase A complete (§14.17–§14.21). Phase B in flight, NOT closed: 14 named sub-slices each shipped working code (§14.22–§14.37), but the port byte-equality test fails against real weekly. §14.37's harness diagnosed the remaining gap as a cursor-bootstrap model question (importing a prior playlist implicitly advances cursors in weekly; station-studio needs explicit semantics for it). Three follow-on slices to close Phase B: §14.38 (imported-prior cursor manifest), §14.39 (per-cursor within-generation offset — replaces the coalescing patch), §14.40 (lift xfail + add a second station fixture to prove "weekly is one instance"). Phase B closes when §14.40 lands. |
+| **§17 pre-port roadmap** | **Phase A complete (§14.17–§14.21). Phase B in flight: §14.22–§14.37 shipped the harness + 13 sub-slices; §14.38 closed the cursor-bootstrap model gap and the port byte-equality test now passes against real weekly (station-studio = weekly byte-for-byte for asserted weeks 2/3/5/9). Two slices remain before Phase B closes: §14.39 (replace §14.37's coalescing patch with proper per-cursor within-generation offset — architectural fix proving the model isn't weekly-shaped), §14.40 (second station fixture proving "weekly is one instance"). Phase B closes when §14.40 lands. |
 | Visual block editor      | Deferred (v2). Lands as §17 Phase B after Phase A unblocks.      |
 | Trace versioning         | Deferred. See §16.4 (queued behind §16.1 by design).             |
 | Accessibility pass       | Deferred. §17 Phase D — single sweep after §16.2 + port.         |
