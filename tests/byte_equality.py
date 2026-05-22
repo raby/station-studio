@@ -84,36 +84,79 @@ def slot_ref_from_block(week: int, slot_index: int, block) -> SlotRef:
     )
 
 
-def expand_block_slot_refs(week: int, blocks: Iterable) -> list[SlotRef]:
+def expand_block_slot_refs(week: int, blocks) -> list[SlotRef]:
     """Build ONE SlotRef per PICK (not per BLOCK).
 
     The §14.37 c2 mid-slice review caught the harness lying: pids are
-    per-pick (2,196 for rebirth-radio.json) but slot_refs were per-block
-    (1,111 after coalescing). After the first size=95 block, slot_ref
-    index 218 labelled the NEXT block (a jingle) while pid index 218
-    was the 2ND PICK of the NIGHT_1 sequential — the diagnostic
-    pointed at the wrong template position.
-
+    per-pick (2,196 for rebirth-radio.json) but slot_refs were per-block.
     This helper expands each block into `block.size` slot_refs sharing
-    the same block-level metadata but distinguished by a
-    `pick_in_block` field (1-indexed within the block). After
-    expansion, `len(refs) == sum(block.size)` matches the pids list
-    length.
+    the same block-level metadata but distinguished by a `pick_in_block`
+    field (1-indexed within the block). After expansion,
+    `len(refs) == sum(block.size)` matches the pids list length.
+
+    `blocks` accepts either:
+
+      * **A station-studio `Template`** (§14.40 generalisation) — the
+        helper dispatches on the active layout form. For flat_slots,
+        iterates `layout.flat_slots` in declared order. For
+        row_template, iterates `layout.row_start_offsets ×
+        layout.row_template` in the SAME ORDER the engine walks slots
+        (`engine.generator._iterate_slots`). The slot_index field tags
+        which row + which intra-row block + which pick within the block.
+
+      * **A plain iterable of blocks** (legacy / synthetic test path) —
+        treats them as a linear sequence, no row dimension. Used by
+        tests that hand-build inline lists of `BlockSpec`/dict.
 
     Use this helper when comparing the full per-pick pid sequence; use
     `slot_ref_from_block` directly only when you're labelling blocks
     one-to-one (e.g. structural template inspection).
     """
     refs: list[SlotRef] = []
-    for block in blocks:
+
+    def _block_size(block) -> int:
         size = getattr(block, "size", None)
         if size is None and isinstance(block, dict):
             size = block.get("size", 1)
-        size = size if size is not None else 1
-        for offset in range(size):
-            r = slot_ref_from_block(week=week, slot_index=len(refs), block=block)
-            r.extra["pick_in_block"] = offset + 1
-            refs.append(r)
+        return size if size is not None else 1
+
+    def _add(block, pick_in_block: int, row_idx: int | None = None):
+        r = slot_ref_from_block(
+            week=week, slot_index=len(refs), block=block,
+        )
+        r.extra["pick_in_block"] = pick_in_block
+        if row_idx is not None:
+            # Row-template layouts also surface the row index — the
+            # engine reports `unit_label` in trace; we attach the index
+            # so the diagnostic message can disambiguate same-block
+            # instantiations across rows.
+            r.extra["row_idx"] = row_idx + 1  # 1-indexed for humans
+        refs.append(r)
+
+    # Dispatch: Template object → layout-aware walk; raw iterable →
+    # linear walk. Detect Template by duck-typing on `.layout` (a real
+    # `engine.template.Template` exposes it; a list of blocks doesn't).
+    layout = getattr(blocks, "layout", None)
+    if layout is None:
+        # Legacy path — plain iterable of blocks.
+        for block in blocks:
+            for offset in range(_block_size(block)):
+                _add(block, pick_in_block=offset + 1)
+        return refs
+
+    # Template path — match engine's slot iteration order.
+    if layout.flat_slots:
+        for block in layout.flat_slots:
+            for offset in range(_block_size(block)):
+                _add(block, pick_in_block=offset + 1)
+    else:
+        # row_template form: outer loop over rows, inner over the
+        # per-row block sequence. Mirrors `_iterate_slots` in
+        # engine/generator.py.
+        for row_idx in range(len(layout.row_start_offsets)):
+            for block in layout.row_template:
+                for offset in range(_block_size(block)):
+                    _add(block, pick_in_block=offset + 1, row_idx=row_idx)
     return refs
 
 

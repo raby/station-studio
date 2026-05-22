@@ -11,11 +11,12 @@ source =
     api
     scripts
 omit =
-    # One-shot fixture generator (§14.37) — committed to make fixture
-    # provenance auditable, but the FIXTURES are what's under test, not
-    # the generator that produced them. Running it from CI would only
-    # confirm we can still write JSON.
+    # One-shot fixture generators (§14.37, §14.40) — committed to make
+    # fixture provenance auditable, but the FIXTURES are what's under
+    # test, not the generators. Running them from CI would only confirm
+    # we can still write JSON.
     scripts/generate_byte_eq_fixtures.py
+    scripts/generate_classics_fixtures.py
     # Dump-from-weekly helpers (§14.34 + §14.37) — designed to run
     # INSIDE a weekly checkout with weekly's venv. They import
     # weekly's `app.services.*` modules which aren't installed in

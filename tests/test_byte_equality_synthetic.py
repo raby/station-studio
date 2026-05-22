@@ -206,7 +206,7 @@ def test_synthetic_chain_matches_committed_fixtures(chain_db):
     expected_chain = {w: _load_expected(w) for w in ASSERTED_WEEKS}
     actual_chain = {w: pids_by_week[w] for w in ASSERTED_WEEKS}
     slot_refs_by_week = {
-        w: expand_block_slot_refs(week=w, blocks=tmpl.layout.flat_slots)
+        w: expand_block_slot_refs(week=w, blocks=tmpl)
         for w in ASSERTED_WEEKS
     }
 

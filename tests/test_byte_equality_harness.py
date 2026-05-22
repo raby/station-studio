@@ -257,6 +257,77 @@ def test_expand_block_slot_refs_treats_missing_size_as_one():
     assert refs[0].extra["pick_in_block"] == 1
 
 
+def test_expand_block_slot_refs_walks_row_template_in_engine_order():
+    """§14.40 generalisation: when given a Template with row_template
+    layout, the helper walks rows × blocks in the SAME order
+    `engine.generator._iterate_slots` does.
+
+    Walks engine order so the diagnostic message correctly identifies
+    which row + which block the divergent pick lives in.
+    """
+    from engine.template import parse_template
+
+    tmpl = parse_template({
+        "station": "test", "cadence": "weekly", "rng": "off",
+        "sources": [
+            {"name": "A", "colour": "#aaa", "role": "content"},
+            {"name": "B", "colour": "#bbb", "role": "content"},
+        ],
+        "cursor": {"base_advance_per_week": 0, "cycle_weeks": 1},
+        "layout": {
+            "unit": "day",
+            "unit_labels": ["Mon", "Tue", "Wed"],
+            "row_start_offsets": [0, 5, 10],
+            "row_template": [
+                {"source": "A", "strategy": "window", "size": 2},
+                {"source": "B", "strategy": "window", "size": 3},
+            ],
+        },
+    })
+    refs = expand_block_slot_refs(week=4, blocks=tmpl)
+    # 3 rows × (2 + 3) picks per row = 15 total refs.
+    assert len(refs) == 15
+    # Walk order: row 0 block 0 (×2), row 0 block 1 (×3), row 1
+    # block 0 (×2), row 1 block 1 (×3), row 2 block 0 (×2), row 2
+    # block 1 (×3).
+    sources = [r.source for r in refs]
+    assert sources == ["A", "A", "B", "B", "B"] * 3
+    # Pick-in-block resets per block.
+    picks = [r.extra["pick_in_block"] for r in refs]
+    assert picks == [1, 2, 1, 2, 3] * 3
+    # Row indices (1-indexed) advance across the chain.
+    rows = [r.extra["row_idx"] for r in refs]
+    assert rows == [1] * 5 + [2] * 5 + [3] * 5
+
+
+def test_expand_block_slot_refs_walks_flat_slots_template():
+    """Template with flat_slots layout: ignores row dimension (row_idx
+    not surfaced) and walks the slot list directly. Mirrors how the
+    engine dispatches flat_slots templates."""
+    from engine.template import parse_template
+
+    tmpl = parse_template({
+        "station": "test", "cadence": "weekly", "rng": "off",
+        "sources": [{"name": "A", "colour": "#aaa", "role": "content"}],
+        "cursor": {"base_advance_per_week": 0, "cycle_weeks": 1},
+        "layout": {
+            "unit": "slot", "unit_labels": [], "row_start_offsets": [],
+            "cursors_init": {"N1": 0},
+            "flat_slots": [
+                {"source": "A", "strategy": "sequential", "size": 2,
+                 "cursor_id": "N1"},
+                {"source": "A", "strategy": "sequential", "size": 3,
+                 "cursor_id": "N1"},
+            ],
+        },
+    })
+    refs = expand_block_slot_refs(week=1, blocks=tmpl)
+    assert len(refs) == 5
+    assert [r.extra["pick_in_block"] for r in refs] == [1, 2, 1, 2, 3]
+    # Flat slots → no row_idx surfaced.
+    assert all("row_idx" not in r.extra for r in refs)
+
+
 def test_assert_pids_equal_raises_clean_error_on_short_slot_refs():
     """Length-precondition added in the sweep-up: a caller passing
     per-BLOCK refs (shorter than the per-pick pids list) gets a

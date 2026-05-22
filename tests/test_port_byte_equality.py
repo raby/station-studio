@@ -433,7 +433,7 @@ def test_rebirth_radio_chain_matches_weekly_byte_for_byte(port_db):
     expected_chain = {w: expected_by_week[w] for w in weeks_asserted}
     actual_chain = {w: pids_by_week[w] for w in weeks_asserted}
     slot_refs_by_week = {
-        w: expand_block_slot_refs(week=w, blocks=tmpl.layout.flat_slots)
+        w: expand_block_slot_refs(week=w, blocks=tmpl)
         for w in weeks_asserted
     }
 

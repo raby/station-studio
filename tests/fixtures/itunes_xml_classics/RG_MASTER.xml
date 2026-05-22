@@ -1,0 +1,771 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Library Persistent ID</key>
+	<string>CLASSICS00000001</string>
+	<key>Playlists</key>
+	<array>
+		<dict>
+			<key>Name</key>
+			<string>RG_MASTER</string>
+			<key>Playlist Items</key>
+			<array>
+				<dict>
+					<key>Track ID</key>
+					<integer>300001</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>300002</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>300003</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>300004</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>300005</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>300006</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>300007</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>300008</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>300009</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>300010</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>300011</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>300012</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>300013</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>300014</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>300015</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>300016</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>300017</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>300018</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>300019</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>300020</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>300021</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>300022</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>300023</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>300024</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>300025</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>300026</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>300027</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>300028</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>300029</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>300030</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>300031</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>300032</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>300033</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>300034</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>300035</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>300036</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>300037</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>300038</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>300039</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>300040</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>300041</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>300042</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>300043</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>300044</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>300045</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>300046</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>300047</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>300048</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>300049</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>300050</integer>
+				</dict>
+			</array>
+		</dict>
+	</array>
+	<key>Tracks</key>
+	<dict>
+		<key>300001</key>
+		<dict>
+			<key>Artist</key>
+			<string>Classics Artist 02</string>
+			<key>Name</key>
+			<string>RG_MASTER Track 0001</string>
+			<key>Persistent ID</key>
+			<string>RGMS0000000001AA</string>
+			<key>Track ID</key>
+			<integer>300001</integer>
+		</dict>
+		<key>300002</key>
+		<dict>
+			<key>Artist</key>
+			<string>Classics Artist 03</string>
+			<key>Name</key>
+			<string>RG_MASTER Track 0002</string>
+			<key>Persistent ID</key>
+			<string>RGMS0000000002AA</string>
+			<key>Track ID</key>
+			<integer>300002</integer>
+		</dict>
+		<key>300003</key>
+		<dict>
+			<key>Artist</key>
+			<string>Classics Artist 04</string>
+			<key>Name</key>
+			<string>RG_MASTER Track 0003</string>
+			<key>Persistent ID</key>
+			<string>RGMS0000000003AA</string>
+			<key>Track ID</key>
+			<integer>300003</integer>
+		</dict>
+		<key>300004</key>
+		<dict>
+			<key>Artist</key>
+			<string>Classics Artist 05</string>
+			<key>Name</key>
+			<string>RG_MASTER Track 0004</string>
+			<key>Persistent ID</key>
+			<string>RGMS0000000004AA</string>
+			<key>Track ID</key>
+			<integer>300004</integer>
+		</dict>
+		<key>300005</key>
+		<dict>
+			<key>Artist</key>
+			<string>Classics Artist 06</string>
+			<key>Name</key>
+			<string>RG_MASTER Track 0005</string>
+			<key>Persistent ID</key>
+			<string>RGMS0000000005AA</string>
+			<key>Track ID</key>
+			<integer>300005</integer>
+		</dict>
+		<key>300006</key>
+		<dict>
+			<key>Artist</key>
+			<string>Classics Artist 07</string>
+			<key>Name</key>
+			<string>RG_MASTER Track 0006</string>
+			<key>Persistent ID</key>
+			<string>RGMS0000000006AA</string>
+			<key>Track ID</key>
+			<integer>300006</integer>
+		</dict>
+		<key>300007</key>
+		<dict>
+			<key>Artist</key>
+			<string>Classics Artist 08</string>
+			<key>Name</key>
+			<string>RG_MASTER Track 0007</string>
+			<key>Persistent ID</key>
+			<string>RGMS0000000007AA</string>
+			<key>Track ID</key>
+			<integer>300007</integer>
+		</dict>
+		<key>300008</key>
+		<dict>
+			<key>Artist</key>
+			<string>Classics Artist 09</string>
+			<key>Name</key>
+			<string>RG_MASTER Track 0008</string>
+			<key>Persistent ID</key>
+			<string>RGMS0000000008AA</string>
+			<key>Track ID</key>
+			<integer>300008</integer>
+		</dict>
+		<key>300009</key>
+		<dict>
+			<key>Artist</key>
+			<string>Classics Artist 10</string>
+			<key>Name</key>
+			<string>RG_MASTER Track 0009</string>
+			<key>Persistent ID</key>
+			<string>RGMS0000000009AA</string>
+			<key>Track ID</key>
+			<integer>300009</integer>
+		</dict>
+		<key>300010</key>
+		<dict>
+			<key>Artist</key>
+			<string>Classics Artist 01</string>
+			<key>Name</key>
+			<string>RG_MASTER Track 0010</string>
+			<key>Persistent ID</key>
+			<string>RGMS0000000010AA</string>
+			<key>Track ID</key>
+			<integer>300010</integer>
+		</dict>
+		<key>300011</key>
+		<dict>
+			<key>Artist</key>
+			<string>Classics Artist 02</string>
+			<key>Name</key>
+			<string>RG_MASTER Track 0011</string>
+			<key>Persistent ID</key>
+			<string>RGMS0000000011AA</string>
+			<key>Track ID</key>
+			<integer>300011</integer>
+		</dict>
+		<key>300012</key>
+		<dict>
+			<key>Artist</key>
+			<string>Classics Artist 03</string>
+			<key>Name</key>
+			<string>RG_MASTER Track 0012</string>
+			<key>Persistent ID</key>
+			<string>RGMS0000000012AA</string>
+			<key>Track ID</key>
+			<integer>300012</integer>
+		</dict>
+		<key>300013</key>
+		<dict>
+			<key>Artist</key>
+			<string>Classics Artist 04</string>
+			<key>Name</key>
+			<string>RG_MASTER Track 0013</string>
+			<key>Persistent ID</key>
+			<string>RGMS0000000013AA</string>
+			<key>Track ID</key>
+			<integer>300013</integer>
+		</dict>
+		<key>300014</key>
+		<dict>
+			<key>Artist</key>
+			<string>Classics Artist 05</string>
+			<key>Name</key>
+			<string>RG_MASTER Track 0014</string>
+			<key>Persistent ID</key>
+			<string>RGMS0000000014AA</string>
+			<key>Track ID</key>
+			<integer>300014</integer>
+		</dict>
+		<key>300015</key>
+		<dict>
+			<key>Artist</key>
+			<string>Classics Artist 06</string>
+			<key>Name</key>
+			<string>RG_MASTER Track 0015</string>
+			<key>Persistent ID</key>
+			<string>RGMS0000000015AA</string>
+			<key>Track ID</key>
+			<integer>300015</integer>
+		</dict>
+		<key>300016</key>
+		<dict>
+			<key>Artist</key>
+			<string>Classics Artist 07</string>
+			<key>Name</key>
+			<string>RG_MASTER Track 0016</string>
+			<key>Persistent ID</key>
+			<string>RGMS0000000016AA</string>
+			<key>Track ID</key>
+			<integer>300016</integer>
+		</dict>
+		<key>300017</key>
+		<dict>
+			<key>Artist</key>
+			<string>Classics Artist 08</string>
+			<key>Name</key>
+			<string>RG_MASTER Track 0017</string>
+			<key>Persistent ID</key>
+			<string>RGMS0000000017AA</string>
+			<key>Track ID</key>
+			<integer>300017</integer>
+		</dict>
+		<key>300018</key>
+		<dict>
+			<key>Artist</key>
+			<string>Classics Artist 09</string>
+			<key>Name</key>
+			<string>RG_MASTER Track 0018</string>
+			<key>Persistent ID</key>
+			<string>RGMS0000000018AA</string>
+			<key>Track ID</key>
+			<integer>300018</integer>
+		</dict>
+		<key>300019</key>
+		<dict>
+			<key>Artist</key>
+			<string>Classics Artist 10</string>
+			<key>Name</key>
+			<string>RG_MASTER Track 0019</string>
+			<key>Persistent ID</key>
+			<string>RGMS0000000019AA</string>
+			<key>Track ID</key>
+			<integer>300019</integer>
+		</dict>
+		<key>300020</key>
+		<dict>
+			<key>Artist</key>
+			<string>Classics Artist 01</string>
+			<key>Name</key>
+			<string>RG_MASTER Track 0020</string>
+			<key>Persistent ID</key>
+			<string>RGMS0000000020AA</string>
+			<key>Track ID</key>
+			<integer>300020</integer>
+		</dict>
+		<key>300021</key>
+		<dict>
+			<key>Artist</key>
+			<string>Classics Artist 02</string>
+			<key>Name</key>
+			<string>RG_MASTER Track 0021</string>
+			<key>Persistent ID</key>
+			<string>RGMS0000000021AA</string>
+			<key>Track ID</key>
+			<integer>300021</integer>
+		</dict>
+		<key>300022</key>
+		<dict>
+			<key>Artist</key>
+			<string>Classics Artist 03</string>
+			<key>Name</key>
+			<string>RG_MASTER Track 0022</string>
+			<key>Persistent ID</key>
+			<string>RGMS0000000022AA</string>
+			<key>Track ID</key>
+			<integer>300022</integer>
+		</dict>
+		<key>300023</key>
+		<dict>
+			<key>Artist</key>
+			<string>Classics Artist 04</string>
+			<key>Name</key>
+			<string>RG_MASTER Track 0023</string>
+			<key>Persistent ID</key>
+			<string>RGMS0000000023AA</string>
+			<key>Track ID</key>
+			<integer>300023</integer>
+		</dict>
+		<key>300024</key>
+		<dict>
+			<key>Artist</key>
+			<string>Classics Artist 05</string>
+			<key>Name</key>
+			<string>RG_MASTER Track 0024</string>
+			<key>Persistent ID</key>
+			<string>RGMS0000000024AA</string>
+			<key>Track ID</key>
+			<integer>300024</integer>
+		</dict>
+		<key>300025</key>
+		<dict>
+			<key>Artist</key>
+			<string>Classics Artist 06</string>
+			<key>Name</key>
+			<string>RG_MASTER Track 0025</string>
+			<key>Persistent ID</key>
+			<string>RGMS0000000025AA</string>
+			<key>Track ID</key>
+			<integer>300025</integer>
+		</dict>
+		<key>300026</key>
+		<dict>
+			<key>Artist</key>
+			<string>Classics Artist 07</string>
+			<key>Name</key>
+			<string>RG_MASTER Track 0026</string>
+			<key>Persistent ID</key>
+			<string>RGMS0000000026AA</string>
+			<key>Track ID</key>
+			<integer>300026</integer>
+		</dict>
+		<key>300027</key>
+		<dict>
+			<key>Artist</key>
+			<string>Classics Artist 08</string>
+			<key>Name</key>
+			<string>RG_MASTER Track 0027</string>
+			<key>Persistent ID</key>
+			<string>RGMS0000000027AA</string>
+			<key>Track ID</key>
+			<integer>300027</integer>
+		</dict>
+		<key>300028</key>
+		<dict>
+			<key>Artist</key>
+			<string>Classics Artist 09</string>
+			<key>Name</key>
+			<string>RG_MASTER Track 0028</string>
+			<key>Persistent ID</key>
+			<string>RGMS0000000028AA</string>
+			<key>Track ID</key>
+			<integer>300028</integer>
+		</dict>
+		<key>300029</key>
+		<dict>
+			<key>Artist</key>
+			<string>Classics Artist 10</string>
+			<key>Name</key>
+			<string>RG_MASTER Track 0029</string>
+			<key>Persistent ID</key>
+			<string>RGMS0000000029AA</string>
+			<key>Track ID</key>
+			<integer>300029</integer>
+		</dict>
+		<key>300030</key>
+		<dict>
+			<key>Artist</key>
+			<string>Classics Artist 01</string>
+			<key>Name</key>
+			<string>RG_MASTER Track 0030</string>
+			<key>Persistent ID</key>
+			<string>RGMS0000000030AA</string>
+			<key>Track ID</key>
+			<integer>300030</integer>
+		</dict>
+		<key>300031</key>
+		<dict>
+			<key>Artist</key>
+			<string>Classics Artist 02</string>
+			<key>Name</key>
+			<string>RG_MASTER Track 0031</string>
+			<key>Persistent ID</key>
+			<string>RGMS0000000031AA</string>
+			<key>Track ID</key>
+			<integer>300031</integer>
+		</dict>
+		<key>300032</key>
+		<dict>
+			<key>Artist</key>
+			<string>Classics Artist 03</string>
+			<key>Name</key>
+			<string>RG_MASTER Track 0032</string>
+			<key>Persistent ID</key>
+			<string>RGMS0000000032AA</string>
+			<key>Track ID</key>
+			<integer>300032</integer>
+		</dict>
+		<key>300033</key>
+		<dict>
+			<key>Artist</key>
+			<string>Classics Artist 04</string>
+			<key>Name</key>
+			<string>RG_MASTER Track 0033</string>
+			<key>Persistent ID</key>
+			<string>RGMS0000000033AA</string>
+			<key>Track ID</key>
+			<integer>300033</integer>
+		</dict>
+		<key>300034</key>
+		<dict>
+			<key>Artist</key>
+			<string>Classics Artist 05</string>
+			<key>Name</key>
+			<string>RG_MASTER Track 0034</string>
+			<key>Persistent ID</key>
+			<string>RGMS0000000034AA</string>
+			<key>Track ID</key>
+			<integer>300034</integer>
+		</dict>
+		<key>300035</key>
+		<dict>
+			<key>Artist</key>
+			<string>Classics Artist 06</string>
+			<key>Name</key>
+			<string>RG_MASTER Track 0035</string>
+			<key>Persistent ID</key>
+			<string>RGMS0000000035AA</string>
+			<key>Track ID</key>
+			<integer>300035</integer>
+		</dict>
+		<key>300036</key>
+		<dict>
+			<key>Artist</key>
+			<string>Classics Artist 07</string>
+			<key>Name</key>
+			<string>RG_MASTER Track 0036</string>
+			<key>Persistent ID</key>
+			<string>RGMS0000000036AA</string>
+			<key>Track ID</key>
+			<integer>300036</integer>
+		</dict>
+		<key>300037</key>
+		<dict>
+			<key>Artist</key>
+			<string>Classics Artist 08</string>
+			<key>Name</key>
+			<string>RG_MASTER Track 0037</string>
+			<key>Persistent ID</key>
+			<string>RGMS0000000037AA</string>
+			<key>Track ID</key>
+			<integer>300037</integer>
+		</dict>
+		<key>300038</key>
+		<dict>
+			<key>Artist</key>
+			<string>Classics Artist 09</string>
+			<key>Name</key>
+			<string>RG_MASTER Track 0038</string>
+			<key>Persistent ID</key>
+			<string>RGMS0000000038AA</string>
+			<key>Track ID</key>
+			<integer>300038</integer>
+		</dict>
+		<key>300039</key>
+		<dict>
+			<key>Artist</key>
+			<string>Classics Artist 10</string>
+			<key>Name</key>
+			<string>RG_MASTER Track 0039</string>
+			<key>Persistent ID</key>
+			<string>RGMS0000000039AA</string>
+			<key>Track ID</key>
+			<integer>300039</integer>
+		</dict>
+		<key>300040</key>
+		<dict>
+			<key>Artist</key>
+			<string>Classics Artist 01</string>
+			<key>Name</key>
+			<string>RG_MASTER Track 0040</string>
+			<key>Persistent ID</key>
+			<string>RGMS0000000040AA</string>
+			<key>Track ID</key>
+			<integer>300040</integer>
+		</dict>
+		<key>300041</key>
+		<dict>
+			<key>Artist</key>
+			<string>Classics Artist 02</string>
+			<key>Name</key>
+			<string>RG_MASTER Track 0041</string>
+			<key>Persistent ID</key>
+			<string>RGMS0000000041AA</string>
+			<key>Track ID</key>
+			<integer>300041</integer>
+		</dict>
+		<key>300042</key>
+		<dict>
+			<key>Artist</key>
+			<string>Classics Artist 03</string>
+			<key>Name</key>
+			<string>RG_MASTER Track 0042</string>
+			<key>Persistent ID</key>
+			<string>RGMS0000000042AA</string>
+			<key>Track ID</key>
+			<integer>300042</integer>
+		</dict>
+		<key>300043</key>
+		<dict>
+			<key>Artist</key>
+			<string>Classics Artist 04</string>
+			<key>Name</key>
+			<string>RG_MASTER Track 0043</string>
+			<key>Persistent ID</key>
+			<string>RGMS0000000043AA</string>
+			<key>Track ID</key>
+			<integer>300043</integer>
+		</dict>
+		<key>300044</key>
+		<dict>
+			<key>Artist</key>
+			<string>Classics Artist 05</string>
+			<key>Name</key>
+			<string>RG_MASTER Track 0044</string>
+			<key>Persistent ID</key>
+			<string>RGMS0000000044AA</string>
+			<key>Track ID</key>
+			<integer>300044</integer>
+		</dict>
+		<key>300045</key>
+		<dict>
+			<key>Artist</key>
+			<string>Classics Artist 06</string>
+			<key>Name</key>
+			<string>RG_MASTER Track 0045</string>
+			<key>Persistent ID</key>
+			<string>RGMS0000000045AA</string>
+			<key>Track ID</key>
+			<integer>300045</integer>
+		</dict>
+		<key>300046</key>
+		<dict>
+			<key>Artist</key>
+			<string>Classics Artist 07</string>
+			<key>Name</key>
+			<string>RG_MASTER Track 0046</string>
+			<key>Persistent ID</key>
+			<string>RGMS0000000046AA</string>
+			<key>Track ID</key>
+			<integer>300046</integer>
+		</dict>
+		<key>300047</key>
+		<dict>
+			<key>Artist</key>
+			<string>Classics Artist 08</string>
+			<key>Name</key>
+			<string>RG_MASTER Track 0047</string>
+			<key>Persistent ID</key>
+			<string>RGMS0000000047AA</string>
+			<key>Track ID</key>
+			<integer>300047</integer>
+		</dict>
+		<key>300048</key>
+		<dict>
+			<key>Artist</key>
+			<string>Classics Artist 09</string>
+			<key>Name</key>
+			<string>RG_MASTER Track 0048</string>
+			<key>Persistent ID</key>
+			<string>RGMS0000000048AA</string>
+			<key>Track ID</key>
+			<integer>300048</integer>
+		</dict>
+		<key>300049</key>
+		<dict>
+			<key>Artist</key>
+			<string>Classics Artist 10</string>
+			<key>Name</key>
+			<string>RG_MASTER Track 0049</string>
+			<key>Persistent ID</key>
+			<string>RGMS0000000049AA</string>
+			<key>Track ID</key>
+			<integer>300049</integer>
+		</dict>
+		<key>300050</key>
+		<dict>
+			<key>Artist</key>
+			<string>Classics Artist 01</string>
+			<key>Name</key>
+			<string>RG_MASTER Track 0050</string>
+			<key>Persistent ID</key>
+			<string>RGMS0000000050AA</string>
+			<key>Track ID</key>
+			<integer>300050</integer>
+		</dict>
+	</dict>
+</dict>
+</plist>

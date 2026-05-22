@@ -13,7 +13,7 @@
         backup backups restore \
         dev dev-backend dev-frontend \
         import-station import-weekly-pools refresh-rebirth-radio \
-        refresh-port-fixture refresh-port-everything
+        refresh-port-fixture refresh-port-everything refresh-classics-fixture
 
 PY := .venv/bin/python
 ALEMBIC := .venv/bin/alembic
@@ -352,3 +352,27 @@ refresh-port-everything:
 	$(MAKE) refresh-port-fixture WEEKLY_DIR="$(WEEKLY_DIR)" WEEKLY_FROM_USER_DIR="$(WEEKLY_FROM_USER_DIR)"
 	@echo "Both refreshed. Run the port byte-equality test:"
 	@echo "  WEEKLY_FROM_USER_DIR=$(WEEKLY_FROM_USER_DIR) .venv/bin/python -m pytest tests/test_port_byte_equality.py"
+
+# Refresh the Classics byte-equality fixture (§14.40). Unlike
+# `refresh-port-fixture` (which dumps from weekly), this is
+# self-contained: station-studio's own generator produces the
+# expected output ("freeze-against-self" pattern). No weekly venv
+# needed.
+#
+# Workflow:
+#   1. Regenerate the synthetic Classics pool XMLs + manifest (so the
+#      fixture is fully reproducible from this command alone — no
+#      separate "regenerate pools" step needed).
+#   2. Run the test in bootstrap mode (BOOTSTRAP_BYTE_EQ_FIXTURES=1)
+#      to capture station-studio's current output as the new committed
+#      fixture.
+#
+# Usage:
+#   make refresh-classics-fixture
+refresh-classics-fixture:
+	@echo "Regenerating synthetic Classics pool XMLs + manifest …"
+	$(PY) scripts/generate_classics_fixtures.py
+	@echo "Capturing station-studio's Classics output as the new fixture …"
+	BOOTSTRAP_BYTE_EQ_FIXTURES=1 $(PY) -m pytest \
+	    tests/test_classics_byte_equality.py -v
+	@echo "Done. Diff with: git diff tests/fixtures/expected/classics_byte_eq.json"

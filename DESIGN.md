@@ -389,7 +389,7 @@ The trace is stored as JSON alongside the playlist (in a `playlist_trace` table 
 | Visual block editor                         | later (§16.2)| v2; operates on same JSON as wizard; needs §17 Phase A  |
 | Pre-port roadmap (§17 Phase A)              | done         | All 5 unblocks shipped (§14.17–§14.21)                  |
 | Weekly study findings                       | done (§17.1) | Port is bigger than §17 estimated; §16.2 lands AFTER port |
-| Weekly port (§17 Phase B, was C)            | next         | 20–26 commits; engine primitives + constraints + schema additions + port artifact |
+| Weekly port (§17 Phase B, was C)            | **done**     | All sub-slices shipped + byte-equality verified for both rebirth-radio (real weekly XMLs) and Classics (synthetic pools, 16-week cycle). §14.41+ queued (deepen weekly fixture to 16 weeks for symmetry). |
 | Station creation wizard (UI)                | done (14.7)  | Produces the template JSON; reuses `web/src/lib/api.ts` |
 | Edit mode for stations                      | done (14.13) | `<StationForm>` extracted; JSON preview + diff + reset  |
 | Wizard polish (presets, per-field errors)   | later (14.7) | See 14.7 table; wait for real-user pain                 |
@@ -5767,15 +5767,177 @@ fixture + lift xfail policy) closes Phase B genuinely.
 
 ---
 
+### 14.40 Classics byte-equality — Phase B closeout (§17 Phase B byte-equality follow-on #3 of 3)
+
+**Goal.** Defend the "weekly is one instance, not the shape"
+claim by exercising station-studio's engine through a second,
+structurally distinct station — Rebirth Classics. Phase B
+genuinely closes when this slice ships and both byte-equality
+tests stay green together.
+
+#### The "weekly is one instance" affirmation
+
+§14.37 + §14.38 + §14.39 each took the rebirth-radio port test
+closer to byte-equal with weekly's reference output. That proves
+*one* station works. The user's productisation framing rejects
+calling that Phase B's closeout: the engine should be expressive
+enough to represent any station's configuration. §14.40 ships the
+*second instance* that proves the architecture itself is general.
+
+Classics is concretely different from weekly on every axis the
+engine touches:
+
+| Axis | Weekly (rebirth-radio) | Classics (rebirth-classics) |
+|---|---|---|
+| Layout form | `flat_slots` (2,196 size=1 blocks) | `row_template` (2 blocks × 7 rows = 14 BlockSpecs) |
+| Cursor mode | `persist=true` (9 named cursors via `cursor_state`) | `persist=false` (1 stateless cursor via `base_cursor_for_week`) |
+| Strategies | jingle + weighted + mix + prev_ref + sequential | **only `window`** |
+| RNG | `on` (seeded) | `off` (deterministic) |
+| Cross-week state | mix-exclusion + prev_ref + named-cursor advance | none |
+| Reference comparison | weekly's external generator | station-studio itself (freeze-against-self) |
+
+Same engine code path covers both. After §14.40 the assertion
+"the engine isn't weekly-shaped" carries actual receipts.
+
+#### Freeze-against-self pattern
+
+Classics has no external generator to compare against (no
+"weekly-equivalent" of Classics ever existed; it was a
+station-studio-native template from the start). The byte-equality
+test therefore can't follow §14.37's "match an external reference"
+pattern. Instead:
+
+1. Station-studio's own generator produces the expected output.
+2. That output is committed as the fixture.
+3. Subsequent runs assert against the committed output.
+
+This is **regression-locking**, not external-correctness-checking.
+Its job is: when §14.41+ or any future engine change perturbs
+Classics's output, this test fires. The fixture is the contract.
+
+The bootstrap mode (`BOOTSTRAP_BYTE_EQ_FIXTURES=1`) regenerates the
+fixture from current behaviour — used after intentional engine
+changes. Same CI guard as the synthetic test (§14.37 c1): a leaked
+env var in CI fails LOUD, preventing silent fixture rewrites.
+
+#### Full 16-week cycle
+
+Classics's `cycle_weeks=16` defines the cursor advance period. The
+fixture captures all 16 weeks, exercising every position in the
+cycle. Week 1 starts at cursor=0; week 16 starts at cursor=900
+(15 × `base_advance_per_week=60`). Week 17+ would wrap; that wrap
+isn't asserted here (Phase B's job is the cycle, not the wrap).
+
+A future slice could lock the wrap behaviour by extending to week
+17+; or a `§14.41` follow-on (queued below) could extend the
+weekly port test to a matching 16-week depth for symmetry. Today
+both stations are regression-locked across a meaningful chain.
+
+#### What ships in §14.40
+
+* `scripts/generate_classics_fixtures.py`: one-shot generator
+  building 3 synthetic iTunes XML pools (RG_RADIO + RG_PARTY at
+  1,200 tracks each — sized to cover the full 16-week cursor
+  reach without wrap; RG_MASTER at 50 as a reference-role pool).
+  Plus the `classics_pool_manifest.json`.
+* `tests/fixtures/itunes_xml_classics/*.xml`: 3 committed XMLs
+  (~600 KB total).
+* `tests/fixtures/classics_pool_manifest.json`.
+* `tests/byte_equality.py::expand_block_slot_refs`: generalised
+  to accept a `Template` object; dispatches on layout form
+  internally. Walks row_template in engine-order (`rows × blocks`)
+  with `row_idx` surfaced in `SlotRef.extra` for diagnostic clarity.
+  Existing callers updated to pass `tmpl` instead of
+  `tmpl.layout.flat_slots`. Legacy iterable path preserved for
+  harness tests.
+* `tests/test_byte_equality_harness.py`: +2 tests covering the
+  row_template walk and the flat_slots Template path.
+* `tests/test_classics_byte_equality.py`: the byte-equality test
+  itself. Bootstrap mode, CI guard, full 16-week assertion.
+* `tests/fixtures/expected/classics_byte_eq.json`: ~1.3 MB
+  committed fixture, schema_version=2, `priors: []` (stateless),
+  16 × 3,010 PIDs.
+* `Makefile`: `refresh-classics-fixture` target. Self-contained
+  (no weekly venv needed): regenerates the synthetic pools, then
+  re-bootstraps the fixture in one command.
+* §14.40 DESIGN entry (this section).
+* §15 status snapshot: Phase B done.
+* §17 roadmap: Phase B closed; Phase C is operational (cutover),
+  not engineering.
+
+Single commit, slice-level review after it lands.
+
+#### Decisions punted (queued follow-ons)
+
+* **§14.41 — extend weekly port byte-equality to 16 weeks.** Today
+  the weekly port test generates 8 weeks, asserts 4. After §14.40
+  ships Classics's full-cycle 1-16 depth, the asymmetry is
+  visible: Classics gets 16 weeks of regression-locking; weekly
+  only 4. §14.41 bumps the weekly side to a matching 16-week
+  chain. Extends `dump_weekly_playlist.py` to dump weeks 2-17,
+  re-bootstraps `port_byte_eq.json` with all 16 weeks asserted,
+  catches any post-week-9 regressions the current chain misses.
+  Possibly extending to weeks 2-21+ would exercise weekly's
+  mix-exclusion-window wrap (default 20 weeks). Small slice;
+  natural extension of §14.40's depth.
+* **§14.42 — Classics cycle-wrap assertion.** Asserting week 17+
+  exercises the `cycle_weeks` wrap (cursor returns to 0). Today
+  not in scope; the 16-week chain proves the cycle works
+  end-to-end without exercising the wrap edge. Cheap follow-on
+  when wrap behaviour matters operationally.
+* **Real Classics pools.** §14.40 uses synthetic pools to keep CI
+  runnable + avoid copyright concerns. Operators with real
+  Classics XMLs can run the same engine path via the existing
+  `make import-weekly-pools` against their own manifest. A
+  skip-when-missing test mirroring the weekly port pattern could
+  be added if a real-pool byte-equality test ever becomes useful.
+* **`refresh-port-everything` extension to include Classics.**
+  Today the convenience target chains weekly's two refresh steps.
+  A future "refresh ALL fixtures" target would also rerun
+  `refresh-classics-fixture`. Trivial; defer until the workflow
+  bites.
+
+| Punt | Severity | Notes |
+|---|---|---|
+| §14.41 weekly 16-week extension | LATER | Queued — natural symmetry with Classics's depth. |
+| §14.42 Classics cycle-wrap assertion | LATER | Locks week 17+ wrap behaviour. |
+| Real Classics pool byte-equality | LATER | Skip-when-missing pattern available if demand emerges. |
+| `refresh-port-everything` includes Classics | LOW | Trivial; rolls in with next refresh-workflow change. |
+
+#### Phase B closeout
+
+After §14.40, Phase B is GENUINELY closed:
+
+* `tests/test_port_byte_equality.py` — weekly port (real XMLs):
+  **GREEN** across 4 asserted weeks of an 8-week chain.
+* `tests/test_classics_byte_equality.py` — Classics: **GREEN**
+  across all 16 weeks of the full cycle.
+* `tests/test_byte_equality_synthetic.py` — synthetic determinism
+  floor: **GREEN** across the 4-week assertion.
+* `make refresh-port-fixture` / `make refresh-classics-fixture` —
+  both refresh workflows operational. Drift caught the moment a
+  fixture is bootstrapped against changed behaviour.
+* The §17.1 weekly study's three open questions — slot-type
+  vocabulary, cross-slot state, multi-cursor templates — all
+  ship through the same engine, both stations.
+* The user's "any station config we throw at it" framing: two
+  concrete instances now pass the same engine path, structurally
+  distinct on every axis. Generality has receipts.
+
+Phase C is operational (production cutover, weekly retirement);
+not engineering work. Phase B is done.
+
+---
+
 ## 15. Status snapshot
 
 A quick "where are we" for a future reader. Last updated alongside
-the §14.39 per-cursor offset slice. Port byte-equality test STILL
-passes against real weekly (architectural change preserved
-output). Coalescing patch removed; engine model now generalises to
-interleaved-cursor templates. Phase B's byte-equality milestone
-hit; one slice remains (§14.40 — Classics second-station fixture
-+ lift xfail) before Phase B closes genuinely.
+the §14.40 Classics byte-equality slice. **Phase B is DONE.** Both
+station-studio's byte-equality tests are GREEN: weekly port (real
+XMLs, 4 asserted weeks) and Classics (16-week full cycle,
+synthetic pools, freeze-against-self). The engine handles two
+structurally distinct stations through the same code path — the
+"weekly is one instance, not the shape" claim has receipts.
 
 | Area                     | State                                                            |
 |--------------------------|------------------------------------------------------------------|
