@@ -379,6 +379,46 @@ def test_alternating_same_cursor_blocks_read_disjoint_pool_slices():
     assert names[4:7] == ["A0004", "A0005", "A0006"]
 
 
+def test_alternating_same_cursor_advances_offset_by_block_size_not_one():
+    """§14.39 hardening — verify the per-cursor offset advances by
+    `block.size`, not by `1`. The size=1 counterexample above
+    couldn't distinguish those two implementations; this test makes
+    the regression class narrow but real.
+    """
+    t = parse_template(mk_template(
+        sources=[
+            {"name": "A", "colour": "#aaa", "role": "content"},
+            {"name": "B", "colour": "#bbb", "role": "content"},
+        ],
+        cursor={"base_advance_per_week": 0, "cycle_weeks": 1},
+        layout={
+            "unit": "slot",
+            "unit_labels": [],
+            "row_start_offsets": [],
+            "cursors_init": {"NIGHT_1": 0, "NIGHT_2": 20},
+            "flat_slots": [
+                # NIGHT_1 size=3: reads pool[0..2]; offset advances 0 → 3.
+                {"source": "A", "strategy": "sequential", "size": 3, "cursor_id": "NIGHT_1"},
+                # NIGHT_2 interrupts (own cursor, own offset).
+                {"source": "B", "strategy": "sequential", "size": 1, "cursor_id": "NIGHT_2"},
+                # NIGHT_1 size=3 again: must read pool[3..5], not pool[1..3].
+                # The bug class this catches: `seq_offsets[id] += 1` instead
+                # of `seq_offsets[id] += block.size`.
+                {"source": "A", "strategy": "sequential", "size": 3, "cursor_id": "NIGHT_1"},
+            ],
+        },
+    ))
+    # Pool sizes well above NIGHT_2's start position so no modular wrap.
+    pools = {"A": mk_pool("A", 100), "B": mk_pool("B", 100)}
+    r = generate(t, pools, week=1)
+    names = [p.name for p in r.picks]
+    assert names == [
+        "A0001", "A0002", "A0003",  # first NIGHT_1 size=3 → pool[0..2]
+        "B0021",                     # NIGHT_2 cursor=20 → pool[20]
+        "A0004", "A0005", "A0006",  # second NIGHT_1 — pool[3..5] (offset += 3)
+    ]
+
+
 def test_multi_cursor_template_each_cursor_addresses_independently():
     t = parse_template(mk_template(
         sources=[

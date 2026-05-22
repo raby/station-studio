@@ -384,18 +384,23 @@ def test_rebirth_radio_chain_matches_weekly_byte_for_byte(port_db):
     2/3/5/9 are asserted byte-for-byte (PID-for-PID) against the
     committed fixture.
 
-    This test FAILS LOUDLY today on the §14.38 cursor-bootstrap model
-    gap (see DESIGN §14.37). It's intentionally not marked xfail —
-    Phase B's port acceptance is not closed, and silently green CI
-    on the acceptance test would hide that. The skip-when-missing
+    **CURRENTLY PASSING** post-§14.38 (cursor-bootstrap closed) +
+    §14.39 (engine model generalised; same OUTPUT preserved). The
+    test is intentionally NOT marked xfail — Phase B's port
+    acceptance now passes against real weekly. The skip-when-missing
     pattern (no XMLs → pytest.skip) keeps CI green where real
     weekly data isn't available; local dev with XMLs gets the
-    failure surfaced unmistakably.
+    full byte-equality assertion.
 
-    The diagnostic from `assert_chain_equal` surfaces the first
-    divergent (week, slot, pick_in_block) coordinate. When the
-    §14.38 / §14.39 / §14.40 follow-on slices land + the test goes
-    green, that signals genuine Phase B closure.
+    If this test EVER turns red, the diagnostic from
+    `assert_chain_equal` surfaces the first divergent (week, slot,
+    pick_in_block) coordinate. The per-PICK SlotRef expansion
+    (§14.37 sweep-up) ensures the labelled position matches the
+    actually-divergent pick — useful for any future regression.
+
+    One slice (§14.40) remains in Phase B: add a second station
+    fixture (Classics through the same engine path) proving "weekly
+    is one instance, not the shape." After §14.40, Phase B closes.
     """
     fixture = json.loads(EXPECTED_FIXTURE.read_text())
     seed_base = fixture["seed_base"]
