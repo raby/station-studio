@@ -241,12 +241,24 @@ def generate(
                 seq_start = named_cursor_positions[block.cursor_id]  # type: ignore[index]
             else:
                 seq_start = template.cursor_position(block.cursor_id, week)  # type: ignore[arg-type]
-            picked = apply_window(
-                pool,
-                start=seq_start,
-                size=block.size,
-                source_name=block.source,
-            )
+            # §14.37 c2 fix: sequential WRAPS at pool boundary (unlike
+            # `window` which fail-louds). Mirrors weekly's
+            # `_resolve_sequential_block` which computes
+            # `(cursor_pos + i) % n` per slot. Surfaced by the
+            # byte-equality harness: weekly's WEEKEND_2 cursor at week
+            # 7+ exceeds pool length, and the wrap was the actual
+            # behaviour. `window` and `pick` keep their fail-loud
+            # semantics (Classics never wraps; silent wrap there would
+            # mask a real template bug).
+            pool_len = len(pool)
+            if pool_len == 0:
+                raise WindowOutOfRangeError(
+                    f"source '{block.source}': pool is empty"
+                )
+            picked = [
+                ((seq_start + i) % pool_len + 1, pool[(seq_start + i) % pool_len])
+                for i in range(block.size)
+            ]
             reason_prefix = (
                 f"sequential size={block.size} from '{block.source}' "
                 f"cursor='{block.cursor_id}' at pool_index {seq_start + 1}"

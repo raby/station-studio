@@ -163,7 +163,9 @@ def test_seed_rebirth_radio_from_checked_in_json(db):
 
     assert summary["action"] == "created"
     assert summary["slug"] == "rebirth-radio"
-    assert summary["slot_count"] == 2196  # weekly's 2,196-slot template
+    # slots_per_week sums block.size — weekly's 2,196 picks total.
+    # (flat_slots count is 1,111 blocks after §14.37 c2 coalescing.)
+    assert summary["slot_count"] == 2196
 
     row = db.query(Station).filter_by(slug="rebirth-radio").one()
     assert row.template["cadence"] == "weekly"

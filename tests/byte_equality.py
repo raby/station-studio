@@ -177,6 +177,96 @@ def assert_pids_equal(
     )
 
 
+def generate_chain(
+    db: "Session",
+    *,
+    station_slug: str,
+    weeks: Iterable[int],
+    seed_base: int,
+    advance_step: int = 120,
+    reset_cycle: int = 0,
+) -> dict[int, list[str]]:
+    """Run a multi-week chain through the full API persistence flow.
+
+    Returns week → list of persistent IDs. Mirrors
+    ``api/routers/generate.py``'s call sequence EXACTLY — the
+    byte-equality slice's correctness hinges on the test path
+    matching the production path. Any deviation means a test passes
+    while the API regresses.
+
+    Threaded inputs (each maps to an API helper):
+
+      * ``load_alias_map`` (§14.26) — artist alias normalisation in
+        `weighted`. Live even when the DB has no aliases.
+      * ``max_mix_exclusion_window`` (§14.32 review fix) — walks
+        ``layout.all_blocks()``; works for row_template AND flat_slots.
+        Hardcoding the window would bypass exactly the stale-helper
+        bug class that's bitten this project repeatedly.
+      * ``weighted_window_default=None`` — no station-rule seeded in
+        the chain DB; engine falls back to its constant. The path
+        documents the rule-precedence flow.
+      * ``previous_playlist=load_previous_playlist(current_week=week)``
+        — prev_ref reads the most-recent-prior; week 1 falls back
+        unless the caller pre-seeded a prior playlist (the §14.37 c2
+        real-XML test does this with WEEKLY 001).
+
+    Cursor advance defaults (120 / 0) match weekly's rules. Override
+    via ``advance_step`` / ``reset_cycle`` for tests using compressed
+    pools (e.g. the §14.37 c1 synthetic test).
+
+    Importing the SQLAlchemy + engine modules lazily keeps this
+    helper importable without a DB context — useful for the harness
+    tests that don't need a session.
+    """
+    from engine.generator import generate
+    from engine.models import Station, Track
+    from engine.persistence import (
+        advance_cursors, load_alias_map, load_cursor_positions,
+        load_excluded_mix_ids, load_pools, load_previous_playlist,
+        max_mix_exclusion_window, save_playlist,
+    )
+    from engine.template import parse_template
+
+    station = db.query(Station).filter_by(slug=station_slug).one()
+    tmpl = parse_template(station.template)
+    pools = load_pools(db, tmpl)
+    alias_map = load_alias_map(db)
+    # Explicit track_id → persistent_id resolution (defends against the
+    # stale-Track-in-identity-map bug class noted in §14.26's review).
+    track_pids = {t.id: t.persistent_id for t in db.query(Track).all()}
+
+    pids_by_week: dict[int, list[str]] = {}
+    for week in weeks:
+        positions = load_cursor_positions(db, station_id=station.id, template=tmpl)
+        excluded_mix_ids = load_excluded_mix_ids(
+            db, station_id=station.id,
+            window=max_mix_exclusion_window(tmpl),
+        )
+        previous_playlist = load_previous_playlist(
+            db, station_id=station.id, current_week=week,
+        )
+        result = generate(
+            tmpl, pools,
+            week=week,
+            seed=seed_base + week,
+            excluded_mix_ids=excluded_mix_ids,
+            alias_map=alias_map,
+            previous_playlist=previous_playlist,
+            weighted_window_default=None,
+            named_cursor_positions=positions,
+        )
+        pids_by_week[week] = [track_pids[t.id] for t in result.picks]
+        save_playlist(db, station=station, result=result, week=week, template=tmpl)
+        advance_cursors(
+            db, station_id=station.id, template=tmpl, pools=pools,
+            advance_step=advance_step, reset_cycle=reset_cycle,
+            generation_count=week - 1,
+        )
+        db.commit()
+
+    return pids_by_week
+
+
 def assert_chain_equal(
     expected_chain: dict[int, list[str]],
     actual_chain: dict[int, list[str]],

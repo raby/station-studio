@@ -151,6 +151,20 @@ def import_weekly_template(
 
     flat_slots = [_translate_slot(s, i) for i, s in enumerate(weekly_data["slots"])]
 
+    # §14.37 commit 2 fix: coalesce consecutive same-cursor sequential
+    # slots into one size=N block. Surfaced by the byte-equality
+    # harness — weekly's `_expand_block(cursor_id, N, ...)` produces N
+    # individual `{type: "night", cursor_id}` dicts but resolves them
+    # AS ONE BLOCK (pre-fetching N consecutive tracks from the source
+    # at the cursor position, then iterating with a per-cursor offset).
+    # The naïve 1:1 translation emitted N separate `{size: 1}` blocks,
+    # and engine.generator's sequential dispatch then read position
+    # `cursor + 0` for each — picking the SAME track N times. Merging
+    # consecutive same-cursor runs into one size=N block restores
+    # weekly's "block reads N sequential tracks" semantics; the engine's
+    # `apply_window` does the rest.
+    flat_slots = _coalesce_sequential_runs(flat_slots)
+
     # §14.34 review fix F5: surface a clear user-facing error when a slot
     # references a cursor not declared in initial_cursors. Without this
     # check the post-translation parse_template raises (correctly) but
@@ -327,3 +341,45 @@ def _require_fields(slot: dict[str, Any], idx: int, type_: str, *, required: set
             f"slot {idx + 1} (type={type_!r}): missing required fields "
             f"{sorted(missing)}. Got: {sorted(slot.keys())}"
         )
+
+
+def _coalesce_sequential_runs(flat_slots: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Merge consecutive same-(source, cursor_id) sequential blocks into
+    one ``size=N`` block (§14.37 c2 fix).
+
+    Weekly's ``_expand_block(cursor_id, N, ...)`` produces N individual
+    slot dicts but resolves them as ONE sequential block — the
+    generator pre-fetches N consecutive tracks from the source at the
+    cursor position, then iterates with a per-cursor offset. The
+    station-studio engine's `sequential` dispatch instead reads from
+    `named_cursor_positions[cursor_id]` at each slot — which gives the
+    SAME track for every slot in a run when each slot is `size=1`.
+
+    Coalescing the N slots into one ``size=N`` block routes through
+    `apply_window(pool, start=cursor, size=N)` which reads N
+    consecutive tracks, matching weekly's semantics.
+
+    The runs station-studio cares about are ALL same-cursor and
+    contiguous in the input — weekly never interleaves different
+    cursors within a "block." The merge is therefore a straight
+    consecutive-run collapse; non-sequential or boundary-crossing
+    slots break the run. Other strategies (jingle/weighted/mix/
+    prev_ref) pass through unchanged.
+    """
+    out: list[dict[str, Any]] = []
+    for block in flat_slots:
+        if (
+            out
+            and block.get("strategy") == "sequential"
+            and out[-1].get("strategy") == "sequential"
+            and out[-1].get("source") == block.get("source")
+            and out[-1].get("cursor_id") == block.get("cursor_id")
+        ):
+            # Mutate a shallow copy of the previous entry so we don't
+            # accidentally edit a caller-shared dict.
+            merged = dict(out[-1])
+            merged["size"] = merged["size"] + block["size"]
+            out[-1] = merged
+        else:
+            out.append(block)
+    return out

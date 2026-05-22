@@ -52,17 +52,11 @@ import pytest
 from sqlalchemy.orm import Session
 
 from engine.database import make_engine, make_sessionmaker
-from engine.generator import generate
-from engine.models import Base, Station, Track
-from engine.persistence import (
-    advance_cursors, load_alias_map, load_cursor_positions,
-    load_excluded_mix_ids, load_pools, load_previous_playlist,
-    max_mix_exclusion_window, save_playlist,
-)
+from engine.models import Base, Station
 from engine.template import parse_template
 from scripts.import_weekly_pools import import_manifest
 from tests.byte_equality import (
-    SlotRef, assert_chain_equal, slot_ref_from_block,
+    SlotRef, assert_chain_equal, generate_chain, slot_ref_from_block,
 )
 
 
@@ -132,73 +126,22 @@ def chain_db(tmp_path) -> Session:
 
 
 def _generate_chain(db: Session) -> dict[int, list[str]]:
-    """Run the full multi-week chain. Returns week → list of PIDs.
+    """Run the 8-week chain via the shared generate_chain helper.
 
-    Mirrors `api/routers/generate.py`'s call sequence EXACTLY — the
-    test's "determinism floor" claim hinges on it. Any deviation
-    means the test passes while the API path silently regresses.
-    The relevant API inputs threaded through here:
-
-      * `load_alias_map(db)` — §14.26. The synthetic Commercials have
-        no aliases today, but the path needs to be live so a future
-        alias-related regression in `weighted` would fail.
-      * `max_mix_exclusion_window(tmpl)` — §14.32 review fix; walks
-        layout.all_blocks() to handle BOTH row_template + flat_slots
-        forms. Hardcoding `window=5` would bypass exactly the kind of
-        prior-slice-helper-staleness bug that's bitten this project.
-      * `weighted_window_default=None` — no station-rule set in the
-        chain DB, so the engine falls back to its DEFAULT_WEIGHTED_WINDOW
-        constant. Passing None explicitly documents the path.
-      * `previous_playlist=load_previous_playlist(current_week=week)` —
-        prev_ref reads week N-1; week 1 falls back.
+    The shared helper (tests/byte_equality.py:generate_chain) is
+    parameterised so commit 2's real-XML test can reuse the EXACT
+    same chain wiring. The synthetic chain passes the small
+    advance_step=3 because NIGHT/WEEKEND pools are only 100 tracks;
+    weekly's real chain uses the engine default 120.
     """
-    station = db.query(Station).filter_by(slug="synthetic-byte-eq").one()
-    tmpl = parse_template(station.template)
-    pools = load_pools(db, tmpl)
-    alias_map = load_alias_map(db)
-    # Build a track_id → persistent_id lookup once. Picks return Track
-    # objects (with .persistent_id); we resolve through this dict to
-    # defend against the stale-Track-in-identity-map bug class noted
-    # in §14.26's persistence review (ORM identity map can hand back a
-    # detached object after a re-import; the explicit lookup forces a
-    # fresh read).
-    track_pids = {
-        t.id: t.persistent_id
-        for t in db.query(Track).all()
-    }
-
-    pids_by_week: dict[int, list[str]] = {}
-    for week in range(1, CHAIN_LENGTH + 1):
-        positions = load_cursor_positions(db, station_id=station.id, template=tmpl)
-        excluded_mix_ids = load_excluded_mix_ids(
-            db, station_id=station.id,
-            window=max_mix_exclusion_window(tmpl),
-        )
-        previous_playlist = load_previous_playlist(
-            db, station_id=station.id, current_week=week,
-        )
-        result = generate(
-            tmpl, pools,
-            week=week,
-            seed=SEED_BASE + week,
-            excluded_mix_ids=excluded_mix_ids,
-            alias_map=alias_map,
-            previous_playlist=previous_playlist,
-            weighted_window_default=None,
-            named_cursor_positions=positions,
-        )
-        # Resolve via track_pids lookup (see comment above) rather than
-        # result.picks[i].persistent_id direct attribute access.
-        pids_by_week[week] = [track_pids[t.id] for t in result.picks]
-        save_playlist(db, station=station, result=result, week=week, template=tmpl)
-        advance_cursors(
-            db, station_id=station.id, template=tmpl, pools=pools,
-            advance_step=ADVANCE_STEP, reset_cycle=RESET_CYCLE,
-            generation_count=week - 1,
-        )
-        db.commit()
-
-    return pids_by_week
+    return generate_chain(
+        db,
+        station_slug="synthetic-byte-eq",
+        weeks=range(1, CHAIN_LENGTH + 1),
+        seed_base=SEED_BASE,
+        advance_step=ADVANCE_STEP,
+        reset_cycle=RESET_CYCLE,
+    )
 
 
 def _slot_refs_for_template(tmpl) -> list[SlotRef]:

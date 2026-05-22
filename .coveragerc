@@ -16,6 +16,13 @@ omit =
     # the generator that produced them. Running it from CI would only
     # confirm we can still write JSON.
     scripts/generate_byte_eq_fixtures.py
+    # Dump-from-weekly helpers (§14.34 + §14.37) — designed to run
+    # INSIDE a weekly checkout with weekly's venv. They import
+    # weekly's `app.services.*` modules which aren't installed in
+    # station-studio's venv. Covered indirectly via the fixtures they
+    # produce + the smoke-test-against-real-weekly commands in DESIGN.
+    scripts/dump_weekly_template.py
+    scripts/dump_weekly_playlist.py
 
 [report]
 # Don't bother flagging lines that obviously don't need coverage.

@@ -291,21 +291,31 @@ def test_sample_fixture_translates_to_valid_station_studio_template(sample_weekl
     """End-to-end: the committed fixture parses through the importer +
     the resulting template parses through parse_template. Catches
     fixture drift if either the importer or the fixture's shape
-    diverges."""
+    diverges.
+
+    Fixture has 13 weekly-shaped slots; after §14.37 c2's sequential
+    coalescing, the two consecutive NIGHT_1 slots merge into one
+    size=2 block — so the translated output has 12 flat_slots.
+    """
     out = import_weekly_template(
         sample_weekly_data, slug="sample-rb", name="Sample Rebirth",
     )
     tmpl = parse_template(out)
-    # Sanity: the fixture has 13 slots → 13 flat_slots.
-    assert len(tmpl.layout.flat_slots) == 13
-    # Strategies match the fixture's expected vocabulary.
+    assert len(tmpl.layout.flat_slots) == 12
+    # Strategies after coalescing: the two NIGHT_1 slots merged.
     strategies = [b.strategy for b in tmpl.layout.flat_slots]
     assert strategies == [
         "jingle", "weighted", "weighted", "weighted",
         "jingle", "mix", "prev_ref", "mix",
-        "sequential", "sequential", "sequential",
-        "sequential", "sequential",
+        "sequential",  # NIGHT_1 (size=2, coalesced from two slots)
+        "sequential",  # NIGHT_2
+        "sequential",  # WEEKEND_1
+        "sequential",  # WEEKEND_2
     ]
+    # First sequential block (NIGHT_1) is the coalesced one.
+    night_1 = tmpl.layout.flat_slots[8]
+    assert night_1.cursor_id == "NIGHT_1"
+    assert night_1.size == 2
     # cursors_init comes through verbatim.
     assert tmpl.layout.cursors_init == {
         "NIGHT_1": 0, "NIGHT_2": 10,
@@ -313,6 +323,84 @@ def test_sample_fixture_translates_to_valid_station_studio_template(sample_weekl
     }
     # Persistent cursors (§14.30) for the Rebirth Radio pattern.
     assert tmpl.cursor.persist is True
+
+
+# ---------- §14.37 c2 sequential coalescing ----------------------------
+
+
+def test_consecutive_same_cursor_sequentials_coalesce_into_one_size_n_block():
+    """Translator merges runs of consecutive same-(source, cursor_id)
+    sequential slots into one ``size=N`` block. Mirrors weekly's
+    `_expand_block` semantics; lets the engine's sequential dispatch
+    read N consecutive tracks for the run instead of picking the same
+    cursor position N times.
+
+    Surfaced by the §14.37 c2 byte-equality harness — the original
+    1:1 translation produced 95 individual `{size: 1, cursor_id: NIGHT_1}`
+    slots, and the engine then picked pool[cursor] for every one of
+    them (the same track 95 times).
+    """
+    weekly = {
+        "initial_cursors": {"NIGHT_1": 0, "NIGHT_2": 5, "WEEKEND_1": 0},
+        "slots": (
+            # 3 consecutive NIGHT_1 → 1 size=3 block.
+            [{"type": "night", "cursor_id": "NIGHT_1"}] * 3
+            # Switch to NIGHT_2 (different cursor) → new block.
+            + [{"type": "night", "cursor_id": "NIGHT_2"}] * 2
+            # Interrupted by a jingle → next sequential starts a new block
+            # even if cursor_id matches.
+            + [{"type": "jingle", "genre": "Daytime"}]
+            + [{"type": "night", "cursor_id": "NIGHT_2"}] * 4
+            # WEEKEND_1 (different source) → new block.
+            + [{"type": "weekend", "cursor_id": "WEEKEND_1"}] * 5
+        ),
+    }
+    out = import_weekly_template(weekly, slug="x", name="X")
+    flat = out["layout"]["flat_slots"]
+
+    # Expected coalesced shape:
+    #   1 NIGHT_1 size=3
+    #   1 NIGHT_2 size=2
+    #   1 jingle
+    #   1 NIGHT_2 size=4 (interrupted run starts a NEW block)
+    #   1 WEEKEND_1 size=5
+    assert len(flat) == 5
+    assert flat[0] == {
+        "source": "NIGHT", "strategy": "sequential", "size": 3,
+        "cursor_id": "NIGHT_1",
+    }
+    assert flat[1] == {
+        "source": "NIGHT", "strategy": "sequential", "size": 2,
+        "cursor_id": "NIGHT_2",
+    }
+    assert flat[2]["strategy"] == "jingle"
+    assert flat[3] == {
+        "source": "NIGHT", "strategy": "sequential", "size": 4,
+        "cursor_id": "NIGHT_2",
+    }
+    assert flat[4] == {
+        "source": "WEEKEND", "strategy": "sequential", "size": 5,
+        "cursor_id": "WEEKEND_1",
+    }
+
+
+def test_single_sequential_slot_passes_through_coalescing_unchanged():
+    """A single sequential slot (no run to merge) stays as size=1.
+    Defensive — the coalesce loop's "previous block" check should
+    not accidentally elide a one-off."""
+    weekly = {
+        "initial_cursors": {"NIGHT_1": 0},
+        "slots": [
+            {"type": "jingle", "genre": "Daytime"},
+            {"type": "night", "cursor_id": "NIGHT_1"},
+            {"type": "jingle", "genre": "Mixzone"},
+        ],
+    }
+    out = import_weekly_template(weekly, slug="x", name="X")
+    flat = out["layout"]["flat_slots"]
+    assert len(flat) == 3
+    assert flat[1]["strategy"] == "sequential"
+    assert flat[1]["size"] == 1
 
 
 # ---------- review fix F5: undeclared cursor surfaces user-side --------

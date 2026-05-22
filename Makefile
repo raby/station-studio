@@ -12,7 +12,8 @@
         backfill-slot-types \
         backup backups restore \
         dev dev-backend dev-frontend \
-        import-station import-weekly-pools refresh-rebirth-radio
+        import-station import-weekly-pools refresh-rebirth-radio \
+        refresh-port-fixture
 
 PY := .venv/bin/python
 ALEMBIC := .venv/bin/alembic
@@ -293,3 +294,36 @@ refresh-rebirth-radio:
 	  echo "Translating → stations/rebirth-radio.json …" && \
 	  $(PY) -m scripts.import_station rebirth-radio "$$TMP" --output stations/rebirth-radio.json && \
 	  echo 'Done. Diff against the previous version with: git diff stations/rebirth-radio.json'
+
+# Refresh tests/fixtures/expected/port_byte_eq.json from a live weekly
+# checkout (§14.37 c2). The committed fixture captures weekly's
+# generator output for (seed_base=42, weeks 2-9); this target
+# regenerates it. Requires both WEEKLY_DIR (the checkout root) and
+# WEEKLY_FROM_USER_DIR (where the XMLs live; usually $WEEKLY_DIR/from_user).
+#
+# Usage:
+#   make refresh-port-fixture WEEKLY_DIR=/path/to/weekly \
+#                             WEEKLY_FROM_USER_DIR=/path/to/weekly/from_user
+refresh-port-fixture:
+	@if [ -z "$(WEEKLY_DIR)" ] || [ -z "$(WEEKLY_FROM_USER_DIR)" ]; then \
+		echo "Usage: make refresh-port-fixture WEEKLY_DIR=/path/to/weekly WEEKLY_FROM_USER_DIR=/path/to/weekly/from_user"; \
+		echo "Refreshes tests/fixtures/expected/port_byte_eq.json from a live weekly checkout (§14.37 c2)."; \
+		exit 1; \
+	fi
+	@if [ ! -d "$(WEEKLY_DIR)/app/services" ]; then \
+		echo "error: $(WEEKLY_DIR) doesn't look like a weekly checkout (missing app/services/)."; \
+		exit 1; \
+	fi
+	@if [ ! -x "$(WEEKLY_DIR)/.venv/bin/python" ]; then \
+		echo "error: $(WEEKLY_DIR)/.venv/bin/python not executable. Set up weekly's venv first."; \
+		exit 1; \
+	fi
+	@if [ ! -d "$(WEEKLY_FROM_USER_DIR)" ]; then \
+		echo "error: $(WEEKLY_FROM_USER_DIR) is not a directory."; \
+		exit 1; \
+	fi
+	@echo "Capturing weekly playlists → tests/fixtures/expected/port_byte_eq.json …"; \
+	  PYTHONPATH=$(WEEKLY_DIR) $(WEEKLY_DIR)/.venv/bin/python scripts/dump_weekly_playlist.py \
+	    --from-user "$(WEEKLY_FROM_USER_DIR)" \
+	    --out tests/fixtures/expected/port_byte_eq.json && \
+	  echo 'Done. Diff against the previous version with: git diff tests/fixtures/expected/port_byte_eq.json'

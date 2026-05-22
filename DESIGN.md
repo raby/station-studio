@@ -5083,10 +5083,248 @@ After #19 ships, Phase B is done.
 
 ---
 
+### 14.37 byte-equality verification harness — Phase B closeout (§17 Phase B sub-slice #19)
+
+**Goal.** Ship the byte-equality test infrastructure that's been
+Phase B's acceptance criterion, run it against real weekly output,
+and either:
+- Declare the port byte-identical (if station-studio matches weekly
+  for the same inputs) — Phase B closes out clean.
+- Document the divergences + file follow-on slices (if station-studio
+  doesn't match) — Phase B closes "harness ships + fixes filed."
+
+The user picked the latter framing during the slice's design
+discussion: "ship the harness + document the divergence as a
+follow-on slice." That was the right call — the harness caught
+three real port divergences in this slice alone (two fixed below;
+one filed as the closing follow-on).
+
+**Two-commit slice with mid-slice review** (matches the §14.34/.35/.36
+pattern):
+
+* **Commit 1**: synthetic determinism floor + diagnostic harness.
+  Locks down station-studio's own generator output against
+  regression. Always runs in CI.
+* **Mid-slice review** (B1 + B2 + 4 🟡 applied).
+* **Commit 2**: real-weekly comparison + DESIGN + Phase B closeout.
+
+#### Architecture: two tiers of byte-equality
+
+The slice ships TWO byte-equality tests, distinguishable by what
+they assert:
+
+| Test | Inputs | What it locks down | Runs in CI? |
+|---|---|---|---|
+| `tests/test_byte_equality_synthetic.py` | Synthetic template + 6 synthetic pool XMLs (committed) | Station-studio's OWN deterministic output for these inputs. Any strategy regression that changes any pick fails. | Yes |
+| `tests/test_port_byte_equality.py` | `stations/rebirth-radio.json` + real weekly XMLs (NOT committed; user-data path) + fixture from `scripts/dump_weekly_playlist.py` | Station-studio matches WEEKLY for the same `(seed, week)` inputs. The actual port acceptance test. | Skip-when-missing |
+
+The synthetic floor is the **regression net**. The real-weekly test
+is the **port acceptance criterion**. Each fails for different reasons:
+- A synthetic regression == "we broke our own engine."
+- A real-weekly regression == "we don't match weekly (yet)."
+
+#### Diagnostic harness
+
+`tests/byte_equality.py` is the slice's most-reused artifact.
+Provides:
+- `SlotRef` — captures per-slot context (strategy, source,
+  per-strategy params including `size` after the c1 mid-slice fix).
+- `assert_pids_equal` — compares two PID sequences; raises with a
+  centred ±3-slot context window and `<-- DIFF` marker on the
+  divergent row.
+- `assert_chain_equal` — multi-week chain comparison; reports the
+  FIRST failing week (downstream divergences are noise once RNG
+  sequences desync).
+- `generate_chain` — shared multi-week chain helper used by both
+  test files. Mirrors `api/routers/generate.py`'s call sequence
+  EXACTLY (load_alias_map / max_mix_exclusion_window /
+  load_previous_playlist / weighted_window_default=None) so a
+  test pass actually means the API path works.
+- 16 unit tests for the harness itself.
+
+The diagnostic was smoke-verified by intentionally corrupting a
+fixture PID — the message reads cleanly and pinpoints the failure
+within a few terminal lines.
+
+#### Synthetic floor (commit 1)
+
+A 120-slot flat_slots template exercising all 5 weekly-style
+strategies + a 4-cursor pattern, paired with 6 synthetic pool XMLs
+sized to genuinely exercise:
+- Artist dedup window (default 10) within 15-commercial blocks
+- Per-genre mix exclusion + the "relax" branch (5 tracks/genre +
+  window=5 + 8 weeks → relax fires week 6+; the c1 mid-slice review
+  caught this — original 8 tracks/genre never exhausted the
+  candidates)
+- Cursor advancement across 8 weeks (100-track NIGHT/WEEKEND pools)
+- prev_ref fallback (week 1) + lookup (weeks 2+)
+
+The chain generates weeks 1-8 sequentially through the persistence
+flow + asserts weeks 1/2/4/8 outputs against committed fixtures.
+`BOOTSTRAP_BYTE_EQ_FIXTURES=1` regenerates the fixtures for
+intentional behavior changes; the bootstrap is CI-guarded (the
+c1 review fix Y1) so a leaked env var can't silently rewrite the
+regression net.
+
+#### Real-weekly comparison (commit 2)
+
+`scripts/dump_weekly_playlist.py` — runs inside a weekly checkout
+with weekly's venv active. Imports `app.services.generator.generate`,
+loops weeks 2-9 with `seed = SEED_BASE + week`, captures the
+WeeklyPlaylistEntry rows' persistent IDs per week, writes to
+`tests/fixtures/expected/port_byte_eq.json`. WEEKLY PLAYLIST 001
+(imported, not generated) is captured separately as
+`weekly_001_pids` — station-studio's test pre-seeds this as its
+week-1 Playlist so prev_ref's week-2+ lookups read the same prior
+data weekly does.
+
+`tests/test_port_byte_equality.py` mirrors weekly's
+`REQUIRE_XML_FIXTURES` pattern via `WEEKLY_FROM_USER_DIR` (skip
+when missing) + `REQUIRE_WEEKLY_XMLS=1` (fail-loud when missing).
+Generates weeks 2-9 against the committed rebirth-radio.json
+template + asserts weeks 2/3/5/9 against the captured fixture.
+
+`make refresh-port-fixture WEEKLY_DIR=… WEEKLY_FROM_USER_DIR=…`
+wraps the dump script with weekly-path validation + clear errors.
+
+#### Divergences found
+
+The byte-equality test FOUND three port-blocking divergences when
+first run against real weekly data. Two were fixed in this slice;
+one remains as the follow-on.
+
+**Fixed in commit 2:**
+
+1. **Sequential coalescing in the translator** (§14.34
+   `template_importer.py`). Weekly's `_expand_block("NIGHT_1",
+   95, ...)` produces 95 individual `{type: "night", cursor_id:
+   "NIGHT_1"}` slot dicts AND resolves them as ONE block (pre-fetches
+   95 consecutive tracks from the source at the cursor, then
+   iterates with a per-cursor offset). Station-studio's translator
+   was emitting 95 separate `{strategy: "sequential", size: 1}`
+   blocks; the engine then read position `cursor + 0` for every
+   one — picking the SAME track 95 times. Fix: `_coalesce_sequential_runs`
+   walks the translator output, merging consecutive same-(source,
+   cursor_id) sequential blocks into a single `size=N` block.
+   Engine's existing `apply_window(start=cursor, size=N)` then
+   reads N consecutive tracks correctly.
+
+2. **Cursor wrap-around in the sequential dispatch** (`engine/
+   generator.py`). Weekly's `_resolve_sequential_block` uses
+   `(cursor_pos + i) % len(source)` — modular wrap when the block
+   exceeds the pool length. Station-studio's sequential dispatch
+   called `apply_window` (the Classics-style fail-loud helper)
+   which raised `WindowOutOfRangeError` at the wrap point.
+   Surfaced at week 7 (cursor 720) for the 160-track WEEKEND_2
+   block against a 960-track pool. Fix: sequential dispatch now
+   computes the modular indices itself (separate from `apply_window`,
+   which keeps its fail-loud semantics for Classics).
+
+**Remaining (filed as follow-on):**
+
+3. **Pool ordering or earlier RNG-consumption divergence**
+   (location: NIGHT/WEEKEND sequential block, second-and-subsequent
+   picks). After the two fixes above, week 2's first sequential
+   pick matches weekly (pool[0]); the second pick doesn't. The
+   diagnostic surfaces this at idx 218. Possibilities:
+   - Station-studio's pool-import + ordering differs from weekly's
+   - An earlier RNG-consuming strategy makes one extra/fewer `random()`
+     call than weekly's
+   - The pre-seeded WEEKLY 001 row needs a different `slot_type`
+     or shape for prev_ref lookups to match exactly
+
+   The harness's diagnostic ships, and `pytest.mark.xfail(strict=True,
+   reason="…")` documents the known failure. When the follow-on
+   slice (§14.38 — TBD when picked up) lands the fix, the test
+   XPASSes and prompts removal of the marker.
+
+#### Phase B status: closing with harness + 2 fixes + 1 follow-on
+
+Going into this slice, Phase B's promise was "byte-equality with
+weekly." The honest closeout: **the harness ships**, runs cleanly
+on the synthetic floor, and surfaces real port divergences when
+run against real weekly. Two divergences are fixed; one is filed
+as a follow-on slice.
+
+Phase B's *engineering* is done. The *port acceptance* is one
+follow-on slice away. The infrastructure to land that follow-on
+exists: the diagnostic + fixture + xfail marker mean the next
+developer (you, future self) can run the test, see the failure,
+fix it, and the marker XPASSes them out of the gate.
+
+#### What shipped
+
+* `scripts/dump_weekly_playlist.py` (~250 LoC) — runs inside weekly's
+  venv. Captures WEEKLY 001 (imported) + generated weeks 2-9 PIDs.
+* `tests/test_port_byte_equality.py` — skip-when-missing test;
+  `xfail(strict=True)` until the third divergence is fixed.
+* `tests/fixtures/expected/port_byte_eq.json` — committed expected
+  output (~530 KB; 18 lines + 9 × 2196 PIDs). Refreshed via the
+  Makefile target below.
+* `Makefile`: `refresh-port-fixture WEEKLY_DIR=… WEEKLY_FROM_USER_DIR=…`
+  target.
+* `engine/template_importer.py`: `_coalesce_sequential_runs` helper
+  + 2 new tests (translator-level coalescing).
+* `engine/generator.py`: sequential dispatch wraps at pool boundary.
+* `tests/byte_equality.py`: `generate_chain` extracted as shared
+  helper (commit-1 mid-slice review fix Y3 from `slot_ref_from_block`
+  + the `size` field).
+* `tests/test_import_station.py` + `tests/test_seed_stations.py`:
+  updated slot-count expectations after coalescing (2,196 picks =
+  1,111 blocks for rebirth-radio.json).
+
+**577 tests pass + 1 expected skip + 1 expected fail.** 92%
+coverage. Migration parity green.
+
+#### Decisions punted
+
+* **Filing the follow-on slice as §14.38 vs §16.x**. Going with
+  §14.x (live work) so the divergence stays visible in the active
+  roadmap. If it takes longer than a sub-slice to debug, it
+  becomes §14.38 + 14.39 + … rather than slipping to a queued
+  section.
+* **Asserting more weeks than 2/3/5/9**. The 4 sampled weeks
+  cover prev_ref (week 2's lookup), mid-chain cursor advancement
+  (week 5), and late-chain wrap behaviour (week 9). Asserting
+  all 8 would catch more, but each assertion is independent and
+  the diagnostic shows the FIRST failure — extra weeks add fixture
+  size for marginal additional debug surface.
+* **Diagnostic surfaces pool-position context** (e.g. for the
+  divergence, "this is pick #2 of NIGHT_1 cursor at pool[1] for
+  week 2"). Would require threading the cursor + offset through
+  the trace. Defer to the follow-on slice; the slot-block label
+  + ±3-slot window is enough for the user to find their place in
+  the template.
+
+| Punt | Severity | Notes |
+|---|---|---|
+| Synthetic test asserts all 8 weeks | LOW | Fixture size cost; marginal debug surface. Add only if a follow-on needs it. |
+| Real-XML test asserts all 8 weeks | LOW | Same reasoning. |
+| Per-pool-position diagnostic context | LATER | Useful for the follow-on; not slice-blocking. |
+| Auto-discovery of weekly path | LOW | Same as §14.36's punt — explicit env var is honest about cross-repo coupling. |
+| CI integration of real-XML test | NEVER | XMLs are user data; can't be in CI. The skip-when-missing pattern is correct. |
+
+#### Phase B closeout
+
+After §14.37: 14 of 14 named Phase B sub-slices shipped (#5 / #7
+/ #8 / #9 / #10 / #11 / #12 / #13 / #14 / #15 / #16 / #17 / #18 /
+#19). One outstanding divergence as a follow-on. The engineering
+to make the port byte-identical is one slice away; the
+infrastructure to land that slice (harness, fixtures, diagnostic,
+DESIGN entry) is in place.
+
+Phase C (operational cutover — point production at station-studio,
+retire weekly's generator) becomes the next phase. The follow-on
+slice fixing the remaining divergence is the bridge between B and
+C; it could land in either phase depending on when it's picked up.
+
+---
+
 ## 15. Status snapshot
 
 A quick "where are we" for a future reader. Last updated alongside
-the §14.36 port artifact commit (sub-slice #18 shipped).
+the §14.37 byte-equality harness (sub-slice #19 shipped; Phase B
+closes out with 2 port divergences fixed + 1 documented follow-on).
 
 | Area                     | State                                                            |
 |--------------------------|------------------------------------------------------------------|
@@ -5105,7 +5343,7 @@ the §14.36 port artifact commit (sub-slice #18 shipped).
 | Delete / station-reset   | Shipped (14.10). Per-row delete + station nuke; cascades.        |
 | Disk-export UI button    | Shipped (14.11). Trace viewer "Export to disk" + status line.    |
 | Backup / restore         | Shipped (§14.18). `make backup` / `make restore date=...` with WAL-aware sqlite3 .backup + pre-restore safety copy. |
-| **§17 pre-port roadmap** | **Phase A complete (§14.17–§14.21). Phase B underway: sub-slices #5 (§14.23), #7 (§14.22), #8 (§14.24), #9 (§14.25), #10 (§14.26), #11 (§14.27), #12 (§14.28), #13 (§14.29 + §14.30), #14 (§14.31), #15 (§14.32), #16 (§14.34), #17 (§14.35), #18 (§14.36) shipped + §14.33 whole-project review fixes. Sub-slice #18 ships `stations/rebirth-radio.json` (2,196 slots, 9 cursors, MASTER reference role) + placeholder pool manifest; `make refresh-rebirth-radio` regenerates the artifact from a live weekly checkout. **Next + last: sub-slice #19 = byte-equality verification harness (Phase B's acceptance criterion). After #19, Phase B is done.** |
+| **§17 pre-port roadmap** | **Phase A complete (§14.17–§14.21). Phase B complete: sub-slices #5–#19 shipped (§14.22–§14.37) + §14.33 whole-project review fixes. §14.37 byte-equality harness found three port divergences against real weekly: two fixed (sequential coalescing in the translator + cursor wrap in the engine), one filed as a follow-on (NIGHT/WEEKEND pool position divergence — `test_port_byte_equality` xfail(strict=True) until follow-on fix lands). Phase B engineering closed; the follow-on bridges into Phase C. |
 | Visual block editor      | Deferred (v2). Lands as §17 Phase B after Phase A unblocks.      |
 | Trace versioning         | Deferred. See §16.4 (queued behind §16.1 by design).             |
 | Accessibility pass       | Deferred. §17 Phase D — single sweep after §16.2 + port.         |

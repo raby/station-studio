@@ -146,7 +146,9 @@ def test_main_imports_sample_fixture_end_to_end(tmp_path, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "created" in out
     assert "sample-rb" in out
-    assert "13 slots" in out
+    # 13 weekly slots → 12 flat_slots after §14.37 c2 sequential
+    # coalescing (two consecutive NIGHT_1 slots merge to one size=2).
+    assert "12 slots" in out
     assert "4 cursors" in out
 
     # Confirm the row landed.
@@ -154,7 +156,7 @@ def test_main_imports_sample_fixture_end_to_end(tmp_path, monkeypatch, capsys):
     SessionLocal = make_sessionmaker(engine)
     with SessionLocal() as db:
         row = db.query(Station).filter_by(slug="sample-rb").one()
-        assert len(row.template["layout"]["flat_slots"]) == 13
+        assert len(row.template["layout"]["flat_slots"]) == 12
 
 
 def test_main_returns_nonzero_for_missing_file(tmp_path, monkeypatch, capsys):
@@ -193,7 +195,8 @@ def test_translate_only_returns_station_studio_format():
     assert out["name"] == "X"
     assert out["cadence"] == "weekly"
     assert out["cursor"]["persist"] is True
-    assert len(out["layout"]["flat_slots"]) == 13
+    # 13 weekly slots → 12 flat_slots after §14.37 c2 coalescing.
+    assert len(out["layout"]["flat_slots"]) == 12
 
 
 def test_main_output_mode_writes_json_without_touching_db(tmp_path, monkeypatch, capsys):
@@ -213,7 +216,8 @@ def test_main_output_mode_writes_json_without_touching_db(tmp_path, monkeypatch,
     # File exists + parses cleanly.
     written = json.loads(out_path.read_text())
     assert written["station"] == "sample-rb"
-    assert len(written["layout"]["flat_slots"]) == 13
+    # 13 weekly slots → 12 flat_slots after §14.37 c2 coalescing.
+    assert len(written["layout"]["flat_slots"]) == 12
 
     # No DB file was ever created — --output mode short-circuits before
     # make_engine() runs. The file path was set via STATION_STUDIO_DB_URL
@@ -255,11 +259,13 @@ def test_committed_rebirth_radio_template_parses_cleanly():
     assert tmpl.station == "rebirth-radio"
     assert tmpl.cadence == "weekly"
     assert tmpl.rng == "on"
-    # Real weekly is 2,196 slots / 9 cursors — the dump+translate
-    # pipeline preserves both. Fixed numbers because the artifact is
-    # committed; if weekly's template changes, run
-    # `make refresh-rebirth-radio WEEKLY_DIR=/path/to/weekly`.
-    assert len(tmpl.layout.flat_slots) == 2196
+    # Real weekly is 2,196 slots / 9 cursors. After §14.37 c2's
+    # sequential coalescing, consecutive same-cursor sequential slots
+    # merge into one size=N block → 1,111 flat_slots (9 sequential
+    # blocks covering 1,085 picks + 26 non-sequential blocks).
+    # Fixed numbers because the artifact is committed; if weekly's
+    # template changes, run `make refresh-rebirth-radio WEEKLY_DIR=…`.
+    assert len(tmpl.layout.flat_slots) == 1111
     assert len(tmpl.layout.cursors_init) == 9
     assert set(tmpl.layout.cursors_init.keys()) == {
         "NIGHT_1", "NIGHT_2", "NIGHT_3", "NIGHT_4",
