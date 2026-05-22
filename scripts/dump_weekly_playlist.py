@@ -86,9 +86,27 @@ from pathlib import Path
 DEFAULT_SEED_BASE = 42
 
 # Weeks weekly generates in this dump (matches station-studio's
-# real-XML test). Asserted weeks are a subset for diversity-of-state.
-WEEKS_GENERATED = list(range(2, 10))    # 2, 3, 4, 5, 6, 7, 8, 9
-WEEKS_ASSERTED = [2, 3, 5, 9]
+# real-XML test). Asserted weeks are a subset chosen for diversity
+# of state coverage.
+#
+# §14.41 (Phase B depth symmetry with Classics + mix-exclusion slide):
+# extended from 8 generations (weeks 2-9) to 30 (weeks 2-31).
+#
+# Asserted-week selection rationale:
+#   * 2  — first generation; MixUsage history empty (imported priors
+#          have slot_type="imported", contribute no MixUsage rows).
+#   * 3  — small mix-exclusion history (1 prior generation).
+#   * 5  — mid-cycle small state.
+#   * 9  — continuity with the pre-§14.41 4-asserted-week chain.
+#   * 16 — Classics-cycle depth equivalent (symmetry with §14.40).
+#   * 22 — LAST week before the first mix-exclusion-window slide
+#          (window=20; weeks N-20..N-1 → week 22 still covers all
+#          of weeks 2-21).
+#   * 26 — 3 slides in (weeks 2/3/4/5 dropped out of exclusion).
+#   * 30 — multi-slide territory; deep cursor advancement;
+#          stress-tests sequential-cursor wrap + mix exclusion math.
+WEEKS_GENERATED = list(range(2, 32))    # 2..31 = 30 generations
+WEEKS_ASSERTED = [2, 3, 5, 9, 16, 22, 26, 30]
 
 
 def _import_weekly_modules():

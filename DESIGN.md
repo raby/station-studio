@@ -5929,15 +5929,121 @@ not engineering work. Phase B is done.
 
 ---
 
+### 14.41 weekly port byte-equality — 30-week depth + mix-exclusion slide
+
+**Goal.** Bring the weekly port test's regression-locking depth in
+line with Classics's (§14.40 ships 16 asserted weeks for Classics;
+weekly was at 4). Plus exercise the **mix-exclusion-window
+sliding** behavior — a real semantic test that the prior 8-week
+chain couldn't reach.
+
+#### The exclusion-slide math
+
+`mix_exclusion_weeks` default is 20. For generation week `N`, the
+engine excludes MixUsage rows where `playlist.week ∈ {N-20, …, N-1}`.
+
+| Week | Excluded set | Note |
+|---|---|---|
+| 2 | {} | Empty — imported priors have `slot_type="imported"`, no MixUsage rows |
+| 3 | {2} | Single prior |
+| 22 | {2..21} | Window covers ALL generated weeks |
+| 23 | {3..22} | **First slide** — week 2 drops out, becomes eligible again |
+| 26 | {6..25} | 4 slides in |
+| 30 | {10..29} | 8 slides in |
+
+Going past week 22 specifically catches sliding-window regressions
+that the pre-§14.41 chain (weeks 2-9, no slides) couldn't surface.
+
+**Pool exhaustion vs slide**: Real weekly pools have ~750 mix
+tracks across genres. Even with 20 weeks of exclusion, the
+eligible set never empties — the `relaxed=True` fallback in
+`engine.strategies.mix` doesn't fire. The synthetic test
+(§14.37 c1, smaller MIXES pool) covers that fallback path
+separately; this slice covers the sliding-window path.
+
+#### What ships in §14.41
+
+* `scripts/dump_weekly_playlist.py`: bumped `WEEKS_GENERATED =
+  list(range(2, 32))` (30 generations, was 8) and
+  `WEEKS_ASSERTED = [2, 3, 5, 9, 16, 22, 26, 30]` (8 weeks
+  spanning empty-history → pre-slide → post-slide → multi-slide
+  → deep-cursor territory).
+* `tests/fixtures/expected/port_byte_eq.json`: regenerated. Now
+  ~1.8 MB (was ~200 KB); 65,880 PIDs across 30 weeks.
+* No code changes in the test itself — the `_validate_prior_seed_fixture`
+  (§14.40 sweep c1) already accepts the deeper fixture shape; the
+  `generate_chain` helper iterates whatever `WEEKS_GENERATED` says.
+* §14.41 DESIGN entry (this section) + §15 status snapshot.
+
+**Test runtime**: ~19s for the 30-generation chain (was ~7s for 8).
+Acceptable; still skip-when-XMLs-missing in CI.
+
+#### Asserted-week selection rationale
+
+| Week | Locks in |
+|---|---|
+| 2 | First generation; empty MixUsage history |
+| 3 | Single-week mix exclusion |
+| 5 | Mid-cycle small state |
+| 9 | **Continuity** with the pre-§14.41 4-asserted-week chain |
+| 16 | **Depth symmetry** with Classics's 16-week cycle (§14.40) |
+| 22 | Last pre-slide week (window still covers all history) |
+| 26 | 4 slides in (weeks 2-5 dropped from exclusion) |
+| 30 | Multi-slide territory + deep cursor advancement |
+
+#### What this rules out
+
+The byte-equality test now catches:
+
+* **Mix-exclusion week-counting bugs** — off-by-one in window
+  bounds, wrong base-week for the slide.
+* **Cursor wrap at deep advance** — NIGHT cursor at week 30 has
+  advanced (30 × 120 = 3600) past the NIGHT pool's 1911 entries
+  → modular wrap. The synthetic test exercises wrap; this exercises
+  it AT PRODUCTION SCALE.
+* **Long-chain prev_ref correctness** — each week's prev_ref reads
+  week N-1; 30 chained reads are 30 chances for prev_ref to drift.
+* **save_playlist / advance_cursors interaction** — running the
+  persistence flow 30 times surfaces any cumulative state issue.
+
+All of these were previously "presumed correct" via the synthetic
+test + the 8-week real-weekly chain. §14.41 lifts that to
+"verified at production scale across the exclusion-window cycle."
+
+#### Queued follow-on: §14.42 — Classics cycle wrap
+
+Today's Classics fixture (§14.40) asserts weeks 1-16 (the full
+`cycle_weeks=16` cycle). Week 17+ would WRAP — cursor returns to
+position 0. §14.42 could extend the Classics test to weeks 1-32
+(2 full cycles) to lock the wrap. Cheap follow-on; not blocking.
+
+#### Phase B depth status
+
+Both stations are now regression-locked across multi-month chains:
+
+| Station | Generated weeks | Asserted weeks | Mix exclusion slide |
+|---|---|---|---|
+| weekly (rebirth-radio) | 30 (weeks 2-31) | 8 | ✅ exercised at weeks 23-30 |
+| Classics (rebirth-classics) | 16 (weeks 1-16) | 16 (all) | n/a (no mix strategy) |
+| Synthetic floor | 8 | 4 | ✅ relax fallback exercised at week 6+ |
+
+The depth asymmetry from §14.40 (Classics 16, weekly 4) is
+closed. Both production-scale byte-equality tests catch their
+respective station-shape's regression class at meaningful depth.
+
+---
+
 ## 15. Status snapshot
 
 A quick "where are we" for a future reader. Last updated alongside
-the §14.40 Classics byte-equality slice. **Phase B is DONE.** Both
-station-studio's byte-equality tests are GREEN: weekly port (real
-XMLs, 4 asserted weeks) and Classics (16-week full cycle,
-synthetic pools, freeze-against-self). The engine handles two
-structurally distinct stations through the same code path — the
-"weekly is one instance, not the shape" claim has receipts.
+the §14.41 weekly port depth-symmetry slice. **Phase B is DONE
++ DEEPENED.** Both station-studio's byte-equality tests are GREEN
+at production-scale chain depth: weekly port (real XMLs, 30
+generations, 8 asserted weeks spanning the mix-exclusion-window
+slide) and Classics (16-week full cycle, synthetic pools,
+freeze-against-self). The engine handles two structurally
+distinct stations through the same code path — the "weekly is
+one instance, not the shape" claim has receipts at depth.
 
 | Area                     | State                                                            |
 |--------------------------|------------------------------------------------------------------|
