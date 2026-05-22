@@ -5519,12 +5519,37 @@ same loader logic.
   top-level. Schema bumped to 2.
 * `tests/fixtures/expected/port_byte_eq.json`: regenerated.
 * `tests/test_port_byte_equality.py:port_db`: reads `priors[0]`,
-  seeds Playlist + CursorState. Clean error on `len(priors) != 1`.
+  seeds Playlist + CursorState. Strict validation (R1 sweep-up) +
+  cursor-name cross-check against template + drop-rate guard
+  (R2 sweep-up).
 * DESIGN.md §14.38 entry (this section).
 * §15 status snapshot updated.
 
-Single commit, no mid-slice review (small scope; no engine change).
-Slice-level review after it lands.
+Single commit + sweep-up commit after slice review. The slice review
+caught 5 things worth addressing before §14.39 starts:
+
+* **R1**: Loader was far less strict than sibling parsers
+  (§14.32/.34/.35). Sweep-up lifted `_validate_prior_seed_fixture`
+  with allowlist + per-field types + cursor-name cross-check against
+  the station template's `cursors_init`. Matches the project's
+  strict-parsing pattern; typo'd cursor names now fail loud instead
+  of writing dead rows.
+* **R2**: Silent PID drops had no telemetry. Sweep-up adds a
+  drop-rate guard — `>5%` drops triggers `pytest.fail` with a
+  refresh-fixture suggestion.
+* **R3**: `trace_id` sentinel changed from `"imported-prior-seed"`
+  to `"imported-prior:week{N}"`. The `imported-prior:` prefix
+  documents intent + distinguishes from generation UUIDs; any future
+  code that filters trace_id on UUID shape skips imported priors
+  correctly.
+* **R4**: `len(priors) == 0` now valid (was: rejected). Enables
+  §14.40's stateless Classics fixture to use the same loader.
+  Multi-prior (`> 1`) still rejected; queued as §14.38b.
+* **R5**: `cursors: {}` flow tested explicitly (stateless template's
+  prior-seed declaration).
+
+13 new unit tests cover the validator + cursor-name check + trace_id
+helper. All run without WEEKLY_FROM_USER_DIR (CI-friendly).
 
 #### Verification outcome
 

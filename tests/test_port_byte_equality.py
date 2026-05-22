@@ -102,6 +102,148 @@ def _check_xmls_or_skip(from_user: Path | None) -> Path:
     return from_user
 
 
+# ---------- §14.38 prior-seed validator + loader (R1+R2+R3+R4 sweep-up) -
+
+
+_ALLOWED_FIXTURE_TOP_LEVEL = {
+    "schema_version", "seed_base", "weeks_generated", "weeks_asserted",
+    "priors", "weeks", "_comment",
+}
+_REQUIRED_PRIOR_KEYS = {"week", "pids", "cursors"}
+_ALLOWED_PRIOR_KEYS = {"week", "pids", "cursors"}
+
+# Max fraction of PID-resolution drops before the loader fails. A few
+# drops are expected (weekly's WEEKLY 001 references historical tracks
+# no longer in active pools — matches weekly's importer silent-skip).
+# Many drops mean the fixture is stale OR pools were imported from a
+# different XML revision. R2 sweep-up.
+_MAX_PID_DROP_FRACTION = 0.05
+
+
+class _PriorSeedError(AssertionError):
+    """Raised when fixture validation fails (§14.38)."""
+
+
+def _validate_prior_seed_fixture(fixture: dict) -> None:
+    """Strict-mode fixture validation (§14.38 R1 sweep-up).
+
+    Calibrated against the §14.32 / §14.34 / §14.35 strict-parser
+    pattern: top-level allowlist + per-prior allowlist + per-field
+    type checks. Catches typos that would otherwise silently drop
+    data downstream.
+
+    Allows `len(priors) in {0, 1}` so §14.40 can use the same loader
+    for a stateless Classics fixture (no prior seed needed). Multi-
+    prior (`len > 1`) is queued as §14.38b.
+    """
+    if not isinstance(fixture, dict):
+        raise _PriorSeedError(
+            f"fixture must be a JSON object, got {type(fixture).__name__}"
+        )
+    if fixture.get("schema_version") != 2:
+        raise _PriorSeedError(
+            f"fixture schema_version={fixture.get('schema_version')!r}; "
+            f"expected 2 (§14.38). Regenerate via "
+            f"`make refresh-port-fixture …`."
+        )
+    unknown_top = set(fixture.keys()) - _ALLOWED_FIXTURE_TOP_LEVEL
+    if unknown_top:
+        raise _PriorSeedError(
+            f"fixture has unknown top-level keys: {sorted(unknown_top)}. "
+            f"Allowed: {sorted(_ALLOWED_FIXTURE_TOP_LEVEL)}."
+        )
+    priors = fixture.get("priors")
+    if not isinstance(priors, list):
+        raise _PriorSeedError(
+            f"fixture 'priors' must be a list, got {type(priors).__name__}"
+        )
+    if len(priors) > 1:
+        raise _PriorSeedError(
+            f"fixture has {len(priors)} priors; loader supports 0 or 1 "
+            f"(multi-prior is §14.38b — queued)."
+        )
+    for i, prior in enumerate(priors):
+        if not isinstance(prior, dict):
+            raise _PriorSeedError(
+                f"priors[{i}] must be an object, got {type(prior).__name__}"
+            )
+        missing = _REQUIRED_PRIOR_KEYS - set(prior.keys())
+        if missing:
+            raise _PriorSeedError(
+                f"priors[{i}] missing required keys: {sorted(missing)}. "
+                f"Required: {sorted(_REQUIRED_PRIOR_KEYS)}."
+            )
+        unknown = set(prior.keys()) - _ALLOWED_PRIOR_KEYS
+        if unknown:
+            raise _PriorSeedError(
+                f"priors[{i}] has unknown keys: {sorted(unknown)}. "
+                f"Allowed: {sorted(_ALLOWED_PRIOR_KEYS)}."
+            )
+        if not isinstance(prior["week"], int):
+            raise _PriorSeedError(
+                f"priors[{i}].week must be int, got "
+                f"{type(prior['week']).__name__}"
+            )
+        if not isinstance(prior["pids"], list):
+            raise _PriorSeedError(
+                f"priors[{i}].pids must be a list, got "
+                f"{type(prior['pids']).__name__}"
+            )
+        for j, pid in enumerate(prior["pids"]):
+            if not isinstance(pid, str):
+                raise _PriorSeedError(
+                    f"priors[{i}].pids[{j}] must be a string, got "
+                    f"{type(pid).__name__}"
+                )
+        if not isinstance(prior["cursors"], dict):
+            raise _PriorSeedError(
+                f"priors[{i}].cursors must be an object, got "
+                f"{type(prior['cursors']).__name__}"
+            )
+        for name, pos in prior["cursors"].items():
+            if not isinstance(name, str) or not name:
+                raise _PriorSeedError(
+                    f"priors[{i}].cursors key must be a non-empty string, "
+                    f"got {name!r}"
+                )
+            if not isinstance(pos, int):
+                raise _PriorSeedError(
+                    f"priors[{i}].cursors[{name!r}] must be int, got "
+                    f"{type(pos).__name__}"
+                )
+
+
+def _validate_prior_cursor_names(prior: dict, template_cursors: set[str]) -> None:
+    """Cross-check prior's cursor names against the station template's
+    `cursors_init`. A typo would otherwise create a dead
+    `cursor_state` row that runtime silently ignores — exactly the
+    silent-field-drop class of bug this slice fights against. R1
+    sweep-up.
+    """
+    declared = set(prior["cursors"].keys())
+    unknown = declared - template_cursors
+    if unknown:
+        raise _PriorSeedError(
+            f"prior declares cursors {sorted(unknown)} that are NOT in "
+            f"the station template's cursors_init (declared: "
+            f"{sorted(template_cursors)}). A typo here would create a "
+            f"dead cursor_state row that runtime ignores — fail loud "
+            f"instead."
+        )
+
+
+def _trace_id_for_prior(week: int) -> str:
+    """Build a clearly-non-UUID trace_id for an imported prior playlist.
+
+    Format: `imported-prior:week{N}`. The `imported-prior:` prefix
+    documents intent + distinguishes from generation traces (full
+    UUIDs). Any future code that filters `Playlist.trace_id` on UUID
+    shape will skip these correctly; explicit prior-aware filters can
+    pattern-match the prefix. R3 sweep-up.
+    """
+    return f"imported-prior:week{week}"
+
+
 @pytest.fixture
 def port_db(tmp_path) -> Session:
     """Build a DB with weekly's imported prior seed (§14.38):
@@ -130,22 +272,13 @@ def port_db(tmp_path) -> Session:
         )
     fixture = json.loads(EXPECTED_FIXTURE.read_text())
 
-    # §14.38: validate the fixture's prior-seed shape. The loader is
-    # single-prior only (multi-prior is queued as §14.38b).
-    schema = fixture.get("schema_version")
-    if schema != 2:
-        pytest.fail(
-            f"fixture schema_version={schema!r}; expected 2 (§14.38). "
-            f"Regenerate via `make refresh-port-fixture …`."
-        )
-    priors = fixture.get("priors")
-    if not isinstance(priors, list) or len(priors) != 1:
-        pytest.fail(
-            f"fixture must contain exactly 1 prior (§14.38 single-prior "
-            f"limit; multi-prior support queued as §14.38b). "
-            f"Got: len(priors)={len(priors) if isinstance(priors, list) else 'n/a'}."
-        )
-    prior = priors[0]
+    # Strict validation (§14.38 R1 sweep-up) — lifts the §14.32/.34/.35
+    # pattern. A fixture typo (`cursor` for `cursors`, missing field,
+    # wrong types) now fails loud with a clear message.
+    try:
+        _validate_prior_seed_fixture(fixture)
+    except _PriorSeedError as e:
+        pytest.fail(f"fixture validation: {e}")
 
     engine = make_engine(f"sqlite:///{tmp_path}/port.db")
     Base.metadata.create_all(engine)
@@ -168,55 +301,76 @@ def port_db(tmp_path) -> Session:
         db.add(station)
         db.flush()
 
-        # Step 3 — load the §14.38 prior seed.
-        #
-        # 3a. Pre-seed Playlist(week=N) + PlaylistEntry rows. Look
-        # up Track ids by persistent_id (cross-pool stable identifier).
-        # Some WEEKLY 001 tracks aren't in the 6 imported pools (weekly
-        # has historical tracks no longer in active rotation); those
-        # entries are skipped, mirroring weekly's import_source.
-        prior_week = prior["week"]
-        prior_pids = prior["pids"]
-        prior_cursors = prior.get("cursors", {})
+        # Step 3 — load priors (0 or 1 entries; multi-prior is §14.38b).
+        priors = fixture["priors"]
+        if priors:
+            prior = priors[0]
+            # Cross-validate prior's cursor names against the template's
+            # declared cursors (R1 sweep-up).
+            template_cursors = set(
+                tmpl_dict.get("layout", {}).get("cursors_init", {}).keys()
+            )
+            try:
+                _validate_prior_cursor_names(prior, template_cursors)
+            except _PriorSeedError as e:
+                pytest.fail(f"fixture validation: {e}")
 
-        pid_to_track = {
-            t.persistent_id: t
-            for t in db.query(Track).filter(
-                Track.persistent_id.in_(prior_pids)
-            ).all()
-        }
-        # Sentinel trace_id: imported priors are not station-studio
-        # generations and have no trace. Playlist.trace_id is non-null;
-        # the marker string is clearly not a UUID. prev_ref doesn't
-        # read it.
-        prior_playlist = Playlist(
-            station_id=station.id, week=prior_week,
-            trace_id="imported-prior-seed",
-        )
-        db.add(prior_playlist)
-        db.flush()
-        for position, pid in enumerate(prior_pids):
-            track = pid_to_track.get(pid)
-            if track is None:
-                continue
-            db.add(PlaylistEntry(
-                playlist_id=prior_playlist.id,
-                track_id=track.id,
-                position=position,
-                slot_type="imported",
-            ))
+            # 3a. Pre-seed Playlist(week=N) + PlaylistEntry rows. Some
+            # WEEKLY 001 tracks aren't in the 6 active pools (weekly
+            # has historical tracks no longer in rotation); a small
+            # fraction of drops is expected and matches weekly's
+            # importer. But a HIGH drop rate means the fixture is
+            # stale or pools drifted — fail loud (R2 sweep-up).
+            prior_week = prior["week"]
+            prior_pids = prior["pids"]
+            prior_cursors = prior["cursors"]
 
-        # 3b. Seed CursorState from prior['cursors']. Each entry maps
-        # cursor name → integer position. Loader is dumb: writes
-        # verbatim, no derivation. Weekly's quirk of hardcoding
-        # advance_step=120 in `initialize_cursors(post_first=True)`
-        # lives in the dumped values, not here.
-        for cursor_name, position in prior_cursors.items():
-            db.add(CursorState(
-                station_id=station.id,
-                name=cursor_name,
-                position=position,
-            ))
+            pid_to_track = {
+                t.persistent_id: t
+                for t in db.query(Track).filter(
+                    Track.persistent_id.in_(prior_pids)
+                ).all()
+            }
+            dropped = sum(1 for p in prior_pids if p not in pid_to_track)
+            if prior_pids and dropped / len(prior_pids) > _MAX_PID_DROP_FRACTION:
+                pytest.fail(
+                    f"prior PID resolution dropped {dropped} of "
+                    f"{len(prior_pids)} ({dropped / len(prior_pids):.0%}) "
+                    f"— more than {_MAX_PID_DROP_FRACTION:.0%}. Fixture "
+                    f"is likely stale or pools were imported from a "
+                    f"different XML revision. Run `make refresh-port-"
+                    f"everything WEEKLY_DIR=… WEEKLY_FROM_USER_DIR=…`."
+                )
+
+            prior_playlist = Playlist(
+                station_id=station.id, week=prior_week,
+                trace_id=_trace_id_for_prior(prior_week),
+            )
+            db.add(prior_playlist)
+            db.flush()
+            for position, pid in enumerate(prior_pids):
+                track = pid_to_track.get(pid)
+                if track is None:
+                    # Sub-threshold drop (see fail-loud above).
+                    continue
+                db.add(PlaylistEntry(
+                    playlist_id=prior_playlist.id,
+                    track_id=track.id,
+                    position=position,
+                    slot_type="imported",
+                ))
+
+            # 3b. Seed CursorState from prior['cursors']. Loader is
+            # dumb: writes verbatim, no derivation. Weekly's quirk of
+            # hardcoding advance_step=120 in
+            # `initialize_cursors(post_first=True)` lives in the
+            # dumped values, not here.
+            for cursor_name, position in prior_cursors.items():
+                db.add(CursorState(
+                    station_id=station.id,
+                    name=cursor_name,
+                    position=position,
+                ))
 
         db.commit()
         yield db
@@ -279,3 +433,134 @@ def test_rebirth_radio_chain_matches_weekly_byte_for_byte(port_db):
     }
 
     assert_chain_equal(expected_chain, actual_chain, slot_refs_by_week)
+
+
+# ---------- §14.38 R1 / R3 / R4 / R5 sweep-up tests ---------------------
+#
+# These always run (no XML data required) — they cover the prior-seed
+# validator + the helper functions. The byte-equality test above is the
+# integration check; these are unit-level locks for the strictness
+# pattern.
+
+
+def _valid_minimal_fixture(priors: list[dict] | None = None) -> dict:
+    return {
+        "schema_version": 2,
+        "seed_base": 42,
+        "weeks_generated": [2],
+        "weeks_asserted": [2],
+        "priors": priors if priors is not None else [],
+        "weeks": [{"week": 2, "seed": 44, "pids": []}],
+    }
+
+
+def test_validate_accepts_minimal_zero_prior_fixture():
+    """R4: priors=[] is valid (§14.40 stateless-station case)."""
+    _validate_prior_seed_fixture(_valid_minimal_fixture(priors=[]))
+
+
+def test_validate_accepts_one_prior_with_empty_cursors():
+    """R5: cursors={} is valid (stateless station's prior seed
+    declaration). Loader writes zero rows; runtime falls back to
+    template's cursors_init."""
+    _validate_prior_seed_fixture(_valid_minimal_fixture(priors=[
+        {"week": 1, "pids": [], "cursors": {}},
+    ]))
+
+
+def test_validate_rejects_unknown_schema_version():
+    bad = _valid_minimal_fixture()
+    bad["schema_version"] = 1
+    with pytest.raises(_PriorSeedError, match="schema_version=1"):
+        _validate_prior_seed_fixture(bad)
+
+
+def test_validate_rejects_unknown_top_level_keys():
+    bad = _valid_minimal_fixture()
+    bad["bogus_field"] = 42
+    with pytest.raises(_PriorSeedError, match="unknown top-level keys.*bogus_field"):
+        _validate_prior_seed_fixture(bad)
+
+
+def test_validate_rejects_multi_prior_pending_14_38b():
+    """R4: 2+ priors is queued as §14.38b; loader rejects loudly."""
+    bad = _valid_minimal_fixture(priors=[
+        {"week": 1, "pids": [], "cursors": {}},
+        {"week": 2, "pids": [], "cursors": {}},
+    ])
+    with pytest.raises(_PriorSeedError, match="2 priors.*supports 0 or 1"):
+        _validate_prior_seed_fixture(bad)
+
+
+def test_validate_rejects_prior_missing_required_field():
+    bad = _valid_minimal_fixture(priors=[{"week": 1, "pids": []}])
+    with pytest.raises(_PriorSeedError, match="missing required keys.*cursors"):
+        _validate_prior_seed_fixture(bad)
+
+
+def test_validate_rejects_prior_with_unknown_field():
+    bad = _valid_minimal_fixture(priors=[{
+        "week": 1, "pids": [], "cursors": {}, "typo_field": True,
+    }])
+    with pytest.raises(_PriorSeedError, match="unknown keys.*typo_field"):
+        _validate_prior_seed_fixture(bad)
+
+
+def test_validate_rejects_pids_not_list():
+    """R1: a string `pids` field would silently iterate per-char
+    without this check."""
+    bad = _valid_minimal_fixture(priors=[
+        {"week": 1, "pids": "ABCDEF", "cursors": {}},
+    ])
+    with pytest.raises(_PriorSeedError, match="pids must be a list"):
+        _validate_prior_seed_fixture(bad)
+
+
+def test_validate_rejects_non_string_pid():
+    bad = _valid_minimal_fixture(priors=[
+        {"week": 1, "pids": ["GOOD_PID", 12345], "cursors": {}},
+    ])
+    with pytest.raises(_PriorSeedError, match=r"pids\[1\] must be a string"):
+        _validate_prior_seed_fixture(bad)
+
+
+def test_validate_rejects_non_int_cursor_position():
+    """R1: a string `position` would write to CursorState.position
+    without crashing on SQLite, surfacing as wrong picks much later."""
+    bad = _valid_minimal_fixture(priors=[
+        {"week": 1, "pids": [], "cursors": {"NIGHT_1": "120"}},
+    ])
+    with pytest.raises(_PriorSeedError, match="cursors.*must be int"):
+        _validate_prior_seed_fixture(bad)
+
+
+def test_validate_cursor_names_against_template_catches_typos():
+    """R1: a misspelled cursor name (NITE_1 instead of NIGHT_1) would
+    write a dead row that runtime silently ignores. Cross-validation
+    catches it loud."""
+    prior = {"week": 1, "pids": [],
+             "cursors": {"NIGHT_1": 120, "NITE_2": 130}}
+    template_cursors = {"NIGHT_1", "NIGHT_2"}
+    with pytest.raises(_PriorSeedError, match=r"cursors \['NITE_2'\].*NOT in"):
+        _validate_prior_cursor_names(prior, template_cursors)
+
+
+def test_validate_cursor_names_passes_subset_of_template():
+    """R1: declaring a SUBSET of the template's cursors is valid.
+    Runtime falls back to template's cursors_init for the missing
+    ones — verified separately by load_cursor_positions's behavior."""
+    prior = {"week": 1, "pids": [], "cursors": {"NIGHT_1": 120}}
+    template_cursors = {"NIGHT_1", "NIGHT_2", "WEEKEND_1"}
+    _validate_prior_cursor_names(prior, template_cursors)  # no raise
+
+
+def test_trace_id_for_prior_uses_explicit_prefix():
+    """R3: trace_id is clearly-non-UUID so future filters/code paths
+    that pattern-match UUID shape skip imported priors correctly."""
+    assert _trace_id_for_prior(1) == "imported-prior:week1"
+    assert _trace_id_for_prior(42) == "imported-prior:week42"
+    # Doesn't look anything like a UUID — failure mode is "future
+    # code expects UUID, breaks loud" rather than "silently matches
+    # a real generation."
+    assert "-" in _trace_id_for_prior(1)
+    assert len(_trace_id_for_prior(1)) != 36  # UUIDs are 36 chars
