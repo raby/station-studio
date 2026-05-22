@@ -84,6 +84,39 @@ def slot_ref_from_block(week: int, slot_index: int, block) -> SlotRef:
     )
 
 
+def expand_block_slot_refs(week: int, blocks: Iterable) -> list[SlotRef]:
+    """Build ONE SlotRef per PICK (not per BLOCK).
+
+    The §14.37 c2 mid-slice review caught the harness lying: pids are
+    per-pick (2,196 for rebirth-radio.json) but slot_refs were per-block
+    (1,111 after coalescing). After the first size=95 block, slot_ref
+    index 218 labelled the NEXT block (a jingle) while pid index 218
+    was the 2ND PICK of the NIGHT_1 sequential — the diagnostic
+    pointed at the wrong template position.
+
+    This helper expands each block into `block.size` slot_refs sharing
+    the same block-level metadata but distinguished by a
+    `pick_in_block` field (1-indexed within the block). After
+    expansion, `len(refs) == sum(block.size)` matches the pids list
+    length.
+
+    Use this helper when comparing the full per-pick pid sequence; use
+    `slot_ref_from_block` directly only when you're labelling blocks
+    one-to-one (e.g. structural template inspection).
+    """
+    refs: list[SlotRef] = []
+    for block in blocks:
+        size = getattr(block, "size", None)
+        if size is None and isinstance(block, dict):
+            size = block.get("size", 1)
+        size = size if size is not None else 1
+        for offset in range(size):
+            r = slot_ref_from_block(week=week, slot_index=len(refs), block=block)
+            r.extra["pick_in_block"] = offset + 1
+            refs.append(r)
+    return refs
+
+
 def find_first_divergence(
     expected_pids: Sequence[str],
     actual_pids: Sequence[str],
@@ -166,6 +199,17 @@ def assert_pids_equal(
             f"Usually a template-slot-count drift (the synthetic template "
             f"was edited without regenerating the fixture), or a strategy "
             f"raised mid-loop and the chain truncated. Check both."
+        )
+    if len(slot_refs) < len(expected_pids):
+        # Diagnostic prerequisite: one SlotRef per pid. The
+        # expand_block_slot_refs helper guarantees this when given a
+        # parsed template; a stale caller passing per-BLOCK refs would
+        # IndexError below. Fail clean here with a usable error.
+        raise AssertionError(
+            f"{prefix}slot_refs/pids alignment mismatch: "
+            f"{len(slot_refs)} refs for {len(expected_pids)} pids. "
+            f"Callers should use `expand_block_slot_refs` to build one "
+            f"ref per PICK; per-block refs misalign once blocks have size>1."
         )
 
     div = find_first_divergence(expected_pids, actual_pids)

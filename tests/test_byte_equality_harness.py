@@ -10,6 +10,7 @@ from tests.byte_equality import (
     SlotRef,
     assert_chain_equal,
     assert_pids_equal,
+    expand_block_slot_refs,
     find_first_divergence,
     render_divergence_context,
     slot_ref_from_block,
@@ -201,3 +202,68 @@ def test_assert_chain_equal_reports_first_failing_week():
     msg = str(exc_info.value)
     assert "week 2:" in msg
     assert "week 4" not in msg  # second failure NOT reported
+
+
+# ---------- expand_block_slot_refs (per-PICK expansion) ----------------
+
+
+def test_expand_block_slot_refs_expands_size_n_blocks_per_pick():
+    """Each block.size=N produces N slot_refs sharing block metadata
+    but distinguished by `pick_in_block` (1-indexed within the block).
+    This is the fix for the §14.37 c2 SlotRef-pick misalignment that
+    made the diagnostic point at the wrong template position."""
+    blocks = [
+        _FakeBlock(strategy="jingle", source="JINGLES", genre="Daytime"),  # size=1
+        _FakeBlock(strategy="sequential", source="NIGHT", cursor_id="N1"),  # size=1
+    ]
+    # Patch sizes after construction (FakeBlock defaults size to None).
+    blocks[0].size = 1
+    blocks[1].size = 95
+    refs = expand_block_slot_refs(week=2, blocks=blocks)
+    # Total picks = 1 + 95 = 96.
+    assert len(refs) == 96
+    # First pick is the jingle.
+    assert refs[0].strategy == "jingle"
+    assert refs[0].extra["pick_in_block"] == 1
+    # Second pick is the FIRST pick of the size=95 block.
+    assert refs[1].strategy == "sequential"
+    assert refs[1].extra["pick_in_block"] == 1
+    # Last pick is the 95th of the sequential block.
+    assert refs[95].strategy == "sequential"
+    assert refs[95].extra["pick_in_block"] == 95
+    # slot_index runs 0..95 across all picks (not per-block).
+    assert [r.slot_index for r in refs] == list(range(96))
+
+
+def test_expand_block_slot_refs_handles_dict_blocks():
+    """The translator emits dicts before parse_template; the helper
+    handles both block forms."""
+    blocks = [
+        {"strategy": "sequential", "source": "NIGHT",
+         "cursor_id": "N1", "size": 3},
+    ]
+    refs = expand_block_slot_refs(week=1, blocks=blocks)
+    assert len(refs) == 3
+    assert [r.extra["pick_in_block"] for r in refs] == [1, 2, 3]
+
+
+def test_expand_block_slot_refs_treats_missing_size_as_one():
+    """Defensive: a block without `size` defaults to 1 (matches
+    parser default)."""
+    block = _FakeBlock(strategy="weighted", source="COMMERCIAL")
+    # FakeBlock.size is None.
+    refs = expand_block_slot_refs(week=1, blocks=[block])
+    assert len(refs) == 1
+    assert refs[0].extra["pick_in_block"] == 1
+
+
+def test_assert_pids_equal_raises_clean_error_on_short_slot_refs():
+    """Length-precondition added in the sweep-up: a caller passing
+    per-BLOCK refs (shorter than the per-pick pids list) gets a
+    clean error instead of an IndexError from the diagnostic
+    renderer."""
+    # pids has 3 entries; slot_refs has 2 (e.g. one block has size=2
+    # but caller built refs per block).
+    short_refs = _slot_refs(2)
+    with pytest.raises(AssertionError, match="slot_refs/pids alignment mismatch"):
+        assert_pids_equal(["A", "B", "C"], ["A", "B", "X"], short_refs)

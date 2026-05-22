@@ -13,7 +13,7 @@
         backup backups restore \
         dev dev-backend dev-frontend \
         import-station import-weekly-pools refresh-rebirth-radio \
-        refresh-port-fixture
+        refresh-port-fixture refresh-port-everything
 
 PY := .venv/bin/python
 ALEMBIC := .venv/bin/alembic
@@ -327,3 +327,28 @@ refresh-port-fixture:
 	    --from-user "$(WEEKLY_FROM_USER_DIR)" \
 	    --out tests/fixtures/expected/port_byte_eq.json && \
 	  echo 'Done. Diff against the previous version with: git diff tests/fixtures/expected/port_byte_eq.json'
+
+# Refresh BOTH the rebirth-radio.json artifact AND the port byte-
+# equality fixture (§14.37 sweep-up). Useful when weekly's template
+# OR the translator changes — both rebirth-radio.json and
+# port_byte_eq.json may need to track. Independent of station-studio
+# generator changes (those don't change weekly's output).
+#
+# The two targets are run in this order: template first (so the
+# downstream port test runs against the up-to-date artifact), then
+# fixture. Either step can fail independently; the user diagnoses
+# from there.
+#
+# Usage:
+#   make refresh-port-everything WEEKLY_DIR=/path/to/weekly \
+#                                WEEKLY_FROM_USER_DIR=/path/to/weekly/from_user
+refresh-port-everything:
+	@if [ -z "$(WEEKLY_DIR)" ] || [ -z "$(WEEKLY_FROM_USER_DIR)" ]; then \
+		echo "Usage: make refresh-port-everything WEEKLY_DIR=… WEEKLY_FROM_USER_DIR=…"; \
+		echo "Runs refresh-rebirth-radio + refresh-port-fixture in order."; \
+		exit 1; \
+	fi
+	$(MAKE) refresh-rebirth-radio WEEKLY_DIR="$(WEEKLY_DIR)"
+	$(MAKE) refresh-port-fixture WEEKLY_DIR="$(WEEKLY_DIR)" WEEKLY_FROM_USER_DIR="$(WEEKLY_FROM_USER_DIR)"
+	@echo "Both refreshed. Run the port byte-equality test:"
+	@echo "  WEEKLY_FROM_USER_DIR=$(WEEKLY_FROM_USER_DIR) .venv/bin/python -m pytest tests/test_port_byte_equality.py"

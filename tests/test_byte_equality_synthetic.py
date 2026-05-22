@@ -56,7 +56,7 @@ from engine.models import Base, Station
 from engine.template import parse_template
 from scripts.import_weekly_pools import import_manifest
 from tests.byte_equality import (
-    SlotRef, assert_chain_equal, generate_chain, slot_ref_from_block,
+    assert_chain_equal, expand_block_slot_refs, generate_chain,
 )
 
 
@@ -144,23 +144,6 @@ def _generate_chain(db: Session) -> dict[int, list[str]]:
     )
 
 
-def _slot_refs_for_template(tmpl) -> list[SlotRef]:
-    """Build the slot-ref list once from the template. Reused across
-    all asserted weeks (same template, same slot shape per week).
-    Week is patched in per-assertion."""
-    return [
-        slot_ref_from_block(week=0, slot_index=i, block=block)
-        for i, block in enumerate(tmpl.layout.flat_slots)
-    ]
-
-
-def _patch_slot_refs(refs: list[SlotRef], week: int) -> list[SlotRef]:
-    """Return a copy with the week field updated."""
-    return [SlotRef(week=week, slot_index=r.slot_index,
-                    strategy=r.strategy, source=r.source, extra=r.extra)
-            for r in refs]
-
-
 def _expected_path(week: int) -> Path:
     return EXPECTED_DIR / f"synthetic_week{week}.json"
 
@@ -192,9 +175,12 @@ def test_synthetic_chain_matches_committed_fixtures(chain_db):
     refreshed fixtures."""
     pids_by_week = _generate_chain(chain_db)
 
-    # Slot refs are template-derived (same shape every week).
+    # Slot refs are template-derived (same shape every week). All
+    # synthetic blocks are size=1 so per-pick expansion is a no-op
+    # here — but we use the same expand_block_slot_refs helper as
+    # the port test for consistency. If a future synthetic template
+    # grows size>1 blocks, the diagnostic stays accurate.
     tmpl = parse_template(json.loads(STATION_TEMPLATE.read_text()))
-    base_refs = _slot_refs_for_template(tmpl)
 
     if _bootstrap_mode():
         if _is_ci():
@@ -219,7 +205,10 @@ def test_synthetic_chain_matches_committed_fixtures(chain_db):
 
     expected_chain = {w: _load_expected(w) for w in ASSERTED_WEEKS}
     actual_chain = {w: pids_by_week[w] for w in ASSERTED_WEEKS}
-    slot_refs_by_week = {w: _patch_slot_refs(base_refs, w) for w in ASSERTED_WEEKS}
+    slot_refs_by_week = {
+        w: expand_block_slot_refs(week=w, blocks=tmpl.layout.flat_slots)
+        for w in ASSERTED_WEEKS
+    }
 
     assert_chain_equal(expected_chain, actual_chain, slot_refs_by_week)
 

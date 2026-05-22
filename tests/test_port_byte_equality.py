@@ -48,7 +48,7 @@ from engine.importer import import_source
 from engine.models import Base, Playlist, PlaylistEntry, Station, Track
 from engine.template import parse_template
 from tests.byte_equality import (
-    SlotRef, assert_chain_equal, generate_chain, slot_ref_from_block,
+    assert_chain_equal, expand_block_slot_refs, generate_chain,
 )
 
 
@@ -191,28 +191,24 @@ def port_db(tmp_path) -> Session:
         db.close()
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "§14.37 c2 known port divergence — see DESIGN §14.37 'Divergences "
-        "found' section. Two blockers were caught and fixed in this slice "
-        "(sequential coalescing in the translator + cursor wrap in the "
-        "engine); a third divergence remains in the NIGHT/WEEKEND sequential "
-        "block's second-and-subsequent picks. Follow-on slice §14.38 will "
-        "diagnose + fix. Marked xfail(strict=True) so a future fix that "
-        "makes this pass surfaces XPASS and prompts removing the marker."
-    ),
-)
 def test_rebirth_radio_chain_matches_weekly_byte_for_byte(port_db):
     """The port's acceptance criterion. Station-studio generates
     weeks 2-9 against the same pools + same seeds as weekly; weeks
     2/3/5/9 are asserted byte-for-byte (PID-for-PID) against the
     committed fixture.
 
-    Currently marked xfail — see the marker's reason. The diagnostic
-    from assert_chain_equal surfaces the first divergent (week, slot)
-    coordinate; this test stays in the codebase, will XPASS when
-    follow-on fixes land, and only then drop the marker.
+    This test FAILS LOUDLY today on the §14.38 cursor-bootstrap model
+    gap (see DESIGN §14.37). It's intentionally not marked xfail —
+    Phase B's port acceptance is not closed, and silently green CI
+    on the acceptance test would hide that. The skip-when-missing
+    pattern (no XMLs → pytest.skip) keeps CI green where real
+    weekly data isn't available; local dev with XMLs gets the
+    failure surfaced unmistakably.
+
+    The diagnostic from `assert_chain_equal` surfaces the first
+    divergent (week, slot, pick_in_block) coordinate. When the
+    §14.38 / §14.39 / §14.40 follow-on slices land + the test goes
+    green, that signals genuine Phase B closure.
     """
     fixture = json.loads(EXPECTED_FIXTURE.read_text())
     seed_base = fixture["seed_base"]
@@ -233,20 +229,19 @@ def test_rebirth_radio_chain_matches_weekly_byte_for_byte(port_db):
     # Build expected chain from the fixture.
     expected_by_week = {w["week"]: w["pids"] for w in fixture["weeks"]}
 
-    # Compute slot refs from the template — same shape every week,
-    # patch the week field per assertion.
+    # Build slot refs PER PICK (not per block). After §14.37 c2's
+    # sequential coalescing, blocks can have size>1 — a per-block
+    # ref list would label the wrong template position when the
+    # divergence is inside a multi-pick block. expand_block_slot_refs
+    # expands each block to size=N refs sharing block-level metadata
+    # but distinguished by `pick_in_block`, so the diagnostic accurately
+    # identifies which pick diverged.
     tmpl = parse_template(json.loads(STATION_TEMPLATE.read_text()))
-    base_refs = [
-        slot_ref_from_block(week=0, slot_index=i, block=block)
-        for i, block in enumerate(tmpl.layout.flat_slots)
-    ]
 
     expected_chain = {w: expected_by_week[w] for w in weeks_asserted}
     actual_chain = {w: pids_by_week[w] for w in weeks_asserted}
     slot_refs_by_week = {
-        w: [SlotRef(week=w, slot_index=r.slot_index,
-                    strategy=r.strategy, source=r.source, extra=r.extra)
-            for r in base_refs]
+        w: expand_block_slot_refs(week=w, blocks=tmpl.layout.flat_slots)
         for w in weeks_asserted
     }
 
