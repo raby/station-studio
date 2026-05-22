@@ -295,9 +295,12 @@ def test_expand_block_slot_refs_walks_row_template_in_engine_order():
     # Pick-in-block resets per block.
     picks = [r.extra["pick_in_block"] for r in refs]
     assert picks == [1, 2, 1, 2, 3] * 3
-    # Row indices (1-indexed) advance across the chain.
+    # Row indices (0-indexed; engine-mirroring; sweep c2 normalisation).
     rows = [r.extra["row_idx"] for r in refs]
-    assert rows == [1] * 5 + [2] * 5 + [3] * 5
+    assert rows == [0] * 5 + [1] * 5 + [2] * 5
+    # Block indices (0-indexed; sweep c2 addition for engine parity).
+    block_indices = [r.extra["block_idx"] for r in refs]
+    assert block_indices == [0, 0, 1, 1, 1] * 3
 
 
 def test_expand_block_slot_refs_walks_flat_slots_template():
@@ -324,8 +327,9 @@ def test_expand_block_slot_refs_walks_flat_slots_template():
     refs = expand_block_slot_refs(week=1, blocks=tmpl)
     assert len(refs) == 5
     assert [r.extra["pick_in_block"] for r in refs] == [1, 2, 1, 2, 3]
-    # Flat slots → no row_idx surfaced.
+    # Flat slots → no row dimension → row_idx + block_idx absent.
     assert all("row_idx" not in r.extra for r in refs)
+    assert all("block_idx" not in r.extra for r in refs)
 
 
 def test_assert_pids_equal_raises_clean_error_on_short_slot_refs():

@@ -102,12 +102,29 @@ def expand_block_slot_refs(week: int, blocks) -> list[SlotRef]:
         iterates `layout.flat_slots` in declared order. For
         row_template, iterates `layout.row_start_offsets ×
         layout.row_template` in the SAME ORDER the engine walks slots
-        (`engine.generator._iterate_slots`). The slot_index field tags
-        which row + which intra-row block + which pick within the block.
+        (`engine.generator._iterate_slots`).
 
       * **A plain iterable of blocks** (legacy / synthetic test path) —
         treats them as a linear sequence, no row dimension. Used by
         tests that hand-build inline lists of `BlockSpec`/dict.
+
+    SlotRef field semantics (§14.40 review sweep c2 — calibrated):
+
+      * `slot_index` — flat running counter, 0-indexed at STORAGE,
+        rendered 1-indexed by `SlotRef.render` (`slot={slot_index+1}`).
+        For row_template walks, the slot_index does NOT directly tag
+        "which row + which block within the row"; for that, read
+        `.extra[row_idx]` and `.extra[block_idx]` (both 0-indexed at
+        storage, mirroring `slot_index`'s convention).
+      * `.extra[pick_in_block]` — 1-indexed pick WITHIN the block
+        (e.g. block.size=3 → picks 1, 2, 3). Human-friendly; intent
+        is "the 2nd pick of a 95-pick NIGHT_1 block" rather than the
+        0-indexed offset.
+      * `.extra[row_idx]` — 0-indexed row (row_template only). Mirrors
+        the engine's `row_idx` in `_iterate_slots`. Rendered raw.
+      * `.extra[block_idx]` — 0-indexed block WITHIN THE ROW
+        (row_template only). Mirrors the engine's `block_idx`. The
+        engine's trace uses the same field name + indexing.
 
     Use this helper when comparing the full per-pick pid sequence; use
     `slot_ref_from_block` directly only when you're labelling blocks
@@ -121,17 +138,22 @@ def expand_block_slot_refs(week: int, blocks) -> list[SlotRef]:
             size = block.get("size", 1)
         return size if size is not None else 1
 
-    def _add(block, pick_in_block: int, row_idx: int | None = None):
+    def _add(
+        block,
+        pick_in_block: int,
+        row_idx: int | None = None,
+        block_idx: int | None = None,
+    ):
         r = slot_ref_from_block(
             week=week, slot_index=len(refs), block=block,
         )
         r.extra["pick_in_block"] = pick_in_block
+        # row_idx + block_idx are 0-indexed at storage, matching the
+        # engine's `_iterate_slots` semantics. Both rendered raw.
         if row_idx is not None:
-            # Row-template layouts also surface the row index — the
-            # engine reports `unit_label` in trace; we attach the index
-            # so the diagnostic message can disambiguate same-block
-            # instantiations across rows.
-            r.extra["row_idx"] = row_idx + 1  # 1-indexed for humans
+            r.extra["row_idx"] = row_idx
+        if block_idx is not None:
+            r.extra["block_idx"] = block_idx
         refs.append(r)
 
     # Dispatch: Template object → layout-aware walk; raw iterable →
@@ -147,17 +169,25 @@ def expand_block_slot_refs(week: int, blocks) -> list[SlotRef]:
 
     # Template path — match engine's slot iteration order.
     if layout.flat_slots:
+        # No row dimension; slot_index alone suffices.
         for block in layout.flat_slots:
             for offset in range(_block_size(block)):
                 _add(block, pick_in_block=offset + 1)
     else:
         # row_template form: outer loop over rows, inner over the
         # per-row block sequence. Mirrors `_iterate_slots` in
-        # engine/generator.py.
+        # engine/generator.py; surfaces row_idx + block_idx so the
+        # diagnostic message disambiguates same-block instantiations
+        # across rows AND within a row.
         for row_idx in range(len(layout.row_start_offsets)):
-            for block in layout.row_template:
+            for block_idx, block in enumerate(layout.row_template):
                 for offset in range(_block_size(block)):
-                    _add(block, pick_in_block=offset + 1, row_idx=row_idx)
+                    _add(
+                        block,
+                        pick_in_block=offset + 1,
+                        row_idx=row_idx,
+                        block_idx=block_idx,
+                    )
     return refs
 
 
