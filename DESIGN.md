@@ -5622,17 +5622,160 @@ over a richer window), the loader needs to handle `len(priors) > 1`:
 
 ---
 
+### 14.39 per-cursor within-generation offset — kill the coalescing patch (§17 Phase B byte-equality follow-on #2 of 3)
+
+**Goal.** Replace §14.37 c2's `_coalesce_sequential_runs` translator
+patch with a proper engine primitive: per-cursor within-generation
+offset. The patch worked for weekly's specific template shape (each
+named cursor appears in exactly one contiguous run); the engine
+primitive generalises to any layout — including stations with
+**interleaved same-cursor sequential blocks**, which the patch
+couldn't represent.
+
+This is the second of three slices closing Phase B byte-equality.
+§14.38 closed the cursor-bootstrap gap (port test went green).
+§14.40 will lift xfail policy + add a SECOND station fixture
+(Classics) proving "weekly is one instance, not the shape." Only
+after §14.40 does Phase B genuinely close.
+
+#### The model gap the patch hid
+
+Pre-§14.39, the translator coalesced consecutive same-cursor
+sequential blocks into one `size=N` block. The engine's sequential
+dispatch then read `pool[seq_start+i]` for `i in 0..N`. This works
+for weekly because weekly's `_expand_block(cursor_id, N, ...)`
+produces N individual slot dicts in one contiguous run.
+
+But consider any station with a layout like:
+
+```
+[ jingle,
+  10 × {sequential NIGHT_1 size:1},
+  jingle,
+  10 × {sequential NIGHT_1 size:1},
+  ... ]
+```
+
+The coalesce condition (CONSECUTIVE same-cursor blocks) doesn't
+merge across the jingle. Each isolated `size=1` NIGHT_1 block read
+`pool[cursor]` — the same track. Both groups of 10 NIGHT_1 picks
+were identical.
+
+That's not a bug to patch per template; it's a missing primitive.
+
+#### The architectural primitive
+
+A local `seq_offsets: dict[str, int]` accumulator at the top of
+`engine.generator.generate`. Each sequential block:
+
+```python
+offset = seq_offsets.get(block.cursor_id, 0)
+# Read pool[seq_start + offset + i] for i in 0..block.size, with
+# modular wrap at pool boundary.
+picked = [
+    pool[(seq_start + offset + i) % pool_len]
+    for i in range(block.size)
+]
+seq_offsets[block.cursor_id] = offset + block.size
+```
+
+Two clearly-separated mechanisms now compose:
+
+1. **Cross-generation cursor advance** — `cursor_state.position`
+   advances by `cursor_advance_step` rule (default 120) after
+   `save_playlist`. This is "where does NIGHT_1 START at the
+   beginning of each generation."
+2. **Within-generation offset** — per-`generate()`-call dict, RESET
+   at start, advances by `block.size` per sequential block. This
+   is "how do same-cursor picks ORDER WITHIN one generation."
+
+Cross-generation = rule-driven, stored in cursor_state.
+Within-generation = engine-managed, per-call, never persisted.
+
+#### What ships
+
+* `engine/generator.py`: `seq_offsets` dict + sequential dispatch
+  reads from `cursor + offset`, increments offset by `block.size`.
+  Wrap-around (§14.37 c2) preserved.
+* `engine/template_importer.py`: `_coalesce_sequential_runs` and
+  its call site DELETED. Translator returns to strict 1:1 mapping.
+* `stations/rebirth-radio.json`: refreshed via
+  `make refresh-rebirth-radio WEEKLY_DIR=…` → 2,196 size=1 blocks
+  (was 1,111 coalesced blocks). File grows from ~250KB to ~500KB.
+  Mechanical diff: blocks of `{size:1, cursor_id:NIGHT_X}` repeated.
+* Tests: count assertions updated (rebirth-radio: 1111→2196 blocks;
+  sample fixture: 12→13 flat_slots). Two §14.37 c2 coalescing tests
+  in `test_template_importer.py` replaced with one strict-1:1 test.
+* `test_generator_generic.py::test_sequential_block_ignores_row_start_offset`
+  expectation updated: pre-§14.39 the two rows read the same track
+  (`[11, 11]`); post-§14.39 they read consecutive (`[11, 12]`).
+  The old expectation captured the bug; the new one captures the
+  fix.
+
+**New tests for the productisation case:**
+
+* `tests/test_generator_generic.py::test_alternating_same_cursor_blocks_read_disjoint_pool_slices`
+  — inline counterexample. Template alternates NIGHT_1 / NIGHT_2 /
+  NIGHT_1; asserts NIGHT_1 picks span pool[0..5] disjoint across the
+  NIGHT_2 interruption.
+* `tests/fixtures/alternating_cursor_station.json` + `tests/
+  test_alternating_cursor_fixture.py` — committed JSON fixture
+  documenting the supported layout shape as a visible recipe.
+  Parses cleanly via `parse_template`; generates as expected.
+
+**Synthetic byte-equality fixtures re-bootstrapped.** The
+`tests/fixtures/expected/synthetic_week{1,2,4,8}.json` captured the
+PRE-§14.39 (broken) behaviour — each cursor's 10 size=1 sequential
+slots all read pool[cursor]. Post-§14.39 they read consecutive
+positions. Re-bootstrapped via `BOOTSTRAP_BYTE_EQ_FIXTURES=1`; the
+new fixtures are the right answer.
+
+**Real-weekly byte-equality stayed green** through this slice —
+weekly's specific layout has all same-cursor sequential blocks in
+contiguous runs, so the engine offset and the deleted coalescing
+patch happen to produce identical output for weekly. The
+counterexample fixture is what proves the new primitive's value
+beyond weekly.
+
+#### Decisions punted
+
+* **State location** (`seq_offsets` as local dict vs. attached to
+  `_GenState`): chose local dict. Self-contained; sequential is
+  the only consumer; no need to couple with cross-strategy state.
+  Reconsider if future strategies need per-cursor accumulators.
+* **Migration story for in-the-wild fixtures** — the §14.34 (sample
+  weekly) fixture's coalescing-aware test was updated in this
+  slice. No other in-repo fixtures depend on the count change. A
+  future external operator who happened to depend on the
+  pre-§14.39 slot count would see a count diff — but the OUTPUT
+  bytes are unchanged for weekly's layout, so it's only the
+  internal representation that changed.
+
+| Punt | Severity | Notes |
+|---|---|---|
+| Per-cursor offset attached to _GenState | LOW | Local dict suffices today; consider if other strategies grow per-cursor state. |
+| Surface `seq_offsets` in trace | LATER | The pre-§14.39 trace's `pool_index` was `seq_start + 1` for every block; post-§14.39 it's `(seq_start + offset) % pool_len + 1` which already encodes the offset. No extra surface needed. |
+| Refactor `apply_window` to support wrap modes | LATER | Sequential dispatch implements wrap inline. `apply_window` stays fail-loud for window/pick (Classics never wraps). A future per-strategy wrap-mode flag would unify. |
+
+#### Phase B status after §14.39
+
+Phase B's byte-equality MILESTONE remains hit (real-weekly stays
+green). The architectural model is now general enough that
+weekly's layout shape isn't baked in — the engine primitive
+generalises. One slice remains: §14.40 (Classics second station
+fixture + lift xfail policy) closes Phase B genuinely.
+
+---
+
 ## 15. Status snapshot
 
 A quick "where are we" for a future reader. Last updated alongside
-the §14.38 prior-seed slice. **Port byte-equality test now passes
-against real weekly** — station-studio generates byte-identical
-output to weekly for the same `(seed, week)` inputs across the
-asserted weeks (2/3/5/9). Phase B's byte-equality MILESTONE is
-hit; Phase B itself remains open until §14.39 (kill the §14.37
-coalescing patch, replace with proper per-cursor offset) and
-§14.40 (second station fixture proving "weekly is one instance")
-land.
+the §14.39 per-cursor offset slice. Port byte-equality test STILL
+passes against real weekly (architectural change preserved
+output). Coalescing patch removed; engine model now generalises to
+interleaved-cursor templates. Phase B's byte-equality milestone
+hit; one slice remains (§14.40 — Classics second-station fixture
++ lift xfail) before Phase B closes genuinely.
 
 | Area                     | State                                                            |
 |--------------------------|------------------------------------------------------------------|
@@ -5651,7 +5794,7 @@ land.
 | Delete / station-reset   | Shipped (14.10). Per-row delete + station nuke; cascades.        |
 | Disk-export UI button    | Shipped (14.11). Trace viewer "Export to disk" + status line.    |
 | Backup / restore         | Shipped (§14.18). `make backup` / `make restore date=...` with WAL-aware sqlite3 .backup + pre-restore safety copy. |
-| **§17 pre-port roadmap** | **Phase A complete (§14.17–§14.21). Phase B in flight: §14.22–§14.37 shipped the harness + 13 sub-slices; §14.38 closed the cursor-bootstrap model gap and the port byte-equality test now passes against real weekly (station-studio = weekly byte-for-byte for asserted weeks 2/3/5/9). Two slices remain before Phase B closes: §14.39 (replace §14.37's coalescing patch with proper per-cursor within-generation offset — architectural fix proving the model isn't weekly-shaped), §14.40 (second station fixture proving "weekly is one instance"). Phase B closes when §14.40 lands. |
+| **§17 pre-port roadmap** | **Phase A complete (§14.17–§14.21). Phase B in flight: §14.22–§14.39 shipped — including the harness (§14.37), cursor-bootstrap model gap closed (§14.38, port byte-equality passes against real weekly), and per-cursor within-generation offset replacing §14.37's coalescing patch (§14.39, engine generalises to interleaved-cursor templates via committed counterexample fixture). One slice remains: §14.40 — second station fixture (Classics through the same engine path) proving "weekly is one instance" + lift xfail. Phase B closes when §14.40 lands. |
 | Visual block editor      | Deferred (v2). Lands as §17 Phase B after Phase A unblocks.      |
 | Trace versioning         | Deferred. See §16.4 (queued behind §16.1 by design).             |
 | Accessibility pass       | Deferred. §17 Phase D — single sweep after §16.2 + port.         |

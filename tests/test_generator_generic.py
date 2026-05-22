@@ -299,7 +299,17 @@ def test_sequential_block_advances_with_base_advance():
 
 
 def test_sequential_block_ignores_row_start_offset():
-    """Sequential blocks address by named cursor, not row offset."""
+    """Sequential blocks address by named cursor, not row offset.
+
+    §14.39: both rows share cursor c1, so they advance through the
+    pool consecutively via the per-cursor within-generation offset
+    (pool[10], pool[11]). The 999 row_start_offset is NOT applied —
+    that was the original point of this test.
+
+    Pre-§14.39 the engine read pool[cursor] for every same-cursor
+    sequential block (broken). Now they read disjoint slices,
+    which is what weekly's `_resolve_sequential_block` does too.
+    """
     t = parse_template(mk_template(
         cursor={"base_advance_per_week": 0, "cycle_weeks": 1},
         layout={
@@ -314,8 +324,59 @@ def test_sequential_block_ignores_row_start_offset():
     ))
     pools = {"A": mk_pool("A", 50)}
     r = generate(t, pools, week=1)
-    # Both rows draw from cursor c1 (offset 10) — row 2 does NOT use 999.
-    assert [s.pool_index for s in r.trace.slots] == [11, 11]
+    # Both rows draw from cursor c1; the second advances by 1 (§14.39
+    # within-generation offset). Row 2 does NOT use the 999 row offset.
+    assert [s.pool_index for s in r.trace.slots] == [11, 12]
+
+
+def test_alternating_same_cursor_blocks_read_disjoint_pool_slices():
+    """§14.39 counterexample: a template that interleaves same-cursor
+    sequential blocks with non-sequential blocks. The per-cursor
+    within-generation offset accumulator (engine.generator.generate's
+    `seq_offsets`) makes the two NIGHT_1 groups read DISJOINT pool
+    slices — even though they're not contiguous in the template.
+
+    Pre-§14.39 this template was broken: the §14.37 c2 coalescing
+    patch only merged CONSECUTIVE same-cursor blocks, and the engine
+    read pool[cursor + 0] for every isolated sequential slot — so
+    the second NIGHT_1 group read the same tracks as the first.
+
+    This is exactly the productisation case the user's framing
+    demands: station-studio should be able to represent any layout
+    a station designer can think of, not just weekly's specific
+    contiguous-block shape.
+    """
+    t = parse_template(mk_template(
+        sources=[
+            {"name": "A", "colour": "#aaa", "role": "content"},
+            {"name": "B", "colour": "#bbb", "role": "content"},
+        ],
+        cursor={"base_advance_per_week": 0, "cycle_weeks": 1},
+        layout={
+            "unit": "slot",
+            "unit_labels": [],
+            "row_start_offsets": [],
+            "cursors_init": {"NIGHT_1": 0, "NIGHT_2": 20},
+            "flat_slots": (
+                # 3 NIGHT_1 picks, then NIGHT_2 interrupts, then 3 more NIGHT_1.
+                [{"source": "A", "strategy": "sequential", "size": 1, "cursor_id": "NIGHT_1"}] * 3
+                + [{"source": "B", "strategy": "sequential", "size": 1, "cursor_id": "NIGHT_2"}]
+                + [{"source": "A", "strategy": "sequential", "size": 1, "cursor_id": "NIGHT_1"}] * 3
+            ),
+        },
+    ))
+    pools = {"A": mk_pool("A", 50), "B": mk_pool("B", 50)}
+    r = generate(t, pools, week=1)
+    names = [p.name for p in r.picks]
+    # First NIGHT_1 group: pool[0..2] (cursor starts at 0).
+    assert names[0:3] == ["A0001", "A0002", "A0003"]
+    # NIGHT_2 interrupts: reads from its own cursor (20) — pool[20].
+    assert names[3] == "B0021"
+    # Second NIGHT_1 group: pool[3..5], CONTINUING from offset=3.
+    # Pre-§14.39 this group would have read pool[0..2] again. The
+    # per-cursor accumulator tracks NIGHT_1's offset across the
+    # NIGHT_2 interruption.
+    assert names[4:7] == ["A0004", "A0005", "A0006"]
 
 
 def test_multi_cursor_template_each_cursor_addresses_independently():

@@ -1,0 +1,27 @@
+{
+  "_comment": "§14.39 productisation counterexample: a station whose template INTERLEAVES same-cursor sequential blocks with other-cursor or non-sequential blocks. Weekly never does this — it puts each cursor in one contiguous run — but a general station-configuration product must support arbitrary layouts. Pre-§14.39 (with the _coalesce_sequential_runs translator patch), every NIGHT_1 block in this template read pool[cursor]; both NIGHT_1 groups produced identical tracks. Post-§14.39 the engine's per-cursor within-generation offset accumulator advances correctly across the NIGHT_2 interruption — the second NIGHT_1 group reads tracks pool[3..5] while the first reads pool[0..2]. The fixture exists to document the supported layout shape AND as a visible recipe for future station designers exploring interleaved-cursor patterns.",
+  "station": "alternating-cursor-counterexample",
+  "name": "Alternating Cursor Counterexample",
+  "cadence": "weekly",
+  "rng": "off",
+  "sources": [
+    {"name": "NIGHT", "colour": "#3a86ff", "role": "content"},
+    {"name": "WEEKEND", "colour": "#ff006e", "role": "content"}
+  ],
+  "cursor": {"base_advance_per_week": 0, "cycle_weeks": 1, "persist": true},
+  "layout": {
+    "unit": "slot",
+    "unit_labels": [],
+    "row_start_offsets": [],
+    "cursors_init": {"NIGHT_1": 0, "NIGHT_2": 50},
+    "flat_slots": [
+      {"source": "NIGHT",   "strategy": "sequential", "size": 1, "cursor_id": "NIGHT_1"},
+      {"source": "NIGHT",   "strategy": "sequential", "size": 1, "cursor_id": "NIGHT_1"},
+      {"source": "NIGHT",   "strategy": "sequential", "size": 1, "cursor_id": "NIGHT_1"},
+      {"source": "WEEKEND", "strategy": "sequential", "size": 1, "cursor_id": "NIGHT_2"},
+      {"source": "NIGHT",   "strategy": "sequential", "size": 1, "cursor_id": "NIGHT_1"},
+      {"source": "NIGHT",   "strategy": "sequential", "size": 1, "cursor_id": "NIGHT_1"},
+      {"source": "NIGHT",   "strategy": "sequential", "size": 1, "cursor_id": "NIGHT_1"}
+    ]
+  }
+}

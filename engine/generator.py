@@ -174,6 +174,18 @@ def generate(
     # picked track).
     prev_ref_fallback_mixes: list[tuple[int, str, Any]] = []
 
+    # §14.39 — per-cursor within-generation offset accumulator.
+    # Sequential blocks sharing a cursor_id advance through the pool
+    # consecutively across the WHOLE generation, not just within one
+    # contiguous block. This is the architectural primitive that
+    # replaces §14.37's `_coalesce_sequential_runs` translator patch:
+    # any template (including those with non-contiguous same-cursor
+    # blocks interleaved with other strategies) reads disjoint pool
+    # slices for each block. RESET per generate() call; cross-
+    # generation cursor advance is the separate `cursor_advance_step`
+    # rule-driven mechanism (see engine.persistence.advance_cursors).
+    seq_offsets: dict[str, int] = {}
+
     base_cursor = template.base_cursor_for_week(week)
 
     trace = Trace(
@@ -241,27 +253,36 @@ def generate(
                 seq_start = named_cursor_positions[block.cursor_id]  # type: ignore[index]
             else:
                 seq_start = template.cursor_position(block.cursor_id, week)  # type: ignore[arg-type]
-            # §14.37 c2 fix: sequential WRAPS at pool boundary (unlike
-            # `window` which fail-louds). Mirrors weekly's
-            # `_resolve_sequential_block` which computes
-            # `(cursor_pos + i) % n` per slot. Surfaced by the
-            # byte-equality harness: weekly's WEEKEND_2 cursor at week
-            # 7+ exceeds pool length, and the wrap was the actual
-            # behaviour. `window` and `pick` keep their fail-loud
-            # semantics (Classics never wraps; silent wrap there would
-            # mask a real template bug).
+            # §14.39: within-generation offset accumulator (per cursor)
+            # advances through the pool across NON-CONTIGUOUS blocks
+            # sharing a cursor. The §14.37 c2 coalescing patch worked
+            # only because weekly happens to use each cursor in one
+            # contiguous run; this primitive generalises to any
+            # template shape (e.g. NIGHT_1, COMMERCIAL, NIGHT_1, ...).
+            # offset starts at 0 for each cursor + each generation.
+            #
+            # §14.37 c2 wrap-around (modular) preserved: sequential
+            # WRAPS at pool boundary (unlike `window`/`pick` which
+            # fail-loud). Mirrors weekly's `_resolve_sequential_block`
+            # `(cursor_pos + i) % n`.
             pool_len = len(pool)
             if pool_len == 0:
                 raise WindowOutOfRangeError(
                     f"source '{block.source}': pool is empty"
                 )
+            offset = seq_offsets.get(block.cursor_id, 0)
             picked = [
-                ((seq_start + i) % pool_len + 1, pool[(seq_start + i) % pool_len])
+                (
+                    (seq_start + offset + i) % pool_len + 1,
+                    pool[(seq_start + offset + i) % pool_len],
+                )
                 for i in range(block.size)
             ]
+            seq_offsets[block.cursor_id] = offset + block.size
             reason_prefix = (
                 f"sequential size={block.size} from '{block.source}' "
-                f"cursor='{block.cursor_id}' at pool_index {seq_start + 1}"
+                f"cursor='{block.cursor_id}' at pool_index "
+                f"{(seq_start + offset) % pool_len + 1}"
             )
             for (pool_idx, track) in picked:
                 slot_counter += 1
