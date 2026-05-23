@@ -13,7 +13,8 @@
         backup backups restore \
         dev dev-backend dev-frontend \
         import-station import-weekly-pools refresh-rebirth-radio \
-        refresh-port-fixture refresh-port-everything refresh-classics-fixture
+        refresh-port-fixture refresh-port-everything refresh-classics-fixture \
+        generate-user-playlists
 
 PY := .venv/bin/python
 ALEMBIC := .venv/bin/alembic
@@ -376,3 +377,38 @@ refresh-classics-fixture:
 	BOOTSTRAP_BYTE_EQ_FIXTURES=1 $(PY) -m pytest \
 	    tests/test_classics_byte_equality.py -v
 	@echo "Done. Diff with: git diff tests/fixtures/expected/classics_byte_eq.json"
+
+# Generate N weeks of Rebirth Radio iTunes XML playlists for USER-FACING
+# validation (not byte-equality). Drops real .xml files that an operator
+# can import into Apple Music/iTunes + play to confirm the port sounds
+# right.
+#
+# Two modes — both run by default:
+#   * fresh: weeks 1..N, no prior (all prev_ref slots fall back)
+#   * prior: weeks 2..N+1, WEEKLY 001 seeded as prior (realistic cutover)
+#
+# Outputs to output/user-test/{fresh,prior}/. Output dir is gitignored
+# (not committed; produced per-machine).
+#
+# Usage:
+#   make generate-user-playlists \
+#       WEEKLY_FROM_USER_DIR=/path/to/weekly/from_user
+#
+# With overrides:
+#   make generate-user-playlists \
+#       WEEKLY_FROM_USER_DIR=/path/to/weekly/from_user \
+#       WEEKS=10 \
+#       NAME_PREFIX="WEEKLY PLAYLIST" \
+#       MODE=prior
+generate-user-playlists:
+	@if [ -z "$(WEEKLY_FROM_USER_DIR)" ]; then \
+		echo "Usage: make generate-user-playlists WEEKLY_FROM_USER_DIR=/path/to/from_user"; \
+		echo "Optional: WEEKS=N (default 25), NAME_PREFIX=\"…\" (default 'Rebirth Radio'),"; \
+		echo "          MODE=fresh|prior|both (default both)"; \
+		exit 1; \
+	fi
+	$(PY) -m scripts.generate_user_playlists \
+	    --xmls "$(WEEKLY_FROM_USER_DIR)" \
+	    $(if $(WEEKS),--weeks $(WEEKS),) \
+	    $(if $(NAME_PREFIX),--name-prefix "$(NAME_PREFIX)",) \
+	    $(if $(MODE),--mode $(MODE),)
