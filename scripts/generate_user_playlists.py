@@ -69,7 +69,8 @@ from engine.importer import import_source
 from engine.models import (
     Base, CursorState, Playlist, PlaylistEntry, Station, Track,
 )
-from tests.byte_equality import generate_chain, trace_id_for_prior
+from engine.persistence import generate_chain
+from engine.prior_seed import trace_id_for_prior
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
