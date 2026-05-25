@@ -285,7 +285,15 @@ def parse_template(raw: dict) -> Template:
             f"row_start_offsets length ({len(layout.row_start_offsets)})"
         )
 
-    for b in layout.row_template:
+    # §14.32 + §14.41 post-review sweep 2: walk ALL blocks via
+    # `layout.all_blocks()` (covers both row_template AND flat_slots).
+    # The pre-sweep code iterated `layout.row_template` only — for
+    # flat_slots templates this silently SKIPPED these checks, so a
+    # block with an unknown `strategy` or a non-content `source` parsed
+    # successfully and crashed at generation time. Same row_template-
+    # only-walk bug class swept in §14.32 (`max_mix_exclusion_window`,
+    # `_save_mix_usages`) — this site was missed.
+    for b in layout.all_blocks():
         if b.strategy not in SUPPORTED_STRATEGIES:
             raise TemplateError(
                 f"strategy '{b.strategy}' not supported. Supported: {sorted(SUPPORTED_STRATEGIES)}"

@@ -711,3 +711,81 @@ def test_source_by_name_unknown_raises():
     tmpl = parse_template(BASE)
     with pytest.raises(TemplateError, match="Unknown source"):
         tmpl.source_by_name("ZZZ")
+
+
+# ---------- §14.41 sweep 2: parse-time strategy + role checks ---------
+#
+# Regression tests for the row_template-only walk bug at
+# engine/template.py:288 (pre-sweep). The pre-sweep code iterated
+# `layout.row_template` only — for flat_slots templates these checks
+# silently skipped, so unknown strategy / non-content source slipped
+# parse and crashed at dispatch.
+
+
+def test_flat_slots_unknown_strategy_rejected_at_parse():
+    """A flat_slots block with an unknown strategy must fail-loud at
+    parse, not silently sail through (pre-sweep) and crash at
+    dispatch."""
+    bad = {
+        "station": "x", "cadence": "weekly", "rng": "off",
+        "sources": [{"name": "A", "colour": "#111", "role": "content"}],
+        "cursor": {"base_advance_per_week": 0, "cycle_weeks": 1},
+        "layout": {
+            "unit": "slot",
+            "unit_labels": [],
+            "row_start_offsets": [],
+            "cursors_init": {},
+            "flat_slots": [
+                {"source": "A", "strategy": "bananatime", "size": 1},
+            ],
+        },
+    }
+    with pytest.raises(TemplateError, match="strategy 'bananatime' not supported"):
+        parse_template(bad)
+
+
+def test_flat_slots_block_referencing_reference_role_source_rejected():
+    """A flat_slots block pointing at a `role=reference` source must
+    fail-loud at parse — only content sources can be referenced by
+    the layout. Pre-sweep this silently sailed through for
+    flat_slots templates."""
+    bad = {
+        "station": "x", "cadence": "weekly", "rng": "off",
+        "sources": [
+            {"name": "A", "colour": "#111", "role": "content"},
+            {"name": "M", "colour": "#222", "role": "reference"},
+        ],
+        "cursor": {"base_advance_per_week": 0, "cycle_weeks": 1},
+        "layout": {
+            "unit": "slot",
+            "unit_labels": [],
+            "row_start_offsets": [],
+            "cursors_init": {},
+            "flat_slots": [
+                {"source": "M", "strategy": "weighted", "size": 1},
+            ],
+        },
+    }
+    with pytest.raises(TemplateError, match="role 'reference'"):
+        parse_template(bad)
+
+
+def test_row_template_unknown_strategy_still_rejected():
+    """The pre-sweep code DID catch this case (it iterated row_template).
+    Regression test confirms the new all_blocks() walk preserves the
+    behaviour for row_template templates."""
+    bad = {
+        "station": "x", "cadence": "weekly", "rng": "off",
+        "sources": [{"name": "A", "colour": "#111", "role": "content"}],
+        "cursor": {"base_advance_per_week": 0, "cycle_weeks": 1},
+        "layout": {
+            "unit": "day",
+            "unit_labels": ["Mon"],
+            "row_start_offsets": [0],
+            "row_template": [
+                {"source": "A", "strategy": "bananatime", "size": 1},
+            ],
+        },
+    }
+    with pytest.raises(TemplateError, match="strategy 'bananatime' not supported"):
+        parse_template(bad)
