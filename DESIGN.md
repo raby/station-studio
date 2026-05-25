@@ -6080,6 +6080,15 @@ direction — spec slice §16.2.0 is the next planned work.
 | Install story            | Queued — §16.13. pip-installable or polished docker after §16.2 MVP. |
 | Hobbyist starter station | Queued — §16.14. 100-200-slot example structurally simpler than Classics, with synthetic starter XMLs for end-to-end boot without external data. |
 | Docs site                | Deferred — §16.15. After §16.2 + §16.13 + §16.14 ship.           |
+| Disk-export prune endpoint | Queued — §16.16. Demand-gated. §14.3's prune punt. |
+| Excluded-candidates display | Queued — §16.17. Small. Trace records them (§14.23); viewer needs to surface them. |
+| Trace viewer virtualisation | Queued — §16.18. Felt-pain triggered. 3,010-row Classics scroll lag. |
+| Station detail page richness | Queued — §16.19. Small. Template summary + pool stats + cursor state + generations summary. |
+| Mobile / narrow-viewport CSS | Queued — §16.20. Phone-usability vector for OSS hobbyist trajectory. |
+| Test follow-ups (mutation + perf) | Queued — §16.21. §14.8's later row. Refactor-confidence trigger. |
+| Trace viewer SSR migration | Queued — §16.22. Quality-of-life. First-paint flash removal. |
+| Week-vs-week trace diff  | Queued — §16.23. Waits for use case (template-edit → output-diff). |
+| Post-validation fixes    | Reserved placeholder — §16.24. TBD count. Slot for external port validation feedback. |
 | §14.42 Classics cycle wrap | Queued tail. Tiny (~1 commit). Symmetric with §14.41's mix-slide lock for weekly. Defer-able. |
 | §14.38b Multi-prior import | Queued tail. Small (~2-3 commits). Lets operators import N weeks of prior history at cutover. Wait for demand. |
 | Scheduler                | Deferred (v1.1).                                                 |
@@ -6120,16 +6129,42 @@ Master order at a glance. Detailed briefs follow below.
 | 6 | §16.13 Install story (pip / docker) | medium | Hobbyist friction floor. Lands after §16.2 MVP makes "install + try" worth marketing. |
 | 7 | §16.14 Hobbyist starter station | small | Fresh install needs a runnable example without external XMLs. |
 | 8 | §16.15 Docs site (MkDocs-Material) | medium | After enough product is built to justify a doc site. |
-| — | §14.42 Classics cycle wrap (weeks 17-32) | tiny (1 commit) | Phase B tail; defer-able. Locks the Classics cursor-cycle wrap edge, symmetric with §14.41's mix-slide lock for weekly. Slot in opportunistically. |
-| — | §14.38b Multi-prior import support | small (2-3 commits) | Phase B tail; no demand today. Slot in when a real cutover wants N weeks of prior history. |
-| — | §16.4 Trace versioning | medium | Deferred. Not on the critical path post-Phase-B. |
-| — | §16.5 A11y pass | medium | Deferred. Single sweep after §16.2 + the rest ship. |
 
-**Reading the table:** rows 1-8 are the strategic execution
-sequence. The em-dashed rows below the divider are tail items —
-queued but not blocking; slot in opportunistically (cycle wrap is
-30 min; multi-prior is demand-gated; trace versioning + a11y wait
-their natural time).
+Inserted into the strategic sequence based on §16.0 audit:
+
+| # | Slice | Effort | Why now |
+|---|---|---|---|
+| 4* | §16.24 Post-validation fixes (placeholder) | TBD | Slot for whatever surfaces during the external port validation week. May be 0 slices ("sounds great") or 1-3 (specific divergences need fixing). Inserts ahead of post-MVP polish if it fires. |
+| 5* | §16.17 Excluded-candidates display in trace viewer | small | Trace already RECORDS them (§14.23 shipped); viewer needs to SURFACE them. Finishes a half-shipped feature. |
+| 6* | §16.19 Station detail page richness | small | Template summary + pool stats + cursor position on `/stations/[slug]`. Bare today. |
+
+**Cross-cutting / polish — slot in opportunistically:**
+
+| Slice | Effort | Trigger |
+|---|---|---|
+| §16.16 Disk-export prune endpoint | small (~2 commits) | Demand: user reports `out/` clutter. Code path partly designed in §14.3. |
+| §16.18 Trace viewer virtualisation | small-medium | Felt pain: Classics's 3,010-row scroll lag becomes annoying. |
+| §16.20 Mobile / narrow-viewport CSS pass | small-medium | First user tries on a phone, surfaces the overflow. |
+| §16.21 Test follow-ups (mutation + perf) | medium | When refactor confidence demands stronger regression coverage. |
+| §16.22 Trace viewer SSR migration | small | Flash-of-empty-shell becomes annoying or SEO matters. |
+
+**Tail / wait-for-demand:**
+
+| Slice | Effort | Notes |
+|---|---|---|
+| §14.42 Classics cycle wrap (weeks 17-32) | tiny (1 commit) | Phase B tail; locks Classics cursor-cycle wrap edge, symmetric with §14.41's mix-slide lock for weekly. |
+| §14.38b Multi-prior import support | small (2-3 commits) | Phase B tail; no demand today. |
+| §16.4 Trace versioning | medium | Deferred. Not on critical path post-Phase-B. |
+| §16.5 A11y pass (sub-items enumerated below) | medium | Single sweep after §16.2 + the rest ship. |
+| §16.23 Week-vs-week trace diff | small-medium | Waits for use case ("what changed from last week?"). |
+
+**Reading the tables:**
+
+* **Strategic** (rows 1-11 above, with 4*/5*/6* inserted) — the
+  §16.2 push + its supporting cast.
+* **Cross-cutting** — quality-of-life slices triggered by felt
+  pain, not strategic sequencing.
+* **Tail** — defer-able; specific triggers in the Notes column.
 
 The detailed §16.x briefs below cover each slice's reasoning,
 shape, and what's NOT in scope.
@@ -7561,6 +7596,239 @@ its UI shape. Lands once the major slices are stable.
 
 **Effort.** Medium (~5-8 commits: mkdocs.yml + site structure +
 content extraction + GH Pages CI workflow + branded styling).
+
+---
+
+### 16.16 Disk-export prune endpoint
+
+**Why this matters.** `§14.3` explicitly punted the prune endpoint
+until a user reported clutter. Worth queuing now as a small visible
+slice so the punt isn't forgotten.
+
+**Shape.** `POST /api/playlists/export/prune` — compare files in
+the configured export directory against the `playlist` table.
+Report orphans (files with no DB row) + offer to delete them.
+**Dry-run by default**; deletion requires explicit
+`?confirm=true`. Idempotent. Returns counts + per-file actions.
+
+**Effort.** Small (~2 commits: endpoint + tests + a `make
+prune-exports` convenience target).
+
+**Triggered by.** User report of `out/` clutter — or simply
+opportunistic when between other slices.
+
+---
+
+### 16.17 Excluded-candidates display in trace viewer
+
+**Why this matters.** §14.23 shipped the engine-side
+excluded-candidates capture — every `weighted` / `mix` pick records
+WHY each rejected candidate was rejected (artist dedup, recent use,
+mix exclusion). The trace records them; the viewer doesn't display
+them. The feature is half-shipped.
+
+**Shape.** Per-slot disclosure: a "Why not these?" expander on each
+`weighted` / `mix` slot, listing each rejected candidate + the
+rejection reason (e.g. "Artist also at slot 17" / "Used in week
+22"). Optional — collapsed by default. Visible in the per-slot
+detail panel of `/playlists/[id]`.
+
+**Effort.** Small (~3 commits: API surfaces, UI component, e2e test).
+
+**Why useful now.** When the visual editor (§16.2) lands, users
+will tweak templates and want to know "why didn't this slot pick
+X?" — excluded-candidates display is the answer. Compounds with
+§16.2's edit-test loop.
+
+---
+
+### 16.18 Trace viewer virtualisation
+
+**Why this matters.** Classics generates **3,010 slots per week**.
+The current trace viewer renders all 3,010 DOM rows on first paint.
+First-paint delay + scroll lag are real on production data. §14.5's
+punt table flagged this with "noticeable scroll lag" as the
+trigger; with the visual editor (§16.2) likely to make this page a
+high-traffic destination, the trigger fires.
+
+**Shape.** Virtualised list (svelte-virtual-list or
+@tanstack/svelte-virtual) on the slots table. Preserves the
+existing row-grouping (collapsible day headers) — virtualise WITHIN
+each group, keep group headers always in DOM.
+
+**Effort.** Small-medium (~3-4 commits: virtualisation library +
+integration + a11y verification + smoke test).
+
+**Open design call.** Virtualisation can interact poorly with
+keyboard nav + screen readers; §16.5 (a11y pass) cares about this.
+Better to do §16.18 BEFORE §16.5 so the a11y pass audits the
+virtualised layout.
+
+---
+
+### 16.19 Station detail page richness
+
+**Why this matters.** `/stations/[slug]` today shows a bare
+playlists table — useful for "show me the generations" but not
+much else. The visual editor (§16.2) will need a richer station-
+detail surface to anchor the editor + rules panel + pool stats.
+
+**Shape.** Sections on `/stations/[slug]`:
+
+* **Identity** — slug, name, cadence, RNG, station-level rules.
+* **Template summary** — slot count, layout form, strategy mix,
+  cursor mode. Links to the editor (when §16.2 ships).
+* **Source pools** — per-pool name, role, track count, last
+  imported timestamp, link to the pool's content.
+* **Cursor positions** — for `cursor.persist=true` stations, show
+  current `cursor_state` values + an "advance / reset" button (per
+  §14.30 semantics).
+* **Generations** — existing playlists table, but with a "last
+  generated" badge + the generation count summary at top.
+
+**Effort.** Small (~4-5 commits, mostly UI; backend pieces already
+exist via /api/stations/{slug}, /api/sources, /api/cursor_state).
+
+**Compounds with.** §16.2 (anchors the editor entry point);
+§16.10 (Rules panel embeds here); §16.12 (stations list polish
+links to richer detail page).
+
+---
+
+### 16.20 Mobile / narrow-viewport CSS pass
+
+**Why this matters.** Today the trace viewer + stations list +
+wizard all overflow horizontally on small screens (~640px). For an
+OSS hobbyist product, "tried it on my phone" is a real first-
+impression vector.
+
+**Shape.** Three small responsive passes:
+
+1. **Tables → cards on narrow viewports** — the slots table,
+   playlists table, stations list. CSS-only via media queries +
+   `display: block` on `<tr>` below 640px.
+2. **Wizard form** — single-column instead of multi-column at
+   narrow widths. Easy.
+3. **Nav / header / sidebar** — collapsible drawer pattern for
+   sidebar nav at narrow widths (matters once §16.10 Rules panel
+   + §16.19 station detail richness exist).
+
+**Effort.** Small-medium (~3-4 commits, mostly CSS).
+
+**Trigger.** First report of phone-usability issue, OR
+opportunistically once §16.19 + §16.10 ship and the layout is
+more complex.
+
+**Overlap with §16.5.** A11y pass touches landmarks + focus
+patterns; mobile pass touches layout breakpoints. Different
+concerns, can sequence either way. If they land together, the
+slice is medium.
+
+---
+
+### 16.21 Test follow-ups — mutation testing + perf benchmarks
+
+**Why this matters.** §14.8's "later" row queued these:
+
+* **Mutation testing** — measures how much of the code's behaviour
+  is genuinely tested vs accidentally covered. Mutmut / Cosmic Ray
+  for Python; Stryker for the frontend. Catches "test runs but
+  doesn't assert" patterns.
+* **Performance benchmarks** — pytest-benchmark for engine hot
+  paths (`generate()` for a 30-week chain), Vitest's bench mode
+  for component render. Catches "this commit doubled latency"
+  before users notice.
+
+**Shape.** Two adjacent sub-slices, can land independently:
+
+* **§16.21a** — mutmut for backend; CI gate at e.g. ≥60% mutation
+  score on `engine/`. Frontend mutation testing deferred (Stryker
+  is heavier).
+* **§16.21b** — pytest-benchmark for `generate()` (single week +
+  30-week chain). CI doesn't gate; baseline comparison printed in
+  test output.
+
+**Effort.** Medium (~5-7 commits total across both sub-slices).
+
+**Trigger.** When refactor confidence demands stronger regression
+coverage (e.g. before §16.2's editor work touches the engine).
+NOT a current pain point.
+
+---
+
+### 16.22 Trace viewer SSR migration — `+page.ts` `load` over `onMount`
+
+**Why this matters.** Today the trace viewer fetches in `onMount`
+(client-only). First paint shows an empty shell for ~200-400ms
+before data renders. Annoying UX; in a shared-link context (paste
+a trace URL in chat), the empty shell is what people see.
+
+**Shape.** Move the three fetches from `onMount` to a `+page.ts`
+`load()` function. `api.ts` helpers already accept an optional
+`fetch_` arg for exactly this. Page receives `data` as a prop;
+template uses `data.trace` / `data.playlist` / `data.station`
+directly without loading branches.
+
+**Effort.** Small (~2 commits: refactor + e2e verify).
+
+**Trigger.** SEO matters (unlikely for a single-user tool) OR
+shared-link UX becomes a felt pain.
+
+---
+
+### 16.23 Week-vs-week trace diff
+
+**Why this matters.** §14.5's punt: "show what changed from week
+N-1 — central once there are real-world edits." Once users start
+editing templates + comparing what shifted, week-diff is the
+natural visual answer.
+
+**Shape.** A `/playlists/[id]/diff/[other-id]` view that shows
+slot-by-slot what differs between two playlists (same station,
+different weeks, or same week different runs). Diff structure:
+position N → expected A vs actual B + reason.
+
+Reuses §14.37's byte-equality diagnostic harness
+(`tests/byte_equality.py:assert_chain_equal`) at the engine level
+for the comparison logic; new SvelteKit page wraps it.
+
+**Effort.** Small-medium (~4-5 commits: API endpoint, page, UI
+component, e2e test).
+
+**Trigger.** Wait for the use case ("I tweaked the template; what
+changed in the output?"). The editor (§16.2) makes this question
+natural; ship the diff alongside.
+
+---
+
+### 16.24 Post-validation fixes — placeholder
+
+**Why this slot exists.** Phase B closed with byte-equality
+verified, but external validation against the real station owner
+is in flight (50 generated XMLs + README in `output/user-test/`).
+That validation will surface either:
+
+* **Nothing** — the operator says "sounds great." The placeholder
+  collapses; move directly to §16.11 / §16.17 / §16.19.
+* **1-3 specific issues** — divergences from operator expectation
+  (which may be operator-preference disagreements, not bugs; or
+  may be real engine issues; or may be pool-content concerns).
+
+**Process.**
+
+* Operator listens + reports.
+* For each reported issue: diagnose (is it a bug? a preference? a
+  template / pool issue?), classify, decide if it warrants a slice.
+* Each warranted issue becomes a small §14.x.y or §14.43+ slice
+  with its own DESIGN entry + commit pair.
+
+**Effort.** UNKNOWN (TBD). Could be 0 commits if validation is
+clean; could be 3-5 small slices if specific divergences need
+fixing.
+
+**Slot in plan.** Position 4* in the strategic table — between
+§16.2.1+ implementation and §16.11. Reasoning: if real validation
+issues surface, they take priority over polish work.
 
 ---
 
