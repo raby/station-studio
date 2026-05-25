@@ -6107,6 +6107,31 @@ that proves the next decision", not "polish the thing we've got".
 §17 is the queue we *are* going to chip at; everything else stays
 trigger-gated.
 
+### Plan audits — keeping this index honest
+
+The §16 master tables above are the SOURCE OF TRUTH for what's
+queued. Items in §14.x punt tables that aren't ALSO in §16 risk
+falling off when focus narrows.
+
+**Plan audits** (see `CONTRIBUTING.md` for the full process) sweep
+DESIGN.md for queued / deferred / punted items not in the §16
+plan, then triage each one: elevate to a §16.x slice, confirm
+tail (explicit "stays deferred + why"), or drop (irrelevant /
+shipped-under-another-name).
+
+**Cadence triggers** (any one is enough to do an audit):
+
+- Phase boundaries (e.g. Phase A → Phase B; we did the most
+  recent one at §14.41 → §16.0).
+- Before a major focus narrowing (≥1 week of attention on one
+  thing — items risk falling off when working memory narrows).
+- Every ~10 slices (rough heuristic for queue drift).
+- When the next-slice question feels chaotic.
+
+**Worked example.** Commit `3a18548` (DESIGN §16 audit follow-up)
+elevated 9 missing items to named §16.x slices. CONTRIBUTING.md's
+"Plan audits" subsection walks through the mechanics.
+
 ---
 
 ## 16. Next up — planned slices

@@ -40,6 +40,84 @@ discipline is:
 The slice pattern is mature; if a change doesn't fit it, propose
 the change to the pattern itself first.
 
+## Plan audits
+
+The slice pattern is great for shipping but easy to drop "we
+should also..." items between commits. Punts in §14.x entries,
+"later" rows in §11, and `Trigger to pick up` columns in punt
+tables accumulate; without periodic surfacing they decay into
+"things only the original author remembers."
+
+**Plan audits prevent that.** A plan audit is a 30-60 minute
+sweep: read DESIGN.md looking for queued / deferred / punted items
+not in the §16 plan order, then decide for each one:
+
+- **Elevate** — give it a §16.x number + a brief in the plan. The
+  brief is short (effort estimate + trigger + scope), not a spec.
+- **Confirm tail** — explicitly note it stays deferred + WHY (no
+  demand, waits for a felt pain, etc.). The note prevents the
+  question coming up again next audit.
+- **Drop** — if the item has become irrelevant (e.g. shipped under
+  a different name, or the original problem evaporated), strike
+  it from §11 / the punt table with a one-line note.
+
+After an audit, the master queued-order table at the top of §16
+should reflect everything tracked. No item should live ONLY in a
+§14.x punt table — they should also surface in §16's index.
+
+### When to do one
+
+Triggers (any one is enough):
+
+- **Phase boundary** — Phase A → Phase B, Phase B → Phase C-or-
+  whatever-comes-next. We just finished one at the §14.41 →
+  §16.0 transition; it caught 9 items that hadn't propagated to
+  the §16 plan.
+- **Major focus narrowing** — before starting work that will
+  occupy attention for ≥1 week. Tail items risk falling off when
+  focus narrows; audit first so they're indexed before they
+  disappear from working memory.
+- **Every ~10 slices** — rough heuristic for "the queue has
+  accumulated enough that small punts have started to drift."
+- **When the queue feels chaotic** — trust the feeling. If the
+  next-slice question takes longer than a minute to answer, that's
+  a signal.
+
+### How to do one
+
+1. **Search DESIGN.md** for queued markers — `Deferred`, `Queued`,
+   `Punted`, `LATER`, `TODO`, "wait for", "trigger to pick up".
+   Plus the punt tables at the bottom of each §14.x entry.
+
+2. **Build a working list** of items found but not in the §16
+   master table. Group by category (operational / UI polish /
+   testing / cross-cutting / tail).
+
+3. **Triage each one** — elevate, confirm tail, or drop. For
+   elevations, assign a §16.x number from above the existing
+   range (don't reuse old numbers even if they're "shipped";
+   §14.x entries reference them).
+
+4. **Commit one slice**: DESIGN.md updates (new briefs + updated
+   master table + status snapshot rows). Same shape as any other
+   slice; commit message names "audit follow-up: N new slices."
+
+5. **Verify** — re-run the search after the commit; nothing
+   queued should be missing from the master table.
+
+The §14.40 review's "DESIGN §16 audit follow-up" commit
+(`3a18548`) is the worked example.
+
+### What an audit is NOT
+
+- Not a code review. Audits look at the PLAN, not the
+  implementation. Code review happens slice-by-slice.
+- Not a design overhaul. If the audit surfaces an item that
+  needs a design discussion, the audit FILES that discussion as
+  a §16.x entry to pick up later; it doesn't dive in.
+- Not a sprint plan. Plan audits index the queue; they don't
+  schedule it. Which slice comes next is a separate decision.
+
 ## Test discipline
 
 | Layer | Tool | Gate |
