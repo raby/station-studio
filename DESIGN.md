@@ -6033,6 +6033,86 @@ respective station-shape's regression class at meaningful depth.
 
 ---
 
+### 14.42 Classics cycle wrap — weeks 17-32 locked
+
+**Goal.** §14.40 asserted weeks 1-16 (one full cycle). §14.42
+extends to TWO full cycles (weeks 1-32), specifically locking the
+cycle-wrap edge at week 17 where the stateless cursor formula
+returns to week-1 positions.
+
+#### The wrap math
+
+Classics's stateless cursor:
+
+```
+base_cursor(week) = (week - 1) * base_advance_per_week % (cycle_weeks * base_advance)
+                  = (week - 1) * 60 % 960
+```
+
+| Week | base_cursor | Matches |
+|---|---|---|
+| 1 | 0 | — |
+| 16 | 900 | — |
+| **17** | **0** | **= week 1** |
+| 21 | 240 | = week 5 |
+| 32 | 900 | = week 16 |
+
+The wrap fires AT week 17, not later: `(17-1) * 60 = 960; 960 % 960 = 0`.
+Pre-§14.42 the fixture stopped at week 16 — the wrap was UNTESTED.
+
+#### Verification of the wrap
+
+The regenerated fixture exhibits the EXACT mirroring the formula
+predicts:
+
+```python
+fixture["weeks"][16].pids == fixture["weeks"][0].pids   # week 17 == week 1
+fixture["weeks"][31].pids == fixture["weeks"][15].pids  # week 32 == week 16
+```
+
+Both verified true in the fixture. This isn't a property the test
+asserts at runtime (it just compares against the fixture); it's a
+property of the fixture that, if any future cursor-formula change
+breaks the wrap, the fixture-comparison surfaces.
+
+#### Asserted weeks (6, covering the wrap span)
+
+| Week | Locks in |
+|---|---|
+| 1 | First cycle start; continuity with the prior §14.40 fixture |
+| 5 | Mid first cycle |
+| 16 | Last week BEFORE wrap (cursor at max = 900) |
+| **17** | **First week AFTER wrap (cursor back to 0)** — the edge |
+| 21 | Mid second cycle |
+| 32 | Last week of second cycle (cursor at 900; mirrors week 16) |
+
+#### What ships in §14.42
+
+* `tests/test_classics_byte_equality.py`:
+  - `WEEKS_GENERATED = list(range(1, 33))` (32 weeks, was 16)
+  - `WEEKS_ASSERTED = [1, 5, 16, 17, 21, 32]` (6 weeks, was 16)
+  - Inline comment explaining the wrap math + week-pair mirroring
+* `tests/fixtures/expected/classics_byte_eq.json`: regenerated.
+  ~2.6 MB (was ~1.3 MB); 32 weeks × 3,010 PIDs = 96,320 PIDs.
+* DESIGN.md §14.42 (this section).
+
+**Test runtime**: ~5.7s (was ~3s for 16 weeks). Acceptable; doesn't
+require XML data (synthetic Classics pools); always runs in CI.
+
+#### What §14.42 catches
+
+Without it, a regression in the cursor-cycle math (off-by-one in
+modular arithmetic, accidentally double-wrapping, treating
+`cycle_weeks=16` as inclusive vs exclusive) would have passed all
+prior tests. §14.42 is now the regression lock for that edge.
+
+It also closes Phase B's last "tail" item — the §14.41 punt table
+named §14.42 as queued; it's now shipped. §14.38b (multi-prior
+import) is the only remaining Phase B tail item, parked on
+"wait for demand."
+
+---
+
 ## 15. Status snapshot
 
 A quick "where are we" for a future reader. Last updated alongside

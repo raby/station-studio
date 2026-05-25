@@ -53,9 +53,13 @@ make dev                     # FastAPI :8001 + SvelteKit :5173 in parallel
 Open <http://localhost:5173>. The two example stations (Rebirth
 Classics + Rebirth Radio) are seeded automatically on first boot
 from `stations/*.json` — you'll see them in the sidebar. Pick one
-and explore. To import your own iTunes XMLs as source pools, use
-the wizard's *Sources → Import* flow (or `make import-weekly-pools
-manifest=…` from the CLI).
+and explore.
+
+To import your own iTunes XMLs as source pools today, use the CLI:
+`make import-weekly-pools manifest=path/to/your-manifest.json`
+(see [`tests/fixtures/sample_pool_manifest.json`](tests/fixtures/sample_pool_manifest.json)
+for the manifest shape). A dedicated UI for importing pools ships
+alongside the visual block editor (§16.2).
 
 Full install + first-station tutorial: see
 [docs/getting-started.md](docs/getting-started.md)
@@ -102,7 +106,7 @@ station template ──► describes what plays when
                        └──► export → iTunes XML
 ```
 
-Five **strategies** for placing a track at a slot:
+Seven **strategies** for placing a track at a slot:
 
 - `window` — take N consecutive tracks from a source at a cursor position
 - `pick` — one track from a source at a cursor position
@@ -138,8 +142,11 @@ discipline, byte-equality test methodology — live in
 at the top lists every §14.x slice that shipped.
 
 If you're contributing engine work, also see
-[`tests/byte_equality.py`](tests/byte_equality.py) for how the port
-acceptance tests catch regressions.
+[`engine/divergence.py`](engine/divergence.py) (slot-level diff
+helpers) and [`engine/prior_seed.py`](engine/prior_seed.py) (the
+prior-seed validator + the import-prior contract) for how the
+port acceptance tests catch regressions. `tests/byte_equality.py`
+is a thin re-export shim for backward compatibility.
 
 ## Acknowledgements
 

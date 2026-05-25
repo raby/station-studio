@@ -73,8 +73,25 @@ CLASSICS_TEMPLATE = REPO_ROOT / "stations" / "rebirth-classics.json"
 
 # Classics's `cycle_weeks=16` — the full cycle. Each week independently
 # generated (Classics has no cross-week state).
-WEEKS_GENERATED = list(range(1, 17))
-WEEKS_ASSERTED = list(range(1, 17))
+# §14.42: extended to TWO full cycles (16 + 16 = 32 weeks) so the
+# fixture locks the cycle-wrap edge at week 17.
+#
+# Classics's stateless cursor formula:
+#   base_cursor(week) = (week - 1) * base_advance_per_week % (cycle_weeks * base_advance_per_week)
+#   = (week - 1) * 60 % 960
+#
+# So week 17 → 16 * 60 % 960 = 960 % 960 = 0 → back to week 1's position.
+# Week 32 → 31 * 60 % 960 = 1860 % 960 = 900 → same as week 16.
+#
+# Asserted weeks chosen to span the wrap:
+#   1  = first cycle start (continuity with prior §14.40 fixture)
+#   5  = mid first cycle
+#   16 = last week BEFORE wrap (cursor at 900)
+#   17 = FIRST week AFTER wrap (cursor back to 0) — most important
+#   21 = mid second cycle
+#   32 = last week of second cycle (cursor at 900; should match week 16)
+WEEKS_GENERATED = list(range(1, 33))
+WEEKS_ASSERTED = [1, 5, 16, 17, 21, 32]
 
 # Classics is rng=off; seed is irrelevant to output. We pass a fixed
 # value so the chain helper's signature is satisfied + the seed
