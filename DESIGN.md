@@ -6492,6 +6492,339 @@ D1–D10 without that station's needs in hand risks designing for
 hypothetical pain. When the trigger fires, expand to the full
 brief shape using §16.7 / §16.8 as templates.
 
+**§16.2.0 supersedes this brief.** The trigger fired (weekly port
+landed; second station shape is concrete) and the comprehensive
+design discussion is in §16.2.0 below. The brief above stays for
+historical record + to show what was assumed pre-port.
+
+### 16.2.0 Visual block editor — comprehensive design (post-port)
+
+**Status.** Paper-only slice. No code. Output is THIS DESIGN entry,
+which sets the architectural decisions that §16.2.1 through §16.2.7
+implement. Same shape as §14.38's design-doc-first pattern.
+
+**Why §16.2.0 NOW.** §17.1 explicitly deferred §16.2's detailed
+design until after the port. The port landed (§14.37–§14.41); both
+layout forms (flat_slots for weekly, row_template for Classics) are
+concrete; the rules system is wired (§14.29/§14.30); and the OSS
+framing shift (§16.0) reframed the editor's primary audience from
+"operator porting weekly" to "hobbyist building their station."
+Pre-implementation design now has receipts to ground each decision.
+
+**Three personas the editor must serve** (in order of strategic
+weight):
+
+1. **The hobbyist building from scratch** (primary OSS persona).
+   Doesn't know weekly's vocabulary. Learns by doing. Needs
+   composability + discoverability + low-stakes experimentation.
+
+2. **The operator tweaking an existing station** (today's primary
+   user — the original station owner). Knows the vocabulary.
+   Wants surgical precision: "move slot 1734 to position 1842,"
+   "change the mix exclusion from 20 to 15 weeks."
+
+3. **The experimenter forking + diffing.** Wants "what does this
+   change actually do?" feedback. Reuses the §14.37 byte-equality
+   harness in a UI surface.
+
+All three deserve service, but the architecture optimises for
+persona 1. That's the long-tail growth bet from §16.0; serving
+persona 1 well typically serves 2 + 3 as side effects.
+
+#### Decision 1 — Primitives the editor exposes
+
+The user manipulates THREE primitive types:
+
+- **Atomic slot** — one chip = one `BlockSpec` (`{strategy, source,
+  size, …}`). Today's mental model. Useful for one-off chips
+  (jingles, specific prev_ref slots).
+
+- **Macro** — "200 × commercial" is one macro chip that expands
+  to 200 atomic slots at generation time. Edit the macro = edit
+  all 200. Essential for weekly's structure; atomic-only is
+  unworkable past ~50 slots.
+
+- **Section** — composition: a NAMED ordered list of slots +
+  macros. Reusable across positions ("morning-block" lives once,
+  referenced from day1 / day2 / day3). Matches how station
+  designers think.
+
+Template inheritance (a fourth primitive — "Sunday Radio extends
+Rebirth Radio with overrides") is **deferred**. Forking via copy-
+and-paste is simpler and covers the demand we know about. Re-open
+when a contributor actually wants to maintain two stations sharing
+80% structure.
+
+#### Decision 2 — Where macros + sections live
+
+**Sidecar metadata file.** `stations/X.json` stays unchanged
+(today's engine-facing template). `stations/X.editor.json` carries
+macros + sections. Engine ignores the sidecar entirely; editor
+reads both.
+
+Rationale:
+
+- Engine stays simple; the existing flat_slots / row_template grammar
+  doesn't grow. No changes to template.py, generator.py, or
+  template_importer.py.
+- JSON file remains the canonical source-of-truth (per §16.0's
+  decision); git history is intact; existing seed_stations / refresh
+  flows are unaffected.
+- Sidecar drift (someone hand-edits `X.json` without updating
+  `X.editor.json`) is detected at editor load time. A small
+  reconciliation step: "this slot exists in the JSON but isn't in
+  any section — fix it manually or auto-add to a fallback section?"
+
+The drift detector follows §14.32's strict-mode parsing pattern:
+allowlisted keys, type checks, cross-reference validation. Same
+PriorSeedError-style fail-loud-on-malformed approach.
+
+**Sidecar grammar (v1 sketch):**
+
+```json
+{
+  "_comment": "Editor-only metadata for stations/rebirth-radio.json.",
+  "schema_version": 1,
+  "sections": [
+    {
+      "id": "morning-block",
+      "name": "Morning",
+      "blocks": [
+        {"kind": "atomic", "slot_index": 0},
+        {"kind": "macro", "ref": "commercial-200"},
+        {"kind": "atomic", "slot_index": 201}
+      ]
+    }
+  ],
+  "macros": [
+    {
+      "id": "commercial-200",
+      "name": "200 × commercial",
+      "spec": {"strategy": "weighted", "source": "COMMERCIAL", "size": 1},
+      "repeat": 200
+    }
+  ],
+  "layout_order": ["morning-block", "mix-section-1", "night-block-1", …]
+}
+```
+
+`slot_index` in atomic blocks refers to the position in the
+`stations/X.json` `flat_slots` array (or the row+block_idx tuple
+for row_template). The sidecar's job is to GROUP those slots into
+meaningful units; it doesn't duplicate slot data.
+
+#### Decision 3 — Layout-form handling
+
+**Editor is neutral.** The flat_slots vs row_template XOR is
+invisible to the user. Macros + sections express both naturally:
+
+- **row_template form** (Classics-style) becomes a `repeat_with_offsets`
+  section property: "this section repeats N times with offsets [O1,
+  O2, …]". The 7-row Classics layout = one section repeated 7 times.
+- **flat_slots form** (weekly-style) becomes a flat list of macros
+  (or atomic slots) inside sections. Weekly's 2,196 slots = ~50
+  macros across ~10 sections.
+
+On save, the editor picks the JSON form that best represents the
+result (mostly: a section with repeat_with_offsets → row_template;
+otherwise → flat_slots). Round-trip-stable for stations created
+in either form.
+
+#### Decision 4 — Preview + diff (revised)
+
+**Two coexisting feedback surfaces**, not one OR the other. Earlier
+draft of this section rejected live preview as "too performance-
+heavy"; on closer analysis that was conflating regeneration cost
+(real but tolerable) with disk-round-trip cost (not actually
+incurred — preview runs against in-memory editor state, not the
+persistent store). Revised below.
+
+**(a) Live preview — debounced, automatic.**
+
+Editor's in-memory template state is continuously sent to a new
+`POST /api/stations/{slug}/preview` endpoint after ~500ms of edit
+idle. The endpoint accepts a full template body, parses it, loads
+the station's pools, generates against them with a deterministic
+seed, and returns the resulting trace. NO persistent-store
+side-effects.
+
+Cost breakdown (weekly's 2,196-slot template, baseline):
+
+| Step | Cost |
+|---|---|
+| Editor → API POST (~500 KB body, localhost) | ~10ms |
+| `parse_template` + `load_pools` (pools cached server-side per session) | ~50ms |
+| Engine `generate()` | **~1s** — the dominant cost |
+| Trace JSON response + render | ~100ms |
+| Total feedback latency (after debounce) | **~1.5s** |
+
+1.5s feedback isn't real-time, but it IS "I see the impact of my
+edit before I forget what I was thinking." The trace renders
+inline alongside the canvas; user can toggle live-preview off if
+working on huge templates or slow hardware.
+
+**Critically: live preview is independent of Decision 2 (JSON-as-
+source-of-truth).** Preview runs against editor MEMORY; the
+persistent store enters the loop only on Save / Discard. The
+storage choice and the preview choice are orthogonal.
+
+**(b) Compare against saved — explicit, on-demand.**
+
+Button: "Show what changed since save." Generates against BOTH
+current in-memory state AND last-saved JSON; renders a slot-by-
+slot diff using `tests/byte_equality.py`'s `find_first_divergence`
++ `render_divergence_context` helpers — the same code powering
+the port byte-equality test.
+
+Diff surfaces: "12 slot positions changed" banner → expand for the
+per-slot diff with surrounding context (slot type, params, ±3
+positions of context for orientation).
+
+Different question from live preview: (a) shows WHAT IT GENERATES
+NOW; (b) shows DELTA against last save. Both are useful; the user
+chooses which lens to look through.
+
+**UX flow combining both:**
+
+1. User edits a chip → live preview updates within ~1.5s
+2. User makes 5 more edits → live preview keeps refreshing
+3. User clicks "Compare against saved" → sees TOTAL delta since
+   session start
+4. User clicks Save (commits to JSON + sidecar) OR Discard (rolls
+   back to last saved)
+
+**Performance escape hatches** (deferred; document for future):
+
+1. **Incremental regeneration** — only re-run strategies whose
+   inputs changed. Local edits cascade locally for most strategies;
+   engine would need a "regen from slot N" entry point. Significant
+   work; defer until 10K-slot templates exist.
+2. **Server-side template cache** — keep parsed Template + loaded
+   pools warm in the API process between requests. Saves ~100ms,
+   not the main 1s. Trivial to add when needed.
+3. **WebWorker generation in the browser** — port engine to WASM
+   or pure JS. ~weeks of work; only pays off if the localhost API
+   hop becomes prohibitive.
+
+None of these are needed at v1 sizes; the 1.5s debounced feedback
+is the right v1 target.
+
+#### Decision 5 — Fork (multi-station variants)
+
+**Copy-and-paste.** "Fork this station" duplicates the JSON +
+sidecar to a new slug. Edits diverge from there. Two independent
+files; no inheritance / composition across stations.
+
+The hobbyist starter station (§16.14 — `stations/hobbyist-starter.json`)
+plus the fork action means a new contributor's flow is: clone repo,
+`make seed-stations`, fork the starter, edit, generate. No copy-paste
+across machines required.
+
+Template inheritance + cross-station section reuse: **deferred**
+until §16.2 v2 or a contributor demands it. The §16.2 brief above
+already noted this — §16.2.0 reaffirms.
+
+#### Implementation roadmap
+
+Seven implementation slices, each independently shippable:
+
+| Slice | Title | What ships | Risk |
+|---|---|---|---|
+| **§16.2.1** | Sidecar grammar + parser | The schema (decision 2 above), `engine/editor_metadata.py` parser, drift detector, tests. No UI. | Low — pure data layer. |
+| **§16.2.2** | Read-only canvas | `/stations/[slug]/visualise` route renders sections + macros from sidecar. View only; no edits. | Low — even shipping just this is useful as a "see what your station looks like" feature. |
+| **§16.2.3** | Atomic slot editing | Click chip → edit form → save. Drag-drop within section. | Medium — first write path; concurrency-with-JSON concerns. |
+| **§16.2.4** | Macro editing | Edit-once-applies-to-all. Macro palette in sidebar. | Medium. |
+| **§16.2.5** | Section composition | Create / rename / reorder sections. Drag macros between sections. | Medium. |
+| **§16.2.6** | Live preview endpoint + UI | `POST /api/stations/{slug}/preview` (in-memory; no persistence side-effects) + editor wires it to a debounced auto-refresh trace panel. | Medium — new API surface; debounce + state-management UX. |
+| **§16.2.7** | Compare against saved | "Show what changed since save" button → slot-by-slot diff using `byte_equality.py` helpers. | Low — diff helpers exist; UI plumbing. |
+| **§16.2.8** | Fork action | "Fork this station" → duplicates JSON + sidecar. | Low — file copy + slug-rename UI. |
+
+Total: 8 slices. Estimated 17-28 commits across them with the
+established mid-slice review pattern. Earliest user-visible value
+is §16.2.2 (read-only visualiser); v1 feature-complete at §16.2.8.
+
+#### Decisions deliberately deferred
+
+| Deferred decision | Why deferred | Trigger to revisit |
+|---|---|---|
+| Template inheritance / cross-station section reuse | Adds grammar complexity; fork-and-paste covers v1 demand | Contributor maintains 2+ stations sharing structure |
+| Real-time (per-keystroke) live preview | At ~1s/regen for 2,196 slots, per-keystroke is too costly. Debounced live preview ships in §16.2.6 | If incremental regeneration (escape hatch 1 above) makes per-keystroke cheap |
+| Collaborative editing (multi-user lock + presence) | OSS solo-user shape per §16.0; git is the collab mechanism | Project ever moves to multi-user / SaaS shape |
+| Mobile / touch responsive | Touch drag-drop for 2,196 slots not viable (§17.1) | Never, probably |
+| Undo / redo across sessions | Sidecar diff against git mostly covers it | User pain — "I lost an edit" — after the editor ships |
+| Keyboard shortcuts | Power-user feature; doesn't gate v1 | After §16.2.7 ships + power users emerge |
+| Sidecar version migration | Schema_version=1 today; bump when needed | Schema change |
+| Theme / dark mode | Visual polish; not gating | After §16.5 (a11y pass) |
+
+#### Worked examples — how each persona uses the editor
+
+**Persona 1 (hobbyist building from scratch):**
+1. Fork the §16.14 starter station.
+2. Open the editor → see the starter's sections.
+3. Drag a "mix" chip from the palette into the "morning-block"
+   section.
+4. Click Preview → see the diff: "1 slot changed."
+5. Listen to the change in trace viewer.
+6. Save.
+7. Three iterations later, has a custom station.
+
+**Persona 2 (operator tweaking weekly):**
+1. Open `rebirth-radio` in the editor.
+2. Navigate to the relevant section.
+3. Click the slot at position 1734 → edit form → change `genre`
+   from `01Alphastate` to `06Safespaced`.
+4. Click Preview → diff shows 1 slot changed.
+5. Save.
+
+**Persona 3 (experimenter forking):**
+1. Fork `rebirth-radio` to `rebirth-radio-experimental`.
+2. Make a chunk of edits.
+3. Preview shows N positions diverged from the original.
+4. Generate both stations' playlists for the same week + seed.
+5. Listen to both; decide which works better.
+
+#### What §16.2.0 deliberately doesn't decide
+
+- **Visual design / look-and-feel.** Chip colours, fonts, spacing.
+  Picks up in §16.2.2 (read-only canvas) where rendering becomes
+  real.
+- **API endpoints for the editor.** Whether sidecar writes go
+  through a REST endpoint or direct file write is §16.2.3's
+  concern (first slice with a write path).
+- **Where sections live across multiple stations.** Cross-station
+  section reuse is deferred (see above); the question doesn't
+  arise.
+
+#### Punts
+
+| Punt | Severity | Notes |
+|---|---|---|
+| Template inheritance | LATER (§16.2 v2) | Reopen when a contributor maintains 2+ stations sharing structure |
+| Per-keystroke real-time preview | LATER | Debounced live preview ships in §16.2.6; per-keystroke requires incremental regeneration (engine refactor) |
+| Incremental regeneration engine refactor | LATER | Only needed if 10K-slot templates surface or per-keystroke real-time becomes a felt need |
+| Multi-user collaborative editing | LATER (multi-user shape) | OSS solo-user shape; git is the collab mechanism |
+| Mobile / touch | NEVER | Touch drag-drop for 2,196 slots isn't viable |
+| Undo / redo cross-session | LATER | Git + sidecar diff covers most of it; revisit on real pain |
+| Keyboard shortcuts | LATER | Post-§16.2.7 |
+| Theme / dark mode | LATER | Post-§16.5 a11y pass |
+| Sidecar schema_version migration | LATER | When schema changes |
+
+#### Queued follow-on slices
+
+- **§16.2.1** Sidecar grammar + parser + drift detector
+- **§16.2.2** Read-only visual canvas (`/stations/[slug]/visualise`)
+- **§16.2.3** Atomic slot editing
+- **§16.2.4** Macro editing
+- **§16.2.5** Section composition
+- **§16.2.6** Live preview endpoint + UI (debounced auto-refresh)
+- **§16.2.7** Compare against saved (slot-by-slot diff)
+- **§16.2.8** Fork action
+
+§16.2.0 is paper-only and closes here. §16.2.1 is the first
+implementation slice; design discussion for it picks up the
+sidecar grammar's concrete shape (allowlists, field types, drift-
+detector messages).
+
 ### 16.3 Delete / station reset
 
 **Why this matters.** Today the only way to clean up a wizard test
