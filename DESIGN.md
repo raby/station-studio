@@ -6036,14 +6036,21 @@ respective station-shape's regression class at meaningful depth.
 ## 15. Status snapshot
 
 A quick "where are we" for a future reader. Last updated alongside
-the §14.41 weekly port depth-symmetry slice. **Phase B is DONE
-+ DEEPENED.** Both station-studio's byte-equality tests are GREEN
-at production-scale chain depth: weekly port (real XMLs, 30
-generations, 8 asserted weeks spanning the mix-exclusion-window
-slide) and Classics (16-week full cycle, synthetic pools,
-freeze-against-self). The engine handles two structurally
-distinct stations through the same code path — the "weekly is
-one instance, not the shape" claim has receipts at depth.
+the §16.0 product-framing shift. **Phase B is DONE + DEEPENED.**
+Both station-studio's byte-equality tests are GREEN at production-
+scale chain depth: weekly port (real XMLs, 30 generations, 8
+asserted weeks spanning the mix-exclusion-window slide) and
+Classics (16-week full cycle, synthetic pools, freeze-against-self).
+The engine handles two structurally distinct stations through the
+same code path — the "weekly is one instance, not the shape" claim
+has receipts at depth.
+
+**Product framing (§16.0)**: station-studio is now positioned as
+an **open-source radio playlist generator for hobbyists**, not just
+an internal port replacement. LICENSE: MIT. README rewritten with
+hobbyist-facing front. CONTRIBUTING.md codifies the slice pattern.
+The visual block editor (§16.2) is the flagship feature of that
+direction — spec slice §16.2.0 is the next planned work.
 
 | Area                     | State                                                            |
 |--------------------------|------------------------------------------------------------------|
@@ -6062,12 +6069,16 @@ one instance, not the shape" claim has receipts at depth.
 | Delete / station-reset   | Shipped (14.10). Per-row delete + station nuke; cascades.        |
 | Disk-export UI button    | Shipped (14.11). Trace viewer "Export to disk" + status line.    |
 | Backup / restore         | Shipped (§14.18). `make backup` / `make restore date=...` with WAL-aware sqlite3 .backup + pre-restore safety copy. |
-| **§17 pre-port roadmap** | **Phase A complete (§14.17–§14.21). Phase B in flight: §14.22–§14.39 shipped — including the harness (§14.37), cursor-bootstrap model gap closed (§14.38, port byte-equality passes against real weekly), and per-cursor within-generation offset replacing §14.37's coalescing patch (§14.39, engine generalises to interleaved-cursor templates via committed counterexample fixture). One slice remains: §14.40 — second station fixture (Classics through the same engine path) proving "weekly is one instance" + lift xfail. Phase B closes when §14.40 lands. |
-| Visual block editor      | Deferred (v2). Lands as §17 Phase B after Phase A unblocks.      |
-| Trace versioning         | Deferred. See §16.4 (queued behind §16.1 by design).             |
-| Accessibility pass       | Deferred. §17 Phase D — single sweep after §16.2 + port.         |
+| **§17 port roadmap**     | **Phase A + Phase B both complete. Phase A (§14.17–§14.21): pre-port unblocks. Phase B (§14.22–§14.41): port — byte-equality verified at depth against weekly + Classics. Phase C (production cutover): operational, not engineering — external validation in flight with the station owner. Next engineering direction: §16.0 OSS framing shift (shipped) + §16.2 visual block editor (the flagship hobbyist feature). |
+| **Product framing**      | **OSS for radio hobbyists (§16.0). MIT-licensed. README hobbyist-facing; CONTRIBUTING.md codifies slice pattern. Two example stations (Classics + Rebirth Radio) ship; hobbyist starter station queued (§16.7).** |
+| Visual block editor      | **Next focus — §16.2.** Design slice §16.2.0 queued (paper-only spec). Flagship feature for the OSS direction. JSON source-of-truth (editor writes JSON; DB re-seeds from disk). |
+| Trace versioning         | Deferred. See §16.4 (queued; not on the critical path post-Phase-B). |
+| Accessibility pass       | Deferred. §16.5 — single sweep after §16.2 ships.                |
+| Rules CRUD UI panel      | Queued. Small slice; compounds with §16.2 (sidebar component reused). |
+| Install story            | Queued — §16.6. pip-installable or polished docker after §16.2 MVP. |
+| Hobbyist starter station | Queued — §16.7. 100-200-slot example structurally simpler than Classics, with synthetic starter XMLs for end-to-end boot without external data. |
+| Docs site                | Deferred — §16.8. After §16.2 + §16.6 + §16.7 ship.              |
 | Scheduler                | Deferred (v1.1).                                                 |
-| Weekly migration         | Long-term — §17 Phase C; needs three new engine primitives.      |
 
 Active TODOs live in §11 (deferred), §14.5 (trace-viewer follow-ups),
 §14.7 (wizard follow-ups), §14.8 (test-plan follow-ups), §16 (per-slice
@@ -6087,9 +6098,95 @@ trigger-gated.
 
 ## 16. Next up — planned slices
 
-Three queued slices, in the order we expect to take them. Each section
+The queued slices, in the order we expect to take them. Each section
 is intentionally a short brief, not a spec — the spec gets written
 when the slice lands, in the same §14.x format as the others.
+
+### 16.0 Product framing shift — open-source for radio hobbyists
+
+**Goal.** Pivot the project's framing from "internal weekly port
+replacement" to "open-source radio playlist generator for hobbyists,"
+ahead of the §16.2 visual editor work that's the flagship of that
+direction.
+
+Phase B closed (§14.37–§14.41) with byte-equality across two
+structurally distinct stations. The engine has earned its claim of
+generality. What it hasn't earned yet is its **product framing**:
+today the repo reads as an engineering project (sister to `weekly/`),
+not as a tool a hobbyist could install + use + extend.
+
+§16.0 is a paper-only framing slice. No engine changes. The point is
+to commit to the trajectory before designing the editor under it.
+
+#### What shipped
+
+* `LICENSE` — MIT. Maximum permissiveness; standard hobbyist-OSS choice.
+  Forks free to redistribute / modify / commercialise without
+  restriction. Copyright held by the original author; license text
+  per [opensource.org/licenses/MIT](https://opensource.org/licenses/MIT).
+* `README.md` rewritten — leads with user value (what is this, why
+  use it, quickstart), example-station tour second, architecture
+  pointer to `DESIGN.md` last. Hobbyist-readable front; engineering
+  reference still discoverable.
+* `CONTRIBUTING.md` — codifies the slice pattern (design discussion →
+  mid-slice review → slice-level review → DESIGN entry), test
+  discipline (byte-equality preservation, coverage gate, migration
+  parity), code style, station-shape proposal flow.
+* DESIGN.md §16.0 entry (this section) — captures the trajectory
+  decision + scope of OSS readiness.
+* DESIGN.md §15 status snapshot — reframed: this is a product, not
+  a port artifact. The "first target station: Rebirth Classics"
+  framing from the old README retires.
+
+#### What this means for downstream slices
+
+Three priorities propagate from the framing shift:
+
+1. **Hobbyist-readable vocabulary.** The engine's internals use
+   precise but technical names (`flat_slots`, `cursor_id`, `prev_ref`).
+   User-facing UI + docs should translate to musical concepts:
+   "playlist sections," "advance position," "previous-week reference."
+   The visual editor (§16.2) is the biggest carrier of this; the
+   wizard + trace viewer follow.
+
+2. **Onboarding floor.** A hobbyist with iTunes XMLs + curiosity
+   should reach a working playlist in <10 minutes. Today: clone +
+   make install + make dev + figure out where to put XMLs + figure
+   out the wizard. Most steps need polish. Tracked as the "install
+   story" slice (queued; see §16.6 below).
+
+3. **Example diversity.** Two stations ship today — both Rebirth
+   Radio's own (Classics + Rebirth itself). A hobbyist-shape starter
+   station (smaller, no `prev_ref`, no `mix`-style cross-week state)
+   would lower the cognitive cost of forking. Tracked as the
+   "hobbyist starter station" slice (queued).
+
+#### Decisions punted
+
+| Punt | Severity | Notes |
+|---|---|---|
+| Pip-installable package (`pip install station-studio`) | LATER | The git-clone path works; pip distribution wants entry-point polish + dependency pinning. Land when §16.2 editor MVP makes "install + try" worth marketing. |
+| Docker image | LATER | Same as above; nice-to-have for hobbyist friction. |
+| Documentation site (MkDocs / Docusaurus) | LATER | README + DESIGN.md is enough for now. Add when contributor traffic justifies. |
+| Public GitHub release announcement | LATER | Wait until §16.2 ships + 1-2 hobbyist starter stations exist. The product needs a coherent first-impression. |
+| Multi-user / SaaS shape | NEVER (for now) | Solo-user tool by design. Multi-user adds auth + concurrency surface that doesn't compound with the hobbyist trajectory. |
+
+#### Queued — adjacent OSS-readiness work
+
+* **§16.6 install story** — pip-installable package OR polished
+  docker-compose; first-station tutorial.
+* **§16.7 hobbyist starter station** — a 100-200 slot example
+  station structurally simpler than Classics, with starter XMLs
+  (synthetic, MIT-licensed metadata) so a fresh install boots
+  end-to-end without any external data.
+* **§16.8 docs site** — once §16.2 + §16.6 + §16.7 ship, a docs
+  site (MkDocs-Material) consolidates README + DESIGN extracts
+  + tutorial into something searchable.
+
+These are queued, not blocking. §16.0 lands first (paper only),
+then §16.2.0 (visual editor spec), then implementation slices.
+
+---
 
 ### 16.1 In-UI generate button (and per-row regenerate)
 
