@@ -46,17 +46,21 @@ It produces:
 ```bash
 git clone https://github.com/raby/station-studio.git
 cd station-studio
-make install                 # python deps + node deps
+make install                 # creates .venv, installs Python + Node deps
 make dev                     # FastAPI :8001 + SvelteKit :5173 in parallel
 ```
 
-Open <http://localhost:5173>. You'll see the two example stations
-(Rebirth Classics + Rebirth Radio) seeded automatically; pick one
-and explore. To import your own iTunes XMLs, use the wizard's
-*Sources → Import* flow.
+Open <http://localhost:5173>. The two example stations (Rebirth
+Classics + Rebirth Radio) are seeded automatically on first boot
+from `stations/*.json` — you'll see them in the sidebar. Pick one
+and explore. To import your own iTunes XMLs as source pools, use
+the wizard's *Sources → Import* flow (or `make import-weekly-pools
+manifest=…` from the CLI).
 
-Full install + first-station tutorial: see [docs/getting-started.md](docs/getting-started.md)
-*(coming soon — for now, see `Makefile` + `DESIGN.md` §17.1).*
+Full install + first-station tutorial: see
+[docs/getting-started.md](docs/getting-started.md)
+*(coming soon — for now, see `Makefile` + `DESIGN.md` §15
+status snapshot for the current capability surface).*
 
 ## Example stations included
 

@@ -6242,10 +6242,13 @@ Three priorities propagate from the framing shift:
    wizard + trace viewer follow.
 
 2. **Onboarding floor.** A hobbyist with iTunes XMLs + curiosity
-   should reach a working playlist in <10 minutes. Today: clone +
-   make install + make dev + figure out where to put XMLs + figure
-   out the wizard. Most steps need polish. Tracked as the "install
-   story" slice (queued; see §16.6 below).
+   should reach a working playlist in ~30 minutes (the README's
+   stated target). Today: `make install + make dev` works (auto-
+   seed lifespan handler ships the example stations on first
+   boot — sweep 1 of the §14.41 post-review batch); after that
+   the user needs to figure out where to put XMLs + work the
+   wizard. The flow is real but rough. Tracked as the "install
+   story" slice (queued; see §16.13).
 
 3. **Example diversity.** Two stations ship today — both Rebirth
    Radio's own (Classics + Rebirth itself). A hobbyist-shape starter

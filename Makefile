@@ -7,7 +7,7 @@
 #
 # `make test` runs all three in order; CI does the same.
 
-.PHONY: test test-backend test-frontend-unit test-e2e install-e2e-browsers clean-test \
+.PHONY: install test test-backend test-frontend-unit test-e2e install-e2e-browsers clean-test \
         migrate alembic-stamp alembic-revision alembic-current migration-parity \
         backfill-slot-types \
         backup backups restore \
@@ -19,6 +19,31 @@
 PY := .venv/bin/python
 ALEMBIC := .venv/bin/alembic
 DB_FILE := station_studio.db
+
+# One-shot bootstrap for a fresh clone. README's "Quick start" calls
+# this. Idempotent: re-running on a populated checkout is safe.
+#
+#   * Creates .venv if missing (Python 3.10+ required).
+#   * Installs Python deps (runtime + dev). pip pinning is loose
+#     today; pinning lands when the hobbyist-starter slice ships.
+#   * Installs frontend deps via `npm ci` (uses package-lock.json
+#     for reproducibility).
+#
+# DOES NOT seed the stations table — that happens automatically on
+# first uvicorn boot (api/main.py lifespan handler) when the
+# database is empty. So `make install && make dev` is the full
+# "fresh clone to running app" path. See README's Quick start.
+install:
+	@if [ ! -d .venv ]; then \
+		echo "Creating .venv …"; \
+		python3 -m venv .venv; \
+	fi
+	@echo "Installing Python deps …"
+	@.venv/bin/pip install --quiet --upgrade pip
+	@.venv/bin/pip install --quiet -r requirements.txt -r requirements-dev.txt
+	@echo "Installing frontend deps …"
+	@cd web && npm ci --silent
+	@echo "Done. Run \`make dev\` to start the app."
 
 test: test-backend test-frontend-unit test-e2e
 

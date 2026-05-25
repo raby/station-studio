@@ -36,13 +36,27 @@ from engine.models import (
 
 
 @pytest.fixture
-def api(tmp_path):
+def api(tmp_path, monkeypatch):
     """TestClient wired to a throwaway SQLite DB.
 
     Yields (client, Session). The test can use `client` to hit endpoints
     and `Session()` to seed preconditions or assert post-conditions.
+
+    Sets `STATION_STUDIO_DB_URL` to the tmp path so the §sweep-1
+    auto-seed lifespan handler (api/main.py:lifespan) points at the
+    same DB as the dep-override — otherwise the lifespan would try
+    to seed the real station_studio.db on every test run, which is
+    both incorrect (clobbers dev DB) and slow.
     """
-    engine = make_engine(f"sqlite:///{tmp_path}/api.db")
+    db_url = f"sqlite:///{tmp_path}/api.db"
+    monkeypatch.setenv("STATION_STUDIO_DB_URL", db_url)
+    # Opt out of the §sweep-1 auto-seed lifespan handler — most api
+    # tests assume an empty Station table. Tests SPECIFICALLY
+    # targeting auto-seed behaviour (test_lifespan_…) skip this fixture
+    # and set up their own TestClient without this env var.
+    monkeypatch.setenv("STATION_STUDIO_SKIP_AUTO_SEED", "1")
+
+    engine = make_engine(db_url)
     Base.metadata.create_all(engine)
     Session: sessionmaker = make_sessionmaker(engine)
 
@@ -716,12 +730,103 @@ def test_import_malformed_xml_500(api):
 # ---------- app plumbing -----------------------------------------------
 
 
-def test_root_endpoint_identifies_the_service():
-    """GET / returns a tiny service-identity blob — covers api/main.root()."""
+def test_root_endpoint_identifies_the_service(monkeypatch):
+    """GET / returns a tiny service-identity blob — covers api/main.root().
+    Skips the auto-seed lifespan since we're not testing that path."""
+    monkeypatch.setenv("STATION_STUDIO_SKIP_AUTO_SEED", "1")
     with TestClient(app) as client:
         r = client.get("/")
     assert r.status_code == 200
     assert r.json() == {"service": "station-studio", "version": "0.1.0"}
+
+
+# ---------- §sweep-1 auto-seed lifespan handler -----------------------
+
+
+def test_lifespan_auto_seeds_when_station_table_is_empty(tmp_path, monkeypatch):
+    """README's "Quick start" promises Rebirth Classics + Rebirth Radio
+    appear after `make install && make dev`. The lifespan handler
+    seeds `stations/*.json` on first boot when the Station table is
+    empty.
+
+    This test verifies the seed actually fires + creates the expected
+    rows. Uses the real stations/ dir so it tests the production path.
+    """
+    db_url = f"sqlite:///{tmp_path}/lifespan.db"
+    monkeypatch.setenv("STATION_STUDIO_DB_URL", db_url)
+
+    # Confirm empty DB pre-boot.
+    engine = make_engine(db_url)
+    Base.metadata.create_all(engine)
+    Session = make_sessionmaker(engine)
+    with Session() as db:
+        assert db.query(Station).count() == 0
+
+    # Boot the app → lifespan handler fires.
+    with TestClient(app) as client:
+        # Bootstrap done. Confirm seeded rows.
+        with Session() as db:
+            slugs = {s.slug for s in db.query(Station).all()}
+            # At least the two example stations from stations/*.json.
+            assert "rebirth-classics" in slugs, slugs
+            assert "rebirth-radio" in slugs, slugs
+
+
+def test_lifespan_does_not_re_seed_when_station_table_is_populated(
+    tmp_path, monkeypatch,
+):
+    """Idempotency: re-running with existing stations doesn't clobber
+    them. Specifically: a station with a hand-edited name keeps its
+    edits across the second boot."""
+    db_url = f"sqlite:///{tmp_path}/lifespan.db"
+    monkeypatch.setenv("STATION_STUDIO_DB_URL", db_url)
+
+    engine = make_engine(db_url)
+    Base.metadata.create_all(engine)
+    Session = make_sessionmaker(engine)
+
+    # First boot — seeds happens.
+    with TestClient(app):
+        pass
+
+    # Hand-edit a station's name to verify the second boot doesn't
+    # overwrite it.
+    with Session() as db:
+        s = db.query(Station).filter_by(slug="rebirth-classics").one()
+        s.name = "MY CUSTOM EDIT"
+        db.commit()
+
+    # Second boot — should be a no-op.
+    with TestClient(app):
+        pass
+
+    with Session() as db:
+        s = db.query(Station).filter_by(slug="rebirth-classics").one()
+        assert s.name == "MY CUSTOM EDIT", (
+            "lifespan re-seeded over the user's edit"
+        )
+
+
+def test_lifespan_swallows_seed_errors_so_app_still_boots(
+    tmp_path, monkeypatch, caplog,
+):
+    """If `stations/*.json` is broken, the lifespan logs + continues —
+    the API still comes up so the user can investigate. Set the
+    stations dir to an empty tmp path to trigger the "no stations
+    found" branch."""
+    db_url = f"sqlite:///{tmp_path}/lifespan.db"
+    monkeypatch.setenv("STATION_STUDIO_DB_URL", db_url)
+    # Force seed_stations to look at a tmp dir with no JSONs.
+    from scripts import seed_stations as ss_module
+    monkeypatch.setattr(ss_module, "STATIONS_DIR", tmp_path / "no_stations")
+
+    with caplog.at_level("INFO"):
+        with TestClient(app) as client:
+            r = client.get("/")
+        assert r.status_code == 200
+    # Either "no stations found" (default path) or "auto-seed failed"
+    # (error path) — both are acceptable; what matters is the app
+    # served the root endpoint.
 
 
 # ---------- DELETE /api/playlists/{id} --------------------------------
