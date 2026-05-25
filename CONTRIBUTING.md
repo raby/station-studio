@@ -150,24 +150,42 @@ slice's DESIGN entry.
 
 ## Proposing a new station shape
 
-The engine's grammar is documented in `DESIGN.md` §14.32 (flat_slots)
-and §14.34 (weekly-format translator). Two ways to add a station:
+**The fast path** (hobbyist building their first station): fork
+`stations/rebirth-classics.json`, edit the slot vocabulary to match
+what you want, drop it back in `stations/`, restart the app. The
+auto-seed lifespan handler picks it up on next boot. Your station
+shows up in the sidebar.
 
-1. **From scratch** — author a `stations/<slug>.json` matching the
-   template grammar. Add a byte-equality "freeze-against-self" test
-   under `tests/test_<slug>_byte_equality.py` so future engine
-   changes don't silently regress your station. The Classics test
-   is the model.
+That's it for the minimum case. The fast path is the path. You DO
+NOT need to write a byte-equality test, port through the weekly
+translator, or know what `mix_exclusion_weeks` means. Most stations
+won't.
 
-2. **From a weekly-format export** — if your station has a
-   `weekly/`-style generator already, use
-   `scripts/dump_weekly_template.py` + `make import-station` to
-   bring it in.
+### When you DO want more
 
-If your station needs a primitive the engine doesn't have, propose
-it as a §14.x slice (engine strategy modules live under
-`engine/strategies/`; pattern: pure function, no DB, no
-randomness-source as arg).
+Three signals you're past the fast path:
+
+1. **You want to port from an existing weekly-format generator.**
+   Use `scripts/dump_weekly_template.py` + `make import-station`
+   to bring its template in. See `DESIGN.md` §14.34 for the
+   translation table.
+
+2. **You want regression-locked output across engine changes.**
+   Add a "freeze-against-self" byte-equality test under
+   `tests/test_<slug>_byte_equality.py`. The Classics test is
+   the model. Only worth doing if you're maintaining the station
+   long-term + care about engine changes not silently changing
+   your output.
+
+3. **You hit a primitive the engine doesn't have.** Propose it
+   as a §14.x slice — engine strategy modules live under
+   `engine/strategies/`; pattern: pure function, no DB, no
+   randomness-source baked in. `DESIGN.md` §14.24-§14.28 walk
+   through five real examples.
+
+The grammar reference is `DESIGN.md` §14.32 (flat_slots form) and
+§14.34 (weekly-format translator). You don't need to read both
+before starting — read the one that matches what you're doing.
 
 ## Commit message style
 

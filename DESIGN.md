@@ -6850,12 +6850,12 @@ Seven implementation slices, each independently shippable:
 
 | Slice | Title | What ships | Risk |
 |---|---|---|---|
-| **§16.2.1** | Sidecar grammar + parser | The schema (decision 2 above), `engine/editor_metadata.py` parser, drift detector, tests. No UI. | Low — pure data layer. |
-| **§16.2.2** | Read-only canvas | `/stations/[slug]/visualise` route renders sections + macros from sidecar. View only; no edits. | Low — even shipping just this is useful as a "see what your station looks like" feature. |
+| **§16.2.1** | Sidecar grammar + parser | The schema (decision 2 above), `engine/editor_metadata.py` parser, drift detector, tests. No UI. **Plus** the two committed-station sidecars (`stations/rebirth-radio.editor.json` + `stations/rebirth-classics.editor.json`) authored using the grammar — without these, §16.2.2 has nothing to render. | Low-Medium — pure data layer, but ships two real-station sidecars so §16.2.2 can render something on day one. |
+| **§16.2.2** | Read-only canvas | `/stations/[slug]/visualise` route renders sections + macros from the sidecar shipped in §16.2.1. View only; no edits. **Coupling note:** §16.2.2 is paired with §16.2.1 in practice — without §16.2.1's committed sidecars, this route has nothing to render. Independently shippable in CODE terms (the route exists and works for any sidecar) but not in DEMO terms (the demo requires the sidecars). Treat the pair as one ~1-week unit; the 8-slice estimate already accounts for this. | Low — UI scaffold + sidecar consumer. |
 | **§16.2.3** | Atomic slot editing | Click chip → edit form → save. Drag-drop within section. | Medium — first write path; concurrency-with-JSON concerns. |
 | **§16.2.4** | Macro editing | Edit-once-applies-to-all. Macro palette in sidebar. | Medium. |
 | **§16.2.5** | Section composition | Create / rename / reorder sections. Drag macros between sections. | Medium. |
-| **§16.2.6** | Live preview endpoint + UI | `POST /api/stations/{slug}/preview` (in-memory; no persistence side-effects) + editor wires it to a debounced auto-refresh trace panel. | Medium — new API surface; debounce + state-management UX. |
+| **§16.2.6** | Live preview endpoint + UI | `POST /api/stations/{slug}/preview` (in-memory; no persistence side-effects) + editor wires it to a debounced auto-refresh trace panel. **Implementation note:** `excluded_mix_ids` must be RECOMPUTED per request from the DB's current MixUsage (not cached at page-load) — if the user edits a mix block's `exclusion_window` value in the editor, the new window changes which MixUsage rows are in scope. Same for `previous_playlist` if the user is on a non-week-1 preview. The endpoint reads all rule-derived inputs fresh from the request body + DB; nothing is cached across edits within a session. | Medium — new API surface; debounce + state-management UX. |
 | **§16.2.7** | Compare against saved | "Show what changed since save" button → slot-by-slot diff using `byte_equality.py` helpers. | Low — diff helpers exist; UI plumbing. |
 | **§16.2.8** | Fork action | "Fork this station" → duplicates JSON + sidecar. | Low — file copy + slug-rename UI. |
 
