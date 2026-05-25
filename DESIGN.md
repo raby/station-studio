@@ -6074,10 +6074,14 @@ direction — spec slice §16.2.0 is the next planned work.
 | Visual block editor      | **Next focus — §16.2.** Design slice §16.2.0 queued (paper-only spec). Flagship feature for the OSS direction. JSON source-of-truth (editor writes JSON; DB re-seeds from disk). |
 | Trace versioning         | Deferred. See §16.4 (queued; not on the critical path post-Phase-B). |
 | Accessibility pass       | Deferred. §16.5 — single sweep after §16.2 ships.                |
-| Rules CRUD UI panel      | Queued. Small slice; compounds with §16.2 (sidebar component reused). |
-| Install story            | Queued — §16.6. pip-installable or polished docker after §16.2 MVP. |
-| Hobbyist starter station | Queued — §16.7. 100-200-slot example structurally simpler than Classics, with synthetic starter XMLs for end-to-end boot without external data. |
-| Docs site                | Deferred — §16.8. After §16.2 + §16.6 + §16.7 ship.              |
+| Rules CRUD UI panel      | Queued — §16.10. Small-medium slice; compounds with §16.2 (sidebar component reused). |
+| In-UI generation progress | Queued — §16.11. Small. Generate button is shipped but the 30-week chain takes ~19s; progress signal would help. |
+| Stations list polish     | Queued — §16.12. Small. Adjacent to §16.2 — once the editor makes adding stations easy, the list needs sort/filter. |
+| Install story            | Queued — §16.13. pip-installable or polished docker after §16.2 MVP. |
+| Hobbyist starter station | Queued — §16.14. 100-200-slot example structurally simpler than Classics, with synthetic starter XMLs for end-to-end boot without external data. |
+| Docs site                | Deferred — §16.15. After §16.2 + §16.13 + §16.14 ship.           |
+| §14.42 Classics cycle wrap | Queued tail. Tiny (~1 commit). Symmetric with §14.41's mix-slide lock for weekly. Defer-able. |
+| §14.38b Multi-prior import | Queued tail. Small (~2-3 commits). Lets operators import N weeks of prior history at cutover. Wait for demand. |
 | Scheduler                | Deferred (v1.1).                                                 |
 
 Active TODOs live in §11 (deferred), §14.5 (trace-viewer follow-ups),
@@ -6101,6 +6105,34 @@ trigger-gated.
 The queued slices, in the order we expect to take them. Each section
 is intentionally a short brief, not a spec — the spec gets written
 when the slice lands, in the same §14.x format as the others.
+
+### Queued slice order — post-Phase-B execution sequence
+
+Master order at a glance. Detailed briefs follow below.
+
+| # | Slice | Effort | Why now |
+|---|---|---|---|
+| 1 | §16.2.0 visual block editor SPEC (paper) | 1 commit | Settles editor architecture before code; flagship feature of §16.0 OSS direction. |
+| 2 | §16.10 Rules CRUD UI panel | 3-5 commits | Compounds with §16.2 (sidebar component reused); independent value (today rules need a DB shell). |
+| 3 | §16.2.1+ visual block editor implementation | multi-slice | Per the §16.2.0 spec; flagship hobbyist feature. |
+| 4 | §16.11 In-UI generation progress | small | 30-week chain takes ~19s; users need progress signal. Independent, slot in any time. |
+| 5 | §16.12 Stations list polish (search / filter / recent generations) | small | Adjacent to §16.2 — once the editor makes adding stations easy, the list needs scaling. |
+| 6 | §16.13 Install story (pip / docker) | medium | Hobbyist friction floor. Lands after §16.2 MVP makes "install + try" worth marketing. |
+| 7 | §16.14 Hobbyist starter station | small | Fresh install needs a runnable example without external XMLs. |
+| 8 | §16.15 Docs site (MkDocs-Material) | medium | After enough product is built to justify a doc site. |
+| — | §14.42 Classics cycle wrap (weeks 17-32) | tiny (1 commit) | Phase B tail; defer-able. Locks the Classics cursor-cycle wrap edge, symmetric with §14.41's mix-slide lock for weekly. Slot in opportunistically. |
+| — | §14.38b Multi-prior import support | small (2-3 commits) | Phase B tail; no demand today. Slot in when a real cutover wants N weeks of prior history. |
+| — | §16.4 Trace versioning | medium | Deferred. Not on the critical path post-Phase-B. |
+| — | §16.5 A11y pass | medium | Deferred. Single sweep after §16.2 + the rest ship. |
+
+**Reading the table:** rows 1-8 are the strategic execution
+sequence. The em-dashed rows below the divider are tail items —
+queued but not blocking; slot in opportunistically (cycle wrap is
+30 min; multi-prior is demand-gated; trace versioning + a11y wait
+their natural time).
+
+The detailed §16.x briefs below cover each slice's reasoning,
+shape, and what's NOT in scope.
 
 ### 16.0 Product framing shift — open-source for radio hobbyists
 
@@ -6173,13 +6205,16 @@ Three priorities propagate from the framing shift:
 
 #### Queued — adjacent OSS-readiness work
 
-* **§16.6 install story** — pip-installable package OR polished
+(Numbers chosen above §16.10 to avoid collision with the existing
+§16.3/§16.6–§16.9 sections that briefed pre-port UI work.)
+
+* **§16.13 install story** — pip-installable package OR polished
   docker-compose; first-station tutorial.
-* **§16.7 hobbyist starter station** — a 100-200 slot example
+* **§16.14 hobbyist starter station** — a 100-200 slot example
   station structurally simpler than Classics, with starter XMLs
   (synthetic, MIT-licensed metadata) so a fresh install boots
   end-to-end without any external data.
-* **§16.8 docs site** — once §16.2 + §16.6 + §16.7 ship, a docs
+* **§16.15 docs site** — once §16.2 + §16.13 + §16.14 ship, a docs
   site (MkDocs-Material) consolidates README + DESIGN extracts
   + tutorial into something searchable.
 
@@ -7353,6 +7388,179 @@ No backend work. No schema change.
 - The rendered text "← week 002" should match the existing
   `String(week).padStart(3, '0')` zero-padding for visual
   consistency with the heading badge.
+
+---
+
+### 16.10 Rules CRUD UI panel
+
+**Why this matters.** Today `/api/stations/{slug}/rules` has full
+CRUD via the API (§14.29 + §14.30) — but no UI surface. To change
+`artist_dedup_window` or `cursor_advance_step` for a station, an
+operator has to either curl the API or run `sqlite3` against the
+DB. Neither matches the §16.0 OSS-hobbyist trajectory.
+
+**Shape.** A new tab on the station-detail page ("Rules"). Lists
+the 4 rule keys with their current values + the engine constant
+defaults shown in disabled state when unset. Inline edit; per-key
+PUT/DELETE via the existing API. Validation client-side (matches
+the engine's range expectations).
+
+**Compounding with §16.2.** The Rules panel is a station-detail
+sidebar component. The visual block editor (§16.2) will also need
+a sidebar — Rules can be one tab among others (Sources, Generated
+Playlists, Rules, etc.). Build Rules as a reusable component;
+§16.2 reuses the sidebar shell.
+
+**Effort.** 3-5 commits. Independent of §16.2 timing — can land
+before, alongside, or after.
+
+**Punted:**
+
+* Bulk rule editing across stations (no demand; single-station tool).
+* Rule history / audit log (rule changes are infrequent; DB+git
+  covers most needs).
+* Per-block rule overrides via UI (already supported via JSON edit;
+  visual editor handles this in §16.2's chip-detail panel).
+
+---
+
+### 16.11 In-UI generation progress
+
+**Why this matters.** The Generate button shipped in §14.9, but a
+30-week chain (the §14.41 case) takes ~19s. Today the UI shows a
+spinner with no further signal. A hobbyist watching a 30-second
+generation has no idea whether it's working, hung, or how close
+to done.
+
+**Shape.** Server-sent events (or chunked response) from
+`/api/stations/{slug}/generate` reporting `(week, status)` per
+generated week. Frontend renders a progress bar + the per-week
+list. On error, surfaces the diagnostic without rolling back the
+weeks already saved.
+
+**Why independent.** No dependency on §16.2 or any other queued
+slice. Small standalone improvement; can slot in any time the
+user-perceived latency justifies the work.
+
+**Effort.** Small (~3 commits): backend SSE endpoint + frontend
+consumer + smoke test.
+
+**Punted:**
+
+* Cancellation mid-chain (would need transaction handling — for
+  now, kill the server if it's wrong; the per-week saves are
+  individually committed).
+* Generation queue for multiple stations (single-user tool;
+  parallel-station generation isn't a demand-side request).
+
+---
+
+### 16.12 Stations list polish — search / filter / recent generations
+
+**Why this matters.** The stations list at `/stations` shows the
+2 example stations today. Once §16.2 makes adding stations easy +
+§16.14 ships a hobbyist starter, the list scales — a few-stations
+list is fine to scan, a 20-stations list isn't. Search + filter
++ "most recently generated" become user-visible needs.
+
+**Shape.** Three additions to the existing stations list:
+
+1. **Search box** — substring match on `name` + `slug`.
+2. **Filter chips** — by cadence (weekly / monthly / TBD), by
+   "has generations" (≥1 playlist generated) vs "empty".
+3. **Sort options** — by name (default), by last-generation timestamp,
+   by template last-modified.
+
+Plus a per-row "Last generated: WEEKLY 026 (3 days ago)" line so
+the operator knows which station they were last working on without
+opening it.
+
+**Adjacency to §16.2.** Wait until §16.2 makes "add a station"
+a real flow. Premature scaling-up of the list before stations are
+easy to add is over-engineering.
+
+**Effort.** Small (~3-5 commits).
+
+---
+
+### 16.13 Install story — pip-installable / docker-compose
+
+**Why this matters.** §16.0's OSS-hobbyist trajectory promises
+"clone + run" simplicity. Reality today: `git clone → make install
+→ make dev`, which works but isn't pip-installable. A hobbyist who
+just wants to *try* shouldn't need git.
+
+**Shape (likely TWO commits, both queued):**
+
+1. **`pip install station-studio`** — package the engine + API +
+   CLI as a wheel. SvelteKit frontend either bundled as static
+   assets OR distributed separately. Entry points for CLI
+   (`station-studio import-station …` etc.).
+
+2. **`docker-compose up`** — single-command bring-up of backend +
+   frontend + SQLite volume. Mirrors `make dev` but with no Python
+   or Node prerequisites.
+
+**Why not now.** Until §16.2 makes the editor compelling, "install
++ try" doesn't have a strong landing. Distribution polish lands
+when there's something worth distributing.
+
+**Effort.** Medium (~5-8 commits across pip + docker + tutorial).
+
+---
+
+### 16.14 Hobbyist starter station
+
+**Why this matters.** Both example stations today (Classics +
+Rebirth Radio) are Rebirth's own. A first-time hobbyist forking
+either is forking a complete production station — overwhelming.
+§16.14 ships a third example: a structurally simple "starter
+station" that demonstrates the engine's basics without complexity.
+
+**Shape.** A `stations/starter.json` with:
+
+* ~100-200 slots (vs Classics's 3,010, Rebirth's 2,196)
+* `flat_slots` form (easier mental model than row_template + cycle math)
+* 2-3 strategies: `pick` + `window` + maybe one `jingle`. No `mix`,
+  no `prev_ref`, no `weighted`.
+* 1-2 cursors (or stateless), short cycle, no cross-week state
+* Companion synthetic XML pools committed (MIT-licensed metadata,
+  ~50 tracks per pool) so the station boots end-to-end on a fresh
+  install with zero external data.
+
+Used in the §16.13 tutorial as the "your first station" example.
+
+**Punted from scope:**
+
+* "Live" or audio-included pools (still just iTunes XMLs; pools
+  reference but don't include audio files).
+* A station-from-scratch wizard tutorial — that's §16.2's territory
+  (visual editor).
+
+**Effort.** Small (~2-3 commits).
+
+---
+
+### 16.15 Docs site — MkDocs-Material consolidation
+
+**Why this matters.** After §16.2 + §16.13 + §16.14 ship, the
+project has enough surface that README is too small and DESIGN.md
+is too long. A docs site (MkDocs-Material) bridges the gap:
+
+* **Tutorial track** — "your first station in 10 minutes"
+* **Reference track** — template grammar, strategy reference, API
+  reference, CLI reference
+* **Architecture track** — pulled from selected DESIGN.md §14.x
+  entries; not a wholesale republish
+
+Hosted on GitHub Pages (free, version-controlled, fits the OSS
+posture).
+
+**Why not now.** Premature docs site for a project still finding
+its UI shape. Lands once the major slices are stable.
+
+**Effort.** Medium (~5-8 commits: mkdocs.yml + site structure +
+content extraction + GH Pages CI workflow + branded styling).
 
 ---
 
