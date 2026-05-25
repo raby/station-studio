@@ -6582,7 +6582,32 @@ The drift detector follows §14.32's strict-mode parsing pattern:
 allowlisted keys, type checks, cross-reference validation. Same
 PriorSeedError-style fail-loud-on-malformed approach.
 
-**Sidecar grammar (v1 sketch):**
+**Sidecar grammar (v1 spec):**
+
+The sidecar's discriminator for atomic-block addressing depends on
+which layout form the station's JSON uses. Two cases:
+
+* **`stations/X.json` uses `flat_slots`** (weekly-style). Atomic
+  blocks address a single slot by its integer index into the
+  `flat_slots` array:
+  `{"kind": "atomic", "slot_index": 1734}`.
+
+* **`stations/X.json` uses `row_template`** (Classics-style).
+  Atomic blocks address a single instantiation by (row_idx,
+  block_idx) — both 0-indexed, matching the engine's
+  `_iterate_slots` semantics:
+  `{"kind": "atomic", "row_idx": 3, "block_idx": 1}`.
+
+The discriminator is implicit: an `atomic` block has EITHER
+`slot_index` OR (`row_idx` + `block_idx`); never both. The drift
+detector validates the form matches the station's layout (an atomic
+block with `slot_index` on a row_template station is rejected).
+
+Sections that need to express row_template's "the same blocks
+repeated N times with different cursor offsets" pattern use a
+`repeat_with_offsets` property: the section's blocks list is the
+per-row template; the offsets list parallels the station's
+`row_start_offsets` (same length, same order).
 
 ```json
 {
@@ -6597,6 +6622,15 @@ PriorSeedError-style fail-loud-on-malformed approach.
         {"kind": "macro", "ref": "commercial-200"},
         {"kind": "atomic", "slot_index": 201}
       ]
+    },
+    {
+      "id": "classics-week",
+      "name": "Weekly cycle (Classics-style)",
+      "blocks": [
+        {"kind": "atomic", "row_idx": 0, "block_idx": 0},
+        {"kind": "atomic", "row_idx": 0, "block_idx": 1}
+      ],
+      "repeat_with_offsets": [0, 10, 20, 30, 40, 50, 50]
     }
   ],
   "macros": [
@@ -6607,14 +6641,97 @@ PriorSeedError-style fail-loud-on-malformed approach.
       "repeat": 200
     }
   ],
-  "layout_order": ["morning-block", "mix-section-1", "night-block-1", …]
+  "layout_order": ["morning-block", "mix-section-1", "night-block-1"]
 }
 ```
 
-`slot_index` in atomic blocks refers to the position in the
-`stations/X.json` `flat_slots` array (or the row+block_idx tuple
-for row_template). The sidecar's job is to GROUP those slots into
-meaningful units; it doesn't duplicate slot data.
+Field semantics:
+
+* `sections[].id` — string identifier, unique across the sidecar.
+* `sections[].name` — human label rendered in the editor's sidebar.
+  Optional; defaults to `id`.
+* `sections[].blocks` — ordered list. Mixed atomic / macro entries.
+* `sections[].repeat_with_offsets` — OPTIONAL. Present ONLY for
+  sections that should expand row-template-style. If present:
+  - Length MUST match `stations/X.json`'s
+    `layout.row_start_offsets` length. Drift detector rejects
+    mismatched cardinality.
+  - Values MUST match the corresponding `row_start_offsets`
+    entries. Drift detector rejects if a user hand-edits one
+    file without the other.
+  - The section's `blocks` list is interpreted as the per-row
+    template (one instantiation per offset).
+* `macros[].id` — string identifier; referenced by atomic-or-macro
+  blocks via `{"kind": "macro", "ref": <id>}`.
+* `macros[].name` — human label.
+* `macros[].spec` — a partial BlockSpec dict (strategy/source/size
+  + per-strategy fields). Expanded `repeat` times at generation
+  resolution.
+* `macros[].repeat` — positive integer; the macro emits this many
+  identical slots.
+* `layout_order` — top-level ordered list of section ids; defines
+  the order sections render in the final template.
+
+#### Drift detector rules (enumerated)
+
+The detector fires at editor LOAD time (and as a precondition to
+generation when the sidecar is present). Each rule's failure is
+a clean error message, NOT a silent fallback. Following the
+§14.32 / §14.34 / §14.38 strict-parsing pattern.
+
+1. **Orphan slots** — `stations/X.json` has slots not referenced
+   by any section's atomic blocks (after macro expansion). Fix:
+   either add to a section or remove from the template JSON.
+
+2. **Dangling macro refs** — a section's `{"kind": "macro", "ref":
+   "X"}` points at a `macros[].id` that doesn't exist. Fix: add
+   the macro or correct the ref.
+
+3. **Section in `layout_order` not in `sections[]`** — a string in
+   the top-level `layout_order` array doesn't match any
+   `sections[].id`. Fix: add the section or remove from
+   `layout_order`.
+
+4. **`repeat_with_offsets` cardinality mismatch** — a section's
+   `repeat_with_offsets` length doesn't match
+   `stations/X.json`'s `layout.row_start_offsets` length. Fix:
+   align them (or remove the property if the section isn't meant
+   to repeat).
+
+5. **`repeat_with_offsets` value mismatch** — a value in the
+   section's `repeat_with_offsets` doesn't match the corresponding
+   entry in `row_start_offsets`. Fix: align them (one file or
+   the other was hand-edited).
+
+6. **Atomic addressing form mismatch** — an atomic block uses
+   `slot_index` on a row_template station, or
+   `row_idx`+`block_idx` on a flat_slots station. Fix: use the
+   form matching the station's layout.
+
+7. **Atomic slot index out of bounds** — `slot_index >=
+   len(flat_slots)` or `row_idx >= len(row_start_offsets)` or
+   `block_idx >= len(row_template)`. Fix: edit the sidecar to
+   match the station's actual dimensions.
+
+8. **Duplicate atomic reference** — the same slot is referenced
+   by more than one atomic block across sections (after macro
+   expansion). Fix: each slot belongs to exactly one section
+   instance.
+
+9. **Sidecar references a station JSON that doesn't exist** —
+   sidecar at `stations/X.editor.json` with no
+   `stations/X.json`. Fix: remove the orphan sidecar.
+
+10. **Macro spec invalid** — `macros[].spec` doesn't parse via
+    `parse_template`'s block-validation (unknown strategy,
+    missing required field for the strategy, wrong source role).
+    Fix: align the macro spec with the station's allowed
+    strategies + content sources.
+
+All ten rules are checked by `engine/editor_metadata.py`'s
+parser/validator (lands in §16.2.1). Drift errors include the
+section/macro id + the specific mismatch, mirroring §14.38's
+`PriorSeedError` failure messages.
 
 #### Decision 3 — Layout-form handling
 
