@@ -1,0 +1,654 @@
+{
+  "_comment": "Auto-derived from the station's flat_slots via scripts/derive_sidecar.py. Heuristic: sections split at Daytime jingles; macros for runs of \u22653 identical specs. Refine section names + macro names to match your programming concept (the heuristic can't infer 'Morning Drive' from a block of 200 commercials).",
+  "schema_version": 1,
+  "sections": [
+    {
+      "id": "segment-1",
+      "name": "Segment 1",
+      "blocks": [
+        {
+          "kind": "atomic",
+          "slot_index": 0
+        },
+        {
+          "kind": "macro",
+          "ref": "weighted-1"
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 201
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 202
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 203
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 204
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 205
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 206
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 207
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 208
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 209
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 210
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 211
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 212
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 213
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 214
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 215
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 216
+        },
+        {
+          "kind": "macro",
+          "ref": "sequential-1"
+        }
+      ]
+    },
+    {
+      "id": "segment-2",
+      "name": "Segment 2",
+      "blocks": [
+        {
+          "kind": "atomic",
+          "slot_index": 312
+        },
+        {
+          "kind": "macro",
+          "ref": "weighted-2"
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 514
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 515
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 516
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 517
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 518
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 519
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 520
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 521
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 522
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 523
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 524
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 525
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 526
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 527
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 528
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 529
+        },
+        {
+          "kind": "macro",
+          "ref": "sequential-2"
+        }
+      ]
+    },
+    {
+      "id": "segment-3",
+      "name": "Segment 3",
+      "blocks": [
+        {
+          "kind": "atomic",
+          "slot_index": 626
+        },
+        {
+          "kind": "macro",
+          "ref": "weighted-3"
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 827
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 828
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 829
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 830
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 831
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 832
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 833
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 834
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 835
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 836
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 837
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 838
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 839
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 840
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 841
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 842
+        },
+        {
+          "kind": "macro",
+          "ref": "sequential-3"
+        }
+      ]
+    },
+    {
+      "id": "segment-4",
+      "name": "Segment 4",
+      "blocks": [
+        {
+          "kind": "atomic",
+          "slot_index": 940
+        },
+        {
+          "kind": "macro",
+          "ref": "weighted-4"
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 1141
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 1142
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 1143
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 1144
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 1145
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 1146
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 1147
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 1148
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 1149
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 1150
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 1151
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 1152
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 1153
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 1154
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 1155
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 1156
+        },
+        {
+          "kind": "macro",
+          "ref": "sequential-4"
+        }
+      ]
+    },
+    {
+      "id": "segment-5",
+      "name": "Segment 5",
+      "blocks": [
+        {
+          "kind": "atomic",
+          "slot_index": 1253
+        },
+        {
+          "kind": "macro",
+          "ref": "weighted-5"
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 1454
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 1455
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 1456
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 1457
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 1458
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 1459
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 1460
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 1461
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 1462
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 1463
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 1464
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 1465
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 1466
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 1467
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 1468
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 1469
+        },
+        {
+          "kind": "macro",
+          "ref": "sequential-5"
+        },
+        {
+          "kind": "macro",
+          "ref": "sequential-6"
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 1740
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 1741
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 1742
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 1743
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 1744
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 1745
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 1746
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 1747
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 1748
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 1749
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 1750
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 1751
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 1752
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 1753
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 1754
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 1755
+        },
+        {
+          "kind": "macro",
+          "ref": "sequential-7"
+        },
+        {
+          "kind": "macro",
+          "ref": "sequential-8"
+        },
+        {
+          "kind": "macro",
+          "ref": "sequential-9"
+        }
+      ]
+    }
+  ],
+  "macros": [
+    {
+      "id": "weighted-1",
+      "name": "200 \u00d7 weighted",
+      "repeat": 200,
+      "spec": {
+        "source": "COMMERCIAL",
+        "strategy": "weighted",
+        "size": 1
+      }
+    },
+    {
+      "id": "sequential-1",
+      "name": "95 \u00d7 sequential",
+      "repeat": 95,
+      "spec": {
+        "source": "NIGHT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "NIGHT_1"
+      }
+    },
+    {
+      "id": "weighted-2",
+      "name": "201 \u00d7 weighted",
+      "repeat": 201,
+      "spec": {
+        "source": "COMMERCIAL",
+        "strategy": "weighted",
+        "size": 1
+      }
+    },
+    {
+      "id": "sequential-2",
+      "name": "96 \u00d7 sequential",
+      "repeat": 96,
+      "spec": {
+        "source": "NIGHT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "NIGHT_2"
+      }
+    },
+    {
+      "id": "weighted-3",
+      "name": "200 \u00d7 weighted",
+      "repeat": 200,
+      "spec": {
+        "source": "COMMERCIAL",
+        "strategy": "weighted",
+        "size": 1
+      }
+    },
+    {
+      "id": "sequential-3",
+      "name": "97 \u00d7 sequential",
+      "repeat": 97,
+      "spec": {
+        "source": "NIGHT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "NIGHT_3"
+      }
+    },
+    {
+      "id": "weighted-4",
+      "name": "200 \u00d7 weighted",
+      "repeat": 200,
+      "spec": {
+        "source": "COMMERCIAL",
+        "strategy": "weighted",
+        "size": 1
+      }
+    },
+    {
+      "id": "sequential-4",
+      "name": "96 \u00d7 sequential",
+      "repeat": 96,
+      "spec": {
+        "source": "NIGHT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "NIGHT_4"
+      }
+    },
+    {
+      "id": "weighted-5",
+      "name": "200 \u00d7 weighted",
+      "repeat": 200,
+      "spec": {
+        "source": "COMMERCIAL",
+        "strategy": "weighted",
+        "size": 1
+      }
+    },
+    {
+      "id": "sequential-5",
+      "name": "150 \u00d7 sequential",
+      "repeat": 150,
+      "spec": {
+        "source": "NIGHT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "NIGHT_5"
+      }
+    },
+    {
+      "id": "sequential-6",
+      "name": "120 \u00d7 sequential",
+      "repeat": 120,
+      "spec": {
+        "source": "WEEKEND",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "WEEKEND_1"
+      }
+    },
+    {
+      "id": "sequential-7",
+      "name": "140 \u00d7 sequential",
+      "repeat": 140,
+      "spec": {
+        "source": "NIGHT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "NIGHT_6"
+      }
+    },
+    {
+      "id": "sequential-8",
+      "name": "160 \u00d7 sequential",
+      "repeat": 160,
+      "spec": {
+        "source": "WEEKEND",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "WEEKEND_2"
+      }
+    },
+    {
+      "id": "sequential-9",
+      "name": "140 \u00d7 sequential",
+      "repeat": 140,
+      "spec": {
+        "source": "NIGHT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "NIGHT_7"
+      }
+    }
+  ],
+  "layout_order": [
+    "segment-1",
+    "segment-2",
+    "segment-3",
+    "segment-4",
+    "segment-5"
+  ]
+}

@@ -14,7 +14,8 @@
         dev dev-backend dev-frontend \
         import-station import-weekly-pools refresh-rebirth-radio \
         refresh-port-fixture refresh-port-everything refresh-classics-fixture \
-        generate-user-playlists
+        generate-user-playlists \
+        derive-sidecar
 
 PY := .venv/bin/python
 ALEMBIC := .venv/bin/alembic
@@ -437,3 +438,22 @@ generate-user-playlists:
 	    $(if $(WEEKS),--weeks $(WEEKS),) \
 	    $(if $(NAME_PREFIX),--name-prefix "$(NAME_PREFIX)",) \
 	    $(if $(MODE),--mode $(MODE),)
+
+# §16.2.1: auto-derive an editor sidecar for a flat_slots station
+# template. Heuristic walker (scripts/derive_sidecar.py) detects
+# sections + macros from slot-vocabulary patterns; output validates
+# against the engine.editor_metadata drift rules.
+#
+# Usage:
+#   make derive-sidecar STATION=stations/rebirth-radio.json
+#
+# Writes alongside the station file (STATION basename + .editor.json).
+# row_template stations should be hand-authored — derive_sidecar
+# rejects them with a clear error.
+derive-sidecar:
+	@if [ -z "$(STATION)" ]; then \
+		echo "Usage: make derive-sidecar STATION=stations/X.json"; \
+		exit 1; \
+	fi
+	@OUT=$$(echo "$(STATION)" | sed 's/\.json$$/.editor.json/'); \
+	  $(PY) -m scripts.derive_sidecar --station "$(STATION)" --out "$$OUT"

@@ -75,17 +75,28 @@ def _collect_paths(argv: list[str]) -> list[Path]:
     """Resolve the station JSONs to seed.
 
     Explicit args override the glob. Default: every `*.json` under
-    `stations/` EXCEPT `*.pool-manifest.json` — those are §14.36 pool
-    manifests co-located with their station's template JSON (e.g.
-    `rebirth-radio.json` + `rebirth-radio.pool-manifest.json`).
-    Filtering by suffix here keeps the manifest next to its station
-    without it being mis-parsed as a template.
+    `stations/` EXCEPT:
+
+      * `*.pool-manifest.json` — §14.36 pool manifests co-located
+        with their station's template (e.g. `rebirth-radio.json` +
+        `rebirth-radio.pool-manifest.json`).
+
+      * `*.editor.json` — §16.2.1 editor metadata sidecars co-located
+        with their station's template (e.g. `rebirth-radio.json` +
+        `rebirth-radio.editor.json`). Engine ignores the sidecar;
+        seed_stations would otherwise mis-parse it as a template.
+
+    Filtering by suffix keeps the manifest + sidecar next to their
+    station without forcing a deeper directory structure.
     """
     if argv:
         return [Path(a).resolve() for a in argv]
     return sorted(
         p for p in STATIONS_DIR.glob("*.json")
-        if not p.name.endswith(".pool-manifest.json")
+        if not (
+            p.name.endswith(".pool-manifest.json")
+            or p.name.endswith(".editor.json")
+        )
     )
 
 

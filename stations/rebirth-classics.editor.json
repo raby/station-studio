@@ -1,0 +1,17 @@
+{
+  "_comment": "Editor sidecar for Rebirth Classics (§16.2.1). Single repeating section: each of the 7 rows has the same 2 blocks (RG_RADIO window + RG_PARTY window). repeat_with_offsets mirrors the station template's row_start_offsets [0, 10, 20, 30, 40, 50, 50]. Row 7 duplicates row 6's offset by design — the §17.1 weekly study explains the 'avoid cross-week-boundary repeats' reasoning. Hand-authored (row_template stations are simple enough; auto-derivation is flat_slots-only).",
+  "schema_version": 1,
+  "sections": [
+    {
+      "id": "weekly-cycle",
+      "name": "Weekly cycle (7 days)",
+      "blocks": [
+        {"kind": "atomic", "row_idx": 0, "block_idx": 0},
+        {"kind": "atomic", "row_idx": 0, "block_idx": 1}
+      ],
+      "repeat_with_offsets": [0, 10, 20, 30, 40, 50, 50]
+    }
+  ],
+  "macros": [],
+  "layout_order": ["weekly-cycle"]
+}

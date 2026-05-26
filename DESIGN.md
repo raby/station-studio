@@ -6116,11 +6116,13 @@ import) is the only remaining Phase B tail item, parked on
 ## 15. Status snapshot
 
 A quick "where are we" for a future reader. Last updated alongside
-the §16.0 product-framing shift. **Phase B is DONE + DEEPENED.**
-Both station-studio's byte-equality tests are GREEN at production-
-scale chain depth: weekly port (real XMLs, 30 generations, 8
-asserted weeks spanning the mix-exclusion-window slide) and
-Classics (16-week full cycle, synthetic pools, freeze-against-self).
+**§16.2.1 (visual editor data layer shipped — parser + drift
+detector + both committed sidecars + auto-derive script)**. Phase
+B is DONE; Phase C / §16 product work underway. Both station-studio's
+byte-equality tests are GREEN at production-scale chain depth:
+weekly port (real XMLs, 30 generations, 8 asserted weeks spanning
+the mix-exclusion-window slide); Classics (32-week, two full cycles,
+synthetic pools, freeze-against-self, §14.42 cycle-wrap locked).
 The engine handles two structurally distinct stations through the
 same code path — the "weekly is one instance, not the shape" claim
 has receipts at depth.
@@ -7024,6 +7026,123 @@ is §16.2.2 (read-only visualiser); v1 feature-complete at §16.2.8.
 implementation slice; design discussion for it picks up the
 sidecar grammar's concrete shape (allowlists, field types, drift-
 detector messages).
+
+### 16.2.1 Sidecar grammar + parser + drift detector — what shipped
+
+**Status.** Implementation slice. Two commits (c1 = parser +
+validator + tests; c2 = derive script + committed sidecars +
+integration). Mid-slice review caught 7 findings (4 🟡 + 3 🟢
+applied; 1 🔵 = this entry's note on `_comment` allowlist scope).
+
+**What ships:**
+
+* `engine/editor_metadata.py` — ~600 LoC. Public API:
+  - `validate_sidecar(sidecar, station_template)` — enforces all
+    10 drift rules from §16.2.0 + grammar (allowlist + types).
+  - `parse_sidecar(path, station_template)` — loads + validates
+    in one call; wraps `JSONDecodeError` in `EditorMetadataError`
+    (mid-slice review finding 6).
+  - `synthesize_trivial_sidecar(station_template)` — builds a
+    valid no-macros sidecar with one section per layout form;
+    used by the editor when no sidecar exists.
+  - `expand_section(section, sidecar)` — expands a section to
+    `list[AtomicRef | MacroPlaceholder]` for the editor canvas.
+  - `AtomicRef` + `MacroPlaceholder` dataclasses for the
+    expanded representation. `AtomicRef.__post_init__` uses
+    `ValueError` for the XOR invariant (mid-slice review
+    finding 5 — `EditorMetadataError` reserved for sidecar
+    validation, not internal-invariant violations).
+  - `EditorMetadataError` exception (PriorSeedError-style;
+    subclasses `AssertionError`).
+
+* `scripts/derive_sidecar.py` — heuristic auto-derivation for
+  `flat_slots` templates. Sections split at Daytime jingles;
+  macros for runs of ≥3 consecutive identical specs. `row_template`
+  stations are rejected (hand-author them; their structure is
+  already explicit). Output validates against the station template
+  before writing.
+
+* `stations/rebirth-classics.editor.json` — hand-authored. Single
+  section with `repeat_with_offsets = [0, 10, 20, 30, 40, 50, 50]`
+  (mirrors the station's `row_start_offsets`). 2 atomic blocks per
+  iteration (one per row_template block). The canonical row_template
+  sidecar shape.
+
+* `stations/rebirth-radio.editor.json` — auto-derived from the
+  2,196-slot template. 5 sections (Daytime-jingle bounded), 14
+  macros covering ~90% of slots (the big commercial blocks +
+  NIGHT/WEEKEND sequential runs). ~13 KB vs ~510 KB if every slot
+  were atomic.
+
+* `tests/test_editor_metadata.py` — 43 tests. Each of the 10 drift
+  rules has a negative test; grammar edge cases; synthesize_trivial
+  for both layout forms; expand_section for atomic-flat / atomic-row
+  / macros / repeat_with_offsets. Plus 5 mid-slice review fix tests.
+
+* `tests/test_committed_sidecars.py` — 11 integration tests.
+  Asserts both committed sidecars validate against their station
+  templates + lock the derived structural shape (5 sections / 14
+  macros for Rebirth Radio; 1 section / 2 atomic blocks for
+  Classics). Catches drift between station JSON edits and the
+  sidecar.
+
+* `Makefile derive-sidecar STATION=…` — convenience target for
+  re-deriving a station's sidecar after a template change. Writes
+  alongside the station file as `X.editor.json`.
+
+* `scripts/seed_stations.py` — `_collect_paths` skips
+  `*.editor.json` glob hits (mirrors the §14.36 `*.pool-manifest.json`
+  skip). Sidecars co-located with stations without being mis-parsed.
+
+**Mid-slice review fixes (commit 70e3d79):**
+
+| Finding | Outcome |
+|---|---|
+| 🟡 #1: row_idx silently overridden in repeat_with_offsets | Fix: require row_idx=0; explicit contract |
+| 🟡 #2: empty sections accepted | Fix: reject with "use synthesize_trivial instead" |
+| 🟡 #3: station with both layout forms validates wrong sidecar | Fix: XOR precondition at top of validate_sidecar |
+| 🟡 #4: macros inside repeat_with_offsets — ambiguous semantics | Fix: reject for v1 |
+| 🟢 #5: AtomicRef uses EditorMetadataError | Fix: use ValueError for internal invariants |
+| 🟢 #6: parse_sidecar propagates JSONDecodeError | Fix: wrap in EditorMetadataError |
+| 🟢 #7: validate_sidecar call order doesn't match design numbering | Fix: reorder + docstring map |
+
+**Decision noted (was 🔵 #8): `_comment` allowlist scope.** In v1,
+`_comment` is allowed at the SIDECAR TOP LEVEL only — not on
+sections, macros, or blocks. Strict-mode parsing rejects any
+nested comment. The trade-off: simpler grammar, fewer footguns,
+matches §14.32/§14.34/§14.35's allowlist discipline. If
+section/macro-level comments become useful (hand-authored sidecars
+might want them), raise as a §16.2.x sub-slice — likely needs to
+extend allowlists + grammar tests.
+
+**Decisions punted:**
+
+| Punt | Severity | Trigger |
+|---|---|---|
+| §16.2.2 read-only canvas | NEXT SLICE | Now unblocked |
+| Section/macro-level `_comment` fields | LATER | First hand-author asks |
+| Heuristic for row_template auto-derivation | LATER | Second row_template station emerges |
+| Macro grouping by approximate spec match | LATER | A station with near-identical specs (different sizes) needs grouping |
+| `expand_section` returning live BlockSpec snapshots | LATER | Editor renders need spec lookup; today it returns refs only |
+
+**Anticipated regression class:** the recurring "row_template-only
+walk" bug class fired AGAIN during this slice's mid-review (finding
+1 — the iteration index silently overrode authored row_idx). The
+lint test (`tests/test_no_bare_row_template_access.py`) catches
+production-source instances; the validator's explicit reject in
+this slice closes a similar class on the authoring side.
+
+**Coverage + verification:**
+
+* 661 tests pass + 1 skipped after c2 ships (+ 5 from c1 mid-slice
+  fixes; + 11 from c2 integration tests).
+* 93% backend coverage holding.
+* Both committed sidecars: validate clean + round-trip cleanly.
+
+§16.2.2 (read-only canvas) is the next slice; design discussion
+picks up rendering decisions (chip layout, macro pill style,
+section-header treatment) using the §16.2.0 personas (hobbyist /
+operator / experimenter).
 
 ### 16.3 Delete / station reset
 
