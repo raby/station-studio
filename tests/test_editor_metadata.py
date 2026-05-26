@@ -98,12 +98,14 @@ def test_atomic_ref_row_only_ok():
 
 
 def test_atomic_ref_rejects_both_forms():
-    with pytest.raises(EditorMetadataError, match="EITHER flat_slots"):
+    # Mid-slice review finding 5: AtomicRef raises ValueError (not
+    # EditorMetadataError) for internal-invariant violations.
+    with pytest.raises(ValueError, match="EITHER flat_slots"):
         AtomicRef(slot_index=0, row_idx=0, block_idx=0)
 
 
 def test_atomic_ref_rejects_neither_form():
-    with pytest.raises(EditorMetadataError, match="EITHER flat_slots"):
+    with pytest.raises(ValueError, match="EITHER flat_slots"):
         AtomicRef()
 
 
@@ -665,3 +667,99 @@ def test_expand_section_repeat_with_offsets():
     assert (refs[3].row_idx, refs[3].block_idx) == (1, 1)
     assert (refs[4].row_idx, refs[4].block_idx) == (2, 0)
     assert (refs[5].row_idx, refs[5].block_idx) == (2, 1)
+
+
+# ---------- mid-slice review follow-up tests (findings 1-4 + 6) --------
+
+
+def test_finding_1_repeat_with_offsets_rejects_non_zero_row_idx():
+    """The atomic block's row_idx field is OVERRIDDEN by the iteration
+    index when the section uses repeat_with_offsets — author's value
+    is silently lost. v1 enforces row_idx=0 so the contract is explicit.
+    """
+    station = _row_station(3, 2)
+    sc = {
+        "schema_version": 1,
+        "sections": [{
+            "id": "w",
+            "blocks": [
+                # Author writes row_idx=5 thinking it means "row 5"
+                # but the iteration overrides it. v1 rejects.
+                {"kind": "atomic", "row_idx": 5, "block_idx": 0},
+                {"kind": "atomic", "row_idx": 0, "block_idx": 1},
+            ],
+            "repeat_with_offsets": [0, 10, 20],
+        }],
+        "macros": [],
+        "layout_order": ["w"],
+    }
+    with pytest.raises(EditorMetadataError, match="row_idx=0"):
+        validate_sidecar(sc, station)
+
+
+def test_finding_2_empty_sections_list_rejected():
+    """A sidecar with zero sections has nothing to render. v1 rejects
+    explicitly; the no-sidecar path (synthesize_trivial_sidecar) is
+    the supported way to express 'no semantic structure.'"""
+    station = _flat_station(3)
+    sc = {
+        "schema_version": 1,
+        "sections": [],
+        "macros": [],
+        "layout_order": [],
+    }
+    with pytest.raises(EditorMetadataError, match="at least one section"):
+        validate_sidecar(sc, station)
+
+
+def test_finding_3_station_with_both_layout_forms_rejected():
+    """The engine's XOR invariant is enforced at parse_template, but
+    validate_sidecar takes raw station JSON — guard against a
+    hand-edited station with BOTH forms populated, which would
+    otherwise validate the sidecar against the flat-form rules only,
+    masking the station bug."""
+    station = _flat_station(3)
+    # Add a row_template alongside the existing flat_slots.
+    station["layout"]["row_template"] = [
+        {"source": "JINGLES", "strategy": "jingle", "size": 1, "genre": "X"},
+    ]
+    station["layout"]["row_start_offsets"] = [0]
+    sc = synthesize_trivial_sidecar(_flat_station(3))
+    with pytest.raises(EditorMetadataError, match="XOR invariant"):
+        validate_sidecar(sc, station)
+
+
+def test_finding_4_macros_rejected_inside_repeat_with_offsets():
+    """Macro semantics inside a repeat_with_offsets section are
+    ambiguous (per-row vs global repeat). v1 rejects; revisit in
+    §16.2.4 if a real need emerges."""
+    station = _row_station(2, 2)
+    sc = {
+        "schema_version": 1,
+        "sections": [{
+            "id": "w",
+            "blocks": [
+                {"kind": "atomic", "row_idx": 0, "block_idx": 0},
+                {"kind": "macro", "ref": "m"},
+            ],
+            "repeat_with_offsets": [0, 10],
+        }],
+        "macros": [{
+            "id": "m", "repeat": 3,
+            "spec": {"source": "A", "strategy": "window", "size": 1},
+        }],
+        "layout_order": ["w"],
+    }
+    with pytest.raises(EditorMetadataError, match="macro blocks aren't allowed"):
+        validate_sidecar(sc, station)
+
+
+def test_finding_6_parse_sidecar_wraps_json_decode_error(tmp_path):
+    """Malformed JSON in a sidecar file should surface as
+    EditorMetadataError, not raw JSONDecodeError, so callers get a
+    uniform editor-error surface."""
+    from engine.editor_metadata import parse_sidecar
+    bad = tmp_path / "bad.editor.json"
+    bad.write_text("{this is not valid JSON")
+    with pytest.raises(EditorMetadataError, match="JSON malformed"):
+        parse_sidecar(bad, _flat_station(3))

@@ -98,10 +98,17 @@ class AtomicRef:
     block_idx: int | None = None
 
     def __post_init__(self):
+        # ValueError (not EditorMetadataError) because this is an
+        # INTERNAL invariant on a dataclass constructed by
+        # `expand_section` — never from user data. Mid-slice review
+        # finding 5: separating internal-invariant errors from
+        # sidecar-validation errors lets callers catch
+        # EditorMetadataError purely for "your sidecar is wrong"
+        # without accidentally catching expansion-code bugs.
         has_flat = self.slot_index is not None
         has_row = self.row_idx is not None and self.block_idx is not None
         if has_flat == has_row:
-            raise EditorMetadataError(
+            raise ValueError(
                 f"AtomicRef must address EITHER flat_slots ({self.slot_index=}) "
                 f"OR row_template ({self.row_idx=}, {self.block_idx=}); "
                 f"got both or neither."
@@ -146,7 +153,15 @@ def parse_sidecar(path: Path, station_template: dict) -> dict:
     """
     if not path.is_file():
         raise EditorMetadataError(f"sidecar file not found: {path}")
-    raw = json.loads(path.read_text())
+    # Mid-slice review finding 6: wrap JSONDecodeError so callers get
+    # a uniform editor-error surface; raw JSON syntax problems shouldn't
+    # leak through a different exception class.
+    try:
+        raw = json.loads(path.read_text())
+    except json.JSONDecodeError as e:
+        raise EditorMetadataError(
+            f"sidecar JSON malformed at {path}: {e}"
+        ) from e
     validate_sidecar(raw, station_template)
     return raw
 
@@ -155,20 +170,51 @@ def validate_sidecar(sidecar: dict, station_template: dict) -> None:
     """Run all 10 drift rules + grammar validation against the sidecar.
 
     Raises `EditorMetadataError` on the first violation found.
+
+    Call order mirrors the §16.2.0 drift-rule numbering:
+
+      structural (grammar)           — type/allowlist/required checks
+      rule 6  layout form consistency
+      rule 2  macro refs
+      rule 3  layout_order refs
+      rule 10 macro spec validity
+      rule 4+5 repeat_with_offsets cardinality + values
+      rule 7  atomic bounds
+      rule 8  duplicate atomics
+      rule 1  orphan slots
+
     Validation order is structural-first (grammar) then semantic
     (cross-references with the station template), so a malformed
     sidecar fails on a clean grammar error rather than a confusing
     cross-reference error.
+
+    Mid-slice review finding 3: enforce the engine's XOR invariant
+    on `station_template` up-front. The engine's `parse_template`
+    enforces this on PARSED templates; here we get raw JSON and
+    must guard against a hand-edited station JSON with both
+    flat_slots and row_template populated (which would otherwise
+    validate the sidecar against the flat-form rules only, masking
+    the underlying station bug).
     """
+    layout = station_template.get("layout", {})
+    has_flat = bool(layout.get("flat_slots"))
+    has_row = bool(layout.get("row_template"))
+    if has_flat and has_row:
+        raise EditorMetadataError(
+            "station_template has BOTH flat_slots and row_template "
+            "populated; the engine's XOR invariant is violated. Fix "
+            "the station JSON before validating its sidecar."
+        )
+
     _validate_grammar(sidecar)
     _validate_layout_form_consistency(sidecar, station_template)
-    _validate_atomic_bounds(sidecar, station_template)
     _validate_macro_refs(sidecar)
     _validate_layout_order_refs(sidecar)
+    _validate_macro_specs(sidecar, station_template)
     _validate_repeat_with_offsets(sidecar, station_template)
+    _validate_atomic_bounds(sidecar, station_template)
     _validate_no_duplicate_atomics(sidecar, station_template)
     _validate_no_orphan_slots(sidecar, station_template)
-    _validate_macro_specs(sidecar, station_template)
 
 
 def synthesize_trivial_sidecar(station_template: dict) -> dict:
@@ -321,6 +367,17 @@ def _validate_grammar(sidecar: dict) -> None:
         raise EditorMetadataError(
             f"'sections' must be a list, got {type(sections).__name__}"
         )
+    # Mid-slice review finding 2: reject empty sections. A sidecar
+    # with zero sections renders an empty editor view; if the user
+    # wants "no sections" they shouldn't ship a sidecar at all
+    # (synthesize_trivial_sidecar handles the no-sidecar case).
+    if not sections:
+        raise EditorMetadataError(
+            "'sections' must contain at least one section. An empty "
+            "sidecar has nothing to render; remove the sidecar file "
+            "(the editor falls back to a synthesized 'All slots' view) "
+            "or add at least one section."
+        )
     seen_section_ids: set[str] = set()
     for i, sec in enumerate(sections):
         _validate_section_grammar(sec, i)
@@ -400,8 +457,36 @@ def _validate_section_grammar(sec: dict, i: int) -> None:
                 )
 
     # Validate each block in the section.
+    has_rwo = "repeat_with_offsets" in sec
     for j, b in enumerate(sec["blocks"]):
         _validate_block_grammar(b, i, j)
+        if has_rwo:
+            # Mid-slice review finding 4: macros inside a
+            # repeat_with_offsets section have ambiguous semantics
+            # (does the macro repeat per-row or globally?). v1
+            # rejects them; §16.2.4 may relax if a real need emerges.
+            if b.get("kind") == "macro":
+                raise EditorMetadataError(
+                    f"sections[{i}].blocks[{j}]: macro blocks aren't "
+                    f"allowed inside a section with repeat_with_offsets. "
+                    f"The semantic (does the macro repeat per-row or "
+                    f"globally?) isn't settled in v1 — restructure to "
+                    f"either drop repeat_with_offsets OR move the macro "
+                    f"into a separate section."
+                )
+            # Mid-slice review finding 1: atomic blocks' `row_idx`
+            # field is OVERRIDDEN by the iteration index when the
+            # section uses repeat_with_offsets. The block's authored
+            # row_idx is template-only; require it to be 0 so the
+            # contract is explicit + the user doesn't silently lose
+            # an authored value.
+            if b.get("kind") == "atomic" and b.get("row_idx") not in (None, 0):
+                raise EditorMetadataError(
+                    f"sections[{i}].blocks[{j}]: atomic blocks inside a "
+                    f"repeat_with_offsets section must use row_idx=0 "
+                    f"(the iteration index overrides it). Got row_idx="
+                    f"{b['row_idx']}; the value would be silently lost."
+                )
 
 
 def _validate_block_grammar(b: dict, section_idx: int, block_idx: int) -> None:
