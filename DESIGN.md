@@ -8630,6 +8630,52 @@ around `generate()` (which itself wraps `generate_stream()`); the
 job endpoint runs `generate_stream()` in a background thread +
 returns immediately. Same engine code path; different orchestration.
 
+#### Decision F — Concurrent-start policy (per-endpoint)
+
+Review finding 🟡 4: the right behaviour for "user starts a new
+job while one is already running" DIVERGES between generate and
+preview. Each endpoint declares its policy:
+
+* **`/jobs/generate`**: 409 Conflict if a running job already
+  exists for the same (slug). Persistence side-effects (multiple
+  threads racing on the same (station, week) Playlist row) are
+  the cost of getting this wrong; reject the second click loud.
+* **`/jobs/preview`** (§16.2.6): CANCEL the existing job + start
+  new. Debounce-restart is the natural shape for live preview;
+  the user IS asking to drop the previous in-flight work because
+  their edit invalidated it.
+
+Implementation:
+
+* `JobStore.start(slug, kind, payload, concurrent_policy)` where
+  `concurrent_policy ∈ {"reject", "cancel_existing"}`.
+* The endpoint specifies the policy on call. Default is
+  `"reject"`; preview overrides to `"cancel_existing"`.
+* "Existing" means: a job with status=`running` for the same
+  (slug, kind) tuple. (Don't conflict across kinds — generating
+  while previewing should be allowed if both endpoints exist.)
+
+#### Decision G — Stream invariant + exception contract
+
+Review finding 🟡 5: `generate_stream` is implicitly typed
+`Iterator[ProgressEvent | Result]`. Pin the invariants:
+
+* Exactly ONE `Result` per stream, emitted LAST. Any `next()`
+  call after the Result raises `StopIteration` immediately.
+* The `generate()` wrapper asserts these invariants when draining:
+  exactly one Result observed; no events after it.
+* If `generate_stream` raises mid-stream (e.g. a strategy raises
+  `ValueError`, `KeyError`, etc.), the exception propagates
+  through the wrapper unchanged. Existing callers' exception
+  expectations are preserved.
+* The job runner catches the same exception around its
+  `for event in generate_stream(...)` loop, writes the message +
+  exception class name into `Job.error = {message, kind}`, and
+  sets `Job.status = "error"`.
+
+c1's engine tests assert each invariant (one Result, last;
+mid-stream raise propagates; multi-Result raises an assertion).
+
 #### Job runner — in-memory implementation sketch
 
 ```
@@ -8655,11 +8701,44 @@ loop blocks. `threading.Thread` lets the loop keep serving GET
 poll requests. Acceptable for solo-user; for SaaS scale, a real
 worker pool replaces this.
 
-**GC policy**: jobs in `done` / `error` / `cancelled` status for
->60s get removed from the store. Frontend should fetch the final
-state quickly after detecting completion. (If a tab is closed
-mid-job, the job runs to completion + sits for 60s before GC —
-trivial memory footprint at solo scale.)
+**Concurrency model** (review finding 🟡 1):
+
+* `JobStore._jobs` is protected by a single `threading.Lock` (or
+  `RLock` for re-entrant GC paths). All `_jobs` mutations happen
+  under the lock.
+* `JobStore.get(job_id)` returns an IMMUTABLE SNAPSHOT — a frozen
+  dataclass copy of the Job's current state. The poller never
+  reads the live Job whose fields the worker thread is mid-write.
+  Without snapshotting, a poller can observe torn state (e.g.
+  `current=5, total=None`).
+* Worker thread updates `phase/current/total/status` under the
+  same lock — short critical sections (just the dict mutation).
+* `Job.cancelled: bool` is a single primitive; reads/writes are
+  atomic in CPython without locking. The worker checks it between
+  yields without contention.
+
+**GC policy** (review finding 🟡 2 + 🟡 3):
+
+* GC is LAZY — triggered on every `start()` and `get()` under the
+  store lock. Avoids a second background thread + atomic "check-
+  then-remove" comes for free inside the existing lock window.
+* Atomicity: GC runs under the lock; if a poller is waiting on
+  the lock when GC fires, the poller sees the post-GC state
+  cleanly. No race window.
+* **Cancelled jobs GC IMMEDIATELY** (no 60s grace). Rationale:
+  the result of a cancelled job isn't useful; for §16.2.6's
+  debounce-restart pattern, continuous typing at 500ms can
+  generate ~60 cancelled jobs per minute. Without immediate-GC
+  of cancelled jobs, those accumulate in the store with their
+  partial state. 🟡 3 mitigation.
+* `done` / `error` jobs keep the 60s grace so the frontend can
+  fetch the final state after detecting completion (without a
+  race against GC).
+* Per-(slug, kind) "latest wins": calling `start(slug, kind)`
+  when an existing job for the same (slug, kind) is running OR
+  in its 60s grace cancels + GCs the older one. Prevents
+  long-running tabs from accumulating completed-but-not-yet-GC'd
+  state across edit sessions.
 
 #### Frontend consumption
 
@@ -8708,17 +8787,25 @@ Cancel button: `cancelJob(job_id)` + close the progress indicator.
 
 #### What §16.11 ships (implementation plan)
 
-6 commits with mid-slice review after c2 (the API contract):
+6 commits with mid-slice review AFTER c3 (review finding 🟡 12 —
+moved from after-c2; c3 establishes the full API contract that
+deserves the highest-leverage audit before frontend code locks
+against it):
 
 | Commit | What |
 |---|---|
-| **c1** | Engine: `generate_stream` generator + `generate` wrapper. Unit tests asserting event sequence + final Result. No API change yet. |
-| **c2** | Job runner: `api/job_runner.py` module + `JobStore` + per-job thread orchestration + GC. Unit tests with a fast fake engine. |
-| **Mid-slice review** | API contract + thread-safety + cancellation semantics. |
-| **c3** | API endpoints: `POST /api/stations/{slug}/jobs/generate`, `GET /api/jobs/{job_id}`, `DELETE /api/jobs/{job_id}`. Pydantic shapes. Tests. |
-| **c4** | Frontend: `startGenerateJob` / `pollJob` / `watchJob` helpers + `<ProgressIndicator>` component. Vitest. |
+| **c1** | Engine: `generate_stream` generator + `generate` wrapper. Unit tests asserting event sequence + Decision G invariants (exactly one Result, last; mid-stream exception propagates; multi-Result assertion). No API change yet. |
+| **c2** | Job runner: `api/job_runner.py` module + `JobStore` (with the threading.Lock + immutable snapshots per Decision F's concurrency model) + per-job thread orchestration + lazy GC + cancelled-job immediate-GC. Unit tests with a fast fake engine. |
+| **c3** | API endpoints: `POST /api/stations/{slug}/jobs/generate`, `GET /api/jobs/{job_id}`, `DELETE /api/jobs/{job_id}`. Pydantic shapes. `concurrent_policy` per-endpoint (generate=reject, preview=cancel_existing — preview lands in §16.2.6). Tests. |
+| **Mid-slice review** | Full protocol audit: URL shape, status state machine, error response format, Pydantic schemas, concurrent-policy enforcement, server-restart 404 UX path. Catches second-order issues before frontend ties to the surface. |
+| **c4** | Frontend: `startGenerateJob` / `pollJob` / `watchJob` / `cancelJob` helpers + `<ProgressIndicator>` component + 404-mid-poll handling (toast + clear indicator). Vitest. |
 | **c5** | Wire into `<GenerateButton>`; Playwright test of click → progress → completion → trace navigation. |
-| **c6** | DESIGN.md §16.11 implementation entry (this section becomes the design-doc reference; c6 adds the "what shipped" suffix) + §15 status snapshot. |
+| **c6** | DESIGN.md §16.11 — APPEND "what shipped" suffix with deltas + verification (do NOT rewrite the design entry above; it's the reference). §15 status snapshot bump. |
+
+**c3/c4 reorderability** (review 🟢 13): c4 may begin against a
+stub server / OpenAPI schema before c3 merges, since the API
+contract is locked by this design doc. Not required, but useful
+if c3 hits an unexpected snag.
 
 #### Decisions punted
 
@@ -8730,13 +8817,61 @@ Cancel button: `cancelJob(job_id)` + close the progress indicator.
 | Generation queue for multiple stations in parallel | LATER | A user reports waiting |
 | Resume interrupted job | NEVER (probably) | Solo-user tool; restart is the recovery |
 | Cancellation mid-chain rollback | LATER | Today's per-week save is atomic; a cancelled chain leaves partial state — operator can delete the unwanted weeks via §16.3 |
+| Adaptive polling / long-poll for live preview (review 🟡 9) | LATER | §16.2.6 ships with fixed 500ms polling; if the polling tax becomes a felt UX issue, adopt long-poll (`GET /api/jobs/{id}?wait=2000` blocks up to 2s for status change). Eliminates the 250ms median tax for free. |
+| Server-suggested poll interval (`Retry-After` header) (review 🟢 18) | LATER | Same hook point as long-poll above; defer together. |
+| Job listing endpoint (`GET /api/jobs/?status=running`) (review 🟢 17) | LATER | When operator suspects a hang or wants to debug in flight |
+| Auth on job endpoints (review 🟢 16) | NEVER (v1) | No auth in v1; same threat model as `POST /api/stations/{slug}/generate`. Lands with whatever auth model arrives if/when SaaS shape comes. |
 
 #### What §16.11 unblocks
 
 * §16.2.6 (live preview) — uses the same job pattern; the live-
   preview endpoint becomes `POST /api/stations/{slug}/jobs/preview`.
+  **Note**: §16.2.6 adds a SIBLING `preview_stream` generator
+  alongside `generate_stream` (review 🟡 8). They share the
+  `ProgressEvent` shape but have different work units —
+  generate_stream's `phase="generate-week"`, preview_stream's
+  `phase="generate-slots"`. NOT a `persist: bool` flag on a single
+  function (which would accrete branching in the engine).
 * §16.21 (bulk-generate UI if it ever ships) — same shape.
 * Future async-bound work (e.g. CSV import progress) — same pattern.
+
+#### §16.2.6 polling-tax acknowledgment (review 🟡 9)
+
+§16.2.2's Decision 4 sold live preview at ~1.5s edit-to-trace
+latency (generation cost). §16.11's polling at 500ms adds a
+median 250ms tax (the poll-wait between "job done" and "frontend
+notices"). Realistic live-preview UX:
+
+```
+edit → 500ms debounce → POST start (~10ms) → ~1500ms preview →
+       ~250ms median poll-wait → render
+       Total: ~2.25s edit-to-trace.
+```
+
+That's ~17% over the §16.2.2 budget. Honest accounting: we accept
+the tax for the architectural clarity of the polling pattern.
+**Mitigations available without changing the protocol**:
+
+* Adaptive polling: 250ms while job running, 500ms otherwise.
+  Halves the median tax. Simple frontend change.
+* Long-poll: `GET /api/jobs/{id}?wait=2000` blocks up to 2s
+  server-side for the next status change. Eliminates the tax
+  entirely. Two-line FastAPI endpoint addition.
+
+Both are documented in the punts table above. §16.2.6 ships with
+fixed 500ms polling; revisit if the tax becomes a felt issue.
+
+#### Server-restart UX (review 🟡 15)
+
+If uvicorn restarts mid-job, the in-memory `JobStore` is empty.
+Polling clients hit `GET /api/jobs/{id}` → 404. Defined UX:
+
+* Frontend treats 404 mid-poll as "job lost" — surfaces a toast
+  ("Server restarted — please retry your generation") and clears
+  the `<ProgressIndicator>`.
+* Does NOT auto-retry. The user's edit state may have been lost
+  too; auto-retry could silently overwrite or duplicate work.
+* The toast points at the retry UX (click Generate again).
 
 #### Plan-order context
 
