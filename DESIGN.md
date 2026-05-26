@@ -7200,11 +7200,13 @@ ZERO visual editor surface until this ships.
 sequence is:
 
 1. §16.2.2 design discussion (THIS entry) — paper.
-2. **§16.10 in-UI generation progress signal** — small Tier B
-   slice; warms up the frontend work + delivers a reusable pattern
-   §16.2.6 will need.
+2. **§16.11 in-UI generation progress signal** — small Tier B
+   slice; warms up the frontend work + delivers a reusable
+   pattern §16.2.6 will need. (Numbering note: §16.10 is Rules
+   CRUD UI panel — separate, deferred per Tier C; §16.11 is the
+   progress-signal slot.)
 3. §16.2.2 implementation — first cut of the read-only canvas.
-4. **§16.11 stations list polish** — Tier B; after §16.2.2 sets
+4. **§16.12 stations list polish** — Tier B; after §16.2.2 sets
    the chip-rendering pattern.
 
 #### Decision A — Route shape
@@ -7230,9 +7232,24 @@ detail panel.
   count + collapse toggle.
 * **Collapse**: each section collapses to its header strip
   showing a one-line summary ("Segment 5: 943 picks, 6 macros,
-  33 atomic"). Default state for the page: top section expanded,
-  rest collapsed. User clicks to expand others; state persists
+  33 atomic"). User clicks to expand others; state persists
   in localStorage per (slug, section_id).
+  - **Default state heuristics** (slice-review finding 4):
+    - For a SYNTHESIZED-TRIVIAL sidecar (no committed
+      `.editor.json`) with >500 chips, default ALL sections
+      collapsed — a 2,196-chip wall on first paint would tank
+      first-impression UX. Header shows "Show all 2,196 picks"
+      as the explicit affordance.
+    - For a hand-authored or auto-derived sidecar, default the
+      FIRST section in `layout_order` expanded; rest collapsed.
+    - localStorage override always wins once the user has set it.
+* **Collapse-state ownership** (slice-review finding 5):
+  `EditorCanvas` owns a single Svelte writable store
+  (`editorCanvasStore`) holding `{ collapsedSections: Set<string>,
+  viewMode: { labels, colors, macros } }`. `Section` components
+  subscribe + dispatch toggle events. localStorage syncs from the
+  store via a derived subscription. ViewModeToggle reads/writes
+  the same store. Single source-of-truth; one place to debug.
 * **Wrap**: chips inside an expanded section wrap to multiple
   lines as the viewport width dictates. No internal horizontal
   scroll. Each chip is a fixed-min-width box; the flex container
@@ -7284,7 +7301,7 @@ discovers verbose mode when they hover a chip and want more.
 
 #### Decision E — API endpoint shape
 
-**`GET /api/stations/{slug}/sidecar` returns `{template, sidecar}`.**
+**`GET /api/stations/{slug}/sidecar` returns `{template, sidecar, sidecar_error}`.**
 
 * Server reads `stations/{slug}.editor.json` if present, else
   returns `synthesize_trivial_sidecar(template)`. Frontend NEVER
@@ -7292,6 +7309,16 @@ discovers verbose mode when they hover a chip and want more.
   valid sidecar.
 * Returns BOTH the parsed template AND the sidecar so the
   frontend has both halves available without a second request.
+* `sidecar_error` is `null` on the happy path. If the committed
+  `.editor.json` exists but FAILS `validate_sidecar`, the server
+  falls back to `synthesize_trivial_sidecar(template)` AND sets
+  `sidecar_error` to the parser's error message (a string). The
+  frontend renders the trivial fallback + a warning banner
+  ("Your committed sidecar is malformed — falling back to the
+  trivial view. Fix the sidecar at `stations/{slug}.editor.json`
+  or regenerate with `make derive-sidecar STATION=…`."). Slice-
+  review finding 2: chosen because the hobbyist-friendly path is
+  "the editor still works while I figure out what I broke."
 * 404 only when the station itself doesn't exist (a real not-
   found error).
 
@@ -7299,10 +7326,21 @@ Endpoint lives in a new `api/routers/editor.py` module — sidecar
 serving is an editor concern, separate from the existing
 `stations.py` (which handles CRUD on the station row).
 
-Pydantic models: `EditorSidecarResponse(template: dict, sidecar: dict)`.
-Keep them as `dict` for v1 — the grammar is validated at the
-`engine.editor_metadata` layer; the API isn't a second validation
-surface.
+Pydantic models: `EditorSidecarResponse(template: dict, sidecar: dict, sidecar_error: str | None)`.
+Keep `template`/`sidecar` as `dict` for v1 — the grammar is
+validated at the `engine.editor_metadata` layer; the API isn't a
+second validation surface.
+
+**§16.11 transport-pattern interaction (slice-review finding 3).**
+The live-preview endpoint `POST /api/stations/{slug}/preview`
+(planned for §16.2.6) takes ~19s for a 30-week chain. Whatever
+progress-signal transport §16.11 picks (polling on a job-id /
+SSE / chunked response) becomes the pattern §16.2.6 reuses for
+its preview progress. **§16.11's design discussion MUST settle
+the transport choice before §16.2.2 c1 lands**, otherwise
+§16.2.6 risks inventing a different transport that doesn't
+compose. Lock the transport in §16.11; the canvas API in
+§16.2.2 c1 can then reference §16.11's pattern.
 
 #### Frontend component tree (sketch)
 
@@ -7360,15 +7398,26 @@ The first render contract — what a brand-new visitor sees on
 opening a sidecar-less station:
 
 1. Server synthesizes a trivial sidecar (one section, all atomic).
-2. Canvas renders the section expanded by default (since it's the
-   only one).
+2. Canvas renders the section EXPANDED if total chips ≤ 500,
+   else COLLAPSED with a "Show all N picks" affordance
+   (slice-review finding 4 — a 2,196-chip wall on first paint
+   would tank first-impression UX).
 3. View mode defaults: compact labels, color-by-source, wider-chip
    macros (n/a for synthesized — no macros).
 4. Hover any chip → tooltip shows the full spec.
 5. Click any chip → side panel opens.
 
+For SMALL stations (Classics's 14 atomic blocks via the
+synthesized-trivial would land here): full canvas visible
+immediately, zero clicks needed.
+
+For LARGE stations (Rebirth Radio's 2,196 slots via
+synthesized-trivial): one-line summary with explicit
+"Show all 2,196 picks" — the user opts in to the wall rather
+than getting buried.
+
 This is the §16.2.0 hobbyist persona's first contact: they see
-their station as 100+ chips in one section, can hover any one to
+their station as a navigable structure, can hover any chip to
 understand it. Zero authoring required to feel productive.
 
 #### What §16.2.2 deliberately doesn't ship
@@ -7393,7 +7442,7 @@ understand it. Zero authoring required to feel productive.
 | Mobile / touch responsive layout | NEVER (or LATER if demand) | A real mobile contributor asks |
 | Keyboard shortcuts for chip navigation | LATER | Power-user demand surfaces |
 | "Defined but hidden" section state | LATER (§16.2.5 territory) | A user wants to author sections that don't render |
-| Search / filter chips by source / strategy | LATER (§16.11 stations list polish pattern is the precursor) | Canvas gets dense enough that scanning is hard |
+| Search / filter chips by source / strategy | LATER (§16.12 stations list polish pattern is the precursor) | Canvas gets dense enough that scanning is hard |
 | Section reordering (drag headers) | LATER (§16.2.5) | After atomic editing lands |
 | Macro expand-in-place (show the N atomic slots inline) | LATER (§16.2.3) | After atomic edit lands; useful for "audit my macro" |
 

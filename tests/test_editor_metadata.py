@@ -268,17 +268,15 @@ def test_drift_rule_layout_order_missing_a_defined_section():
     state in v1)."""
     station = _flat_station(3)
     sc = synthesize_trivial_sidecar(station)
-    # Add a second section that's NOT in layout_order.
+    # Move slot 0 OUT of the trivial section so an orphan section
+    # can claim it without duplicating coverage (drift rule 8 would
+    # otherwise also fire).
+    sc["sections"][0]["blocks"] = sc["sections"][0]["blocks"][1:]
+    # Add a section that owns slot 0 but is NOT in layout_order.
     sc["sections"].append({
         "id": "orphan-section",
         "blocks": [{"kind": "atomic", "slot_index": 0}],
     })
-    # Move the orphan's only slot back so the trivial section can
-    # still cover the originals (validate would fail on duplicate
-    # otherwise — drift rule 8).
-    sc["sections"][-1]["blocks"] = [{"kind": "atomic", "slot_index": 0}]
-    # Drop the orphan slot from the original section (avoid drift 8).
-    sc["sections"][0]["blocks"] = sc["sections"][0]["blocks"][1:]
     with pytest.raises(
         EditorMetadataError,
         match=r"defined but not listed in layout_order",
