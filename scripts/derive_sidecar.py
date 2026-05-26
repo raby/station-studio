@@ -17,10 +17,13 @@ because their structure is already explicit — see
 sidecar shape):
 
   1. Section boundaries: each `(strategy=jingle, genre=Daytime)` slot
-     starts a new section. This matches weekly's segment structure
-     (Rebirth Radio has 7 segments, each opening with a Daytime
-     jingle). Stations without Daytime jingles get a single
-     "all-slots" section.
+     starts a new section. For Rebirth Radio's 2,196-slot template
+     this yields 5 sections (the Daytime jingles fall at slot indices
+     0, 312, 626, 940, 1253). The final section spans ~943 slots
+     because no Daytime jingle marks the end of programming —
+     operators should split that section by hand if a finer grouping
+     matches their concept. Stations without Daytime jingles get a
+     single "all-slots" section.
 
   2. Within a section: detect runs of ≥3 consecutive slots with
      IDENTICAL specs (same source + strategy + per-strategy fields
@@ -74,23 +77,18 @@ from engine.editor_metadata import EditorMetadataError, validate_sidecar
 MIN_MACRO_RUN = 3
 
 
-def _spec_key(slot: dict) -> tuple:
+def _spec_key(slot: dict) -> str:
     """Build a hashable key for spec equality.
 
     Two slots with the same key can be grouped into one macro. The
-    key includes all spec-defining fields; `size` matters because
-    differently-sized blocks should never coalesce.
+    key includes EVERY field in the slot dict — slice review finding
+    9: hand-enumerated field lists are a regression hazard when a
+    future strategy adds a new spec parameter (slots differing only
+    in that field would silently coalesce). `json.dumps(sort_keys=True)`
+    handles all primitive + nested values; new fields automatically
+    distinguish.
     """
-    return (
-        slot.get("source"),
-        slot.get("strategy"),
-        slot.get("size", 1),
-        slot.get("genre"),
-        slot.get("exclusion_window"),
-        slot.get("cursor_id"),
-        slot.get("position"),
-        slot.get("fallback_genre"),
-    )
+    return json.dumps(slot, sort_keys=True)
 
 
 def _is_daytime_jingle(slot: dict) -> bool:

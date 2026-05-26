@@ -175,21 +175,32 @@ def test_seed_rebirth_radio_from_checked_in_json(db):
     assert len(row.template["layout"]["cursors_init"]) == 9
 
 
-def test_collect_paths_skips_pool_manifest_files():
+def test_collect_paths_skips_pool_manifest_and_editor_files():
     """seed_stations's default glob picks up stations/*.json — but
-    *.pool-manifest.json files (§14.36) sit alongside their template
-    JSON and would fail parse_template if seeded. The glob filter
-    excludes them; explicit-argv mode is unaffected."""
+    co-located metadata files MUST NOT be mis-parsed as templates:
+
+      * `*.pool-manifest.json` (§14.36) — pool-import manifests.
+      * `*.editor.json` (§16.2.1) — visual-editor sidecar metadata.
+
+    Both have their own dedicated loaders (`scripts.import_weekly_pools`
+    for manifests; `engine.editor_metadata.parse_sidecar` for
+    sidecars) and would fail parse_template if mistakenly seeded.
+
+    The default-glob filter excludes BOTH; explicit-argv mode
+    bypasses the filter (tested separately).
+    """
     paths = _collect_paths([])
     names = [p.name for p in paths]
     # Both station templates land in the glob.
     assert "rebirth-classics.json" in names
     assert "rebirth-radio.json" in names
-    # The co-located pool manifest does NOT.
+    # Co-located pool manifest excluded.
     assert "rebirth-radio.pool-manifest.json" not in names
-    # No name in the result ends with .pool-manifest.json (defensive
-    # check in case a new station gets one).
     assert all(not n.endswith(".pool-manifest.json") for n in names)
+    # Co-located editor sidecars excluded (slice-review finding 4).
+    assert "rebirth-radio.editor.json" not in names
+    assert "rebirth-classics.editor.json" not in names
+    assert all(not n.endswith(".editor.json") for n in names)
 
 
 def test_collect_paths_honours_explicit_argv_for_pool_manifest():

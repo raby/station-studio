@@ -256,6 +256,52 @@ def test_drift_rule_layout_order_unknown_section():
         validate_sidecar(sc, station)
 
 
+def test_drift_rule_layout_order_missing_a_defined_section():
+    """Slice-review finding 3: layout_order must reference EVERY
+    defined section (strict equality, not just subset). A section
+    that exists in `sections[]` but isn't listed in `layout_order`
+    would silently disappear from the editor — surface it as a
+    clear error.
+
+    The fix path is documented in the error message: delete the
+    section from `sections[]` to hide it (no separate 'hidden'
+    state in v1)."""
+    station = _flat_station(3)
+    sc = synthesize_trivial_sidecar(station)
+    # Add a second section that's NOT in layout_order.
+    sc["sections"].append({
+        "id": "orphan-section",
+        "blocks": [{"kind": "atomic", "slot_index": 0}],
+    })
+    # Move the orphan's only slot back so the trivial section can
+    # still cover the originals (validate would fail on duplicate
+    # otherwise — drift rule 8).
+    sc["sections"][-1]["blocks"] = [{"kind": "atomic", "slot_index": 0}]
+    # Drop the orphan slot from the original section (avoid drift 8).
+    sc["sections"][0]["blocks"] = sc["sections"][0]["blocks"][1:]
+    with pytest.raises(
+        EditorMetadataError,
+        match=r"defined but not listed in layout_order",
+    ):
+        validate_sidecar(sc, station)
+
+
+def test_drift_rule_layout_order_rejects_duplicate_section_ids():
+    """Each section appears in layout_order EXACTLY ONCE. Duplicates
+    would render the same section twice — the v1 editor doesn't
+    support that; flag as an authoring error."""
+    station = _flat_station(3)
+    sc = synthesize_trivial_sidecar(station)
+    # synthesize_trivial returns a single section named "all-slots".
+    # Duplicate it in layout_order.
+    sc["layout_order"] = ["all-slots", "all-slots"]
+    with pytest.raises(
+        EditorMetadataError,
+        match=r"duplicate section id",
+    ):
+        validate_sidecar(sc, station)
+
+
 # ---------- drift rule 4 — repeat_with_offsets cardinality --------------
 
 

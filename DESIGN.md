@@ -7115,6 +7115,42 @@ section/macro-level comments become useful (hand-authored sidecars
 might want them), raise as a §16.2.x sub-slice — likely needs to
 extend allowlists + grammar tests.
 
+**Slice-level review sweep (post-c2):** 5 🟡 + 4 🟢 applied. The
+five 🟡s + three 🟢s landed in a single sweep commit; one 🟢
+(`AtomicRef`/`MacroPlaceholder` negative-index defensive checks)
+stays deferred as pure polish.
+
+| Sweep finding | Outcome |
+|---|---|
+| 🟡 #1: derive byte-equality not locked | Fix: integration test calls `derive_sidecar` on rebirth-radio + asserts dict-equality with the committed sidecar |
+| 🟡 #2: derive_sidecar.py has no unit tests | Fix: 18 new tests in `tests/test_derive_sidecar.py` covering `_spec_key`, `_detect_section_ranges`, `_build_section`, end-to-end shapes |
+| 🟡 #3: layout_order cardinality loose | Fix: strict `set(layout_order) == set(section_ids)`; duplicates also rejected. Error message points at delete-from-sections[] as the hide-a-section path |
+| 🟡 #4: `.editor.json` skip untested | Fix: extended `test_collect_paths_skips_pool_manifest_and_editor_files` to assert both suffixes |
+| 🟡 #5: derive docstring claimed 7 segments | Fix: corrected to 5 + explained why (Daytime jingles only fall at 5 indices; final section spans ~943 slots) |
+| 🟢 #6: `name` field default-to-id contract | Note in §16.2.2 brief: chip renderer uses `section.get("name", section["id"])` |
+| 🟢 #8: `lookup_macro` helper for §16.2.2 | Fix: added `lookup_macro(sidecar, macro_id) -> dict \| None` to `engine.editor_metadata`'s public API |
+| 🟢 #9: `_spec_key` field coverage fragility | Fix: switched from hand-enumerated tuple to `json.dumps(slot, sort_keys=True)` — automatically distinguishes new spec fields |
+| 🟢 #10: sidecar schema_version migration path | Documented below |
+
+**Sidecar schema-version migration policy.** Today `schema_version
+== 1` is required (validate raises on anything else). When v2
+ships, the contract:
+
+1. `parse_sidecar` reads the version field BEFORE running grammar
+   validation; routes through `migrate_v1_to_v2(sidecar)` if the
+   version is older.
+2. Committed sidecars (`stations/*.editor.json`) get re-derived
+   (`make derive-sidecar STATION=…`) OR migrated by a one-shot
+   script committed alongside the schema bump.
+3. The version bump is its own slice (§16.2.x); the migration
+   function ships with the slice that needs the new fields.
+4. Schema_version <= editor-supported version is required; newer
+   versions raise "this sidecar was authored by a newer editor;
+   upgrade station-studio."
+
+This mirrors §14.18's backup/restore versioning approach: explicit,
+script-driven, no implicit migrations.
+
 **Decisions punted:**
 
 | Punt | Severity | Trigger |
@@ -7124,6 +7160,8 @@ extend allowlists + grammar tests.
 | Heuristic for row_template auto-derivation | LATER | Second row_template station emerges |
 | Macro grouping by approximate spec match | LATER | A station with near-identical specs (different sizes) needs grouping |
 | `expand_section` returning live BlockSpec snapshots | LATER | Editor renders need spec lookup; today it returns refs only |
+| AtomicRef + MacroPlaceholder negative-index defensive checks | LATER | A real authoring bug surfaces; pure polish today |
+| `section.hidden` field for "defined but not in layout_order" | LATER | A user wants to keep a section's metadata but hide its canvas presence |
 
 **Anticipated regression class:** the recurring "row_template-only
 walk" bug class fired AGAIN during this slice's mid-review (finding

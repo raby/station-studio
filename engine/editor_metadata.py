@@ -266,6 +266,26 @@ def synthesize_trivial_sidecar(station_template: dict) -> dict:
     }
 
 
+def lookup_macro(sidecar: dict, macro_id: str) -> dict | None:
+    """Find a macro by its id. Returns the macro dict or None.
+
+    Slice-review finding 8: §16.2.2's chip renderer needs to look up
+    a macro's spec/name/repeat when rendering a `MacroPlaceholder`
+    chip. `expand_section` returns placeholders with `macro_id` only;
+    this helper does the dict scan once instead of inlining
+    `next(m for m in sidecar["macros"] if m["id"] == macro_id)` at
+    every call site.
+
+    Returns None when the macro_id is unknown — `validate_sidecar`
+    catches dangling refs at load time (drift rule 2), so callers
+    on a validated sidecar can treat None as a programmer error.
+    """
+    for m in sidecar.get("macros", []):
+        if m.get("id") == macro_id:
+            return m
+    return None
+
+
 def expand_section(section: dict, sidecar: dict) -> list:
     """Resolve a section into the flat list of refs the editor renders.
 
@@ -671,14 +691,58 @@ def _validate_macro_refs(sidecar: dict) -> None:
 
 
 def _validate_layout_order_refs(sidecar: dict) -> None:
-    """Drift rule 3: every layout_order entry must be a defined section id."""
+    """Drift rule 3: layout_order references each defined section
+    EXACTLY ONCE.
+
+    Slice-review finding 3: tightened from "every layout_order entry
+    must match SOME section" to "set(layout_order) ==
+    set(section_ids)" — i.e. cardinality + completeness enforced.
+
+    Rationale: under the loose check, a section could exist in
+    `sections[]` and never appear in `layout_order`, silently hiding
+    it from the editor. A user renaming a section but forgetting to
+    update `layout_order` would lose a section without a clean
+    error.
+
+    If hiding a section is later needed as a feature, add a separate
+    `section.hidden: bool` field (in a follow-on slice). v1: explicit
+    is better than implicit; missing-from-layout_order is an error.
+    """
     section_ids = {s["id"] for s in sidecar["sections"]}
+    layout_ids = set(sidecar["layout_order"])
+
     for i, sid in enumerate(sidecar["layout_order"]):
         if sid not in section_ids:
             raise EditorMetadataError(
                 f"layout_order[{i}]={sid!r} doesn't match any section. "
                 f"Available: {sorted(section_ids)}."
             )
+
+    missing = section_ids - layout_ids
+    if missing:
+        raise EditorMetadataError(
+            f"sections {sorted(missing)} are defined but not listed "
+            f"in layout_order. Every section must appear in "
+            f"layout_order exactly once (drift rule 3). To hide a "
+            f"section, remove it from sections[] entirely; the editor "
+            f"has no 'hidden but defined' state in v1."
+        )
+
+    # Drift rule 3 also forbids duplicates: each section appears once
+    # in layout_order. Since the set-difference check above passes,
+    # this is just len-vs-set-len.
+    if len(sidecar["layout_order"]) != len(layout_ids):
+        # Find the duplicate(s) for a clean error message.
+        seen: set[str] = set()
+        dups: set[str] = set()
+        for sid in sidecar["layout_order"]:
+            if sid in seen:
+                dups.add(sid)
+            seen.add(sid)
+        raise EditorMetadataError(
+            f"layout_order contains duplicate section id(s): "
+            f"{sorted(dups)}. Each section appears once."
+        )
 
 
 def _validate_repeat_with_offsets(sidecar: dict, station_template: dict) -> None:

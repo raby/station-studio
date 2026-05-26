@@ -166,3 +166,71 @@ def test_committed_sidecar_has_no_empty_sections(slug):
     _, sidecar = _load_pair(slug)
     for sec in sidecar["sections"]:
         assert sec["blocks"], f"section {sec['id']!r} has no blocks"
+
+
+# ---------- Slice-review finding 1: derive byte-equality lock ----------
+
+
+def test_derive_sidecar_byte_equality_with_committed_radio_sidecar():
+    """Slice-review finding 1: re-running scripts/derive_sidecar.py
+    on stations/rebirth-radio.json MUST produce the committed
+    stations/rebirth-radio.editor.json byte-for-byte. Locks the
+    auto-derive heuristic against silent drift — a heuristic change
+    (different boundary rule, different MIN_MACRO_RUN, different
+    macro ID format) that produced the same COUNTS but different
+    file contents would slip past the structural-shape tests.
+
+    To refresh after an intentional heuristic change, run:
+        make derive-sidecar STATION=stations/rebirth-radio.json
+    + review the diff before committing.
+    """
+    from scripts.derive_sidecar import derive_sidecar
+
+    template = json.loads((STATIONS_DIR / "rebirth-radio.json").read_text())
+    derived = derive_sidecar(template)
+
+    committed_path = STATIONS_DIR / "rebirth-radio.editor.json"
+    committed = json.loads(committed_path.read_text())
+
+    # Compare dict-equality (round-trips through JSON normalize keys
+    # + drop formatting; the byte-equality contract is structural).
+    assert derived == committed, (
+        f"derive_sidecar output differs from committed sidecar at "
+        f"{committed_path}. Refresh via `make derive-sidecar STATION="
+        f"stations/rebirth-radio.json` if the heuristic change is "
+        f"intentional."
+    )
+
+
+# ---------- Slice-review finding 8: lookup_macro helper ----------------
+
+
+def test_lookup_macro_returns_dict_for_known_id():
+    """The helper finds a macro by id in O(n). Used by §16.2.2's
+    chip renderer to resolve MacroPlaceholder to its spec/name/repeat."""
+    from engine.editor_metadata import lookup_macro
+    _, sidecar = _load_pair("rebirth-radio")
+    # First macro id from the auto-derived sidecar.
+    first_id = sidecar["macros"][0]["id"]
+    m = lookup_macro(sidecar, first_id)
+    assert m is not None
+    assert m["id"] == first_id
+
+
+def test_lookup_macro_returns_none_for_unknown_id():
+    """Unknown id returns None — validate_sidecar already catches
+    dangling refs at load time, so callers can treat None as a
+    programmer error (or use it explicitly to test existence)."""
+    from engine.editor_metadata import lookup_macro
+    _, sidecar = _load_pair("rebirth-radio")
+    assert lookup_macro(sidecar, "nonexistent-macro") is None
+
+
+def test_lookup_macro_on_classics_returns_none_for_any_id():
+    """Classics sidecar has zero macros (row_template repeat is
+    naturally expressed via repeat_with_offsets). lookup_macro
+    should handle the empty list cleanly."""
+    from engine.editor_metadata import lookup_macro
+    _, sidecar = _load_pair("rebirth-classics")
+    assert sidecar["macros"] == []
+    assert lookup_macro(sidecar, "anything") is None
