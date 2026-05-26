@@ -7182,6 +7182,260 @@ picks up rendering decisions (chip layout, macro pill style,
 section-header treatment) using the §16.2.0 personas (hobbyist /
 operator / experimenter).
 
+### 16.2.2 Read-only visual canvas — design (paper)
+
+**Status.** Paper-only slice. No code. Output is THIS DESIGN entry,
+which locks the architectural + interaction decisions that the
+§16.2.2 implementation slice executes. Same shape as §16.2.0's
+design pattern; smaller scope (one route, one component tree).
+
+**Why §16.2.2 matters.** §16.2.1 shipped the sidecar grammar + the
+committed sidecars + the data-layer parser. §16.2.2 is the FIRST
+USER-FACING SLICE for the visual block editor. The hobbyist persona
+finally sees something visual — getting this right shapes the
+editor's reputation. Persona 1 + 3 (hobbyist + experimenter) see
+ZERO visual editor surface until this ships.
+
+**Plan-order context.** Per the user's explicit instruction, the
+sequence is:
+
+1. §16.2.2 design discussion (THIS entry) — paper.
+2. **§16.10 in-UI generation progress signal** — small Tier B
+   slice; warms up the frontend work + delivers a reusable pattern
+   §16.2.6 will need.
+3. §16.2.2 implementation — first cut of the read-only canvas.
+4. **§16.11 stations list polish** — Tier B; after §16.2.2 sets
+   the chip-rendering pattern.
+
+#### Decision A — Route shape
+
+**A3: BOTH** a standalone `/stations/[slug]/visualise` route AND a
+"Visualise" link on the existing station-detail page.
+
+* The standalone route is the URL source-of-truth; deep-linkable,
+  bookmarkable, shareable.
+* The station-detail page surfaces a "Visualise" link so users
+  discover it without learning the URL.
+
+Wiring effort: small. The route renders the new canvas component;
+the station page adds one anchor.
+
+#### Decision B + D — Canvas shape + interaction
+
+**B2+B3 + D4**: wrap-flow with section collapse + tooltip + click-
+detail panel.
+
+* **Sections**: vertical scroll. Each section is a header strip
+  + a wrap-flow chip container. Section headers show name + chip
+  count + collapse toggle.
+* **Collapse**: each section collapses to its header strip
+  showing a one-line summary ("Segment 5: 943 picks, 6 macros,
+  33 atomic"). Default state for the page: top section expanded,
+  rest collapsed. User clicks to expand others; state persists
+  in localStorage per (slug, section_id).
+* **Wrap**: chips inside an expanded section wrap to multiple
+  lines as the viewport width dictates. No internal horizontal
+  scroll. Each chip is a fixed-min-width box; the flex container
+  reflows on resize.
+* **Tooltip**: hovering a chip surfaces the full spec
+  (`source`, `strategy`, per-strategy fields, `size`,
+  `pick_in_block`/`row_idx`/`block_idx` from the SlotRef).
+* **Click-detail**: clicking a chip opens a side panel (right
+  sliding sheet) with the full spec PLUS context (which section,
+  which macro membership if any, which pool the source resolves
+  to). Side panel can be pinned to stay open while the user
+  browses chips.
+* **No edit / drag**: §16.2.3 lands those. View-only constraint
+  is enforced by NOT wiring any onClick handlers beyond chip-
+  detail.
+
+Mobile / touch: hover tooltips degrade to tap-to-show-panel on
+touch. Desktop-first per §16.2.0 punt.
+
+#### Decision C — Chip rendering (toggleable view modes)
+
+User's "want all" answer: ship a small view-modes panel with
+three independent toggles. Each toggle persists in localStorage so
+each user's preference sticks across sessions.
+
+| Dimension | Options |
+|---|---|
+| **Label density** | Compact (`#1 J:Day`) — DEFAULT — or Verbose (`jingle: Daytime`) |
+| **Color scheme** | By source (DEFAULT — uses `template.sources[].colour`; consistent with trace viewer) ‖ By strategy (each of the 7 strategies has a distinct color) ‖ Both (border = source, fill = strategy) |
+| **Macro visual** | Wider chip with `×N` (DEFAULT) ‖ Stacked (overlapping chips suggesting multiplicity) ‖ Count badge (same width + small `×N` corner badge) |
+
+UI surface: a "View" dropdown at the top of the canvas. Three
+labeled rows of toggle pills.
+
+Strategy abbreviations (compact label mode):
+
+| Strategy | Abbrev |
+|---|---|
+| `jingle` | `J:{genre}` (e.g. `J:Day`) |
+| `weighted` | `W` |
+| `mix` | `M:{genre}` (e.g. `M:01Alphastate`) |
+| `prev_ref` | `P:{position}` (e.g. `P:1742`) |
+| `sequential` | `S:{cursor_id}` (e.g. `S:NIGHT_1`) |
+| `window` | `Wnd` |
+| `pick` | `Pk` |
+
+Default starting view: compact + by-source + wider-chip. Hobbyist
+discovers verbose mode when they hover a chip and want more.
+
+#### Decision E — API endpoint shape
+
+**`GET /api/stations/{slug}/sidecar` returns `{template, sidecar}`.**
+
+* Server reads `stations/{slug}.editor.json` if present, else
+  returns `synthesize_trivial_sidecar(template)`. Frontend NEVER
+  handles "no sidecar" — always renders the canvas against a
+  valid sidecar.
+* Returns BOTH the parsed template AND the sidecar so the
+  frontend has both halves available without a second request.
+* 404 only when the station itself doesn't exist (a real not-
+  found error).
+
+Endpoint lives in a new `api/routers/editor.py` module — sidecar
+serving is an editor concern, separate from the existing
+`stations.py` (which handles CRUD on the station row).
+
+Pydantic models: `EditorSidecarResponse(template: dict, sidecar: dict)`.
+Keep them as `dict` for v1 — the grammar is validated at the
+`engine.editor_metadata` layer; the API isn't a second validation
+surface.
+
+#### Frontend component tree (sketch)
+
+```
+/stations/[slug]/visualise/+page.svelte
+├── load(): fetch /api/stations/{slug}/sidecar
+│   on 404 (station missing) → redirect to stations list
+│   on 200 → return {template, sidecar}
+│
+└── <EditorCanvas {template, sidecar}>
+    ├── <ViewModeToggle> ─── persists to localStorage
+    ├── <Section> × N (one per layout_order)
+    │   ├── <SectionHeader> ─── name, chip count, collapse toggle
+    │   └── (when expanded) <ChipFlow>
+    │       └── <Chip> × M ─── atomic or macro
+    │           ├── tooltip (hover)
+    │           └── onClick → DetailPanel
+    └── <DetailPanel> (slides in from right; pinnable)
+        ├── chip's full spec
+        ├── section / macro context
+        └── (optional) link to trace for this pick — DEFERRED to §16.2.7
+```
+
+New components live in `web/src/lib/components/editor/`:
+
+- `EditorCanvas.svelte`
+- `ViewModeToggle.svelte`
+- `Section.svelte`
+- `SectionHeader.svelte`
+- `ChipFlow.svelte`
+- `Chip.svelte`
+- `DetailPanel.svelte`
+
+Plus a `web/src/lib/editor.ts` module with:
+
+- Sidecar / Section / AtomicRef / MacroPlaceholder TypeScript types
+  (hand-translated from `engine.editor_metadata`'s dataclasses).
+- `expandSection(section, sidecar)` mirror of the Python helper —
+  returns `(AtomicRef | MacroPlaceholder)[]`. Pure function; the
+  frontend doesn't re-fetch on every render.
+- `lookupMacro(sidecar, macroId)` mirror.
+- `compactStrategyLabel(block)` / `verboseStrategyLabel(block)`
+  helpers for the chip text.
+
+#### Discoverability + first-impression contract
+
+The "Visualise" link on the station-detail page is the primary
+discoverability surface. Place it:
+
+* Top of the page, after the station name + display name.
+* Icon + text label (e.g. "🗺 Visualise template").
+* Clicking navigates to `/stations/[slug]/visualise`.
+
+The first render contract — what a brand-new visitor sees on
+opening a sidecar-less station:
+
+1. Server synthesizes a trivial sidecar (one section, all atomic).
+2. Canvas renders the section expanded by default (since it's the
+   only one).
+3. View mode defaults: compact labels, color-by-source, wider-chip
+   macros (n/a for synthesized — no macros).
+4. Hover any chip → tooltip shows the full spec.
+5. Click any chip → side panel opens.
+
+This is the §16.2.0 hobbyist persona's first contact: they see
+their station as 100+ chips in one section, can hover any one to
+understand it. Zero authoring required to feel productive.
+
+#### What §16.2.2 deliberately doesn't ship
+
+* **No edit affordance.** Chips are non-editable; no drag-drop;
+  no "+" button. The canvas is the read primitive.
+* **No trace integration.** Clicking a chip shows its spec, not
+  "what got picked at this position last week." Trace integration
+  is §16.2.6's preview UI.
+* **No fork.** Forking a station ships in §16.2.8.
+* **No keyboard shortcuts.** Power-user feature; deferred per
+  §16.2.0 punt table.
+* **No mobile layout.** Desktop-first; touch users get
+  best-effort fallback (tap = click).
+
+#### Decisions punted
+
+| Punt | Severity | Trigger |
+|---|---|---|
+| Click-chip → jump to trace-viewer position | LATER (§16.2.6 or §16.2.7) | After the live-preview slice ships |
+| Strategy-color color palette (which colors) | IMPLEMENTATION DETAIL | §16.2.2 implementation picks colors; refined post-feedback |
+| Mobile / touch responsive layout | NEVER (or LATER if demand) | A real mobile contributor asks |
+| Keyboard shortcuts for chip navigation | LATER | Power-user demand surfaces |
+| "Defined but hidden" section state | LATER (§16.2.5 territory) | A user wants to author sections that don't render |
+| Search / filter chips by source / strategy | LATER (§16.11 stations list polish pattern is the precursor) | Canvas gets dense enough that scanning is hard |
+| Section reordering (drag headers) | LATER (§16.2.5) | After atomic editing lands |
+| Macro expand-in-place (show the N atomic slots inline) | LATER (§16.2.3) | After atomic edit lands; useful for "audit my macro" |
+
+#### Implementation roadmap for §16.2.2
+
+The slice ships in ~4 commits with the established mid-slice
+review pattern:
+
+1. **§16.2.2 c1**: API endpoint + Pydantic shape + tests +
+   server-side synthesize-trivial fallback. Pure backend.
+2. **§16.2.2 c2**: Frontend types + `editor.ts` helpers +
+   visualise route scaffold + load function. No render yet.
+3. **Mid-slice review** of the c1 + c2 surface (API contract +
+   frontend types in sync; types match the dataclasses).
+4. **§16.2.2 c3**: Canvas + chip components (read-only render).
+5. **§16.2.2 c4**: ViewModeToggle + DetailPanel + section
+   collapse. Polish for the first-impression contract.
+6. **§16.2.2 c5**: Vitest + Playwright tests + DESIGN entry.
+
+c2 and c3 are couplable (rendering needs types); c4 is a polish
+slice; c5 closes out.
+
+#### What §16.2.2 unblocks for §16.2.3+
+
+* §16.2.3 (atomic edit) reuses `<Chip>` + `<DetailPanel>` — the
+  panel grows an "Edit" button + form.
+* §16.2.4 (macro edit) reuses `<DetailPanel>` for macros + grows
+  the macro palette sidebar from the ViewModeToggle's footprint.
+* §16.2.5 (section composition) reuses `<SectionHeader>` for
+  rename + the drag handle.
+* §16.2.6 (live preview) calls `/api/stations/{slug}/preview`
+  (NEW endpoint) and renders a separate trace pane alongside the
+  canvas.
+* §16.2.7 (compare against saved) reuses the trace pane + the
+  `byte_equality.py` diff helpers; renders a slot-by-slot diff.
+* §16.2.8 (fork) is a one-action UI affordance; doesn't touch
+  the canvas internals.
+
+In other words: §16.2.2's component decomposition is the
+SCAFFOLDING for the entire §16.2 editor. Get this right and the
+next 6 slices have a stable foundation.
+
 ### 16.3 Delete / station reset
 
 **Why this matters.** Today the only way to clean up a wizard test
