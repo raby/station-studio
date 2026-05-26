@@ -7332,15 +7332,13 @@ validated at the `engine.editor_metadata` layer; the API isn't a
 second validation surface.
 
 **§16.11 transport-pattern interaction (slice-review finding 3).**
-The live-preview endpoint `POST /api/stations/{slug}/preview`
-(planned for §16.2.6) takes ~19s for a 30-week chain. Whatever
-progress-signal transport §16.11 picks (polling on a job-id /
-SSE / chunked response) becomes the pattern §16.2.6 reuses for
-its preview progress. **§16.11's design discussion MUST settle
-the transport choice before §16.2.2 c1 lands**, otherwise
-§16.2.6 risks inventing a different transport that doesn't
-compose. Lock the transport in §16.11; the canvas API in
-§16.2.2 c1 can then reference §16.11's pattern.
+The live-preview endpoint (planned for §16.2.6) reuses §16.11's
+transport. §16.11 locked **A1: polling on a job-id endpoint**.
+Live preview becomes `POST /api/stations/{slug}/jobs/preview` →
+`{job_id}` → poll `GET /api/jobs/{job_id}` → render trace from
+the final result. Engine instrumentation is §16.11's `generate_stream`
+generator pattern (B2); §16.2.6 adds `preview_stream` alongside.
+See §16.11's full design for the JobStore + thread-runner shape.
 
 #### Frontend component tree (sketch)
 
@@ -8477,34 +8475,275 @@ before, alongside, or after.
 
 ---
 
-### 16.11 In-UI generation progress
+### 16.11 In-UI generation progress signal — design (paper)
 
-**Why this matters.** The Generate button shipped in §14.9, but a
-30-week chain (the §14.41 case) takes ~19s. Today the UI shows a
-spinner with no further signal. A hobbyist watching a 30-second
-generation has no idea whether it's working, hung, or how close
-to done.
+**Status.** Paper-only design discussion locking the architectural
+decisions for the implementation slice that follows. Same pattern
+as §16.2.0 / §16.2.2.
 
-**Shape.** Server-sent events (or chunked response) from
-`/api/stations/{slug}/generate` reporting `(week, status)` per
-generated week. Frontend renders a progress bar + the per-week
-list. On error, surfaces the diagnostic without rolling back the
-weeks already saved.
+**Why this slice runs BEFORE §16.2.2 implementation.** §16.2.2's
+live-preview endpoint (`POST /api/stations/{slug}/preview`, planned
+for §16.2.6) needs a progress-signal mechanism. Whatever transport
+§16.11 picks becomes the pattern §16.2.6 reuses — settling it
+first means §16.2.6 inherits a well-considered shape; settling it
+later risks reinventing.
 
-**Why independent.** No dependency on §16.2 or any other queued
-slice. Small standalone improvement; can slot in any time the
-user-perceived latency justifies the work.
+**Why this matters today.** Today's `<GenerateButton>` (§14.9)
+shows a spinner during `POST /api/stations/{slug}/generate`. For
+a single-week generation (~0.6s) the spinner is sufficient. For
+multi-week chains (~19s on Rebirth Radio's 30-week range), the
+operator has no signal whether it's working / hung / how close to
+done. The progress-stream pattern also unblocks future bulk-
+generation UI + the live-preview slice.
 
-**Effort.** Small (~3 commits): backend SSE endpoint + frontend
-consumer + smoke test.
+**Honest reframing**: §16.11 is two things stacked:
 
-**Punted:**
+* **(a) Simple in-flight spinner** for the existing single-week
+  generate — small immediate value; transport-agnostic.
+* **(b) Progress-stream pattern** for §16.2.6 + future long-
+  running jobs — the architectural piece.
 
-* Cancellation mid-chain (would need transaction handling — for
-  now, kill the server if it's wrong; the per-week saves are
-  individually committed).
-* Generation queue for multiple stations (single-user tool;
-  parallel-station generation isn't a demand-side request).
+Both ship in this slice; only (b) has architectural decisions to
+lock.
+
+#### Decision A — Transport: A1 polling on a job-id endpoint
+
+**Chosen**: `POST /api/stations/{slug}/jobs/generate` starts a
+background job, returns `{job_id, status: "running"}`. Frontend
+polls `GET /api/jobs/{job_id}` every ~500ms; response carries
+`{status, current, total, label, result, error}`. `DELETE /api/jobs/{job_id}`
+cancels.
+
+Rationale:
+
+* **Server-side state separates lifecycle from client.** The job
+  exists independent of the requesting tab. A future multi-tab
+  or session-resume use case is reachable without changing the
+  protocol.
+* **Cleaner architectural seam.** Engine = pure compute that
+  produces an event stream. Job runner = orchestration + state.
+  API = surfaces state via polling. Each layer testable in
+  isolation; failure modes localize.
+* **Cancellation is natural.** DELETE the job; background runner
+  sets `cancelled=True`; engine's per-event check bails. NDJSON
+  would need client-disconnect detection (fiddlier).
+* **No async streaming framework required.** Polling is plain
+  HTTP; works through every proxy / dev tool / network condition.
+
+Trade-off accepted: heavier than NDJSON (job state, background
+runner, GC). The architectural separation pays the cost back when
+§16.2.6 reuses the pattern.
+
+Job state lives **in-memory** (a process-level dict). DB-backed
+jobs are a §16.21+ punt: solo-user OSS today; a server restart
+losing in-flight jobs is acceptable. Multi-process deployments
+would need a queue (Redis / DB), but that's a SaaS-shape concern
+out of scope for §16.0.
+
+#### Decision B — Engine instrumentation: B2 generator function
+
+**Chosen**: engine grows a `generate_stream(template, pools, …)`
+function that yields events. The existing `generate(…) -> Result`
+becomes a thin wrapper:
+
+```python
+def generate(template, pools, **kwargs) -> Result:
+    """Drains generate_stream and returns the final Result.
+    Existing callers (tests, dump scripts, single-week API) call
+    this unchanged."""
+    final = None
+    for event in generate_stream(template, pools, **kwargs):
+        if isinstance(event, Result):
+            final = event
+    assert final is not None
+    return final
+
+
+def generate_stream(template, pools, **kwargs) -> Iterator[ProgressEvent | Result]:
+    """Pure generator. Yields ProgressEvent objects during work
+    + a final Result. Callers that want progress (job runner)
+    consume the stream; callers that just want the result use
+    the wrapper above."""
+    # … existing generate logic, with `yield ProgressEvent(…)`
+    # interleaved + a final `yield Result(…)`
+```
+
+Rationale:
+
+* **Backward-compatible.** Every existing caller of `generate()`
+  works unchanged — wrapper drains the stream + returns the
+  final result.
+* **Pure-function shape**. `generate_stream` is a generator;
+  no callbacks, no side-effect handles. The job runner consumes
+  it inside its own thread; the engine doesn't know about jobs.
+* **Testable in isolation.** Unit-test `generate_stream` by
+  collecting yielded events; assert the sequence of phases +
+  counts.
+
+The B1 callback alternative was simpler but coupled the engine to
+the caller's progress-reporting mechanism. B2 keeps the engine
+data-pure.
+
+#### Decision C — Event shape
+
+```python
+@dataclass
+class ProgressEvent:
+    phase: str        # "generate-week", "save-playlist", "load-pools", etc.
+    current: int      # 1-indexed (e.g. "week 5 of 30")
+    total: int        # total work units for this phase
+    label: str | None # optional human string
+
+@dataclass
+class Result:
+    playlist_id: int
+    trace_id: str
+    # … existing /generate response fields
+```
+
+Job-state JSON returned by `GET /api/jobs/{job_id}` mirrors:
+
+```json
+{
+  "job_id": "abc-123",
+  "status": "running" | "done" | "error" | "cancelled",
+  "phase": "generate-week",
+  "current": 5,
+  "total": 30,
+  "label": "Generating week 5 of 30",
+  "started_at": "2026-05-27T14:32:01Z",
+  "result": null | {playlist_id, trace_id, …},
+  "error": null | {message, kind}
+}
+```
+
+#### Decision E — Backward compatibility: E1 keep both endpoints
+
+**Chosen**: existing `POST /api/stations/{slug}/generate` unchanged
+(returns Result synchronously). New `POST /api/stations/{slug}/jobs/generate`
+starts a background job. CLI scripts + tests continue to use the
+existing synchronous endpoint; the frontend opt-in to the job
+endpoint for the in-UI progress flow.
+
+Zero-risk migration. The synchronous endpoint is a thin wrapper
+around `generate()` (which itself wraps `generate_stream()`); the
+job endpoint runs `generate_stream()` in a background thread +
+returns immediately. Same engine code path; different orchestration.
+
+#### Job runner — in-memory implementation sketch
+
+```
+api/job_runner.py
+├── JobStore (singleton)
+│   ├── _jobs: dict[str, Job]              # job_id → Job
+│   ├── start(slug, payload) -> job_id     # spawns background thread
+│   ├── get(job_id) -> Job | None
+│   ├── cancel(job_id) -> bool             # sets cancelled flag
+│   └── _gc_old_jobs()                     # called periodically
+│
+└── Job (dataclass)
+    ├── job_id, slug, started_at
+    ├── status, phase, current, total, label
+    ├── result, error
+    ├── cancelled: bool                    # set by cancel(); read by runner
+    └── thread: threading.Thread
+```
+
+**Thread vs asyncio**: the engine is CPU-bound (Python, no I/O).
+`asyncio.create_task` won't yield during generation; the event
+loop blocks. `threading.Thread` lets the loop keep serving GET
+poll requests. Acceptable for solo-user; for SaaS scale, a real
+worker pool replaces this.
+
+**GC policy**: jobs in `done` / `error` / `cancelled` status for
+>60s get removed from the store. Frontend should fetch the final
+state quickly after detecting completion. (If a tab is closed
+mid-job, the job runs to completion + sits for 60s before GC —
+trivial memory footprint at solo scale.)
+
+#### Frontend consumption
+
+```ts
+// web/src/lib/api.ts
+export async function startGenerateJob(
+  slug: string, payload: GeneratePayload,
+): Promise<{ job_id: string }> { … }
+
+export async function pollJob(job_id: string): Promise<JobState> { … }
+
+export async function cancelJob(job_id: string): Promise<void> { … }
+
+// Generator-style helper for ergonomic consumption:
+export async function* watchJob(
+  job_id: string, interval_ms = 500,
+): AsyncIterable<JobState> {
+  while (true) {
+    const state = await pollJob(job_id);
+    yield state;
+    if (state.status !== 'running') return;
+    await sleep(interval_ms);
+  }
+}
+```
+
+UI surface: a `<ProgressIndicator>` Svelte component reading a
+job-store derived from `watchJob`:
+
+```svelte
+<!-- web/src/lib/components/ProgressIndicator.svelte -->
+{#if job}
+  <div class="progress">
+    <div class="bar" style="width: {(job.current / job.total) * 100}%"></div>
+    <span>{job.label ?? `${job.phase}: ${job.current}/${job.total}`}</span>
+    <button on:click={cancel}>Cancel</button>
+  </div>
+{/if}
+```
+
+Wired into `<GenerateButton>`: click → `startGenerateJob` → loop
+`watchJob` → render `<ProgressIndicator>` → on `status === "done"`
+navigate to the resulting trace.
+
+Cancel button: `cancelJob(job_id)` + close the progress indicator.
+
+#### What §16.11 ships (implementation plan)
+
+6 commits with mid-slice review after c2 (the API contract):
+
+| Commit | What |
+|---|---|
+| **c1** | Engine: `generate_stream` generator + `generate` wrapper. Unit tests asserting event sequence + final Result. No API change yet. |
+| **c2** | Job runner: `api/job_runner.py` module + `JobStore` + per-job thread orchestration + GC. Unit tests with a fast fake engine. |
+| **Mid-slice review** | API contract + thread-safety + cancellation semantics. |
+| **c3** | API endpoints: `POST /api/stations/{slug}/jobs/generate`, `GET /api/jobs/{job_id}`, `DELETE /api/jobs/{job_id}`. Pydantic shapes. Tests. |
+| **c4** | Frontend: `startGenerateJob` / `pollJob` / `watchJob` helpers + `<ProgressIndicator>` component. Vitest. |
+| **c5** | Wire into `<GenerateButton>`; Playwright test of click → progress → completion → trace navigation. |
+| **c6** | DESIGN.md §16.11 implementation entry (this section becomes the design-doc reference; c6 adds the "what shipped" suffix) + §15 status snapshot. |
+
+#### Decisions punted
+
+| Punt | Severity | Trigger |
+|---|---|---|
+| DB-backed job state | LATER | Multi-process deployment / SaaS shape |
+| Cross-tab cancel UI | LATER | Real demand |
+| Real worker pool (replace threading) | LATER | CPU saturation in benchmarks |
+| Generation queue for multiple stations in parallel | LATER | A user reports waiting |
+| Resume interrupted job | NEVER (probably) | Solo-user tool; restart is the recovery |
+| Cancellation mid-chain rollback | LATER | Today's per-week save is atomic; a cancelled chain leaves partial state — operator can delete the unwanted weeks via §16.3 |
+
+#### What §16.11 unblocks
+
+* §16.2.6 (live preview) — uses the same job pattern; the live-
+  preview endpoint becomes `POST /api/stations/{slug}/jobs/preview`.
+* §16.21 (bulk-generate UI if it ever ships) — same shape.
+* Future async-bound work (e.g. CSV import progress) — same pattern.
+
+#### Plan-order context
+
+1. ✅ §16.2.2 design (paper) — shipped (a6e1005 + 4d671bc).
+2. **§16.11 design (this entry) + implementation** — current.
+3. §16.2.2 implementation (c1-c5) — picks up the job-pattern from §16.11.
+4. §16.12 stations list polish — after §16.2.2 sets the chip-rendering pattern.
 
 ---
 
