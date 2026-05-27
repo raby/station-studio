@@ -111,7 +111,7 @@
         Sidecar loaded:
         <strong data-testid="section-count">{sidecar.sections.length}</strong>
         section(s),
-        <strong data-testid="macro-count">{sidecar.macros.length}</strong>
+        <strong data-testid="macro-count">{(sidecar.macros ?? []).length}</strong>
         macro(s),
         <strong data-testid="chip-count">{totalChips}</strong>
         chip(s) total.

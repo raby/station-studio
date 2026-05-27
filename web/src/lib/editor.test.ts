@@ -38,22 +38,34 @@ function makeSidecar(over: Partial<Sidecar> = {}): Sidecar {
 describe('lookupMacro', () => {
   it('returns the macro when its id matches', () => {
     const sc = makeSidecar({
-      macros: [{ id: 'jingles', repeat: 3, blocks: [] }],
+      macros: [{ id: 'jingles', repeat: 3, spec: { source: 'A', strategy: 'pick', size: 1 } }],
     });
     expect(lookupMacro(sc, 'jingles')).toEqual({
       id: 'jingles',
       repeat: 3,
-      blocks: [],
+      spec: { source: 'A', strategy: 'pick', size: 1 },
     });
   });
 
   it('returns null on unknown id', () => {
-    const sc = makeSidecar({ macros: [{ id: 'a', repeat: 1, blocks: [] }] });
+    const sc = makeSidecar({ macros: [{ id: 'a', repeat: 1, spec: { source: 'A', strategy: 'pick', size: 1 } }] });
     expect(lookupMacro(sc, 'missing')).toBeNull();
   });
 
   it('returns null on empty macros', () => {
     expect(lookupMacro(makeSidecar(), 'x')).toBeNull();
+  });
+
+  it('handles a sidecar with macros field omitted entirely', () => {
+    // Mid-slice review 🟡-3: top-level `macros` is OPTIONAL per
+    // Python REQUIRED_TOP_LEVEL. The helper uses `?? []` defensively
+    // so an omitted-macros sidecar doesn't crash.
+    const sc: Sidecar = {
+      schema_version: 1,
+      sections: [],
+      layout_order: [],
+    };
+    expect(lookupMacro(sc, 'anything')).toBeNull();
   });
 });
 
@@ -102,7 +114,7 @@ describe('expandSection — atomic blocks', () => {
 describe('expandSection — macros', () => {
   it('emits `repeat` MacroPlaceholders for a macro block', () => {
     const sc = makeSidecar({
-      macros: [{ id: 'jingles', repeat: 4, blocks: [] }],
+      macros: [{ id: 'jingles', repeat: 4, spec: { source: 'A', strategy: 'pick', size: 1 } }],
     });
     const section: SidecarSection = {
       id: 's', name: 'S',
@@ -118,7 +130,7 @@ describe('expandSection — macros', () => {
   });
 
   it('throws EditorMetadataError on a dangling macro ref', () => {
-    const sc = makeSidecar({ macros: [{ id: 'real', repeat: 1, blocks: [] }] });
+    const sc = makeSidecar({ macros: [{ id: 'real', repeat: 1, spec: { source: 'A', strategy: 'pick', size: 1 } }] });
     const section: SidecarSection = {
       id: 's', name: 'S',
       blocks: [{ kind: 'macro', ref: 'ghost' }],
@@ -129,7 +141,7 @@ describe('expandSection — macros', () => {
 
   it('interleaves atomic refs + macro placeholders in render order', () => {
     const sc = makeSidecar({
-      macros: [{ id: 'm', repeat: 2, blocks: [] }],
+      macros: [{ id: 'm', repeat: 2, spec: { source: 'A', strategy: 'pick', size: 1 } }],
     });
     const section: SidecarSection = {
       id: 's', name: 'S',
@@ -193,7 +205,7 @@ describe('expandSection — repeat_with_offsets', () => {
 
   it('expands macros inside a repeat_with_offsets row', () => {
     const sc = makeSidecar({
-      macros: [{ id: 'm', repeat: 2, blocks: [] }],
+      macros: [{ id: 'm', repeat: 2, spec: { source: 'A', strategy: 'pick', size: 1 } }],
     });
     const section: SidecarSection = {
       id: 's', name: 'S',
@@ -333,7 +345,17 @@ describe('verboseStrategyLabel', () => {
 
   it('omits fields that are undefined', () => {
     const out = verboseStrategyLabel({ source: 'A', strategy: 'pick', size: 1 });
-    expect(out).not.toMatch(/cursor_id|window|exclusion_window|genre|position/);
+    expect(out).not.toMatch(
+      /cursor_id|window|exclusion_window|genre|position|fallback_genre/,
+    );
+  });
+
+  it('surfaces fallback_genre on prev_ref blocks (mid-slice review 🟡-4)', () => {
+    const out = verboseStrategyLabel({
+      source: 'A', strategy: 'prev_ref', size: 1,
+      position: 100, fallback_genre: 'Day',
+    });
+    expect(out).toContain('fallback_genre: Day');
   });
 
   it('formats with newline separators (multi-line tooltip-friendly)', () => {

@@ -36,14 +36,15 @@ export interface EngineBlock {
     | 'prev_ref';
   size: number;
   // Strategy-specific optional fields. Hand-mirrored from
-  // engine.template.BlockSpec. Only the ones the compact label
-  // reads are listed; add fields here as new chip-display needs
-  // surface.
+  // engine.template.BlockSpec. Pinned by tests/test_editor_ts_schema_parity.py
+  // — adding a BlockSpec field here without mirroring it there fails
+  // the parity guard.
   cursor_id?: string;       // sequential
   window?: number;          // window / weighted
   exclusion_window?: number; // mix
   genre?: string;           // jingle / mix
   position?: number;        // prev_ref
+  fallback_genre?: string;  // prev_ref (optional fallback when mirror misses)
 }
 
 
@@ -95,7 +96,10 @@ export type SidecarBlock = SidecarAtomicBlock | SidecarMacroBlock;
 
 export interface SidecarSection {
   id: string;
-  name: string;
+  /** OPTIONAL per Python `REQUIRED_SECTION_KEYS = {"id", "blocks"}`.
+   *  Most hand-authored sidecars supply it; a section that omits it
+   *  is still valid grammar (the canvas falls back to `id`). */
+  name?: string;
   blocks: SidecarBlock[];
   /** If present, the section's `blocks` list is a per-row template
    *  instantiated once per offset. Used by row_template-style
@@ -107,16 +111,26 @@ export interface SidecarSection {
 
 export interface SidecarMacro {
   id: string;
+  /** OPTIONAL per Python grammar. Defaults to falling back to `id`
+   *  in the chip renderer. */
   name?: string;
   repeat: number;
-  blocks: SidecarAtomicBlock[]; // macros hold atomic blocks only
+  /** Single engine block spec that gets repeated `repeat` times.
+   *  Mirrors Python `Macro.spec` (NOT `blocks` — a Macro represents
+   *  one repeated BlockSpec, not a list). c3's chip renderer reads
+   *  this via `compactStrategyLabel(macro.spec)` to show the
+   *  macro's strategy/source on the grouped chip. */
+  spec: EngineBlock;
 }
 
 
 export interface Sidecar {
   schema_version: number;
   sections: SidecarSection[];
-  macros: SidecarMacro[];
+  /** OPTIONAL per Python `REQUIRED_TOP_LEVEL = {"schema_version",
+   *  "sections", "layout_order"}`. Most stations have no macros;
+   *  callers use `sidecar.macros ?? []` defensively. */
+  macros?: SidecarMacro[];
   layout_order: string[];
   _comment?: string; // synthesized sidecars include one
 }
@@ -159,7 +173,7 @@ export type ExpandedRef = AtomicRef | MacroPlaceholder;
  * Mirror of Python `engine.editor_metadata.lookup_macro`.
  */
 export function lookupMacro(sidecar: Sidecar, macroId: string): SidecarMacro | null {
-  for (const m of sidecar.macros) {
+  for (const m of sidecar.macros ?? []) {
     if (m.id === macroId) return m;
   }
   return null;
@@ -190,7 +204,7 @@ export function expandSection(
   section: SidecarSection,
   sidecar: Sidecar,
 ): ExpandedRef[] {
-  const macrosById = new Map(sidecar.macros.map((m) => [m.id, m]));
+  const macrosById = new Map((sidecar.macros ?? []).map((m) => [m.id, m]));
 
   function expandAtomic(
     b: SidecarAtomicBlock,
@@ -333,6 +347,9 @@ export function verboseStrategyLabel(block: EngineBlock): string {
   }
   if (block.genre !== undefined) lines.push(`genre: ${block.genre}`);
   if (block.position !== undefined) lines.push(`position: ${block.position}`);
+  if (block.fallback_genre !== undefined) {
+    lines.push(`fallback_genre: ${block.fallback_genre}`);
+  }
   return lines.join('\n');
 }
 
