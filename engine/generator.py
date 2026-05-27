@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import random
 from dataclasses import dataclass, field
-from typing import Any, Mapping
+from typing import Any, Iterator, Mapping
 
 from engine.template import Template, BlockSpec
 from engine.trace import Trace, TraceSlot, ExcludedCandidate
@@ -52,6 +52,48 @@ class GenerationResult:
     # picks; the trace's "strategy" field can't distinguish mirror from
     # fallback-mix because both still record strategy='prev_ref'.
     prev_ref_fallback_mixes: list[tuple[int, str, Any]] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class ProgressEvent:
+    """One progress signal yielded by `generate_stream` (§16.11).
+
+    Consumers (job runners, CLI status, tests) treat the stream as
+    `Iterator[ProgressEvent | GenerationResult]` and react to either.
+    The Decision G contract from DESIGN §16.11:
+
+      * `generate_stream` yields ProgressEvent objects + exactly ONE
+        GenerationResult at the end. Multi-Result streams are an
+        engine bug.
+      * Mid-stream exceptions propagate unchanged (the engine doesn't
+        try/except its own internals); the wrapper / job-runner
+        catches and surfaces them.
+
+    Fields:
+
+      * `phase` — what the engine is doing. v1: "start" before the
+        slot loop, "picks" during the loop, plus implicit "done"
+        signalled by the GenerationResult emission. Future phases
+        ("load-pools", "resolve-prev-ref") can be added without a
+        consumer change — frontends ignore unknown phases.
+      * `current`, `total` — work-units within the phase.
+        1-indexed for human messages; consumers compute progress
+        as `current / total`.
+      * `label` — optional human string. If absent, callers build
+        from `f"{phase}: {current}/{total}"`.
+    """
+    phase: str
+    current: int
+    total: int
+    label: str | None = None
+
+
+# §16.11 c1: progress emission cadence inside the slot loop. Emit every
+# N picks rather than every pick — 2,196 progress events per generate
+# call would crowd the stream + cost cycles. N=50 yields ~44 events for
+# Rebirth Radio, ~60 for Classics — enough granularity for a smooth
+# progress bar (~2% steps), tiny CPU overhead.
+_PROGRESS_EMIT_EVERY = 50
 
 
 @dataclass
@@ -86,6 +128,84 @@ def generate(
     named_cursor_positions: dict[str, int] | None = None,
 ) -> GenerationResult:
     """Generate one playlist for the given station + week.
+
+    Thin wrapper around `generate_stream`: drains the event stream
+    and returns the final `GenerationResult`. Existing callers
+    (tests, dump scripts, the synchronous API endpoint) use this
+    signature unchanged.
+
+    Decision G invariants (DESIGN.md §16.11) are enforced here:
+
+      * Exactly ONE `GenerationResult` yielded by the stream,
+        emitted LAST. Multi-Result or no-Result streams raise
+        AssertionError (engine bug, not user error).
+      * Mid-stream exceptions from `generate_stream` propagate
+        unchanged — existing callers' exception expectations
+        preserved (a strategy's `ValueError` still surfaces as
+        `ValueError` to the caller).
+    """
+    final: GenerationResult | None = None
+    for event in generate_stream(
+        template, pools,
+        week=week, seed=seed,
+        excluded_mix_ids=excluded_mix_ids,
+        alias_map=alias_map,
+        previous_playlist=previous_playlist,
+        weighted_window_default=weighted_window_default,
+        named_cursor_positions=named_cursor_positions,
+    ):
+        if isinstance(event, GenerationResult):
+            assert final is None, (
+                "engine bug: generate_stream yielded multiple "
+                "GenerationResult objects"
+            )
+            final = event
+        # Progress events ignored by the wrapper; consumers of the
+        # stream directly (job runner, §16.11) handle them.
+    assert final is not None, (
+        "engine bug: generate_stream yielded no GenerationResult"
+    )
+    return final
+
+
+def generate_stream(
+    template: Template,
+    pools: Mapping[str, list[Any]],
+    *,
+    week: int,
+    seed: int | None = None,
+    excluded_mix_ids: set[int] | frozenset[int] | None = None,
+    alias_map: dict[str, str] | None = None,
+    previous_playlist: list[Any] | None = None,
+    weighted_window_default: int | None = None,
+    named_cursor_positions: dict[str, int] | None = None,
+) -> Iterator["ProgressEvent | GenerationResult"]:
+    """Generate one playlist as a STREAM of progress events + a
+    final result (§16.11 Decision B).
+
+    Generator function. Yields zero or more `ProgressEvent` objects
+    during work + exactly ONE `GenerationResult` at the end.
+    Consumers that want progress (job runner, future preview
+    endpoint) drive this directly; consumers that just want the
+    result (most existing callers) use `generate(...)` which is a
+    thin wrapper that drains this stream.
+
+    Progress emission cadence (§16.11 c1): one event per
+    `_PROGRESS_EMIT_EVERY` picks during the main slot loop, plus
+    a `phase="start"` event before the loop. For Rebirth Radio's
+    2,196 picks that's ~44 events; for Classics' 3,010 picks ~60.
+    Sub-millisecond engine overhead per event; meaningful UI
+    granularity for the job runner's progress bar.
+
+    Decision G invariants (DESIGN.md §16.11) — pinned for the
+    wrapper + job runner to rely on:
+
+      * Yields exactly ONE GenerationResult, LAST. Once the
+        Result is yielded, the generator is exhausted.
+      * Mid-stream exceptions propagate unchanged (engine doesn't
+        try/except its own internals).
+      * No events after the Result. The wrapper asserts this on
+        consumption.
 
     Parameters
     ----------
@@ -196,6 +316,16 @@ def generate(
     )
     picks: list[Any] = []
     slot_counter = 0
+
+    # §16.11 c1 — progress emission. Compute total slot count up-front
+    # (template.slots_per_week is XOR-aware for flat_slots/row_template).
+    # Emit a `phase="start"` event before the loop so consumers can
+    # show "Generating week N (0 / total)" immediately on response.
+    total_slots = template.slots_per_week()
+    yield ProgressEvent(
+        phase="start", current=0, total=total_slots,
+        label=f"Generating week {week}",
+    )
 
     # Pool-addressing convention. `window` + `pick` use row_start_in_pool
     # (base cursor + per-row offset). `sequential` reads from a named
@@ -635,7 +765,27 @@ def generate(
             # template.parse_template should have rejected this already
             raise RuntimeError(f"unreachable: unknown strategy {block.strategy!r}")
 
-    return GenerationResult(
+        # §16.11 c1 — progress emission cadence. Yield once per
+        # `_PROGRESS_EMIT_EVERY` picks crossed since the last yield.
+        # `slot_counter` is incremented inside each strategy branch
+        # for every pick; the modulo check fires when we cross a
+        # multiple. For Rebirth Radio's 2,196 picks at N=50, ~44
+        # events emitted total.
+        if slot_counter // _PROGRESS_EMIT_EVERY > (
+            (slot_counter - block.size) // _PROGRESS_EMIT_EVERY
+        ):
+            yield ProgressEvent(
+                phase="picks", current=slot_counter, total=total_slots,
+                label=(
+                    f"Generating week {week} "
+                    f"({slot_counter} / {total_slots})"
+                ),
+            )
+
+    # §16.11 Decision G: yield the final result. Exactly one Result
+    # per stream, last. The wrapper / job-runner asserts no events
+    # follow this.
+    yield GenerationResult(
         picks=picks,
         trace=trace,
         prev_ref_fallback_mixes=prev_ref_fallback_mixes,
