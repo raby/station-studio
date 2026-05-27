@@ -51,6 +51,7 @@ a fake fast engine (no DB fixture required).
 """
 from __future__ import annotations
 
+import copy
 import logging
 import threading
 import time
@@ -133,7 +134,7 @@ class _Job:
     # skew (NTP corrections, DST etc.). Tests freeze + advance this
     # via the `grace_seconds` constructor arg + manipulating
     # `time.monotonic` via a clock override hook.
-    _finished_monotonic: float | None = None
+    finished_monotonic: float | None = None
     # Atomic bool — read by the worker thread between yields. Reads
     # and writes of a single Python attribute are atomic in CPython,
     # so this needs no lock.
@@ -167,7 +168,15 @@ class JobSnapshot:
 def _snapshot(job: _Job) -> JobSnapshot:
     """Build a JobSnapshot from a mutable _Job. Caller must hold the
     store lock — otherwise the read of result/error/etc. can race the
-    worker's mutation."""
+    worker's mutation.
+
+    `result` and `error` are deep-copied: the snapshot is frozen as a
+    dataclass, but its dict fields are shared by reference unless we
+    copy. A caller that mutates `snap.result["foo"] = ...` would
+    otherwise mutate the store's view too. For trusted callers
+    (FastAPI's serialiser) this never bites, but cheap defence keeps
+    the "snapshot is a snapshot" contract honest.
+    """
     return JobSnapshot(
         job_id=job.job_id,
         slug=job.slug,
@@ -177,8 +186,8 @@ def _snapshot(job: _Job) -> JobSnapshot:
         current=job.current,
         total=job.total,
         label=job.label,
-        result=job.result,
-        error=job.error,
+        result=copy.deepcopy(job.result),
+        error=copy.deepcopy(job.error),
         started_at=job.started_at,
         finished_at=job.finished_at,
     )
@@ -205,7 +214,7 @@ class JobStore:
         ----------
         grace_seconds : float
             How long completed (done/error) jobs linger after
-            `_finished_monotonic` before lazy GC reaps them.
+            `finished_monotonic` before lazy GC reaps them.
             Cancelled jobs ignore this — they GC immediately.
         monotonic : Callable[[], float]
             Clock injection for tests. Default `time.monotonic`;
@@ -422,6 +431,24 @@ class JobStore:
                     "engine bug: generate_stream yielded no GenerationResult"
                 )
 
+            # Decision F cancellation point — observed AFTER the Result
+            # yield but BEFORE on_result runs. Without this check, a
+            # cancel issued between the Result yield and on_result still
+            # commits save_playlist + advance_cursors (c3's on_result
+            # closure has DB side effects). The user clicks Cancel,
+            # indicator vanishes, but the playlist row was created
+            # anyway → stale state requiring §16.3 cleanup. The atomic
+            # bool read is cheap; the (microscopic) race between this
+            # check and on_result actually starting is acceptable —
+            # the alternative (holding the store lock across on_result)
+            # would block every poller for the duration of save_playlist.
+            if job.cancelled:
+                logger.info(
+                    "job %s cancelled after Result yield; skipping on_result",
+                    job.job_id,
+                )
+                return
+
             # Persistence + result-body construction in the worker
             # thread. Engine work is done; this is the post-generation
             # save_playlist + advance_cursors path (composed by the
@@ -502,28 +529,28 @@ class JobStore:
         self._jobs.pop(job.job_id, None)
 
     def _mark_finished_under_lock(self, job: _Job) -> None:
-        """Stamp `finished_at` + `_finished_monotonic`. Caller holds
+        """Stamp `finished_at` + `finished_monotonic`. Caller holds
         the lock. Used by all three terminal transitions (done /
         error / cancel)."""
         # Avoid double-stamp if we somehow take this path twice
         # (defensive; shouldn't happen given the lock).
-        if job._finished_monotonic is None:
+        if job.finished_monotonic is None:
             job.finished_at = time.time()
-            job._finished_monotonic = self._monotonic()
+            job.finished_monotonic = self._monotonic()
 
     def _gc_under_lock(self) -> None:
         """Sweep terminal jobs whose grace window elapsed. Caller
         holds self._lock. Cancelled jobs are already gone (immediate
         GC in `_cancel_under_lock`); this only reaps done/error
-        jobs whose `_finished_monotonic + grace_seconds` is in the
+        jobs whose `finished_monotonic + grace_seconds` is in the
         past.
         """
         now = self._monotonic()
         expired = [
             jid for jid, j in self._jobs.items()
             if j.status in (JOB_STATUS_DONE, JOB_STATUS_ERROR)
-            and j._finished_monotonic is not None
-            and now - j._finished_monotonic > self._grace
+            and j.finished_monotonic is not None
+            and now - j.finished_monotonic > self._grace
         ]
         for jid in expired:
             self._jobs.pop(jid, None)

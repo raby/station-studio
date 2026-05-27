@@ -356,6 +356,91 @@ def test_cancel_unknown_job_returns_false():
     assert store.cancel("not-a-real-id") is False
 
 
+def test_cancel_between_result_and_on_result_skips_on_result():
+    """🟡-1 regression guard: a cancel issued AFTER the GenerationResult
+    yield but BEFORE on_result runs must skip on_result.
+
+    Why this matters: in c3 on_result is save_playlist + db.commit. A
+    cancel that fires here, without the worker's pre-on_result cancel
+    check, would still commit the playlist — the user cancelled but a
+    row was created anyway. The fix in c2 is an atomic cancelled
+    check right before on_result; this test pins it.
+
+    Sequencing: synthetic stream blocks just before yielding the
+    Result, test issues cancel, stream is released, worker observes
+    cancel before calling on_result.
+    """
+    store = JobStore()
+    result_ready = threading.Event()
+    proceed = threading.Event()
+    on_result_called: list[bool] = []
+
+    def stream() -> Iterator:
+        # First yield a progress event so the test can detect the
+        # worker has entered the stream and we're past the initial
+        # cancel check.
+        yield ProgressEvent(phase="picks", current=1, total=2)
+        result_ready.set()
+        # Block here — test will cancel, then release us. The Result
+        # is yielded AFTER the cancel arrives.
+        proceed.wait(timeout=5)
+        yield _fake_result(slot_count=2)
+
+    def on_result(r: GenerationResult) -> dict:
+        on_result_called.append(True)
+        return {"shouldnt": "happen"}
+
+    job_id = store.start(
+        slug="s1", kind="generate",
+        stream_factory=stream, on_result=on_result,
+    )
+    assert result_ready.wait(timeout=2)
+    # Cancel BEFORE releasing the stream — when the worker next
+    # iterates, it'll see the Result, then the pre-on_result cancel
+    # check fires.
+    assert store.cancel(job_id) is True
+    proceed.set()
+    # Job is immediately GC'd on cancel; on_result must NEVER fire.
+    _wait_until(lambda: store.get(job_id) is None, timeout=2)
+    # Give the worker a moment to finish + (incorrectly, if buggy)
+    # call on_result. Tight but adequate — the worker's only remaining
+    # work is `next()` then the cancel check.
+    time.sleep(0.05)
+    assert on_result_called == [], (
+        "on_result ran AFTER cancel — Decision F cancel-before-side-"
+        "effects contract broken"
+    )
+
+
+def test_snapshot_result_dict_is_isolated_from_store():
+    """🟢-3 regression guard: mutating a snapshot's `result` dict must
+    NOT affect the store's view. Snapshot is frozen as a dataclass,
+    but its dict fields are deep-copied to prevent shared-reference
+    leakage."""
+    store = JobStore()
+
+    def stream() -> Iterator:
+        yield _fake_result()
+
+    def on_result(r: GenerationResult) -> dict:
+        return {"nested": {"k": 1}}
+
+    job_id = store.start(
+        slug="s1", kind="generate",
+        stream_factory=stream, on_result=on_result,
+    )
+    _wait_for_status(store, job_id, JOB_STATUS_DONE)
+    snap_a = store.get(job_id)
+    # Mutate the snapshot's nested dict. If the store shared the
+    # reference, the next snapshot would see the mutation.
+    snap_a.result["nested"]["k"] = 999
+    snap_a.result["leaked"] = True
+    snap_b = store.get(job_id)
+    assert snap_b.result == {"nested": {"k": 1}}, (
+        f"store leaked snapshot mutation: {snap_b.result}"
+    )
+
+
 def test_cancel_done_job_returns_false():
     """Cancelling an already-done job returns False (terminal status
     — nothing to cancel). The done job still exists in the store
