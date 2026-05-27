@@ -155,6 +155,42 @@ class JobErrorBody(BaseModel):
     kind: str
 
 
+# §16.2.2 c1 — visual block editor (read-only canvas)
+
+
+class EditorSidecarResponse(BaseModel):
+    """200 body for `GET /api/stations/{slug}/sidecar`. Per DESIGN.md
+    §16.2.2 Decision E: the frontend NEVER handles "no sidecar" —
+    always renders the canvas against a valid sidecar. The server
+    synthesizes a trivial sidecar when the committed `.editor.json`
+    is absent OR malformed.
+
+    Fields:
+      * `template` — the station's parsed-from-DB template dict.
+        Same shape `StationOut.template` carries.
+      * `sidecar` — either the committed `stations/{slug}.editor.json`
+        content (after `validate_sidecar` passes) OR the result of
+        `synthesize_trivial_sidecar(template)`. Always non-null +
+        always valid.
+      * `sidecar_error` — null on the happy path. Populated with the
+        validator's error message (a string) when a committed sidecar
+        exists but failed parse/validation, in which case `sidecar`
+        carries the trivial fallback. The frontend renders a warning
+        banner so the hobbyist can keep working while they figure out
+        what broke their sidecar.
+
+    `template` and `sidecar` are typed as `dict` for v1: the grammar
+    is validated at the `engine.editor_metadata` layer; Pydantic isn't
+    a second validation surface (and the structural variation —
+    flat_slots vs row_template, optional macros, etc. — would need a
+    discriminated-union model that buys little over the existing
+    engine-side parser).
+    """
+    template: dict[str, Any]
+    sidecar: dict[str, Any]
+    sidecar_error: str | None = None
+
+
 class JobStatusResponse(BaseModel):
     """200 body for `GET /api/jobs/{job_id}`. Mirrors `JobSnapshot`
     in api/job_runner.py with one transformation: monotonic-correlated

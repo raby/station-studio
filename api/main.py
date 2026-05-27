@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from api.routers import stations, sources, generate, jobs, meta, rules
+from api.routers import editor, stations, sources, generate, jobs, meta, rules
 from engine.database import make_engine, make_sessionmaker
 from engine.models import Base, Station
 
@@ -111,6 +111,7 @@ app.include_router(stations.router)
 app.include_router(sources.router)
 app.include_router(generate.router)
 app.include_router(jobs.router)
+app.include_router(editor.router)
 app.include_router(meta.router)
 app.include_router(rules.router)
 
