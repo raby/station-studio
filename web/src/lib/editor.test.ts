@@ -517,6 +517,65 @@ describe('parseEditorSidecarResponse', () => {
     (r as Record<string, unknown>).sidecar_error = 42;
     expect(() => parseEditorSidecarResponse(r)).toThrow(/sidecar_error/);
   });
+
+  // ---- per-element drift (review 🟡-2 + 🟡-3) -----------------------
+
+  it('throws when template.sources contains a non-object element', () => {
+    // §16.2.2.t1 review 🟡-2: an array of non-objects passed the
+    // earlier Array.isArray check; the per-element guard catches it.
+    const r = validResponse();
+    (r.template as Record<string, unknown>).sources = [42];
+    expect(() => parseEditorSidecarResponse(r)).toThrow(
+      /template\.sources\[0\]/,
+    );
+  });
+
+  it('throws when template.sources[i].name is missing', () => {
+    const r = validResponse();
+    (r.template as Record<string, unknown>).sources = [
+      { colour: '#abc', role: 'content' }, // no `name`
+    ];
+    expect(() => parseEditorSidecarResponse(r)).toThrow(
+      /template\.sources\[0\]\.name/,
+    );
+  });
+
+  it('throws when sidecar.sections contains a non-object element', () => {
+    // §16.2.2.t1 review 🟡-3.
+    const r = validResponse();
+    (r.sidecar as Record<string, unknown>).sections = ['not-an-object'];
+    expect(() => parseEditorSidecarResponse(r)).toThrow(
+      /sidecar\.sections\[0\]/,
+    );
+  });
+
+  it('throws when sidecar.sections[i].id is not a string', () => {
+    const r = validResponse();
+    (r.sidecar as Record<string, unknown>).sections = [
+      { id: 42, name: 'S', blocks: [] },
+    ];
+    expect(() => parseEditorSidecarResponse(r)).toThrow(
+      /sidecar\.sections\[0\]\.id/,
+    );
+  });
+
+  it('throws when sidecar.sections[i].blocks is not an array', () => {
+    const r = validResponse();
+    (r.sidecar as Record<string, unknown>).sections = [
+      { id: 's', name: 'S', blocks: 'wrong' },
+    ];
+    expect(() => parseEditorSidecarResponse(r)).toThrow(
+      /sidecar\.sections\[0\]\.blocks/,
+    );
+  });
+
+  it('throws when sidecar.layout_order contains a non-string', () => {
+    const r = validResponse();
+    (r.sidecar as Record<string, unknown>).layout_order = ['ok', 42, 'also-ok'];
+    expect(() => parseEditorSidecarResponse(r)).toThrow(
+      /sidecar\.layout_order\[1\]/,
+    );
+  });
 });
 
 

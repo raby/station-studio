@@ -537,6 +537,22 @@ export function parseEditorSidecarResponse(raw: unknown): ParsedEditorSidecar {
   if (t.layout === null || typeof t.layout !== 'object') {
     return fail('template.layout', 'object', t.layout);
   }
+  // Per-source-element check (review 🟡-2). Only `name` is load-
+  // bearing — `colour` / `role` have defensive fallbacks. A
+  // degenerate `sources: [42]` would silently render '?' chips
+  // without this guard.
+  for (let i = 0; i < t.sources.length; i++) {
+    const src = t.sources[i] as unknown;
+    if (src === null || typeof src !== 'object') {
+      return fail(`template.sources[${i}]`, 'object', src);
+    }
+    if (typeof (src as Record<string, unknown>).name !== 'string') {
+      return fail(
+        `template.sources[${i}].name`, 'string',
+        (src as Record<string, unknown>).name,
+      );
+    }
+  }
 
   // sidecar
   if (r.sidecar === null || typeof r.sidecar !== 'object') {
@@ -548,6 +564,33 @@ export function parseEditorSidecarResponse(raw: unknown): ParsedEditorSidecar {
   }
   if (!Array.isArray(s.sections)) return fail('sidecar.sections', 'array', s.sections);
   if (!Array.isArray(s.layout_order)) return fail('sidecar.layout_order', 'array', s.layout_order);
+  // Per-section-element check (review 🟡-3). Each section needs at
+  // minimum `id: string` (drives layout_order lookups) +
+  // `blocks: array` (drives expandSection). Drilling deeper into
+  // each block stays the server's job — validate_sidecar's drift
+  // rules cover the inner grammar.
+  for (let i = 0; i < s.sections.length; i++) {
+    const sec = s.sections[i] as unknown;
+    if (sec === null || typeof sec !== 'object') {
+      return fail(`sidecar.sections[${i}]`, 'object', sec);
+    }
+    const so = sec as Record<string, unknown>;
+    if (typeof so.id !== 'string') {
+      return fail(`sidecar.sections[${i}].id`, 'string', so.id);
+    }
+    if (!Array.isArray(so.blocks)) {
+      return fail(`sidecar.sections[${i}].blocks`, 'array', so.blocks);
+    }
+  }
+  // Per-layout_order-element check. Each entry is the id of a
+  // section to render at that position; a non-string would silently
+  // miss the lookup + render nothing.
+  for (let i = 0; i < s.layout_order.length; i++) {
+    const id = s.layout_order[i];
+    if (typeof id !== 'string') {
+      return fail(`sidecar.layout_order[${i}]`, 'string', id);
+    }
+  }
 
   // sidecar_error
   if (r.sidecar_error !== null && typeof r.sidecar_error !== 'string') {

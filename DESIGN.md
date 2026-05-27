@@ -6260,7 +6260,7 @@ Inserted into the strategic sequence based on §16.0 audit:
 | **§16.11.t1** Pre-materialise pools as dataclasses for the async path | small (~1 commit) | A future engine strategy lazily reads an ORM `Track` relationship → `DetachedInstanceError` only in `/jobs/generate`, not `/generate`. Documented at `start_generate_job`'s `load_pools` call. Promote when it bites. |
 | **§16.11.t2** Adaptive / long-poll polling for job state | small-medium | §16.2.6 live-preview's polling tax (~250ms median) becomes a felt UX issue. Two mitigations queued in §16.11 punts table: adaptive (250ms while running) or long-poll (`GET /api/jobs/{id}?wait=2000`). Both protocol-compatible — no breaking changes. |
 | **§16.11.t3** Server-restart toast UX refinement | tiny (~1 commit) | Today: generic "job vanished mid-poll" inline error. Design called for a toast pointer to the retry button. Adequate for v1; reconsider when a user reports the experience as confusing. |
-| **§16.2.2.t1** Runtime validation of `/api/stations/{slug}/sidecar` response in the visualise route | tiny (~1 commit) | The route uses `as unknown as StationTemplate`/`Sidecar` casts (mid-slice review 🟢-6). Acceptable per server-is-truth design, but no defense against a future server drift that ships malformed shapes. Promote when a real shape drift bites or when we want JSON-schema-level guarantees on the wire. |
+| ~~**§16.2.2.t1** Runtime validation of `/api/stations/{slug}/sidecar`~~ | **CLOSED** (`1815c57`) | `parseEditorSidecarResponse` in `web/src/lib/editor.ts` narrows the response from `unknown` to `{template: StationTemplate, sidecar: Sidecar, sidecar_error}`. Wired into `getStationSidecar`; route dropped both `as unknown as` casts. Per-element drift checks (`template.sources[i].name`, `sidecar.sections[i].{id, blocks}`, `sidecar.layout_order[i]`) added in the post-c5 review fix; 14 vitest cases pin both top-level and per-element drift. |
 | ~~**§16.2.2.t2** Visualise route load-function test~~ | **CLOSED in post-c5 sweep** | New `visualise.test.ts` pins loading / error / 404 / warning-banner / happy-path / missing-slug states. 6 tests. |
 | **§16.2.2.t3** Sidecar response payload size for very large stations | small | The synthesized trivial sidecar for Rebirth Radio (2,196 atomic blocks) ships ~100KB of JSON per request (c1 review 🟢-6). Acceptable for the canvas — c4's "collapse if > 500 chips" UI affordance is the practical fix. Promote if a non-canvas consumer (SSR, mobile, slow link) starts caring about wire size; mitigations include a `?compact=1` projection that elides slot_index for the trivial-sidecar case. |
 | **§16.2.2.t4** `_REPO_ROOT` calculation brittleness in `api/deps.py` | tiny (~1 commit) | `Path(__file__).resolve().parent.parent` (c1 review 🟢-3) breaks silently if `api/deps.py` moves a level deeper. Standard Python pattern; no proactive fix. Add an import-time assertion (`assert _STATIONS_DIR.parent.name == "station-studio"`) if the symptom ever bites. |
@@ -7575,7 +7575,7 @@ Frontend:
 
 | Item | Promoted in | Status |
 |---|---|---|
-| §16.2.2.t1 | mid-slice review 🟢-6 | open |
+| §16.2.2.t1 | mid-slice review 🟢-6 | **closed in post-c5 sweep** (`1815c57` + review fixes) |
 | §16.2.2.t2 | mid-slice review 🟢-7 | **closed in post-c5 sweep** (route load test) |
 | §16.2.2.t3 | c1 review 🟢-6 (recovery) | open |
 | §16.2.2.t4 | c1 review 🟢-3 (recovery) | open ("watch for symptom" — not actionable proactively) |

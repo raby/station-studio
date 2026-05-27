@@ -7,6 +7,14 @@
 // Types intentionally mirror the Pydantic schemas in api/schemas.py. Keep
 // them in sync — if you add a field there, add it here.
 
+// §16.2.2.t1 — api.ts now depends on editor.ts for the sidecar
+// validator + parsed-shape type. A one-way dep (editor.ts doesn't
+// import api.ts), explicitly chosen: editor.ts owns the canonical
+// shapes for the visual editor; replicating them here would mean
+// two sources of truth. If a future caller wants api.ts without
+// editor.ts (e.g. a non-editor surface that just needs auth
+// helpers), the validator can be split into a third "shapes" module
+// — but that's overengineering today.
 import {
   parseEditorSidecarResponse,
   type ParsedEditorSidecar,
