@@ -21,15 +21,22 @@
   export let sidecar: Sidecar;
   export let viewMode: ViewModeState;
   export let initialExpanded: boolean = true;
+  /**
+   * Pick count for the header (§16.2.2.t5 — passed down from
+   * EditorCanvas which computes all section counts in a single
+   * reduce; previous design had each Section recompute via its
+   * own `expandSection` call, doubling the work on large
+   * stations). When called directly (testing in isolation),
+   * fall back to a fresh computation.
+   */
+  export let chipCount: number | undefined = undefined;
 
   let expanded = initialExpanded;
 
-  // Chip count = total expanded refs in this section. Computed once
-  // per (section, sidecar) — Svelte reactivity caches via the `$:`.
-  // Includes EVERY placeholder a macro span emits (not the collapsed
-  // first-only count) so the header reflects engine-level scale,
-  // not visual chip-count.
-  $: chipCount = expandSection(section, sidecar).length;
+  // Use the passed-down count when available; otherwise recompute
+  // (test-friendly fallback so callers can omit the prop).
+  $: effectiveCount =
+    chipCount !== undefined ? chipCount : expandSection(section, sidecar).length;
 
   function toggle() {
     expanded = !expanded;
@@ -41,7 +48,7 @@
   data-testid="section"
   data-section-id={section.id}
 >
-  <SectionHeader {section} {chipCount} {expanded} on:toggle={toggle} />
+  <SectionHeader {section} chipCount={effectiveCount} {expanded} on:toggle={toggle} />
 
   {#if expanded}
     <div

@@ -6261,11 +6261,11 @@ Inserted into the strategic sequence based on §16.0 audit:
 | **§16.11.t2** Adaptive / long-poll polling for job state | small-medium | §16.2.6 live-preview's polling tax (~250ms median) becomes a felt UX issue. Two mitigations queued in §16.11 punts table: adaptive (250ms while running) or long-poll (`GET /api/jobs/{id}?wait=2000`). Both protocol-compatible — no breaking changes. |
 | **§16.11.t3** Server-restart toast UX refinement | tiny (~1 commit) | Today: generic "job vanished mid-poll" inline error. Design called for a toast pointer to the retry button. Adequate for v1; reconsider when a user reports the experience as confusing. |
 | **§16.2.2.t1** Runtime validation of `/api/stations/{slug}/sidecar` response in the visualise route | tiny (~1 commit) | The route uses `as unknown as StationTemplate`/`Sidecar` casts (mid-slice review 🟢-6). Acceptable per server-is-truth design, but no defense against a future server drift that ships malformed shapes. Promote when a real shape drift bites or when we want JSON-schema-level guarantees on the wire. |
-| **§16.2.2.t2** Visualise route load-function test | tiny (~1 commit) | c2 leaves the route's compose-of (helper → cast → render counts) implicit (mid-slice review 🟢-7). The api.test + editor.test pin the inputs/outputs; a small route test would assert the loading / load-error / loaded / warning-banner states. c3 + c5 will add canvas tests anyway; this is a sweep-up the route can be folded into. |
+| ~~**§16.2.2.t2** Visualise route load-function test~~ | **CLOSED in post-c5 sweep** | New `visualise.test.ts` pins loading / error / 404 / warning-banner / happy-path / missing-slug states. 6 tests. |
 | **§16.2.2.t3** Sidecar response payload size for very large stations | small | The synthesized trivial sidecar for Rebirth Radio (2,196 atomic blocks) ships ~100KB of JSON per request (c1 review 🟢-6). Acceptable for the canvas — c4's "collapse if > 500 chips" UI affordance is the practical fix. Promote if a non-canvas consumer (SSR, mobile, slow link) starts caring about wire size; mitigations include a `?compact=1` projection that elides slot_index for the trivial-sidecar case. |
 | **§16.2.2.t4** `_REPO_ROOT` calculation brittleness in `api/deps.py` | tiny (~1 commit) | `Path(__file__).resolve().parent.parent` (c1 review 🟢-3) breaks silently if `api/deps.py` moves a level deeper. Standard Python pattern; no proactive fix. Add an import-time assertion (`assert _STATIONS_DIR.parent.name == "station-studio"`) if the symptom ever bites. |
 | **§16.11.t4** Sub-second precision in job-state timestamps | tiny (~1 commit) | `_iso_utc` truncates to whole seconds for the `started_at` / `finished_at` response fields (§16.11 c3 mid-slice review 🟢-7). Fine for human-readable display; a future benchmark / audit looking at job-duration would need millisecond precision. The raw `time.time()` float still lives on `JobSnapshot` — a `started_at_unix: float` response field could be added later without breaking the existing ISO field. |
-| **§16.2.2.t5** `chipCount` prop drilling to deduplicate `expandSection` calls | tiny (~1 commit) | `<EditorCanvas>` computes `totalChips` by reducing every section's expansion, AND each `<Section>` recomputes its own count for the header (§16.2.2 c3 review 🟢-4). For Rebirth Radio's synthesized trivial (2,196 atomic blocks in one section) that's a 2,196-element array build run twice per render cycle. Svelte's `$:` caching reduces the impact (only re-runs when inputs change), so acceptable today; promote when a render-cost flamegraph shows it. The fix is passing pre-computed counts from canvas → section as a prop. |
+| ~~**§16.2.2.t5** `chipCount` prop drilling~~ | **CLOSED in post-c5 sweep** | `<EditorCanvas>` builds a `sectionChipCounts: Map<id, count>` once, derives `totalChips` from its values, passes each section's count to `<Section>` as a `chipCount` prop. Section retains an `expandSection` fallback for tests / standalone use. |
 | ~~**§16.2.2.t6** Chip keyboard accessibility~~ | **CLOSED in c4** | Chips are now `<button>`s — native focus + Enter/Space activation. Click + key both dispatch the `select` event. Pinned by `Chip.test.ts > chip is a native <button>` + the click→select event test. |
 
 **Tail / wait-for-demand:**
@@ -7576,10 +7576,10 @@ Frontend:
 | Item | Promoted in | Status |
 |---|---|---|
 | §16.2.2.t1 | mid-slice review 🟢-6 | open |
-| §16.2.2.t2 | mid-slice review 🟢-7 | open |
+| §16.2.2.t2 | mid-slice review 🟢-7 | **closed in post-c5 sweep** (route load test) |
 | §16.2.2.t3 | c1 review 🟢-6 (recovery) | open |
-| §16.2.2.t4 | c1 review 🟢-3 (recovery) | open |
-| §16.2.2.t5 | c3 review 🟢-4 | open |
+| §16.2.2.t4 | c1 review 🟢-3 (recovery) | open ("watch for symptom" — not actionable proactively) |
+| §16.2.2.t5 | c3 review 🟢-4 | **closed in post-c5 sweep** (chipCount prop drilling) |
 | §16.2.2.t6 | c3 review 🟢-5 | **closed in c4** (chip a11y) |
 
 ### 16.3 Delete / station reset

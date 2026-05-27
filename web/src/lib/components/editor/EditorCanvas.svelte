@@ -75,13 +75,16 @@
    */
   export let collapseThreshold: number = 500;
 
-  // Total chip count across the canvas — drives the all-collapsed
-  // vs all-expanded initial-state decision. Computed once per
-  // (template, sidecar); Svelte caches via `$:`.
-  $: totalChips = sidecar.sections.reduce(
-    (acc, s) => acc + expandSection(s, sidecar).length,
-    0,
+  // §16.2.2.t5 — compute per-section chip counts ONCE here and pass
+  // them down. Previous design had EditorCanvas reduce + each Section
+  // independently call expandSection again for its header — meaning
+  // Rebirth Radio's synthesized-trivial (2,196 atomic blocks in one
+  // section) ran the 2,196-element array build twice per render
+  // cycle. Now once.
+  $: sectionChipCounts = new Map(
+    sidecar.sections.map((s) => [s.id, expandSection(s, sidecar).length]),
   );
+  $: totalChips = [...sectionChipCounts.values()].reduce((a, b) => a + b, 0);
   $: initialExpanded = totalChips <= collapseThreshold;
 
   // Resolve sections in layout_order; skip ids absent from
@@ -115,6 +118,7 @@
       {template}
       {sidecar}
       {viewMode}
+      chipCount={sectionChipCounts.get(section.id) ?? 0}
       initialExpanded={initialExpanded}
       on:select={(e) => onSelect(e, section)}
     />
