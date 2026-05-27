@@ -8,11 +8,14 @@ import '@testing-library/jest-dom/vitest';
 const {
   getStationMock,
   getStationPlaylistsMock,
-  generatePlaylistMock,
+  startGenerateJobMock,
+  watchJobMock,
+  cancelJobMock,
   deletePlaylistMock,
   deleteStationMock,
   gotoMock,
   FakeApiError,
+  FakeJobStartConflict,
   pageStore,
   setSlug,
 } = vi.hoisted(() => {
@@ -22,6 +25,14 @@ const {
       super(message);
       this.name = 'ApiError';
       this.status = status;
+    }
+  }
+  class FakeJobStartConflict extends FakeApiError {
+    existing_job_id: string;
+    constructor(message: string, existing_job_id: string) {
+      super(409, message);
+      this.name = 'JobStartConflict';
+      this.existing_job_id = existing_job_id;
     }
   }
   let currentSlug: string | undefined = 'test-slug';
@@ -40,11 +51,14 @@ const {
   return {
     getStationMock: vi.fn(),
     getStationPlaylistsMock: vi.fn(),
-    generatePlaylistMock: vi.fn(),
+    startGenerateJobMock: vi.fn(),
+    watchJobMock: vi.fn(),
+    cancelJobMock: vi.fn(),
     deletePlaylistMock: vi.fn(),
     deleteStationMock: vi.fn(),
     gotoMock: vi.fn(),
     FakeApiError,
+    FakeJobStartConflict,
     pageStore,
     setSlug,
   };
@@ -53,11 +67,67 @@ const {
 vi.mock('$lib/api', () => ({
   getStation: (...args: unknown[]) => getStationMock(...args),
   getStationPlaylists: (...args: unknown[]) => getStationPlaylistsMock(...args),
-  generatePlaylist: (...args: unknown[]) => generatePlaylistMock(...args),
+  startGenerateJob: (...args: unknown[]) => startGenerateJobMock(...args),
+  watchJob: (...args: unknown[]) => watchJobMock(...args),
+  cancelJob: (...args: unknown[]) => cancelJobMock(...args),
   deletePlaylist: (...args: unknown[]) => deletePlaylistMock(...args),
   deleteStation: (...args: unknown[]) => deleteStationMock(...args),
   ApiError: FakeApiError,
+  JobStartConflict: FakeJobStartConflict,
 }));
+
+/**
+ * §16.11 c5 — helper: wraps a list of snapshots as an AsyncIterable.
+ * watchJob is now an async generator that yields snapshots until
+ * a terminal status; tests mock it via `watchJobMock.mockReturnValueOnce(
+ * snapsAsAsyncIterable([...]))`.
+ *
+ * Yielding the array entries one-by-one matches the real generator's
+ * one-snapshot-per-poll shape — the page's `for await` consumes them
+ * sequentially, updating currentJob each tick.
+ */
+function snapsAsAsyncIterable(snaps: unknown[]): AsyncIterable<unknown> {
+  return {
+    async *[Symbol.asyncIterator]() {
+      for (const s of snaps) yield s;
+    },
+  };
+}
+
+/** Build a minimal JobSnapshot-shaped object for tests. */
+function fakeSnap(over: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    job_id: 'j-1',
+    slug: 'cls',
+    kind: 'generate',
+    status: 'running',
+    phase: 'queued',
+    current: 0,
+    total: 0,
+    label: null,
+    result: null,
+    error: null,
+    started_at: '2026-05-27T10:00:00Z',
+    finished_at: null,
+    ...over,
+  };
+}
+
+/**
+ * Convenience: most tests expect "start a job, poll once, see done +
+ * a result, navigate". Wires both mocks in one call.
+ */
+function mockJobThatCompletes(
+  job_id: string,
+  result: { playlist_id: number; trace_id: string; station: string; week: number; slot_count: number },
+) {
+  startGenerateJobMock.mockResolvedValueOnce({ job_id, status: 'running' });
+  watchJobMock.mockReturnValueOnce(
+    snapsAsAsyncIterable([
+      fakeSnap({ job_id, status: 'done', result, finished_at: '2026-05-27T10:00:01Z' }),
+    ]),
+  );
+}
 
 vi.mock('$app/stores', () => ({
   page: pageStore,
@@ -81,7 +151,9 @@ describe('station detail +page.svelte', () => {
   beforeEach(() => {
     getStationMock.mockReset();
     getStationPlaylistsMock.mockReset();
-    generatePlaylistMock.mockReset();
+    startGenerateJobMock.mockReset();
+    watchJobMock.mockReset();
+    cancelJobMock.mockReset();
     deletePlaylistMock.mockReset();
     deleteStationMock.mockReset();
     gotoMock.mockReset();
@@ -227,7 +299,9 @@ describe('station detail — §16.1 generate panel', () => {
   beforeEach(() => {
     getStationMock.mockReset();
     getStationPlaylistsMock.mockReset();
-    generatePlaylistMock.mockReset();
+    startGenerateJobMock.mockReset();
+    watchJobMock.mockReset();
+    cancelJobMock.mockReset();
     deletePlaylistMock.mockReset();
     deleteStationMock.mockReset();
     gotoMock.mockReset();
@@ -253,10 +327,10 @@ describe('station detail — §16.1 generate panel', () => {
     expect(screen.queryByText(/generate next week/i)).not.toBeInTheDocument();
   });
 
-  it('clicking the empty-state CTA POSTs week 1 and navigates on success', async () => {
+  it('clicking the empty-state CTA starts a job and navigates on done', async () => {
     getStationMock.mockResolvedValueOnce(stubStation());
     getStationPlaylistsMock.mockResolvedValueOnce([]);
-    generatePlaylistMock.mockResolvedValueOnce({
+    mockJobThatCompletes('job-1', {
       playlist_id: 99,
       trace_id: 'abcdef1234567890',
       station: 'cls',
@@ -268,8 +342,9 @@ describe('station detail — §16.1 generate panel', () => {
     const cta = await screen.findByTestId('generate-empty-cta');
     await fireEvent.click(cta);
 
-    expect(generatePlaylistMock).toHaveBeenCalledWith('cls', 1, undefined);
-    // act() flush is needed before the goto microtask completes.
+    expect(startGenerateJobMock).toHaveBeenCalledWith('cls', 1, undefined);
+    // act() flush — startGenerateJob resolves, watchJob's async
+    // iterator yields the done snapshot, then goto fires.
     await act();
     expect(gotoMock).toHaveBeenCalledWith('/playlists/99');
   });
@@ -332,16 +407,16 @@ describe('station detail — §16.1 generate panel', () => {
     await fireEvent.click(screen.getByTestId('advanced-submit'));
 
     expect(confirmSpy).toHaveBeenCalledWith(expect.stringMatching(/replace week 1/i));
-    expect(generatePlaylistMock).not.toHaveBeenCalled();
+    expect(startGenerateJobMock).not.toHaveBeenCalled();
     confirmSpy.mockRestore();
   });
 
-  it('per-row regen confirms then POSTs with no seed for rng:off', async () => {
+  it('per-row regen confirms then starts a job with no seed for rng:off', async () => {
     getStationMock.mockResolvedValueOnce(stubStation('off'));
     getStationPlaylistsMock.mockResolvedValueOnce([
       { id: 5, week: 5, trace_id: 'feedface1234', generated_at: null, entry_count: 3010 },
     ]);
-    generatePlaylistMock.mockResolvedValueOnce({
+    mockJobThatCompletes('job-50', {
       playlist_id: 50,
       trace_id: 'newnewnewnew',
       station: 'cls',
@@ -355,7 +430,7 @@ describe('station detail — §16.1 generate panel', () => {
     await fireEvent.click(regen);
 
     expect(confirmSpy).toHaveBeenCalledWith(expect.stringMatching(/regenerate week 5/i));
-    expect(generatePlaylistMock).toHaveBeenCalledWith('cls', 5, undefined);
+    expect(startGenerateJobMock).toHaveBeenCalledWith('cls', 5, undefined);
     await act();
     expect(gotoMock).toHaveBeenCalledWith('/playlists/50');
     confirmSpy.mockRestore();
@@ -366,7 +441,7 @@ describe('station detail — §16.1 generate panel', () => {
     getStationPlaylistsMock.mockResolvedValueOnce([
       { id: 5, week: 5, trace_id: 'feedface1234', generated_at: null, entry_count: 3010 },
     ]);
-    generatePlaylistMock.mockResolvedValueOnce({
+    mockJobThatCompletes('job-50', {
       playlist_id: 50,
       trace_id: 'x',
       station: 'cls',
@@ -378,7 +453,7 @@ describe('station detail — §16.1 generate panel', () => {
     render(Page);
     await fireEvent.click(await screen.findByTestId('regen-row-5'));
 
-    const [slug, week, seed] = generatePlaylistMock.mock.calls[0];
+    const [slug, week, seed] = startGenerateJobMock.mock.calls[0];
     expect(slug).toBe('cls');
     expect(week).toBe(5);
     // Per D3: rng:on regen sends *some* integer seed (the form-input one
@@ -389,9 +464,12 @@ describe('station detail — §16.1 generate panel', () => {
   });
 
   it('renders the API error inline and does not navigate on failure', async () => {
+    // §16.11 c5: start-time API errors (400 bad pool, 404 station)
+    // still surface as inline messages — startGenerateJob's rejection
+    // path matches the old generatePlaylist behaviour.
     getStationMock.mockResolvedValueOnce(stubStation());
     getStationPlaylistsMock.mockResolvedValueOnce([]);
-    generatePlaylistMock.mockRejectedValueOnce(
+    startGenerateJobMock.mockRejectedValueOnce(
       new FakeApiError(400, '400 Bad Request: pool underflow at index 985 of RG_RADIO'),
     );
 
@@ -403,6 +481,127 @@ describe('station detail — §16.1 generate panel', () => {
       /pool underflow.*RG_RADIO/i,
     );
     expect(gotoMock).not.toHaveBeenCalled();
+  });
+
+  // ----- §16.11 c5 — async-job flow paths --------------------------------
+
+  it('shows the <ProgressIndicator> while the job is running', async () => {
+    // Synthesise a watchJob iterator that emits a running snapshot
+    // and then suspends forever — the test never resolves the
+    // generator. Inspects the in-progress UI.
+    getStationMock.mockResolvedValueOnce(stubStation());
+    getStationPlaylistsMock.mockResolvedValueOnce([]);
+    startGenerateJobMock.mockResolvedValueOnce({
+      job_id: 'job-x', status: 'running',
+    });
+    watchJobMock.mockReturnValueOnce({
+      async *[Symbol.asyncIterator]() {
+        yield fakeSnap({
+          job_id: 'job-x', status: 'running', phase: 'picks',
+          current: 30, total: 100, label: 'Generating week 1 (30 / 100)',
+        });
+        // Then suspend on a never-resolving promise so the consumer
+        // stays in the loop and the indicator stays mounted.
+        await new Promise(() => {});
+      },
+    });
+
+    render(Page);
+    await fireEvent.click(await screen.findByTestId('generate-empty-cta'));
+    await act();
+
+    const indicator = await screen.findByTestId('progress-indicator');
+    expect(indicator).toHaveAttribute('data-status', 'running');
+    expect(screen.getByTestId('progress-label')).toHaveTextContent(
+      /generating week 1 \(30 \/ 100\)/i,
+    );
+    expect(screen.getByTestId('progress-cancel')).toBeInTheDocument();
+    // Did NOT navigate — job's still running.
+    expect(gotoMock).not.toHaveBeenCalled();
+  });
+
+  it('renders status=error with kind + message and stays on page', async () => {
+    getStationMock.mockResolvedValueOnce(stubStation());
+    getStationPlaylistsMock.mockResolvedValueOnce([]);
+    startGenerateJobMock.mockResolvedValueOnce({
+      job_id: 'job-err', status: 'running',
+    });
+    watchJobMock.mockReturnValueOnce(
+      snapsAsAsyncIterable([
+        fakeSnap({
+          job_id: 'job-err', status: 'error',
+          error: { kind: 'RuntimeError', message: 'engine crashed' },
+          finished_at: '2026-05-27T10:00:01Z',
+        }),
+      ]),
+    );
+
+    render(Page);
+    await fireEvent.click(await screen.findByTestId('generate-empty-cta'));
+    await act();
+
+    expect(await screen.findByTestId('generate-error')).toHaveTextContent(
+      /RuntimeError.*engine crashed/i,
+    );
+    expect(gotoMock).not.toHaveBeenCalled();
+    // Indicator cleared after terminal state surfaces the error.
+    expect(screen.queryByTestId('progress-indicator')).not.toBeInTheDocument();
+  });
+
+  it('adopts the existing job on 409 JobStartConflict', async () => {
+    // Decision F + design-doc intent (and mid-slice review): the
+    // frontend polls the in-flight job rather than failing the click.
+    getStationMock.mockResolvedValueOnce(stubStation());
+    getStationPlaylistsMock.mockResolvedValueOnce([]);
+    startGenerateJobMock.mockRejectedValueOnce(
+      new FakeJobStartConflict('already running', 'older-job-7'),
+    );
+    watchJobMock.mockReturnValueOnce(
+      snapsAsAsyncIterable([
+        fakeSnap({
+          job_id: 'older-job-7', status: 'done',
+          result: {
+            playlist_id: 7, trace_id: 't', station: 'cls',
+            week: 1, slot_count: 100,
+          },
+          finished_at: '2026-05-27T10:00:01Z',
+        }),
+      ]),
+    );
+
+    render(Page);
+    await fireEvent.click(await screen.findByTestId('generate-empty-cta'));
+    await act();
+
+    // watchJob was called with the EXISTING job_id, not a fresh one.
+    expect(watchJobMock).toHaveBeenCalledWith('older-job-7');
+    // Done snapshot → navigate to the existing job's playlist.
+    expect(gotoMock).toHaveBeenCalledWith('/playlists/7');
+  });
+
+  it('clicking Cancel inside the indicator calls cancelJob', async () => {
+    getStationMock.mockResolvedValueOnce(stubStation());
+    getStationPlaylistsMock.mockResolvedValueOnce([]);
+    startGenerateJobMock.mockResolvedValueOnce({
+      job_id: 'job-c', status: 'running',
+    });
+    watchJobMock.mockReturnValueOnce({
+      async *[Symbol.asyncIterator]() {
+        yield fakeSnap({ job_id: 'job-c', status: 'running', phase: 'picks',
+                         current: 10, total: 100 });
+        // Suspend until cancel is fired; test isn't asserting on the
+        // post-cancel snapshot so the never-resolving promise is fine.
+        await new Promise(() => {});
+      },
+    });
+    cancelJobMock.mockResolvedValueOnce(undefined);
+
+    render(Page);
+    await fireEvent.click(await screen.findByTestId('generate-empty-cta'));
+    await act();
+    await fireEvent.click(await screen.findByTestId('progress-cancel'));
+
+    expect(cancelJobMock).toHaveBeenCalledWith('job-c');
   });
 });
 
@@ -417,7 +616,9 @@ describe('station detail — §16.3 delete affordances', () => {
   beforeEach(() => {
     getStationMock.mockReset();
     getStationPlaylistsMock.mockReset();
-    generatePlaylistMock.mockReset();
+    startGenerateJobMock.mockReset();
+    watchJobMock.mockReset();
+    cancelJobMock.mockReset();
     deletePlaylistMock.mockReset();
     deleteStationMock.mockReset();
     gotoMock.mockReset();

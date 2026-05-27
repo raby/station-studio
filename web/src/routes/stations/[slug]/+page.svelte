@@ -4,12 +4,16 @@
   import {
     getStation,
     getStationPlaylists,
-    generatePlaylist,
+    startGenerateJob,
+    watchJob,
+    cancelJob,
+    JobStartConflict,
     deletePlaylist,
     deleteStation,
     ApiError,
   } from '$lib/api';
-  import type { Station, PlaylistSummary } from '$lib/api';
+  import type { Station, PlaylistSummary, JobSnapshot } from '$lib/api';
+  import ProgressIndicator from '$lib/components/ProgressIndicator.svelte';
   import { page } from '$app/stores';
 
   let station: Station | null = null;
@@ -23,6 +27,10 @@
   let seedInput = randomSeed();
   let generating = false;
   let generateError: string | null = null;
+  // §16.11 c5: live job snapshot driving the <ProgressIndicator>.
+  // null when no job is in flight; otherwise the latest snapshot
+  // yielded by watchJob's polling loop.
+  let currentJob: JobSnapshot | null = null;
 
   // Delete state (DESIGN.md §16.3). One inline-error slot is reused for both
   // per-row playlist deletes and the station-nuke control — only one delete
@@ -103,20 +111,87 @@
 
     generating = true;
     generateError = null;
+    currentJob = null;
+
+    // Per D3: seed only goes on the wire for rng:on stations. The
+    // advanced form passes the user-chosen seed; per-row regen passes
+    // a fresh random one. For rng:off, seed is omitted entirely.
+    const seed = rngOn ? (opts.seed ?? seedInput) : undefined;
+
+    // Start the job. JobStartConflict (409) means a generate is
+    // already running for this slug — adopt that job rather than
+    // failing the user's click. The polling loop below then surfaces
+    // whatever happens to the EXISTING job.
+    let jobId: string;
     try {
-      // Per D3: seed only goes on the wire for rng:on stations. The advanced
-      // form passes the user-chosen seed; per-row regen passes a fresh
-      // random one (so the user lands on a *different* output, not a
-      // byte-identical replay). For rng:off, the seed is omitted entirely.
-      const seed = rngOn ? (opts.seed ?? seedInput) : undefined;
-      const r = await generatePlaylist(slug, week, seed);
-      // Lands on the trace viewer for the freshly generated playlist.
-      await goto(`/playlists/${r.playlist_id}`);
+      const r = await startGenerateJob(slug, week, seed);
+      jobId = r.job_id;
+    } catch (e) {
+      if (e instanceof JobStartConflict) {
+        jobId = e.existing_job_id;
+      } else {
+        generateError = e instanceof ApiError ? e.message : String(e);
+        generating = false;
+        return;
+      }
+    }
+
+    // Drive the polling loop. Each snapshot updates currentJob,
+    // which Svelte reactivity flows into <ProgressIndicator>.
+    try {
+      for await (const snap of watchJob(jobId)) {
+        currentJob = snap;
+        if (snap.status === 'done' && snap.result) {
+          // Lands on the trace viewer for the freshly generated
+          // playlist. No `generating = false` — navigating away.
+          await goto(`/playlists/${snap.result.playlist_id}`);
+          return;
+        }
+        if (snap.status === 'error') {
+          const err = snap.error;
+          generateError = err
+            ? `${err.kind}: ${err.message}`
+            : 'generation failed';
+          currentJob = null;
+          generating = false;
+          return;
+        }
+        if (snap.status === 'cancelled') {
+          // User clicked Cancel. Quiet clear — no error to surface;
+          // they meant to do it.
+          currentJob = null;
+          generating = false;
+          return;
+        }
+      }
+      // watchJob returned without a terminal status — job 404'd
+      // mid-poll (server restarted / job GC'd). Surface a friendly
+      // message + clear UI; the user can click Generate again.
+      generateError = 'job vanished mid-poll (server may have restarted)';
+      currentJob = null;
+      generating = false;
     } catch (e) {
       generateError = e instanceof ApiError ? e.message : String(e);
+      currentJob = null;
       generating = false;
     }
-    // Note: no `generating = false` on success — we're navigating away.
+  }
+
+  /**
+   * <ProgressIndicator> Cancel-button handler. cancelJob already
+   * absorbs 404, so the only error path here is a real network
+   * failure — surfaced inline. The watchJob loop in `generate()`
+   * sees the cancellation via either a status="cancelled" snapshot
+   * (if the worker observed the cancel between yields) or a 404
+   * (immediate-GC of cancelled jobs); either way it exits cleanly.
+   */
+  async function handleCancel() {
+    if (!currentJob) return;
+    try {
+      await cancelJob(currentJob.job_id);
+    } catch (e) {
+      generateError = e instanceof ApiError ? e.message : String(e);
+    }
   }
 
   async function regenRow(p: PlaylistSummary) {
@@ -306,6 +381,10 @@
           </button>
         </div>
       </details>
+
+      {#if currentJob !== null}
+        <ProgressIndicator job={currentJob} on:cancel={handleCancel} />
+      {/if}
 
       {#if generateError}
         <p class="error" data-testid="generate-error">{generateError}</p>
