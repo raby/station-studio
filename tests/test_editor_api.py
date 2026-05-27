@@ -350,3 +350,43 @@ def test_small_sidecar_response_skips_gzip(editor_api):
     r = client.get("/api/stations/tiny/sidecar")
     assert r.status_code == 200
     assert r.headers.get("content-encoding") != "gzip"
+
+
+def test_large_sidecar_response_honours_accept_encoding_identity(editor_api):
+    """§16.2.2.t3 review 🟡-2 — clients can opt out of gzip via
+    `Accept-Encoding: identity`. Belt-and-suspenders against the
+    TestClient's default Accept-Encoding ever changing: this test
+    pins the behaviour against an explicit identity request."""
+    client, Session, _dir = editor_api
+    # Same 600-slot setup as test_large_sidecar_response_is_gzip_compressed
+    # — comfortably above the 1KB threshold.
+    with Session() as db:
+        template = {
+            "station": "big-identity",
+            "name": "Big Identity",
+            "cadence": "weekly",
+            "rng": "off",
+            "sources": [{"name": "A", "colour": "#abc", "role": "content"}],
+            "cursor": {"base_advance_per_week": 0, "cycle_weeks": 1},
+            "layout": {
+                "unit": "slot",
+                "unit_labels": [],
+                "row_start_offsets": [],
+                "cursors_init": {"C": 0},
+                "flat_slots": [
+                    {"source": "A", "strategy": "sequential", "size": 1, "cursor_id": "C"}
+                ] * 600,
+            },
+        }
+        db.add(Station(slug="big-identity", name="Big Identity", template=template))
+        db.commit()
+
+    r = client.get(
+        "/api/stations/big-identity/sidecar",
+        headers={"Accept-Encoding": "identity"},
+    )
+    assert r.status_code == 200
+    # Client opted out of gzip — middleware MUST honour it.
+    assert r.headers.get("content-encoding") != "gzip"
+    # Body still parses normally.
+    assert len(r.json()["sidecar"]["sections"][0]["blocks"]) == 600

@@ -99,6 +99,22 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# §16.2.2.t3 (post-c5 sweep) — gzip-compress responses ≥1KB. Driven
+# by the visualise endpoint's synthesized-trivial sidecar: Rebirth
+# Radio's 2,196-atomic-block JSON is ~100KB raw / ~10KB gzipped.
+# Compresses any JSON response above the threshold; small responses
+# (most CRUD endpoints, GET /api/jobs/{id}, etc.) skip the overhead.
+# Browsers + httpx both send `Accept-Encoding: gzip` by default;
+# starlette's middleware no-ops when the client doesn't.
+#
+# Registered BEFORE CORS so gzip sits INSIDE the CORS wrapper at
+# request time. `add_middleware` registers in reverse-wrap order:
+# last-registered = outermost. CORS-outermost is the conventional
+# layering — CORS headers wrap the already-compressed body, so a
+# preflight that reads response metadata sees coherent
+# Content-Length etc. (§16.2.2.t3 review 🟡-1).
+app.add_middleware(GZipMiddleware, minimum_size=1000)
+
 # SvelteKit dev server
 app.add_middleware(
     CORSMiddleware,
@@ -107,15 +123,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# §16.2.2.t3 (post-c5 sweep) — gzip-compress responses ≥1KB. Driven
-# by the visualise endpoint's synthesized-trivial sidecar: Rebirth
-# Radio's 2,196-atomic-block JSON is ~100KB raw / ~10KB gzipped.
-# Compresses any JSON response above the threshold; small responses
-# (most CRUD endpoints, GET /api/jobs/{id}, etc.) skip the overhead.
-# Browsers + httpx both send `Accept-Encoding: gzip` by default;
-# starlette's middleware no-ops when the client doesn't.
-app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 app.include_router(stations.router)
 app.include_router(sources.router)
