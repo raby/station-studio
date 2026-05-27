@@ -129,3 +129,55 @@ class RuleListResponse(BaseModel):
 class RuleValueIn(BaseModel):
     """PUT body — just the new integer value."""
     value: int
+
+
+# §16.11 c3 — job runner endpoints
+
+
+class JobStartResponse(BaseModel):
+    """201 body for `POST /api/stations/{slug}/jobs/generate`. Mirrors
+    DESIGN.md §16.11 Decision A's "starts a background job, returns
+    {job_id, status: running}" — the frontend immediately begins
+    polling `GET /api/jobs/{job_id}`.
+    """
+    job_id: str
+    status: Literal["running"] = "running"
+
+
+class JobErrorBody(BaseModel):
+    """Shape inside `JobStatusResponse.error` when status=error.
+
+    `kind` is the Python exception class name (RuntimeError, ValueError,
+    AssertionError for engine-bug paths). Frontends can show
+    `kind`-specific messaging or treat as a generic failure.
+    """
+    message: str
+    kind: str
+
+
+class JobStatusResponse(BaseModel):
+    """200 body for `GET /api/jobs/{job_id}`. Mirrors `JobSnapshot`
+    in api/job_runner.py with one transformation: monotonic-correlated
+    UNIX timestamps are converted to ISO-8601 strings per the design
+    doc's example ("started_at": "2026-05-27T14:32:01Z"). The
+    `started_at`/`finished_at` floats are stored internally for clock-
+    skew immunity but humans want ISO at the API boundary.
+
+    `result` is whatever the endpoint's `on_result` callback returned —
+    for the generate endpoint that's the same shape as
+    `GenerateResponse` (playlist_id / trace_id / station / week /
+    slot_count). Pydantic doesn't type-check this nested dict; trust
+    the endpoint to populate consistently.
+    """
+    job_id: str
+    slug: str
+    kind: str
+    status: Literal["running", "done", "error", "cancelled"]
+    phase: str
+    current: int
+    total: int
+    label: str | None = None
+    result: dict[str, Any] | None = None
+    error: JobErrorBody | None = None
+    started_at: str  # ISO 8601 UTC
+    finished_at: str | None = None

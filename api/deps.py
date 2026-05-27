@@ -18,3 +18,13 @@ def get_db():
         yield db
     finally:
         db.close()
+
+
+def get_session_factory():
+    """Return the SessionLocal factory. Endpoints that spawn background
+    work (§16.11 c3 job runner) need to open fresh sessions INSIDE the
+    worker thread — the request's `db` from `get_db()` is closed when
+    the endpoint returns. Tests override this dep alongside `get_db` so
+    the worker uses the throwaway-tmp test DB, not the dev DB.
+    """
+    return _SessionLocal
