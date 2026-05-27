@@ -6,6 +6,7 @@ import {
   getStation,
   getStationPlaylists,
   getPlaylist,
+  getStationSidecar,
   getTrace,
   createStation,
   generatePlaylist,
@@ -625,6 +626,51 @@ describe('cancelJob', () => {
     const err = await cancelJob('j-1', fetch_).catch((e) => e);
     expect(err).toBeInstanceOf(ApiError);
     expect(err.status).toBe(500);
+  });
+});
+
+
+describe('getStationSidecar', () => {
+  it('GETs /api/stations/{slug}/sidecar and returns the bundle', async () => {
+    const body = {
+      template: { station: 's', name: 'S', layout: {} },
+      sidecar: { schema_version: 1, sections: [], macros: [], layout_order: [] },
+      sidecar_error: null,
+    };
+    const { fetch_, calls } = makeSpy({ body });
+    const out = await getStationSidecar('s', fetch_);
+    expect(calls[0].input).toBe('/api/stations/s/sidecar');
+    expect(out).toEqual(body);
+  });
+
+  it('URL-encodes the slug', async () => {
+    const { fetch_, calls } = makeSpy({
+      body: { template: {}, sidecar: {}, sidecar_error: null },
+    });
+    await getStationSidecar('a b', fetch_);
+    expect(calls[0].input).toBe('/api/stations/a%20b/sidecar');
+  });
+
+  it('surfaces 404 station-not-found as ApiError', async () => {
+    const { fetch_ } = makeSpy({
+      ok: false, status: 404, statusText: 'Not Found',
+      text: '{"detail":"station nope not found"}',
+    });
+    const err = await getStationSidecar('nope', fetch_).catch((e) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.status).toBe(404);
+  });
+
+  it('does NOT throw on sidecar_error — that comes back in the 200 body', async () => {
+    // Decision E contract: sidecar errors are non-HTTP-error data.
+    const body = {
+      template: { layout: {} },
+      sidecar: { schema_version: 1, sections: [], macros: [], layout_order: [] },
+      sidecar_error: 'your sidecar is malformed at line 3',
+    };
+    const { fetch_ } = makeSpy({ body });
+    const out = await getStationSidecar('broken', fetch_);
+    expect(out.sidecar_error).toContain('malformed');
   });
 });
 

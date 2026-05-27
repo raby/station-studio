@@ -562,4 +562,51 @@ export async function* watchJob(
 }
 
 
+// ---- §16.2.2 c2 — visual block editor sidecar fetch ------------------
+
+
+/**
+ * Shape returned by GET /api/stations/{slug}/sidecar. Mirrors the
+ * backend's `EditorSidecarResponse` (api/schemas.py). Per Decision E:
+ *
+ *   * `template` — the parsed station template (same shape
+ *     `Station.template` carries).
+ *   * `sidecar` — ALWAYS non-null. Either the committed
+ *     `stations/{slug}.editor.json` content (after validation) OR
+ *     a server-synthesized trivial sidecar (one section, all atomic).
+ *     The frontend NEVER handles "no sidecar".
+ *   * `sidecar_error` — null on happy paths. Populated with the
+ *     parser's error message when a committed sidecar fails
+ *     validation; the frontend renders a warning banner so the
+ *     hobbyist can keep working while they figure out what broke.
+ *
+ * `template` + `sidecar` are typed as opaque `Record` here because
+ * `web/src/lib/editor.ts` owns the structural types; importing
+ * them here would create a circular concern (api.ts is supposed to
+ * be the network-shape layer, not the editor-shape layer). Callers
+ * cast to `StationTemplate` + `Sidecar` from $lib/editor at the
+ * use site.
+ */
+export interface EditorSidecarResponse {
+  template: Record<string, unknown>;
+  sidecar: Record<string, unknown>;
+  sidecar_error: string | null;
+}
+
+
+/**
+ * Fetch the editor sidecar bundle for a station. The endpoint
+ * returns 404 only when the station itself doesn't exist —
+ * absent/broken sidecars resolve to the trivial fallback with
+ * `sidecar_error` populated, never an HTTP error.
+ */
+export const getStationSidecar = (
+  slug: string,
+  fetch_ = fetch,
+): Promise<EditorSidecarResponse> =>
+  fetch_(`/api/stations/${encodeURIComponent(slug)}/sidecar`).then((r) =>
+    json<EditorSidecarResponse>(r),
+  );
+
+
 export { ApiError };
