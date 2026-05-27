@@ -124,14 +124,21 @@
     display: inline-flex;
     align-items: center;
     gap: 0.3em;
-    padding: 0.1em 0.45em;
+    /* Touch-target bump (slice review 🟡-1) — chips are now <button>s
+       (c4 keyboard a11y), so the click area matters for trackpad-
+       precision and reduced-motor-control users. Previous padding
+       produced ~16px tall chips; 0.3em/0.55em + line-height 1.5 lifts
+       to ~26px, comfortably above the 24px effective bar most editors
+       hit. Still well below WCAG AAA 44px (which would crowd the
+       canvas); §16.5 a11y pass revisits. */
+    padding: 0.3em 0.55em;
     margin: 0.15em;
     border: 1px solid var(--chip-color, #ccc);
     border-radius: 4px;
     background: color-mix(in srgb, var(--chip-color, #ccc) 12%, transparent);
     font-family: ui-monospace, monospace;
     font-size: 0.78rem;
-    line-height: 1.4;
+    line-height: 1.5;
     white-space: nowrap;
     cursor: pointer;
     color: inherit;

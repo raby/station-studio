@@ -41,6 +41,12 @@ It produces:
 - **Reproducibility** — same template + same source files + same week
   number = same playlist, byte-for-byte
 
+You can also **visualise a station's template** in the web UI — a
+chip-per-pick canvas grouped into sections, color-coded by source
+(or strategy), with click-through detail for every slot and macro.
+Click "🗺 Visualise template" on any station page. (Read-only today;
+in-canvas authoring is on the roadmap — see DESIGN.md §16.2.3+.)
+
 ## Quick start
 
 ```bash

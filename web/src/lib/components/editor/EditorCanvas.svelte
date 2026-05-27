@@ -104,8 +104,8 @@
 
   {#if totalChips > collapseThreshold}
     <p class="large-station-hint" data-testid="large-station-hint">
-      Large station ({totalChips.toLocaleString()} chips total).
-      Sections start collapsed; click each section header to expand.
+      Large station ({totalChips.toLocaleString()} picks total).
+      Sections start collapsed; click a section header to expand.
     </p>
   {/if}
 

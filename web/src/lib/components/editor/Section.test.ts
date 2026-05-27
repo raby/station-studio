@@ -56,7 +56,7 @@ describe('<Section>', () => {
       section: makeSection(), template: makeTemplate(), sidecar: makeSidecar(),
     });
     expect(screen.getByTestId('section-name')).toHaveTextContent('Section 1');
-    expect(screen.getByTestId('section-count')).toHaveTextContent('2 chips');
+    expect(screen.getByTestId('section-count')).toHaveTextContent('2 picks');
   });
 
   it('falls back to section.id when name is omitted (🟡-2)', () => {
@@ -109,8 +109,8 @@ describe('<Section>', () => {
       }),
       template: makeTemplate(), sidecar: makeSidecar(),
     });
-    expect(screen.getByTestId('section-count')).toHaveTextContent('1 chip');
+    expect(screen.getByTestId('section-count')).toHaveTextContent('1 pick');
     // No trailing 's' on singular.
-    expect(screen.getByTestId('section-count').textContent).toMatch(/1 chip(?!s)/);
+    expect(screen.getByTestId('section-count').textContent).toMatch(/1 pick(?!s)/);
   });
 });

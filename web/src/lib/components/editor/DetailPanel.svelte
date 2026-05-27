@@ -162,7 +162,11 @@
     box-shadow: -2px 0 10px rgba(0, 0, 0, 0.05);
     padding: 1rem;
     overflow-y: auto;
-    z-index: 10;
+    /* Custom property (slice review 🟢-5) so a future stacking
+       conflict (modal over panel) can override the layer without
+       editing this component. Default 10 keeps it above the
+       canvas chips' :focus outline + the static layout. */
+    z-index: var(--detail-panel-z, 10);
   }
   header {
     display: flex;

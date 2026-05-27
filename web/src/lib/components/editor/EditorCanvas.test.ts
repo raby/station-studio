@@ -90,28 +90,31 @@ describe('<EditorCanvas>', () => {
   });
 
   it('starts all sections COLLAPSED + shows hint when total chips > threshold', () => {
-    // Build a section with 501 atomic blocks (one over the limit).
-    const template = makeTemplate(501);
+    // c3 review 🟡-3 made the threshold a settable prop — tests can
+    // set a tiny threshold instead of building 501-block fixtures.
+    const template = makeTemplate(3);
     const sidecar = makeSidecar({
       sections: [
         {
           id: 's', name: 'S',
-          blocks: Array.from({ length: 501 }, (_, i) => ({
-            kind: 'atomic' as const, slot_index: i,
-          })),
+          blocks: [
+            { kind: 'atomic', slot_index: 0 },
+            { kind: 'atomic', slot_index: 1 },
+            { kind: 'atomic', slot_index: 2 },
+          ],
         },
       ],
       layout_order: ['s'],
     });
-    render(EditorCanvas, { template, sidecar });
+    render(EditorCanvas, { template, sidecar, collapseThreshold: 2 });
     const canvas = screen.getByTestId('editor-canvas');
-    expect(canvas.getAttribute('data-total-chips')).toBe('501');
+    expect(canvas.getAttribute('data-total-chips')).toBe('3');
     expect(canvas.getAttribute('data-initially-collapsed')).toBe('true');
     // Body hidden.
     expect(screen.queryByTestId('section-body')).toBeNull();
-    // Hint visible with locale-formatted count.
+    // Hint visible — uses "picks" wording per slice review 🟡-2.
     const hint = screen.getByTestId('large-station-hint');
-    expect(hint).toHaveTextContent('501');
+    expect(hint).toHaveTextContent('3 picks');
   });
 
   it('renders an empty-canvas message when layout_order is empty', () => {

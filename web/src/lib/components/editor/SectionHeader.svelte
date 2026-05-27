@@ -42,7 +42,15 @@
     <span class="caret" aria-hidden="true">{expanded ? '▼' : '▶'}</span>
     <span class="name" data-testid="section-name">{displayName}</span>
     <span class="count" data-testid="section-count">
-      {chipCount} chip{chipCount === 1 ? '' : 's'}
+      <!--
+        "picks" reflects the engine-scale count — macros contribute
+        `macro.repeat` to the total, matching the ×N badge on a
+        single visible chip. Slice review 🟡-2 (`5 atomic + 1
+        macro×10` reads "15 picks", with 6 visible chips). "picks"
+        is the unit a hobbyist editing the template thinks in:
+        "how many tracks does this section produce?"
+      -->
+      {chipCount} pick{chipCount === 1 ? '' : 's'}
     </span>
   </button>
 </header>
