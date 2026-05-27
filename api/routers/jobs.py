@@ -173,7 +173,13 @@ def start_generate_job(
 
     try:
         template = parse_template(station.template)
-    except TemplateError as e:
+    except TemplateError as e:  # pragma: no cover
+        # Stored templates are validated at creation (POST /api/stations
+        # rejects invalid templates with 400). This branch fires only on
+        # data corruption — the row was written invalid somehow (manual
+        # DB edit, restore from a corrupted backup, schema drift). Not
+        # reachable from any normal API path; the 500 surfaces the
+        # corruption to the operator.
         raise HTTPException(500, f"stored template is invalid: {e}")
 
     try:
@@ -264,9 +270,14 @@ def start_generate_job(
             # Re-fetch the station in the worker's session — `station`
             # from the request is bound to a closed session.
             worker_station = worker_db.query(Station).filter_by(id=station_id).first()
-            if worker_station is None:
+            if worker_station is None:  # pragma: no cover
                 # Station was deleted between job start + completion.
-                # Surface as a ValueError so it lands in error.kind.
+                # Requires the operator (or a script) to DELETE the
+                # station mid-generation; not reachable from normal
+                # API paths without thread-racing the test fixture.
+                # The runner surfaces this as status=error so the
+                # frontend has SOMETHING to render rather than a
+                # silent worker-thread crash.
                 raise ValueError(
                     f"station id={station_id} was deleted before job completed"
                 )
@@ -276,10 +287,16 @@ def start_generate_job(
                     week=week, template=template,
                 )
                 worker_db.commit()
-            except IntegrityError:
+            except IntegrityError:  # pragma: no cover
+                # Concurrent (station_id, week) generations racing the
+                # unique constraint. POLICY_REJECT (Decision F) prevents
+                # the common case at the API layer; this only fires if
+                # the same station+week is being generated via the SYNC
+                # endpoint AND the async job simultaneously, or two
+                # processes share a DB (no longer the v1 deployment
+                # shape — see README single-worker caveat). Translated
+                # to ValueError so error.kind is meaningful on the wire.
                 worker_db.rollback()
-                # Translate to a ValueError so error.kind is meaningful
-                # ("IntegrityError" wouldn't tell a frontend much).
                 raise ValueError(
                     "a playlist for this station and week was concurrently "
                     "generated; retry"

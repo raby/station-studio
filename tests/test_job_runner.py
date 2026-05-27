@@ -453,25 +453,45 @@ def test_cancel_between_result_and_on_result_skips_on_result():
     row was created anyway. The fix in c2 is an atomic cancelled
     check right before on_result; this test pins it.
 
-    Sequencing: synthetic stream blocks just before yielding the
-    Result, test issues cancel, stream is released, worker observes
-    cancel before calling on_result.
+    Sequencing (slice review 🟡-5 — earlier version of this test
+    exercised the WRONG cancel check, the top-of-for-loop one at
+    line 442. The post-Result check at line 493 is the defense-in-
+    depth guard we actually want to pin):
+
+      1. Stream yields ProgressEvent.
+      2. Stream yields GenerationResult.
+      3. Stream BLOCKS on a never-fired event (forces a third
+         next() call to suspend the worker thread INSIDE the
+         generator's `__next__`, AFTER result_obj was set but
+         BEFORE the for-loop exited).
+      4. Test issues cancel — sets job.cancelled=True.
+      5. Test releases the generator → it returns (no more yields).
+      6. Worker's for-loop ends (StopIteration), falls through to
+         the post-Result `if job.cancelled: return` check (line 493).
+         That check fires; on_result NEVER runs.
+
+    Without the line-493 check, on_result would run despite the
+    cancel because step 4's `cancelled=True` set was AFTER the
+    top-of-loop check in step 2's iteration.
     """
     store = JobStore()
-    result_ready = threading.Event()
-    proceed = threading.Event()
+    in_block = threading.Event()
+    release_block = threading.Event()
     on_result_called: list[bool] = []
 
     def stream() -> Iterator:
-        # First yield a progress event so the test can detect the
-        # worker has entered the stream and we're past the initial
-        # cancel check.
+        # First a regular event so the worker pulls + processes it.
         yield ProgressEvent(phase="picks", current=1, total=2)
-        result_ready.set()
-        # Block here — test will cancel, then release us. The Result
-        # is yielded AFTER the cancel arrives.
-        proceed.wait(timeout=5)
+        # Now yield the Result — sets result_obj inside the for-loop.
         yield _fake_result(slot_count=2)
+        # Block here. The worker's NEXT next() call (which would
+        # raise StopIteration if we just returned) suspends inside
+        # the generator. The for-loop body never re-runs the
+        # top-of-loop cancel check; once we return, the loop exits
+        # via StopIteration and the worker reaches the line-493
+        # check we're pinning.
+        in_block.set()
+        release_block.wait(timeout=5)
 
     def on_result(r: GenerationResult) -> dict:
         on_result_called.append(True)
@@ -481,21 +501,23 @@ def test_cancel_between_result_and_on_result_skips_on_result():
         slug="s1", kind="generate",
         stream_factory=stream, on_result=on_result,
     )
-    assert result_ready.wait(timeout=2)
-    # Cancel BEFORE releasing the stream — when the worker next
-    # iterates, it'll see the Result, then the pre-on_result cancel
-    # check fires.
+    # Wait until the worker is suspended INSIDE the third next() call
+    # (post-Result-yield, awaiting StopIteration).
+    assert in_block.wait(timeout=2)
+    # Cancel — sets cancelled=True + pops from _jobs.
     assert store.cancel(job_id) is True
-    proceed.set()
+    # Let the generator return so the for-loop exits cleanly.
+    release_block.set()
+
     # Job is immediately GC'd on cancel; on_result must NEVER fire.
     _wait_until(lambda: store.get(job_id) is None, timeout=2)
-    # Give the worker a moment to finish + (incorrectly, if buggy)
-    # call on_result. Tight but adequate — the worker's only remaining
-    # work is `next()` then the cancel check.
+    # Give the worker a moment to fall through past on_result. Tight
+    # but adequate — the worker's only remaining work post-StopIteration
+    # is the cancel check + a return.
     time.sleep(0.05)
     assert on_result_called == [], (
-        "on_result ran AFTER cancel — Decision F cancel-before-side-"
-        "effects contract broken"
+        "on_result ran AFTER cancel — line-493 defense-in-depth "
+        "check (Decision F cancel-before-side-effects) broken"
     )
 
 

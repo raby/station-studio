@@ -454,8 +454,13 @@ class JobStore:
                     with self._lock:
                         # Re-check under lock so a cancel() racing the
                         # update doesn't silently overwrite the
-                        # cancelled status.
-                        if job.status == JOB_STATUS_CANCELLED:
+                        # cancelled status. Defensive: the outer
+                        # `if job.cancelled` already catches the common
+                        # case; this only matters for a cancel that
+                        # fires INSIDE the lock-acquire window. Hard to
+                        # manufacture deterministically without
+                        # invasive monkey-patching.
+                        if job.status == JOB_STATUS_CANCELLED:  # pragma: no cover
                             return
                         job.phase = event.phase
                         job.current = event.current
@@ -513,8 +518,12 @@ class JobStore:
             )
             logger.debug("job %s traceback:\n%s", job.job_id, traceback.format_exc())
             with self._lock:
-                # Don't overwrite a cancellation that won the race.
-                if job.status == JOB_STATUS_CANCELLED:
+                # Don't overwrite a cancellation that won the race
+                # (cancel fired between the exception being raised
+                # and the lock-acquire here). Defense-in-depth; the
+                # exception path is already rare and the cancel-
+                # racing-it window is microscopic.
+                if job.status == JOB_STATUS_CANCELLED:  # pragma: no cover
                     return
                 job.status = JOB_STATUS_ERROR
                 job.error = {
@@ -526,9 +535,11 @@ class JobStore:
 
         # Success path.
         with self._lock:
-            if job.status == JOB_STATUS_CANCELLED:
-                # Cancelled after the result yielded but before we
-                # took the lock — honour the cancellation.
+            if job.status == JOB_STATUS_CANCELLED:  # pragma: no cover
+                # Cancelled between on_result returning and the lock-
+                # acquire here. The line-493 pre-on_result check already
+                # catches the common cancel-after-Result case; this is
+                # defense-in-depth for the lock-acquire-vs-cancel race.
                 return
             job.status = JOB_STATUS_DONE
             job.result = body
@@ -639,19 +650,25 @@ def get_job_store() -> JobStore:
     layer. If we later want multiple stores (e.g. per-tenant in a
     multi-tenant SaaS), revisit.
     """
+    # pragma branches: production accessor — tests override via
+    # `app.dependency_overrides[get_job_store]` (see tests/test_jobs_api.py)
+    # so the real `_SINGLETON` lazy-init path runs only in `uvicorn`,
+    # never under pytest.
     global _SINGLETON
-    if _SINGLETON is None:
+    if _SINGLETON is None:  # pragma: no cover
         _SINGLETON = JobStore()
-    return _SINGLETON
+    return _SINGLETON  # pragma: no cover
 
 
 _SINGLETON: JobStore | None = None
 
 
-def _reset_singleton_for_tests() -> None:
+def _reset_singleton_for_tests() -> None:  # pragma: no cover
     """Reset the module singleton. Tests call this between cases when
     they don't use `dependency_overrides` (e.g. unit tests that
-    `get_job_store()` directly). NOT public API.
+    `get_job_store()` directly). NOT public API — kept for symmetry
+    with the rest of the testing surface; the dep-override path is
+    what tests actually use today.
     """
     global _SINGLETON
     _SINGLETON = None

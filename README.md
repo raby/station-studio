@@ -66,6 +66,13 @@ Full install + first-station tutorial: see
 *(coming soon — for now, see `Makefile` + `DESIGN.md` §15
 status snapshot for the current capability surface).*
 
+> **Single-worker for now.** The async-generation job tracker
+> (§16.11) holds job state in-memory per uvicorn worker. If you
+> run `uvicorn --workers N` with N > 1, the frontend's polling
+> request can land on a worker that doesn't know about the job
+> and you'll get spurious 404s. `make dev` uses a single worker;
+> stick to that until DB-backed job state lands (§16.21+).
+
 ## Example stations included
 
 ### Rebirth Classics — `stations/rebirth-classics.json`

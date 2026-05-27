@@ -86,10 +86,17 @@ def jobs_api(tmp_path, monkeypatch):
     app.dependency_overrides.clear()
 
 
-def _seed_station_with_pool(Session: sessionmaker, *, slug: str = "ts"):
+def _seed_station_with_pool(
+    Session: sessionmaker, *, slug: str = "ts", persist_cursors: bool = False,
+):
     """Insert a Station + a SourcePlaylist + tracks so generate_stream
     can produce a playlist. Single-row flat_slots template — 3 slots,
-    sequential strategy, named cursor."""
+    sequential strategy, named cursor.
+
+    `persist_cursors=True` flips `cursor.persist` on so the endpoint
+    exercises the `load_cursor_positions` + `advance_cursors` branches
+    (jobs.py 222-225 + 291-301). Default off keeps existing tests
+    simple."""
     with Session() as db:
         # Tracks
         tracks = [
@@ -112,13 +119,16 @@ def _seed_station_with_pool(Session: sessionmaker, *, slug: str = "ts"):
         # Station with a minimal flat_slots template — uses the
         # `sequential` strategy + named cursor, the same shape c1's
         # tests use. Deterministic; rng=off.
+        cursor_block: dict = {"base_advance_per_week": 0, "cycle_weeks": 1}
+        if persist_cursors:
+            cursor_block["persist"] = True
         template = {
             "station": slug,
             "name": "Test",
             "cadence": "weekly",
             "rng": "off",
             "sources": [{"name": "A", "colour": "#abc", "role": "content"}],
-            "cursor": {"base_advance_per_week": 0, "cycle_weeks": 1},
+            "cursor": cursor_block,
             "layout": {
                 "unit": "slot",
                 "unit_labels": [],
@@ -470,3 +480,64 @@ def test_engine_exception_surfaces_as_status_error(jobs_api):
         assert final["error"]["kind"] == "RuntimeError"
         assert "simulated engine crash" in final["error"]["message"]
         assert final["result"] is None
+
+
+# ---------- coverage gap closures (slice review fixes) ------------------
+
+
+def test_generate_job_with_persist_cursors_advances_cursor_state(jobs_api):
+    """Slice review 🔴-1: closes the cursor.persist=True branches in
+    `start_generate_job` (jobs.py 222-225 + 291-301). With
+    persist=True the endpoint must:
+      * Load existing named cursor positions before generate_stream.
+      * After save_playlist commits, advance the cursor row via
+        engine.persistence.advance_cursors.
+
+    Assertion: a CursorState row exists post-job with `position`
+    advanced by 3 (the template has 3 slots, cursor advance == picks).
+    """
+    from engine.models import CursorState
+    client, Session, _store = jobs_api
+    _seed_station_with_pool(Session, slug="cp", persist_cursors=True)
+
+    r = client.post("/api/stations/cp/jobs/generate", json={"week": 1})
+    assert r.status_code == 201
+    job_id = r.json()["job_id"]
+    final = _wait_for_status(client, job_id, "done")
+    assert final["result"]["slot_count"] == 3
+
+    with Session() as db:
+        rows = db.query(CursorState).filter_by(name="C").all()
+        # advance_cursors upserted a row for cursor 'C' — its mere
+        # existence is the proof that the persist=True branch fired
+        # (load_cursor_positions only READS from cursor_state; only
+        # advance_cursors WRITES). The post-advance `position` value
+        # happens to be `(0 + cursor_advance_step_default=120) %
+        # pool_len=10 == 0` for this fixture — so we can't simply
+        # assert `position > 0`. The row's presence is unambiguous.
+        assert len(rows) == 1, (
+            f"persist=True path didn't upsert a CursorState row for 'C': "
+            f"got {[(c.name, c.position) for c in db.query(CursorState).all()]}"
+        )
+
+
+def test_job_result_dict_keys_match_generate_response_schema(jobs_api):
+    """Slice review 🟡-4 (downgraded to a structural pin): the dict
+    returned by on_result must carry the same keys the synchronous
+    `GenerateResponse` Pydantic model exposes — otherwise a future
+    field added to one endpoint silently diverges from the other.
+    Cheap structural test; no functional cost."""
+    from api.schemas import GenerateResponse
+    client, Session, _store = jobs_api
+    _seed_station_with_pool(Session)
+
+    job_id = client.post(
+        "/api/stations/ts/jobs/generate", json={"week": 1},
+    ).json()["job_id"]
+    final = _wait_for_status(client, job_id, "done")
+    expected = set(GenerateResponse.model_fields.keys())
+    got = set(final["result"].keys())
+    assert got == expected, (
+        f"job.result key drift from GenerateResponse: "
+        f"missing={expected - got}, extra={got - expected}"
+    )

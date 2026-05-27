@@ -71,11 +71,25 @@ class ProgressEvent:
 
     Fields:
 
-      * `phase` — what the engine is doing. v1: "start" before the
-        slot loop, "picks" during the loop, plus implicit "done"
-        signalled by the GenerationResult emission. Future phases
-        ("load-pools", "resolve-prev-ref") can be added without a
-        consumer change — frontends ignore unknown phases.
+      * `phase` — what the engine is doing. The CURRENT v1 vocabulary
+        (slice review 🟢-6 — pinned here so frontends + future
+        engine work don't drift):
+
+          - "queued" — runner-emitted initial state; the worker thread
+            has not yet pulled the first event from the engine.
+            JobStore sets this when the _Job is constructed.
+          - "start"  — engine's first yield, emitted BEFORE the slot
+            loop runs. current=0, total=total_slots. Frontends treat
+            as "indeterminate progress, show generic spinner".
+          - "picks"  — emitted from inside the slot loop at the
+            `_PROGRESS_EMIT_EVERY` cadence. current advances toward
+            total. Frontends render the determinate progress bar.
+
+        Implicit "done" is signalled by the GenerationResult yield
+        terminating the stream (no phase value needed). Future phases
+        ("load-pools", "resolve-prev-ref", or §16.2.6 preview's
+        "generate-slots") can be added — frontends ignore unknown
+        phases via the `ProgressIndicator`'s indeterminate fallback.
       * `current`, `total` — work-units within the phase.
         1-indexed for human messages; consumers compute progress
         as `current / total`.

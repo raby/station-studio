@@ -6256,6 +6256,9 @@ Inserted into the strategic sequence based on §16.0 audit:
 | §16.20 Mobile / narrow-viewport CSS pass | small-medium | First user tries on a phone, surfaces the overflow. |
 | §16.21 Test follow-ups (mutation + perf) | medium | When refactor confidence demands stronger regression coverage. |
 | §16.22 Trace viewer SSR migration | small | Flash-of-empty-shell becomes annoying or SEO matters. |
+| **§16.11.t1** Pre-materialise pools as dataclasses for the async path | small (~1 commit) | A future engine strategy lazily reads an ORM `Track` relationship → `DetachedInstanceError` only in `/jobs/generate`, not `/generate`. Documented at `start_generate_job`'s `load_pools` call. Promote when it bites. |
+| **§16.11.t2** Adaptive / long-poll polling for job state | small-medium | §16.2.6 live-preview's polling tax (~250ms median) becomes a felt UX issue. Two mitigations queued in §16.11 punts table: adaptive (250ms while running) or long-poll (`GET /api/jobs/{id}?wait=2000`). Both protocol-compatible — no breaking changes. |
+| **§16.11.t3** Server-restart toast UX refinement | tiny (~1 commit) | Today: generic "job vanished mid-poll" inline error. Design called for a toast pointer to the retry button. Adequate for v1; reconsider when a user reports the experience as confusing. |
 
 **Tail / wait-for-demand:**
 
