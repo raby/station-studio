@@ -289,3 +289,64 @@ def test_non_editor_metadata_exception_falls_back_to_trivial(editor_api, monkeyp
     assert body["sidecar_error"] is not None
     assert "OSError" in body["sidecar_error"]
     assert "simulated read failure" in body["sidecar_error"]
+
+
+def test_large_sidecar_response_is_gzip_compressed(editor_api):
+    """§16.2.2.t3 — gzip middleware compresses large JSON responses.
+    Closes the watch-list item: Rebirth Radio's synthesized-trivial
+    sidecar (2,196 atomic blocks) shipped ~100KB of JSON per
+    request. With `Accept-Encoding: gzip` on the wire (the default
+    for browsers + httpx), starlette's GZipMiddleware compresses
+    any response ≥1KB.
+
+    Construct a station with enough slots to cross the threshold +
+    assert the response carries `content-encoding: gzip`.
+    """
+    client, Session, _dir = editor_api
+    # 600 atomic flat_slots → synthesized-trivial sidecar with 600
+    # `{"kind":"atomic","slot_index":i}` entries. JSON size lands
+    # ~20-25KB raw; comfortably above the 1KB minimum_size + small
+    # enough to keep the test fast.
+    with Session() as db:
+        template = {
+            "station": "big",
+            "name": "Big",
+            "cadence": "weekly",
+            "rng": "off",
+            "sources": [{"name": "A", "colour": "#abc", "role": "content"}],
+            "cursor": {"base_advance_per_week": 0, "cycle_weeks": 1},
+            "layout": {
+                "unit": "slot",
+                "unit_labels": [],
+                "row_start_offsets": [],
+                "cursors_init": {"C": 0},
+                "flat_slots": [
+                    {"source": "A", "strategy": "sequential", "size": 1, "cursor_id": "C"}
+                ] * 600,
+            },
+        }
+        db.add(Station(slug="big", name="Big", template=template))
+        db.commit()
+
+    r = client.get("/api/stations/big/sidecar")
+    assert r.status_code == 200
+    # TestClient sets Accept-Encoding: gzip,deflate by default; the
+    # middleware activates above the 1000-byte threshold.
+    assert r.headers.get("content-encoding") == "gzip", (
+        f"expected gzip; got headers={dict(r.headers)}"
+    )
+    # Body still decodes correctly (httpx transparently un-gzips).
+    body = r.json()
+    assert len(body["sidecar"]["sections"][0]["blocks"]) == 600
+
+
+def test_small_sidecar_response_skips_gzip(editor_api):
+    """§16.2.2.t3 — minimum_size=1000 means tiny responses skip
+    the compression overhead. Belt + suspenders: confirms we're not
+    gzipping everything blindly, which would slow per-CRUD-call
+    endpoints + complicate debugging in dev tools."""
+    client, Session, _dir = editor_api
+    _seed_station(Session, slug="tiny")  # 1-block station — <1KB JSON
+    r = client.get("/api/stations/tiny/sidecar")
+    assert r.status_code == 200
+    assert r.headers.get("content-encoding") != "gzip"

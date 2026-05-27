@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 
 from api.routers import editor, stations, sources, generate, jobs, meta, rules
 from engine.database import make_engine, make_sessionmaker
@@ -106,6 +107,15 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# §16.2.2.t3 (post-c5 sweep) — gzip-compress responses ≥1KB. Driven
+# by the visualise endpoint's synthesized-trivial sidecar: Rebirth
+# Radio's 2,196-atomic-block JSON is ~100KB raw / ~10KB gzipped.
+# Compresses any JSON response above the threshold; small responses
+# (most CRUD endpoints, GET /api/jobs/{id}, etc.) skip the overhead.
+# Browsers + httpx both send `Accept-Encoding: gzip` by default;
+# starlette's middleware no-ops when the client doesn't.
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 app.include_router(stations.router)
 app.include_router(sources.router)
