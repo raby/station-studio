@@ -6116,9 +6116,11 @@ import) is the only remaining Phase B tail item, parked on
 ## 15. Status snapshot
 
 A quick "where are we" for a future reader. Last updated alongside
-**§16.2.1 (visual editor data layer shipped — parser + drift
-detector + both committed sidecars + auto-derive script)**. Phase
-B is DONE; Phase C / §16 product work underway. Both station-studio's
+**§16.11 (in-UI generation progress shipped — `generate_stream`
+generator + in-memory `JobStore` + `POST/GET/DELETE /api/jobs/...` +
+`<ProgressIndicator>` + Playwright e2e; mid-slice review caught
+the REJECT-against-grace bug in `a780570`)**. Phase B is DONE;
+Phase C / §16 product work underway. Both station-studio's
 byte-equality tests are GREEN at production-scale chain depth:
 weekly port (real XMLs, 30 generations, 8 asserted weeks spanning
 the mix-exclusion-window slide); Classics (32-week, two full cycles,
@@ -6157,7 +6159,7 @@ direction — spec slice §16.2.0 is the next planned work.
 | Trace versioning         | Deferred. See §16.4 (queued; not on the critical path post-Phase-B). |
 | Accessibility pass       | Deferred. §16.5 — single sweep after §16.2 ships.                |
 | Rules CRUD UI panel      | Queued — §16.10. Small-medium slice; compounds with §16.2 (sidebar component reused). |
-| In-UI generation progress | Queued — §16.11. Small. Generate button is shipped but the 30-week chain takes ~19s; progress signal would help. |
+| In-UI generation progress | **Shipped (§16.11).** Polling-job-id transport (POST/GET/DELETE `/api/jobs/...`); engine became a generator yielding `ProgressEvent | GenerationResult` with Decision G invariants enforced + tested; in-memory `JobStore` with threading.Lock + immutable snapshots + lazy GC (cancelled-immediate, done/error-60s-grace) + per-(slug, kind) eviction. `<ProgressIndicator>` Svelte component reads `JobSnapshot` snapshots; station-detail page wires `startGenerateJob` → `watchJob` → navigate; JobStartConflict (409) adopts the existing job. Unblocks §16.2.6 live preview's transport. |
 | Stations list polish     | Queued — §16.12. Small. Adjacent to §16.2 — once the editor makes adding stations easy, the list needs sort/filter. |
 | Install story            | Queued — §16.13. pip-installable or polished docker after §16.2 MVP. |
 | Hobbyist starter station | Queued — §16.14. 100-200-slot example structurally simpler than Classics, with synthetic starter XMLs for end-to-end boot without external data. |
@@ -6231,7 +6233,7 @@ Master order at a glance. Detailed briefs follow below.
 | 1 | §16.2.0 visual block editor SPEC (paper) | 1 commit | Settles editor architecture before code; flagship feature of §16.0 OSS direction. |
 | 2 | §16.10 Rules CRUD UI panel | 3-5 commits | Compounds with §16.2 (sidebar component reused); independent value (today rules need a DB shell). |
 | 3 | §16.2.1+ visual block editor implementation | multi-slice | Per the §16.2.0 spec; flagship hobbyist feature. |
-| 4 | §16.11 In-UI generation progress | small | 30-week chain takes ~19s; users need progress signal. Independent, slot in any time. |
+| 4 | ~~§16.11 In-UI generation progress~~ | ✅ shipped | **SHIPPED** (d10c560). Job-runner pattern: `generate_stream` engine generator + in-memory `JobStore` + `POST/GET/DELETE /api/jobs/...` polling + `<ProgressIndicator>` Svelte component. Unblocks §16.2.6 live preview's transport. |
 | 5 | §16.12 Stations list polish (search / filter / recent generations) | small | Adjacent to §16.2 — once the editor makes adding stations easy, the list needs scaling. |
 | 6 | §16.13 Install story (pip / docker) | medium | Hobbyist friction floor. Lands after §16.2 MVP makes "install + try" worth marketing. |
 | 7 | §16.14 Hobbyist starter station | small | Fresh install needs a runnable example without external XMLs. |
@@ -8879,6 +8881,130 @@ Polling clients hit `GET /api/jobs/{id}` → 404. Defined UX:
 2. **§16.11 design (this entry) + implementation** — current.
 3. §16.2.2 implementation (c1-c5) — picks up the job-pattern from §16.11.
 4. §16.12 stations list polish — after §16.2.2 sets the chip-rendering pattern.
+
+---
+
+#### What §16.11 shipped — verification + deltas
+
+Implementation landed across 6 commits (+ 3 mid-slice review fixes,
+matching the original plan's commit shape). All decision letters from
+the design above were honoured. Deltas, ratified review findings, and
+test totals captured here so a future reader doesn't have to diff
+commits to learn what's actually true today.
+
+**Commit shape:**
+
+| Commit | Hash | Summary |
+|---|---|---|
+| design | `9ae6338` + `34961fb` | §16.11 design (paper) + design review sweep |
+| c1 | `f8693ea` + `ddc9d6d` | Engine generator + wrapper + Decision G invariants + review fixes |
+| c2 | `9acfcbb` + `614d4ee` | `api/job_runner.py` JobStore + worker thread + review fixes |
+| c3 | `c2f6eff` | API endpoints (POST jobs/generate, GET/DELETE jobs/{id}) |
+| review | `a780570` | **Full-protocol mid-slice review fixes** (1 🔴 + 2 🟡 + 1 🟢) |
+| c4 | `90c3cc1` | Frontend api.ts helpers + `<ProgressIndicator>` component |
+| c5 | `d10c560` | Wire into station-detail page + Playwright |
+| c6 | _this commit_ | Design suffix + §15 snapshot bump |
+
+**Mid-slice review (after c3) caught one real bug.** The original
+`_find_for_slug_kind_under_lock` matched any (slug, kind) job
+regardless of status; under POLICY_REJECT that 409'd done jobs in
+their 60s grace window, breaking the natural "generate week 1 →
+generate week 2" workflow. Fixed in `a780570`: REJECT filters to
+`statuses=(RUNNING,)`; CANCEL_EXISTING evicts done/error-in-grace
+without status-flipping (per "latest wins"). Three regression tests
+pin both behaviours. This is exactly why the review sits at c3, not
+c2 — the protocol surface deserves the highest-leverage audit.
+
+**Surface as shipped (matches design — no contract drift):**
+
+```
+POST   /api/stations/{slug}/jobs/generate
+       → 201 {job_id, status: "running"}
+         + Location: /api/jobs/{job_id} header
+       → 409 {detail: {message, existing_job_id}}    (POLICY_REJECT)
+       → 404 / 400 / 500 / 422 (synchronous validation paths)
+GET    /api/jobs/{job_id}
+       → 200 JobStatusResponse (ISO-8601 UTC timestamps)
+       → 404
+DELETE /api/jobs/{job_id}
+       → 204 (idempotent)
+       → 404
+```
+
+Job kinds: `KIND_GENERATE = "generate"`, `KIND_PREVIEW = "preview"`
+(reserved for §16.2.6).
+
+**Verification — tests across the slice:**
+
+| Layer | Tests | Notes |
+|---|---|---|
+| Engine (`test_generate_stream.py`) | 14 | Decision G invariants pinned: exactly-one-Result-last, mid-stream exception propagation, multi-Result / no-Result wrapper asserts, post-Result event guard (review 🟡-2). |
+| Job runner (`test_job_runner.py`) | 25 | Concurrency policies (REJECT vs CANCEL_EXISTING), cancellation semantics (mid-stream + between-Result-and-on_result), GC (cancelled-immediate, done-grace), `_find_for_slug_kind_under_lock` status filter (review 🔴-1), snapshot isolation (review 🟢-3). |
+| API (`test_jobs_api.py`) | 13 | End-to-end through real engine + tmp SQLite. 201/404/400/409/204 status codes; ISO timestamps; cancel-before-on_result leaves NO Playlist row (review fix pinned end-to-end). |
+| Frontend unit (`api.test.ts` + `ProgressIndicator.test.ts`) | 28 new | startGenerateJob / pollJob / cancelJob / watchJob URL + error + iteration semantics; component render states (indeterminate, determinate, error, cancel-event dispatch, a11y). |
+| Frontend integration (`detail.test.ts`) | 4 new | Indicator mount, status=error render, JobStartConflict adoption, Cancel button → cancelJob. |
+| Playwright (`generate-progress.spec.ts`) | 2 | Indicator visible during running (route stub for fast engine), DELETE fires on Cancel click. Existing 6 generate specs still pass through the new async flow. |
+
+Totals: **Python 741 passed**, **Vitest 194 passed**, **Playwright
+29 passed**, **svelte-check 0 errors**.
+
+**Deltas from the original design.** Three honest-accounting items:
+
+1. **`JobErrorBody.kind` semantics tightened.** Design said "Python
+   exception class name"; implementation uses literal `type(e).__name__`
+   in the runner, with two transformed cases in the API layer: a
+   SQLAlchemy `IntegrityError` on the unique (station_id, week)
+   constraint is rewritten to `ValueError("a playlist for this
+   station and week was concurrently generated; retry")` so a
+   frontend doesn't have to special-case SQL error names. Station-
+   deleted-mid-job → `ValueError` same way.
+2. **Error response shape NOT unified.** Mid-slice review 🟡-5
+   documented the inconsistency: 404/400 use FastAPI's default
+   `{"detail": str}`, 409 uses `{"detail": {message, existing_job_id}}`,
+   422 uses the Pydantic list-of-errors shape. c4's helpers branch on
+   status code accordingly. Unifying into a single `ErrorBody` schema
+   touches every existing endpoint — punted explicitly.
+3. **Pools are passed to the worker as detached ORM `Track` instances.**
+   The engine reads only scalar columns today, so this works. A
+   future strategy that lazily loads ORM relationships would
+   `DetachedInstanceError` only in the async path. Documented at
+   `start_generate_job`'s `load_pools` call + queued as a tail item
+   to pre-materialise into dataclasses if/when it bites.
+
+**Decision G — "no events after Result" — IS enforced.** Originally
+the wrapper docstring claimed it; c1's review caught the gap and
+added the explicit `assert final is None` guard + a regression test
+(`test_wrapper_asserts_on_event_after_result_engine_bug`). Same gap
+exists in the runner (it would already throw via the multi-Result
+asserts, but the c2 review added a pre-on_result cancel check that
+makes the post-Result side-effect window vanishingly small).
+
+**c2 review fix saved a real bug.** Cancel issued AFTER the Result
+yield but BEFORE on_result ran was a real window where save_playlist
+fired despite cancellation — would have created stale Playlist rows
+the user explicitly cancelled. The fix is a single atomic
+`if job.cancelled: return` before on_result; pinned by both a unit
+test and an end-to-end test that asserts the DB has zero Playlist
+rows after the cancel-mid-job sequence.
+
+**Unblocks (matches design):**
+
+* §16.2.6 (live preview) — `KIND_PREVIEW` reserved; the runner
+  accepts any kind so `POST /api/stations/{slug}/jobs/preview` can
+  add itself with `concurrent_policy=POLICY_CANCEL_EXISTING` for the
+  debounce-restart UX.
+* §16.21 bulk-generate / future async-bound work — same pattern.
+
+**Watch list (post-validation triggers, not work-now items):**
+
+* Polling tax in §16.2.6's live preview — re-measure after real
+  use; mitigations (adaptive-poll / long-poll) are in the punts.
+* Detached-pool fragility — if a future strategy lazily reads a
+  Track relationship, the failure mode is async-path-only. Promote
+  to a real follow-up at that point.
+* Server-restart UX is currently a generic "job vanished mid-poll"
+  message; design called for a toast pointer to retry. Adequate for
+  v1; reconsider if users hit it.
 
 ---
 
