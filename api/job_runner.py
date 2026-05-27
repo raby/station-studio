@@ -34,10 +34,15 @@ GC policy (Decision F's GC bullets + review 🟡 2/3):
   ~60 cancelled jobs/min — without immediate-GC they accumulate.
 * Done / error jobs keep a 60s grace so the frontend can fetch final
   state after detecting completion (without a race against GC).
-* Per-(slug, kind) "latest wins": calling `start(slug, kind)` when
-  an existing job for the same (slug, kind) is running OR in its
-  grace window cancels + GCs the older one. Prevents long-running
-  tabs accumulating completed-but-not-yet-GC'd state.
+* Per-(slug, kind) eviction (review 🔴-1 + 🟡-2):
+  - POLICY_REJECT: only a RUNNING job conflicts. Done/error jobs in
+    their grace window do NOT block a new start — the natural
+    workflow (generate, then immediately generate again) must not
+    409 for 60s while the previous result lingers.
+  - POLICY_CANCEL_EXISTING ("latest wins"): a RUNNING job is
+    cancelled + immediate-GC'd; a terminal-in-grace job is silently
+    evicted (popped without flipping its status — it really did
+    finish, it's just being made room for).
 
 Engine + DB agnosticism (review 🟡 8):
 
@@ -75,6 +80,11 @@ JOB_STATUS_DONE = "done"
 JOB_STATUS_ERROR = "error"
 JOB_STATUS_CANCELLED = "cancelled"
 _TERMINAL_STATUSES = {JOB_STATUS_DONE, JOB_STATUS_ERROR, JOB_STATUS_CANCELLED}
+# All status values — used as the find-helper's "match anything"
+# filter under POLICY_CANCEL_EXISTING's "latest wins" rule.
+_ALL_STATUSES = (
+    JOB_STATUS_RUNNING, JOB_STATUS_DONE, JOB_STATUS_ERROR, JOB_STATUS_CANCELLED,
+)
 
 
 # Concurrency policy values (Decision F).
@@ -91,10 +101,18 @@ _VALID_POLICIES = {POLICY_REJECT, POLICY_CANCEL_EXISTING}
 _DEFAULT_GRACE_SECONDS = 60.0
 
 
+# §16.11 c3 — job kinds. Module-level constants so the API endpoints
+# (and §16.2.6 preview, future) share a single source of truth.
+KIND_GENERATE = "generate"
+KIND_PREVIEW = "preview"
+
+
 class JobStartConflict(Exception):
     """Raised by `JobStore.start(..., concurrent_policy=POLICY_REJECT)`
-    when an existing running-or-grace job for the same (slug, kind)
-    already exists.
+    when a job for the same (slug, kind) is currently RUNNING (mid-
+    slice review 🔴-1: NOT triggered by done/error jobs in their
+    grace window — those don't conflict, they're just lingering for
+    the frontend's final-status poll).
 
     The API layer catches this and returns 409 Conflict with the
     `existing_job_id` so the frontend can poll the in-flight job
@@ -102,7 +120,7 @@ class JobStartConflict(Exception):
     """
     def __init__(self, existing_job_id: str):
         super().__init__(
-            f"a job for this (slug, kind) is already running: "
+            f"a job for this (slug, kind) is currently running: "
             f"{existing_job_id}"
         )
         self.existing_job_id = existing_job_id
@@ -121,6 +139,12 @@ class _Job:
     slug: str
     kind: str
     status: str = JOB_STATUS_RUNNING
+    # §16.11 review 🟢-6: initial phase BEFORE the worker pulls its
+    # first event from the engine. The engine's first yield is
+    # `phase="start"` (then "picks"); any GET that arrives between
+    # `start()` returning and the worker pulling the first event sees
+    # "queued". Frontends should treat phase ∈ {"queued", "start"} as
+    # "indeterminate progress, show generic spinner".
     phase: str = "queued"
     current: int = 0
     total: int = 0
@@ -265,11 +289,17 @@ class JobStore:
             from here transitions the job to status="error".
             If None, Job.result is set to an empty dict.
         concurrent_policy : str
-            "reject" (default): raise JobStartConflict if an existing
-            running/grace job for (slug, kind) is found.
-            "cancel_existing": cancel + GC the existing job, then
-            start the new one. Used by preview (§16.2.6) for debounce-
-            restart UX.
+            "reject" (default): raise JobStartConflict ONLY if a job
+            for (slug, kind) is currently RUNNING (review 🔴-1 — done/
+            error jobs in their grace window don't conflict; the
+            user clicking Generate right after a successful generate
+            should start a new job, not get 409'd for 60 seconds).
+            "cancel_existing": "latest wins". A running job for the
+            same (slug, kind) is cancelled + immediate-GC'd; a done/
+            error job in grace is silently evicted (popped from the
+            store without flipping its status — it isn't cancelled,
+            it's just being made room for). Used by preview (§16.2.6)
+            for the debounce-restart UX.
 
         Returns
         -------
@@ -279,8 +309,8 @@ class JobStore:
         Raises
         ------
         JobStartConflict
-            When `concurrent_policy=POLICY_REJECT` and a job for the
-            same (slug, kind) already exists in running or grace state.
+            When `concurrent_policy=POLICY_REJECT` and a RUNNING job
+            for the same (slug, kind) exists.
         ValueError
             On invalid `concurrent_policy`.
         """
@@ -295,14 +325,32 @@ class JobStore:
             # existence check below doesn't fire on stale entries.
             self._gc_under_lock()
 
-            existing = self._find_for_slug_kind_under_lock(slug, kind)
-            if existing is not None:
-                if concurrent_policy == POLICY_REJECT:
-                    raise JobStartConflict(existing.job_id)
-                # POLICY_CANCEL_EXISTING — cancel + GC the older job
-                # (immediate-GC of cancelled jobs handled by
-                # _cancel_under_lock).
-                self._cancel_under_lock(existing)
+            if concurrent_policy == POLICY_REJECT:
+                # Review 🔴-1: REJECT only conflicts with RUNNING jobs.
+                # Done/error jobs in their grace window are lingering
+                # for the frontend's final-status poll, not occupying
+                # the "slot" — a new generate may start.
+                running = self._find_for_slug_kind_under_lock(
+                    slug, kind, statuses=(JOB_STATUS_RUNNING,),
+                )
+                if running is not None:
+                    raise JobStartConflict(running.job_id)
+            else:
+                # POLICY_CANCEL_EXISTING — "latest wins" (§16.2.6).
+                # Find ANY existing job for (slug, kind). If running,
+                # cancel + immediate-GC. If terminal-in-grace, just
+                # pop (review 🟡-2: don't retroactively flip a done
+                # job's status to "cancelled" — it really did finish).
+                existing = self._find_for_slug_kind_under_lock(
+                    slug, kind, statuses=_ALL_STATUSES,
+                )
+                if existing is not None:
+                    if existing.status == JOB_STATUS_RUNNING:
+                        self._cancel_under_lock(existing)
+                    else:
+                        # Silent eviction — the older terminal job
+                        # is making room for the new one.
+                        self._jobs.pop(existing.job_id, None)
 
             job_id = uuid.uuid4().hex
             job = _Job(job_id=job_id, slug=slug, kind=kind)
@@ -492,21 +540,25 @@ class JobStore:
     # ------------------------------------------------------------------
 
     def _find_for_slug_kind_under_lock(
-        self, slug: str, kind: str,
+        self, slug: str, kind: str, *,
+        statuses: tuple[str, ...],
     ) -> _Job | None:
-        """Return the existing (running or in-grace) job for the
-        (slug, kind) tuple, if any. Used by start() for the per-key
-        latest-wins eviction.
+        """Return the existing job for the (slug, kind) tuple whose
+        status is in `statuses`, if any. Used by start():
+
+        * POLICY_REJECT passes `statuses=(JOB_STATUS_RUNNING,)` — only
+          a currently-running job conflicts with a new start (review
+          🔴-1: done/error jobs in grace don't conflict).
+        * POLICY_CANCEL_EXISTING passes `_ALL_STATUSES` — any existing
+          entry (running OR terminal-in-grace) needs to be evicted to
+          make room for the new "latest" job.
 
         Iterates the dict — O(N) but N is the number of in-flight or
         recently-completed jobs, expected ≪ 100 for typical OSS use.
         If this becomes a hotspot, add a (slug, kind) → job_id index.
         """
         for j in self._jobs.values():
-            if j.slug == slug and j.kind == kind:
-                # Running OR within grace counts as "existing".
-                # Cancelled jobs are GC'd immediately so they don't
-                # appear here.
+            if j.slug == slug and j.kind == kind and j.status in statuses:
                 return j
         return None
 

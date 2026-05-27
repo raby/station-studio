@@ -63,6 +63,7 @@ from api.job_runner import (
     JobSnapshot,
     JobStartConflict,
     JobStore,
+    KIND_GENERATE,
     POLICY_REJECT,
     get_job_store,
 )
@@ -79,8 +80,22 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["jobs"])
 
 
-# Job kind for the generate flow. Preview (§16.2.6) will add "preview".
-_KIND_GENERATE = "generate"
+# §16.11 mid-slice review 🟡-5: error response shapes ARE NOT uniform
+# across this router. Pinning the shapes here so frontend (c4) can
+# match against documented contracts rather than guessing:
+#
+#   404 (station / job not found):
+#       {"detail": "<human message>"}              # FastAPI default
+#   400 (load_pools failed):
+#       {"detail": "<human message>"}              # FastAPI default
+#   422 (pydantic validation, e.g. week < 1):
+#       {"detail": [{"loc": ..., "msg": ..., ...}]}  # FastAPI default
+#   409 (POLICY_REJECT conflict):
+#       {"detail": {"message": str, "existing_job_id": str}}
+#
+# c4's API helpers should branch on `response.status` and read the
+# appropriate shape. Standardising into a single ErrorBody schema is a
+# defer-later item (would touch every existing endpoint).
 
 
 def _iso_utc(ts: float | None) -> str | None:
@@ -165,6 +180,18 @@ def start_generate_job(
         pools = load_pools(db, template)
     except ValueError as e:
         raise HTTPException(400, str(e))
+    # ⚠ Detached-pool caveat (mid-slice review 🟡-4):
+    # `pools` is `dict[str, list[Track]]` where Track is a SQLAlchemy
+    # ORM instance bound to `db`. When the request returns, FastAPI's
+    # generator-dep teardown closes `db`, leaving those Tracks DETACHED.
+    # The worker thread then iterates `pools` inside generate_stream.
+    # Today this works because the engine reads only scalar columns
+    # (id/name/artist/album) which were eager-loaded via joinedload in
+    # `engine.persistence.load_pools`. A future strategy that traverses
+    # an ORM relationship (e.g. lazy-loading track.genre_tags) would
+    # DetachedInstanceError. If/when that lands, pre-materialise pools
+    # here into plain dataclasses before capturing into the closure.
+    # The c3 byte-equality tests pin today's scalar-only behaviour.
 
     # §14.29: per-station rule defaults. Resolved BEFORE the mix
     # exclusion set so a station that omits BlockSpec.exclusion_window
@@ -285,7 +312,7 @@ def start_generate_job(
     try:
         job_id = job_store.start(
             slug=slug,
-            kind=_KIND_GENERATE,
+            kind=KIND_GENERATE,
             stream_factory=stream_factory,
             on_result=on_result,
             concurrent_policy=POLICY_REJECT,

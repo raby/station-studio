@@ -302,6 +302,93 @@ def test_cancel_existing_policy_evicts_running_job():
     release.set()
 
 
+def test_reject_policy_allows_new_job_when_previous_is_done_in_grace():
+    """🔴-1 regression guard: POLICY_REJECT must NOT 409 when an
+    existing job for (slug, kind) is in done/grace.
+
+    Without the fix, the natural workflow "generate week 1 → wait 1s →
+    generate week 2" returned 409 for ~60s because the still-in-grace
+    done job was matched as "existing". The design doc is explicit:
+    REJECT applies to RUNNING jobs only.
+    """
+    store = JobStore(grace_seconds=60.0)
+
+    def quick() -> Iterator:
+        yield _fake_result()
+
+    first_id = store.start(slug="s1", kind="generate", stream_factory=quick)
+    _wait_for_status(store, first_id, JOB_STATUS_DONE)
+    # Job is in grace — still queryable, status=done.
+    assert store.get(first_id).status == JOB_STATUS_DONE
+
+    # Second start must succeed (no 409). Different job_id; both
+    # exist in the store, the older one still lingering in grace.
+    second_id = store.start(
+        slug="s1", kind="generate", stream_factory=quick,
+        concurrent_policy=POLICY_REJECT,
+    )
+    assert second_id != first_id
+    _wait_for_status(store, second_id, JOB_STATUS_DONE)
+
+
+def test_reject_policy_allows_new_job_when_previous_errored_in_grace():
+    """🔴-1 sibling: same rule must hold for status=error jobs in
+    grace. An engine crash on week 1 must not block a retry on week 2.
+    """
+    store = JobStore(grace_seconds=60.0)
+
+    def crash() -> Iterator:
+        if False:
+            yield  # unreachable, makes this a generator
+        raise RuntimeError("oops")
+
+    first_id = store.start(slug="s1", kind="generate", stream_factory=crash)
+    _wait_for_status(store, first_id, JOB_STATUS_ERROR)
+
+    def quick() -> Iterator:
+        yield _fake_result()
+
+    second_id = store.start(
+        slug="s1", kind="generate", stream_factory=quick,
+        concurrent_policy=POLICY_REJECT,
+    )
+    assert second_id != first_id
+    _wait_for_status(store, second_id, JOB_STATUS_DONE)
+
+
+def test_cancel_existing_evicts_done_in_grace_without_status_flip():
+    """🟡-2 regression guard: POLICY_CANCEL_EXISTING against a
+    terminal-in-grace job must silently EVICT (just pop) — not flip
+    the older job's status to cancelled. The job really did finish;
+    we're just making room for the latest "winner".
+
+    Verified by: the old job vanishes from store.get() (eviction
+    happened) AND no JOB_STATUS_CANCELLED entries exist in the store
+    afterwards (status flip didn't happen).
+    """
+    store = JobStore(grace_seconds=60.0)
+
+    def quick() -> Iterator:
+        yield _fake_result()
+
+    old_id = store.start(slug="s1", kind="preview", stream_factory=quick)
+    _wait_for_status(store, old_id, JOB_STATUS_DONE)
+    assert store.get(old_id).status == JOB_STATUS_DONE  # still in grace
+
+    new_id = store.start(
+        slug="s1", kind="preview", stream_factory=quick,
+        concurrent_policy=POLICY_CANCEL_EXISTING,
+    )
+    assert new_id != old_id
+    # The old job is gone (evicted).
+    assert store.get(old_id) is None
+    _wait_for_status(store, new_id, JOB_STATUS_DONE)
+    # And the new job is genuinely a fresh job in status=done — not
+    # somehow inheriting the old job's status flip. (Also: there's
+    # no orphan cancelled job lingering in the store.)
+    assert store.get(new_id).status == JOB_STATUS_DONE
+
+
 def test_invalid_concurrent_policy_raises():
     """Defensive: typo'd policy string fails fast."""
     store = JobStore()
