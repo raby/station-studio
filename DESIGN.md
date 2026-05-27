@@ -6116,10 +6116,11 @@ import) is the only remaining Phase B tail item, parked on
 ## 15. Status snapshot
 
 A quick "where are we" for a future reader. Last updated alongside
-**§16.11 (in-UI generation progress shipped — `generate_stream`
-generator + in-memory `JobStore` + `POST/GET/DELETE /api/jobs/...` +
-`<ProgressIndicator>` + Playwright e2e; mid-slice review caught
-the REJECT-against-grace bug in `a780570`)**. Phase B is DONE;
+**§16.2.2 (read-only visual block canvas shipped — `GET /api/stations/{slug}/sidecar`
+endpoint with synthesize-trivial fallback + frontend types + 5 canvas
+components + ViewModeToggle + DetailPanel + chip keyboard a11y +
+Playwright e2e; mid-slice review caught the SidecarMacro shape drift
++ c3 review caught the ChipFlow repeat_with_offsets bug)**. Phase B is DONE;
 Phase C / §16 product work underway. Both station-studio's
 byte-equality tests are GREEN at production-scale chain depth:
 weekly port (real XMLs, 30 generations, 8 asserted weeks spanning
@@ -6155,7 +6156,7 @@ direction — spec slice §16.2.0 is the next planned work.
 | Backup / restore         | Shipped (§14.18). `make backup` / `make restore date=...` with WAL-aware sqlite3 .backup + pre-restore safety copy. |
 | **§17 port roadmap**     | **Phase A + Phase B both complete. Phase A (§14.17–§14.21): pre-port unblocks. Phase B (§14.22–§14.41): port — byte-equality verified at depth against weekly + Classics. Phase C (production cutover): operational, not engineering — external validation in flight with the station owner. Next engineering direction: §16.0 OSS framing shift (shipped) + §16.2 visual block editor (the flagship hobbyist feature). |
 | **Product framing**      | **OSS for radio hobbyists (§16.0). MIT-licensed. README hobbyist-facing; CONTRIBUTING.md codifies slice pattern. Two example stations (Classics + Rebirth Radio) ship; hobbyist starter station queued (§16.7).** |
-| Visual block editor      | **Next focus — §16.2.** Design slice §16.2.0 queued (paper-only spec). Flagship feature for the OSS direction. JSON source-of-truth (editor writes JSON; DB re-seeds from disk). |
+| Visual block editor      | **§16.2.2 SHIPPED** — read-only canvas at `/stations/[slug]/visualise`. `GET /api/stations/{slug}/sidecar` endpoint serves template + sidecar in one fetch; trivial-sidecar fallback for un-authored stations (Decision E — frontend never handles "no sidecar"). 7 Svelte components (`<EditorCanvas>`, `<Section>`, `<SectionHeader>`, `<ChipFlow>`, `<Chip>`, `<ViewModeToggle>`, `<DetailPanel>`) compose the canvas. View-mode prefs (labels / colour / macros) persist to localStorage. Chips are native `<button>`s (keyboard a11y); click opens a slide-in DetailPanel with full BlockSpec / macro spec. `<500-chip` sections start expanded; `>500` sections start collapsed with "Large station" hint. Discoverability via "🗺 Visualise template" link from `/stations/[slug]`. **Next**: §16.2.3 atomic edit (grow the DetailPanel with edit forms). |
 | Trace versioning         | Deferred. See §16.4 (queued; not on the critical path post-Phase-B). |
 | Accessibility pass       | Deferred. §16.5 — single sweep after §16.2 ships.                |
 | Rules CRUD UI panel      | Queued — §16.10. Small-medium slice; compounds with §16.2 (sidebar component reused). |
@@ -6265,7 +6266,7 @@ Inserted into the strategic sequence based on §16.0 audit:
 | **§16.2.2.t4** `_REPO_ROOT` calculation brittleness in `api/deps.py` | tiny (~1 commit) | `Path(__file__).resolve().parent.parent` (c1 review 🟢-3) breaks silently if `api/deps.py` moves a level deeper. Standard Python pattern; no proactive fix. Add an import-time assertion (`assert _STATIONS_DIR.parent.name == "station-studio"`) if the symptom ever bites. |
 | **§16.11.t4** Sub-second precision in job-state timestamps | tiny (~1 commit) | `_iso_utc` truncates to whole seconds for the `started_at` / `finished_at` response fields (§16.11 c3 mid-slice review 🟢-7). Fine for human-readable display; a future benchmark / audit looking at job-duration would need millisecond precision. The raw `time.time()` float still lives on `JobSnapshot` — a `started_at_unix: float` response field could be added later without breaking the existing ISO field. |
 | **§16.2.2.t5** `chipCount` prop drilling to deduplicate `expandSection` calls | tiny (~1 commit) | `<EditorCanvas>` computes `totalChips` by reducing every section's expansion, AND each `<Section>` recomputes its own count for the header (§16.2.2 c3 review 🟢-4). For Rebirth Radio's synthesized trivial (2,196 atomic blocks in one section) that's a 2,196-element array build run twice per render cycle. Svelte's `$:` caching reduces the impact (only re-runs when inputs change), so acceptable today; promote when a render-cost flamegraph shows it. The fix is passing pre-computed counts from canvas → section as a prop. |
-| **§16.2.2.t6** Chip keyboard accessibility (focus + Enter/Space) | already in c4 scope | Atomic chips in c3 are `<span>` with `cursor: default` + `title=` tooltip — screen-reader users can't focus or activate them (§16.2.2 c3 review 🟢-5). c4's click-detail panel makes chips clickable; the right time to add `<button>` semantics + focus styles + key handlers. Tracked here so c4 doesn't forget. |
+| ~~**§16.2.2.t6** Chip keyboard accessibility~~ | **CLOSED in c4** | Chips are now `<button>`s — native focus + Enter/Space activation. Click + key both dispatch the `select` event. Pinned by `Chip.test.ts > chip is a native <button>` + the click→select event test. |
 
 **Tail / wait-for-demand:**
 
@@ -7494,6 +7495,92 @@ slice; c5 closes out.
 In other words: §16.2.2's component decomposition is the
 SCAFFOLDING for the entire §16.2 editor. Get this right and the
 next 6 slices have a stable foundation.
+
+#### What §16.2.2 shipped — verification + deltas
+
+Slice landed in 5 commits + 4 review-fix commits across c1–c5
+(matches the design plan). The reference design entry above is
+unchanged; this section captures what actually shipped + the
+deltas from the plan.
+
+**Commits (chronological):**
+
+| Commit | Subject |
+|---|---|
+| c1 | editor sidecar endpoint — GET /api/stations/{slug}/sidecar |
+| c1 review fixes | broad-catch (any non-`EditorMetadataError` falls back to trivial; preserves Decision E "frontend always gets a sidecar" contract) + pair test. |
+| c2 | frontend types + editor.ts helpers + visualise scaffold |
+| mid-slice review fixes | 1 🔴 (SidecarMacro shape — `blocks` → `spec: EngineBlock`) + 4 🟡 (optional name/macros + fallback_genre + schema-parity test). 🟢-6/7 queued as §16.2.2.t1/.t2 in cross-cutting table. |
+| c3 | read-only canvas + chip components (5 new Svelte components) |
+| c3 review fixes | 1 🔴 (ChipFlow's macro-collapse switched from `lastMacroId` tracking to `pick_in_macro === 1` — handles `repeat_with_offsets` correctly) + 2 🟡 (regression test + `collapseThreshold` prop) + 2 🟢 queued as §16.2.2.t5/.t6. |
+| c4 | ViewModeToggle + DetailPanel + chip a11y + Visualise link |
+| c5 | this entry + Playwright e2e + final tests |
+
+**Deltas from the plan**
+
+* **§16.2.2.t1–t6** queued in the cross-cutting watch-list during
+  the slice (covers route runtime validation, route load test,
+  large-station payload size, REPO_ROOT brittleness, chipCount
+  prop drilling, chip a11y promote — the last of which actually
+  shipped in c4).
+* **Section collapse polish** wasn't a separate c4 deliverable —
+  c3's caret + aria already covered it. c4 focused on
+  ViewModeToggle + DetailPanel + chip a11y instead.
+* **Mid-slice review caught a 🔴 in c2** before c3 components
+  read the wrong shape. The schema-parity Python test added
+  there (tests/test_editor_ts_schema_parity.py) is permanent
+  drift insurance for §16.2.3+ slices.
+* **c3 review caught a 🔴 in ChipFlow's collapse logic** —
+  the `repeat_with_offsets` case rendered 1 chip instead of N.
+  Important for Classics's 7-row weekly cycle (where any
+  authored macros would have silently elided rows). Regression
+  test pinned.
+
+**Verification**
+
+* `pytest` (Python): 757 pass, 1 skipped.
+  Files: tests/test_editor_api.py (7), tests/test_editor_ts_schema_parity.py (7).
+* `npm run test:unit` (vitest): 279 pass across 17 files.
+  Files: web/src/lib/editor.test.ts (40 cases — types, expand,
+  labels, view-mode helpers); web/src/lib/components/editor/
+  Chip.test.ts (13), ChipFlow.test.ts (5), Section.test.ts (6),
+  EditorCanvas.test.ts (6), ViewModeToggle.test.ts (4),
+  DetailPanel.test.ts (7); api.test (+4 getStationSidecar).
+* `npm run check` (svelte-check): 0 errors / 0 warnings.
+* `npx playwright test visualise.spec.ts`: 7 e2e tests pass —
+  discovery link from /stations/[slug], synthesized-trivial
+  rendering, chip-click DetailPanel, Esc close, view-mode
+  reload persistence, section collapse toggle, back link.
+
+**Files added/changed**
+
+Backend:
+* `api/routers/editor.py` — NEW, 30 LoC, 100% covered.
+* `api/deps.py` — get_stations_dir() added.
+* `api/schemas.py` — EditorSidecarResponse added.
+* `api/main.py` — register the new router.
+
+Frontend:
+* `web/src/lib/editor.ts` — types + helpers (375 LoC including
+  view-mode store).
+* `web/src/lib/components/editor/` — 7 files: EditorCanvas,
+  Section, SectionHeader, ChipFlow, Chip, ViewModeToggle,
+  DetailPanel.
+* `web/src/lib/api.ts` — getStationSidecar + EditorSidecarResponse.
+* `web/src/routes/stations/[slug]/visualise/+page.svelte` — NEW.
+* `web/src/routes/stations/[slug]/+page.svelte` — Visualise link
+  (data-testid="visualise-station") next to Edit / Delete.
+
+**Watch-list items promoted during the slice**
+
+| Item | Promoted in | Status |
+|---|---|---|
+| §16.2.2.t1 | mid-slice review 🟢-6 | open |
+| §16.2.2.t2 | mid-slice review 🟢-7 | open |
+| §16.2.2.t3 | c1 review 🟢-6 (recovery) | open |
+| §16.2.2.t4 | c1 review 🟢-3 (recovery) | open |
+| §16.2.2.t5 | c3 review 🟢-4 | open |
+| §16.2.2.t6 | c3 review 🟢-5 | **closed in c4** (chip a11y) |
 
 ### 16.3 Delete / station reset
 
