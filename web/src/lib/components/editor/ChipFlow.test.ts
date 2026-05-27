@@ -102,6 +102,44 @@ describe('<ChipFlow>', () => {
     expect(screen.getAllByTestId('chip-count')).toHaveLength(2);
   });
 
+  it('renders one chip PER offset-instance when a macro is inside repeat_with_offsets (c3 review 🔴-1)', () => {
+    // c3 review 🔴-1 regression guard: ChipFlow's earlier
+    // macro-collapse used lastMacroId tracking, which incorrectly
+    // folded ALL placeholders across offsets into a single chip —
+    // hiding offset-instance distinctions.
+    //
+    // Fixture: section with 2 offsets + 1 macro block (repeat=3).
+    // expandSection emits 6 placeholders: [pick=1,2,3, 1,2,3].
+    // Correct: render the 2 first-of-each-span placeholders =
+    //   2 chips (each shows ×3 from macro.repeat).
+    // Buggy old behaviour: render 1 chip (×3) — eliding one
+    //   offset-instance entirely.
+    const template = makeFlatTemplate();
+    const sidecar: Sidecar = {
+      schema_version: 1, sections: [],
+      macros: [
+        {
+          id: 'm', name: 'm', repeat: 3,
+          spec: { source: 'A', strategy: 'pick', size: 1 },
+        },
+      ],
+      layout_order: [],
+    };
+    const section: SidecarSection = {
+      id: 's', name: 'S',
+      blocks: [{ kind: 'macro', ref: 'm' }],
+      repeat_with_offsets: [0, 100],
+    };
+    render(ChipFlow, { section, template, sidecar });
+    // 2 chips (one per offset's first-of-span macro placeholder),
+    // each carrying its own ×3 count badge.
+    expect(screen.getAllByTestId('chip')).toHaveLength(2);
+    expect(screen.getAllByTestId('chip-count')).toHaveLength(2);
+    for (const badge of screen.getAllByTestId('chip-count')) {
+      expect(badge).toHaveTextContent('×3');
+    }
+  });
+
   it('renders the empty flow without crashing on an empty section', () => {
     const template = makeFlatTemplate();
     const sidecar: Sidecar = {

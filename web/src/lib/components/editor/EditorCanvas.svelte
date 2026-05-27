@@ -34,6 +34,17 @@
   export let template: StationTemplate;
   export let sidecar: Sidecar;
 
+  /**
+   * Total chips threshold. ≤ threshold → all sections start
+   * expanded; > threshold → all start collapsed + show the
+   * "Large station" hint. Default 500 per DESIGN.md §16.2.2
+   * first-impression contract: Classics (~14 atomic via
+   * synthesized trivial) sits well below; Rebirth Radio (2,196)
+   * sits well above. Overridable from the route (or a test) for
+   * stations that land in the awkward middle.
+   */
+  export let collapseThreshold: number = 500;
+
   // Total chip count across the canvas — drives the all-collapsed
   // vs all-expanded initial-state decision. Computed once per
   // (template, sidecar); Svelte caches via `$:`.
@@ -41,7 +52,7 @@
     (acc, s) => acc + expandSection(s, sidecar).length,
     0,
   );
-  $: initialExpanded = totalChips <= COLLAPSE_THRESHOLD;
+  $: initialExpanded = totalChips <= collapseThreshold;
 
   // Resolve sections in layout_order; skip ids absent from
   // sidecar.sections (validate_sidecar would have rejected at API
@@ -51,13 +62,6 @@
   $: orderedSections = sidecar.layout_order
     .map((id) => sectionsById.get(id))
     .filter((s): s is NonNullable<typeof s> => s !== undefined);
-
-  // Threshold chosen per DESIGN.md §16.2.2 first-impression
-  // contract — Classics (~14 atomic blocks via synthesized
-  // trivial) sits well below; Rebirth Radio (2,196) sits well
-  // above. Tweak via the `--collapse-threshold` punt if a
-  // station lands in the awkward middle.
-  const COLLAPSE_THRESHOLD = 500;
 </script>
 
 <div
@@ -66,7 +70,7 @@
   data-total-chips={totalChips}
   data-initially-collapsed={!initialExpanded}
 >
-  {#if totalChips > COLLAPSE_THRESHOLD}
+  {#if totalChips > collapseThreshold}
     <p class="large-station-hint" data-testid="large-station-hint">
       Large station ({totalChips.toLocaleString()} chips total).
       Sections start collapsed; click each section header to expand.

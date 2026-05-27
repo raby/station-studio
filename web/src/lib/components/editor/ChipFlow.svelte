@@ -6,12 +6,18 @@
    * elements. Two behaviours:
    *
    *   1. Macro placeholders: only the FIRST placeholder per macro
-   *      repeat-span is rendered (its Chip shows the ×N count).
-   *      Subsequent placeholders for the SAME contiguous macro are
-   *      filtered out — they're redundant once the count badge is
-   *      visible. Non-contiguous occurrences of the same macro
-   *      (e.g. macro X at slot 5 AND slot 20) render as separate
-   *      chips, each with its own ×N count.
+   *      repeat-span is rendered (its Chip shows the ×N count from
+   *      `macro.repeat`). Subsequent placeholders within the same
+   *      span are filtered out — they're redundant once the count
+   *      badge is visible.
+   *
+   *      Detection uses `pick_in_macro === 1` rather than tracking
+   *      the last-seen macro_id (c3 review 🔴-1). A macro_id-based
+   *      tracker incorrectly collapsed ALL placeholders across a
+   *      `repeat_with_offsets` section into one chip — eliding the
+   *      offset-instance distinctions. pick_in_macro resets to 1 at
+   *      the start of each span (the engine emits it 1..N per
+   *      offset iteration), so "first-of-span" is unambiguous.
    *
    *   2. Section gets one ChipFlow. The flex-wrap layout keeps
    *      chips on a single visual row when there's space, wrapping
@@ -24,27 +30,12 @@
   export let template: StationTemplate;
   export let sidecar: Sidecar;
 
-  // Compute the rendered list: expand, then collapse contiguous
-  // macro placeholders to the first-of-each-span.
-  $: rendered = (() => {
-    const expanded = expandSection(section, sidecar);
-    const out: ExpandedRef[] = [];
-    let lastMacroId: string | null = null;
-    for (const ref of expanded) {
-      if (ref.kind === 'macro-placeholder') {
-        if (ref.macro_id === lastMacroId) {
-          // Same contiguous macro — fold into the previous chip's
-          // ×N count via lookupMacro lookup in the Chip component.
-          continue;
-        }
-        lastMacroId = ref.macro_id;
-      } else {
-        lastMacroId = null;
-      }
-      out.push(ref);
-    }
-    return out;
-  })();
+  // Compute the rendered list: expand, then collapse each macro
+  // span to its first placeholder (pick_in_macro === 1).
+  $: rendered = expandSection(section, sidecar).filter(
+    (ref): ref is ExpandedRef =>
+      ref.kind === 'atomic-ref' || ref.pick_in_macro === 1,
+  );
 
   // Stable key for {#each} — atomic refs use their address; macro
   // refs use macro_id + pick_in_macro (the first-of-span is always
