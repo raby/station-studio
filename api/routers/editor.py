@@ -99,15 +99,43 @@ def get_station_sidecar(
             "sidecar at %s failed validation; falling back to trivial: %s",
             sidecar_path, e,
         )
+        error_message = str(e)
+    except Exception as e:  # noqa: BLE001 — see c1 review 🟡-1 below
+        # Case (c'): non-EditorMetadataError raised during the sidecar
+        # load. Two known sources:
+        #
+        #   1. OSError from `path.read_text()` racing the is_file()
+        #      check (file deleted / perm flipped / disk full).
+        #   2. KeyError / TypeError from validate_sidecar() if the
+        #      stored TEMPLATE is corrupted (DB hand-edit, partial
+        #      restore). synthesize_trivial_sidecar already defends
+        #      against missing-layout-keys; parse_sidecar doesn't.
+        #
+        # Decision E's contract: "frontend NEVER handles 'no sidecar'
+        # — always renders the canvas against a valid sidecar." A 500
+        # here breaks that contract. So we widen the catch + treat
+        # any failure as a sidecar problem → trivial fallback +
+        # populated sidecar_error.
+        #
+        # `logger.exception` preserves the traceback in case the
+        # broader catch is hiding a real engine bug; the operator
+        # sees it in the log without it blowing up the UI.
+        logger.exception(
+            "unexpected sidecar load error at %s; falling back to trivial",
+            sidecar_path,
+        )
+        error_message = f"sidecar load failed: {type(e).__name__}: {e}"
+    else:
+        # Case (b): committed + valid sidecar.
         return EditorSidecarResponse(
             template=template,
-            sidecar=synthesize_trivial_sidecar(template),
-            sidecar_error=str(e),
+            sidecar=sidecar,
+            sidecar_error=None,
         )
 
-    # Case (b): committed + valid sidecar.
+    # Shared fallback path for both except branches.
     return EditorSidecarResponse(
         template=template,
-        sidecar=sidecar,
-        sidecar_error=None,
+        sidecar=synthesize_trivial_sidecar(template),
+        sidecar_error=error_message,
     )

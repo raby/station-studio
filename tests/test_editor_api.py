@@ -250,3 +250,42 @@ def test_response_carries_both_template_and_sidecar_in_one_request(editor_api):
     assert "template" in body and body["template"] is not None
     assert "sidecar" in body and body["sidecar"] is not None
     assert "sidecar_error" in body  # may be null but key must exist
+
+
+def test_non_editor_metadata_exception_falls_back_to_trivial(editor_api, monkeypatch):
+    """c1 review 🟡-1 regression guard: any exception from sidecar
+    loading — not just EditorMetadataError — must fall back to the
+    trivial sidecar with `sidecar_error` populated. Decision E
+    promises the frontend ALWAYS gets a valid sidecar; a 500 here
+    would break that contract.
+
+    Simulate by patching parse_sidecar to raise an unrelated
+    exception class (the runner's broad-catch should kick in). Two
+    known triggers in production: OSError from a file read racing
+    the is_file() check, and KeyError from validate_sidecar reading
+    a corrupted template — same end state for the caller, same
+    test target."""
+    client, Session, stations_dir = editor_api
+    _seed_station(Session, slug="oops")
+    # Create the file so the endpoint doesn't take the
+    # "absent → trivial" path before reaching parse_sidecar.
+    (stations_dir / "oops.editor.json").write_text("{}")
+
+    import api.routers.editor as editor_mod
+
+    def boom(*args, **kwargs):
+        raise OSError("simulated read failure")
+
+    monkeypatch.setattr(editor_mod, "parse_sidecar", boom)
+
+    r = client.get("/api/stations/oops/sidecar")
+    # Still 200 — Decision E contract.
+    assert r.status_code == 200, r.json()
+    body = r.json()
+    # Trivial fallback present.
+    assert body["sidecar"]["sections"][0]["id"] == "all-slots"
+    # Error message carries class name + original text so the
+    # operator can triage from the response.
+    assert body["sidecar_error"] is not None
+    assert "OSError" in body["sidecar_error"]
+    assert "simulated read failure" in body["sidecar_error"]
