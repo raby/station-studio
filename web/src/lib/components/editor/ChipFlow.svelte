@@ -23,12 +23,13 @@
    *      chips on a single visual row when there's space, wrapping
    *      to multiple rows for wide sections (Decision B2: wrap-flow).
    */
-  import { expandSection, type ExpandedRef, type Sidecar, type SidecarSection, type StationTemplate } from '$lib/editor';
+  import { expandSection, type ExpandedRef, type Sidecar, type SidecarSection, type StationTemplate, type ViewModeState } from '$lib/editor';
   import Chip from './Chip.svelte';
 
   export let section: SidecarSection;
   export let template: StationTemplate;
   export let sidecar: Sidecar;
+  export let viewMode: ViewModeState;
 
   // Compute the rendered list: expand, then collapse each macro
   // span to its first placeholder (pick_in_macro === 1).
@@ -52,7 +53,7 @@
 
 <div class="chip-flow" data-testid="chip-flow">
   {#each rendered as ref, i (refKey(ref, i))}
-    <Chip {ref} {template} {sidecar} />
+    <Chip {ref} {template} {sidecar} {viewMode} on:select />
   {/each}
 </div>
 

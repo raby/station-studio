@@ -1,16 +1,22 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import {
+  DEFAULT_VIEW_MODE,
   EditorMetadataError,
+  chipColour,
   compactStrategyLabel,
   expandSection,
   lookupEngineBlock,
   lookupMacro,
+  readViewMode,
+  sourceColour,
   verboseStrategyLabel,
+  writeViewMode,
   type EngineBlock,
   type Sidecar,
   type SidecarMacro,
   type SidecarSection,
   type StationLayout,
+  type StationTemplate,
 } from './editor';
 
 /**
@@ -361,5 +367,93 @@ describe('verboseStrategyLabel', () => {
   it('formats with newline separators (multi-line tooltip-friendly)', () => {
     const out = verboseStrategyLabel({ source: 'A', strategy: 'pick', size: 1 });
     expect(out.split('\n').length).toBe(3);
+  });
+});
+
+
+// ---- §16.2.2 c4 view-mode helpers --------------------------------------
+
+
+function tinyTemplate(): StationTemplate {
+  return {
+    station: 'ts', name: 'Test',
+    sources: [
+      { name: 'A', colour: '#c0392b', role: 'content' },
+      { name: 'B', role: 'content' }, // no colour declared
+    ],
+    layout: { unit: 'slot', unit_labels: [], row_start_offsets: [], flat_slots: [] },
+  };
+}
+
+
+describe('sourceColour', () => {
+  it('returns the declared colour for a known source', () => {
+    expect(sourceColour(tinyTemplate(), 'A')).toBe('#c0392b');
+  });
+
+  it('returns the fallback when source has no colour declared', () => {
+    expect(sourceColour(tinyTemplate(), 'B')).toBe('#ccc');
+  });
+
+  it('returns the fallback for an unknown source name', () => {
+    expect(sourceColour(tinyTemplate(), 'ghost')).toBe('#ccc');
+  });
+});
+
+
+describe('chipColour', () => {
+  const block: EngineBlock = { source: 'A', strategy: 'pick', size: 1 };
+
+  it('colorBy=source uses the source colour', () => {
+    expect(chipColour(block, tinyTemplate(), 'source')).toBe('#c0392b');
+  });
+
+  it('colorBy=strategy uses the strategy palette', () => {
+    // pick → palette entry (matches the helper's STRATEGY_COLOURS).
+    expect(chipColour(block, tinyTemplate(), 'strategy')).toMatch(/^#/);
+    // Different strategies get different colours.
+    const window: EngineBlock = { source: 'A', strategy: 'window', size: 5 };
+    expect(chipColour(block, tinyTemplate(), 'strategy')).not.toBe(
+      chipColour(window, tinyTemplate(), 'strategy'),
+    );
+  });
+});
+
+
+describe('readViewMode / writeViewMode', () => {
+  beforeEach(() => {
+    if (typeof window !== 'undefined') window.localStorage.clear();
+  });
+
+  it('returns DEFAULT_VIEW_MODE when nothing is persisted', () => {
+    expect(readViewMode()).toEqual(DEFAULT_VIEW_MODE);
+  });
+
+  it('round-trips through writeViewMode + readViewMode', () => {
+    writeViewMode({
+      labelMode: 'verbose', colorBy: 'strategy', macroVisual: 'count-badge',
+    });
+    expect(readViewMode()).toEqual({
+      labelMode: 'verbose', colorBy: 'strategy', macroVisual: 'count-badge',
+    });
+  });
+
+  it('falls back to defaults on malformed JSON', () => {
+    if (typeof window === 'undefined') return; // SSR guard
+    window.localStorage.setItem('station-studio.viewMode.v1', 'not-json{');
+    expect(readViewMode()).toEqual(DEFAULT_VIEW_MODE);
+  });
+
+  it('fills missing fields with defaults (partial blob in storage)', () => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(
+      'station-studio.viewMode.v1',
+      JSON.stringify({ labelMode: 'verbose' }),
+    );
+    expect(readViewMode()).toEqual({
+      labelMode: 'verbose',
+      colorBy: DEFAULT_VIEW_MODE.colorBy,
+      macroVisual: DEFAULT_VIEW_MODE.macroVisual,
+    });
   });
 });

@@ -290,6 +290,18 @@
         destructive = outlined.
       -->
       <div class="header-actions">
+        <!--
+          §16.2.2 c4 — primary discoverability surface for the
+          visual block editor. Read-only canvas today; §16.2.3+
+          grows it into the authoring environment.
+        -->
+        <a
+          href="/stations/{encodeURIComponent(slug)}/visualise"
+          class="visualise-link"
+          data-testid="visualise-station"
+        >
+          🗺 Visualise template
+        </a>
         <a
           href="/stations/{encodeURIComponent(slug)}/edit"
           class="edit-link"
@@ -489,6 +501,22 @@
     align-items: center;
     gap: 0.5rem;
     flex-shrink: 0;
+  }
+  /* Visualise link — peer of edit-link but visually softer (read-only
+     surface today; §16.2.3+ promotes it to primary). */
+  .visualise-link {
+    display: inline-block;
+    padding: 0.5rem 1rem;
+    background: white;
+    color: #2c7a7b;
+    border: 1px solid #2c7a7b;
+    text-decoration: none;
+    border-radius: 4px;
+    font-size: 0.9rem;
+    white-space: nowrap;
+  }
+  .visualise-link:hover {
+    background: #e6fffa;
   }
   /* Edit link mirrors the trace viewer's `.button` styling — safe = filled,
      paired with the .nuke destructive button on its right (§16.7 D1). */

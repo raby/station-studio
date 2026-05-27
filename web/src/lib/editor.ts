@@ -373,6 +373,108 @@ export function verboseStrategyLabel(block: EngineBlock): string {
 }
 
 
+// ---- §16.2.2 c4 — view-mode store ---------------------------------------
+
+
+/** Three orthogonal display dimensions per DESIGN.md §16.2.2
+ *  Decision C. Each value persists to localStorage so the operator's
+ *  preferences survive page reloads.
+ *
+ *  Defaults match the design's "first-impression contract":
+ *    - labelMode    = "compact"   (Pk / Wnd / S:NIGHT_1 abbreviations)
+ *    - colorBy      = "source"    (each pool's declared colour)
+ *    - macroVisual  = "wider-chip" (single chip + ×N count badge)
+ */
+export type LabelMode = 'compact' | 'verbose';
+export type ColorBy = 'source' | 'strategy';
+export type MacroVisual = 'wider-chip' | 'stacked' | 'count-badge';
+
+
+export interface ViewModeState {
+  labelMode: LabelMode;
+  colorBy: ColorBy;
+  macroVisual: MacroVisual;
+}
+
+
+export const DEFAULT_VIEW_MODE: ViewModeState = {
+  labelMode: 'compact',
+  colorBy: 'source',
+  macroVisual: 'wider-chip',
+};
+
+
+// localStorage key for the view-mode prefs blob.
+const VIEW_MODE_LS_KEY = 'station-studio.viewMode.v1';
+
+
+/**
+ * Strategy-color palette — used when `colorBy === 'strategy'`. The
+ * design doc punts on exact colors (DESIGN.md §16.2.2 Decision C:
+ * "implementation detail"). These are picked for visual distinction
+ * + decent dark-on-light contrast; refine post-feedback.
+ */
+const STRATEGY_COLOURS: Record<string, string> = {
+  pick: '#7d3c98',
+  window: '#1abc9c',
+  sequential: '#e67e22',
+  jingle: '#f39c12',
+  mix: '#16a085',
+  weighted: '#2980b9',
+  prev_ref: '#8e44ad',
+};
+
+
+/** Resolve the chip's display colour given the view mode. Falls back
+ *  to source colour when colorBy='source' (existing behaviour).
+ *  Used by `<Chip>` to drive the border / background tint. */
+export function chipColour(
+  block: EngineBlock,
+  template: StationTemplate,
+  colorBy: ColorBy,
+): string {
+  if (colorBy === 'source') {
+    return sourceColour(template, block.source);
+  }
+  return STRATEGY_COLOURS[block.strategy] ?? '#888';
+}
+
+
+/**
+ * Read the persisted view mode from localStorage, or return defaults
+ * if nothing is set / SSR (no window). Defensive against malformed
+ * JSON + missing fields — partial reads use defaults for the
+ * unknown half.
+ */
+export function readViewMode(): ViewModeState {
+  if (typeof window === 'undefined') return { ...DEFAULT_VIEW_MODE };
+  try {
+    const raw = window.localStorage.getItem(VIEW_MODE_LS_KEY);
+    if (raw === null) return { ...DEFAULT_VIEW_MODE };
+    const parsed = JSON.parse(raw) as Partial<ViewModeState>;
+    return {
+      labelMode: parsed.labelMode ?? DEFAULT_VIEW_MODE.labelMode,
+      colorBy: parsed.colorBy ?? DEFAULT_VIEW_MODE.colorBy,
+      macroVisual: parsed.macroVisual ?? DEFAULT_VIEW_MODE.macroVisual,
+    };
+  } catch {
+    return { ...DEFAULT_VIEW_MODE };
+  }
+}
+
+
+/** Persist the view mode to localStorage. No-op under SSR. */
+export function writeViewMode(state: ViewModeState): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(VIEW_MODE_LS_KEY, JSON.stringify(state));
+  } catch {
+    // Quota errors / disabled storage — ignore silently; the
+    // session-level reactive state still works.
+  }
+}
+
+
 // ---- error type ---------------------------------------------------------
 
 

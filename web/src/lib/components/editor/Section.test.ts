@@ -2,7 +2,15 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { render, screen, fireEvent, cleanup } from '@testing-library/svelte';
 import '@testing-library/jest-dom/vitest';
 import Section from './Section.svelte';
-import type { Sidecar, SidecarSection, StationTemplate } from '$lib/editor';
+import {
+  DEFAULT_VIEW_MODE,
+  type Sidecar,
+  type SidecarSection,
+  type StationTemplate,
+  type ViewModeState,
+} from '$lib/editor';
+
+const VM: ViewModeState = DEFAULT_VIEW_MODE;
 
 
 function makeTemplate(): StationTemplate {
@@ -44,6 +52,7 @@ describe('<Section>', () => {
 
   it('renders header with name + chip count', () => {
     render(Section, {
+      viewMode: VM,
       section: makeSection(), template: makeTemplate(), sidecar: makeSidecar(),
     });
     expect(screen.getByTestId('section-name')).toHaveTextContent('Section 1');
@@ -52,6 +61,7 @@ describe('<Section>', () => {
 
   it('falls back to section.id when name is omitted (🟡-2)', () => {
     render(Section, {
+      viewMode: VM,
       section: makeSection({ name: undefined, id: 'abc-123' }),
       template: makeTemplate(), sidecar: makeSidecar(),
     });
@@ -60,6 +70,7 @@ describe('<Section>', () => {
 
   it('renders body when initialExpanded=true', () => {
     render(Section, {
+      viewMode: VM,
       section: makeSection(), template: makeTemplate(),
       sidecar: makeSidecar(), initialExpanded: true,
     });
@@ -69,6 +80,7 @@ describe('<Section>', () => {
 
   it('hides body when initialExpanded=false', () => {
     render(Section, {
+      viewMode: VM,
       section: makeSection(), template: makeTemplate(),
       sidecar: makeSidecar(), initialExpanded: false,
     });
@@ -78,6 +90,7 @@ describe('<Section>', () => {
 
   it('clicking the toggle flips expanded state', async () => {
     render(Section, {
+      viewMode: VM,
       section: makeSection(), template: makeTemplate(),
       sidecar: makeSidecar(), initialExpanded: false,
     });
@@ -90,6 +103,7 @@ describe('<Section>', () => {
 
   it('header singular/plural matches chip count (1 chip vs N chips)', () => {
     render(Section, {
+      viewMode: VM,
       section: makeSection({
         blocks: [{ kind: 'atomic', slot_index: 0 }],
       }),

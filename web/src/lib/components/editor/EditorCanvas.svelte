@@ -28,11 +28,41 @@
    * uniformity helps the user discover that "open everything" is
    * one click each.
    */
-  import { expandSection, type Sidecar, type StationTemplate } from '$lib/editor';
+  import {
+    expandSection,
+    readViewMode,
+    writeViewMode,
+    type ExpandedRef,
+    type Sidecar,
+    type SidecarSection,
+    type StationTemplate,
+    type ViewModeState,
+  } from '$lib/editor';
+  import DetailPanel from './DetailPanel.svelte';
   import Section from './Section.svelte';
+  import ViewModeToggle from './ViewModeToggle.svelte';
 
   export let template: StationTemplate;
   export let sidecar: Sidecar;
+
+  // §16.2.2 c4 — view-mode prefs, hydrated from localStorage +
+  // persisted on every change. SSR-safe: readViewMode() returns
+  // defaults when window is undefined.
+  let viewMode: ViewModeState = readViewMode();
+  $: writeViewMode(viewMode);
+
+  // Currently-selected chip for the DetailPanel. null = panel
+  // closed. Section component bubbles `select` events up via the
+  // forward; we annotate the ref with its owning section here
+  // (DetailPanel renders the section name).
+  let selected: { ref: ExpandedRef; section: SidecarSection } | null = null;
+
+  function onSelect(e: CustomEvent<{ ref: ExpandedRef }>, section: SidecarSection) {
+    selected = { ref: e.detail.ref, section };
+  }
+  function closeDetail() {
+    selected = null;
+  }
 
   /**
    * Total chips threshold. ≤ threshold → all sections start
@@ -70,6 +100,8 @@
   data-total-chips={totalChips}
   data-initially-collapsed={!initialExpanded}
 >
+  <ViewModeToggle bind:value={viewMode} />
+
   {#if totalChips > collapseThreshold}
     <p class="large-station-hint" data-testid="large-station-hint">
       Large station ({totalChips.toLocaleString()} chips total).
@@ -82,7 +114,9 @@
       {section}
       {template}
       {sidecar}
+      {viewMode}
       initialExpanded={initialExpanded}
+      on:select={(e) => onSelect(e, section)}
     />
   {/each}
 
@@ -94,6 +128,8 @@
     </p>
   {/if}
 </div>
+
+<DetailPanel {selected} {template} {sidecar} on:close={closeDetail} />
 
 <style>
   .editor-canvas {

@@ -1,13 +1,17 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { render, screen, cleanup } from '@testing-library/svelte';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { render, screen, fireEvent, cleanup } from '@testing-library/svelte';
 import '@testing-library/jest-dom/vitest';
 import Chip from './Chip.svelte';
-import type {
-  AtomicRef,
-  MacroPlaceholder,
-  Sidecar,
-  StationTemplate,
+import {
+  DEFAULT_VIEW_MODE,
+  type AtomicRef,
+  type MacroPlaceholder,
+  type Sidecar,
+  type StationTemplate,
+  type ViewModeState,
 } from '$lib/editor';
+
+const VM: ViewModeState = DEFAULT_VIEW_MODE;
 
 /**
  * Pin <Chip>'s read-only render branches:
@@ -62,7 +66,7 @@ describe('<Chip>', () => {
   it('renders an atomic ref with compact strategy label', () => {
     const template = makeFlatTemplate();
     const ref: AtomicRef = { kind: 'atomic-ref', slot_index: 0 };
-    render(Chip, { ref, template, sidecar: makeSidecarWithMacro() });
+    render(Chip, { ref, template, sidecar: makeSidecarWithMacro(), viewMode: VM });
 
     const chip = screen.getByTestId('chip');
     expect(chip).toHaveAttribute('data-chip-kind', 'atomic');
@@ -75,7 +79,7 @@ describe('<Chip>', () => {
   it('uses the source colour declared on the template', () => {
     const template = makeFlatTemplate();
     const ref: AtomicRef = { kind: 'atomic-ref', slot_index: 0 };
-    render(Chip, { ref, template, sidecar: makeSidecarWithMacro() });
+    render(Chip, { ref, template, sidecar: makeSidecarWithMacro(), viewMode: VM });
     const chip = screen.getByTestId('chip');
     // Colour is exposed via inline style for downstream CSS.
     expect(chip.getAttribute('style')).toMatch(/--chip-color:\s*#c0392b/i);
@@ -84,7 +88,7 @@ describe('<Chip>', () => {
   it('renders sequential atomic with S:{cursor_id} label', () => {
     const template = makeFlatTemplate();
     const ref: AtomicRef = { kind: 'atomic-ref', slot_index: 1 };
-    render(Chip, { ref, template, sidecar: makeSidecarWithMacro() });
+    render(Chip, { ref, template, sidecar: makeSidecarWithMacro(), viewMode: VM });
     expect(screen.getByTestId('chip')).toHaveTextContent('S:NIGHT_1');
   });
 
@@ -95,7 +99,7 @@ describe('<Chip>', () => {
       macro_id: 'm1',
       pick_in_macro: 1,
     };
-    render(Chip, { ref, template, sidecar: makeSidecarWithMacro() });
+    render(Chip, { ref, template, sidecar: makeSidecarWithMacro(), viewMode: VM });
 
     const chip = screen.getByTestId('chip');
     expect(chip).toHaveAttribute('data-chip-kind', 'macro');
@@ -111,7 +115,7 @@ describe('<Chip>', () => {
     const ref: MacroPlaceholder = {
       kind: 'macro-placeholder', macro_id: 'm1', pick_in_macro: 1,
     };
-    render(Chip, { ref, template, sidecar: makeSidecarWithMacro() });
+    render(Chip, { ref, template, sidecar: makeSidecarWithMacro(), viewMode: VM });
     const chip = screen.getByTestId('chip');
     const title = chip.getAttribute('title') ?? '';
     expect(title).toContain('200 × weighted'); // name
@@ -123,7 +127,7 @@ describe('<Chip>', () => {
   it('atomic chip tooltip lists the full verbose label', () => {
     const template = makeFlatTemplate();
     const ref: AtomicRef = { kind: 'atomic-ref', slot_index: 1 };
-    render(Chip, { ref, template, sidecar: makeSidecarWithMacro() });
+    render(Chip, { ref, template, sidecar: makeSidecarWithMacro(), viewMode: VM });
     const title = screen.getByTestId('chip').getAttribute('title') ?? '';
     expect(title).toContain('strategy: sequential');
     expect(title).toContain('cursor_id: NIGHT_1');
@@ -134,7 +138,7 @@ describe('<Chip>', () => {
     // crash on a degenerate fixture either.
     const template = makeFlatTemplate();
     const ref: AtomicRef = { kind: 'atomic-ref', slot_index: 999 };
-    render(Chip, { ref, template, sidecar: makeSidecarWithMacro() });
+    render(Chip, { ref, template, sidecar: makeSidecarWithMacro(), viewMode: VM });
     expect(screen.getByTestId('chip')).toHaveTextContent('?');
   });
 
@@ -143,9 +147,77 @@ describe('<Chip>', () => {
     const ref: MacroPlaceholder = {
       kind: 'macro-placeholder', macro_id: 'ghost', pick_in_macro: 1,
     };
-    render(Chip, { ref, template, sidecar: makeSidecarWithMacro() });
+    render(Chip, { ref, template, sidecar: makeSidecarWithMacro(), viewMode: VM });
     const chip = screen.getByTestId('chip');
     expect(chip).toHaveTextContent('?');
     expect(chip.getAttribute('title') ?? '').toContain('ghost');
+  });
+
+  // ---- c4 keyboard a11y (§16.2.2.t6 promote) + select event --------
+
+  it('chip is a native <button> (focusable + keyboard-activatable)', () => {
+    const template = makeFlatTemplate();
+    const ref: AtomicRef = { kind: 'atomic-ref', slot_index: 0 };
+    render(Chip, { ref, template, sidecar: makeSidecarWithMacro(), viewMode: VM });
+    const chip = screen.getByTestId('chip');
+    expect(chip.tagName).toBe('BUTTON');
+    expect(chip).toHaveAttribute('type', 'button');
+  });
+
+  it('clicking the chip dispatches a `select` event carrying the ref', async () => {
+    const template = makeFlatTemplate();
+    const ref: AtomicRef = { kind: 'atomic-ref', slot_index: 1 };
+    const onSelect = vi.fn();
+    const { component } = render(Chip, {
+      ref, template, sidecar: makeSidecarWithMacro(), viewMode: VM,
+    });
+    component.$on('select', (e: Event) => {
+      onSelect((e as CustomEvent<{ ref: AtomicRef }>).detail);
+    });
+    await fireEvent.click(screen.getByTestId('chip'));
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    expect(onSelect.mock.calls[0][0]).toEqual({ ref });
+  });
+
+  // ---- c4 view-mode toggles ------------------------------------------
+
+  it('verbose label mode shows strategy + source', () => {
+    const template = makeFlatTemplate();
+    const ref: AtomicRef = { kind: 'atomic-ref', slot_index: 0 };
+    render(Chip, {
+      ref, template, sidecar: makeSidecarWithMacro(),
+      viewMode: { ...VM, labelMode: 'verbose' },
+    });
+    expect(screen.getByTestId('chip')).toHaveTextContent('pick (A)');
+  });
+
+  it('colorBy=strategy uses the strategy palette, not the source colour', () => {
+    const template = makeFlatTemplate();
+    const ref: AtomicRef = { kind: 'atomic-ref', slot_index: 0 }; // pick
+    render(Chip, {
+      ref, template, sidecar: makeSidecarWithMacro(),
+      viewMode: { ...VM, colorBy: 'strategy' },
+    });
+    const chip = screen.getByTestId('chip');
+    // pick → strategy palette colour (#7d3c98), not source #c0392b.
+    expect(chip.getAttribute('style')).toMatch(/--chip-color:\s*#7d3c98/i);
+  });
+
+  it('macro chip applies the per-mode CSS class', () => {
+    const template = makeFlatTemplate();
+    const ref: MacroPlaceholder = {
+      kind: 'macro-placeholder', macro_id: 'm1', pick_in_macro: 1,
+    };
+    for (const mode of ['wider-chip', 'stacked', 'count-badge'] as const) {
+      const { unmount } = render(Chip, {
+        ref, template, sidecar: makeSidecarWithMacro(),
+        viewMode: { ...VM, macroVisual: mode },
+      });
+      const chip = screen.getByTestId('chip');
+      // Convert kebab to the class suffix the component uses.
+      const classSuffix = mode === 'count-badge' ? 'macro-badge' : `macro-${mode.split('-')[0]}`;
+      expect(chip.className).toContain(classSuffix);
+      unmount();
+    }
   });
 });

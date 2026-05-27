@@ -12,13 +12,14 @@
    * decides whether each section starts open; this component just
    * tracks user-toggled state from there.
    */
-  import { expandSection, type Sidecar, type SidecarSection, type StationTemplate } from '$lib/editor';
+  import { expandSection, type Sidecar, type SidecarSection, type StationTemplate, type ViewModeState } from '$lib/editor';
   import ChipFlow from './ChipFlow.svelte';
   import SectionHeader from './SectionHeader.svelte';
 
   export let section: SidecarSection;
   export let template: StationTemplate;
   export let sidecar: Sidecar;
+  export let viewMode: ViewModeState;
   export let initialExpanded: boolean = true;
 
   let expanded = initialExpanded;
@@ -48,7 +49,7 @@
       id={`section-body-${section.id}`}
       data-testid="section-body"
     >
-      <ChipFlow {section} {template} {sidecar} />
+      <ChipFlow {section} {template} {sidecar} {viewMode} on:select />
     </div>
   {/if}
 </section>

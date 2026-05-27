@@ -2,7 +2,15 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/svelte';
 import '@testing-library/jest-dom/vitest';
 import ChipFlow from './ChipFlow.svelte';
-import type { Sidecar, SidecarSection, StationTemplate } from '$lib/editor';
+import {
+  DEFAULT_VIEW_MODE,
+  type Sidecar,
+  type SidecarSection,
+  type StationTemplate,
+  type ViewModeState,
+} from '$lib/editor';
+
+const VM: ViewModeState = DEFAULT_VIEW_MODE;
 
 
 function makeFlatTemplate(): StationTemplate {
@@ -43,7 +51,7 @@ describe('<ChipFlow>', () => {
         { kind: 'atomic', slot_index: 2 },
       ],
     };
-    render(ChipFlow, { section, template, sidecar });
+    render(ChipFlow, { section, template, sidecar, viewMode: VM });
     expect(screen.getAllByTestId('chip')).toHaveLength(3);
   });
 
@@ -66,7 +74,7 @@ describe('<ChipFlow>', () => {
       id: 's', name: 'S',
       blocks: [{ kind: 'macro', ref: 'm' }],
     };
-    render(ChipFlow, { section, template, sidecar });
+    render(ChipFlow, { section, template, sidecar, viewMode: VM });
     expect(screen.getAllByTestId('chip')).toHaveLength(1);
     expect(screen.getByTestId('chip-count')).toHaveTextContent('×5');
   });
@@ -93,7 +101,7 @@ describe('<ChipFlow>', () => {
         { kind: 'macro', ref: 'm' },
       ],
     };
-    render(ChipFlow, { section, template, sidecar });
+    render(ChipFlow, { section, template, sidecar, viewMode: VM });
     // 1 atomic + 1 macro-collapsed + 1 atomic + 1 macro-collapsed
     // (each macro span emits placeholders; ChipFlow folds within a
     // contiguous span but NOT across atomic boundaries).
@@ -130,7 +138,7 @@ describe('<ChipFlow>', () => {
       blocks: [{ kind: 'macro', ref: 'm' }],
       repeat_with_offsets: [0, 100],
     };
-    render(ChipFlow, { section, template, sidecar });
+    render(ChipFlow, { section, template, sidecar, viewMode: VM });
     // 2 chips (one per offset's first-of-span macro placeholder),
     // each carrying its own ×3 count badge.
     expect(screen.getAllByTestId('chip')).toHaveLength(2);
@@ -146,7 +154,7 @@ describe('<ChipFlow>', () => {
       schema_version: 1, sections: [], macros: [], layout_order: [],
     };
     const section: SidecarSection = { id: 's', name: 'S', blocks: [] };
-    render(ChipFlow, { section, template, sidecar });
+    render(ChipFlow, { section, template, sidecar, viewMode: VM });
     expect(screen.queryAllByTestId('chip')).toHaveLength(0);
     expect(screen.getByTestId('chip-flow')).toBeInTheDocument();
   });
