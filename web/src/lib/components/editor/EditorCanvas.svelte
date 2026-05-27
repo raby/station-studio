@@ -1,0 +1,118 @@
+<script lang="ts">
+  /**
+   * <EditorCanvas> — §16.2.2 c3 root component for the read-only
+   * visual block editor.
+   *
+   * Iterates `sidecar.layout_order` and renders one `<Section>` per
+   * section id. The order is significant: the canvas's vertical
+   * stack matches `layout_order`, which is what the sidecar author
+   * decided is the intuitive top-to-bottom reading order. Sections
+   * referenced by `layout_order` but absent from `sidecar.sections`
+   * (drift caught at the engine's `validate_sidecar` time) are
+   * skipped silently here — the warning banner in the route
+   * already surfaced the error.
+   *
+   * Per-section initial expanded state:
+   *
+   *   * Total chips across the canvas ≤ 500 → every section starts
+   *     EXPANDED. Small stations (Classics, Rebirth Radio's
+   *     authored sidecar with 5 sections of various sizes) render
+   *     the full canvas immediately.
+   *   * Total chips > 500 → every section starts COLLAPSED. The
+   *     user opts in by clicking section headers. Prevents a
+   *     2,196-chip wall-of-flow on first paint (Rebirth Radio's
+   *     synthesized-trivial fallback).
+   *
+   * The threshold is a per-canvas decision (not per-section) — even
+   * a small section in a large station starts collapsed, by design:
+   * uniformity helps the user discover that "open everything" is
+   * one click each.
+   */
+  import { expandSection, type Sidecar, type StationTemplate } from '$lib/editor';
+  import Section from './Section.svelte';
+
+  export let template: StationTemplate;
+  export let sidecar: Sidecar;
+
+  // Total chip count across the canvas — drives the all-collapsed
+  // vs all-expanded initial-state decision. Computed once per
+  // (template, sidecar); Svelte caches via `$:`.
+  $: totalChips = sidecar.sections.reduce(
+    (acc, s) => acc + expandSection(s, sidecar).length,
+    0,
+  );
+  $: initialExpanded = totalChips <= COLLAPSE_THRESHOLD;
+
+  // Resolve sections in layout_order; skip ids absent from
+  // sidecar.sections (validate_sidecar would have rejected at API
+  // load, but defend defensively here too — the route's warning
+  // banner already pointed the operator at the broken file).
+  $: sectionsById = new Map(sidecar.sections.map((s) => [s.id, s]));
+  $: orderedSections = sidecar.layout_order
+    .map((id) => sectionsById.get(id))
+    .filter((s): s is NonNullable<typeof s> => s !== undefined);
+
+  // Threshold chosen per DESIGN.md §16.2.2 first-impression
+  // contract — Classics (~14 atomic blocks via synthesized
+  // trivial) sits well below; Rebirth Radio (2,196) sits well
+  // above. Tweak via the `--collapse-threshold` punt if a
+  // station lands in the awkward middle.
+  const COLLAPSE_THRESHOLD = 500;
+</script>
+
+<div
+  class="editor-canvas"
+  data-testid="editor-canvas"
+  data-total-chips={totalChips}
+  data-initially-collapsed={!initialExpanded}
+>
+  {#if totalChips > COLLAPSE_THRESHOLD}
+    <p class="large-station-hint" data-testid="large-station-hint">
+      Large station ({totalChips.toLocaleString()} chips total).
+      Sections start collapsed; click each section header to expand.
+    </p>
+  {/if}
+
+  {#each orderedSections as section (section.id)}
+    <Section
+      {section}
+      {template}
+      {sidecar}
+      initialExpanded={initialExpanded}
+    />
+  {/each}
+
+  {#if orderedSections.length === 0}
+    <p class="empty" data-testid="empty-canvas">
+      No sections to render. (Sidecar's <code>layout_order</code> is
+      empty — author entries in <code>stations/{template.station}.editor.json</code>
+      or regenerate with <code>make derive-sidecar STATION={template.station}</code>.)
+    </p>
+  {/if}
+</div>
+
+<style>
+  .editor-canvas {
+    display: flex;
+    flex-direction: column;
+  }
+  .large-station-hint {
+    background: var(--bg-info, #eef6fb);
+    border: 1px solid var(--border-info, #b8d8e8);
+    border-radius: 4px;
+    padding: 0.5rem 0.75rem;
+    margin: 0 0 0.75rem;
+    font-size: 0.85rem;
+    color: var(--text-muted, #444);
+  }
+  .empty {
+    color: var(--text-muted, #666);
+    font-size: 0.9rem;
+    font-style: italic;
+  }
+  code {
+    background: #f4f4f4;
+    padding: 0.1em 0.3em;
+    border-radius: 3px;
+  }
+</style>

@@ -20,7 +20,7 @@
   import { page } from '$app/stores';
   import { ApiError, getStationSidecar } from '$lib/api';
   import type { Sidecar, StationTemplate } from '$lib/editor';
-  import { expandSection } from '$lib/editor';
+  import EditorCanvas from '$lib/components/editor/EditorCanvas.svelte';
 
   let template: StationTemplate | null = null;
   let sidecar: Sidecar | null = null;
@@ -52,17 +52,6 @@
     }
   });
 
-  // Derived counts the placeholder renders — also exercises
-  // expandSection from $lib/editor so the helper is reachable from
-  // the route (catches import / type-mismatch issues at build time
-  // rather than at c3-component-author time).
-  $: totalChips =
-    sidecar !== null
-      ? sidecar.sections.reduce(
-          (acc, s) => acc + expandSection(s, sidecar!).length,
-          0,
-        )
-      : 0;
 </script>
 
 <svelte:head>
@@ -101,23 +90,10 @@
     {/if}
 
     <!--
-      c2 placeholder. Real canvas (Section / ChipFlow / Chip) ships
-      in c3. Counts surface let smoke tests + the dev `make dev` run
-      confirm the load + expansion paths work end-to-end before c3
-      builds on top.
+      §16.2.2 c3 — read-only visual block canvas. ViewModeToggle +
+      DetailPanel polish ships in c4.
     -->
-    <section class="placeholder" data-testid="visualise-placeholder">
-      <p>
-        Sidecar loaded:
-        <strong data-testid="section-count">{sidecar.sections.length}</strong>
-        section(s),
-        <strong data-testid="macro-count">{(sidecar.macros ?? []).length}</strong>
-        macro(s),
-        <strong data-testid="chip-count">{totalChips}</strong>
-        chip(s) total.
-      </p>
-      <p class="hint">The visual canvas ships in §16.2.2 c3.</p>
-    </section>
+    <EditorCanvas {template} {sidecar} />
   {/if}
 </main>
 
@@ -162,17 +138,6 @@
     overflow-x: auto;
     font-size: 0.85rem;
     margin: 0.5rem 0;
-  }
-  .placeholder {
-    margin-top: 1.5rem;
-    padding: 1rem;
-    background: #f4f4f4;
-    border-radius: 6px;
-  }
-  .hint {
-    color: #666;
-    font-size: 0.9rem;
-    margin-top: 0.5rem;
   }
   .error {
     color: crimson;

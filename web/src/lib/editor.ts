@@ -333,6 +333,25 @@ export function compactStrategyLabel(block: EngineBlock): string {
 
 
 /**
+ * Look up the colour declared for a source in the station's
+ * `sources[]`. Returns the colour string (CSS-valid; templates use
+ * `#abc` / `#aabbcc` per convention) or a neutral fallback when the
+ * source name is unknown or has no colour set.
+ *
+ * §16.2.2 c3 — drives the chip's color-by-source default view.
+ */
+export function sourceColour(
+  template: StationTemplate,
+  sourceName: string,
+): string {
+  for (const s of template.sources) {
+    if (s.name === sourceName) return s.colour ?? '#ccc';
+  }
+  return '#ccc';
+}
+
+
+/**
  * Verbose label including the strategy + every parameter that
  * influences the slot. Used in the tooltip + the click-detail
  * panel. Multi-line via newline; consumers can render with
