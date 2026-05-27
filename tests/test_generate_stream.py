@@ -163,11 +163,12 @@ def test_stream_emits_picks_progress_at_cadence():
     ]
     assert len(picks_events) >= 1
     # The cadence emits at slot_counter crossing 50, 100, etc.
-    # For 100 slots we hit at 50 (and possibly 100 — at the END
-    # of block whose pick was the 100th; the modulo-crossing
-    # check fires there).
+    # For 100 slots we hit at 50 and 100 — the modulo-crossing
+    # check fires at the block whose pick crosses each multiple.
     for e in picks_events:
-        assert e.current % 50 == 0 or e.current == 100
+        assert e.current % 50 == 0, (
+            f"picks event current={e.current} is not a multiple of 50"
+        )
 
 
 def test_stream_propagates_mid_stream_exception():
@@ -248,6 +249,29 @@ def test_wrapper_asserts_on_no_result_engine_bug():
 
     with patch("engine.generator.generate_stream", buggy_stream):
         with pytest.raises(AssertionError, match="no GenerationResult"):
+            generate(template, pools=pools, week=1)
+
+
+def test_wrapper_asserts_on_event_after_result_engine_bug():
+    """Decision G "no events after Result": if `generate_stream`
+    ever yields a ProgressEvent (or anything else) AFTER the
+    GenerationResult, the wrapper catches it. Pins the docstring
+    claim ("No events after the Result. The wrapper asserts this
+    on consumption.") against silent drift — the engine's body
+    has nothing past `yield Result` today, but this catches a
+    future regression."""
+    template = parse_template(_tiny_template(n_slots=3))
+    pools = {"A": _tiny_pool(10)}
+
+    real_result = generate(template, pools=pools, week=1)
+
+    def buggy_stream(*args, **kwargs) -> Iterator:
+        yield real_result
+        # Post-Result event — should never happen.
+        yield ProgressEvent(phase="picks", current=99, total=3)
+
+    with patch("engine.generator.generate_stream", buggy_stream):
+        with pytest.raises(AssertionError, match="after the GenerationResult"):
             generate(template, pools=pools, week=1)
 
 

@@ -88,11 +88,14 @@ class ProgressEvent:
     label: str | None = None
 
 
-# §16.11 c1: progress emission cadence inside the slot loop. Emit every
-# N picks rather than every pick — 2,196 progress events per generate
-# call would crowd the stream + cost cycles. N=50 yields ~44 events for
-# Rebirth Radio, ~60 for Classics — enough granularity for a smooth
-# progress bar (~2% steps), tiny CPU overhead.
+# §16.11 c1: progress emission cadence inside the slot loop. The loop
+# fires ONE event per block iteration where the cumulative pick counter
+# crosses a multiple of N (modulo-crossing check) — not literally one
+# per N picks. For all real station templates today block.size ≤ N so
+# the cadence approximates "every N picks" closely (~44 events for
+# Rebirth Radio's 2,196 picks, ~60 for Classics' 3,010). A station
+# with chunky blocks (size > N) would emit fewer events per N picks
+# but still ≥1 per block — acceptable for v1's smooth-progress goal.
 _PROGRESS_EMIT_EVERY = 50
 
 
@@ -160,8 +163,19 @@ def generate(
                 "GenerationResult objects"
             )
             final = event
-        # Progress events ignored by the wrapper; consumers of the
-        # stream directly (job runner, §16.11) handle them.
+        else:
+            # Decision G: NO events after the GenerationResult. Today
+            # the generator's body has nothing past `yield Result`, so
+            # this can't fire from the engine — but if a future change
+            # adds a post-Result yield (cleanup phase? metrics?) this
+            # catches it before the job runner / frontend sees malformed
+            # streams. Progress events BEFORE the Result are ignored
+            # by the wrapper; stream-direct consumers (§16.11 job
+            # runner) handle them.
+            assert final is None, (
+                "engine bug: generate_stream yielded an event after "
+                f"the GenerationResult: {event!r}"
+            )
     assert final is not None, (
         "engine bug: generate_stream yielded no GenerationResult"
     )
@@ -765,14 +779,18 @@ def generate_stream(
             # template.parse_template should have rejected this already
             raise RuntimeError(f"unreachable: unknown strategy {block.strategy!r}")
 
-        # §16.11 c1 — progress emission cadence. Yield once per
-        # `_PROGRESS_EMIT_EVERY` picks crossed since the last yield.
+        # §16.11 c1 — progress emission cadence. Yield when this
+        # block iteration crossed a multiple of `_PROGRESS_EMIT_EVERY`.
         # `slot_counter` is incremented inside each strategy branch
-        # for every pick; the modulo check fires when we cross a
-        # multiple. For Rebirth Radio's 2,196 picks at N=50, ~44
-        # events emitted total.
+        # per pick (contract: every dispatch branch produces exactly
+        # `block.size` picks). The `max(0, …)` guards against any
+        # future short-circuit that picks fewer than block.size —
+        # the modulo check would otherwise read negative arithmetic.
+        # Fires ONCE per crossing iteration (not once per multiple
+        # crossed); see `_PROGRESS_EMIT_EVERY` comment for caveat.
+        prev_counter = max(0, slot_counter - block.size)
         if slot_counter // _PROGRESS_EMIT_EVERY > (
-            (slot_counter - block.size) // _PROGRESS_EMIT_EVERY
+            prev_counter // _PROGRESS_EMIT_EVERY
         ):
             yield ProgressEvent(
                 phase="picks", current=slot_counter, total=total_slots,

@@ -65,9 +65,11 @@ ALLOWED_SITES: set[tuple[str, int]] = {
     # §14.32: _iterate_slots — engine's slot-dispatch loop; the
     # `else` branch after `if layout.flat_slots:` is the row_template
     # dispatch and CORRECTLY reads row_template only.
-    # (Line moved from 688 → 838 in §16.11 c1 when generate became a
-    # wrapper around generate_stream + ProgressEvent emissions added.)
-    ("engine/generator.py", 838),
+    # (Line moved 688 → 838 in §16.11 c1 when generate became a wrapper
+    # around generate_stream + ProgressEvent emissions; 838 → 856 in
+    # §16.11 c1 review fixes when the wrapper grew a "no events after
+    # Result" guard + the cadence comment + prev_counter helper.)
+    ("engine/generator.py", 856),
     # NOTE: `LayoutSpec.all_blocks` itself (engine/template.py:174)
     # uses `self.row_template` (no `.layout.` prefix; it's a method
     # ON LayoutSpec) and so doesn't match this lint pattern. That's
