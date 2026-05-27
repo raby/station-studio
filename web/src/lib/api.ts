@@ -339,4 +339,227 @@ export const clearStationRule = (
     method: 'DELETE',
   }).then((r) => noContent(r));
 
+// ---- §16.11 c4 — async job runner ------------------------------------
+//
+// Job pattern (DESIGN.md §16.11 Decision A1):
+//   1. POST /api/stations/{slug}/jobs/generate  → 201 {job_id, status}
+//      OR 409 {detail: {message, existing_job_id}} if a job is already
+//      running for this slug.
+//   2. Poll GET /api/jobs/{job_id} every ~500ms until status !== "running".
+//      404 mid-poll = server restarted or job GC'd; treat as terminal.
+//   3. DELETE /api/jobs/{job_id} to cancel (idempotent, 204).
+//
+// Error-response shapes for the job endpoints (api/routers/jobs.py
+// header comment is the contract):
+//   * 404 — {"detail": <string>}                       → ApiError
+//   * 400 — {"detail": <string>}                       → ApiError
+//   * 422 — {"detail": [...]}                          → ApiError
+//   * 409 — {"detail": {"message", "existing_job_id"}} → JobStartConflict
+
+export type JobStatus = 'running' | 'done' | 'error' | 'cancelled';
+
+export interface JobErrorBody {
+  message: string;
+  /** Python exception class name — e.g. "RuntimeError", "ValueError",
+   *  "AssertionError" for engine-bug paths. */
+  kind: string;
+}
+
+/**
+ * Snapshot returned by GET /api/jobs/{job_id}. Mirrors the backend's
+ * `JobStatusResponse` (api/schemas.py). The `result` shape for a
+ * generate job matches `GenerateResponse` exactly — the wrapper-vs-
+ * job parity Decision E1 promised.
+ */
+export interface JobSnapshot {
+  job_id: string;
+  slug: string;
+  kind: string;
+  status: JobStatus;
+  /** Mid-stream phase from the engine — "queued" before the worker
+   *  pulls its first event, then "start", then "picks". Frontends
+   *  should treat phase ∈ {"queued", "start"} as "indeterminate". */
+  phase: string;
+  current: number;
+  total: number;
+  label: string | null;
+  /** Populated when status === "done". For generate jobs this is the
+   *  same shape as GenerateResponse. */
+  result: GenerateResponse | null;
+  /** Populated when status === "error". */
+  error: JobErrorBody | null;
+  /** ISO-8601 UTC (Z-suffix), never null. */
+  started_at: string;
+  /** ISO-8601 UTC (Z-suffix). Null while status === "running". */
+  finished_at: string | null;
+}
+
+/**
+ * Thrown by `startGenerateJob` when the backend responds 409 with the
+ * conflict-detail shape. Carries `existing_job_id` so the caller can
+ * choose to poll the in-flight job rather than failing the user's
+ * click. Extends ApiError so generic catch-blocks still work.
+ */
+export class JobStartConflict extends ApiError {
+  existing_job_id: string;
+  constructor(message: string, existing_job_id: string) {
+    super(409, message);
+    this.name = 'JobStartConflict';
+    this.existing_job_id = existing_job_id;
+  }
+}
+
+/**
+ * Shape returned by POST /api/stations/{slug}/jobs/generate on success.
+ * `status` is always "running" at this point — the worker thread might
+ * not have entered the engine yet; immediately follow with `pollJob` or
+ * `watchJob`.
+ */
+export interface JobStartResponse {
+  job_id: string;
+  status: 'running';
+}
+
+/**
+ * Start an asynchronous generation job. Returns the new job_id on 201;
+ * throws `JobStartConflict` on 409 (concurrent job exists); throws a
+ * generic `ApiError` for other non-2xx.
+ *
+ * Decision F: per-(slug) REJECT means a second click while one runs
+ * gets 409. The mid-slice review fix (🔴-1) means a click after a
+ * previous job finished — even within the 60s grace — does NOT 409;
+ * it starts a fresh job.
+ */
+export const startGenerateJob = async (
+  slug: string,
+  week: number,
+  seed?: number,
+  fetch_ = fetch,
+): Promise<JobStartResponse> => {
+  const body: { week: number; seed?: number } = { week };
+  if (seed !== undefined) body.seed = seed;
+  const res = await fetch_(
+    `/api/stations/${encodeURIComponent(slug)}/jobs/generate`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    },
+  );
+  if (res.status === 409) {
+    // 409 carries a structured detail; parse + throw JobStartConflict
+    // so callers can distinguish "click harder" from "deeper problem".
+    let detail: { message?: string; existing_job_id?: string } | string = '';
+    try {
+      const parsed = await res.json();
+      detail = parsed?.detail ?? parsed;
+    } catch {
+      // Non-JSON body — shouldn't happen but handle defensively.
+      detail = await res.text();
+    }
+    if (
+      detail &&
+      typeof detail === 'object' &&
+      typeof detail.existing_job_id === 'string'
+    ) {
+      throw new JobStartConflict(
+        detail.message ?? 'a job for this station is already running',
+        detail.existing_job_id,
+      );
+    }
+    // Fall through to ApiError if the shape is unexpected.
+    throw new ApiError(409, `409 Conflict: ${JSON.stringify(detail)}`);
+  }
+  return json<JobStartResponse>(res);
+};
+
+/**
+ * Poll a job's current state. Returns null on 404 — the calling
+ * `watchJob` translates that into a clean terminal stop (server
+ * restarted; job GC'd past grace; typo'd id). Other non-2xx still
+ * throw ApiError.
+ */
+export const pollJob = async (
+  jobId: string,
+  fetch_ = fetch,
+): Promise<JobSnapshot | null> => {
+  const res = await fetch_(`/api/jobs/${encodeURIComponent(jobId)}`);
+  if (res.status === 404) return null;
+  return json<JobSnapshot>(res);
+};
+
+/**
+ * Cancel a job. Idempotent at the HTTP level: 204 on success,
+ * 404 if the job is unknown. We absorb the 404 because cancel-after-
+ * GC has the same end state the caller wanted ("dismiss this job")
+ * — surfacing it as an error would be hostile to a UI racing cancel
+ * against a fast finish.
+ */
+export const cancelJob = async (
+  jobId: string,
+  fetch_ = fetch,
+): Promise<void> => {
+  const res = await fetch_(`/api/jobs/${encodeURIComponent(jobId)}`, {
+    method: 'DELETE',
+  });
+  if (res.status === 404) return; // already gone — caller's intent met.
+  if (!res.ok) {
+    const body = await res.text();
+    throw new ApiError(res.status, `${res.status} ${res.statusText}: ${body}`);
+  }
+};
+
+/**
+ * Async-iterable wrapper around `pollJob`. Yields one snapshot per
+ * poll until either `status !== "running"` or the job 404s mid-poll
+ * (yields nothing in the 404 case — `for await` cleanly exits).
+ *
+ * Usage:
+ *   for await (const state of watchJob(jobId)) {
+ *     updateProgress(state);
+ *     if (state.status === 'done') navigateToResult(state.result);
+ *     if (state.status === 'error') showToast(state.error);
+ *   }
+ *
+ * The 250ms median polling tax (Decision A1 punt) is the price of
+ * the polling transport. If/when long-poll lands (§16.21+), this
+ * helper's signature can stay; only its internal sleep goes away.
+ *
+ * `sleepFn` is injectable for tests so they don't actually sleep.
+ */
+export async function* watchJob(
+  jobId: string,
+  intervalMs = 500,
+  fetch_ = fetch,
+  sleepFn: (ms: number) => Promise<void> = (ms) =>
+    new Promise((r) => setTimeout(r, ms)),
+): AsyncIterable<JobSnapshot> {
+  // Loop until the job reaches a terminal status OR 404s. We poll
+  // BEFORE sleeping on the first iteration so the caller sees fresh
+  // state immediately rather than waiting `intervalMs` for the first
+  // snapshot.
+  // Hard cap on iterations as a defensive safety net — at 500ms/poll
+  // 7200 iterations = 1h, far beyond any reasonable generation. If
+  // we ever blow past this it's a bug (engine stuck, never reaches
+  // a terminal state).
+  let safety = 7200;
+  while (safety-- > 0) {
+    const snap = await pollJob(jobId, fetch_);
+    if (snap === null) {
+      // Job vanished (404). Yielding nothing here means consumer's
+      // for-await loop exits cleanly; they can detect via "we got no
+      // terminal status" + the next pollJob returning null. UI side
+      // typically shows a "job lost" toast.
+      return;
+    }
+    yield snap;
+    if (snap.status !== 'running') return;
+    await sleepFn(intervalMs);
+  }
+  throw new Error(
+    `watchJob(${jobId}) iteration limit exceeded — engine may be stuck`,
+  );
+}
+
+
 export { ApiError };

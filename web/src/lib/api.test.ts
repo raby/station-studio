@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
   ApiError,
+  cancelJob,
   getStations,
   getStation,
   getStationPlaylists,
@@ -13,8 +14,13 @@ import {
   exportPlaylistToDisk,
   getMeta,
   getStationRules,
+  JobStartConflict,
+  pollJob,
   setStationRule,
   clearStationRule,
+  startGenerateJob,
+  watchJob,
+  type JobSnapshot,
 } from './api';
 
 /**
@@ -431,5 +437,289 @@ describe('api client', () => {
       })) as unknown as typeof fetch;
       await expect(clearStationRule('cls', 'mix_exclusion_weeks', fetch_)).resolves.toBeUndefined();
     });
+  });
+});
+
+
+// ---- §16.11 c4 — async job runner helpers ----------------------------
+
+
+/**
+ * Builds a spy fetch that returns the given list of responses in
+ * sequence (one per call). Each call past the end of the list
+ * triggers the test-failure assertion. Used by `watchJob` tests
+ * where multiple polls each see a different snapshot.
+ */
+function makeSequencedSpy(
+  responses: Array<{
+    ok?: boolean;
+    status?: number;
+    body?: unknown;
+    text?: string;
+  }>,
+) {
+  const calls: SpyCall[] = [];
+  let i = 0;
+  const fetch_ = async (input: RequestInfo | URL, init?: RequestInit) => {
+    calls.push({ input, init });
+    if (i >= responses.length) {
+      throw new Error(`spy fetch called past end of sequence (#${i})`);
+    }
+    const r = responses[i++];
+    return {
+      ok: r.ok ?? true,
+      status: r.status ?? 200,
+      statusText: 'OK',
+      json: async () => r.body,
+      text: async () => r.text ?? '',
+    } as unknown as Response;
+  };
+  return { fetch_, calls };
+}
+
+function fakeSnap(over: Partial<JobSnapshot> = {}): JobSnapshot {
+  return {
+    job_id: 'j-1',
+    slug: 'ts',
+    kind: 'generate',
+    status: 'running',
+    phase: 'queued',
+    current: 0,
+    total: 10,
+    label: null,
+    result: null,
+    error: null,
+    started_at: '2026-05-27T10:00:00Z',
+    finished_at: null,
+    ...over,
+  };
+}
+
+
+describe('startGenerateJob', () => {
+  it('POSTs the week + seed body and returns {job_id, status}', async () => {
+    const { fetch_, calls } = makeSpy({
+      status: 201,
+      body: { job_id: 'abc123', status: 'running' },
+    });
+    const out = await startGenerateJob('cls', 5, 42, fetch_);
+    expect(out).toEqual({ job_id: 'abc123', status: 'running' });
+    expect(calls[0].input).toBe('/api/stations/cls/jobs/generate');
+    const init = calls[0].init!;
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body as string)).toEqual({ week: 5, seed: 42 });
+  });
+
+  it('omits seed from the body when not passed', async () => {
+    const { fetch_, calls } = makeSpy({
+      status: 201,
+      body: { job_id: 'abc', status: 'running' },
+    });
+    await startGenerateJob('cls', 1, undefined, fetch_);
+    expect(JSON.parse(calls[0].init!.body as string)).toEqual({ week: 1 });
+  });
+
+  it('URL-encodes the slug', async () => {
+    const { fetch_, calls } = makeSpy({
+      status: 201,
+      body: { job_id: 'x', status: 'running' },
+    });
+    await startGenerateJob('a b', 1, undefined, fetch_);
+    expect(calls[0].input).toBe('/api/stations/a%20b/jobs/generate');
+  });
+
+  it('throws JobStartConflict carrying existing_job_id on 409', async () => {
+    const { fetch_ } = makeSpy({
+      ok: false,
+      status: 409,
+      body: {
+        detail: {
+          message: 'a job for station ts is already running',
+          existing_job_id: 'older-job-99',
+        },
+      },
+    });
+    const err = await startGenerateJob('ts', 1, undefined, fetch_).catch((e) => e);
+    expect(err).toBeInstanceOf(JobStartConflict);
+    expect(err).toBeInstanceOf(ApiError); // also a regular ApiError
+    expect(err.existing_job_id).toBe('older-job-99');
+    expect(err.message).toContain('already running');
+    expect(err.status).toBe(409);
+  });
+
+  it('throws ApiError on unexpected 4xx', async () => {
+    const { fetch_ } = makeSpy({
+      ok: false,
+      status: 404,
+      statusText: 'Not Found',
+      text: '{"detail":"station nope not found"}',
+    });
+    const err = await startGenerateJob('nope', 1, undefined, fetch_).catch((e) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.status).toBe(404);
+    // Plain ApiError, not JobStartConflict.
+    expect(err).not.toBeInstanceOf(JobStartConflict);
+  });
+});
+
+
+describe('pollJob', () => {
+  it('GETs /api/jobs/{id} and returns the snapshot', async () => {
+    const snap = fakeSnap({ status: 'running', phase: 'picks', current: 50 });
+    const { fetch_, calls } = makeSpy({ body: snap });
+    const out = await pollJob('j-1', fetch_);
+    expect(out).toEqual(snap);
+    expect(calls[0].input).toBe('/api/jobs/j-1');
+  });
+
+  it('returns null on 404 (job GC\'d / server restarted)', async () => {
+    const { fetch_ } = makeSpy({ ok: false, status: 404, text: 'gone' });
+    const out = await pollJob('j-1', fetch_);
+    expect(out).toBeNull();
+  });
+
+  it('URL-encodes the job_id', async () => {
+    const { fetch_, calls } = makeSpy({ body: fakeSnap() });
+    await pollJob('weird id/with slash', fetch_);
+    expect(calls[0].input).toBe('/api/jobs/weird%20id%2Fwith%20slash');
+  });
+
+  it('raises ApiError on 5xx', async () => {
+    const { fetch_ } = makeSpy({
+      ok: false,
+      status: 500,
+      statusText: 'Internal Server Error',
+      text: 'boom',
+    });
+    const err = await pollJob('j-1', fetch_).catch((e) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.status).toBe(500);
+  });
+});
+
+
+describe('cancelJob', () => {
+  it('DELETEs /api/jobs/{id} and resolves to void on 204', async () => {
+    const { fetch_, calls } = makeSpy({ ok: true, status: 204 });
+    const out = await cancelJob('j-1', fetch_);
+    expect(out).toBeUndefined();
+    expect(calls[0].input).toBe('/api/jobs/j-1');
+    expect(calls[0].init!.method).toBe('DELETE');
+  });
+
+  it('absorbs 404 (already-GC\'d job) as a no-op', async () => {
+    // Cancel-after-GC has the same end state the caller wanted.
+    // Helper must NOT throw — UI race against fast-finishing job
+    // would otherwise show a spurious "couldn't cancel" toast.
+    const { fetch_ } = makeSpy({ ok: false, status: 404 });
+    await expect(cancelJob('j-1', fetch_)).resolves.toBeUndefined();
+  });
+
+  it('throws ApiError on other non-2xx', async () => {
+    const { fetch_ } = makeSpy({
+      ok: false,
+      status: 500,
+      statusText: 'Internal Server Error',
+      text: 'kaboom',
+    });
+    const err = await cancelJob('j-1', fetch_).catch((e) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.status).toBe(500);
+  });
+});
+
+
+describe('watchJob', () => {
+  it('yields every snapshot until status flips to done', async () => {
+    const { fetch_ } = makeSequencedSpy([
+      { body: fakeSnap({ status: 'running', phase: 'queued', current: 0 }) },
+      { body: fakeSnap({ status: 'running', phase: 'picks', current: 50 }) },
+      { body: fakeSnap({ status: 'done', phase: 'picks', current: 100,
+                         finished_at: '2026-05-27T10:00:05Z',
+                         result: {
+                           playlist_id: 7, trace_id: 't', station: 'ts',
+                           week: 1, slot_count: 100,
+                         } }) },
+    ]);
+    const sleep = vi.fn(async () => {});
+    const snaps: JobSnapshot[] = [];
+    for await (const snap of watchJob('j-1', 500, fetch_, sleep)) {
+      snaps.push(snap);
+    }
+    expect(snaps.map((s) => [s.status, s.current])).toEqual([
+      ['running', 0],
+      ['running', 50],
+      ['done', 100],
+    ]);
+    // Sleep called BETWEEN polls (2x, not before the first or after
+    // the last terminal poll).
+    expect(sleep).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenCalledWith(500);
+  });
+
+  it('stops cleanly when the job 404s mid-poll (yields nothing on 404)', async () => {
+    const { fetch_ } = makeSequencedSpy([
+      { body: fakeSnap({ status: 'running' }) },
+      { ok: false, status: 404, text: 'gone' },
+    ]);
+    const sleep = vi.fn(async () => {});
+    const snaps: JobSnapshot[] = [];
+    for await (const snap of watchJob('j-1', 500, fetch_, sleep)) {
+      snaps.push(snap);
+    }
+    // First snapshot was yielded; second poll 404'd → generator
+    // returns silently (consumer sees a clean for-await exit).
+    expect(snaps.map((s) => s.status)).toEqual(['running']);
+  });
+
+  it('terminates immediately on error status', async () => {
+    const { fetch_ } = makeSequencedSpy([
+      { body: fakeSnap({
+          status: 'error',
+          phase: 'picks',
+          current: 12,
+          finished_at: '2026-05-27T10:00:02Z',
+          error: { message: 'engine crashed', kind: 'RuntimeError' },
+        }) },
+    ]);
+    const sleep = vi.fn(async () => {});
+    const snaps: JobSnapshot[] = [];
+    for await (const snap of watchJob('j-1', 500, fetch_, sleep)) {
+      snaps.push(snap);
+    }
+    expect(snaps.length).toBe(1);
+    expect(snaps[0].status).toBe('error');
+    expect(snaps[0].error?.kind).toBe('RuntimeError');
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it('terminates immediately on cancelled status', async () => {
+    const { fetch_ } = makeSequencedSpy([
+      { body: fakeSnap({ status: 'cancelled' }) },
+    ]);
+    const sleep = vi.fn(async () => {});
+    const snaps: JobSnapshot[] = [];
+    for await (const snap of watchJob('j-1', 500, fetch_, sleep)) {
+      snaps.push(snap);
+    }
+    expect(snaps[0].status).toBe('cancelled');
+  });
+
+  it('propagates non-404 fetch errors out of the generator', async () => {
+    const { fetch_ } = makeSequencedSpy([
+      { ok: false, status: 500, text: 'engine wedged' },
+    ]);
+    const sleep = vi.fn(async () => {});
+    const err = await (async () => {
+      try {
+        for await (const _ of watchJob('j-1', 500, fetch_, sleep)) {
+          // unreachable — pollJob raises before any yield
+        }
+      } catch (e) {
+        return e;
+      }
+    })();
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).status).toBe(500);
   });
 });
