@@ -18,7 +18,7 @@
    */
   import { onMount } from 'svelte';
   import { page } from '$app/stores';
-  import { ApiError, getStationSidecar } from '$lib/api';
+  import { getStationSidecar } from '$lib/api';
   import type { Sidecar, StationTemplate } from '$lib/editor';
   import EditorCanvas from '$lib/components/editor/EditorCanvas.svelte';
 
@@ -37,16 +37,18 @@
       return;
     }
     try {
+      // §16.2.2.t1 — getStationSidecar validates the response shape
+      // before return. `template` + `sidecar` arrive as typed
+      // StationTemplate + Sidecar; an EditorMetadataError throws
+      // here if the server ever drifts. Both ApiError (network/4xx)
+      // and EditorMetadataError (shape) carry `.message`, so a
+      // single Error-typed handler covers both.
       const r = await getStationSidecar(slug);
-      // The API returns opaque records; cast at the use site per the
-      // api.ts type-layering note. Validation happens server-side
-      // (engine.editor_metadata) so the cast is safe for any
-      // response that didn't 5xx.
-      template = r.template as unknown as StationTemplate;
-      sidecar = r.sidecar as unknown as Sidecar;
+      template = r.template;
+      sidecar = r.sidecar;
       sidecarError = r.sidecar_error;
     } catch (e) {
-      loadError = e instanceof ApiError ? e.message : String(e);
+      loadError = e instanceof Error ? e.message : String(e);
     } finally {
       loading = false;
     }

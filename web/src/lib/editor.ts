@@ -475,6 +475,94 @@ export function writeViewMode(state: ViewModeState): void {
 }
 
 
+// ---- §16.2.2.t1 — runtime response validation ---------------------------
+
+
+/** Shape returned by `parseEditorSidecarResponse` — the post-
+ *  validation typed projection of the wire response. Mirrors
+ *  the api.ts `EditorSidecarResponse` but with concrete types
+ *  on `template` + `sidecar` rather than opaque `Record`s. */
+export interface ParsedEditorSidecar {
+  template: StationTemplate;
+  sidecar: Sidecar;
+  sidecar_error: string | null;
+}
+
+
+/**
+ * Validate + narrow the raw `/api/stations/{slug}/sidecar` response
+ * to typed shapes. Throws `EditorMetadataError` (string-only error;
+ * no traceback noise) when the response doesn't match what
+ * `<EditorCanvas>` needs to render.
+ *
+ * Decision E (DESIGN.md §16.2.2): the FRONTEND never handles a
+ * "no sidecar" case — the server's synthesize-trivial fallback
+ * means `sidecar` is always non-null. This validator pins the
+ * MINIMUM shape the canvas reads:
+ *
+ *   * `template.station: string` + `template.name: string` +
+ *     `template.sources: array` + `template.layout: object`
+ *   * `sidecar.schema_version: 1` + `sidecar.sections: array` +
+ *     `sidecar.layout_order: array`
+ *   * `sidecar_error: string | null`
+ *
+ * Deeper structural drift (e.g. one section's blocks malformed)
+ * is handled by the existing component defensive renders — the
+ * `?` chip + DetailPanel "not found" warning. This validator's
+ * job is to catch TOP-LEVEL shape drift loudly, NOT to re-run
+ * the full engine grammar (that's the server's job + the
+ * tests/test_editor_ts_schema_parity.py guard).
+ */
+export function parseEditorSidecarResponse(raw: unknown): ParsedEditorSidecar {
+  function fail(field: string, expected: string, got: unknown): never {
+    throw new EditorMetadataError(
+      `editor sidecar response: ${field} expected ${expected}, ` +
+        `got ${typeof got === 'object' ? JSON.stringify(got).slice(0, 60) : typeof got}`,
+    );
+  }
+
+  if (raw === null || typeof raw !== 'object') {
+    return fail('response', 'object', raw);
+  }
+  const r = raw as Record<string, unknown>;
+
+  // template
+  if (r.template === null || typeof r.template !== 'object') {
+    return fail('template', 'object', r.template);
+  }
+  const t = r.template as Record<string, unknown>;
+  if (typeof t.station !== 'string') return fail('template.station', 'string', t.station);
+  if (typeof t.name !== 'string') return fail('template.name', 'string', t.name);
+  if (!Array.isArray(t.sources)) return fail('template.sources', 'array', t.sources);
+  if (t.layout === null || typeof t.layout !== 'object') {
+    return fail('template.layout', 'object', t.layout);
+  }
+
+  // sidecar
+  if (r.sidecar === null || typeof r.sidecar !== 'object') {
+    return fail('sidecar', 'object', r.sidecar);
+  }
+  const s = r.sidecar as Record<string, unknown>;
+  if (s.schema_version !== 1) {
+    return fail('sidecar.schema_version', '1', s.schema_version);
+  }
+  if (!Array.isArray(s.sections)) return fail('sidecar.sections', 'array', s.sections);
+  if (!Array.isArray(s.layout_order)) return fail('sidecar.layout_order', 'array', s.layout_order);
+
+  // sidecar_error
+  if (r.sidecar_error !== null && typeof r.sidecar_error !== 'string') {
+    return fail('sidecar_error', 'string | null', r.sidecar_error);
+  }
+
+  // Narrowed structurally; full grammar already validated server-side.
+  return {
+    template: r.template as StationTemplate,
+    sidecar: r.sidecar as Sidecar,
+    sidecar_error: r.sidecar_error as string | null,
+  };
+}
+
+
 // ---- error type ---------------------------------------------------------
 
 

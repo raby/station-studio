@@ -7,6 +7,7 @@ import {
   expandSection,
   lookupEngineBlock,
   lookupMacro,
+  parseEditorSidecarResponse,
   readViewMode,
   sourceColour,
   verboseStrategyLabel,
@@ -416,6 +417,105 @@ describe('chipColour', () => {
     expect(chipColour(block, tinyTemplate(), 'strategy')).not.toBe(
       chipColour(window, tinyTemplate(), 'strategy'),
     );
+  });
+});
+
+
+// ---- parseEditorSidecarResponse (§16.2.2.t1 runtime validation) -------
+
+
+describe('parseEditorSidecarResponse', () => {
+  function validResponse(): {
+    template: Record<string, unknown>;
+    sidecar: Record<string, unknown>;
+    sidecar_error: string | null;
+  } {
+    return {
+      template: {
+        station: 'cls',
+        name: 'Classics',
+        sources: [{ name: 'A', colour: '#abc', role: 'content' }],
+        layout: { unit: 'slot', unit_labels: [], row_start_offsets: [] },
+      },
+      sidecar: {
+        schema_version: 1,
+        sections: [],
+        macros: [],
+        layout_order: [],
+      },
+      sidecar_error: null,
+    };
+  }
+
+  it('returns the typed bundle on a valid response', () => {
+    const out = parseEditorSidecarResponse(validResponse());
+    expect(out.template.station).toBe('cls');
+    expect(out.sidecar.schema_version).toBe(1);
+    expect(out.sidecar_error).toBeNull();
+  });
+
+  it('accepts a populated sidecar_error string', () => {
+    const r = validResponse();
+    r.sidecar_error = 'something broke at line 3';
+    const out = parseEditorSidecarResponse(r);
+    expect(out.sidecar_error).toBe('something broke at line 3');
+  });
+
+  it.each([
+    ['null root', null],
+    ['undefined root', undefined],
+    ['string root', 'not an object'],
+    ['array root', []],
+  ])('throws EditorMetadataError on %s', (_label, raw) => {
+    expect(() => parseEditorSidecarResponse(raw)).toThrow(EditorMetadataError);
+  });
+
+  it('throws when template is missing', () => {
+    const r = validResponse() as Record<string, unknown>;
+    delete r.template;
+    expect(() => parseEditorSidecarResponse(r)).toThrow(/template/);
+  });
+
+  it('throws when template.station is not a string', () => {
+    const r = validResponse();
+    (r.template as Record<string, unknown>).station = 42;
+    expect(() => parseEditorSidecarResponse(r)).toThrow(/template\.station/);
+  });
+
+  it('throws when template.sources is not an array', () => {
+    const r = validResponse();
+    (r.template as Record<string, unknown>).sources = {};
+    expect(() => parseEditorSidecarResponse(r)).toThrow(/template\.sources/);
+  });
+
+  it('throws when template.layout is missing', () => {
+    const r = validResponse();
+    delete (r.template as Record<string, unknown>).layout;
+    expect(() => parseEditorSidecarResponse(r)).toThrow(/template\.layout/);
+  });
+
+  it('throws when sidecar.schema_version is not 1', () => {
+    const r = validResponse();
+    (r.sidecar as Record<string, unknown>).schema_version = 2;
+    expect(() => parseEditorSidecarResponse(r)).toThrow(/schema_version/);
+  });
+
+  it('throws when sidecar.sections is missing', () => {
+    const r = validResponse();
+    delete (r.sidecar as Record<string, unknown>).sections;
+    expect(() => parseEditorSidecarResponse(r)).toThrow(/sidecar\.sections/);
+  });
+
+  it('throws when sidecar.layout_order is not an array', () => {
+    const r = validResponse();
+    (r.sidecar as Record<string, unknown>).layout_order = 'wrong';
+    expect(() => parseEditorSidecarResponse(r)).toThrow(/layout_order/);
+  });
+
+  it('throws when sidecar_error is wrong type', () => {
+    const r = validResponse();
+    (r as Record<string, unknown>).sidecar_error = 42;
+    expect(() => parseEditorSidecarResponse(r)).toThrow(/sidecar_error/);
   });
 });
 

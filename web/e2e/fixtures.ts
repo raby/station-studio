@@ -14,10 +14,16 @@ export const TINY_LIBRARY_PATH = path.join(
   'tests/fixtures/tiny-library.xml',
 );
 
-/** Canonical minimal template — one source, one Mon row, one pick slot. */
+/** Canonical minimal template — one source, one Mon row, one pick slot.
+ *
+ *  `name` matches production templates (stations/*.json all carry it).
+ *  Earlier omission was tolerated because most consumers skipped that
+ *  field; §16.2.2.t1's runtime validator catches the drift, so the
+ *  fixture now mirrors real shape. */
 export function minimalTemplate(slug: string, sourceName = 'A') {
   return {
     station: slug,
+    name: slug,
     cadence: 'weekly',
     rng: 'off',
     sources: [{ name: sourceName, colour: '#117733', role: 'content' }],

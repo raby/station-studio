@@ -7,6 +7,11 @@
 // Types intentionally mirror the Pydantic schemas in api/schemas.py. Keep
 // them in sync — if you add a field there, add it here.
 
+import {
+  parseEditorSidecarResponse,
+  type ParsedEditorSidecar,
+} from '$lib/editor';
+
 export interface Station {
   id: number;
   slug: string;
@@ -566,47 +571,28 @@ export async function* watchJob(
 
 
 /**
- * Shape returned by GET /api/stations/{slug}/sidecar. Mirrors the
- * backend's `EditorSidecarResponse` (api/schemas.py). Per Decision E:
- *
- *   * `template` — the parsed station template (same shape
- *     `Station.template` carries).
- *   * `sidecar` — ALWAYS non-null. Either the committed
- *     `stations/{slug}.editor.json` content (after validation) OR
- *     a server-synthesized trivial sidecar (one section, all atomic).
- *     The frontend NEVER handles "no sidecar".
- *   * `sidecar_error` — null on happy paths. Populated with the
- *     parser's error message when a committed sidecar fails
- *     validation; the frontend renders a warning banner so the
- *     hobbyist can keep working while they figure out what broke.
- *
- * `template` + `sidecar` are typed as opaque `Record` here because
- * `web/src/lib/editor.ts` owns the structural types; importing
- * them here would create a circular concern (api.ts is supposed to
- * be the network-shape layer, not the editor-shape layer). Callers
- * cast to `StationTemplate` + `Sidecar` from $lib/editor at the
- * use site.
- */
-export interface EditorSidecarResponse {
-  template: Record<string, unknown>;
-  sidecar: Record<string, unknown>;
-  sidecar_error: string | null;
-}
-
-
-/**
  * Fetch the editor sidecar bundle for a station. The endpoint
  * returns 404 only when the station itself doesn't exist —
  * absent/broken sidecars resolve to the trivial fallback with
  * `sidecar_error` populated, never an HTTP error.
+ *
+ * §16.2.2.t1 (post-c5 sweep): the response is now PARSED by
+ * `parseEditorSidecarResponse` before return — replaces the
+ * earlier opaque-`Record` + `as unknown as` cast pattern. Callers
+ * get strongly-typed `template: StationTemplate` + `sidecar:
+ * Sidecar` and an early `EditorMetadataError` throw if the server
+ * ever drifts.
  */
-export const getStationSidecar = (
+export const getStationSidecar = async (
   slug: string,
   fetch_ = fetch,
-): Promise<EditorSidecarResponse> =>
-  fetch_(`/api/stations/${encodeURIComponent(slug)}/sidecar`).then((r) =>
-    json<EditorSidecarResponse>(r),
+): Promise<ParsedEditorSidecar> => {
+  const res = await fetch_(
+    `/api/stations/${encodeURIComponent(slug)}/sidecar`,
   );
+  const raw = await json<unknown>(res);
+  return parseEditorSidecarResponse(raw);
+};
 
 
 export { ApiError };

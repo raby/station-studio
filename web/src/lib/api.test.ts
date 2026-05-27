@@ -631,22 +631,40 @@ describe('cancelJob', () => {
 
 
 describe('getStationSidecar', () => {
-  it('GETs /api/stations/{slug}/sidecar and returns the bundle', async () => {
-    const body = {
-      template: { station: 's', name: 'S', layout: {} },
+  /** §16.2.2.t1 — getStationSidecar now parses+validates the
+   *  response. Fixtures must include the minimum shape the
+   *  validator requires (template.station / .name / .sources / .layout
+   *  + sidecar.schema_version=1 / .sections[] / .layout_order[]). */
+  function validBody(): {
+    template: Record<string, unknown>;
+    sidecar: Record<string, unknown>;
+    sidecar_error: string | null;
+  } {
+    return {
+      template: {
+        station: 's', name: 'S',
+        sources: [{ name: 'A', colour: '#abc', role: 'content' }],
+        layout: { unit: 'slot', unit_labels: [], row_start_offsets: [] },
+      },
       sidecar: { schema_version: 1, sections: [], macros: [], layout_order: [] },
       sidecar_error: null,
     };
+  }
+
+  it('GETs /api/stations/{slug}/sidecar and returns the bundle', async () => {
+    const body = validBody();
     const { fetch_, calls } = makeSpy({ body });
     const out = await getStationSidecar('s', fetch_);
     expect(calls[0].input).toBe('/api/stations/s/sidecar');
-    expect(out).toEqual(body);
+    // Returned shape is the PARSED one — same keys, but `template`
+    // and `sidecar` carry the canvas-ready typed shapes.
+    expect(out.template.station).toBe('s');
+    expect(out.sidecar.schema_version).toBe(1);
+    expect(out.sidecar_error).toBeNull();
   });
 
   it('URL-encodes the slug', async () => {
-    const { fetch_, calls } = makeSpy({
-      body: { template: {}, sidecar: {}, sidecar_error: null },
-    });
+    const { fetch_, calls } = makeSpy({ body: validBody() });
     await getStationSidecar('a b', fetch_);
     expect(calls[0].input).toBe('/api/stations/a%20b/sidecar');
   });
@@ -663,14 +681,24 @@ describe('getStationSidecar', () => {
 
   it('does NOT throw on sidecar_error — that comes back in the 200 body', async () => {
     // Decision E contract: sidecar errors are non-HTTP-error data.
-    const body = {
-      template: { layout: {} },
-      sidecar: { schema_version: 1, sections: [], macros: [], layout_order: [] },
-      sidecar_error: 'your sidecar is malformed at line 3',
-    };
+    const body = validBody();
+    body.sidecar_error = 'your sidecar is malformed at line 3';
     const { fetch_ } = makeSpy({ body });
     const out = await getStationSidecar('broken', fetch_);
     expect(out.sidecar_error).toContain('malformed');
+  });
+
+  it('throws when the server returns a shape that fails validation', async () => {
+    // §16.2.2.t1 regression guard: drift between server payload and
+    // TS interfaces surfaces LOUDLY, not as a silent canvas crash
+    // downstream. Caught at the network layer + bubbled out of
+    // `getStationSidecar` for the route to render inline.
+    const { fetch_ } = makeSpy({
+      body: { template: { /* missing station/name/sources */ }, sidecar: {} },
+    });
+    await expect(getStationSidecar('drift', fetch_)).rejects.toThrow(
+      /template\.station/,
+    );
   });
 });
 
