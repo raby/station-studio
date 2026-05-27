@@ -22,6 +22,27 @@ Base.metadata.create_all(_engine)
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _STATIONS_DIR = _REPO_ROOT / "stations"
 
+# §16.2.2.t4 (post-c5 sweep) — fail-fast assertion against silent
+# brittleness: if api/deps.py ever moves deeper into the package,
+# `parent.parent` would resolve to the wrong directory. The sibling
+# `engine/` dir is a load-bearing presence at the repo root — the
+# whole codebase imports from it — so asserting it lives next to
+# `_STATIONS_DIR` catches the misconfiguration at import time, with
+# a clear stack trace, instead of failing later with "stations
+# directory not found" once the editor endpoint is hit.
+#
+# Repo-name-agnostic on purpose: someone forking the repo into
+# `my-station-fork/` should still pass. The assertion checks
+# STRUCTURE (engine/ sibling, stations/ exists), not naming.
+assert (_REPO_ROOT / "engine").is_dir(), (
+    f"api/deps.py: _REPO_ROOT={_REPO_ROOT} doesn't contain an `engine/` "
+    f"sibling. Did api/deps.py move deeper into the package?"
+)
+assert _STATIONS_DIR.is_dir(), (
+    f"api/deps.py: _STATIONS_DIR={_STATIONS_DIR} doesn't exist. "
+    f"The `stations/` directory should live at the repo root."
+)
+
 
 def get_db():
     db = _SessionLocal()
