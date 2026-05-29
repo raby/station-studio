@@ -114,6 +114,11 @@
         ...rowError,
         [r.key]: e instanceof ApiError ? e.message : String(e),
       };
+    } finally {
+      // Clear in a `finally` — NOT just the catch branch (c1+c2 review
+      // 🟡-1). On the success path the stuck `saving=true` would
+      // disable the Save button after a later edit (disabled =
+      // edited===value || saving), trapping the user until reload.
       saving = { ...saving, [r.key]: false };
     }
   }

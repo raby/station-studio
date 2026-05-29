@@ -125,6 +125,28 @@ describe('<RulesPanel>', () => {
     expect(screen.queryByTestId('rule-reset')).toBeNull();
   });
 
+  it('after reset, editing the rule again re-enables Save (🟡-1 regression)', async () => {
+    // c1+c2 review 🟡-1: reset() must clear saving[key] on the success
+    // path too (finally, not just catch). Otherwise Save stays stuck
+    // disabled the next time the user edits the reset rule.
+    getStationRulesMock
+      .mockResolvedValueOnce({ rules: [rule({ value: 8, is_override: true })] })
+      .mockResolvedValueOnce({ rules: [rule({ value: 3, is_override: false })] });
+    clearStationRuleMock.mockResolvedValueOnce(undefined);
+    render(RulesPanel, { slug: 'cls' });
+
+    await fireEvent.click(await screen.findByTestId('rule-reset'));
+    await waitFor(() =>
+      expect(screen.getByTestId('default-badge')).toBeInTheDocument(),
+    );
+
+    // Edit the now-default rule → Save must enable (would stay
+    // disabled if saving[key] were stuck true).
+    const input = screen.getByTestId('rule-input') as HTMLInputElement;
+    await fireEvent.input(input, { target: { value: '7' } });
+    expect(screen.getByTestId('rule-save')).toBeEnabled();
+  });
+
   it('Reset button only shows for overridden rules', async () => {
     getStationRulesMock.mockResolvedValueOnce({ rules: [rule({ is_override: false })] });
     render(RulesPanel, { slug: 'cls' });
