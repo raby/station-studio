@@ -6116,16 +6116,18 @@ import) is the only remaining Phase B tail item, parked on
 ## 15. Status snapshot
 
 A quick "where are we" for a future reader. Last updated alongside
-**§16.2.3 (atomic slot editing shipped — the editor's first WRITE
-path. `PATCH /api/stations/{slug}/blocks` (targeted, parameter-only,
-optimistic-concurrency via `expected_updated_at` → 409) + `POST
-/export` (DB-as-truth + on-demand disk commit, Decision A3). DetailPanel
-grows a strategy-aware edit form (cursor_id as a `<select>`); row_template
-edits warn "changes every row". 5 commits incl. 2 per-commit reviews —
-caught a Svelte number-input crash + a conflict-token re-arm hole.
-3-way editable-fields parity guard (Python ↔ TS ↔ engine). Preceded by
-§16.10 Rules CRUD UI + §16.12 stations list polish + §16.2.2 read-only
-canvas)**. Phase B is DONE;
+**§16.19 (station detail richness shipped — `/stations/[slug]` renders
+an overview bundle from `GET /api/stations/{slug}/overview`: template
+summary (slot count / layout form / strategy mix / cursor mode), source
+pools with a not-imported setup-gap flag, persistent cursor positions,
+and a generation rollup carrying the §16.2.3-homed staleness hint. The
+overview fetch is non-fatal — failure omits the cards, core page stays
+intact. 3 commits incl. c1 review (staleness `stale_count` uses
+`updated_at` as a proxy; precise fix queued §16.19.t1). Preceded by
+§16.17 excluded-candidates enrichments + §16.2.3 atomic slot editing
+(`PATCH /api/stations/{slug}/blocks`, optimistic-concurrency 409, `POST
+/export` Decision A3) + §16.10 Rules CRUD UI + §16.12 stations list
+polish + §16.2.2 read-only canvas)**. Phase B is DONE;
 Phase C / §16 product work underway. Both station-studio's
 byte-equality tests are GREEN at production-scale chain depth:
 weekly port (real XMLs, 30 generations, 8 asserted weeks spanning
@@ -6162,6 +6164,7 @@ direction — spec slice §16.2.0 is the next planned work.
 | **§17 port roadmap**     | **Phase A + Phase B both complete. Phase A (§14.17–§14.21): pre-port unblocks. Phase B (§14.22–§14.41): port — byte-equality verified at depth against weekly + Classics. Phase C (production cutover): operational, not engineering — external validation in flight with the station owner. Next engineering direction: §16.0 OSS framing shift (shipped) + §16.2 visual block editor (the flagship hobbyist feature). |
 | **Product framing**      | **OSS for radio hobbyists (§16.0). MIT-licensed. README hobbyist-facing; CONTRIBUTING.md codifies slice pattern. Two example stations (Classics + Rebirth Radio) ship; hobbyist starter station queued (§16.7).** |
 | Visual block editor      | **§16.2.2 SHIPPED** — read-only canvas at `/stations/[slug]/visualise`. `GET /api/stations/{slug}/sidecar` endpoint serves template + sidecar in one fetch; trivial-sidecar fallback for un-authored stations (Decision E — frontend never handles "no sidecar"). 7 Svelte components (`<EditorCanvas>`, `<Section>`, `<SectionHeader>`, `<ChipFlow>`, `<Chip>`, `<ViewModeToggle>`, `<DetailPanel>`) compose the canvas. View-mode prefs (labels / colour / macros) persist to localStorage. Chips are native `<button>`s (keyboard a11y); click opens a slide-in DetailPanel with full BlockSpec / macro spec. `<500-chip` sections start expanded; `>500` sections start collapsed with "Large station" hint. Discoverability via "🗺 Visualise template" link from `/stations/[slug]`. **§16.2.3 SHIPPED** — atomic slot editing: click a chip → DetailPanel edit form (parameter fields only; cursor_id as a select) → Save → `PATCH /api/stations/{slug}/blocks` (server-enforced parameter-only, optimistic-concurrency 409, parse_template revalidation) → refetch. "Export to disk" writes `stations/{slug}.json` (Decision A3, DB-as-truth). row_template edits warn they change every row. **Next**: §16.2.4 macro editing + block retyping. |
+| Station detail page      | **§16.19 SHIPPED** — `/stations/[slug]` overview bundle (`GET /api/stations/{slug}/overview`): template summary, source pools (not-imported gap flagged red), persistent cursor positions, generation rollup + staleness hint (`stale_count`, `updated_at`-proxy; precise fix §16.19.t1). Non-fatal fetch; bounded aggregate queries. |
 | Trace versioning         | Deferred. See §16.4 (queued; not on the critical path post-Phase-B). |
 | Accessibility pass       | Deferred. §16.5 — single sweep after §16.2 ships.                |
 | Rules CRUD UI panel      | **Shipped (§16.10).** `<RulesPanel>` self-contained component (load → edit → Save/Reset, client-side validation mirroring engine.rules, per-row state) + `/stations/[slug]/rules` route + "⚙ Rules" header link. Backend CRUD pre-existed; frontend-only. Reusable for the §16.2 sidebar shell. |
@@ -6173,7 +6176,7 @@ direction — spec slice §16.2.0 is the next planned work.
 | Disk-export prune endpoint | Queued — §16.16. Demand-gated. §14.3's prune punt. |
 | Excluded-candidates display | Queued — §16.17. Small. Trace records them (§14.23); viewer needs to surface them. |
 | Trace viewer virtualisation | Queued — §16.18. Felt-pain triggered. 3,010-row Classics scroll lag. |
-| Station detail page richness | Queued — §16.19. Small. Template summary + pool stats + cursor state + generations summary. |
+| Station detail page richness | Shipped — §16.19 (3 commits). `/stations/[slug]` renders an overview bundle from `GET /api/stations/{slug}/overview`: template summary, source pools (w/ not-imported gap flag), persistent cursor positions, generation rollup + staleness hint. Non-fatal fetch. (Precise staleness queued §16.19.t1.) |
 | Mobile / narrow-viewport CSS | Queued — §16.20. Phone-usability vector for OSS hobbyist trajectory. |
 | Test follow-ups (mutation + perf) | Queued — §16.21. §14.8's later row. Refactor-confidence trigger. |
 | Trace viewer SSR migration | Queued — §16.22. Quality-of-life. First-paint flash removal. |
@@ -6251,7 +6254,7 @@ Inserted into the strategic sequence based on §16.0 audit:
 |---|---|---|---|
 | 4* | §16.24 Post-validation fixes (placeholder) | TBD | Slot for whatever surfaces during the external port validation week. May be 0 slices ("sounds great") or 1-3 (specific divergences need fixing). Inserts ahead of post-MVP polish if it fires. |
 | 5* | §16.17 Excluded-candidates display in trace viewer | small | **Core shipped under §14.23** (viewer already surfaces the per-slot rejection sub-table). §16.17 = doc reconcile + 3 small enrichments (relabel / expand-all / per-trace summary). |
-| 6* | §16.19 Station detail page richness | small | Template summary + pool stats + cursor position on `/stations/[slug]`. Bare today. |
+| 6* | §16.19 Station detail page richness | small | **Shipped** (3 commits). Template summary + pool stats (w/ not-imported gap) + persistent cursor positions + generation rollup + staleness hint on `/stations/[slug]`, via `GET /api/stations/{slug}/overview`. |
 
 **Cross-cutting / polish — slot in opportunistically:**
 
@@ -9584,6 +9587,44 @@ exist via /api/stations/{slug}, /api/sources, /api/cursor_state).
 **Compounds with.** §16.2 (anchors the editor entry point);
 §16.10 (Rules panel embeds here); §16.12 (stations list polish
 links to richer detail page).
+
+**What shipped (§16.19).**
+
+* **c1 — backend.** `GET /api/stations/{slug}/overview` returns one
+  bundle: identity (slug/name/cadence/rng/updated_at) + a
+  `TemplateSummary` (slot_count, layout_form, per-strategy block
+  counts, cursor_persist, source_count) + `pools` (each declared
+  source joined to its imported pool; `imported=false` flags a
+  declared-but-not-imported setup gap the generate endpoint would
+  400 on) + `cursors` (persistent named-cursor positions, only when
+  `cursor.persist`) + a `GenerationsSummary` (count, argmax-latest
+  week/timestamp, `stale_count`). Aggregates are bounded queries (no
+  N+1). Schemas: `TemplateSummary`/`PoolStatus`/`CursorPosition`/
+  `GenerationsSummary`/`StationOverview`. Timestamp formatting hoisted
+  to `api/timefmt.iso`.
+* **c1 review.** 🟡-1 — `stale_count` uses `generated_at <
+  station.updated_at` as a PROXY for "template changed". The
+  wizard-edit PUT reassigns `s.template` unconditionally, so a
+  name-only edit bumps `updated_at` and over-flags. Accepted for v1
+  (regenerating an unchanged template reproduces identical output);
+  the precise fix is queued as **§16.19.t1** (dedicated
+  `template_updated_at` column). 🟢-2 — `_iso` helper hoist.
+* **c2 — frontend.** `/stations/[slug]` renders the bundle as four
+  additive cards (template summary w/ strategy pills + visualise
+  deep-link; source pools w/ track counts and a red "not imported"
+  flag; cursors, persistent-only; generations rollup w/ the
+  staleness hint when `stale_count > 0`). The overview fetch is
+  **non-fatal** — a failure (or a backend predating the endpoint)
+  omits the sections and leaves the core page (header + generate +
+  playlists) intact. 5 component tests + svelte-check clean.
+* **c3 — e2e + docs.** Playwright `station-overview.spec.ts`: the
+  not-imported pool gap + (imported-pool counts, template summary,
+  generation rollup, visualise link). This suffix + §15 snapshot.
+
+**Staleness hint — landed.** The §16.2.3-homed "N playlists were
+generated under a previous template — regenerate to apply your
+edits" hint ships in the generations card, gated on `stale_count`
+(see the §16.19.t1 caveat for the proxy precision).
 
 ---
 
