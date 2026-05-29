@@ -92,17 +92,33 @@
       saveError = 'cannot edit this block (no storage address)';
       return;
     }
+    // PATCH first; only on success refetch. Splitting the two
+    // (mid-slice review 🟢-3) means a refetch network blip AFTER a
+    // successful save doesn't masquerade as a save failure.
     try {
       await patchBlock(slug, address, e.detail.fields, updatedAt);
-      // Refetch so the canvas + token reflect the saved state.
-      await loadSidecar();
     } catch (err) {
       if (err instanceof BlockPatchConflict) {
+        // Mid-slice review 🟡-1: do NOT adopt the server's current
+        // token here. Keeping the STALE `updatedAt` means a retry
+        // without reloading 409s again — the user must reload (which
+        // refreshes content + token together) before their edit can
+        // land. Adopting the token would silently arm the next save
+        // to overwrite the concurrent change, defeating D2.
         conflict = true;
-        updatedAt = err.current_updated_at;
       } else {
         saveError = err instanceof Error ? err.message : String(err);
       }
+      return;
+    }
+    // Save landed — refresh canvas + optimistic token. A failure here
+    // is a refetch problem, not a save problem; surface it distinctly.
+    try {
+      await loadSidecar();
+    } catch (err) {
+      saveError =
+        'saved, but failed to refresh the view: ' +
+        (err instanceof Error ? err.message : String(err));
     }
   }
 

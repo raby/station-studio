@@ -472,6 +472,31 @@ def test_patch_block_edits_a_parameter_field(editor_api):
     assert sidecar["template"]["layout"]["flat_slots"][0]["cursor_id"] == "D"
 
 
+def test_patch_block_bumps_updated_at_token(editor_api):
+    """Mid-slice review 🟡-2: a successful PATCH must MOVE the
+    optimistic-concurrency token. If the `onupdate` ever stopped
+    firing (e.g. a refactor mutating station.template in place rather
+    than reassigning), every token would stay stale-but-matching and
+    D2 would silently become a no-op that all other tests still pass.
+    This pins the mechanism that makes optimistic concurrency work."""
+    client, Session, _dir = editor_api
+    _mix_station(Session, "mx")
+    before = _token(client, "mx")
+    r = client.patch("/api/stations/mx/blocks", json={
+        "address": {"slot_index": 0},
+        "fields": {"genre": "Bumped"},
+        "expected_updated_at": before,
+    })
+    assert r.status_code == 200, r.json()
+    after = r.json()["updated_at"]
+    assert after is not None and after != before, (
+        f"updated_at did not move on PATCH (before={before}, after={after}) "
+        f"— optimistic concurrency is broken"
+    )
+    # And the next GET reports the same moved token.
+    assert _token(client, "mx") == after
+
+
 def test_patch_block_clearing_optional_field_removes_key(editor_api):
     """null clears an OPTIONAL field — the key is removed from the block."""
     client, Session, _dir = editor_api
