@@ -221,6 +221,56 @@ class EditorSidecarResponse(BaseModel):
     template: dict[str, Any]
     sidecar: dict[str, Any]
     sidecar_error: str | None = None
+    # §16.2.3 — the station's `updated_at` at load time. The editor
+    # carries it back in a block PATCH's `expected_updated_at` for
+    # optimistic concurrency (Decision D2): the PATCH 409s if the row
+    # moved since the editor loaded. ISO-8601 string.
+    updated_at: str | None = None
+
+
+# §16.2.3 — atomic block editing (Decision B2: targeted PATCH).
+
+
+class BlockAddress(BaseModel):
+    """Storage address of a block in the template's layout. EITHER
+    `slot_index` (flat_slots) OR `block_idx` (row_template). Mirrors
+    the editor's AtomicRef, but `row_idx` is intentionally ABSENT —
+    row_template stores ONE shared row template; editing block_idx j
+    changes `layout.row_template[j]` for EVERY row. The render-time
+    row_idx is irrelevant to storage (Decision B)."""
+    slot_index: int | None = None
+    block_idx: int | None = None
+
+
+class BlockPatchRequest(BaseModel):
+    """PATCH /api/stations/{slug}/blocks body.
+
+    * `address` — which block to edit (XOR slot_index / block_idx).
+    * `fields` — parameter fields to set; a null value CLEARS the key
+      (removes an optional field). Only strategy-PARAMETER fields are
+      accepted (Decision C); strategy/source/size are rejected 400.
+    * `expected_updated_at` — optimistic-concurrency token from the
+      sidecar GET. 409 if the station moved since (Decision D2).
+    """
+    address: BlockAddress
+    fields: dict[str, Any]
+    expected_updated_at: str | None = None
+
+
+class BlockPatchResponse(BaseModel):
+    """200 body for a successful block PATCH. Returns the updated
+    block + the new `updated_at` so the editor can refresh its
+    optimistic token for the next edit without a full reload."""
+    block: dict[str, Any]
+    updated_at: str | None = None
+
+
+class TemplateExportResponse(BaseModel):
+    """200 body for POST /api/stations/{slug}/export — the A3
+    'commit to disk' affordance. Writes the DB template to
+    `stations/{slug}.json` (the git-committable artifact)."""
+    path: str
+    bytes: int
 
 
 class JobStatusResponse(BaseModel):

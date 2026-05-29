@@ -38,12 +38,20 @@
     type StationTemplate,
     type ViewModeState,
   } from '$lib/editor';
+  import { createEventDispatcher } from 'svelte';
   import DetailPanel from './DetailPanel.svelte';
   import Section from './Section.svelte';
   import ViewModeToggle from './ViewModeToggle.svelte';
 
   export let template: StationTemplate;
   export let sidecar: Sidecar;
+
+  // §16.2.3 c2 — forward the DetailPanel's `save` event up to the
+  // route, which owns the slug + optimistic token + the PATCH call.
+  // The canvas stays persistence-agnostic.
+  const dispatch = createEventDispatcher<{
+    save: { ref: ExpandedRef; fields: Record<string, string | number | null> };
+  }>();
 
   // §16.2.2 c4 — view-mode prefs, hydrated from localStorage +
   // persisted on every change. SSR-safe: readViewMode() returns
@@ -133,7 +141,13 @@
   {/if}
 </div>
 
-<DetailPanel {selected} {template} {sidecar} on:close={closeDetail} />
+<DetailPanel
+  {selected}
+  {template}
+  {sidecar}
+  on:close={closeDetail}
+  on:save={(e) => dispatch('save', e.detail)}
+/>
 
 <style>
   .editor-canvas {

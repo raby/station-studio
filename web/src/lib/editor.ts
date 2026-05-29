@@ -486,6 +486,10 @@ export interface ParsedEditorSidecar {
   template: StationTemplate;
   sidecar: Sidecar;
   sidecar_error: string | null;
+  /** §16.2.3 — optimistic-concurrency token. The editor sends it back
+   *  in a block PATCH's `expected_updated_at`. Null only on legacy
+   *  rows with no timestamp. */
+  updated_at: string | null;
 }
 
 
@@ -597,11 +601,21 @@ export function parseEditorSidecarResponse(raw: unknown): ParsedEditorSidecar {
     return fail('sidecar_error', 'string | null', r.sidecar_error);
   }
 
+  // updated_at (§16.2.3) — string | null | absent (treat absent as null).
+  if (
+    r.updated_at !== undefined &&
+    r.updated_at !== null &&
+    typeof r.updated_at !== 'string'
+  ) {
+    return fail('updated_at', 'string | null', r.updated_at);
+  }
+
   // Narrowed structurally; full grammar already validated server-side.
   return {
     template: r.template as StationTemplate,
     sidecar: r.sidecar as Sidecar,
     sidecar_error: r.sidecar_error as string | null,
+    updated_at: (r.updated_at as string | null | undefined) ?? null,
   };
 }
 

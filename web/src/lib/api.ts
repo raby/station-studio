@@ -620,4 +620,97 @@ export const getStationSidecar = async (
 };
 
 
+// ---- §16.2.3 c2 — atomic block edit (PATCH) + disk export ------------
+
+
+/** Storage address of a block — XOR slot_index / block_idx. Mirrors
+ *  the backend BlockAddress. row_idx is intentionally absent: a
+ *  row_template edit targets the shared block_idx. */
+export interface BlockAddress {
+  slot_index?: number;
+  block_idx?: number;
+}
+
+export interface BlockPatchResponse {
+  block: Record<string, unknown>;
+  updated_at: string | null;
+}
+
+/**
+ * Thrown when a block PATCH 409s — the station changed since the
+ * editor loaded it (Decision D2). Carries the server's current
+ * `updated_at` so the caller can prompt a reload. Extends ApiError
+ * so generic catches still work.
+ */
+export class BlockPatchConflict extends ApiError {
+  current_updated_at: string | null;
+  constructor(message: string, current_updated_at: string | null) {
+    super(409, message);
+    this.name = 'BlockPatchConflict';
+    this.current_updated_at = current_updated_at;
+  }
+}
+
+/**
+ * Edit one block's parameter fields. `fields` values: a value sets
+ * the field; `null` clears an optional field. `expectedUpdatedAt` is
+ * the optimistic-concurrency token from `getStationSidecar`.
+ *
+ * Throws `BlockPatchConflict` on 409 (stale token); generic
+ * `ApiError` on other non-2xx (400 invalid edit / parameter-only
+ * violation, 404 station/out-of-range).
+ */
+export const patchBlock = async (
+  slug: string,
+  address: BlockAddress,
+  fields: Record<string, string | number | null>,
+  expectedUpdatedAt: string | null,
+  fetch_ = fetch,
+): Promise<BlockPatchResponse> => {
+  const res = await fetch_(`/api/stations/${encodeURIComponent(slug)}/blocks`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      address,
+      fields,
+      expected_updated_at: expectedUpdatedAt,
+    }),
+  });
+  if (res.status === 409) {
+    let detail: { message?: string; current_updated_at?: string | null } | string = '';
+    try {
+      const parsed = await res.json();
+      detail = parsed?.detail ?? parsed;
+    } catch {
+      detail = await res.text();
+    }
+    if (detail && typeof detail === 'object') {
+      throw new BlockPatchConflict(
+        detail.message ?? 'station changed since you loaded it',
+        detail.current_updated_at ?? null,
+      );
+    }
+    throw new ApiError(409, `409 Conflict: ${JSON.stringify(detail)}`);
+  }
+  return json<BlockPatchResponse>(res);
+};
+
+export interface TemplateExportResponse {
+  path: string;
+  bytes: number;
+}
+
+/**
+ * Write the station's current DB template to `stations/{slug}.json`
+ * (§16.2.3 Decision A3 — the on-demand git-committable snapshot).
+ */
+export const exportStationTemplate = (
+  slug: string,
+  fetch_ = fetch,
+): Promise<TemplateExportResponse> =>
+  fetch_(`/api/stations/${encodeURIComponent(slug)}/export`, {
+    method: 'POST',
+  }).then((r) => json<TemplateExportResponse>(r));
+
+
 export { ApiError };

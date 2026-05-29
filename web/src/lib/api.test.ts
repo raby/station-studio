@@ -1,7 +1,9 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
   ApiError,
+  BlockPatchConflict,
   cancelJob,
+  exportStationTemplate,
   getStations,
   getStation,
   getStationPlaylists,
@@ -16,6 +18,7 @@ import {
   getMeta,
   getStationRules,
   JobStartConflict,
+  patchBlock,
   pollJob,
   setStationRule,
   clearStationRule,
@@ -795,5 +798,125 @@ describe('watchJob', () => {
     })();
     expect(err).toBeInstanceOf(ApiError);
     expect((err as ApiError).status).toBe(500);
+  });
+});
+
+
+// ---- §16.2.3 c2 — patchBlock + exportStationTemplate -----------------
+
+
+describe('patchBlock', () => {
+  it('PATCHes /api/stations/{slug}/blocks with address + fields + token', async () => {
+    const { fetch_, calls } = makeSpy({
+      body: { block: { strategy: 'mix', genre: 'New' }, updated_at: 't2' },
+    });
+    const out = await patchBlock(
+      'cls', { slot_index: 3 }, { genre: 'New' }, 't1', fetch_,
+    );
+    expect(calls[0].input).toBe('/api/stations/cls/blocks');
+    const init = calls[0].init!;
+    expect(init.method).toBe('PATCH');
+    expect(JSON.parse(init.body as string)).toEqual({
+      address: { slot_index: 3 },
+      fields: { genre: 'New' },
+      expected_updated_at: 't1',
+    });
+    expect(out.updated_at).toBe('t2');
+    expect(out.block.genre).toBe('New');
+  });
+
+  it('URL-encodes the slug', async () => {
+    const { fetch_, calls } = makeSpy({ body: { block: {}, updated_at: null } });
+    await patchBlock('a b', { slot_index: 0 }, {}, null, fetch_);
+    expect(calls[0].input).toBe('/api/stations/a%20b/blocks');
+  });
+
+  it('throws BlockPatchConflict carrying current_updated_at on 409', async () => {
+    const { fetch_ } = makeSpy({
+      ok: false, status: 409,
+      body: { detail: { message: 'station changed', current_updated_at: 't9' } },
+    });
+    const err = await patchBlock('cls', { slot_index: 0 }, { genre: 'X' }, 't1', fetch_)
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(BlockPatchConflict);
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.current_updated_at).toBe('t9');
+    expect(err.status).toBe(409);
+  });
+
+  it('throws plain ApiError on a 400 parameter-only / invalid-edit reject', async () => {
+    const { fetch_ } = makeSpy({
+      ok: false, status: 400, statusText: 'Bad Request',
+      text: '{"detail":"fields [\'size\'] are not editable for strategy ..."}',
+    });
+    const err = await patchBlock('cls', { slot_index: 0 }, { size: 5 } as never, 't1', fetch_)
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err).not.toBeInstanceOf(BlockPatchConflict);
+    expect(err.status).toBe(400);
+  });
+
+  it('sends block_idx address for row_template edits', async () => {
+    const { fetch_, calls } = makeSpy({ body: { block: {}, updated_at: 't2' } });
+    await patchBlock('cls', { block_idx: 1 }, { genre: 'Night' }, 't1', fetch_);
+    expect(JSON.parse(calls[0].init!.body as string).address).toEqual({ block_idx: 1 });
+  });
+});
+
+
+describe('exportStationTemplate', () => {
+  it('POSTs /api/stations/{slug}/export and returns {path, bytes}', async () => {
+    const { fetch_, calls } = makeSpy({
+      body: { path: '/repo/stations/cls.json', bytes: 1234 },
+    });
+    const out = await exportStationTemplate('cls', fetch_);
+    expect(calls[0].input).toBe('/api/stations/cls/export');
+    expect(calls[0].init!.method).toBe('POST');
+    expect(out).toEqual({ path: '/repo/stations/cls.json', bytes: 1234 });
+  });
+
+  it('raises ApiError on 404 unknown station', async () => {
+    const { fetch_ } = makeSpy({
+      ok: false, status: 404, statusText: 'Not Found', text: 'nope',
+    });
+    const err = await exportStationTemplate('nope', fetch_).catch((e) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.status).toBe(404);
+  });
+});
+
+
+describe('getStationSidecar — updated_at token (§16.2.3)', () => {
+  it('surfaces the updated_at optimistic token', async () => {
+    const { fetch_ } = makeSpy({
+      body: {
+        template: {
+          station: 's', name: 'S',
+          sources: [{ name: 'A', role: 'content' }],
+          layout: { unit: 'slot', unit_labels: [], row_start_offsets: [] },
+        },
+        sidecar: { schema_version: 1, sections: [], macros: [], layout_order: [] },
+        sidecar_error: null,
+        updated_at: '2026-05-29T12:00:00+00:00',
+      },
+    });
+    const out = await getStationSidecar('s', fetch_);
+    expect(out.updated_at).toBe('2026-05-29T12:00:00+00:00');
+  });
+
+  it('treats an absent updated_at as null', async () => {
+    const { fetch_ } = makeSpy({
+      body: {
+        template: {
+          station: 's', name: 'S',
+          sources: [{ name: 'A', role: 'content' }],
+          layout: { unit: 'slot', unit_labels: [], row_start_offsets: [] },
+        },
+        sidecar: { schema_version: 1, sections: [], macros: [], layout_order: [] },
+        sidecar_error: null,
+      },
+    });
+    const out = await getStationSidecar('s', fetch_);
+    expect(out.updated_at).toBeNull();
   });
 });

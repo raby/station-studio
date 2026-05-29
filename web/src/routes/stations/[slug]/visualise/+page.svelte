@@ -18,8 +18,14 @@
    */
   import { onMount } from 'svelte';
   import { page } from '$app/stores';
-  import { getStationSidecar } from '$lib/api';
-  import type { Sidecar, StationTemplate } from '$lib/editor';
+  import {
+    BlockPatchConflict,
+    exportStationTemplate,
+    getStationSidecar,
+    patchBlock,
+    type BlockAddress,
+  } from '$lib/api';
+  import type { ExpandedRef, Sidecar, StationTemplate } from '$lib/editor';
   import EditorCanvas from '$lib/components/editor/EditorCanvas.svelte';
 
   let template: StationTemplate | null = null;
@@ -28,7 +34,21 @@
   let loadError: string | null = null;
   let loading = true;
 
+  // §16.2.3 c2 — optimistic-concurrency token + edit/export status.
+  let updatedAt: string | null = null;
+  let saveError: string | null = null;
+  let conflict = false;
+  let exportMsg: string | null = null;
+
   $: slug = $page.params.slug ?? '';
+
+  async function loadSidecar() {
+    const r = await getStationSidecar(slug);
+    template = r.template;
+    sidecar = r.sidecar;
+    sidecarError = r.sidecar_error;
+    updatedAt = r.updated_at;
+  }
 
   onMount(async () => {
     if (!slug) {
@@ -38,15 +58,9 @@
     }
     try {
       // §16.2.2.t1 — getStationSidecar validates the response shape
-      // before return. `template` + `sidecar` arrive as typed
-      // StationTemplate + Sidecar; an EditorMetadataError throws
-      // here if the server ever drifts. Both ApiError (network/4xx)
-      // and EditorMetadataError (shape) carry `.message`, so a
-      // single Error-typed handler covers both.
-      const r = await getStationSidecar(slug);
-      template = r.template;
-      sidecar = r.sidecar;
-      sidecarError = r.sidecar_error;
+      // before return. Both ApiError (network/4xx) and
+      // EditorMetadataError (shape) carry `.message`.
+      await loadSidecar();
     } catch (e) {
       loadError = e instanceof Error ? e.message : String(e);
     } finally {
@@ -54,6 +68,63 @@
     }
   });
 
+  // Map a chip's ExpandedRef to the storage BlockAddress. row_idx is
+  // dropped — a row_template edit targets the shared block_idx
+  // (Decision B).
+  function refToAddress(ref: ExpandedRef): BlockAddress | null {
+    if (ref.kind !== 'atomic-ref') return null;
+    if (ref.slot_index !== undefined) return { slot_index: ref.slot_index };
+    if (ref.block_idx !== undefined) return { block_idx: ref.block_idx };
+    return null;
+  }
+
+  // §16.2.3 c2 — DetailPanel save → PATCH → refetch. On 409 (someone
+  // else changed the station) show a reload prompt; on other errors
+  // show the message inline.
+  async function handleSave(
+    e: CustomEvent<{ ref: ExpandedRef; fields: Record<string, string | number | null> }>,
+  ) {
+    saveError = null;
+    conflict = false;
+    exportMsg = null;
+    const address = refToAddress(e.detail.ref);
+    if (address === null) {
+      saveError = 'cannot edit this block (no storage address)';
+      return;
+    }
+    try {
+      await patchBlock(slug, address, e.detail.fields, updatedAt);
+      // Refetch so the canvas + token reflect the saved state.
+      await loadSidecar();
+    } catch (err) {
+      if (err instanceof BlockPatchConflict) {
+        conflict = true;
+        updatedAt = err.current_updated_at;
+      } else {
+        saveError = err instanceof Error ? err.message : String(err);
+      }
+    }
+  }
+
+  async function handleExport() {
+    saveError = null;
+    exportMsg = null;
+    try {
+      const r = await exportStationTemplate(slug);
+      exportMsg = `Exported to ${r.path} (${r.bytes} bytes).`;
+    } catch (err) {
+      saveError = err instanceof Error ? err.message : String(err);
+    }
+  }
+
+  async function reloadAfterConflict() {
+    conflict = false;
+    try {
+      await loadSidecar();
+    } catch (e) {
+      loadError = e instanceof Error ? e.message : String(e);
+    }
+  }
 </script>
 
 <svelte:head>
@@ -91,11 +162,38 @@
       </div>
     {/if}
 
+    <!-- §16.2.3 c2 — edit affordances: export-to-disk + edit status. -->
+    <div class="editor-actions">
+      <button
+        type="button"
+        class="export"
+        data-testid="export-template"
+        on:click={handleExport}
+      >
+        Export to disk
+      </button>
+      {#if exportMsg}
+        <span class="export-msg" data-testid="export-msg">{exportMsg}</span>
+      {/if}
+    </div>
+
+    {#if conflict}
+      <div class="conflict" data-testid="conflict-banner">
+        This station changed elsewhere (another tab or the edit route).
+        <button type="button" data-testid="conflict-reload" on:click={reloadAfterConflict}>
+          Reload latest
+        </button>
+      </div>
+    {/if}
+    {#if saveError}
+      <p class="error" data-testid="save-error">{saveError}</p>
+    {/if}
+
     <!--
-      §16.2.2 c3 — read-only visual block canvas. ViewModeToggle +
-      DetailPanel polish ships in c4.
+      §16.2.3 — editable visual block canvas. The DetailPanel's `save`
+      event bubbles up here (via EditorCanvas) to the PATCH call.
     -->
-    <EditorCanvas {template} {sidecar} />
+    <EditorCanvas {template} {sidecar} on:save={handleSave} />
   {/if}
 </main>
 
@@ -105,6 +203,41 @@
     max-width: 900px;
     margin: 2rem auto;
     padding: 0 1rem;
+  }
+  .editor-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin: 0.75rem 0;
+  }
+  .export {
+    padding: 0.4rem 0.9rem;
+    background: #2c3e50;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.85rem;
+  }
+  .export:hover {
+    background: #1a252f;
+  }
+  .export-msg {
+    color: #2e7d32;
+    font-size: 0.85rem;
+  }
+  .conflict {
+    background: #fff8e1;
+    border: 1px solid #f0c36d;
+    border-radius: 4px;
+    padding: 0.6rem 0.9rem;
+    margin: 0.5rem 0;
+    font-size: 0.9rem;
+  }
+  .conflict button {
+    margin-left: 0.5rem;
+    padding: 0.2rem 0.6rem;
+    cursor: pointer;
   }
   .crumbs {
     font-size: 0.85rem;

@@ -346,7 +346,17 @@ def test_small_sidecar_response_skips_gzip(editor_api):
     gzipping everything blindly, which would slow per-CRUD-call
     endpoints + complicate debugging in dev tools."""
     client, Session, _dir = editor_api
-    _seed_station(Session, slug="tiny")  # 1-block station — <1KB JSON
+    # Genuinely 1-slot station so the response is solidly < the 1000-byte
+    # gzip threshold. (The shared _minimal_template makes 3 slots, which
+    # sat right at the boundary — §16.2.3 c2's `updated_at` field tipped
+    # it over, exposing that this test needs a truly small fixture.)
+    one_slot = _minimal_template("tiny")
+    one_slot["layout"]["flat_slots"] = [
+        {"source": "A", "strategy": "sequential", "size": 1, "cursor_id": "C"}
+    ]
+    with Session() as db:
+        db.add(Station(slug="tiny", name="Test", template=one_slot))
+        db.commit()
     r = client.get("/api/stations/tiny/sidecar")
     assert r.status_code == 200
     assert r.headers.get("content-encoding") != "gzip"
@@ -390,3 +400,213 @@ def test_large_sidecar_response_honours_accept_encoding_identity(editor_api):
     assert r.headers.get("content-encoding") != "gzip"
     # Body still parses normally.
     assert len(r.json()["sidecar"]["sections"][0]["blocks"]) == 600
+
+
+# ---------- §16.2.3 c2: PATCH /api/stations/{slug}/blocks ----------------
+
+
+def _token(client, slug: str) -> str:
+    """Fetch the station's current updated_at token via the sidecar GET."""
+    return client.get(f"/api/stations/{slug}/sidecar").json()["updated_at"]
+
+
+def _mix_station(Session: sessionmaker, slug: str = "mx") -> None:
+    """flat_slots station whose slot 0 is a `mix` block (genre +
+    optional exclusion_window) — exercises optional-field clearing."""
+    template = {
+        "station": slug, "name": "Mix", "cadence": "weekly", "rng": "off",
+        "sources": [{"name": "A", "colour": "#abc", "role": "content"}],
+        "cursor": {"base_advance_per_week": 0, "cycle_weeks": 1},
+        "layout": {
+            "unit": "slot", "unit_labels": [], "row_start_offsets": [],
+            "cursors_init": {},
+            "flat_slots": [
+                {"source": "A", "strategy": "mix", "size": 1,
+                 "genre": "Old", "exclusion_window": 8},
+            ],
+        },
+    }
+    with Session() as db:
+        db.add(Station(slug=slug, name="Mix", template=template))
+        db.commit()
+
+
+def _row_template_station(Session: sessionmaker, slug: str = "rt") -> None:
+    """row_template station — block_idx edits the SHARED block (all rows)."""
+    template = {
+        "station": slug, "name": "RT", "cadence": "weekly", "rng": "off",
+        "sources": [{"name": "A", "colour": "#abc", "role": "content"}],
+        "cursor": {"base_advance_per_week": 0, "cycle_weeks": 1},
+        "layout": {
+            "unit": "day", "unit_labels": ["Mon", "Tue"],
+            "row_start_offsets": [0, 10], "cursors_init": {},
+            "row_template": [{"source": "A", "strategy": "jingle", "size": 1, "genre": "Day"}],
+        },
+    }
+    with Session() as db:
+        db.add(Station(slug=slug, name="RT", template=template))
+        db.commit()
+
+
+def test_patch_block_edits_a_parameter_field(editor_api):
+    """Happy path: edit a sequential block's cursor_id → 200, block
+    reflects the change, GET shows the new template, fresh token."""
+    client, Session, _dir = editor_api
+    # minimal template: slot 0 is sequential cursor_id=C; cursors_init {C:0}.
+    # Add a second cursor so we can switch to it.
+    template = _minimal_template("seq")
+    template["layout"]["cursors_init"] = {"C": 0, "D": 5}
+    with Session() as db:
+        db.add(Station(slug="seq", name="Seq", template=template))
+        db.commit()
+
+    r = client.patch("/api/stations/seq/blocks", json={
+        "address": {"slot_index": 0},
+        "fields": {"cursor_id": "D"},
+        "expected_updated_at": _token(client, "seq"),
+    })
+    assert r.status_code == 200, r.json()
+    assert r.json()["block"]["cursor_id"] == "D"
+    # Persisted: GET reflects it.
+    sidecar = client.get("/api/stations/seq/sidecar").json()
+    assert sidecar["template"]["layout"]["flat_slots"][0]["cursor_id"] == "D"
+
+
+def test_patch_block_clearing_optional_field_removes_key(editor_api):
+    """null clears an OPTIONAL field — the key is removed from the block."""
+    client, Session, _dir = editor_api
+    _mix_station(Session, "mx")
+    r = client.patch("/api/stations/mx/blocks", json={
+        "address": {"slot_index": 0},
+        "fields": {"exclusion_window": None},
+        "expected_updated_at": _token(client, "mx"),
+    })
+    assert r.status_code == 200, r.json()
+    assert "exclusion_window" not in r.json()["block"]
+
+
+def test_patch_block_unknown_station_404(editor_api):
+    client, _Session, _dir = editor_api
+    r = client.patch("/api/stations/nope/blocks", json={
+        "address": {"slot_index": 0}, "fields": {"genre": "X"},
+    })
+    assert r.status_code == 404
+
+
+def test_patch_block_stale_token_409(editor_api):
+    """Optimistic concurrency: a stale expected_updated_at → 409 with
+    the current token so the editor can reload."""
+    client, Session, _dir = editor_api
+    _mix_station(Session, "mx")
+    r = client.patch("/api/stations/mx/blocks", json={
+        "address": {"slot_index": 0},
+        "fields": {"genre": "New"},
+        "expected_updated_at": "1999-01-01T00:00:00+00:00",
+    })
+    assert r.status_code == 409
+    assert "current_updated_at" in r.json()["detail"]
+
+
+def test_patch_block_rejects_non_parameter_fields(editor_api):
+    """Decision C: strategy/source/size are NOT editable → 400."""
+    client, Session, _dir = editor_api
+    _mix_station(Session, "mx")
+    for bad in ({"strategy": "pick"}, {"source": "B"}, {"size": 5}):
+        r = client.patch("/api/stations/mx/blocks", json={
+            "address": {"slot_index": 0}, "fields": bad,
+            "expected_updated_at": _token(client, "mx"),
+        })
+        assert r.status_code == 400, (bad, r.json())
+        assert "not editable" in r.json()["detail"]
+
+
+def test_patch_block_out_of_range_404(editor_api):
+    client, Session, _dir = editor_api
+    _mix_station(Session, "mx")
+    r = client.patch("/api/stations/mx/blocks", json={
+        "address": {"slot_index": 99}, "fields": {"genre": "X"},
+        "expected_updated_at": _token(client, "mx"),
+    })
+    assert r.status_code == 404
+    assert "out of range" in r.json()["detail"]
+
+
+def test_patch_block_wrong_layout_form_400(editor_api):
+    """flat_slots station + block_idx address → 400 (form mismatch)."""
+    client, Session, _dir = editor_api
+    _mix_station(Session, "mx")
+    r = client.patch("/api/stations/mx/blocks", json={
+        "address": {"block_idx": 0}, "fields": {"genre": "X"},
+        "expected_updated_at": _token(client, "mx"),
+    })
+    assert r.status_code == 400
+    assert "row_template" in r.json()["detail"]
+
+
+def test_patch_block_invalid_value_rejected_by_parse_template(editor_api):
+    """A value that's syntactically a parameter field but engine-invalid
+    (cursor_id not in cursors_init) → 400 via parse_template revalidation."""
+    client, Session, _dir = editor_api
+    template = _minimal_template("seq")  # cursors_init {C:0}
+    with Session() as db:
+        db.add(Station(slug="seq", name="Seq", template=template))
+        db.commit()
+    r = client.patch("/api/stations/seq/blocks", json={
+        "address": {"slot_index": 0},
+        "fields": {"cursor_id": "GHOST"},  # not in cursors_init
+        "expected_updated_at": _token(client, "seq"),
+    })
+    assert r.status_code == 400
+    assert "invalid template" in r.json()["detail"]
+
+
+def test_patch_row_template_block_edits_shared_block(editor_api):
+    """row_template: block_idx edits the SHARED block — the single
+    row_template entry changes (affects every row at generation)."""
+    client, Session, _dir = editor_api
+    _row_template_station(Session, "rt")
+    r = client.patch("/api/stations/rt/blocks", json={
+        "address": {"block_idx": 0},
+        "fields": {"genre": "Night"},
+        "expected_updated_at": _token(client, "rt"),
+    })
+    assert r.status_code == 200, r.json()
+    sidecar = client.get("/api/stations/rt/sidecar").json()
+    assert sidecar["template"]["layout"]["row_template"][0]["genre"] == "Night"
+
+
+# ---------- §16.2.3 c2: POST /api/stations/{slug}/export -----------------
+
+
+def test_export_writes_template_to_disk(editor_api):
+    client, Session, stations_dir = editor_api
+    _mix_station(Session, "mx")
+    r = client.post("/api/stations/mx/export")
+    assert r.status_code == 200, r.json()
+    out = stations_dir / "mx.json"
+    assert out.is_file()
+    doc = json.loads(out.read_text())
+    assert doc["station"] == "mx"
+    assert doc["name"] == "Mix"
+    assert doc["layout"]["flat_slots"][0]["genre"] == "Old"
+    assert r.json()["bytes"] > 0
+
+
+def test_export_reflects_a_prior_patch(editor_api):
+    """End-to-end A3: PATCH the DB, then export → disk file carries the
+    edit. Proves DB-as-truth + on-demand commit."""
+    client, Session, stations_dir = editor_api
+    _mix_station(Session, "mx")
+    client.patch("/api/stations/mx/blocks", json={
+        "address": {"slot_index": 0}, "fields": {"genre": "Fresh"},
+        "expected_updated_at": _token(client, "mx"),
+    })
+    client.post("/api/stations/mx/export")
+    doc = json.loads((stations_dir / "mx.json").read_text())
+    assert doc["layout"]["flat_slots"][0]["genre"] == "Fresh"
+
+
+def test_export_unknown_station_404(editor_api):
+    client, _Session, _dir = editor_api
+    r = client.post("/api/stations/nope/export")
+    assert r.status_code == 404
