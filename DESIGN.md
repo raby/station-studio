@@ -6250,7 +6250,7 @@ Inserted into the strategic sequence based on §16.0 audit:
 | # | Slice | Effort | Why now |
 |---|---|---|---|
 | 4* | §16.24 Post-validation fixes (placeholder) | TBD | Slot for whatever surfaces during the external port validation week. May be 0 slices ("sounds great") or 1-3 (specific divergences need fixing). Inserts ahead of post-MVP polish if it fires. |
-| 5* | §16.17 Excluded-candidates display in trace viewer | small | Trace already RECORDS them (§14.23 shipped); viewer needs to SURFACE them. Finishes a half-shipped feature. |
+| 5* | §16.17 Excluded-candidates display in trace viewer | small | **Core shipped under §14.23** (viewer already surfaces the per-slot rejection sub-table). §16.17 = doc reconcile + 3 small enrichments (relabel / expand-all / per-trace summary). |
 | 6* | §16.19 Station detail page richness | small | Template summary + pool stats + cursor position on `/stations/[slug]`. Bare today. |
 
 **Cross-cutting / polish — slot in opportunistically:**
@@ -9488,24 +9488,42 @@ opportunistic when between other slices.
 
 ### 16.17 Excluded-candidates display in trace viewer
 
+**Status reconciliation (do not re-ship).** The CORE of this slice
+ALREADY shipped under §14.23's frontend disclosure — this entry's
+original premise ("the viewer doesn't display them") was stale. As
+of §14.23 the trace viewer (`/playlists/[id]`) renders, per picked
+slot with rejections, an inline toggle + an expandable sub-table
+(Pool / Track / Artist / Why rejected). Engine populates `excluded`
+(weighted/mix) → trace JSON stores it → `GET /api/playlists/{id}/trace`
+returns it → viewer shows it. Three vitest tests pin it (the
+"§14.23 excluded-candidates disclosure" block).
+
 **Why this matters.** §14.23 shipped the engine-side
 excluded-candidates capture — every `weighted` / `mix` pick records
 WHY each rejected candidate was rejected (artist dedup, recent use,
-mix exclusion). The trace records them; the viewer doesn't display
-them. The feature is half-shipped.
+mix exclusion). The end-to-end chain is complete.
 
-**Shape.** Per-slot disclosure: a "Why not these?" expander on each
-`weighted` / `mix` slot, listing each rejected candidate + the
-rejection reason (e.g. "Artist also at slot 17" / "Used in week
-22"). Optional — collapsed by default. Visible in the per-slot
-detail panel of `/playlists/[id]`.
+**Shape (original intent).** Per-slot disclosure: a "Why not these?"
+expander on each `weighted` / `mix` slot, listing each rejected
+candidate + the rejection reason (e.g. "Artist also at slot 17" /
+"Used in week 22"). Optional — collapsed by default.
 
-**Effort.** Small (~3 commits: API surfaces, UI component, e2e test).
+**What §16.17 actually shipped (the enrichment slice).** Rather
+than re-build the disclosure, §16.17 reconciled the docs + layered
+three small genuine enrichments on the existing display:
+
+| Commit | Enrichment |
+|---|---|
+| c1 | Doc reconciliation (this note) — stop the roadmap listing a phantom. |
+| c2 | Relabel the toggle "N rejected" → "Why not these? (N)" — matches the design's wording + is more discoverable than the terse original. |
+| c3 | Expand-all / collapse-all rejections control — flip every slot's disclosure at once for a debugging sweep over a 2,196-slot trace. |
+| c4 | Per-trace summary: "N slots have rejected candidates" near the header — spot whether/where a trace had contested picks without scrolling. |
 
 **Why useful now.** When the visual editor (§16.2) lands, users
-will tweak templates and want to know "why didn't this slot pick
-X?" — excluded-candidates display is the answer. Compounds with
-§16.2's edit-test loop.
+tweak templates + want "why didn't this slot pick X?" — the
+excluded-candidates display is the answer. The §16.17 enrichments
+make it usable at Rebirth Radio scale. Compounds with §16.2's
+edit-test loop.
 
 ---
 
