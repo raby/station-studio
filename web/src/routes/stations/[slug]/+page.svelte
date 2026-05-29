@@ -302,6 +302,18 @@
         >
           🗺 Visualise template
         </a>
+        <!--
+          §16.10 — per-station rule editor. Standalone route (mirrors
+          the visualise route) until the §16.2 sidebar shell lands +
+          embeds RulesPanel as one tab.
+        -->
+        <a
+          href="/stations/{encodeURIComponent(slug)}/rules"
+          class="rules-link"
+          data-testid="rules-station"
+        >
+          ⚙ Rules
+        </a>
         <a
           href="/stations/{encodeURIComponent(slug)}/edit"
           class="edit-link"
@@ -516,6 +528,22 @@
     white-space: nowrap;
   }
   .visualise-link:hover {
+    background: #e6fffa;
+  }
+  /* Rules link mirrors the visualise-link's outlined-teal treatment —
+     both are safe, navigational, secondary to Edit (§16.10). */
+  .rules-link {
+    display: inline-block;
+    padding: 0.5rem 1rem;
+    background: white;
+    color: #2c7a7b;
+    border: 1px solid #2c7a7b;
+    text-decoration: none;
+    border-radius: 4px;
+    font-size: 0.9rem;
+    white-space: nowrap;
+  }
+  .rules-link:hover {
     background: #e6fffa;
   }
   /* Edit link mirrors the trace viewer's `.button` styling — safe = filled,
