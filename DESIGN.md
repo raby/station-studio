@@ -9979,17 +9979,18 @@ users don't intuit *"in Music: File → Library → Export Playlist →
 XML"*. A short inline hint by the upload control saves a docs trip
 (this carries us until §16.15 docs site).
 
-**Decisions (locked in the §16.25 design pass).**
+**Decisions (locked in the §16.25 design pass; details tightened by
+the c1-review pre-pass — see "Implementation locks" below).**
 
 * **D1 — Upload model: FILE UPLOAD (primary) + path (advanced /
   local option).** Multipart upload is the headline path; the
-  endpoint grows a `POST /api/sources/upload` (or content-type
-  branch on `/import`) that streams the body to a temp file then
-  invokes the same importer. Path-input stays as an "advanced /
-  local file" affordance for `pipx` users with the XML already on
-  disk and a 100 MB library they don't want to round-trip through
-  multipart. Both paths converge on the same `import_source(...)`
-  call.
+  endpoint grows a NEW `POST /api/sources/upload` (separate
+  endpoint, not a branch on `/import` — see Implementation locks)
+  that streams the body to a temp file then invokes the same
+  importer. Path-input stays as an "advanced / local file"
+  affordance for `pipx` users with the XML already on disk and a
+  100 MB library they don't want to round-trip through multipart.
+  Both paths converge on the same `import_source(...)` call.
 * **D2 — Scope: simple per-pool form by default, expandable to
   multi-pool.** The default add-pool form is one pool (name + role +
   upload-or-path), submits, returns to the sources list, you can
@@ -9999,63 +10000,143 @@ XML"*. A short inline hint by the upload control saves a docs trip
   what landed, list what failed, with per-row error). Hybrid model
   matches both the casual case ("just one more pool") and the
   hobbyist-tutorial case ("seed my whole station").
-* **D3 — Placement: top-level `/sources` (source of truth) +
-  embed-in-station-detail.** `/sources` is the canonical page —
-  lists every imported pool with name / role / track count /
-  imported_at, plus the add-pool form. `/stations/[slug]` embeds
-  the *same* component scoped to the station's declared sources
-  (so the §16.19 "not imported" gap is fixable in-place without
-  navigating away). The component takes a `scope?: string[]` prop
-  — undefined = global view; set = filter list + pre-fill the
-  add-form's pool name from the declared-but-missing set. One
-  component, two mounting points, one source of truth.
+* **D3 — Placement: top-level `/sources` (canonical) +
+  embed-in-station-detail + deep-link badge.** `/sources` is the
+  canonical page — lists every imported pool with name / role /
+  track count / imported_at, plus the add-pool form. The same
+  Svelte component (`<PoolImportPanel scope?: string[]>`) is
+  *embedded* on `/stations/[slug]` scoped to the station's
+  declared sources, so the §16.19 "not imported" gap is fixable
+  in-place without navigating away. AND — as a secondary
+  affordance (cheap once the embed exists, useful as a global-
+  context / robust-fallback path) — the §16.19 "not imported"
+  badge **also** carries a deep-link `<a
+  href="/sources?pool=NAME&role=ROLE">` that lands the user on the
+  global page with the add-form prefilled. Two CTAs from the gap;
+  one component, two mount points + a prefill route. (Confirmed
+  in the c1-review re-ask: "both" — the embed is the in-place
+  fix; the deep-link is the global-context escape hatch.)
 * **D4 — Re-import: explicit "Re-import" button + confirm.** Each
   pool in the list gets a Re-import action that re-prompts for the
   file/path and confirms *"this replaces N existing tracks in
   pool '{name}'"*. Makes the destructive replace visible. The
   underlying call is the same `import_source(...)` (idempotent on
-  name), so the backend doesn't change; the UX wraps it.
+  name), so the backend doesn't change; the UX wraps it. **The
+  role select is READ-ONLY on the re-import dialog** (role change
+  is out of scope — see "Not in this slice"; see Implementation
+  lock 🟡-4).
+
+**Implementation locks (c1-review pre-pass).** The four decisions
+above leave room for coin-flip choices; this section commits to the
+specific ones before any code lands.
+
+* **🟡-1 — Separate `POST /api/sources/upload` endpoint, not a
+  content-type branch on `/import`.** Mixing JSON-bodied and
+  multipart on the same endpoint muddles validation (different
+  request shapes, error surfaces, test harnesses). Two endpoints,
+  one shared `import_source(...)` underneath. The existing
+  `/import` keeps its current JSON-with-path contract; `/upload`
+  is the new multipart sibling.
+* **🟡-3 — Path-input is a TYPED TEXT FIELD, not a file picker.**
+  Browsers will not let `<input type="file">` return a server-side
+  path (security). The advanced path-input is `<input type="text"
+  placeholder="/path/to/library.xml">`. `STATION_STUDIO_IMPORT_BASE_DIR`
+  validation surfaces 400 errors verbatim to the user. No file
+  dialog, no autocomplete.
+* **🟡-4 — Re-import preserves the existing role.** The role
+  select is read-only on the re-import dialog. Without this lock,
+  re-import would become the de-facto path to role-change (because
+  no other API exposes it), which is confusing UX. Role change is
+  a small future slice if asked (~1 commit: `PATCH
+  /api/sources/{id}` + a row-level edit affordance).
+* **G1 — `FastAPI UploadFile` (NOT `bytes`).** Starlette spools to
+  disk above 1 MB; `bytes` buffers the whole body in memory. A 100
+  MB library XML must not blow up RAM. `bytes` is banned in this
+  endpoint.
+* **G2 — Temp-file via `tempfile.NamedTemporaryFile(suffix=".xml")`.**
+  Keeps `import_source(path: Path)` untouched (don't refactor to
+  file-like — that'd churn the CLI manifest importer for no win).
+  Stream UploadFile → temp file → `import_source(temp_path, ...)`
+  → `finally` cleanup (even on import error). Stdlib only.
+* **G3 — Multi-pool submit is SEQUENTIAL.** Client iterates rows
+  and calls `/upload` one at a time. Per-row state: `pending` →
+  `uploading` → `imported` | `failed`. Sequential avoids 6×
+  concurrent 100 MB uploads racing for memory + the §16.11
+  single-worker backend constraint.
+* **G4 — Keep the CLI manifest, don't deprecate.** README c6 makes
+  the UI primary; an "Advanced: importing many pools from a
+  manifest" section keeps `make import-weekly-pools` as a power-
+  user channel. Matches §16.13's plurality (pipx AND docker, both
+  first-class).
+* **G5 — iTunes-XML export hint copy.** One sentence by the upload
+  control: *"In Music (macOS): File → Library → Export Playlist →
+  choose 'XML' format. (In iTunes on Windows: same path.)"*
+  Carries us until §16.15 docs site.
+* **G7 — No wizard touch.** The station-creation wizard already
+  lets you declare source *names* without importing; that's
+  correct and unchanged. The §16.19 "not imported" gap + the new
+  `/sources` page are the bridge between declared-names and
+  imported-pools; the wizard does not grow upload UI.
+
+**Not in this slice.** Pool color assignment (mentioned in the
+§16.0-era backlog), pool rename (the `name` is the upsert key —
+rename means delete + re-import), pool merge, **role change after
+import** (queued as a small future PATCH slice), import audit log,
+multi-user concerns. Future plan-audits: do not assume these
+landed under §16.25.
 
 **Prerequisites this slice owns (the parts that aren't "just UI").**
 
-* A new `POST /api/sources/upload` (or a multipart branch on the
-  existing `/import`) that streams the upload to a temp file and
-  feeds it to `import_source(...)`. Body-size limit lifted (per-app
-  config; document the cap). Cleanup-on-error so a failed import
-  doesn't leave a temp file lying around.
+* The new `POST /api/sources/upload` endpoint (🟡-1, G1, G2) that
+  streams the multipart body to a `NamedTemporaryFile`, invokes
+  `import_source(temp_path, name, role=...)`, and cleans up in a
+  `finally`. The existing `/import` (path-input) is untouched.
 * The frontend's first **non-JSON** API call: existing helpers in
-  `api.ts` are all JSON-bodied. Either add a small `uploadFile()`
-  helper that takes a `FormData` body, or special-case at the
-  call site. Tested at `api.test.ts` like the others.
+  `api.ts` are all JSON-bodied. Add a small `uploadSource()`
+  helper that takes `(name, role, file: File)` and builds the
+  `FormData` body. Tested at `api.test.ts` like the others.
 * Pool delete already exists (`DELETE /api/sources/{id}`); the
   UI just needs to wire it up with a confirm.
 
 **Shape (rough, ~6-8 commits, each with mid-slice review):**
 
-1. **c1 — backend upload endpoint.** `POST /api/sources/upload`
-   (streaming multipart → temp file → `import_source`), error
-   cleanup, body-limit config + tests.
+1. **c1 — backend upload endpoint.** New `POST /api/sources/upload`
+   (🟡-1 separate endpoint; G1 `UploadFile`, NOT `bytes`; G2
+   `NamedTemporaryFile` → `import_source(...)` → `finally` cleanup
+   even on import error). Multipart `Form(name)` + `Form(role)` +
+   `File(file)`. Tests cover happy path with `tiny-library.xml`,
+   error path with `malformed-library.xml`, role validation, and
+   temp-file cleanup on parse failure. Mid-commit code review.
 2. **c2 — frontend `/sources` page + add-pool form (single-pool
    default).** List view + per-pool form with role select + file
-   upload (D1 primary) + collapsed "advanced: path" option +
-   inline iTunes-XML export hint. Component tests + Playwright
-   for the happy path.
+   upload (D1 primary) + collapsed "advanced: path" option
+   (🟡-3 typed text field) + inline iTunes-XML export hint (G5
+   copy). `uploadSource()` helper in `api.ts` (first non-JSON
+   call; FormData body). Component tests + Playwright happy path.
 3. **c3 — multi-pool expansion (D2 toggle).** "Add multiple at
-   once" expands the form to N rows; each row imports
-   independently; partial-success surface (what landed, what
-   failed). Tests for the partial-failure case.
-4. **c4 — re-import + delete affordances (D4).** Per-row "Re-import"
-   + confirm + "Delete" + confirm. Wires up the existing DELETE
-   endpoint.
-5. **c5 — `/stations/[slug]` embed (D3 second mount point).** Pool
-   list + add form embedded in the station overview, scoped to
-   declared sources. The §16.19 "not imported" badge becomes a
-   button that pre-fills the form with the missing pool's name.
-6. **c6 — README + docs.** README "Quick start" learns the new
-   path. The "to import your own iTunes XMLs, use the CLI…"
-   paragraph is rewritten: "open `/sources` and upload your XMLs."
-   Cross-link to the inline export hint. §16.13 D1 gate flipped
-   to **CLEARED** in the §16.13 entry + queue rows.
+   once" expands the form to N rows; G3 SEQUENTIAL submit — client
+   iterates `pending` → `uploading` → `imported` | `failed` one
+   row at a time; partial-success surface (what landed, what
+   failed, per-row error). Tests for the partial-failure case.
+4. **c4 — re-import + delete affordances (D4).** Per-row
+   "Re-import" + confirm (with 🟡-4 read-only role) + "Delete" +
+   confirm. Wires up the existing `DELETE /api/sources/{id}`.
+5. **c5 — `/stations/[slug]` embed + §16.19 badge deep-link (D3
+   both).** Extract `<PoolImportPanel scope?: string[]>` from c2's
+   `/sources` page; mount it scoped on the station overview for
+   declared sources. ALSO: the §16.19 "not imported" badge gains
+   an `<a href="/sources?pool=NAME&role=ROLE">` deep-link (the
+   secondary global-context affordance); `/sources` learns to
+   read those query params and prefill the add-form. Tests cover
+   both mount points (no state leak) + the prefill route.
+6. **c6 — README + docs (G4 keep CLI).** README "Quick start"
+   learns the new path. The "to import your own iTunes XMLs, use
+   the CLI…" paragraph is rewritten: "open `/sources` and upload
+   your XMLs." An "Advanced: importing many pools from a
+   manifest" section keeps `make import-weekly-pools` as a
+   power-user channel. Cross-link to G5's inline export hint.
+   **§16.13 D1 gate flipped to CLEARED** in the §16.13 entry +
+   queue rows.
 7. **c7 (optional) — slice review sweep.** Whatever fell out.
 
 **Effort.** Medium-large (~6-8 commits, all four decisions went to
