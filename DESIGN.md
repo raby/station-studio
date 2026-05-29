@@ -6947,10 +6947,10 @@ Seven implementation slices, each independently shippable:
 |---|---|---|---|
 | **§16.2.1** | Sidecar grammar + parser | The schema (decision 2 above), `engine/editor_metadata.py` parser, drift detector, tests. No UI. **Plus** the two committed-station sidecars (`stations/rebirth-radio.editor.json` + `stations/rebirth-classics.editor.json`) authored using the grammar — without these, §16.2.2 has nothing to render. | Low-Medium — pure data layer, but ships two real-station sidecars so §16.2.2 can render something on day one. |
 | **§16.2.2** | Read-only canvas | `/stations/[slug]/visualise` route renders sections + macros from the sidecar shipped in §16.2.1. View only; no edits. **Coupling note:** §16.2.2 is paired with §16.2.1 in practice — without §16.2.1's committed sidecars, this route has nothing to render. Independently shippable in CODE terms (the route exists and works for any sidecar) but not in DEMO terms (the demo requires the sidecars). Treat the pair as one ~1-week unit; the 8-slice estimate already accounts for this. | Low — UI scaffold + sidecar consumer. |
-| **§16.2.3** | Atomic slot editing | Click chip → edit form → save. Drag-drop within section. | Medium — first write path; concurrency-with-JSON concerns. |
-| **§16.2.4** | Macro editing | Edit-once-applies-to-all. Macro palette in sidebar. | Medium. |
-| **§16.2.5** | Section composition | Create / rename / reorder sections. Drag macros between sections. | Medium. |
-| **§16.2.6** | Live preview endpoint + UI | `POST /api/stations/{slug}/preview` (in-memory; no persistence side-effects) + editor wires it to a debounced auto-refresh trace panel. **Implementation note:** `excluded_mix_ids` must be RECOMPUTED per request from the DB's current MixUsage (not cached at page-load) — if the user edits a mix block's `exclusion_window` value in the editor, the new window changes which MixUsage rows are in scope. Same for `previous_playlist` if the user is on a non-week-1 preview. The endpoint reads all rule-derived inputs fresh from the request body + DB; nothing is cached across edits within a session. | Medium — new API surface; debounce + state-management UX. |
+| **§16.2.3** | Atomic slot editing | Click chip → edit form → save (parameter fields only; see locked design below). **Targeted `PATCH /api/stations/{slug}/blocks`** with optimistic `expected_updated_at`; DB-as-truth + on-demand disk export. NO drag-drop (reorder is §16.2.5), NO retyping (§16.2.4), NO structural edits (§16.2.5). | Medium — first write path; resolved via the locked design (decisions A–F). |
+| **§16.2.4** | Macro editing | Edit-once-applies-to-all. Macro palette in sidebar. **+ block retyping** (change a block's `strategy` / `source`) punted here from §16.2.3 — needs valid-field-set swap + pool/cursor existence checks. | Medium. |
+| **§16.2.5** | Section composition | Create / rename / reorder sections. Drag macros between sections. **+ structural block edits** (`size` / add / remove) punted here from §16.2.3 — these change slot counts and must update the sidecar's atomic bounds in the same write (first slice with a sidecar write path). | Medium. |
+| **§16.2.6** | Live preview endpoint + UI | `POST /api/stations/{slug}/preview` (in-memory; no persistence side-effects) + editor wires it to a debounced auto-refresh trace panel. **Implementation note:** `excluded_mix_ids` must be RECOMPUTED per request from the DB's current MixUsage (not cached at page-load) — if the user edits a mix block's `exclusion_window` value in the editor, the new window changes which MixUsage rows are in scope. Same for `previous_playlist` if the user is on a non-week-1 preview. The endpoint reads all rule-derived inputs fresh from the request body + DB; nothing is cached across edits within a session. **+ staged-edit + Discard (F2)** punted here from §16.2.3 — the in-memory edit-accumulation + Discard model lands with live preview, since preview inherently needs staging; §16.2.3 ships immediate per-block save. | Medium — new API surface; debounce + state-management UX. |
 | **§16.2.7** | Compare against saved | "Show what changed since save" button → slot-by-slot diff using `byte_equality.py` helpers. | Low — diff helpers exist; UI plumbing. |
 | **§16.2.8** | Fork action | "Fork this station" → duplicates JSON + sidecar. | Low — file copy + slug-rename UI. |
 
@@ -7581,6 +7581,111 @@ Frontend:
 | §16.2.2.t4 | c1 review 🟢-3 (recovery) | **closed in post-c5 sweep** (sibling-dir + stations-dir assertions) |
 | §16.2.2.t5 | c3 review 🟢-4 | **closed in post-c5 sweep** (chipCount prop drilling) |
 | §16.2.2.t6 | c3 review 🟢-5 | **closed in c4** (chip a11y) |
+
+#### §16.2.3 atomic edit — locked design (paper)
+
+The first WRITE path for the editor: click a chip → DetailPanel
+grows an edit form → change a block's parameter fields → save.
+Decisions locked in a design pass before implementation (same
+pattern as §16.2.0 / §16.11). The §16.2.3 row in the sub-slice
+table above is the one-liner; this is the full spec.
+
+**Grounding facts (confirmed against the code):**
+
+* Template lives in `Station.template` (DB JSON column). Generation
+  NEVER mutates it (`advance_cursors` writes `cursor_state`;
+  `save_playlist` writes playlists). The only template writers are
+  the wizard-edit `PUT /api/stations/{slug}` and (now) this editor.
+* Sidecar is disk-only + read-only so far; its write path is
+  §16.2.5, NOT this slice. §16.2.3 touches the template only.
+* §16.2.0 stated "JSON file is canonical; DB re-seeds from disk",
+  but the implemented reality is DB-as-truth (PUT writes DB; disk
+  `stations/{slug}.json` goes stale; seed runs only on an empty DB).
+  Decision A below resolves this gap.
+
+**Decision A — source of truth: A3 (DB-as-truth + on-demand export).**
+Edits land in the DB. A separate "Export template to stations/
+{slug}.json" affordance (mirrors the existing playlist disk-export)
+lets the operator commit the change to git when ready. DB = live
+runtime truth; disk JSON = the committable git artifact, exported
+on demand. Reframes §16.2.0's "JSON is canonical" as "JSON is the
+committable artifact" rather than "every save writes a file." No
+forced file I/O per save; the existing validated write path is reused.
+
+**Decision B — endpoint: B2 (targeted PATCH).**
+New `PATCH /api/stations/{slug}/blocks` (body-based, not a composite
+URL address). Body:
+`{address, fields, expected_updated_at}`.
+
+* `address` maps to the underlying STORAGE location, NOT the render
+  position:
+  * flat_slots → `{"slot_index": i}` → `layout.flat_slots[i]`
+    (each slot independent).
+  * row_template → `{"block_idx": j}` → `layout.row_template[j]`.
+    **Editing a row_template block edits the SHARED template block —
+    it changes EVERY row that instantiates it.** The `row_idx` from
+    the chip's AtomicRef is a render artifact, irrelevant to storage.
+    The UI must warn: "this edits the shared row template — all N
+    rows change."
+* Chosen over B1 (whole-template PUT) precisely because the server
+  can ENFORCE the parameter-only constraint (Decision C) server-
+  side rather than trusting the client. The targeted endpoint
+  validates: address in bounds → block exists → every field in
+  `fields` is an allowed parameter for that block's strategy →
+  apply → `parse_template(modified)` → commit.
+
+**Decision C — editable scope: parameter fields only.**
+Editable: `genre`, `window`, `cursor_id`, `position`,
+`exclusion_window` (whichever the block's strategy declares).
+NOT `strategy`, NOT `source`, NOT `size`. Those are structural
+(change valid-field-set / pool validity / slot counts) → they'd
+drift the sidecar's atomic bounds. The PATCH endpoint REJECTS
+attempts to change them (400). This keeps slot counts + sidecar +
+layout-form invariant, so §16.2.3 never touches the sidecar. Block
+retyping (strategy/source) is §16.2.4; structural edits
+(size/add/remove) are §16.2.5.
+
+**Decision D — concurrency: D2 (optimistic via `updated_at`).**
+The PATCH body carries `expected_updated_at` (the `updated_at` the
+editor loaded with the sidecar GET — already on the wire via
+StationSummary). The endpoint 409s if `Station.updated_at` has
+moved (another tab / the wizard-edit route). The frontend surfaces
+"this station changed elsewhere — reload to see the latest" and
+re-fetches. Chosen over D1 (last-write-wins) because this is the
+first write path + the timestamp is free.
+
+**Decision E — validation surfacing.**
+Client-side pre-validation (numeric ranges, required-per-strategy)
+for instant feedback in the DetailPanel form; server PATCH 400
+(`parse_template` TemplateError, or the parameter-only guard) as
+the source of truth, surfaced inline (reuse the RulesPanel
+field-error pattern).
+
+**Decision F — save model: F1 (immediate per-block save).**
+The DetailPanel form has its own Save button (like RulesPanel);
+each block edit PATCHes immediately. Staged multi-edit + Discard
+is inherently §16.2.6's live-preview model — building the
+in-memory diff/staging machinery now would be premature. **F2
+(staged-edit + Discard) is deferred to §16.2.6** — see that slice.
+
+**Commit plan (~3–4 commits + mid-slice review):**
+
+| Commit | What |
+|---|---|
+| c1 | Per-strategy editable-field schema in `editor.ts` + DetailPanel edit form (strategy-aware fields, client validation). Wired to a save callback; vitest. |
+| c2 | Persistence: `PATCH /api/stations/{slug}/blocks` endpoint (address resolution + parameter-only guard + optimistic `expected_updated_at` + `parse_template` revalidation) + frontend wiring + 409 surfacing + the A3 "Export to disk" affordance. Pytest + vitest. |
+| Mid-slice review | After c2 — the full write contract (endpoint shape, address semantics, parameter-only enforcement, optimistic-concurrency, row_template shared-block warning) before e2e locks against it. |
+| c3 | Playwright e2e (click chip → edit genre → save → reload shows change; row_template shared-block warning; 409 path) + DESIGN suffix + §15 snapshot. |
+
+**Punts (homed in the right slices — do not lose):**
+
+| Punt | Home | Note |
+|---|---|---|
+| Block retyping (change `strategy` / `source`) | **§16.2.4** | Changes the valid-field set + needs pool/cursor existence checks. The §16.2.4 "macro editing" brief absorbs block retyping. |
+| Structural edits (`size` / add / remove blocks) | **§16.2.5** | Changes slot counts → must update the sidecar's atomic bounds in the SAME write. That's exactly §16.2.5's "section composition" territory (the first slice with a sidecar write path). |
+| Staged-edit + Discard (in-memory accumulation) | **§16.2.6** | The live-preview slice inherently needs staging; F2 lands there. §16.2.3 ships immediate per-block save. |
+| "N playlists were generated under the previous template" staleness hint | **§16.19** (station detail richness) | Editing the template doesn't touch existing playlists; they reflect the template-at-generation-time. A hint that prior playlists are now stale belongs with the station-detail richness slice. |
+| D1→D2 was taken now; no concurrency punt remains | — | (D2 shipped in this slice's plan.) |
 
 ### 16.3 Delete / station reset
 
@@ -9391,6 +9496,12 @@ detail surface to anchor the editor + rules panel + pool stats.
   §14.30 semantics).
 * **Generations** — existing playlists table, but with a "last
   generated" badge + the generation count summary at top.
+  **+ template-staleness hint** (punted here from §16.2.3): once
+  the editor can change the template, existing playlists may have
+  been generated under a PRIOR template version. Surface "N
+  playlists were generated under a previous template — regenerate
+  to apply your edits." (Editing the template never auto-touches
+  playlists; they reflect the template-at-generation-time.)
 
 **Effort.** Small (~4-5 commits, mostly UI; backend pieces already
 exist via /api/stations/{slug}, /api/sources, /api/cursor_state).
