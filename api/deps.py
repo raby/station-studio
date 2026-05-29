@@ -1,6 +1,7 @@
 """FastAPI dependency providers."""
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from engine.database import make_engine, make_sessionmaker
@@ -82,7 +83,20 @@ def get_stations_dir() -> Path:
     sidecar files (`stations/{slug}.json`, `stations/{slug}.editor.json`).
 
     §16.2.2 c1: the editor endpoint reads sidecars from this directory.
-    Tests override to point at a tmp_path so they can drop fixtures
-    in isolation without polluting the repo's committed sidecars.
+    Pytest overrides this dep to a tmp_path so fixtures drop in
+    isolation without polluting the repo's committed sidecars.
+
+    §16.2.3 c3: `STATION_STUDIO_STATIONS_DIR` env override. The export
+    endpoint WRITES `stations/{slug}.json` here — in a real server
+    process (Playwright e2e) there's no dependency-override, so without
+    this the e2e would write stray files into the repo's `stations/`.
+    The Playwright webServer points it at a throwaway dir. Read at call
+    time (not import) so the env applies per-process; the dir is
+    created if missing so the first export doesn't 500.
     """
+    override = os.environ.get("STATION_STUDIO_STATIONS_DIR", "").strip()
+    if override:
+        d = Path(override)
+        d.mkdir(parents=True, exist_ok=True)
+        return d
     return _STATIONS_DIR

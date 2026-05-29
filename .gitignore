@@ -31,6 +31,10 @@ web/test-results/
 web/playwright-report/
 test-results/
 playwright-report/
+playwright-test.*.db
+playwright-test.*.db-wal
+playwright-test.*.db-shm
+playwright-stations.*/
 
 # Coverage output
 .coverage

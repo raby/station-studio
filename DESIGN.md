@@ -6116,11 +6116,16 @@ import) is the only remaining Phase B tail item, parked on
 ## 15. Status snapshot
 
 A quick "where are we" for a future reader. Last updated alongside
-**§16.10 (Rules CRUD UI panel shipped — `<RulesPanel>` self-contained
-per-station rule editor + `/stations/[slug]/rules` route + "⚙ Rules"
-discovery link; backend CRUD pre-existed §14.29/§14.30 so frontend-
-only; 10 vitest + 5 Playwright e2e). Preceded by §16.12 stations list
-polish + §16.2.2 read-only visual block canvas)**. Phase B is DONE;
+**§16.2.3 (atomic slot editing shipped — the editor's first WRITE
+path. `PATCH /api/stations/{slug}/blocks` (targeted, parameter-only,
+optimistic-concurrency via `expected_updated_at` → 409) + `POST
+/export` (DB-as-truth + on-demand disk commit, Decision A3). DetailPanel
+grows a strategy-aware edit form (cursor_id as a `<select>`); row_template
+edits warn "changes every row". 5 commits incl. 2 per-commit reviews —
+caught a Svelte number-input crash + a conflict-token re-arm hole.
+3-way editable-fields parity guard (Python ↔ TS ↔ engine). Preceded by
+§16.10 Rules CRUD UI + §16.12 stations list polish + §16.2.2 read-only
+canvas)**. Phase B is DONE;
 Phase C / §16 product work underway. Both station-studio's
 byte-equality tests are GREEN at production-scale chain depth:
 weekly port (real XMLs, 30 generations, 8 asserted weeks spanning
@@ -6156,7 +6161,7 @@ direction — spec slice §16.2.0 is the next planned work.
 | Backup / restore         | Shipped (§14.18). `make backup` / `make restore date=...` with WAL-aware sqlite3 .backup + pre-restore safety copy. |
 | **§17 port roadmap**     | **Phase A + Phase B both complete. Phase A (§14.17–§14.21): pre-port unblocks. Phase B (§14.22–§14.41): port — byte-equality verified at depth against weekly + Classics. Phase C (production cutover): operational, not engineering — external validation in flight with the station owner. Next engineering direction: §16.0 OSS framing shift (shipped) + §16.2 visual block editor (the flagship hobbyist feature). |
 | **Product framing**      | **OSS for radio hobbyists (§16.0). MIT-licensed. README hobbyist-facing; CONTRIBUTING.md codifies slice pattern. Two example stations (Classics + Rebirth Radio) ship; hobbyist starter station queued (§16.7).** |
-| Visual block editor      | **§16.2.2 SHIPPED** — read-only canvas at `/stations/[slug]/visualise`. `GET /api/stations/{slug}/sidecar` endpoint serves template + sidecar in one fetch; trivial-sidecar fallback for un-authored stations (Decision E — frontend never handles "no sidecar"). 7 Svelte components (`<EditorCanvas>`, `<Section>`, `<SectionHeader>`, `<ChipFlow>`, `<Chip>`, `<ViewModeToggle>`, `<DetailPanel>`) compose the canvas. View-mode prefs (labels / colour / macros) persist to localStorage. Chips are native `<button>`s (keyboard a11y); click opens a slide-in DetailPanel with full BlockSpec / macro spec. `<500-chip` sections start expanded; `>500` sections start collapsed with "Large station" hint. Discoverability via "🗺 Visualise template" link from `/stations/[slug]`. **Next**: §16.2.3 atomic edit (grow the DetailPanel with edit forms). |
+| Visual block editor      | **§16.2.2 SHIPPED** — read-only canvas at `/stations/[slug]/visualise`. `GET /api/stations/{slug}/sidecar` endpoint serves template + sidecar in one fetch; trivial-sidecar fallback for un-authored stations (Decision E — frontend never handles "no sidecar"). 7 Svelte components (`<EditorCanvas>`, `<Section>`, `<SectionHeader>`, `<ChipFlow>`, `<Chip>`, `<ViewModeToggle>`, `<DetailPanel>`) compose the canvas. View-mode prefs (labels / colour / macros) persist to localStorage. Chips are native `<button>`s (keyboard a11y); click opens a slide-in DetailPanel with full BlockSpec / macro spec. `<500-chip` sections start expanded; `>500` sections start collapsed with "Large station" hint. Discoverability via "🗺 Visualise template" link from `/stations/[slug]`. **§16.2.3 SHIPPED** — atomic slot editing: click a chip → DetailPanel edit form (parameter fields only; cursor_id as a select) → Save → `PATCH /api/stations/{slug}/blocks` (server-enforced parameter-only, optimistic-concurrency 409, parse_template revalidation) → refetch. "Export to disk" writes `stations/{slug}.json` (Decision A3, DB-as-truth). row_template edits warn they change every row. **Next**: §16.2.4 macro editing + block retyping. |
 | Trace versioning         | Deferred. See §16.4 (queued; not on the critical path post-Phase-B). |
 | Accessibility pass       | Deferred. §16.5 — single sweep after §16.2 ships.                |
 | Rules CRUD UI panel      | **Shipped (§16.10).** `<RulesPanel>` self-contained component (load → edit → Save/Reset, client-side validation mirroring engine.rules, per-row state) + `/stations/[slug]/rules` route + "⚙ Rules" header link. Backend CRUD pre-existed; frontend-only. Reusable for the §16.2 sidebar shell. |
@@ -7686,6 +7691,57 @@ in-memory diff/staging machinery now would be premature. **F2
 | Staged-edit + Discard (in-memory accumulation) | **§16.2.6** | The live-preview slice inherently needs staging; F2 lands there. §16.2.3 ships immediate per-block save. |
 | "N playlists were generated under the previous template" staleness hint | **§16.19** (station detail richness) | Editing the template doesn't touch existing playlists; they reflect the template-at-generation-time. A hint that prior playlists are now stale belongs with the station-detail richness slice. |
 | D1→D2 was taken now; no concurrency punt remains | — | (D2 shipped in this slice's plan.) |
+
+#### What §16.2.3 shipped — verification + deltas
+
+Landed in 5 commits (c1 + c1-review + c2 + c2-review + c3).
+
+| Commit | Subject |
+|---|---|
+| c1 | editable-field schema (editor.ts EDITABLE_FIELDS) + DetailPanel strategy-aware edit form (dispatches `save`). |
+| c1 review | 2 🔴 + 2 🟡 — Svelte number-input binding makes int fields NUMBERS; the save payload's `.trim()` crashed on them. Normalised all read sites via `normStr`; widened the value type; fixed dirty-detection. |
+| c2 | `PATCH /api/stations/{slug}/blocks` (address resolution, parameter-only guard, D2 optimistic concurrency, parse_template revalidation) + `POST /export` (A3) + sidecar GET `updated_at` + frontend patchBlock/export + route wiring. Three-way editable-fields parity test. |
+| c2 review | 1 🟡 — conflict path no longer re-arms the optimistic token (a retry must 409 again until reload), so a second blind save can't silently overwrite a concurrent change. + token-bump test + split save/refetch try-blocks. |
+| c3 | Playwright e2e + this suffix + §15 snapshot. |
+
+**Decisions, as implemented:** A3 (DB write + on-demand disk export),
+B2 (targeted PATCH; row_template edits the shared block_idx), C
+(parameter fields only; server-enforced), D2 (optimistic
+`expected_updated_at` → 409), E (client pre-validation + server 400
+inline), F1 (immediate per-block save).
+
+**Deltas from the plan**
+* **c3 surfaced an isolation bug** the export endpoint introduced: in
+  a real server process (Playwright) `get_stations_dir` resolved to
+  the REPO `stations/`, so the e2e export test wrote a stray
+  `stations/ed3-export.json`. Fixed by an env override
+  (`STATION_STUDIO_STATIONS_DIR`, read at call time, auto-creates) +
+  the Playwright webServer pointing it at a throwaway dir +
+  `.gitignore` entry. Pinned by 2 deps tests.
+* **Number-input binding (c1 review 🔴)** — the single biggest catch:
+  saving any int-field edit crashed before the review. Worth the
+  per-commit review cadence.
+
+**Verification**
+* `pytest`: editor 23 + parity 3 + deps-layout 7 = green across the
+  784-test suite.
+* `npm run test:unit`: 382 (editor.ts schema/validation, DetailPanel
+  edit form, api.ts patchBlock/export).
+* `npm run check`: 0 errors / 0 warnings.
+* `npx playwright test atomic-edit.spec.ts`: 4 — edit→save→persist,
+  row_template shared-block warning, 409 conflict banner + reload,
+  export-to-disk. No stray repo files.
+
+**Files**
+Backend: `api/routers/editor.py` (PATCH + export + updated_at),
+`api/schemas.py` (BlockAddress / BlockPatchRequest / BlockPatchResponse
+/ TemplateExportResponse + EditorSidecarResponse.updated_at),
+`api/deps.py` (STATION_STUDIO_STATIONS_DIR override),
+`tests/test_editable_fields_parity.py` (NEW).
+Frontend: `editor.ts` (EDITABLE_FIELDS + validators + updated_at),
+`api.ts` (patchBlock / BlockPatchConflict / exportStationTemplate),
+`DetailPanel.svelte` (edit form), `EditorCanvas.svelte` (save
+forward), visualise route (save/conflict/export wiring).
 
 ### 16.3 Delete / station reset
 

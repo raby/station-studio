@@ -81,3 +81,28 @@ def test_helper_accepts_arbitrary_paths(tmp_path):
     stations = weird_root / "stations"
     stations.mkdir()
     _verify_repo_layout(weird_root, stations)  # no raise — name doesn't matter
+
+
+# ---------- §16.2.3 c3: STATION_STUDIO_STATIONS_DIR env override ----------
+
+
+def test_get_stations_dir_defaults_to_repo_stations(monkeypatch):
+    """No env override → the repo's stations/ dir (the committed
+    sidecars live there)."""
+    monkeypatch.delenv("STATION_STUDIO_STATIONS_DIR", raising=False)
+    from api.deps import get_stations_dir, _STATIONS_DIR
+    assert get_stations_dir() == _STATIONS_DIR
+
+
+def test_get_stations_dir_env_override_creates_and_returns(tmp_path, monkeypatch):
+    """§16.2.3 c3 isolation fix: STATION_STUDIO_STATIONS_DIR redirects
+    the editor read/write dir (so the Playwright e2e's export endpoint
+    doesn't litter the repo's committed stations/). The dir is created
+    if missing so the first export doesn't 500."""
+    target = tmp_path / "throwaway-stations"
+    assert not target.exists()
+    monkeypatch.setenv("STATION_STUDIO_STATIONS_DIR", str(target))
+    from api.deps import get_stations_dir
+    out = get_stations_dir()
+    assert out == target
+    assert target.is_dir()  # auto-created

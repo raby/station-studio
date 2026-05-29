@@ -11,6 +11,15 @@ const REPO_ROOT = path.resolve(__dirname, '..');
 // other's DB; the backend command below wipes its own file on boot.
 const TEST_DB_PATH = path.join(REPO_ROOT, `playwright-test.${process.pid}.db`);
 
+// §16.2.3 c3 — throwaway stations dir for the e2e backend. The editor
+// EXPORT endpoint writes `stations/{slug}.json`; without this override
+// the e2e would litter the repo's committed `stations/`. A real server
+// process has no dependency-override, so the isolation must come via
+// the env var `get_stations_dir` reads (api/deps.py). Editor GETs for
+// e2e-created stations have no committed sidecar → synthesize-trivial,
+// so an empty dir is fine.
+const TEST_STATIONS_DIR = path.join(REPO_ROOT, `playwright-stations.${process.pid}`);
+
 export default defineConfig({
   testDir: './e2e',
   fullyParallel: false, // the backend is a single-process shared store
@@ -33,7 +42,7 @@ export default defineConfig({
       // Playwright boots webServers before globalSetup runs, so a stale DB
       // file gets created/opened first and then deleted out from under the
       // connection pool, leaving queries to hit an empty file.
-      command: `rm -f "${TEST_DB_PATH}" "${TEST_DB_PATH}-wal" "${TEST_DB_PATH}-shm" && exec ${REPO_ROOT}/.venv/bin/python -m uvicorn api.main:app --host 127.0.0.1 --port 8001`,
+      command: `rm -rf "${TEST_DB_PATH}" "${TEST_DB_PATH}-wal" "${TEST_DB_PATH}-shm" "${TEST_STATIONS_DIR}" && exec ${REPO_ROOT}/.venv/bin/python -m uvicorn api.main:app --host 127.0.0.1 --port 8001`,
       cwd: REPO_ROOT,
       url: 'http://127.0.0.1:8001/',
       reuseExistingServer: false,
@@ -42,6 +51,7 @@ export default defineConfig({
       timeout: 30_000,
       env: {
         STATION_STUDIO_DB_URL: `sqlite:///${TEST_DB_PATH}`,
+        STATION_STUDIO_STATIONS_DIR: TEST_STATIONS_DIR,
       },
     },
     {
