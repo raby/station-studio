@@ -768,6 +768,80 @@ describe('trace viewer — §14.23 excluded-candidates disclosure', () => {
   });
 });
 
+
+// ---- §16.17 c3 — expand-all / collapse-all rejections -------------------
+
+describe('trace viewer — §16.17 expand-all rejections', () => {
+  beforeEach(() => {
+    getPlaylistMock.mockReset();
+    getTraceMock.mockReset();
+    getStationMock.mockReset();
+    getStationPlaylistsMock.mockReset();
+    getStationPlaylistsMock.mockResolvedValue([]);
+    exportPlaylistToDiskMock.mockReset();
+    setId('1');
+  });
+
+  /** Two slots with rejections so "all" is meaningful. */
+  const traceWithTwoExcludedSlots = () =>
+    stubTrace({
+      slots: [
+        {
+          slot: 1, unit: 'Mon', row: 1, block: 1,
+          source: 'A', strategy: 'weighted', pool_index: 5,
+          track_id: 105, track_name: 'Picked One',
+          track_artist: 'Artist One', reason: 'highest weight',
+          excluded: [
+            { pool_index: 3, track_id: 103, track_name: 'Rej A1',
+              track_artist: 'A1', reason: 'artist dedup' },
+          ],
+        },
+        {
+          slot: 2, unit: 'Mon', row: 1, block: 1,
+          source: 'A', strategy: 'weighted', pool_index: 8,
+          track_id: 108, track_name: 'Picked Two',
+          track_artist: 'Artist Two', reason: 'highest weight',
+          excluded: [
+            { pool_index: 6, track_id: 106, track_name: 'Rej B1',
+              track_artist: 'B1', reason: 'recently used' },
+          ],
+        },
+      ],
+    });
+
+  it('shows the expand-all control only when some slot has rejections', async () => {
+    // No excluded → no control.
+    getTraceMock.mockResolvedValueOnce(stubTrace());
+    getPlaylistMock.mockResolvedValueOnce(stubPlaylist());
+    getStationMock.mockResolvedValueOnce(stubStation());
+    render(Page);
+    await screen.findByText('Track Mon-1');
+    expect(screen.queryByTestId('toggle-all-excluded')).not.toBeInTheDocument();
+  });
+
+  it('expands then collapses every slot\'s rejections at once', async () => {
+    getTraceMock.mockResolvedValueOnce(traceWithTwoExcludedSlots());
+    getPlaylistMock.mockResolvedValueOnce(stubPlaylist());
+    getStationMock.mockResolvedValueOnce(stubStation());
+    render(Page);
+
+    await screen.findByText('Picked One');
+    const btn = screen.getByTestId('toggle-all-excluded');
+    // Default: all collapsed → label offers Expand, no sub-rows.
+    expect(btn).toHaveTextContent(/expand all rejections/i);
+    expect(screen.queryAllByTestId('excluded-row')).toHaveLength(0);
+
+    await fireEvent.click(btn);
+    // Both slots' sub-rows now visible; label flips to Collapse.
+    expect(screen.getAllByTestId('excluded-row')).toHaveLength(2);
+    expect(btn).toHaveTextContent(/collapse all rejections/i);
+
+    await fireEvent.click(btn);
+    expect(screen.queryAllByTestId('excluded-row')).toHaveLength(0);
+    expect(btn).toHaveTextContent(/expand all rejections/i);
+  });
+});
+
 // ---- §16.9 multi-week prev / next nav -----------------------------------
 
 describe('trace viewer — §16.9 multi-week prev/next nav', () => {

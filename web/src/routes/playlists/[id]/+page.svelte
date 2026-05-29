@@ -67,6 +67,30 @@
     excludedOpen[slot] = !excludedOpen[slot];
   }
 
+  // §16.17 c3 — expand-all / collapse-all rejections. For a 2,196-slot
+  // trace, flipping every slot's disclosure one-by-one is impractical;
+  // this control opens (or closes) them all at once for a debugging
+  // sweep. Only the slots that HAVE rejections are touched.
+  $: anyExcluded = trace
+    ? trace.slots.some((s) => (s.excluded?.length ?? 0) > 0)
+    : false;
+  // "All expanded" iff every rejection-bearing slot is open. None-open
+  // or a mix → false → the button offers "Expand all".
+  $: allExcludedExpanded = trace
+    ? trace.slots
+        .filter((s) => (s.excluded?.length ?? 0) > 0)
+        .every((s) => !!excludedOpen[s.slot])
+    : false;
+  function toggleAllExcluded() {
+    if (!trace) return;
+    const target = !allExcludedExpanded;
+    const next: Record<number, boolean> = { ...excludedOpen };
+    for (const s of trace.slots) {
+      if ((s.excluded?.length ?? 0) > 0) next[s.slot] = target;
+    }
+    excludedOpen = next;
+  }
+
   /**
    * Generation counter for stale-write protection (review S1). Each
    * loadAll() invocation captures its own generation; if a later
@@ -439,6 +463,17 @@
           on:click={clearFilters}
         >
           Clear
+        </button>
+      {/if}
+      {#if anyExcluded}
+        <!-- §16.17 c3: flip every slot's "Why not these?" at once. -->
+        <button
+          type="button"
+          class="clear-btn"
+          data-testid="toggle-all-excluded"
+          on:click={toggleAllExcluded}
+        >
+          {allExcludedExpanded ? 'Collapse all rejections' : 'Expand all rejections'}
         </button>
       {/if}
     </div>
