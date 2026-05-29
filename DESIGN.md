@@ -6116,12 +6116,11 @@ import) is the only remaining Phase B tail item, parked on
 ## 15. Status snapshot
 
 A quick "where are we" for a future reader. Last updated alongside
-**§16.12 (stations list polish shipped — search + cadence/generated
-filter chips + sort + per-row last-generated line; GET /api/stations
-enriched with StationSummary aggregates via two bounded queries +
-argmax-by-timestamp; pure filter/sort logic in web/src/lib/stations.ts;
-5 Playwright e2e + 28 vitest. Preceded by §16.2.2 read-only visual
-block canvas + its post-c5 watch-list sweep closing .t1–.t5)**. Phase B is DONE;
+**§16.10 (Rules CRUD UI panel shipped — `<RulesPanel>` self-contained
+per-station rule editor + `/stations/[slug]/rules` route + "⚙ Rules"
+discovery link; backend CRUD pre-existed §14.29/§14.30 so frontend-
+only; 10 vitest + 5 Playwright e2e). Preceded by §16.12 stations list
+polish + §16.2.2 read-only visual block canvas)**. Phase B is DONE;
 Phase C / §16 product work underway. Both station-studio's
 byte-equality tests are GREEN at production-scale chain depth:
 weekly port (real XMLs, 30 generations, 8 asserted weeks spanning
@@ -6160,7 +6159,7 @@ direction — spec slice §16.2.0 is the next planned work.
 | Visual block editor      | **§16.2.2 SHIPPED** — read-only canvas at `/stations/[slug]/visualise`. `GET /api/stations/{slug}/sidecar` endpoint serves template + sidecar in one fetch; trivial-sidecar fallback for un-authored stations (Decision E — frontend never handles "no sidecar"). 7 Svelte components (`<EditorCanvas>`, `<Section>`, `<SectionHeader>`, `<ChipFlow>`, `<Chip>`, `<ViewModeToggle>`, `<DetailPanel>`) compose the canvas. View-mode prefs (labels / colour / macros) persist to localStorage. Chips are native `<button>`s (keyboard a11y); click opens a slide-in DetailPanel with full BlockSpec / macro spec. `<500-chip` sections start expanded; `>500` sections start collapsed with "Large station" hint. Discoverability via "🗺 Visualise template" link from `/stations/[slug]`. **Next**: §16.2.3 atomic edit (grow the DetailPanel with edit forms). |
 | Trace versioning         | Deferred. See §16.4 (queued; not on the critical path post-Phase-B). |
 | Accessibility pass       | Deferred. §16.5 — single sweep after §16.2 ships.                |
-| Rules CRUD UI panel      | Queued — §16.10. Small-medium slice; compounds with §16.2 (sidebar component reused). |
+| Rules CRUD UI panel      | **Shipped (§16.10).** `<RulesPanel>` self-contained component (load → edit → Save/Reset, client-side validation mirroring engine.rules, per-row state) + `/stations/[slug]/rules` route + "⚙ Rules" header link. Backend CRUD pre-existed; frontend-only. Reusable for the §16.2 sidebar shell. |
 | In-UI generation progress | **Shipped (§16.11).** Polling-job-id transport (POST/GET/DELETE `/api/jobs/...`); engine became a generator yielding `ProgressEvent | GenerationResult` with Decision G invariants enforced + tested; in-memory `JobStore` with threading.Lock + immutable snapshots + lazy GC (cancelled-immediate, done/error-60s-grace) + per-(slug, kind) eviction. `<ProgressIndicator>` Svelte component reads `JobSnapshot` snapshots; station-detail page wires `startGenerateJob` → `watchJob` → navigate; JobStartConflict (409) adopts the existing job. Unblocks §16.2.6 live preview's transport. |
 | Stations list polish     | **Shipped (§16.12).** Landing page has search (name/slug substring), cadence + generated filter chips, sort (name / last-generated / recently-edited), + per-row "Last generated: WEEKLY 026 · 3 days ago" line. GET /api/stations returns enriched StationSummary aggregates (2 bounded queries, argmax-by-timestamp). Pure filter/sort logic in web/src/lib/stations.ts. |
 | Install story            | Queued — §16.13. pip-installable or polished docker after §16.2 MVP. |
@@ -6233,7 +6232,7 @@ Master order at a glance. Detailed briefs follow below.
 | # | Slice | Effort | Why now |
 |---|---|---|---|
 | 1 | §16.2.0 visual block editor SPEC (paper) | 1 commit | Settles editor architecture before code; flagship feature of §16.0 OSS direction. |
-| 2 | §16.10 Rules CRUD UI panel | 3-5 commits | Compounds with §16.2 (sidebar component reused); independent value (today rules need a DB shell). |
+| 2 | ~~§16.10 Rules CRUD UI panel~~ | ✅ shipped | **SHIPPED.** `<RulesPanel>` self-contained component + `/stations/[slug]/rules` route + "⚙ Rules" discovery link. Backend CRUD pre-existed (§14.29/§14.30); frontend-only slice. |
 | 3 | §16.2.1+ visual block editor implementation | multi-slice | Per the §16.2.0 spec; flagship hobbyist feature. |
 | 4 | ~~§16.11 In-UI generation progress~~ | ✅ shipped | **SHIPPED** (d10c560). Job-runner pattern: `generate_stream` engine generator + in-memory `JobStore` + `POST/GET/DELETE /api/jobs/...` polling + `<ProgressIndicator>` Svelte component. Unblocks §16.2.6 live preview's transport. |
 | 5 | ~~§16.12 Stations list polish (search / filter / recent generations)~~ | ✅ shipped | **SHIPPED.** Search + cadence/generated filter chips + sort (name / last-generated / recently-edited) + per-row last-generated line. GET /api/stations enriched with StationSummary aggregates. |
@@ -8572,6 +8571,51 @@ before, alongside, or after.
   covers most needs).
 * Per-block rule overrides via UI (already supported via JSON edit;
   visual editor handles this in §16.2's chip-detail panel).
+
+#### What §16.10 shipped — verification + deltas
+
+Landed in 3 commits + 1 review-fix (c1 + c2 + c1+c2-review + c3).
+Frontend-only — the backend CRUD (§14.29/§14.30) + api.ts client
+helpers already existed; this is purely the missing UI.
+
+| Commit | Subject |
+|---|---|
+| c1 | `RulesPanel.svelte` — self-contained per-station rule editor (load → edit → Save/Reset, client-side validation, per-row in-flight + error state). 9→10 vitest. |
+| c1+c2 review fix | 🟡 reset() cleared `saving[key]` only on the catch branch → a successful reset left Save stuck disabled on the next edit. Moved to a `finally`; regression test added. |
+| c2 | `/stations/[slug]/rules` route + "⚙ Rules" discovery link on the station-detail header. |
+| c3 | this entry + Playwright e2e + §15 snapshot. |
+
+**Deltas from the plan**
+
+* **Standalone route, not a tab.** The design said "a new tab on
+  the station-detail page", but no tab shell exists yet. Built
+  RulesPanel as a self-contained component on a standalone route
+  (mirrors the §16.2.2 visualise route) so the §16.2 sidebar shell
+  can embed it later as `<RulesPanel {slug} />` with zero rework —
+  satisfying the "build it reusable" intent without prematurely
+  building the tab system.
+* **Svelte reactivity gotcha** documented in-code: the Save
+  `disabled` inlines `edited[r.key] === r.value` rather than calling
+  an `isDirty()` helper, because a function call hides `edited` from
+  the template's dependency tracking (button stuck disabled).
+
+**Verification**
+
+* `npm run test:unit`: RulesPanel.test.ts 10 cases (badges,
+  save-enable-on-edit, PUT-flips-override, reset-clears-reloads,
+  reset-then-edit re-enables Save, reset-hidden-when-default,
+  max_value + negative validation, backend-error inline, load error).
+* `npm run check`: 0 errors / 0 warnings.
+* `npx playwright test rules.spec.ts`: 5 e2e — discovery link,
+  4-rule default list, save→override→reset round-trip (API-verified),
+  out-of-range inline error, back crumb. Shared-DB-safe (rules10-*).
+
+**Files**
+
+* `web/src/lib/components/RulesPanel.svelte` — NEW.
+* `web/src/routes/stations/[slug]/rules/+page.svelte` — NEW route.
+* `web/src/routes/stations/[slug]/+page.svelte` — "⚙ Rules" link.
+* (No backend / api.ts change — CRUD + client helpers pre-existed.)
 
 ---
 
