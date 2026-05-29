@@ -620,6 +620,64 @@ export const getStationSidecar = async (
 };
 
 
+// ---- §16.19 — station overview (rich detail bundle) -------------------
+
+
+export interface TemplateSummary {
+  slot_count: number;
+  layout_form: 'flat_slots' | 'row_template';
+  strategy_counts: Record<string, number>;
+  cursor_persist: boolean;
+  source_count: number;
+}
+
+export interface PoolStatus {
+  name: string;
+  role: string;
+  imported: boolean;
+  track_count: number | null;
+  imported_at: string | null;
+}
+
+export interface CursorPosition {
+  name: string;
+  position: number;
+}
+
+export interface GenerationsSummary {
+  count: number;
+  last_generated_week: number | null;
+  last_generated_at: string | null;
+  /** Playlists generated before the last template edit (§16.2.3 hint). */
+  stale_count: number;
+}
+
+export interface StationOverview {
+  slug: string;
+  name: string;
+  cadence: string;
+  rng: string;
+  updated_at: string | null;
+  template_summary: TemplateSummary;
+  pools: PoolStatus[];
+  cursors: CursorPosition[];
+  generations: GenerationsSummary;
+}
+
+/**
+ * Fetch the rich station-detail bundle (§16.19) — identity + template
+ * summary + pool status + cursor positions + generation rollup, in one
+ * request. 404 if the station doesn't exist.
+ */
+export const getStationOverview = (
+  slug: string,
+  fetch_ = fetch,
+): Promise<StationOverview> =>
+  fetch_(`/api/stations/${encodeURIComponent(slug)}/overview`).then((r) =>
+    json<StationOverview>(r),
+  );
+
+
 // ---- §16.2.3 c2 — atomic block edit (PATCH) + disk export ------------
 
 

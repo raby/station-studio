@@ -27,7 +27,7 @@ from api.deps import get_db
 from api.main import app
 from engine.database import make_engine, make_sessionmaker
 from engine.models import (
-    Base, Config, Playlist, PlaylistEntry, PlaylistTrace,
+    Base, Config, CursorState, Playlist, PlaylistEntry, PlaylistTrace,
     SourcePlaylist, SourcePlaylistEntry, Station, Track,
 )
 
@@ -337,6 +337,127 @@ def test_get_station_happy_path(api):
     assert body["slug"] == "solo"
     assert body["name"] == "Solo FM"
     assert body["template"]["station"] == "solo"
+
+
+# ---------- §16.19 GET /api/stations/{slug}/overview --------------------
+
+
+def _overview_station(client, slug="ov", *, persist=False, extra_source=None):
+    """Create a station via the wizard payload, optionally with a
+    cursor.persist template + an extra (un-imported) source."""
+    payload = _wizard_payload(slug, f"{slug.upper()} FM")
+    tmpl = payload["template"]
+    if persist:
+        tmpl["cursor"]["persist"] = True
+        tmpl["layout"]["cursors_init"] = {"C": 0}
+        tmpl["layout"]["row_template"] = [
+            {"source": "A", "strategy": "sequential", "size": 1, "cursor_id": "C"}
+        ]
+    if extra_source:
+        tmpl["sources"].append({"name": extra_source, "colour": "#222", "role": "content"})
+        # reference it from a block so it's "declared"
+    r = client.post("/api/stations", json=payload)
+    assert r.status_code == 201, r.json()
+    return payload
+
+
+def test_overview_unknown_station_404(api):
+    client, _ = api
+    r = client.get("/api/stations/nope/overview")
+    assert r.status_code == 404
+
+
+def test_overview_template_summary_and_pool_gap(api):
+    """Template summary fields + the declared-but-not-imported pool gap
+    (source A is in the template but no SourcePlaylist row exists)."""
+    client, _ = api
+    _overview_station(client, "ov1")
+    body = client.get("/api/stations/ov1/overview").json()
+
+    ts = body["template_summary"]
+    assert ts["slot_count"] == 1            # one pick slot, one Mon row
+    assert ts["layout_form"] == "row_template"
+    assert ts["strategy_counts"] == {"pick": 1}
+    assert ts["cursor_persist"] is False
+    assert ts["source_count"] == 1
+
+    # Source A is declared but never imported → imported=False, no count.
+    assert len(body["pools"]) == 1
+    pool = body["pools"][0]
+    assert pool["name"] == "A"
+    assert pool["imported"] is False
+    assert pool["track_count"] is None
+
+
+def test_overview_pool_imported_shows_track_count(api):
+    """Once a pool is imported, the overview reports its track count +
+    imported_at."""
+    client, Session = api
+    _overview_station(client, "ov2")
+    with Session() as db:
+        tracks = [
+            Track(persistent_id=f"P{i}", name=f"T{i}", artist="X", itunes_track_id=i)
+            for i in range(1, 4)
+        ]
+        db.add_all(tracks)
+        db.commit()
+        sp = SourcePlaylist(name="A", role="content")
+        db.add(sp)
+        db.commit()
+        db.add_all([
+            SourcePlaylistEntry(source_playlist_id=sp.id, position=i, track_id=tracks[i - 1].id)
+            for i in range(1, 4)
+        ])
+        db.commit()
+    body = client.get("/api/stations/ov2/overview").json()
+    pool = body["pools"][0]
+    assert pool["imported"] is True
+    assert pool["track_count"] == 3
+    assert pool["imported_at"] is not None
+
+
+def test_overview_cursors_only_for_persist_templates(api):
+    """Stateless template → empty cursors. persist=True → cursor rows
+    from cursor_state surface."""
+    client, Session = api
+    # Stateless.
+    _overview_station(client, "ov3")
+    assert client.get("/api/stations/ov3/overview").json()["cursors"] == []
+
+    # Persistent — seed a cursor_state row.
+    _overview_station(client, "ov4", persist=True)
+    with Session() as db:
+        st = db.query(Station).filter_by(slug="ov4").first()
+        db.add(CursorState(station_id=st.id, name="C", position=42))
+        db.commit()
+    cursors = client.get("/api/stations/ov4/overview").json()["cursors"]
+    assert cursors == [{"name": "C", "position": 42}]
+
+
+def test_overview_generations_rollup_and_staleness(api):
+    """count + last_generated + stale_count (playlists generated BEFORE
+    the last template edit)."""
+    client, Session = api
+    _overview_station(client, "ov5")
+    with Session() as db:
+        st = db.query(Station).filter_by(slug="ov5").first()
+        # Two playlists generated in the PAST (before any edit).
+        old = datetime(2020, 1, 1, tzinfo=timezone.utc)
+        db.add_all([
+            Playlist(station_id=st.id, week=1, trace_id="t1", generated_at=old),
+            Playlist(station_id=st.id, week=2, trace_id="t2", generated_at=old),
+        ])
+        # Bump updated_at to NOW (simulates a template edit after those
+        # playlists were generated) by touching name.
+        st.name = "Edited"
+        db.commit()
+
+    gen = client.get("/api/stations/ov5/overview").json()["generations"]
+    assert gen["count"] == 2
+    assert gen["last_generated_week"] == 2  # tie on timestamp → higher week
+    assert gen["last_generated_at"] is not None
+    # Both pre-date the post-edit updated_at → both stale.
+    assert gen["stale_count"] == 2
 
 
 # ---------- GET /api/stations/{slug}/playlists --------------------------

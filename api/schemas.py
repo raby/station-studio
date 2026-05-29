@@ -228,6 +228,65 @@ class EditorSidecarResponse(BaseModel):
     updated_at: str | None = None
 
 
+# §16.19 — station detail richness (overview bundle)
+
+
+class TemplateSummary(BaseModel):
+    """At-a-glance template shape for the station detail page."""
+    slot_count: int
+    layout_form: Literal["flat_slots", "row_template"]
+    # strategy → count of blocks using it (e.g. {"window": 2, "pick": 1}).
+    strategy_counts: dict[str, int]
+    cursor_persist: bool
+    source_count: int
+
+
+class PoolStatus(BaseModel):
+    """One source the template references, joined to its imported pool
+    (if any). `imported=False` surfaces a setup gap — a declared source
+    with no SourcePlaylist row, which would 400 at generation time."""
+    name: str
+    role: str
+    imported: bool
+    track_count: int | None = None
+    imported_at: str | None = None  # ISO-8601
+
+
+class CursorPosition(BaseModel):
+    """One persistent named cursor's current position (§14.30).
+    Empty list for stateless templates."""
+    name: str
+    position: int
+
+
+class GenerationsSummary(BaseModel):
+    """Playlist-generation rollup for the station.
+
+    `stale_count` = playlists generated BEFORE the last template edit
+    (generated_at < station.updated_at) — they reflect a prior template
+    version (§16.2.3 staleness hint, homed here)."""
+    count: int
+    last_generated_week: int | None = None
+    last_generated_at: str | None = None
+    stale_count: int
+
+
+class StationOverview(BaseModel):
+    """200 body for GET /api/stations/{slug}/overview (§16.19). One
+    fetch bundles everything the rich station-detail page renders:
+    identity + template summary + pool status + cursor positions +
+    generation rollup. Mirrors the editor-sidecar one-fetch pattern."""
+    slug: str
+    name: str
+    cadence: str
+    rng: str
+    updated_at: str | None = None
+    template_summary: TemplateSummary
+    pools: list[PoolStatus]
+    cursors: list[CursorPosition]
+    generations: GenerationsSummary
+
+
 # §16.2.3 — atomic block editing (Decision B2: targeted PATCH).
 
 

@@ -2,15 +2,33 @@
 from __future__ import annotations
 
 import logging
+from collections import Counter
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from engine.models import Station, Playlist, PlaylistEntry
+from engine.models import (
+    Station, Playlist, PlaylistEntry, SourcePlaylist, SourcePlaylistEntry, CursorState,
+)
 from engine.template import parse_template, TemplateError
 from api.deps import get_db
-from api.schemas import StationCreate, StationOut, StationSummary, PlaylistSummary
+from api.schemas import (
+    CursorPosition,
+    GenerationsSummary,
+    PlaylistSummary,
+    PoolStatus,
+    StationCreate,
+    StationOut,
+    StationOverview,
+    StationSummary,
+    TemplateSummary,
+)
 from sqlalchemy import func
+
+
+def _iso(dt: datetime | None) -> str | None:
+    return dt.isoformat() if dt is not None else None
 
 
 logger = logging.getLogger(__name__)
@@ -117,6 +135,127 @@ def get_station(slug: str, db: Session = Depends(get_db)):
     if not s:
         raise HTTPException(404, f"station '{slug}' not found")
     return s
+
+
+@router.get("/{slug}/overview", response_model=StationOverview)
+def get_station_overview(slug: str, db: Session = Depends(get_db)):
+    """Rich station-detail bundle (§16.19): identity + template summary
+    + pool status + cursor positions + generation rollup, in one fetch.
+
+    500 on a corrupted stored template (parse failure) — same posture
+    as the other template-reading endpoints; the row was validated at
+    creation, so a parse failure means data corruption, not user error.
+    """
+    s = db.query(Station).filter(Station.slug == slug).first()
+    if not s:
+        raise HTTPException(404, f"station '{slug}' not found")
+
+    try:
+        template = parse_template(s.template)
+    except TemplateError as e:  # pragma: no cover — corrupted stored row
+        raise HTTPException(500, f"stored template is invalid: {e}")
+
+    # ----- template summary -----------------------------------------
+    layout_form = "flat_slots" if template.layout.flat_slots else "row_template"
+    strategy_counts = dict(
+        Counter(b.strategy for b in template.layout.all_blocks())
+    )
+    summary = TemplateSummary(
+        slot_count=template.slots_per_week(),
+        layout_form=layout_form,
+        strategy_counts=strategy_counts,
+        cursor_persist=template.cursor.persist,
+        source_count=len(template.sources),
+    )
+
+    # ----- pools: each declared source joined to its imported pool ---
+    # `imported=False` flags a declared-but-not-imported source — a
+    # setup gap that would 400 the generate endpoint.
+    # One grouped query for track counts (mirrors list_sources) — keyed
+    # by name so the per-source join below is O(1) lookups, no N+1.
+    counts_by_name = {
+        sp.name: (sp, track_count)
+        for sp, track_count in (
+            db.query(SourcePlaylist, func.count(SourcePlaylistEntry.id))
+            .outerjoin(
+                SourcePlaylistEntry,
+                SourcePlaylistEntry.source_playlist_id == SourcePlaylist.id,
+            )
+            .group_by(SourcePlaylist.id)
+            .all()
+        )
+    }
+    pools: list[PoolStatus] = []
+    for src in template.sources:
+        hit = counts_by_name.get(src.name)
+        if hit is None:
+            # Declared in the template but never imported — a setup gap
+            # the generate endpoint would 400 on.
+            pools.append(PoolStatus(name=src.name, role=src.role, imported=False))
+        else:
+            sp, track_count = hit
+            pools.append(PoolStatus(
+                name=src.name,
+                role=src.role,
+                imported=True,
+                track_count=track_count,
+                imported_at=_iso(sp.imported_at),
+            ))
+
+    # ----- cursors: persistent named-cursor positions ---------------
+    cursors: list[CursorPosition] = []
+    if template.cursor.persist:
+        rows = (
+            db.query(CursorState)
+            .filter(CursorState.station_id == s.id)
+            .order_by(CursorState.name)
+            .all()
+        )
+        cursors = [CursorPosition(name=c.name, position=c.position) for c in rows]
+
+    # ----- generations rollup ---------------------------------------
+    count = (
+        db.query(func.count())
+        .select_from(Playlist)
+        .filter(Playlist.station_id == s.id)
+        .scalar()
+    ) or 0
+    latest = (
+        db.query(Playlist.week, Playlist.generated_at)
+        .filter(Playlist.station_id == s.id, Playlist.generated_at.isnot(None))
+        .order_by(Playlist.generated_at.desc(), Playlist.week.desc())
+        .first()
+    )
+    # Stale = generated BEFORE the last template edit (§16.2.3 hint).
+    # NULL generated_at rows aren't counted (NULL < x is unknown).
+    stale_count = (
+        db.query(func.count())
+        .select_from(Playlist)
+        .filter(
+            Playlist.station_id == s.id,
+            Playlist.generated_at.isnot(None),
+            Playlist.generated_at < s.updated_at,
+        )
+        .scalar()
+    ) or 0
+    generations = GenerationsSummary(
+        count=count,
+        last_generated_week=latest[0] if latest else None,
+        last_generated_at=_iso(latest[1]) if latest else None,
+        stale_count=stale_count,
+    )
+
+    return StationOverview(
+        slug=s.slug,
+        name=s.name,
+        cadence=template.cadence,
+        rng=template.rng,
+        updated_at=_iso(s.updated_at),
+        template_summary=summary,
+        pools=pools,
+        cursors=cursors,
+        generations=generations,
+    )
 
 
 @router.post("", response_model=StationOut, status_code=201)

@@ -8,6 +8,7 @@ import {
   getStation,
   getStationPlaylists,
   getPlaylist,
+  getStationOverview,
   getStationSidecar,
   getTrace,
   createStation,
@@ -918,5 +919,51 @@ describe('getStationSidecar — updated_at token (§16.2.3)', () => {
     });
     const out = await getStationSidecar('s', fetch_);
     expect(out.updated_at).toBeNull();
+  });
+});
+
+
+// ---- §16.19 — getStationOverview -------------------------------------
+
+
+describe('getStationOverview', () => {
+  function overviewBody() {
+    return {
+      slug: 's', name: 'S', cadence: 'weekly', rng: 'off',
+      updated_at: '2026-05-29T12:00:00+00:00',
+      template_summary: {
+        slot_count: 100, layout_form: 'flat_slots',
+        strategy_counts: { pick: 80, mix: 20 },
+        cursor_persist: false, source_count: 2,
+      },
+      pools: [
+        { name: 'A', role: 'content', imported: true, track_count: 50, imported_at: '2026-05-01T00:00:00+00:00' },
+        { name: 'B', role: 'content', imported: false, track_count: null, imported_at: null },
+      ],
+      cursors: [],
+      generations: { count: 3, last_generated_week: 3, last_generated_at: '2026-05-20T00:00:00+00:00', stale_count: 1 },
+    };
+  }
+
+  it('GETs /api/stations/{slug}/overview and returns the bundle', async () => {
+    const { fetch_, calls } = makeSpy({ body: overviewBody() });
+    const out = await getStationOverview('s', fetch_);
+    expect(calls[0].input).toBe('/api/stations/s/overview');
+    expect(out.template_summary.slot_count).toBe(100);
+    expect(out.pools[1].imported).toBe(false);
+    expect(out.generations.stale_count).toBe(1);
+  });
+
+  it('URL-encodes the slug', async () => {
+    const { fetch_, calls } = makeSpy({ body: overviewBody() });
+    await getStationOverview('a b', fetch_);
+    expect(calls[0].input).toBe('/api/stations/a%20b/overview');
+  });
+
+  it('raises ApiError on 404', async () => {
+    const { fetch_ } = makeSpy({ ok: false, status: 404, text: 'nope' });
+    const err = await getStationOverview('nope', fetch_).catch((e) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.status).toBe(404);
   });
 });
