@@ -6170,7 +6170,8 @@ direction — spec slice §16.2.0 is the next planned work.
 | Rules CRUD UI panel      | **Shipped (§16.10).** `<RulesPanel>` self-contained component (load → edit → Save/Reset, client-side validation mirroring engine.rules, per-row state) + `/stations/[slug]/rules` route + "⚙ Rules" header link. Backend CRUD pre-existed; frontend-only. Reusable for the §16.2 sidebar shell. |
 | In-UI generation progress | **Shipped (§16.11).** Polling-job-id transport (POST/GET/DELETE `/api/jobs/...`); engine became a generator yielding `ProgressEvent | GenerationResult` with Decision G invariants enforced + tested; in-memory `JobStore` with threading.Lock + immutable snapshots + lazy GC (cancelled-immediate, done/error-60s-grace) + per-(slug, kind) eviction. `<ProgressIndicator>` Svelte component reads `JobSnapshot` snapshots; station-detail page wires `startGenerateJob` → `watchJob` → navigate; JobStartConflict (409) adopts the existing job. Unblocks §16.2.6 live preview's transport. |
 | Stations list polish     | **Shipped (§16.12).** Landing page has search (name/slug substring), cadence + generated filter chips, sort (name / last-generated / recently-edited), + per-row "Last generated: WEEKLY 026 · 3 days ago" line. GET /api/stations returns enriched StationSummary aggregates (2 bounded queries, argmax-by-timestamp). Pure filter/sort logic in web/src/lib/stations.ts. |
-| Install story            | Queued — §16.13. Design pass done: static-bundle wheel (pipx) + docker-compose, both first-class. **Gated on a self-serve pool-import path** (D1) — won't ship while BYO-music import still needs the Makefile. Retires §16.22's SSR premise (no Node at runtime). |
+| Install story            | Queued — §16.13. Design pass done: static-bundle wheel (pipx) + docker-compose, both first-class. **Gated on §16.25 (pool-import UI)** — won't ship while BYO-music import still needs the Makefile. Retires §16.22's SSR premise (no Node at runtime). |
+| Pool-import UI           | **NEXT — §16.25.** Design pass done. The §16.13 D1 gate-unblocker. Builds `/sources` (list + add) + a per-station embed; file-upload primary + path-input as advanced/local. ~6-8 commits. |
 | Hobbyist starter station | Queued — §16.14. 100-200-slot example structurally simpler than Classics, with synthetic starter XMLs for end-to-end boot without external data. |
 | Docs site                | Deferred — §16.15. After §16.2 + §16.13 + §16.14 ship.           |
 | Disk-export prune endpoint | Queued — §16.16. Demand-gated. §14.3's prune punt. |
@@ -6244,7 +6245,8 @@ Master order at a glance. Detailed briefs follow below.
 | 3 | §16.2.1+ visual block editor implementation | multi-slice | Per the §16.2.0 spec; flagship hobbyist feature. |
 | 4 | ~~§16.11 In-UI generation progress~~ | ✅ shipped | **SHIPPED** (d10c560). Job-runner pattern: `generate_stream` engine generator + in-memory `JobStore` + `POST/GET/DELETE /api/jobs/...` polling + `<ProgressIndicator>` Svelte component. Unblocks §16.2.6 live preview's transport. |
 | 5 | ~~§16.12 Stations list polish (search / filter / recent generations)~~ | ✅ shipped | **SHIPPED.** Search + cadence/generated filter chips + sort (name / last-generated / recently-edited) + per-row last-generated line. GET /api/stations enriched with StationSummary aggregates. |
-| 6 | §16.13 Install story (pip / docker) | medium | Hobbyist friction floor. Design pass done (static wheel + docker, both channels). **Re-gated (D1): lands after a self-serve pool-import path, not just §16.2 MVP** — a distributable whose first step is `make import-…` is a trap. |
+| 6 | §16.25 Pool-import UI | medium-large | **The §16.13 D1 gate-unblocker.** Builds `/sources` (list + add) + per-station embed; file-upload primary + path-input as advanced/local. Decisions all went highest-coverage; ~6-8 commits. |
+| 7 | §16.13 Install story (pip / docker) | medium | Hobbyist friction floor. Design pass done (static wheel + docker, both channels). **Re-gated (D1): lands after §16.25 pool-import UI** — a distributable whose first step is `make import-…` is a trap. |
 | 7 | §16.14 Hobbyist starter station | small | Fresh install needs a runnable example without external XMLs. |
 | 8 | §16.15 Docs site (MkDocs-Material) | medium | After enough product is built to justify a doc site. |
 
@@ -9437,11 +9439,12 @@ stranger runs without the repo."** Three structural facts shape it:
 
 **Decisions (locked in the §16.13 design pass).**
 
-* **D1 — Sequencing: ship AFTER the pool-import UI.** §16.13 stays
-  queued behind a self-serve pool-import path (the import UI that
-  rides with §16.2's editor work, OR a standalone CLI import that a
-  later slice adds first). Rationale: distribution lowers friction
-  for strangers; a distributable whose first required step is a
+* **D1 — Sequencing: ship AFTER §16.25 (pool-import UI).** §16.13
+  stays queued behind a self-serve pool-import path. §16.25 is the
+  named slice that closes this gate — `/sources` + per-station
+  embed, file-upload primary + path-input as advanced, design pass
+  done. Rationale: distribution lowers friction for strangers; a
+  distributable whose first required step is a
   Makefile target is friction, not less of it. Don't market "pip
   install + try" until "try" works end-to-end without the repo.
 * **D2 — Distribute BOTH a static-bundle wheel AND docker-compose.**
@@ -9918,6 +9921,154 @@ fixing.
 **Slot in plan.** Position 4* in the strategic table — between
 §16.2.1+ implementation and §16.11. Reasoning: if real validation
 issues surface, they take priority over polish work.
+
+---
+
+### 16.25 Pool-import UI — the §16.13 D1 unblocker
+
+**Why this matters (the install-story dependency).** §16.13 D1
+gates the install slice on **"a self-serve pool-import path that
+doesn't require the repo / Makefile."** Today that path doesn't
+exist: there is zero pool-import surface in the web UI — no
+`/sources` route, no client helper, nothing. The only way to load
+your own iTunes XML into Station Studio is
+`make import-weekly-pools manifest=…`, a Makefile target that ships
+inside the repo and references a `.json` manifest format new users
+have never seen. A `pipx`-installed hobbyist who just wants to
+*try* the tool hits this wall before they can do *anything* useful.
+
+This slice is named after its only job: **close §16.13's D1 gate.**
+Until it ships, §16.13 cannot honestly market "pip install + try."
+
+**Three structural facts that shape the design:**
+
+1. **The API takes a server-side filesystem PATH, not an upload.**
+   `POST /api/sources/import` accepts `{path, name, role}` where
+   `path` is resolved on the *server*. That works for `pipx` local
+   (server + XML on the same disk) but **breaks for docker** (XML
+   on the host, server in a container) — the user would have to
+   edit `docker-compose.yml` to volume-mount their music dir before
+   they could even type a path. §16.13 D2 ships docker as a
+   first-class channel, so path-only silently makes docker
+   second-class. The honest fix is a multipart upload path
+   alongside (D1 below).
+
+2. **Pool import is *plural*, but the API is singular.** Real
+   stations reference multiple pools (Rebirth Radio: ~6 —
+   jingles + weekday content + weekend content + reference, with
+   distinct roles). The CLI manifest is a list of pools. The
+   endpoint imports one pool per call. The UI has to bridge that —
+   either per-pool form + persistent list (you keep coming back to
+   add more) OR a multi-row "add N pools, submit once." Both work;
+   D2 below picks a hybrid that defaults to simple and expands.
+
+3. **iTunes XML can be huge.** A 50K-track Music library XML is
+   50–100 MB+. Per-playlist exports (the more common case) are
+   smaller — KB to a few MB. Accepting upload means streaming
+   multipart to disk, **not** buffering in memory, and may need
+   FastAPI's default body-size limit lifted.
+
+**Minor but real:** the importer is **idempotent on `name`** —
+re-import with the same name silently replaces the existing entries.
+That's the right default but invisible today; the UI surface needs
+to make replacement visible (D4 below: explicit "Re-import" affordance
+with confirm).
+
+And a UX cheap-win worth noting now so it doesn't get lost: new
+users don't intuit *"in Music: File → Library → Export Playlist →
+XML"*. A short inline hint by the upload control saves a docs trip
+(this carries us until §16.15 docs site).
+
+**Decisions (locked in the §16.25 design pass).**
+
+* **D1 — Upload model: FILE UPLOAD (primary) + path (advanced /
+  local option).** Multipart upload is the headline path; the
+  endpoint grows a `POST /api/sources/upload` (or content-type
+  branch on `/import`) that streams the body to a temp file then
+  invokes the same importer. Path-input stays as an "advanced /
+  local file" affordance for `pipx` users with the XML already on
+  disk and a 100 MB library they don't want to round-trip through
+  multipart. Both paths converge on the same `import_source(...)`
+  call.
+* **D2 — Scope: simple per-pool form by default, expandable to
+  multi-pool.** The default add-pool form is one pool (name + role +
+  upload-or-path), submits, returns to the sources list, you can
+  add another. A toggle ("Add multiple at once") expands the form
+  into N rows for a batch submit — each row imports independently so
+  one bad XML doesn't poison the others (partial-success UX: list
+  what landed, list what failed, with per-row error). Hybrid model
+  matches both the casual case ("just one more pool") and the
+  hobbyist-tutorial case ("seed my whole station").
+* **D3 — Placement: top-level `/sources` (source of truth) +
+  embed-in-station-detail.** `/sources` is the canonical page —
+  lists every imported pool with name / role / track count /
+  imported_at, plus the add-pool form. `/stations/[slug]` embeds
+  the *same* component scoped to the station's declared sources
+  (so the §16.19 "not imported" gap is fixable in-place without
+  navigating away). The component takes a `scope?: string[]` prop
+  — undefined = global view; set = filter list + pre-fill the
+  add-form's pool name from the declared-but-missing set. One
+  component, two mounting points, one source of truth.
+* **D4 — Re-import: explicit "Re-import" button + confirm.** Each
+  pool in the list gets a Re-import action that re-prompts for the
+  file/path and confirms *"this replaces N existing tracks in
+  pool '{name}'"*. Makes the destructive replace visible. The
+  underlying call is the same `import_source(...)` (idempotent on
+  name), so the backend doesn't change; the UX wraps it.
+
+**Prerequisites this slice owns (the parts that aren't "just UI").**
+
+* A new `POST /api/sources/upload` (or a multipart branch on the
+  existing `/import`) that streams the upload to a temp file and
+  feeds it to `import_source(...)`. Body-size limit lifted (per-app
+  config; document the cap). Cleanup-on-error so a failed import
+  doesn't leave a temp file lying around.
+* The frontend's first **non-JSON** API call: existing helpers in
+  `api.ts` are all JSON-bodied. Either add a small `uploadFile()`
+  helper that takes a `FormData` body, or special-case at the
+  call site. Tested at `api.test.ts` like the others.
+* Pool delete already exists (`DELETE /api/sources/{id}`); the
+  UI just needs to wire it up with a confirm.
+
+**Shape (rough, ~6-8 commits, each with mid-slice review):**
+
+1. **c1 — backend upload endpoint.** `POST /api/sources/upload`
+   (streaming multipart → temp file → `import_source`), error
+   cleanup, body-limit config + tests.
+2. **c2 — frontend `/sources` page + add-pool form (single-pool
+   default).** List view + per-pool form with role select + file
+   upload (D1 primary) + collapsed "advanced: path" option +
+   inline iTunes-XML export hint. Component tests + Playwright
+   for the happy path.
+3. **c3 — multi-pool expansion (D2 toggle).** "Add multiple at
+   once" expands the form to N rows; each row imports
+   independently; partial-success surface (what landed, what
+   failed). Tests for the partial-failure case.
+4. **c4 — re-import + delete affordances (D4).** Per-row "Re-import"
+   + confirm + "Delete" + confirm. Wires up the existing DELETE
+   endpoint.
+5. **c5 — `/stations/[slug]` embed (D3 second mount point).** Pool
+   list + add form embedded in the station overview, scoped to
+   declared sources. The §16.19 "not imported" badge becomes a
+   button that pre-fills the form with the missing pool's name.
+6. **c6 — README + docs.** README "Quick start" learns the new
+   path. The "to import your own iTunes XMLs, use the CLI…"
+   paragraph is rewritten: "open `/sources` and upload your XMLs."
+   Cross-link to the inline export hint. §16.13 D1 gate flipped
+   to **CLEARED** in the §16.13 entry + queue rows.
+7. **c7 (optional) — slice review sweep.** Whatever fell out.
+
+**Effort.** Medium-large (~6-8 commits, all four decisions went to
+the highest-coverage option). Largest single recent slice by code
+surface, but each commit is independently reviewable + ships green.
+
+**Compounds with.** §16.13 (gate-unblocker — direct dependency);
+§16.19 (the "not imported" badge becomes interactive); §16.15 docs
+site (the inline export hint stays until docs replace it).
+
+**Trigger.** Now. §16.19 just shipped, §16.13's design entry is
+locked, and the only thing between Station Studio and a real "pip
+install + try" story is this slice.
 
 ---
 
