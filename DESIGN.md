@@ -6116,11 +6116,12 @@ import) is the only remaining Phase B tail item, parked on
 ## 15. Status snapshot
 
 A quick "where are we" for a future reader. Last updated alongside
-**§16.2.2 (read-only visual block canvas shipped — `GET /api/stations/{slug}/sidecar`
-endpoint with synthesize-trivial fallback + frontend types + 5 canvas
-components + ViewModeToggle + DetailPanel + chip keyboard a11y +
-Playwright e2e; mid-slice review caught the SidecarMacro shape drift
-+ c3 review caught the ChipFlow repeat_with_offsets bug)**. Phase B is DONE;
+**§16.12 (stations list polish shipped — search + cadence/generated
+filter chips + sort + per-row last-generated line; GET /api/stations
+enriched with StationSummary aggregates via two bounded queries +
+argmax-by-timestamp; pure filter/sort logic in web/src/lib/stations.ts;
+5 Playwright e2e + 28 vitest. Preceded by §16.2.2 read-only visual
+block canvas + its post-c5 watch-list sweep closing .t1–.t5)**. Phase B is DONE;
 Phase C / §16 product work underway. Both station-studio's
 byte-equality tests are GREEN at production-scale chain depth:
 weekly port (real XMLs, 30 generations, 8 asserted weeks spanning
@@ -6161,7 +6162,7 @@ direction — spec slice §16.2.0 is the next planned work.
 | Accessibility pass       | Deferred. §16.5 — single sweep after §16.2 ships.                |
 | Rules CRUD UI panel      | Queued — §16.10. Small-medium slice; compounds with §16.2 (sidebar component reused). |
 | In-UI generation progress | **Shipped (§16.11).** Polling-job-id transport (POST/GET/DELETE `/api/jobs/...`); engine became a generator yielding `ProgressEvent | GenerationResult` with Decision G invariants enforced + tested; in-memory `JobStore` with threading.Lock + immutable snapshots + lazy GC (cancelled-immediate, done/error-60s-grace) + per-(slug, kind) eviction. `<ProgressIndicator>` Svelte component reads `JobSnapshot` snapshots; station-detail page wires `startGenerateJob` → `watchJob` → navigate; JobStartConflict (409) adopts the existing job. Unblocks §16.2.6 live preview's transport. |
-| Stations list polish     | Queued — §16.12. Small. Adjacent to §16.2 — once the editor makes adding stations easy, the list needs sort/filter. |
+| Stations list polish     | **Shipped (§16.12).** Landing page has search (name/slug substring), cadence + generated filter chips, sort (name / last-generated / recently-edited), + per-row "Last generated: WEEKLY 026 · 3 days ago" line. GET /api/stations returns enriched StationSummary aggregates (2 bounded queries, argmax-by-timestamp). Pure filter/sort logic in web/src/lib/stations.ts. |
 | Install story            | Queued — §16.13. pip-installable or polished docker after §16.2 MVP. |
 | Hobbyist starter station | Queued — §16.14. 100-200-slot example structurally simpler than Classics, with synthetic starter XMLs for end-to-end boot without external data. |
 | Docs site                | Deferred — §16.15. After §16.2 + §16.13 + §16.14 ship.           |
@@ -6235,7 +6236,7 @@ Master order at a glance. Detailed briefs follow below.
 | 2 | §16.10 Rules CRUD UI panel | 3-5 commits | Compounds with §16.2 (sidebar component reused); independent value (today rules need a DB shell). |
 | 3 | §16.2.1+ visual block editor implementation | multi-slice | Per the §16.2.0 spec; flagship hobbyist feature. |
 | 4 | ~~§16.11 In-UI generation progress~~ | ✅ shipped | **SHIPPED** (d10c560). Job-runner pattern: `generate_stream` engine generator + in-memory `JobStore` + `POST/GET/DELETE /api/jobs/...` polling + `<ProgressIndicator>` Svelte component. Unblocks §16.2.6 live preview's transport. |
-| 5 | §16.12 Stations list polish (search / filter / recent generations) | small | Adjacent to §16.2 — once the editor makes adding stations easy, the list needs scaling. |
+| 5 | ~~§16.12 Stations list polish (search / filter / recent generations)~~ | ✅ shipped | **SHIPPED.** Search + cadence/generated filter chips + sort (name / last-generated / recently-edited) + per-row last-generated line. GET /api/stations enriched with StationSummary aggregates. |
 | 6 | §16.13 Install story (pip / docker) | medium | Hobbyist friction floor. Lands after §16.2 MVP makes "install + try" worth marketing. |
 | 7 | §16.14 Hobbyist starter station | small | Fresh install needs a runnable example without external XMLs. |
 | 8 | §16.15 Docs site (MkDocs-Material) | medium | After enough product is built to justify a doc site. |
@@ -9130,6 +9131,52 @@ a real flow. Premature scaling-up of the list before stations are
 easy to add is over-engineering.
 
 **Effort.** Small (~3-5 commits).
+
+#### What §16.12 shipped — verification + deltas
+
+Landed in 3 commits + 1 review-fix commit (c1 + c1-review + c2 + c3).
+
+| Commit | Subject |
+|---|---|
+| c1 | enrich GET /api/stations with per-station aggregates (StationSummary: cadence + playlist_count + last_generated_week/at + updated_at; two bounded queries, ROW_NUMBER argmax for latest-by-timestamp week). |
+| c1 review fixes | 🟡 filter NULL generated_at from the latest-week window (kept week/at fields consistent) + deterministic tie-break (week.desc) + cadence-fallback test. |
+| c2 | landing page: search + cadence/generated filter chips + sort (name/last-generated/recently-edited) + per-row "Last generated: WEEKLY 026 · 3 days ago" line. Pure logic in web/src/lib/stations.ts. |
+| c3 | this entry + Playwright e2e + §15 snapshot. |
+
+**Deltas from the plan**
+
+* **All three design additions shipped** (search / filter chips /
+  sort) + the per-row last-generated line.
+* **"template last-modified" sort** used the pre-existing
+  `Station.updated_at` column — NO migration needed (labelled
+  "recently edited" in the UI).
+* **Latest-generation = argmax by timestamp**, not max(week): a
+  regen of an old week makes THAT week the latest event. The c1
+  review caught + fixed a null-timestamp inconsistency where the
+  week + timestamp fields could disagree.
+* **Logic extracted to a pure module** (`stations.ts`) so the
+  filter/sort/relative-time is unit-tested without Svelte — the
+  component is a thin binding shell.
+
+**Verification**
+
+* `pytest`: 769 pass, 1 skipped (api/routers/stations.py 100%).
+  New: 4 StationSummary aggregate tests in tests/test_api.py.
+* `npm run test:unit`: 336 pass across 19 files. New:
+  web/src/lib/stations.test.ts (28 cases) + 2 landing render tests.
+* `npm run check`: 0 errors / 0 warnings.
+* `npx playwright test stations-list.spec.ts`: 5 e2e — search,
+  cadence filter, generated filter + last-gen line, name sort,
+  no-matches message. Shared-DB-safe (assertions scope to sl12-*
+  slugs).
+
+**Files**
+
+Backend: api/schemas.py (StationSummary), api/routers/stations.py
+(enriched list_stations).
+Frontend: web/src/lib/api.ts (StationSummary + getStations return
+type), web/src/lib/stations.ts (NEW pure helpers),
+web/src/routes/+page.svelte (controls + rows).
 
 ---
 
