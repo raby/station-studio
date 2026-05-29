@@ -715,7 +715,7 @@ describe('trace viewer — §14.23 excluded-candidates disclosure', () => {
       ],
     });
 
-  it('renders the "N rejected" toggle only when excluded list is non-empty', async () => {
+  it('renders the "Why not these? (N)" toggle only when excluded list is non-empty', async () => {
     getTraceMock.mockResolvedValueOnce(traceWithExcluded());
     getPlaylistMock.mockResolvedValueOnce(stubPlaylist());
     getStationMock.mockResolvedValueOnce(stubStation());
@@ -725,7 +725,8 @@ describe('trace viewer — §14.23 excluded-candidates disclosure', () => {
     // Slot 2 has two excluded — one toggle. Slot 1 has none — no toggle.
     const toggles = screen.getAllByTestId('excluded-toggle');
     expect(toggles).toHaveLength(1);
-    expect(toggles[0]).toHaveTextContent(/2 rejected/i);
+    // §16.17 c2 relabel: "Why not these? (2)".
+    expect(toggles[0]).toHaveTextContent(/why not these\? \(2\)/i);
   });
 
   it('clicking the toggle reveals the per-candidate reject table', async () => {

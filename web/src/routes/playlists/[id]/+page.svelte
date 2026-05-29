@@ -511,7 +511,10 @@
                         aria-expanded={!!excludedOpen[s.slot]}
                         on:click={() => toggleExcluded(s.slot)}
                       >
-                        {excludedOpen[s.slot] ? '▾' : '▸'} {s.excluded.length} rejected
+                        <!-- §16.17 c2: "Why not these? (N)" reads more
+                             discoverably than the terse "N rejected" +
+                             matches the design's wording. -->
+                        {excludedOpen[s.slot] ? '▾' : '▸'} Why not these? ({s.excluded.length})
                       </button>
                     {/if}
                   </td>
