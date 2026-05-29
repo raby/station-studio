@@ -242,6 +242,40 @@ describe('<DetailPanel> — §16.2.3 c1 edit form', () => {
     expect(detail.fields).toEqual({ genre: 'New', exclusion_window: 8 });
   });
 
+  it('editing an INT field to a new number saves it (c1 review 🔴-1)', async () => {
+    // Regression guard: Svelte's <input type=number> binding makes the
+    // value a NUMBER, not a string. The earlier onSave did
+    // `(value ?? '').trim()` → `(10).trim()` → TypeError, so saving
+    // after editing any int field crashed + no `save` fired.
+    const onSave = vi.fn();
+    const { component } = render(DetailPanel, {
+      selected: { ref: { kind: 'atomic-ref', slot_index: 0 }, section: ESEC },
+      template: makeEditTemplate(), sidecar: makeSidecar(),
+    });
+    component.$on('save', (e) => onSave(e.detail));
+    // exclusion_window is an int field; 8 → 10.
+    await fireEvent.input(screen.getByTestId('input-exclusion_window'), {
+      target: { value: '10' },
+    });
+    await fireEvent.click(screen.getByTestId('detail-save'));
+    expect(onSave).toHaveBeenCalledTimes(1);
+    expect(onSave.mock.calls[0][0].fields).toEqual({ genre: 'Old', exclusion_window: 10 });
+  });
+
+  it('returning an int field to its original value clears dirty (c1 review 🟡-4)', async () => {
+    render(DetailPanel, {
+      selected: { ref: { kind: 'atomic-ref', slot_index: 0 }, section: ESEC },
+      template: makeEditTemplate(), sidecar: makeSidecar(),
+    });
+    const input = screen.getByTestId('input-exclusion_window');
+    const save = screen.getByTestId('detail-save');
+    await fireEvent.input(input, { target: { value: '10' } });
+    expect(save).toBeEnabled();
+    // Back to the seeded value — should read as clean, not dirty.
+    await fireEvent.input(input, { target: { value: '8' } });
+    expect(save).toBeDisabled();
+  });
+
   it('clearing an OPTIONAL field sends null in the payload', async () => {
     const onSave = vi.fn();
     const { component } = render(DetailPanel, {

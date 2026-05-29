@@ -89,13 +89,18 @@
 
   // Reseed the form whenever the SELECTION changes (not on every
   // reactive tick — that would clobber the user's in-progress edits).
-  let editValues: Record<string, string> = {};
+  //
+  // Value type is string | number | null, NOT just string (c1 review
+  // 🟡-3): Svelte's `bind:value` on <input type="number"> coerces to
+  // a NUMBER (or null when cleared) regardless of the seeded type.
+  // The declared union forces every read site to normalize.
+  let editValues: Record<string, string | number | null> = {};
   let seededFor: string | null = null;
   $: {
     const key = selected ? JSON.stringify(selected.ref) : null;
     if (key !== seededFor) {
       seededFor = key;
-      const next: Record<string, string> = {};
+      const next: Record<string, string | number | null> = {};
       if (detail && detail.kind === 'atomic' && detail.block) {
         for (const f of editableFieldsForBlock(detail.block)) {
           const v = detail.block[f.name];
@@ -106,11 +111,20 @@
     }
   }
 
+  // Normalise a raw form value (string | number | null) to the
+  // canonical string used for dirty-comparison + emptiness checks.
+  // Centralises the c1-review 🟡-3/🟡-4 fix: Svelte's number-input
+  // binding makes int-field values numbers, so neither dirty nor the
+  // save payload can assume strings.
+  function normStr(v: string | number | null | undefined): string {
+    return v === undefined || v === null ? '' : String(v).trim();
+  }
+
   // Per-field validation (mirrors engine validators via the helper).
   $: fieldErrors = Object.fromEntries(
     editFields.map((f) => {
-      const raw = editValues[f.name] ?? '';
-      const val = f.type === 'int' ? (raw === '' ? undefined : Number(raw)) : raw;
+      const s = normStr(editValues[f.name]);
+      const val = f.type === 'int' ? (s === '' ? undefined : Number(s)) : s;
       return [f.name, validateEditableField(f, val, template)];
     }),
   ) as Record<string, string | null>;
@@ -120,10 +134,11 @@
   $: dirty =
     detail && detail.kind === 'atomic' && detail.block
       ? editFields.some((f) => {
-          const current = detail.block![f.name];
-          const currentStr =
-            current === undefined || current === null ? '' : String(current);
-          return (editValues[f.name] ?? '') !== currentStr;
+          // Compare normalised strings on BOTH sides so an int field
+          // returned to its original value (number vs seeded string)
+          // doesn't read as dirty (c1 review 🟡-4).
+          const currentStr = normStr(detail.block![f.name]);
+          return normStr(editValues[f.name]) !== currentStr;
         })
       : false;
 
@@ -149,7 +164,11 @@
     // the key). Required fields can't be empty (validation blocks save).
     const fields: Record<string, string | number | null> = {};
     for (const f of editFields) {
-      const s = (editValues[f.name] ?? '').trim();
+      // normStr handles number | null | string uniformly (c1 review
+      // 🔴-1: Svelte makes edited int fields NUMBERS — calling .trim()
+      // on a number threw TypeError). Empty optional → null (PATCH
+      // clears the key); otherwise coerce by declared field type.
+      const s = normStr(editValues[f.name]);
       if (s === '') {
         fields[f.name] = null;
       } else {
