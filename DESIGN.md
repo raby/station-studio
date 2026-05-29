@@ -6170,7 +6170,7 @@ direction — spec slice §16.2.0 is the next planned work.
 | Rules CRUD UI panel      | **Shipped (§16.10).** `<RulesPanel>` self-contained component (load → edit → Save/Reset, client-side validation mirroring engine.rules, per-row state) + `/stations/[slug]/rules` route + "⚙ Rules" header link. Backend CRUD pre-existed; frontend-only. Reusable for the §16.2 sidebar shell. |
 | In-UI generation progress | **Shipped (§16.11).** Polling-job-id transport (POST/GET/DELETE `/api/jobs/...`); engine became a generator yielding `ProgressEvent | GenerationResult` with Decision G invariants enforced + tested; in-memory `JobStore` with threading.Lock + immutable snapshots + lazy GC (cancelled-immediate, done/error-60s-grace) + per-(slug, kind) eviction. `<ProgressIndicator>` Svelte component reads `JobSnapshot` snapshots; station-detail page wires `startGenerateJob` → `watchJob` → navigate; JobStartConflict (409) adopts the existing job. Unblocks §16.2.6 live preview's transport. |
 | Stations list polish     | **Shipped (§16.12).** Landing page has search (name/slug substring), cadence + generated filter chips, sort (name / last-generated / recently-edited), + per-row "Last generated: WEEKLY 026 · 3 days ago" line. GET /api/stations returns enriched StationSummary aggregates (2 bounded queries, argmax-by-timestamp). Pure filter/sort logic in web/src/lib/stations.ts. |
-| Install story            | Queued — §16.13. pip-installable or polished docker after §16.2 MVP. |
+| Install story            | Queued — §16.13. Design pass done: static-bundle wheel (pipx) + docker-compose, both first-class. **Gated on a self-serve pool-import path** (D1) — won't ship while BYO-music import still needs the Makefile. Retires §16.22's SSR premise (no Node at runtime). |
 | Hobbyist starter station | Queued — §16.14. 100-200-slot example structurally simpler than Classics, with synthetic starter XMLs for end-to-end boot without external data. |
 | Docs site                | Deferred — §16.15. After §16.2 + §16.13 + §16.14 ship.           |
 | Disk-export prune endpoint | Queued — §16.16. Demand-gated. §14.3's prune punt. |
@@ -6244,7 +6244,7 @@ Master order at a glance. Detailed briefs follow below.
 | 3 | §16.2.1+ visual block editor implementation | multi-slice | Per the §16.2.0 spec; flagship hobbyist feature. |
 | 4 | ~~§16.11 In-UI generation progress~~ | ✅ shipped | **SHIPPED** (d10c560). Job-runner pattern: `generate_stream` engine generator + in-memory `JobStore` + `POST/GET/DELETE /api/jobs/...` polling + `<ProgressIndicator>` Svelte component. Unblocks §16.2.6 live preview's transport. |
 | 5 | ~~§16.12 Stations list polish (search / filter / recent generations)~~ | ✅ shipped | **SHIPPED.** Search + cadence/generated filter chips + sort (name / last-generated / recently-edited) + per-row last-generated line. GET /api/stations enriched with StationSummary aggregates. |
-| 6 | §16.13 Install story (pip / docker) | medium | Hobbyist friction floor. Lands after §16.2 MVP makes "install + try" worth marketing. |
+| 6 | §16.13 Install story (pip / docker) | medium | Hobbyist friction floor. Design pass done (static wheel + docker, both channels). **Re-gated (D1): lands after a self-serve pool-import path, not just §16.2 MVP** — a distributable whose first step is `make import-…` is a trap. |
 | 7 | §16.14 Hobbyist starter station | small | Fresh install needs a runnable example without external XMLs. |
 | 8 | §16.15 Docs site (MkDocs-Material) | medium | After enough product is built to justify a doc site. |
 
@@ -9392,26 +9392,116 @@ web/src/routes/+page.svelte (controls + rows).
 ### 16.13 Install story — pip-installable / docker-compose
 
 **Why this matters.** §16.0's OSS-hobbyist trajectory promises
-"clone + run" simplicity. Reality today: `git clone → make install
-→ make dev`, which works but isn't pip-installable. A hobbyist who
-just wants to *try* shouldn't need git.
+"clone + run" simplicity. The reality today is a *contributor*
+workflow wearing a user's hat: `git clone → make install → make
+dev` assumes git, the Makefile, AND both Python + Node on the host.
+Worse, the backend isn't even a package (no `pyproject.toml`;
+deps live in `requirements.txt` and the app launches via a bare
+`run.py`). A stranger who just wants to *try* shouldn't need any
+of that.
 
-**Shape (likely TWO commits, both queued):**
+The framing that matters: Station Studio is a **two-runtime app** —
+a FastAPI backend (uvicorn :8001) and a *separate* SvelteKit dev
+server (vite :5173) talking over HTTP. So §16.13 isn't "package the
+Python." It's **"collapse two dev runtimes into one artifact a
+stranger runs without the repo."** Three structural facts shape it:
 
-1. **`pip install station-studio`** — package the engine + API +
-   CLI as a wheel. SvelteKit frontend either bundled as static
-   assets OR distributed separately. Entry points for CLI
-   (`station-studio import-station …` etc.).
+1. **The friction wall (drives the sequencing gate).** The editor
+   MVP has shipped (§16.2.2 read-only canvas + §16.2.3 atomic
+   edit), which was the *original* gate for this slice. But a
+   hobbyist who installs today still **can't load their own music
+   through the UI** — the README funnels them to `make
+   import-weekly-pools manifest=…`, a Makefile target that doesn't
+   exist outside the repo. Shipping a distributable that depends on
+   `make` to do the one thing every new user must do (import their
+   library) is incoherent. So the true gate is not "does the editor
+   exist" but **"is the new-user surface self-serve without the
+   Makefile."**
 
-2. **`docker-compose up`** — single-command bring-up of backend +
-   frontend + SQLite volume. Mirrors `make dev` but with no Python
-   or Node prerequisites.
+2. **Frontend distribution is an architecture decision, not
+   packaging.** The clean single-process story requires SvelteKit
+   on `adapter-static` so FastAPI can mount the built SPA and ship
+   those assets inside the wheel. The app is already CSR-heavy
+   (every route fetches via `api.ts` in `onMount`), so static is
+   viable today — but it's a conscious **"SPA / no-Node-at-runtime
+   forever"** commitment (see the §16.22 reconciliation below).
 
-**Why not now.** Until §16.2 makes the editor compelling, "install
-+ try" doesn't have a strong landing. Distribution polish lands
-when there's something worth distributing.
+3. **State must leave the repo root.** The DB (`station_studio.db`),
+   `stations/`, and exports are all repo-relative today. A
+   pip-installed tool can't write into site-packages. The seams
+   already exist from the e2e isolation work (`STATION_STUDIO_DB_URL`,
+   `STATION_STUDIO_STATIONS_DIR`); §16.13 must add an XDG-style
+   app-home (`$STATION_STUDIO_HOME`, default `~/.station-studio/`)
+   that the DB / stations dir / exports resolve under when not
+   overridden.
 
-**Effort.** Medium (~5-8 commits across pip + docker + tutorial).
+**Decisions (locked in the §16.13 design pass).**
+
+* **D1 — Sequencing: ship AFTER the pool-import UI.** §16.13 stays
+  queued behind a self-serve pool-import path (the import UI that
+  rides with §16.2's editor work, OR a standalone CLI import that a
+  later slice adds first). Rationale: distribution lowers friction
+  for strangers; a distributable whose first required step is a
+  Makefile target is friction, not less of it. Don't market "pip
+  install + try" until "try" works end-to-end without the repo.
+* **D2 — Distribute BOTH a static-bundle wheel AND docker-compose.**
+  The wheel (adapter-static SPA served by FastAPI) is the
+  single-process, no-Node-at-runtime artifact for people who have
+  Python. The docker-compose is the no-prerequisites artifact for
+  people who have neither. Both ship the **same** static frontend
+  build to avoid a divergent second build path.
+* **D3 — Both `pipx` and `docker` are first-class "try it"
+  channels.** Documented as equals: `pipx install station-studio &&
+  station-studio serve` for the local/BYO-music case (local XML in,
+  local XML out — no volume mounts); `docker compose up` for the
+  zero-prereq / evaluate-on-a-box case. README quick-start carries
+  both.
+
+**Prerequisites this slice owns (the parts that aren't "just
+packaging").**
+
+* A real CLI console entry point — `station-studio <subcommand>`
+  (`serve`, `import`, `generate`, `export`, `backup`, `seed`) —
+  replacing the Makefile targets for installed users. (If D1's
+  standalone-CLI route is taken, the `import` subcommand is the
+  thing that unblocks the gate.)
+* `serve` hardcodes **`workers=1`**: the §16.11 job tracker holds
+  state in-memory per worker, so multi-worker yields spurious
+  poll-404s. Enforce the constraint in code, not just the README
+  caveat, until DB-backed job state (§16.21+) lands.
+* App-home resolution (D-state above) + first-run bootstrap (create
+  the home dir, init the DB, `alembic stamp head`, auto-seed the
+  bundled example stations — mirrors today's first-boot seed).
+* `pyproject.toml` + wheel build that vendors the prebuilt SvelteKit
+  static assets as package data.
+
+**Shape (rough, ~5-8 commits, all post-gate):** pyproject + CLI
+entry point → adapter-static migration + FastAPI static mount →
+app-home + first-run bootstrap → wheel packaging (assets as package
+data) → docker-compose + image → quick-start docs rewrite (folds
+into §16.15 docs site).
+
+**§16.22 reconciliation (honest).** Choosing adapter-static (D2)
+means there is **no Node server at runtime**, so §16.22's goal —
+*server*-rendered first paint to kill the empty-shell flash on a
+hard-loaded / shared trace link — becomes unreachable for the
+shipped artifacts. The `+page.ts load()` refactor §16.22 describes
+still helps on *client-side* navigation, but the deep-link
+first-paint win it was really about is foreclosed. Net: **§16.13
+effectively retires §16.22's server-render premise.** If shared-link
+first-paint ever becomes a real felt pain, the answer would be a
+*separate* docker image built on SvelteKit's node adapter — out of
+scope here, and explicitly not the wheel's job. §16.22 should be
+re-scoped to "client-side `load()` refactor (flash on nav only)" or
+closed; flagged for the next plan-audit.
+
+**Why not now.** D1: the new-user surface isn't self-serve yet
+(pool import still needs the Makefile). Until that's closed, a
+polished installer would ship a trap. Distribution polish lands
+when there's something a stranger can fully use without the repo.
+
+**Effort.** Medium (~5-8 commits across pyproject + CLI + static
+migration + wheel + docker + docs).
 
 ---
 
@@ -9690,6 +9780,16 @@ NOT a current pain point.
 ---
 
 ### 16.22 Trace viewer SSR migration — `+page.ts` `load` over `onMount`
+
+> **⚠ Re-scope pending (§16.13 design pass).** §16.13 D2 commits to
+> SvelteKit `adapter-static` (no Node at runtime), which forecloses
+> the *server*-rendered first paint this slice was really about —
+> a hard-loaded / shared trace link can't be SSR'd without a Node
+> server the wheel doesn't ship. What survives is the client-side
+> `load()` refactor (kills the flash on in-app navigation, not on
+> deep-load). Re-scope this slice to "client `load()` refactor
+> only" or close it; if shared-link first-paint ever truly hurts,
+> the fix is a separate node-adapter docker image, not the wheel.
 
 **Why this matters.** Today the trace viewer fetches in `onMount`
 (client-only). First paint shows an empty shell for ~200-400ms
