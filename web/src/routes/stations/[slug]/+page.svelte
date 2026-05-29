@@ -4,6 +4,7 @@
   import {
     getStation,
     getStationPlaylists,
+    getStationOverview,
     startGenerateJob,
     watchJob,
     cancelJob,
@@ -12,7 +13,9 @@
     deleteStation,
     ApiError,
   } from '$lib/api';
-  import type { Station, PlaylistSummary, JobSnapshot } from '$lib/api';
+  import type {
+    Station, PlaylistSummary, JobSnapshot, StationOverview,
+  } from '$lib/api';
   import ProgressIndicator from '$lib/components/ProgressIndicator.svelte';
   import { page } from '$app/stores';
 
@@ -20,6 +23,10 @@
   let playlists: PlaylistSummary[] = [];
   let error: string | null = null;
   let loading = true;
+  // §16.19 — rich overview bundle (template summary / pools / cursors /
+  // generation rollup + staleness). NON-fatal: a failure here leaves
+  // the core station page (header + generate + playlists) intact.
+  let overview: StationOverview | null = null;
 
   // Generate-panel state. See DESIGN.md §16.1 for the decision matrix.
   let advancedOpen = false;
@@ -90,6 +97,15 @@
       error = e instanceof ApiError ? e.message : String(e);
     } finally {
       loading = false;
+    }
+    // §16.19 — fetch the overview separately + non-fatally. The core
+    // page already rendered above; the rich sections are additive, so
+    // a failure (or a backend that predates the endpoint) just omits
+    // them rather than blanking the page.
+    try {
+      overview = await getStationOverview(slug);
+    } catch {
+      overview = null;
     }
   });
 
@@ -332,6 +348,93 @@
         </button>
       </div>
     </header>
+
+    {#if overview}
+      <!-- §16.19 — rich station detail. Additive sections; absent if the
+           overview fetch failed (the page core still works). -->
+      <section class="overview" data-testid="overview">
+        <div class="overview-grid">
+          <div class="card" data-testid="template-summary">
+            <h3>Template</h3>
+            <dl>
+              <dt>Slots / week</dt>
+              <dd>{overview.template_summary.slot_count.toLocaleString()}</dd>
+              <dt>Layout</dt>
+              <dd>{overview.template_summary.layout_form}</dd>
+              <dt>Cursor</dt>
+              <dd>{overview.template_summary.cursor_persist ? 'persistent' : 'stateless'}</dd>
+              <dt>Strategies</dt>
+              <dd>
+                {#each Object.entries(overview.template_summary.strategy_counts) as [strat, n]}
+                  <span class="pill">{strat} ×{n}</span>
+                {/each}
+                <span class="hint-inline">(by block)</span>
+              </dd>
+            </dl>
+            <a
+              href="/stations/{encodeURIComponent(slug)}/visualise"
+              class="card-link"
+              data-testid="overview-visualise-link"
+            >🗺 Visualise →</a>
+          </div>
+
+          <div class="card" data-testid="pools-summary">
+            <h3>Source pools</h3>
+            <ul class="pool-list">
+              {#each overview.pools as p}
+                <li data-testid="pool-row" data-pool={p.name} class:missing={!p.imported}>
+                  <span class="pool-name">{p.name}</span>
+                  <span class="pool-role">{p.role}</span>
+                  {#if p.imported}
+                    <span class="pool-count">{(p.track_count ?? 0).toLocaleString()} tracks</span>
+                  {:else}
+                    <span class="pool-missing" data-testid="pool-missing">not imported</span>
+                  {/if}
+                </li>
+              {/each}
+            </ul>
+          </div>
+
+          {#if overview.template_summary.cursor_persist}
+            <div class="card" data-testid="cursors-summary">
+              <h3>Cursors</h3>
+              {#if overview.cursors.length === 0}
+                <p class="hint">No cursor state yet (generate to initialise).</p>
+              {:else}
+                <ul class="cursor-list">
+                  {#each overview.cursors as c}
+                    <li data-testid="cursor-row">
+                      <span class="mono">{c.name}</span>
+                      <span class="cursor-pos">{c.position.toLocaleString()}</span>
+                    </li>
+                  {/each}
+                </ul>
+              {/if}
+            </div>
+          {/if}
+
+          <div class="card" data-testid="generations-summary">
+            <h3>Generations</h3>
+            <dl>
+              <dt>Total</dt>
+              <dd>{overview.generations.count.toLocaleString()}</dd>
+              {#if overview.generations.last_generated_week !== null}
+                <dt>Latest</dt>
+                <dd>{overview.cadence.toUpperCase()} {String(overview.generations.last_generated_week).padStart(3, '0')}</dd>
+              {/if}
+            </dl>
+            {#if overview.generations.stale_count > 0}
+              <!-- §16.2.3 staleness hint, homed in §16.19. -->
+              <p class="stale-hint" data-testid="stale-hint">
+                {overview.generations.stale_count.toLocaleString()}
+                {overview.generations.stale_count === 1 ? 'playlist was' : 'playlists were'}
+                generated under a previous template — regenerate to apply your edits.
+              </p>
+            {/if}
+          </div>
+        </div>
+      </section>
+    {/if}
 
     <h2>Playlists</h2>
 
@@ -585,6 +688,108 @@
   }
   h2 {
     margin-top: 2rem;
+  }
+  /* §16.19 — overview cards */
+  .overview {
+    margin-top: 1.5rem;
+  }
+  .overview-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 1rem;
+  }
+  .card {
+    border: 1px solid #eee;
+    border-radius: 6px;
+    padding: 0.75rem 1rem;
+    background: #fafafa;
+  }
+  .card h3 {
+    margin: 0 0 0.5rem;
+    font-size: 0.95rem;
+  }
+  .card dl {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 0.2rem 0.6rem;
+    margin: 0;
+    font-size: 0.85rem;
+  }
+  .card dt {
+    color: #888;
+  }
+  .card dd {
+    margin: 0;
+  }
+  .card-link {
+    display: inline-block;
+    margin-top: 0.6rem;
+    font-size: 0.85rem;
+    color: #2c7a7b;
+    text-decoration: none;
+  }
+  .card-link:hover {
+    text-decoration: underline;
+  }
+  .pill {
+    display: inline-block;
+    background: #eef;
+    border-radius: 999px;
+    padding: 0.05rem 0.45rem;
+    font-size: 0.75rem;
+    margin: 0 0.2rem 0.2rem 0;
+    font-family: ui-monospace, monospace;
+  }
+  .hint-inline {
+    color: #aaa;
+    font-size: 0.75rem;
+  }
+  .pool-list,
+  .cursor-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    font-size: 0.85rem;
+  }
+  .pool-list li,
+  .cursor-list li {
+    display: flex;
+    gap: 0.5rem;
+    align-items: baseline;
+    padding: 0.2rem 0;
+    border-bottom: 1px solid #f0f0f0;
+  }
+  .pool-name {
+    font-weight: 500;
+  }
+  .pool-role {
+    color: #888;
+    font-size: 0.78rem;
+  }
+  .pool-count {
+    margin-left: auto;
+    color: #555;
+    font-variant-numeric: tabular-nums;
+  }
+  .pool-missing {
+    margin-left: auto;
+    color: #c0392b;
+    font-size: 0.78rem;
+  }
+  .pool-list li.missing .pool-name {
+    color: #c0392b;
+  }
+  .cursor-pos {
+    margin-left: auto;
+    font-variant-numeric: tabular-nums;
+  }
+  .stale-hint {
+    margin: 0.5rem 0 0;
+    padding: 0.4rem 0.6rem;
+    background: #fff8e1;
+    border: 1px solid #f0c36d;
+    border-radius: 4px;
+    font-size: 0.82rem;
   }
   .generate {
     margin: 1rem 0 1.5rem;

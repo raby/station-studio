@@ -8,6 +8,7 @@ import '@testing-library/jest-dom/vitest';
 const {
   getStationMock,
   getStationPlaylistsMock,
+  getStationOverviewMock,
   startGenerateJobMock,
   watchJobMock,
   cancelJobMock,
@@ -51,6 +52,7 @@ const {
   return {
     getStationMock: vi.fn(),
     getStationPlaylistsMock: vi.fn(),
+    getStationOverviewMock: vi.fn(),
     startGenerateJobMock: vi.fn(),
     watchJobMock: vi.fn(),
     cancelJobMock: vi.fn(),
@@ -67,6 +69,7 @@ const {
 vi.mock('$lib/api', () => ({
   getStation: (...args: unknown[]) => getStationMock(...args),
   getStationPlaylists: (...args: unknown[]) => getStationPlaylistsMock(...args),
+  getStationOverview: (...args: unknown[]) => getStationOverviewMock(...args),
   startGenerateJob: (...args: unknown[]) => startGenerateJobMock(...args),
   watchJob: (...args: unknown[]) => watchJobMock(...args),
   cancelJob: (...args: unknown[]) => cancelJobMock(...args),
@@ -787,5 +790,100 @@ describe('station detail — §16.3 delete affordances', () => {
     expect(await screen.findByTestId('delete-error')).toHaveTextContent(/db locked/i);
     expect(gotoMock).not.toHaveBeenCalled();
     confirmSpy.mockRestore();
+  });
+});
+
+
+// ---- §16.19 station overview sections -----------------------------------
+
+describe('station detail — §16.19 overview', () => {
+  beforeEach(() => {
+    getStationMock.mockReset();
+    getStationPlaylistsMock.mockReset();
+    getStationOverviewMock.mockReset();
+    gotoMock.mockReset();
+    setSlug('cls');
+    // Core page deps — the overview is additive on top.
+    getStationMock.mockResolvedValue({
+      id: 1, slug: 'cls', name: 'Classics', template: { rng: 'off' },
+    });
+    getStationPlaylistsMock.mockResolvedValue([]);
+  });
+
+  const overview = (over = {}) => ({
+    slug: 'cls', name: 'Classics', cadence: 'weekly', rng: 'off',
+    updated_at: '2026-05-29T12:00:00+00:00',
+    template_summary: {
+      slot_count: 3010, layout_form: 'row_template',
+      strategy_counts: { window: 2 }, cursor_persist: false, source_count: 3,
+    },
+    pools: [
+      { name: 'RG_RADIO', role: 'content', imported: true, track_count: 500, imported_at: '2026-05-01T00:00:00+00:00' },
+      { name: 'RG_MISSING', role: 'content', imported: false, track_count: null, imported_at: null },
+    ],
+    cursors: [],
+    generations: { count: 5, last_generated_week: 5, last_generated_at: '2026-05-20T00:00:00+00:00', stale_count: 0 },
+    ...over,
+  });
+
+  it('renders template summary + pools with the not-imported gap flagged', async () => {
+    getStationOverviewMock.mockResolvedValue(overview());
+    render(Page);
+
+    const ts = await screen.findByTestId('template-summary');
+    expect(ts).toHaveTextContent('3,010');
+    expect(ts).toHaveTextContent('row_template');
+    expect(ts).toHaveTextContent(/window ×2/);
+
+    expect(screen.getByTestId('pools-summary')).toHaveTextContent('RG_RADIO');
+    expect(screen.getByTestId('pools-summary')).toHaveTextContent('500 tracks');
+    // The un-imported source surfaces the setup gap.
+    expect(screen.getByTestId('pool-missing')).toHaveTextContent('not imported');
+  });
+
+  it('shows the cursors card only for persistent templates', async () => {
+    // Stateless → no cursors card.
+    getStationOverviewMock.mockResolvedValue(overview());
+    const { unmount } = render(Page);
+    await screen.findByTestId('template-summary');
+    expect(screen.queryByTestId('cursors-summary')).toBeNull();
+    unmount();
+
+    // Persistent → cursors card with the row.
+    getStationOverviewMock.mockResolvedValue(overview({
+      template_summary: {
+        slot_count: 100, layout_form: 'row_template',
+        strategy_counts: { sequential: 1 }, cursor_persist: true, source_count: 1,
+      },
+      cursors: [{ name: 'NIGHT_1', position: 42 }],
+    }));
+    render(Page);
+    const card = await screen.findByTestId('cursors-summary');
+    expect(card).toHaveTextContent('NIGHT_1');
+    expect(card).toHaveTextContent('42');
+  });
+
+  it('renders the staleness hint only when stale_count > 0', async () => {
+    getStationOverviewMock.mockResolvedValue(overview({
+      generations: { count: 5, last_generated_week: 5, last_generated_at: 'x', stale_count: 3 },
+    }));
+    render(Page);
+    const hint = await screen.findByTestId('stale-hint');
+    expect(hint).toHaveTextContent(/3 playlists were generated under a previous template/i);
+  });
+
+  it('omits the staleness hint when stale_count is 0', async () => {
+    getStationOverviewMock.mockResolvedValue(overview());
+    render(Page);
+    await screen.findByTestId('generations-summary');
+    expect(screen.queryByTestId('stale-hint')).toBeNull();
+  });
+
+  it('omits the whole overview when the fetch fails (page core survives)', async () => {
+    getStationOverviewMock.mockRejectedValue(new FakeApiError(500, 'boom'));
+    render(Page);
+    // Core page still renders (the Playlists heading is always present).
+    await screen.findByText('Classics');
+    expect(screen.queryByTestId('overview')).toBeNull();
   });
 });
