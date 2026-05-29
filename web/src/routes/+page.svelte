@@ -77,52 +77,61 @@
         type="search"
         class="search"
         placeholder="Search name or slug…"
+        aria-label="Search stations by name or slug"
         data-testid="station-search"
         bind:value={controls.search}
       />
 
-      <div class="control-row">
+      <div class="control-row" role="group" aria-label="Filter by cadence">
         <span class="control-label">Cadence</span>
         <button
           type="button" class="chip" class:active={controls.cadence === 'all'}
+          aria-pressed={controls.cadence === 'all'}
           data-testid="cadence-all" on:click={() => setCadence('all')}
         >all</button>
         {#each cadences as c}
           <button
             type="button" class="chip" class:active={controls.cadence === c}
+            aria-pressed={controls.cadence === c}
             data-testid="cadence-{c}" on:click={() => setCadence(c)}
           >{c}</button>
         {/each}
       </div>
 
-      <div class="control-row">
+      <div class="control-row" role="group" aria-label="Filter by generation status">
         <span class="control-label">Generated</span>
         <button
           type="button" class="chip" class:active={controls.generation === 'all'}
+          aria-pressed={controls.generation === 'all'}
           data-testid="gen-all" on:click={() => setGeneration('all')}
         >all</button>
         <button
           type="button" class="chip" class:active={controls.generation === 'has'}
+          aria-pressed={controls.generation === 'has'}
           data-testid="gen-has" on:click={() => setGeneration('has')}
         >has generations</button>
         <button
           type="button" class="chip" class:active={controls.generation === 'empty'}
+          aria-pressed={controls.generation === 'empty'}
           data-testid="gen-empty" on:click={() => setGeneration('empty')}
         >empty</button>
       </div>
 
-      <div class="control-row">
+      <div class="control-row" role="group" aria-label="Sort order">
         <span class="control-label">Sort</span>
         <button
           type="button" class="chip" class:active={controls.sortBy === 'name'}
+          aria-pressed={controls.sortBy === 'name'}
           data-testid="sort-name" on:click={() => setSort('name')}
         >name</button>
         <button
           type="button" class="chip" class:active={controls.sortBy === 'last-generated'}
+          aria-pressed={controls.sortBy === 'last-generated'}
           data-testid="sort-last-generated" on:click={() => setSort('last-generated')}
         >last generated</button>
         <button
           type="button" class="chip" class:active={controls.sortBy === 'updated'}
+          aria-pressed={controls.sortBy === 'updated'}
           data-testid="sort-updated" on:click={() => setSort('updated')}
         >recently edited</button>
       </div>

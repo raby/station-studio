@@ -122,7 +122,12 @@ export function relativeTime(iso: string | null, now: Date = new Date()): string
   const weeks = Math.floor(days / 7);
   if (weeks < 5) return `${weeks} week${weeks === 1 ? '' : 's'} ago`;
   const months = Math.floor(days / 30);
-  if (months < 12) return `${months} month${months === 1 ? '' : 's'} ago`;
+  // Gate on the DAY count, not `months < 12` (full-slice review 🟡-1):
+  // at days 360-364 `months` floors to 12 (rejecting the months
+  // branch) while `years = floor(days/365)` floors to 0 — producing
+  // "0 years ago". Gating on `days < 365` keeps 360-364 reading
+  // "12 months ago" and hands ≥365 to the years branch.
+  if (days < 365) return `${months} month${months === 1 ? '' : 's'} ago`;
   const years = Math.floor(days / 365);
   return `${years} year${years === 1 ? '' : 's'} ago`;
 }

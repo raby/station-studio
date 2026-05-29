@@ -209,6 +209,18 @@ describe('relativeTime', () => {
     expect(relativeTime('2024-05-09T12:00:00Z', now)).toBe('2 years ago');
   });
 
+  it('reads "12 months ago" in the 360-364 day gap, NOT "0 years ago"', () => {
+    // Full-slice review 🟡-1 regression guard: at 360-364 days
+    // `months` floors to 12 (so the old `months < 12` gate rejected
+    // it) while `years = floor(days/365)` floors to 0 — producing
+    // "0 years ago". 2025-05-14 → 2026-05-10 is 361 days.
+    expect(relativeTime('2025-05-14T12:00:00Z', now)).toBe('12 months ago');
+    // 364 days (2025-05-11) still months, not a broken year.
+    expect(relativeTime('2025-05-11T12:00:00Z', now)).toBe('12 months ago');
+    // The boundary holds: 365 days flips to "1 year ago".
+    expect(relativeTime('2025-05-10T12:00:00Z', now)).toBe('1 year ago');
+  });
+
   it('returns "just now" for a future timestamp (clock skew)', () => {
     expect(relativeTime('2026-05-10T12:30:00Z', now)).toBe('just now');
   });

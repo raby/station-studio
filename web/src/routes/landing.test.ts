@@ -118,6 +118,36 @@ describe('landing +page.svelte', () => {
     expect(screen.getByTestId('never-generated')).toBeInTheDocument();
   });
 
+  it('filter/sort chips expose aria-pressed reflecting active state', async () => {
+    // Full-slice review 🟡-3: chips must carry aria-pressed (matching
+    // the ViewModeToggle precedent) so screen-reader users can tell
+    // which filter / sort is active.
+    getStationsMock.mockResolvedValueOnce([
+      {
+        id: 1, slug: 'jazz-fm', name: 'Jazz FM', cadence: 'weekly',
+        playlist_count: 0, last_generated_week: null, last_generated_at: null,
+        updated_at: new Date().toISOString(),
+      },
+    ]);
+    render(Page);
+    await screen.findByTestId('station-list');
+
+    // Default state: sort=name active, generation=all active.
+    expect(screen.getByTestId('sort-name')).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByTestId('sort-updated')).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.getByTestId('gen-all')).toHaveAttribute('aria-pressed', 'true');
+
+    // Click a different sort → aria-pressed follows.
+    await fireEvent.click(screen.getByTestId('sort-updated'));
+    expect(screen.getByTestId('sort-updated')).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByTestId('sort-name')).toHaveAttribute('aria-pressed', 'false');
+
+    // Search input has an accessible label (🟢-4).
+    expect(screen.getByTestId('station-search')).toHaveAttribute(
+      'aria-label', 'Search stations by name or slug',
+    );
+  });
+
   it('search filters the visible rows', async () => {
     getStationsMock.mockResolvedValueOnce([
       {
