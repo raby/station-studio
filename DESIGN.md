@@ -6150,7 +6150,7 @@ direction — spec slice §16.2.0 is the next planned work.
 | Exporter                 | Shipped. Browser endpoint + disk endpoint, round-trip.           |
 | Bootstrap script         | Shipped. One-command Classics setup.                             |
 | API                      | Stations CRUD, sources, generate, playlist, trace, export, rules (§14.29 CRUD per station). |
-| Trace viewer (UI)        | Shipped. Row grouping, filter (§16.8), prev/next nav (§16.9), excluded-candidates disclosure (§14.23). |
+| Trace viewer (UI)        | Shipped. Row grouping, filter (§16.8), prev/next nav (§16.9), excluded-candidates disclosure (§14.23 + §16.17 enrichments: "Why not these? (N)" relabel, expand-all/collapse-all rejections, per-trace "N slots have rejected candidates" summary). |
 | Station creation wizard  | Shipped (v1 vocab only). Supports `pick` / `window` strategies and the row_template form. **Edit route gates advanced templates** (§14.33: any post-§14.22 field shows "edit JSON directly" message instead of mounting lossy form). Full editor support deferred to §16.2 / §17 Phase D. |
 | Rule overrides           | Shipped (§14.29 + §14.30). Engine-side accessors + per-station CRUD endpoints. Four keys: artist_dedup_window + mix_exclusion_weeks (live precedence: BlockSpec → rule → engine constant); cursor_advance_step + cursor_reset_cycle (drive persistent cursor advance/reset when cursor.persist=true). **No UI panel yet** — deferred to §17 Phase D. |
 | Persistence tables       | Shipped. 12 tables. Migrations 0f76cfb45e8d (baseline) → 8353f29ac95e (mix_usage) → 6db55f2a13af (artist_alias) → 54570900ed97 (rule) → 1cafcc971152 (slot_type column) → c7bb27708788 (source_playlist.role column, §14.35). Migration parity check in CI. |

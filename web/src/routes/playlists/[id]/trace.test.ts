@@ -840,6 +840,51 @@ describe('trace viewer — §16.17 expand-all rejections', () => {
     expect(screen.queryAllByTestId('excluded-row')).toHaveLength(0);
     expect(btn).toHaveTextContent(/expand all rejections/i);
   });
+
+  it('per-trace summary counts the rejection-bearing slots (plural)', async () => {
+    getTraceMock.mockResolvedValueOnce(traceWithTwoExcludedSlots());
+    getPlaylistMock.mockResolvedValueOnce(stubPlaylist());
+    getStationMock.mockResolvedValueOnce(stubStation());
+    render(Page);
+    await screen.findByText('Picked One');
+    expect(screen.getByTestId('rejections-summary')).toHaveTextContent(
+      /2 slots have rejected candidates/i,
+    );
+  });
+
+  it('per-trace summary uses the singular for one slot', async () => {
+    const oneSlot = stubTrace({
+      slots: [
+        {
+          slot: 1, unit: 'Mon', row: 1, block: 1,
+          source: 'A', strategy: 'weighted', pool_index: 5,
+          track_id: 105, track_name: 'Only Picked',
+          track_artist: 'Solo', reason: 'highest weight',
+          excluded: [
+            { pool_index: 3, track_id: 103, track_name: 'Rej',
+              track_artist: 'R', reason: 'artist dedup' },
+          ],
+        },
+      ],
+    });
+    getTraceMock.mockResolvedValueOnce(oneSlot);
+    getPlaylistMock.mockResolvedValueOnce(stubPlaylist());
+    getStationMock.mockResolvedValueOnce(stubStation());
+    render(Page);
+    await screen.findByText('Only Picked');
+    expect(screen.getByTestId('rejections-summary')).toHaveTextContent(
+      /1 slot has rejected candidates/i,
+    );
+  });
+
+  it('per-trace summary is absent when no slot has rejections', async () => {
+    getTraceMock.mockResolvedValueOnce(stubTrace());
+    getPlaylistMock.mockResolvedValueOnce(stubPlaylist());
+    getStationMock.mockResolvedValueOnce(stubStation());
+    render(Page);
+    await screen.findByText('Track Mon-1');
+    expect(screen.queryByTestId('rejections-summary')).not.toBeInTheDocument();
+  });
 });
 
 // ---- §16.9 multi-week prev / next nav -----------------------------------

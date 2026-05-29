@@ -71,9 +71,13 @@
   // trace, flipping every slot's disclosure one-by-one is impractical;
   // this control opens (or closes) them all at once for a debugging
   // sweep. Only the slots that HAVE rejections are touched.
-  $: anyExcluded = trace
-    ? trace.slots.some((s) => (s.excluded?.length ?? 0) > 0)
-    : false;
+  // §16.17 c4 — per-trace summary: how many slots had contested picks.
+  // Lets the operator spot at a glance whether (and roughly where) a
+  // trace had rejections without scrolling a 2,196-slot table.
+  $: excludedSlotCount = trace
+    ? trace.slots.filter((s) => (s.excluded?.length ?? 0) > 0).length
+    : 0;
+  $: anyExcluded = excludedSlotCount > 0;
   // "All expanded" iff every rejection-bearing slot is open. None-open
   // or a mix → false → the button offers "Expand all".
   $: allExcludedExpanded = trace
@@ -395,6 +399,17 @@
 
       <dt>Trace</dt>
       <dd class="mono">{trace.trace_id}</dd>
+
+      {#if anyExcluded}
+        <!-- §16.17 c4: only shown when there ARE rejections — for
+             window/pick-only traces (Classics) this stays absent
+             rather than displaying a noisy "0". -->
+        <dt>Rejections</dt>
+        <dd data-testid="rejections-summary">
+          {excludedSlotCount.toLocaleString()}
+          {excludedSlotCount === 1 ? 'slot has' : 'slots have'} rejected candidates
+        </dd>
+      {/if}
     </dl>
 
     <div class="actions">
