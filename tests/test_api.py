@@ -267,6 +267,61 @@ def test_list_stations_summary_aggregates_playlists(api):
     assert row["last_generated_at"] is not None
 
 
+def test_list_stations_summary_null_timestamp_keeps_week_and_at_consistent(api):
+    """Mid-slice review 🟡-1: a station whose only playlist has a NULL
+    generated_at must report BOTH last_generated_week AND
+    last_generated_at as null — never a half-populated row. SQL
+    max() ignores nulls (→ at=null); the ranked-week query now
+    filters nulls so it agrees (→ week=null)."""
+    client, Session = api
+    with Session() as db:
+        st = Station(
+            slug="nullts", name="Null TS",
+            template={
+                "station": "nullts", "cadence": "weekly", "rng": "off",
+                "sources": [], "cursor": {"base_advance_per_week": 0, "cycle_weeks": 1},
+                "layout": {"unit": "day", "unit_labels": [], "row_start_offsets": [], "row_template": []},
+            },
+        )
+        db.add(st)
+        db.flush()
+        # Passing generated_at=None to the constructor doesn't stick —
+        # the column's Python-side `default=datetime.now` fires at
+        # INSERT for unset/None values. Insert normally, then UPDATE
+        # the row to NULL to genuinely exercise the null-timestamp path.
+        pl = Playlist(station_id=st.id, week=7, trace_id="t-nullts")
+        db.add(pl)
+        db.flush()
+        pl.generated_at = None
+        db.commit()
+
+    row = next(s for s in client.get("/api/stations").json() if s["slug"] == "nullts")
+    assert row["playlist_count"] == 1  # the playlist still counts
+    assert row["last_generated_week"] is None
+    assert row["last_generated_at"] is None
+
+
+def test_list_stations_summary_cadence_fallback_on_missing_key(api):
+    """Mid-slice review 🟢-4: a template missing the `cadence` key
+    (corrupted / hand-edited row) falls back to "unknown" instead of
+    500-ing the whole list."""
+    client, Session = api
+    with Session() as db:
+        db.add(Station(
+            slug="nocad", name="No Cadence",
+            # template deliberately omits "cadence".
+            template={
+                "station": "nocad", "rng": "off", "sources": [],
+                "cursor": {"base_advance_per_week": 0, "cycle_weeks": 1},
+                "layout": {"unit": "day", "unit_labels": [], "row_start_offsets": [], "row_template": []},
+            },
+        ))
+        db.commit()
+
+    row = next(s for s in client.get("/api/stations").json() if s["slug"] == "nocad")
+    assert row["cadence"] == "unknown"
+
+
 def test_get_station_missing_returns_404(api):
     client, _ = api
     r = client.get("/api/stations/nope")

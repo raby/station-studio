@@ -53,10 +53,20 @@ def list_stations(db: Session = Depends(get_db)):
 
     # (2) week of the latest-by-timestamp playlist per station.
     # ROW_NUMBER() partitioned by station, ordered by generated_at
-    # DESC — rn==1 is the most-recent generation event. NULLs in
-    # generated_at sort last, so a station with only null-timestamp
-    # playlists yields whatever row the DB picks; acceptable (those
-    # are pre-§14.x rows that predate generated_at).
+    # DESC — rn==1 is the most-recent generation event.
+    #
+    # Mid-slice review 🟡-1: filter out NULL generated_at rows. Without
+    # this, a station whose playlists ALL have null timestamps would
+    # still produce an rn==1 row (week=X), while query (1)'s max()
+    # IGNORES nulls (last_generated_at=None) — leaving the two fields
+    # contradicting each other ("week 5, generated never"). Filtering
+    # here means null-timestamp-only stations yield NO ranked row, so
+    # both fields agree on None.
+    #
+    # 🟢-3: secondary order key `week.desc()` makes ties deterministic
+    # — two playlists with identical generated_at (batch insert,
+    # second-granularity collision) pick the higher week instead of an
+    # arbitrary row that could flip between requests.
     ranked = (
         db.query(
             Playlist.station_id.label("station_id"),
@@ -64,10 +74,11 @@ def list_stations(db: Session = Depends(get_db)):
             func.row_number()
             .over(
                 partition_by=Playlist.station_id,
-                order_by=Playlist.generated_at.desc(),
+                order_by=(Playlist.generated_at.desc(), Playlist.week.desc()),
             )
             .label("rn"),
         )
+        .filter(Playlist.generated_at.isnot(None))
         .subquery()
     )
     latest_week_by_station = {
