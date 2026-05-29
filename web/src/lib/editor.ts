@@ -39,11 +39,11 @@ export interface EngineBlock {
   // engine.template.BlockSpec. Pinned by tests/test_editor_ts_schema_parity.py
   // — adding a BlockSpec field here without mirroring it there fails
   // the parity guard.
-  cursor_id?: string;       // sequential
-  window?: number;          // window / weighted
-  exclusion_window?: number; // mix
-  genre?: string;           // jingle / mix
-  position?: number;        // prev_ref
+  cursor_id?: string;       // sequential (required; must be a cursors_init key)
+  window?: number;          // weighted ONLY (optional, default 10) — NOT the `window` strategy
+  exclusion_window?: number; // mix (optional)
+  genre?: string;           // jingle (required) / mix (required)
+  position?: number;        // prev_ref (required, 1-indexed)
   fallback_genre?: string;  // prev_ref (optional fallback when mirror misses)
 }
 
@@ -603,6 +603,135 @@ export function parseEditorSidecarResponse(raw: unknown): ParsedEditorSidecar {
     sidecar: r.sidecar as Sidecar,
     sidecar_error: r.sidecar_error as string | null,
   };
+}
+
+
+// ---- §16.2.3 c1 — editable-field schema (atomic edit) -------------------
+//
+// Which block fields the editor lets you change, per strategy. Locked
+// to PARAMETER fields only (§16.2.3 Decision C): strategy / source /
+// size are NOT editable here (structural — §16.2.4/§16.2.5). The
+// schema MIRRORS engine/template.py's `_require_strategy_field` table
+// — keep the two in sync. The PATCH endpoint (c2) re-validates server-
+// side; these specs drive the form + instant client feedback.
+
+
+export type EditableFieldType = 'string' | 'int';
+
+
+export interface EditableFieldSpec {
+  /** Block field name. One of the EngineBlock parameter fields. */
+  name: 'cursor_id' | 'genre' | 'window' | 'exclusion_window' | 'position' | 'fallback_genre';
+  /** Human label for the form. */
+  label: string;
+  type: EditableFieldType;
+  /** Required for this strategy (matches engine `required_for`). When
+   *  false the field is optional (engine `optional_for`) — clearing it
+   *  removes the key from the block. */
+  required: boolean;
+  /** Minimum value for int fields (engine validators: window/
+   *  exclusion_window ≥ 0, position ≥ 1). */
+  min?: number;
+  /** cursor_id only: the allowed values are the station's
+   *  `layout.cursors_init` keys, not free text — the form renders a
+   *  <select>. Mirrors the engine validator
+   *  `v in known_cursor_ids`. */
+  enumFromCursors?: boolean;
+}
+
+
+/**
+ * Per-strategy editable parameter fields. Empty array = nothing to
+ * edit (pick / window strategies have no parameters).
+ *
+ * Source-of-truth cross-check: engine/template.py `_parse_block`:
+ *   sequential → cursor_id (required, ∈ cursors_init)
+ *   jingle     → genre (required, non-empty)
+ *   mix        → genre (required) + exclusion_window (optional, ≥0)
+ *   weighted   → window (optional, ≥0; default 10)
+ *   prev_ref   → position (required, ≥1) + fallback_genre (optional)
+ *   pick       → (none)
+ *   window     → (none — the `window` FIELD belongs to `weighted`)
+ */
+export const EDITABLE_FIELDS: Record<EngineBlock['strategy'], EditableFieldSpec[]> = {
+  pick: [],
+  window: [],
+  sequential: [
+    { name: 'cursor_id', label: 'Cursor', type: 'string', required: true, enumFromCursors: true },
+  ],
+  jingle: [
+    { name: 'genre', label: 'Genre', type: 'string', required: true },
+  ],
+  mix: [
+    { name: 'genre', label: 'Genre', type: 'string', required: true },
+    { name: 'exclusion_window', label: 'Exclusion window (weeks)', type: 'int', required: false, min: 0 },
+  ],
+  weighted: [
+    { name: 'window', label: 'Artist-dedup window', type: 'int', required: false, min: 0 },
+  ],
+  prev_ref: [
+    { name: 'position', label: 'Position (1-indexed)', type: 'int', required: true, min: 1 },
+    { name: 'fallback_genre', label: 'Fallback genre', type: 'string', required: false },
+  ],
+};
+
+
+/** The editable-field specs for a block, by its strategy. Empty when
+ *  the strategy has no parameters (pick / window). */
+export function editableFieldsForBlock(block: EngineBlock): EditableFieldSpec[] {
+  return EDITABLE_FIELDS[block.strategy] ?? [];
+}
+
+
+/** The cursor ids a `sequential` block may point at — the keys of the
+ *  station's `layout.cursors_init`. Drives the cursor_id <select>. */
+export function availableCursorIds(template: StationTemplate): string[] {
+  return Object.keys(template.layout.cursors_init ?? {});
+}
+
+
+/**
+ * Validate one editable field's prospective value, mirroring the
+ * engine's `_require_strategy_field` validators. Returns an error
+ * string or null. `value` is the form value: `string` for string
+ * fields, `number` (or NaN from an empty number input) for int
+ * fields, or `undefined`/'' when the user cleared an optional field.
+ *
+ * The PATCH endpoint re-runs the real engine validation; this gives
+ * instant inline feedback before the round-trip.
+ */
+export function validateEditableField(
+  spec: EditableFieldSpec,
+  value: string | number | undefined,
+  template?: StationTemplate,
+): string | null {
+  const empty =
+    value === undefined ||
+    value === '' ||
+    (typeof value === 'number' && Number.isNaN(value));
+
+  if (empty) {
+    return spec.required ? `${spec.label} is required` : null;
+  }
+
+  if (spec.type === 'int') {
+    const n = typeof value === 'number' ? value : Number(value);
+    if (!Number.isInteger(n)) return `${spec.label} must be a whole number`;
+    if (spec.min !== undefined && n < spec.min) {
+      return `${spec.label} must be ≥ ${spec.min}`;
+    }
+    return null;
+  }
+
+  // string
+  const s = String(value);
+  if (spec.enumFromCursors && template) {
+    const ids = availableCursorIds(template);
+    if (!ids.includes(s)) {
+      return `${spec.label} must be one of: ${ids.join(', ') || '(none defined)'}`;
+    }
+  }
+  return null;
 }
 
 

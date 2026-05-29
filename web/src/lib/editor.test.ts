@@ -2,14 +2,17 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import {
   DEFAULT_VIEW_MODE,
   EditorMetadataError,
+  availableCursorIds,
   chipColour,
   compactStrategyLabel,
+  editableFieldsForBlock,
   expandSection,
   lookupEngineBlock,
   lookupMacro,
   parseEditorSidecarResponse,
   readViewMode,
   sourceColour,
+  validateEditableField,
   verboseStrategyLabel,
   writeViewMode,
   type EngineBlock,
@@ -614,5 +617,110 @@ describe('readViewMode / writeViewMode', () => {
       colorBy: DEFAULT_VIEW_MODE.colorBy,
       macroVisual: DEFAULT_VIEW_MODE.macroVisual,
     });
+  });
+});
+
+
+// ---- §16.2.3 c1 — editable-field schema ---------------------------------
+
+
+describe('editableFieldsForBlock', () => {
+  it('pick + window strategies have NO editable params', () => {
+    expect(editableFieldsForBlock({ source: 'A', strategy: 'pick', size: 1 })).toEqual([]);
+    // The `window` STRATEGY has no params — the `window` FIELD is weighted's.
+    expect(editableFieldsForBlock({ source: 'A', strategy: 'window', size: 5 })).toEqual([]);
+  });
+
+  it('sequential → cursor_id (required, enumFromCursors)', () => {
+    const fields = editableFieldsForBlock({ source: 'A', strategy: 'sequential', size: 1, cursor_id: 'C' });
+    expect(fields).toHaveLength(1);
+    expect(fields[0]).toMatchObject({ name: 'cursor_id', required: true, enumFromCursors: true });
+  });
+
+  it('jingle → genre (required)', () => {
+    const fields = editableFieldsForBlock({ source: 'A', strategy: 'jingle', size: 1, genre: 'Day' });
+    expect(fields.map((f) => f.name)).toEqual(['genre']);
+    expect(fields[0].required).toBe(true);
+  });
+
+  it('mix → genre (required) + exclusion_window (optional, int)', () => {
+    const fields = editableFieldsForBlock({ source: 'A', strategy: 'mix', size: 1, genre: 'M' });
+    expect(fields.map((f) => f.name)).toEqual(['genre', 'exclusion_window']);
+    expect(fields.find((f) => f.name === 'exclusion_window')).toMatchObject({
+      required: false, type: 'int', min: 0,
+    });
+  });
+
+  it('weighted → window (optional, int ≥ 0)', () => {
+    const fields = editableFieldsForBlock({ source: 'A', strategy: 'weighted', size: 1 });
+    expect(fields).toHaveLength(1);
+    expect(fields[0]).toMatchObject({ name: 'window', required: false, type: 'int', min: 0 });
+  });
+
+  it('prev_ref → position (required, ≥1) + fallback_genre (optional)', () => {
+    const fields = editableFieldsForBlock({ source: 'A', strategy: 'prev_ref', size: 1, position: 5 });
+    expect(fields.map((f) => f.name)).toEqual(['position', 'fallback_genre']);
+    expect(fields.find((f) => f.name === 'position')).toMatchObject({
+      required: true, type: 'int', min: 1,
+    });
+    expect(fields.find((f) => f.name === 'fallback_genre')).toMatchObject({ required: false });
+  });
+});
+
+
+describe('availableCursorIds', () => {
+  function tmpl(cursorsInit?: Record<string, number>): StationTemplate {
+    return {
+      station: 's', name: 'S',
+      sources: [{ name: 'A', role: 'content' }],
+      layout: {
+        unit: 'slot', unit_labels: [], row_start_offsets: [],
+        cursors_init: cursorsInit, flat_slots: [],
+      },
+    };
+  }
+  it('returns the cursors_init keys', () => {
+    expect(availableCursorIds(tmpl({ NIGHT_1: 0, DAY: 10 }))).toEqual(['NIGHT_1', 'DAY']);
+  });
+  it('returns [] when cursors_init is absent', () => {
+    expect(availableCursorIds(tmpl(undefined))).toEqual([]);
+  });
+});
+
+
+describe('validateEditableField', () => {
+  const intReq = { name: 'position' as const, label: 'Position', type: 'int' as const, required: true, min: 1 };
+  const intOpt = { name: 'window' as const, label: 'Window', type: 'int' as const, required: false, min: 0 };
+  const strReq = { name: 'genre' as const, label: 'Genre', type: 'string' as const, required: true };
+  const cursor = { name: 'cursor_id' as const, label: 'Cursor', type: 'string' as const, required: true, enumFromCursors: true };
+
+  it('required field rejects empty', () => {
+    expect(validateEditableField(intReq, undefined)).toMatch(/required/);
+    expect(validateEditableField(strReq, '')).toMatch(/required/);
+  });
+
+  it('optional field accepts empty (null/clear)', () => {
+    expect(validateEditableField(intOpt, undefined)).toBeNull();
+    expect(validateEditableField(intOpt, '')).toBeNull();
+  });
+
+  it('int field rejects non-integers + below min', () => {
+    expect(validateEditableField(intReq, 1.5)).toMatch(/whole number/);
+    expect(validateEditableField(intReq, 0)).toMatch(/≥ 1/);
+    expect(validateEditableField(intOpt, -1)).toMatch(/≥ 0/);
+  });
+
+  it('int field accepts valid', () => {
+    expect(validateEditableField(intReq, 1)).toBeNull();
+    expect(validateEditableField(intOpt, 0)).toBeNull();
+  });
+
+  it('cursor field must be one of cursors_init (enum check)', () => {
+    const template: StationTemplate = {
+      station: 's', name: 'S', sources: [],
+      layout: { unit: 'slot', unit_labels: [], row_start_offsets: [], cursors_init: { C: 0 } },
+    };
+    expect(validateEditableField(cursor, 'C', template)).toBeNull();
+    expect(validateEditableField(cursor, 'NOPE', template)).toMatch(/must be one of/);
   });
 });
