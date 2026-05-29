@@ -104,8 +104,11 @@
     // them rather than blanking the page.
     try {
       overview = await getStationOverview(slug);
-    } catch {
+    } catch (e) {
+      // Non-fatal by design (the cards are additive) — but keep a trace
+      // so a real 500 doesn't vanish into "cards just didn't render".
       overview = null;
+      console.warn('station overview fetch failed', e);
     }
   });
 

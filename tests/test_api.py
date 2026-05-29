@@ -342,9 +342,9 @@ def test_get_station_happy_path(api):
 # ---------- §16.19 GET /api/stations/{slug}/overview --------------------
 
 
-def _overview_station(client, slug="ov", *, persist=False, extra_source=None):
-    """Create a station via the wizard payload, optionally with a
-    cursor.persist template + an extra (un-imported) source."""
+def _overview_station(client, slug="ov", *, persist=False):
+    """Create a station via the wizard payload, optionally swapping in a
+    cursor.persist template (one sequential block bound to cursor 'C')."""
     payload = _wizard_payload(slug, f"{slug.upper()} FM")
     tmpl = payload["template"]
     if persist:
@@ -353,9 +353,6 @@ def _overview_station(client, slug="ov", *, persist=False, extra_source=None):
         tmpl["layout"]["row_template"] = [
             {"source": "A", "strategy": "sequential", "size": 1, "cursor_id": "C"}
         ]
-    if extra_source:
-        tmpl["sources"].append({"name": extra_source, "colour": "#222", "role": "content"})
-        # reference it from a block so it's "declared"
     r = client.post("/api/stations", json=payload)
     assert r.status_code == 201, r.json()
     return payload
