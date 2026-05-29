@@ -27,6 +27,23 @@ export interface Station {
   template: Record<string, unknown>;
 }
 
+/**
+ * List-row shape from GET /api/stations (§16.12). Mirrors the
+ * backend `StationSummary` — lighter than `Station` (no template
+ * blob) + per-station aggregates the landing page sorts/filters on.
+ * The DETAIL endpoint (getStation) still returns the full `Station`.
+ */
+export interface StationSummary {
+  id: number;
+  slug: string;
+  name: string;
+  cadence: string;
+  playlist_count: number;
+  last_generated_week: number | null;
+  last_generated_at: string | null; // ISO 8601
+  updated_at: string | null; // ISO 8601
+}
+
 export interface PlaylistSummary {
   id: number;
   week: number;
@@ -145,8 +162,8 @@ async function noContent(res: Response): Promise<void> {
 
 // ---- public API ---------------------------------------------------------
 
-export const getStations = (fetch_ = fetch): Promise<Station[]> =>
-  fetch_('/api/stations').then((r) => json<Station[]>(r));
+export const getStations = (fetch_ = fetch): Promise<StationSummary[]> =>
+  fetch_('/api/stations').then((r) => json<StationSummary[]>(r));
 
 export const getStation = (slug: string, fetch_ = fetch): Promise<Station> =>
   fetch_(`/api/stations/${encodeURIComponent(slug)}`).then((r) => json<Station>(r));

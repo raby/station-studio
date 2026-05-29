@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, act } from '@testing-library/svelte';
+import { render, screen, act, fireEvent } from '@testing-library/svelte';
 import '@testing-library/jest-dom/vitest';
 
 // Hoist mock surface so vi.mock() factories (which run before imports) can
@@ -65,9 +65,20 @@ describe('landing +page.svelte', () => {
   });
 
   it('lists stations as links when the fetch returns rows', async () => {
+    // §16.12 — rows are now StationSummary shape (cadence + aggregates).
     getStationsMock.mockResolvedValueOnce([
-      { id: 1, slug: 'rebirth-classics', name: 'Rebirth Classics', template: {} },
-      { id: 2, slug: 'new-gen', name: 'New Gen', template: {} },
+      {
+        id: 1, slug: 'rebirth-classics', name: 'Rebirth Classics',
+        cadence: 'weekly', playlist_count: 3,
+        last_generated_week: 3, last_generated_at: '2026-05-01T00:00:00Z',
+        updated_at: '2026-05-01T00:00:00Z',
+      },
+      {
+        id: 2, slug: 'new-gen', name: 'New Gen',
+        cadence: 'monthly', playlist_count: 0,
+        last_generated_week: null, last_generated_at: null,
+        updated_at: '2026-04-01T00:00:00Z',
+      },
     ]);
     render(Page);
 
@@ -75,6 +86,58 @@ describe('landing +page.svelte', () => {
     expect(classics).toHaveAttribute('href', '/stations/rebirth-classics');
     const newGen = screen.getByRole('link', { name: 'New Gen' });
     expect(newGen).toHaveAttribute('href', '/stations/new-gen');
+  });
+
+  it('renders the §16.12 controls + per-row last-generated line', async () => {
+    getStationsMock.mockResolvedValueOnce([
+      {
+        id: 1, slug: 'has-gen', name: 'Has Gen',
+        cadence: 'weekly', playlist_count: 3,
+        last_generated_week: 26, last_generated_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      },
+      {
+        id: 2, slug: 'no-gen', name: 'No Gen',
+        cadence: 'monthly', playlist_count: 0,
+        last_generated_week: null, last_generated_at: null,
+        updated_at: new Date().toISOString(),
+      },
+    ]);
+    render(Page);
+    await screen.findByTestId('station-list');
+
+    // Controls present.
+    expect(screen.getByTestId('station-search')).toBeInTheDocument();
+    expect(screen.getByTestId('sort-last-generated')).toBeInTheDocument();
+    // Cadence chips reflect the present cadences.
+    expect(screen.getByTestId('cadence-weekly')).toBeInTheDocument();
+    expect(screen.getByTestId('cadence-monthly')).toBeInTheDocument();
+    // Per-row last-generated line for the generated station.
+    expect(screen.getByTestId('last-generated')).toHaveTextContent('WEEKLY 026');
+    // Never-generated muted line for the empty one.
+    expect(screen.getByTestId('never-generated')).toBeInTheDocument();
+  });
+
+  it('search filters the visible rows', async () => {
+    getStationsMock.mockResolvedValueOnce([
+      {
+        id: 1, slug: 'jazz-fm', name: 'Jazz FM', cadence: 'weekly',
+        playlist_count: 0, last_generated_week: null, last_generated_at: null,
+        updated_at: new Date().toISOString(),
+      },
+      {
+        id: 2, slug: 'rock-radio', name: 'Rock Radio', cadence: 'weekly',
+        playlist_count: 0, last_generated_week: null, last_generated_at: null,
+        updated_at: new Date().toISOString(),
+      },
+    ]);
+    const { container } = render(Page);
+    const search = (await screen.findByTestId('station-search')) as HTMLInputElement;
+    await fireEvent.input(search, { target: { value: 'jazz' } });
+
+    const rows = container.querySelectorAll('[data-testid="station-row"]');
+    expect(rows).toHaveLength(1);
+    expect(rows[0].getAttribute('data-slug')).toBe('jazz-fm');
   });
 
   it('non-ApiError failures stringify so the user still sees something', async () => {
