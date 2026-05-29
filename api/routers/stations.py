@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import logging
 from collections import Counter
-from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -25,10 +24,7 @@ from api.schemas import (
     TemplateSummary,
 )
 from sqlalchemy import func
-
-
-def _iso(dt: datetime | None) -> str | None:
-    return dt.isoformat() if dt is not None else None
+from api.timefmt import iso as _iso
 
 
 logger = logging.getLogger(__name__)
@@ -228,6 +224,16 @@ def get_station_overview(slug: str, db: Session = Depends(get_db)):
     )
     # Stale = generated BEFORE the last template edit (§16.2.3 hint).
     # NULL generated_at rows aren't counted (NULL < x is unknown).
+    #
+    # Mid-slice review 🟡-1 — `updated_at` is a PROXY for "template
+    # changed": the wizard-edit PUT reassigns s.template unconditionally
+    # (onupdate fires even on a name-only edit with identical template
+    # bytes), so a rename can falsely flag existing playlists as stale.
+    # Impact is mild (the hint says "regenerate to apply edits"; an
+    # unchanged template reproduces identical output). The precise fix —
+    # a dedicated `template_updated_at` column bumped only on real
+    # template change — is a migration + write-path touch, queued as
+    # §16.19.t1. v1 accepts the over-approximation.
     stale_count = (
         db.query(func.count())
         .select_from(Playlist)

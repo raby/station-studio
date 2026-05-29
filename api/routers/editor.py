@@ -37,7 +37,6 @@ from __future__ import annotations
 import copy
 import json
 import logging
-from datetime import datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -57,6 +56,7 @@ from engine.editor_metadata import (
 )
 from engine.models import Station
 from engine.template import parse_template, TemplateError
+from api.timefmt import iso as _iso
 
 
 logger = logging.getLogger(__name__)
@@ -82,10 +82,6 @@ EDITABLE_FIELDS_BY_STRATEGY: dict[str, set[str]] = {
 }
 
 
-def _iso(dt: datetime | None) -> str | None:
-    """ISO-8601 string for a datetime column, or None. Used for the
-    optimistic-concurrency token + export response."""
-    return dt.isoformat() if dt is not None else None
 
 
 @router.get(
