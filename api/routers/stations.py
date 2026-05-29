@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from engine.models import Station, Playlist, PlaylistEntry
 from engine.template import parse_template, TemplateError
 from api.deps import get_db
-from api.schemas import StationCreate, StationOut, PlaylistSummary
+from api.schemas import StationCreate, StationOut, StationSummary, PlaylistSummary
 from sqlalchemy import func
 
 
@@ -18,9 +18,86 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/stations", tags=["stations"])
 
 
-@router.get("", response_model=list[StationOut])
+@router.get("", response_model=list[StationSummary])
 def list_stations(db: Session = Depends(get_db)):
-    return db.query(Station).order_by(Station.slug).all()
+    """List all stations with per-station aggregates (§16.12).
+
+    Returns the lighter `StationSummary` (no template blob) enriched
+    with cadence + playlist_count + last-generation week/timestamp +
+    updated_at — everything the landing page needs to search / filter
+    / sort without a second round-trip per row.
+
+    Aggregates are computed in TWO bounded queries (not N+1):
+
+      1. Per-station count + max(generated_at).
+      2. The week of the latest-by-timestamp playlist per station,
+         via a ROW_NUMBER() window (argmax — a regen of an old week
+         makes THAT week the latest event, so max(week) would be
+         wrong).
+
+    Default order: slug (the frontend re-sorts client-side).
+    """
+    stations = db.query(Station).order_by(Station.slug).all()
+
+    # (1) count + last-generated timestamp per station.
+    agg_rows = (
+        db.query(
+            Playlist.station_id.label("station_id"),
+            func.count(Playlist.id).label("playlist_count"),
+            func.max(Playlist.generated_at).label("last_generated_at"),
+        )
+        .group_by(Playlist.station_id)
+        .all()
+    )
+    agg_by_station = {r.station_id: r for r in agg_rows}
+
+    # (2) week of the latest-by-timestamp playlist per station.
+    # ROW_NUMBER() partitioned by station, ordered by generated_at
+    # DESC — rn==1 is the most-recent generation event. NULLs in
+    # generated_at sort last, so a station with only null-timestamp
+    # playlists yields whatever row the DB picks; acceptable (those
+    # are pre-§14.x rows that predate generated_at).
+    ranked = (
+        db.query(
+            Playlist.station_id.label("station_id"),
+            Playlist.week.label("week"),
+            func.row_number()
+            .over(
+                partition_by=Playlist.station_id,
+                order_by=Playlist.generated_at.desc(),
+            )
+            .label("rn"),
+        )
+        .subquery()
+    )
+    latest_week_by_station = {
+        row.station_id: row.week
+        for row in db.query(ranked.c.station_id, ranked.c.week).filter(
+            ranked.c.rn == 1
+        )
+    }
+
+    out: list[StationSummary] = []
+    for s in stations:
+        agg = agg_by_station.get(s.id)
+        count = agg.playlist_count if agg else 0
+        last_at = agg.last_generated_at if agg else None
+        out.append(
+            StationSummary(
+                id=s.id,
+                slug=s.slug,
+                name=s.name,
+                # template is validated at creation, so "cadence" is
+                # present; .get keeps a corrupted row from 500-ing
+                # the whole list.
+                cadence=s.template.get("cadence", "unknown"),
+                playlist_count=count,
+                last_generated_week=latest_week_by_station.get(s.id),
+                last_generated_at=last_at.isoformat() if last_at else None,
+                updated_at=s.updated_at.isoformat() if s.updated_at else None,
+            )
+        )
+    return out
 
 
 @router.get("/{slug}", response_model=StationOut)

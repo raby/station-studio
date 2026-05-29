@@ -36,6 +36,38 @@ class StationOut(BaseModel):
     template: dict[str, Any]
 
 
+class StationSummary(BaseModel):
+    """List-row shape for GET /api/stations (§16.12 stations list polish).
+
+    Lighter than StationOut (no full template blob) + enriched with
+    the per-station aggregates the landing page renders + sorts/filters
+    on:
+
+      * `cadence` — from template["cadence"]; drives the cadence
+        filter chip.
+      * `playlist_count` — number of generated playlists; drives the
+        "has generations" vs "empty" filter.
+      * `last_generated_week` / `last_generated_at` — the week + ISO
+        timestamp of the MOST RECENTLY GENERATED playlist (by
+        generated_at, NOT max week — a regen of an old week is the
+        latest event). Powers the "Last generated: WEEKLY 026 (3
+        days ago)" per-row line + the last-generation sort.
+      * `updated_at` — Station.updated_at ISO; powers the
+        "template last-modified" sort.
+
+    The detail endpoint (GET /api/stations/{slug}) still returns the
+    full StationOut with the template — this summary is list-only.
+    """
+    id: int
+    slug: str
+    name: str
+    cadence: str
+    playlist_count: int
+    last_generated_week: int | None
+    last_generated_at: str | None  # ISO 8601
+    updated_at: str | None  # ISO 8601
+
+
 class SourceOut(BaseModel):
     id: int
     name: str

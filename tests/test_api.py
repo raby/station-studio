@@ -211,6 +211,62 @@ def test_list_stations_ordered_by_slug(api):
     assert [s["slug"] for s in r.json()] == ["alpha", "beta"]
 
 
+# §16.12 — StationSummary aggregates on the list endpoint.
+
+
+def test_list_stations_summary_fields_for_station_with_no_playlists(api):
+    """A freshly-created station reports zero aggregates: count 0,
+    null last-generated, but a non-null updated_at + the cadence
+    from its template."""
+    client, _ = api
+    client.post("/api/stations", json=_wizard_payload("fresh", "Fresh FM"))
+    r = client.get("/api/stations")
+    assert r.status_code == 200
+    row = next(s for s in r.json() if s["slug"] == "fresh")
+    assert row["cadence"] == "weekly"
+    assert row["playlist_count"] == 0
+    assert row["last_generated_week"] is None
+    assert row["last_generated_at"] is None
+    assert row["updated_at"] is not None
+    # The heavy template blob is NOT in the list row.
+    assert "template" not in row
+
+
+def test_list_stations_summary_aggregates_playlists(api):
+    """count + last-generated reflect seeded playlists. The latest-
+    by-TIMESTAMP week wins (argmax), not max(week)."""
+    client, Session = api
+    # Seed a station with week 1, then a LATER-timestamped regen of
+    # week 1 — but ALSO a week 2. We want last_generated_week to be
+    # whichever has the max generated_at.
+    from datetime import timedelta
+    base = datetime.now(timezone.utc)
+    with Session() as db:
+        st = Station(
+            slug="agg", name="Agg FM",
+            template={
+                "station": "agg", "cadence": "monthly", "rng": "off",
+                "sources": [], "cursor": {"base_advance_per_week": 0, "cycle_weeks": 1},
+                "layout": {"unit": "day", "unit_labels": [], "row_start_offsets": [], "row_template": []},
+            },
+        )
+        db.add(st)
+        db.flush()
+        # week 2 generated EARLIER; week 1 regenerated LATER.
+        db.add(Playlist(station_id=st.id, week=2, trace_id="t-agg-2",
+                        generated_at=base - timedelta(days=2)))
+        db.add(Playlist(station_id=st.id, week=1, trace_id="t-agg-1",
+                        generated_at=base))
+        db.commit()
+
+    row = next(s for s in client.get("/api/stations").json() if s["slug"] == "agg")
+    assert row["cadence"] == "monthly"
+    assert row["playlist_count"] == 2
+    # Latest BY TIMESTAMP is week 1 (regenerated last), NOT max-week 2.
+    assert row["last_generated_week"] == 1
+    assert row["last_generated_at"] is not None
+
+
 def test_get_station_missing_returns_404(api):
     client, _ = api
     r = client.get("/api/stations/nope")
