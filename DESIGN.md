@@ -9807,6 +9807,62 @@ directly without loading branches.
 **Trigger.** SEO matters (unlikely for a single-user tool) OR
 shared-link UX becomes a felt pain.
 
+**The §16.13 conflict (full record).** This slice and §16.13's
+distribution decision want opposite things from the frontend, and
+they cannot both happen. Documented in full so a future reader
+doesn't re-litigate it or, worse, build both and discover the clash
+at runtime.
+
+* **What §16.22 needs.** A populated *first paint* requires running
+  `+page.ts load()` on the **server**, per request, and shipping
+  already-rendered HTML to the browser. That is SSR, and SSR needs a
+  **live Node server** on every request (SvelteKit's `adapter-node`
+  or equivalent).
+* **What §16.13 D2 chose.** Ship the frontend as a **static bundle**
+  (`adapter-static`): plain `.html`/`.js`/`.css` produced at *build*
+  time, served by FastAPI as files, with **no Node process at
+  runtime**. That is the whole point of the hobbyist install — one
+  `pipx install`, `station-studio serve`, no Node on the host.
+* **Why they collide.** SSR needs a server on each request; the
+  static choice deliberately deletes the server. So with
+  `adapter-static` there is nothing to execute `load()` server-side
+  → **§16.22's server-rendered first paint is unreachable** for the
+  shipped wheel. A hard-loaded or shared trace link hits FastAPI,
+  gets the static shell, and the data still fetches client-side —
+  the empty-shell flash §16.22 wanted to kill **returns**.
+
+* **What survives vs. what dies.** §16.22 bundled two things; only
+  one survives the static choice:
+
+  | Part of §16.22 | Survives `adapter-static`? | Why |
+  |---|---|---|
+  | Fetch in `+page.ts load()` instead of `onMount` | ✅ yes | `load()` still runs **client-side** during in-app navigation — removes the flash when clicking *between* pages |
+  | Server-rendered first paint on hard-load / shared link | ❌ no | Needs a Node server the static wheel doesn't ship |
+
+  The dying half is exactly the half §16.22 cared about most: a
+  *shared link* is always a hard-load with no prior in-app
+  navigation, so it never benefits from the surviving client-side
+  `load()`.
+
+* **Resolution + rationale.** §16.13 wins. The no-Node single-process
+  install is core to the OSS-hobbyist trajectory (the gap between
+  "install one Python thing" and "install Python AND Node AND run two
+  processes"); §16.22 itself rated its payoff low ("unlikely for a
+  single-user tool" / "becomes a felt pain"). 300ms of shared-link
+  flash does not outweigh the distribution story.
+
+* **Escape hatch (if shared-link first paint ever truly hurts).** The
+  fix is NOT to undo `adapter-static`. It is a **separate
+  node-adapter docker image** — the docker path (§16.13 D2) *can* run
+  Node, so SSR could live there without touching the wheel. Out of
+  scope until the pain is real.
+
+**Net: re-scope or close.** Shrink §16.22 to "client-side `load()`
+refactor only (flash on in-app nav, not on deep-load)" — still a
+small, real win — or close it outright. Do NOT carry it as "SSR
+migration"; that title now describes something the shipped artifact
+can't do.
+
 ---
 
 ### 16.23 Week-vs-week trace diff
