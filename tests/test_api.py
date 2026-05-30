@@ -16,6 +16,7 @@ api.deps.get_db, so nothing leaks between tests or onto the real DB.
 """
 from __future__ import annotations
 
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -1275,6 +1276,135 @@ def test_list_sources_count_correct_after_import(api):
     assert len(sources) == 1
     assert sources[0]["name"] == "tiny2"
     assert sources[0]["track_count"] == 3
+
+
+# ---------- §16.25 c1 — POST /api/sources/upload (multipart) -----------
+
+
+def _upload(client, name, role, fixture):
+    """POST `fixture` as a multipart upload — mirrors the browser's
+    FormData payload (file + name + role) so test setup reads as the
+    real call shape."""
+    return client.post(
+        "/api/sources/upload",
+        files={"file": (fixture.name, fixture.read_bytes(), "application/xml")},
+        data={"name": name, "role": role},
+    )
+
+
+def test_upload_happy_path(api):
+    """Multipart upload of tiny-library.xml + role=content → 200; the
+    new pool surfaces on GET /api/sources with the right track_count
+    and role. End-to-end byte path: upload → temp file → import_source
+    → SourcePlaylist + entries."""
+    client, _ = api
+    r = _upload(client, "tiny-up", "content", _FIXTURES / "tiny-library.xml")
+    assert r.status_code == 200, r.text
+    summary = r.json()
+    assert summary["name"] == "tiny-up"
+    assert summary["role"] == "content"
+    assert summary["tracks_imported"] == 3
+
+    rows = client.get("/api/sources").json()
+    assert any(p["name"] == "tiny-up" and p["track_count"] == 3 for p in rows)
+
+
+def test_upload_role_reference_persists(api):
+    """role=reference flows through the multipart Form (Literal validation
+    accepts it) and surfaces on GET — mirrors /import's role surface."""
+    client, _ = api
+    r = _upload(client, "ref-up", "reference", _FIXTURES / "tiny-library.xml")
+    assert r.status_code == 200, r.text
+    assert r.json()["role"] == "reference"
+    rows = client.get("/api/sources").json()
+    assert any(p["name"] == "ref-up" and p["role"] == "reference" for p in rows)
+
+
+def test_upload_invalid_role_returns_422(api):
+    """Form's `Literal[...]` validation rejects roles outside the
+    allowlist — same 422 contract as /import's JSON Literal. The XML
+    bytes are irrelevant since validation fires before the upload is
+    consumed."""
+    client, _ = api
+    r = client.post(
+        "/api/sources/upload",
+        files={"file": ("tiny.xml", b"<plist></plist>", "application/xml")},
+        data={"name": "x", "role": "banana"},
+    )
+    assert r.status_code == 422
+    assert any("role" in str(e.get("loc", [])) for e in r.json()["detail"])
+
+
+def test_upload_malformed_xml_500(api):
+    """Non-parseable XML → 500, matching /import's contract via the
+    shared `_import_to_pool` helper."""
+    client, _ = api
+    r = _upload(client, "broken-up", "content", _FIXTURES / "malformed-library.xml")
+    assert r.status_code == 500
+    assert "import failed" in r.json()["detail"]
+
+
+def test_upload_temp_file_cleanup_on_parse_failure(api):
+    """G2: a failed import still cleans up its temp file. Verified by
+    counting `ss-upload-*.xml` in $TMPDIR before vs after — any leak
+    would show up as a new file. Comparison is `<= before` rather than
+    `== before` because the test harness shares $TMPDIR with other
+    runners and we don't own ambient state."""
+    tmpdir = Path(tempfile.gettempdir())
+    before = set(tmpdir.glob("ss-upload-*.xml"))
+
+    client, _ = api
+    r = _upload(client, "cleanup-broken", "content", _FIXTURES / "malformed-library.xml")
+    assert r.status_code == 500
+
+    after = set(tmpdir.glob("ss-upload-*.xml"))
+    leaked = after - before
+    assert not leaked, f"temp file leaked after failed upload: {leaked}"
+
+
+def test_upload_temp_file_cleanup_on_happy_path(api):
+    """Symmetric to the failure-path cleanup test: a successful import
+    also unlinks its temp file. Together they prove the `finally`-unlink
+    fires regardless of outcome."""
+    tmpdir = Path(tempfile.gettempdir())
+    before = set(tmpdir.glob("ss-upload-*.xml"))
+
+    client, _ = api
+    r = _upload(client, "cleanup-ok", "content", _FIXTURES / "tiny-library.xml")
+    assert r.status_code == 200, r.text
+
+    after = set(tmpdir.glob("ss-upload-*.xml"))
+    leaked = after - before
+    assert not leaked, f"temp file leaked after successful upload: {leaked}"
+
+
+def test_upload_reimport_overwrites_existing_pool(api):
+    """Re-uploading with the same name replaces the existing pool
+    (idempotent on name, §14.35) — the engine-layer reimport contract
+    surfaces through the upload endpoint too. Will be wrapped in a
+    'Re-import' confirm UI in §16.25 c4 (D4)."""
+    client, _ = api
+    r1 = _upload(client, "swap-up", "content", _FIXTURES / "tiny-library.xml")
+    assert r1.status_code == 200, r1.text
+    r2 = _upload(client, "swap-up", "reference", _FIXTURES / "tiny-library.xml")
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["role"] == "reference"
+    rows = client.get("/api/sources").json()
+    matches = [p for p in rows if p["name"] == "swap-up"]
+    assert len(matches) == 1
+    assert matches[0]["role"] == "reference"
+
+
+def test_upload_missing_file_field_returns_422(api):
+    """No `file` part → FastAPI's required-field 422. The `data` body
+    alone (no `files=…`) reaches the endpoint, but the `File(...)`
+    dependency raises a validation error before the handler runs."""
+    client, _ = api
+    r = client.post(
+        "/api/sources/upload",
+        data={"name": "no-file", "role": "content"},
+    )
+    assert r.status_code == 422
 
 
 def test_get_db_yields_closable_session(tmp_path, monkeypatch):
