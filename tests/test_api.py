@@ -1407,6 +1407,55 @@ def test_upload_missing_file_field_returns_422(api):
     assert r.status_code == 422
 
 
+# c1 mid-slice review 🟡-1: name input validation (both endpoints).
+
+
+def test_upload_empty_name_is_rejected(api):
+    """Empty name is rejected by FastAPI's `Form(...)` layer with 422
+    (multipart-empty is treated as a missing required field) BEFORE
+    `_validate_name` is reached. The JSON `/import` path is different:
+    Pydantic accepts `""` as a valid `str`, so empty there reaches the
+    helper and surfaces as 400 (see `test_import_empty_name_returns_400`).
+    Either way, the latent gap (persisting a blank-named pool) is
+    closed — just at different layers per request shape."""
+    client, _ = api
+    r = _upload(client, "", "content", _FIXTURES / "tiny-library.xml")
+    assert r.status_code == 422  # Form layer, before _validate_name
+
+
+def test_upload_whitespace_only_name_returns_400(api):
+    """Whitespace-only name → 400 (post-`.strip()` it's empty)."""
+    client, _ = api
+    r = _upload(client, "   ", "content", _FIXTURES / "tiny-library.xml")
+    assert r.status_code == 400
+    assert "whitespace" in r.json()["detail"].lower()
+
+
+def test_upload_surrounding_whitespace_is_stripped(api):
+    """`"  daytime  "` is stored as `"daytime"` — the helper strips
+    before passing to the importer, so list_sources sorts cleanly."""
+    client, _ = api
+    r = _upload(client, "  trimmed  ", "content", _FIXTURES / "tiny-library.xml")
+    assert r.status_code == 200, r.text
+    assert r.json()["name"] == "trimmed"
+    rows = client.get("/api/sources").json()
+    assert any(p["name"] == "trimmed" for p in rows)
+    assert not any(p["name"].startswith(" ") for p in rows)
+
+
+def test_import_empty_name_returns_400(api):
+    """The same `_validate_name` guard fires on the JSON `/import`
+    endpoint — pre-c1 this was a latent gap that the c1 sweep closed
+    in both places at once."""
+    client, _ = api
+    r = client.post("/api/sources/import", json={
+        "path": str(_FIXTURES / "tiny-library.xml"),
+        "name": "",
+    })
+    assert r.status_code == 400
+    assert "empty" in r.json()["detail"].lower()
+
+
 def test_get_db_yields_closable_session(tmp_path, monkeypatch):
     """The real get_db() generator (not the test-override) opens a Session,
     yields it, and closes it on teardown. Verify by driving the generator

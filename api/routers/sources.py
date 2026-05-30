@@ -20,6 +20,24 @@ from api.schemas import ImportRequest, SourceOut
 router = APIRouter(prefix="/api/sources", tags=["sources"])
 
 
+def _validate_name(raw: str) -> str:
+    """Strip and reject empty / whitespace-only pool names.
+
+    Pre-c1 both `/import` (JSON `ImportRequest.name: str`) and the new
+    `/upload` (`Form(name)`) accepted `""`, `"   "`, and `"  daytime  "`
+    verbatim. `import_source` would then persist a `SourcePlaylist`
+    with a blank or odd-whitespace name, surfacing on `GET /api/sources`
+    as a confusing row. Closed in the c1 mid-slice review (🟡-1) —
+    one helper, both endpoints, one error contract.
+    """
+    stripped = raw.strip()
+    if not stripped:
+        raise HTTPException(
+            400, "name must not be empty or whitespace-only",
+        )
+    return stripped
+
+
 def _import_to_pool(db: Session, *, path: Path, name: str, role: str) -> dict:
     """Run `import_source` and map its exception contract to HTTPExceptions.
 
@@ -87,7 +105,8 @@ def post_import(payload: ImportRequest, db: Session = Depends(get_db)):
     path = _validate_import_path(payload.path)
     if not path.exists():
         raise HTTPException(400, f"path not found: {path}")
-    return _import_to_pool(db, path=path, name=payload.name, role=payload.role)
+    name = _validate_name(payload.name)
+    return _import_to_pool(db, path=path, name=name, role=payload.role)
 
 
 @router.post("/upload")
@@ -124,11 +143,22 @@ def post_upload(
     the Form layer (`Literal`) with 422, mirroring /import's JSON
     `Literal` behaviour.
     """
+    name = _validate_name(name)
     fd, tmp_path_str = tempfile.mkstemp(suffix=".xml", prefix="ss-upload-")
     tmp_path = Path(tmp_path_str)
     try:
-        with os.fdopen(fd, "wb") as out:
-            shutil.copyfileobj(file.file, out)
+        try:
+            with os.fdopen(fd, "wb") as out:
+                shutil.copyfileobj(file.file, out)
+        except OSError as e:
+            # c1 mid-slice review 🟡-2: disk-full / temp-partition I/O
+            # error during streaming surfaces as an opaque 500 by
+            # default. Map it to an honest message so the user knows
+            # it was the WRITE that failed, not the parse. `finally`
+            # cleanup below still fires (mkstemp succeeded; the fd may
+            # have been consumed by os.fdopen's `with` — unlink is
+            # best-effort either way).
+            raise HTTPException(500, f"upload write failed: {e}")
         return _import_to_pool(db, path=tmp_path, name=name, role=role)
     finally:
         # Best-effort: import_source raised → still cleanup. Unlink fails
