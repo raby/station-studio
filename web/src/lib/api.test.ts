@@ -3,6 +3,7 @@ import {
   ApiError,
   BlockPatchConflict,
   cancelJob,
+  deleteSource,
   exportStationTemplate,
   getStations,
   getStation,
@@ -10,6 +11,9 @@ import {
   getPlaylist,
   getStationOverview,
   getStationSidecar,
+  importSourceByPath,
+  listSources,
+  uploadSource,
   getTrace,
   createStation,
   generatePlaylist,
@@ -963,6 +967,119 @@ describe('getStationOverview', () => {
   it('raises ApiError on 404', async () => {
     const { fetch_ } = makeSpy({ ok: false, status: 404, text: 'nope' });
     const err = await getStationOverview('nope', fetch_).catch((e) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.status).toBe(404);
+  });
+});
+
+
+// ---- §16.25 — source-pool helpers ------------------------------------
+
+
+describe('listSources', () => {
+  it('GETs /api/sources and returns the list verbatim', async () => {
+    const rows = [
+      { id: 1, name: 'DAYTIME', role: 'content', track_count: 247 },
+      { id: 2, name: 'JINGLES', role: 'content', track_count: 12 },
+    ];
+    const { fetch_, calls } = makeSpy({ body: rows });
+    const out = await listSources(fetch_);
+    expect(calls[0].input).toBe('/api/sources');
+    expect(out).toEqual(rows);
+  });
+
+  it('raises ApiError on 500', async () => {
+    const { fetch_ } = makeSpy({ ok: false, status: 500, text: 'oh no' });
+    const err = await listSources(fetch_).catch((e) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.status).toBe(500);
+  });
+});
+
+
+describe('uploadSource', () => {
+  function fakeFile() {
+    return new File(['<plist></plist>'], 'tiny.xml', { type: 'application/xml' });
+  }
+
+  it('POSTs FormData (name + role + file) to /api/sources/upload', async () => {
+    const summary = { name: 'TINY', role: 'content', tracks_imported: 1, entries_imported: 1 };
+    const { fetch_, calls } = makeSpy({ body: summary });
+    const out = await uploadSource('TINY', 'content', fakeFile(), fetch_);
+
+    expect(calls[0].input).toBe('/api/sources/upload');
+    expect(calls[0].init?.method).toBe('POST');
+    // Body is a FormData instance — verify the fields.
+    const body = calls[0].init?.body as FormData;
+    expect(body).toBeInstanceOf(FormData);
+    expect(body.get('name')).toBe('TINY');
+    expect(body.get('role')).toBe('content');
+    expect((body.get('file') as File).name).toBe('tiny.xml');
+    // CRITICAL: content-type must NOT be set manually — browser fills
+    // it with `multipart/form-data; boundary=...` automatically.
+    // Setting it strips the boundary and the server fails to parse.
+    expect(calls[0].init?.headers).toBeUndefined();
+
+    expect(out).toEqual(summary);
+  });
+
+  it('passes role=reference through', async () => {
+    const { fetch_, calls } = makeSpy({ body: {} });
+    await uploadSource('REF', 'reference', fakeFile(), fetch_);
+    const body = calls[0].init?.body as FormData;
+    expect(body.get('role')).toBe('reference');
+  });
+
+  it('raises ApiError on 400 (e.g. empty name from the helper)', async () => {
+    const { fetch_ } = makeSpy({ ok: false, status: 400, text: 'name must not be empty' });
+    const err = await uploadSource('', 'content', fakeFile(), fetch_).catch((e) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.status).toBe(400);
+  });
+});
+
+
+describe('importSourceByPath', () => {
+  it('POSTs JSON {name, role, path} to /api/sources/import', async () => {
+    const summary = { name: 'P', role: 'content', tracks_imported: 3, entries_imported: 3 };
+    const { fetch_, calls } = makeSpy({ body: summary });
+    const out = await importSourceByPath('P', 'content', '/abs/library.xml', fetch_);
+
+    expect(calls[0].input).toBe('/api/sources/import');
+    expect(calls[0].init?.method).toBe('POST');
+    expect((calls[0].init?.headers as Record<string, string>)['content-type']).toBe(
+      'application/json',
+    );
+    expect(JSON.parse(calls[0].init?.body as string)).toEqual({
+      name: 'P',
+      role: 'content',
+      path: '/abs/library.xml',
+    });
+    expect(out).toEqual(summary);
+  });
+
+  it('raises ApiError on 400 (path not found)', async () => {
+    const { fetch_ } = makeSpy({ ok: false, status: 400, text: 'path not found' });
+    const err = await importSourceByPath('x', 'content', '/missing.xml', fetch_).catch(
+      (e) => e,
+    );
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.status).toBe(400);
+  });
+});
+
+
+describe('deleteSource', () => {
+  it('DELETEs /api/sources/{id} and returns void on 204', async () => {
+    const { fetch_, calls } = makeSpy({ status: 204, body: null });
+    await deleteSource(7, fetch_);
+    expect(calls[0].input).toBe('/api/sources/7');
+    expect(calls[0].init?.method).toBe('DELETE');
+  });
+
+  it('raises ApiError on 404', async () => {
+    const { fetch_ } = makeSpy({ ok: false, status: 404, text: 'not found' });
+    const err = await deleteSource(999, fetch_).catch((e) => e);
     expect(err).toBeInstanceOf(ApiError);
     expect(err.status).toBe(404);
   });

@@ -56,7 +56,12 @@
 
   <header class="section-head">
     <h2>Stations</h2>
-    <a href="/stations/new" class="button">+ new station</a>
+    <div class="header-actions">
+      <a href="/sources" class="link-secondary" data-testid="nav-sources">
+        Source pools →
+      </a>
+      <a href="/stations/new" class="button">+ new station</a>
+    </div>
   </header>
 
   {#if loading}
@@ -191,6 +196,19 @@
   }
   .section-head h2 {
     margin: 0;
+  }
+  .header-actions {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+  }
+  .link-secondary {
+    color: #2563eb;
+    text-decoration: none;
+    font-size: 0.9rem;
+  }
+  .link-secondary:hover {
+    text-decoration: underline;
   }
   .button {
     display: inline-block;

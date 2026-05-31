@@ -771,4 +771,95 @@ export const exportStationTemplate = (
   }).then((r) => json<TemplateExportResponse>(r));
 
 
+// ---- §16.25 — source-pool management (list / upload / import / delete) ----
+
+
+/**
+ * One imported source pool. Mirrors the backend `SourceOut`
+ * (`GET /api/sources`); used as the row type for the §16.25
+ * `/sources` page and the §16.19 pool-status widget.
+ */
+export interface Source {
+  id: number;
+  name: string;
+  /** §14.35 — `content` (engine samples) vs `reference` (cross-ref only). */
+  role: 'content' | 'reference';
+  track_count: number;
+}
+
+/**
+ * Server-side `import_source(...)` summary, returned by both
+ * `POST /api/sources/upload` and `POST /api/sources/import`. The
+ * library-level keys (`name_persistent_id`, etc) are present but
+ * we don't surface them yet; documented loosely so a future field
+ * doesn't 422 the typed parse.
+ */
+export interface ImportSummary {
+  name: string;
+  role: 'content' | 'reference';
+  tracks_imported: number;
+  entries_imported: number;
+  [extra: string]: unknown;
+}
+
+/** `GET /api/sources` — every imported pool with its current track count. */
+export const listSources = (fetch_ = fetch): Promise<Source[]> =>
+  fetch_('/api/sources').then((r) => json<Source[]>(r));
+
+/**
+ * §16.25 c1 — the browser-friendly multipart upload path. Used as the
+ * PRIMARY route on `/sources` (D1) because it works regardless of
+ * where the server runs (pipx-local OR docker — the user's XML never
+ * has to be on the server's disk).
+ *
+ * The first non-JSON helper in this module: a `FormData` body lets
+ * the browser stream the file without buffering it in memory.
+ * `content-type` is intentionally NOT set — the browser fills it
+ * with the right `multipart/form-data; boundary=...` automatically.
+ */
+export const uploadSource = (
+  name: string,
+  role: 'content' | 'reference',
+  file: File,
+  fetch_ = fetch,
+): Promise<ImportSummary> => {
+  const body = new FormData();
+  body.append('name', name);
+  body.append('role', role);
+  body.append('file', file);
+  return fetch_('/api/sources/upload', {
+    method: 'POST',
+    body,
+  }).then((r) => json<ImportSummary>(r));
+};
+
+/**
+ * §16.25 D1 — the "advanced / local file" path (a typed server-side
+ * filesystem path, NOT a file picker — browsers can't return a real
+ * path from `<input type="file">`). For `pipx`-local users with a
+ * 100 MB library already on disk who'd rather skip the multipart
+ * round-trip.
+ */
+export const importSourceByPath = (
+  name: string,
+  role: 'content' | 'reference',
+  path: string,
+  fetch_ = fetch,
+): Promise<ImportSummary> =>
+  fetch_('/api/sources/import', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ name, role, path }),
+  }).then((r) => json<ImportSummary>(r));
+
+/**
+ * `DELETE /api/sources/{id}`. Cascade-deletes the pool + its
+ * `SourcePlaylistEntry` rows. Generated playlists are unaffected —
+ * `PlaylistEntry` references tracks directly, not pools. Caller
+ * confirms (the §16.25 c4 UI wraps this with a confirm dialog).
+ */
+export const deleteSource = (id: number, fetch_ = fetch): Promise<void> =>
+  fetch_(`/api/sources/${id}`, { method: 'DELETE' }).then((r) => noContent(r));
+
+
 export { ApiError };
