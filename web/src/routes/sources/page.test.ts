@@ -158,6 +158,57 @@ describe('/sources — add-pool form (upload mode, the D1 primary path)', () => 
     expect(uploadSourceMock).not.toHaveBeenCalled();
   });
 
+  it('clears the file input after a successful upload (c2-review 🟡-1)', async () => {
+    // Locks the post-submit DOM clear: `bind:files` is one-way, so
+    // setting `fileList = null` alone leaves the underlying
+    // <input type=file> still showing the chosen filename. The page
+    // clears it via a `bind:this`-bound element ref. Before the fix,
+    // a global `document.querySelector` did the same thing but was
+    // brittle to test-id renames + the conditional-render collapse.
+    listSourcesMock
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        { id: 1, name: 'TINY', role: 'content', track_count: 3 },
+      ]);
+    uploadSourceMock.mockResolvedValue({
+      name: 'TINY',
+      role: 'content',
+      tracks_imported: 3,
+      entries_imported: 3,
+    });
+
+    render(Page);
+    const fileInput = (await screen.findByTestId('file-input')) as HTMLInputElement;
+
+    await fireEvent.input(screen.getByTestId('name-input'), {
+      target: { value: 'TINY' },
+    });
+    await fireEvent.change(fileInput, { target: { files: [tinyFile()] } });
+    // Sanity — the input now holds a file (we just picked one).
+    expect(fileInput.files?.length).toBe(1);
+
+    await fireEvent.submit(screen.getByTestId('add-pool-form'));
+    await screen.findByTestId('success-banner');
+
+    // Post-submit: the DOM input's visible value is cleared (real
+    // browsers ALSO clear `.files` when `.value=''` is set, but JSDOM
+    // doesn't fully — checking `.value` catches what the user sees).
+    expect(fileInput.value).toBe('');
+
+    // The deeper behavioural proof: a second submit without picking
+    // a new file now correctly fails validation, because the page's
+    // `fileList` state was also cleared. Before the fix, the DOM input
+    // would have *visually* still shown the prior file (broken
+    // querySelector lookup), creating a confusing UX where Submit
+    // re-imported the same XML silently.
+    await fireEvent.input(screen.getByTestId('name-input'), {
+      target: { value: 'AGAIN' },
+    });
+    await fireEvent.submit(screen.getByTestId('add-pool-form'));
+    const err = await screen.findByTestId('form-error');
+    expect(err).toHaveTextContent(/pick.*xml file/i);
+  });
+
   it('surfaces server errors (e.g. 500 malformed XML) inline', async () => {
     uploadSourceMock.mockRejectedValueOnce(
       new FakeApiError(500, 'import failed: malformed plist'),

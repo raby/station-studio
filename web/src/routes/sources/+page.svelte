@@ -14,7 +14,7 @@
    * c4 adds:  per-row Re-import + Delete.
    * c5 adds:  embed on /stations/[slug] + §16.19 deep-link prefill.
    */
-  import { onMount, tick } from 'svelte';
+  import { onMount } from 'svelte';
   import {
     ApiError,
     importSourceByPath,
@@ -34,6 +34,12 @@
   // local-file option for pipx users with the XML already on disk.
   let mode: 'upload' | 'path' = 'upload';
   let fileList: FileList | null = null;
+  // c2-review 🟡-1: `bind:files` is one-way (DOM → JS), so setting
+  // `fileList = null` doesn't clear the underlying `<input type=file>`.
+  // We keep a direct element ref and clear `.value` on it — scope-local
+  // and robust to the conditional-render collapse in path mode
+  // (`fileInputEl` just stays null, the optional-chain no-ops).
+  let fileInputEl: HTMLInputElement | null = null;
   let path = '';
 
   let submitting = false;
@@ -93,17 +99,16 @@
         summary.tracks_imported === 1 ? '' : 's'
       } (${summary.role}).`;
       // Reset only the per-submit fields — keep role + mode so
-      // adding "another from the same source" is fast.
+      // adding "another from the same source" is fast. The DOM
+      // file-input clear goes through the bound ref (c2-review 🟡-1):
+      // `bind:files` is one-way, so we MUST clear `.value` on the
+      // element directly. `fileInputEl` is null when we're in path
+      // mode (the `{#if}` collapsed it out) — optional-chain handles
+      // that as a valid no-op.
       name = '';
       fileList = null;
       path = '';
-      // The <input type="file"> doesn't track `fileList = null`
-      // reactively — clear via the DOM after the next tick.
-      await tick();
-      const fileInput = document.querySelector<HTMLInputElement>(
-        '[data-testid="file-input"]',
-      );
-      if (fileInput) fileInput.value = '';
+      if (fileInputEl) fileInputEl.value = '';
 
       await refresh();
     } catch (e) {
@@ -199,6 +204,7 @@
             type="file"
             accept=".xml,application/xml,text/xml"
             data-testid="file-input"
+            bind:this={fileInputEl}
             bind:files={fileList}
             disabled={submitting}
           />
