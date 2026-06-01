@@ -10151,20 +10151,20 @@ plan-audit can find them:
   Panel-component-via-wrapper-page pattern. Investigate when the
   next e2e bug surfaces or when adding new UI behavior to this
   page.
-* **§16.25.t4 — Replace `window.confirm()` with a styled modal.**
-  Both Delete and Re-import-blast-radius use native `confirm()`
-  today (matches §16.3 station-delete). It's blocking, jarring,
-  ignores the page's design system, and on some browsers prevents
-  Escape-key dismissal of the underlying panel state. A styled
-  modal (a `<ConfirmDialog>` component) would integrate properly,
-  carry markup-richer copy (line breaks, emphasis), and be
-  testable without `vi.spyOn(window, 'confirm')`. Touches §16.3
-  station-delete + §16.25 Delete + §16.25 Re-import + the
-  playlist delete in `/stations/[slug]` — a real cross-cutting
-  polish. **Home: separate post-§16.25 polish slice (~3-4
-  commits) — a `<ConfirmDialog>` component + replacing the four
-  call sites + tests.** Not blocking; native `confirm()` works
-  today and the tests assert the copy.
+* **§16.25.t4 — Replace `window.confirm()` with a styled modal —
+  SHIPPED.** Closed across 3 commits as a separate polish slice:
+  `confirmDialog({title, body, confirmLabel?, danger?}): Promise<bool>`
+  + a single `<ConfirmDialog>` host mounted in `+layout.svelte`.
+  Migrated 7 call sites (4 in `/stations/[slug]`: replace week,
+  regenerate week, delete week, nuke station; 3 in
+  `PoolImportPanel`: discard unsaved batch rows, re-import pool,
+  delete pool). Tests now mock `$lib/confirm` instead of
+  `vi.spyOn(window, 'confirm')` — title + body checked
+  separately via `objectContaining` or direct property
+  inspection. Behaviour: Cancel auto-focused (safer destructive
+  default), Esc + click-outside both cancel, no focus trap
+  (only 2 focusable elements). 11 dialog-primitive tests + the
+  migrated assertions across both call-site test files.
 * **§16.25.t3 — Mutation-idiom hybrid under Svelte 5 migration.**
   `<PoolImportPanel>` documents an explicit hybrid contract:
   whole-array operations use immutable `[...rows, …]` / `.filter`,
