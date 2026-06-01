@@ -131,6 +131,43 @@
   // filled 5 rows and clicked once by accident, all work vanished. A
   // row counts as "dirty" if name OR file OR path has content (a fresh
   // row from `makeEmptyRow()` has all three empty).
+  // §16.25.t1: in batch mode, switching upload ↔ path with rows
+  // already holding content from the OLD mode causes a confusing
+  // submit failure (every dormant row fails validation with "type
+  // the server-side path" or "pick an iTunes XML file"). The content
+  // is preserved across the toggle (recoverable by toggling back),
+  // but the user has no signal that it's still there.
+  //
+  // Fix: confirm the toggle when dormant content exists. The
+  // confirmDialog body explains the recovery path ("toggle back to
+  // use them") so the user doesn't feel data was lost.
+  //
+  // Single mode skips this — the user has at most one file/path,
+  // can see what they have, and toggles back trivially.
+  async function setMode(newMode: 'upload' | 'path') {
+    if (newMode === mode) return;
+    if (batchMode) {
+      const dormantCount = rows.filter((r) =>
+        newMode === 'path'
+          ? r.file !== null
+          : r.path.trim() !== '',
+      ).length;
+      if (dormantCount > 0) {
+        const ok = await confirmDialog({
+          title: `Switch to ${newMode === 'upload' ? 'upload' : 'path'} mode?`,
+          body:
+            `${dormantCount} row${dormantCount === 1 ? '' : 's'} ` +
+            `${dormantCount === 1 ? 'has' : 'have'} content from the other ` +
+            `mode that will be ignored on submit. (Toggle back to use it.)`,
+          confirmLabel: 'Switch',
+          // Not `danger: true` — toggling is reversible, no data loss.
+        });
+        if (!ok) return;
+      }
+    }
+    mode = newMode;
+  }
+
   async function exitBatchMode() {
     const dirtyRows = rows.filter(
       (r) => r.name.trim() !== '' || r.file !== null || r.path.trim() !== '',
@@ -484,7 +521,7 @@
         class:active={mode === 'upload'}
         aria-selected={mode === 'upload'}
         data-testid="mode-toggle-upload"
-        on:click={() => (mode = 'upload')}
+        on:click={() => setMode('upload')}
         disabled={submitting}
       >
         Upload file
@@ -496,7 +533,7 @@
         class:active={mode === 'path'}
         aria-selected={mode === 'path'}
         data-testid="mode-toggle-path"
-        on:click={() => (mode = 'path')}
+        on:click={() => setMode('path')}
         disabled={submitting}
       >
         Advanced: server path

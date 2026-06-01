@@ -620,6 +620,126 @@ describe('/sources — batch mode (c3 D2 multi-pool)', () => {
 });
 
 
+// ---- §16.25.t1 — mid-batch mode-switch UX hardening -------------------
+
+
+describe('/sources — batch mode-switch confirm (§16.25.t1)', () => {
+  it('switching modes with NO dormant content goes through silently', async () => {
+    render(Page);
+    await screen.findByTestId('add-pool-form');
+    await fireEvent.click(screen.getByTestId('batch-mode-toggle'));
+    // Empty row — no file, no path. Toggling either way should NOT
+    // prompt a confirm.
+    await fireEvent.click(screen.getByTestId('mode-toggle-path'));
+    expect(confirmDialogMock).not.toHaveBeenCalled();
+    expect(screen.getByTestId('batch-row-path')).toBeInTheDocument();
+
+    await fireEvent.click(screen.getByTestId('mode-toggle-upload'));
+    expect(confirmDialogMock).not.toHaveBeenCalled();
+    expect(screen.getByTestId('batch-row-file')).toBeInTheDocument();
+  });
+
+  it('upload→path with a file-holding row confirms before switching', async () => {
+    render(Page);
+    await screen.findByTestId('add-pool-form');
+    await fireEvent.click(screen.getByTestId('batch-mode-toggle'));
+    // Drop a file into the row.
+    await fireEvent.change(screen.getByTestId('batch-row-file'), {
+      target: { files: [tinyFile()] },
+    });
+
+    confirmDialogMock.mockResolvedValueOnce(true);
+    await fireEvent.click(screen.getByTestId('mode-toggle-path'));
+
+    expect(confirmDialogMock).toHaveBeenCalledTimes(1);
+    const opts = confirmDialogMock.mock.calls[0][0] as unknown as {
+      title: string;
+      body: string;
+    };
+    expect(opts.title).toMatch(/Switch to path mode/i);
+    // Body explains the count + recovery path.
+    expect(opts.body).toMatch(/1 row has content from the other mode/);
+    expect(opts.body).toMatch(/toggle back/i);
+    // Confirmed → mode switched.
+    expect(await screen.findByTestId('batch-row-path')).toBeInTheDocument();
+  });
+
+  it('cancelling the confirm keeps the current mode + content intact', async () => {
+    render(Page);
+    await screen.findByTestId('add-pool-form');
+    await fireEvent.click(screen.getByTestId('batch-mode-toggle'));
+    await fireEvent.change(screen.getByTestId('batch-row-file'), {
+      target: { files: [tinyFile()] },
+    });
+
+    confirmDialogMock.mockResolvedValueOnce(false);
+    await fireEvent.click(screen.getByTestId('mode-toggle-path'));
+
+    // Still in upload mode; file-input still rendered.
+    expect(screen.getByTestId('batch-row-file')).toBeInTheDocument();
+    expect(screen.queryByTestId('batch-row-path')).not.toBeInTheDocument();
+  });
+
+  it('path→upload with a path-holding row confirms before switching', async () => {
+    render(Page);
+    await screen.findByTestId('add-pool-form');
+    // Page-level mode toggle to path first.
+    await fireEvent.click(screen.getByTestId('mode-toggle-path'));
+    await fireEvent.click(screen.getByTestId('batch-mode-toggle'));
+    // Type a path into the row.
+    await fireEvent.input(screen.getByTestId('batch-row-path'), {
+      target: { value: '/abs/lib.xml' },
+    });
+
+    confirmDialogMock.mockResolvedValueOnce(true);
+    await fireEvent.click(screen.getByTestId('mode-toggle-upload'));
+
+    const opts = confirmDialogMock.mock.calls[0][0] as unknown as {
+      title: string;
+      body: string;
+    };
+    expect(opts.title).toMatch(/Switch to upload mode/i);
+    expect(opts.body).toMatch(/1 row has content from the other mode/);
+    expect(await screen.findByTestId('batch-row-file')).toBeInTheDocument();
+  });
+
+  it('content pluralisation: "N rows have" for N>1', async () => {
+    render(Page);
+    await screen.findByTestId('add-pool-form');
+    await fireEvent.click(screen.getByTestId('batch-mode-toggle'));
+    await fireEvent.click(screen.getByTestId('batch-add-row'));
+    // Two file-holding rows.
+    const fileInputs = screen.getAllByTestId('batch-row-file');
+    await fireEvent.change(fileInputs[0], { target: { files: [tinyFile()] } });
+    await fireEvent.change(fileInputs[1], { target: { files: [tinyFile()] } });
+
+    confirmDialogMock.mockResolvedValueOnce(true);
+    await fireEvent.click(screen.getByTestId('mode-toggle-path'));
+
+    const opts = confirmDialogMock.mock.calls[0][0] as unknown as {
+      title: string;
+      body: string;
+    };
+    expect(opts.body).toMatch(/2 rows have content from the other mode/);
+  });
+
+  it('single-mode (non-batch) toggling NEVER confirms', async () => {
+    // Single mode by default. Set a file, then toggle to path.
+    render(Page);
+    await screen.findByTestId('add-pool-form');
+    await fireEvent.change(screen.getByTestId('file-input'), {
+      target: { files: [tinyFile()] },
+    });
+    await fireEvent.click(screen.getByTestId('mode-toggle-path'));
+
+    // The single-mode UI has at most one file/path; the user can
+    // see what they have and toggle back trivially — no confirm.
+    expect(confirmDialogMock).not.toHaveBeenCalled();
+    expect(screen.getByTestId('path-input')).toBeInTheDocument();
+  });
+});
+
+
 // ---- §16.25 c5 — query-param prefill (deep-link from §16.19 badge) ----
 
 

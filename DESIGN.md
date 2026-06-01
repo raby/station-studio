@@ -10097,16 +10097,18 @@ landed under §16.25.
 this slice deliberately defers, each with a home so a future
 plan-audit can find them:
 
-* **§16.25.t1 — mid-batch mode-switch UX hardening.** If a user
-  adds rows in upload mode (with files), toggles to path mode,
-  then submits, every row fails with "Type the server-side path"
-  — confusing because the uploaded files are still in row state,
-  just dormant for the current mode. Recoverable by toggling
-  back, and the per-row error message is honest. Possible fixes:
-  disable the mode toggle while any row has dirty fields, OR
-  warn with a confirm, OR clear non-active-mode fields on
-  toggle. **Home: §16.25 c7 (slice review sweep) candidate** —
-  pick a fix only if validation tells us this bit a real user.
+* **§16.25.t1 — mid-batch mode-switch UX hardening — SHIPPED.**
+  Closed via a `setMode(newMode)` async wrapper around the
+  batch-mode toggle: when the new mode would leave dormant
+  content in rows (files when switching to path mode; paths when
+  switching to upload mode), `confirmDialog` fires with the
+  count + the recovery hint ("toggle back to use it"). Single
+  mode is unchanged — the user has at most one file/path, can
+  see what they have, toggles back trivially. 6 new tests:
+  silent no-op when no dormant content; confirm fires on both
+  directions; cancel preserves mode; pluralisation; single-mode
+  never confirms. Not `danger: true` — the operation is
+  reversible, no data loss.
 * **§16.25.t2 — Upload cancel via `AbortController`.** A user
   submitting 6 large XMLs has no way to abort mid-batch if they
   realise row 3 has the wrong file. Needs `AbortController`
