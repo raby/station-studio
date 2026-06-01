@@ -1,12 +1,16 @@
 """FastAPI app for Station Studio."""
 from __future__ import annotations
 
+import importlib.resources
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from api.routers import editor, stations, sources, generate, jobs, meta, rules
 from engine.database import make_engine, make_sessionmaker
@@ -133,6 +137,94 @@ app.include_router(meta.router)
 app.include_router(rules.router)
 
 
-@app.get("/")
-def root():
-    return {"service": "station-studio", "version": "0.1.0"}
+# §16.13 c2 — serve the SvelteKit SPA at / (catch-all under /api/*).
+#
+# Resolution order for the built static assets:
+#   1. Wheel-bundled (`station_studio/_bundled/web/`) — c4 will plumb
+#      the npm-then-python build orchestration that populates this.
+#   2. In-repo (`<repo>/web/build/`) — present after `npm run build`,
+#      the `make dev` / Playwright preview path.
+#   3. Neither → log a warning + leave `GET /` returning the
+#      service-identity blob. That's the dev-loop case (vite dev on
+#      :5173 serves the UI; FastAPI on :8001 is API-only). The blob
+#      also keeps `test_root_endpoint_identifies_the_service` green
+#      in CI where no static build runs.
+#
+# The order is intentional: an installed wheel's bundled assets win
+# over a stale in-repo `web/build/` if both exist (the installed
+# wheel is the canonical artifact in that case).
+def _resolve_static_dir() -> Path | None:
+    try:
+        bundled = importlib.resources.files("station_studio") / "_bundled" / "web"
+        if bundled.is_dir():
+            return Path(str(bundled))
+    except (ModuleNotFoundError, AttributeError):
+        # `station_studio` isn't installed yet (in-repo dev pre-pip-install).
+        pass
+    repo_root = Path(__file__).resolve().parent.parent
+    in_repo = repo_root / "web" / "build"
+    if in_repo.is_dir():
+        return in_repo
+    return None
+
+
+STATIC_DIR = _resolve_static_dir()
+
+
+def attach_spa_routes(app: FastAPI, static_dir: Path) -> None:
+    """Wire SvelteKit's SPA build into `app` from `static_dir`.
+
+    Three routes get added:
+      * `GET /` → index.html (the SPA entry HTML).
+      * `GET /_app/...` → built JS/CSS/fonts via StaticFiles (etag,
+        Cache-Control, range support).
+      * `GET /{anything}` → real file if it exists (e.g. /favicon.ico),
+        otherwise index.html (SPA fallback — client-side router takes
+        over once the bundle boots).
+
+    Extracted as a function so tests can mount the SPA against a
+    fake `static_dir` without monkeypatching module-level state.
+    """
+    app.mount(
+        "/_app",
+        StaticFiles(directory=static_dir / "_app"),
+        name="spa-assets",
+    )
+
+    @app.get("/", include_in_schema=False)
+    async def spa_index() -> FileResponse:
+        return FileResponse(static_dir / "index.html")
+
+    # Catch-all SPA fallback. Registered LAST so /api/* routers + the
+    # /_app mount + explicit / handler all match first. The
+    # `{path:path}` converter swallows slashes — `/stations/foo/bar`
+    # all routes to here.
+    @app.get("/{spa_path:path}", include_in_schema=False)
+    async def spa_fallback(spa_path: str) -> FileResponse:
+        # Defensive: an /api/* path shouldn't reach this — every
+        # router uses the `/api/` prefix and routers match first. But
+        # if a router IS missing a route, returning the SPA shell
+        # would be a confusing 200-shaped 404. Surface as a real 404.
+        if spa_path.startswith("api/"):
+            raise HTTPException(status_code=404, detail="Not Found")
+        # Real file (e.g. `/favicon.ico`) — serve it.
+        target = static_dir / spa_path
+        if target.is_file():
+            return FileResponse(target)
+        # Unknown path → SPA route → client-side router handles it
+        # once the bundle boots from index.html.
+        return FileResponse(static_dir / "index.html")
+
+
+if STATIC_DIR is not None:
+    attach_spa_routes(app, STATIC_DIR)
+else:
+    logger.info(
+        "no static frontend assets found (looked under bundled wheel + "
+        "<repo>/web/build/). Falling back to API-only mode at `/`. "
+        "Run `npm run build` in `web/` to enable single-process serving."
+    )
+
+    @app.get("/")
+    def root() -> dict:
+        return {"service": "station-studio", "version": "0.1.0"}

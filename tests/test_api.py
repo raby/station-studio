@@ -961,13 +961,29 @@ def test_import_malformed_xml_500(api):
 
 
 def test_root_endpoint_identifies_the_service(monkeypatch):
-    """GET / returns a tiny service-identity blob — covers api/main.root().
-    Skips the auto-seed lifespan since we're not testing that path."""
+    """GET / returns either:
+      * the tiny service-identity blob — when no static frontend is built
+        yet (`<repo>/web/build/` is absent, CI's typical state); or
+      * `index.html` from the SvelteKit SPA — when a build IS present
+        (a dev who ran `npm run build` locally before pytest).
+
+    Both are correct §16.13 c2 behaviour; the test accepts either so
+    `npm run build` and `pytest` don't clobber each other in dev. The
+    SPA-mount-with-fake-dir test in `test_spa_mount.py` covers the
+    static path comprehensively."""
+    from api.main import STATIC_DIR
+
     monkeypatch.setenv("STATION_STUDIO_SKIP_AUTO_SEED", "1")
     with TestClient(app) as client:
         r = client.get("/")
     assert r.status_code == 200
-    assert r.json() == {"service": "station-studio", "version": "0.1.0"}
+    if STATIC_DIR is None:
+        # Dev / CI without a frontend build → service-identity blob.
+        assert r.json() == {"service": "station-studio", "version": "0.1.0"}
+    else:
+        # A frontend build was found at module-load time → SPA index.
+        assert r.headers["content-type"].startswith("text/html")
+        assert "<html" in r.text.lower()
 
 
 # ---------- §sweep-1 auto-seed lifespan handler -----------------------
