@@ -13,6 +13,7 @@ const {
   listSourcesMock,
   uploadSourceMock,
   importSourceByPathMock,
+  deleteSourceMock,
   FakeApiError,
 } = vi.hoisted(() => {
   class FakeApiError extends Error {
@@ -27,6 +28,7 @@ const {
     listSourcesMock: vi.fn(),
     uploadSourceMock: vi.fn(),
     importSourceByPathMock: vi.fn(),
+    deleteSourceMock: vi.fn(),
     FakeApiError,
   };
 });
@@ -36,6 +38,7 @@ vi.mock('$lib/api', () => ({
   listSources: (...args: unknown[]) => listSourcesMock(...args),
   uploadSource: (...args: unknown[]) => uploadSourceMock(...args),
   importSourceByPath: (...args: unknown[]) => importSourceByPathMock(...args),
+  deleteSource: (...args: unknown[]) => deleteSourceMock(...args),
 }));
 
 // Load AFTER vi.mock so the mocked module is what the page sees.
@@ -48,6 +51,7 @@ beforeEach(() => {
   listSourcesMock.mockReset();
   uploadSourceMock.mockReset();
   importSourceByPathMock.mockReset();
+  deleteSourceMock.mockReset();
   // Default: empty list (page renders empty state).
   listSourcesMock.mockResolvedValue([]);
 });
@@ -542,5 +546,265 @@ describe('/sources — iTunes export hint (G5)', () => {
     await screen.findByTestId('add-pool-form');
     await fireEvent.click(screen.getByTestId('mode-toggle-path'));
     expect(screen.queryByTestId('itunes-hint')).not.toBeInTheDocument();
+  });
+});
+
+
+// ---- §16.25 c4 — per-row Re-import + Delete (D4) -------------------
+
+
+describe('/sources — per-row Delete (D4)', () => {
+  it('confirms then calls deleteSource and refreshes', async () => {
+    listSourcesMock
+      .mockResolvedValueOnce([
+        { id: 7, name: 'DOOMED', role: 'content', track_count: 247 },
+      ])
+      .mockResolvedValueOnce([]); // after delete
+    deleteSourceMock.mockResolvedValue(undefined);
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+    render(Page);
+    const deleteBtn = await screen.findByTestId('pool-row-delete');
+    await fireEvent.click(deleteBtn);
+
+    // Confirm dialog spelled out the blast radius.
+    expect(confirmSpy).toHaveBeenCalledTimes(1);
+    const message = confirmSpy.mock.calls[0][0] as string;
+    expect(message).toMatch(/DOOMED/);
+    expect(message).toMatch(/247 track/);
+    expect(message).toMatch(/cannot be undone/i);
+
+    expect(deleteSourceMock).toHaveBeenCalledWith(7);
+    // Row gone after refresh.
+    await screen.findByTestId('empty-state');
+
+    confirmSpy.mockRestore();
+  });
+
+  it('cancelling the confirm does NOT call deleteSource', async () => {
+    listSourcesMock.mockResolvedValue([
+      { id: 1, name: 'KEEP_ME', role: 'content', track_count: 5 },
+    ]);
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+
+    render(Page);
+    const deleteBtn = await screen.findByTestId('pool-row-delete');
+    await fireEvent.click(deleteBtn);
+
+    expect(confirmSpy).toHaveBeenCalled();
+    expect(deleteSourceMock).not.toHaveBeenCalled();
+    // Pool still in the list.
+    expect(screen.getByTestId('pool-row')).toHaveAttribute('data-pool-name', 'KEEP_ME');
+
+    confirmSpy.mockRestore();
+  });
+
+  it('surfaces a delete error inline (e.g. 404 from a stale list)', async () => {
+    listSourcesMock.mockResolvedValue([
+      { id: 1, name: 'STALE', role: 'content', track_count: 3 },
+    ]);
+    deleteSourceMock.mockRejectedValueOnce(new FakeApiError(404, 'not found'));
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+    render(Page);
+    const deleteBtn = await screen.findByTestId('pool-row-delete');
+    await fireEvent.click(deleteBtn);
+
+    const err = await screen.findByTestId('delete-error');
+    expect(err).toHaveTextContent(/not found/);
+
+    confirmSpy.mockRestore();
+  });
+});
+
+
+describe('/sources — per-row Re-import (D4 + 🟡-4 read-only role)', () => {
+  it('clicking Re-import expands the row with the upload form (current mode)', async () => {
+    listSourcesMock.mockResolvedValue([
+      { id: 1, name: 'DAYTIME', role: 'content', track_count: 100 },
+    ]);
+
+    render(Page);
+    const reimportBtn = await screen.findByTestId('pool-row-reimport');
+    await fireEvent.click(reimportBtn);
+
+    // The expansion row + file input appear (page is in upload mode by default).
+    const expansion = screen.getByTestId('reimport-row');
+    expect(expansion).toHaveAttribute('data-pool-name', 'DAYTIME');
+    expect(screen.getByTestId('reimport-file-input')).toBeInTheDocument();
+    expect(screen.queryByTestId('reimport-path-input')).not.toBeInTheDocument();
+
+    // 🟡-4: the role is rendered as read-only display (a role-tag),
+    // NOT as an editable <select>. Confirm there's no input for role
+    // inside the expansion.
+    const expansionRoleSelect = expansion.querySelector('select');
+    expect(expansionRoleSelect).toBeNull();
+    // And the role text IS shown (so the user knows what they're re-importing).
+    expect(expansion).toHaveTextContent('content');
+  });
+
+  it('Cancel collapses the expansion without an API call', async () => {
+    listSourcesMock.mockResolvedValue([
+      { id: 1, name: 'DAYTIME', role: 'content', track_count: 100 },
+    ]);
+
+    render(Page);
+    await fireEvent.click(await screen.findByTestId('pool-row-reimport'));
+    expect(screen.getByTestId('reimport-row')).toBeInTheDocument();
+
+    await fireEvent.click(screen.getByTestId('pool-row-cancel-reimport'));
+    expect(screen.queryByTestId('reimport-row')).not.toBeInTheDocument();
+    expect(uploadSourceMock).not.toHaveBeenCalled();
+  });
+
+  it('Replace + confirm calls uploadSource with PRESERVED name + role, then refreshes', async () => {
+    listSourcesMock
+      .mockResolvedValueOnce([
+        { id: 1, name: 'DAYTIME', role: 'content', track_count: 100 },
+      ])
+      .mockResolvedValueOnce([
+        { id: 1, name: 'DAYTIME', role: 'content', track_count: 150 }, // post-reimport
+      ]);
+    uploadSourceMock.mockResolvedValue({
+      name: 'DAYTIME',
+      role: 'content',
+      tracks_imported: 150,
+      entries_imported: 150,
+    });
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+    render(Page);
+    await fireEvent.click(await screen.findByTestId('pool-row-reimport'));
+
+    await fireEvent.change(screen.getByTestId('reimport-file-input'), {
+      target: { files: [tinyFile()] },
+    });
+    await fireEvent.click(screen.getByTestId('reimport-submit'));
+
+    // Confirm dialog called out the blast radius + the pool name.
+    expect(confirmSpy).toHaveBeenCalled();
+    const message = confirmSpy.mock.calls[0][0] as string;
+    expect(message).toMatch(/100 tracks/);
+    expect(message).toMatch(/'DAYTIME'/);
+    expect(message).toMatch(/cannot be undone/i);
+
+    // 🟡-4: the API call used the EXISTING name + role, not anything
+    // the user could have changed in the dialog.
+    expect(uploadSourceMock).toHaveBeenCalledWith(
+      'DAYTIME',
+      'content',
+      expect.any(File),
+    );
+
+    // Expansion collapsed after success.
+    expect(screen.queryByTestId('reimport-row')).not.toBeInTheDocument();
+    // List refreshed — track count bumped.
+    const row = await screen.findByTestId('pool-row');
+    expect(row).toHaveTextContent('150');
+
+    // Success banner shows.
+    expect(await screen.findByTestId('success-banner')).toHaveTextContent(/DAYTIME/);
+
+    confirmSpy.mockRestore();
+  });
+
+  it('cancelling the confirm does NOT submit the re-import', async () => {
+    listSourcesMock.mockResolvedValue([
+      { id: 1, name: 'DAYTIME', role: 'content', track_count: 100 },
+    ]);
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+
+    render(Page);
+    await fireEvent.click(await screen.findByTestId('pool-row-reimport'));
+    await fireEvent.change(screen.getByTestId('reimport-file-input'), {
+      target: { files: [tinyFile()] },
+    });
+    await fireEvent.click(screen.getByTestId('reimport-submit'));
+
+    expect(confirmSpy).toHaveBeenCalled();
+    expect(uploadSourceMock).not.toHaveBeenCalled();
+    // Still expanded (user can pick another file or hit Cancel).
+    expect(screen.getByTestId('reimport-row')).toBeInTheDocument();
+
+    confirmSpy.mockRestore();
+  });
+
+  it('rejects no-file submit client-side (no API call, inline error)', async () => {
+    listSourcesMock.mockResolvedValue([
+      { id: 1, name: 'DAYTIME', role: 'content', track_count: 100 },
+    ]);
+
+    render(Page);
+    await fireEvent.click(await screen.findByTestId('pool-row-reimport'));
+    // No file picked.
+    await fireEvent.click(screen.getByTestId('reimport-submit'));
+
+    const err = await screen.findByTestId('reimport-error');
+    expect(err).toHaveTextContent(/pick.*xml file/i);
+    expect(uploadSourceMock).not.toHaveBeenCalled();
+  });
+
+  it('surfaces a server error inline (500 malformed XML) without collapsing', async () => {
+    listSourcesMock.mockResolvedValue([
+      { id: 1, name: 'DAYTIME', role: 'content', track_count: 100 },
+    ]);
+    uploadSourceMock.mockRejectedValueOnce(
+      new FakeApiError(500, 'import failed: malformed plist'),
+    );
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+    render(Page);
+    await fireEvent.click(await screen.findByTestId('pool-row-reimport'));
+    await fireEvent.change(screen.getByTestId('reimport-file-input'), {
+      target: { files: [tinyFile()] },
+    });
+    await fireEvent.click(screen.getByTestId('reimport-submit'));
+
+    const err = await screen.findByTestId('reimport-error');
+    expect(err).toHaveTextContent(/malformed plist/);
+    // Stays expanded so the user can pick a different file.
+    expect(screen.getByTestId('reimport-row')).toBeInTheDocument();
+
+    confirmSpy.mockRestore();
+  });
+
+  it('path mode: Re-import shows path input + submits via importSourceByPath', async () => {
+    listSourcesMock
+      .mockResolvedValueOnce([
+        { id: 1, name: 'BIG', role: 'content', track_count: 50000 },
+      ])
+      .mockResolvedValueOnce([
+        { id: 1, name: 'BIG', role: 'content', track_count: 60000 },
+      ]);
+    importSourceByPathMock.mockResolvedValue({
+      name: 'BIG',
+      role: 'content',
+      tracks_imported: 60000,
+      entries_imported: 60000,
+    });
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+    render(Page);
+    // Toggle the page to path mode FIRST, then re-import.
+    await screen.findByTestId('add-pool-form');
+    await fireEvent.click(screen.getByTestId('mode-toggle-path'));
+    await fireEvent.click(await screen.findByTestId('pool-row-reimport'));
+
+    expect(screen.getByTestId('reimport-path-input')).toBeInTheDocument();
+    expect(screen.queryByTestId('reimport-file-input')).not.toBeInTheDocument();
+
+    await fireEvent.input(screen.getByTestId('reimport-path-input'), {
+      target: { value: '/abs/big.xml' },
+    });
+    await fireEvent.click(screen.getByTestId('reimport-submit'));
+
+    expect(importSourceByPathMock).toHaveBeenCalledWith(
+      'BIG',
+      'content',
+      '/abs/big.xml',
+    );
+    expect(uploadSourceMock).not.toHaveBeenCalled();
+
+    confirmSpy.mockRestore();
   });
 });

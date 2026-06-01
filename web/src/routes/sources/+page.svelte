@@ -17,6 +17,7 @@
   import { onMount } from 'svelte';
   import {
     ApiError,
+    deleteSource,
     importSourceByPath,
     listSources,
     uploadSource,
@@ -292,6 +293,120 @@
       formError = e instanceof ApiError ? e.message : String(e);
     } finally {
       submitting = false;
+    }
+  }
+
+  // ---- c4 — per-row Re-import + Delete affordances (D4) ----
+  //
+  // Re-import semantics: same `name` triggers the §14.35 idempotent
+  // replace inside `import_source`. The role is PRESERVED from the
+  // existing pool (🟡-4: role select is read-only on re-import; role
+  // change after import is queued as a separate small PATCH slice).
+  // The mode (upload vs path) is global — re-import uses whatever the
+  // page is set to. The user can toggle mode at the page level if
+  // they want a path re-import.
+  //
+  // State is single-row: only one re-import can be active at a time.
+  // Starting a new re-import (or hitting Delete) cancels any prior
+  // expansion implicitly via the id swap.
+  let reimportingId: number | null = null;
+  let reimportFile: File | null = null;
+  let reimportPath = '';
+  let reimporting = false;
+  let reimportError: string | null = null;
+
+  function startReimport(pool: Source) {
+    reimportingId = pool.id;
+    reimportFile = null;
+    reimportPath = '';
+    reimportError = null;
+  }
+
+  function cancelReimport() {
+    reimportingId = null;
+    reimportFile = null;
+    reimportPath = '';
+    reimportError = null;
+  }
+
+  // The per-row Re-import inline form's file-input on:change.
+  // Mirrors `onRowFileChange` for batch rows but writes the single
+  // `reimportFile` slot.
+  function onReimportFileChange(event: Event) {
+    const input = event.currentTarget as HTMLInputElement;
+    reimportFile = input.files?.[0] ?? null;
+  }
+
+  async function submitReimport(pool: Source) {
+    reimportError = null;
+    // Mirror the c2 client-side validation — fail fast without a
+    // round-trip if the obvious field is missing.
+    if (mode === 'upload' && !reimportFile) {
+      reimportError = 'Pick an iTunes XML file to upload.';
+      return;
+    }
+    if (mode === 'path' && !reimportPath.trim()) {
+      reimportError = 'Type the server-side path to the XML.';
+      return;
+    }
+
+    // Confirm shows the BLAST RADIUS (current track count) so the
+    // user understands the replace before clicking through. Matches
+    // the §16.3 delete-station pattern.
+    const ok = confirm(
+      `Replace ${pool.track_count.toLocaleString()} track${pool.track_count === 1 ? '' : 's'} ` +
+        `in pool '${pool.name}' (${pool.role}) with this new file? ` +
+        `This cannot be undone. (Generated playlists are unaffected — they reference tracks directly.)`,
+    );
+    if (!ok) return;
+
+    reimporting = true;
+    try {
+      if (mode === 'upload') {
+        await uploadSource(pool.name, pool.role, reimportFile!);
+      } else {
+        await importSourceByPath(pool.name, pool.role, reimportPath.trim());
+      }
+      // Success — collapse the form, surface a banner, refresh.
+      successMessage = `Re-imported "${pool.name}".`;
+      cancelReimport();
+      await refresh();
+    } catch (e) {
+      reimportError = e instanceof ApiError ? e.message : String(e);
+    } finally {
+      reimporting = false;
+    }
+  }
+
+  // ---- c4 — Delete ----
+  //
+  // Confirm dialog mirrors the §16.3 station-delete pattern: spell out
+  // the blast radius (pool name + track count) so the user can't
+  // mistake which pool they're deleting. Generated playlists are
+  // unaffected (`PlaylistEntry.track_id` is direct), so we say so
+  // explicitly to reduce hesitation on the right click-through.
+  let deleting: number | null = null; // id mid-delete, for disable state
+  let deleteError: string | null = null;
+
+  async function deletePool(pool: Source) {
+    const ok = confirm(
+      `Delete pool '${pool.name}' and its ${pool.track_count.toLocaleString()} track${pool.track_count === 1 ? '' : 's'}? ` +
+        `This cannot be undone. ` +
+        `(Generated playlists are unaffected — they reference tracks directly, not pools.)`,
+    );
+    if (!ok) return;
+    deleting = pool.id;
+    deleteError = null;
+    // If the user clicks Delete while re-importing the same row, the
+    // expansion would survive after the row vanishes — close it.
+    if (reimportingId === pool.id) cancelReimport();
+    try {
+      await deleteSource(pool.id);
+      await refresh();
+    } catch (e) {
+      deleteError = e instanceof ApiError ? e.message : String(e);
+    } finally {
+      deleting = null;
     }
   }
 </script>
@@ -571,12 +686,16 @@
         No pools imported yet. Use the form above to import your first one.
       </p>
     {:else}
+      {#if deleteError}
+        <p class="error" data-testid="delete-error">Could not delete: {deleteError}</p>
+      {/if}
       <table class="sources-list" data-testid="sources-list">
         <thead>
           <tr>
             <th>Name</th>
             <th>Role</th>
             <th class="num">Tracks</th>
+            <th class="actions-col"><span class="sr-only">Actions</span></th>
           </tr>
         </thead>
         <tbody>
@@ -587,7 +706,82 @@
                 <span class="role-tag role-{s.role}">{s.role}</span>
               </td>
               <td class="num">{s.track_count.toLocaleString()}</td>
+              <td class="actions">
+                {#if reimportingId === s.id}
+                  <button
+                    type="button"
+                    class="row-button"
+                    data-testid="pool-row-cancel-reimport"
+                    on:click={cancelReimport}
+                    disabled={reimporting}
+                  >
+                    Cancel
+                  </button>
+                {:else}
+                  <button
+                    type="button"
+                    class="row-button"
+                    data-testid="pool-row-reimport"
+                    on:click={() => startReimport(s)}
+                    disabled={deleting === s.id || reimporting}
+                  >
+                    Re-import
+                  </button>
+                  <button
+                    type="button"
+                    class="row-button danger"
+                    data-testid="pool-row-delete"
+                    on:click={() => deletePool(s)}
+                    disabled={deleting === s.id || reimporting}
+                  >
+                    {deleting === s.id ? 'Deleting…' : 'Delete'}
+                  </button>
+                {/if}
+              </td>
             </tr>
+            {#if reimportingId === s.id}
+              <tr class="reimport-row" data-testid="reimport-row" data-pool-name={s.name}>
+                <td colspan="4">
+                  <div class="reimport-form">
+                    <p class="reimport-summary">
+                      Re-import <b>{s.name}</b> — role <span class="role-tag role-{s.role}">{s.role}</span>
+                      (read-only on re-import; role change is a separate slice).
+                      Replaces all {s.track_count.toLocaleString()} existing track{s.track_count === 1 ? '' : 's'}.
+                    </p>
+                    {#if mode === 'upload'}
+                      <input
+                        type="file"
+                        accept=".xml,application/xml,text/xml"
+                        data-testid="reimport-file-input"
+                        on:change={onReimportFileChange}
+                        disabled={reimporting}
+                      />
+                    {:else}
+                      <input
+                        type="text"
+                        class="reimport-path-input"
+                        placeholder="/path/to/library.xml"
+                        data-testid="reimport-path-input"
+                        bind:value={reimportPath}
+                        disabled={reimporting}
+                      />
+                    {/if}
+                    {#if reimportError}
+                      <p class="error" data-testid="reimport-error">{reimportError}</p>
+                    {/if}
+                    <button
+                      type="button"
+                      class="button primary"
+                      data-testid="reimport-submit"
+                      on:click={() => submitReimport(s)}
+                      disabled={reimporting}
+                    >
+                      {reimporting ? 'Replacing…' : 'Replace'}
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            {/if}
           {/each}
         </tbody>
       </table>
@@ -862,5 +1056,70 @@
     padding-left: 0.25rem;
     color: #991b1b;
     font-size: 0.85rem;
+  }
+
+  /* ===== c4 row actions + Re-import inline expansion ===== */
+  .actions-col {
+    width: 1%;
+    white-space: nowrap;
+  }
+  .actions {
+    text-align: right;
+    white-space: nowrap;
+  }
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    border: 0;
+  }
+  .row-button {
+    font: inherit;
+    font-size: 0.82rem;
+    padding: 0.25rem 0.6rem;
+    border: 1px solid #d4d4d8;
+    background: #fff;
+    border-radius: 4px;
+    cursor: pointer;
+    margin-left: 0.25rem;
+  }
+  .row-button:hover:not(:disabled) {
+    background: #f3f4f6;
+  }
+  .row-button.danger {
+    color: #991b1b;
+    border-color: #fecaca;
+  }
+  .row-button.danger:hover:not(:disabled) {
+    background: #fef2f2;
+  }
+  .row-button:disabled {
+    color: #9ca3af;
+    cursor: wait;
+  }
+  .reimport-row td {
+    background: #fefce8;
+    border-top: 1px solid #fef08a;
+    padding: 0.75rem 0.75rem;
+  }
+  .reimport-form {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  .reimport-summary {
+    margin: 0;
+    font-size: 0.9rem;
+  }
+  .reimport-path-input {
+    padding: 0.4rem 0.5rem;
+    border: 1px solid #c4c4c8;
+    border-radius: 4px;
+    font: inherit;
+    max-width: 32rem;
   }
 </style>
