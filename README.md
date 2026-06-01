@@ -61,11 +61,26 @@ Classics + Rebirth Radio) are seeded automatically on first boot
 from `stations/*.json` — you'll see them in the sidebar. Pick one
 and explore.
 
-To import your own iTunes XMLs as source pools today, use the CLI:
-`make import-weekly-pools manifest=path/to/your-manifest.json`
-(see [`tests/fixtures/sample_pool_manifest.json`](tests/fixtures/sample_pool_manifest.json)
-for the manifest shape). A dedicated UI for importing pools ships
-alongside the visual block editor (§16.2).
+To import your own iTunes XMLs as source pools, open the
+[**Sources** page](http://localhost:5173/sources) (or click "Source
+pools →" from the landing). Drag-and-drop or pick an XML file, name
+the pool, choose a role (content / reference), and hit Import. Re-
+import to refresh, Delete to remove — all from the same page (§16.25).
+
+In Music (macOS), export a playlist as XML via:
+**File → Library → Export Playlist… → choose "XML" format**.
+(In iTunes on Windows, same path.)
+
+**Advanced: many pools from a manifest** (CLI). The classic batch path
+still ships for power users — drop a JSON manifest at
+[`tests/fixtures/sample_pool_manifest.json`](tests/fixtures/sample_pool_manifest.json)'s
+shape and run:
+```bash
+make import-weekly-pools manifest=path/to/your-manifest.json
+```
+Useful when you have a fixed list of pools to import in CI / on a
+fresh dev box, or when re-bootstrapping a station from scratch. The
+UI path above is the recommended hobbyist flow.
 
 Full install + first-station tutorial: see
 [docs/getting-started.md](docs/getting-started.md)

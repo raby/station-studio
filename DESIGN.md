@@ -6116,19 +6116,23 @@ import) is the only remaining Phase B tail item, parked on
 ## 15. Status snapshot
 
 A quick "where are we" for a future reader. Last updated alongside
-**§16.19 (station detail richness shipped — `/stations/[slug]` renders
-an overview bundle from `GET /api/stations/{slug}/overview`: template
-summary (slot count / layout form / strategy mix / cursor mode), source
-pools with a not-imported setup-gap flag, persistent cursor positions,
-and a generation rollup carrying the §16.2.3-homed staleness hint. The
-overview fetch is non-fatal — failure omits the cards, core page stays
-intact. 3 commits incl. c1 review (staleness `stale_count` uses
-`updated_at` as a proxy; precise fix queued §16.19.t1). Preceded by
-§16.17 excluded-candidates enrichments + §16.2.3 atomic slot editing
-(`PATCH /api/stations/{slug}/blocks`, optimistic-concurrency 409, `POST
-/export` Decision A3) + §16.10 Rules CRUD UI + §16.12 stations list
-polish + §16.2.2 read-only canvas)**. Phase B is DONE;
-Phase C / §16 product work underway. Both station-studio's
+**§16.25 (pool-import UI shipped — `/sources` page with single + batch
+add forms, per-row Re-import + Delete with blast-radius confirms,
+file-upload primary + advanced typed-path; `<PoolImportPanel>` extracted
+to `web/src/lib/components/sources/` and embedded on `/stations/[slug]`
+scoped to the station's declared sources, with `on:changed` re-fetching
+the §16.19 overview so the "not imported" badge clears in real time;
+that badge becomes an `<a href="/sources?pool=…&role=…">` deep-link
+prefilling the add-form. New `POST /api/sources/upload` multipart
+endpoint (streaming → `tempfile.mkstemp` → `import_source` → `finally`
+cleanup). Six commits with mid-slice review fixes at every step;
+G3 sequential submit verified by call-order test; 🟡-4 mutation-idiom
+unification documented honestly as a hybrid (full immutability broke
+Svelte 4 keyed-each bindings). **§16.13 D1 gate CLEARED — installer
+is now the next buildable slice.** Preceded by §16.19 (station detail
+overview), §16.17 (excluded-candidates), §16.2.3 (atomic slot edit),
+§16.10 (Rules CRUD), §16.12 (stations list polish), §16.2.2 (read-only
+canvas))**. Phase B is DONE; Phase C / §16 product work underway. Both station-studio's
 byte-equality tests are GREEN at production-scale chain depth:
 weekly port (real XMLs, 30 generations, 8 asserted weeks spanning
 the mix-exclusion-window slide); Classics (32-week, two full cycles,
@@ -6164,14 +6168,15 @@ direction — spec slice §16.2.0 is the next planned work.
 | **§17 port roadmap**     | **Phase A + Phase B both complete. Phase A (§14.17–§14.21): pre-port unblocks. Phase B (§14.22–§14.41): port — byte-equality verified at depth against weekly + Classics. Phase C (production cutover): operational, not engineering — external validation in flight with the station owner. Next engineering direction: §16.0 OSS framing shift (shipped) + §16.2 visual block editor (the flagship hobbyist feature). |
 | **Product framing**      | **OSS for radio hobbyists (§16.0). MIT-licensed. README hobbyist-facing; CONTRIBUTING.md codifies slice pattern. Two example stations (Classics + Rebirth Radio) ship; hobbyist starter station queued (§16.7).** |
 | Visual block editor      | **§16.2.2 SHIPPED** — read-only canvas at `/stations/[slug]/visualise`. `GET /api/stations/{slug}/sidecar` endpoint serves template + sidecar in one fetch; trivial-sidecar fallback for un-authored stations (Decision E — frontend never handles "no sidecar"). 7 Svelte components (`<EditorCanvas>`, `<Section>`, `<SectionHeader>`, `<ChipFlow>`, `<Chip>`, `<ViewModeToggle>`, `<DetailPanel>`) compose the canvas. View-mode prefs (labels / colour / macros) persist to localStorage. Chips are native `<button>`s (keyboard a11y); click opens a slide-in DetailPanel with full BlockSpec / macro spec. `<500-chip` sections start expanded; `>500` sections start collapsed with "Large station" hint. Discoverability via "🗺 Visualise template" link from `/stations/[slug]`. **§16.2.3 SHIPPED** — atomic slot editing: click a chip → DetailPanel edit form (parameter fields only; cursor_id as a select) → Save → `PATCH /api/stations/{slug}/blocks` (server-enforced parameter-only, optimistic-concurrency 409, parse_template revalidation) → refetch. "Export to disk" writes `stations/{slug}.json` (Decision A3, DB-as-truth). row_template edits warn they change every row. **Next**: §16.2.4 macro editing + block retyping. |
-| Station detail page      | **§16.19 SHIPPED** — `/stations/[slug]` overview bundle (`GET /api/stations/{slug}/overview`): template summary, source pools (not-imported gap flagged red), persistent cursor positions, generation rollup + staleness hint (`stale_count`, `updated_at`-proxy; precise fix §16.19.t1). Non-fatal fetch; bounded aggregate queries. |
+| Station detail page      | **§16.19 SHIPPED** — `/stations/[slug]` overview bundle (`GET /api/stations/{slug}/overview`): template summary, source pools (not-imported gap flagged red), persistent cursor positions, generation rollup + staleness hint (`stale_count`, `updated_at`-proxy; precise fix §16.19.t1). Non-fatal fetch; bounded aggregate queries. **§16.25 extension**: not-imported badge is a deep-link to `/sources?pool=…&role=…`; `<PoolImportPanel>` embedded below the overview, scoped to declared sources; panel-driven changes refresh the overview live. |
+| Pool-import UI           | **§16.25 SHIPPED** — `/sources` page (list + single/batch add + per-row Re-import/Delete) + per-station embed + deep-link badge. `POST /api/sources/upload` multipart endpoint (streaming + `mkstemp` + `finally` cleanup). File-upload primary, typed-path advanced. CLI manifest (`make import-weekly-pools`) kept as the power-user channel. **Closed §16.13 D1.** Watch-list: §16.25.t1 (mid-batch mode-switch UX), §16.25.t2 (upload cancel / AbortController). |
 | Trace versioning         | Deferred. See §16.4 (queued; not on the critical path post-Phase-B). |
 | Accessibility pass       | Deferred. §16.5 — single sweep after §16.2 ships.                |
 | Rules CRUD UI panel      | **Shipped (§16.10).** `<RulesPanel>` self-contained component (load → edit → Save/Reset, client-side validation mirroring engine.rules, per-row state) + `/stations/[slug]/rules` route + "⚙ Rules" header link. Backend CRUD pre-existed; frontend-only. Reusable for the §16.2 sidebar shell. |
 | In-UI generation progress | **Shipped (§16.11).** Polling-job-id transport (POST/GET/DELETE `/api/jobs/...`); engine became a generator yielding `ProgressEvent | GenerationResult` with Decision G invariants enforced + tested; in-memory `JobStore` with threading.Lock + immutable snapshots + lazy GC (cancelled-immediate, done/error-60s-grace) + per-(slug, kind) eviction. `<ProgressIndicator>` Svelte component reads `JobSnapshot` snapshots; station-detail page wires `startGenerateJob` → `watchJob` → navigate; JobStartConflict (409) adopts the existing job. Unblocks §16.2.6 live preview's transport. |
 | Stations list polish     | **Shipped (§16.12).** Landing page has search (name/slug substring), cadence + generated filter chips, sort (name / last-generated / recently-edited), + per-row "Last generated: WEEKLY 026 · 3 days ago" line. GET /api/stations returns enriched StationSummary aggregates (2 bounded queries, argmax-by-timestamp). Pure filter/sort logic in web/src/lib/stations.ts. |
-| Install story            | Queued — §16.13. Design pass done: static-bundle wheel (pipx) + docker-compose, both first-class. **Gated on §16.25 (pool-import UI)** — won't ship while BYO-music import still needs the Makefile. Retires §16.22's SSR premise (no Node at runtime). |
-| Pool-import UI           | **NEXT — §16.25.** Design pass done. The §16.13 D1 gate-unblocker. Builds `/sources` (list + add) + a per-station embed; file-upload primary + path-input as advanced/local. ~6-8 commits. |
+| Install story            | Queued — §16.13. Design pass done: static-bundle wheel (pipx) + docker-compose, both first-class. **D1 gate CLEARED by §16.25** — BYO-music import is now self-serve via the UI; nothing else blocks shipping the installer. Retires §16.22's SSR premise (no Node at runtime). |
+| Pool-import UI           | **SHIPPED — §16.25.** `/sources` page (list + single/batch add + per-row Re-import + Delete) + per-station embed on `/stations/[slug]` that re-fetches the §16.19 overview on any panel change + §16.19 "not imported" badge deep-links to the prefilled add-form. File-upload primary, typed-path advanced. Six commits + multiple mid-slice review fixes. |
 | Hobbyist starter station | Queued — §16.14. 100-200-slot example structurally simpler than Classics, with synthetic starter XMLs for end-to-end boot without external data. |
 | Docs site                | Deferred — §16.15. After §16.2 + §16.13 + §16.14 ship.           |
 | Disk-export prune endpoint | Queued — §16.16. Demand-gated. §14.3's prune punt. |
@@ -6183,6 +6188,7 @@ direction — spec slice §16.2.0 is the next planned work.
 | Trace viewer SSR migration | Queued — §16.22. Quality-of-life. First-paint flash removal. |
 | Week-vs-week trace diff  | Queued — §16.23. Waits for use case (template-edit → output-diff). |
 | Post-validation fixes    | Reserved placeholder — §16.24. TBD count. Slot for external port validation feedback. |
+| Pool-import UI           | **Shipped — §16.25 (6 commits).** `/sources` page (list + single/batch add + per-row Re-import/Delete) + per-station embed scoped to declared sources + §16.19 badge deep-link prefill. New `POST /api/sources/upload` multipart endpoint. **Closed §16.13 D1.** |
 | §14.42 Classics cycle wrap | Queued tail. Tiny (~1 commit). Symmetric with §14.41's mix-slide lock for weekly. Defer-able. |
 | §14.38b Multi-prior import | Queued tail. Small (~2-3 commits). Lets operators import N weeks of prior history at cutover. Wait for demand. |
 | Scheduler                | Deferred (v1.1).                                                 |
@@ -6245,8 +6251,8 @@ Master order at a glance. Detailed briefs follow below.
 | 3 | §16.2.1+ visual block editor implementation | multi-slice | Per the §16.2.0 spec; flagship hobbyist feature. |
 | 4 | ~~§16.11 In-UI generation progress~~ | ✅ shipped | **SHIPPED** (d10c560). Job-runner pattern: `generate_stream` engine generator + in-memory `JobStore` + `POST/GET/DELETE /api/jobs/...` polling + `<ProgressIndicator>` Svelte component. Unblocks §16.2.6 live preview's transport. |
 | 5 | ~~§16.12 Stations list polish (search / filter / recent generations)~~ | ✅ shipped | **SHIPPED.** Search + cadence/generated filter chips + sort (name / last-generated / recently-edited) + per-row last-generated line. GET /api/stations enriched with StationSummary aggregates. |
-| 6 | §16.25 Pool-import UI | medium-large | **The §16.13 D1 gate-unblocker.** Builds `/sources` (list + add) + per-station embed; file-upload primary + path-input as advanced/local. Decisions all went highest-coverage; ~6-8 commits. |
-| 7 | §16.13 Install story (pip / docker) | medium | Hobbyist friction floor. Design pass done (static wheel + docker, both channels). **Re-gated (D1): lands after §16.25 pool-import UI** — a distributable whose first step is `make import-…` is a trap. |
+| 6 | §16.25 Pool-import UI | **SHIPPED** | The §16.13 D1 gate-unblocker. `/sources` page + per-station embed + deep-link badge; six commits, multiple mid-slice review passes. |
+| 7 | §16.13 Install story (pip / docker) | **NEXT** | Hobbyist friction floor. Design pass done (static wheel + docker, both channels). **D1 gate CLEARED by §16.25** — no remaining blockers; ready to build. |
 | 7 | §16.14 Hobbyist starter station | small | Fresh install needs a runnable example without external XMLs. |
 | 8 | §16.15 Docs site (MkDocs-Material) | medium | After enough product is built to justify a doc site. |
 
@@ -9439,14 +9445,15 @@ stranger runs without the repo."** Three structural facts shape it:
 
 **Decisions (locked in the §16.13 design pass).**
 
-* **D1 — Sequencing: ship AFTER §16.25 (pool-import UI).** §16.13
-  stays queued behind a self-serve pool-import path. §16.25 is the
-  named slice that closes this gate — `/sources` + per-station
-  embed, file-upload primary + path-input as advanced, design pass
-  done. Rationale: distribution lowers friction for strangers; a
-  distributable whose first required step is a
-  Makefile target is friction, not less of it. Don't market "pip
-  install + try" until "try" works end-to-end without the repo.
+* **D1 — Sequencing: ship AFTER §16.25 (pool-import UI). ✅ CLEARED.**
+  §16.25 shipped (`/sources` page + per-station embed + deep-link
+  badge + file-upload primary). A fresh `pipx`- or docker-installed
+  user can now load their iTunes XML end-to-end without touching the
+  repo or the Makefile. **No remaining blockers — §16.13 is the
+  next buildable slice.** Original rationale preserved for future
+  readers: distribution lowers friction for strangers; a
+  distributable whose first required step is a Makefile target is
+  friction, not less of it.
 * **D2 — Distribute BOTH a static-bundle wheel AND docker-compose.**
   The wheel (adapter-static SPA served by FastAPI) is the
   single-process, no-Node-at-runtime artifact for people who have
@@ -9498,10 +9505,11 @@ scope here, and explicitly not the wheel's job. §16.22 should be
 re-scoped to "client-side `load()` refactor (flash on nav only)" or
 closed; flagged for the next plan-audit.
 
-**Why not now.** D1: the new-user surface isn't self-serve yet
+**Why not now.** ~~D1: the new-user surface isn't self-serve yet
 (pool import still needs the Makefile). Until that's closed, a
-polished installer would ship a trap. Distribution polish lands
-when there's something a stranger can fully use without the repo.
+polished installer would ship a trap.~~ **§16.25 closed the D1 gate
+(pool-import UI shipped).** §16.13 is now the next buildable slice;
+no remaining blockers.
 
 **Effort.** Medium (~5-8 commits across pyproject + CLI + static
 migration + wheel + docker + docs).
@@ -10185,6 +10193,82 @@ site (the inline export hint stays until docs replace it).
 **Trigger.** Now. §16.19 just shipped, §16.13's design entry is
 locked, and the only thing between Station Studio and a real "pip
 install + try" story is this slice.
+
+---
+
+**What shipped.** Six commits + multiple mid-slice review passes,
+all four decisions landed at their locked-highest-coverage shape.
+
+* **c1** — `POST /api/sources/upload` (multipart streaming →
+  `tempfile.mkstemp` → `import_source` → `finally` cleanup). Shared
+  `_import_to_pool` helper DRYs the error contract across the new
+  endpoint and the existing `/import`. + 12 tests. Mid-slice review
+  added `_validate_name` (empty/whitespace-only name → 400; closed
+  a pre-existing latent gap on both `/import` and `/upload`) +
+  `OSError` wrap around `shutil.copyfileobj` so disk-full surfaces
+  with an honest message.
+* **c2** — `/sources` SvelteKit page + single-pool add-form. Four
+  new `api.ts` helpers (`listSources`, `uploadSource` —
+  multipart/FormData, the first non-JSON helper in the module —
+  `importSourceByPath`, `deleteSource`) + types. Inline iTunes-XML
+  export hint (G5 copy). Landing-page nav link added. Mid-slice
+  review: `bind:this={fileInputEl}` for the post-submit DOM clear
+  (was a global `document.querySelector` keyed on a test-id) +
+  regression test asserting a second submit without re-picking a
+  file correctly fails validation.
+* **c3** — multi-pool batch mode (D2 toggle). Two-phase `submitBatch`
+  with **sequential** `for...of await` (G3 — proven by a call-order
+  test: parallel would interleave start/end markers). Per-row
+  `pending → uploading → imported | failed` status with semantic
+  colours; partial-success drops succeeded rows, keeps failed for
+  retry. Mid-slice review: outer `catch` on `submitBatch` for
+  defensive parity with `submit()`. Watch-list items §16.25.t1
+  (mid-batch mode-switch UX) and §16.25.t2 (upload cancel via
+  `AbortController`) homed.
+* **c4** — per-row Re-import + Delete (D4). `window.confirm()` with
+  blast-radius copy mirroring §16.3 station-delete. Re-import
+  expands the row inline with read-only role (🟡-4 — role change
+  is queued as a separate small PATCH slice). Mid-slice review
+  shipped as THREE commits: (a) three 🟡 fixes — concurrent-delete
+  race fixed by locking all row actions during any delete, stale
+  `successMessage` cleared on every list-section op, re-import
+  success banner moved to a dedicated `reimport-success` in the
+  list section (not the form's banner above); (b) `afterEach(vi.restoreAllMocks)`
+  for spy hygiene; (c) `SOURCES_TABLE_COLS` constant for the
+  expansion row's `colspan` (no more magic number).
+* **c5** — `<PoolImportPanel>` extraction into
+  `web/src/lib/components/sources/` + per-station embed on
+  `/stations/[slug]` + §16.19 "not imported" badge becomes an
+  `<a href="/sources?pool=…&role=…">` deep-link + query-param
+  prefill on `/sources`. Folded in the queued cleanups: 🟢-3
+  (replace `row.file!` non-null with explicit runtime narrowing in
+  both `submitBatch` and `submitReimport`) fully; 🟢-4 partial
+  (whole-array operations immutable, per-row status flips stay
+  in-place — full immutability broke Svelte 4's keyed-each
+  `bind:value` and the docstring documents the hybrid contract
+  explicitly so a future reader doesn't repeat the experiment).
+  Mid-slice review: panel dispatches a `changed` event after any
+  successful list-modifying op; station page re-fetches
+  `getStationOverview` on `on:changed` so the §16.19 "not imported"
+  badge clears in real time (without this, the embed felt broken).
+  `{#key poolParam|roleParam}` wrapper on /sources to handle the
+  same-route navigation case.
+* **c6** — README quick-start rewrite: pool-import path is now
+  "open Sources → upload" (UI primary); the CLI manifest gets an
+  "Advanced" section (G4 keep CLI, don't deprecate). DESIGN
+  §16.13 **D1 gate flipped to CLEARED**; capability + queue rows
+  updated; this "what shipped" suffix.
+
+**Tests.** Final counts: 8 backend tests (`POST /upload`), 19 source
+api-helper + page tests, 14 panel-embed + deep-link tests on the
+station detail. Plus the existing /sources page tests survived the
+extraction unchanged. svelte-check clean throughout.
+
+**Not done.** Per the locked plan: pool color assignment, pool
+rename, pool merge, **role change after import** (queued small
+PATCH slice), import audit log, multi-user. Watch-list: §16.25.t1
+(mid-batch mode-switch UX), §16.25.t2 (upload cancel /
+AbortController). All documented above.
 
 ---
 
