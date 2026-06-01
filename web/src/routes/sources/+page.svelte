@@ -280,6 +280,16 @@
       }
 
       await refresh();
+    } catch (e) {
+      // c3 mid-slice review 🟡-1: defensive parity with submit(). The
+      // per-row API errors are caught inside Phase 2's inner try/catch
+      // (that's how partial-success works). This OUTER catch handles
+      // unexpected throws from Phase 1 (validation), Phase 3 (summary),
+      // or refresh() — none of which today have a reachable failure
+      // path, but a future refactor could introduce one. Without this,
+      // the error would escape silently: `finally` would clear
+      // `submitting` but the user would see no feedback at all.
+      formError = e instanceof ApiError ? e.message : String(e);
     } finally {
       submitting = false;
     }

@@ -10085,6 +10085,30 @@ import** (queued as a small future PATCH slice), import audit log,
 multi-user concerns. Future plan-audits: do not assume these
 landed under §16.25.
 
+**Watch-list (queued follow-ups from c3 mid-slice review).** Items
+this slice deliberately defers, each with a home so a future
+plan-audit can find them:
+
+* **§16.25.t1 — mid-batch mode-switch UX hardening.** If a user
+  adds rows in upload mode (with files), toggles to path mode,
+  then submits, every row fails with "Type the server-side path"
+  — confusing because the uploaded files are still in row state,
+  just dormant for the current mode. Recoverable by toggling
+  back, and the per-row error message is honest. Possible fixes:
+  disable the mode toggle while any row has dirty fields, OR
+  warn with a confirm, OR clear non-active-mode fields on
+  toggle. **Home: §16.25 c7 (slice review sweep) candidate** —
+  pick a fix only if validation tells us this bit a real user.
+* **§16.25.t2 — Upload cancel via `AbortController`.** A user
+  submitting 6 large XMLs has no way to abort mid-batch if they
+  realise row 3 has the wrong file. Needs `AbortController`
+  threaded through `fetch_` in `uploadSource` + a per-row cancel
+  affordance in the UI + a "Cancel batch" button that aborts the
+  pending tail. Parallels §16.11's job-cancel surface
+  semantically but operates on `fetch` not the job-store.
+  **Home: separate post-§16.25 slice (~2-3 commits).** Out of
+  scope for v1 of the install-story unblocker.
+
 **Prerequisites this slice owns (the parts that aren't "just UI").**
 
 * The new `POST /api/sources/upload` endpoint (🟡-1, G1, G2) that
@@ -10129,6 +10153,15 @@ landed under §16.25.
    secondary global-context affordance); `/sources` learns to
    read those query params and prefill the add-form. Tests cover
    both mount points (no state leak) + the prefill route.
+   **Cleanups to fold in at extraction time** (c3 mid-slice review):
+   * 🟢-3 — replace `row.file!` non-null assertion with a proper
+     type guard inside `submitBatch` (validation invariant is
+     real but the `!` is unsafe sugar).
+   * 🟢-4 — unify the mutation idiom across the panel (Phase 1
+     uses in-place mutation + `rows = rows`; `addRow` uses
+     `[...rows, makeEmptyRow()]`). Pick one — the all-immutable
+     `.map(...)` for status flips is the cleaner Svelte-5-ready
+     choice — and apply throughout the extracted component.
 6. **c6 — README + docs (G4 keep CLI).** README "Quick start"
    learns the new path. The "to import your own iTunes XMLs, use
    the CLI…" paragraph is rewritten: "open `/sources` and upload
@@ -10138,6 +10171,8 @@ landed under §16.25.
    **§16.13 D1 gate flipped to CLEARED** in the §16.13 entry +
    queue rows.
 7. **c7 (optional) — slice review sweep.** Whatever fell out.
+   Likely candidate: **§16.25.t1** (mid-batch mode-switch UX
+   hardening) if validation surfaces it as a real friction.
 
 **Effort.** Medium-large (~6-8 commits, all four decisions went to
 the highest-coverage option). Largest single recent slice by code
