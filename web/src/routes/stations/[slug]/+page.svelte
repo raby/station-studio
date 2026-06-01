@@ -18,6 +18,7 @@
   } from '$lib/api';
   import ProgressIndicator from '$lib/components/ProgressIndicator.svelte';
   import PoolImportPanel from '$lib/components/sources/PoolImportPanel.svelte';
+  import { confirmDialog } from '$lib/confirm';
   import { page } from '$app/stores';
 
   let station: Station | null = null;
@@ -133,9 +134,14 @@
       ? playlists.find((p) => p.week === week)
       : undefined;
     if (existing) {
-      const ok = confirm(
-        `Replace week ${week}? The current trace ${existing.trace_id.slice(0, 8)}… will be deleted. (Trace history across regenerations is on the roadmap — for now this is permanent.)`,
-      );
+      const ok = await confirmDialog({
+        title: `Replace week ${week}?`,
+        body:
+          `The current trace ${existing.trace_id.slice(0, 8)}… will be deleted. ` +
+          `(Trace history across regenerations is on the roadmap — for now this is permanent.)`,
+        confirmLabel: 'Replace',
+        danger: true,
+      });
       if (!ok) return;
     }
 
@@ -225,9 +231,14 @@
   }
 
   async function regenRow(p: PlaylistSummary) {
-    const ok = confirm(
-      `Regenerate week ${p.week}? The current trace ${p.trace_id.slice(0, 8)}… will be deleted. (Trace history across regenerations is on the roadmap — for now this is permanent.)`,
-    );
+    const ok = await confirmDialog({
+      title: `Regenerate week ${p.week}?`,
+      body:
+        `The current trace ${p.trace_id.slice(0, 8)}… will be deleted. ` +
+        `(Trace history across regenerations is on the roadmap — for now this is permanent.)`,
+      confirmLabel: 'Regenerate',
+      danger: true,
+    });
     if (!ok) return;
     // Per-row regen always uses a fresh random seed for rng:on (D3); the
     // explicit-seed path is the advanced form. Skip the generate()-level
@@ -243,9 +254,12 @@
    * error: inline error rendering, no navigation.
    */
   async function deleteRow(p: PlaylistSummary) {
-    const ok = confirm(
-      `Delete week ${p.week} (trace ${p.trace_id.slice(0, 8)}…)? This is permanent.`,
-    );
+    const ok = await confirmDialog({
+      title: `Delete week ${p.week}?`,
+      body: `Trace ${p.trace_id.slice(0, 8)}… will be removed. This is permanent.`,
+      confirmLabel: 'Delete',
+      danger: true,
+    });
     if (!ok) return;
     deleting = true;
     deleteError = null;
@@ -270,9 +284,15 @@
   async function nukeStation() {
     if (!station) return;
     const totalEntries = playlists.reduce((a, p) => a + p.entry_count, 0);
-    const ok = confirm(
-      `Delete station '${station.slug}' and all ${playlists.length} playlist${playlists.length === 1 ? '' : 's'}, ${totalEntries.toLocaleString()} total entries? This is permanent.`,
-    );
+    const ok = await confirmDialog({
+      title: `Delete station '${station.slug}'?`,
+      body:
+        `${playlists.length} playlist${playlists.length === 1 ? '' : 's'}, ` +
+        `${totalEntries.toLocaleString()} total entries. ` +
+        `This is permanent.`,
+      confirmLabel: 'Delete',
+      danger: true,
+    });
     if (!ok) return;
     deleting = true;
     deleteError = null;

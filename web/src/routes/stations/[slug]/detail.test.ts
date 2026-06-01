@@ -19,6 +19,7 @@ const {
   panelUploadSourceMock,
   panelImportByPathMock,
   panelDeleteSourceMock,
+  confirmDialogMock,
   FakeApiError,
   FakeJobStartConflict,
   pageStore,
@@ -66,6 +67,13 @@ const {
     panelUploadSourceMock: vi.fn(),
     panelImportByPathMock: vi.fn(),
     panelDeleteSourceMock: vi.fn(),
+    // §16.25.t4: replaces `vi.spyOn(window, 'confirm')` across this
+    // page's 4 destructive ops (regen, delete week, replace week,
+    // nuke station). Default is set in `beforeEach` (= Confirm
+    // clicked); per-test overrides call mockResolvedValueOnce(false)
+    // for the Cancel path. Untyped `vi.fn()` so the vi.mock factory's
+    // `(...args: unknown[])` spread typechecks.
+    confirmDialogMock: vi.fn(),
     gotoMock: vi.fn(),
     FakeApiError,
     FakeJobStartConflict,
@@ -95,6 +103,11 @@ vi.mock('$lib/api', () => ({
   uploadSource: (...args: unknown[]) => panelUploadSourceMock(...args),
   importSourceByPath: (...args: unknown[]) => panelImportByPathMock(...args),
   deleteSource: (...args: unknown[]) => panelDeleteSourceMock(...args),
+}));
+vi.mock('$lib/confirm', () => ({
+  // §16.25.t4: every confirm() call in /stations/[slug] (regen,
+  // delete week, replace week, nuke station) routes through this.
+  confirmDialog: (...args: unknown[]) => confirmDialogMock(...args),
 }));
 
 /**
@@ -178,6 +191,8 @@ describe('station detail +page.svelte', () => {
     deletePlaylistMock.mockReset();
     deleteStationMock.mockReset();
     gotoMock.mockReset();
+    confirmDialogMock.mockReset();
+    confirmDialogMock.mockResolvedValue(true);
     setSlug('cls'); // default for tests that don't care
   });
 
@@ -326,6 +341,8 @@ describe('station detail — §16.1 generate panel', () => {
     deletePlaylistMock.mockReset();
     deleteStationMock.mockReset();
     gotoMock.mockReset();
+    confirmDialogMock.mockReset();
+    confirmDialogMock.mockResolvedValue(true);
     setSlug('cls');
   });
 
@@ -420,16 +437,17 @@ describe('station detail — §16.1 generate panel', () => {
     getStationPlaylistsMock.mockResolvedValueOnce([
       { id: 1, week: 1, trace_id: 'aaaa1111', generated_at: null, entry_count: 3010 },
     ]);
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    confirmDialogMock.mockResolvedValueOnce(false);
 
     render(Page);
     const weekInput = await screen.findByTestId('advanced-week');
     await fireEvent.input(weekInput, { target: { value: '1' } });
     await fireEvent.click(screen.getByTestId('advanced-submit'));
 
-    expect(confirmSpy).toHaveBeenCalledWith(expect.stringMatching(/replace week 1/i));
+    expect(confirmDialogMock).toHaveBeenCalledWith(
+      expect.objectContaining({ title: expect.stringMatching(/replace week 1/i) }),
+    );
     expect(startGenerateJobMock).not.toHaveBeenCalled();
-    confirmSpy.mockRestore();
   });
 
   it('per-row regen confirms then starts a job with no seed for rng:off', async () => {
@@ -444,17 +462,18 @@ describe('station detail — §16.1 generate panel', () => {
       week: 5,
       slot_count: 3010,
     });
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    confirmDialogMock.mockResolvedValueOnce(true);
 
     render(Page);
     const regen = await screen.findByTestId('regen-row-5');
     await fireEvent.click(regen);
 
-    expect(confirmSpy).toHaveBeenCalledWith(expect.stringMatching(/regenerate week 5/i));
+    expect(confirmDialogMock).toHaveBeenCalledWith(
+      expect.objectContaining({ title: expect.stringMatching(/regenerate week 5/i) }),
+    );
     expect(startGenerateJobMock).toHaveBeenCalledWith('cls', 5, undefined);
     await act();
     expect(gotoMock).toHaveBeenCalledWith('/playlists/50');
-    confirmSpy.mockRestore();
   });
 
   it('per-row regen sends a fresh random seed for rng:on stations', async () => {
@@ -469,7 +488,7 @@ describe('station detail — §16.1 generate panel', () => {
       week: 5,
       slot_count: 3010,
     });
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    confirmDialogMock.mockResolvedValueOnce(true);
 
     render(Page);
     await fireEvent.click(await screen.findByTestId('regen-row-5'));
@@ -481,7 +500,6 @@ describe('station detail — §16.1 generate panel', () => {
     // would only be used if the user opened the advanced form first).
     expect(typeof seed).toBe('number');
     expect(seed).toBeGreaterThanOrEqual(0);
-    confirmSpy.mockRestore();
   });
 
   it('renders the API error inline and does not navigate on failure', async () => {
@@ -643,6 +661,8 @@ describe('station detail — §16.3 delete affordances', () => {
     deletePlaylistMock.mockReset();
     deleteStationMock.mockReset();
     gotoMock.mockReset();
+    confirmDialogMock.mockReset();
+    confirmDialogMock.mockResolvedValue(true);
     setSlug('cls');
   });
 
@@ -666,29 +686,30 @@ describe('station detail — §16.3 delete affordances', () => {
     // After delete the page refetches; return the shrunken list.
     getStationPlaylistsMock.mockResolvedValueOnce([playlistFixture()[1]]);
     deletePlaylistMock.mockResolvedValueOnce(undefined);
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    confirmDialogMock.mockResolvedValueOnce(true);
 
     render(Page);
     const btn = await screen.findByTestId('delete-row-5');
     await fireEvent.click(btn);
 
-    expect(confirmSpy).toHaveBeenCalledWith(
-      expect.stringMatching(/delete week 5.*feedface/i),
-    );
+    // Title carries the week; body carries the trace prefix. Both
+    // were one string under window.confirm(); now split across the
+    // structured options (§16.25.t4).
+    const delOpts = confirmDialogMock.mock.calls[0][0] as unknown as { title: string; body: string };
+    expect(delOpts.title).toMatch(/delete week 5/i);
+    expect(delOpts.body).toMatch(/feedface/i);
     expect(deletePlaylistMock).toHaveBeenCalledWith(5);
-    confirmSpy.mockRestore();
   });
 
   it('per-row delete: cancel skips the API call entirely', async () => {
     getStationMock.mockResolvedValueOnce(stubStation());
     getStationPlaylistsMock.mockResolvedValueOnce(playlistFixture());
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    confirmDialogMock.mockResolvedValueOnce(false);
 
     render(Page);
     await fireEvent.click(await screen.findByTestId('delete-row-5'));
 
     expect(deletePlaylistMock).not.toHaveBeenCalled();
-    confirmSpy.mockRestore();
   });
 
   it('per-row delete: 404 renders inline, no navigation', async () => {
@@ -697,7 +718,7 @@ describe('station detail — §16.3 delete affordances', () => {
     deletePlaylistMock.mockRejectedValueOnce(
       new FakeApiError(404, '404 Not Found: playlist not found'),
     );
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    confirmDialogMock.mockResolvedValueOnce(true);
 
     render(Page);
     await fireEvent.click(await screen.findByTestId('delete-row-5'));
@@ -705,7 +726,6 @@ describe('station detail — §16.3 delete affordances', () => {
 
     expect(await screen.findByTestId('delete-error')).toHaveTextContent(/playlist not found/i);
     expect(gotoMock).not.toHaveBeenCalled();
-    confirmSpy.mockRestore();
   });
 
   // ---- station nuke ---------------------------------------------------
@@ -713,41 +733,40 @@ describe('station detail — §16.3 delete affordances', () => {
   it('station nuke: confirm copy includes computed counts', async () => {
     getStationMock.mockResolvedValueOnce(stubStation());
     getStationPlaylistsMock.mockResolvedValueOnce(playlistFixture()); // 2 × 3010 = 6020
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    confirmDialogMock.mockResolvedValueOnce(false);
 
     render(Page);
     await fireEvent.click(await screen.findByTestId('delete-station'));
 
     // The dialog text mentions both the playlist count (2) and the entry
     // total (6,020 with locale separator). Loose regex so a future copy
-    // tweak doesn't break this.
-    expect(confirmSpy).toHaveBeenCalledWith(
-      expect.stringMatching(/'cls'.*2 playlists.*6,?020/i),
-    );
+    // tweak doesn't break this. Title carries the slug; body carries
+    // counts (§16.25.t4 split the single string into structured options).
+    const nukeOpts = confirmDialogMock.mock.calls[0][0] as unknown as { title: string; body: string };
+    expect(nukeOpts.title).toMatch(/'cls'/i);
+    expect(nukeOpts.body).toMatch(/2 playlists.*6,?020/i);
     expect(deleteStationMock).not.toHaveBeenCalled();
-    confirmSpy.mockRestore();
   });
 
   it('station nuke: pluralisation handles the single-playlist case', async () => {
     getStationMock.mockResolvedValueOnce(stubStation());
     getStationPlaylistsMock.mockResolvedValueOnce([playlistFixture()[0]]);
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    confirmDialogMock.mockResolvedValueOnce(false);
 
     render(Page);
     await fireEvent.click(await screen.findByTestId('delete-station'));
 
-    // "1 playlist" — singular — not "1 playlists".
-    expect(confirmSpy).toHaveBeenCalledWith(
-      expect.stringMatching(/1 playlist[^s]/i),
-    );
-    confirmSpy.mockRestore();
+    // "1 playlist" — singular — not "1 playlists". Lives in body
+    // since the title only carries the slug.
+    const singOpts = confirmDialogMock.mock.calls[0][0] as unknown as { title: string; body: string };
+    expect(singOpts.body).toMatch(/1 playlist[^s]/i);
   });
 
   it('station nuke: success navigates to landing', async () => {
     getStationMock.mockResolvedValueOnce(stubStation());
     getStationPlaylistsMock.mockResolvedValueOnce(playlistFixture());
     deleteStationMock.mockResolvedValueOnce(undefined);
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    confirmDialogMock.mockResolvedValueOnce(true);
 
     render(Page);
     await fireEvent.click(await screen.findByTestId('delete-station'));
@@ -755,7 +774,6 @@ describe('station detail — §16.3 delete affordances', () => {
 
     expect(deleteStationMock).toHaveBeenCalledWith('cls');
     expect(gotoMock).toHaveBeenCalledWith('/');
-    confirmSpy.mockRestore();
   });
 
   it('generate buttons disable while a delete is in flight (S1 race fix)', async () => {
@@ -778,7 +796,7 @@ describe('station detail — §16.3 delete affordances', () => {
     deletePlaylistMock.mockImplementationOnce(
       () => new Promise<void>((res) => { resolveDelete = res; }),
     );
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    confirmDialogMock.mockResolvedValueOnce(true);
 
     render(Page);
     await fireEvent.click(await screen.findByTestId('delete-row-5'));
@@ -790,7 +808,6 @@ describe('station detail — §16.3 delete affordances', () => {
 
     // Drain the pending delete so afterEach's act() flush doesn't hang.
     resolveDelete();
-    confirmSpy.mockRestore();
   });
 
   it('station nuke: 5xx renders inline, no navigation', async () => {
@@ -799,7 +816,7 @@ describe('station detail — §16.3 delete affordances', () => {
     deleteStationMock.mockRejectedValueOnce(
       new FakeApiError(500, '500 Internal Server Error: db locked'),
     );
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    confirmDialogMock.mockResolvedValueOnce(true);
 
     render(Page);
     await fireEvent.click(await screen.findByTestId('delete-station'));
@@ -807,7 +824,6 @@ describe('station detail — §16.3 delete affordances', () => {
 
     expect(await screen.findByTestId('delete-error')).toHaveTextContent(/db locked/i);
     expect(gotoMock).not.toHaveBeenCalled();
-    confirmSpy.mockRestore();
   });
 });
 
@@ -824,6 +840,8 @@ describe('station detail — §16.19 overview', () => {
     panelImportByPathMock.mockReset();
     panelDeleteSourceMock.mockReset();
     gotoMock.mockReset();
+    confirmDialogMock.mockReset();
+    confirmDialogMock.mockResolvedValue(true);
     setSlug('cls');
     // Core page deps — the overview is additive on top.
     getStationMock.mockResolvedValue({
@@ -914,7 +932,7 @@ describe('station detail — §16.19 overview', () => {
       ])
       .mockResolvedValueOnce([]);
     panelDeleteSourceMock.mockResolvedValue(undefined);
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    confirmDialogMock.mockResolvedValueOnce(true);
 
     render(Page);
 
@@ -934,7 +952,6 @@ describe('station detail — §16.19 overview', () => {
     });
     expect(panelDeleteSourceMock).toHaveBeenCalledWith(1);
 
-    confirmSpy.mockRestore();
   });
 
   it('shows the cursors card only for persistent templates', async () => {

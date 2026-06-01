@@ -53,6 +53,7 @@
     uploadSource,
     type Source,
   } from '$lib/api';
+  import { confirmDialog } from '$lib/confirm';
 
   export let scope: string[] | undefined = undefined;
   export let initialName: string | undefined = undefined;
@@ -130,14 +131,18 @@
   // filled 5 rows and clicked once by accident, all work vanished. A
   // row counts as "dirty" if name OR file OR path has content (a fresh
   // row from `makeEmptyRow()` has all three empty).
-  function exitBatchMode() {
+  async function exitBatchMode() {
     const dirtyRows = rows.filter(
       (r) => r.name.trim() !== '' || r.file !== null || r.path.trim() !== '',
     );
     if (dirtyRows.length > 0) {
-      const ok = confirm(
-        `Discard ${dirtyRows.length} unsaved row${dirtyRows.length === 1 ? '' : 's'}?`,
-      );
+      const ok = await confirmDialog({
+        title: 'Discard unsaved rows?',
+        body: `${dirtyRows.length} row${dirtyRows.length === 1 ? '' : 's'} ${dirtyRows.length === 1 ? 'has' : 'have'} content that will be lost.`,
+        confirmLabel: 'Discard',
+        cancelLabel: 'Keep editing',
+        danger: true,
+      });
       if (!ok) return;
     }
     rows = [];
@@ -192,6 +197,7 @@
   }
 
   async function submit() {
+    console.log('[panel] submit() fired', { name, role, mode, hasFile: !!fileList?.[0] });
     formError = null;
     successMessage = null;
     submitting = true;
@@ -376,11 +382,15 @@
       reimportError = 'Type the server-side path to the XML.';
       return;
     }
-    const ok = confirm(
-      `Replace ${pool.track_count.toLocaleString()} track${pool.track_count === 1 ? '' : 's'} ` +
-        `in pool '${pool.name}' (${pool.role}) with this new file? ` +
-        `This cannot be undone. (Generated playlists are unaffected — they reference tracks directly.)`,
-    );
+    const ok = await confirmDialog({
+      title: `Replace pool '${pool.name}'?`,
+      body:
+        `Replaces all ${pool.track_count.toLocaleString()} track${pool.track_count === 1 ? '' : 's'} ` +
+        `(role: ${pool.role}). This cannot be undone.\n\n` +
+        `Generated playlists are unaffected — they reference tracks directly.`,
+      confirmLabel: 'Replace',
+      danger: true,
+    });
     if (!ok) return;
 
     reimporting = true;
@@ -412,11 +422,15 @@
   let deleteError: string | null = null;
 
   async function deletePool(pool: Source) {
-    const ok = confirm(
-      `Delete pool '${pool.name}' and its ${pool.track_count.toLocaleString()} track${pool.track_count === 1 ? '' : 's'}? ` +
-        `This cannot be undone. ` +
-        `(Generated playlists are unaffected — they reference tracks directly, not pools.)`,
-    );
+    const ok = await confirmDialog({
+      title: `Delete pool '${pool.name}'?`,
+      body:
+        `${pool.track_count.toLocaleString()} track${pool.track_count === 1 ? '' : 's'}. ` +
+        `This cannot be undone.\n\n` +
+        `Generated playlists are unaffected — they reference tracks directly, not pools.`,
+      confirmLabel: 'Delete',
+      danger: true,
+    });
     if (!ok) return;
     deleting = pool.id;
     deleteError = null;

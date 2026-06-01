@@ -14,6 +14,7 @@ const {
   uploadSourceMock,
   importSourceByPathMock,
   deleteSourceMock,
+  confirmDialogMock,
   FakeApiError,
 } = vi.hoisted(() => {
   class FakeApiError extends Error {
@@ -29,6 +30,12 @@ const {
     uploadSourceMock: vi.fn(),
     importSourceByPathMock: vi.fn(),
     deleteSourceMock: vi.fn(),
+    // §16.25.t4: replaces the per-test `vi.spyOn(window, 'confirm')`.
+    // Default is set in `beforeEach` (= resolve(true)); tests override
+    // per-call when they need the "user cancelled" path. Untyped
+    // `vi.fn()` so the spread of `unknown[]` args in the vi.mock
+    // factory below typechecks.
+    confirmDialogMock: vi.fn(),
     FakeApiError,
   };
 });
@@ -39,6 +46,9 @@ vi.mock('$lib/api', () => ({
   uploadSource: (...args: unknown[]) => uploadSourceMock(...args),
   importSourceByPath: (...args: unknown[]) => importSourceByPathMock(...args),
   deleteSource: (...args: unknown[]) => deleteSourceMock(...args),
+}));
+vi.mock('$lib/confirm', () => ({
+  confirmDialog: (...args: unknown[]) => confirmDialogMock(...args),
 }));
 
 // §16.25 c5: /sources reads `?pool=…&role=…` from $page.url.searchParams
@@ -68,6 +78,10 @@ beforeEach(() => {
   deleteSourceMock.mockReset();
   // Default: empty list (page renders empty state).
   listSourcesMock.mockResolvedValue([]);
+  // §16.25.t4 default confirm outcome = user clicked Confirm. Tests
+  // that need the Cancel path override with mockResolvedValueOnce(false).
+  confirmDialogMock.mockReset();
+  confirmDialogMock.mockResolvedValue(true);
   // Default: no query params (deep-link prefill OFF).
   testSearch = '';
 });
@@ -373,11 +387,15 @@ describe('/sources — batch mode (c3 D2 multi-pool)', () => {
       target: { value: 'WIP' },
     });
 
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    confirmDialogMock.mockResolvedValueOnce(false);
     await fireEvent.click(screen.getByTestId('single-mode-toggle'));
 
-    expect(confirmSpy).toHaveBeenCalledTimes(1);
-    expect(confirmSpy.mock.calls[0][0]).toMatch(/Discard 1 unsaved row/);
+    expect(confirmDialogMock).toHaveBeenCalledTimes(1);
+    // §16.25.t4: the dialog now takes structured options. Title +
+    // body together carry the count copy that used to be one string.
+    const cancelCall = confirmDialogMock.mock.calls[0][0] as unknown as { title: string; body: string };
+    expect(cancelCall.title).toMatch(/Discard unsaved rows/);
+    expect(cancelCall.body).toMatch(/1 row has content/);
     // Cancel → still in batch mode, row preserved.
     expect(screen.getByTestId('batch-form')).toBeInTheDocument();
     expect(screen.getByTestId('batch-row-name')).toHaveValue('WIP');
@@ -393,11 +411,13 @@ describe('/sources — batch mode (c3 D2 multi-pool)', () => {
     await fireEvent.input(nameInputs[0], { target: { value: 'A' } });
     await fireEvent.input(nameInputs[1], { target: { value: 'B' } });
 
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    confirmDialogMock.mockResolvedValueOnce(true);
     await fireEvent.click(screen.getByTestId('single-mode-toggle'));
 
-    expect(confirmSpy).toHaveBeenCalledTimes(1);
-    expect(confirmSpy.mock.calls[0][0]).toMatch(/Discard 2 unsaved rows/);
+    expect(confirmDialogMock).toHaveBeenCalledTimes(1);
+    const okCall = confirmDialogMock.mock.calls[0][0] as unknown as { title: string; body: string };
+    expect(okCall.title).toMatch(/Discard unsaved rows/);
+    expect(okCall.body).toMatch(/2 rows have content/);
     // Confirmed → back to single mode.
     expect(screen.queryByTestId('batch-form')).not.toBeInTheDocument();
     expect(screen.getByTestId('add-pool-form')).toBeInTheDocument();
@@ -680,18 +700,18 @@ describe('/sources — per-row Delete (D4)', () => {
       ])
       .mockResolvedValueOnce([]); // after delete
     deleteSourceMock.mockResolvedValue(undefined);
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    confirmDialogMock.mockResolvedValueOnce(true);
 
     render(Page);
     const deleteBtn = await screen.findByTestId('pool-row-delete');
     await fireEvent.click(deleteBtn);
 
-    // Confirm dialog spelled out the blast radius.
-    expect(confirmSpy).toHaveBeenCalledTimes(1);
-    const message = confirmSpy.mock.calls[0][0] as string;
-    expect(message).toMatch(/DOOMED/);
-    expect(message).toMatch(/247 track/);
-    expect(message).toMatch(/cannot be undone/i);
+    // Confirm dialog spelled out the blast radius across title + body.
+    expect(confirmDialogMock).toHaveBeenCalledTimes(1);
+    const opts = confirmDialogMock.mock.calls[0][0] as unknown as { title: string; body: string };
+    expect(opts.title).toMatch(/DOOMED/);
+    expect(opts.body).toMatch(/247 track/);
+    expect(opts.body).toMatch(/cannot be undone/i);
 
     expect(deleteSourceMock).toHaveBeenCalledWith(7);
     // Row gone after refresh.
@@ -703,13 +723,13 @@ describe('/sources — per-row Delete (D4)', () => {
     listSourcesMock.mockResolvedValue([
       { id: 1, name: 'KEEP_ME', role: 'content', track_count: 5 },
     ]);
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    confirmDialogMock.mockResolvedValueOnce(false);
 
     render(Page);
     const deleteBtn = await screen.findByTestId('pool-row-delete');
     await fireEvent.click(deleteBtn);
 
-    expect(confirmSpy).toHaveBeenCalled();
+    expect(confirmDialogMock).toHaveBeenCalled();
     expect(deleteSourceMock).not.toHaveBeenCalled();
     // Pool still in the list.
     expect(screen.getByTestId('pool-row')).toHaveAttribute('data-pool-name', 'KEEP_ME');
@@ -721,7 +741,7 @@ describe('/sources — per-row Delete (D4)', () => {
       { id: 1, name: 'STALE', role: 'content', track_count: 3 },
     ]);
     deleteSourceMock.mockRejectedValueOnce(new FakeApiError(404, 'not found'));
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    confirmDialogMock.mockResolvedValueOnce(true);
 
     render(Page);
     const deleteBtn = await screen.findByTestId('pool-row-delete');
@@ -787,7 +807,7 @@ describe('/sources — per-row Re-import (D4 + 🟡-4 read-only role)', () => {
       tracks_imported: 150,
       entries_imported: 150,
     });
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    confirmDialogMock.mockResolvedValueOnce(true);
 
     render(Page);
     await fireEvent.click(await screen.findByTestId('pool-row-reimport'));
@@ -798,11 +818,11 @@ describe('/sources — per-row Re-import (D4 + 🟡-4 read-only role)', () => {
     await fireEvent.click(screen.getByTestId('reimport-submit'));
 
     // Confirm dialog called out the blast radius + the pool name.
-    expect(confirmSpy).toHaveBeenCalled();
-    const message = confirmSpy.mock.calls[0][0] as string;
-    expect(message).toMatch(/100 tracks/);
-    expect(message).toMatch(/'DAYTIME'/);
-    expect(message).toMatch(/cannot be undone/i);
+    expect(confirmDialogMock).toHaveBeenCalled();
+    const opts = confirmDialogMock.mock.calls[0][0] as unknown as { title: string; body: string };
+    expect(opts.title).toMatch(/'DAYTIME'/);
+    expect(opts.body).toMatch(/100 tracks/);
+    expect(opts.body).toMatch(/cannot be undone/i);
 
     // 🟡-4: the API call used the EXISTING name + role, not anything
     // the user could have changed in the dialog.
@@ -812,17 +832,17 @@ describe('/sources — per-row Re-import (D4 + 🟡-4 read-only role)', () => {
       expect.any(File),
     );
 
+    // §16.25.t4: confirmDialog is now async, so submitReimport has an
+    // extra await point. Wait for the success banner (the LAST DOM
+    // mutation in the flow) before asserting the row is gone — gives
+    // Svelte's reactive flush a chance to run.
+    expect(await screen.findByTestId('reimport-success')).toHaveTextContent(/DAYTIME/);
+    expect(screen.queryByTestId('success-banner')).not.toBeInTheDocument();
     // Expansion collapsed after success.
     expect(screen.queryByTestId('reimport-row')).not.toBeInTheDocument();
     // List refreshed — track count bumped.
-    const row = await screen.findByTestId('pool-row');
+    const row = screen.getByTestId('pool-row');
     expect(row).toHaveTextContent('150');
-
-    // 🟡-3: success banner shows in the LIST section (dedicated
-    // `reimport-success` testid), NOT the FORM section's
-    // `success-banner` (which is for form imports only).
-    expect(await screen.findByTestId('reimport-success')).toHaveTextContent(/DAYTIME/);
-    expect(screen.queryByTestId('success-banner')).not.toBeInTheDocument();
 
   });
 
@@ -830,7 +850,7 @@ describe('/sources — per-row Re-import (D4 + 🟡-4 read-only role)', () => {
     listSourcesMock.mockResolvedValue([
       { id: 1, name: 'DAYTIME', role: 'content', track_count: 100 },
     ]);
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    confirmDialogMock.mockResolvedValueOnce(false);
 
     render(Page);
     await fireEvent.click(await screen.findByTestId('pool-row-reimport'));
@@ -839,7 +859,7 @@ describe('/sources — per-row Re-import (D4 + 🟡-4 read-only role)', () => {
     });
     await fireEvent.click(screen.getByTestId('reimport-submit'));
 
-    expect(confirmSpy).toHaveBeenCalled();
+    expect(confirmDialogMock).toHaveBeenCalled();
     expect(uploadSourceMock).not.toHaveBeenCalled();
     // Still expanded (user can pick another file or hit Cancel).
     expect(screen.getByTestId('reimport-row')).toBeInTheDocument();
@@ -868,7 +888,7 @@ describe('/sources — per-row Re-import (D4 + 🟡-4 read-only role)', () => {
     uploadSourceMock.mockRejectedValueOnce(
       new FakeApiError(500, 'import failed: malformed plist'),
     );
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    confirmDialogMock.mockResolvedValueOnce(true);
 
     render(Page);
     await fireEvent.click(await screen.findByTestId('pool-row-reimport'));
@@ -904,7 +924,7 @@ describe('/sources — per-row Re-import (D4 + 🟡-4 read-only role)', () => {
       entries_imported: 15,
     });
     deleteSourceMock.mockResolvedValue(undefined);
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    confirmDialogMock.mockResolvedValueOnce(true);
 
     render(Page);
     // Re-import pool A.
@@ -949,7 +969,7 @@ describe('/sources — per-row Re-import (D4 + 🟡-4 read-only role)', () => {
       tracks_imported: 60000,
       entries_imported: 60000,
     });
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    confirmDialogMock.mockResolvedValueOnce(true);
 
     render(Page);
     // Toggle the page to path mode FIRST, then re-import.
