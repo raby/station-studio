@@ -9467,6 +9467,51 @@ stranger runs without the repo."** Three structural facts shape it:
   zero-prereq / evaluate-on-a-box case. README quick-start carries
   both.
 
+**Decisions (locked in the pre-c1 review pass).**
+
+* **D4 — Build a wheel; don't publish to PyPI in this slice.** c4
+  produces `dist/station_studio-0.1.0-py3-none-any.whl`. Users with
+  the repo install via `pip install ./dist/*.whl` (or `pipx install
+  ./dist/*.whl`). **PyPI publish** (so strangers can run
+  `pipx install station-studio` with no clone) is queued as
+  §16.13.t1 — needs an account, token, twine config, and a CI
+  publish workflow; all real operational work and orthogonal to the
+  build itself. Keeping it out of this slice keeps the scope focused
+  on "the wheel exists and works."
+* **D5 — CLI scope: `serve` + `import` + `seed`.** Three subcommands
+  that an installed user cannot fall back to (server start, pool
+  import without Makefile, re-seed example stations). `generate`,
+  `export`, `backup` are skipped this slice — the UI already covers
+  them, and the Makefile still works for power-user scripting in the
+  repo. The full design list (`serve` + `import` + `generate` +
+  `export` + `backup` + `seed`) is queued as §16.13.t2; a small
+  follow-up slice if installed-user scripting demand surfaces.
+* **D6 — Bundled example stations copy to `~/.station-studio/stations/`
+  on first run.** `stations/rebirth-classics.json` +
+  `stations/rebirth-radio.json` ship inside the wheel as package data;
+  on first `station-studio serve`, the bootstrap copies them into the
+  app-home's stations dir so the user can edit / delete / re-import
+  them like any other station. Mirrors the existing first-boot seed
+  semantics. (Wheel-internal originals stay pristine — the copy is
+  one-way, only on first run when the user's stations dir is empty.)
+
+**Pre-c1 defaults locked (not asked — obvious choices):**
+
+* Build backend: `hatchling` (PEP 621 modern standard).
+* CLI library: `click` (ecosystem default; cleaner than argparse for
+  subcommands).
+* Docker base: `python:3.12-slim`.
+* Migration on first run: `alembic upgrade head` (matches existing
+  pattern).
+* adapter-static output: `web/build/` (SvelteKit default).
+* FastAPI static mount: `/` as catch-all under `/api/*` routes.
+* Version: `0.1.0` (honest for first installable release).
+* First-run feedback: verbose (logs each bootstrap step so the user
+  sees "Creating ~/.station-studio/", "Initializing DB", "Copying
+  example stations…" — builds trust on first run).
+* Env var: `STATION_STUDIO_HOME` (matches existing
+  `STATION_STUDIO_DB_URL` / `STATION_STUDIO_STATIONS_DIR` prefix).
+
 **Prerequisites this slice owns (the parts that aren't "just
 packaging").**
 
@@ -9513,6 +9558,26 @@ no remaining blockers.
 
 **Effort.** Medium (~5-8 commits across pyproject + CLI + static
 migration + wheel + docker + docs).
+
+**Watch-list (queued follow-ups from pre-c1 review).**
+
+* **§16.13.t1 — PyPI publish.** D4 keeps this slice scoped to
+  "the wheel exists and works." Publishing to PyPI turns
+  `pipx install station-studio` into a one-liner for strangers (no
+  clone needed). Operational work: PyPI account, API token, GitHub
+  Actions workflow (`workflow_dispatch` or tag-triggered),
+  test.pypi.org dry-run rehearsal, README install copy refresh.
+  **Home: separate slice (~2 commits — publish workflow + a
+  smoke-test step that pipx-installs from the published wheel).**
+  Trigger: a stranger asks how to install without cloning.
+* **§16.13.t2 — Full CLI subcommand set.** D5 ships `serve` +
+  `import` + `seed` — the install-essentials. The full design list
+  also includes `generate`, `export`, `backup`. The UI covers
+  these for interactive users; the Makefile covers them for the
+  in-repo scripting case. **Home: separate slice (~1-2 commits) IF
+  installed-user scripting demand surfaces** (e.g. someone wants to
+  cron `station-studio generate next-week` against an installed
+  app, no repo present). Until then, the gap is honest and small.
 
 ---
 
