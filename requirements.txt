@@ -7,6 +7,10 @@ pydantic>=2.5
 # `POST /api/sources/upload` fails at app-import time with
 # "Form data requires 'python-multipart' to be installed."
 python-multipart>=0.0.9
+# §16.13 c1: Click drives the `station-studio` CLI (pyproject.toml's
+# `[project.scripts]`). In-repo dev workflow needs it too so
+# `python -m pytest tests/test_cli.py` works without the wheel install.
+click>=8.1
 # Alembic powers the schema migration baseline (DESIGN.md §14.17 / §17 #8).
 # Future schema changes (e.g. §16.4 trace versioning, weighted-strategy
 # excluded-candidates per §17 #5) live in `migrations/versions/` and apply

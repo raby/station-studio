@@ -1,0 +1,106 @@
+# §16.13 c1 — packaging config.
+#
+# Hatchling backend (PEP 621 modern Python standard, zero-config). The
+# package is "station-studio" on PyPI but ships THREE top-level modules
+# in the wheel: `station_studio` (the CLI entry point), `api` (FastAPI
+# routers), and `engine` (the playlist generator). The CLI imports
+# from `api` and `engine`; no circular deps.
+#
+# `scripts/` is intentionally NOT in the wheel — those are in-repo
+# developer tools (refresh fixtures, bootstrap-classics, etc), not
+# end-user surface. Installed users do the equivalent via the
+# `station-studio` CLI subcommands shipping in c1+ (D5 scope: serve +
+# import + seed; full list in §16.13.t2 follow-up).
+#
+# `migrations/` + `alembic.ini` aren't in the wheel YET — c3 wires them
+# in via `[tool.hatch.build.targets.wheel.shared-data]` when the
+# first-run bootstrap learns to invoke `alembic upgrade head`. For c1
+# the wheel just needs to install cleanly + ship the entry point.
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "station-studio"
+version = "0.1.0"
+description = "Open-source playlist generator for hobbyist radio stations"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.11"
+authors = [
+    { name = "Raby Whyte", email = "rabywhyte@gmail.com" },
+]
+keywords = ["playlist", "radio", "music", "itunes", "generator"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Multimedia :: Sound/Audio",
+]
+
+# Pinned versions mirror `requirements.txt` (the dev workflow source of
+# truth). Any bump there must also land here.
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "sqlalchemy>=2.0",
+    "pydantic>=2.5",
+    "alembic>=1.13",
+    "python-multipart>=0.0.9",
+    "click>=8.1",
+]
+
+[project.optional-dependencies]
+# Mirror `requirements-dev.txt`. Install with `pip install -e .[dev]`.
+dev = [
+    "pytest>=8.0",
+    "coverage>=7.0",
+]
+
+# The headline shipped artifact: `station-studio <subcommand>` runs
+# `station_studio.cli:main`. D5: serve + import + seed in c1; full list
+# (generate, export, backup) in the queued §16.13.t2 slice if needed.
+[project.scripts]
+station-studio = "station_studio.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/raby/station-studio"
+Repository = "https://github.com/raby/station-studio"
+Issues = "https://github.com/raby/station-studio/issues"
+
+# The wheel ships these THREE top-level packages. `api` and `engine`
+# are existing modules; `station_studio` is new (the CLI). Each has its
+# own `__init__.py` so hatchling picks them up automatically.
+[tool.hatch.build.targets.wheel]
+packages = ["station_studio", "api", "engine"]
+
+# Source distribution (sdist) excludes test detritus, the SvelteKit
+# frontend (which the wheel will ship as built static assets in c2/c4),
+# the dev .venv, and the working DB. The wheel itself is built from
+# whatever the sdist contains, so anything excluded here is also out
+# of the wheel.
+[tool.hatch.build.targets.sdist]
+exclude = [
+    "/.venv",
+    "/.coverage",
+    "/.pytest_cache",
+    "/.svelte-kit",
+    "/node_modules",
+    "/playwright-test*.db*",
+    "/playwright-stations*",
+    "/playwright-test*",
+    "/test-results",
+    "/station_studio.db",
+    "/tmp_check.db",
+    "/.DS_Store",
+    "/web/build",
+    "/web/node_modules",
+    "/output",
+    "/from_user",
+    "/backups",
+    "/out",
+]
