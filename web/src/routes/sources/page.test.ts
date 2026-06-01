@@ -315,12 +315,11 @@ describe('/sources — advanced path mode (the D1 secondary path)', () => {
     await fireEvent.submit(screen.getByTestId('add-pool-form'));
 
     await waitFor(() => expect(importSourceByPathMock).toHaveBeenCalledTimes(1));
-    expect(importSourceByPathMock).toHaveBeenCalledWith(
-      'P',
-      'reference',
-      '/abs/path/to/lib.xml',
-    );
-    // Upload helper must NOT have been called.
+    // §16.25.t2: helpers now also receive fetch_ (undefined → default)
+    // and signal (an AbortSignal) as trailing args. Inspect by position
+    // so trailing additions don't churn this assertion.
+    const args = importSourceByPathMock.mock.calls[0];
+    expect(args.slice(0, 3)).toEqual(['P', 'reference', '/abs/path/to/lib.xml']);
     expect(uploadSourceMock).not.toHaveBeenCalled();
   });
 
@@ -614,8 +613,163 @@ describe('/sources — batch mode (c3 D2 multi-pool)', () => {
     await fireEvent.submit(screen.getByTestId('batch-form'));
 
     await screen.findByTestId('success-banner');
-    expect(importSourceByPathMock).toHaveBeenCalledWith('P', 'reference', '/abs/p.xml');
+    // §16.25.t2: helpers now also receive fetch_ + signal as trailing args.
+    expect(importSourceByPathMock.mock.calls[0].slice(0, 3)).toEqual([
+      'P', 'reference', '/abs/p.xml',
+    ]);
     expect(uploadSourceMock).not.toHaveBeenCalled();
+  });
+});
+
+
+// ---- §16.25.t2 — upload cancel via AbortController -------------------
+
+
+describe('/sources — single-mode cancel (§16.25.t2)', () => {
+  it('Cancel button appears only while submitting', async () => {
+    // Mock uploadSource to never resolve so we can observe submitting state.
+    let unblock: (() => void) | null = null;
+    uploadSourceMock.mockImplementationOnce(
+      () => new Promise<never>((_, reject) => {
+        // capture so the test can resolve the promise after asserting
+        unblock = () => {
+          const err = new Error('aborted');
+          err.name = 'AbortError';
+          reject(err);
+        };
+      }),
+    );
+
+    render(Page);
+    await fireEvent.input(await screen.findByTestId('name-input'), {
+      target: { value: 'T' },
+    });
+    await fireEvent.change(screen.getByTestId('file-input'), {
+      target: { files: [tinyFile()] },
+    });
+
+    // Before submit: no cancel button.
+    expect(screen.queryByTestId('cancel-button')).not.toBeInTheDocument();
+
+    await fireEvent.submit(screen.getByTestId('add-pool-form'));
+
+    // While submitting (uploadSource is pending): cancel visible.
+    const cancelBtn = await screen.findByTestId('cancel-button');
+    expect(cancelBtn).toBeInTheDocument();
+    expect(screen.getByTestId('submit-button')).toBeDisabled();
+
+    // Cleanup: resolve the pending promise so the test ends cleanly.
+    if (unblock) (unblock as () => void)();
+  });
+
+  it('clicking Cancel aborts the in-flight upload + surfaces a clean message', async () => {
+    // The mock honours the abort signal — resolves with AbortError
+    // when the test fires the controller's abort.
+    uploadSourceMock.mockImplementationOnce((..._args) => {
+      // The 5th arg is the signal.
+      const signal = _args[4] as AbortSignal | undefined;
+      return new Promise<never>((_, reject) => {
+        signal?.addEventListener('abort', () => {
+          const err = new Error('aborted');
+          err.name = 'AbortError';
+          reject(err);
+        });
+      });
+    });
+
+    render(Page);
+    await fireEvent.input(await screen.findByTestId('name-input'), {
+      target: { value: 'T' },
+    });
+    await fireEvent.change(screen.getByTestId('file-input'), {
+      target: { files: [tinyFile()] },
+    });
+    await fireEvent.submit(screen.getByTestId('add-pool-form'));
+    await fireEvent.click(await screen.findByTestId('cancel-button'));
+
+    // Form error reports the cancel (not a scary 5xx-style red message).
+    const err = await screen.findByTestId('form-error');
+    expect(err).toHaveTextContent(/upload cancelled/i);
+    // Cancel button gone; submit re-enabled (submitting=false).
+    expect(screen.queryByTestId('cancel-button')).not.toBeInTheDocument();
+    expect(screen.getByTestId('submit-button')).toBeEnabled();
+  });
+});
+
+
+describe('/sources — batch-mode cancel (§16.25.t2)', () => {
+  it('Cancel aborts the in-flight row + skips the pending tail', async () => {
+    // 3 rows: A, B, C. A imports successfully, then user cancels
+    // during B. B → cancelled. C → cancelled (signal already aborted
+    // by the time the for-loop reaches it).
+    listSourcesMock
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ id: 1, name: 'A', role: 'content', track_count: 1 }]);
+
+    let bResolver: (() => void) | null = null;
+    uploadSourceMock.mockImplementation((..._args) => {
+      const name = _args[0] as string;
+      const signal = _args[4] as AbortSignal | undefined;
+      if (name === 'A') {
+        return Promise.resolve({
+          name: 'A', role: 'content', tracks_imported: 1, entries_imported: 1,
+        });
+      }
+      if (name === 'B') {
+        return new Promise((_, reject) => {
+          bResolver = () => {
+            const err = new Error('aborted');
+            err.name = 'AbortError';
+            reject(err);
+          };
+          signal?.addEventListener('abort', bResolver);
+        });
+      }
+      // C should never get here — the aborted signal short-circuits it.
+      throw new Error('uploadSource called for C; should have been skipped');
+    });
+
+    render(Page);
+    await screen.findByTestId('add-pool-form');
+    await fireEvent.click(screen.getByTestId('batch-mode-toggle'));
+    // Add 2 more rows (so 3 total: A, B, C).
+    await fireEvent.click(screen.getByTestId('batch-add-row'));
+    await fireEvent.click(screen.getByTestId('batch-add-row'));
+
+    const nameInputs = screen.getAllByTestId('batch-row-name');
+    const fileInputs = screen.getAllByTestId('batch-row-file');
+    await fireEvent.input(nameInputs[0], { target: { value: 'A' } });
+    await fireEvent.input(nameInputs[1], { target: { value: 'B' } });
+    await fireEvent.input(nameInputs[2], { target: { value: 'C' } });
+    for (const fi of fileInputs) {
+      await fireEvent.change(fi, { target: { files: [tinyFile()] } });
+    }
+
+    // Submit the batch. A resolves immediately, B hangs on the signal,
+    // wait for B to be the in-flight row.
+    await fireEvent.submit(screen.getByTestId('batch-form'));
+
+    // Wait until uploadSource has been called for both A and B.
+    await waitFor(() => expect(uploadSourceMock).toHaveBeenCalledTimes(2));
+
+    // Click Cancel.
+    await fireEvent.click(screen.getByTestId('batch-cancel'));
+
+    // Form-error summary: "Imported 1 of 3. 2 cancelled."
+    const err = await screen.findByTestId('form-error');
+    expect(err).toHaveTextContent(/Imported 1 of 3/);
+    expect(err).toHaveTextContent(/2 cancelled/);
+
+    // C should NOT have been submitted (signal was aborted before
+    // the loop reached it, AND our mock throws if it was called).
+    expect(uploadSourceMock).toHaveBeenCalledTimes(2);
+
+    // The two remaining rows visible are B + C (A was imported and
+    // dropped; B + C are 'cancelled' but stay for retry).
+    const remaining = screen.getAllByTestId('batch-row');
+    expect(remaining).toHaveLength(2);
+    expect(remaining[0]).toHaveAttribute('data-row-status', 'cancelled');
+    expect(remaining[1]).toHaveAttribute('data-row-status', 'cancelled');
   });
 });
 
@@ -945,12 +1099,12 @@ describe('/sources — per-row Re-import (D4 + 🟡-4 read-only role)', () => {
     expect(opts.body).toMatch(/cannot be undone/i);
 
     // 🟡-4: the API call used the EXISTING name + role, not anything
-    // the user could have changed in the dialog.
-    expect(uploadSourceMock).toHaveBeenCalledWith(
-      'DAYTIME',
-      'content',
-      expect.any(File),
-    );
+    // the user could have changed in the dialog. §16.25.t2: helpers
+    // grew trailing fetch_ + signal args; inspect by position.
+    const args = uploadSourceMock.mock.calls[0];
+    expect(args[0]).toBe('DAYTIME');
+    expect(args[1]).toBe('content');
+    expect(args[2]).toBeInstanceOf(File);
 
     // §16.25.t4: confirmDialog is now async, so submitReimport has an
     // extra await point. Wait for the success banner (the LAST DOM
@@ -1105,11 +1259,10 @@ describe('/sources — per-row Re-import (D4 + 🟡-4 read-only role)', () => {
     });
     await fireEvent.click(screen.getByTestId('reimport-submit'));
 
-    expect(importSourceByPathMock).toHaveBeenCalledWith(
-      'BIG',
-      'content',
-      '/abs/big.xml',
-    );
+    // §16.25.t2: position-based check tolerates trailing fetch_ + signal args.
+    expect(importSourceByPathMock.mock.calls[0].slice(0, 3)).toEqual([
+      'BIG', 'content', '/abs/big.xml',
+    ]);
     expect(uploadSourceMock).not.toHaveBeenCalled();
 
   });

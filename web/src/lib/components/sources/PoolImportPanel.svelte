@@ -101,7 +101,10 @@
     role: 'content' | 'reference';
     file: File | null;
     path: string;
-    status: 'pending' | 'uploading' | 'imported' | 'failed';
+    // §16.25.t2: `cancelled` is user-initiated abort (visually
+    // distinct from `failed` — different copy, no error message,
+    // doesn't suggest "the server rejected this").
+    status: 'pending' | 'uploading' | 'imported' | 'failed' | 'cancelled';
     error?: string;
   }
   let batchMode = false;
@@ -215,6 +218,15 @@
 
   let submitting = false;
   let formError: string | null = null;
+  // §16.25.t2: per-submission AbortController. Created at submit
+  // start, signalled by the Cancel button, cleared when the submission
+  // settles (success / failure / cancel). One controller per submit
+  // call — single-mode uses it for the one upload; batch-mode uses
+  // the same one for the in-flight row + as the "stop the tail" flag.
+  let abortController: AbortController | null = null;
+  function cancelSubmission() {
+    abortController?.abort();
+  }
   let successMessage: string | null = null;
 
   onMount(async () => {
@@ -238,6 +250,7 @@
     formError = null;
     successMessage = null;
     submitting = true;
+    abortController = new AbortController();
     try {
       const trimmedName = name.trim();
       if (!trimmedName) {
@@ -252,14 +265,18 @@
           formError = 'Pick an iTunes XML file to upload.';
           return;
         }
-        summary = await uploadSource(trimmedName, role, file);
+        summary = await uploadSource(
+          trimmedName, role, file, undefined, abortController.signal,
+        );
       } else {
         const trimmedPath = path.trim();
         if (!trimmedPath) {
           formError = 'Type the server-side path to the XML.';
           return;
         }
-        summary = await importSourceByPath(trimmedName, role, trimmedPath);
+        summary = await importSourceByPath(
+          trimmedName, role, trimmedPath, undefined, abortController.signal,
+        );
       }
 
       successMessage = `Imported "${summary.name}" — ${summary.tracks_imported} track${
@@ -273,9 +290,17 @@
       await refresh();
       dispatch('changed');
     } catch (e) {
-      formError = e instanceof ApiError ? e.message : String(e);
+      // §16.25.t2: distinguish user-aborted from server-errored.
+      // AbortError → "Upload cancelled." (no scary red error text);
+      // anything else flows through the existing ApiError path.
+      if (e instanceof Error && e.name === 'AbortError') {
+        formError = 'Upload cancelled.';
+      } else {
+        formError = e instanceof ApiError ? e.message : String(e);
+      }
     } finally {
       submitting = false;
+      abortController = null;
     }
   }
 
@@ -296,9 +321,11 @@
     formError = null;
     successMessage = null;
     submitting = true;
+    abortController = new AbortController();
 
     let successes = 0;
     let failures = 0;
+    let cancelled = 0;
 
     try {
       // Phase 1: validation. In-place mutation + `rows = rows` keeps
@@ -326,6 +353,17 @@
       // instead of the `row.file!` non-null assertion.
       for (const row of rows) {
         if (row.status === 'failed') continue;
+        // §16.25.t2: if cancel fired before this row's turn (the
+        // abort was while we were mid-await on a prior row), the
+        // signal is already aborted — skip the remaining tail
+        // without starting a new fetch. The current row gets
+        // 'cancelled' too (it never ran). Surfaces in Phase 3
+        // as part of the cancelled count.
+        if (abortController.signal.aborted) {
+          row.status = 'cancelled';
+          cancelled++;
+          continue;
+        }
         row.status = 'uploading';
         rows = rows;
         try {
@@ -335,34 +373,50 @@
                 `bug: upload row '${row.name}' reached Phase 2 with no file`,
               );
             }
-            await uploadSource(row.name.trim(), row.role, row.file);
+            await uploadSource(
+              row.name.trim(), row.role, row.file,
+              undefined, abortController.signal,
+            );
           } else {
             await importSourceByPath(
               row.name.trim(),
               row.role,
               row.path.trim(),
+              undefined, abortController.signal,
             );
           }
           row.status = 'imported';
           successes++;
         } catch (e) {
-          row.status = 'failed';
-          row.error = e instanceof ApiError ? e.message : String(e);
-          failures++;
+          // §16.25.t2: AbortError → cancelled (user wanted to stop);
+          // other errors → failed (server / parse / IO).
+          if (e instanceof Error && e.name === 'AbortError') {
+            row.status = 'cancelled';
+            cancelled++;
+          } else {
+            row.status = 'failed';
+            row.error = e instanceof ApiError ? e.message : String(e);
+            failures++;
+          }
         }
         rows = rows;
       }
 
-      // Phase 3: summary + cleanup.
-      const total = successes + failures;
-      if (failures === 0) {
+      // Phase 3: summary + cleanup. §16.25.t2 added a third outcome
+      // (cancelled) on top of imported/failed. Cancelled rows stay
+      // visible (like failed) for retry; imported rows drop.
+      // Summary banner combines all three counts honestly.
+      const total = successes + failures + cancelled;
+      if (failures === 0 && cancelled === 0) {
         successMessage = `Imported all ${successes} pool${successes === 1 ? '' : 's'}.`;
         rows = [makeEmptyRow()];
       } else {
-        formError =
-          successes > 0
-            ? `Imported ${successes} of ${total}. ${failures} failed — see row errors below.`
-            : `All ${failures} import${failures === 1 ? '' : 's'} failed — see row errors below.`;
+        const parts: string[] = [];
+        if (successes > 0) parts.push(`Imported ${successes} of ${total}`);
+        if (failures > 0) parts.push(`${failures} failed`);
+        if (cancelled > 0) parts.push(`${cancelled} cancelled`);
+        formError = parts.join('. ') +
+          (failures > 0 ? ' — see row errors below.' : '.');
         rows = rows.filter((r) => r.status !== 'imported');
       }
 
@@ -376,6 +430,7 @@
       formError = e instanceof ApiError ? e.message : String(e);
     } finally {
       submitting = false;
+      abortController = null;
     }
   }
 
@@ -632,16 +687,33 @@
           <p class="success" data-testid="success-banner">{successMessage}</p>
         {/if}
 
-        <button
-          type="submit"
-          class="button primary"
-          data-testid="batch-submit"
-          disabled={submitting || rows.length === 0}
-        >
-          {submitting
-            ? `Importing… (${rows.filter((r) => r.status === 'imported').length}/${rows.length})`
-            : `Import ${rows.length} pool${rows.length === 1 ? '' : 's'}`}
-        </button>
+        <div class="submit-row">
+          <button
+            type="submit"
+            class="button primary"
+            data-testid="batch-submit"
+            disabled={submitting || rows.length === 0}
+          >
+            {submitting
+              ? `Importing… (${rows.filter((r) => r.status === 'imported').length}/${rows.length})`
+              : `Import ${rows.length} pool${rows.length === 1 ? '' : 's'}`}
+          </button>
+          {#if submitting}
+            <!-- §16.25.t2: Cancel sibling button while a batch is
+                 in-flight. Aborts the current upload (rejects with
+                 AbortError → row marked 'cancelled') and the
+                 abortController.signal.aborted check at the top of
+                 the loop iteration short-circuits the pending tail. -->
+            <button
+              type="button"
+              class="button"
+              data-testid="batch-cancel"
+              on:click={cancelSubmission}
+            >
+              Cancel
+            </button>
+          {/if}
+        </div>
       </form>
     {:else}
       <form
@@ -724,14 +796,31 @@
           <p class="success" data-testid="success-banner">{successMessage}</p>
         {/if}
 
-        <button
-          type="submit"
-          class="button primary"
-          data-testid="submit-button"
-          disabled={submitting}
-        >
-          {submitting ? 'Importing…' : 'Import'}
-        </button>
+        <div class="submit-row">
+          <button
+            type="submit"
+            class="button primary"
+            data-testid="submit-button"
+            disabled={submitting}
+          >
+            {submitting ? 'Importing…' : 'Import'}
+          </button>
+          {#if submitting}
+            <!-- §16.25.t2: Cancel sibling button. Aborts the in-flight
+                 single upload — fetch rejects with AbortError, the
+                 outer submit() catch sets formError = "Upload
+                 cancelled." Same primitive as batch mode (one
+                 abortController per submit) just with one upload. -->
+            <button
+              type="button"
+              class="button"
+              data-testid="cancel-button"
+              on:click={cancelSubmission}
+            >
+              Cancel
+            </button>
+          {/if}
+        </div>
       </form>
     {/if}
   </section>
@@ -1052,6 +1141,12 @@
     background: #fef3c7;
     border-color: #fde68a;
   }
+  /* §16.25.t2 — user-initiated cancel; muted grey, not error-red. */
+  .batch-row[data-row-status='cancelled'] {
+    background: #f9fafb;
+    border-color: #d4d4d8;
+    color: #6b7280;
+  }
   .batch-row-fields {
     display: grid;
     grid-template-columns: 2fr 1.2fr 2fr auto auto;
@@ -1091,6 +1186,18 @@
   .status-failed {
     background: #fecaca;
     color: #991b1b;
+  }
+  .status-cancelled {
+    background: #e5e7eb;
+    color: #4b5563;
+  }
+  /* §16.25.t2 — Cancel button sits next to Import / Import N pools
+     during submission. `submit-row` lays them out as a flex row so
+     the cancel doesn't push the submit to a new line. */
+  .submit-row {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
   }
   .remove-row {
     background: transparent;

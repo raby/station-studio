@@ -10109,15 +10109,25 @@ plan-audit can find them:
   directions; cancel preserves mode; pluralisation; single-mode
   never confirms. Not `danger: true` — the operation is
   reversible, no data loss.
-* **§16.25.t2 — Upload cancel via `AbortController`.** A user
-  submitting 6 large XMLs has no way to abort mid-batch if they
-  realise row 3 has the wrong file. Needs `AbortController`
-  threaded through `fetch_` in `uploadSource` + a per-row cancel
-  affordance in the UI + a "Cancel batch" button that aborts the
-  pending tail. Parallels §16.11's job-cancel surface
-  semantically but operates on `fetch` not the job-store.
-  **Home: separate post-§16.25 slice (~2-3 commits).** Out of
-  scope for v1 of the install-story unblocker.
+* **§16.25.t2 — Upload cancel via `AbortController` — SHIPPED.**
+  Closed in 2 commits:
+  - c1: `signal?: AbortSignal` threaded through `uploadSource` +
+    `importSourceByPath` (5th positional, backward-compatible);
+    forwarded into `fetch.init.signal`. 3 new api.test.ts tests.
+  - c2: per-submission `AbortController` in the panel + a Cancel
+    button next to Import (single) / Import N pools (batch);
+    new `cancelled` BatchRow status (visually distinct from
+    `failed` — muted grey, no error copy); `submitBatch`'s
+    Phase 2 short-circuits the pending tail via
+    `abortController.signal.aborted` check at the loop head;
+    summary banner accounts for all three outcomes
+    ("Imported X of N. Y failed. Z cancelled."). 3 new tests
+    (cancel button visibility, single-mode cancel, batch-mode
+    abort-with-tail-skip).
+  Trailing-positional helper args (fetch_ + signal) required a
+  couple of existing assertions to switch from
+  `toHaveBeenCalledWith(...)` to position-slice equality so
+  trailing additions don't churn the test.
 * **§16.25.t3 — Svelte 5 migration: revisit the
   `PoolImportPanel.submitBatch` mutation hybrid.** c5 documented
   the working contract honestly: the per-row status flips in

@@ -1049,8 +1049,8 @@ describe('uploadSource', () => {
     // The fetch mock honours the abort by reading init.signal and
     // rejecting with a DOMException-shaped AbortError, matching the
     // real fetch contract.
-    const fetch_ = async (_input: RequestInfo | URL, init?: RequestInit) => {
-      return new Promise((_, reject) => {
+    const fetch_: typeof fetch = (_input, init) => {
+      return new Promise<Response>((_, reject) => {
         init?.signal?.addEventListener('abort', () => {
           const err = new Error('aborted');
           err.name = 'AbortError';
