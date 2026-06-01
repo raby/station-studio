@@ -15,6 +15,10 @@ const {
   deletePlaylistMock,
   deleteStationMock,
   gotoMock,
+  panelListSourcesMock,
+  panelUploadSourceMock,
+  panelImportByPathMock,
+  panelDeleteSourceMock,
   FakeApiError,
   FakeJobStartConflict,
   pageStore,
@@ -58,6 +62,10 @@ const {
     cancelJobMock: vi.fn(),
     deletePlaylistMock: vi.fn(),
     deleteStationMock: vi.fn(),
+    panelListSourcesMock: vi.fn(),
+    panelUploadSourceMock: vi.fn(),
+    panelImportByPathMock: vi.fn(),
+    panelDeleteSourceMock: vi.fn(),
     gotoMock: vi.fn(),
     FakeApiError,
     FakeJobStartConflict,
@@ -77,15 +85,16 @@ vi.mock('$lib/api', () => ({
   deleteStation: (...args: unknown[]) => deleteStationMock(...args),
   ApiError: FakeApiError,
   JobStartConflict: FakeJobStartConflict,
-  // §16.25 c5: the page now embeds <PoolImportPanel> which calls into
-  // these helpers. Stub them to no-op resolutions so the panel mounts
-  // cleanly without polluting the station-detail tests' assertions.
-  // (The panel's own behaviour is exercised in
-  // src/routes/sources/page.test.ts.)
-  listSources: async () => [],
-  uploadSource: async () => ({ name: '', role: 'content', tracks_imported: 0, entries_imported: 0 }),
-  importSourceByPath: async () => ({ name: '', role: 'content', tracks_imported: 0, entries_imported: 0 }),
-  deleteSource: async () => undefined,
+  // §16.25 c5: the page embeds <PoolImportPanel> which calls into
+  // these helpers. Defaults are no-op resolutions (the panel mounts
+  // cleanly without polluting station-detail assertions). Individual
+  // tests that need to drive panel behaviour — e.g. verifying the
+  // c5-review 🟡-1 `on:changed` → refreshOverview wiring — override
+  // these via the `setPanelHelpers` escape hatch below.
+  listSources: (...args: unknown[]) => panelListSourcesMock(...args),
+  uploadSource: (...args: unknown[]) => panelUploadSourceMock(...args),
+  importSourceByPath: (...args: unknown[]) => panelImportByPathMock(...args),
+  deleteSource: (...args: unknown[]) => panelDeleteSourceMock(...args),
 }));
 
 /**
@@ -810,6 +819,10 @@ describe('station detail — §16.19 overview', () => {
     getStationMock.mockReset();
     getStationPlaylistsMock.mockReset();
     getStationOverviewMock.mockReset();
+    panelListSourcesMock.mockReset();
+    panelUploadSourceMock.mockReset();
+    panelImportByPathMock.mockReset();
+    panelDeleteSourceMock.mockReset();
     gotoMock.mockReset();
     setSlug('cls');
     // Core page deps — the overview is additive on top.
@@ -817,6 +830,11 @@ describe('station detail — §16.19 overview', () => {
       id: 1, slug: 'cls', name: 'Classics', template: { rng: 'off' },
     });
     getStationPlaylistsMock.mockResolvedValue([]);
+    // Defaults for the embedded <PoolImportPanel> — no-op resolutions
+    // keep the panel from polluting unrelated tests; individual tests
+    // override these when they need to drive panel behaviour.
+    panelListSourcesMock.mockResolvedValue([]);
+    panelDeleteSourceMock.mockResolvedValue(undefined);
   });
 
   const overview = (over = {}) => ({
@@ -869,6 +887,54 @@ describe('station detail — §16.19 overview', () => {
     expect(await screen.findByTestId('overview-pool-import')).toBeInTheDocument();
     // The panel itself renders inside.
     expect(screen.getByTestId('pool-import-panel')).toBeInTheDocument();
+  });
+
+  it('§16.25 c5 review 🟡-1: panel-driven delete re-fetches the station overview', async () => {
+    // Initial overview returns 1 imported pool, second returns 0 (after
+    // the user deletes via the embedded panel). The bug this locks:
+    // before the fix, the §16.19 pools card would stay stale showing
+    // the deleted pool until a hard reload.
+    getStationOverviewMock
+      .mockResolvedValueOnce(overview({
+        pools: [
+          { name: 'RG_RADIO', role: 'content', imported: true, track_count: 500, imported_at: '2026-05-01T00:00:00+00:00' },
+        ],
+      }))
+      .mockResolvedValueOnce(overview({
+        pools: [
+          { name: 'RG_RADIO', role: 'content', imported: false, track_count: null, imported_at: null },
+        ],
+      }));
+    // The panel's listSources returns the same pool so it has a row
+    // to delete. After the delete, an empty list is fine — we're not
+    // asserting list state, only that the overview re-fetches.
+    panelListSourcesMock
+      .mockResolvedValueOnce([
+        { id: 1, name: 'RG_RADIO', role: 'content', track_count: 500 },
+      ])
+      .mockResolvedValueOnce([]);
+    panelDeleteSourceMock.mockResolvedValue(undefined);
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+    render(Page);
+
+    // Wait for both initial fetches (overview + panel.listSources).
+    await screen.findByTestId('overview-pool-import');
+    await screen.findByTestId('pool-row');
+    expect(getStationOverviewMock).toHaveBeenCalledTimes(1);
+
+    // Click delete inside the panel, confirm.
+    const deleteBtn = screen.getByTestId('pool-row-delete');
+    await fireEvent.click(deleteBtn);
+
+    // The panel's deleteSource fires → refresh fires → dispatch('changed')
+    // → station page's refreshOverview fires → getStationOverview called again.
+    await vi.waitFor(() => {
+      expect(getStationOverviewMock).toHaveBeenCalledTimes(2);
+    });
+    expect(panelDeleteSourceMock).toHaveBeenCalledWith(1);
+
+    confirmSpy.mockRestore();
   });
 
   it('shows the cursors card only for persistent templates', async () => {

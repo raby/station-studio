@@ -44,7 +44,7 @@
    *                  identity-stable per-row mutation, immutable
    *                  whole-array refresh.
    */
-  import { onMount } from 'svelte';
+  import { onMount, createEventDispatcher } from 'svelte';
   import {
     ApiError,
     deleteSource,
@@ -57,6 +57,15 @@
   export let scope: string[] | undefined = undefined;
   export let initialName: string | undefined = undefined;
   export let initialRole: 'content' | 'reference' | undefined = undefined;
+
+  // c5 mid-slice review 🟡-1: fired after any successful list-modifying
+  // op (single import, batch import, re-import, delete). Embedding
+  // pages listen via `on:changed` to refresh their OWN derived views —
+  // the station-detail embed re-fetches `getStationOverview` so the
+  // §16.19 "not imported" badge clears in real time. /sources doesn't
+  // need to listen (its only derived view is the panel's own list,
+  // already refreshed inside `refresh()`).
+  const dispatch = createEventDispatcher<{ changed: void }>();
 
   let sources: Source[] = [];
   let listError: string | null = null;
@@ -205,6 +214,7 @@
       if (fileInputEl) fileInputEl.value = '';
 
       await refresh();
+      dispatch('changed');
     } catch (e) {
       formError = e instanceof ApiError ? e.message : String(e);
     } finally {
@@ -300,6 +310,10 @@
       }
 
       await refresh();
+      // c5-review 🟡-1: only dispatch when something actually landed.
+      // A 0-success batch left the underlying pool list unchanged, so
+      // the embedding page doesn't need to re-fetch.
+      if (successes > 0) dispatch('changed');
     } catch (e) {
       // c3 mid-slice review 🟡-1: defensive parity with submit().
       formError = e instanceof ApiError ? e.message : String(e);
@@ -371,6 +385,7 @@
       reimportSuccessMessage = `Re-imported "${pool.name}".`;
       cancelReimport();
       await refresh();
+      dispatch('changed');
     } catch (e) {
       reimportError = e instanceof ApiError ? e.message : String(e);
     } finally {
@@ -396,6 +411,7 @@
     try {
       await deleteSource(pool.id);
       await refresh();
+      dispatch('changed');
     } catch (e) {
       deleteError = e instanceof ApiError ? e.message : String(e);
     } finally {

@@ -103,6 +103,16 @@
     // page already rendered above; the rich sections are additive, so
     // a failure (or a backend that predates the endpoint) just omits
     // them rather than blanking the page.
+    await refreshOverview();
+  });
+
+  // §16.25 c5 review 🟡-1: extracted so the embedded <PoolImportPanel>
+  // can `on:changed={refreshOverview}` — after any panel-driven import
+  // / re-import / delete, the §16.19 pools card needs to re-fetch so
+  // the "not imported" badge clears in real time. (Without this, the
+  // embed feels broken: the user fixes a gap but the gap-indicator
+  // stays until they reload.)
+  async function refreshOverview() {
     try {
       overview = await getStationOverview(slug);
     } catch (e) {
@@ -111,7 +121,7 @@
       overview = null;
       console.warn('station overview fetch failed', e);
     }
-  });
+  }
 
   async function generate(week: number, opts: { seed?: number; skipConfirm?: boolean } = {}) {
     // Confirm-on-overwrite (DESIGN.md §16.1 D2). The per-row regen path
@@ -459,7 +469,10 @@
            from the overview card above). -->
       <section class="overview-pool-import" data-testid="overview-pool-import">
         <h2>Manage source pools</h2>
-        <PoolImportPanel scope={overview.pools.map((p) => p.name)} />
+        <PoolImportPanel
+          scope={overview.pools.map((p) => p.name)}
+          on:changed={refreshOverview}
+        />
       </section>
     {/if}
 

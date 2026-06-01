@@ -595,7 +595,20 @@ describe('/sources — deep-link prefill from ?pool=&role= (c5)', () => {
     expect(nameInput.value).toBe('');
     expect(roleSelect.value).toBe('content');
   });
+
 });
+
+// c5-review 🟡-2 (re-mount on in-app nav): no dedicated test. Simulating
+// a same-route navigation that mutates `$page.url.searchParams`
+// mid-mount is brittle in this test harness — our page-store mock
+// emits its value at subscribe time and the route's `$:` reactive
+// declarations only re-run on store-driven updates we'd have to
+// hand-roll. The fix itself is a 3-line `{#key poolParam|roleParam}`
+// wrapper around the panel; correctness rests on Svelte's documented
+// `{#key}` semantics. If this ever needs locking down, the right
+// shape is a Playwright e2e that hits /sources?pool=A, then
+// programmatically navigates to /sources?pool=B inside the SPA,
+// and asserts the form's name input value changes.
 
 
 describe('/sources — iTunes export hint (G5)', () => {

@@ -50,7 +50,20 @@
     track data lives.
   </p>
 
-  <PoolImportPanel initialName={poolParam} initialRole={roleParam} />
+  <!--
+    c5 mid-slice review 🟡-2: the panel applies initial props ONCE at
+    mount, so a same-route navigation (e.g. user already on /sources
+    clicks another station's "not imported" badge → URL changes from
+    ?pool=A to ?pool=B) would leave the old prefill in place since
+    SvelteKit doesn't re-mount on same-route nav. Key the panel by
+    the prefill params so a change forces a fresh mount, re-reading
+    the props. Trivial cost: any in-app navigation TO /sources with
+    different params re-creates the form (losing in-progress edits) —
+    acceptable because the user explicitly clicked a new deep-link.
+  -->
+  {#key `${poolParam ?? ''}|${roleParam ?? ''}`}
+    <PoolImportPanel initialName={poolParam} initialRole={roleParam} />
+  {/key}
 </main>
 
 <style>
