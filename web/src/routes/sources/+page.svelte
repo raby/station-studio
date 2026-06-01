@@ -343,6 +343,12 @@
     reimportFile = input.files?.[0] ?? null;
   }
 
+  // Column count for the sources table — used by the Re-import
+  // expansion's `colspan`. Kept here so adding a column doesn't drift
+  // out of sync with a magic number in the template (c4 mid-slice
+  // review 🟢-3).
+  const SOURCES_TABLE_COLS = 4;
+
   async function submitReimport(pool: Source) {
     reimportError = null;
     // c4 mid-slice review 🟡-2: clear the re-import success banner at
@@ -768,7 +774,7 @@
             </tr>
             {#if reimportingId === s.id}
               <tr class="reimport-row" data-testid="reimport-row" data-pool-name={s.name}>
-                <td colspan="4">
+                <td colspan={SOURCES_TABLE_COLS}>
                   <div class="reimport-form">
                     <p class="reimport-summary">
                       Re-import <b>{s.name}</b> — role <span class="role-tag role-{s.role}">{s.role}</span>
