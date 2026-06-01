@@ -33,7 +33,7 @@ authors = [
 ]
 keywords = ["playlist", "radio", "music", "itunes", "generator"]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 3 - Alpha",
     "Intended Audience :: End Users/Desktop",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
@@ -77,6 +77,23 @@ Issues = "https://github.com/raby/station-studio/issues"
 # own `__init__.py` so hatchling picks them up automatically.
 [tool.hatch.build.targets.wheel]
 packages = ["station_studio", "api", "engine"]
+
+# c1-review 🟡-1: ship the bundled data inside the wheel so c3 doesn't
+# have to circle back to packaging. Three drops, each mapped into the
+# `station_studio/_bundled/` namespace where c3's first-run bootstrap
+# will resolve them via `importlib.resources.files("station_studio") /
+# "_bundled" / ...`. Putting the data INSIDE the package (force-include
+# under station_studio/) rather than in `share/` keeps everything one
+# `importlib.resources` call away — no fragile filesystem lookups
+# against `sys.prefix` or distutils-era `data_files`.
+#
+#   stations/    → station_studio/_bundled/stations/    (D6 — copy on first run)
+#   migrations/  → station_studio/_bundled/migrations/  (alembic upgrade head)
+#   alembic.ini  → station_studio/_bundled/alembic.ini  (env config for migrations)
+[tool.hatch.build.targets.wheel.force-include]
+"stations" = "station_studio/_bundled/stations"
+"migrations" = "station_studio/_bundled/migrations"
+"alembic.ini" = "station_studio/_bundled/alembic.ini"
 
 # Source distribution (sdist) excludes test detritus, the SvelteKit
 # frontend (which the wheel will ship as built static assets in c2/c4),

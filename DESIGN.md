@@ -9578,6 +9578,25 @@ migration + wheel + docker + docs).
   installed-user scripting demand surfaces** (e.g. someone wants to
   cron `station-studio generate next-week` against an installed
   app, no repo present). Until then, the gap is honest and small.
+* **§16.13.t3 — Real-uvicorn subprocess integration test.** c1's
+  CLI tests mock `uvicorn.run` and assert kwargs (`workers=1` etc).
+  That gives confidence at the dispatch boundary but not at the
+  uvicorn integration boundary — if a future uvicorn version
+  changes the kwarg names, the mocked tests still pass but the
+  real call would fail. A small subprocess test that actually boots
+  uvicorn (`Popen`), curls `/`, then kills it would close the loop.
+  **Home: §16.13 c7 (slice review sweep candidate)** — ride along
+  with whatever else falls out of the slice's full-review pass.
+* **§16.13.t4 — Dependency-list drift between `pyproject.toml` and
+  `requirements.txt`.** Today both list `fastapi`/`uvicorn`/etc and
+  must be kept in sync by hand (the pyproject's comment says so).
+  Real risk over time: a `requirements.txt` bump (e.g. for security)
+  forgets the pyproject. Two ways to close: (a) generate one from
+  the other (`uv pip compile` or `pip-tools`), or (b) commit to
+  manual sync with a CI check that diffs the two. **Home: future
+  slice (~1 commit) when a drift bites OR when adding dependency
+  management tooling.** Not urgent — both files are short and the
+  dev workflow only reads one.
 
 ---
 

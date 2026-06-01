@@ -11,6 +11,8 @@ install-essentials only.
 """
 from __future__ import annotations
 
+import os
+
 import click
 
 from station_studio import __version__
@@ -65,6 +67,22 @@ def serve(host: str, port: int) -> None:
 
     click.echo(f"Starting station-studio on http://{host}:{port}")
     click.echo("(single worker — see DESIGN.md §16.11 / §16.13)")
+    # c1-review 🟡-2: until §16.13 c3 wires the app-home + first-run
+    # bootstrap, the FastAPI app's DB + stations dir + sidecars all
+    # resolve RELATIVE to `$PWD`. That's the right behaviour for
+    # in-repo dev (running `station-studio serve` from the repo root
+    # works exactly like `python run.py`), but it's a footgun for an
+    # installed-wheel user who runs it from anywhere else (they'd
+    # silently create `~/station_studio.db` or worse).
+    #
+    # The honest signal until c3 lands: tell the user where the
+    # working dir actually is so they can sanity-check that's where
+    # they meant to run. The banner DOESN'T fail-loud because the
+    # behaviour is correct for in-repo use (the working c1 case);
+    # it's a heads-up for the installed-wheel case.
+    click.echo(
+        f"(working dir: {os.getcwd()} — app-home wired in §16.13 c3)"
+    )
     uvicorn.run(
         "api.main:app",
         host=host,
@@ -90,7 +108,10 @@ def serve(host: str, port: int) -> None:
     show_default=True,
     help="content = engine samples from this pool; reference = cross-ref only.",
 )
-def import_cmd(path: str | None, name: str | None, role: str) -> None:
+@click.pass_context
+def import_cmd(
+    ctx: click.Context, path: str | None, name: str | None, role: str
+) -> None:
     """Stub for the installed-user pool-import path.
 
     c3 wires this against the running server's `import_source(...)`
@@ -104,7 +125,7 @@ def import_cmd(path: str | None, name: str | None, role: str) -> None:
         "in-repo `make import-weekly-pools manifest=…` target.",
         err=True,
     )
-    raise SystemExit(1)
+    ctx.exit(1)
 
 
 @main.command(
@@ -114,7 +135,8 @@ def import_cmd(path: str | None, name: str | None, role: str) -> None:
         "[Stub — wired in c3 once the app-home lands.]"
     ),
 )
-def seed() -> None:
+@click.pass_context
+def seed(ctx: click.Context) -> None:
     """Stub for re-seeding example stations from the wheel's bundled copies.
 
     c3 wires this against the app-home's stations dir (D6: copy on first
@@ -126,7 +148,7 @@ def seed() -> None:
         "(app-home + bundled-stations resolution).",
         err=True,
     )
-    raise SystemExit(1)
+    ctx.exit(1)
 
 
 if __name__ == "__main__":

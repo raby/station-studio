@@ -122,6 +122,22 @@ def test_serve_logs_startup_banner(runner: CliRunner) -> None:
     assert "single worker" in result.output
 
 
+def test_serve_banner_surfaces_working_directory(runner: CliRunner) -> None:
+    """c1-review 🟡-2: until §16.13 c3 wires the app-home, the FastAPI
+    app resolves its DB / stations dir against `$PWD`. That's a footgun
+    for an installed-wheel user who runs `station-studio serve` from
+    anywhere other than the repo. Banner surfaces the working dir so
+    the user can sanity-check before reading silent files into the
+    wrong place. The c3 boundary is also called out so a future reader
+    knows when this banner can disappear."""
+    with patch("uvicorn.run"):
+        result = runner.invoke(main, ["serve"])
+    # Some portion of the cwd shows in the banner (full path is platform-
+    # dependent; we just look for the `working dir:` label + a c3 marker).
+    assert "working dir:" in result.output
+    assert "§16.13 c3" in result.output
+
+
 def test_import_role_validates_choice(runner: CliRunner) -> None:
     """Click's Choice() rejects unknown roles at the CLI layer (same
     422-equivalent as the API's `Literal[content,reference]` Form
