@@ -10130,6 +10130,27 @@ plan-audit can find them:
   wins. **Home: whichever Svelte-5 migration slice ever lands** —
   no work today, just don't let the Svelte-4 quirk get reified as
   "the design" past the migration.
+* **§16.25.t5 — Playwright e2e for the pool-import UI (the §16.25
+  full-slice-review 🟡-A item).** The slice ships with 107 vitest
+  + 21 pytest tests covering the upload vertical, but the
+  Playwright e2e attempt didn't land: the form's
+  `on:submit|preventDefault={submit}` handler does NOT fire under
+  the Playwright + Vite-dev-server environment — neither
+  `submit-button.click()`, `form.requestSubmit()`, nor
+  `dispatchEvent(new Event('submit'))` triggers the Svelte
+  handler. The page hydrates (`bind:value` works, `onMount` runs,
+  the initial `GET /api/sources` fires), but `submit` never runs
+  and the form's `defaultPrevented` flag stays false post-dispatch
+  — definitive proof the listener isn't attached. The same e2e
+  pattern works fine on other pages (e.g. `atomic-edit.spec.ts`).
+  Same-day investigation eliminated: the wrapper's `{#key}` block,
+  conditional `{#if !batchMode}` rendering, `.svelte-kit` cache,
+  duplicate forms. Root cause TBD. **Home: separate
+  investigation slice** — likely a `vite-plugin-svelte` / Svelte 4
+  / Playwright interaction bug; could be specific to the
+  Panel-component-via-wrapper-page pattern. Investigate when the
+  next e2e bug surfaces or when adding new UI behavior to this
+  page.
 * **§16.25.t4 — Replace `window.confirm()` with a styled modal.**
   Both Delete and Re-import-blast-radius use native `confirm()`
   today (matches §16.3 station-delete). It's blocking, jarring,
