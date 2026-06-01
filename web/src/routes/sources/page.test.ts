@@ -297,6 +297,238 @@ describe('/sources — advanced path mode (the D1 secondary path)', () => {
 });
 
 
+// ---- §16.25 c3 — batch (multi-pool) mode ---------------------------
+
+
+describe('/sources — batch mode (c3 D2 multi-pool)', () => {
+  it('toggling into batch mode seeds one empty row + hides single form', async () => {
+    render(Page);
+    await screen.findByTestId('add-pool-form');
+
+    // Single form visible by default.
+    expect(screen.queryByTestId('batch-form')).not.toBeInTheDocument();
+
+    await fireEvent.click(screen.getByTestId('batch-mode-toggle'));
+
+    expect(screen.queryByTestId('add-pool-form')).not.toBeInTheDocument();
+    expect(screen.getByTestId('batch-form')).toBeInTheDocument();
+    // One empty row, status 'pending'.
+    const rows = screen.getAllByTestId('batch-row');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toHaveAttribute('data-row-status', 'pending');
+  });
+
+  it('Back to single mode restores the single form and drops rows', async () => {
+    render(Page);
+    await screen.findByTestId('add-pool-form');
+
+    await fireEvent.click(screen.getByTestId('batch-mode-toggle'));
+    await fireEvent.click(screen.getByTestId('batch-add-row'));
+    expect(screen.getAllByTestId('batch-row')).toHaveLength(2);
+
+    await fireEvent.click(screen.getByTestId('single-mode-toggle'));
+
+    expect(screen.queryByTestId('batch-form')).not.toBeInTheDocument();
+    expect(screen.getByTestId('add-pool-form')).toBeInTheDocument();
+  });
+
+  it('+ Add another row appends; remove drops it; never goes below 1', async () => {
+    render(Page);
+    await screen.findByTestId('add-pool-form');
+    await fireEvent.click(screen.getByTestId('batch-mode-toggle'));
+
+    await fireEvent.click(screen.getByTestId('batch-add-row'));
+    await fireEvent.click(screen.getByTestId('batch-add-row'));
+    expect(screen.getAllByTestId('batch-row')).toHaveLength(3);
+
+    // Remove the first row.
+    const removeButtons = screen.getAllByTestId('batch-row-remove');
+    await fireEvent.click(removeButtons[0]);
+    expect(screen.getAllByTestId('batch-row')).toHaveLength(2);
+
+    // Removing both remaining rows must NOT leave us row-less —
+    // the page re-seeds with one empty row.
+    await fireEvent.click(screen.getAllByTestId('batch-row-remove')[0]);
+    await fireEvent.click(screen.getAllByTestId('batch-row-remove')[0]);
+    expect(screen.getAllByTestId('batch-row')).toHaveLength(1);
+  });
+
+  it('submits all rows sequentially (G3) on the happy path, then resets', async () => {
+    listSourcesMock
+      .mockResolvedValueOnce([]) // initial
+      .mockResolvedValueOnce([
+        { id: 1, name: 'A', role: 'content', track_count: 1 },
+        { id: 2, name: 'B', role: 'content', track_count: 1 },
+      ]);
+
+    // Track call order to prove sequential submission.
+    const callOrder: string[] = [];
+    uploadSourceMock.mockImplementation(async (name: string) => {
+      callOrder.push(`start:${name}`);
+      // Tiny delay so parallel uploads (if they happened) would
+      // interleave the start/end markers — sequential ensures
+      // start:A → end:A → start:B → end:B.
+      await new Promise((r) => setTimeout(r, 0));
+      callOrder.push(`end:${name}`);
+      return {
+        name,
+        role: 'content',
+        tracks_imported: 1,
+        entries_imported: 1,
+      };
+    });
+
+    render(Page);
+    await screen.findByTestId('add-pool-form');
+    await fireEvent.click(screen.getByTestId('batch-mode-toggle'));
+    await fireEvent.click(screen.getByTestId('batch-add-row'));
+
+    // Two rows: A and B.
+    const nameInputs = screen.getAllByTestId('batch-row-name');
+    const fileInputs = screen.getAllByTestId('batch-row-file');
+    await fireEvent.input(nameInputs[0], { target: { value: 'A' } });
+    await fireEvent.change(fileInputs[0], { target: { files: [tinyFile()] } });
+    await fireEvent.input(nameInputs[1], { target: { value: 'B' } });
+    await fireEvent.change(fileInputs[1], { target: { files: [tinyFile()] } });
+
+    await fireEvent.submit(screen.getByTestId('batch-form'));
+
+    const banner = await screen.findByTestId('success-banner');
+    expect(banner).toHaveTextContent(/Imported all 2 pools/);
+
+    // G3 — submissions did not interleave.
+    expect(callOrder).toEqual(['start:A', 'end:A', 'start:B', 'end:B']);
+
+    // Form reset to one empty row on full success.
+    expect(screen.getAllByTestId('batch-row')).toHaveLength(1);
+    expect(screen.getAllByTestId('batch-row-name')[0]).toHaveValue('');
+
+    // Pool list refreshed with the two new rows.
+    const listRows = await screen.findAllByTestId('pool-row');
+    expect(listRows).toHaveLength(2);
+  });
+
+  it('partial failure: keeps failed rows visible with per-row error, drops succeeded', async () => {
+    listSourcesMock
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ id: 1, name: 'GOOD', role: 'content', track_count: 3 }]);
+
+    // GOOD succeeds, BAD fails with a 500.
+    uploadSourceMock
+      .mockResolvedValueOnce({
+        name: 'GOOD',
+        role: 'content',
+        tracks_imported: 3,
+        entries_imported: 3,
+      })
+      .mockRejectedValueOnce(new FakeApiError(500, 'import failed: malformed plist'));
+
+    render(Page);
+    await screen.findByTestId('add-pool-form');
+    await fireEvent.click(screen.getByTestId('batch-mode-toggle'));
+    await fireEvent.click(screen.getByTestId('batch-add-row'));
+
+    const nameInputs = screen.getAllByTestId('batch-row-name');
+    const fileInputs = screen.getAllByTestId('batch-row-file');
+    await fireEvent.input(nameInputs[0], { target: { value: 'GOOD' } });
+    await fireEvent.change(fileInputs[0], { target: { files: [tinyFile()] } });
+    await fireEvent.input(nameInputs[1], { target: { value: 'BAD' } });
+    await fireEvent.change(fileInputs[1], { target: { files: [tinyFile()] } });
+
+    await fireEvent.submit(screen.getByTestId('batch-form'));
+
+    // Form-level error summary mentions the partial split.
+    const err = await screen.findByTestId('form-error');
+    expect(err).toHaveTextContent(/Imported 1 of 2.*1 failed/);
+
+    // Succeeded row dropped; failed row stays visible with its error.
+    // (Identify "this is BAD's row" via the input's .value rather than
+    // textContent — input values don't surface in textContent.)
+    const remaining = screen.getAllByTestId('batch-row');
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0]).toHaveAttribute('data-row-status', 'failed');
+    expect(screen.getByTestId('batch-row-name')).toHaveValue('BAD');
+    expect(screen.getByTestId('batch-row-error')).toHaveTextContent(
+      /malformed plist/,
+    );
+
+    // Pool list refreshed — the succeeded pool is there.
+    const listRows = await screen.findAllByTestId('pool-row');
+    expect(listRows).toHaveLength(1);
+    expect(listRows[0]).toHaveAttribute('data-pool-name', 'GOOD');
+  });
+
+  it('pre-flight validation marks empty-name rows failed without API call', async () => {
+    render(Page);
+    await screen.findByTestId('add-pool-form');
+    await fireEvent.click(screen.getByTestId('batch-mode-toggle'));
+    await fireEvent.click(screen.getByTestId('batch-add-row'));
+
+    // Row 0: valid; row 1: empty name.
+    const nameInputs = screen.getAllByTestId('batch-row-name');
+    const fileInputs = screen.getAllByTestId('batch-row-file');
+    await fireEvent.input(nameInputs[0], { target: { value: 'OK' } });
+    await fireEvent.change(fileInputs[0], { target: { files: [tinyFile()] } });
+    // Leave nameInputs[1] empty.
+    await fireEvent.change(fileInputs[1], { target: { files: [tinyFile()] } });
+
+    uploadSourceMock.mockResolvedValue({
+      name: 'OK',
+      role: 'content',
+      tracks_imported: 1,
+      entries_imported: 1,
+    });
+    listSourcesMock.mockResolvedValueOnce([
+      { id: 1, name: 'OK', role: 'content', track_count: 1 },
+    ]);
+
+    await fireEvent.submit(screen.getByTestId('batch-form'));
+
+    await screen.findByTestId('form-error'); // partial-failure banner
+    // The invalid row was NOT submitted to the API.
+    expect(uploadSourceMock).toHaveBeenCalledTimes(1);
+    expect(uploadSourceMock.mock.calls[0][0]).toBe('OK');
+
+    // The failed row stays + carries the inline error.
+    const failedRow = screen.getByTestId('batch-row');
+    expect(failedRow).toHaveAttribute('data-row-status', 'failed');
+    expect(screen.getByTestId('batch-row-error')).toHaveTextContent(
+      /name is required/i,
+    );
+  });
+
+  it('batch path mode submits via importSourceByPath (not uploadSource)', async () => {
+    importSourceByPathMock.mockResolvedValue({
+      name: 'P',
+      role: 'reference',
+      tracks_imported: 2,
+      entries_imported: 2,
+    });
+    listSourcesMock.mockResolvedValueOnce([
+      { id: 1, name: 'P', role: 'reference', track_count: 2 },
+    ]);
+
+    render(Page);
+    await screen.findByTestId('add-pool-form');
+    await fireEvent.click(screen.getByTestId('mode-toggle-path'));
+    await fireEvent.click(screen.getByTestId('batch-mode-toggle'));
+
+    const nameInput = screen.getByTestId('batch-row-name');
+    const pathInput = screen.getByTestId('batch-row-path');
+    const roleSelect = screen.getByTestId('batch-row-role');
+    await fireEvent.input(nameInput, { target: { value: 'P' } });
+    await fireEvent.change(roleSelect, { target: { value: 'reference' } });
+    await fireEvent.input(pathInput, { target: { value: '/abs/p.xml' } });
+
+    await fireEvent.submit(screen.getByTestId('batch-form'));
+
+    await screen.findByTestId('success-banner');
+    expect(importSourceByPathMock).toHaveBeenCalledWith('P', 'reference', '/abs/p.xml');
+    expect(uploadSourceMock).not.toHaveBeenCalled();
+  });
+});
+
+
 describe('/sources — iTunes export hint (G5)', () => {
   it('shows the iTunes export hint in upload mode (the new-user help)', async () => {
     render(Page);

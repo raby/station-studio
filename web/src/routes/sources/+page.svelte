@@ -27,12 +27,17 @@
   let listError: string | null = null;
   let loading = true;
 
-  // Add-pool form state.
-  let name = '';
+  // ---- Add-pool form state (shared between single + batch modes) ----
+  //
+  // `mode` is GLOBAL across both modes: all rows in a batch share the
+  // upload-vs-path choice. Per-row mode would multiply the UX with
+  // little real-world payoff (a hobbyist's 6 pools are typically
+  // all from disk OR all uploaded, not mixed).
   let role: 'content' | 'reference' = 'content';
-  // D1 — upload is the headline path; path-input is the advanced /
-  // local-file option for pipx users with the XML already on disk.
   let mode: 'upload' | 'path' = 'upload';
+
+  // ---- Single-pool form state (c2) ----
+  let name = '';
   let fileList: FileList | null = null;
   // c2-review 🟡-1: `bind:files` is one-way (DOM → JS), so setting
   // `fileList = null` doesn't clear the underlying `<input type=file>`.
@@ -41,6 +46,79 @@
   // (`fileInputEl` just stays null, the optional-chain no-ops).
   let fileInputEl: HTMLInputElement | null = null;
   let path = '';
+
+  // ---- Batch (multi-pool) form state (c3) ----
+  // Toggle off → single-pool form (c2 UX, unchanged). Toggle on →
+  // a list of `BatchRow`s with per-row status. Per-row state is
+  // surfaced in the DOM (`data-row-status` + the visible badge) so
+  // the user sees `pending → uploading → imported | failed` as the
+  // sequential submit walks the list (G3 — no parallel uploads).
+  //
+  // Sequential submit is enforced by `for...of await` in `submitBatch`;
+  // there is no Promise.all path. Justified by §16.11's single-worker
+  // backend constraint + the 100 MB-library memory ceiling.
+  interface BatchRow {
+    id: string;
+    name: string;
+    role: 'content' | 'reference';
+    file: File | null;
+    path: string;
+    status: 'pending' | 'uploading' | 'imported' | 'failed';
+    error?: string;
+  }
+  let batchMode = false;
+  let rows: BatchRow[] = [];
+  let nextRowId = 0;
+
+  function makeEmptyRow(): BatchRow {
+    return {
+      id: String(nextRowId++),
+      name: '',
+      // First row inherits the global `role` so toggling into batch
+      // mode from a half-filled single form (or just having clicked
+      // "reference" earlier) preserves the user's intent for the
+      // initial row. Subsequent rows added via "+ Add row" also
+      // inherit the current global role.
+      role: role,
+      file: null,
+      path: '',
+      status: 'pending',
+    };
+  }
+
+  function enterBatchMode() {
+    rows = [makeEmptyRow()];
+    batchMode = true;
+    formError = null;
+    successMessage = null;
+  }
+
+  function exitBatchMode() {
+    rows = [];
+    batchMode = false;
+    formError = null;
+    successMessage = null;
+  }
+
+  function addRow() {
+    rows = [...rows, makeEmptyRow()];
+  }
+
+  function removeRow(id: string) {
+    const filtered = rows.filter((r) => r.id !== id);
+    // Never let the form become row-less — the user can exit batch
+    // mode via the dedicated button. Re-seed with one empty row.
+    rows = filtered.length === 0 ? [makeEmptyRow()] : filtered;
+  }
+
+  // Per-row file-input change handler. Extracted because Svelte's
+  // template parser doesn't allow `as` TS casts inside inline arrow
+  // functions in event handlers — this gives the cast its own scope.
+  function onRowFileChange(row: BatchRow, event: Event) {
+    const input = event.currentTarget as HTMLInputElement;
+    row.file = input.files?.[0] ?? null;
+    rows = rows;
+  }
 
   let submitting = false;
   let formError: string | null = null;
@@ -117,6 +195,95 @@
       submitting = false;
     }
   }
+
+  // ---- Batch submit (c3) ----
+  //
+  // Two-phase: validate all rows up front (mark invalid ones as
+  // `failed` without an API call), then walk the survivors
+  // sequentially, flipping each through `uploading → imported|failed`.
+  // After all rows are processed: drop the succeeded ones, keep the
+  // failed for retry, write a summary banner.
+  function validateBatchRow(row: BatchRow): string | null {
+    const trimmedName = row.name.trim();
+    if (!trimmedName) return 'Pool name is required.';
+    if (mode === 'upload' && !row.file) {
+      return 'Pick an iTunes XML file to upload.';
+    }
+    if (mode === 'path' && !row.path.trim()) {
+      return 'Type the server-side path to the XML.';
+    }
+    return null;
+  }
+
+  async function submitBatch() {
+    formError = null;
+    successMessage = null;
+    submitting = true;
+
+    let successes = 0;
+    let failures = 0;
+
+    try {
+      // Phase 1: validation. Mark invalid rows as failed; survivors
+      // reset to 'pending' (so a retry on a previously-failed row
+      // that's now valid starts from a clean slate).
+      for (const row of rows) {
+        const validationError = validateBatchRow(row);
+        if (validationError) {
+          row.status = 'failed';
+          row.error = validationError;
+          failures++;
+        } else {
+          row.status = 'pending';
+          row.error = undefined;
+        }
+      }
+      rows = rows;
+
+      // Phase 2: sequential submit. G3 — no parallel uploads;
+      // walks one row at a time, awaiting each before moving on.
+      // Per-row try/catch isolates failures so one bad XML doesn't
+      // poison the rest of the batch (D2 partial-success contract).
+      for (const row of rows) {
+        if (row.status === 'failed') continue; // skip pre-flight failures
+        row.status = 'uploading';
+        rows = rows;
+        try {
+          if (mode === 'upload') {
+            await uploadSource(row.name.trim(), row.role, row.file!);
+          } else {
+            await importSourceByPath(row.name.trim(), row.role, row.path.trim());
+          }
+          row.status = 'imported';
+          successes++;
+        } catch (e) {
+          row.status = 'failed';
+          row.error = e instanceof ApiError ? e.message : String(e);
+          failures++;
+        }
+        rows = rows;
+      }
+
+      // Phase 3: summary + cleanup. Drop succeeded rows; keep failed
+      // for retry. If everything succeeded, re-seed with one empty
+      // row so the form stays usable for the next batch.
+      const total = successes + failures;
+      if (failures === 0) {
+        successMessage = `Imported all ${successes} pool${successes === 1 ? '' : 's'}.`;
+        rows = [makeEmptyRow()];
+      } else {
+        formError =
+          successes > 0
+            ? `Imported ${successes} of ${total}. ${failures} failed — see row errors below.`
+            : `All ${failures} import${failures === 1 ? '' : 's'} failed — see row errors below.`;
+        rows = rows.filter((r) => r.status !== 'imported');
+      }
+
+      await refresh();
+    } finally {
+      submitting = false;
+    }
+  }
 </script>
 
 <svelte:head>
@@ -134,8 +301,165 @@
 
   <!-- ===== Add-pool form ===== -->
   <section class="add-section">
-    <h2>Add a pool</h2>
+    <header class="section-row">
+      <h2>{batchMode ? 'Add multiple pools' : 'Add a pool'}</h2>
+      {#if batchMode}
+        <button
+          type="button"
+          class="link-button"
+          data-testid="single-mode-toggle"
+          on:click={exitBatchMode}
+          disabled={submitting}
+        >
+          ← Back to single pool
+        </button>
+      {:else}
+        <button
+          type="button"
+          class="link-button"
+          data-testid="batch-mode-toggle"
+          on:click={enterBatchMode}
+          disabled={submitting}
+        >
+          + Add multiple at once
+        </button>
+      {/if}
+    </header>
 
+    <!-- Mode toggle (upload vs path) sits ABOVE the form body so it
+         applies uniformly in both single + batch modes. -->
+    <div class="mode-toggle" role="tablist" aria-label="How to provide the XML">
+      <button
+        type="button"
+        role="tab"
+        class="mode-tab"
+        class:active={mode === 'upload'}
+        aria-selected={mode === 'upload'}
+        data-testid="mode-toggle-upload"
+        on:click={() => (mode = 'upload')}
+        disabled={submitting}
+      >
+        Upload file
+      </button>
+      <button
+        type="button"
+        role="tab"
+        class="mode-tab"
+        class:active={mode === 'path'}
+        aria-selected={mode === 'path'}
+        data-testid="mode-toggle-path"
+        on:click={() => (mode = 'path')}
+        disabled={submitting}
+      >
+        Advanced: server path
+      </button>
+    </div>
+
+    {#if batchMode}
+      <!-- ===== Batch mode (c3 — D2 multi-pool) ===== -->
+      <form
+        class="batch-form"
+        data-testid="batch-form"
+        on:submit|preventDefault={submitBatch}
+      >
+        <ul class="batch-rows" data-testid="batch-rows">
+          {#each rows as row (row.id)}
+            <li
+              class="batch-row"
+              data-testid="batch-row"
+              data-row-id={row.id}
+              data-row-status={row.status}
+            >
+              <div class="batch-row-fields">
+                <input
+                  type="text"
+                  class="batch-name"
+                  placeholder="Pool name"
+                  data-testid="batch-row-name"
+                  bind:value={row.name}
+                  disabled={submitting}
+                />
+                <select
+                  class="batch-role"
+                  data-testid="batch-row-role"
+                  bind:value={row.role}
+                  disabled={submitting}
+                >
+                  <option value="content">content</option>
+                  <option value="reference">reference</option>
+                </select>
+                {#if mode === 'upload'}
+                  <input
+                    type="file"
+                    accept=".xml,application/xml,text/xml"
+                    class="batch-file"
+                    data-testid="batch-row-file"
+                    on:change={(e) => onRowFileChange(row, e)}
+                    disabled={submitting}
+                  />
+                {:else}
+                  <input
+                    type="text"
+                    class="batch-path"
+                    placeholder="/path/to/library.xml"
+                    data-testid="batch-row-path"
+                    bind:value={row.path}
+                    disabled={submitting}
+                  />
+                {/if}
+                <span
+                  class="status-badge status-{row.status}"
+                  data-testid="batch-row-status"
+                >
+                  {row.status}
+                </span>
+                <button
+                  type="button"
+                  class="remove-row"
+                  data-testid="batch-row-remove"
+                  aria-label="Remove row"
+                  on:click={() => removeRow(row.id)}
+                  disabled={submitting}
+                >
+                  ×
+                </button>
+              </div>
+              {#if row.error}
+                <p class="row-error" data-testid="batch-row-error">{row.error}</p>
+              {/if}
+            </li>
+          {/each}
+        </ul>
+
+        <button
+          type="button"
+          class="button"
+          data-testid="batch-add-row"
+          on:click={addRow}
+          disabled={submitting}
+        >
+          + Add another row
+        </button>
+
+        {#if formError}
+          <p class="error" data-testid="form-error">{formError}</p>
+        {/if}
+        {#if successMessage}
+          <p class="success" data-testid="success-banner">{successMessage}</p>
+        {/if}
+
+        <button
+          type="submit"
+          class="button primary"
+          data-testid="batch-submit"
+          disabled={submitting || rows.length === 0}
+        >
+          {submitting
+            ? `Importing… (${rows.filter((r) => r.status === 'imported').length}/${rows.length})`
+            : `Import ${rows.length} pool${rows.length === 1 ? '' : 's'}`}
+        </button>
+      </form>
+    {:else}
     <form class="add-pool-form" data-testid="add-pool-form" on:submit|preventDefault={submit}>
       <div class="field">
         <label for="pool-name">Pool name</label>
@@ -166,34 +490,6 @@
             reference — imported for cross-reference only (e.g. MASTER)
           </option>
         </select>
-      </div>
-
-      <!-- D1 mode toggle: upload is the headline; path is the
-           advanced/local-file option. Buttons (not <a>) so they're
-           keyboard-operable without page navigation. -->
-      <div class="mode-toggle" role="tablist" aria-label="How to provide the XML">
-        <button
-          type="button"
-          role="tab"
-          class="mode-tab"
-          class:active={mode === 'upload'}
-          aria-selected={mode === 'upload'}
-          data-testid="mode-toggle-upload"
-          on:click={() => (mode = 'upload')}
-        >
-          Upload file
-        </button>
-        <button
-          type="button"
-          role="tab"
-          class="mode-tab"
-          class:active={mode === 'path'}
-          aria-selected={mode === 'path'}
-          data-testid="mode-toggle-path"
-          on:click={() => (mode = 'path')}
-        >
-          Advanced: server path
-        </button>
       </div>
 
       {#if mode === 'upload'}
@@ -249,6 +545,7 @@
         {submitting ? 'Importing…' : 'Import'}
       </button>
     </form>
+    {/if}
   </section>
 
   <!-- ===== Imported pools list ===== -->
@@ -438,5 +735,122 @@
   .role-reference {
     background: #fef3c7;
     color: #92400e;
+  }
+
+  /* ===== c3 batch UI ===== */
+  .section-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-bottom: 1rem;
+  }
+  .section-row h2 {
+    margin: 0;
+  }
+  .link-button {
+    background: none;
+    border: none;
+    padding: 0;
+    color: #2563eb;
+    cursor: pointer;
+    font: inherit;
+    font-size: 0.9rem;
+    text-decoration: underline;
+  }
+  .link-button:disabled {
+    color: #9ab3e8;
+    cursor: wait;
+  }
+
+  .batch-form {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+  .batch-rows {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+  }
+  .batch-row {
+    border: 1px solid #e4e4e7;
+    border-radius: 4px;
+    padding: 0.5rem;
+    background: #fff;
+  }
+  .batch-row[data-row-status='imported'] {
+    background: #f0fdf4;
+    border-color: #bbf7d0;
+  }
+  .batch-row[data-row-status='failed'] {
+    background: #fef2f2;
+    border-color: #fecaca;
+  }
+  .batch-row[data-row-status='uploading'] {
+    background: #fef3c7;
+    border-color: #fde68a;
+  }
+  .batch-row-fields {
+    display: grid;
+    grid-template-columns: 2fr 1.2fr 2fr auto auto;
+    gap: 0.5rem;
+    align-items: center;
+  }
+  .batch-row-fields input[type='text'],
+  .batch-row-fields select {
+    padding: 0.35rem 0.5rem;
+    border: 1px solid #c4c4c8;
+    border-radius: 4px;
+    font: inherit;
+  }
+  .batch-row-fields input[type='file'] {
+    font-size: 0.85rem;
+  }
+  .status-badge {
+    font-size: 0.78rem;
+    font-weight: 500;
+    padding: 0.15rem 0.55rem;
+    border-radius: 999px;
+    text-align: center;
+    text-transform: lowercase;
+  }
+  .status-pending {
+    background: #f3f4f6;
+    color: #4b5563;
+  }
+  .status-uploading {
+    background: #fde68a;
+    color: #92400e;
+  }
+  .status-imported {
+    background: #bbf7d0;
+    color: #166534;
+  }
+  .status-failed {
+    background: #fecaca;
+    color: #991b1b;
+  }
+  .remove-row {
+    background: transparent;
+    border: 1px solid #d4d4d8;
+    border-radius: 4px;
+    padding: 0.1rem 0.5rem;
+    cursor: pointer;
+    color: #6b7280;
+    font-size: 1.1rem;
+    line-height: 1;
+  }
+  .remove-row:hover:not(:disabled) {
+    background: #fef2f2;
+    color: #b91c1c;
+  }
+  .row-error {
+    margin: 0.4rem 0 0;
+    padding-left: 0.25rem;
+    color: #991b1b;
+    font-size: 0.85rem;
   }
 </style>
