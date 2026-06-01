@@ -10116,6 +10116,31 @@ plan-audit can find them:
   semantically but operates on `fetch` not the job-store.
   **Home: separate post-§16.25 slice (~2-3 commits).** Out of
   scope for v1 of the install-story unblocker.
+* **§16.25.t3 — Mutation-idiom hybrid under Svelte 5 migration.**
+  `<PoolImportPanel>` documents an explicit hybrid contract:
+  whole-array operations use immutable `[...rows, …]` / `.filter`,
+  per-row status flips stay in-place mutation + `rows = rows`. The
+  full-immutable form was tried during the c5 extraction and broke
+  Svelte 4's keyed-each `bind:value={row.name}` — replacing every
+  row object on every status flip confused binding identity enough
+  that sibling inputs lost data. **The hybrid works because of
+  Svelte 4 semantics.** When/if the codebase migrates to Svelte 5
+  (`$state` runes), the binding semantics change and the hybrid
+  needs re-evaluation — the all-immutable form may then "just work."
+  **Home: a Svelte-5 migration slice that doesn't exist yet.** No
+  triggering event today; the panel's docstring documents the
+  hybrid explicitly so a future reader doesn't repeat the failed
+  experiment.
+* **§16.25.t4 — Replace `window.confirm()` with styled modals.**
+  Per-row Delete and Re-import both use the native browser
+  `window.confirm()` dialog (matching the §16.3 station-delete
+  pattern). It's jarring UX — a system-modal that visually breaks
+  out of the app, and isn't styleable. A reusable
+  `<ConfirmDialog>` component with the same blast-radius copy
+  would feel native. **Home: separate small UX-polish slice
+  (~2-3 commits, also retrofits the §16.3 station-delete +
+  §14.10 per-week delete + §16.2.3 export overwrite).** Out of
+  scope for §16.25's "close the gate" goal.
 
 **Prerequisites this slice owns (the parts that aren't "just UI").**
 
@@ -10246,7 +10271,9 @@ all four decisions landed at their locked-highest-coverage shape.
   (whole-array operations immutable, per-row status flips stay
   in-place — full immutability broke Svelte 4's keyed-each
   `bind:value` and the docstring documents the hybrid contract
-  explicitly so a future reader doesn't repeat the experiment).
+  explicitly so a future reader doesn't repeat the experiment;
+  re-evaluation queued as **§16.25.t3** for the eventual Svelte 5
+  migration).
   Mid-slice review: panel dispatches a `changed` event after any
   successful list-modifying op; station page re-fetches
   `getStationOverview` on `on:changed` so the §16.19 "not imported"
