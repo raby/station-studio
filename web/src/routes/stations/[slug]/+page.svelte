@@ -17,6 +17,7 @@
     Station, PlaylistSummary, JobSnapshot, StationOverview,
   } from '$lib/api';
   import ProgressIndicator from '$lib/components/ProgressIndicator.svelte';
+  import PoolImportPanel from '$lib/components/sources/PoolImportPanel.svelte';
   import { page } from '$app/stores';
 
   let station: Station | null = null;
@@ -391,7 +392,19 @@
                   {#if p.imported}
                     <span class="pool-count">{(p.track_count ?? 0).toLocaleString()} tracks</span>
                   {:else}
-                    <span class="pool-missing" data-testid="pool-missing">not imported</span>
+                    <!-- §16.25 c5 (D3 secondary): deep-link the badge
+                         to /sources with the pool name + role prefilled
+                         on the add-form. The PRIMARY fix path is the
+                         embedded <PoolImportPanel> below (same page,
+                         no navigation); this link is the global-
+                         context escape hatch. -->
+                    <a
+                      class="pool-missing"
+                      data-testid="pool-missing"
+                      href="/sources?pool={encodeURIComponent(p.name)}&role={encodeURIComponent(p.role)}"
+                    >
+                      not imported
+                    </a>
                   {/if}
                 </li>
               {/each}
@@ -436,6 +449,17 @@
             {/if}
           </div>
         </div>
+      </section>
+
+      <!-- §16.25 c5 (D3 primary): per-station <PoolImportPanel> embed.
+           Scope filters the imported-pools list to ONLY this station's
+           declared sources, so the user sees what's relevant here.
+           The add-form is unconstrained (any name is acceptable, but
+           the user typically came here to fill a "not imported" gap
+           from the overview card above). -->
+      <section class="overview-pool-import" data-testid="overview-pool-import">
+        <h2>Manage source pools</h2>
+        <PoolImportPanel scope={overview.pools.map((p) => p.name)} />
       </section>
     {/if}
 
@@ -696,6 +720,14 @@
   .overview {
     margin-top: 1.5rem;
   }
+  /* §16.25 c5 — per-station pool-import embed. */
+  .overview-pool-import {
+    margin-top: 2rem;
+    margin-bottom: 2rem;
+  }
+  .overview-pool-import h2 {
+    margin-bottom: 0.75rem;
+  }
   .overview-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -778,6 +810,10 @@
     margin-left: auto;
     color: #c0392b;
     font-size: 0.78rem;
+    text-decoration: underline;
+  }
+  .pool-missing:hover {
+    color: #8b1e10;
   }
   .pool-list li.missing .pool-name {
     color: #c0392b;

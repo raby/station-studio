@@ -77,6 +77,15 @@ vi.mock('$lib/api', () => ({
   deleteStation: (...args: unknown[]) => deleteStationMock(...args),
   ApiError: FakeApiError,
   JobStartConflict: FakeJobStartConflict,
+  // §16.25 c5: the page now embeds <PoolImportPanel> which calls into
+  // these helpers. Stub them to no-op resolutions so the panel mounts
+  // cleanly without polluting the station-detail tests' assertions.
+  // (The panel's own behaviour is exercised in
+  // src/routes/sources/page.test.ts.)
+  listSources: async () => [],
+  uploadSource: async () => ({ name: '', role: 'content', tracks_imported: 0, entries_imported: 0 }),
+  importSourceByPath: async () => ({ name: '', role: 'content', tracks_imported: 0, entries_imported: 0 }),
+  deleteSource: async () => undefined,
 }));
 
 /**
@@ -839,6 +848,27 @@ describe('station detail — §16.19 overview', () => {
     expect(screen.getByTestId('pools-summary')).toHaveTextContent('500 tracks');
     // The un-imported source surfaces the setup gap.
     expect(screen.getByTestId('pool-missing')).toHaveTextContent('not imported');
+  });
+
+  it('§16.25 c5: "not imported" badge is a deep-link to /sources?pool=…&role=…', async () => {
+    getStationOverviewMock.mockResolvedValue(overview());
+    render(Page);
+
+    const badge = await screen.findByTestId('pool-missing');
+    // It's an anchor (not a span) — so the user can click through.
+    expect(badge.tagName).toBe('A');
+    const href = badge.getAttribute('href');
+    expect(href).toBe('/sources?pool=RG_MISSING&role=content');
+  });
+
+  it('§16.25 c5: embeds <PoolImportPanel> scoped to this station', async () => {
+    getStationOverviewMock.mockResolvedValue(overview());
+    render(Page);
+
+    // The embed section appears below the overview.
+    expect(await screen.findByTestId('overview-pool-import')).toBeInTheDocument();
+    // The panel itself renders inside.
+    expect(screen.getByTestId('pool-import-panel')).toBeInTheDocument();
   });
 
   it('shows the cursors card only for persistent templates', async () => {

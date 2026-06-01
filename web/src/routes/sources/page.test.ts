@@ -41,6 +41,20 @@ vi.mock('$lib/api', () => ({
   deleteSource: (...args: unknown[]) => deleteSourceMock(...args),
 }));
 
+// §16.25 c5: /sources reads `?pool=…&role=…` from $page.url.searchParams
+// to drive the deep-link prefill (the §16.19 "not imported" badge
+// target). A holder lets individual tests swap the URL per case.
+let testSearch = '';
+vi.mock('$app/stores', () => {
+  const pageStore = {
+    subscribe(fn: (v: { url: URL }) => void) {
+      fn({ url: new URL(`http://localhost/sources${testSearch}`) });
+      return () => {};
+    },
+  };
+  return { page: pageStore };
+});
+
 // Load AFTER vi.mock so the mocked module is what the page sees.
 const Page = (await import('./+page.svelte')).default;
 
@@ -54,6 +68,8 @@ beforeEach(() => {
   deleteSourceMock.mockReset();
   // Default: empty list (page renders empty state).
   listSourcesMock.mockResolvedValue([]);
+  // Default: no query params (deep-link prefill OFF).
+  testSearch = '';
 });
 
 // c4 mid-slice review T1: per-test `vi.spyOn(window, 'confirm')` calls
@@ -539,6 +555,45 @@ describe('/sources — batch mode (c3 D2 multi-pool)', () => {
     await screen.findByTestId('success-banner');
     expect(importSourceByPathMock).toHaveBeenCalledWith('P', 'reference', '/abs/p.xml');
     expect(uploadSourceMock).not.toHaveBeenCalled();
+  });
+});
+
+
+// ---- §16.25 c5 — query-param prefill (deep-link from §16.19 badge) ----
+
+
+describe('/sources — deep-link prefill from ?pool=&role= (c5)', () => {
+  it('prefills the single-pool form name from ?pool=', async () => {
+    testSearch = '?pool=DAYTIME';
+    render(Page);
+    const nameInput = (await screen.findByTestId('name-input')) as HTMLInputElement;
+    expect(nameInput.value).toBe('DAYTIME');
+  });
+
+  it('prefills both name AND role from ?pool=&role=reference', async () => {
+    testSearch = '?pool=MASTER&role=reference';
+    render(Page);
+    const nameInput = (await screen.findByTestId('name-input')) as HTMLInputElement;
+    const roleSelect = (await screen.findByTestId('role-select')) as HTMLSelectElement;
+    expect(nameInput.value).toBe('MASTER');
+    expect(roleSelect.value).toBe('reference');
+  });
+
+  it('ignores ?role= with an invalid value (defensive against typos)', async () => {
+    testSearch = '?pool=TYPO&role=banana';
+    render(Page);
+    const roleSelect = (await screen.findByTestId('role-select')) as HTMLSelectElement;
+    // Falls back to the panel's default 'content', not 'banana'.
+    expect(roleSelect.value).toBe('content');
+  });
+
+  it('renders empty name + default role when no query params (no regression)', async () => {
+    testSearch = '';
+    render(Page);
+    const nameInput = (await screen.findByTestId('name-input')) as HTMLInputElement;
+    const roleSelect = (await screen.findByTestId('role-select')) as HTMLSelectElement;
+    expect(nameInput.value).toBe('');
+    expect(roleSelect.value).toBe('content');
   });
 });
 
