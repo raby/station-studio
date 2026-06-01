@@ -10142,27 +10142,54 @@ plan-audit can find them:
   wins. **Home: whichever Svelte-5 migration slice ever lands** —
   no work today, just don't let the Svelte-4 quirk get reified as
   "the design" past the migration.
-* **§16.25.t5 — Playwright e2e for the pool-import UI (the §16.25
-  full-slice-review 🟡-A item).** The slice ships with 107 vitest
-  + 21 pytest tests covering the upload vertical, but the
-  Playwright e2e attempt didn't land: the form's
-  `on:submit|preventDefault={submit}` handler does NOT fire under
-  the Playwright + Vite-dev-server environment — neither
-  `submit-button.click()`, `form.requestSubmit()`, nor
-  `dispatchEvent(new Event('submit'))` triggers the Svelte
-  handler. The page hydrates (`bind:value` works, `onMount` runs,
-  the initial `GET /api/sources` fires), but `submit` never runs
-  and the form's `defaultPrevented` flag stays false post-dispatch
-  — definitive proof the listener isn't attached. The same e2e
-  pattern works fine on other pages (e.g. `atomic-edit.spec.ts`).
-  Same-day investigation eliminated: the wrapper's `{#key}` block,
-  conditional `{#if !batchMode}` rendering, `.svelte-kit` cache,
-  duplicate forms. Root cause TBD. **Home: separate
-  investigation slice** — likely a `vite-plugin-svelte` / Svelte 4
-  / Playwright interaction bug; could be specific to the
-  Panel-component-via-wrapper-page pattern. Investigate when the
-  next e2e bug surfaces or when adding new UI behavior to this
-  page.
+* **§16.25.t5 — Playwright e2e for the pool-import UI.** The slice
+  ships with 107 vitest + 21 pytest covering the upload vertical;
+  Playwright never landed. **Second investigation attempt sharpened
+  the diagnosis significantly:**
+
+  * **Bug is general to ALL Svelte event handlers on /sources, not
+    just `on:submit`.** Verified by switching the Import button to
+    `<button type="button" on:click={submit}>` — STILL didn't fire.
+    Verified again on a non-form button (`mode-toggle-path`): the
+    on:click handler doesn't run, the global `mode` state never
+    flips, file-input stays visible instead of being replaced by
+    path-input.
+  * **Side-by-side proof against a working surface.** Same Playwright
+    run, same Svelte/SvelteKit/Vite, dispatched a synthetic
+    `Event('submit', {cancelable, bubbles})` against
+    `[data-testid="edit-form"]` (DetailPanel on the visualise page)
+    AND `[data-testid="add-pool-form"]` (PoolImportPanel on /sources).
+    edit-form: `defaultPrevented = true` (Svelte's
+    `on:submit|preventDefault` ran). add-pool-form:
+    `defaultPrevented = false` (listener never ran). Identical
+    Svelte directive syntax; one attaches, the other doesn't.
+  * **Hydration partially works.** `bind:value` updates `name` in
+    state (test fills `name-input`, value persists). `onMount` runs
+    (`GET /api/sources` fires on page load). So the component IS
+    mounted; only event listener attachment is broken.
+  * **Eliminated as causes:** `{#key}` wrapper, `+layout.svelte`'s
+    `<ConfirmDialog>` mount, conditional `{#if batchMode}{:else}`
+    vs two bare `{#if}` branches, `.svelte-kit` build cache,
+    duplicate forms in the DOM.
+  * **Confirmed irrelevant artifact:** the `<Layout> was created
+    with unknown prop 'params'` console warning appears whether or
+    not a layout file exists, on /sources AND on working pages.
+
+  **Next investigation should test:**
+  * Production build (`npm run build && npm run preview`) instead
+    of dev (`npm run dev`) — isolates Vite-dev HMR as a possible
+    cause.
+  * Whether PoolImportPanel's size (1100+ lines, many reactive
+    statements, `bind:this`, multiple nested conditionals)
+    overwhelms hydration timing.
+  * Whether the panel mounted via dynamic-import or different
+    structure attaches listeners correctly.
+
+  **Home: dedicated investigation slice (~1-2 days).** Not a
+  blocker; the unit + integration coverage carries the load and
+  the page works fine in real-browser manual smoke. Pick up when
+  next adding non-trivial UI to /sources, or when a real e2e bug
+  exposes the gap.
 * **§16.25.t4 — Replace `window.confirm()` with a styled modal —
   SHIPPED.** Closed across 3 commits as a separate polish slice:
   `confirmDialog({title, body, confirmLabel?, danger?}): Promise<bool>`

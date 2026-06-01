@@ -246,7 +246,6 @@
   }
 
   async function submit() {
-    console.log('[panel] submit() fired', { name, role, mode, hasFile: !!fileList?.[0] });
     formError = null;
     successMessage = null;
     submitting = true;
