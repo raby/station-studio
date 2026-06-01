@@ -14,6 +14,13 @@ export const TINY_LIBRARY_PATH = path.join(
   'tests/fixtures/tiny-library.xml',
 );
 
+/** Absolute path to the malformed-library fixture — for partial-failure
+ *  + invalid-XML e2e cases. */
+export const MALFORMED_LIBRARY_PATH = path.join(
+  REPO_ROOT,
+  'tests/fixtures/malformed-library.xml',
+);
+
 /** Canonical minimal template — one source, one Mon row, one pick slot.
  *
  *  `name` matches production templates (stations/*.json all carry it).
