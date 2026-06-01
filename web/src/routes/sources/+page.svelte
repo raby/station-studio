@@ -314,6 +314,12 @@
   let reimportPath = '';
   let reimporting = false;
   let reimportError: string | null = null;
+  // c4 mid-slice review 🟡-3: success feedback for re-import lives in
+  // the LIST section (next to where the user just acted), not in the
+  // FORM section (where `successMessage` lives for single + batch
+  // imports). Same op-type, different visual home — splitting the
+  // state keeps each banner near the relevant operation.
+  let reimportSuccessMessage: string | null = null;
 
   function startReimport(pool: Source) {
     reimportingId = pool.id;
@@ -339,6 +345,10 @@
 
   async function submitReimport(pool: Source) {
     reimportError = null;
+    // c4 mid-slice review 🟡-2: clear the re-import success banner at
+    // the start of a new attempt so a stale "Re-imported X" never
+    // co-exists with a fresh in-progress submit.
+    reimportSuccessMessage = null;
     // Mirror the c2 client-side validation — fail fast without a
     // round-trip if the obvious field is missing.
     if (mode === 'upload' && !reimportFile) {
@@ -367,8 +377,9 @@
       } else {
         await importSourceByPath(pool.name, pool.role, reimportPath.trim());
       }
-      // Success — collapse the form, surface a banner, refresh.
-      successMessage = `Re-imported "${pool.name}".`;
+      // Success — collapse the form, surface a banner in the LIST
+      // section (🟡-3 — next to where the user acted), refresh.
+      reimportSuccessMessage = `Re-imported "${pool.name}".`;
       cancelReimport();
       await refresh();
     } catch (e) {
@@ -385,7 +396,15 @@
   // mistake which pool they're deleting. Generated playlists are
   // unaffected (`PlaylistEntry.track_id` is direct), so we say so
   // explicitly to reduce hesitation on the right click-through.
-  let deleting: number | null = null; // id mid-delete, for disable state
+  //
+  // c4 mid-slice review 🟡-1: `deleting` is a single-slot indicator
+  // (id mid-delete), but the disabled-button predicate now blocks ALL
+  // row actions while ANY delete is in flight. Without that, a
+  // concurrent second Delete would (a) clobber the first row's
+  // "Deleting…" label and (b) have the first delete's `finally` clear
+  // the second's indicator. Matches the `reimporting` blocks-all
+  // semantic — symmetric + concurrent deletes have no real use case.
+  let deleting: number | null = null;
   let deleteError: string | null = null;
 
   async function deletePool(pool: Source) {
@@ -397,6 +416,11 @@
     if (!ok) return;
     deleting = pool.id;
     deleteError = null;
+    // c4 mid-slice review 🟡-2: clear the re-import success banner on
+    // any new list-section op, so "Re-imported X" doesn't sit stale
+    // above a freshly-deleted pool row. Delete itself shows no
+    // success banner — the row vanishing IS the success state (🟡-3).
+    reimportSuccessMessage = null;
     // If the user clicks Delete while re-importing the same row, the
     // expansion would survive after the row vanishes — close it.
     if (reimportingId === pool.id) cancelReimport();
@@ -686,6 +710,9 @@
         No pools imported yet. Use the form above to import your first one.
       </p>
     {:else}
+      {#if reimportSuccessMessage}
+        <p class="success" data-testid="reimport-success">{reimportSuccessMessage}</p>
+      {/if}
       {#if deleteError}
         <p class="error" data-testid="delete-error">Could not delete: {deleteError}</p>
       {/if}
@@ -723,7 +750,7 @@
                     class="row-button"
                     data-testid="pool-row-reimport"
                     on:click={() => startReimport(s)}
-                    disabled={deleting === s.id || reimporting}
+                    disabled={deleting !== null || reimporting}
                   >
                     Re-import
                   </button>
@@ -732,7 +759,7 @@
                     class="row-button danger"
                     data-testid="pool-row-delete"
                     on:click={() => deletePool(s)}
-                    disabled={deleting === s.id || reimporting}
+                    disabled={deleting !== null || reimporting}
                   >
                     {deleting === s.id ? 'Deleting…' : 'Delete'}
                   </button>

@@ -702,8 +702,11 @@ describe('/sources — per-row Re-import (D4 + 🟡-4 read-only role)', () => {
     const row = await screen.findByTestId('pool-row');
     expect(row).toHaveTextContent('150');
 
-    // Success banner shows.
-    expect(await screen.findByTestId('success-banner')).toHaveTextContent(/DAYTIME/);
+    // 🟡-3: success banner shows in the LIST section (dedicated
+    // `reimport-success` testid), NOT the FORM section's
+    // `success-banner` (which is for form imports only).
+    expect(await screen.findByTestId('reimport-success')).toHaveTextContent(/DAYTIME/);
+    expect(screen.queryByTestId('success-banner')).not.toBeInTheDocument();
 
     confirmSpy.mockRestore();
   });
@@ -766,6 +769,63 @@ describe('/sources — per-row Re-import (D4 + 🟡-4 read-only role)', () => {
     expect(screen.getByTestId('reimport-row')).toBeInTheDocument();
 
     confirmSpy.mockRestore();
+  });
+
+  it('🟡-2: deleting another pool clears any prior re-import success banner', async () => {
+    listSourcesMock
+      .mockResolvedValueOnce([
+        { id: 1, name: 'A', role: 'content', track_count: 10 },
+        { id: 2, name: 'B', role: 'content', track_count: 20 },
+      ])
+      .mockResolvedValueOnce([
+        { id: 1, name: 'A', role: 'content', track_count: 15 },
+        { id: 2, name: 'B', role: 'content', track_count: 20 },
+      ])
+      .mockResolvedValueOnce([
+        { id: 1, name: 'A', role: 'content', track_count: 15 },
+      ]); // after deleting B
+    uploadSourceMock.mockResolvedValue({
+      name: 'A',
+      role: 'content',
+      tracks_imported: 15,
+      entries_imported: 15,
+    });
+    deleteSourceMock.mockResolvedValue(undefined);
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+    render(Page);
+    // Re-import pool A.
+    const reimportBtn = (await screen.findAllByTestId('pool-row-reimport'))[0];
+    await fireEvent.click(reimportBtn);
+    await fireEvent.change(screen.getByTestId('reimport-file-input'), {
+      target: { files: [tinyFile()] },
+    });
+    await fireEvent.click(screen.getByTestId('reimport-submit'));
+
+    // Re-import banner now visible.
+    await screen.findByTestId('reimport-success');
+
+    // Delete pool B — should clear the stale "Re-imported A" banner
+    // (we deliberately don't surface a delete success banner; the
+    // row vanishing IS the success state, 🟡-3).
+    const deleteButtons = screen.getAllByTestId('pool-row-delete');
+    // After re-import, the surviving pools are A + B. Find B's
+    // delete button.
+    const bRow = screen
+      .getAllByTestId('pool-row')
+      .find((r) => r.getAttribute('data-pool-name') === 'B');
+    expect(bRow).toBeDefined();
+    const bDeleteBtn = bRow!.querySelector('[data-testid="pool-row-delete"]')!;
+    await fireEvent.click(bDeleteBtn);
+
+    // After the delete refresh, the re-import banner is gone.
+    await screen.findAllByTestId('pool-row'); // ensure refresh happened
+    expect(screen.queryByTestId('reimport-success')).not.toBeInTheDocument();
+
+    confirmSpy.mockRestore();
+    // We've used the unused-vars `deleteButtons` reference; mark it
+    // as referenced for lints if needed:
+    void deleteButtons;
   });
 
   it('path mode: Re-import shows path input + submits via importSourceByPath', async () => {
