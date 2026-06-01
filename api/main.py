@@ -184,7 +184,20 @@ def attach_spa_routes(app: FastAPI, static_dir: Path) -> None:
 
     Extracted as a function so tests can mount the SPA against a
     fake `static_dir` without monkeypatching module-level state.
+
+    c2 mid-slice review 🟡-1: index.html is served with
+    `Cache-Control: no-cache`. SvelteKit emits content-hashed asset
+    filenames under `_app/immutable/` so those can cache forever
+    (StaticFiles handles their headers), but index.html REFERENCES
+    those hashed names — a stale-cached index.html after a deploy
+    would point at old hashes that 404 on the new server, leaving
+    the user in a broken state until hard-refresh. `no-cache` tells
+    browsers to revalidate every load.
     """
+    # Caller-visible constant — also referenced by the SPA-fallback
+    # branch below so both `index.html` serves are headered identically.
+    _NO_CACHE_HEADERS = {"Cache-Control": "no-cache"}
+
     app.mount(
         "/_app",
         StaticFiles(directory=static_dir / "_app"),
@@ -193,7 +206,9 @@ def attach_spa_routes(app: FastAPI, static_dir: Path) -> None:
 
     @app.get("/", include_in_schema=False)
     async def spa_index() -> FileResponse:
-        return FileResponse(static_dir / "index.html")
+        return FileResponse(
+            static_dir / "index.html", headers=_NO_CACHE_HEADERS,
+        )
 
     # Catch-all SPA fallback. Registered LAST so /api/* routers + the
     # /_app mount + explicit / handler all match first. The
@@ -207,13 +222,20 @@ def attach_spa_routes(app: FastAPI, static_dir: Path) -> None:
         # would be a confusing 200-shaped 404. Surface as a real 404.
         if spa_path.startswith("api/"):
             raise HTTPException(status_code=404, detail="Not Found")
-        # Real file (e.g. `/favicon.ico`) — serve it.
+        # Real file (e.g. `/favicon.ico`) — serve it. No explicit cache
+        # header; FileResponse's default (no Cache-Control) lets the
+        # browser apply its heuristics, which is fine for static
+        # top-level files since they rarely change.
         target = static_dir / spa_path
         if target.is_file():
             return FileResponse(target)
         # Unknown path → SPA route → client-side router handles it
-        # once the bundle boots from index.html.
-        return FileResponse(static_dir / "index.html")
+        # once the bundle boots from index.html. `no-cache` for the
+        # same reason as the spa_index() root: index.html references
+        # hashed asset names that shift with each deploy.
+        return FileResponse(
+            static_dir / "index.html", headers=_NO_CACHE_HEADERS,
+        )
 
 
 if STATIC_DIR is not None:
