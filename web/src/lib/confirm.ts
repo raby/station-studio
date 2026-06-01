@@ -63,17 +63,35 @@ export interface ConfirmDialogOptions {
 /**
  * Show the confirm dialog. Returns a promise resolving to `true` if
  * the user clicked Confirm, `false` on Cancel / Esc / click-outside.
+ *
+ * Concurrent-call safety (t1/t2/t4 post-slice review 🟡-1): if a
+ * dialog is already open when this is called, the prior resolver is
+ * auto-resolved as `false` before being overwritten. Without that
+ * guard, the prior promise would dangle forever — a memory leak +
+ * hung await that's hard to debug. Every current call site awaits,
+ * so this guard is dormant today, but the next non-awaited caller
+ * (e.g. `void confirmDialog(...)` for fire-and-forget) is now safe
+ * — the prior caller still sees a clean `false`, and a `console.warn`
+ * surfaces the unusual stacking so the bug is findable.
  */
 export function confirmDialog(options: ConfirmDialogOptions): Promise<boolean> {
   return new Promise((resolve) => {
-    confirmDialogState.set({
-      open: true,
-      title: options.title,
-      body: options.body,
-      confirmLabel: options.confirmLabel ?? 'Confirm',
-      cancelLabel: options.cancelLabel ?? 'Cancel',
-      danger: options.danger ?? false,
-      resolve,
+    confirmDialogState.update((current) => {
+      if (current.open) {
+        current.resolve(false);
+        console.warn(
+          'confirmDialog called while another was open — auto-cancelling the prior dialog as false',
+        );
+      }
+      return {
+        open: true,
+        title: options.title,
+        body: options.body,
+        confirmLabel: options.confirmLabel ?? 'Confirm',
+        cancelLabel: options.cancelLabel ?? 'Cancel',
+        danger: options.danger ?? false,
+        resolve,
+      };
     });
   });
 }

@@ -167,6 +167,38 @@ describe('confirmDialog() promise + host integration', () => {
     });
   });
 
+  it('🟡-1 stacking guard: a second confirmDialog() call auto-resolves the first as false', async () => {
+    // Before the guard, the first promise dangled forever — the
+    // store.set() in the original implementation overwrote the prior
+    // resolver without releasing it. With the update()-based guard
+    // in place, the prior caller sees a clean `false`.
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    render(ConfirmDialog);
+
+    const first = confirmDialog({ title: 'First', body: '...' });
+    // Synchronously, without awaiting `first` — the bug we're
+    // guarding against is exactly this pattern (forgot to await,
+    // OR genuinely concurrent triggers).
+    const second = confirmDialog({ title: 'Second', body: '...' });
+
+    // First promise resolves to false (auto-cancelled by the guard).
+    expect(await first).toBe(false);
+
+    // Second dialog is the one rendered now.
+    expect(await screen.findByTestId('confirm-dialog-title')).toHaveTextContent(
+      'Second',
+    );
+
+    // Warning was emitted so the unusual stacking is findable in logs.
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringMatching(/another was open/i),
+    );
+
+    // Cleanup: cancel the second so the test ends.
+    await fireEvent.click(screen.getByTestId('confirm-dialog-cancel'));
+    expect(await second).toBe(false);
+  });
+
   it('focuses the Cancel button on open (safer default for destructive ops)', async () => {
     render(ConfirmDialog);
     const promise = confirmDialog({ title: 'X', body: 'Y', danger: true });
