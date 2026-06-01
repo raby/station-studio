@@ -1036,6 +1036,34 @@ describe('uploadSource', () => {
     expect(err).toBeInstanceOf(ApiError);
     expect(err.status).toBe(400);
   });
+
+  // §16.25.t2 — AbortSignal threading
+  it('threads the AbortSignal through to fetch.init.signal', async () => {
+    const { fetch_, calls } = makeSpy({ body: {} });
+    const ac = new AbortController();
+    await uploadSource('S', 'content', fakeFile(), fetch_, ac.signal);
+    expect(calls[0].init?.signal).toBe(ac.signal);
+  });
+
+  it('propagates an AbortError when the signal aborts mid-flight', async () => {
+    // The fetch mock honours the abort by reading init.signal and
+    // rejecting with a DOMException-shaped AbortError, matching the
+    // real fetch contract.
+    const fetch_ = async (_input: RequestInfo | URL, init?: RequestInit) => {
+      return new Promise((_, reject) => {
+        init?.signal?.addEventListener('abort', () => {
+          const err = new Error('aborted');
+          err.name = 'AbortError';
+          reject(err);
+        });
+      });
+    };
+    const ac = new AbortController();
+    const promise = uploadSource('S', 'content', fakeFile(), fetch_, ac.signal);
+    ac.abort();
+    const err = await promise.catch((e) => e);
+    expect(err.name).toBe('AbortError');
+  });
 });
 
 
@@ -1065,6 +1093,14 @@ describe('importSourceByPath', () => {
     );
     expect(err).toBeInstanceOf(ApiError);
     expect(err.status).toBe(400);
+  });
+
+  // §16.25.t2 — AbortSignal threading (parity with uploadSource).
+  it('threads the AbortSignal through to fetch.init.signal', async () => {
+    const { fetch_, calls } = makeSpy({ body: {} });
+    const ac = new AbortController();
+    await importSourceByPath('P', 'content', '/abs/p.xml', fetch_, ac.signal);
+    expect(calls[0].init?.signal).toBe(ac.signal);
   });
 });
 

@@ -822,6 +822,13 @@ export const uploadSource = (
   role: 'content' | 'reference',
   file: File,
   fetch_ = fetch,
+  /**
+   * §16.25.t2 — optional AbortSignal. When the linked AbortController
+   * fires `.abort()`, fetch rejects with an `AbortError`, the panel's
+   * inner try/catch flips the row to `cancelled`, and (in batch mode)
+   * the surviving for-loop breaks out of the pending tail.
+   */
+  signal?: AbortSignal,
 ): Promise<ImportSummary> => {
   const body = new FormData();
   body.append('name', name);
@@ -830,6 +837,7 @@ export const uploadSource = (
   return fetch_('/api/sources/upload', {
     method: 'POST',
     body,
+    signal,
   }).then((r) => json<ImportSummary>(r));
 };
 
@@ -845,11 +853,14 @@ export const importSourceByPath = (
   role: 'content' | 'reference',
   path: string,
   fetch_ = fetch,
+  /** §16.25.t2 — see `uploadSource` for AbortSignal semantics. */
+  signal?: AbortSignal,
 ): Promise<ImportSummary> =>
   fetch_('/api/sources/import', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ name, role, path }),
+    signal,
   }).then((r) => json<ImportSummary>(r));
 
 /**
