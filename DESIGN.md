@@ -10116,6 +10116,34 @@ plan-audit can find them:
   semantically but operates on `fetch` not the job-store.
   **Home: separate post-§16.25 slice (~2-3 commits).** Out of
   scope for v1 of the install-story unblocker.
+* **§16.25.t3 — Svelte 5 migration: revisit the
+  `PoolImportPanel.submitBatch` mutation hybrid.** c5 documented
+  the working contract honestly: the per-row status flips in
+  Phase 2 use in-place mutation + `rows = rows` because a full-
+  immutable `.map(...)` rebuilds row objects, which broke Svelte 4's
+  keyed-each `bind:value={row.name}` (children re-mounted, lost
+  focus + cleared input state). That contract is Svelte-4-specific.
+  Svelte 5's `$state` runes change reactivity semantics — when (if)
+  this codebase migrates, the hybrid needs re-evaluation: maybe
+  `$state.snapshot` enables the all-immutable form, maybe `bind:`
+  inside keyed-each behaves differently, maybe the hybrid still
+  wins. **Home: whichever Svelte-5 migration slice ever lands** —
+  no work today, just don't let the Svelte-4 quirk get reified as
+  "the design" past the migration.
+* **§16.25.t4 — Replace `window.confirm()` with a styled modal.**
+  Both Delete and Re-import-blast-radius use native `confirm()`
+  today (matches §16.3 station-delete). It's blocking, jarring,
+  ignores the page's design system, and on some browsers prevents
+  Escape-key dismissal of the underlying panel state. A styled
+  modal (a `<ConfirmDialog>` component) would integrate properly,
+  carry markup-richer copy (line breaks, emphasis), and be
+  testable without `vi.spyOn(window, 'confirm')`. Touches §16.3
+  station-delete + §16.25 Delete + §16.25 Re-import + the
+  playlist delete in `/stations/[slug]` — a real cross-cutting
+  polish. **Home: separate post-§16.25 polish slice (~3-4
+  commits) — a `<ConfirmDialog>` component + replacing the four
+  call sites + tests.** Not blocking; native `confirm()` works
+  today and the tests assert the copy.
 * **§16.25.t3 — Mutation-idiom hybrid under Svelte 5 migration.**
   `<PoolImportPanel>` documents an explicit hybrid contract:
   whole-array operations use immutable `[...rows, …]` / `.filter`,
