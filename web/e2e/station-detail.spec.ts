@@ -29,7 +29,7 @@ test.describe('station detail page', () => {
     await expect(page.getByRole('heading', { name: 'Det List' })).toBeVisible();
 
     // One row per week, ordered 001 then 002.
-    const rows = page.locator('table tbody tr');
+    const rows = page.locator('[data-testid="playlists-table"] tbody tr');
     await expect(rows).toHaveCount(2);
     await expect(rows.nth(0).locator('td').first()).toHaveText('001');
     await expect(rows.nth(1).locator('td').first()).toHaveText('002');

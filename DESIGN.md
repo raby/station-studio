@@ -10142,10 +10142,24 @@ plan-audit can find them:
   wins. **Home: whichever Svelte-5 migration slice ever lands** —
   no work today, just don't let the Svelte-4 quirk get reified as
   "the design" past the migration.
-* **§16.25.t5 — Playwright e2e for the pool-import UI.** The slice
-  ships with 107 vitest + 21 pytest covering the upload vertical;
-  Playwright never landed. **Second investigation attempt sharpened
-  the diagnosis significantly:**
+* ~~**§16.25.t5 — Playwright e2e for the pool-import UI.**~~ **SHIPPED.**
+  Root cause: `vite dev`'s HMR breaks Svelte event-handler attachment
+  on PoolImportPanel specifically — verified by side-by-side dispatch
+  probe (DetailPanel's identical `on:submit|preventDefault` directive
+  worked in the same run, PoolImportPanel's didn't). Switching the
+  Playwright `webServer` config to `npm run build && npm run preview`
+  (production build, no HMR) made every test pass — 4 new
+  `sources.spec.ts` tests + the existing 52 (after fold-in fixes
+  for the §16.25.t4 confirm-dialog migration that had silently broken
+  `delete.spec.ts`, `generate.spec.ts`, and `edit.spec.ts`'s
+  `page.once('dialog')` patterns). The narrowed Svelte/Vite-dev
+  interaction bug is still TBD — investigate when a developer tries
+  to run `npm run dev` against /sources and hits a regression — but
+  the e2e suite no longer cares because preview is what we test
+  against. Adds ~5s per Playwright run for the rebuild.
+
+  **Initial diagnosis (kept for reference if the dev-mode bug ever
+  becomes blocking):**
 
   * **Bug is general to ALL Svelte event handlers on /sources, not
     just `on:submit`.** Verified by switching the Import button to

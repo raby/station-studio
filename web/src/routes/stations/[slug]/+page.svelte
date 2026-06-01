@@ -584,7 +584,9 @@
         <code>python -m scripts.bootstrap_classics</code> from the repo root.
       </p>
     {:else}
-      <table>
+      <!-- data-testid set so e2e can disambiguate from §16.19 pools
+           table + §16.25 PoolImportPanel embed (both also use <table>). -->
+      <table data-testid="playlists-table">
         <thead>
           <tr>
             <th>Week</th>

@@ -65,9 +65,9 @@ test.describe('§16.1 generate panel', () => {
     const submit = page.getByTestId('advanced-submit');
     await expect(submit).toHaveText(/replace week 1/i);
 
-    // Accept the browser confirm() dialog.
-    page.once('dialog', (d) => d.accept());
+    // §16.25.t4: native confirm() migrated to <ConfirmDialog> in 227fb3b.
     await submit.click();
+    await page.getByTestId('confirm-dialog-confirm').click();
 
     await expect(page).toHaveURL(/\/playlists\/\d+$/);
     // The new trace_id differs from the original — i.e. the regen really
@@ -89,8 +89,8 @@ test.describe('§16.1 generate panel', () => {
     const orig = await generate(request, 'gen-row-regen', 1);
 
     await page.goto('/stations/gen-row-regen');
-    page.once('dialog', (d) => d.accept());
     await page.getByTestId('regen-row-1').click();
+    await page.getByTestId('confirm-dialog-confirm').click();
 
     await expect(page).toHaveURL(/\/playlists\/\d+$/);
     const newId = Number(page.url().split('/').pop());
@@ -111,8 +111,8 @@ test.describe('§16.1 generate panel', () => {
     await page.getByText(/advanced — pick a week/i).click();
     await page.getByTestId('advanced-week').fill('1');
 
-    page.once('dialog', (d) => d.dismiss());
     await page.getByTestId('advanced-submit').click();
+    await page.getByTestId('confirm-dialog-cancel').click();
 
     // No navigation: still on the station detail page.
     await expect(page).toHaveURL(/\/stations\/gen-cancel$/);

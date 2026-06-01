@@ -56,13 +56,23 @@ export default defineConfig({
     },
     {
       name: 'frontend',
-      command: 'npm run dev -- --port 5173',
+      // §16.25.t5: use `vite preview` (production build) instead of
+      // `vite dev`. Dev-mode HMR breaks Svelte event-handler
+      // attachment specifically on PoolImportPanel (proved side-by-
+      // side: same `on:submit|preventDefault` directive worked on
+      // DetailPanel in the same Playwright run but failed on
+      // PoolImportPanel; switching to preview made both work).
+      // Always rebuilds first so source edits don't go stale between
+      // runs — costs a few seconds on each `npm run test:e2e` invocation
+      // but ensures correctness.
+      command: 'npm run build && npm run preview -- --port 5173',
       cwd: __dirname,
       url: 'http://localhost:5173/',
       reuseExistingServer: false,
       stdout: 'pipe',
       stderr: 'pipe',
-      timeout: 30_000,
+      // Build can take 5-10s; bump from 30s → 60s so slow CI doesn't trip.
+      timeout: 60_000,
     },
   ],
 });

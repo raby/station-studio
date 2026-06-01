@@ -74,8 +74,9 @@ test.describe('§16.7 edit mode', () => {
 
     await page.getByLabel('Display name').fill('Tweaked');
     // Reset button enabled now that the form is dirty.
-    page.once('dialog', (d) => d.accept());
     await page.getByTestId('reset-to-saved').click();
+    // §16.25.t4 + this commit: native confirm() migrated to <ConfirmDialog>.
+    await page.getByTestId('confirm-dialog-confirm').click();
 
     await expect(page.getByLabel('Display name')).toHaveValue('Reset Test');
   });

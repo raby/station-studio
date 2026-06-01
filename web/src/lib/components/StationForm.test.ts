@@ -1,6 +1,22 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, fireEvent, screen, cleanup } from '@testing-library/svelte';
 import '@testing-library/jest-dom/vitest';
+
+// §16.25.t4 + t5 fold-in: confirmDialog mocked at the module level
+// (vi.hoisted so it's set up before StationForm.svelte imports it).
+// Default `mockResolvedValue(true)` keeps existing tests unaffected;
+// the two reset-to-saved tests override per-case.
+const { confirmDialogMock } = vi.hoisted(() => ({
+  confirmDialogMock: vi.fn((..._args: unknown[]) => Promise.resolve(true)),
+}));
+vi.mock('$lib/confirm', () => ({
+  // Forward via apply so the mock sees the args without TS complaining
+  // about the spread type — keeps the call-recording behaviour intact.
+  confirmDialog: function (this: unknown) {
+    return confirmDialogMock.apply(this, arguments as unknown as unknown[]);
+  },
+}));
+
 import StationForm from './StationForm.svelte';
 
 /**
@@ -98,30 +114,32 @@ describe('<StationForm mode="edit" /> — §16.7 edit-mode', () => {
   });
 
   it('"Reset to saved" reverts the form when the user accepts the confirm', async () => {
+    // §16.25.t4 fold-in: native confirm() migrated to confirmDialog().
+    confirmDialogMock.mockResolvedValueOnce(true);
     render(StationForm, { mode: 'edit', initial, onSubmit: vi.fn(), meta });
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
 
     const nameInput = screen.getByPlaceholderText('Rebirth Classics') as HTMLInputElement;
     await fireEvent.input(nameInput, { target: { value: 'tweaked' } });
     expect(nameInput.value).toBe('tweaked');
 
     await fireEvent.click(screen.getByTestId('reset-to-saved'));
-    expect(confirmSpy).toHaveBeenCalledWith(expect.stringMatching(/discard changes/i));
-    expect(nameInput.value).toBe('Classics');
-
-    confirmSpy.mockRestore();
+    await vi.waitFor(() => expect(confirmDialogMock).toHaveBeenCalled());
+    const opts = (confirmDialogMock.mock.calls[0] as unknown as [{ title: string; body: string }])[0];
+    expect(opts.title).toMatch(/discard changes/i);
+    // After resolving true, the form reverts on the next tick.
+    await vi.waitFor(() => expect(nameInput.value).toBe('Classics'));
   });
 
   it('"Reset to saved" leaves the form untouched if the user cancels', async () => {
+    confirmDialogMock.mockResolvedValueOnce(false);
     render(StationForm, { mode: 'edit', initial, onSubmit: vi.fn(), meta });
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
 
     const nameInput = screen.getByPlaceholderText('Rebirth Classics') as HTMLInputElement;
     await fireEvent.input(nameInput, { target: { value: 'tweaked' } });
     await fireEvent.click(screen.getByTestId('reset-to-saved'));
+    await vi.waitFor(() => expect(confirmDialogMock).toHaveBeenCalled());
 
     expect(nameInput.value).toBe('tweaked');
-    confirmSpy.mockRestore();
   });
 
   it('submit calls onSubmit with the slug-from-initial + edited fields', async () => {

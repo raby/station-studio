@@ -37,6 +37,7 @@
   // _form-shared.css for the full rationale. The rules are scoped under
   // `.station-form`, so the wrapper div around the <form> is load-bearing.
   import './_form-shared.css';
+  import { confirmDialog } from '$lib/confirm';
 
   // ---- props ------------------------------------------------------------
 
@@ -193,9 +194,17 @@
 
   // ---- Reset to saved (D8, edit-mode only) -----------------------------
 
-  function resetToSaved() {
+  async function resetToSaved() {
     if (!initial) return;
-    if (dirty && !confirm('Discard changes and reset to the saved template?')) return;
+    if (dirty) {
+      const ok = await confirmDialog({
+        title: 'Discard changes?',
+        body: 'Your edits to this station will be lost and the form will reset to the saved template.',
+        confirmLabel: 'Discard',
+        danger: true,
+      });
+      if (!ok) return;
+    }
     // structuredClone deep-copies — Object spread / Array map alone leaves
     // nested arrays/objects shared with `initial`, so subsequent edits
     // would mutate the original (caught me once during dev).

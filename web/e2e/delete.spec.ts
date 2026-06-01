@@ -20,14 +20,17 @@ test.describe('§16.3 delete affordances', () => {
     await generate(request, 'del-row', 2);
 
     await page.goto('/stations/del-row');
-    await expect(page.locator('table tbody tr')).toHaveCount(2);
+    await expect(page.locator('[data-testid="playlists-table"] tbody tr')).toHaveCount(2);
 
-    page.once('dialog', (d) => d.accept());
+    // §16.25.t4: the native `window.confirm` was migrated to a styled
+    // <ConfirmDialog> in 227fb3b. e2e tests now click the dialog's
+    // Confirm/Cancel testids instead of using `page.once('dialog')`.
     await page.getByTestId('delete-row-1').click();
+    await page.getByTestId('confirm-dialog-confirm').click();
 
     // After the refetch, the table is one row shorter and week 2 remains.
-    await expect(page.locator('table tbody tr')).toHaveCount(1);
-    await expect(page.locator('table tbody tr td').first()).toHaveText('002');
+    await expect(page.locator('[data-testid="playlists-table"] tbody tr')).toHaveCount(1);
+    await expect(page.locator('[data-testid="playlists-table"] tbody tr td').first()).toHaveText('002');
   });
 
   test('per-row delete: cancel keeps the row in place', async ({
@@ -39,12 +42,12 @@ test.describe('§16.3 delete affordances', () => {
     await generate(request, 'del-cancel', 1);
 
     await page.goto('/stations/del-cancel');
-    page.once('dialog', (d) => d.dismiss());
     await page.getByTestId('delete-row-1').click();
+    await page.getByTestId('confirm-dialog-cancel').click();
 
     // No DOM change: still one row, still week 1.
-    await expect(page.locator('table tbody tr')).toHaveCount(1);
-    await expect(page.locator('table tbody tr td').first()).toHaveText('001');
+    await expect(page.locator('[data-testid="playlists-table"] tbody tr')).toHaveCount(1);
+    await expect(page.locator('[data-testid="playlists-table"] tbody tr td').first()).toHaveText('001');
   });
 
   test('station nuke: confirm → DELETE 204 → land on landing without it', async ({
@@ -56,8 +59,8 @@ test.describe('§16.3 delete affordances', () => {
     await generate(request, 'del-nuke', 1);
 
     await page.goto('/stations/del-nuke');
-    page.once('dialog', (d) => d.accept());
     await page.getByTestId('delete-station').click();
+    await page.getByTestId('confirm-dialog-confirm').click();
 
     // Lands on landing.
     await expect(page).toHaveURL(/\/$/);
@@ -73,8 +76,8 @@ test.describe('§16.3 delete affordances', () => {
     await createStation(request, 'del-nuke-cancel', 'Del Nuke Cancel');
 
     await page.goto('/stations/del-nuke-cancel');
-    page.once('dialog', (d) => d.dismiss());
     await page.getByTestId('delete-station').click();
+    await page.getByTestId('confirm-dialog-cancel').click();
 
     // No navigation; still on the same URL.
     await expect(page).toHaveURL(/\/stations\/del-nuke-cancel$/);
