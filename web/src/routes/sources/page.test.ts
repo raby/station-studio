@@ -348,7 +348,7 @@ describe('/sources — batch mode (c3 D2 multi-pool)', () => {
     expect(rows[0]).toHaveAttribute('data-row-status', 'pending');
   });
 
-  it('Back to single mode restores the single form and drops rows', async () => {
+  it('Back to single mode restores the single form and drops rows (empty rows: no confirm)', async () => {
     render(Page);
     await screen.findByTestId('add-pool-form');
 
@@ -356,8 +356,49 @@ describe('/sources — batch mode (c3 D2 multi-pool)', () => {
     await fireEvent.click(screen.getByTestId('batch-add-row'));
     expect(screen.getAllByTestId('batch-row')).toHaveLength(2);
 
+    // No spy on confirm — if the guard fires for empty rows, the test
+    // would hang on the real window.confirm. Empty rows MUST skip it.
     await fireEvent.click(screen.getByTestId('single-mode-toggle'));
 
+    expect(screen.queryByTestId('batch-form')).not.toBeInTheDocument();
+    expect(screen.getByTestId('add-pool-form')).toBeInTheDocument();
+  });
+
+  it('full-slice review F: exit with dirty rows prompts confirm; cancel keeps batch mode', async () => {
+    render(Page);
+    await screen.findByTestId('add-pool-form');
+    await fireEvent.click(screen.getByTestId('batch-mode-toggle'));
+    // Dirty the row by typing a name.
+    await fireEvent.input(screen.getByTestId('batch-row-name'), {
+      target: { value: 'WIP' },
+    });
+
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    await fireEvent.click(screen.getByTestId('single-mode-toggle'));
+
+    expect(confirmSpy).toHaveBeenCalledTimes(1);
+    expect(confirmSpy.mock.calls[0][0]).toMatch(/Discard 1 unsaved row/);
+    // Cancel → still in batch mode, row preserved.
+    expect(screen.getByTestId('batch-form')).toBeInTheDocument();
+    expect(screen.getByTestId('batch-row-name')).toHaveValue('WIP');
+  });
+
+  it('full-slice review F: exit with dirty rows + OK confirm returns to single mode', async () => {
+    render(Page);
+    await screen.findByTestId('add-pool-form');
+    await fireEvent.click(screen.getByTestId('batch-mode-toggle'));
+    await fireEvent.click(screen.getByTestId('batch-add-row'));
+    // Two dirty rows.
+    const nameInputs = screen.getAllByTestId('batch-row-name');
+    await fireEvent.input(nameInputs[0], { target: { value: 'A' } });
+    await fireEvent.input(nameInputs[1], { target: { value: 'B' } });
+
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    await fireEvent.click(screen.getByTestId('single-mode-toggle'));
+
+    expect(confirmSpy).toHaveBeenCalledTimes(1);
+    expect(confirmSpy.mock.calls[0][0]).toMatch(/Discard 2 unsaved rows/);
+    // Confirmed → back to single mode.
     expect(screen.queryByTestId('batch-form')).not.toBeInTheDocument();
     expect(screen.getByTestId('add-pool-form')).toBeInTheDocument();
   });

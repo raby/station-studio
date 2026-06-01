@@ -125,7 +125,21 @@
     successMessage = null;
   }
 
+  // c5 full-slice review F: confirm before discarding non-empty batch
+  // rows. "Back to single pool" was a silent discard — if the user had
+  // filled 5 rows and clicked once by accident, all work vanished. A
+  // row counts as "dirty" if name OR file OR path has content (a fresh
+  // row from `makeEmptyRow()` has all three empty).
   function exitBatchMode() {
+    const dirtyRows = rows.filter(
+      (r) => r.name.trim() !== '' || r.file !== null || r.path.trim() !== '',
+    );
+    if (dirtyRows.length > 0) {
+      const ok = confirm(
+        `Discard ${dirtyRows.length} unsaved row${dirtyRows.length === 1 ? '' : 's'}?`,
+      );
+      if (!ok) return;
+    }
     rows = [];
     batchMode = false;
     formError = null;
