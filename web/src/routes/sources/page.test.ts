@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/svelte';
 import '@testing-library/jest-dom/vitest';
 
@@ -54,6 +54,16 @@ beforeEach(() => {
   deleteSourceMock.mockReset();
   // Default: empty list (page renders empty state).
   listSourcesMock.mockResolvedValue([]);
+});
+
+// c4 mid-slice review T1: per-test `vi.spyOn(window, 'confirm')` calls
+// risked leaking into the next test if one threw before reaching its
+// `mockRestore()`. `restoreAllMocks` after each test undoes every
+// `vi.spyOn`, so the safety net survives a failed assertion. (Only
+// affects spies; vi.fn() mocks above are reset explicitly in
+// beforeEach.)
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 
@@ -578,7 +588,6 @@ describe('/sources — per-row Delete (D4)', () => {
     // Row gone after refresh.
     await screen.findByTestId('empty-state');
 
-    confirmSpy.mockRestore();
   });
 
   it('cancelling the confirm does NOT call deleteSource', async () => {
@@ -596,7 +605,6 @@ describe('/sources — per-row Delete (D4)', () => {
     // Pool still in the list.
     expect(screen.getByTestId('pool-row')).toHaveAttribute('data-pool-name', 'KEEP_ME');
 
-    confirmSpy.mockRestore();
   });
 
   it('surfaces a delete error inline (e.g. 404 from a stale list)', async () => {
@@ -613,7 +621,6 @@ describe('/sources — per-row Delete (D4)', () => {
     const err = await screen.findByTestId('delete-error');
     expect(err).toHaveTextContent(/not found/);
 
-    confirmSpy.mockRestore();
   });
 });
 
@@ -708,7 +715,6 @@ describe('/sources — per-row Re-import (D4 + 🟡-4 read-only role)', () => {
     expect(await screen.findByTestId('reimport-success')).toHaveTextContent(/DAYTIME/);
     expect(screen.queryByTestId('success-banner')).not.toBeInTheDocument();
 
-    confirmSpy.mockRestore();
   });
 
   it('cancelling the confirm does NOT submit the re-import', async () => {
@@ -729,7 +735,6 @@ describe('/sources — per-row Re-import (D4 + 🟡-4 read-only role)', () => {
     // Still expanded (user can pick another file or hit Cancel).
     expect(screen.getByTestId('reimport-row')).toBeInTheDocument();
 
-    confirmSpy.mockRestore();
   });
 
   it('rejects no-file submit client-side (no API call, inline error)', async () => {
@@ -768,7 +773,6 @@ describe('/sources — per-row Re-import (D4 + 🟡-4 read-only role)', () => {
     // Stays expanded so the user can pick a different file.
     expect(screen.getByTestId('reimport-row')).toBeInTheDocument();
 
-    confirmSpy.mockRestore();
   });
 
   it('🟡-2: deleting another pool clears any prior re-import success banner', async () => {
@@ -808,9 +812,8 @@ describe('/sources — per-row Re-import (D4 + 🟡-4 read-only role)', () => {
     // Delete pool B — should clear the stale "Re-imported A" banner
     // (we deliberately don't surface a delete success banner; the
     // row vanishing IS the success state, 🟡-3).
-    const deleteButtons = screen.getAllByTestId('pool-row-delete');
-    // After re-import, the surviving pools are A + B. Find B's
-    // delete button.
+    // Find B's delete button (the row that survives after the
+    // re-import).
     const bRow = screen
       .getAllByTestId('pool-row')
       .find((r) => r.getAttribute('data-pool-name') === 'B');
@@ -821,11 +824,6 @@ describe('/sources — per-row Re-import (D4 + 🟡-4 read-only role)', () => {
     // After the delete refresh, the re-import banner is gone.
     await screen.findAllByTestId('pool-row'); // ensure refresh happened
     expect(screen.queryByTestId('reimport-success')).not.toBeInTheDocument();
-
-    confirmSpy.mockRestore();
-    // We've used the unused-vars `deleteButtons` reference; mark it
-    // as referenced for lints if needed:
-    void deleteButtons;
   });
 
   it('path mode: Re-import shows path input + submits via importSourceByPath', async () => {
@@ -865,6 +863,5 @@ describe('/sources — per-row Re-import (D4 + 🟡-4 read-only role)', () => {
     );
     expect(uploadSourceMock).not.toHaveBeenCalled();
 
-    confirmSpy.mockRestore();
   });
 });
