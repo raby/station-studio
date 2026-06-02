@@ -1,13 +1,23 @@
-"""§16.13 c1 — `station-studio` CLI entry point.
+"""§16.13 c1 + t2 — `station-studio` CLI entry point.
 
-D5 scope: `serve` + `import` + `seed`. `serve` is fully working today
-(starts uvicorn against `api.main:app`, hardcoded `workers=1` per the
-§16.11 in-memory job-store constraint). `import` and `seed` are stubs
-in c1 — they need the app-home + first-run bootstrap that c3 wires in.
+D5 scope (c1-c3): `serve` + `import` + `seed`. The install-essentials
+— an installed user with no repo checkout can start the app, import
+their own pools, and re-seed the bundled examples.
 
-The full design list (`serve` + `import` + `generate` + `export` +
-`backup` + `seed`) is queued as §16.13.t2; this slice ships the
-install-essentials only.
+t2 scope (this commit): `generate` + `export` + `backup`. The full
+design list — installed-user scripting without a repo. Cron-able
+generation, file-or-stdout XML export, and a one-shot tar of the
+whole app-home for off-box backup.
+
+All six subcommands share the same shape:
+  * Click subcommand under the `main` group.
+  * `bootstrap()` runs FIRST so the app-home + DB env vars are set
+    before any engine/api import touches `engine.database`.
+  * Lazy imports for everything beyond `click` + `pathlib` — keeps
+    `--help` snappy (no fastapi/sqlalchemy/uvicorn load cost just
+    to print help).
+  * Errors go to stderr + exit 1 (Click's `ctx.exit(1)`); successes
+    print a one-line summary to stdout for shell-pipeline use.
 """
 from __future__ import annotations
 
@@ -189,6 +199,325 @@ def seed() -> None:
     """
     from station_studio.bootstrap import bootstrap
     bootstrap(echo=click.echo)
+
+
+# ---------- §16.13.t2 — generate / export / backup ----------
+
+
+@main.command(
+    name="generate",
+    help=(
+        "Generate a playlist for one station and one week. Persists "
+        "Playlist + Trace rows + advances cursors. Equivalent to the "
+        "POST /api/stations/{slug}/generate endpoint, runnable without "
+        "a running server. Prints the new playlist id on success."
+    ),
+)
+@click.argument("slug")
+@click.option(
+    "--week",
+    type=int,
+    required=True,
+    help="Week number to generate (1-based, integer ≥ 1).",
+)
+@click.option(
+    "--seed",
+    type=int,
+    default=None,
+    help=(
+        "Override the random seed. Default: deterministic from week + "
+        "station rules (matches the UI's seed semantics)."
+    ),
+)
+@click.pass_context
+def generate_cmd(
+    ctx: click.Context, slug: str, week: int, seed: int | None
+) -> None:
+    """Run the engine pipeline against an installed app-home's DB.
+
+    Mirrors `api/routers/generate.py:generate_playlist` step-for-step —
+    same load_pools / load_alias_map / load_excluded_mix_ids /
+    load_previous_playlist / load_cursor_positions sequence, same
+    `save_playlist` + `advance_cursors` post-call. The CLI is a thin
+    wrapper, NOT a parallel implementation, so engine bug fixes (and
+    bugs!) land here automatically.
+
+    Errors that match the API endpoint's HTTPException paths:
+      * unknown station slug → exit 1, message "station ... not found"
+      * template parse error → exit 1, message from TemplateError
+      * missing source pool → exit 1, message from ValueError
+
+    Week < 1 is rejected by Click's int conversion + the explicit
+    check below — mirrors the GenerateRequest pydantic `ge=1`.
+    """
+    if week < 1:
+        click.echo("Error: --week must be ≥ 1.", err=True)
+        ctx.exit(1)
+
+    from station_studio.bootstrap import bootstrap
+    bootstrap(echo=click.echo)
+
+    # Lazy: full engine import chain (sqlalchemy, generator, etc).
+    from engine.database import make_engine, make_sessionmaker
+    from engine.generator import generate as engine_generate
+    from engine.models import Base, Station
+    from engine.persistence import (
+        advance_cursors, load_alias_map, load_cursor_positions,
+        load_excluded_mix_ids, load_pools, load_previous_playlist,
+        max_mix_exclusion_window, save_playlist,
+    )
+    from engine.rules import get_rule_value
+    from engine.template import TemplateError, parse_template
+
+    db_engine = make_engine()
+    Base.metadata.create_all(db_engine)
+    SessionLocal = make_sessionmaker(db_engine)
+
+    with SessionLocal() as db:
+        station = db.query(Station).filter(Station.slug == slug).first()
+        if station is None:
+            click.echo(f"Error: station '{slug}' not found.", err=True)
+            ctx.exit(1)
+
+        try:
+            template = parse_template(station.template)
+        except TemplateError as e:
+            click.echo(f"Error: stored template is invalid: {e}", err=True)
+            ctx.exit(1)
+
+        try:
+            pools = load_pools(db, template)
+        except ValueError as e:
+            click.echo(f"Error: {e}", err=True)
+            ctx.exit(1)
+
+        # Same station-rule resolution as the API endpoint. Pulled
+        # eagerly so the generate call below mirrors the API's args.
+        mix_exclusion_weeks = get_rule_value(
+            db, station_id=station.id, key="mix_exclusion_weeks",
+        )
+        cursor_advance_step = get_rule_value(
+            db, station_id=station.id, key="cursor_advance_step",
+        )
+        cursor_reset_cycle = get_rule_value(
+            db, station_id=station.id, key="cursor_reset_cycle",
+        )
+
+        excluded_mix_ids = load_excluded_mix_ids(
+            db, station_id=station.id,
+            window=max_mix_exclusion_window(
+                template, default=mix_exclusion_weeks,
+            ),
+        )
+        alias_map = load_alias_map(db)
+        previous_playlist = load_previous_playlist(
+            db, station_id=station.id, current_week=week,
+        )
+        named_cursor_positions = None
+        if template.cursor.persist:
+            named_cursor_positions = load_cursor_positions(
+                db, station_id=station.id, template=template,
+            )
+
+        try:
+            result = engine_generate(
+                template, pools,
+                week=week, seed=seed,
+                excluded_mix_ids=excluded_mix_ids,
+                alias_map=alias_map,
+                previous_playlist=previous_playlist,
+                named_cursor_positions=named_cursor_positions,
+            )
+        except ValueError as e:
+            click.echo(f"Error: generation failed: {e}", err=True)
+            ctx.exit(1)
+
+        playlist = save_playlist(
+            db, station=station, result=result, week=week, template=template,
+        )
+        advance_cursors(
+            db, station_id=station.id, template=template, pools=pools,
+            advance_step=cursor_advance_step or 120,
+            reset_cycle=cursor_reset_cycle or 0,
+            generation_count=week - 1,
+        )
+        db.commit()
+
+        click.echo(
+            f"Generated playlist {playlist.id} for '{slug}' week {week} "
+            f"({len(result.picks)} slots)."
+        )
+
+
+@main.command(
+    name="export",
+    help=(
+        "Export a generated playlist as iTunes XML. Default: writes to "
+        "stdout (pipe-friendly). With `--output PATH`, writes to a file. "
+        "With `--to-disk`, writes to the configured export directory "
+        "({export_dir}/{station-slug}/{week:03d}.xml)."
+    ),
+)
+@click.argument("playlist_id", type=int)
+@click.option(
+    "--output", "-o",
+    type=click.Path(dir_okay=False, writable=True, path_type=Path),
+    default=None,
+    help="Write the XML to this file path (creates parent dirs).",
+)
+@click.option(
+    "--to-disk",
+    is_flag=True,
+    default=False,
+    help=(
+        "Write to the configured exports dir using the standard layout "
+        "{exports}/{slug}/{week:03d}.xml. Mutually exclusive with --output."
+    ),
+)
+@click.pass_context
+def export_cmd(
+    ctx: click.Context,
+    playlist_id: int,
+    output: Path | None,
+    to_disk: bool,
+) -> None:
+    """Wraps `engine.exporter.export_playlist` (in-memory bytes) or
+    `engine.exporter.export_playlist_to_disk` (configured-dir layout).
+
+    The default (stdout) path is the pipeable form — `station-studio
+    export 42 > playlist.xml` works the same as `--output playlist.xml`,
+    AND composes with shell redirection / `wc` / `xmllint` / etc.
+
+    --output and --to-disk are mutually exclusive (different sinks).
+    Passing both is a usage error (exit 1) — Click can't natively
+    express the constraint, so check explicitly.
+    """
+    if output is not None and to_disk:
+        click.echo(
+            "Error: --output and --to-disk are mutually exclusive.",
+            err=True,
+        )
+        ctx.exit(1)
+
+    from station_studio.bootstrap import bootstrap
+    bootstrap(echo=click.echo)
+
+    import sys
+
+    from engine.database import make_engine, make_sessionmaker
+    from engine.exporter import export_playlist, export_playlist_to_disk
+    from engine.models import Base
+
+    db_engine = make_engine()
+    Base.metadata.create_all(db_engine)
+    SessionLocal = make_sessionmaker(db_engine)
+
+    try:
+        with SessionLocal() as db:
+            if to_disk:
+                target = export_playlist_to_disk(db, playlist_id)
+                click.echo(f"Wrote {target}")
+                return
+            xml_bytes = export_playlist(db, playlist_id)
+    except ValueError as e:
+        # `Playlist {id} not found` lands here.
+        click.echo(f"Error: {e}", err=True)
+        ctx.exit(1)
+
+    if output is not None:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_bytes(xml_bytes)
+        click.echo(f"Wrote {output} ({len(xml_bytes)} bytes)")
+        return
+
+    # Default: stdout. Use the buffer to write bytes (Click's
+    # `click.echo` is text-mode; iTunes XML is utf-8 bytes, but writing
+    # to sys.stdout.buffer keeps the exact byte sequence the on-disk
+    # path would produce — bit-for-bit identical between `--output
+    # foo.xml` and `> foo.xml`).
+    sys.stdout.buffer.write(xml_bytes)
+
+
+@main.command(
+    name="backup",
+    help=(
+        "Tar up the app-home (DB, stations, exports, anything else under "
+        "$STATION_STUDIO_HOME). Writes a timestamped .tar.gz under the "
+        "home's `backups/` subdir by default; override with --output."
+    ),
+)
+@click.option(
+    "--output", "-o",
+    type=click.Path(dir_okay=False, writable=True, path_type=Path),
+    default=None,
+    help=(
+        "Output path for the backup archive. Default: "
+        "$STATION_STUDIO_HOME/backups/station-studio-YYYYMMDD-HHMMSS.tar.gz"
+    ),
+)
+@click.pass_context
+def backup_cmd(ctx: click.Context, output: Path | None) -> None:
+    """Tarball the whole app-home for off-box backup.
+
+    Strategy: stream-write a `tar.gz` containing every file under
+    `$STATION_STUDIO_HOME` EXCEPT the `backups/` subdir itself (would
+    cause infinite recursion + bloat — older backups don't belong
+    inside newer ones). The archive paths are relative to the home,
+    so restore is `tar xzf` into any empty STATION_STUDIO_HOME of the
+    user's choice (same machine, new machine, into a docker volume).
+
+    Output path always lives OUTSIDE the recursed-into tree (under
+    backups/, which is excluded) so even when --output points inside
+    the home, we don't tar our own output mid-write.
+    """
+    from station_studio.bootstrap import bootstrap
+    bootstrap(echo=click.echo)
+
+    import datetime as _dt
+    import tarfile as _tarfile
+
+    from station_studio.home import get_home
+
+    home = get_home()
+    if not home.is_dir():
+        click.echo(
+            f"Error: app-home {home} doesn't exist — nothing to back up.",
+            err=True,
+        )
+        ctx.exit(1)
+
+    if output is None:
+        ts = _dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+        backups_dir = home / "backups"
+        backups_dir.mkdir(parents=True, exist_ok=True)
+        output = backups_dir / f"station-studio-{ts}.tar.gz"
+    else:
+        output = output.expanduser().resolve()
+        output.parent.mkdir(parents=True, exist_ok=True)
+
+    # The exclude filter — keeps `backups/` (recursion-safety) AND
+    # any pyc/cache crud out. Tarfile's `filter=` is called per
+    # member; returning None drops it.
+    def _filter(tarinfo: _tarfile.TarInfo) -> _tarfile.TarInfo | None:
+        # Member name is relative to `arcname` (set on add below).
+        # Drop the `backups/` subtree + bytecode caches.
+        parts = Path(tarinfo.name).parts
+        if "backups" in parts:
+            return None
+        if "__pycache__" in parts:
+            return None
+        if tarinfo.name.endswith(".pyc"):
+            return None
+        return tarinfo
+
+    with _tarfile.open(output, "w:gz") as tar:
+        # arcname='.' keeps paths relative to the home — restore is
+        # `tar xzf foo.tar.gz -C $STATION_STUDIO_HOME` and members land
+        # back where they came from.
+        tar.add(str(home), arcname=".", filter=_filter)
+
+    size = output.stat().st_size
+    click.echo(f"Wrote {output} ({size:,} bytes)")
 
 
 if __name__ == "__main__":

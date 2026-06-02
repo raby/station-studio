@@ -9583,14 +9583,24 @@ migration + wheel + docker + docs).
   Actions OIDC publisher on PyPI + test.pypi with the matching
   owner/repo/workflow/env quadruple (one-time, in the project
   settings UI on each side).
-* **§16.13.t2 — Full CLI subcommand set.** D5 ships `serve` +
-  `import` + `seed` — the install-essentials. The full design list
-  also includes `generate`, `export`, `backup`. The UI covers
-  these for interactive users; the Makefile covers them for the
-  in-repo scripting case. **Home: separate slice (~1-2 commits) IF
-  installed-user scripting demand surfaces** (e.g. someone wants to
-  cron `station-studio generate next-week` against an installed
-  app, no repo present). Until then, the gap is honest and small.
+* ~~**§16.13.t2 — Full CLI subcommand set.**~~ **SHIPPED.** All six
+  subcommands now wired (`serve` + `import` + `seed` from c1-c3
+  plus `generate` + `export` + `backup` from this commit).
+  Implementation pattern: each subcommand mirrors the equivalent
+  API endpoint step-for-step (same load_pools / load_alias_map /
+  save_playlist sequence), runs `bootstrap()` first so app-home
+  env vars are set before engine imports, lazy-imports
+  fastapi/sqlalchemy/uvicorn for `--help` snappiness. `generate
+  <slug> --week N` matches POST /api/stations/{slug}/generate's
+  contract; `export <playlist_id>` defaults to stdout (pipe-
+  friendly) with `--output PATH` and `--to-disk` (configured-dir
+  layout) as alternates; `backup` tars `$STATION_STUDIO_HOME` to
+  a timestamped `.tar.gz` excluding the backups/ subtree itself
+  (recursion safety) and `__pycache__/*.pyc` noise. 10 new CLI
+  tests pin the happy + error paths end-to-end via Click's
+  CliRunner against an isolated app-home fixture. Restore is
+  `tar xzf foo.tar.gz -C $STATION_STUDIO_HOME` into any empty
+  home (same machine / new machine / docker volume mount).
 * **§16.13.t3 — Real-uvicorn subprocess integration test.** c1's
   CLI tests mock `uvicorn.run` and assert kwargs (`workers=1` etc).
   That gives confidence at the dispatch boundary but not at the

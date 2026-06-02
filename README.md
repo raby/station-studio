@@ -225,7 +225,7 @@ Each strategy is a small pure-function module under `engine/strategies/`.
 | **Engine** | Stable. Byte-equality verified across 30-week chains for two structurally distinct stations. |
 | **Backend API** | Stable. FastAPI; full CRUD on stations + sources + rules. |
 | **Install** | Wheel + docker-compose both ship and smoke-pass (§16.13). PyPI publish queued (§16.13.t1). |
-| **CLI** | `station-studio serve / import / seed` ships with the wheel. Full Makefile target set (refresh, generate, backup, etc.) for in-repo work. |
+| **CLI** | `station-studio serve / import / seed / generate / export / backup` ships with the wheel — full hobbyist subcommand set, no repo checkout required. Makefile targets remain for in-repo dev work (refresh, byte-equality fixtures, etc.). |
 | **Web UI** | Wizard + trace viewer + Sources page + read-only template visualiser ship; **in-canvas template editor in design** (§16.2 — flagship feature). |
 | **Docs** | Engineering docs in `DESIGN.md`; user-facing docs are growing. |
 | **License** | [MIT](LICENSE) — fork freely. |

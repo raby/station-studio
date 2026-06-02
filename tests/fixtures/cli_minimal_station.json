@@ -1,0 +1,24 @@
+{
+  "station": "cli-minimal",
+  "name": "CLI test minimal station",
+  "cadence": "weekly",
+  "rng": "off",
+  "sources": [
+    { "name": "TINY_POOL", "colour": "#888888", "role": "content" }
+  ],
+  "cursor": {
+    "base_advance_per_week": 0,
+    "cycle_weeks": 1,
+    "persist": false
+  },
+  "layout": {
+    "unit": "slot",
+    "unit_labels": [],
+    "row_start_offsets": [],
+    "flat_slots": [
+      { "source": "TINY_POOL", "strategy": "weighted", "size": 1 },
+      { "source": "TINY_POOL", "strategy": "weighted", "size": 1 },
+      { "source": "TINY_POOL", "strategy": "weighted", "size": 1 }
+    ]
+  }
+}

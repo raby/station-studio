@@ -31,19 +31,16 @@ def test_version_flag_prints_package_version(runner: CliRunner) -> None:
     assert __version__ in result.output
 
 
-def test_help_lists_all_three_subcommands(runner: CliRunner) -> None:
-    """The D5 install-essentials trio is visible to `--help` callers.
-    The full list (D5 punt → §16.13.t2) intentionally doesn't appear."""
+def test_help_lists_install_essentials(runner: CliRunner) -> None:
+    """The D5 install-essentials trio is visible to `--help`. (Full
+    list including generate/export/backup is asserted by
+    `test_help_now_lists_all_six_subcommands` at the bottom of this
+    file, added in §16.13.t2.)"""
     result = runner.invoke(main, ["--help"])
     assert result.exit_code == 0
     assert "serve" in result.output
     assert "import" in result.output
     assert "seed" in result.output
-    # The §16.13.t2-punted subcommands MUST NOT appear yet — surfacing
-    # them as unimplemented would invite confused issues.
-    assert "generate" not in result.output
-    assert "export" not in result.output
-    assert "backup" not in result.output
 
 
 def test_serve_invokes_uvicorn_with_workers_1_and_defaults(
@@ -270,3 +267,208 @@ def test_import_subcommand_rejects_whitespace_name(
             pass
     finally:
         db.close()
+
+
+# ---------- §16.13.t2 — generate / export / backup tests ----------
+
+
+@pytest.fixture
+def cli_home_with_station_and_pool(
+    runner: CliRunner, isolated_cli_home: Path
+) -> Path:
+    """Seed a one-slot one-pool station into the CLI's app-home so
+    generate/export tests can hit a real end-to-end path.
+
+    The fixture station (cli_minimal_station.json) has a single
+    `window` block of 3 slots against `TINY_POOL`, which we import
+    from tiny-library.xml. Both are stable test fixtures.
+    """
+    fixture_dir = Path(__file__).resolve().parent / "fixtures"
+    station_src = fixture_dir / "cli_minimal_station.json"
+    lib_src = fixture_dir / "tiny-library.xml"
+    assert station_src.is_file() and lib_src.is_file()
+
+    # Import the pool via the CLI (bootstrap runs inside).
+    r = runner.invoke(main, ["import", str(lib_src), "--name", "TINY_POOL"])
+    assert r.exit_code == 0, f"pool import failed: {r.output}"
+
+    # Insert the station row via scripts.seed_stations against the
+    # imported JSON — same path the api/main.py lifespan uses, so
+    # we exercise the production seeding helper directly.
+    from engine.database import make_engine, make_sessionmaker
+    from engine.models import Base
+    from scripts.seed_stations import seed_station
+
+    engine = make_engine()
+    Base.metadata.create_all(engine)
+    SessionLocal = make_sessionmaker(engine)
+    with SessionLocal() as db:
+        seed_station(db, station_src)
+        db.commit()
+
+    return isolated_cli_home
+
+
+def test_generate_subcommand_creates_a_playlist(
+    runner: CliRunner, cli_home_with_station_and_pool: Path
+) -> None:
+    """`station-studio generate cli-minimal --week 1` runs the engine
+    pipeline + persists a Playlist row. End-to-end through the CLI."""
+    result = runner.invoke(
+        main, ["generate", "cli-minimal", "--week", "1"]
+    )
+    assert result.exit_code == 0, result.output
+    assert "Generated playlist" in result.output
+    assert "cli-minimal" in result.output
+
+    # The 3-slot template should produce exactly 3 entries.
+    assert "3 slots" in result.output
+
+    import sqlite3
+    db = sqlite3.connect(cli_home_with_station_and_pool / "station_studio.db")
+    try:
+        n_playlists = db.execute("SELECT COUNT(*) FROM playlist").fetchone()[0]
+        assert n_playlists == 1
+        n_entries = db.execute(
+            "SELECT COUNT(*) FROM playlist_entry"
+        ).fetchone()[0]
+        assert n_entries == 3
+    finally:
+        db.close()
+
+
+def test_generate_subcommand_rejects_unknown_station(
+    runner: CliRunner, isolated_cli_home
+) -> None:
+    """Unknown slug → exit 1 + readable error (not a stack trace)."""
+    result = runner.invoke(
+        main, ["generate", "nonexistent-station", "--week", "1"]
+    )
+    assert result.exit_code != 0
+    assert "not found" in result.output.lower()
+
+
+def test_generate_subcommand_rejects_week_zero(
+    runner: CliRunner, isolated_cli_home
+) -> None:
+    """--week < 1 mirrors the API's pydantic ge=1 constraint. Caught
+    BEFORE bootstrap to avoid a confusing partial run."""
+    result = runner.invoke(
+        main, ["generate", "any-slug", "--week", "0"]
+    )
+    assert result.exit_code != 0
+
+
+def test_export_subcommand_writes_xml_to_stdout(
+    runner: CliRunner, cli_home_with_station_and_pool: Path
+) -> None:
+    """Default sink is stdout. Pipeline-friendly: `station-studio
+    export 1 > playlist.xml` works the same as `--output playlist.xml`.
+
+    Two-step: generate first to create playlist id=1, then export."""
+    r_gen = runner.invoke(
+        main, ["generate", "cli-minimal", "--week", "1"]
+    )
+    assert r_gen.exit_code == 0, r_gen.output
+
+    # CliRunner captures stdout; click's buffer.write goes through it.
+    result = runner.invoke(main, ["export", "1"])
+    assert result.exit_code == 0, result.output
+    # iTunes XML starts with the standard plist header.
+    assert "<?xml" in result.output
+    assert "<plist" in result.output
+
+
+def test_export_subcommand_writes_xml_to_file(
+    runner: CliRunner, cli_home_with_station_and_pool: Path, tmp_path: Path
+) -> None:
+    """`--output PATH` writes XML to a file + reports byte count."""
+    r_gen = runner.invoke(main, ["generate", "cli-minimal", "--week", "1"])
+    assert r_gen.exit_code == 0
+
+    target = tmp_path / "out.xml"
+    result = runner.invoke(main, ["export", "1", "--output", str(target)])
+    assert result.exit_code == 0, result.output
+    assert target.is_file()
+    assert target.read_bytes().startswith(b"<?xml")
+    assert f"Wrote {target}" in result.output
+
+
+def test_export_subcommand_rejects_missing_playlist(
+    runner: CliRunner, isolated_cli_home
+) -> None:
+    """A non-existent playlist id exits 1 with a readable error
+    (not a SQLAlchemy IntegrityError stack)."""
+    result = runner.invoke(main, ["export", "99999"])
+    assert result.exit_code != 0
+    assert "99999" in result.output
+
+
+def test_export_subcommand_rejects_output_and_to_disk_together(
+    runner: CliRunner, isolated_cli_home, tmp_path: Path
+) -> None:
+    """--output and --to-disk are mutually exclusive sinks. Without
+    the early check, you'd get unpredictable behavior (whichever
+    code path ran first wins). Caught at usage-validation time."""
+    result = runner.invoke(
+        main,
+        ["export", "1", "--output", str(tmp_path / "x.xml"), "--to-disk"],
+    )
+    assert result.exit_code != 0
+    assert "mutually exclusive" in result.output
+
+
+def test_backup_subcommand_writes_tarball(
+    runner: CliRunner, cli_home_with_station_and_pool: Path
+) -> None:
+    """`station-studio backup` tars the app-home → default
+    home/backups/station-studio-TS.tar.gz. The DB + bundled stations
+    are inside; the backups/ subdir itself is NOT (no recursion)."""
+    result = runner.invoke(main, ["backup"])
+    assert result.exit_code == 0, result.output
+
+    backups_dir = cli_home_with_station_and_pool / "backups"
+    archives = list(backups_dir.glob("station-studio-*.tar.gz"))
+    assert len(archives) == 1, f"unexpected backup files: {archives}"
+
+    import tarfile
+    with tarfile.open(archives[0], "r:gz") as tar:
+        members = tar.getnames()
+    # The DB must be in the archive (the whole point of the backup).
+    assert any(m.endswith("station_studio.db") for m in members), members
+    # A bundled station from the seed should be there too.
+    assert any(
+        m.endswith("rebirth-classics.json") for m in members
+    ), members
+    # The backups/ subdir + its archive must NOT be in the tar
+    # (recursion safety from the _filter function).
+    leaked = [m for m in members if "backups" in m.split("/")]
+    assert not leaked, f"backups/ subtree leaked into archive: {leaked}"
+
+
+def test_backup_subcommand_respects_output_flag(
+    runner: CliRunner, isolated_cli_home: Path, tmp_path: Path
+) -> None:
+    """`--output PATH` overrides the default backups/ destination
+    so users can land the archive on external media / a specific
+    backup-rotation directory."""
+    target = tmp_path / "custom-backup.tar.gz"
+    result = runner.invoke(main, ["backup", "--output", str(target)])
+    assert result.exit_code == 0, result.output
+    assert target.is_file()
+    # Default backups/ dir should NOT have a stray file in it.
+    default_backups = isolated_cli_home / "backups"
+    if default_backups.is_dir():
+        stray = list(default_backups.glob("station-studio-*.tar.gz"))
+        assert not stray, f"default dir got an unexpected backup: {stray}"
+
+
+def test_help_now_lists_all_six_subcommands(
+    runner: CliRunner
+) -> None:
+    """t2 closes D5's six-subcommand list. `--help` advertises all of
+    them; regression catch for a future `@main.command` removal."""
+    result = runner.invoke(main, ["--help"])
+    assert result.exit_code == 0
+    for cmd in ("serve", "import", "seed", "generate", "export", "backup"):
+        assert cmd in result.output, f"{cmd!r} missing from --help"
