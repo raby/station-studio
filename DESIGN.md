@@ -9626,16 +9626,22 @@ migration + wheel + docker + docs).
   `httpx>=0.27` was in `requirements-dev.txt` but missing from
   pyproject's `dev` extras (so `pip install -e .[dev]` was leaving
   httpx out, silently breaking any test that imported it).
-* **§16.13.t5 — `bundled_path()` repo-walk depth sanity check.**
-  `station_studio/bootstrap.py:bundled_path()` resolves the in-repo
-  fallback via `Path(__file__).resolve().parent.parent`, hardcoding
-  the file's depth from repo root. Same hazard as
-  `api/main.py:_resolve_static_dir`. A future move of either file
-  silently breaks the in-repo / editable-install path. Cheap
-  defense: assert the resolved candidate contains `pyproject.toml`,
-  falling through cleanly if not. **Home: small follow-up (~5
-  lines, 1 test)** whenever a future contributor reorgs the package
-  layout — that's the natural moment to add the guard.
+* ~~**§16.13.t5 — `bundled_path()` repo-walk depth sanity check.**~~
+  **SHIPPED.** Inlined `_resolve_repo_root()` helpers in BOTH
+  `station_studio/bootstrap.py` and `api/main.py`. Each walks
+  `Path(__file__).resolve().parent.parent` as before, then validates
+  by checking for `pyproject.toml` at the candidate. Returns the dir
+  on success, None on failure — callers decide what to raise.
+  `bundled_path()` now surfaces a clear `FileNotFoundError(
+  "bundled data not found: ... did the package layout move?")`
+  instead of silently returning a non-existent path that fails
+  opaquely a step later in `shutil.copytree`. `_resolve_static_dir()`
+  short-circuits to None at the guard, no surprise behaviour. Same
+  structural-not-naming check as `api/deps.py:_verify_repo_layout`
+  (§16.2.2.t4); helpers are duplicated rather than imported to keep
+  `api/` independent of `station_studio/` (dep direction is
+  station_studio → api). 5 new tests pin happy path + sandbox
+  negative path + bundled_path integration.
 * **§16.13.t6 — Hoist `_validate_name` to a shared importer module.**
   `api/routers/sources.py:_validate_name` and the inline strip /
   reject check in `station_studio/cli.py:import_cmd` (c3-review

@@ -161,10 +161,33 @@ def _resolve_static_dir() -> Path | None:
     except (ModuleNotFoundError, AttributeError):
         # `station_studio` isn't installed yet (in-repo dev pre-pip-install).
         pass
-    repo_root = Path(__file__).resolve().parent.parent
+    # §16.13.t5: pyproject.toml sanity-check on the walked-up root.
+    # Without the check, a future move of api/main.py to e.g.
+    # `api/server/main.py` would silently resolve `parent.parent` to
+    # `api/` (not the repo root), `api/web/build/` would obviously
+    # not exist, and the function would return None — making the SPA
+    # mount silently disappear. With the check, depth drift short-
+    # circuits to None at the guard, no surprise behaviour.
+    repo_root = _resolve_repo_root()
+    if repo_root is None:
+        return None
     in_repo = repo_root / "web" / "build"
     if in_repo.is_dir():
         return in_repo
+    return None
+
+
+def _resolve_repo_root() -> Path | None:
+    """§16.13.t5 — same depth-sanity-checked walk as
+    `station_studio/bootstrap.py:_resolve_repo_root`. Inlined (not
+    imported from station_studio) because api/ shouldn't depend on
+    station_studio for what's essentially a one-line filesystem
+    check, and the dependency direction is currently
+    `station_studio → api`, not the other way.
+    """
+    candidate = Path(__file__).resolve().parent.parent
+    if (candidate / "pyproject.toml").is_file():
+        return candidate
     return None
 
 

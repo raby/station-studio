@@ -65,7 +65,18 @@ def bundled_path(subpath: str) -> Path:
     #   <repo>/migrations/
     #   <repo>/stations/
     #   <repo>/alembic.ini
-    repo_root = Path(__file__).resolve().parent.parent
+    repo_root = _resolve_repo_root()
+    if repo_root is None:
+        # §16.13.t5: the depth-hardcoded walk produced a non-repo
+        # directory (no pyproject.toml at the resolved candidate).
+        # Fail with a CLEAR diagnostic instead of silently returning
+        # a non-existent path that explodes opaquely a step later in
+        # `shutil.copytree` or alembic.
+        raise FileNotFoundError(
+            f"bundled data not found: {subpath} (and the in-repo "
+            "fallback couldn't locate the repo root from "
+            f"{Path(__file__).resolve()} — did the package layout move?)"
+        )
     fallback_map = {
         "alembic.ini": repo_root / "alembic.ini",
         "migrations": repo_root / "migrations",
@@ -77,6 +88,31 @@ def bundled_path(subpath: str) -> Path:
         rest = subpath[len(top):].lstrip("/")
         return base / rest if rest else base
     raise FileNotFoundError(f"bundled data not found: {subpath}")
+
+
+def _resolve_repo_root() -> Path | None:
+    """§16.13.t5 — depth-sanity-checked repo-root resolution.
+
+    The historical pattern `Path(__file__).resolve().parent.parent`
+    hardcodes the assumption that `station_studio/bootstrap.py` sits
+    one level inside the repo root. Any future move of the file
+    (deeper subpackage, layout reorg) silently produces the wrong
+    directory + a confusing "X is not a directory" error half a step
+    later in shutil/alembic.
+
+    The check: the candidate MUST contain a `pyproject.toml` to be
+    accepted as the repo root. Same structural-not-naming-based
+    check as api/deps.py's `_verify_repo_layout` (§16.2.2.t4) —
+    repo-name-agnostic so forks into `my-station-fork/` still work.
+
+    Returns the dir on success, None on failure (caller decides
+    what error to raise — keeps call sites cleaner than a raise
+    here).
+    """
+    candidate = Path(__file__).resolve().parent.parent
+    if (candidate / "pyproject.toml").is_file():
+        return candidate
+    return None
 
 
 def _run_alembic_upgrade(db_url: str) -> None:
