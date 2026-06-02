@@ -1062,9 +1062,18 @@ def test_lifespan_swallows_seed_errors_so_app_still_boots(
     found" branch."""
     db_url = f"sqlite:///{tmp_path}/lifespan.db"
     monkeypatch.setenv("STATION_STUDIO_DB_URL", db_url)
-    # Force seed_stations to look at a tmp dir with no JSONs.
-    from scripts import seed_stations as ss_module
-    monkeypatch.setattr(ss_module, "STATIONS_DIR", tmp_path / "no_stations")
+    # §16.13.t9 / t9-review 🟢-1: the canonical way to point seeding
+    # at an empty dir is the `STATION_STUDIO_STATIONS_DIR` env var
+    # (engine.seeding._resolve_stations_dir reads it at call time).
+    # Pre-fix this test monkey-patched the SHIM's `STATIONS_DIR`
+    # constant — which `_collect_paths` never reads, so the patch
+    # was a no-op. The assertion below is loose enough that the
+    # test still passed, but it wasn't exercising the empty-dir
+    # path it claimed to. Now: env-var override that actually drives
+    # the resolve helper.
+    empty_dir = tmp_path / "no_stations"
+    empty_dir.mkdir()
+    monkeypatch.setenv("STATION_STUDIO_STATIONS_DIR", str(empty_dir))
 
     with caplog.at_level("INFO"):
         with TestClient(app) as client:

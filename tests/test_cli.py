@@ -297,7 +297,7 @@ def cli_home_with_station_and_pool(
     # we exercise the production seeding helper directly.
     from engine.database import make_engine, make_sessionmaker
     from engine.models import Base
-    from scripts.seed_stations import seed_station
+    from engine.seeding import seed_station  # §16.13.t9 canonical home
 
     engine = make_engine()
     Base.metadata.create_all(engine)

@@ -1,4 +1,10 @@
-"""Tests for scripts/seed_stations.py.
+"""Tests for engine.seeding (the seed-stations library).
+
+§16.13.t9: the library moved from `scripts/seed_stations.py` to
+`engine/seeding.py`. This file imports from the canonical home so
+the tests cover the library directly, not via the back-compat
+shim. The shim has its own minimal contract pin near the bottom
+of this file (`test_scripts_shim_re_exports_canonical_names`).
 
 Proves:
   * Seeding a fresh DB creates the station row (action: created)
@@ -16,7 +22,7 @@ from sqlalchemy.orm import Session
 
 from engine.database import make_engine, make_sessionmaker
 from engine.models import Base, Station
-from scripts.seed_stations import seed_station, seed_all, _collect_paths
+from engine.seeding import seed_station, seed_all, _collect_paths
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -209,3 +215,28 @@ def test_collect_paths_honours_explicit_argv_for_pool_manifest():
     paths = _collect_paths([str(REPO_ROOT / "stations" / "rebirth-radio.pool-manifest.json")])
     assert len(paths) == 1
     assert paths[0].name == "rebirth-radio.pool-manifest.json"
+
+
+def test_scripts_shim_re_exports_canonical_names() -> None:
+    """§16.13.t9 backward-compat: the `scripts.seed_stations` shim
+    re-exports every public + private name from `engine.seeding`
+    so the legacy `python -m scripts.seed_stations` invocation +
+    any external code doing `from scripts.seed_stations import ...`
+    keep working. Pin the contract — if a future contributor adds
+    a new public name to engine.seeding, this test fails until
+    the shim re-export catches up.
+    """
+    import engine.seeding as canonical
+    import scripts.seed_stations as shim
+
+    # Every name the shim claims to re-export must point at the SAME
+    # object in engine.seeding.
+    for name in (
+        "REPO_ROOT", "STATIONS_DIR",
+        "seed_station", "seed_all",
+        "_collect_paths", "_resolve_stations_dir",
+        "main",
+    ):
+        assert getattr(shim, name) is getattr(canonical, name), (
+            f"shim's {name!r} diverged from engine.seeding's"
+        )
