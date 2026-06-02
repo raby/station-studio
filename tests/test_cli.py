@@ -7,6 +7,7 @@ arguments (host, port, workers=1 hardcoded per §16.11).
 """
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -93,49 +94,21 @@ def test_serve_has_no_workers_flag(runner: CliRunner) -> None:
     assert "--workers" not in result.output
 
 
-def test_import_stub_exits_non_zero_with_punt_message(runner: CliRunner) -> None:
-    """`import` is a stub in c1 (queued for c3). It must exit non-zero
-    so scripted callers don't think a no-op succeeded, and the message
-    points at the working alternative (UI or Makefile)."""
-    result = runner.invoke(main, ["import", "fake-path.xml", "--name", "X"])
-    assert result.exit_code != 0
-    # Honest about the punt + points at the working alternative.
-    assert "queued for §16.13 c3" in result.output
-    assert "/sources" in result.output
-
-
-def test_seed_stub_exits_non_zero_with_punt_message(runner: CliRunner) -> None:
-    """Same shape as `import`: honest stub, non-zero exit, pointer to
-    the c3 unblock."""
-    result = runner.invoke(main, ["seed"])
-    assert result.exit_code != 0
-    assert "queued for §16.13 c3" in result.output
-
-
-def test_serve_logs_startup_banner(runner: CliRunner) -> None:
+def test_serve_logs_startup_banner(
+    runner: CliRunner, monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
     """Verbose first-run feedback (the locked default): user sees the
-    host:port + the single-worker caveat. Quiet-failure mode where the
-    server just starts with no output makes debugging needlessly hard."""
+    host:port + the single-worker caveat + the app-home path. Quiet-
+    failure mode where the server just starts with no output makes
+    debugging needlessly hard."""
+    monkeypatch.setenv("STATION_STUDIO_HOME", str(tmp_path / "ss-home"))
     with patch("uvicorn.run"):
         result = runner.invoke(main, ["serve"])
+    assert result.exit_code == 0, result.output
     assert "127.0.0.1:8001" in result.output
     assert "single worker" in result.output
-
-
-def test_serve_banner_surfaces_working_directory(runner: CliRunner) -> None:
-    """c1-review 🟡-2: until §16.13 c3 wires the app-home, the FastAPI
-    app resolves its DB / stations dir against `$PWD`. That's a footgun
-    for an installed-wheel user who runs `station-studio serve` from
-    anywhere other than the repo. Banner surfaces the working dir so
-    the user can sanity-check before reading silent files into the
-    wrong place. The c3 boundary is also called out so a future reader
-    knows when this banner can disappear."""
-    with patch("uvicorn.run"):
-        result = runner.invoke(main, ["serve"])
-    # Some portion of the cwd shows in the banner (full path is platform-
-    # dependent; we just look for the `working dir:` label + a c3 marker).
-    assert "working dir:" in result.output
-    assert "§16.13 c3" in result.output
+    # c3: bootstrap banner exposes the app-home path.
+    assert "App home:" in result.output
 
 
 def test_import_role_validates_choice(runner: CliRunner) -> None:
@@ -147,3 +120,105 @@ def test_import_role_validates_choice(runner: CliRunner) -> None:
     )
     assert result.exit_code != 0
     assert "banana" in result.output or "Invalid value" in result.output
+
+
+# ---- §16.13 c3 — wired subcommands ---------------------------------
+
+
+@pytest.fixture
+def isolated_cli_home(monkeypatch, tmp_path):
+    """Run CLI subcommands against a tmp app-home + clean DB env.
+
+    Bootstrap calls `os.environ.setdefault` which monkeypatch's
+    auto-cleanup doesn't catch — explicit teardown prevents pollution
+    leaking into later tests."""
+    import os
+    home = tmp_path / "ss-home"
+    monkeypatch.setenv("STATION_STUDIO_HOME", str(home))
+    monkeypatch.delenv("STATION_STUDIO_DB_URL", raising=False)
+    monkeypatch.delenv("STATION_STUDIO_STATIONS_DIR", raising=False)
+    yield home
+    os.environ.pop("STATION_STUDIO_DB_URL", None)
+    os.environ.pop("STATION_STUDIO_STATIONS_DIR", None)
+
+
+def test_seed_subcommand_populates_stations_dir(
+    runner: CliRunner, isolated_cli_home
+) -> None:
+    """`station-studio seed` on a fresh app-home → bundled stations
+    land. End-to-end through the CLI (bootstrap inside)."""
+    result = runner.invoke(main, ["seed"])
+    assert result.exit_code == 0, result.output
+    stations = isolated_cli_home / "stations"
+    names = {p.name for p in stations.glob("*.json")}
+    assert "rebirth-classics.json" in names
+    assert "rebirth-radio.json" in names
+
+
+def test_seed_subcommand_idempotent_no_crash(
+    runner: CliRunner, isolated_cli_home
+) -> None:
+    """Re-running seed (after the first run populated the dir) succeeds
+    quietly + reports "already populated"."""
+    r1 = runner.invoke(main, ["seed"])
+    assert r1.exit_code == 0
+    r2 = runner.invoke(main, ["seed"])
+    assert r2.exit_code == 0
+    assert "already populated" in r2.output.lower()
+
+
+def test_import_subcommand_imports_a_pool(
+    runner: CliRunner, isolated_cli_home
+) -> None:
+    """`station-studio import path/to/lib.xml --name X` actually
+    imports the pool into the app-home's DB. We assert by hitting
+    SQLite directly — quick, no API server, end-to-end coverage of
+    the wired path."""
+    fixture = (
+        Path(__file__).resolve().parent / "fixtures" / "tiny-library.xml"
+    )
+    assert fixture.is_file()
+
+    result = runner.invoke(
+        main, ["import", str(fixture), "--name", "CLI_POOL"]
+    )
+    assert result.exit_code == 0, result.output
+    assert "Imported" in result.output
+    assert "CLI_POOL" in result.output
+
+    import sqlite3
+    db = sqlite3.connect(isolated_cli_home / "station_studio.db")
+    try:
+        row = db.execute(
+            "SELECT name, role FROM source_playlist WHERE name = ?",
+            ("CLI_POOL",),
+        ).fetchone()
+        assert row == ("CLI_POOL", "content")
+    finally:
+        db.close()
+
+
+def test_import_subcommand_rejects_missing_file(
+    runner: CliRunner, isolated_cli_home
+) -> None:
+    """A non-existent PATH exits non-zero with a clear error. Avoids
+    a confusing alembic / SQL stack trace when the user just typed
+    the path wrong."""
+    result = runner.invoke(
+        main, ["import", "/does/not/exist.xml", "--name", "X"]
+    )
+    assert result.exit_code != 0
+    assert "not found" in result.output.lower()
+
+
+def test_import_subcommand_requires_name(
+    runner: CliRunner, isolated_cli_home
+) -> None:
+    """Without --name the import has nowhere to land. Clear early
+    error keeps the bootstrap + DB-init from running for nothing."""
+    fixture = (
+        Path(__file__).resolve().parent / "fixtures" / "tiny-library.xml"
+    )
+    result = runner.invoke(main, ["import", str(fixture)])
+    assert result.exit_code != 0
+    assert "--name is required" in result.output

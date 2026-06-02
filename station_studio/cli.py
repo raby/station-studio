@@ -12,6 +12,7 @@ install-essentials only.
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 import click
 
@@ -61,28 +62,20 @@ def serve(host: str, port: int) -> None:
     worker is the only correct mode. The constraint is enforced here
     so an installed user can't accidentally trip it via uvicorn flags.
     """
+    # §16.13 c3: bootstrap before uvicorn. ensure_home + migrations +
+    # bundled-stations copy land BEFORE api.main is imported (uvicorn
+    # imports its `app` arg lazily, so the env vars bootstrap sets
+    # apply to engine.database / scripts.seed_stations once they
+    # eventually do load).
+    from station_studio.bootstrap import bootstrap
+    bootstrap(echo=click.echo)
+
     # Imported lazily so `station-studio --version` (or --help on other
     # subcommands) doesn't pay the uvicorn import cost.
     import uvicorn
 
     click.echo(f"Starting station-studio on http://{host}:{port}")
     click.echo("(single worker — see DESIGN.md §16.11 / §16.13)")
-    # c1-review 🟡-2: until §16.13 c3 wires the app-home + first-run
-    # bootstrap, the FastAPI app's DB + stations dir + sidecars all
-    # resolve RELATIVE to `$PWD`. That's the right behaviour for
-    # in-repo dev (running `station-studio serve` from the repo root
-    # works exactly like `python run.py`), but it's a footgun for an
-    # installed-wheel user who runs it from anywhere else (they'd
-    # silently create `~/station_studio.db` or worse).
-    #
-    # The honest signal until c3 lands: tell the user where the
-    # working dir actually is so they can sanity-check that's where
-    # they meant to run. The banner DOESN'T fail-loud because the
-    # behaviour is correct for in-repo use (the working c1 case);
-    # it's a heads-up for the installed-wheel case.
-    click.echo(
-        f"(working dir: {os.getcwd()} — app-home wired in §16.13 c3)"
-    )
     uvicorn.run(
         "api.main:app",
         host=host,
@@ -112,20 +105,52 @@ def serve(host: str, port: int) -> None:
 def import_cmd(
     ctx: click.Context, path: str | None, name: str | None, role: str
 ) -> None:
-    """Stub for the installed-user pool-import path.
+    """§16.13 c3 — wired implementation.
 
-    c3 wires this against the running server's `import_source(...)`
-    helper using the app-home's DB. For now, the in-repo flow remains
-    `make import-weekly-pools manifest=…` and the UI's /sources page.
+    Imports an iTunes XML at PATH as a pool named --name. Uses the
+    app-home's DB (bootstrap runs first to ensure the DB is migrated
+    + env vars are set). Direct DB access; no running server needed.
+
+    Mirrors the /api/sources/import endpoint's contract: ValueError
+    surfaces as a CLI 400-equivalent (exit 1, error message); any
+    other exception bubbles up.
     """
+    if not path:
+        click.echo("Error: PATH (iTunes XML file) is required.", err=True)
+        ctx.exit(1)
+    if not name:
+        click.echo("Error: --name is required.", err=True)
+        ctx.exit(1)
+
+    from station_studio.bootstrap import bootstrap
+    bootstrap(echo=click.echo)
+
+    # Imports stay lazy — keeps `station-studio --help` snappy.
+    from engine.database import make_engine, make_sessionmaker
+    from engine.importer import import_source
+    from engine.models import Base
+
+    xml_path = Path(path).expanduser().resolve()
+    if not xml_path.is_file():
+        click.echo(f"Error: file not found: {xml_path}", err=True)
+        ctx.exit(1)
+
+    engine = make_engine()
+    Base.metadata.create_all(engine)
+    SessionLocal = make_sessionmaker(engine)
+
+    try:
+        with SessionLocal() as db:
+            summary = import_source(db, xml_path, name, role=role)
+            db.commit()
+    except ValueError as e:
+        click.echo(f"Error: {e}", err=True)
+        ctx.exit(1)
+
+    tracks = summary.get("tracks_imported", "?")
     click.echo(
-        "station-studio import is queued for §16.13 c3 "
-        "(app-home + DB bootstrap).\n"
-        "In the meantime, use the /sources page in the web UI or the "
-        "in-repo `make import-weekly-pools manifest=…` target.",
-        err=True,
+        f"Imported {tracks} tracks into pool '{name}' (role: {role})."
     )
-    ctx.exit(1)
 
 
 @main.command(
@@ -135,20 +160,21 @@ def import_cmd(
         "[Stub — wired in c3 once the app-home lands.]"
     ),
 )
-@click.pass_context
-def seed(ctx: click.Context) -> None:
-    """Stub for re-seeding example stations from the wheel's bundled copies.
+def seed() -> None:
+    """§16.13 c3 — wired implementation.
 
-    c3 wires this against the app-home's stations dir (D6: copy on first
-    run; `seed` is the explicit re-run for "I deleted Classics, get it
-    back").
+    Copies any MISSING bundled stations into the app-home's stations
+    dir. Existing files are preserved (so user edits aren't clobbered
+    between runs); deleting a station first and re-running `seed`
+    restores it. The bootstrap step does the actual copy work — this
+    subcommand is mostly the explicit re-run affordance for "I
+    deleted Classics, get it back."
+
+    A future `seed --force` would overwrite existing files (factory
+    reset). Out of scope for c3; queue if a real user asks.
     """
-    click.echo(
-        "station-studio seed is queued for §16.13 c3 "
-        "(app-home + bundled-stations resolution).",
-        err=True,
-    )
-    ctx.exit(1)
+    from station_studio.bootstrap import bootstrap
+    bootstrap(echo=click.echo)
 
 
 if __name__ == "__main__":

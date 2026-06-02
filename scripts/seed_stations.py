@@ -14,6 +14,9 @@ Usage
     # Use a different DB (e.g. in tests)
     STATION_STUDIO_DB_URL=sqlite:///tmp.db python -m scripts.seed_stations
 
+    # Use a different stations dir (installed-wheel users via §16.13 c3)
+    STATION_STUDIO_STATIONS_DIR=/path/to/stations python -m scripts.seed_stations
+
 Why have this at all? The stations/ JSON files are the checked-in source of
 truth; the DB is just a cache. A fresh machine needs one command to become
 useful — this is it.
@@ -21,6 +24,7 @@ useful — this is it.
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -32,7 +36,24 @@ from engine.template import parse_template, TemplateError
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-STATIONS_DIR = REPO_ROOT / "stations"
+# §16.13 c3: STATION_STUDIO_STATIONS_DIR override resolved at call
+# time (not at module load) so the bootstrap setting it BEFORE
+# importing this module picks up. Falls back to the repo-relative
+# default when unset (in-repo dev / Makefile-driven workflows).
+_REPO_STATIONS_DIR = REPO_ROOT / "stations"
+
+
+def _resolve_stations_dir() -> Path:
+    override = os.environ.get("STATION_STUDIO_STATIONS_DIR", "").strip()
+    if override:
+        return Path(override)
+    return _REPO_STATIONS_DIR
+
+
+# Back-compat shim: existing callers (lifespan, tests) read `STATIONS_DIR`
+# as a module-level constant. Keep it as the repo default so backward
+# compatibility holds; _collect_paths uses _resolve_stations_dir() now.
+STATIONS_DIR = _REPO_STATIONS_DIR
 
 
 def seed_station(db: Session, path: Path) -> dict:
@@ -91,8 +112,9 @@ def _collect_paths(argv: list[str]) -> list[Path]:
     """
     if argv:
         return [Path(a).resolve() for a in argv]
+    stations_dir = _resolve_stations_dir()
     return sorted(
-        p for p in STATIONS_DIR.glob("*.json")
+        p for p in stations_dir.glob("*.json")
         if not (
             p.name.endswith(".pool-manifest.json")
             or p.name.endswith(".editor.json")
