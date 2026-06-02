@@ -9742,19 +9742,80 @@ Rebirth Radio) are Rebirth's own. A first-time hobbyist forking
 either is forking a complete production station — overwhelming.
 §16.14 ships a third example: a structurally simple "starter
 station" that demonstrates the engine's basics without complexity.
-
-**Shape.** A `stations/starter.json` with:
-
-* ~100-200 slots (vs Classics's 3,010, Rebirth's 2,196)
-* `flat_slots` form (easier mental model than row_template + cycle math)
-* 2-3 strategies: `pick` + `window` + maybe one `jingle`. No `mix`,
-  no `prev_ref`, no `weighted`.
-* 1-2 cursors (or stateless), short cycle, no cross-week state
-* Companion synthetic XML pools committed (MIT-licensed metadata,
-  ~50 tracks per pool) so the station boots end-to-end on a fresh
-  install with zero external data.
-
 Used in the §16.13 tutorial as the "your first station" example.
+
+**Shape (locked design talk).** A `stations/starter.json` with
+companion synthetic iTunes XML pools — so the station boots
+end-to-end on a fresh install with zero external data.
+
+**Decisions (locked in the pre-c1 design pass).**
+
+* **D1 — Two strategies: `weighted` (content) + `jingle` (every 8
+  slots).** `weighted` proves out the "main content stream" with
+  artist-dedup, the canonical hobbyist pattern. `jingle` proves out
+  the "fixed-interval insert" pattern. Two strategies is the right
+  budget for a starter — `pick`, `mix`, `prev_ref`, `sequential`
+  are graduations.
+* **D2 — Stateless cursors.** Cursor mechanics + cross-week state
+  are exactly what makes Rebirth Classics' "next station up" feel
+  intimidating. The starter teaches the slot+strategy mental model;
+  state comes with the §16.14.t1 stateful-starter follow-up.
+* **D3 — 168 slots default** (24/day × 7 days, "Mon"-"Sun" labels,
+  "one track per hour"). Real-station-shaped but easy to count;
+  configurable in the template if a fork wants something denser.
+* **D4 — Two synthetic pools:** `STARTER_CONTENT` (50 tracks across
+  10 fully-synthetic artists, 5 each) + `STARTER_JINGLES` (5 tracks,
+  Genre="Jingle"). Track titles + artist names entirely made-up so
+  no license-audit surface (no public-domain attribution, no CC-0
+  matchback risk). 50/5 enough variety that weighted artist-dedup
+  produces an interesting week.
+* **D5 — Pools committed under `stations/`:** `starter-content.itunes.xml`
+  + `starter-jingles.itunes.xml`, co-located with `starter.json`.
+  Reviewable in PRs, no "magic on first boot" generation step,
+  small (~10KB total). Deterministically regeneratable via
+  `scripts/generate_starter_pools.py` + `make refresh-starter-pools`
+  so fixing a typo is one command.
+* **D6 — Auto-import on first boot ONLY + manual tutorial flow.**
+  Best-of-both: the starter "just works" out of the box (bootstrap
+  imports the bundled XMLs when `SourcePlaylist.count() == 0`), AND
+  the §16.13 tutorial walks the user through "delete the pool,
+  re-import it manually" so they LEARN the import flow without it
+  being a blocker. First-boot guard (Q8) means once-deleted,
+  stay-deleted — matches the bootstrap's stations-dir semantics
+  (copy missing, don't clobber).
+* **D7 — Content role only.** No reference pool. Roles tie to the
+  weekly-style master-list concept which is a graduation, not a
+  starter feature. Reserved for §16.14.t1.
+* **D8 — Editor sidecar auto-derived on first boot** via the
+  existing `scripts/derive_sidecar.py` logic. The user doesn't have
+  to know the sidecar exists; the visualiser is "interesting on
+  first paint" out of the box.
+* **D9 — `stations/README.md`** orients any reader of the repo to
+  what each of the three stations is + which to read first. ~30
+  lines; nothing fancy.
+
+**Pre-c1 defaults locked (not asked — obvious choices):**
+
+* Pool XML format: iTunes XML plist v1.0 (same as the existing
+  fixtures + the format the importer accepts natively).
+* Persistent IDs: deterministic from a synthetic-seed counter
+  (so regeneration produces byte-identical XMLs).
+* Track lengths: synthetic ~3:30 each, no real durations to mimic.
+* Tests live under `tests/test_starter_station.py` (new file).
+* The auto-import helper lives next to the existing seeding code
+  in `engine/seeding.py` (closes the §16.13.t9 home for "stuff the
+  runtime needs" — keeps the dep direction `api → engine` clean).
+
+**Shape (commit plan).**
+
+| | Scope |
+|---|---|
+| **c1** | Engine artifacts: `stations/starter.json` + synthetic pools (`starter-content.itunes.xml`, `starter-jingles.itunes.xml`) + auto-derived sidecar + `stations/README.md` + `scripts/generate_starter_pools.py` regenerator + `make refresh-starter-pools` + 4-6 tests pinning parse / pool import / end-to-end generate / byte-equality. |
+| **c2** | First-boot auto-import (D6) wired into bootstrap. New `engine.seeding.auto_import_starter_pools(db) -> int` gated on `SourcePlaylist.count() == 0`. `BootstrapResult` grows a `pools_auto_imported: int` field. Sidecar auto-derive (D8) fires on first boot if missing. Tests pin first-boot vs subsequent-run vs user-deleted-and-stayed-empty. |
+| **c3** | Slice closeout: this DESIGN entry's "shipped" log table + §15 status snapshot bump + README "Example stations included" section gets the starter as the FIRST entry (read this first). |
+
+Each commit followed by a mid-slice review + fix commit, per the
+established cadence. Full slice-review sweep at the end.
 
 **Punted from scope:**
 
@@ -9762,8 +9823,23 @@ Used in the §16.13 tutorial as the "your first station" example.
   reference but don't include audio files).
 * A station-from-scratch wizard tutorial — that's §16.2's territory
   (visual editor).
+* Stateful starter — see §16.14.t1 below.
 
-**Effort.** Small (~2-3 commits).
+**Effort.** Small (3 commits + 3 review-fix commits + 1 slice-review
+sweep, matching the §16.13.t1-t9 cadence).
+
+**Watch-list (queued from this slice).**
+
+* **§16.14.t1 — Stateful starter station.** A second bundled
+  example showcasing **persistent cursors + reference role +
+  cross-week state**. Bridges the gap between the stateless starter
+  (this slice) and Rebirth Classics' real persistent-cursor
+  mechanics. Shape: ~336 slots (every 30 min), `cursor.persist=true`
+  with one persistent cursor, one content pool + one reference pool
+  to demonstrate the role concept. Tutorial: "your second station,
+  with state." **Home: separate slice (~3 commits).** Trigger:
+  this stateless starter shipped + a hobbyist asks "how do I make
+  slots persist across weeks?"
 
 ---
 
