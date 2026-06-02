@@ -178,16 +178,20 @@ def _resolve_static_dir() -> Path | None:
 
 
 def _resolve_repo_root() -> Path | None:
-    """§16.13.t5 — same depth-sanity-checked walk as
-    `station_studio/bootstrap.py:_resolve_repo_root`. Inlined (not
-    imported from station_studio) because api/ shouldn't depend on
-    station_studio for what's essentially a one-line filesystem
-    check, and the dependency direction is currently
-    `station_studio → api`, not the other way.
+    """§16.13.t5 (+ post-t5-review 🟡-1) — depth-adaptive, sanity-
+    checked walk. Mirrors `station_studio/bootstrap.py:_resolve_repo_root`
+    line-for-line. Inlined (not imported from station_studio) because
+    api/ shouldn't depend on station_studio for what's essentially a
+    one-line filesystem check, and the dependency direction is
+    currently `station_studio → api`, not the other way.
+
+    Walks `Path.parents` until pyproject.toml appears so a future
+    move of api/main.py (deeper subpackage, layout reorg) doesn't
+    need a coordinated `parent.parent → parent.parent.parent` patch.
     """
-    candidate = Path(__file__).resolve().parent.parent
-    if (candidate / "pyproject.toml").is_file():
-        return candidate
+    for candidate in Path(__file__).resolve().parents:
+        if (candidate / "pyproject.toml").is_file():
+            return candidate
     return None
 
 

@@ -91,27 +91,35 @@ def bundled_path(subpath: str) -> Path:
 
 
 def _resolve_repo_root() -> Path | None:
-    """§16.13.t5 — depth-sanity-checked repo-root resolution.
+    """§16.13.t5 — depth-adaptive, sanity-checked repo-root resolution.
 
-    The historical pattern `Path(__file__).resolve().parent.parent`
-    hardcodes the assumption that `station_studio/bootstrap.py` sits
-    one level inside the repo root. Any future move of the file
-    (deeper subpackage, layout reorg) silently produces the wrong
-    directory + a confusing "X is not a directory" error half a step
-    later in shutil/alembic.
+    Walks `Path(__file__).resolve().parents` until a `pyproject.toml`
+    appears (or the filesystem root is reached). The pyproject is the
+    canonical anchor for "this is the project root"; finding it tells
+    us where to mount the in-repo fallback paths
+    (stations/ / migrations/ / alembic.ini) regardless of how deep
+    `bootstrap.py` lives inside the package.
 
-    The check: the candidate MUST contain a `pyproject.toml` to be
-    accepted as the repo root. Same structural-not-naming-based
-    check as api/deps.py's `_verify_repo_layout` (§16.2.2.t4) —
-    repo-name-agnostic so forks into `my-station-fork/` still work.
+    Pre-t5: hardcoded `parent.parent`. A future move to a deeper
+    package (e.g. `station_studio/_internal/bootstrap.py`) silently
+    resolved one level too shallow and failed opaquely in
+    `shutil.copytree`. Post-t5 first cut: same `parent.parent` but
+    with a pyproject existence check at the resolved candidate.
+    Post-t5-review 🟡-1 (this iteration): walk parents to actually
+    survive depth drift — the check now ADAPTS to the new layout
+    automatically instead of just failing louder.
+
+    Same structural-not-naming-based check as
+    `api/deps.py:_verify_repo_layout` (§16.2.2.t4). Repo-name-
+    agnostic so forks into `my-station-fork/` still work.
 
     Returns the dir on success, None on failure (caller decides
     what error to raise — keeps call sites cleaner than a raise
     here).
     """
-    candidate = Path(__file__).resolve().parent.parent
-    if (candidate / "pyproject.toml").is_file():
-        return candidate
+    for candidate in Path(__file__).resolve().parents:
+        if (candidate / "pyproject.toml").is_file():
+            return candidate
     return None
 
 

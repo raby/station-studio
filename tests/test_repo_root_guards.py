@@ -87,6 +87,50 @@ def test_api_main_resolve_repo_root_returns_none_without_pyproject(
     assert main_mod._resolve_repo_root() is None
 
 
+def test_bootstrap_resolve_repo_root_walks_arbitrary_depth(
+    tmp_path, monkeypatch
+) -> None:
+    """t5-review 🟡-1 regression pin: the helper now WALKS parents
+    until pyproject.toml appears, not just `parent.parent`. A future
+    move to a deeper subpackage (e.g.
+    `station_studio/_internal/bootstrap.py`) must continue to
+    resolve to the repo root without a coordinated patch.
+    """
+    import station_studio.bootstrap as boot
+    sandbox = tmp_path / "fake_repo"
+    sandbox.mkdir()
+    # Place a real pyproject.toml at sandbox/ — that's the "repo root."
+    (sandbox / "pyproject.toml").write_text('[project]\nname="x"\n')
+    # Drop a fake module THREE levels deep (was just two pre-fix).
+    deep = sandbox / "station_studio" / "_internal" / "subdir"
+    deep.mkdir(parents=True)
+    fake_file = deep / "bootstrap.py"
+    fake_file.write_text("# fake")
+
+    monkeypatch.setattr(boot, "__file__", str(fake_file))
+    # Pre-fix: parent.parent would resolve to
+    # `sandbox/station_studio/_internal/` (no pyproject), return None.
+    # Post-fix: walks up until pyproject is found at `sandbox/`.
+    root = boot._resolve_repo_root()
+    assert root == sandbox.resolve()
+
+
+def test_api_main_resolve_repo_root_walks_arbitrary_depth(
+    tmp_path, monkeypatch
+) -> None:
+    """Same depth-adaptive guarantee for api/main.py's helper."""
+    import api.main as main_mod
+    sandbox = tmp_path / "fake_repo"
+    sandbox.mkdir()
+    (sandbox / "pyproject.toml").write_text('[project]\nname="x"\n')
+    deep = sandbox / "api" / "server" / "v1"
+    deep.mkdir(parents=True)
+    fake_file = deep / "main.py"
+    fake_file.write_text("# fake")
+    monkeypatch.setattr(main_mod, "__file__", str(fake_file))
+    assert main_mod._resolve_repo_root() == sandbox.resolve()
+
+
 def test_bundled_path_raises_clear_error_when_guard_fails(
     tmp_path, monkeypatch
 ) -> None:
