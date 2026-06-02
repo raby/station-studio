@@ -9642,16 +9642,21 @@ migration + wheel + docker + docs).
   `api/` independent of `station_studio/` (dep direction is
   station_studio → api). 5 new tests pin happy path + sandbox
   negative path + bundled_path integration.
-* **§16.13.t6 — Hoist `_validate_name` to a shared importer module.**
-  `api/routers/sources.py:_validate_name` and the inline strip /
-  reject check in `station_studio/cli.py:import_cmd` (c3-review
-  🟡-1) implement the same "pool name must not be empty or
-  whitespace-only" contract in two places. A third entry point
-  would inherit the same gap a third time. Cleaner: move the helper
-  to `engine/importer.py` (or a small `engine/validation.py`) and
-  have both API + CLI import it. **Home: ~1 commit when adding a
-  new entry point OR during a future engine/ refactor.** Today's
-  duplication is two lines; the consolidation cost is the same.
+* ~~**§16.13.t6 — Hoist `_validate_name` to a shared importer module.**~~
+  **SHIPPED.** New `engine.importer.validate_pool_name(raw: str) -> str`
+  — single source of truth, lives in `engine/` so both `api/` and
+  `station_studio/` import without inverting the cross-package
+  dependency direction. Raises ValueError (the engine's standard
+  contract); each caller translates to its own surface:
+    * `api/routers/sources.py:_validate_name` — thin wrapper that
+      catches ValueError + raises HTTPException(400).
+    * `station_studio/cli.py:import_cmd` — catches ValueError, prints
+      `Error: <message>` to stderr + exit 1.
+  Error MESSAGE is part of the contract — both existing API + CLI
+  test suites grep for "empty or whitespace-only" so a future
+  rephrase fails immediately. 5 new engine-layer unit tests pin
+  strip-whitespace, pass-clean-names, reject-empty, reject-
+  whitespace-only, and exact-message-text behaviours.
 * **§16.13.t7 — `bootstrap()` runs alembic upgrade on every CLI
   invocation.** Even when the DB is already at head, the upgrade
   is a no-op that costs ~100ms (alembic version check + log line).

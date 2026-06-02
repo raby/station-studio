@@ -12,7 +12,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from engine.models import SourcePlaylist, SourcePlaylistEntry
-from engine.importer import import_source
+from engine.importer import import_source, validate_pool_name
 from api.deps import get_db
 from api.schemas import ImportRequest, SourceOut
 
@@ -23,19 +23,16 @@ router = APIRouter(prefix="/api/sources", tags=["sources"])
 def _validate_name(raw: str) -> str:
     """Strip and reject empty / whitespace-only pool names.
 
-    Pre-c1 both `/import` (JSON `ImportRequest.name: str`) and the new
-    `/upload` (`Form(name)`) accepted `""`, `"   "`, and `"  daytime  "`
-    verbatim. `import_source` would then persist a `SourcePlaylist`
-    with a blank or odd-whitespace name, surfacing on `GET /api/sources`
-    as a confusing row. Closed in the c1 mid-slice review (🟡-1) —
-    one helper, both endpoints, one error contract.
+    §16.13.t6: rule body lives in `engine.importer.validate_pool_name`
+    (single source of truth across api/, station_studio/, and any
+    future entry point). This wrapper translates the engine's
+    ValueError to the API's HTTPException(400) — the router keeps
+    its HTTP error class, the rule moves to engine/.
     """
-    stripped = raw.strip()
-    if not stripped:
-        raise HTTPException(
-            400, "name must not be empty or whitespace-only",
-        )
-    return stripped
+    try:
+        return validate_pool_name(raw)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
 
 
 def _import_to_pool(db: Session, *, path: Path, name: str, role: str) -> dict:

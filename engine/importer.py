@@ -23,6 +23,36 @@ from engine.models import SourcePlaylist, Track, SourcePlaylistEntry, Config
 logger = logging.getLogger(__name__)
 
 
+def validate_pool_name(raw: str) -> str:
+    """§16.13.t6 — single source of truth for the pool-name contract.
+
+    Strips surrounding whitespace and rejects empty / whitespace-only
+    names. Returns the stripped name on success; raises ValueError on
+    failure. Callers translate ValueError to their own error surface
+    (HTTPException 400 for the API, exit-1 stderr for the CLI).
+
+    Pre-t6 this rule lived inline in TWO places:
+      * api/routers/sources.py:_validate_name (§16.25 c1) — both
+        /import (JSON) and /upload (multipart) endpoints called it.
+      * station_studio/cli.py:import_cmd (c3 review 🟡-1) — the CLI's
+        third entry point copied the same `strip + reject empty` check.
+
+    A future fourth entry point would otherwise inherit the same gap
+    again. Hoisting here pins the contract — including the exact error
+    text — for every current and future caller. Lives in engine/ so
+    BOTH api/ and station_studio/ can import without inverting the
+    cross-package dependency direction.
+
+    The error MESSAGE is part of the contract — tests on both surfaces
+    grep for "empty or whitespace-only" so a rephrase here would flag
+    the test regressions immediately.
+    """
+    stripped = raw.strip()
+    if not stripped:
+        raise ValueError("name must not be empty or whitespace-only")
+    return stripped
+
+
 def _store_library_metadata(db: Session, data: dict) -> None:
     """Persist library-level iTunes metadata on first import so the exporter
     can reconstruct an XML file iTunes will accept. First-import wins —

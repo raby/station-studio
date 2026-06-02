@@ -389,3 +389,49 @@ def test_load_pools_happy_path_when_roles_agree(db_session, tmp_path):
     pools = load_pools(db_session, tmpl)
     assert "P" in pools
     assert len(pools["P"]) == 2
+
+
+# ---------- §16.13.t6 — validate_pool_name (hoisted from api/cli) ----------
+
+
+class TestValidatePoolName:
+    """`validate_pool_name` is the single source of truth across api/,
+    station_studio/, and any future entry point. Pin the contract here
+    so the API + CLI integration tests (which already grep for "empty
+    or whitespace-only") can rely on the engine layer's behaviour."""
+
+    def test_strips_surrounding_whitespace(self) -> None:
+        from engine.importer import validate_pool_name
+        assert validate_pool_name("  daytime  ") == "daytime"
+        assert validate_pool_name("\tjingles\n") == "jingles"
+
+    def test_passes_through_already_clean_names(self) -> None:
+        from engine.importer import validate_pool_name
+        assert validate_pool_name("DAYTIME") == "DAYTIME"
+        # Internal whitespace is preserved — only surrounding is stripped.
+        assert validate_pool_name("Night Owl") == "Night Owl"
+
+    def test_rejects_empty_string(self) -> None:
+        from engine.importer import validate_pool_name
+        with pytest.raises(ValueError, match="empty or whitespace-only"):
+            validate_pool_name("")
+
+    def test_rejects_whitespace_only(self) -> None:
+        """Whitespace-only inputs: spaces, tabs, newlines. All reject."""
+        from engine.importer import validate_pool_name
+        for w in ("   ", "\t", "\n", "  \t  \n"):
+            with pytest.raises(ValueError, match="empty or whitespace-only"):
+                validate_pool_name(w)
+
+    def test_error_message_is_part_of_the_contract(self) -> None:
+        """The exact error text is what both API and CLI surfaces grep
+        for. Rephrasing breaks downstream tests; pin it here so any
+        casual reword fails THIS test first (with a clear "you broke
+        the contract" diagnostic)."""
+        from engine.importer import validate_pool_name
+        try:
+            validate_pool_name("")
+        except ValueError as e:
+            assert str(e) == "name must not be empty or whitespace-only"
+        else:
+            raise AssertionError("expected ValueError")
