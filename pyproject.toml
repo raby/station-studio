@@ -138,3 +138,13 @@ exclude = [
     "/backups",
     "/out",
 ]
+
+# §16.13 slice-review 🟡-4 / t3: register the `slow` marker so the
+# real-uvicorn subprocess test (tests/test_cli_serve_subprocess.py)
+# doesn't trigger a PytestUnknownMarkWarning. Default `pytest` runs
+# include slow tests (the gate is the default behavior, not opt-in);
+# use `pytest -m 'not slow'` to skip on bandwidth-constrained CI shards.
+[tool.pytest.ini_options]
+markers = [
+    "slow: subprocess / uvicorn / network tests that add ~5s+ to a run",
+]

@@ -9601,15 +9601,16 @@ migration + wheel + docker + docs).
   CliRunner against an isolated app-home fixture. Restore is
   `tar xzf foo.tar.gz -C $STATION_STUDIO_HOME` into any empty
   home (same machine / new machine / docker volume mount).
-* **§16.13.t3 — Real-uvicorn subprocess integration test.** c1's
-  CLI tests mock `uvicorn.run` and assert kwargs (`workers=1` etc).
-  That gives confidence at the dispatch boundary but not at the
-  uvicorn integration boundary — if a future uvicorn version
-  changes the kwarg names, the mocked tests still pass but the
-  real call would fail. A small subprocess test that actually boots
-  uvicorn (`Popen`), curls `/`, then kills it would close the loop.
-  **Home: §16.13 c7 (slice review sweep candidate)** — ride along
-  with whatever else falls out of the slice's full-review pass.
+* ~~**§16.13.t3 — Real-uvicorn subprocess integration test.**~~ **SHIPPED.**
+  Landed in the slice-review sweep. New `tests/test_cli_serve_subprocess.py`
+  spawns the CLI via `subprocess.Popen([python, '-m',
+  station_studio.cli, 'serve', '--port', N])`, polls the TCP socket
+  for readiness, urllib-fetches `/`, `/api/stations`, asserts content
+  types, SIGTERMs the process with a SIGKILL fallback. Module-level
+  `@pytest.mark.slow` marker registered in pyproject; default pytest
+  runs include it (the gate is the default behavior), `-m 'not slow'`
+  skips for bandwidth-constrained shards. Closes the gap between
+  mocked dispatch tests and `make wheel-smoke`'s shell-only path.
 * **§16.13.t4 — Dependency-list drift between `pyproject.toml` and
   `requirements.txt`.** Today both list `fastapi`/`uvicorn`/etc and
   must be kept in sync by hand (the pyproject's comment says so).

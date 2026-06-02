@@ -104,10 +104,30 @@ jobs:
           fi
           echo "Versions match: v$TAG_VERSION"
 
-      - name: install build deps
+      - name: install full deps (runtime + dev)
+        # §16.13 slice-review 🟡-3: pre-flight runs the test suite
+        # against the tagged commit before publishing. Without this,
+        # a tag pushed against a broken main would publish broken code
+        # to PyPI — `workflow_run` triggers don't apply to tag pushes
+        # (tags don't have a branch they fire on), so we re-run the
+        # checks inline. The duplication is the right tradeoff: releases
+        # are rare, ~minutes of CI is cheap, and the SAME-COMMIT
+        # guarantee is what users actually want.
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install build
+          python -m venv .venv
+          .venv/bin/pip install -U pip
+          .venv/bin/pip install -r requirements.txt -r requirements-dev.txt
+          .venv/bin/pip install build
+
+      - name: pre-flight pytest (release gate)
+        # Same coverage gate as ci.yml's backend job. Catches the
+        # "main was broken when the tag was cut" case that
+        # `workflow_run`-style cross-workflow dependencies can't
+        # express against tag pushes.
+        run: make test-backend
+
+      - name: pre-flight migration parity
+        run: make migration-parity
 
       - name: make wheel (web + python)
         # Re-uses the same `make wheel` target dev/CI/release all
@@ -196,9 +216,22 @@ jobs:
           done
 
       - name: dispatch smoke
+        # §16.13 slice-review 🟢-2: grep all six subcommands in the
+        # --help output. Without this, a future release could ship a
+        # wheel missing one subcommand (entry-point regression, click
+        # decorator typo) and the smoke would still pass on `--version`
+        # + `--help` alone. Belt-and-suspenders for the dispatch surface.
         run: |
           /tmp/smoke/bin/station-studio --version
-          /tmp/smoke/bin/station-studio --help
+          HELP=$(/tmp/smoke/bin/station-studio --help)
+          echo "$HELP"
+          for cmd in serve import seed generate export backup; do
+            if ! echo "$HELP" | grep -q "^  $cmd"; then
+              echo "ERROR: subcommand '$cmd' missing from published wheel's --help" >&2
+              exit 1
+            fi
+          done
+          echo "All six subcommands present in --help output."
 
       - name: serve smoke (launch + curl /, /api/stations, /sources)
         # Same triple-URL gate `make wheel-smoke` uses locally and

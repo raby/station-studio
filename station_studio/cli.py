@@ -98,8 +98,9 @@ def serve(host: str, port: int) -> None:
 @main.command(
     name="import",
     help=(
-        "Import an iTunes XML as a named pool. [Stub — wired in c3 once "
-        "the app-home + bootstrap land.]"
+        "Import an iTunes XML as a named pool. Reads PATH, creates a "
+        "source_playlist row in the app-home's DB, inserts/updates tracks. "
+        "Mirrors the POST /api/sources/upload endpoint."
     ),
 )
 @click.argument("path", required=False)
@@ -180,8 +181,9 @@ def import_cmd(
 @main.command(
     name="seed",
     help=(
-        "(Re)copy the bundled example stations into your stations dir. "
-        "[Stub — wired in c3 once the app-home lands.]"
+        "(Re)copy any MISSING bundled example stations into the app-home's "
+        "stations dir. Existing files are preserved (user edits aren't "
+        "clobbered); delete a station and re-run to restore it."
     ),
 )
 def seed() -> None:
@@ -462,7 +464,13 @@ def export_cmd(
         with SessionLocal() as db:
             if to_disk:
                 target = export_playlist_to_disk(db, playlist_id)
-                click.echo(f"Wrote {target}")
+                # §16.13 slice-review 🟢-1: uniform "Wrote ... (N bytes)"
+                # output across export + backup. The --to-disk path used
+                # to omit the byte count; the --output path used a bare
+                # int; backup used a thousands-separator int. One form
+                # now, everywhere: `:,` for readability.
+                size = target.stat().st_size
+                click.echo(f"Wrote {target} ({size:,} bytes)")
                 return
             xml_bytes = export_playlist(db, playlist_id)
     except ValueError as e:
@@ -473,7 +481,7 @@ def export_cmd(
     if output is not None:
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_bytes(xml_bytes)
-        click.echo(f"Wrote {output} ({len(xml_bytes)} bytes)")
+        click.echo(f"Wrote {output} ({len(xml_bytes):,} bytes)")
         return
 
     # Default: stdout. Use the buffer to write bytes (Click's

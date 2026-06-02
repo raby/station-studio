@@ -85,3 +85,59 @@ jobs:
             web/test-results/
             web/playwright-report/
           if-no-files-found: ignore
+
+  # §16.13 slice-review 🟡-2: enforce `make wheel-smoke` per PR. The
+  # release-blocker framing in CONTRIBUTING.md is aspirational without
+  # this — main could otherwise land in a state where the wheel doesn't
+  # build cleanly (force-include regression, lifespan import error,
+  # SPA mount drift) and no PR check catches it until release time.
+  #
+  # Docker smoke (`make image-smoke`) is split into its own job below;
+  # it runs on push-to-main only because docker daemon + multi-stage
+  # build adds ~2-3 min and mostly overlaps with wheel-smoke coverage.
+  install-smoke-wheel:
+    name: install smoke (wheel)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+            pyproject.toml
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: web/package-lock.json
+      - name: install build deps
+        # `make wheel` shells out to `$(PY) -m build`; .venv ships
+        # `build` because it's listed in requirements-dev.txt.
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install -U pip
+          .venv/bin/pip install -r requirements.txt -r requirements-dev.txt
+      - name: make wheel-smoke
+        # Same target the release process uses locally + that publish.yml
+        # consumes. Builds the wheel, installs into a temp venv, starts
+        # station-studio serve, curls /, /api/stations, /sources for
+        # HTTP-200 + content-type. ~30-60s end-to-end with cached deps.
+        run: make wheel-smoke
+
+  install-smoke-image:
+    name: install smoke (docker image)
+    # Push-to-main only (not PRs). Docker pulls + multi-stage builds
+    # are expensive; wheel-smoke above covers most regressions. This
+    # job is the belt-and-suspenders Dockerfile / compose / healthcheck
+    # regression catch before any tag gets cut.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: make image-smoke
+        # GitHub-hosted runners ship docker pre-installed and ready;
+        # no daemon setup step needed.
+        run: make image-smoke

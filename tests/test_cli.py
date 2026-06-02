@@ -541,3 +541,54 @@ def test_help_now_lists_all_six_subcommands(
     assert result.exit_code == 0
     for cmd in ("serve", "import", "seed", "generate", "export", "backup"):
         assert cmd in result.output, f"{cmd!r} missing from --help"
+
+
+def test_no_stub_status_in_subcommand_help(runner: CliRunner) -> None:
+    """§16.13 slice-review 🟡-1 regression pin: the c1 help text for
+    `import` and `seed` carried "[Stub — wired in c3 once ...]" markers
+    that became stale five commits later. Catch any future drift where
+    a subcommand's help advertises an unfinished status it doesn't
+    actually have."""
+    for cmd in ("import", "seed", "generate", "export", "backup", "serve"):
+        result = runner.invoke(main, [cmd, "--help"])
+        assert result.exit_code == 0, f"{cmd} --help exit code: {result.output}"
+        assert "[Stub" not in result.output, (
+            f"{cmd}: stale '[Stub' marker in --help. The c1 stub text "
+            "should have been removed once the subcommand was wired."
+        )
+        assert "TODO" not in result.output.upper(), (
+            f"{cmd}: literal TODO marker in --help. Resolve or move "
+            "to DESIGN.md watch-list."
+        )
+
+
+def test_wrote_output_format_is_uniform(
+    runner: CliRunner, cli_home_with_station_and_pool: Path, tmp_path: Path
+) -> None:
+    """§16.13 slice-review 🟢-1 regression pin: every CLI command that
+    writes a file SHOULD say `Wrote <path> (N bytes)` with the same
+    `:,` thousands-separator form. Three drift forms existed pre-fix:
+      - export --output: bare-int (no separator)
+      - export --to-disk: NO byte count at all
+      - backup: thousands-separator form
+
+    Pin the uniform form so a future contributor doesn't reintroduce
+    the drift."""
+    # Generate a playlist so export has something to write.
+    r_gen = runner.invoke(main, ["generate", "cli-minimal", "--week", "1"])
+    assert r_gen.exit_code == 0, r_gen.output
+
+    # export --output → "Wrote PATH (N bytes)" with `:,`-friendly format
+    target_export = tmp_path / "export-out.xml"
+    r_ex = runner.invoke(main, ["export", "1", "--output", str(target_export)])
+    assert r_ex.exit_code == 0
+    assert "Wrote " in r_ex.output
+    assert " bytes)" in r_ex.output
+
+    # backup → same shape
+    r_bk = runner.invoke(
+        main, ["backup", "--output", str(tmp_path / "bk.tar.gz")]
+    )
+    assert r_bk.exit_code == 0
+    assert "Wrote " in r_bk.output
+    assert " bytes)" in r_bk.output
