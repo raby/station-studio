@@ -165,33 +165,38 @@ def test_run_alembic_upgrade_returns_true_on_first_run(
     isolated_home: Path,
 ) -> None:
     """First call against a fresh DB applies migrations and returns
-    True (the "did work" signal). Pin the contract."""
+    (True, head_revision). Pin the contract."""
     from station_studio.bootstrap import _run_alembic_upgrade
     from station_studio.home import db_url as _resolve_db_url, ensure_home
 
     # Bootstrap normally creates the home + subdirs before alembic;
     # this test calls the helper directly so it has to mkdir manually.
     ensure_home()
-    did_work = _run_alembic_upgrade(_resolve_db_url())
-    assert did_work is True
+    applied, head_rev = _run_alembic_upgrade(_resolve_db_url())
+    assert applied is True
+    # t8-review 🟡-2: head_revision threaded out alongside applied bool.
+    assert isinstance(head_rev, str) and len(head_rev) >= 8
 
 
 def test_run_alembic_upgrade_skips_when_already_at_head(
     isolated_home: Path,
 ) -> None:
     """§16.13.t7 fast-path: second call against an at-head DB returns
-    False without running `command.upgrade`. This is the cron'd
-    batch-import optimisation — saves ~100ms × N invocations."""
+    (False, head_revision) without running `command.upgrade`. The
+    head_revision is reported on both branches so callers always know
+    where the DB ended up."""
     from station_studio.bootstrap import _run_alembic_upgrade
     from station_studio.home import db_url as _resolve_db_url, ensure_home
 
     ensure_home()
     url = _resolve_db_url()
-    first = _run_alembic_upgrade(url)
-    assert first is True
+    applied_1, head_1 = _run_alembic_upgrade(url)
+    assert applied_1 is True
     # Same DB, no new migrations land in between — at head now.
-    second = _run_alembic_upgrade(url)
-    assert second is False
+    applied_2, head_2 = _run_alembic_upgrade(url)
+    assert applied_2 is False
+    # head_revision is identical on both branches.
+    assert head_2 == head_1
 
 
 def test_run_alembic_upgrade_falls_through_when_head_rev_is_none(
@@ -221,8 +226,11 @@ def test_run_alembic_upgrade_falls_through_when_head_rev_is_none(
     # The guard `current_rev is not None` short-circuits the False
     # return → we fall through to command.upgrade against the REAL
     # bundled migrations (which we didn't monkeypatch away), so the
-    # upgrade actually runs + we get True.
-    assert _run_alembic_upgrade(_resolve_db_url()) is True
+    # upgrade actually runs.
+    applied, returned_head = _run_alembic_upgrade(_resolve_db_url())
+    assert applied is True
+    # head was monkeypatched to None — that's what we return.
+    assert returned_head is None
 
 
 # ---------- §16.13.t8 — BootstrapResult dataclass ----------
@@ -249,22 +257,33 @@ def test_bootstrap_returns_structured_result(
     # First run: migrations applied + bundled stations copied.
     assert result.migrations_applied is True
     assert result.stations_copied > 0
+    # t8-review 🟡-1: home didn't exist before this call → first run.
+    assert result.was_first_run is True
+    # t8-review 🟡-2: head_revision is the real alembic head id.
+    assert isinstance(result.head_revision, str)
+    assert len(result.head_revision) >= 8  # alembic revs are 12-hex
 
 
 def test_bootstrap_result_reflects_second_run(
     isolated_home: Path,
 ) -> None:
     """A second bootstrap on the same home: migrations skipped (t7
-    fast-path) + stations already populated. The result dataclass
-    surfaces both signals so a caller can branch on "did anything
-    actually happen?" without re-reading the echo log."""
+    fast-path) + stations already populated + NOT a first-run + same
+    head_revision. The result dataclass surfaces all of these so a
+    caller can branch on "did anything actually happen?" without
+    re-reading the echo log."""
     first = bootstrap()
     assert first.migrations_applied is True
-    assert first.stations_copied > 0
+    assert first.was_first_run is True
 
     second = bootstrap()
     assert second.migrations_applied is False
     assert second.stations_copied == 0
+    # t8-review 🟡-1: home now exists → NOT first run.
+    assert second.was_first_run is False
+    # t8-review 🟡-2: head_revision identical to first run (same alembic
+    # head reported whether we applied or skipped).
+    assert second.head_revision == first.head_revision
     # Paths stable across runs.
     assert second.home == first.home
     assert second.db_path == first.db_path
@@ -297,6 +316,48 @@ def test_bootstrap_no_echo_returns_silent_but_complete_result(
     assert captured.getvalue() == ""  # nothing printed to stdout
     assert result.migrations_applied is True
     assert result.stations_copied > 0
+
+
+# ---------- §16.13.t8 review 🟡-3 — _db_path_from_url ----------
+
+
+@pytest.mark.parametrize(
+    "url,expected",
+    [
+        # sqlite-relative + absolute on-disk paths → Path object
+        ("sqlite:////Users/raby/foo.db", Path("/Users/raby/foo.db")),
+        ("sqlite:////tmp/station.db", Path("/tmp/station.db")),
+        # in-memory sqlite → None (no filesystem path)
+        ("sqlite:///:memory:", None),
+        # non-sqlite schemes → None (no meaningful filesystem path)
+        ("postgresql://user@host/db", None),
+        ("mysql+pymysql://u:p@h/d", None),
+    ],
+)
+def test_db_path_from_url(url: str, expected) -> None:
+    """t8-review 🟡-3: db_path is derived from db_url so the two
+    can't diverge under env overrides. Parse SQLite URLs into Path;
+    return None for non-sqlite + in-memory (no on-disk file)."""
+    from station_studio.bootstrap import _db_path_from_url
+    assert _db_path_from_url(url) == expected
+
+
+def test_bootstrap_db_path_follows_env_override(
+    isolated_home: Path, tmp_path, monkeypatch,
+) -> None:
+    """Integration pin for 🟡-3: when STATION_STUDIO_DB_URL is preset
+    to point ELSEWHERE than the home's default, the result's
+    `db_path` reflects the OVERRIDE — not the home-derived path.
+
+    Pre-fix `db_path` was hardcoded to `<home>/station_studio.db`,
+    silently diverging from `db_url`. Pin the corrected behaviour."""
+    elsewhere = tmp_path / "elsewhere.db"
+    monkeypatch.setenv("STATION_STUDIO_DB_URL", f"sqlite:///{elsewhere}")
+    result = bootstrap()
+    assert result.db_url == f"sqlite:///{elsewhere}"
+    assert result.db_path == elsewhere
+    # The home is still the isolated_home — only the DB moved.
+    assert result.home == isolated_home
 
 
 def test_bootstrap_echo_reflects_skip_vs_apply(

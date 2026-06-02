@@ -47,15 +47,36 @@ class BootstrapResult:
 
     Frozen because callers shouldn't mutate the record after bootstrap
     completes — it's a snapshot of "what happened on this run."
+
+    Fields match the t8 design spec plus the post-review additions:
+    `was_first_run` (🟡-1), `head_revision` (🟡-2), and `db_path`
+    derived from `db_url` so the two never diverge (🟡-3).
     """
     home: Path
     db_url: str
-    db_path: Path
+    # t8-review 🟡-3: derived from `db_url` (not from `home`), so an
+    # env-overridden DB URL never disagrees with the path the caller
+    # would actually open. For non-sqlite URLs, db_path is None (no
+    # meaningful filesystem path — the DB lives over the network).
+    db_path: Path | None
     stations_dir: Path
+    # t8-review 🟡-1: True if the app-home directory didn't exist
+    # before this `bootstrap()` call (the canonical "first run"
+    # signal). Captured BEFORE `ensure_home()` runs. Not derivable
+    # from `migrations_applied + stations_copied` — a partial install
+    # where the user manually re-ran alembic then deleted stations
+    # would false-positive that combined check.
+    was_first_run: bool
     # True if `alembic upgrade head` actually applied migrations on
     # this run. False if the DB was already at head (t7 fast-path) and
     # we short-circuited. Mirrors `_run_alembic_upgrade`'s return.
     migrations_applied: bool
+    # t8-review 🟡-2: the migration head revision at the end of this
+    # bootstrap (applied OR already-at). Lets a caller alert "we just
+    # moved to revision abc123, invalidate caches" without parsing
+    # logs. None if the migrations dir is empty or unreadable (which
+    # is a separate failure mode, not "no migrations applied").
+    head_revision: str | None
     # Number of bundled station files copied into the app-home's
     # stations dir on this run. 0 once seeded; non-zero on first run
     # (and any later run that finds a deleted file in the
@@ -161,11 +182,17 @@ def _resolve_repo_root() -> Path | None:
     return None
 
 
-def _run_alembic_upgrade(db_url: str) -> bool:
+def _run_alembic_upgrade(db_url: str) -> tuple[bool, str | None]:
     """Run `alembic upgrade head` against the bundled migrations.
 
-    Returns True if migrations were actually applied, False if the DB
-    was already at head and the upgrade was skipped (§16.13.t7).
+    Returns `(applied, head_revision)`:
+      * `applied` — True if `command.upgrade` ran, False if the DB
+        was already at head and the fast-path short-circuited
+        (§16.13.t7).
+      * `head_revision` — the migration head's revision id (str), or
+        None if the migrations directory is empty / unreadable.
+        Lifted out so `BootstrapResult.head_revision` (§16.13.t8
+        review 🟡-2) carries the actual revision identifier.
 
     Builds the alembic Config WITHOUT reading the bundled `alembic.ini`
     — only the script_location + sqlalchemy.url options matter at
@@ -205,6 +232,11 @@ def _run_alembic_upgrade(db_url: str) -> bool:
     config.set_main_option("script_location", str(migrations_dir))
     config.set_main_option("sqlalchemy.url", db_url)
 
+    # Read the migration head ONCE — used by the SQLite shortcut, the
+    # fast-path comparison, AND the return value (t8-review 🟡-2).
+    script_dir = ScriptDirectory.from_config(config)
+    head_rev = script_dir.get_current_head()
+
     # t7-review 🟡-1: SQLite-file-missing short-circuit. The fast-path
     # check below would open the engine, create the file, connect, see
     # an empty DB, return current_rev=None, and fall through to
@@ -218,7 +250,7 @@ def _run_alembic_upgrade(db_url: str) -> bool:
         # handle it (current_rev=None → real upgrade is correct).
         if parsed.path != "/:memory:" and not Path(parsed.path).exists():
             command.upgrade(config, "head")
-            return True
+            return True, head_rev
 
     # §16.13.t7: fast-path. Open a short-lived connection, read
     # alembic_version.version_num, compare to the migration scripts'
@@ -226,8 +258,6 @@ def _run_alembic_upgrade(db_url: str) -> bool:
     # doesn't exist (first-run, populated-but-unmigrated DB), current_rev
     # is None and we fall through to the real upgrade (which creates the
     # table + stamps it).
-    script_dir = ScriptDirectory.from_config(config)
-    head_rev = script_dir.get_current_head()
     engine = create_engine(db_url)
     try:
         with engine.connect() as conn:
@@ -237,10 +267,10 @@ def _run_alembic_upgrade(db_url: str) -> bool:
         engine.dispose()
 
     if current_rev is not None and current_rev == head_rev:
-        return False
+        return False, head_rev
 
     command.upgrade(config, "head")
-    return True
+    return True, head_rev
 
 
 def _copy_missing_stations(target_dir: Path) -> int:
@@ -285,6 +315,12 @@ def bootstrap(*, echo: Callable[[str], None] = _silent) -> BootstrapResult:
     tests) read the returned dataclass instead of parsing strings —
     §16.13.t8.
     """
+    # t8-review 🟡-1: capture first-run state BEFORE ensure_home() runs.
+    # Once ensure_home() executes, the dir exists; we'd lose the
+    # before-state signal. Check the canonical home (env-resolved) to
+    # match what ensure_home() would create.
+    was_first_run = not _home.get_home().exists()
+
     home = _home.ensure_home()
     echo(f"App home: {home}")
 
@@ -298,15 +334,19 @@ def bootstrap(*, echo: Callable[[str], None] = _silent) -> BootstrapResult:
         "STATION_STUDIO_STATIONS_DIR", str(_home.stations_dir())
     )
 
+    # t8-review 🟡-3: derive db_path from the URL that will ACTUALLY be
+    # used (which may be an env override pointing elsewhere), not from
+    # the home. Falls back to None for non-sqlite URLs.
+    resolved_db_url = os.environ["STATION_STUDIO_DB_URL"]
+    db_path = _db_path_from_url(resolved_db_url)
+
     # DB migrations. The bundled alembic.ini's `sqlalchemy.url` is a
     # placeholder; we override it to the resolved app-home URL.
     # §16.13.t7: print whether work was actually done so the user
     # gets honest feedback (rather than "Running migrations..." that
     # silently did nothing).
-    echo(f"DB: {_home.db_path()}")
-    migrations_applied = _run_alembic_upgrade(
-        os.environ["STATION_STUDIO_DB_URL"]
-    )
+    echo(f"DB: {db_path if db_path is not None else resolved_db_url}")
+    migrations_applied, head_revision = _run_alembic_upgrade(resolved_db_url)
     if migrations_applied:
         echo("Ran migrations (alembic upgrade head).")
     else:
@@ -321,9 +361,38 @@ def bootstrap(*, echo: Callable[[str], None] = _silent) -> BootstrapResult:
 
     return BootstrapResult(
         home=home,
-        db_url=os.environ["STATION_STUDIO_DB_URL"],
-        db_path=_home.db_path(),
+        db_url=resolved_db_url,
+        db_path=db_path,
         stations_dir=_home.stations_dir(),
+        was_first_run=was_first_run,
         migrations_applied=migrations_applied,
+        head_revision=head_revision,
         stations_copied=copied,
     )
+
+
+def _db_path_from_url(db_url: str) -> Path | None:
+    """§16.13.t8 review 🟡-3: parse the filesystem path out of a
+    SQLite URL. Returns None for non-sqlite schemes (postgres, mysql,
+    in-memory sqlite) — the BootstrapResult's `db_path` is `None` in
+    those cases since "the DB lives over the network / in-process"
+    isn't a meaningful filesystem path.
+
+    Uses sqlalchemy's `make_url` instead of `urllib.parse.urlparse`
+    so the SQLite 4-slash absolute-path form
+    (`sqlite:////abs/path`) is decoded correctly. urlparse leaves a
+    spurious leading `//` on `.path` for that form; `make_url` knows
+    the dialect's URL grammar and returns the bare filesystem path
+    via `.database`.
+    """
+    from sqlalchemy.engine.url import make_url
+
+    try:
+        url = make_url(db_url)
+    except Exception:
+        return None
+    if not url.drivername.startswith("sqlite"):
+        return None
+    if not url.database or url.database == ":memory:":
+        return None
+    return Path(url.database)
