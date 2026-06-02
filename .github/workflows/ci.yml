@@ -27,6 +27,13 @@ jobs:
         # (DESIGN.md §17 review S2). Both produce the same schema from
         # engine/models.py at HEAD; drift = a migration is missing.
         run: make migration-parity
+      - name: requirements ↔ pyproject dep parity
+        # §16.13.t4: catches a `pip install -U fastapi`-style bump that
+        # touches requirements.txt but forgets pyproject (or vice-versa).
+        # Both surfaces must list the same packages with the same version
+        # specifiers or the wheel ships a different runtime contract
+        # than `make install` gives developers.
+        run: make check-deps-parity
 
   frontend-unit:
     name: frontend unit (vitest)

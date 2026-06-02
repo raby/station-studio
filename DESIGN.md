@@ -9611,16 +9611,21 @@ migration + wheel + docker + docs).
   runs include it (the gate is the default behavior), `-m 'not slow'`
   skips for bandwidth-constrained shards. Closes the gap between
   mocked dispatch tests and `make wheel-smoke`'s shell-only path.
-* **§16.13.t4 — Dependency-list drift between `pyproject.toml` and
-  `requirements.txt`.** Today both list `fastapi`/`uvicorn`/etc and
-  must be kept in sync by hand (the pyproject's comment says so).
-  Real risk over time: a `requirements.txt` bump (e.g. for security)
-  forgets the pyproject. Two ways to close: (a) generate one from
-  the other (`uv pip compile` or `pip-tools`), or (b) commit to
-  manual sync with a CI check that diffs the two. **Home: future
-  slice (~1 commit) when a drift bites OR when adding dependency
-  management tooling.** Not urgent — both files are short and the
-  dev workflow only reads one.
+* ~~**§16.13.t4 — Dependency-list drift between `pyproject.toml` and
+  `requirements.txt`.**~~ **SHIPPED.** Approach: option (b) from
+  the original framing — CI check that diffs the two surfaces,
+  not regenerate-from-canonical (avoids the pip-tools / uv tax for
+  the 10-entry surface area we have today). `scripts/check_deps_parity.py`
+  parses `requirements.txt` + `requirements-dev.txt` + pyproject's
+  `[project].dependencies` + `[project.optional-dependencies].dev`,
+  reports a named diff on drift, exits non-zero. Wired into:
+    * `make check-deps-parity` (local + dev workflow)
+    * ci.yml backend job (per-PR + push enforcement)
+    * 3 pytest tests pinning the script behaviour
+  Also fixed an existing drift the new check caught immediately:
+  `httpx>=0.27` was in `requirements-dev.txt` but missing from
+  pyproject's `dev` extras (so `pip install -e .[dev]` was leaving
+  httpx out, silently breaking any test that imported it).
 * **§16.13.t5 — `bundled_path()` repo-walk depth sanity check.**
   `station_studio/bootstrap.py:bundled_path()` resolves the in-repo
   fallback via `Path(__file__).resolve().parent.parent`, hardcoding

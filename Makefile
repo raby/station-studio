@@ -247,6 +247,12 @@ alembic-current:
 migration-parity:
 	$(PY) scripts/check_migration_parity.py
 
+# §16.13.t4 — `requirements*.txt` ↔ `pyproject.toml` dep parity.
+# Catches a security bump that updates one surface but not the other.
+# Source: see scripts/check_deps_parity.py docstring for design.
+check-deps-parity:
+	$(PY) scripts/check_deps_parity.py
+
 # §14.31 backfill: populate PlaylistEntry.slot_type for playlists
 # generated before the column existed. Idempotent — re-running after
 # the first pass is a no-op. Use --dry-run flag (`make

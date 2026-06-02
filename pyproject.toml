@@ -55,9 +55,15 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Mirror `requirements-dev.txt`. Install with `pip install -e .[dev]`.
+# Mirror `requirements-dev.txt` (dev-only entries — runtime deps are
+# inherited transitively via `-r requirements.txt`). Install with
+# `pip install -e .[dev]`. `scripts/check_deps_parity.py` + the
+# `check-deps-parity` make target enforce that both surfaces stay
+# in sync; if you bump a version here, bump it in requirements-*.txt
+# too, and vice-versa. §16.13.t4.
 dev = [
     "pytest>=8.0",
+    "httpx>=0.27",
     "coverage>=7.0",
 ]
 
