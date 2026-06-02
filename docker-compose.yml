@@ -41,3 +41,12 @@ services:
 
 volumes:
   station-studio-data:
+    # c5-review 🟡-1: opt out of compose's `<project>_` project-name
+    # prefix. Without this `name:`, compose creates a volume called
+    # something like `station-studio_station-studio-data` (project
+    # prefix derived from the directory `docker compose up` ran in),
+    # and the README's `docker volume inspect station-studio-data`
+    # backup recipe returns "No such volume." Pinning the name keeps
+    # the docs honest AND makes volume management portable across
+    # whatever directory the user happened to clone into.
+    name: station-studio-data

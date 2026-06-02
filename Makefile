@@ -169,10 +169,19 @@ image-smoke: image
 	trap "docker stop $$CID >/dev/null 2>&1 || true; docker rm $$CID >/dev/null 2>&1 || true" EXIT INT TERM; \
 	set -e; \
 	echo "--- waiting for /api/stations (up to 30s)..."; \
+	READY=0; \
 	for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30; do \
-		if curl -sf http://127.0.0.1:18001/api/stations >/dev/null 2>&1; then echo "  ready after $${i}s"; break; fi; \
+		if curl -sf http://127.0.0.1:18001/api/stations >/dev/null 2>&1; then \
+			echo "  ready after $${i}s"; READY=1; break; \
+		fi; \
 		sleep 1; \
 	done; \
+	if [ "$$READY" = "0" ]; then \
+		echo "ERROR: /api/stations never returned 200 within 30s — container is broken." >&2; \
+		echo "--- last 50 lines of container logs (cid $$CID) ---" >&2; \
+		docker logs --tail 50 $$CID >&2 2>&1 || true; \
+		exit 1; \
+	fi; \
 	echo "--- curl / (SPA shell) ---"; \
 	curl -sS -o /dev/null -w 'HTTP %{http_code} %{content_type}\n' http://127.0.0.1:18001/ | tee /dev/stderr | grep -q '^HTTP 200 text/html'; \
 	echo "--- curl /api/stations ---"; \

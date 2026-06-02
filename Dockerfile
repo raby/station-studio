@@ -71,6 +71,13 @@ FROM python:3.12-slim AS runtime
 # permission compatibility.
 RUN useradd --uid 1000 --create-home --home-dir /home/app --shell /bin/sh app
 
+# c5-review 🟢-2: pin pip to a known-good version so a future
+# python:3.12-slim base-image bump can't ship a breaking pip release
+# into our build. The pin is loose enough (>= 25.0) to accept security
+# patches without rebuilding the image. Upgrade in a deliberate commit
+# when we know what's in the new release.
+RUN pip install --no-cache-dir --upgrade 'pip>=25.0,<27'
+
 # Install the wheel system-wide. `--no-cache-dir` avoids the pip cache
 # layer; the wheel itself gets removed once installed so the final
 # image doesn't carry the redundant .whl file.
@@ -90,6 +97,26 @@ EXPOSE 8001
 
 USER app
 WORKDIR /home/app
+
+# c5-review 🟡-2: real readiness signal.
+#
+# Without HEALTHCHECK, `docker compose up` returns "started" the
+# moment uvicorn binds, not when the app is actually serving
+# requests — a fast user gets connection-refused while the lifespan
+# (alembic upgrade + auto-seed) is still running. With it,
+# `docker ps` shows `(healthy)`, and any compose stack downstream
+# can use `depends_on: condition: service_healthy`.
+#
+# Probes `/api/stations` (not just `/`) so the check exercises the
+# SQLAlchemy + JSON path — the real "I can actually serve" signal.
+# Uses Python's urllib (not curl, which isn't in python:3.12-slim)
+# so we don't bloat the image with apt-installed extras.
+#
+# start-period=20s covers cold-boot lifespan (alembic + auto-seed
+# of ~3,500 entries); after that, 15s interval + 3-retry tolerates
+# transient blips without flapping.
+HEALTHCHECK --interval=15s --timeout=3s --start-period=20s --retries=3 \
+  CMD python -c "import urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8001/api/stations', timeout=2).status == 200 else 1)" || exit 1
 
 # The CLI entry point shipped by pyproject.toml's [project.scripts].
 # CMD's "serve" + the host/port flags can be overridden at run-time

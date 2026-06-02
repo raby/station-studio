@@ -44,6 +44,12 @@ station_studio.db
 tmp_check.db
 
 # ---- test detritus ----
+# c5-review 🟡-3: exclude the whole `tests/` tree from the build
+# context, not just its __pycache__. The Dockerfile doesn't COPY
+# tests/, so shipping ~MB of pytest source + fixtures to the daemon
+# on every build is pure waste. Same for web/e2e (Playwright specs).
+tests/
+web/e2e/
 playwright-test*
 playwright-test.*.db
 playwright-test.*.db-wal
@@ -52,7 +58,6 @@ playwright-report/
 web/test-results/
 web/playwright-report/
 test-results/
-tests/__pycache__/
 
 # ---- build outputs (rebuilt inside the image) ----
 dist/
