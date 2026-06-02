@@ -146,7 +146,14 @@ def _run_alembic_upgrade(db_url: str) -> bool:
     (once at boot) and `seed` (rare), but for cron'd batch import
     workflows the per-call overhead adds up. Cheap enough to always
     do, no cost when it doesn't apply.
+
+    Assumes a SINGLE-HEAD migration tree (the project's invariant
+    today). If branch migrations land later, `ScriptDirectory.
+    get_current_head()` raises `CommandError` — the fast-path
+    surfaces the failure loudly before the `==` comparison, doesn't
+    silently misbehave. (t7-review 🟢-2.)
     """
+    from urllib.parse import urlparse
     from alembic import command
     from alembic.config import Config
     from alembic.runtime.migration import MigrationContext
@@ -160,12 +167,27 @@ def _run_alembic_upgrade(db_url: str) -> bool:
     config.set_main_option("script_location", str(migrations_dir))
     config.set_main_option("sqlalchemy.url", db_url)
 
+    # t7-review 🟡-1: SQLite-file-missing short-circuit. The fast-path
+    # check below would open the engine, create the file, connect, see
+    # an empty DB, return current_rev=None, and fall through to
+    # command.upgrade anyway. Skip the round trip when we already KNOW
+    # the file doesn't exist — that's a guaranteed fresh-DB run.
+    parsed = urlparse(db_url)
+    if parsed.scheme.startswith("sqlite") and parsed.path:
+        # sqlite URLs are `sqlite:///abs/path` (parsed.path = `/abs/path`)
+        # or `sqlite:///:memory:` (parsed.path = `/:memory:`). The
+        # in-memory form has no on-disk file — let the normal path
+        # handle it (current_rev=None → real upgrade is correct).
+        if parsed.path != "/:memory:" and not Path(parsed.path).exists():
+            command.upgrade(config, "head")
+            return True
+
     # §16.13.t7: fast-path. Open a short-lived connection, read
     # alembic_version.version_num, compare to the migration scripts'
     # `head` revision. If they match, skip the upgrade. If the table
-    # doesn't exist (first-run, fresh DB), current_rev is None and we
-    # fall through to the real upgrade (which creates the table +
-    # stamps it).
+    # doesn't exist (first-run, populated-but-unmigrated DB), current_rev
+    # is None and we fall through to the real upgrade (which creates the
+    # table + stamps it).
     script_dir = ScriptDirectory.from_config(config)
     head_rev = script_dir.get_current_head()
     engine = create_engine(db_url)

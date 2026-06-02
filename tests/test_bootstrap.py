@@ -194,6 +194,37 @@ def test_run_alembic_upgrade_skips_when_already_at_head(
     assert second is False
 
 
+def test_run_alembic_upgrade_falls_through_when_head_rev_is_none(
+    isolated_home: Path, monkeypatch,
+) -> None:
+    """t7-review 🟢-1 edge-case pin: if `script_dir.get_current_head()`
+    returns None (migrations dir empty / no scripts), the fast-path
+    must NOT skip (the `current_rev is not None and current_rev ==
+    head_rev` guard handles it). It falls through to
+    `command.upgrade`, which surfaces the real "no migrations found"
+    error rather than silently no-op-passing.
+
+    Approach: monkeypatch ScriptDirectory.get_current_head to return
+    None against a fresh DB. The function should attempt
+    command.upgrade (and either succeed against the real bundled
+    migrations OR raise a clear alembic error — either way, NOT
+    silently return False from the fast-path)."""
+    from station_studio.bootstrap import _run_alembic_upgrade
+    from station_studio.home import db_url as _resolve_db_url, ensure_home
+    from alembic.script import ScriptDirectory
+
+    ensure_home()
+    monkeypatch.setattr(
+        ScriptDirectory, "get_current_head", lambda self: None
+    )
+    # current_rev is None (fresh DB) + head_rev is None (monkeypatched).
+    # The guard `current_rev is not None` short-circuits the False
+    # return → we fall through to command.upgrade against the REAL
+    # bundled migrations (which we didn't monkeypatch away), so the
+    # upgrade actually runs + we get True.
+    assert _run_alembic_upgrade(_resolve_db_url()) is True
+
+
 def test_bootstrap_echo_reflects_skip_vs_apply(
     isolated_home: Path,
 ) -> None:
