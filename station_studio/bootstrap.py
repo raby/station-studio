@@ -123,8 +123,11 @@ def _resolve_repo_root() -> Path | None:
     return None
 
 
-def _run_alembic_upgrade(db_url: str) -> None:
+def _run_alembic_upgrade(db_url: str) -> bool:
     """Run `alembic upgrade head` against the bundled migrations.
+
+    Returns True if migrations were actually applied, False if the DB
+    was already at head and the upgrade was skipped (§16.13.t7).
 
     Builds the alembic Config WITHOUT reading the bundled `alembic.ini`
     — only the script_location + sqlalchemy.url options matter at
@@ -136,9 +139,19 @@ def _run_alembic_upgrade(db_url: str) -> None:
 
     Side benefit: skipping ini reads also makes this work cleanly when
     the bundled alembic.ini is unreachable (some installer setups).
+
+    §16.13.t7: short-circuit when the DB is already at head. Saves
+    ~100ms per CLI call (alembic version-check + log overhead +
+    DDL-statement parsing for no-op steps). Negligible for `serve`
+    (once at boot) and `seed` (rare), but for cron'd batch import
+    workflows the per-call overhead adds up. Cheap enough to always
+    do, no cost when it doesn't apply.
     """
     from alembic import command
     from alembic.config import Config
+    from alembic.runtime.migration import MigrationContext
+    from alembic.script import ScriptDirectory
+    from sqlalchemy import create_engine
 
     migrations_dir = bundled_path("migrations")
 
@@ -147,7 +160,27 @@ def _run_alembic_upgrade(db_url: str) -> None:
     config.set_main_option("script_location", str(migrations_dir))
     config.set_main_option("sqlalchemy.url", db_url)
 
+    # §16.13.t7: fast-path. Open a short-lived connection, read
+    # alembic_version.version_num, compare to the migration scripts'
+    # `head` revision. If they match, skip the upgrade. If the table
+    # doesn't exist (first-run, fresh DB), current_rev is None and we
+    # fall through to the real upgrade (which creates the table +
+    # stamps it).
+    script_dir = ScriptDirectory.from_config(config)
+    head_rev = script_dir.get_current_head()
+    engine = create_engine(db_url)
+    try:
+        with engine.connect() as conn:
+            ctx = MigrationContext.configure(conn)
+            current_rev = ctx.get_current_revision()
+    finally:
+        engine.dispose()
+
+    if current_rev is not None and current_rev == head_rev:
+        return False
+
     command.upgrade(config, "head")
+    return True
 
 
 def _copy_missing_stations(target_dir: Path) -> int:
@@ -204,9 +237,14 @@ def bootstrap(*, echo: Callable[[str], None] = _silent) -> Path:
 
     # DB migrations. The bundled alembic.ini's `sqlalchemy.url` is a
     # placeholder; we override it to the resolved app-home URL.
+    # §16.13.t7: print whether work was actually done so the user
+    # gets honest feedback (rather than "Running migrations..." that
+    # silently did nothing).
     echo(f"DB: {_home.db_path()}")
-    echo("Running migrations (alembic upgrade head)...")
-    _run_alembic_upgrade(os.environ["STATION_STUDIO_DB_URL"])
+    if _run_alembic_upgrade(os.environ["STATION_STUDIO_DB_URL"]):
+        echo("Ran migrations (alembic upgrade head).")
+    else:
+        echo("DB already at head; skipping migrations.")
 
     # Station copy — only does work on first run.
     copied = _copy_missing_stations(_home.stations_dir())

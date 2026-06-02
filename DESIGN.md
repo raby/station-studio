@@ -9666,16 +9666,17 @@ migration + wheel + docker + docs).
   one helper doesn't justify a new module; co-locating with
   `engine.importer` (where `import_source` consumes the validated
   name) is fine. Revisit when the third helper appears.
-* **§16.13.t7 — `bootstrap()` runs alembic upgrade on every CLI
-  invocation.** Even when the DB is already at head, the upgrade
-  is a no-op that costs ~100ms (alembic version check + log line).
-  Negligible for `serve` (once at boot) and `seed` (rare). For
-  `import` against scripted batch callers (e.g. cron'd
-  `station-studio import` × N pools), the per-call overhead adds
-  up. Easy optimization: query `alembic_version.version_num`
-  before calling `command.upgrade`, skip if at head. **Home: small
-  follow-up (~10 lines) IF batch-import workflows surface as a
-  real use case.** Premature today.
+* ~~**§16.13.t7 — `bootstrap()` runs alembic upgrade on every CLI
+  invocation.**~~ **SHIPPED.** `_run_alembic_upgrade` now opens a
+  short-lived connection, reads `alembic_version.version_num` via
+  `MigrationContext.get_current_revision()`, compares against
+  `ScriptDirectory.get_current_head()`. If equal, returns False
+  without invoking `command.upgrade`; otherwise applies migrations
+  and returns True. Saves ~100ms per CLI call when at head.
+  Bootstrap's echo banner now tells the truth — "Ran migrations
+  (alembic upgrade head)." on real work, "DB already at head;
+  skipping migrations." on the fast-path. 3 new tests pin the
+  return-value contract + the echo asymmetry.
 * **§16.13.t8 — `bootstrap()` couples work + printing.** Today
   bootstrap prints progress via the `echo` callback. Cleaner
   separation: return a result dict (`{home, db_url, copied_count,

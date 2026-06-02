@@ -156,3 +156,59 @@ def test_bootstrap_echo_callback_is_called(
     assert any("App home:" in line for line in seen)
     assert any("DB:" in line for line in seen)
     assert any("migrations" in line.lower() for line in seen)
+
+
+# ---------- §16.13.t7 — skip alembic upgrade when at head ----------
+
+
+def test_run_alembic_upgrade_returns_true_on_first_run(
+    isolated_home: Path,
+) -> None:
+    """First call against a fresh DB applies migrations and returns
+    True (the "did work" signal). Pin the contract."""
+    from station_studio.bootstrap import _run_alembic_upgrade
+    from station_studio.home import db_url as _resolve_db_url, ensure_home
+
+    # Bootstrap normally creates the home + subdirs before alembic;
+    # this test calls the helper directly so it has to mkdir manually.
+    ensure_home()
+    did_work = _run_alembic_upgrade(_resolve_db_url())
+    assert did_work is True
+
+
+def test_run_alembic_upgrade_skips_when_already_at_head(
+    isolated_home: Path,
+) -> None:
+    """§16.13.t7 fast-path: second call against an at-head DB returns
+    False without running `command.upgrade`. This is the cron'd
+    batch-import optimisation — saves ~100ms × N invocations."""
+    from station_studio.bootstrap import _run_alembic_upgrade
+    from station_studio.home import db_url as _resolve_db_url, ensure_home
+
+    ensure_home()
+    url = _resolve_db_url()
+    first = _run_alembic_upgrade(url)
+    assert first is True
+    # Same DB, no new migrations land in between — at head now.
+    second = _run_alembic_upgrade(url)
+    assert second is False
+
+
+def test_bootstrap_echo_reflects_skip_vs_apply(
+    isolated_home: Path,
+) -> None:
+    """The CLI banner now tells the truth: it says "Ran migrations"
+    on the upgrade run + "already at head; skipping" on subsequent
+    runs. Pre-fix it said "Running migrations..." both times, which
+    was a small but real honesty issue for cron'd callers reading
+    the log."""
+    seen_first: list[str] = []
+    bootstrap(echo=seen_first.append)
+    assert any("Ran migrations" in line for line in seen_first)
+
+    seen_second: list[str] = []
+    bootstrap(echo=seen_second.append)
+    assert any("already at head" in line for line in seen_second)
+    # Belt-and-suspenders: the "Ran migrations" string must NOT
+    # appear on the second run.
+    assert not any("Ran migrations" in line for line in seen_second)
