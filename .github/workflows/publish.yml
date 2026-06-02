@@ -35,12 +35,24 @@ on:
   push:
     tags:
       - 'v*'
+  # t1-review 🟡-1: workflow_dispatch is IMPLICITLY test-only. The
+  # publish-pypi job below gates on `github.event_name == 'push'`,
+  # so a manual run never touches real PyPI regardless of any
+  # input. Previous revision had a `test_only` boolean input that
+  # didn't gate anything — confusing the user into thinking
+  # `test_only=false` would force a real publish. Removed; the
+  # tag-driven push is the ONLY path to real PyPI, full stop.
   workflow_dispatch:
-    inputs:
-      test_only:
-        description: 'Publish to test.pypi only (skip real PyPI)'
-        type: boolean
-        default: true
+
+# t1-review 🟢-1: serialize publish runs. Two near-simultaneous
+# tag pushes (or a tag + a manual dispatch) would otherwise race
+# the test.pypi publish step. Group is global to the workflow
+# because both real-PyPI and test.pypi share the same publishable
+# artifact identity; `cancel-in-progress: false` lets a running
+# release finish rather than getting clobbered by a fresh tag.
+concurrency:
+  group: pypi-publish
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -52,6 +64,15 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'  # matches Dockerfile runtime base
+          # t1-review 🟢-2: pip cache. setup-python's `cache: pip`
+          # hashes requirements files by default. Release runs are
+          # rare but ~30-60s shaved off each one adds up to less
+          # CI minutes spent on a release.
+          cache: 'pip'
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+            pyproject.toml
 
       - uses: actions/setup-node@v4
         with:
@@ -66,12 +87,18 @@ jobs:
         # tag — confusing for users + a rollback nightmare. The
         # tag-driven build asserts the two match before pip install
         # can ever see a divergence.
+        #
+        # t1-review 🟡-2: use stdlib `tomllib` (Py3.11+) rather than
+        # a `grep`-based regex. The regex form (`^version = ...`)
+        # would match a stray top-level `version = "..."` in any
+        # future `[tool.foo]` block and silently take the wrong
+        # value. tomllib pins us to `[project].version` by name.
         if: github.event_name == 'push'
         run: |
           TAG_VERSION="${GITHUB_REF#refs/tags/v}"
-          PYPROJECT_VERSION=$(grep '^version = ' pyproject.toml | head -1 | cut -d'"' -f2)
+          PYPROJECT_VERSION=$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml","rb"))["project"]["version"])')
           if [ "$TAG_VERSION" != "$PYPROJECT_VERSION" ]; then
-            echo "ERROR: tag $GITHUB_REF (v$TAG_VERSION) does not match pyproject.toml version $PYPROJECT_VERSION." >&2
+            echo "ERROR: tag $GITHUB_REF (v$TAG_VERSION) does not match pyproject.toml [project].version ($PYPROJECT_VERSION)." >&2
             echo "Bump pyproject.toml's [project].version before tagging." >&2
             exit 1
           fi
@@ -114,7 +141,13 @@ jobs:
           name: dist
           path: dist/
       - name: publish
-        uses: pypa/gh-action-pypi-publish@release/v1
+        # t1-review 🟢-3: SHA-pinned per GitHub's security guidance
+        # for third-party actions. The trailing comment carries the
+        # human-readable version so Dependabot / Renovate (or a
+        # contributor doing a manual bump) can match the SHA back
+        # to a release. Update via:
+        #   git ls-remote https://github.com/pypa/gh-action-pypi-publish.git release/v1
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b  # release/v1
         with:
           repository-url: https://test.pypi.org/legacy/
           # `skip-existing` is INTENTIONAL: re-running this workflow
@@ -215,7 +248,9 @@ jobs:
           name: dist
           path: dist/
       - name: publish
-        uses: pypa/gh-action-pypi-publish@release/v1
+        # t1-review 🟢-3: SHA-pinned (see test.pypi publish step
+        # above for update procedure).
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b  # release/v1
         # No `skip-existing` here on purpose — re-publishing the
         # SAME version to real PyPI is almost always a mistake
         # (PyPI doesn't allow overwrite, but it lets you upload a

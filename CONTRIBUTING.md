@@ -216,19 +216,23 @@ that fix review findings use `§14.NN sweep-up: ...`.
 §16.13.t1 — wheel + docker channels both publish-ready; PyPI
 publish happens via `.github/workflows/publish.yml`.
 
-**One-time setup** (already done if you can see a `station-studio`
-project on PyPI / test.pypi):
+**One-time setup.** PyPI's **pending publisher** feature lets you
+authorize a workflow to claim a name BEFORE the project exists on
+PyPI — no `twine upload`, no temp API token. Three steps:
 
-1. Create the project on https://test.pypi.org AND https://pypi.org
-   (one-time upload via `twine upload` against a temp token, OR
-   the publish workflow itself if you use the pre-claim grace).
-2. PyPI → project → Publishing → Add **trusted publisher**:
+1. **PyPI** → Account → Publishing → "Add a pending publisher":
+   - PyPI project name: `station-studio`
    - owner: `raby`, repo: `station-studio`
    - workflow: `publish.yml`, environment: `pypi`
-3. Same on test.pypi.org with environment `testpypi`.
-4. In the GitHub repo → Settings → Environments → create `pypi`
-   and `testpypi` (no protection rules required for hobbyist use;
-   add reviewers if you want a manual gate).
+2. **TestPyPI** (test.pypi.org) → same, environment: `testpypi`.
+3. **GitHub repo** → Settings → Environments → create `pypi` and
+   `testpypi` (no protection rules required for hobbyist use; add
+   reviewers if you want a manual approval gate before real-PyPI
+   publish).
+
+The first tag push triggers the workflow, PyPI sees the trusted
+publisher match the pending claim, and the project is created
+in-place. No tokens stored anywhere.
 
 **Cutting a release:**
 
@@ -253,11 +257,16 @@ pushes to test.pypi, pip-installs from test.pypi + curls the same
 three URLs `make wheel-smoke` checks locally, then on green
 proceeds to real PyPI.
 
-Manual rehearsal (test.pypi only, no real publish):
+**Manual rehearsal** (test.pypi only, never real PyPI):
 
 ```bash
-gh workflow run publish.yml -f test_only=true
+gh workflow run publish.yml
 ```
+
+`workflow_dispatch` is implicitly test-only — the `publish-pypi`
+job gates on `push` events, so a manual run can never reach real
+PyPI regardless of what flags you pass. Tag-driven push is the
+only path to a real release, by design.
 
 ## When in doubt
 
