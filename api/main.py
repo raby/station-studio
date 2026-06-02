@@ -61,7 +61,10 @@ async def lifespan(app: FastAPI):
 
     # Import lazily so test setups that pass their own session
     # don't need lifespan to fire.
-    from scripts.seed_stations import seed_all, _collect_paths
+    # §16.13.t9: source-of-truth is `engine.seeding`. The legacy
+    # `scripts.seed_stations` re-exports for backward compat with
+    # CLI invocations + older test imports.
+    from engine.seeding import seed_all, _collect_paths
 
     try:
         engine = make_engine()

@@ -78,19 +78,25 @@ Homepage = "https://github.com/raby/station-studio"
 Repository = "https://github.com/raby/station-studio"
 Issues = "https://github.com/raby/station-studio/issues"
 
-# The wheel ships these FOUR top-level packages. `api` and `engine`
-# are the runtime modules; `station_studio` is the CLI; `scripts` is
-# included BECAUSE api/main.py's lifespan imports
-# `scripts.seed_stations` for the auto-seed-from-JSON-files step.
+# The wheel ships these THREE top-level packages: `api` (FastAPI
+# routers), `engine` (playlist generator + seeding library), and
+# `station_studio` (the CLI).
 #
-# Shipping the whole `scripts/` dir is a deliberate over-include for
-# c4: most files (bootstrap_classics, dump_weekly_template, etc) are
-# dev tools that an installed-wheel user never touches. The right
-# longer-term carve is split: a library half (seed_stations,
-# import_weekly_pools) into the wheel, and the dev-tool half left in
-# `scripts/` and out of the wheel. Queued as §16.13.t9.
+# §16.13.t9 (closed): `scripts/` was previously over-included so
+# `api/main.py:lifespan` could `from scripts.seed_stations import
+# ...`. The seeding LIBRARY moved to `engine.seeding`; `scripts/`
+# now contains only dev tools (bootstrap_classics,
+# dump_weekly_template, generate_byte_eq_fixtures, etc) and is
+# deliberately excluded from the wheel. End users never touch
+# those tools — moving them out shrinks the wheel and removes the
+# "why are dev fixtures shipping?" question.
+#
+# `scripts/seed_stations.py` survives as a 25-line backward-compat
+# shim re-exporting from engine.seeding, so the legacy
+# `python -m scripts.seed_stations` invocation keeps working in
+# Makefile + Dockerfile contexts where the repo IS checked out.
 [tool.hatch.build.targets.wheel]
-packages = ["station_studio", "api", "engine", "scripts"]
+packages = ["station_studio", "api", "engine"]
 
 # c1-review 🟡-1 + c4: ship bundled data inside the wheel so c3's
 # first-run bootstrap + c2's SPA mount + c4's static-asset serving

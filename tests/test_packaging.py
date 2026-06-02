@@ -211,16 +211,32 @@ def test_force_include_targets_land_under_station_studio_bundled(
         )
 
 
-def test_wheel_ships_scripts_package(wheel_contents: set[str]) -> None:
-    """§16.13 c4: ship `scripts/` so `api/main.py`'s auto-seed lifespan
-    can `from scripts.seed_stations import ...` at install time.
-    Over-includes some dev tools today (see §16.13.t9 for the future
-    library/dev-tool split); the runtime import is the load-bearing
-    case. Without this, the served app crashes on startup with
-    ModuleNotFoundError: scripts."""
-    scripts_files = {
+def test_wheel_ships_engine_seeding_module(
+    wheel_contents: set[str],
+) -> None:
+    """§16.13.t9 (closes c4 over-include): the seed-stations LIBRARY
+    moved to `engine.seeding` so the wheel no longer needs to ship
+    the entire `scripts/` package. `api/main.py:lifespan` imports
+    from engine.seeding now. Pin that the new library module is in
+    the wheel — without it, the served app's auto-seed lifespan
+    crashes with ModuleNotFoundError: engine.seeding."""
+    assert "engine/seeding.py" in wheel_contents
+
+
+def test_wheel_does_not_ship_scripts_package(
+    wheel_contents: set[str],
+) -> None:
+    """§16.13.t9: `scripts/` is dev tooling (bootstrap_classics,
+    dump_weekly_template, generate_byte_eq_fixtures, ...). The wheel
+    must not ship them — an installed-wheel user never touches them.
+    Pin that NO `scripts/*.py` file appears in the wheel as a
+    regression catch against a future `packages += ["scripts"]`
+    accidentally re-introducing the over-include."""
+    leaked = {
         p for p in wheel_contents
         if p.startswith("scripts/") and p.endswith(".py")
     }
-    assert "scripts/seed_stations.py" in scripts_files
-    assert "scripts/__init__.py" in scripts_files
+    assert not leaked, (
+        f"scripts/ should not ship in the wheel post-t9; leaked: "
+        f"{sorted(leaked)[:5]}"
+    )

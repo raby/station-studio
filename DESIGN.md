@@ -9690,20 +9690,24 @@ migration + wheel + docker + docs).
   `migrations_applied=False + stations_copied=0` on second run, frozen
   enforcement, and silent default for non-CLI callers (no echo
   registered, no output produced).
-* **§16.13.t9 — Split `scripts/` into library half (shipped in
-  wheel) vs dev-tool half (not shipped).** c4 ships the whole
-  `scripts/` package as a wheel top-level because
-  `api/main.py:lifespan` does `from scripts.seed_stations import
-  ...`. That over-includes a pile of in-repo dev tools
+* ~~**§16.13.t9 — Split `scripts/` into library half (shipped in
+  wheel) vs dev-tool half (not shipped).**~~ **SHIPPED.** Library
+  half moved to `engine/seeding.py` (the canonical home — sits
+  next to `engine/importer.py`, no new `scripts/_lib/` subdir
+  needed). `api/main.py:lifespan` imports from `engine.seeding`
+  now. `scripts/seed_stations.py` survives as a 25-line backward-
+  compat shim re-exporting from `engine.seeding`, so the legacy
+  `python -m scripts.seed_stations` invocation keeps working in
+  Makefile / Dockerfile / docs / cron contexts. `pyproject.toml`
+  drops `scripts` from `[tool.hatch.build.targets.wheel].packages`
+  — the wheel no longer ships any of the dev tools
   (`bootstrap_classics.py`, `dump_weekly_template.py`,
-  `generate_byte_eq_fixtures.py`, etc.) that no installed user
-  will touch. The carve: `scripts/_lib/` (or rename to
-  `engine.seeding` / similar) for the library bits the runtime
-  needs, leave the dev tools in `scripts/` and exclude that dir
-  from the wheel. **Home: small refactor (~3 commits — move
-  files, update imports, update tests).** Trigger: wheel size
-  becomes a concern OR a contributor asks why dev fixtures ship to
-  end users.
+  `generate_byte_eq_fixtures.py`, etc). `tests/test_packaging.py`
+  inverts the prior assertion: pins `engine/seeding.py` IS in the
+  wheel + pins NO `scripts/*.py` ships (regression catch against
+  a future `packages += ["scripts"]` accidentally re-introducing
+  the over-include). 909 backend tests + `make wheel-smoke` pass
+  end-to-end with the slimmer wheel.
 
 **Shipped this slice (c1-c5, running log).**
 
