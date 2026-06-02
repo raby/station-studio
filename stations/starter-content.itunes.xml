@@ -1,728 +1,1189 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple Computer//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>Major Version</key><integer>1</integer>
-	<key>Minor Version</key><integer>1</integer>
-	<key>Application Version</key><string>10.3</string>
-	<key>Features</key><integer>5</integer>
-	<key>Show Content Ratings</key><true/>
-	<key>Music Folder</key><string>file://localhost/Users/starter/Music/iTunes/iTunes%20Media/</string>
-	<key>Library Persistent ID</key><string>STARTERLIBRARY01</string>
+	<key>Application Version</key>
+	<string>10.3</string>
+	<key>Features</key>
+	<integer>5</integer>
+	<key>Library Persistent ID</key>
+	<string>STARTERLIBRARY01</string>
+	<key>Major Version</key>
+	<integer>1</integer>
+	<key>Minor Version</key>
+	<integer>1</integer>
+	<key>Music Folder</key>
+	<string>file://localhost/Users/starter/Music/iTunes/iTunes%20Media/</string>
+	<key>Playlists</key>
+	<array>
+		<dict>
+			<key>All Items</key>
+			<true/>
+			<key>Name</key>
+			<string>STARTER_CONTENT</string>
+			<key>Playlist ID</key>
+			<integer>1</integer>
+			<key>Playlist Items</key>
+			<array>
+				<dict>
+					<key>Track ID</key>
+					<integer>1001</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>1002</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>1003</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>1004</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>1005</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>1006</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>1007</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>1008</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>1009</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>1010</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>1011</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>1012</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>1013</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>1014</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>1015</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>1016</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>1017</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>1018</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>1019</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>1020</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>1021</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>1022</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>1023</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>1024</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>1025</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>1026</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>1027</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>1028</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>1029</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>1030</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>1031</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>1032</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>1033</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>1034</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>1035</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>1036</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>1037</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>1038</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>1039</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>1040</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>1041</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>1042</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>1043</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>1044</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>1045</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>1046</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>1047</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>1048</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>1049</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>1050</integer>
+				</dict>
+			</array>
+			<key>Playlist Persistent ID</key>
+			<string>STCONTPLAYLIST01</string>
+		</dict>
+	</array>
+	<key>Show Content Ratings</key>
+	<true/>
 	<key>Tracks</key>
 	<dict>
 		<key>1001</key>
 		<dict>
-			<key>Track ID</key><integer>1001</integer>
-			<key>Name</key><string>Sunrise Loop 01</string>
-			<key>Artist</key><string>Synthetic Artist 1</string>
-			<key>Album</key><string>Synthetic Artist 1 — Selected Works</string>
-			<key>Genre</key><string>Pop</string>
-			<key>Total Time</key><integer>210000</integer>
-			<key>Persistent ID</key><string>STCONT000000000001</string>
-			<key>Track Type</key><string>File</string>
+			<key>Album</key>
+			<string>Synthetic Artist 1 — Selected Works</string>
+			<key>Artist</key>
+			<string>Synthetic Artist 1</string>
+			<key>Genre</key>
+			<string>Pop</string>
+			<key>Name</key>
+			<string>Sunrise Loop 01</string>
+			<key>Persistent ID</key>
+			<string>STCONT000000000001</string>
+			<key>Total Time</key>
+			<integer>180000</integer>
+			<key>Track ID</key>
+			<integer>1001</integer>
+			<key>Track Type</key>
+			<string>File</string>
 		</dict>
 		<key>1002</key>
 		<dict>
-			<key>Track ID</key><integer>1002</integer>
-			<key>Name</key><string>Midday Theme 02</string>
-			<key>Artist</key><string>Synthetic Artist 1</string>
-			<key>Album</key><string>Synthetic Artist 1 — Selected Works</string>
-			<key>Genre</key><string>Pop</string>
-			<key>Total Time</key><integer>210000</integer>
-			<key>Persistent ID</key><string>STCONT000000000002</string>
-			<key>Track Type</key><string>File</string>
+			<key>Album</key>
+			<string>Synthetic Artist 1 — Selected Works</string>
+			<key>Artist</key>
+			<string>Synthetic Artist 1</string>
+			<key>Genre</key>
+			<string>Pop</string>
+			<key>Name</key>
+			<string>Midday Theme 02</string>
+			<key>Persistent ID</key>
+			<string>STCONT000000000002</string>
+			<key>Total Time</key>
+			<integer>190000</integer>
+			<key>Track ID</key>
+			<integer>1002</integer>
+			<key>Track Type</key>
+			<string>File</string>
 		</dict>
 		<key>1003</key>
 		<dict>
-			<key>Track ID</key><integer>1003</integer>
-			<key>Name</key><string>Afternoon Drift 03</string>
-			<key>Artist</key><string>Synthetic Artist 1</string>
-			<key>Album</key><string>Synthetic Artist 1 — Selected Works</string>
-			<key>Genre</key><string>Pop</string>
-			<key>Total Time</key><integer>210000</integer>
-			<key>Persistent ID</key><string>STCONT000000000003</string>
-			<key>Track Type</key><string>File</string>
+			<key>Album</key>
+			<string>Synthetic Artist 1 — Selected Works</string>
+			<key>Artist</key>
+			<string>Synthetic Artist 1</string>
+			<key>Genre</key>
+			<string>Pop</string>
+			<key>Name</key>
+			<string>Afternoon Drift 03</string>
+			<key>Persistent ID</key>
+			<string>STCONT000000000003</string>
+			<key>Total Time</key>
+			<integer>200000</integer>
+			<key>Track ID</key>
+			<integer>1003</integer>
+			<key>Track Type</key>
+			<string>File</string>
 		</dict>
 		<key>1004</key>
 		<dict>
-			<key>Track ID</key><integer>1004</integer>
-			<key>Name</key><string>Evening Pulse 04</string>
-			<key>Artist</key><string>Synthetic Artist 1</string>
-			<key>Album</key><string>Synthetic Artist 1 — Selected Works</string>
-			<key>Genre</key><string>Pop</string>
-			<key>Total Time</key><integer>210000</integer>
-			<key>Persistent ID</key><string>STCONT000000000004</string>
-			<key>Track Type</key><string>File</string>
+			<key>Album</key>
+			<string>Synthetic Artist 1 — Selected Works</string>
+			<key>Artist</key>
+			<string>Synthetic Artist 1</string>
+			<key>Genre</key>
+			<string>Pop</string>
+			<key>Name</key>
+			<string>Evening Pulse 04</string>
+			<key>Persistent ID</key>
+			<string>STCONT000000000004</string>
+			<key>Total Time</key>
+			<integer>210000</integer>
+			<key>Track ID</key>
+			<integer>1004</integer>
+			<key>Track Type</key>
+			<string>File</string>
 		</dict>
 		<key>1005</key>
 		<dict>
-			<key>Track ID</key><integer>1005</integer>
-			<key>Name</key><string>Night Bridge 05</string>
-			<key>Artist</key><string>Synthetic Artist 1</string>
-			<key>Album</key><string>Synthetic Artist 1 — Selected Works</string>
-			<key>Genre</key><string>Pop</string>
-			<key>Total Time</key><integer>210000</integer>
-			<key>Persistent ID</key><string>STCONT000000000005</string>
-			<key>Track Type</key><string>File</string>
+			<key>Album</key>
+			<string>Synthetic Artist 1 — Selected Works</string>
+			<key>Artist</key>
+			<string>Synthetic Artist 1</string>
+			<key>Genre</key>
+			<string>Pop</string>
+			<key>Name</key>
+			<string>Night Bridge 05</string>
+			<key>Persistent ID</key>
+			<string>STCONT000000000005</string>
+			<key>Total Time</key>
+			<integer>220000</integer>
+			<key>Track ID</key>
+			<integer>1005</integer>
+			<key>Track Type</key>
+			<string>File</string>
 		</dict>
 		<key>1006</key>
 		<dict>
-			<key>Track ID</key><integer>1006</integer>
-			<key>Name</key><string>Sunrise Loop 06</string>
-			<key>Artist</key><string>Synthetic Artist 2</string>
-			<key>Album</key><string>Synthetic Artist 2 — Selected Works</string>
-			<key>Genre</key><string>Pop</string>
-			<key>Total Time</key><integer>210000</integer>
-			<key>Persistent ID</key><string>STCONT000000000006</string>
-			<key>Track Type</key><string>File</string>
+			<key>Album</key>
+			<string>Synthetic Artist 2 — Selected Works</string>
+			<key>Artist</key>
+			<string>Synthetic Artist 2</string>
+			<key>Genre</key>
+			<string>Pop</string>
+			<key>Name</key>
+			<string>Sunrise Loop 06</string>
+			<key>Persistent ID</key>
+			<string>STCONT000000000006</string>
+			<key>Total Time</key>
+			<integer>230000</integer>
+			<key>Track ID</key>
+			<integer>1006</integer>
+			<key>Track Type</key>
+			<string>File</string>
 		</dict>
 		<key>1007</key>
 		<dict>
-			<key>Track ID</key><integer>1007</integer>
-			<key>Name</key><string>Midday Theme 07</string>
-			<key>Artist</key><string>Synthetic Artist 2</string>
-			<key>Album</key><string>Synthetic Artist 2 — Selected Works</string>
-			<key>Genre</key><string>Pop</string>
-			<key>Total Time</key><integer>210000</integer>
-			<key>Persistent ID</key><string>STCONT000000000007</string>
-			<key>Track Type</key><string>File</string>
+			<key>Album</key>
+			<string>Synthetic Artist 2 — Selected Works</string>
+			<key>Artist</key>
+			<string>Synthetic Artist 2</string>
+			<key>Genre</key>
+			<string>Pop</string>
+			<key>Name</key>
+			<string>Midday Theme 07</string>
+			<key>Persistent ID</key>
+			<string>STCONT000000000007</string>
+			<key>Total Time</key>
+			<integer>240000</integer>
+			<key>Track ID</key>
+			<integer>1007</integer>
+			<key>Track Type</key>
+			<string>File</string>
 		</dict>
 		<key>1008</key>
 		<dict>
-			<key>Track ID</key><integer>1008</integer>
-			<key>Name</key><string>Afternoon Drift 08</string>
-			<key>Artist</key><string>Synthetic Artist 2</string>
-			<key>Album</key><string>Synthetic Artist 2 — Selected Works</string>
-			<key>Genre</key><string>Pop</string>
-			<key>Total Time</key><integer>210000</integer>
-			<key>Persistent ID</key><string>STCONT000000000008</string>
-			<key>Track Type</key><string>File</string>
+			<key>Album</key>
+			<string>Synthetic Artist 2 — Selected Works</string>
+			<key>Artist</key>
+			<string>Synthetic Artist 2</string>
+			<key>Genre</key>
+			<string>Pop</string>
+			<key>Name</key>
+			<string>Afternoon Drift 08</string>
+			<key>Persistent ID</key>
+			<string>STCONT000000000008</string>
+			<key>Total Time</key>
+			<integer>180000</integer>
+			<key>Track ID</key>
+			<integer>1008</integer>
+			<key>Track Type</key>
+			<string>File</string>
 		</dict>
 		<key>1009</key>
 		<dict>
-			<key>Track ID</key><integer>1009</integer>
-			<key>Name</key><string>Evening Pulse 09</string>
-			<key>Artist</key><string>Synthetic Artist 2</string>
-			<key>Album</key><string>Synthetic Artist 2 — Selected Works</string>
-			<key>Genre</key><string>Pop</string>
-			<key>Total Time</key><integer>210000</integer>
-			<key>Persistent ID</key><string>STCONT000000000009</string>
-			<key>Track Type</key><string>File</string>
+			<key>Album</key>
+			<string>Synthetic Artist 2 — Selected Works</string>
+			<key>Artist</key>
+			<string>Synthetic Artist 2</string>
+			<key>Genre</key>
+			<string>Pop</string>
+			<key>Name</key>
+			<string>Evening Pulse 09</string>
+			<key>Persistent ID</key>
+			<string>STCONT000000000009</string>
+			<key>Total Time</key>
+			<integer>190000</integer>
+			<key>Track ID</key>
+			<integer>1009</integer>
+			<key>Track Type</key>
+			<string>File</string>
 		</dict>
 		<key>1010</key>
 		<dict>
-			<key>Track ID</key><integer>1010</integer>
-			<key>Name</key><string>Night Bridge 10</string>
-			<key>Artist</key><string>Synthetic Artist 2</string>
-			<key>Album</key><string>Synthetic Artist 2 — Selected Works</string>
-			<key>Genre</key><string>Pop</string>
-			<key>Total Time</key><integer>210000</integer>
-			<key>Persistent ID</key><string>STCONT00000000000A</string>
-			<key>Track Type</key><string>File</string>
+			<key>Album</key>
+			<string>Synthetic Artist 2 — Selected Works</string>
+			<key>Artist</key>
+			<string>Synthetic Artist 2</string>
+			<key>Genre</key>
+			<string>Pop</string>
+			<key>Name</key>
+			<string>Night Bridge 10</string>
+			<key>Persistent ID</key>
+			<string>STCONT00000000000A</string>
+			<key>Total Time</key>
+			<integer>200000</integer>
+			<key>Track ID</key>
+			<integer>1010</integer>
+			<key>Track Type</key>
+			<string>File</string>
 		</dict>
 		<key>1011</key>
 		<dict>
-			<key>Track ID</key><integer>1011</integer>
-			<key>Name</key><string>Sunrise Loop 11</string>
-			<key>Artist</key><string>Synthetic Artist 3</string>
-			<key>Album</key><string>Synthetic Artist 3 — Selected Works</string>
-			<key>Genre</key><string>Pop</string>
-			<key>Total Time</key><integer>210000</integer>
-			<key>Persistent ID</key><string>STCONT00000000000B</string>
-			<key>Track Type</key><string>File</string>
+			<key>Album</key>
+			<string>Synthetic Artist 3 — Selected Works</string>
+			<key>Artist</key>
+			<string>Synthetic Artist 3</string>
+			<key>Genre</key>
+			<string>Pop</string>
+			<key>Name</key>
+			<string>Sunrise Loop 11</string>
+			<key>Persistent ID</key>
+			<string>STCONT00000000000B</string>
+			<key>Total Time</key>
+			<integer>210000</integer>
+			<key>Track ID</key>
+			<integer>1011</integer>
+			<key>Track Type</key>
+			<string>File</string>
 		</dict>
 		<key>1012</key>
 		<dict>
-			<key>Track ID</key><integer>1012</integer>
-			<key>Name</key><string>Midday Theme 12</string>
-			<key>Artist</key><string>Synthetic Artist 3</string>
-			<key>Album</key><string>Synthetic Artist 3 — Selected Works</string>
-			<key>Genre</key><string>Pop</string>
-			<key>Total Time</key><integer>210000</integer>
-			<key>Persistent ID</key><string>STCONT00000000000C</string>
-			<key>Track Type</key><string>File</string>
+			<key>Album</key>
+			<string>Synthetic Artist 3 — Selected Works</string>
+			<key>Artist</key>
+			<string>Synthetic Artist 3</string>
+			<key>Genre</key>
+			<string>Pop</string>
+			<key>Name</key>
+			<string>Midday Theme 12</string>
+			<key>Persistent ID</key>
+			<string>STCONT00000000000C</string>
+			<key>Total Time</key>
+			<integer>220000</integer>
+			<key>Track ID</key>
+			<integer>1012</integer>
+			<key>Track Type</key>
+			<string>File</string>
 		</dict>
 		<key>1013</key>
 		<dict>
-			<key>Track ID</key><integer>1013</integer>
-			<key>Name</key><string>Afternoon Drift 13</string>
-			<key>Artist</key><string>Synthetic Artist 3</string>
-			<key>Album</key><string>Synthetic Artist 3 — Selected Works</string>
-			<key>Genre</key><string>Pop</string>
-			<key>Total Time</key><integer>210000</integer>
-			<key>Persistent ID</key><string>STCONT00000000000D</string>
-			<key>Track Type</key><string>File</string>
+			<key>Album</key>
+			<string>Synthetic Artist 3 — Selected Works</string>
+			<key>Artist</key>
+			<string>Synthetic Artist 3</string>
+			<key>Genre</key>
+			<string>Pop</string>
+			<key>Name</key>
+			<string>Afternoon Drift 13</string>
+			<key>Persistent ID</key>
+			<string>STCONT00000000000D</string>
+			<key>Total Time</key>
+			<integer>230000</integer>
+			<key>Track ID</key>
+			<integer>1013</integer>
+			<key>Track Type</key>
+			<string>File</string>
 		</dict>
 		<key>1014</key>
 		<dict>
-			<key>Track ID</key><integer>1014</integer>
-			<key>Name</key><string>Evening Pulse 14</string>
-			<key>Artist</key><string>Synthetic Artist 3</string>
-			<key>Album</key><string>Synthetic Artist 3 — Selected Works</string>
-			<key>Genre</key><string>Pop</string>
-			<key>Total Time</key><integer>210000</integer>
-			<key>Persistent ID</key><string>STCONT00000000000E</string>
-			<key>Track Type</key><string>File</string>
+			<key>Album</key>
+			<string>Synthetic Artist 3 — Selected Works</string>
+			<key>Artist</key>
+			<string>Synthetic Artist 3</string>
+			<key>Genre</key>
+			<string>Pop</string>
+			<key>Name</key>
+			<string>Evening Pulse 14</string>
+			<key>Persistent ID</key>
+			<string>STCONT00000000000E</string>
+			<key>Total Time</key>
+			<integer>240000</integer>
+			<key>Track ID</key>
+			<integer>1014</integer>
+			<key>Track Type</key>
+			<string>File</string>
 		</dict>
 		<key>1015</key>
 		<dict>
-			<key>Track ID</key><integer>1015</integer>
-			<key>Name</key><string>Night Bridge 15</string>
-			<key>Artist</key><string>Synthetic Artist 3</string>
-			<key>Album</key><string>Synthetic Artist 3 — Selected Works</string>
-			<key>Genre</key><string>Pop</string>
-			<key>Total Time</key><integer>210000</integer>
-			<key>Persistent ID</key><string>STCONT00000000000F</string>
-			<key>Track Type</key><string>File</string>
+			<key>Album</key>
+			<string>Synthetic Artist 3 — Selected Works</string>
+			<key>Artist</key>
+			<string>Synthetic Artist 3</string>
+			<key>Genre</key>
+			<string>Pop</string>
+			<key>Name</key>
+			<string>Night Bridge 15</string>
+			<key>Persistent ID</key>
+			<string>STCONT00000000000F</string>
+			<key>Total Time</key>
+			<integer>180000</integer>
+			<key>Track ID</key>
+			<integer>1015</integer>
+			<key>Track Type</key>
+			<string>File</string>
 		</dict>
 		<key>1016</key>
 		<dict>
-			<key>Track ID</key><integer>1016</integer>
-			<key>Name</key><string>Sunrise Loop 16</string>
-			<key>Artist</key><string>Synthetic Artist 4</string>
-			<key>Album</key><string>Synthetic Artist 4 — Selected Works</string>
-			<key>Genre</key><string>Pop</string>
-			<key>Total Time</key><integer>210000</integer>
-			<key>Persistent ID</key><string>STCONT000000000010</string>
-			<key>Track Type</key><string>File</string>
+			<key>Album</key>
+			<string>Synthetic Artist 4 — Selected Works</string>
+			<key>Artist</key>
+			<string>Synthetic Artist 4</string>
+			<key>Genre</key>
+			<string>Pop</string>
+			<key>Name</key>
+			<string>Sunrise Loop 16</string>
+			<key>Persistent ID</key>
+			<string>STCONT000000000010</string>
+			<key>Total Time</key>
+			<integer>190000</integer>
+			<key>Track ID</key>
+			<integer>1016</integer>
+			<key>Track Type</key>
+			<string>File</string>
 		</dict>
 		<key>1017</key>
 		<dict>
-			<key>Track ID</key><integer>1017</integer>
-			<key>Name</key><string>Midday Theme 17</string>
-			<key>Artist</key><string>Synthetic Artist 4</string>
-			<key>Album</key><string>Synthetic Artist 4 — Selected Works</string>
-			<key>Genre</key><string>Pop</string>
-			<key>Total Time</key><integer>210000</integer>
-			<key>Persistent ID</key><string>STCONT000000000011</string>
-			<key>Track Type</key><string>File</string>
+			<key>Album</key>
+			<string>Synthetic Artist 4 — Selected Works</string>
+			<key>Artist</key>
+			<string>Synthetic Artist 4</string>
+			<key>Genre</key>
+			<string>Pop</string>
+			<key>Name</key>
+			<string>Midday Theme 17</string>
+			<key>Persistent ID</key>
+			<string>STCONT000000000011</string>
+			<key>Total Time</key>
+			<integer>200000</integer>
+			<key>Track ID</key>
+			<integer>1017</integer>
+			<key>Track Type</key>
+			<string>File</string>
 		</dict>
 		<key>1018</key>
 		<dict>
-			<key>Track ID</key><integer>1018</integer>
-			<key>Name</key><string>Afternoon Drift 18</string>
-			<key>Artist</key><string>Synthetic Artist 4</string>
-			<key>Album</key><string>Synthetic Artist 4 — Selected Works</string>
-			<key>Genre</key><string>Pop</string>
-			<key>Total Time</key><integer>210000</integer>
-			<key>Persistent ID</key><string>STCONT000000000012</string>
-			<key>Track Type</key><string>File</string>
+			<key>Album</key>
+			<string>Synthetic Artist 4 — Selected Works</string>
+			<key>Artist</key>
+			<string>Synthetic Artist 4</string>
+			<key>Genre</key>
+			<string>Pop</string>
+			<key>Name</key>
+			<string>Afternoon Drift 18</string>
+			<key>Persistent ID</key>
+			<string>STCONT000000000012</string>
+			<key>Total Time</key>
+			<integer>210000</integer>
+			<key>Track ID</key>
+			<integer>1018</integer>
+			<key>Track Type</key>
+			<string>File</string>
 		</dict>
 		<key>1019</key>
 		<dict>
-			<key>Track ID</key><integer>1019</integer>
-			<key>Name</key><string>Evening Pulse 19</string>
-			<key>Artist</key><string>Synthetic Artist 4</string>
-			<key>Album</key><string>Synthetic Artist 4 — Selected Works</string>
-			<key>Genre</key><string>Pop</string>
-			<key>Total Time</key><integer>210000</integer>
-			<key>Persistent ID</key><string>STCONT000000000013</string>
-			<key>Track Type</key><string>File</string>
+			<key>Album</key>
+			<string>Synthetic Artist 4 — Selected Works</string>
+			<key>Artist</key>
+			<string>Synthetic Artist 4</string>
+			<key>Genre</key>
+			<string>Pop</string>
+			<key>Name</key>
+			<string>Evening Pulse 19</string>
+			<key>Persistent ID</key>
+			<string>STCONT000000000013</string>
+			<key>Total Time</key>
+			<integer>220000</integer>
+			<key>Track ID</key>
+			<integer>1019</integer>
+			<key>Track Type</key>
+			<string>File</string>
 		</dict>
 		<key>1020</key>
 		<dict>
-			<key>Track ID</key><integer>1020</integer>
-			<key>Name</key><string>Night Bridge 20</string>
-			<key>Artist</key><string>Synthetic Artist 4</string>
-			<key>Album</key><string>Synthetic Artist 4 — Selected Works</string>
-			<key>Genre</key><string>Pop</string>
-			<key>Total Time</key><integer>210000</integer>
-			<key>Persistent ID</key><string>STCONT000000000014</string>
-			<key>Track Type</key><string>File</string>
+			<key>Album</key>
+			<string>Synthetic Artist 4 — Selected Works</string>
+			<key>Artist</key>
+			<string>Synthetic Artist 4</string>
+			<key>Genre</key>
+			<string>Pop</string>
+			<key>Name</key>
+			<string>Night Bridge 20</string>
+			<key>Persistent ID</key>
+			<string>STCONT000000000014</string>
+			<key>Total Time</key>
+			<integer>230000</integer>
+			<key>Track ID</key>
+			<integer>1020</integer>
+			<key>Track Type</key>
+			<string>File</string>
 		</dict>
 		<key>1021</key>
 		<dict>
-			<key>Track ID</key><integer>1021</integer>
-			<key>Name</key><string>Sunrise Loop 21</string>
-			<key>Artist</key><string>Synthetic Artist 5</string>
-			<key>Album</key><string>Synthetic Artist 5 — Selected Works</string>
-			<key>Genre</key><string>Pop</string>
-			<key>Total Time</key><integer>210000</integer>
-			<key>Persistent ID</key><string>STCONT000000000015</string>
-			<key>Track Type</key><string>File</string>
+			<key>Album</key>
+			<string>Synthetic Artist 5 — Selected Works</string>
+			<key>Artist</key>
+			<string>Synthetic Artist 5</string>
+			<key>Genre</key>
+			<string>Pop</string>
+			<key>Name</key>
+			<string>Sunrise Loop 21</string>
+			<key>Persistent ID</key>
+			<string>STCONT000000000015</string>
+			<key>Total Time</key>
+			<integer>240000</integer>
+			<key>Track ID</key>
+			<integer>1021</integer>
+			<key>Track Type</key>
+			<string>File</string>
 		</dict>
 		<key>1022</key>
 		<dict>
-			<key>Track ID</key><integer>1022</integer>
-			<key>Name</key><string>Midday Theme 22</string>
-			<key>Artist</key><string>Synthetic Artist 5</string>
-			<key>Album</key><string>Synthetic Artist 5 — Selected Works</string>
-			<key>Genre</key><string>Pop</string>
-			<key>Total Time</key><integer>210000</integer>
-			<key>Persistent ID</key><string>STCONT000000000016</string>
-			<key>Track Type</key><string>File</string>
+			<key>Album</key>
+			<string>Synthetic Artist 5 — Selected Works</string>
+			<key>Artist</key>
+			<string>Synthetic Artist 5</string>
+			<key>Genre</key>
+			<string>Pop</string>
+			<key>Name</key>
+			<string>Midday Theme 22</string>
+			<key>Persistent ID</key>
+			<string>STCONT000000000016</string>
+			<key>Total Time</key>
+			<integer>180000</integer>
+			<key>Track ID</key>
+			<integer>1022</integer>
+			<key>Track Type</key>
+			<string>File</string>
 		</dict>
 		<key>1023</key>
 		<dict>
-			<key>Track ID</key><integer>1023</integer>
-			<key>Name</key><string>Afternoon Drift 23</string>
-			<key>Artist</key><string>Synthetic Artist 5</string>
-			<key>Album</key><string>Synthetic Artist 5 — Selected Works</string>
-			<key>Genre</key><string>Pop</string>
-			<key>Total Time</key><integer>210000</integer>
-			<key>Persistent ID</key><string>STCONT000000000017</string>
-			<key>Track Type</key><string>File</string>
+			<key>Album</key>
+			<string>Synthetic Artist 5 — Selected Works</string>
+			<key>Artist</key>
+			<string>Synthetic Artist 5</string>
+			<key>Genre</key>
+			<string>Pop</string>
+			<key>Name</key>
+			<string>Afternoon Drift 23</string>
+			<key>Persistent ID</key>
+			<string>STCONT000000000017</string>
+			<key>Total Time</key>
+			<integer>190000</integer>
+			<key>Track ID</key>
+			<integer>1023</integer>
+			<key>Track Type</key>
+			<string>File</string>
 		</dict>
 		<key>1024</key>
 		<dict>
-			<key>Track ID</key><integer>1024</integer>
-			<key>Name</key><string>Evening Pulse 24</string>
-			<key>Artist</key><string>Synthetic Artist 5</string>
-			<key>Album</key><string>Synthetic Artist 5 — Selected Works</string>
-			<key>Genre</key><string>Pop</string>
-			<key>Total Time</key><integer>210000</integer>
-			<key>Persistent ID</key><string>STCONT000000000018</string>
-			<key>Track Type</key><string>File</string>
+			<key>Album</key>
+			<string>Synthetic Artist 5 — Selected Works</string>
+			<key>Artist</key>
+			<string>Synthetic Artist 5</string>
+			<key>Genre</key>
+			<string>Pop</string>
+			<key>Name</key>
+			<string>Evening Pulse 24</string>
+			<key>Persistent ID</key>
+			<string>STCONT000000000018</string>
+			<key>Total Time</key>
+			<integer>200000</integer>
+			<key>Track ID</key>
+			<integer>1024</integer>
+			<key>Track Type</key>
+			<string>File</string>
 		</dict>
 		<key>1025</key>
 		<dict>
-			<key>Track ID</key><integer>1025</integer>
-			<key>Name</key><string>Night Bridge 25</string>
-			<key>Artist</key><string>Synthetic Artist 5</string>
-			<key>Album</key><string>Synthetic Artist 5 — Selected Works</string>
-			<key>Genre</key><string>Pop</string>
-			<key>Total Time</key><integer>210000</integer>
-			<key>Persistent ID</key><string>STCONT000000000019</string>
-			<key>Track Type</key><string>File</string>
+			<key>Album</key>
+			<string>Synthetic Artist 5 — Selected Works</string>
+			<key>Artist</key>
+			<string>Synthetic Artist 5</string>
+			<key>Genre</key>
+			<string>Pop</string>
+			<key>Name</key>
+			<string>Night Bridge 25</string>
+			<key>Persistent ID</key>
+			<string>STCONT000000000019</string>
+			<key>Total Time</key>
+			<integer>210000</integer>
+			<key>Track ID</key>
+			<integer>1025</integer>
+			<key>Track Type</key>
+			<string>File</string>
 		</dict>
 		<key>1026</key>
 		<dict>
-			<key>Track ID</key><integer>1026</integer>
-			<key>Name</key><string>Sunrise Loop 26</string>
-			<key>Artist</key><string>Synthetic Artist 6</string>
-			<key>Album</key><string>Synthetic Artist 6 — Selected Works</string>
-			<key>Genre</key><string>Pop</string>
-			<key>Total Time</key><integer>210000</integer>
-			<key>Persistent ID</key><string>STCONT00000000001A</string>
-			<key>Track Type</key><string>File</string>
+			<key>Album</key>
+			<string>Synthetic Artist 6 — Selected Works</string>
+			<key>Artist</key>
+			<string>Synthetic Artist 6</string>
+			<key>Genre</key>
+			<string>Pop</string>
+			<key>Name</key>
+			<string>Sunrise Loop 26</string>
+			<key>Persistent ID</key>
+			<string>STCONT00000000001A</string>
+			<key>Total Time</key>
+			<integer>220000</integer>
+			<key>Track ID</key>
+			<integer>1026</integer>
+			<key>Track Type</key>
+			<string>File</string>
 		</dict>
 		<key>1027</key>
 		<dict>
-			<key>Track ID</key><integer>1027</integer>
-			<key>Name</key><string>Midday Theme 27</string>
-			<key>Artist</key><string>Synthetic Artist 6</string>
-			<key>Album</key><string>Synthetic Artist 6 — Selected Works</string>
-			<key>Genre</key><string>Pop</string>
-			<key>Total Time</key><integer>210000</integer>
-			<key>Persistent ID</key><string>STCONT00000000001B</string>
-			<key>Track Type</key><string>File</string>
+			<key>Album</key>
+			<string>Synthetic Artist 6 — Selected Works</string>
+			<key>Artist</key>
+			<string>Synthetic Artist 6</string>
+			<key>Genre</key>
+			<string>Pop</string>
+			<key>Name</key>
+			<string>Midday Theme 27</string>
+			<key>Persistent ID</key>
+			<string>STCONT00000000001B</string>
+			<key>Total Time</key>
+			<integer>230000</integer>
+			<key>Track ID</key>
+			<integer>1027</integer>
+			<key>Track Type</key>
+			<string>File</string>
 		</dict>
 		<key>1028</key>
 		<dict>
-			<key>Track ID</key><integer>1028</integer>
-			<key>Name</key><string>Afternoon Drift 28</string>
-			<key>Artist</key><string>Synthetic Artist 6</string>
-			<key>Album</key><string>Synthetic Artist 6 — Selected Works</string>
-			<key>Genre</key><string>Pop</string>
-			<key>Total Time</key><integer>210000</integer>
-			<key>Persistent ID</key><string>STCONT00000000001C</string>
-			<key>Track Type</key><string>File</string>
+			<key>Album</key>
+			<string>Synthetic Artist 6 — Selected Works</string>
+			<key>Artist</key>
+			<string>Synthetic Artist 6</string>
+			<key>Genre</key>
+			<string>Pop</string>
+			<key>Name</key>
+			<string>Afternoon Drift 28</string>
+			<key>Persistent ID</key>
+			<string>STCONT00000000001C</string>
+			<key>Total Time</key>
+			<integer>240000</integer>
+			<key>Track ID</key>
+			<integer>1028</integer>
+			<key>Track Type</key>
+			<string>File</string>
 		</dict>
 		<key>1029</key>
 		<dict>
-			<key>Track ID</key><integer>1029</integer>
-			<key>Name</key><string>Evening Pulse 29</string>
-			<key>Artist</key><string>Synthetic Artist 6</string>
-			<key>Album</key><string>Synthetic Artist 6 — Selected Works</string>
-			<key>Genre</key><string>Pop</string>
-			<key>Total Time</key><integer>210000</integer>
-			<key>Persistent ID</key><string>STCONT00000000001D</string>
-			<key>Track Type</key><string>File</string>
+			<key>Album</key>
+			<string>Synthetic Artist 6 — Selected Works</string>
+			<key>Artist</key>
+			<string>Synthetic Artist 6</string>
+			<key>Genre</key>
+			<string>Pop</string>
+			<key>Name</key>
+			<string>Evening Pulse 29</string>
+			<key>Persistent ID</key>
+			<string>STCONT00000000001D</string>
+			<key>Total Time</key>
+			<integer>180000</integer>
+			<key>Track ID</key>
+			<integer>1029</integer>
+			<key>Track Type</key>
+			<string>File</string>
 		</dict>
 		<key>1030</key>
 		<dict>
-			<key>Track ID</key><integer>1030</integer>
-			<key>Name</key><string>Night Bridge 30</string>
-			<key>Artist</key><string>Synthetic Artist 6</string>
-			<key>Album</key><string>Synthetic Artist 6 — Selected Works</string>
-			<key>Genre</key><string>Pop</string>
-			<key>Total Time</key><integer>210000</integer>
-			<key>Persistent ID</key><string>STCONT00000000001E</string>
-			<key>Track Type</key><string>File</string>
+			<key>Album</key>
+			<string>Synthetic Artist 6 — Selected Works</string>
+			<key>Artist</key>
+			<string>Synthetic Artist 6</string>
+			<key>Genre</key>
+			<string>Pop</string>
+			<key>Name</key>
+			<string>Night Bridge 30</string>
+			<key>Persistent ID</key>
+			<string>STCONT00000000001E</string>
+			<key>Total Time</key>
+			<integer>190000</integer>
+			<key>Track ID</key>
+			<integer>1030</integer>
+			<key>Track Type</key>
+			<string>File</string>
 		</dict>
 		<key>1031</key>
 		<dict>
-			<key>Track ID</key><integer>1031</integer>
-			<key>Name</key><string>Sunrise Loop 31</string>
-			<key>Artist</key><string>Synthetic Artist 7</string>
-			<key>Album</key><string>Synthetic Artist 7 — Selected Works</string>
-			<key>Genre</key><string>Pop</string>
-			<key>Total Time</key><integer>210000</integer>
-			<key>Persistent ID</key><string>STCONT00000000001F</string>
-			<key>Track Type</key><string>File</string>
+			<key>Album</key>
+			<string>Synthetic Artist 7 — Selected Works</string>
+			<key>Artist</key>
+			<string>Synthetic Artist 7</string>
+			<key>Genre</key>
+			<string>Pop</string>
+			<key>Name</key>
+			<string>Sunrise Loop 31</string>
+			<key>Persistent ID</key>
+			<string>STCONT00000000001F</string>
+			<key>Total Time</key>
+			<integer>200000</integer>
+			<key>Track ID</key>
+			<integer>1031</integer>
+			<key>Track Type</key>
+			<string>File</string>
 		</dict>
 		<key>1032</key>
 		<dict>
-			<key>Track ID</key><integer>1032</integer>
-			<key>Name</key><string>Midday Theme 32</string>
-			<key>Artist</key><string>Synthetic Artist 7</string>
-			<key>Album</key><string>Synthetic Artist 7 — Selected Works</string>
-			<key>Genre</key><string>Pop</string>
-			<key>Total Time</key><integer>210000</integer>
-			<key>Persistent ID</key><string>STCONT000000000020</string>
-			<key>Track Type</key><string>File</string>
+			<key>Album</key>
+			<string>Synthetic Artist 7 — Selected Works</string>
+			<key>Artist</key>
+			<string>Synthetic Artist 7</string>
+			<key>Genre</key>
+			<string>Pop</string>
+			<key>Name</key>
+			<string>Midday Theme 32</string>
+			<key>Persistent ID</key>
+			<string>STCONT000000000020</string>
+			<key>Total Time</key>
+			<integer>210000</integer>
+			<key>Track ID</key>
+			<integer>1032</integer>
+			<key>Track Type</key>
+			<string>File</string>
 		</dict>
 		<key>1033</key>
 		<dict>
-			<key>Track ID</key><integer>1033</integer>
-			<key>Name</key><string>Afternoon Drift 33</string>
-			<key>Artist</key><string>Synthetic Artist 7</string>
-			<key>Album</key><string>Synthetic Artist 7 — Selected Works</string>
-			<key>Genre</key><string>Pop</string>
-			<key>Total Time</key><integer>210000</integer>
-			<key>Persistent ID</key><string>STCONT000000000021</string>
-			<key>Track Type</key><string>File</string>
+			<key>Album</key>
+			<string>Synthetic Artist 7 — Selected Works</string>
+			<key>Artist</key>
+			<string>Synthetic Artist 7</string>
+			<key>Genre</key>
+			<string>Pop</string>
+			<key>Name</key>
+			<string>Afternoon Drift 33</string>
+			<key>Persistent ID</key>
+			<string>STCONT000000000021</string>
+			<key>Total Time</key>
+			<integer>220000</integer>
+			<key>Track ID</key>
+			<integer>1033</integer>
+			<key>Track Type</key>
+			<string>File</string>
 		</dict>
 		<key>1034</key>
 		<dict>
-			<key>Track ID</key><integer>1034</integer>
-			<key>Name</key><string>Evening Pulse 34</string>
-			<key>Artist</key><string>Synthetic Artist 7</string>
-			<key>Album</key><string>Synthetic Artist 7 — Selected Works</string>
-			<key>Genre</key><string>Pop</string>
-			<key>Total Time</key><integer>210000</integer>
-			<key>Persistent ID</key><string>STCONT000000000022</string>
-			<key>Track Type</key><string>File</string>
+			<key>Album</key>
+			<string>Synthetic Artist 7 — Selected Works</string>
+			<key>Artist</key>
+			<string>Synthetic Artist 7</string>
+			<key>Genre</key>
+			<string>Pop</string>
+			<key>Name</key>
+			<string>Evening Pulse 34</string>
+			<key>Persistent ID</key>
+			<string>STCONT000000000022</string>
+			<key>Total Time</key>
+			<integer>230000</integer>
+			<key>Track ID</key>
+			<integer>1034</integer>
+			<key>Track Type</key>
+			<string>File</string>
 		</dict>
 		<key>1035</key>
 		<dict>
-			<key>Track ID</key><integer>1035</integer>
-			<key>Name</key><string>Night Bridge 35</string>
-			<key>Artist</key><string>Synthetic Artist 7</string>
-			<key>Album</key><string>Synthetic Artist 7 — Selected Works</string>
-			<key>Genre</key><string>Pop</string>
-			<key>Total Time</key><integer>210000</integer>
-			<key>Persistent ID</key><string>STCONT000000000023</string>
-			<key>Track Type</key><string>File</string>
+			<key>Album</key>
+			<string>Synthetic Artist 7 — Selected Works</string>
+			<key>Artist</key>
+			<string>Synthetic Artist 7</string>
+			<key>Genre</key>
+			<string>Pop</string>
+			<key>Name</key>
+			<string>Night Bridge 35</string>
+			<key>Persistent ID</key>
+			<string>STCONT000000000023</string>
+			<key>Total Time</key>
+			<integer>240000</integer>
+			<key>Track ID</key>
+			<integer>1035</integer>
+			<key>Track Type</key>
+			<string>File</string>
 		</dict>
 		<key>1036</key>
 		<dict>
-			<key>Track ID</key><integer>1036</integer>
-			<key>Name</key><string>Sunrise Loop 36</string>
-			<key>Artist</key><string>Synthetic Artist 8</string>
-			<key>Album</key><string>Synthetic Artist 8 — Selected Works</string>
-			<key>Genre</key><string>Pop</string>
-			<key>Total Time</key><integer>210000</integer>
-			<key>Persistent ID</key><string>STCONT000000000024</string>
-			<key>Track Type</key><string>File</string>
+			<key>Album</key>
+			<string>Synthetic Artist 8 — Selected Works</string>
+			<key>Artist</key>
+			<string>Synthetic Artist 8</string>
+			<key>Genre</key>
+			<string>Pop</string>
+			<key>Name</key>
+			<string>Sunrise Loop 36</string>
+			<key>Persistent ID</key>
+			<string>STCONT000000000024</string>
+			<key>Total Time</key>
+			<integer>180000</integer>
+			<key>Track ID</key>
+			<integer>1036</integer>
+			<key>Track Type</key>
+			<string>File</string>
 		</dict>
 		<key>1037</key>
 		<dict>
-			<key>Track ID</key><integer>1037</integer>
-			<key>Name</key><string>Midday Theme 37</string>
-			<key>Artist</key><string>Synthetic Artist 8</string>
-			<key>Album</key><string>Synthetic Artist 8 — Selected Works</string>
-			<key>Genre</key><string>Pop</string>
-			<key>Total Time</key><integer>210000</integer>
-			<key>Persistent ID</key><string>STCONT000000000025</string>
-			<key>Track Type</key><string>File</string>
+			<key>Album</key>
+			<string>Synthetic Artist 8 — Selected Works</string>
+			<key>Artist</key>
+			<string>Synthetic Artist 8</string>
+			<key>Genre</key>
+			<string>Pop</string>
+			<key>Name</key>
+			<string>Midday Theme 37</string>
+			<key>Persistent ID</key>
+			<string>STCONT000000000025</string>
+			<key>Total Time</key>
+			<integer>190000</integer>
+			<key>Track ID</key>
+			<integer>1037</integer>
+			<key>Track Type</key>
+			<string>File</string>
 		</dict>
 		<key>1038</key>
 		<dict>
-			<key>Track ID</key><integer>1038</integer>
-			<key>Name</key><string>Afternoon Drift 38</string>
-			<key>Artist</key><string>Synthetic Artist 8</string>
-			<key>Album</key><string>Synthetic Artist 8 — Selected Works</string>
-			<key>Genre</key><string>Pop</string>
-			<key>Total Time</key><integer>210000</integer>
-			<key>Persistent ID</key><string>STCONT000000000026</string>
-			<key>Track Type</key><string>File</string>
+			<key>Album</key>
+			<string>Synthetic Artist 8 — Selected Works</string>
+			<key>Artist</key>
+			<string>Synthetic Artist 8</string>
+			<key>Genre</key>
+			<string>Pop</string>
+			<key>Name</key>
+			<string>Afternoon Drift 38</string>
+			<key>Persistent ID</key>
+			<string>STCONT000000000026</string>
+			<key>Total Time</key>
+			<integer>200000</integer>
+			<key>Track ID</key>
+			<integer>1038</integer>
+			<key>Track Type</key>
+			<string>File</string>
 		</dict>
 		<key>1039</key>
 		<dict>
-			<key>Track ID</key><integer>1039</integer>
-			<key>Name</key><string>Evening Pulse 39</string>
-			<key>Artist</key><string>Synthetic Artist 8</string>
-			<key>Album</key><string>Synthetic Artist 8 — Selected Works</string>
-			<key>Genre</key><string>Pop</string>
-			<key>Total Time</key><integer>210000</integer>
-			<key>Persistent ID</key><string>STCONT000000000027</string>
-			<key>Track Type</key><string>File</string>
+			<key>Album</key>
+			<string>Synthetic Artist 8 — Selected Works</string>
+			<key>Artist</key>
+			<string>Synthetic Artist 8</string>
+			<key>Genre</key>
+			<string>Pop</string>
+			<key>Name</key>
+			<string>Evening Pulse 39</string>
+			<key>Persistent ID</key>
+			<string>STCONT000000000027</string>
+			<key>Total Time</key>
+			<integer>210000</integer>
+			<key>Track ID</key>
+			<integer>1039</integer>
+			<key>Track Type</key>
+			<string>File</string>
 		</dict>
 		<key>1040</key>
 		<dict>
-			<key>Track ID</key><integer>1040</integer>
-			<key>Name</key><string>Night Bridge 40</string>
-			<key>Artist</key><string>Synthetic Artist 8</string>
-			<key>Album</key><string>Synthetic Artist 8 — Selected Works</string>
-			<key>Genre</key><string>Pop</string>
-			<key>Total Time</key><integer>210000</integer>
-			<key>Persistent ID</key><string>STCONT000000000028</string>
-			<key>Track Type</key><string>File</string>
+			<key>Album</key>
+			<string>Synthetic Artist 8 — Selected Works</string>
+			<key>Artist</key>
+			<string>Synthetic Artist 8</string>
+			<key>Genre</key>
+			<string>Pop</string>
+			<key>Name</key>
+			<string>Night Bridge 40</string>
+			<key>Persistent ID</key>
+			<string>STCONT000000000028</string>
+			<key>Total Time</key>
+			<integer>220000</integer>
+			<key>Track ID</key>
+			<integer>1040</integer>
+			<key>Track Type</key>
+			<string>File</string>
 		</dict>
 		<key>1041</key>
 		<dict>
-			<key>Track ID</key><integer>1041</integer>
-			<key>Name</key><string>Sunrise Loop 41</string>
-			<key>Artist</key><string>Synthetic Artist 9</string>
-			<key>Album</key><string>Synthetic Artist 9 — Selected Works</string>
-			<key>Genre</key><string>Pop</string>
-			<key>Total Time</key><integer>210000</integer>
-			<key>Persistent ID</key><string>STCONT000000000029</string>
-			<key>Track Type</key><string>File</string>
+			<key>Album</key>
+			<string>Synthetic Artist 9 — Selected Works</string>
+			<key>Artist</key>
+			<string>Synthetic Artist 9</string>
+			<key>Genre</key>
+			<string>Pop</string>
+			<key>Name</key>
+			<string>Sunrise Loop 41</string>
+			<key>Persistent ID</key>
+			<string>STCONT000000000029</string>
+			<key>Total Time</key>
+			<integer>230000</integer>
+			<key>Track ID</key>
+			<integer>1041</integer>
+			<key>Track Type</key>
+			<string>File</string>
 		</dict>
 		<key>1042</key>
 		<dict>
-			<key>Track ID</key><integer>1042</integer>
-			<key>Name</key><string>Midday Theme 42</string>
-			<key>Artist</key><string>Synthetic Artist 9</string>
-			<key>Album</key><string>Synthetic Artist 9 — Selected Works</string>
-			<key>Genre</key><string>Pop</string>
-			<key>Total Time</key><integer>210000</integer>
-			<key>Persistent ID</key><string>STCONT00000000002A</string>
-			<key>Track Type</key><string>File</string>
+			<key>Album</key>
+			<string>Synthetic Artist 9 — Selected Works</string>
+			<key>Artist</key>
+			<string>Synthetic Artist 9</string>
+			<key>Genre</key>
+			<string>Pop</string>
+			<key>Name</key>
+			<string>Midday Theme 42</string>
+			<key>Persistent ID</key>
+			<string>STCONT00000000002A</string>
+			<key>Total Time</key>
+			<integer>240000</integer>
+			<key>Track ID</key>
+			<integer>1042</integer>
+			<key>Track Type</key>
+			<string>File</string>
 		</dict>
 		<key>1043</key>
 		<dict>
-			<key>Track ID</key><integer>1043</integer>
-			<key>Name</key><string>Afternoon Drift 43</string>
-			<key>Artist</key><string>Synthetic Artist 9</string>
-			<key>Album</key><string>Synthetic Artist 9 — Selected Works</string>
-			<key>Genre</key><string>Pop</string>
-			<key>Total Time</key><integer>210000</integer>
-			<key>Persistent ID</key><string>STCONT00000000002B</string>
-			<key>Track Type</key><string>File</string>
+			<key>Album</key>
+			<string>Synthetic Artist 9 — Selected Works</string>
+			<key>Artist</key>
+			<string>Synthetic Artist 9</string>
+			<key>Genre</key>
+			<string>Pop</string>
+			<key>Name</key>
+			<string>Afternoon Drift 43</string>
+			<key>Persistent ID</key>
+			<string>STCONT00000000002B</string>
+			<key>Total Time</key>
+			<integer>180000</integer>
+			<key>Track ID</key>
+			<integer>1043</integer>
+			<key>Track Type</key>
+			<string>File</string>
 		</dict>
 		<key>1044</key>
 		<dict>
-			<key>Track ID</key><integer>1044</integer>
-			<key>Name</key><string>Evening Pulse 44</string>
-			<key>Artist</key><string>Synthetic Artist 9</string>
-			<key>Album</key><string>Synthetic Artist 9 — Selected Works</string>
-			<key>Genre</key><string>Pop</string>
-			<key>Total Time</key><integer>210000</integer>
-			<key>Persistent ID</key><string>STCONT00000000002C</string>
-			<key>Track Type</key><string>File</string>
+			<key>Album</key>
+			<string>Synthetic Artist 9 — Selected Works</string>
+			<key>Artist</key>
+			<string>Synthetic Artist 9</string>
+			<key>Genre</key>
+			<string>Pop</string>
+			<key>Name</key>
+			<string>Evening Pulse 44</string>
+			<key>Persistent ID</key>
+			<string>STCONT00000000002C</string>
+			<key>Total Time</key>
+			<integer>190000</integer>
+			<key>Track ID</key>
+			<integer>1044</integer>
+			<key>Track Type</key>
+			<string>File</string>
 		</dict>
 		<key>1045</key>
 		<dict>
-			<key>Track ID</key><integer>1045</integer>
-			<key>Name</key><string>Night Bridge 45</string>
-			<key>Artist</key><string>Synthetic Artist 9</string>
-			<key>Album</key><string>Synthetic Artist 9 — Selected Works</string>
-			<key>Genre</key><string>Pop</string>
-			<key>Total Time</key><integer>210000</integer>
-			<key>Persistent ID</key><string>STCONT00000000002D</string>
-			<key>Track Type</key><string>File</string>
+			<key>Album</key>
+			<string>Synthetic Artist 9 — Selected Works</string>
+			<key>Artist</key>
+			<string>Synthetic Artist 9</string>
+			<key>Genre</key>
+			<string>Pop</string>
+			<key>Name</key>
+			<string>Night Bridge 45</string>
+			<key>Persistent ID</key>
+			<string>STCONT00000000002D</string>
+			<key>Total Time</key>
+			<integer>200000</integer>
+			<key>Track ID</key>
+			<integer>1045</integer>
+			<key>Track Type</key>
+			<string>File</string>
 		</dict>
 		<key>1046</key>
 		<dict>
-			<key>Track ID</key><integer>1046</integer>
-			<key>Name</key><string>Sunrise Loop 46</string>
-			<key>Artist</key><string>Synthetic Artist 10</string>
-			<key>Album</key><string>Synthetic Artist 10 — Selected Works</string>
-			<key>Genre</key><string>Pop</string>
-			<key>Total Time</key><integer>210000</integer>
-			<key>Persistent ID</key><string>STCONT00000000002E</string>
-			<key>Track Type</key><string>File</string>
+			<key>Album</key>
+			<string>Synthetic Artist 10 — Selected Works</string>
+			<key>Artist</key>
+			<string>Synthetic Artist 10</string>
+			<key>Genre</key>
+			<string>Pop</string>
+			<key>Name</key>
+			<string>Sunrise Loop 46</string>
+			<key>Persistent ID</key>
+			<string>STCONT00000000002E</string>
+			<key>Total Time</key>
+			<integer>210000</integer>
+			<key>Track ID</key>
+			<integer>1046</integer>
+			<key>Track Type</key>
+			<string>File</string>
 		</dict>
 		<key>1047</key>
 		<dict>
-			<key>Track ID</key><integer>1047</integer>
-			<key>Name</key><string>Midday Theme 47</string>
-			<key>Artist</key><string>Synthetic Artist 10</string>
-			<key>Album</key><string>Synthetic Artist 10 — Selected Works</string>
-			<key>Genre</key><string>Pop</string>
-			<key>Total Time</key><integer>210000</integer>
-			<key>Persistent ID</key><string>STCONT00000000002F</string>
-			<key>Track Type</key><string>File</string>
+			<key>Album</key>
+			<string>Synthetic Artist 10 — Selected Works</string>
+			<key>Artist</key>
+			<string>Synthetic Artist 10</string>
+			<key>Genre</key>
+			<string>Pop</string>
+			<key>Name</key>
+			<string>Midday Theme 47</string>
+			<key>Persistent ID</key>
+			<string>STCONT00000000002F</string>
+			<key>Total Time</key>
+			<integer>220000</integer>
+			<key>Track ID</key>
+			<integer>1047</integer>
+			<key>Track Type</key>
+			<string>File</string>
 		</dict>
 		<key>1048</key>
 		<dict>
-			<key>Track ID</key><integer>1048</integer>
-			<key>Name</key><string>Afternoon Drift 48</string>
-			<key>Artist</key><string>Synthetic Artist 10</string>
-			<key>Album</key><string>Synthetic Artist 10 — Selected Works</string>
-			<key>Genre</key><string>Pop</string>
-			<key>Total Time</key><integer>210000</integer>
-			<key>Persistent ID</key><string>STCONT000000000030</string>
-			<key>Track Type</key><string>File</string>
+			<key>Album</key>
+			<string>Synthetic Artist 10 — Selected Works</string>
+			<key>Artist</key>
+			<string>Synthetic Artist 10</string>
+			<key>Genre</key>
+			<string>Pop</string>
+			<key>Name</key>
+			<string>Afternoon Drift 48</string>
+			<key>Persistent ID</key>
+			<string>STCONT000000000030</string>
+			<key>Total Time</key>
+			<integer>230000</integer>
+			<key>Track ID</key>
+			<integer>1048</integer>
+			<key>Track Type</key>
+			<string>File</string>
 		</dict>
 		<key>1049</key>
 		<dict>
-			<key>Track ID</key><integer>1049</integer>
-			<key>Name</key><string>Evening Pulse 49</string>
-			<key>Artist</key><string>Synthetic Artist 10</string>
-			<key>Album</key><string>Synthetic Artist 10 — Selected Works</string>
-			<key>Genre</key><string>Pop</string>
-			<key>Total Time</key><integer>210000</integer>
-			<key>Persistent ID</key><string>STCONT000000000031</string>
-			<key>Track Type</key><string>File</string>
+			<key>Album</key>
+			<string>Synthetic Artist 10 — Selected Works</string>
+			<key>Artist</key>
+			<string>Synthetic Artist 10</string>
+			<key>Genre</key>
+			<string>Pop</string>
+			<key>Name</key>
+			<string>Evening Pulse 49</string>
+			<key>Persistent ID</key>
+			<string>STCONT000000000031</string>
+			<key>Total Time</key>
+			<integer>240000</integer>
+			<key>Track ID</key>
+			<integer>1049</integer>
+			<key>Track Type</key>
+			<string>File</string>
 		</dict>
 		<key>1050</key>
 		<dict>
-			<key>Track ID</key><integer>1050</integer>
-			<key>Name</key><string>Night Bridge 50</string>
-			<key>Artist</key><string>Synthetic Artist 10</string>
-			<key>Album</key><string>Synthetic Artist 10 — Selected Works</string>
-			<key>Genre</key><string>Pop</string>
-			<key>Total Time</key><integer>210000</integer>
-			<key>Persistent ID</key><string>STCONT000000000032</string>
-			<key>Track Type</key><string>File</string>
+			<key>Album</key>
+			<string>Synthetic Artist 10 — Selected Works</string>
+			<key>Artist</key>
+			<string>Synthetic Artist 10</string>
+			<key>Genre</key>
+			<string>Pop</string>
+			<key>Name</key>
+			<string>Night Bridge 50</string>
+			<key>Persistent ID</key>
+			<string>STCONT000000000032</string>
+			<key>Total Time</key>
+			<integer>180000</integer>
+			<key>Track ID</key>
+			<integer>1050</integer>
+			<key>Track Type</key>
+			<string>File</string>
 		</dict>
 	</dict>
-	<key>Playlists</key>
-	<array>
-		<dict>
-			<key>Name</key><string>STARTER_CONTENT</string>
-			<key>Playlist ID</key><integer>1</integer>
-			<key>Playlist Persistent ID</key><string>STCONTPLAYLIST01</string>
-			<key>All Items</key><true/>
-			<key>Playlist Items</key>
-			<array>
-				<dict>
-					<key>Track ID</key><integer>1001</integer>
-				</dict>
-				<dict>
-					<key>Track ID</key><integer>1002</integer>
-				</dict>
-				<dict>
-					<key>Track ID</key><integer>1003</integer>
-				</dict>
-				<dict>
-					<key>Track ID</key><integer>1004</integer>
-				</dict>
-				<dict>
-					<key>Track ID</key><integer>1005</integer>
-				</dict>
-				<dict>
-					<key>Track ID</key><integer>1006</integer>
-				</dict>
-				<dict>
-					<key>Track ID</key><integer>1007</integer>
-				</dict>
-				<dict>
-					<key>Track ID</key><integer>1008</integer>
-				</dict>
-				<dict>
-					<key>Track ID</key><integer>1009</integer>
-				</dict>
-				<dict>
-					<key>Track ID</key><integer>1010</integer>
-				</dict>
-				<dict>
-					<key>Track ID</key><integer>1011</integer>
-				</dict>
-				<dict>
-					<key>Track ID</key><integer>1012</integer>
-				</dict>
-				<dict>
-					<key>Track ID</key><integer>1013</integer>
-				</dict>
-				<dict>
-					<key>Track ID</key><integer>1014</integer>
-				</dict>
-				<dict>
-					<key>Track ID</key><integer>1015</integer>
-				</dict>
-				<dict>
-					<key>Track ID</key><integer>1016</integer>
-				</dict>
-				<dict>
-					<key>Track ID</key><integer>1017</integer>
-				</dict>
-				<dict>
-					<key>Track ID</key><integer>1018</integer>
-				</dict>
-				<dict>
-					<key>Track ID</key><integer>1019</integer>
-				</dict>
-				<dict>
-					<key>Track ID</key><integer>1020</integer>
-				</dict>
-				<dict>
-					<key>Track ID</key><integer>1021</integer>
-				</dict>
-				<dict>
-					<key>Track ID</key><integer>1022</integer>
-				</dict>
-				<dict>
-					<key>Track ID</key><integer>1023</integer>
-				</dict>
-				<dict>
-					<key>Track ID</key><integer>1024</integer>
-				</dict>
-				<dict>
-					<key>Track ID</key><integer>1025</integer>
-				</dict>
-				<dict>
-					<key>Track ID</key><integer>1026</integer>
-				</dict>
-				<dict>
-					<key>Track ID</key><integer>1027</integer>
-				</dict>
-				<dict>
-					<key>Track ID</key><integer>1028</integer>
-				</dict>
-				<dict>
-					<key>Track ID</key><integer>1029</integer>
-				</dict>
-				<dict>
-					<key>Track ID</key><integer>1030</integer>
-				</dict>
-				<dict>
-					<key>Track ID</key><integer>1031</integer>
-				</dict>
-				<dict>
-					<key>Track ID</key><integer>1032</integer>
-				</dict>
-				<dict>
-					<key>Track ID</key><integer>1033</integer>
-				</dict>
-				<dict>
-					<key>Track ID</key><integer>1034</integer>
-				</dict>
-				<dict>
-					<key>Track ID</key><integer>1035</integer>
-				</dict>
-				<dict>
-					<key>Track ID</key><integer>1036</integer>
-				</dict>
-				<dict>
-					<key>Track ID</key><integer>1037</integer>
-				</dict>
-				<dict>
-					<key>Track ID</key><integer>1038</integer>
-				</dict>
-				<dict>
-					<key>Track ID</key><integer>1039</integer>
-				</dict>
-				<dict>
-					<key>Track ID</key><integer>1040</integer>
-				</dict>
-				<dict>
-					<key>Track ID</key><integer>1041</integer>
-				</dict>
-				<dict>
-					<key>Track ID</key><integer>1042</integer>
-				</dict>
-				<dict>
-					<key>Track ID</key><integer>1043</integer>
-				</dict>
-				<dict>
-					<key>Track ID</key><integer>1044</integer>
-				</dict>
-				<dict>
-					<key>Track ID</key><integer>1045</integer>
-				</dict>
-				<dict>
-					<key>Track ID</key><integer>1046</integer>
-				</dict>
-				<dict>
-					<key>Track ID</key><integer>1047</integer>
-				</dict>
-				<dict>
-					<key>Track ID</key><integer>1048</integer>
-				</dict>
-				<dict>
-					<key>Track ID</key><integer>1049</integer>
-				</dict>
-				<dict>
-					<key>Track ID</key><integer>1050</integer>
-				</dict>
-			</array>
-		</dict>
-	</array>
 </dict>
 </plist>

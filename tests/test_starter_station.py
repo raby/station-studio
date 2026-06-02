@@ -111,18 +111,39 @@ def test_starter_pools_match_generator_output() -> None:
       (b) the generator changed and the committed XMLs are stale —
           run `make refresh-starter-pools` to bring them up to date.
     Either way, the action is the same: run the Make target.
+
+    c1-review 🟡-1: generator switched to plistlib.dumps so the
+    output is bytes (escaped against unsafe chars in track titles)
+    — compare bytes vs bytes.
     """
     from scripts.generate_starter_pools import (
         build_content_pool, build_jingles_pool,
     )
 
-    assert build_content_pool() == STARTER_CONTENT_XML.read_text(), (
+    assert build_content_pool() == STARTER_CONTENT_XML.read_bytes(), (
         "starter-content.itunes.xml diverged from the generator — "
         "run `make refresh-starter-pools`"
     )
-    assert build_jingles_pool() == STARTER_JINGLES_XML.read_text(), (
+    assert build_jingles_pool() == STARTER_JINGLES_XML.read_bytes(), (
         "starter-jingles.itunes.xml diverged from the generator — "
         "run `make refresh-starter-pools`"
+    )
+
+
+def test_starter_pool_durations_vary_per_track() -> None:
+    """c1-review 🟢-1: variance pin. Pre-fix all 55 tracks had
+    `Total Time = 210000` (3:30 flat) which looked unintentional in
+    the XML diff. Now each track's duration is keyed off `tid % 7`,
+    giving 7 distinct duration buckets across the pool. Engine
+    doesn't care; this just keeps the synthetic data looking like
+    a real library."""
+    import plistlib
+
+    data = plistlib.loads(STARTER_CONTENT_XML.read_bytes())
+    durations = {t["Total Time"] for t in data["Tracks"].values()}
+    assert len(durations) == 7, (
+        f"expected 7 distinct durations (tid % 7 buckets); got "
+        f"{sorted(durations)}"
     )
 
 
@@ -141,12 +162,41 @@ def test_starter_sidecar_committed_and_well_formed() -> None:
     # Doesn't raise on a valid sidecar/template pair.
     validate_sidecar(sidecar, station_template=raw_template)
     # `derive_sidecar` reports "1 sections, 21 macros" for the starter.
-    # Macros are top-level in the sidecar (one entry per detected
-    # jingle group), not nested under blocks.
+    # Macros are top-level (one per detected weighted run between
+    # jingles), blocks are atomic (jingle) + macro-ref (weighted run).
     assert len(sidecar.get("sections", [])) >= 1
     assert len(sidecar.get("macros", [])) == 21, (
-        f"expected 21 macros (one per jingle slot), got "
-        f"{len(sidecar.get('macros', []))}"
+        f"expected 21 macros (one per weighted run between jingles), "
+        f"got {len(sidecar.get('macros', []))}"
+    )
+
+
+def test_starter_sidecar_atomic_blocks_at_jingle_positions() -> None:
+    """c1-review 🟡-2: pin POSITIONS, not just counts. The sidecar's
+    atomic blocks must point at slot_indices [0, 8, 16, ... 160] —
+    exactly the jingle positions in starter.json's flat_slots. A
+    future engine bug misaligning the macro→slot binding would slip
+    through a count-only check but fail here."""
+    from engine.editor_metadata import parse_sidecar
+
+    raw_template = json.loads(STARTER_JSON.read_text())
+    sidecar = parse_sidecar(STARTER_SIDECAR, station_template=raw_template)
+
+    blocks = sidecar["sections"][0]["blocks"]
+    atomic_indices = [
+        b["slot_index"] for b in blocks if b["kind"] == "atomic"
+    ]
+    assert atomic_indices == list(range(0, 168, 8)), (
+        f"atomic blocks must hit every 8th slot starting at 0; got "
+        f"{atomic_indices}"
+    )
+
+    # Belt-and-suspenders: blocks alternate atomic → macro-ref pairs
+    # (21 atomic + 21 macro = 42), preserving template-slot order.
+    kinds = [b["kind"] for b in blocks]
+    assert kinds == ["atomic", "macro"] * 21, (
+        f"sidecar blocks should alternate atomic→macro 21 times; got "
+        f"{kinds[:6]}..."
     )
 
 

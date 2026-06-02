@@ -15,19 +15,21 @@ deterministic from a counter so re-running this script produces
 byte-identical XMLs — fixing a typo is one `make
 refresh-starter-pools` command, the diff is small + reviewable.
 
+XML emission uses stdlib `plistlib.dumps` (c1-review 🟡-1): the
+previous string-concatenation approach was brittle to track titles
+that happen to contain `<` or `&`. plistlib escapes correctly +
+matches the iTunes plist format the importer already accepts. The
+output uses spaces for indent (plistlib default) rather than the
+tabs of older hand-rolled fixtures; that's fine — both are valid
+plist syntax.
+
 Run:
     make refresh-starter-pools         # writes both XMLs in place
     python -m scripts.generate_starter_pools  # same
-
-Why a generator script + committed XMLs rather than generate-on-boot?
-Per §16.14 D5: the XMLs are reviewable in PRs (a typo or content
-change is obvious in `git diff`), small enough to commit (~10KB
-total), and never go out-of-sync with the template. Generation is
-opt-in via the Make target, not a hidden first-boot step.
 """
 from __future__ import annotations
 
-import sys
+import plistlib
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -53,35 +55,7 @@ JINGLE_TITLES = [
 ]
 
 
-# ---------- XML emission ----------
-
-PLIST_HEADER = '''<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple Computer//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-\t<key>Major Version</key><integer>1</integer>
-\t<key>Minor Version</key><integer>1</integer>
-\t<key>Application Version</key><string>10.3</string>
-\t<key>Features</key><integer>5</integer>
-\t<key>Show Content Ratings</key><true/>
-\t<key>Music Folder</key><string>file://localhost/Users/starter/Music/iTunes/iTunes%20Media/</string>
-\t<key>Library Persistent ID</key><string>STARTERLIBRARY01</string>
-\t<key>Tracks</key>
-\t<dict>
-'''
-
-TRACK_BLOCK = '''\t\t<key>{tid}</key>
-\t\t<dict>
-\t\t\t<key>Track ID</key><integer>{tid}</integer>
-\t\t\t<key>Name</key><string>{name}</string>
-\t\t\t<key>Artist</key><string>{artist}</string>
-\t\t\t<key>Album</key><string>{album}</string>
-\t\t\t<key>Genre</key><string>{genre}</string>
-\t\t\t<key>Total Time</key><integer>210000</integer>
-\t\t\t<key>Persistent ID</key><string>{pid}</string>
-\t\t\t<key>Track Type</key><string>File</string>
-\t\t</dict>
-'''
+# ---------- helpers ----------
 
 
 def _persistent_id(prefix: str, n: int) -> str:
@@ -91,44 +65,76 @@ def _persistent_id(prefix: str, n: int) -> str:
     return f"{prefix}{n:012X}"
 
 
-def _playlist_block(name: str, pid: str, track_ids: list[int]) -> str:
-    items = "\n".join(
-        f"\t\t\t\t<dict>\n\t\t\t\t\t<key>Track ID</key><integer>{tid}</integer>\n\t\t\t\t</dict>"
-        for tid in track_ids
-    )
-    return f'''\t\t<dict>
-\t\t\t<key>Name</key><string>{name}</string>
-\t\t\t<key>Playlist ID</key><integer>1</integer>
-\t\t\t<key>Playlist Persistent ID</key><string>{pid}</string>
-\t\t\t<key>All Items</key><true/>
-\t\t\t<key>Playlist Items</key>
-\t\t\t<array>
-{items}
-\t\t\t</array>
-\t\t</dict>
-'''
+def _duration_ms(tid: int) -> int:
+    """c1-review 🟢-1: synthetic per-track variance instead of every
+    track being 3:30 flat. 7 buckets (180s..240s in 10s steps) keyed
+    off the track id mod 7. Pure aesthetic — engine doesn't care, but
+    the resulting XML looks like a real library rather than a copy-
+    pasted fixture. Deterministic from tid so the generator stays
+    idempotent."""
+    return (180_000 + (tid % 7) * 10_000)
 
 
-def _emit_xml(
-    pool_name: str,
-    pool_pid: str,
+def _track_dict(
+    tid: int, name: str, artist: str, album: str, genre: str, pid: str,
+) -> dict:
+    """One Track entry as a Python dict — `plistlib.dumps` serialises
+    it to the iTunes-shaped XML block."""
+    return {
+        "Track ID": tid,
+        "Name": name,
+        "Artist": artist,
+        "Album": album,
+        "Genre": genre,
+        "Total Time": _duration_ms(tid),
+        "Persistent ID": pid,
+        "Track Type": "File",
+    }
+
+
+def _library_dict(
+    *,
+    library_pid: str,
     tracks: list[dict],
-) -> str:
-    """Assemble the full plist XML for a single pool."""
-    out = [PLIST_HEADER]
-    for t in tracks:
-        out.append(TRACK_BLOCK.format(**t))
-    out.append("\t</dict>\n\t<key>Playlists</key>\n\t<array>\n")
-    out.append(_playlist_block(
-        pool_name, pool_pid, [t["tid"] for t in tracks],
-    ))
-    out.append("\t</array>\n</dict>\n</plist>\n")
-    return "".join(out)
+    playlist_name: str,
+    playlist_pid: str,
+) -> dict:
+    """Top-level iTunes plist dict for one source pool.
+
+    `Tracks` is keyed by string-form Track ID (iTunes' XML format
+    uses string `<key>` tags even for numeric track IDs). `Playlists`
+    is a single-element array referencing every track in source
+    order.
+    """
+    return {
+        "Major Version": 1,
+        "Minor Version": 1,
+        "Application Version": "10.3",
+        "Features": 5,
+        "Show Content Ratings": True,
+        "Music Folder": (
+            "file://localhost/Users/starter/Music/iTunes/iTunes%20Media/"
+        ),
+        "Library Persistent ID": library_pid,
+        "Tracks": {str(t["Track ID"]): t for t in tracks},
+        "Playlists": [
+            {
+                "Name": playlist_name,
+                "Playlist ID": 1,
+                "Playlist Persistent ID": playlist_pid,
+                "All Items": True,
+                "Playlist Items": [
+                    {"Track ID": t["Track ID"]} for t in tracks
+                ],
+            },
+        ],
+    }
 
 
 # ---------- pool construction ----------
 
-def build_content_pool() -> str:
+
+def build_content_pool() -> bytes:
     """50 tracks: 10 artists × 5 titles, Genre=Pop. Track IDs start
     at 1000 + counter, persistent IDs `STCONT...` namespace."""
     tracks: list[dict] = []
@@ -137,42 +143,46 @@ def build_content_pool() -> str:
         for title in TRACK_TITLES:
             counter += 1
             tid = 1000 + counter
-            tracks.append({
-                "tid": tid,
-                "name": f"{title} {counter:02d}",
-                "artist": artist,
-                "album": f"{artist} — Selected Works",
-                "genre": "Pop",
-                "pid": _persistent_id("STCONT", counter),
-            })
-    return _emit_xml(
-        pool_name="STARTER_CONTENT",
-        pool_pid="STCONTPLAYLIST01",
+            tracks.append(_track_dict(
+                tid=tid,
+                name=f"{title} {counter:02d}",
+                artist=artist,
+                album=f"{artist} — Selected Works",
+                genre="Pop",
+                pid=_persistent_id("STCONT", counter),
+            ))
+    return plistlib.dumps(_library_dict(
+        library_pid="STARTERLIBRARY01",
         tracks=tracks,
-    )
+        playlist_name="STARTER_CONTENT",
+        playlist_pid="STCONTPLAYLIST01",
+    ))
 
 
-def build_jingles_pool() -> str:
+def build_jingles_pool() -> bytes:
     """5 tracks, Genre=Jingle. Track IDs start at 2000+counter,
     persistent IDs in `STJING...` namespace."""
     tracks: list[dict] = []
     for i, title in enumerate(JINGLE_TITLES, start=1):
-        tracks.append({
-            "tid": 2000 + i,
-            "name": title,
-            "artist": "Station Imaging",
-            "album": "Station ID Sweepers",
-            "genre": "Jingle",
-            "pid": _persistent_id("STJING", i),
-        })
-    return _emit_xml(
-        pool_name="STARTER_JINGLES",
-        pool_pid="STJINGPLAYLIST01",
+        tid = 2000 + i
+        tracks.append(_track_dict(
+            tid=tid,
+            name=title,
+            artist="Station Imaging",
+            album="Station ID Sweepers",
+            genre="Jingle",
+            pid=_persistent_id("STJING", i),
+        ))
+    return plistlib.dumps(_library_dict(
+        library_pid="STARTERLIBRARY01",
         tracks=tracks,
-    )
+        playlist_name="STARTER_JINGLES",
+        playlist_pid="STJINGPLAYLIST01",
+    ))
 
 
 # ---------- entry point ----------
+
 
 def main(argv: list[str] | None = None) -> int:
     """Write both pool XMLs in-place under stations/. Idempotent —
@@ -183,8 +193,8 @@ def main(argv: list[str] | None = None) -> int:
     content_path = STATIONS_DIR / "starter-content.itunes.xml"
     jingles_path = STATIONS_DIR / "starter-jingles.itunes.xml"
 
-    content_path.write_text(content_xml)
-    jingles_path.write_text(jingles_xml)
+    content_path.write_bytes(content_xml)
+    jingles_path.write_bytes(jingles_xml)
 
     print(f"  wrote  {content_path.relative_to(REPO_ROOT)}  "
           f"({len(content_xml):,} bytes)")
