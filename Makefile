@@ -253,6 +253,14 @@ migration-parity:
 check-deps-parity:
 	$(PY) scripts/check_deps_parity.py
 
+# §16.14 c1 — regenerate the starter station's synthetic iTunes pools.
+# Deterministic: re-running against unchanged inputs writes
+# byte-identical files. Fix a typo or change the track count in
+# `scripts/generate_starter_pools.py`, then run this target —
+# `git diff stations/starter-*.itunes.xml` shows the result.
+refresh-starter-pools:
+	$(PY) -m scripts.generate_starter_pools
+
 # §14.31 backfill: populate PlaylistEntry.slot_type for playlists
 # generated before the column existed. Idempotent — re-running after
 # the first pass is a no-op. Use --dry-run flag (`make

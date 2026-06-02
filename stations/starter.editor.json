@@ -1,0 +1,395 @@
+{
+  "_comment": "Auto-derived from the station's flat_slots via scripts/derive_sidecar.py. Heuristic: sections split at Daytime jingles; macros for runs of \u22653 identical specs. Refine section names + macro names to match your programming concept (the heuristic can't infer 'Morning Drive' from a block of 200 commercials).",
+  "schema_version": 1,
+  "sections": [
+    {
+      "id": "segment-1",
+      "name": "Segment 1",
+      "blocks": [
+        {
+          "kind": "atomic",
+          "slot_index": 0
+        },
+        {
+          "kind": "macro",
+          "ref": "weighted-1"
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 8
+        },
+        {
+          "kind": "macro",
+          "ref": "weighted-2"
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 16
+        },
+        {
+          "kind": "macro",
+          "ref": "weighted-3"
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 24
+        },
+        {
+          "kind": "macro",
+          "ref": "weighted-4"
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 32
+        },
+        {
+          "kind": "macro",
+          "ref": "weighted-5"
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 40
+        },
+        {
+          "kind": "macro",
+          "ref": "weighted-6"
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 48
+        },
+        {
+          "kind": "macro",
+          "ref": "weighted-7"
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 56
+        },
+        {
+          "kind": "macro",
+          "ref": "weighted-8"
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 64
+        },
+        {
+          "kind": "macro",
+          "ref": "weighted-9"
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 72
+        },
+        {
+          "kind": "macro",
+          "ref": "weighted-10"
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 80
+        },
+        {
+          "kind": "macro",
+          "ref": "weighted-11"
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 88
+        },
+        {
+          "kind": "macro",
+          "ref": "weighted-12"
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 96
+        },
+        {
+          "kind": "macro",
+          "ref": "weighted-13"
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 104
+        },
+        {
+          "kind": "macro",
+          "ref": "weighted-14"
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 112
+        },
+        {
+          "kind": "macro",
+          "ref": "weighted-15"
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 120
+        },
+        {
+          "kind": "macro",
+          "ref": "weighted-16"
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 128
+        },
+        {
+          "kind": "macro",
+          "ref": "weighted-17"
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 136
+        },
+        {
+          "kind": "macro",
+          "ref": "weighted-18"
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 144
+        },
+        {
+          "kind": "macro",
+          "ref": "weighted-19"
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 152
+        },
+        {
+          "kind": "macro",
+          "ref": "weighted-20"
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 160
+        },
+        {
+          "kind": "macro",
+          "ref": "weighted-21"
+        }
+      ]
+    }
+  ],
+  "macros": [
+    {
+      "id": "weighted-1",
+      "name": "7 \u00d7 weighted",
+      "repeat": 7,
+      "spec": {
+        "source": "STARTER_CONTENT",
+        "strategy": "weighted",
+        "size": 1
+      }
+    },
+    {
+      "id": "weighted-2",
+      "name": "7 \u00d7 weighted",
+      "repeat": 7,
+      "spec": {
+        "source": "STARTER_CONTENT",
+        "strategy": "weighted",
+        "size": 1
+      }
+    },
+    {
+      "id": "weighted-3",
+      "name": "7 \u00d7 weighted",
+      "repeat": 7,
+      "spec": {
+        "source": "STARTER_CONTENT",
+        "strategy": "weighted",
+        "size": 1
+      }
+    },
+    {
+      "id": "weighted-4",
+      "name": "7 \u00d7 weighted",
+      "repeat": 7,
+      "spec": {
+        "source": "STARTER_CONTENT",
+        "strategy": "weighted",
+        "size": 1
+      }
+    },
+    {
+      "id": "weighted-5",
+      "name": "7 \u00d7 weighted",
+      "repeat": 7,
+      "spec": {
+        "source": "STARTER_CONTENT",
+        "strategy": "weighted",
+        "size": 1
+      }
+    },
+    {
+      "id": "weighted-6",
+      "name": "7 \u00d7 weighted",
+      "repeat": 7,
+      "spec": {
+        "source": "STARTER_CONTENT",
+        "strategy": "weighted",
+        "size": 1
+      }
+    },
+    {
+      "id": "weighted-7",
+      "name": "7 \u00d7 weighted",
+      "repeat": 7,
+      "spec": {
+        "source": "STARTER_CONTENT",
+        "strategy": "weighted",
+        "size": 1
+      }
+    },
+    {
+      "id": "weighted-8",
+      "name": "7 \u00d7 weighted",
+      "repeat": 7,
+      "spec": {
+        "source": "STARTER_CONTENT",
+        "strategy": "weighted",
+        "size": 1
+      }
+    },
+    {
+      "id": "weighted-9",
+      "name": "7 \u00d7 weighted",
+      "repeat": 7,
+      "spec": {
+        "source": "STARTER_CONTENT",
+        "strategy": "weighted",
+        "size": 1
+      }
+    },
+    {
+      "id": "weighted-10",
+      "name": "7 \u00d7 weighted",
+      "repeat": 7,
+      "spec": {
+        "source": "STARTER_CONTENT",
+        "strategy": "weighted",
+        "size": 1
+      }
+    },
+    {
+      "id": "weighted-11",
+      "name": "7 \u00d7 weighted",
+      "repeat": 7,
+      "spec": {
+        "source": "STARTER_CONTENT",
+        "strategy": "weighted",
+        "size": 1
+      }
+    },
+    {
+      "id": "weighted-12",
+      "name": "7 \u00d7 weighted",
+      "repeat": 7,
+      "spec": {
+        "source": "STARTER_CONTENT",
+        "strategy": "weighted",
+        "size": 1
+      }
+    },
+    {
+      "id": "weighted-13",
+      "name": "7 \u00d7 weighted",
+      "repeat": 7,
+      "spec": {
+        "source": "STARTER_CONTENT",
+        "strategy": "weighted",
+        "size": 1
+      }
+    },
+    {
+      "id": "weighted-14",
+      "name": "7 \u00d7 weighted",
+      "repeat": 7,
+      "spec": {
+        "source": "STARTER_CONTENT",
+        "strategy": "weighted",
+        "size": 1
+      }
+    },
+    {
+      "id": "weighted-15",
+      "name": "7 \u00d7 weighted",
+      "repeat": 7,
+      "spec": {
+        "source": "STARTER_CONTENT",
+        "strategy": "weighted",
+        "size": 1
+      }
+    },
+    {
+      "id": "weighted-16",
+      "name": "7 \u00d7 weighted",
+      "repeat": 7,
+      "spec": {
+        "source": "STARTER_CONTENT",
+        "strategy": "weighted",
+        "size": 1
+      }
+    },
+    {
+      "id": "weighted-17",
+      "name": "7 \u00d7 weighted",
+      "repeat": 7,
+      "spec": {
+        "source": "STARTER_CONTENT",
+        "strategy": "weighted",
+        "size": 1
+      }
+    },
+    {
+      "id": "weighted-18",
+      "name": "7 \u00d7 weighted",
+      "repeat": 7,
+      "spec": {
+        "source": "STARTER_CONTENT",
+        "strategy": "weighted",
+        "size": 1
+      }
+    },
+    {
+      "id": "weighted-19",
+      "name": "7 \u00d7 weighted",
+      "repeat": 7,
+      "spec": {
+        "source": "STARTER_CONTENT",
+        "strategy": "weighted",
+        "size": 1
+      }
+    },
+    {
+      "id": "weighted-20",
+      "name": "7 \u00d7 weighted",
+      "repeat": 7,
+      "spec": {
+        "source": "STARTER_CONTENT",
+        "strategy": "weighted",
+        "size": 1
+      }
+    },
+    {
+      "id": "weighted-21",
+      "name": "7 \u00d7 weighted",
+      "repeat": 7,
+      "spec": {
+        "source": "STARTER_CONTENT",
+        "strategy": "weighted",
+        "size": 1
+      }
+    }
+  ],
+  "layout_order": [
+    "segment-1"
+  ]
+}

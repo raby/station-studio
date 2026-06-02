@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple Computer//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Major Version</key><integer>1</integer>
+	<key>Minor Version</key><integer>1</integer>
+	<key>Application Version</key><string>10.3</string>
+	<key>Features</key><integer>5</integer>
+	<key>Show Content Ratings</key><true/>
+	<key>Music Folder</key><string>file://localhost/Users/starter/Music/iTunes/iTunes%20Media/</string>
+	<key>Library Persistent ID</key><string>STARTERLIBRARY01</string>
+	<key>Tracks</key>
+	<dict>
+		<key>2001</key>
+		<dict>
+			<key>Track ID</key><integer>2001</integer>
+			<key>Name</key><string>Daytime ID 1</string>
+			<key>Artist</key><string>Station Imaging</string>
+			<key>Album</key><string>Station ID Sweepers</string>
+			<key>Genre</key><string>Jingle</string>
+			<key>Total Time</key><integer>210000</integer>
+			<key>Persistent ID</key><string>STJING000000000001</string>
+			<key>Track Type</key><string>File</string>
+		</dict>
+		<key>2002</key>
+		<dict>
+			<key>Track ID</key><integer>2002</integer>
+			<key>Name</key><string>Daytime ID 2</string>
+			<key>Artist</key><string>Station Imaging</string>
+			<key>Album</key><string>Station ID Sweepers</string>
+			<key>Genre</key><string>Jingle</string>
+			<key>Total Time</key><integer>210000</integer>
+			<key>Persistent ID</key><string>STJING000000000002</string>
+			<key>Track Type</key><string>File</string>
+		</dict>
+		<key>2003</key>
+		<dict>
+			<key>Track ID</key><integer>2003</integer>
+			<key>Name</key><string>Daytime ID 3</string>
+			<key>Artist</key><string>Station Imaging</string>
+			<key>Album</key><string>Station ID Sweepers</string>
+			<key>Genre</key><string>Jingle</string>
+			<key>Total Time</key><integer>210000</integer>
+			<key>Persistent ID</key><string>STJING000000000003</string>
+			<key>Track Type</key><string>File</string>
+		</dict>
+		<key>2004</key>
+		<dict>
+			<key>Track ID</key><integer>2004</integer>
+			<key>Name</key><string>Hourly Sweep</string>
+			<key>Artist</key><string>Station Imaging</string>
+			<key>Album</key><string>Station ID Sweepers</string>
+			<key>Genre</key><string>Jingle</string>
+			<key>Total Time</key><integer>210000</integer>
+			<key>Persistent ID</key><string>STJING000000000004</string>
+			<key>Track Type</key><string>File</string>
+		</dict>
+		<key>2005</key>
+		<dict>
+			<key>Track ID</key><integer>2005</integer>
+			<key>Name</key><string>Station Tag</string>
+			<key>Artist</key><string>Station Imaging</string>
+			<key>Album</key><string>Station ID Sweepers</string>
+			<key>Genre</key><string>Jingle</string>
+			<key>Total Time</key><integer>210000</integer>
+			<key>Persistent ID</key><string>STJING000000000005</string>
+			<key>Track Type</key><string>File</string>
+		</dict>
+	</dict>
+	<key>Playlists</key>
+	<array>
+		<dict>
+			<key>Name</key><string>STARTER_JINGLES</string>
+			<key>Playlist ID</key><integer>1</integer>
+			<key>Playlist Persistent ID</key><string>STJINGPLAYLIST01</string>
+			<key>All Items</key><true/>
+			<key>Playlist Items</key>
+			<array>
+				<dict>
+					<key>Track ID</key><integer>2001</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key><integer>2002</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key><integer>2003</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key><integer>2004</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key><integer>2005</integer>
+				</dict>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>
