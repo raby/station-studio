@@ -6175,7 +6175,7 @@ direction — spec slice §16.2.0 is the next planned work.
 | Rules CRUD UI panel      | **Shipped (§16.10).** `<RulesPanel>` self-contained component (load → edit → Save/Reset, client-side validation mirroring engine.rules, per-row state) + `/stations/[slug]/rules` route + "⚙ Rules" header link. Backend CRUD pre-existed; frontend-only. Reusable for the §16.2 sidebar shell. |
 | In-UI generation progress | **Shipped (§16.11).** Polling-job-id transport (POST/GET/DELETE `/api/jobs/...`); engine became a generator yielding `ProgressEvent | GenerationResult` with Decision G invariants enforced + tested; in-memory `JobStore` with threading.Lock + immutable snapshots + lazy GC (cancelled-immediate, done/error-60s-grace) + per-(slug, kind) eviction. `<ProgressIndicator>` Svelte component reads `JobSnapshot` snapshots; station-detail page wires `startGenerateJob` → `watchJob` → navigate; JobStartConflict (409) adopts the existing job. Unblocks §16.2.6 live preview's transport. |
 | Stations list polish     | **Shipped (§16.12).** Landing page has search (name/slug substring), cadence + generated filter chips, sort (name / last-generated / recently-edited), + per-row "Last generated: WEEKLY 026 · 3 days ago" line. GET /api/stations returns enriched StationSummary aggregates (2 bounded queries, argmax-by-timestamp). Pure filter/sort logic in web/src/lib/stations.ts. |
-| Install story            | **IN FLIGHT — §16.13 (c1-c5 SHIPPED, c6 docs pending).** Wheel + docker channels both live and smoke-passing. `make wheel-smoke` and `make image-smoke` are release-blocker gates (curl `/`, `/api/stations`, `/sources` against fresh install). Docker image multi-stage, ~312MB, non-root, /data volume. c6 = unified quick-start docs pass before slice close-out. Retires §16.22's SSR premise (no Node at runtime). |
+| Install story            | **SHIPPED — §16.13 (c1-c6, six commits + 5 review-fix commits).** Wheel + docker channels both live, smoke-passing, release-blocker-gated (`make wheel-smoke` + `make image-smoke` curl `/`, `/api/stations`, `/sources` against the fresh install). Docker image multi-stage, ~312MB, non-root, HEALTHCHECK, /data volume. README's unified "Install" section presents all three channels (docker / wheel / dev clone) as equals with a prerequisites-keyed picker. Retires §16.22's SSR premise (no Node at runtime). Watch-list: §16.13.t1 (PyPI publish), t2 (full CLI subcommand set), t3-t9 (smaller follow-ups). |
 | Pool-import UI           | **SHIPPED — §16.25.** `/sources` page (list + single/batch add + per-row Re-import + Delete) + per-station embed on `/stations/[slug]` that re-fetches the §16.19 overview on any panel change + §16.19 "not imported" badge deep-links to the prefilled add-form. File-upload primary, typed-path advanced. Six commits + multiple mid-slice review fixes. |
 | Hobbyist starter station | Queued — §16.14. 100-200-slot example structurally simpler than Classics, with synthetic starter XMLs for end-to-end boot without external data. |
 | Docs site                | Deferred — §16.15. After §16.2 + §16.13 + §16.14 ship.           |
@@ -6252,7 +6252,7 @@ Master order at a glance. Detailed briefs follow below.
 | 4 | ~~§16.11 In-UI generation progress~~ | ✅ shipped | **SHIPPED** (d10c560). Job-runner pattern: `generate_stream` engine generator + in-memory `JobStore` + `POST/GET/DELETE /api/jobs/...` polling + `<ProgressIndicator>` Svelte component. Unblocks §16.2.6 live preview's transport. |
 | 5 | ~~§16.12 Stations list polish (search / filter / recent generations)~~ | ✅ shipped | **SHIPPED.** Search + cadence/generated filter chips + sort (name / last-generated / recently-edited) + per-row last-generated line. GET /api/stations enriched with StationSummary aggregates. |
 | 6 | §16.25 Pool-import UI | **SHIPPED** | The §16.13 D1 gate-unblocker. `/sources` page + per-station embed + deep-link badge; six commits, multiple mid-slice review passes. |
-| 7 | §16.13 Install story (pip / docker) | **IN FLIGHT** | c1-c5 shipped (wheel + docker both smoke-passing). c6 (quick-start docs pass) is the only remaining hop before slice close-out. |
+| 7 | ~~§16.13 Install story (pip / docker)~~ | ✅ shipped | **SHIPPED** (c1-c6, six commits). Wheel + docker channels both live + release-blocker-gated. Closed D1/D2/D3; retires §16.22 SSR premise. Watch-list (t1-t9) tracks deferred follow-ups; PyPI publish (t1) is the natural next slice if a stranger asks for clone-free install. |
 | 7 | §16.14 Hobbyist starter station | small | Fresh install needs a runnable example without external XMLs. |
 | 8 | §16.15 Docs site (MkDocs-Material) | medium | After enough product is built to justify a doc site. |
 
@@ -9658,11 +9658,21 @@ migration + wheel + docker + docs).
 | c2 (`0d5ed39`) + review (`4047234`) | SvelteKit adapter-static migration + `attach_spa_routes()` in api/main.py (StaticFiles mount under `/api/*` exclusion + index.html catch-all with `Cache-Control: no-cache`). 11 API tests pin SPA routing + auto-docs survival. |
 | c3 (`120d679`) + review (`4ac9c1f`) | `station_studio/home.py` + `station_studio/bootstrap.py` (XDG-style app-home: `$STATION_STUDIO_HOME` env or `~/.station-studio/`; first-run bootstrap copies bundled stations + runs `alembic upgrade head`). CLI's serve/import/seed now actually wired. 13 bootstrap tests + name-validation regression. |
 | c4 (`7d86c8b`) + review (`a43d3e0`) | Wheel orchestration — `force-include "web/build"` ships the SvelteKit static SPA. `make wheel` (npm build + python build) + `make wheel-smoke` (install into temp venv + curl `/`, `/api/stations`, `/sources`). api/deps env-skip when `STATION_STUDIO_STATIONS_DIR` set. 7 packaging tests including force-include mapping-direction pin. |
-| **c5 (_this commit_)** | **Docker image + compose** — multi-stage Dockerfile (node:22 web build → python:3.12-slim wheel build → python:3.12-slim runtime, non-root, /data volume). `docker-compose.yml` (single service, named volume, `unless-stopped` restart). `.dockerignore` (excludes .venv/node_modules/*.db/secrets). `make image` + `make image-smoke` (build + container + curl). Final image **~312MB**. Live-smoke: container ready 2s after start, all three URLs 200 with expected content-types. |
+| c5 (`0783513`) + review (`989c6dc`) | Docker image + compose — multi-stage Dockerfile (node:22 web build → python:3.12-slim wheel build → python:3.12-slim runtime, non-root, /data volume, HEALTHCHECK via urllib probe). `docker-compose.yml` (single service, name-pinned volume, `unless-stopped` restart). `.dockerignore` (excludes tests/, .venv/, node_modules/, *.db, secrets). `make image` + `make image-smoke`. Final image **~312MB**. Container reports `(healthy)` after ~25s; smoke-curl `/`, `/api/stations`, `/sources` clean. |
+| **c6 (_this commit_)** | **Unified quick-start docs + slice close-out.** README "Quick start" replaced by "Install" with three equal-weight channels (docker / pip wheel / dev clone) + a "which should I pick?" table keyed by prerequisites. "Loading your music" lifted out to its own H2 (was buried under quick-start). "Single-worker for now" callout moved below the install block so it applies to all three channels uniformly. Project status table gained dedicated "Install" + "CLI" rows reflecting what shipped. CONTRIBUTING.md test-discipline table adds `make wheel-smoke` + `make image-smoke` as release-blockers. §15 status snapshot bumped: Install story moves from "IN FLIGHT" to **"SHIPPED — both channels."** |
 
-**Pending in this slice.** c6 — quick-start docs rewrite (folds
-into §16.15 docs site, but the README's pip+docker quick-start
-sections need a final unified pass).
+**§16.13 CLOSED.** D1 (pool-import UI gate) cleared by §16.25;
+D2 (both channels) + D3 (both first-class) shipped via c1-c6.
+Watch-list (t1-t9) tracks deferred work: PyPI publish, full CLI
+subcommand set, real-uvicorn integration test, deps drift,
+bundled_path() depth check, _validate_name hoist, callback-coupled
+bootstrap, scripts/ library-vs-dev-tool split.
+
+**§16.22 reconciliation now binding.** Per the c1 design pass, this
+slice retires §16.22's server-render premise — adapter-static
+foreclosed the SSR first-paint win. §16.22 should be re-scoped to
+"client-side `load()` refactor (flash on nav only)" or closed at
+the next plan-audit.
 
 ---
 

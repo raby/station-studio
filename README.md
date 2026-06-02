@@ -47,70 +47,21 @@ chip-per-pick canvas grouped into sections, color-coded by source
 Click "🗺 Visualise template" on any station page. (Read-only today;
 in-canvas authoring is on the roadmap — see DESIGN.md §16.2.3+.)
 
-## Quick start
+## Install
 
-```bash
-git clone https://github.com/raby/station-studio.git
-cd station-studio
-make install                 # creates .venv, installs Python + Node deps
-make dev                     # FastAPI :8001 + SvelteKit :5173 in parallel
-```
+Three install channels, all first-class. Pick whichever matches what
+you've got installed:
 
-Open <http://localhost:5173>. The two example stations (Rebirth
-Classics + Rebirth Radio) are seeded automatically on first boot
-from `stations/*.json` — you'll see them in the sidebar. Pick one
-and explore.
+| Channel | Prerequisites | Best for |
+|---|---|---|
+| **Docker** | docker | Trying it out, leaving it running on a NAS |
+| **Pip wheel** | Python 3.11+ | Local-only / BYO-music, no Node setup |
+| **Dev clone** | Python 3.11+, Node 22+, `make` | Hacking on Station Studio itself |
 
-To import your own iTunes XMLs as source pools, open the
-[**Sources** page](http://localhost:5173/sources) (or click "Source
-pools →" from the landing). Drag-and-drop or pick an XML file, name
-the pool, choose a role (content / reference), and hit Import. Re-
-import to refresh, Delete to remove — all from the same page (§16.25).
+All three serve the same UI + API and the same auto-seeded example
+stations. Pick one:
 
-In Music (macOS), export a playlist as XML via:
-**File → Library → Export Playlist… → choose "XML" format**.
-(In iTunes on Windows, same path.)
-
-**Advanced: many pools from a manifest** (CLI). The classic batch path
-still ships for power users — drop a JSON manifest at
-[`tests/fixtures/sample_pool_manifest.json`](tests/fixtures/sample_pool_manifest.json)'s
-shape and run:
-```bash
-make import-weekly-pools manifest=path/to/your-manifest.json
-```
-Useful when you have a fixed list of pools to import in CI / on a
-fresh dev box, or when re-bootstrapping a station from scratch. The
-UI path above is the recommended hobbyist flow.
-
-Full install + first-station tutorial: see
-[docs/getting-started.md](docs/getting-started.md)
-*(coming soon — for now, see `Makefile` + `DESIGN.md` §15
-status snapshot for the current capability surface).*
-
-### Install as a wheel (no clone)
-
-The dev workflow above clones the repo so you can hack on it. If you
-just want to **use** station-studio, build a wheel and `pip install`
-it into a regular venv:
-
-```bash
-make wheel          # builds web/build + dist/station_studio-*.whl
-pip install dist/station_studio-*.whl
-station-studio serve --host 127.0.0.1 --port 8001
-```
-
-On first run the CLI creates `~/.station-studio/` (configurable via
-`$STATION_STUDIO_HOME`), copies the example stations + runs Alembic,
-and serves the UI + API from a single process at the chosen port. No
-SvelteKit dev server, no `make dev`, no repo checkout required.
-
-`make wheel-smoke` does the same end-to-end in a throwaway venv and
-curls the running server — handy as a release-blocker check.
-
-### Run with docker-compose (no Python, no Node)
-
-For the zero-prerequisites path — try station-studio without
-installing anything except docker — use the docker-compose file:
+### 1. Docker (no Python, no Node)
 
 ```bash
 git clone https://github.com/raby/station-studio.git
@@ -118,23 +69,90 @@ cd station-studio
 docker compose up --build       # first run builds; later runs reuse
 ```
 
-Open <http://localhost:8001>. App-home lives in a docker-managed
-volume (`station-studio-data`), so your imported pools, DBs, and
-exports survive `docker compose down`. Inspect with `docker volume
-inspect station-studio-data`; back up with `docker run --rm -v
-station-studio-data:/data -v $PWD:/backup alpine tar czf
-/backup/data.tar.gz /data`.
+Open <http://localhost:8001>. App-home (your DB + imported pools +
+exports) lives in a docker-managed volume named
+`station-studio-data`, so state survives `docker compose down`.
+Inspect with `docker volume inspect station-studio-data`; back up
+with:
 
-The image is multi-stage (node-build → wheel-build → slim runtime),
-~310MB. Same SvelteKit static SPA as `make wheel` — no divergent
-build path. `make image-smoke` is the release-blocker equivalent.
+```bash
+docker run --rm -v station-studio-data:/data -v $PWD:/backup \
+  alpine tar czf /backup/data.tar.gz /data
+```
+
+The image is multi-stage (node-build → wheel-build → slim runtime,
+non-root, healthchecked), ~312MB. Same SvelteKit static SPA as the
+pip wheel — no divergent build path.
+
+### 2. Pip wheel (Python only, BYO-music)
+
+If you have Python 3.11+ and want a single-process app on
+`localhost`, build a wheel and pip-install it:
+
+```bash
+git clone https://github.com/raby/station-studio.git
+cd station-studio
+make wheel                                # builds web/build + dist/*.whl
+pip install dist/station_studio-*.whl
+station-studio serve --host 127.0.0.1 --port 8001
+```
+
+`make wheel` runs the SvelteKit static build internally — you don't
+need Node installed separately at *runtime*, only at build time. On
+first run the CLI creates `~/.station-studio/` (override with
+`$STATION_STUDIO_HOME`), copies the example stations, and runs
+Alembic. PyPI publish — so strangers can `pip install
+station-studio` with no clone — is queued as §16.13.t1.
+
+### 3. Dev clone (hack on it)
+
+If you want to modify Station Studio or contribute upstream:
+
+```bash
+git clone https://github.com/raby/station-studio.git
+cd station-studio
+make install                  # creates .venv, installs Python + Node deps
+make dev                      # FastAPI :8001 + SvelteKit :5173 with HMR
+```
+
+Open <http://localhost:5173>. Hot-reload on both backend and
+frontend; see [CONTRIBUTING.md](CONTRIBUTING.md) for the slice
+pattern + test discipline.
 
 > **Single-worker for now.** The async-generation job tracker
-> (§16.11) holds job state in-memory per uvicorn worker. If you
-> run `uvicorn --workers N` with N > 1, the frontend's polling
-> request can land on a worker that doesn't know about the job
-> and you'll get spurious 404s. `make dev` uses a single worker;
-> stick to that until DB-backed job state lands (§16.21+).
+> (§16.11) holds job state in-memory per uvicorn worker. All three
+> channels above use a single worker; if you reconfigure to
+> `--workers N` (N>1), the frontend's polling request can land on
+> a worker that doesn't know about the job and you'll get spurious
+> 404s. Stick to single-worker until DB-backed job state lands
+> (§16.21+).
+
+## Loading your music
+
+The two example stations (Rebirth Classics + Rebirth Radio) are
+seeded automatically on first boot — pick one in the sidebar.
+
+To import your own iTunes XMLs as source pools, open the **Sources**
+page (or click "Source pools →" from the landing). Drag-and-drop or
+pick an XML file, name the pool, choose a role (content / reference),
+and hit Import. Re-import to refresh, Delete to remove (§16.25).
+
+In Music (macOS), export a playlist as XML via:
+**File → Library → Export Playlist… → choose "XML" format**.
+(In iTunes on Windows, same path.)
+
+**Advanced: many pools from a manifest** (CLI). The batch path still
+ships for power users — drop a JSON manifest at the shape of
+[`tests/fixtures/sample_pool_manifest.json`](tests/fixtures/sample_pool_manifest.json)
+and run (from the dev clone):
+
+```bash
+make import-weekly-pools manifest=path/to/your-manifest.json
+```
+
+Useful when you have a fixed pool list to import in CI / on a fresh
+box, or when re-bootstrapping a station from scratch. The UI path
+above is the recommended hobbyist flow.
 
 ## Example stations included
 
@@ -194,8 +212,9 @@ Each strategy is a small pure-function module under `engine/strategies/`.
 |---|---|
 | **Engine** | Stable. Byte-equality verified across 30-week chains for two structurally distinct stations. |
 | **Backend API** | Stable. FastAPI; full CRUD on stations + sources + rules. |
-| **CLI** | Stable. Import / refresh / generate / backup all scripted in `Makefile`. |
-| **Web UI** | Wizard + trace viewer ship; **visual block editor in design** (§16.2 — flagship feature). |
+| **Install** | Wheel + docker-compose both ship and smoke-pass (§16.13). PyPI publish queued (§16.13.t1). |
+| **CLI** | `station-studio serve / import / seed` ships with the wheel. Full Makefile target set (refresh, generate, backup, etc.) for in-repo work. |
+| **Web UI** | Wizard + trace viewer + Sources page + read-only template visualiser ship; **in-canvas template editor in design** (§16.2 — flagship feature). |
 | **Docs** | Engineering docs in `DESIGN.md`; user-facing docs are growing. |
 | **License** | [MIT](LICENSE) — fork freely. |
 

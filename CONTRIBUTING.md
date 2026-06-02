@@ -128,6 +128,8 @@ The §14.40 review's "DESIGN §16 audit follow-up" commit
 | End-to-end | Playwright | must pass in CI |
 | Byte-equality (Rebirth Radio) | `tests/test_port_byte_equality.py` | skip-when-XMLs-missing; **must stay green when XMLs present** |
 | Byte-equality (Classics) | `tests/test_classics_byte_equality.py` | always runs (synthetic pools committed) |
+| Install (wheel channel) | `make wheel-smoke` | **release-blocker** — installs the wheel into a temp venv, launches `station-studio serve`, curls `/`, `/api/stations`, `/sources` and asserts HTTP 200 + content-type. Catches bundled-asset force-include regressions + lifespan breakage that pytest can't see. |
+| Install (docker channel) | `make image-smoke` | **release-blocker** — builds the docker image, runs a container, curls the same three URLs against it. Healthcheck reports `(healthy)` after lifespan completes. Run before tagging a release. |
 
 Changes that affect the engine MUST not break byte-equality for
 either example station. If you're intentionally changing engine
