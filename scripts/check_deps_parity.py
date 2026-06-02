@@ -30,6 +30,7 @@ right time to revisit is then.
 """
 from __future__ import annotations
 
+import re
 import sys
 import tomllib
 from pathlib import Path
@@ -38,15 +39,61 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
-def _parse_requirements(path: Path) -> set[str]:
-    """Return the set of dependency specifiers from a requirements
-    file. Strips blank lines + `#`-comments + `-r other.txt` includes.
+class DepsParityError(Exception):
+    """Raised by the helpers when input files are missing or malformed.
 
-    Whitespace + the `[extras]` selector are part of the specifier
-    (e.g. `uvicorn[standard]>=0.27` must match pyproject's same form).
+    t4-review 🟢-2: helpers raise instead of calling `sys.exit` directly
+    so unit tests can drive them at the function level. `main()`
+    translates the exception to an exit code + a printed message.
+    """
+
+
+# t4-review 🟡-1: PEP 503 normalisation.
+# Package names are case-insensitive AND any run of `[-_.]` is
+# equivalent to a single `-`. So `Python_Multipart` and
+# `python-multipart` refer to the same project; pip installs the same
+# wheel either way. Without normalisation the parity check fires
+# false-drift on a case + dash-underscore typo even though the
+# resulting installs would be identical.
+_PEP503_RUNS = re.compile(r"[-_.]+")
+
+
+def _normalize_spec(spec: str) -> str:
+    """Normalise a single PEP 508 specifier for set-equality comparison.
+
+    Two transformations:
+      * Strip ALL internal whitespace so `fastapi >= 0.110` and
+        `fastapi>=0.110` compare equal (t4-review 🟡-2).
+      * Lowercase the package-name half and collapse `[-_.]` runs to a
+        single `-` (t4-review 🟡-1, per PEP 503).
+
+    The package-name half ends at the first non-identifier character
+    (one of `<>=!~([`, a semicolon, or whitespace already-stripped).
+    Everything after that is the version specifier / extras / marker
+    and stays case-sensitive (operators ARE case-significant, values
+    like `>=0.110` aren't case-folded by pip either).
+    """
+    s = "".join(spec.split())              # collapse all whitespace
+    # Find the package-name segment up to the first operator or
+    # extras-bracket. The rest is the version specifier.
+    m = re.match(r"[A-Za-z0-9_.\-]+", s)
+    if not m:
+        return s.lower()
+    name = m.group(0).lower()
+    name = _PEP503_RUNS.sub("-", name)
+    return name + s[m.end():]
+
+
+def _parse_requirements(path: Path) -> set[str]:
+    """Return the set of NORMALISED dependency specifiers from a
+    requirements file. Strips blank lines + `#`-comments + `-r other.txt`
+    includes.
+
+    The `[extras]` selector is preserved (e.g. `uvicorn[standard]>=0.27`
+    must match pyproject's same form). Names are PEP 503-normalised.
     """
     if not path.exists():
-        sys.exit(f"check_deps_parity: {path} not found")
+        raise DepsParityError(f"{path} not found")
     specs: set[str] = set()
     for raw in path.read_text().splitlines():
         line = raw.split("#", 1)[0].strip()
@@ -56,30 +103,42 @@ def _parse_requirements(path: Path) -> set[str]:
         # we parse the dev file; skip the directive itself.
         if line.startswith("-r "):
             continue
-        specs.add(line)
+        specs.add(_normalize_spec(line))
     return specs
 
 
 def _parse_pyproject() -> tuple[set[str], set[str]]:
-    """Return `(runtime, dev)` specifier sets from pyproject.toml."""
+    """Return `(runtime, dev)` NORMALISED specifier sets from
+    pyproject.toml's `[project]` + `[project.optional-dependencies].dev`."""
     pyproject = REPO_ROOT / "pyproject.toml"
     if not pyproject.exists():
-        sys.exit(f"check_deps_parity: {pyproject} not found")
+        raise DepsParityError(f"{pyproject} not found")
 
     with pyproject.open("rb") as f:
         data = tomllib.load(f)
 
     project = data.get("project", {})
-    runtime = set(project.get("dependencies", []))
-    dev = set(project.get("optional-dependencies", {}).get("dev", []))
+    runtime = {_normalize_spec(s) for s in project.get("dependencies", [])}
+    dev = {
+        _normalize_spec(s)
+        for s in project.get("optional-dependencies", {}).get("dev", [])
+    }
     return runtime, dev
 
 
 def main() -> int:
-    """Compare and report. Returns 0 iff every surface matches."""
-    txt_runtime = _parse_requirements(REPO_ROOT / "requirements.txt")
-    txt_dev_full = _parse_requirements(REPO_ROOT / "requirements-dev.txt")
-    py_runtime, py_dev = _parse_pyproject()
+    """Compare and report. Returns 0 iff every surface matches.
+
+    Catches `DepsParityError` from helpers and translates to exit 1
+    with the message on stderr.
+    """
+    try:
+        txt_runtime = _parse_requirements(REPO_ROOT / "requirements.txt")
+        txt_dev_full = _parse_requirements(REPO_ROOT / "requirements-dev.txt")
+        py_runtime, py_dev = _parse_pyproject()
+    except DepsParityError as e:
+        print(f"check_deps_parity: {e}", file=sys.stderr)
+        return 1
 
     # `requirements-dev.txt` includes `-r requirements.txt` so its
     # contents inherit the runtime set. The dev-ONLY entries are
