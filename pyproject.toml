@@ -72,28 +72,45 @@ Homepage = "https://github.com/raby/station-studio"
 Repository = "https://github.com/raby/station-studio"
 Issues = "https://github.com/raby/station-studio/issues"
 
-# The wheel ships these THREE top-level packages. `api` and `engine`
-# are existing modules; `station_studio` is new (the CLI). Each has its
-# own `__init__.py` so hatchling picks them up automatically.
-[tool.hatch.build.targets.wheel]
-packages = ["station_studio", "api", "engine"]
-
-# c1-review 🟡-1: ship the bundled data inside the wheel so c3 doesn't
-# have to circle back to packaging. Three drops, each mapped into the
-# `station_studio/_bundled/` namespace where c3's first-run bootstrap
-# will resolve them via `importlib.resources.files("station_studio") /
-# "_bundled" / ...`. Putting the data INSIDE the package (force-include
-# under station_studio/) rather than in `share/` keeps everything one
-# `importlib.resources` call away — no fragile filesystem lookups
-# against `sys.prefix` or distutils-era `data_files`.
+# The wheel ships these FOUR top-level packages. `api` and `engine`
+# are the runtime modules; `station_studio` is the CLI; `scripts` is
+# included BECAUSE api/main.py's lifespan imports
+# `scripts.seed_stations` for the auto-seed-from-JSON-files step.
 #
-#   stations/    → station_studio/_bundled/stations/    (D6 — copy on first run)
-#   migrations/  → station_studio/_bundled/migrations/  (alembic upgrade head)
-#   alembic.ini  → station_studio/_bundled/alembic.ini  (env config for migrations)
+# Shipping the whole `scripts/` dir is a deliberate over-include for
+# c4: most files (bootstrap_classics, dump_weekly_template, etc) are
+# dev tools that an installed-wheel user never touches. The right
+# longer-term carve is split: a library half (seed_stations,
+# import_weekly_pools) into the wheel, and the dev-tool half left in
+# `scripts/` and out of the wheel. Queued as §16.13.t9.
+[tool.hatch.build.targets.wheel]
+packages = ["station_studio", "api", "engine", "scripts"]
+
+# c1-review 🟡-1 + c4: ship bundled data inside the wheel so c3's
+# first-run bootstrap + c2's SPA mount + c4's static-asset serving
+# all find their data via `importlib.resources.files("station_studio")
+# / "_bundled" / ...`. Putting the data INSIDE the package
+# (force-include under `station_studio/`) rather than in `share/`
+# keeps everything one `importlib.resources` call away — no fragile
+# filesystem lookups against `sys.prefix` or distutils-era
+# `data_files`.
+#
+#   stations/    → station_studio/_bundled/stations/   (c1 — D6 first-run copy)
+#   migrations/  → station_studio/_bundled/migrations/ (c1 — alembic upgrade head)
+#   alembic.ini  → station_studio/_bundled/alembic.ini (c1 — env config)
+#   web/build/   → station_studio/_bundled/web/        (c4 — SvelteKit static SPA)
+#
+# IMPORTANT: `web/build/` only exists AFTER `npm run build` in `web/`.
+# `make wheel` runs the frontend build first; `python -m build --wheel`
+# alone fails with a clear "directory not found" error if you skip it.
+# That's the right behaviour — the wheel without static assets serves
+# only the API and gives users a broken UI; failing loud forces the
+# correct ordering.
 [tool.hatch.build.targets.wheel.force-include]
 "stations" = "station_studio/_bundled/stations"
 "migrations" = "station_studio/_bundled/migrations"
 "alembic.ini" = "station_studio/_bundled/alembic.ini"
+"web/build" = "station_studio/_bundled/web"
 
 # Source distribution (sdist) excludes test detritus, the SvelteKit
 # frontend (which the wheel will ship as built static assets in c2/c4),

@@ -75,6 +75,45 @@ clean-test:
 	rm -f .coverage playwright-test.*.db playwright-test.*.db-wal playwright-test.*.db-shm
 	rm -rf web/test-results web/playwright-report
 
+# §16.13 c4 — produce the installable wheel.
+#
+# Two-step orchestration: build the SvelteKit static SPA into
+# `web/build/` FIRST, then `python -m build` packs everything (Python
+# packages + bundled stations + bundled migrations + the freshly-
+# built web assets) into `dist/station_studio-*.whl`.
+#
+# Skipping the npm step would fail loudly: pyproject's force-include
+# block references `web/build/` and hatchling errors with "directory
+# not found." That's deliberate — a wheel without the static assets
+# would install but serve a broken UI to its users.
+#
+# Cleans `dist/` first so old wheels don't accumulate. Doesn't clean
+# `web/build/`; Vite's cache keeps incremental rebuilds fast.
+wheel:
+	@echo "==> Building SvelteKit static SPA (web/build/)..."
+	@cd web && npm run build
+	@echo "==> Building Python wheel (dist/)..."
+	@rm -rf dist
+	@$(PY) -m build --wheel
+	@echo "==> Built: $$(ls dist/*.whl)"
+
+# Smoke-test the just-built wheel in a throwaway venv. Catches the
+# "wheel is malformed" / "console script missing" failure modes
+# before a stranger does. Doesn't install the dev fixtures or run
+# pytest — just `pip install + --version + --help` to prove the
+# installed entry point works.
+wheel-smoke: wheel
+	@echo "==> Smoke-installing wheel into a temp venv..."
+	@TMPVENV=$$(mktemp -d) && \
+		python3 -m venv $$TMPVENV/venv && \
+		$$TMPVENV/venv/bin/pip install --quiet dist/station_studio-*.whl && \
+		echo "--- station-studio --version ---" && \
+		$$TMPVENV/venv/bin/station-studio --version && \
+		echo "--- station-studio --help ---" && \
+		$$TMPVENV/venv/bin/station-studio --help && \
+		rm -rf $$TMPVENV && \
+		echo "==> Smoke OK."
+
 # Alembic schema migrations (DESIGN.md §14.17 / §17 #8).
 #
 # `make migrate` is the everyday command: applies all unapplied migrations

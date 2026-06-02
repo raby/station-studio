@@ -40,13 +40,45 @@ def test_raises_when_engine_sibling_missing(tmp_path):
         _verify_repo_layout(repo, repo / "stations")
 
 
-def test_raises_when_stations_dir_missing(tmp_path):
+def test_raises_when_stations_dir_missing(tmp_path, monkeypatch):
     """`engine/` is present but `stations/` doesn't exist —
-    second guard catches it with its own message."""
+    second guard catches it with its own message.
+
+    Monkeypatch ensures STATION_STUDIO_STATIONS_DIR isn't set (the
+    c4 env-skip path is asserted separately below)."""
+    monkeypatch.delenv("STATION_STUDIO_STATIONS_DIR", raising=False)
     repo = tmp_path
     (repo / "engine").mkdir()
     # NO stations/ dir created.
     with pytest.raises(RuntimeError, match="stations"):
+        _verify_repo_layout(repo, repo / "stations")
+
+
+def test_skips_stations_check_when_env_override_set(
+    tmp_path, monkeypatch
+):
+    """§16.13 c4: when STATION_STUDIO_STATIONS_DIR is set (the
+    installed-wheel path — `station_studio.bootstrap` populates it),
+    the missing repo-relative stations/ is intentional and shouldn't
+    raise. The env override is the authoritative source of truth in
+    that mode."""
+    repo = tmp_path
+    (repo / "engine").mkdir()
+    # NO stations/ dir at repo root.
+    monkeypatch.setenv("STATION_STUDIO_STATIONS_DIR", str(tmp_path / "elsewhere"))
+    # Should NOT raise even though `repo / "stations"` doesn't exist.
+    _verify_repo_layout(repo, repo / "stations")
+
+
+def test_engine_sibling_check_still_runs_with_env_override(
+    tmp_path, monkeypatch
+):
+    """Engine-sibling check is about Python module resolution — it's
+    load-bearing in BOTH in-repo and installed-wheel modes. The env
+    override shouldn't disable it."""
+    repo = tmp_path  # no engine/ subdir
+    monkeypatch.setenv("STATION_STUDIO_STATIONS_DIR", str(tmp_path / "elsewhere"))
+    with pytest.raises(RuntimeError, match="engine"):
         _verify_repo_layout(repo, repo / "stations")
 
 

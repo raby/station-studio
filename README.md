@@ -87,6 +87,26 @@ Full install + first-station tutorial: see
 *(coming soon — for now, see `Makefile` + `DESIGN.md` §15
 status snapshot for the current capability surface).*
 
+### Install as a wheel (no clone)
+
+The dev workflow above clones the repo so you can hack on it. If you
+just want to **use** station-studio, build a wheel and `pip install`
+it into a regular venv:
+
+```bash
+make wheel          # builds web/build + dist/station_studio-*.whl
+pip install dist/station_studio-*.whl
+station-studio serve --host 127.0.0.1 --port 8001
+```
+
+On first run the CLI creates `~/.station-studio/` (configurable via
+`$STATION_STUDIO_HOME`), copies the example stations + runs Alembic,
+and serves the UI + API from a single process at the chosen port. No
+SvelteKit dev server, no `make dev`, no repo checkout required.
+
+`make wheel-smoke` does the same end-to-end in a throwaway venv and
+curls the running server — handy as a release-blocker check.
+
 > **Single-worker for now.** The async-generation job tracker
 > (§16.11) holds job state in-memory per uvicorn worker. If you
 > run `uvicorn --workers N` with N > 1, the frontend's polling

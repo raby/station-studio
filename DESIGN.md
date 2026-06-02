@@ -9635,6 +9635,20 @@ migration + wheel + docker + docs).
   exposing bootstrap status) inspect outcome without parsing
   strings. **Home: small refactor (~20 lines) whenever a non-CLI
   caller appears.** Today's callback-based design works.
+* **§16.13.t9 — Split `scripts/` into library half (shipped in
+  wheel) vs dev-tool half (not shipped).** c4 ships the whole
+  `scripts/` package as a wheel top-level because
+  `api/main.py:lifespan` does `from scripts.seed_stations import
+  ...`. That over-includes a pile of in-repo dev tools
+  (`bootstrap_classics.py`, `dump_weekly_template.py`,
+  `generate_byte_eq_fixtures.py`, etc.) that no installed user
+  will touch. The carve: `scripts/_lib/` (or rename to
+  `engine.seeding` / similar) for the library bits the runtime
+  needs, leave the dev tools in `scripts/` and exclude that dir
+  from the wheel. **Home: small refactor (~3 commits — move
+  files, update imports, update tests).** Trigger: wheel size
+  becomes a concern OR a contributor asks why dev fixtures ship to
+  end users.
 
 ---
 

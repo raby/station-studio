@@ -109,3 +109,42 @@ def test_wheel_ships_alembic_ini(wheel_contents: set[str]) -> None:
     config (URL template + script_location). c3 reads it from the
     bundled path."""
     assert "station_studio/_bundled/alembic.ini" in wheel_contents
+
+
+def test_wheel_ships_svelte_static_assets(wheel_contents: set[str]) -> None:
+    """§16.13 c4: pyproject's `force-include "web/build" =
+    "station_studio/_bundled/web"` MUST result in the SvelteKit build
+    output landing in the wheel. Without these, `station-studio
+    serve` would fall back to the API-only blob at `/` and ship a
+    broken UX. Asserts the SPA shell + the immutable asset dir
+    that c2's StaticFiles mount serves."""
+    web_files = {
+        p for p in wheel_contents
+        if p.startswith("station_studio/_bundled/web/")
+    }
+    assert web_files, (
+        "no web assets in wheel — c2's SPA mount falls back to "
+        "API-only and the installed user gets a broken UI"
+    )
+    # The SPA shell c2's spa_index() serves.
+    assert "station_studio/_bundled/web/index.html" in wheel_contents
+    # SvelteKit's hashed-asset dir that c2's StaticFiles mount cares about.
+    assert any(
+        p.startswith("station_studio/_bundled/web/_app/")
+        for p in web_files
+    ), "no _app/ assets — the JS/CSS bundles aren't shipping"
+
+
+def test_wheel_ships_scripts_package(wheel_contents: set[str]) -> None:
+    """§16.13 c4: ship `scripts/` so `api/main.py`'s auto-seed lifespan
+    can `from scripts.seed_stations import ...` at install time.
+    Over-includes some dev tools today (see §16.13.t9 for the future
+    library/dev-tool split); the runtime import is the load-bearing
+    case. Without this, the served app crashes on startup with
+    ModuleNotFoundError: scripts."""
+    scripts_files = {
+        p for p in wheel_contents
+        if p.startswith("scripts/") and p.endswith(".py")
+    }
+    assert "scripts/seed_stations.py" in scripts_files
+    assert "scripts/__init__.py" in scripts_files

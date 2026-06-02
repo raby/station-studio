@@ -44,12 +44,27 @@ def _verify_repo_layout(repo_root: Path, stations_dir: Path) -> None:
     """Raise RuntimeError if the path-derivation produced a layout
     that won't work. Extracted so tests can drive failure cases
     deterministically (tests/test_deps_layout.py).
+
+    §16.13 c4: when `STATION_STUDIO_STATIONS_DIR` is set (the
+    installed-wheel path — `station_studio.bootstrap` populates it
+    before uvicorn imports this module), the stations-dir check is
+    SKIPPED. The env-override is the authoritative source of truth in
+    that mode, and the wheel's site-packages layout has no `stations/`
+    sibling. The engine-sibling check stays — it's about Python module
+    resolution, which IS load-bearing in both modes.
     """
     if not (repo_root / "engine").is_dir():
         raise RuntimeError(
             f"api/deps.py: repo_root={repo_root} doesn't contain an "
             f"`engine/` sibling. Did api/deps.py move deeper into the package?"
         )
+    # If the env override is set, defer the stations check to
+    # `get_stations_dir()` (which `mkdir(parents=True, exist_ok=True)`s
+    # the override path at call time anyway). No need to assert the
+    # repo-relative stations/ exists when the operator told us to use
+    # a different dir.
+    if os.environ.get("STATION_STUDIO_STATIONS_DIR", "").strip():
+        return
     if not stations_dir.is_dir():
         raise RuntimeError(
             f"api/deps.py: stations_dir={stations_dir} doesn't exist. "
