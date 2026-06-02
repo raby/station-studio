@@ -107,6 +107,28 @@ SvelteKit dev server, no `make dev`, no repo checkout required.
 `make wheel-smoke` does the same end-to-end in a throwaway venv and
 curls the running server — handy as a release-blocker check.
 
+### Run with docker-compose (no Python, no Node)
+
+For the zero-prerequisites path — try station-studio without
+installing anything except docker — use the docker-compose file:
+
+```bash
+git clone https://github.com/raby/station-studio.git
+cd station-studio
+docker compose up --build       # first run builds; later runs reuse
+```
+
+Open <http://localhost:8001>. App-home lives in a docker-managed
+volume (`station-studio-data`), so your imported pools, DBs, and
+exports survive `docker compose down`. Inspect with `docker volume
+inspect station-studio-data`; back up with `docker run --rm -v
+station-studio-data:/data -v $PWD:/backup alpine tar czf
+/backup/data.tar.gz /data`.
+
+The image is multi-stage (node-build → wheel-build → slim runtime),
+~310MB. Same SvelteKit static SPA as `make wheel` — no divergent
+build path. `make image-smoke` is the release-blocker equivalent.
+
 > **Single-worker for now.** The async-generation job tracker
 > (§16.11) holds job state in-memory per uvicorn worker. If you
 > run `uvicorn --workers N` with N > 1, the frontend's polling

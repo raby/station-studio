@@ -1,0 +1,43 @@
+# §16.13 c5 — docker-compose for the no-prereq install channel (D3).
+#
+# `docker compose up` against this file:
+#   1. builds the multi-stage Dockerfile (web + wheel + runtime)
+#   2. starts the station-studio container with /data mounted to a
+#      named volume (so first-run bootstrap output — DB, copied
+#      example stations, exports — survives `docker compose down`)
+#   3. publishes :8001 to the host
+#
+# Open http://localhost:8001 once the container reports ready.
+#
+# The compose file is intentionally minimal. No reverse proxy, no
+# auth, no TLS — single-process serving on localhost is the slice
+# scope (D2 + D3). Production deploys (multi-worker, postgres,
+# nginx in front) are out of scope; the §16.21+ DB-backed job-state
+# slice is the unblock for multi-worker.
+
+services:
+  station-studio:
+    build:
+      context: .
+      # Pinning the target stage avoids `docker compose build` ever
+      # accidentally producing the giant wheel-build intermediate as
+      # the final artifact.
+      target: runtime
+    image: station-studio:dev
+    ports:
+      # host:container — change the left side to remap (`8080:8001`).
+      - "8001:8001"
+    volumes:
+      # Named volume (not a host-bind) so the data lives in docker's
+      # managed storage and isn't accidentally clobbered by a stray
+      # repo-relative `./data` path. Inspect with `docker volume
+      # inspect station-studio-data`; backup with `docker run --rm -v
+      # station-studio-data:/data -v $PWD:/backup alpine tar czf
+      # /backup/data.tar.gz /data`.
+      - station-studio-data:/data
+    # Restart on container crash — not on `docker compose down`.
+    # Matches the "leave it running on a NAS" hobbyist use case.
+    restart: unless-stopped
+
+volumes:
+  station-studio-data:

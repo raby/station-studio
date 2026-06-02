@@ -1,0 +1,85 @@
+# §16.13 c5 — keep the docker build context lean + secret-free.
+#
+# Docker sends the entire context tarball to the daemon before
+# building. Without this file, that includes .venv (hundreds of MB),
+# node_modules (similar), every committed-test artifact, the dev
+# SQLite DB (potentially containing imported library metadata), and
+# the .git history. All slow, none useful.
+#
+# What we DO want sent: the source the Dockerfile's COPY lines pull
+# from — pyproject, the Python packages, stations/, migrations/,
+# alembic.ini, README, LICENSE, and `web/` (sans node_modules and
+# build artifacts — npm ci rebuilds them inside the build stage).
+
+# ---- dev environments (huge, not source of truth) ----
+.venv/
+**/__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# ---- node-side dev artifacts ----
+# web/node_modules — rebuilt fresh in stage 1 from package-lock.json.
+# web/build      — rebuilt fresh in stage 1 from web/src/.
+# web/.svelte-kit — SvelteKit cache, not needed.
+node_modules/
+web/node_modules/
+web/build/
+web/.svelte-kit/
+
+# ---- secrets + local state (NEVER ship to a build context) ----
+# Working SQLite DBs accumulate as the dev clicks around. They may
+# contain personal iTunes-library metadata. Hard-exclude.
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+.env
+.env.*
+station_studio.db
+tmp_check.db
+
+# ---- test detritus ----
+playwright-test*
+playwright-test.*.db
+playwright-test.*.db-wal
+playwright-test.*.db-shm
+playwright-report/
+web/test-results/
+web/playwright-report/
+test-results/
+tests/__pycache__/
+
+# ---- build outputs (rebuilt inside the image) ----
+dist/
+build/
+*.egg-info/
+*.whl
+*.tar.gz
+
+# ---- editor + OS noise ----
+.DS_Store
+.vscode/
+.idea/
+*.swp
+
+# ---- VCS (we don't need git history at build time) ----
+.git/
+.gitignore
+
+# ---- runtime output dirs (per-dev, never bundled) ----
+output/
+from_user/
+backups/
+out/
+
+# ---- docs that don't affect the build ----
+# DESIGN.md is large but the Dockerfile does COPY README.md + LICENSE
+# explicitly; DESIGN/CONTRIBUTING don't need to be in the context.
+DESIGN.md
+CONTRIBUTING.md
+docs/

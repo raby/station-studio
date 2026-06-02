@@ -143,6 +143,44 @@ wheel-smoke: wheel
 	curl -sS -o /dev/null -w 'HTTP %{http_code} %{content_type}\n' http://127.0.0.1:8765/sources | tee /dev/stderr | grep -q '^HTTP 200 text/html'; \
 	echo "==> Smoke OK."
 
+# §16.13 c5 — build the docker image.
+#
+# Multi-stage Dockerfile (web build → wheel build → runtime). The
+# build context is filtered by .dockerignore so the daemon doesn't
+# receive .venv / node_modules / *.db etc. Tag is `station-studio:dev`
+# (compose's docker-compose.yml `image:` field matches this) so `make
+# image` produces what `docker compose up` would use.
+image:
+	@echo "==> Building docker image (station-studio:dev)..."
+	docker build --tag station-studio:dev .
+	@echo "==> Built: station-studio:dev"
+
+# Smoke-test the image: bring it up, wait for /api/stations to be
+# 200, curl the same three URLs `make wheel-smoke` does (SPA shell +
+# JSON + SPA fallback). Same release-blocker logic as the wheel
+# smoke, applied to the containerised path.
+#
+# Uses port 18001 host-side to avoid colliding with `make dev`'s 8001
+# if both happen to be running. trap cleans the container on any exit
+# (success, mid-flight failure, ctrl-C).
+image-smoke: image
+	@echo "==> Running container + curl smoke (host :18001 → container :8001)..."
+	@CID=$$(docker run -d -p 18001:8001 station-studio:dev); \
+	trap "docker stop $$CID >/dev/null 2>&1 || true; docker rm $$CID >/dev/null 2>&1 || true" EXIT INT TERM; \
+	set -e; \
+	echo "--- waiting for /api/stations (up to 30s)..."; \
+	for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30; do \
+		if curl -sf http://127.0.0.1:18001/api/stations >/dev/null 2>&1; then echo "  ready after $${i}s"; break; fi; \
+		sleep 1; \
+	done; \
+	echo "--- curl / (SPA shell) ---"; \
+	curl -sS -o /dev/null -w 'HTTP %{http_code} %{content_type}\n' http://127.0.0.1:18001/ | tee /dev/stderr | grep -q '^HTTP 200 text/html'; \
+	echo "--- curl /api/stations ---"; \
+	curl -sS -o /dev/null -w 'HTTP %{http_code} %{content_type}\n' http://127.0.0.1:18001/api/stations | tee /dev/stderr | grep -q '^HTTP 200 application/json'; \
+	echo "--- curl /sources (SPA fallback) ---"; \
+	curl -sS -o /dev/null -w 'HTTP %{http_code} %{content_type}\n' http://127.0.0.1:18001/sources | tee /dev/stderr | grep -q '^HTTP 200 text/html'; \
+	echo "==> Image smoke OK."
+
 # Alembic schema migrations (DESIGN.md §14.17 / §17 #8).
 #
 # `make migrate` is the everyday command: applies all unapplied migrations
