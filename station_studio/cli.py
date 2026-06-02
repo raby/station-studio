@@ -121,6 +121,20 @@ def import_cmd(
     if not name:
         click.echo("Error: --name is required.", err=True)
         ctx.exit(1)
+    # c3-review 🟡-1: the API layer has `_validate_name` (§16.25 c1) to
+    # catch empty / whitespace-only names before they reach the importer
+    # — leaving a blank-named pool in the DB is awkward on /api/sources
+    # and the UI's pool list. The CLI is a third entry point to the same
+    # backend, inherits the same gap. Same fix, inline here to avoid
+    # cross-package coupling to api/routers/sources.py (queued as a
+    # follow-up — see §16.13.t6 in DESIGN for the consolidation idea).
+    name = name.strip()
+    if not name:
+        click.echo(
+            "Error: --name must not be empty or whitespace-only.",
+            err=True,
+        )
+        ctx.exit(1)
 
     from station_studio.bootstrap import bootstrap
     bootstrap(echo=click.echo)

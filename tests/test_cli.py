@@ -222,3 +222,51 @@ def test_import_subcommand_requires_name(
     result = runner.invoke(main, ["import", str(fixture)])
     assert result.exit_code != 0
     assert "--name is required" in result.output
+
+
+def test_import_subcommand_rejects_whitespace_name(
+    runner: CliRunner, isolated_cli_home
+) -> None:
+    """c3-review 🟡-1: `--name "   "` is a truthy string that slips
+    past `if not name`, so without the strip + reject check
+    `import_source` would happily persist a whitespace-named pool —
+    the same gap §16.25 c1 closed at the API layer. CLI inherits the
+    same fix here so all three entry points (API JSON, API multipart,
+    CLI) reject the same way.
+
+    (`--name ""` is also rejected, but via the existing `if not name`
+    falsy check — different code path, same outcome. Both
+    independently asserted below.)"""
+    fixture = (
+        Path(__file__).resolve().parent / "fixtures" / "tiny-library.xml"
+    )
+    # Empty string — caught by `if not name` (existing falsy check).
+    r1 = runner.invoke(main, ["import", str(fixture), "--name", ""])
+    assert r1.exit_code != 0
+    assert "required" in r1.output.lower()
+
+    # Whitespace-only — caught by the new strip + reject check.
+    r2 = runner.invoke(main, ["import", str(fixture), "--name", "   "])
+    assert r2.exit_code != 0
+    assert (
+        "empty" in r2.output.lower() or "whitespace" in r2.output.lower()
+    )
+
+    # Neither should have persisted a source_playlist row.
+    import sqlite3
+    db_path_ = isolated_cli_home / "station_studio.db"
+    if not db_path_.exists():
+        # Empty-string case errored before bootstrap created the DB.
+        return
+    db = sqlite3.connect(db_path_)
+    try:
+        try:
+            rows = db.execute(
+                "SELECT name FROM source_playlist"
+            ).fetchall()
+            assert rows == []
+        except sqlite3.OperationalError:
+            # source_playlist table didn't even exist — also clean.
+            pass
+    finally:
+        db.close()

@@ -9597,6 +9597,44 @@ migration + wheel + docker + docs).
   slice (~1 commit) when a drift bites OR when adding dependency
   management tooling.** Not urgent — both files are short and the
   dev workflow only reads one.
+* **§16.13.t5 — `bundled_path()` repo-walk depth sanity check.**
+  `station_studio/bootstrap.py:bundled_path()` resolves the in-repo
+  fallback via `Path(__file__).resolve().parent.parent`, hardcoding
+  the file's depth from repo root. Same hazard as
+  `api/main.py:_resolve_static_dir`. A future move of either file
+  silently breaks the in-repo / editable-install path. Cheap
+  defense: assert the resolved candidate contains `pyproject.toml`,
+  falling through cleanly if not. **Home: small follow-up (~5
+  lines, 1 test)** whenever a future contributor reorgs the package
+  layout — that's the natural moment to add the guard.
+* **§16.13.t6 — Hoist `_validate_name` to a shared importer module.**
+  `api/routers/sources.py:_validate_name` and the inline strip /
+  reject check in `station_studio/cli.py:import_cmd` (c3-review
+  🟡-1) implement the same "pool name must not be empty or
+  whitespace-only" contract in two places. A third entry point
+  would inherit the same gap a third time. Cleaner: move the helper
+  to `engine/importer.py` (or a small `engine/validation.py`) and
+  have both API + CLI import it. **Home: ~1 commit when adding a
+  new entry point OR during a future engine/ refactor.** Today's
+  duplication is two lines; the consolidation cost is the same.
+* **§16.13.t7 — `bootstrap()` runs alembic upgrade on every CLI
+  invocation.** Even when the DB is already at head, the upgrade
+  is a no-op that costs ~100ms (alembic version check + log line).
+  Negligible for `serve` (once at boot) and `seed` (rare). For
+  `import` against scripted batch callers (e.g. cron'd
+  `station-studio import` × N pools), the per-call overhead adds
+  up. Easy optimization: query `alembic_version.version_num`
+  before calling `command.upgrade`, skip if at head. **Home: small
+  follow-up (~10 lines) IF batch-import workflows surface as a
+  real use case.** Premature today.
+* **§16.13.t8 — `bootstrap()` couples work + printing.** Today
+  bootstrap prints progress via the `echo` callback. Cleaner
+  separation: return a result dict (`{home, db_url, copied_count,
+  was_first_run, migrated_to}`) and let the CLI decide what to
+  surface. Lets non-CLI callers (future Python API, REST endpoint
+  exposing bootstrap status) inspect outcome without parsing
+  strings. **Home: small refactor (~20 lines) whenever a non-CLI
+  caller appears.** Today's callback-based design works.
 
 ---
 
