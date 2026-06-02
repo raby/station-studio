@@ -211,6 +211,54 @@ See git log for examples. The `§14.NN` prefix anchors the commit
 to its DESIGN entry; pre-§14 work used `§13` etc. Sweep-up commits
 that fix review findings use `§14.NN sweep-up: ...`.
 
+## Releasing to PyPI
+
+§16.13.t1 — wheel + docker channels both publish-ready; PyPI
+publish happens via `.github/workflows/publish.yml`.
+
+**One-time setup** (already done if you can see a `station-studio`
+project on PyPI / test.pypi):
+
+1. Create the project on https://test.pypi.org AND https://pypi.org
+   (one-time upload via `twine upload` against a temp token, OR
+   the publish workflow itself if you use the pre-claim grace).
+2. PyPI → project → Publishing → Add **trusted publisher**:
+   - owner: `raby`, repo: `station-studio`
+   - workflow: `publish.yml`, environment: `pypi`
+3. Same on test.pypi.org with environment `testpypi`.
+4. In the GitHub repo → Settings → Environments → create `pypi`
+   and `testpypi` (no protection rules required for hobbyist use;
+   add reviewers if you want a manual gate).
+
+**Cutting a release:**
+
+```bash
+# 1. Local release-rehearsal — catches the bugs the workflow can't.
+make wheel-smoke                      # wheel installs + serves OK
+make image-smoke                      # docker image installs + serves OK
+.venv/bin/python -m pytest -q         # full backend suite
+
+# 2. Bump version (single source of truth: pyproject.toml).
+$EDITOR pyproject.toml                # version = "0.2.0"
+git commit -am "Release v0.2.0"
+
+# 3. Tag + push — the workflow does the rest.
+git tag v0.2.0
+git push origin main v0.2.0
+```
+
+The publish.yml workflow asserts `tag-version == pyproject-version`
+before building (catches "tagged but forgot to bump pyproject"),
+pushes to test.pypi, pip-installs from test.pypi + curls the same
+three URLs `make wheel-smoke` checks locally, then on green
+proceeds to real PyPI.
+
+Manual rehearsal (test.pypi only, no real publish):
+
+```bash
+gh workflow run publish.yml -f test_only=true
+```
+
 ## When in doubt
 
 Read `DESIGN.md`. The §14.x entries explain why every decision was

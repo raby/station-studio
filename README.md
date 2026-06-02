@@ -101,8 +101,20 @@ station-studio serve --host 127.0.0.1 --port 8001
 need Node installed separately at *runtime*, only at build time. On
 first run the CLI creates `~/.station-studio/` (override with
 `$STATION_STUDIO_HOME`), copies the example stations, and runs
-Alembic. PyPI publish — so strangers can `pip install
-station-studio` with no clone — is queued as §16.13.t1.
+Alembic.
+
+Once the first tagged release ships, this becomes:
+
+```bash
+pip install station-studio              # straight from PyPI, no clone
+station-studio serve
+```
+
+The PyPI publish workflow is wired (`.github/workflows/publish.yml`,
+trusted-publishing via OIDC, test.pypi rehearsal before real PyPI);
+the first release lands when project trust is configured on PyPI.
+See [CONTRIBUTING.md](CONTRIBUTING.md#releasing-to-pypi) for the
+cut-a-release procedure.
 
 ### 3. Dev clone (hack on it)
 

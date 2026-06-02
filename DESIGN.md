@@ -9561,15 +9561,28 @@ migration + wheel + docker + docs).
 
 **Watch-list (queued follow-ups from pre-c1 review).**
 
-* **§16.13.t1 — PyPI publish.** D4 keeps this slice scoped to
-  "the wheel exists and works." Publishing to PyPI turns
-  `pipx install station-studio` into a one-liner for strangers (no
-  clone needed). Operational work: PyPI account, API token, GitHub
-  Actions workflow (`workflow_dispatch` or tag-triggered),
-  test.pypi.org dry-run rehearsal, README install copy refresh.
-  **Home: separate slice (~2 commits — publish workflow + a
-  smoke-test step that pipx-installs from the published wheel).**
-  Trigger: a stranger asks how to install without cloning.
+* ~~**§16.13.t1 — PyPI publish.**~~ **SHIPPED.** `.github/workflows/publish.yml`
+  wires the publish pipeline: tag-triggered (`v*`) or manual
+  `workflow_dispatch`. Four jobs gated in sequence —
+  **build** (`make wheel` reuses the dev path; tag↔pyproject
+  version-parity guard catches "tagged but forgot to bump"),
+  **publish-testpypi** (trusted publishing via OIDC, no stored
+  tokens, `skip-existing: true` for rehearsal-friendliness),
+  **smoke-testpypi** (pip-installs FROM test.pypi.org with PyPI
+  fallback for deps, retries 12×10s for index lag, launches
+  `station-studio serve` + curls `/`, `/api/stations`, `/sources`
+  — the only check that catches "wheel published but bundled
+  assets missing" at release time), **publish-pypi** (only on
+  tag-push, not workflow_dispatch; only after the test.pypi
+  smoke is green). CONTRIBUTING.md adds a "Releasing to PyPI"
+  section covering trusted-publisher setup + the
+  `make wheel-smoke && make image-smoke && tag` release checklist.
+  README's pip-wheel install section shows the future `pip
+  install station-studio` form pending the first tagged release.
+  **Pre-flight that the user must do once:** trust the GitHub
+  Actions OIDC publisher on PyPI + test.pypi with the matching
+  owner/repo/workflow/env quadruple (one-time, in the project
+  settings UI on each side).
 * **§16.13.t2 — Full CLI subcommand set.** D5 ships `serve` +
   `import` + `seed` — the install-essentials. The full design list
   also includes `generate`, `export`, `backup`. The UI covers

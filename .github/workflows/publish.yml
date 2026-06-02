@@ -1,0 +1,223 @@
+# §16.13.t1 — PyPI publish workflow.
+#
+# Trigger: a semver-shaped tag (`v0.1.0`, `v1.2.3`) — pushed via
+# `git tag v0.1.0 && git push origin v0.1.0`. Also dispatchable
+# manually (`workflow_dispatch`) for test-pypi-only rehearsals
+# without touching real PyPI.
+#
+# Three jobs, gated in sequence:
+#
+#   1. build           — `make wheel` (npm + python build), upload dist/
+#   2. publish-testpypi → smoke-testpypi
+#                      — push to test.pypi.org, then pipx-install from
+#                        there and curl-smoke the serve endpoint to
+#                        confirm a real installable artifact, not just
+#                        "the upload succeeded."
+#   3. publish-pypi    — only on tag push (not workflow_dispatch), only
+#                        after the test-pypi smoke is green. The actual
+#                        public release.
+#
+# Auth: TRUSTED PUBLISHING (PEP 740 / OIDC). No long-lived API tokens.
+# This requires a one-time setup on each side:
+#   - https://pypi.org → Your projects → station-studio → Publishing
+#       Add publisher:
+#         owner=raby, repo=station-studio,
+#         workflow=publish.yml, environment=pypi
+#   - https://test.pypi.org → same, environment=testpypi
+# The `environment:` blocks below match those env names. Until the
+# trust is configured, the publish steps fail with "no trusted
+# publisher" — which is the correct failure mode for an
+# unauthenticated push.
+
+name: Publish to PyPI
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      test_only:
+        description: 'Publish to test.pypi only (skip real PyPI)'
+        type: boolean
+        default: true
+
+jobs:
+  build:
+    name: build wheel (web + python)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'  # matches Dockerfile runtime base
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'      # matches Dockerfile web-build stage
+          cache: 'npm'
+          cache-dependency-path: web/package-lock.json
+
+      - name: tag → pyproject version parity check
+        # CATCH: forgot to bump pyproject.toml before tagging.
+        # Without this, `git tag v0.2.0` against a pyproject still at
+        # 0.1.0 would publish v0.1.0 to PyPI under the v0.2.0 GitHub
+        # tag — confusing for users + a rollback nightmare. The
+        # tag-driven build asserts the two match before pip install
+        # can ever see a divergence.
+        if: github.event_name == 'push'
+        run: |
+          TAG_VERSION="${GITHUB_REF#refs/tags/v}"
+          PYPROJECT_VERSION=$(grep '^version = ' pyproject.toml | head -1 | cut -d'"' -f2)
+          if [ "$TAG_VERSION" != "$PYPROJECT_VERSION" ]; then
+            echo "ERROR: tag $GITHUB_REF (v$TAG_VERSION) does not match pyproject.toml version $PYPROJECT_VERSION." >&2
+            echo "Bump pyproject.toml's [project].version before tagging." >&2
+            exit 1
+          fi
+          echo "Versions match: v$TAG_VERSION"
+
+      - name: install build deps
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install build
+
+      - name: make wheel (web + python)
+        # Re-uses the same `make wheel` target dev/CI/release all
+        # share. ONE build path — if the wheel ships broken to PyPI,
+        # the equivalent `make wheel-smoke` would have caught it
+        # locally first. See CONTRIBUTING.md release section.
+        run: make wheel
+
+      - name: upload dist artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/*.whl
+          retention-days: 7
+          if-no-files-found: error
+
+  publish-testpypi:
+    name: publish to test.pypi.org
+    needs: build
+    runs-on: ubuntu-latest
+    # Environment scopes the OIDC trust. test.pypi.org's "pending
+    # publisher" must match owner/repo/workflow/environment.
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/project/station-studio/
+    permissions:
+      id-token: write  # required for trusted publishing OIDC handshake
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - name: publish
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          # `skip-existing` is INTENTIONAL: re-running this workflow
+          # against the same version is common (rehearsals,
+          # transient failures); without it the action errors on the
+          # second push of an existing file. test.pypi is the right
+          # place to be tolerant; real PyPI keeps the strict default.
+          skip-existing: true
+
+  smoke-testpypi:
+    name: smoke test.pypi install
+    needs: publish-testpypi
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: pip install from test.pypi (with PyPI fallback for deps)
+        # `--extra-index-url https://pypi.org/simple/` is REQUIRED:
+        # test.pypi has station-studio but not its deps (fastapi,
+        # uvicorn, etc — those live on real PyPI). Without the
+        # fallback, pip fails with "no matching distribution for
+        # fastapi" the moment it tries to resolve dependencies.
+        #
+        # Wait-loop: test.pypi indexes new uploads asynchronously
+        # (~30-60s typical). Retry up to 12 × 10s before giving up
+        # so the smoke doesn't race the index.
+        run: |
+          set -e
+          python -m venv /tmp/smoke
+          for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
+            if /tmp/smoke/bin/pip install \
+              --quiet \
+              --index-url https://test.pypi.org/simple/ \
+              --extra-index-url https://pypi.org/simple/ \
+              station-studio; then
+              echo "Install succeeded on attempt $i"
+              break
+            fi
+            if [ "$i" = "12" ]; then
+              echo "ERROR: pip install never succeeded after 2 minutes — test.pypi index lag or broken artifact." >&2
+              exit 1
+            fi
+            sleep 10
+          done
+
+      - name: dispatch smoke
+        run: |
+          /tmp/smoke/bin/station-studio --version
+          /tmp/smoke/bin/station-studio --help
+
+      - name: serve smoke (launch + curl /, /api/stations, /sources)
+        # Same triple-URL gate `make wheel-smoke` uses locally and
+        # `make image-smoke` uses for docker. The actual installed
+        # artifact serves a working UI + API + SPA fallback. The
+        # test.pypi → real-pip-install → working-server path is the
+        # ONLY thing that catches a "wheel installs but the bundled
+        # static assets weren't packaged" regression at release time.
+        run: |
+          set -e
+          export STATION_STUDIO_HOME=/tmp/smoke-home
+          /tmp/smoke/bin/station-studio serve --host 127.0.0.1 --port 8765 \
+            > /tmp/smoke/serve.log 2>&1 &
+          SERVE_PID=$!
+          trap "kill $SERVE_PID 2>/dev/null || true" EXIT
+          for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+            if curl -sf http://127.0.0.1:8765/api/stations >/dev/null 2>&1; then
+              echo "  ready after ${i}s"; break
+            fi
+            sleep 1
+          done
+          curl -sS -o /dev/null -w 'HTTP %{http_code} %{content_type}\n' \
+            http://127.0.0.1:8765/ | tee /dev/stderr | grep -q '^HTTP 200 text/html'
+          curl -sS -o /dev/null -w 'HTTP %{http_code} %{content_type}\n' \
+            http://127.0.0.1:8765/api/stations | tee /dev/stderr | grep -q '^HTTP 200 application/json'
+          curl -sS -o /dev/null -w 'HTTP %{http_code} %{content_type}\n' \
+            http://127.0.0.1:8765/sources | tee /dev/stderr | grep -q '^HTTP 200 text/html'
+          echo "test.pypi smoke OK"
+
+  publish-pypi:
+    name: publish to pypi.org
+    # Only on tag-push (not workflow_dispatch), only after test.pypi
+    # is green. The two gates together mean: a real PyPI release
+    # is ALWAYS preceded by a successful real-pip-install smoke on
+    # test.pypi within the same workflow run.
+    if: github.event_name == 'push'
+    needs: smoke-testpypi
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/station-studio/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - name: publish
+        uses: pypa/gh-action-pypi-publish@release/v1
+        # No `skip-existing` here on purpose — re-publishing the
+        # SAME version to real PyPI is almost always a mistake
+        # (PyPI doesn't allow overwrite, but it lets you upload a
+        # new file with a different sha for the same version which
+        # is worse). Better to fail loud + force a version bump.
