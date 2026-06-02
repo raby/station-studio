@@ -46,7 +46,15 @@ def validate_pool_name(raw: str) -> str:
     The error MESSAGE is part of the contract — tests on both surfaces
     grep for "empty or whitespace-only" so a rephrase here would flag
     the test regressions immediately.
+
+    t6-review 🟡-2: None-guard. A future caller pulling from a JSON
+    body where the field is optional (or a Click option with default
+    None) would otherwise hit `None.strip()` → AttributeError,
+    bypassing the ValueError contract callers catch. Same error
+    class + message keeps the contract honest.
     """
+    if raw is None:
+        raise ValueError("name must not be empty or whitespace-only")
     stripped = raw.strip()
     if not stripped:
         raise ValueError("name must not be empty or whitespace-only")

@@ -32,7 +32,10 @@ def _validate_name(raw: str) -> str:
     try:
         return validate_pool_name(raw)
     except ValueError as e:
-        raise HTTPException(400, str(e))
+        # t6-review 🟢-2: `from None` suppresses the chained-exception
+        # traceback that FastAPI's dev mode would otherwise log. The
+        # HTTP response is identical; cleaner server logs.
+        raise HTTPException(400, str(e)) from None
 
 
 def _import_to_pool(db: Session, *, path: Path, name: str, role: str) -> dict:

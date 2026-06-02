@@ -435,3 +435,12 @@ class TestValidatePoolName:
             assert str(e) == "name must not be empty or whitespace-only"
         else:
             raise AssertionError("expected ValueError")
+
+    def test_rejects_none(self) -> None:
+        """t6-review 🟡-2: a future caller passing None (JSON-optional
+        field, default-None Click option) must hit ValueError — NOT
+        AttributeError from `None.strip()`. Same error class + message
+        so the contract callers catch ValueError against still works."""
+        from engine.importer import validate_pool_name
+        with pytest.raises(ValueError, match="empty or whitespace-only"):
+            validate_pool_name(None)  # type: ignore[arg-type]

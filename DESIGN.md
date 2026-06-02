@@ -9656,7 +9656,16 @@ migration + wheel + docker + docs).
   test suites grep for "empty or whitespace-only" so a future
   rephrase fails immediately. 5 new engine-layer unit tests pin
   strip-whitespace, pass-clean-names, reject-empty, reject-
-  whitespace-only, and exact-message-text behaviours.
+  whitespace-only, and exact-message-text behaviours. Post-review
+  sweep added a None-guard (one more test) so future callers passing
+  optional fields hit ValueError, not AttributeError.
+
+  **Forward note (t6-review 🟢-3):** If a second/third such helper
+  lands (station-slug format rule, role-string rule, ...), the
+  natural carve is a dedicated `engine/validation.py` module. Today
+  one helper doesn't justify a new module; co-locating with
+  `engine.importer` (where `import_source` consumes the validated
+  name) is fine. Revisit when the third helper appears.
 * **§16.13.t7 — `bootstrap()` runs alembic upgrade on every CLI
   invocation.** Even when the DB is already at head, the upgrade
   is a no-op that costs ~100ms (alembic version check + log line).

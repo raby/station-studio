@@ -137,9 +137,9 @@ def import_cmd(
     # hoisted to engine/ in t6). ValueError surfaces as a clean exit-1
     # with the engine's canonical error message; the CLI just prefixes
     # "Error: " for terminal readability.
-    from engine.importer import validate_pool_name as _validate_pool_name
+    from engine.importer import validate_pool_name
     try:
-        name = _validate_pool_name(name)
+        name = validate_pool_name(name)
     except ValueError as e:
         click.echo(f"Error: {e}.", err=True)
         ctx.exit(1)

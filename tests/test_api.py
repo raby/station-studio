@@ -1429,14 +1429,20 @@ def test_upload_missing_file_field_returns_422(api):
 def test_upload_empty_name_is_rejected(api):
     """Empty name is rejected by FastAPI's `Form(...)` layer with 422
     (multipart-empty is treated as a missing required field) BEFORE
-    `_validate_name` is reached. The JSON `/import` path is different:
-    Pydantic accepts `""` as a valid `str`, so empty there reaches the
-    helper and surfaces as 400 (see `test_import_empty_name_returns_400`).
-    Either way, the latent gap (persisting a blank-named pool) is
-    closed — just at different layers per request shape."""
+    `validate_pool_name` (via `_validate_name`) is reached. The JSON
+    `/import` path is different: Pydantic accepts `""` as a valid
+    `str`, so empty there reaches the helper and surfaces as 400 (see
+    `test_import_empty_name_returns_400`). Either way, the latent gap
+    (persisting a blank-named pool) is closed — just at different
+    layers per request shape.
+
+    §16.13.t6: the rule body now lives in
+    `engine.importer.validate_pool_name`; `_validate_name` is the
+    HTTPException-translating wrapper.
+    """
     client, _ = api
     r = _upload(client, "", "content", _FIXTURES / "tiny-library.xml")
-    assert r.status_code == 422  # Form layer, before _validate_name
+    assert r.status_code == 422  # Form layer, before validate_pool_name
 
 
 def test_upload_whitespace_only_name_returns_400(api):
@@ -1460,9 +1466,11 @@ def test_upload_surrounding_whitespace_is_stripped(api):
 
 
 def test_import_empty_name_returns_400(api):
-    """The same `_validate_name` guard fires on the JSON `/import`
-    endpoint — pre-c1 this was a latent gap that the c1 sweep closed
-    in both places at once."""
+    """The same `validate_pool_name` rule (via `_validate_name`) fires
+    on the JSON `/import` endpoint — pre-c1 this was a latent gap
+    that the c1 sweep closed in both places at once. §16.13.t6
+    hoisted the rule body to engine/importer.py so the CLI shares
+    the same check too."""
     client, _ = api
     r = client.post("/api/sources/import", json={
         "path": str(_FIXTURES / "tiny-library.xml"),
