@@ -23,10 +23,48 @@ import importlib.resources
 import logging
 import os
 import shutil
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
 from station_studio import home as _home
+
+
+@dataclass(frozen=True)
+class BootstrapResult:
+    """§16.13.t8 — structured outcome of a bootstrap() run.
+
+    Pre-t8 `bootstrap()` returned just the app-home Path and surfaced
+    progress via an `echo` callback. Non-CLI callers wanting to know
+    "did migrations actually run? how many stations were copied?" had
+    to parse the printed strings — fragile and not part of the
+    contract.
+
+    Post-t8 `bootstrap()` returns this dataclass; callers inspect the
+    fields directly. The CLI keeps using `echo` for user feedback;
+    non-CLI callers (future Python API, REST endpoint exposing
+    bootstrap status, integration tests) read structured data.
+
+    Frozen because callers shouldn't mutate the record after bootstrap
+    completes — it's a snapshot of "what happened on this run."
+    """
+    home: Path
+    db_url: str
+    db_path: Path
+    stations_dir: Path
+    # True if `alembic upgrade head` actually applied migrations on
+    # this run. False if the DB was already at head (t7 fast-path) and
+    # we short-circuited. Mirrors `_run_alembic_upgrade`'s return.
+    migrations_applied: bool
+    # Number of bundled station files copied into the app-home's
+    # stations dir on this run. 0 once seeded; non-zero on first run
+    # (and any later run that finds a deleted file in the
+    # bundle-vs-home diff).
+    stations_copied: int
+
+    # __fspath__ removed intentionally — the dataclass should be
+    # explicit, not pretend to be a Path. Callers that want the home
+    # use `.home`.
 
 
 logger = logging.getLogger(__name__)
@@ -229,8 +267,9 @@ def _copy_missing_stations(target_dir: Path) -> int:
     return copied
 
 
-def bootstrap(*, echo: Callable[[str], None] = _silent) -> Path:
-    """Run the first-run bootstrap. Returns the resolved app-home Path.
+def bootstrap(*, echo: Callable[[str], None] = _silent) -> BootstrapResult:
+    """Run the first-run bootstrap. Returns a `BootstrapResult` with
+    the resolved paths + what-actually-happened flags.
 
     Steps (each idempotent):
       1. ensure_home() — mkdir app-home + subdirs.
@@ -242,7 +281,9 @@ def bootstrap(*, echo: Callable[[str], None] = _silent) -> Path:
          already-present files.
 
     `echo` defaults to silent. CLI callers pass `click.echo` so the
-    user sees each step.
+    user sees each step; non-CLI callers (Python API, REST endpoint,
+    tests) read the returned dataclass instead of parsing strings —
+    §16.13.t8.
     """
     home = _home.ensure_home()
     echo(f"App home: {home}")
@@ -263,7 +304,10 @@ def bootstrap(*, echo: Callable[[str], None] = _silent) -> Path:
     # gets honest feedback (rather than "Running migrations..." that
     # silently did nothing).
     echo(f"DB: {_home.db_path()}")
-    if _run_alembic_upgrade(os.environ["STATION_STUDIO_DB_URL"]):
+    migrations_applied = _run_alembic_upgrade(
+        os.environ["STATION_STUDIO_DB_URL"]
+    )
+    if migrations_applied:
         echo("Ran migrations (alembic upgrade head).")
     else:
         echo("DB already at head; skipping migrations.")
@@ -275,4 +319,11 @@ def bootstrap(*, echo: Callable[[str], None] = _silent) -> Path:
     else:
         echo("Stations dir already populated; skipping example copy.")
 
-    return home
+    return BootstrapResult(
+        home=home,
+        db_url=os.environ["STATION_STUDIO_DB_URL"],
+        db_path=_home.db_path(),
+        stations_dir=_home.stations_dir(),
+        migrations_applied=migrations_applied,
+        stations_copied=copied,
+    )

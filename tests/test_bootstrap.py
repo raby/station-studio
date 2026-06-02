@@ -225,6 +225,80 @@ def test_run_alembic_upgrade_falls_through_when_head_rev_is_none(
     assert _run_alembic_upgrade(_resolve_db_url()) is True
 
 
+# ---------- §16.13.t8 — BootstrapResult dataclass ----------
+
+
+def test_bootstrap_returns_structured_result(
+    isolated_home: Path,
+) -> None:
+    """§16.13.t8: `bootstrap()` returns a `BootstrapResult` with
+    structured fields, not a bare Path. Non-CLI callers can inspect
+    outcome without parsing the printed strings."""
+    from station_studio.bootstrap import BootstrapResult
+
+    result = bootstrap()
+    assert isinstance(result, BootstrapResult)
+
+    # Paths reflect the isolated_home fixture.
+    assert result.home == isolated_home
+    assert result.db_path == isolated_home / "station_studio.db"
+    assert result.stations_dir == isolated_home / "stations"
+    assert result.db_url.startswith("sqlite://")
+    assert str(result.db_path) in result.db_url
+
+    # First run: migrations applied + bundled stations copied.
+    assert result.migrations_applied is True
+    assert result.stations_copied > 0
+
+
+def test_bootstrap_result_reflects_second_run(
+    isolated_home: Path,
+) -> None:
+    """A second bootstrap on the same home: migrations skipped (t7
+    fast-path) + stations already populated. The result dataclass
+    surfaces both signals so a caller can branch on "did anything
+    actually happen?" without re-reading the echo log."""
+    first = bootstrap()
+    assert first.migrations_applied is True
+    assert first.stations_copied > 0
+
+    second = bootstrap()
+    assert second.migrations_applied is False
+    assert second.stations_copied == 0
+    # Paths stable across runs.
+    assert second.home == first.home
+    assert second.db_path == first.db_path
+
+
+def test_bootstrap_result_is_frozen(isolated_home: Path) -> None:
+    """The dataclass is a snapshot of what happened — callers
+    mutating fields would create a confusing "is this the post-
+    bootstrap state or my mutation?" question. Frozen=True
+    forbids it; pin the contract so a future un-freeze gets
+    challenged."""
+    import dataclasses
+    result = bootstrap()
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        result.migrations_applied = False  # type: ignore[misc]
+
+
+def test_bootstrap_no_echo_returns_silent_but_complete_result(
+    isolated_home: Path,
+) -> None:
+    """Non-CLI callers (Python API, REST endpoint, scripts) don't
+    need to register an echo callback. The default `_silent` runs
+    bootstrap silently but the structured result still tells the
+    caller everything that happened."""
+    import io, contextlib
+
+    captured = io.StringIO()
+    with contextlib.redirect_stdout(captured):
+        result = bootstrap()  # no echo= → default _silent
+    assert captured.getvalue() == ""  # nothing printed to stdout
+    assert result.migrations_applied is True
+    assert result.stations_copied > 0
+
+
 def test_bootstrap_echo_reflects_skip_vs_apply(
     isolated_home: Path,
 ) -> None:

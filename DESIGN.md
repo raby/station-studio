@@ -9677,14 +9677,19 @@ migration + wheel + docker + docs).
   (alembic upgrade head)." on real work, "DB already at head;
   skipping migrations." on the fast-path. 3 new tests pin the
   return-value contract + the echo asymmetry.
-* **§16.13.t8 — `bootstrap()` couples work + printing.** Today
-  bootstrap prints progress via the `echo` callback. Cleaner
-  separation: return a result dict (`{home, db_url, copied_count,
-  was_first_run, migrated_to}`) and let the CLI decide what to
-  surface. Lets non-CLI callers (future Python API, REST endpoint
-  exposing bootstrap status) inspect outcome without parsing
-  strings. **Home: small refactor (~20 lines) whenever a non-CLI
-  caller appears.** Today's callback-based design works.
+* ~~**§16.13.t8 — `bootstrap()` couples work + printing.**~~
+  **SHIPPED.** New frozen `BootstrapResult` dataclass returned by
+  `bootstrap()` carries `{home, db_url, db_path, stations_dir,
+  migrations_applied, stations_copied}`. The CLI keeps using `echo`
+  for user-facing progress; non-CLI callers (future Python API, REST
+  endpoint exposing bootstrap status, integration tests) inspect
+  fields directly without parsing strings. Frozen so the snapshot
+  isn't accidentally mutated post-bootstrap. Existing CLI + test
+  callers that discarded the return value continue working unchanged.
+  4 new tests pin the contract: structured result on first run,
+  `migrations_applied=False + stations_copied=0` on second run, frozen
+  enforcement, and silent default for non-CLI callers (no echo
+  registered, no output produced).
 * **§16.13.t9 — Split `scripts/` into library half (shipped in
   wheel) vs dev-tool half (not shipped).** c4 ships the whole
   `scripts/` package as a wheel top-level because
