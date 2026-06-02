@@ -225,8 +225,10 @@ def seed() -> None:
     type=int,
     default=None,
     help=(
-        "Override the random seed. Default: deterministic from week + "
-        "station rules (matches the UI's seed semantics)."
+        "Override the random seed. Default: engine-internal seed "
+        "(None passes through to `engine.generator.generate`, which "
+        "derives one from the run state). Matches the API endpoint's "
+        "`GenerateRequest.seed` default."
     ),
 )
 @click.pass_context
@@ -258,6 +260,8 @@ def generate_cmd(
     bootstrap(echo=click.echo)
 
     # Lazy: full engine import chain (sqlalchemy, generator, etc).
+    from sqlalchemy.exc import IntegrityError
+
     from engine.database import make_engine, make_sessionmaker
     from engine.generator import generate as engine_generate
     from engine.models import Base, Station
@@ -291,8 +295,16 @@ def generate_cmd(
             click.echo(f"Error: {e}", err=True)
             ctx.exit(1)
 
-        # Same station-rule resolution as the API endpoint. Pulled
-        # eagerly so the generate call below mirrors the API's args.
+        # t2-review 🟡-1: resolve `artist_dedup_window` and pass it as
+        # `weighted_window_default` to the engine — same as the API
+        # endpoint does (§14.29). Without this, a station with a
+        # `weighted` block + an `artist_dedup_window` rule would
+        # generate different playlists from CLI vs API for the same
+        # week. The CLI claims thin-wrapper status — drift here
+        # invalidates that claim.
+        artist_dedup_window = get_rule_value(
+            db, station_id=station.id, key="artist_dedup_window",
+        )
         mix_exclusion_weeks = get_rule_value(
             db, station_id=station.id, key="mix_exclusion_weeks",
         )
@@ -326,22 +338,56 @@ def generate_cmd(
                 excluded_mix_ids=excluded_mix_ids,
                 alias_map=alias_map,
                 previous_playlist=previous_playlist,
+                # t2-review 🟡-1: was missing — now matches the API.
+                weighted_window_default=artist_dedup_window,
                 named_cursor_positions=named_cursor_positions,
             )
-        except ValueError as e:
+        # t2-review 🟢-1: broaden the catch from `ValueError` to
+        # `Exception` — same as the API's `except Exception` →
+        # HTTPException(400). Mid-generate failures from malformed
+        # templates / corrupt DB rows surface as a clean exit-1 +
+        # readable error instead of a Python stack trace.
+        except Exception as e:  # noqa: BLE001 — match API surface
             click.echo(f"Error: generation failed: {e}", err=True)
             ctx.exit(1)
 
-        playlist = save_playlist(
-            db, station=station, result=result, week=week, template=template,
-        )
-        advance_cursors(
-            db, station_id=station.id, template=template, pools=pools,
-            advance_step=cursor_advance_step or 120,
-            reset_cycle=cursor_reset_cycle or 0,
-            generation_count=week - 1,
-        )
-        db.commit()
+        # t2-review 🟡-4: handle the concurrent-regen race the same way
+        # the API does (HTTP 409 → CLI exit 1 + retry message). Without
+        # this, two `station-studio generate` processes racing the same
+        # station+week — exactly the cron-misconfiguration case t2's
+        # design rationale calls out — get a SQLAlchemy stack trace.
+        try:
+            playlist = save_playlist(
+                db, station=station, result=result,
+                week=week, template=template,
+            )
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            click.echo(
+                "Error: a playlist for this station and week was "
+                "concurrently generated; retry.",
+                err=True,
+            )
+            ctx.exit(1)
+
+        # t2-review 🟡-2: advance_cursors ONLY when the template opts
+        # into persistent cursors. The API endpoint has this guard;
+        # the CLI was calling unconditionally, doing work that didn't
+        # belong for stateless templates (Rebirth Classics et al).
+        # t2-review 🟡-3: pass raw rule values (None or int) so
+        # `advance_cursors` applies its own internal default. The
+        # previous `or 120 / or 0` form silently turned a user-set
+        # rule of 0 into 120 — exactly the legitimate-zero footgun.
+        if template.cursor.persist:
+            advance_cursors(
+                db, station_id=station.id, template=template,
+                pools=pools,
+                advance_step=cursor_advance_step,
+                reset_cycle=cursor_reset_cycle,
+                generation_count=week - 1,
+            )
+            db.commit()
 
         click.echo(
             f"Generated playlist {playlist.id} for '{slug}' week {week} "

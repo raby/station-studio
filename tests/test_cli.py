@@ -359,6 +359,75 @@ def test_generate_subcommand_rejects_week_zero(
     assert result.exit_code != 0
 
 
+def test_generate_subcommand_upserts_existing_week(
+    runner: CliRunner, cli_home_with_station_and_pool: Path
+) -> None:
+    """`save_playlist` is upsert by design (delete-then-insert any
+    existing (station, week) pair). Single-process regen of the same
+    week SUCCEEDS — it replaces the prior playlist. Pin this so a
+    future refactor that converts the upsert to an insert-only
+    doesn't silently regress the "I want to re-generate week 1 with
+    a new seed" workflow."""
+    r1 = runner.invoke(main, ["generate", "cli-minimal", "--week", "1"])
+    assert r1.exit_code == 0, r1.output
+    r2 = runner.invoke(main, ["generate", "cli-minimal", "--week", "1"])
+    assert r2.exit_code == 0, r2.output
+
+    # Exactly ONE playlist row for that (station, week) — the second
+    # generate replaced the first, not duplicated it.
+    import sqlite3
+    db = sqlite3.connect(
+        cli_home_with_station_and_pool / "station_studio.db"
+    )
+    try:
+        n = db.execute(
+            "SELECT COUNT(*) FROM playlist WHERE week = 1"
+        ).fetchone()[0]
+        assert n == 1
+    finally:
+        db.close()
+
+
+def test_generate_subcommand_handles_concurrent_integrity_error(
+    runner: CliRunner, cli_home_with_station_and_pool: Path,
+    monkeypatch,
+) -> None:
+    """t2-review 🟡-4 regression pin: the API endpoint's HTTP-409
+    "concurrently generated; retry" path is mirrored on the CLI. The
+    upsert in `save_playlist` makes single-process duplicates a
+    no-op, but TWO concurrent processes can both pass the `existing
+    is None` check before either commits — only one wins the unique
+    `(station_id, week)` insert. The loser hits IntegrityError.
+
+    Simulate this by monkeypatching the CLI's save_playlist binding
+    to raise IntegrityError. Confirms:
+      - exit code != 0
+      - clean "concurrently generated; retry" message
+      - no SQLAlchemy stack trace leaks (the whole point of the
+        try/except)."""
+    from sqlalchemy.exc import IntegrityError
+
+    def _raise_integrity_error(*_a, **_kw):
+        # The actual exception's `params` + `orig` are SQLAlchemy
+        # internals; tests only need the type-match.
+        raise IntegrityError("simulated", params=None, orig=None)
+
+    # Patch the binding the CLI imports (NOT engine.persistence
+    # globally — other tests + the same test's setup use it).
+    import station_studio.cli as cli_mod
+    monkeypatch.setattr(
+        "engine.persistence.save_playlist", _raise_integrity_error,
+    )
+
+    result = runner.invoke(main, ["generate", "cli-minimal", "--week", "2"])
+    assert result.exit_code != 0
+    out = result.output.lower()
+    assert "concurrently generated" in out
+    assert "retry" in out
+    assert "Traceback" not in result.output
+    assert "IntegrityError" not in result.output
+
+
 def test_export_subcommand_writes_xml_to_stdout(
     runner: CliRunner, cli_home_with_station_and_pool: Path
 ) -> None:
