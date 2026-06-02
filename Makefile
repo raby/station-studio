@@ -97,22 +97,51 @@ wheel:
 	@$(PY) -m build --wheel
 	@echo "==> Built: $$(ls dist/*.whl)"
 
-# Smoke-test the just-built wheel in a throwaway venv. Catches the
-# "wheel is malformed" / "console script missing" failure modes
-# before a stranger does. Doesn't install the dev fixtures or run
-# pytest — just `pip install + --version + --help` to prove the
-# installed entry point works.
+# Smoke-test the just-built wheel in a throwaway venv. The release-
+# blocker check: prove `pip install <wheel>` → `station-studio serve`
+# yields a working UI + API in a fresh environment with NO repo
+# checkout, NO npm, NO .venv. Catches:
+#   - wheel malformed / console script missing (`--version`)
+#   - bundled-asset force-include broken (`/` returning text/html)
+#   - api/main.py lifespan crashes on startup (auto-seed import,
+#     alembic migrate, etc — manifests as /api/stations not 200)
+#   - SPA fallback wiring broken (`/sources` not 200 text/html)
+#
+# Uses port 8765 (high, unlikely-collision); fails fast if it can't
+# bind. Trap-cleans the tmp venv + kills the bg uvicorn even on
+# mid-flight failure — c4-review 🟡-3 fix (matches the c4 §14.36
+# refresh-rebirth-radio trap pattern).
+#
+# Interpreter: reuses `$(PY)`'s sys.executable so the venv is built
+# with the same Python the dev workflow uses (c4-review 🟢-1 — avoids
+# `python3` resolving to a sub-3.11 binary on multi-Python boxes).
 wheel-smoke: wheel
 	@echo "==> Smoke-installing wheel into a temp venv..."
-	@TMPVENV=$$(mktemp -d) && \
-		python3 -m venv $$TMPVENV/venv && \
-		$$TMPVENV/venv/bin/pip install --quiet dist/station_studio-*.whl && \
-		echo "--- station-studio --version ---" && \
-		$$TMPVENV/venv/bin/station-studio --version && \
-		echo "--- station-studio --help ---" && \
-		$$TMPVENV/venv/bin/station-studio --help && \
-		rm -rf $$TMPVENV && \
-		echo "==> Smoke OK."
+	@PYTHON_BIN=$$($(PY) -c 'import sys; print(sys.executable)'); \
+	TMPVENV=$$(mktemp -d); \
+	SMOKE_PID=""; \
+	trap 'if [ -n "$$SMOKE_PID" ]; then kill $$SMOKE_PID 2>/dev/null || true; fi; rm -rf $$TMPVENV' EXIT INT TERM; \
+	set -e; \
+	$$PYTHON_BIN -m venv $$TMPVENV/venv; \
+	$$TMPVENV/venv/bin/pip install --quiet dist/station_studio-*.whl; \
+	echo "--- station-studio --version ---"; \
+	$$TMPVENV/venv/bin/station-studio --version; \
+	echo "--- launching serve on :8765 ---"; \
+	STATION_STUDIO_HOME=$$TMPVENV/home \
+		$$TMPVENV/venv/bin/station-studio serve --host 127.0.0.1 --port 8765 \
+		>$$TMPVENV/serve.log 2>&1 & \
+	SMOKE_PID=$$!; \
+	for i in 1 2 3 4 5 6 7 8 9 10; do \
+		if curl -sf http://127.0.0.1:8765/api/stations >/dev/null 2>&1; then break; fi; \
+		sleep 1; \
+	done; \
+	echo "--- curl / (SPA shell) ---"; \
+	curl -sS -o /dev/null -w 'HTTP %{http_code} %{content_type}\n' http://127.0.0.1:8765/ | tee /dev/stderr | grep -q '^HTTP 200 text/html'; \
+	echo "--- curl /api/stations ---"; \
+	curl -sS -o /dev/null -w 'HTTP %{http_code} %{content_type}\n' http://127.0.0.1:8765/api/stations | tee /dev/stderr | grep -q '^HTTP 200 application/json'; \
+	echo "--- curl /sources (SPA fallback) ---"; \
+	curl -sS -o /dev/null -w 'HTTP %{http_code} %{content_type}\n' http://127.0.0.1:8765/sources | tee /dev/stderr | grep -q '^HTTP 200 text/html'; \
+	echo "==> Smoke OK."
 
 # Alembic schema migrations (DESIGN.md §14.17 / §17 #8).
 #
