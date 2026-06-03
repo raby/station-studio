@@ -142,15 +142,34 @@ from it; the safety rails catch you if you try.
 
 ### Try the safety rail yourself
 
-Open `stations/starter.json`, find the first slot in
-`flat_slots`, replace its `"source"` value with
+Open `stations/starter.json` (or, on a wheel/docker install, the
+copy at `$STATION_STUDIO_HOME/stations/starter.json`), find the
+first entry in `flat_slots`, replace its `"source"` value with
 `"REFERENCE_ARCHIVE"` (e.g. change the first `{ "source":
 "STARTER_JINGLES", ... }` to `{ "source": "REFERENCE_ARCHIVE",
-"strategy": "weighted", "size": 1 }`). Restart
-`station-studio serve`. Opening the starter station's page or
-hitting `POST /api/stations/starter/generate` should surface a
-`TemplateError` mentioning the role mismatch — proof the rail
-fires. (Revert the edit before you forget.)
+"strategy": "weighted", "size": 1 }`). Restart `station-studio
+serve`.
+
+To see the rail fire, hit:
+
+```bash
+curl -X POST http://localhost:8001/api/stations/starter/generate \
+  -H "Content-Type: application/json" \
+  -d '{"week": 1}'
+```
+
+You get a `400 Bad Request` with a JSON body whose `detail`
+field carries the `TemplateError` message — something like
+`"block uses source 'REFERENCE_ARCHIVE' with role 'reference';
+only 'content' sources can be referenced by the layout"`. That's
+the parse-time guard firing. The "Generate next week" button on
+the station detail page hits the same endpoint and surfaces the
+same error in the UI's error toast.
+
+**To revert:** dev-clone users `git checkout
+stations/starter.json`. Wheel/docker users delete the edited
+file and restart `station-studio serve` — bootstrap re-seeds
+the original from the bundled copy on next boot.
 
 ### Forward-looking utilities (not shipped)
 

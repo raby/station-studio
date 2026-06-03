@@ -225,10 +225,17 @@ def build_reference_pool() -> bytes:
                 genre="Archive",
                 pid=_persistent_id("STREF", counter),
             ))
+    # c2-review 🟡-1: playlist_name MUST match the name the
+    # `_FIRST_BOOT_POOLS` auto-import uses (REFERENCE_ARCHIVE) so a
+    # user inspecting starter-reference.itunes.xml sees the same
+    # name the docs + UI + Sources page show. Pre-fix the XML's
+    # internal playlist_name was "STARTER_REFERENCE" which the
+    # importer ignored (it takes the name as a parameter), creating
+    # a docs-versus-XML naming inconsistency.
     return plistlib.dumps(_library_dict(
         library_pid="STARTERLIBRARY01",
         tracks=tracks,
-        playlist_name="STARTER_REFERENCE",
+        playlist_name="REFERENCE_ARCHIVE",
         playlist_pid="STREFPLAYLIST001",
     ))
 
