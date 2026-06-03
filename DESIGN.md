@@ -9961,17 +9961,68 @@ sweep, matching the §16.13.t1-t9 cadence).
   | c1 (`bdabe99`) + review (`e1a552c`) | Engine artifacts: `REFERENCE_ARCHIVE` added to `stations/starter.json:sources[]` with role=reference (declared, unused in slot blocks). `scripts/generate_starter_pools.py` extended with `build_reference_pool()` emitting 9 tracks across 3 synthetic archive artists, Genre="Archive", PID prefix `STREF`. `engine.seeding._FIRST_BOOT_POOLS` gained the entry so auto-import lands it on first boot. The c1 review discovered the engine has **TWO** cross-check guards (parse-time AND load-pools-time), not one as the watch-list framing implied — both pinned by separate tests. 4 tests added (sources declaration, content_source_names exclusion, pool shape, parse-time cross-check, load-pools cross-check, sidecar stability) + 4 pool-count tests updated (3 → 4 pools auto-imported). |
   | **c2 (_this commit_)** | **Docs + slice closeout.** New "What does `role: reference` mean?" section in `stations/README.md` covering the engine contract (loaded vs not), the two safety rails (parse-time + load-pools-time), the canonical example (`starter.json:sources.REFERENCE_ARCHIVE`), a hands-on "Try the safety rail yourself" recipe, and an honest "Why is this so thin?" paragraph pointing at forward-looking utilities (cross-pool dedup, master-archive prev_ref, allowlist enforcement — none shipped). DESIGN §16.14.t3 marked SHIPPED with this shipped log; §15 status snapshot + §17 queued-order rows bumped. |
 
-* **§16.14.t5 — Reference-role: cross-pool dedup.** Today's
-  `weighted` strategy's artist-dedup window is purely within the
-  content pool. A natural extension: a content sampler excludes
-  any track that appears in a configured reference pool (e.g.
-  "never play anything already in MASTER_ARCHIVE"). Requires:
-  template field (which reference pool to consult), engine wiring
-  in the weighted/window samplers, a config-time check the
-  reference pool was imported. The §16.14.t3 docs page names
-  this as a forward-looking utility. **Home: separate slice
-  (~3-4 commits).** Trigger: a hobbyist asks for "exclude
-  archive tracks from the rotation."
+* **§16.14.t5 — Reference-role: cross-pool dedup. IN FLIGHT.**
+  Trigger fired (user explicitly asked, paired with §16.14.t6 as
+  "engine features that give role: reference real teeth").
+
+  **Decisions (locked in the pre-c1 design talk):**
+  * **D1 — Rule key: `cross_pool_dedup_sources`** (plural).
+    Pre-talk leaned `cross_pool_dedup_source` (singular) per
+    Q1's recommendation; the Q3 decision to ship list semantics
+    upfront required pluralizing. List of 1 is the common
+    case; the field shape supports the union.
+  * **D2 — Scope: `weighted` strategy only this slice.**
+    Smallest engine surface; matches where artist-dedup already
+    lives. `window` extension queued as **§16.14.t8** —
+    must-have follow-up per user's Q2 answer.
+  * **D3 — Value shape: list of source names.**
+    `"cross_pool_dedup_sources": ["MASTER_ARCHIVE", "B"]` —
+    union the track-set exclusions. Single-source case is
+    `["MASTER_ARCHIVE"]`; readable + forward-compatible.
+  * **D4 — Exclusion mode: track-level** via `persistent_id`
+    match. Exclude tracks whose persistent_id appears in any of
+    the named pools. Artist-level cross-pool exclusion is a
+    different feature (artist-dedup-within-pool already covered
+    by `artist_dedup_window`).
+  * **D5 — Missing source: fail loud at `load_pools` time.**
+    Parallel to the existing reference-role cross-check. Error
+    message names the rule + the missing source + suggests
+    "import the pool with role=reference first."
+  * **D6 — Source role: MUST be `role: reference`** for this
+    slice. Couples the rule to the §16.14.t3 concept; gives the
+    reference role its first real engine teeth. **Allow `role:
+    content` in the future** if a real use case appears
+    (queued as a docs note + an inline TODO at the cross-check
+    site). Today's strict reference-only check raises a clear
+    error message that NAMES the allowance as future work, so
+    a hobbyist hitting it knows the constraint is intentional,
+    not arbitrary.
+  * **D7 — Demo: amend `stations/starter.json`'s starter station
+    so its `weighted` slots actually exclude `REFERENCE_ARCHIVE`
+    tracks.** The §16.14.t3 teaching annotation becomes a live
+    behavior. For this to be observable, the bundled
+    `REFERENCE_ARCHIVE` pool needs at least a couple tracks
+    that overlap (by persistent_id) with `STARTER_CONTENT` —
+    `scripts/generate_starter_pools.py` extended to put 2-3
+    shared PIDs in both pools so the exclusion is measurable.
+  * **D8 — Wiring: imperative in `scripts.seed_stations.seed_station`
+    for this slice.** Set the rule row when the starter
+    station seeds. Declarative `rules:` block in template JSON
+    queued as **§16.14.t9** — immediate must-have follow-up
+    per user's Q8 answer; the template-grammar change is too
+    much for THIS slice but should land next.
+
+  **Shape:** c1 (engine rule + weighted wiring + tests), c2
+  (bundled demo: shared PIDs + seed_station amendment +
+  integration test), c3 (docs update + slice closeout) + 3
+  mid-slice reviews + 1 slice-review sweep. Standard cadence.
+
+  **Two follow-up slices queued for after this one:**
+  * **§16.14.t8** — Extend cross-pool dedup to `window` strategy.
+    See D2.
+  * **§16.14.t9** — Declarative `rules:` block in template JSON
+    (instead of imperative seeding). See D8. Marked must-have
+    by the user; should be next on the queue after t5 closes.
 * **§16.14.t6 — Reference-role: master-archive `prev_ref`.**
   Today `prev_ref` reads from the previous week's generated
   playlist. Extension: an alternate form that reads from a
@@ -9995,6 +10046,32 @@ sweep, matching the §16.13.t1-t9 cadence).
   (~2-3 commits).** Trigger: a hobbyist asks for the
   positive-filter pattern, OR §16.14.t5 ships and the inverse
   becomes the natural next step.
+* **§16.14.t8 — Extend cross-pool dedup to `window` strategy.**
+  Per §16.14.t5 D2 (user's Q2 answer): t5 ships rule-wiring for
+  `weighted` only this slice. `window` is the natural next
+  extension — same rule key (`cross_pool_dedup_sources`), same
+  exclusion semantics, applied at the `window` strategy's
+  pick step. Trickier than `weighted` because `window` picks
+  positionally (from the cursor + size), not from a candidate
+  set: the rule effectively makes window blocks SKIP
+  excluded tracks while still advancing the cursor — exact
+  semantics need a small design pass. **Home: separate slice
+  (~3-4 commits).** Trigger: §16.14.t5 ships (then this is
+  the natural next step).
+* **§16.14.t9 — Declarative `rules:` block in template JSON.**
+  Per §16.14.t5 D8 (user's Q8 answer): t5 sets the
+  `cross_pool_dedup_sources` rule imperatively in
+  `scripts.seed_stations.seed_station` for the starter station
+  because adding a top-level `rules:` block to the template
+  JSON grammar is a separate concern from shipping the
+  rule-wiring itself. The long-term shape: templates declare
+  their rules in the JSON file. Then `seed_station` reads
+  `raw.get("rules", {})` and writes the rows; the Rules UI
+  (§16.5) reads + writes the same dict. **Marked must-have
+  follow-up by the user** — should land immediately after t5.
+  **Home: separate slice (~3 commits — template grammar +
+  parser support + seed_station wiring + tests).** Trigger:
+  §16.14.t5 ships (then this is queued next).
 * ~~**§16.14.t4 — Deeper jingle composition coverage.**~~
   **SHIPPED.** Trigger fired (user explicitly asked for t4).
   Single docs commit per the original framing — no bundled
