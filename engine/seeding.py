@@ -153,5 +153,98 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
+# ---------- §16.14 c2 — starter pool auto-import + sidecar auto-derive ----
+
+
+# Naming + role + filename mapping for the bundled starter pools (D4).
+# Mirrors stations/starter.json's `sources` block by NAME so the
+# generated station finds the imported pools at slot-generation time.
+# Tuple shape: (pool name, iTunes-XML filename, role).
+_STARTER_POOLS = (
+    ("STARTER_CONTENT", "starter-content.itunes.xml", "content"),
+    ("STARTER_JINGLES", "starter-jingles.itunes.xml", "content"),
+)
+
+
+def auto_import_starter_pools(
+    db: Session, stations_dir: Path,
+) -> int:
+    """§16.14 D6 + Q8: first-boot auto-import the starter station's
+    pools. Returns the count of pools imported on this call.
+
+    First-boot guard: if ANY `SourcePlaylist` rows exist already, skip
+    everything and return 0. The contract is "starter just works on a
+    fresh install AND a user who deletes the auto-imported pools to
+    learn the manual flow doesn't get them silently re-imported on
+    next boot." That second case is the Q8-locked behaviour: presence
+    of any user-imported pool is the "user has taken over" signal.
+
+    Missing-file tolerance: if the XML pools aren't in `stations_dir`
+    (e.g. a fork that removed the starter from its bundle), skip
+    cleanly with 0 — no error, no log noise.
+    """
+    from sqlalchemy import func
+
+    from engine.importer import import_source
+    from engine.models import SourcePlaylist
+
+    if db.query(func.count(SourcePlaylist.id)).scalar() > 0:
+        return 0
+
+    imported = 0
+    for name, filename, role in _STARTER_POOLS:
+        xml_path = stations_dir / filename
+        if not xml_path.is_file():
+            continue
+        import_source(db, xml_path, name, role=role)
+        imported += 1
+    return imported
+
+
+def auto_derive_missing_sidecars(stations_dir: Path) -> int:
+    """§16.14 D8: if a station JSON ships without a committed
+    `.editor.json` sidecar, derive one in-place so the visualiser is
+    interesting on first paint. Returns the count of sidecars
+    written on this call.
+
+    Idempotent: existing sidecars are NEVER overwritten. A user (or
+    future contributor) who hand-edits a sidecar gets their edits
+    preserved across boots. To regenerate, `rm
+    <home>/stations/foo.editor.json` then restart.
+
+    Skips silently when `derive_sidecar` raises — a malformed station
+    JSON shouldn't block the rest of bootstrap. The drift detector
+    + the editor sidecar tests catch real problems separately.
+    """
+    # Lazy import — keeps engine.seeding light when nobody calls the
+    # derive helper.
+    from scripts.derive_sidecar import derive_sidecar
+
+    if not stations_dir.is_dir():
+        return 0
+    derived = 0
+    for station_path in sorted(stations_dir.glob("*.json")):
+        # Skip sidecar files themselves + the pool-manifest companion.
+        if station_path.name.endswith(".editor.json"):
+            continue
+        if ".pool-manifest" in station_path.name:
+            continue
+        sidecar_path = (
+            station_path.parent / f"{station_path.stem}.editor.json"
+        )
+        if sidecar_path.exists():
+            continue
+        try:
+            raw = json.loads(station_path.read_text())
+            sidecar = derive_sidecar(raw)
+        except Exception:  # noqa: BLE001 — tolerate broken station JSONs
+            continue
+        sidecar_path.write_text(
+            json.dumps(sidecar, indent=2, sort_keys=False) + "\n"
+        )
+        derived += 1
+    return derived
+
+
 if __name__ == "__main__":
     raise SystemExit(main())

@@ -82,6 +82,14 @@ class BootstrapResult:
     # (and any later run that finds a deleted file in the
     # bundle-vs-home diff).
     stations_copied: int
+    # §16.14 c2: number of starter pools auto-imported on this run.
+    # Always 0 once ANY SourcePlaylist exists (Q8 first-boot guard) —
+    # the user is in charge of pools after the initial seed.
+    pools_auto_imported: int = 0
+    # §16.14 c2: number of `.editor.json` sidecars auto-derived for
+    # station JSONs in the home's stations dir that were missing
+    # one. Existing sidecars are never overwritten.
+    sidecars_derived: int = 0
 
     # __fspath__ removed intentionally — the dataclass should be
     # explicit, not pretend to be a Path. Callers that want the home
@@ -359,6 +367,36 @@ def bootstrap(*, echo: Callable[[str], None] = _silent) -> BootstrapResult:
     else:
         echo("Stations dir already populated; skipping example copy.")
 
+    # §16.14 c2 — starter pool auto-import (D6 + Q8 first-boot guard)
+    # + sidecar auto-derive (D8). Both are idempotent + tolerant of
+    # missing files; sidecars never overwrite existing ones.
+    from engine.database import make_engine, make_sessionmaker
+    from engine.models import Base
+    from engine.seeding import (
+        auto_derive_missing_sidecars, auto_import_starter_pools,
+    )
+
+    pools_imported = 0
+    db_engine = make_engine()
+    Base.metadata.create_all(db_engine)
+    SessionLocal = make_sessionmaker(db_engine)
+    with SessionLocal() as db:
+        pools_imported = auto_import_starter_pools(db, _home.stations_dir())
+        db.commit()
+    db_engine.dispose()
+    if pools_imported:
+        echo(
+            f"Auto-imported {pools_imported} starter pool(s) "
+            "(first-run only)."
+        )
+    else:
+        echo("Sources already present (or no starter pools bundled); "
+             "skipping auto-import.")
+
+    sidecars_derived = auto_derive_missing_sidecars(_home.stations_dir())
+    if sidecars_derived:
+        echo(f"Auto-derived {sidecars_derived} editor sidecar(s).")
+
     return BootstrapResult(
         home=home,
         db_url=resolved_db_url,
@@ -368,6 +406,8 @@ def bootstrap(*, echo: Callable[[str], None] = _silent) -> BootstrapResult:
         migrations_applied=migrations_applied,
         head_revision=head_revision,
         stations_copied=copied,
+        pools_auto_imported=pools_imported,
+        sidecars_derived=sidecars_derived,
     )
 
 
