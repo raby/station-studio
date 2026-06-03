@@ -73,7 +73,8 @@ async def lifespan(app: FastAPI):
     # first there; the lifespan re-check sees SourcePlaylist.count()
     # > 0 and is a no-op).
     from engine.seeding import (
-        _collect_paths, auto_import_starter_pools, seed_all,
+        _collect_paths, auto_derive_missing_sidecars,
+        auto_import_starter_pools, seed_all,
     )
     from api.deps import get_stations_dir
 
@@ -112,6 +113,21 @@ async def lifespan(app: FastAPI):
                     "auto-imported %d starter pool(s) (first-run only).",
                     imported,
                 )
+
+        # §16.14.t1 c2-review 🟡-1: sidecar auto-derive. Same
+        # asymmetry the slice-review 🟡-1 closed for auto-import —
+        # `station-studio serve` (CLI path) ran derive via bootstrap,
+        # but `make dev` (direct uvicorn) didn't. Mirror the helper
+        # here so a contributor who drops a station JSON without
+        # a committed sidecar (or deletes a sidecar to force a
+        # regen, per stations/README.md's "how to add jingles"
+        # recipe step 3) gets the same auto-derive behaviour on
+        # both paths. Idempotent: never overwrites existing files.
+        derived = auto_derive_missing_sidecars(get_stations_dir())
+        if derived:
+            logger.info(
+                "auto-derived %d missing sidecar(s).", derived,
+            )
     except Exception as e:  # noqa: BLE001 — see docstring
         logger.warning(
             "auto-seed failed (%s); continuing. Run `make seed-stations` "

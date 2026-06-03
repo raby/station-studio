@@ -10,7 +10,7 @@ Station Studio. Each is a working playlist generator, copied into
 |------|------------|---------------|
 | [`starter.json`](starter.json) | Tiny, stateless, two strategies (`weighted` + `jingle`). Demonstrates the slot+strategy mental model on a one-week / one-track-per-hour grid (168 slots). | **Your first station.** Read this end-to-end before anything else; it has just enough complexity to be interesting and no cursor mechanics. |
 | [`stateful-starter.json`](stateful-starter.json) | One persistent cursor (`sequential` strategy) + sprinkled `prev_ref` slots. 336 slots / week (every 30 min × 7 days), one content pool. Demonstrates **cross-week state**: cursor advances 24 positions/week, cycles every 14 weeks; prev_ref slots read from the previous week's playlist at the same position. | **Your second station, with state.** Read this after `starter.json` when you want to understand persistent cursors + prev_ref. Smaller and more focused than `rebirth-classics.json`. |
-| [`rebirth-classics.json`](rebirth-classics.json) | One persistent cursor, `window` strategy. 3,010 slots / week, two content pools. A real production-scale `row_template` template with cursor advance. | **Your third station.** Forking from here gives you a real cursor-driven rotation with row_template's per-day shape (vs `flat_slots`'s flat list). |
+| [`rebirth-classics.json`](rebirth-classics.json) | One persistent cursor, `window` strategy. 3,010 slots / week, two content pools. First production-scale `row_template` station with cursor advance. | **Your third station.** Forking from here gives you a real cursor-driven rotation with row_template's per-day shape (vs `flat_slots`'s flat list). |
 | [`rebirth-radio.json`](rebirth-radio.json) | Full feature surface: nine persistent cursors with cross-week advance, all five strategies (`jingle`, `weighted`, `mix`, `prev_ref`, `sequential`), reference role. 2,196 slots / week. | **Your fourth station** (or your reference for "can the engine do X?"). Forking from here is forking a complete production station — be ready for it. |
 
 ## Companion files (one per station)
@@ -53,12 +53,22 @@ recipe is short:
      { "name": "STARTER_JINGLES",  "colour": "#fb8500", "role": "content" }
    ]
    ```
-2. Replace one of the slot entries (say, the `sequential` slot
-   at index 0) with the jingle block shape from
-   [`starter.json`](starter.json):
+2. Replace one or more slot entries with the jingle block shape
+   from [`starter.json`](starter.json):
    ```jsonc
    { "source": "STARTER_JINGLES", "strategy": "jingle", "size": 1, "genre": "Jingle" }
    ```
+   For a real radio-shape, swap `sequential` slots for jingles on
+   a regular cadence. **Watch out for the existing `prev_ref`
+   slots at positions 12, 24, 36, …, 324** — if you clobber
+   those, you lose the prev_ref demo (which is fine if that's
+   not what you're keeping). The simplest safe pattern: every 12
+   starting at **6** — slots 6, 18, 30, …, 330 fall halfway
+   between the prev_ref slots, never conflict, give you 28
+   jingles spread evenly. For a denser jingle cadence (say, two
+   per hour at :15 and :45 of every hour), swap positions
+   `6 + 12·k` AND `9 + 12·k` for `k` in 0..27 — 56 jingles, all
+   safely between prev_ref slots.
 3. Drop `stateful-starter.editor.json` (so the sidecar
    auto-derive picks up your new structure), then restart
    `station-studio serve`.

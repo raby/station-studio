@@ -213,8 +213,9 @@ above is the recommended hobbyist flow.
 - 3,010 slots / week, 7 rows × 2 strategy blocks
 - Single stateless cursor advancing 60 positions/week, cycling at 16
 - Strategy: `window` only (the simplest production case)
-- **Read this third** — first real station, single-cursor mechanics
-  in row-template form (vs the starters' flat_slots form).
+- **Read this third** — first `row_template` station, single-cursor
+  mechanics in the per-day shape (vs the starters' `flat_slots`
+  flat list).
 
 ### Rebirth Radio — `stations/rebirth-radio.json`
 
@@ -223,7 +224,9 @@ above is the recommended hobbyist flow.
   cross-week advance
 - Imported from `weekly/` (a bespoke 1-station generator that
   Station Studio replaces)
-- **Read this if you want to see how complex a template can get.**
+- **Read this fourth** (or as your reference for "can the engine
+  do X?"). Forking from here is forking a complete production
+  station — be ready for it.
 
 ### Roll your own
 

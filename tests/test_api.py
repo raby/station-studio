@@ -989,6 +989,47 @@ def test_root_endpoint_identifies_the_service(monkeypatch):
 # ---------- §sweep-1 auto-seed lifespan handler -----------------------
 
 
+def test_lifespan_auto_derives_missing_sidecars(tmp_path, monkeypatch):
+    """§16.14.t1 c2-review 🟡-1: api/main.py lifespan must call
+    `auto_derive_missing_sidecars` so `make dev` (direct uvicorn,
+    bypasses bootstrap) gets the same auto-derive behaviour the CLI
+    path does via bootstrap. Pin the symmetry so a future refactor
+    can't silently regress the dev-mode workflow.
+
+    Approach: point the stations dir at a tmp_path with ONE station
+    JSON and no sidecar; boot the app; confirm the sidecar appears.
+    """
+    import json
+    import shutil
+
+    db_url = f"sqlite:///{tmp_path}/derive.db"
+    monkeypatch.setenv("STATION_STUDIO_DB_URL", db_url)
+
+    # Build a tmp stations dir with starter.json (which has a
+    # well-formed template the derive helper handles) but NO sidecar.
+    stations_dir = tmp_path / "stations"
+    stations_dir.mkdir()
+    monkeypatch.setenv("STATION_STUDIO_STATIONS_DIR", str(stations_dir))
+    repo_root = Path(__file__).resolve().parent.parent
+    shutil.copy(repo_root / "stations" / "starter.json", stations_dir)
+    # Sanity: no sidecar yet.
+    sidecar = stations_dir / "starter.editor.json"
+    assert not sidecar.exists()
+
+    with TestClient(app) as _client:
+        pass  # lifespan fires on context entry/exit
+
+    # The lifespan derived the missing sidecar.
+    assert sidecar.exists(), (
+        "api/main.py lifespan did not auto-derive the missing "
+        "starter sidecar. The `make dev` path now lies about the "
+        "stations/README.md 'how to add jingles' recipe — see "
+        "§16.14.t1 c2-review 🟡-1."
+    )
+    # And the derived content parses as valid JSON (basic smoke).
+    json.loads(sidecar.read_text())
+
+
 def test_lifespan_auto_seeds_when_station_table_is_empty(tmp_path, monkeypatch):
     """README's "Quick start" promises Rebirth Classics + Rebirth Radio
     appear after `make install && make dev`. The lifespan handler
