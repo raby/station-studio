@@ -6177,7 +6177,7 @@ direction — spec slice §16.2.0 is the next planned work.
 | Stations list polish     | **Shipped (§16.12).** Landing page has search (name/slug substring), cadence + generated filter chips, sort (name / last-generated / recently-edited), + per-row "Last generated: WEEKLY 026 · 3 days ago" line. GET /api/stations returns enriched StationSummary aggregates (2 bounded queries, argmax-by-timestamp). Pure filter/sort logic in web/src/lib/stations.ts. |
 | Install story            | **SHIPPED — §16.13 (c1-c6, six commits + 5 review-fix commits).** Wheel + docker channels both live, smoke-passing, release-blocker-gated (`make wheel-smoke` + `make image-smoke` curl `/`, `/api/stations`, `/sources` against the fresh install). Docker image multi-stage, ~312MB, non-root, HEALTHCHECK, /data volume. README's unified "Install" section presents all three channels (docker / wheel / dev clone) as equals with a prerequisites-keyed picker. Retires §16.22's SSR premise (no Node at runtime). Watch-list: §16.13.t1 (PyPI publish), t2 (full CLI subcommand set), t3-t9 (smaller follow-ups). |
 | Pool-import UI           | **SHIPPED — §16.25.** `/sources` page (list + single/batch add + per-row Re-import + Delete) + per-station embed on `/stations/[slug]` that re-fetches the §16.19 overview on any panel change + §16.19 "not imported" badge deep-links to the prefilled add-form. File-upload primary, typed-path advanced. Six commits + multiple mid-slice review fixes. |
-| Hobbyist starter station | **SHIPPED — §16.14 (design + 3 commits + 3 review-fix commits).** `stations/starter.json` (168 slots, weighted + jingle every 8, stateless), synthetic content + jingle XML pools (50+5 tracks all-synthetic, deterministically regenerable), committed sidecar, first-boot auto-import + auto-derive wired into bootstrap with the Q8 first-boot guard. README "Example stations" lists Starter as the read-first entry; "Loading your music" carries the D6 delete-and-re-import tutorial walkthrough; "Roll your own" recommends starter.json as the fork base. Stateful starter (persistent cursors + reference role) queued as §16.14.t1. |
+| Hobbyist starter stations | **SHIPPED — §16.14 (stateless starter) + §16.14.t1 (stateful starter).** Two bundled examples teaching distinct concepts: starter (168 slots, `weighted` + `jingle`, no cursor state) and stateful-starter (336 slots, `sequential` + `prev_ref`, one persistent cursor advancing 24/week, cycling every 14 weeks). All three companion pools (`STARTER_CONTENT` + `STARTER_JINGLES` + `STATEFUL_CONTENT`) auto-import on first boot. README's "Example stations" reading-order table now spans four stations: starter → stateful-starter → rebirth-classics → rebirth-radio. Reference-role starter queued as §16.14.t3; deeper jingle composition coverage queued as §16.14.t4 (likely a docs page, not a station). |
 | Docs site                | Deferred — §16.15. After §16.2 + §16.13 + §16.14 ship.           |
 | Disk-export prune endpoint | Queued — §16.16. Demand-gated. §14.3's prune punt. |
 | Excluded-candidates display | Queued — §16.17. Small. Trace records them (§14.23); viewer needs to surface them. |
@@ -6253,7 +6253,7 @@ Master order at a glance. Detailed briefs follow below.
 | 5 | ~~§16.12 Stations list polish (search / filter / recent generations)~~ | ✅ shipped | **SHIPPED.** Search + cadence/generated filter chips + sort (name / last-generated / recently-edited) + per-row last-generated line. GET /api/stations enriched with StationSummary aggregates. |
 | 6 | §16.25 Pool-import UI | **SHIPPED** | The §16.13 D1 gate-unblocker. `/sources` page + per-station embed + deep-link badge; six commits, multiple mid-slice review passes. |
 | 7 | ~~§16.13 Install story (pip / docker)~~ | ✅ shipped | **SHIPPED** (c1-c6, six commits). Wheel + docker channels both live + release-blocker-gated. Closed D1/D2/D3; retires §16.22 SSR premise. Watch-list (t1-t9) tracks deferred follow-ups; PyPI publish (t1) is the natural next slice if a stranger asks for clone-free install. |
-| 7 | ~~§16.14 Hobbyist starter station~~ | ✅ shipped | **SHIPPED** (3 + 2 review-fix). Starter station + synthetic pools + auto-import + sidecar auto-derive. Stateful follow-up = §16.14.t1. |
+| 7 | ~~§16.14 + §16.14.t1 Hobbyist starter stations~~ | ✅ shipped | **SHIPPED** (§16.14: 3 + 3 review-fix; §16.14.t1: design + 3 + 3 review-fix). Two bundled examples: stateless starter (weighted + jingle) and stateful-starter (sequential + prev_ref, one persistent cursor). Both auto-import on first boot. Reference-role starter (§16.14.t3) + deeper jingle docs (§16.14.t4) queued. |
 | 8 | §16.15 Docs site (MkDocs-Material) | medium | After enough product is built to justify a doc site. |
 
 Inserted into the strategic sequence based on §16.0 audit:
@@ -9841,7 +9841,7 @@ sweep, matching the §16.13.t1-t9 cadence).
 
 **Watch-list (queued from this slice).**
 
-* **§16.14.t1 — Stateful starter station. IN FLIGHT.**
+* ~~**§16.14.t1 — Stateful starter station.**~~ **SHIPPED.**
   A second bundled example demonstrating **persistent cursors +
   cross-week state**. Bridges the gap between the stateless
   starter (§16.14) and Rebirth Classics' real persistent-cursor
@@ -9875,6 +9875,15 @@ sweep, matching the §16.13.t1-t9 cadence).
       is already auto-imported from §16.14, no extra import step).
   **Shape:** 3 commits + 3 review-fix + 1 slice-review sweep,
   matching the §16.14 cadence.
+
+  **Shipped this slice (design + c1-c3, running log).**
+
+  | Commit | Scope |
+  |--------|-------|
+  | design (`adadb55`) | Locked D1-D9 + queued §16.14.t2-t4. |
+  | c1 (`b319239`) + review (`3d42902`) | Engine artifacts: `stations/stateful-starter.json` (336 slots, sequential + prev_ref every 12), synthetic content pool (`stateful-starter-content.itunes.xml` 336 tracks / 14 artists, exact cycle match), committed `stateful-starter.editor.json`, `scripts/generate_stateful_starter_pools.py` regenerator, `make refresh-stateful-starter-pools`. `_FIRST_BOOT_POOLS` renamed from `_STARTER_POOLS` + STATEFUL_CONTENT added so auto-import lands on first boot. Review caught a real semantic bug: `prev_ref.position` is 1-indexed against the prior playlist (not 0-indexed against the template); template + sidecar + XML regenerated. 12 tests including the headline `test_prev_ref_slot_in_week_N_reads_from_week_N_minus_1` pin + the bootstrap → auto-import → generate end-to-end. |
+  | c2 (`04fd91e`) + review (`87bf982`) | Docs: `stations/README.md` reading-order table grew from 3→4 with stateful-starter as "your second station, with state"; D9's "How to add jingles to stateful-starter" recipe added with explicit safe-cadence pattern (every 12 starting at 6 — halfway between prev_ref slots, 28 jingles, no conflicts). Main `README.md` "Example stations included" + "Loading your music" updated. Review caught + fixed `make dev` lying about the recipe's step 3 — added `auto_derive_missing_sidecars` to `api/main.py:lifespan` so `make dev` (direct uvicorn) and `station-studio serve` (CLI → bootstrap) behave the same way. |
+  | **c3 (_this commit_)** | **Slice closeout.** This DESIGN entry's "shipped this slice" log table (you're reading it). §15 status snapshot bumped: §16.14.t1 SHIPPED, hobbyist-starter row notes the stateful follow-up. §17 queued-order row marked. README's stateful-starter entry was already complete from c2. |
 * **§16.14.t2 — Hoist `derive_sidecar` into `engine/`.** The
   `auto_derive_missing_sidecars` helper in `engine/seeding.py`
   imports `from scripts.derive_sidecar import derive_sidecar` —
