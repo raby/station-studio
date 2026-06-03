@@ -168,12 +168,26 @@ above is the recommended hobbyist flow.
 
 ## Example stations included
 
+### Starter Station — `stations/starter.json`
+
+- 168 slots / week (one per hour, Mon → Sun)
+- Stateless cursors — no cross-week state
+- Two strategies: `weighted` (content) + `jingle` (every 8 slots)
+- Companion synthetic pools (`starter-content.itunes.xml`,
+  `starter-jingles.itunes.xml`) — 50 synthetic tracks across 10
+  artists + 5 jingle tracks. **Auto-imported on first boot** so
+  the station works out of the box with no external data.
+- **Read this first.** Smallest, most approachable shape; perfect
+  for "how does the slot+strategy model work?" before you fork
+  anything bigger.
+
 ### Rebirth Classics — `stations/rebirth-classics.json`
 
 - 3,010 slots / week, 7 rows × 2 strategy blocks
 - Single stateless cursor advancing 60 positions/week, cycling at 16
-- Strategy: `window` only (the simplest case)
-- **Read this first if you're new — it's the easiest template shape**
+- Strategy: `window` only (the simplest production case)
+- **Read this second** — first real station, single-cursor mechanics
+  in row-template form.
 
 ### Rebirth Radio — `stations/rebirth-radio.json`
 
@@ -182,7 +196,7 @@ above is the recommended hobbyist flow.
   cross-week advance
 - Imported from `weekly/` (a bespoke 1-station generator that
   Station Studio replaces)
-- **Read this if you want to see how complex a template can get**
+- **Read this if you want to see how complex a template can get.**
 
 ### Roll your own
 

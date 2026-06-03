@@ -6177,7 +6177,7 @@ direction — spec slice §16.2.0 is the next planned work.
 | Stations list polish     | **Shipped (§16.12).** Landing page has search (name/slug substring), cadence + generated filter chips, sort (name / last-generated / recently-edited), + per-row "Last generated: WEEKLY 026 · 3 days ago" line. GET /api/stations returns enriched StationSummary aggregates (2 bounded queries, argmax-by-timestamp). Pure filter/sort logic in web/src/lib/stations.ts. |
 | Install story            | **SHIPPED — §16.13 (c1-c6, six commits + 5 review-fix commits).** Wheel + docker channels both live, smoke-passing, release-blocker-gated (`make wheel-smoke` + `make image-smoke` curl `/`, `/api/stations`, `/sources` against the fresh install). Docker image multi-stage, ~312MB, non-root, HEALTHCHECK, /data volume. README's unified "Install" section presents all three channels (docker / wheel / dev clone) as equals with a prerequisites-keyed picker. Retires §16.22's SSR premise (no Node at runtime). Watch-list: §16.13.t1 (PyPI publish), t2 (full CLI subcommand set), t3-t9 (smaller follow-ups). |
 | Pool-import UI           | **SHIPPED — §16.25.** `/sources` page (list + single/batch add + per-row Re-import + Delete) + per-station embed on `/stations/[slug]` that re-fetches the §16.19 overview on any panel change + §16.19 "not imported" badge deep-links to the prefilled add-form. File-upload primary, typed-path advanced. Six commits + multiple mid-slice review fixes. |
-| Hobbyist starter station | Queued — §16.14. 100-200-slot example structurally simpler than Classics, with synthetic starter XMLs for end-to-end boot without external data. |
+| Hobbyist starter station | **SHIPPED — §16.14 (3 commits + 2 review-fix + design pass).** `stations/starter.json` (168 slots, weighted + jingle every 8, stateless), synthetic content + jingle XML pools (50+5 tracks all-synthetic, deterministically regenerable), committed sidecar, first-boot auto-import + auto-derive wired into bootstrap with the Q8 first-boot guard. README "Example stations" lists Starter as the read-first entry. Stateful starter (persistent cursors + reference role) queued as §16.14.t1. |
 | Docs site                | Deferred — §16.15. After §16.2 + §16.13 + §16.14 ship.           |
 | Disk-export prune endpoint | Queued — §16.16. Demand-gated. §14.3's prune punt. |
 | Excluded-candidates display | Queued — §16.17. Small. Trace records them (§14.23); viewer needs to surface them. |
@@ -6253,7 +6253,7 @@ Master order at a glance. Detailed briefs follow below.
 | 5 | ~~§16.12 Stations list polish (search / filter / recent generations)~~ | ✅ shipped | **SHIPPED.** Search + cadence/generated filter chips + sort (name / last-generated / recently-edited) + per-row last-generated line. GET /api/stations enriched with StationSummary aggregates. |
 | 6 | §16.25 Pool-import UI | **SHIPPED** | The §16.13 D1 gate-unblocker. `/sources` page + per-station embed + deep-link badge; six commits, multiple mid-slice review passes. |
 | 7 | ~~§16.13 Install story (pip / docker)~~ | ✅ shipped | **SHIPPED** (c1-c6, six commits). Wheel + docker channels both live + release-blocker-gated. Closed D1/D2/D3; retires §16.22 SSR premise. Watch-list (t1-t9) tracks deferred follow-ups; PyPI publish (t1) is the natural next slice if a stranger asks for clone-free install. |
-| 7 | §16.14 Hobbyist starter station | small | Fresh install needs a runnable example without external XMLs. |
+| 7 | ~~§16.14 Hobbyist starter station~~ | ✅ shipped | **SHIPPED** (3 + 2 review-fix). Starter station + synthetic pools + auto-import + sidecar auto-derive. Stateful follow-up = §16.14.t1. |
 | 8 | §16.15 Docs site (MkDocs-Material) | medium | After enough product is built to justify a doc site. |
 
 Inserted into the strategic sequence based on §16.0 audit:
@@ -9827,6 +9827,17 @@ established cadence. Full slice-review sweep at the end.
 
 **Effort.** Small (3 commits + 3 review-fix commits + 1 slice-review
 sweep, matching the §16.13.t1-t9 cadence).
+
+**Shipped this slice.**
+
+| Commit | Scope |
+|--------|-------|
+| design (`9b1b537`) | This DESIGN entry — locked D1-D9, watch-list .t1 queued, commit plan documented. |
+| c1 (`470481e`) + review (`e46646a`) | Engine artifacts: `stations/starter.json` (168 slots, weighted + jingle every 8, stateless), synthetic pools (`starter-content.itunes.xml` 50 tracks / 10 artists / 7 duration buckets, `starter-jingles.itunes.xml` 5 jingle tracks), committed `starter.editor.json` sidecar, deterministic `scripts/generate_starter_pools.py` (plistlib-based, escape-safe), `make refresh-starter-pools`, 11 tests pinning parse / pool import / sidecar positions / end-to-end generate / generator-vs-committed byte parity. |
+| c2 (`cc45982`) + review (`4ff9290`) | First-boot auto-import + sidecar auto-derive. New `engine.seeding.auto_import_starter_pools` (Q8 first-boot guard via `SourcePlaylist.count() == 0` + missing-file tolerance + parity test vs `starter.json` sources) + `engine.seeding.auto_derive_missing_sidecars` (idempotent, never overwrites, narrow exception catch + logger). `BootstrapResult` grew `pools_auto_imported` + `sidecars_derived` fields. Unified echo banner shape. 10 tests covering first-boot, second-boot, user-pre-imports-pool-blocks-auto, user-deletes-WILL-reimport-quirk, bundled-sidecar-not-rederived, custom-JSON-gets-derived, existing-sidecar-not-overwritten, BootstrapResult contract, drift parity, missing-XMLs tolerance. |
+| **c3 (_this commit_)** | **Slice closeout.** README "Example stations" gains Starter Station as the FIRST entry (read this first). `stations/README.md` already exists from a prior commit; verified accurate. §15 status snapshot bumped: §16.14 SHIPPED. |
+
+**§16.14 CLOSED.** D1-D9 all shipped; t1 stateful-starter queued.
 
 **Watch-list (queued from this slice).**
 
