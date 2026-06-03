@@ -141,13 +141,23 @@ pattern + test discipline.
 
 ## Loading your music
 
-The two example stations (Rebirth Classics + Rebirth Radio) are
-seeded automatically on first boot — pick one in the sidebar.
+All three example stations (Starter + Rebirth Classics + Rebirth
+Radio) are seeded automatically on first boot — pick one in the
+sidebar. The Starter Station's two pools (`STARTER_CONTENT` +
+`STARTER_JINGLES`) also auto-import from the bundled synthetic
+XMLs, so the station works end-to-end without any setup.
 
 To import your own iTunes XMLs as source pools, open the **Sources**
 page (or click "Source pools →" from the landing). Drag-and-drop or
 pick an XML file, name the pool, choose a role (content / reference),
 and hit Import. Re-import to refresh, Delete to remove (§16.25).
+
+**Want to learn the manual import flow first?** Go to the **Sources**
+page and delete `STARTER_CONTENT`, then re-import it by uploading
+`stations/starter-content.itunes.xml`. The starter pools work as a
+real-shaped iTunes XML you can practice on before importing your own
+library. (The starter station will silently re-import on next boot
+if you leave both pools deleted, so it can't get stuck broken.)
 
 In Music (macOS), export a playlist as XML via:
 **File → Library → Export Playlist… → choose "XML" format**.
@@ -201,9 +211,12 @@ above is the recommended hobbyist flow.
 ### Roll your own
 
 The visual block editor (§16.2) will let you build a template by
-dragging chips onto a timeline. Until that ships, edit one of the
-example JSON files or read `DESIGN.md` §14.32 / §14.34 for the
-template grammar.
+dragging chips onto a timeline. Until that ships, the cleanest
+starting point is **`stations/starter.json`** — copy it under a new
+filename, adjust the slot count, swap in your own source names, and
+drop it in `~/.station-studio/stations/`. Restart `serve` and your
+station appears in the sidebar. Read `DESIGN.md` §14.32 / §14.34 for
+the full template grammar reference.
 
 ## How it works
 
