@@ -370,32 +370,42 @@ def bootstrap(*, echo: Callable[[str], None] = _silent) -> BootstrapResult:
     # §16.14 c2 — starter pool auto-import (D6 + Q8 first-boot guard)
     # + sidecar auto-derive (D8). Both are idempotent + tolerant of
     # missing files; sidecars never overwrite existing ones.
+    #
+    # c2-review 🟡-3: skip the `Base.metadata.create_all` call here —
+    # alembic.upgrade() already created the schema two steps above.
+    # We still build a fresh engine because station_studio/ doesn't
+    # have access to the api.deps singleton (and creating one here
+    # avoids the circular import direction api → station_studio).
     from engine.database import make_engine, make_sessionmaker
-    from engine.models import Base
     from engine.seeding import (
         auto_derive_missing_sidecars, auto_import_starter_pools,
     )
 
-    pools_imported = 0
     db_engine = make_engine()
-    Base.metadata.create_all(db_engine)
     SessionLocal = make_sessionmaker(db_engine)
     with SessionLocal() as db:
         pools_imported = auto_import_starter_pools(db, _home.stations_dir())
         db.commit()
     db_engine.dispose()
+
+    # c2-review 🟢-2: unified echo banner shape — every step says
+    # "<concept>: <result>." in the same form.
     if pools_imported:
         echo(
-            f"Auto-imported {pools_imported} starter pool(s) "
+            f"Starter pools: auto-imported {pools_imported} "
             "(first-run only)."
         )
     else:
-        echo("Sources already present (or no starter pools bundled); "
-             "skipping auto-import.")
+        echo(
+            "Starter pools: skipped (sources already present, or "
+            "starter pools not bundled)."
+        )
 
     sidecars_derived = auto_derive_missing_sidecars(_home.stations_dir())
     if sidecars_derived:
-        echo(f"Auto-derived {sidecars_derived} editor sidecar(s).")
+        echo(f"Editor sidecars: auto-derived {sidecars_derived}.")
+    else:
+        echo("Editor sidecars: nothing to derive.")
 
     return BootstrapResult(
         home=home,

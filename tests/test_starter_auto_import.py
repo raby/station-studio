@@ -282,6 +282,81 @@ def test_bootstrap_result_carries_starter_signals(
     assert isinstance(result.sidecars_derived, int)
 
 
+# --- c2-review 🟡-1: drift detection ---
+
+
+def test_starter_pools_table_matches_starter_json_sources() -> None:
+    """c2-review 🟡-1: `engine.seeding._STARTER_POOLS` hardcodes the
+    pool names that the auto-import will create. They MUST match
+    `stations/starter.json`'s `sources[*].name` — otherwise the
+    auto-import imports a pool the template can't find, and
+    generation silently fails with "no tracks in pool X."
+
+    Catches a rename in starter.json without the matching update to
+    _STARTER_POOLS (and vice versa).
+    """
+    import json
+    from engine.seeding import _STARTER_POOLS
+
+    repo_root = Path(__file__).resolve().parent.parent
+    starter = json.loads(
+        (repo_root / "stations" / "starter.json").read_text()
+    )
+    template_names = {s["name"] for s in starter["sources"]}
+    table_names = {name for name, _xml, _role in _STARTER_POOLS}
+    assert template_names == table_names, (
+        f"starter.json sources {sorted(template_names)} drifted from "
+        f"_STARTER_POOLS {sorted(table_names)}. If you renamed a "
+        "pool, update both."
+    )
+
+
+# --- c2-review 🟢-1: starter JSON present but XMLs missing ---
+
+
+def test_auto_import_starter_pools_tolerates_missing_xmls(
+    tmp_path, isolated_cli_home,
+) -> None:
+    """c2-review 🟢-1: unit pin on the missing-file tolerance branch.
+    A fork that ships `stations/starter.json` (so the station seeds)
+    but doesn't bundle the XML pools must not raise — the helper
+    returns 0. We can't trigger this through the full bootstrap
+    (the copy-stations step would restore the XMLs from the bundle);
+    test the engine.seeding helper directly against a tmp dir.
+
+    `isolated_cli_home` fixture is still required to set up the DB
+    URL so SQLAlchemy can connect."""
+    from engine.database import make_engine, make_sessionmaker
+    from engine.seeding import auto_import_starter_pools
+    from engine.models import Base
+
+    # Run bootstrap once just to get the migrated DB.
+    bootstrap()
+
+    # Empty the table so first-boot guard fires (matches the test
+    # premise: no user pools exist).
+    import sqlite3
+    db = sqlite3.connect(isolated_cli_home / "station_studio.db")
+    try:
+        db.execute("DELETE FROM source_playlist_entry")
+        db.execute("DELETE FROM source_playlist")
+        db.commit()
+    finally:
+        db.close()
+
+    # Point at a tmp dir that contains NO starter-*.itunes.xml files.
+    empty_dir = tmp_path / "no-pools"
+    empty_dir.mkdir()
+
+    eng = make_engine()
+    SL = make_sessionmaker(eng)
+    with SL() as session:
+        imported = auto_import_starter_pools(session, empty_dir)
+        session.commit()
+    eng.dispose()
+    assert imported == 0
+
+
 # --- isolated_cli_home fixture (mirrors tests/test_cli.py) ---
 
 

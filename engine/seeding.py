@@ -25,6 +25,7 @@ installed-wheel users.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sys
 from pathlib import Path
@@ -33,6 +34,9 @@ from sqlalchemy.orm import Session
 
 from engine.database import make_engine, make_sessionmaker
 from engine.models import Base, Station
+
+
+logger = logging.getLogger(__name__)
 from engine.template import parse_template, TemplateError
 
 
@@ -212,13 +216,19 @@ def auto_derive_missing_sidecars(stations_dir: Path) -> int:
     preserved across boots. To regenerate, `rm
     <home>/stations/foo.editor.json` then restart.
 
-    Skips silently when `derive_sidecar` raises — a malformed station
-    JSON shouldn't block the rest of bootstrap. The drift detector
-    + the editor sidecar tests catch real problems separately.
+    c2-review 🟡-2: narrow the exception catch to the expected
+    user-input failure modes (broken JSON syntax, missing template
+    keys, template parse errors). Truly unexpected exceptions
+    (NameError / TypeError from a derive_sidecar refactor bug,
+    ImportError from a broken install) propagate so they don't
+    silently degrade the bootstrap. Caught errors are LOGGED via
+    the module logger so a contributor running `STATION_STUDIO_LOG=
+    info station-studio serve` sees what was skipped.
     """
     # Lazy import — keeps engine.seeding light when nobody calls the
     # derive helper.
     from scripts.derive_sidecar import derive_sidecar
+    from engine.template import TemplateError
 
     if not stations_dir.is_dir():
         return 0
@@ -237,7 +247,12 @@ def auto_derive_missing_sidecars(stations_dir: Path) -> int:
         try:
             raw = json.loads(station_path.read_text())
             sidecar = derive_sidecar(raw)
-        except Exception:  # noqa: BLE001 — tolerate broken station JSONs
+        except (json.JSONDecodeError, KeyError, ValueError,
+                TemplateError) as e:
+            logger.warning(
+                "auto_derive: skipping %s — %s: %s",
+                station_path.name, type(e).__name__, e,
+            )
             continue
         sidecar_path.write_text(
             json.dumps(sidecar, indent=2, sort_keys=False) + "\n"
