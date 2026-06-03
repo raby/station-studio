@@ -141,6 +141,8 @@ wheel-smoke: wheel
 	curl -sS -o /dev/null -w 'HTTP %{http_code} %{content_type}\n' http://127.0.0.1:8765/api/stations | tee /dev/stderr | grep -q '^HTTP 200 application/json'; \
 	echo "--- curl /sources (SPA fallback) ---"; \
 	curl -sS -o /dev/null -w 'HTTP %{http_code} %{content_type}\n' http://127.0.0.1:8765/sources | tee /dev/stderr | grep -q '^HTTP 200 text/html'; \
+	echo "--- curl /api/sources (starter auto-import) ---"; \
+	curl -sS http://127.0.0.1:8765/api/sources | tee /dev/stderr | grep -q 'STARTER_CONTENT' || { echo "FAIL: STARTER_CONTENT pool missing from /api/sources — bootstrap auto-import is broken" >&2; exit 1; }; \
 	echo "==> Smoke OK."
 
 # §16.13 c5 — build the docker image.
@@ -188,6 +190,8 @@ image-smoke: image
 	curl -sS -o /dev/null -w 'HTTP %{http_code} %{content_type}\n' http://127.0.0.1:18001/api/stations | tee /dev/stderr | grep -q '^HTTP 200 application/json'; \
 	echo "--- curl /sources (SPA fallback) ---"; \
 	curl -sS -o /dev/null -w 'HTTP %{http_code} %{content_type}\n' http://127.0.0.1:18001/sources | tee /dev/stderr | grep -q '^HTTP 200 text/html'; \
+	echo "--- curl /api/sources (starter auto-import) ---"; \
+	curl -sS http://127.0.0.1:18001/api/sources | tee /dev/stderr | grep -q 'STARTER_CONTENT' || { echo "FAIL: STARTER_CONTENT pool missing from /api/sources — bootstrap auto-import is broken in the image" >&2; exit 1; }; \
 	echo "==> Image smoke OK."
 
 # Alembic schema migrations (DESIGN.md §14.17 / §17 #8).

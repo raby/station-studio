@@ -9851,6 +9851,19 @@ sweep, matching the §16.13.t1-t9 cadence).
   with state." **Home: separate slice (~3 commits).** Trigger:
   this stateless starter shipped + a hobbyist asks "how do I make
   slots persist across weeks?"
+* **§16.14.t2 — Hoist `derive_sidecar` into `engine/`.** The
+  `auto_derive_missing_sidecars` helper in `engine/seeding.py`
+  imports `from scripts.derive_sidecar import derive_sidecar` —
+  engine → scripts, the same coupling §16.13.t9 was supposed to
+  wash out. The `derive_sidecar` core helper (the pure function
+  that takes a station template dict and returns a sidecar dict;
+  not the `main()` CLI wrapper) would naturally fit in
+  `engine/editor_metadata.py` (or a sibling `engine/sidecar.py`).
+  Today's shape works because §16.13.t9 ships `scripts/` in the
+  wheel anyway as a deliberate over-include; closing this entry
+  would let the future `scripts/` library-vs-dev-tool split land
+  cleanly. **Home: ~1 commit when §16.13.t9 lands its split, or
+  when a third caller of `derive_sidecar` appears.**
 
 ---
 

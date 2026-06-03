@@ -105,11 +105,48 @@ def test_wheel_ships_bundled_stations(wheel_contents: set[str]) -> None:
     assert stations, (
         "no bundled stations in wheel — c3's first-run seed will break"
     )
-    # Specifically: both example stations from the repo's `stations/`
-    # dir made it through.
+    # All three example stations from the repo's `stations/` dir
+    # made it through. §16.14 added `starter.json`.
     names = {Path(p).name for p in stations}
     assert "rebirth-classics.json" in names
     assert "rebirth-radio.json" in names
+    assert "starter.json" in names
+
+
+def test_wheel_ships_starter_pool_xmls_and_sidecar(
+    wheel_contents: set[str],
+) -> None:
+    """§16.14 slice-review 🟡-2: pin that the starter station's
+    auto-importable iTunes XMLs + the committed editor sidecar all
+    ship in the wheel. Pre-fix the packaging test only covered
+    `*.json` station templates; the XMLs the bootstrap auto-import
+    reads on first boot could have been silently excluded by a
+    force-include refactor without anyone noticing until a fresh
+    install + `station-studio serve` showed "no tracks in pool
+    STARTER_CONTENT" on the starter station.
+    """
+    bundled = {
+        p for p in wheel_contents
+        if p.startswith("station_studio/_bundled/stations/")
+    }
+    names = {Path(p).name for p in bundled}
+    # The two auto-imported iTunes-XML pools (D4 + Q8 auto-import path).
+    assert "starter-content.itunes.xml" in names, (
+        "starter content pool missing — auto-import on first boot "
+        "will silently skip the starter station's content slots"
+    )
+    assert "starter-jingles.itunes.xml" in names, (
+        "starter jingles pool missing — every 8th slot will fail "
+        "with 'no track for genre Jingle'"
+    )
+    # The pre-committed editor sidecar (D8 — visualiser interesting
+    # on first paint). Without it, bootstrap's auto-derive would
+    # fall back to producing one at runtime — works, but slower +
+    # depends on the sidecar derive helper being shipped too.
+    assert "starter.editor.json" in names, (
+        "starter editor sidecar missing — visualiser will fall "
+        "back to slow runtime derive on first boot"
+    )
 
 
 def test_wheel_ships_alembic_migrations(wheel_contents: set[str]) -> None:

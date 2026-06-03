@@ -64,7 +64,18 @@ async def lifespan(app: FastAPI):
     # §16.13.t9: source-of-truth is `engine.seeding`. The legacy
     # `scripts.seed_stations` re-exports for backward compat with
     # CLI invocations + older test imports.
-    from engine.seeding import seed_all, _collect_paths
+    # §16.14 slice-review 🟡-1: also call `auto_import_starter_pools`
+    # here so `make dev` (which runs uvicorn directly via run.py,
+    # bypassing station_studio.cli.serve + bootstrap) doesn't ship
+    # a half-working starter station to dev contributors. The Q8
+    # first-boot guard makes this idempotent with the
+    # bootstrap-path call (CLI/wheel/docker users hit auto-import
+    # first there; the lifespan re-check sees SourcePlaylist.count()
+    # > 0 and is a no-op).
+    from engine.seeding import (
+        _collect_paths, auto_import_starter_pools, seed_all,
+    )
+    from api.deps import get_stations_dir
 
     try:
         engine = make_engine()
@@ -89,6 +100,17 @@ async def lifespan(app: FastAPI):
                 logger.debug(
                     "Station table non-empty (%d rows); skipping auto-seed.",
                     existing_count,
+                )
+
+            # §16.14 slice-review 🟡-1: starter pool auto-import.
+            # Internal first-boot guard fires on
+            # SourcePlaylist.count() == 0; subsequent boots no-op.
+            imported = auto_import_starter_pools(db, get_stations_dir())
+            if imported:
+                db.commit()
+                logger.info(
+                    "auto-imported %d starter pool(s) (first-run only).",
+                    imported,
                 )
     except Exception as e:  # noqa: BLE001 — see docstring
         logger.warning(

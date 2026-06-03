@@ -234,3 +234,50 @@ def test_lookup_macro_on_classics_returns_none_for_any_id():
     _, sidecar = _load_pair("rebirth-classics")
     assert sidecar["macros"] == []
     assert lookup_macro(sidecar, "anything") is None
+
+
+# ---------- §16.14 Starter (flat_slots + derived sidecar) -------------
+
+
+def test_starter_sidecar_validates_against_template():
+    """§16.14 slice-review 🟡-3: the committed starter sidecar parses
+    + validates clean against the committed template. Same drift-
+    detection pattern as the Classics + Radio pin — catches a
+    starter.json edit that wasn't followed by a sidecar refresh."""
+    template, sidecar = _load_pair("starter")
+    validate_sidecar(sidecar, template)
+
+
+def test_starter_committed_sidecar_matches_derive_output():
+    """§16.14 slice-review 🟡-3 regen-match pin. Running the live
+    `derive_sidecar` helper against `stations/starter.json` must
+    produce byte-identical output to the committed
+    `stations/starter.editor.json`. If you edit starter.json (e.g.
+    shift a jingle position), this test fails until you re-run
+    derive + commit the updated sidecar.
+
+    Two ways to make it green again:
+      (a) `python -m scripts.derive_sidecar --station
+          stations/starter.json --out stations/starter.editor.json`
+      (b) Bootstrap's auto-derive would have done it at first boot;
+          this test enforces that the COMMITTED snapshot also stays
+          fresh so a PR diff catches the drift.
+    """
+    from pathlib import Path
+    from scripts.derive_sidecar import derive_sidecar
+
+    repo_root = Path(__file__).resolve().parent.parent
+    starter_json = repo_root / "stations" / "starter.json"
+    starter_sidecar = repo_root / "stations" / "starter.editor.json"
+
+    raw = json.loads(starter_json.read_text())
+    derived = json.dumps(
+        derive_sidecar(raw), indent=2, sort_keys=False,
+    ) + "\n"
+    assert derived == starter_sidecar.read_text(), (
+        "stations/starter.editor.json drifted from "
+        "scripts/derive_sidecar.py output — re-run "
+        "`python -m scripts.derive_sidecar --station "
+        "stations/starter.json --out stations/starter.editor.json` "
+        "and commit the result."
+    )
