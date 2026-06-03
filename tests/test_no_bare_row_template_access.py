@@ -70,8 +70,10 @@ ALLOWED_SITES: set[tuple[str, int]] = {
     # §16.11 c1 review fixes when the wrapper grew a "no events after
     # Result" guard + the cadence comment + prev_counter helper; 856 →
     # 870 in §16.11 slice review fixes when the ProgressEvent.phase
-    # vocabulary block was expanded with the current valid values.)
-    ("engine/generator.py", 870),
+    # vocabulary block was expanded with the current valid values;
+    # 870 → 878 in §16.14.t5 c1 when both apply_weighted call sites
+    # picked up the excluded_track_pids kwarg + comment lines.)
+    ("engine/generator.py", 878),
     # NOTE: `LayoutSpec.all_blocks` itself (engine/template.py:174)
     # uses `self.row_template` (no `.layout.` prefix; it's a method
     # ON LayoutSpec) and so doesn't match this lint pattern. That's

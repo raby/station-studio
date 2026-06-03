@@ -11,8 +11,8 @@ from sqlalchemy.orm import Session
 from engine.models import Station, Playlist, PlaylistTrace
 from engine.persistence import (
     advance_cursors, load_alias_map, load_cursor_positions,
-    load_excluded_mix_ids, load_pools, load_previous_playlist,
-    max_mix_exclusion_window, save_playlist,
+    load_excluded_mix_ids, load_excluded_track_pids, load_pools,
+    load_previous_playlist, max_mix_exclusion_window, save_playlist,
 )
 from engine.rules import get_rule_value
 from engine.template import parse_template, TemplateError
@@ -99,6 +99,21 @@ def generate_playlist(slug: str, payload: GenerateRequest, db: Session = Depends
             db, station_id=station.id, template=template,
         )
 
+    # §16.14.t5: resolve cross_pool_dedup_sources to a set of track
+    # persistent_ids the weighted strategy must exclude. Empty set
+    # when the rule isn't configured. The helper fails loud on a
+    # missing-or-misroled reference pool (translated to HTTP 400
+    # below) so the operator sees the rule-vs-importer mismatch
+    # immediately rather than getting a quietly thinned pick set.
+    try:
+        excluded_track_pids = load_excluded_track_pids(
+            db, station_id=station.id,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except TemplateError as e:
+        raise HTTPException(400, str(e))
+
     try:
         result = generate(
             template, pools, week=payload.week, seed=payload.seed,
@@ -111,6 +126,8 @@ def generate_playlist(slug: str, payload: GenerateRequest, db: Session = Depends
             weighted_window_default=artist_dedup_window,
             # §14.30: stateful cursor positions when persist=True.
             named_cursor_positions=named_cursor_positions,
+            # §16.14.t5: cross-pool dedup exclusion set.
+            excluded_track_pids=excluded_track_pids,
         )
     except Exception as e:
         raise HTTPException(400, f"generation failed: {e}")

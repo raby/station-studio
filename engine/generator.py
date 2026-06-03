@@ -143,6 +143,7 @@ def generate(
     previous_playlist: list[Any] | None = None,
     weighted_window_default: int | None = None,
     named_cursor_positions: dict[str, int] | None = None,
+    excluded_track_pids: frozenset[str] | set[str] | None = None,
 ) -> GenerationResult:
     """Generate one playlist for the given station + week.
 
@@ -170,6 +171,7 @@ def generate(
         previous_playlist=previous_playlist,
         weighted_window_default=weighted_window_default,
         named_cursor_positions=named_cursor_positions,
+        excluded_track_pids=excluded_track_pids,
     ):
         if isinstance(event, GenerationResult):
             assert final is None, (
@@ -207,6 +209,7 @@ def generate_stream(
     previous_playlist: list[Any] | None = None,
     weighted_window_default: int | None = None,
     named_cursor_positions: dict[str, int] | None = None,
+    excluded_track_pids: frozenset[str] | set[str] | None = None,
 ) -> Iterator["ProgressEvent | GenerationResult"]:
     """Generate one playlist as a STREAM of progress events + a
     final result (§16.11 Decision B).
@@ -553,6 +556,8 @@ def generate_stream(
                     window=effective_window,
                     rng=rng,
                     source_name=block.source,
+                    # §16.14.t5: threaded from generate_stream's kwarg.
+                    excluded_track_pids=excluded_track_pids,
                 )
                 # Mutate state AFTER the pick (the strategy only reads).
                 state.recent_artist_keys.append(
@@ -739,6 +744,9 @@ def generate_stream(
                         window=fallback_window,
                         rng=rng,
                         source_name=block.source,
+                        # §16.14.t5: same exclusion applies on the
+                        # prev_ref fallback path.
+                        excluded_track_pids=excluded_track_pids,
                     )
                     # Mutate _GenState same as the regular weighted
                     # dispatch — the prev_ref fallback's pick must

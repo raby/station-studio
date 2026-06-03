@@ -139,6 +139,7 @@ def apply_weighted(
     window: int = 10,
     rng: random.Random | None = None,
     source_name: str,
+    excluded_track_pids: frozenset[str] | set[str] | None = None,
 ) -> tuple[Any, WeightedPickInfo]:
     """Return (picked_track, info) for one weighted commercial slot.
 
@@ -154,7 +155,34 @@ def apply_weighted(
     becomes "first stalest". This is intentionally divergent from
     weekly's behaviour and only useful for synthetic tests — production
     callers pass rng.
+
+    `excluded_track_pids` (§16.14.t5): if non-empty, drops every track
+    whose `persistent_id` appears in the set BEFORE the weighted-pick
+    machinery runs. This is the cross-pool dedup mechanism — the
+    generator resolves the `cross_pool_dedup_sources` station rule
+    upstream + passes the union of those pools' track PIDs in here.
+    Filter happens at the pool level (not the candidate level) so
+    artist-dedup + stalest-tracking work as if the excluded tracks
+    were never imported. An empty/None set is a no-op (the rule's
+    default).
     """
+    # §16.14.t5: cross-pool dedup. Filter the pool BEFORE the
+    # empty-pool guard so a fully-excluded source raises with a
+    # specific diagnostic instead of the bare "pool is empty" error.
+    if excluded_track_pids:
+        pre_filter_size = len(pool)
+        pool = [
+            t for t in pool
+            if getattr(t, "persistent_id", None) not in excluded_track_pids
+        ]
+        if not pool:
+            raise IndexError(
+                f"source '{source_name}': all {pre_filter_size} tracks "
+                f"excluded by cross_pool_dedup_sources (§16.14.t5). "
+                "Either narrow the dedup source list or import more "
+                "tracks into the content pool."
+            )
+
     if not pool:
         raise IndexError(f"source '{source_name}': pool is empty")
 

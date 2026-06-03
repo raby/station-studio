@@ -226,3 +226,137 @@ def get_all_rules(db: Session, *, station_id: int) -> list[dict[str, Any]]:
             "is_override": override is not None,
         })
     return result
+
+
+# ---------------------------------------------------------------------------
+# §16.14.t5 — list-of-str rule registry
+# ---------------------------------------------------------------------------
+#
+# Parallel registry for rules whose value is a LIST of strings (not
+# int). cross_pool_dedup_sources (D1+D3) is the first entry — templates
+# name reference pools whose tracks the weighted strategy excludes
+# from its pick set.
+#
+# Storage: `Rule.value` column is TEXT; for list values we store
+# comma-separated strings. Empty list is "" (the empty string);
+# absent rule is the registry default.
+#
+# Why parallel vs extending RULE_DEFAULTS: keeping int rules strictly
+# int-typed at the accessor level preserves the existing API + UI
+# shape (numeric inputs). A future polymorphic Rules UI (§16.5) might
+# merge these — for now, keep the typing explicit.
+
+
+_LIST_SEPARATOR = ","
+
+
+@dataclass(frozen=True)
+class ListRuleDefault:
+    """Canonical definition of a list-typed rule key.
+
+    `value` is the engine-default list (typically `[]` — no
+    exclusion). `description` is UI-facing copy. The list elements
+    are bare strings (no per-element validation here; the engine
+    validates them at use time, e.g. load_excluded_track_pids checks
+    each named source exists in the DB with the expected role).
+    """
+    value: list[str]
+    description: str
+
+
+RULE_LIST_DEFAULTS: dict[str, ListRuleDefault] = {
+    "cross_pool_dedup_sources": ListRuleDefault(
+        value=[],
+        description=(
+            "§16.14.t5: list of source pool names whose tracks the "
+            "weighted strategy excludes from its pick set. Each named "
+            "pool must be imported with role=reference (cross-checked "
+            "at generation time via engine.persistence."
+            "load_excluded_track_pids). Empty list = no exclusion. "
+            "Used today by `weighted` only; `window` extension is "
+            "queued as §16.14.t8."
+        ),
+    ),
+}
+
+
+def get_rule_list_value(
+    db: Session, *, station_id: int, key: str,
+) -> list[str]:
+    """Return the effective list value for `key` on `station_id`.
+
+    Per-station override stored as comma-separated string in
+    Rule.value; falls back to RULE_LIST_DEFAULTS[key].value otherwise.
+    Empty string in the override row → empty list (explicit "no
+    sources" override).
+    """
+    if key not in RULE_LIST_DEFAULTS:
+        raise UnknownRuleError(f"unknown list-rule key: {key!r}")
+    row = (
+        db.query(Rule)
+        .filter(Rule.station_id == station_id, Rule.key == key)
+        .first()
+    )
+    if row is not None:
+        raw = row.value or ""
+        if not raw.strip():
+            return []
+        return [s.strip() for s in raw.split(_LIST_SEPARATOR) if s.strip()]
+    # Return a copy so callers can't mutate the registry default.
+    return list(RULE_LIST_DEFAULTS[key].value)
+
+
+def set_rule_list_value(
+    db: Session, *, station_id: int, key: str, value: list[str],
+) -> None:
+    """Upsert a list-rule override for `(station_id, key)`. Caller
+    commits.
+
+    Strips whitespace per element, drops empty entries. An empty
+    incoming list IS persisted as the empty string (explicit "no
+    exclusion" override; different from the absent default, which is
+    also `[]`). Rejects commas inside source names since the storage
+    format can't escape them.
+    """
+    if key not in RULE_LIST_DEFAULTS:
+        raise UnknownRuleError(f"unknown list-rule key: {key!r}")
+    cleaned = [s.strip() for s in value if s and s.strip()]
+    for entry in cleaned:
+        if _LIST_SEPARATOR in entry:
+            raise InvalidRuleValueError(
+                f"list-rule {key!r} entry {entry!r} contains the "
+                f"separator character {_LIST_SEPARATOR!r}; source pool "
+                "names with commas aren't supported by the on-disk "
+                "format. Rename the pool."
+            )
+    encoded = _LIST_SEPARATOR.join(cleaned)
+    row = (
+        db.query(Rule)
+        .filter(Rule.station_id == station_id, Rule.key == key)
+        .first()
+    )
+    if row is not None:
+        row.value = encoded
+    else:
+        db.add(Rule(station_id=station_id, key=key, value=encoded))
+    db.flush()
+
+
+def clear_rule_list(db: Session, *, station_id: int, key: str) -> bool:
+    """Delete a list-rule override, reverting to RULE_LIST_DEFAULTS.
+
+    Returns True if a row was deleted, False if no override existed.
+    Mirrors `clear_rule` for int rules.
+    """
+    if key not in RULE_LIST_DEFAULTS:
+        raise UnknownRuleError(f"unknown list-rule key: {key!r}")
+    row = (
+        db.query(Rule)
+        .filter(Rule.station_id == station_id, Rule.key == key)
+        .first()
+    )
+    if row is None:
+        return False
+    db.delete(row)
+    db.flush()
+    return True

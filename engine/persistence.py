@@ -304,6 +304,96 @@ def load_excluded_mix_ids(db: Session, *, station_id: int, window: int) -> set[i
     return {tid for (tid,) in rows}
 
 
+# ---------- §16.14.t5 cross-pool dedup -----------------------------------
+#
+# Resolves the `cross_pool_dedup_sources` list-rule into a set of track
+# persistent_ids that the weighted strategy must NOT pick. The weighted
+# filter (engine.strategies.weighted.apply_weighted) drops any track
+# whose `persistent_id` appears in this set BEFORE running its
+# weight/window machinery, so excluded tracks neither pollute the pick
+# distribution nor count toward dedup windows.
+#
+# Per D5 (fail-loud) + D6 (role=reference required):
+#
+#   * Missing source → ValueError ("not imported"). Same exception type
+#     as load_pools' missing-pool error so the API surface stays
+#     consistent.
+#   * Source imported with role='content' → TemplateError. Same shape
+#     as load_pools' role mismatch (§14.35) but inverted: here the
+#     rule names a CONTENT pool that should be reference. Catching
+#     this at load-time prevents the operator from accidentally
+#     starving a regular content pool by referencing it in
+#     cross_pool_dedup_sources.
+#
+# A future widening (D6's punt) would allow role='content' too, but
+# only once the engine has logic to detect circular exclusion (a pool
+# excluding itself or its own siblings).
+
+
+def load_excluded_track_pids(
+    db: Session, *, station_id: int,
+) -> frozenset[str]:
+    """Resolve ``cross_pool_dedup_sources`` to a frozenset of
+    ``Track.persistent_id`` values.
+
+    Returns an empty frozenset when no sources are configured —
+    callers can pass the result through to ``generate()`` unconditionally.
+
+    Reads the per-station list-rule via ``get_rule_list_value`` and,
+    for each named source pool:
+
+      1. Looks up the ``SourcePlaylist`` row by name.
+      2. Verifies ``role == 'reference'`` (D6).
+      3. Collects every entry's ``Track.persistent_id`` into the
+         result set.
+
+    Raises ValueError (matching ``load_pools``) if a named source
+    isn't imported; raises ``TemplateError`` if it exists but has
+    ``role='content'``.
+    """
+    from engine.rules import get_rule_list_value
+
+    source_names = get_rule_list_value(
+        db, station_id=station_id, key="cross_pool_dedup_sources",
+    )
+    if not source_names:
+        return frozenset()
+
+    pids: set[str] = set()
+    for src_name in source_names:
+        sp = db.query(SourcePlaylist).filter_by(name=src_name).first()
+        if sp is None:
+            # D5 — fail loud rather than silently dropping a missing
+            # reference pool. Mirrors load_pools' wording so operators
+            # see consistent diagnostics across both error sites.
+            raise ValueError(
+                f"cross_pool_dedup_sources references pool "
+                f"'{src_name}' which is not imported. Import it with "
+                f"role='reference' or remove it from the rule."
+            )
+        if sp.role != "reference":
+            # D6 — only role='reference' pools may be named here. A
+            # content pool would be a footgun: excluding it from
+            # itself starves the strategy. The engine could enforce
+            # this differently in a future slice (§16.14.t5 punt:
+            # allow content pools once self-reference detection is
+            # in).
+            raise TemplateError(
+                f"cross_pool_dedup_sources names source pool "
+                f"'{src_name}' but it has role={sp.role!r}, not "
+                f"'reference'. Re-import the pool with "
+                f"role='reference' or rename the rule entry."
+            )
+        rows = (
+            db.query(Track.persistent_id)
+            .join(SourcePlaylistEntry, SourcePlaylistEntry.track_id == Track.id)
+            .filter(SourcePlaylistEntry.source_playlist_id == sp.id)
+            .all()
+        )
+        pids.update(pid for (pid,) in rows)
+    return frozenset(pids)
+
+
 # ---------- §14.30 stateful named-cursor persistence --------------------
 
 
@@ -505,6 +595,11 @@ def generate_chain(
         previous_playlist = load_previous_playlist(
             db, station_id=station.id, current_week=week,
         )
+        # §16.14.t5: resolve cross-pool dedup once per week (the
+        # underlying reference pools don't mutate inside the chain).
+        excluded_track_pids = load_excluded_track_pids(
+            db, station_id=station.id,
+        )
         result = generate(
             tmpl, pools,
             week=week,
@@ -514,6 +609,7 @@ def generate_chain(
             previous_playlist=previous_playlist,
             weighted_window_default=None,
             named_cursor_positions=positions,
+            excluded_track_pids=excluded_track_pids,
         )
         pids_by_week[week] = [track_pids[t.id] for t in result.picks]
         save_playlist(db, station=station, result=result, week=week, template=tmpl)
