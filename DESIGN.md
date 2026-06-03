@@ -9841,16 +9841,78 @@ sweep, matching the §16.13.t1-t9 cadence).
 
 **Watch-list (queued from this slice).**
 
-* **§16.14.t1 — Stateful starter station.** A second bundled
-  example showcasing **persistent cursors + reference role +
-  cross-week state**. Bridges the gap between the stateless starter
-  (this slice) and Rebirth Classics' real persistent-cursor
-  mechanics. Shape: ~336 slots (every 30 min), `cursor.persist=true`
-  with one persistent cursor, one content pool + one reference pool
-  to demonstrate the role concept. Tutorial: "your second station,
-  with state." **Home: separate slice (~3 commits).** Trigger:
-  this stateless starter shipped + a hobbyist asks "how do I make
-  slots persist across weeks?"
+* **§16.14.t1 — Stateful starter station. IN FLIGHT.**
+  A second bundled example demonstrating **persistent cursors +
+  cross-week state**. Bridges the gap between the stateless
+  starter (§16.14) and Rebirth Classics' real persistent-cursor
+  mechanics. Locked in the pre-c1 design pass:
+    * **D1** — `sequential` (most slots) + `prev_ref` (sprinkled).
+      Both strategies are about cross-week state; chosen
+      deliberately over reusing weighted+jingle so the slice has
+      a focused teaching surface.
+    * **D2** — One persistent cursor. `base_advance_per_week=24`,
+      `cycle_weeks=14`. 336 / 24 = 14 → full pool coverage per
+      cycle, real-radio-rotation mental model.
+    * **D3** — 336 slots (every 30 min × 7 days). Denser than
+      starter (168), real-shape but tractable.
+    * **D4** — One content pool: `STATEFUL_CONTENT` (336 tracks,
+      configurable artist split, exact cycle match).
+    * **D5** — Pool committed, deterministically regenerable via
+      `scripts/generate_stateful_starter_pools.py` +
+      `make refresh-stateful-starter-pools`.
+    * **D6** — Auto-import on first boot (parity with §16.14 D6).
+      Uses the same `engine.seeding.auto_import_starter_pools`
+      mechanism with the Q8 first-boot guard.
+    * **D7** — NO reference pool this slice. Original watch-list
+      framing said "one content + one reference pool" but the
+      pre-c1 talk surfaced that I'd conflated role-cross-check
+      with prev_ref's playlist-history mechanic — they're
+      orthogonal. Reference-role teaching graduates to §16.14.t3.
+    * **D8** — Editor sidecar auto-derived via existing helper.
+    * **D9** — `stations/README.md` lists stateful-starter as
+      "your second station, with state" + a "How to add jingles"
+      subsection (copy-paste from starter.json — `STARTER_JINGLES`
+      is already auto-imported from §16.14, no extra import step).
+  **Shape:** 3 commits + 3 review-fix + 1 slice-review sweep,
+  matching the §16.14 cadence.
+* **§16.14.t2 — Hoist `derive_sidecar` into `engine/`.** The
+  `auto_derive_missing_sidecars` helper in `engine/seeding.py`
+  imports `from scripts.derive_sidecar import derive_sidecar` —
+  engine → scripts, the same coupling §16.13.t9 was supposed to
+  wash out. The `derive_sidecar` core helper (the pure function
+  that takes a station template dict and returns a sidecar dict;
+  not the `main()` CLI wrapper) would naturally fit in
+  `engine/editor_metadata.py` (or a sibling `engine/sidecar.py`).
+  Today's shape works because §16.13.t9 ships `scripts/` in the
+  wheel anyway as a deliberate over-include; closing this entry
+  would let the future `scripts/` library-vs-dev-tool split land
+  cleanly. **Home: ~1 commit when §16.13.t9 lands its split, or
+  when a third caller of `derive_sidecar` appears.**
+* **§16.14.t3 — Reference-role starter station.** A bundled
+  example that genuinely demonstrates `role: reference` —
+  separate from the stateful starter (§16.14.t1) because the
+  reference role is orthogonal to persistent-cursor mechanics,
+  and conflating them in one station muddles the teaching
+  surface. Shape decision deferred to the trigger-time design
+  talk: the candidate uses include (a) `mix` strategy's
+  `exclusion_window` (real engine behaviour), or (b) a pure-
+  metadata teaching of the role concept (honest about today's
+  contract that role is mostly a label + a cross-check guard).
+  **Home: separate slice (~3 commits).** Trigger: a hobbyist
+  asks "what does role: reference actually do?" — that question
+  is the ONLY honest signal that the concept needs a station-
+  shaped example rather than a docs paragraph.
+* **§16.14.t4 — Deeper jingle composition coverage.** Most
+  likely a docs page in the future §16.15 docs site OR a
+  DESIGN.md subsection — NOT a new bundled station unless the
+  docs prove insufficient. The existing §16.14 starter teaches
+  the basics (jingles every N slots, paired with weighted
+  content). The graduation topics (multiple jingle pools, per-
+  daypart selection, hourly IDs vs sweepers vs station tags) are
+  composition + cadence questions, not engine-behaviour
+  questions, and don't need new code to teach. **Home: 1 docs
+  commit when triggered; bundled station only as last resort.**
+  Trigger: a hobbyist asks for any of those graduation topics.
 * **§16.14.t2 — Hoist `derive_sidecar` into `engine/`.** The
   `auto_derive_missing_sidecars` helper in `engine/seeding.py`
   imports `from scripts.derive_sidecar import derive_sidecar` —
