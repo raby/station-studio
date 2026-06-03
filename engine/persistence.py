@@ -12,6 +12,7 @@ from engine.models import (
     ArtistAlias, CursorState, MixUsage, Playlist, PlaylistEntry, PlaylistTrace,
     SourcePlaylist, SourcePlaylistEntry, Station, Track,
 )
+from engine.rules import get_rule_list_value
 from engine.template import Template, TemplateError
 
 
@@ -351,8 +352,6 @@ def load_excluded_track_pids(
     isn't imported; raises ``TemplateError`` if it exists but has
     ``role='content'``.
     """
-    from engine.rules import get_rule_list_value
-
     source_names = get_rule_list_value(
         db, station_id=station_id, key="cross_pool_dedup_sources",
     )
@@ -581,6 +580,14 @@ def generate_chain(
     tmpl = parse_template(station.template)
     pools = load_pools(db, tmpl)
     alias_map = load_alias_map(db)
+    # §16.14.t5 (c1 review F2): resolved ONCE before the loop. The
+    # rule + reference pools are chain-invariant — sibling pre-loop
+    # state is load_pools + load_alias_map (the other chain-invariant
+    # reads). Hoisting saves a per-week DB roundtrip without
+    # changing semantics.
+    excluded_track_pids = load_excluded_track_pids(
+        db, station_id=station.id,
+    )
     # Explicit track_id → persistent_id resolution (defends against the
     # stale-Track-in-identity-map bug class noted in §14.26's review).
     track_pids = {t.id: t.persistent_id for t in db.query(Track).all()}
@@ -594,11 +601,6 @@ def generate_chain(
         )
         previous_playlist = load_previous_playlist(
             db, station_id=station.id, current_week=week,
-        )
-        # §16.14.t5: resolve cross-pool dedup once per week (the
-        # underlying reference pools don't mutate inside the chain).
-        excluded_track_pids = load_excluded_track_pids(
-            db, station_id=station.id,
         )
         result = generate(
             tmpl, pools,

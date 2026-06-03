@@ -165,10 +165,24 @@ def apply_weighted(
     artist-dedup + stalest-tracking work as if the excluded tracks
     were never imported. An empty/None set is a no-op (the rule's
     default).
+
+    **Caveat — `pool_index` semantics under exclusion.** When the
+    filter drops tracks, the returned ``WeightedPickInfo.pool_index``
+    + every ``ExcludedCandidate.pool_index`` reflect the POST-FILTER
+    pool, not the original ``SourcePlaylistEntry.position``. The
+    trace's `track_id` is still authoritative for identifying the
+    pick; `pool_index` should be read as "position the strategy saw
+    after exclusion", not "position in the imported pool". The
+    alternative (preserving original indices) would require
+    bookkeeping that complicates the hot path with no audible-radio
+    benefit. §16.14.t5 c1 review F1 documents this trade-off.
     """
     # §16.14.t5: cross-pool dedup. Filter the pool BEFORE the
     # empty-pool guard so a fully-excluded source raises with a
     # specific diagnostic instead of the bare "pool is empty" error.
+    # Post-filter pool_index reflects the filtered subset (see
+    # docstring caveat) — operators inspecting the trace use
+    # track_id, not pool_index, to locate the pick.
     if excluded_track_pids:
         pre_filter_size = len(pool)
         pool = [

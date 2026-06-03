@@ -203,11 +203,18 @@ def clear_rule(db: Session, *, station_id: int, key: str) -> bool:
 
 
 def get_all_rules(db: Session, *, station_id: int) -> list[dict[str, Any]]:
-    """Return every rule with its effective value, default, and override status.
+    """Return every INT rule with its effective value, default, and override.
 
     Returns a list of dicts: ``{key, value, default_value, description,
     max_value, is_override}``. Sorted by key for stable UI ordering.
-    Drives the CRUD list endpoint.
+    Drives the CRUD list endpoint at ``/api/stations/{slug}/rules``.
+
+    Scope note (§16.14.t5 c1 review F4): only iterates ``RULE_DEFAULTS``
+    (int rules). List-typed rules (``RULE_LIST_DEFAULTS``, e.g.
+    ``cross_pool_dedup_sources``) are NOT surfaced here — the CRUD
+    endpoint's value schema is integer-shaped. List rules ship with
+    imperative seeding via scripts/seed_stations.py (D8) until the
+    Rules UI slice (§16.5) adds polymorphic value types.
     """
     overrides = {
         r.key: r
@@ -245,6 +252,11 @@ def get_all_rules(db: Session, *, station_id: int) -> list[dict[str, Any]]:
 # int-typed at the accessor level preserves the existing API + UI
 # shape (numeric inputs). A future polymorphic Rules UI (§16.5) might
 # merge these — for now, keep the typing explicit.
+#
+# Surface note (§16.14.t5 c1 review F4): list rules are NOT exposed
+# by ``get_all_rules`` / the CRUD endpoint. Seeding for this slice
+# is imperative (D8 in the §16.14.t5 design pass). When the Rules UI
+# slice (§16.5) lands, this is the registry to plumb into it.
 
 
 _LIST_SEPARATOR = ","
