@@ -278,3 +278,92 @@ def test_starter_station_jingle_positions_match_template() -> None:
         jingle_positions = {e.position for e in jingle_entries}
         expected = {i + 1 for i in range(0, 168, 8)}
         assert jingle_positions == expected
+
+
+# ---------- §16.14.t3 — REFERENCE_ARCHIVE pool + cross-check pin ----------
+
+
+def test_starter_declares_reference_archive_with_role_reference() -> None:
+    """§16.14.t3 D1 lock: the starter template carries a
+    REFERENCE_ARCHIVE source with role: reference. The pool is the
+    teaching annotation — declared but unused in any slot block.
+    Engine `content_source_names` MUST exclude it (the load_pools
+    short-circuit that makes "reference pool" meaningful)."""
+    from engine.template import parse_template
+
+    raw = json.loads(STARTER_JSON.read_text())
+    sources_by_name = {s["name"]: s for s in raw["sources"]}
+    assert "REFERENCE_ARCHIVE" in sources_by_name
+    assert sources_by_name["REFERENCE_ARCHIVE"]["role"] == "reference"
+
+    tmpl = parse_template(raw)
+    # The engine's content-source enumeration must NOT include
+    # REFERENCE_ARCHIVE — otherwise it'd be loaded + sampled like
+    # any content pool, defeating the role's whole purpose.
+    assert "REFERENCE_ARCHIVE" not in tmpl.content_source_names
+    # But the content pools ARE in there (sanity). content_source_names
+    # is a list (preserves order); compare via set.
+    assert set(tmpl.content_source_names) == {
+        "STARTER_CONTENT", "STARTER_JINGLES",
+    }
+
+
+def test_reference_pool_has_9_archive_tracks() -> None:
+    """§16.14.t3 D2 lock: 9 tracks (3 archive artists × 3 titles
+    each), Genre=Archive. Small + distinct from STARTER_CONTENT so a
+    reader sees they're separate collections."""
+    import plistlib
+
+    starter_ref_xml = (
+        REPO_ROOT / "stations" / "starter-reference.itunes.xml"
+    )
+    data = plistlib.loads(starter_ref_xml.read_bytes())
+    tracks = data["Tracks"]
+    assert len(tracks) == 9
+    artists = {t["Artist"] for t in tracks.values()}
+    assert len(artists) == 3
+    genres = {t["Genre"] for t in tracks.values()}
+    assert genres == {"Archive"}
+
+
+def test_engine_cross_check_fires_on_role_mismatch(tmp_path) -> None:
+    """§16.14.t3 D4: the reference role's one real engine behaviour
+    today is the cross-check (§14.35) that raises TemplateError when
+    a template declares a source as content but the DB pool was
+    imported as reference. Pin that the safety rail actually fires —
+    this is the entire teaching surface of `role: reference`.
+
+    Approach: import the starter-reference XML as `STARTER_CONTENT`
+    with role=reference (forcing the mismatch). The starter template
+    declares STARTER_CONTENT as content; load_pools should raise."""
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from engine.importer import import_source
+    from engine.models import Base
+    from engine.persistence import load_pools
+    from engine.template import TemplateError, parse_template
+
+    eng = create_engine(f"sqlite:///{tmp_path}/x.db")
+    Base.metadata.create_all(eng)
+    Session = sessionmaker(bind=eng)
+    db = Session()
+    try:
+        # Use the reference XML's content as the source — but import
+        # it under STARTER_CONTENT's name with role=reference. That
+        # forces the template-says-content / DB-says-reference
+        # mismatch the cross-check fires on.
+        import_source(
+            db,
+            REPO_ROOT / "stations" / "starter-reference.itunes.xml",
+            "STARTER_CONTENT",
+            role="reference",
+        )
+        db.commit()
+
+        raw = json.loads(STARTER_JSON.read_text())
+        tmpl = parse_template(raw)
+        with pytest.raises(TemplateError, match="role='reference'"):
+            load_pools(db, tmpl)
+    finally:
+        db.close()

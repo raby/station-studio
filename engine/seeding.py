@@ -179,6 +179,13 @@ _FIRST_BOOT_POOLS = (
     # §16.14 starter (stateless, weighted + jingle).
     ("STARTER_CONTENT", "starter-content.itunes.xml", "content"),
     ("STARTER_JINGLES", "starter-jingles.itunes.xml", "content"),
+    # §16.14.t3 reference-role teaching pool. Declared in
+    # stations/starter.json's sources with role: reference; the
+    # engine never samples from it, but it appears in the
+    # visualiser + the Sources page so the role is visible.
+    # See stations/README.md > "What does role: reference mean?"
+    # for the full contract.
+    ("REFERENCE_ARCHIVE", "starter-reference.itunes.xml", "reference"),
     # §16.14.t1 stateful-starter (persistent cursor, sequential + prev_ref).
     ("STATEFUL_CONTENT", "stateful-starter-content.itunes.xml", "content"),
 )

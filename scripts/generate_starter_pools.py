@@ -181,6 +181,48 @@ def build_jingles_pool() -> bytes:
     ))
 
 
+# §16.14.t3 D2: small reference pool. 3 fully-synthetic "archive
+# artists" × 3 tracks each = 9 reference tracks. Distinct artist
+# names from CONTENT_ARTISTS so a reader inspecting the visualiser
+# can see the two pools are genuinely separate collections (not
+# slices of the same pool). Persistent IDs use the STREF... namespace
+# to keep them distinct from STCONT + STJING.
+ARCHIVE_ARTISTS = [f"Archive Artist {i + 1}" for i in range(3)]
+ARCHIVE_TITLES = ["Archive Tape A", "Archive Tape B", "Archive Tape C"]
+
+
+def build_reference_pool() -> bytes:
+    """§16.14.t3 D1+D2: the reference-role companion pool.
+
+    Tracks are not driven by any slot strategy in starter.json — the
+    pool is declared in `sources[]` with role: reference as a
+    teaching annotation. Engine never samples from it; the
+    cross-check (§14.35) raises TemplateError if a template
+    accidentally points a content strategy at it. Pool exists to
+    make the role tangible in the visualiser + Sources page.
+    """
+    tracks: list[dict] = []
+    counter = 0
+    for artist in ARCHIVE_ARTISTS:
+        for title in ARCHIVE_TITLES:
+            counter += 1
+            tid = 3000 + counter
+            tracks.append(_track_dict(
+                tid=tid,
+                name=f"{title} {counter:02d}",
+                artist=artist,
+                album=f"{artist} — Master Archive",
+                genre="Archive",
+                pid=_persistent_id("STREF", counter),
+            ))
+    return plistlib.dumps(_library_dict(
+        library_pid="STARTERLIBRARY01",
+        tracks=tracks,
+        playlist_name="STARTER_REFERENCE",
+        playlist_pid="STREFPLAYLIST001",
+    ))
+
+
 # ---------- entry point ----------
 
 
@@ -189,17 +231,22 @@ def main(argv: list[str] | None = None) -> int:
     re-running against unchanged inputs writes identical bytes."""
     content_xml = build_content_pool()
     jingles_xml = build_jingles_pool()
+    reference_xml = build_reference_pool()
 
     content_path = STATIONS_DIR / "starter-content.itunes.xml"
     jingles_path = STATIONS_DIR / "starter-jingles.itunes.xml"
+    reference_path = STATIONS_DIR / "starter-reference.itunes.xml"
 
     content_path.write_bytes(content_xml)
     jingles_path.write_bytes(jingles_xml)
+    reference_path.write_bytes(reference_xml)
 
     print(f"  wrote  {content_path.relative_to(REPO_ROOT)}  "
           f"({len(content_xml):,} bytes)")
     print(f"  wrote  {jingles_path.relative_to(REPO_ROOT)}  "
           f"({len(jingles_xml):,} bytes)")
+    print(f"  wrote  {reference_path.relative_to(REPO_ROOT)}  "
+          f"({len(reference_xml):,} bytes)")
     return 0
 
 

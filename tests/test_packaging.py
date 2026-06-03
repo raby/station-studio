@@ -149,6 +149,17 @@ def test_wheel_ships_starter_pool_xmls_and_sidecar(
         "starter editor sidecar missing — visualiser will fall "
         "back to slow runtime derive on first boot"
     )
+    # §16.14.t3 D1: the reference-archive teaching pool. Without
+    # this XML in the wheel, REFERENCE_ARCHIVE's auto-import would
+    # silently skip and the role: reference teaching annotation in
+    # starter.json's sources[] would have no actual pool behind it
+    # — the visualiser + Sources page would show an entry with
+    # zero tracks, undermining the lesson.
+    assert "starter-reference.itunes.xml" in names, (
+        "starter-reference pool missing — auto-import will skip "
+        "REFERENCE_ARCHIVE and the role: reference teaching "
+        "example will be hollow"
+    )
 
 
 def test_wheel_ships_stateful_starter_pool_and_sidecar(

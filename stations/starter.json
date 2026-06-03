@@ -4,8 +4,9 @@
   "cadence": "weekly",
   "rng": "on",
   "sources": [
-    { "name": "STARTER_CONTENT", "colour": "#3a86ff", "role": "content" },
-    { "name": "STARTER_JINGLES", "colour": "#fb8500", "role": "content" }
+    { "name": "STARTER_CONTENT",    "colour": "#3a86ff", "role": "content"   },
+    { "name": "STARTER_JINGLES",    "colour": "#fb8500", "role": "content"   },
+    { "name": "REFERENCE_ARCHIVE",  "colour": "#9b9b9b", "role": "reference" }
   ],
   "cursor": {
     "base_advance_per_week": 0,

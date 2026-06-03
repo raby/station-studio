@@ -1,0 +1,246 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Application Version</key>
+	<string>10.3</string>
+	<key>Features</key>
+	<integer>5</integer>
+	<key>Library Persistent ID</key>
+	<string>STARTERLIBRARY01</string>
+	<key>Major Version</key>
+	<integer>1</integer>
+	<key>Minor Version</key>
+	<integer>1</integer>
+	<key>Music Folder</key>
+	<string>file://localhost/Users/starter/Music/iTunes/iTunes%20Media/</string>
+	<key>Playlists</key>
+	<array>
+		<dict>
+			<key>All Items</key>
+			<true/>
+			<key>Name</key>
+			<string>STARTER_REFERENCE</string>
+			<key>Playlist ID</key>
+			<integer>1</integer>
+			<key>Playlist Items</key>
+			<array>
+				<dict>
+					<key>Track ID</key>
+					<integer>3001</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>3002</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>3003</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>3004</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>3005</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>3006</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>3007</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>3008</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>3009</integer>
+				</dict>
+			</array>
+			<key>Playlist Persistent ID</key>
+			<string>STREFPLAYLIST001</string>
+		</dict>
+	</array>
+	<key>Show Content Ratings</key>
+	<true/>
+	<key>Tracks</key>
+	<dict>
+		<key>3001</key>
+		<dict>
+			<key>Album</key>
+			<string>Archive Artist 1 — Master Archive</string>
+			<key>Artist</key>
+			<string>Archive Artist 1</string>
+			<key>Genre</key>
+			<string>Archive</string>
+			<key>Name</key>
+			<string>Archive Tape A 01</string>
+			<key>Persistent ID</key>
+			<string>STREF000000000001</string>
+			<key>Total Time</key>
+			<integer>230000</integer>
+			<key>Track ID</key>
+			<integer>3001</integer>
+			<key>Track Type</key>
+			<string>File</string>
+		</dict>
+		<key>3002</key>
+		<dict>
+			<key>Album</key>
+			<string>Archive Artist 1 — Master Archive</string>
+			<key>Artist</key>
+			<string>Archive Artist 1</string>
+			<key>Genre</key>
+			<string>Archive</string>
+			<key>Name</key>
+			<string>Archive Tape B 02</string>
+			<key>Persistent ID</key>
+			<string>STREF000000000002</string>
+			<key>Total Time</key>
+			<integer>240000</integer>
+			<key>Track ID</key>
+			<integer>3002</integer>
+			<key>Track Type</key>
+			<string>File</string>
+		</dict>
+		<key>3003</key>
+		<dict>
+			<key>Album</key>
+			<string>Archive Artist 1 — Master Archive</string>
+			<key>Artist</key>
+			<string>Archive Artist 1</string>
+			<key>Genre</key>
+			<string>Archive</string>
+			<key>Name</key>
+			<string>Archive Tape C 03</string>
+			<key>Persistent ID</key>
+			<string>STREF000000000003</string>
+			<key>Total Time</key>
+			<integer>180000</integer>
+			<key>Track ID</key>
+			<integer>3003</integer>
+			<key>Track Type</key>
+			<string>File</string>
+		</dict>
+		<key>3004</key>
+		<dict>
+			<key>Album</key>
+			<string>Archive Artist 2 — Master Archive</string>
+			<key>Artist</key>
+			<string>Archive Artist 2</string>
+			<key>Genre</key>
+			<string>Archive</string>
+			<key>Name</key>
+			<string>Archive Tape A 04</string>
+			<key>Persistent ID</key>
+			<string>STREF000000000004</string>
+			<key>Total Time</key>
+			<integer>190000</integer>
+			<key>Track ID</key>
+			<integer>3004</integer>
+			<key>Track Type</key>
+			<string>File</string>
+		</dict>
+		<key>3005</key>
+		<dict>
+			<key>Album</key>
+			<string>Archive Artist 2 — Master Archive</string>
+			<key>Artist</key>
+			<string>Archive Artist 2</string>
+			<key>Genre</key>
+			<string>Archive</string>
+			<key>Name</key>
+			<string>Archive Tape B 05</string>
+			<key>Persistent ID</key>
+			<string>STREF000000000005</string>
+			<key>Total Time</key>
+			<integer>200000</integer>
+			<key>Track ID</key>
+			<integer>3005</integer>
+			<key>Track Type</key>
+			<string>File</string>
+		</dict>
+		<key>3006</key>
+		<dict>
+			<key>Album</key>
+			<string>Archive Artist 2 — Master Archive</string>
+			<key>Artist</key>
+			<string>Archive Artist 2</string>
+			<key>Genre</key>
+			<string>Archive</string>
+			<key>Name</key>
+			<string>Archive Tape C 06</string>
+			<key>Persistent ID</key>
+			<string>STREF000000000006</string>
+			<key>Total Time</key>
+			<integer>210000</integer>
+			<key>Track ID</key>
+			<integer>3006</integer>
+			<key>Track Type</key>
+			<string>File</string>
+		</dict>
+		<key>3007</key>
+		<dict>
+			<key>Album</key>
+			<string>Archive Artist 3 — Master Archive</string>
+			<key>Artist</key>
+			<string>Archive Artist 3</string>
+			<key>Genre</key>
+			<string>Archive</string>
+			<key>Name</key>
+			<string>Archive Tape A 07</string>
+			<key>Persistent ID</key>
+			<string>STREF000000000007</string>
+			<key>Total Time</key>
+			<integer>220000</integer>
+			<key>Track ID</key>
+			<integer>3007</integer>
+			<key>Track Type</key>
+			<string>File</string>
+		</dict>
+		<key>3008</key>
+		<dict>
+			<key>Album</key>
+			<string>Archive Artist 3 — Master Archive</string>
+			<key>Artist</key>
+			<string>Archive Artist 3</string>
+			<key>Genre</key>
+			<string>Archive</string>
+			<key>Name</key>
+			<string>Archive Tape B 08</string>
+			<key>Persistent ID</key>
+			<string>STREF000000000008</string>
+			<key>Total Time</key>
+			<integer>230000</integer>
+			<key>Track ID</key>
+			<integer>3008</integer>
+			<key>Track Type</key>
+			<string>File</string>
+		</dict>
+		<key>3009</key>
+		<dict>
+			<key>Album</key>
+			<string>Archive Artist 3 — Master Archive</string>
+			<key>Artist</key>
+			<string>Archive Artist 3</string>
+			<key>Genre</key>
+			<string>Archive</string>
+			<key>Name</key>
+			<string>Archive Tape C 09</string>
+			<key>Persistent ID</key>
+			<string>STREF000000000009</string>
+			<key>Total Time</key>
+			<integer>240000</integer>
+			<key>Track ID</key>
+			<integer>3009</integer>
+			<key>Track Type</key>
+			<string>File</string>
+		</dict>
+	</dict>
+</dict>
+</plist>

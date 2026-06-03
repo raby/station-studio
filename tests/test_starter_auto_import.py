@@ -28,19 +28,24 @@ from station_studio.bootstrap import bootstrap
 # --- pool auto-import ---
 
 
-def test_first_boot_auto_imports_three_starter_pools(
+def test_first_boot_auto_imports_four_starter_pools(
     isolated_cli_home,
 ) -> None:
     """Fresh app-home → bootstrap copies the bundled starter XMLs into
-    the stations dir → auto-import imports all three (§16.14 starter +
-    §16.14.t1 stateful starter) as SourcePlaylist rows.
+    the stations dir → auto-import imports all four (§16.14 starter
+    pools + §16.14.t1 stateful pool + §16.14.t3 reference-archive
+    teaching pool) as SourcePlaylist rows.
 
-    `result.pools_auto_imported == 3` after §16.14.t1's STATEFUL_CONTENT
-    was added to `engine.seeding._STARTER_POOLS`."""
+    `result.pools_auto_imported == 4` after §16.14.t3's
+    REFERENCE_ARCHIVE was added to `engine.seeding._FIRST_BOOT_POOLS`
+    with role=reference (the engine never samples from it, but the
+    pool lands in the DB so it's visible in the Sources page +
+    the visualiser teaches the role concept)."""
     result = bootstrap()
-    assert result.pools_auto_imported == 3
+    assert result.pools_auto_imported == 4
 
-    # SourcePlaylist rows actually landed.
+    # SourcePlaylist rows actually landed, including REFERENCE_ARCHIVE
+    # with role=reference (the teaching pool's defining trait).
     import sqlite3
     db = sqlite3.connect(isolated_cli_home / "station_studio.db")
     try:
@@ -50,6 +55,7 @@ def test_first_boot_auto_imports_three_starter_pools(
     finally:
         db.close()
     assert rows == [
+        ("REFERENCE_ARCHIVE", "reference"),
         ("STARTER_CONTENT", "content"),
         ("STARTER_JINGLES", "content"),
         ("STATEFUL_CONTENT", "content"),
@@ -63,7 +69,7 @@ def test_second_boot_skips_auto_import(isolated_cli_home) -> None:
     home-existed check (so the guard is honest even if the home
     is recreated by hand)."""
     first = bootstrap()
-    assert first.pools_auto_imported == 3
+    assert first.pools_auto_imported == 4
 
     second = bootstrap()
     assert second.pools_auto_imported == 0
@@ -77,7 +83,7 @@ def test_second_boot_skips_auto_import(isolated_cli_home) -> None:
         ).fetchone()[0]
     finally:
         db.close()
-    assert count == 3
+    assert count == 4
 
 
 def test_user_imported_pool_blocks_starter_auto_import(
@@ -162,7 +168,7 @@ def test_user_deleted_pools_will_re_import_known_quirk(
     THIS test break + has to think about whether they're regressing
     the tutorial flow."""
     first = bootstrap()
-    assert first.pools_auto_imported == 3
+    assert first.pools_auto_imported == 4
 
     import sqlite3
     db = sqlite3.connect(isolated_cli_home / "station_studio.db")
@@ -175,7 +181,7 @@ def test_user_deleted_pools_will_re_import_known_quirk(
 
     second = bootstrap()
     # YES, re-imports. Documented quirk.
-    assert second.pools_auto_imported == 3
+    assert second.pools_auto_imported == 4
 
 
 # --- sidecar auto-derive ---
@@ -289,8 +295,10 @@ def test_bootstrap_then_generate_stateful_starter_end_to_end(
     here.
     """
     bootstrap_result = bootstrap()
-    # Sanity: STATEFUL_CONTENT was one of the 3 pools imported.
-    assert bootstrap_result.pools_auto_imported == 3
+    # Sanity: STATEFUL_CONTENT was one of the 4 pools imported
+    # (§16.14 starter content + jingles, §16.14.t3 reference archive,
+    # §16.14.t1 stateful content).
+    assert bootstrap_result.pools_auto_imported == 4
 
     # Bootstrap doesn't auto-seed Station rows — that's the
     # api/main.py lifespan's job. Reproduce that step so the
