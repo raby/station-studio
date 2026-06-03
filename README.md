@@ -141,11 +141,12 @@ pattern + test discipline.
 
 ## Loading your music
 
-All three example stations (Starter + Rebirth Classics + Rebirth
-Radio) are seeded automatically on first boot — pick one in the
-sidebar. The Starter Station's two pools (`STARTER_CONTENT` +
-`STARTER_JINGLES`) also auto-import from the bundled synthetic
-XMLs, so the station works end-to-end without any setup.
+All four example stations (Starter + Stateful Starter + Rebirth
+Classics + Rebirth Radio) are seeded automatically on first boot
+— pick one in the sidebar. The two starter stations' three pools
+(`STARTER_CONTENT`, `STARTER_JINGLES`, `STATEFUL_CONTENT`) also
+auto-import from the bundled synthetic XMLs, so both starters work
+end-to-end without any setup.
 
 To import your own iTunes XMLs as source pools, open the **Sources**
 page (or click "Source pools →" from the landing). Drag-and-drop or
@@ -191,13 +192,29 @@ above is the recommended hobbyist flow.
   for "how does the slot+strategy model work?" before you fork
   anything bigger.
 
+### Stateful Starter — `stations/stateful-starter.json`
+
+- 336 slots / week (one every 30 min, Mon → Sun)
+- One persistent cursor advancing 24 positions/week, cycling
+  every 14 weeks → exact pool coverage per cycle
+- Two strategies: `sequential` (most slots, cursor-driven) +
+  `prev_ref` (sprinkled every 12 slots, reads last week's
+  playlist at the same position)
+- Companion pool (`stateful-starter-content.itunes.xml`) — 336
+  synthetic tracks across 14 artists, also **auto-imported on
+  first boot**.
+- **Read this second** — your second station, with state.
+  Demonstrates cursor advance / cycle math + cross-week
+  `prev_ref` semantics on a focused teaching surface, with no
+  row-template addressing to learn yet.
+
 ### Rebirth Classics — `stations/rebirth-classics.json`
 
 - 3,010 slots / week, 7 rows × 2 strategy blocks
 - Single stateless cursor advancing 60 positions/week, cycling at 16
 - Strategy: `window` only (the simplest production case)
-- **Read this second** — first real station, single-cursor mechanics
-  in row-template form.
+- **Read this third** — first real station, single-cursor mechanics
+  in row-template form (vs the starters' flat_slots form).
 
 ### Rebirth Radio — `stations/rebirth-radio.json`
 
