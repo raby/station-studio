@@ -1,0 +1,2071 @@
+{
+  "station": "stateful-starter",
+  "name": "Stateful Starter \u2014 336 slots (persistent cursor, prev_ref)",
+  "cadence": "weekly",
+  "rng": "on",
+  "sources": [
+    {
+      "name": "STATEFUL_CONTENT",
+      "colour": "#06d6a0",
+      "role": "content"
+    }
+  ],
+  "cursor": {
+    "base_advance_per_week": 24,
+    "cycle_weeks": 14,
+    "persist": true
+  },
+  "layout": {
+    "unit": "slot",
+    "unit_labels": [],
+    "row_start_offsets": [],
+    "cursors_init": {
+      "STATEFUL_1": 0
+    },
+    "flat_slots": [
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "prev_ref",
+        "size": 1,
+        "position": 12,
+        "fallback_genre": "Pop"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "prev_ref",
+        "size": 1,
+        "position": 24,
+        "fallback_genre": "Pop"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "prev_ref",
+        "size": 1,
+        "position": 36,
+        "fallback_genre": "Pop"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "prev_ref",
+        "size": 1,
+        "position": 48,
+        "fallback_genre": "Pop"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "prev_ref",
+        "size": 1,
+        "position": 60,
+        "fallback_genre": "Pop"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "prev_ref",
+        "size": 1,
+        "position": 72,
+        "fallback_genre": "Pop"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "prev_ref",
+        "size": 1,
+        "position": 84,
+        "fallback_genre": "Pop"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "prev_ref",
+        "size": 1,
+        "position": 96,
+        "fallback_genre": "Pop"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "prev_ref",
+        "size": 1,
+        "position": 108,
+        "fallback_genre": "Pop"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "prev_ref",
+        "size": 1,
+        "position": 120,
+        "fallback_genre": "Pop"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "prev_ref",
+        "size": 1,
+        "position": 132,
+        "fallback_genre": "Pop"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "prev_ref",
+        "size": 1,
+        "position": 144,
+        "fallback_genre": "Pop"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "prev_ref",
+        "size": 1,
+        "position": 156,
+        "fallback_genre": "Pop"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "prev_ref",
+        "size": 1,
+        "position": 168,
+        "fallback_genre": "Pop"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "prev_ref",
+        "size": 1,
+        "position": 180,
+        "fallback_genre": "Pop"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "prev_ref",
+        "size": 1,
+        "position": 192,
+        "fallback_genre": "Pop"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "prev_ref",
+        "size": 1,
+        "position": 204,
+        "fallback_genre": "Pop"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "prev_ref",
+        "size": 1,
+        "position": 216,
+        "fallback_genre": "Pop"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "prev_ref",
+        "size": 1,
+        "position": 228,
+        "fallback_genre": "Pop"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "prev_ref",
+        "size": 1,
+        "position": 240,
+        "fallback_genre": "Pop"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "prev_ref",
+        "size": 1,
+        "position": 252,
+        "fallback_genre": "Pop"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "prev_ref",
+        "size": 1,
+        "position": 264,
+        "fallback_genre": "Pop"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "prev_ref",
+        "size": 1,
+        "position": 276,
+        "fallback_genre": "Pop"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "prev_ref",
+        "size": 1,
+        "position": 288,
+        "fallback_genre": "Pop"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "prev_ref",
+        "size": 1,
+        "position": 300,
+        "fallback_genre": "Pop"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "prev_ref",
+        "size": 1,
+        "position": 312,
+        "fallback_genre": "Pop"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "prev_ref",
+        "size": 1,
+        "position": 324,
+        "fallback_genre": "Pop"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      },
+      {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      }
+    ]
+  }
+}

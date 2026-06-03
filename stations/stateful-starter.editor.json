@@ -1,0 +1,545 @@
+{
+  "_comment": "Auto-derived from the station's flat_slots via scripts/derive_sidecar.py. Heuristic: sections split at Daytime jingles; macros for runs of \u22653 identical specs. Refine section names + macro names to match your programming concept (the heuristic can't infer 'Morning Drive' from a block of 200 commercials).",
+  "schema_version": 1,
+  "sections": [
+    {
+      "id": "segment-1",
+      "name": "Segment 1",
+      "blocks": [
+        {
+          "kind": "macro",
+          "ref": "sequential-1"
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 12
+        },
+        {
+          "kind": "macro",
+          "ref": "sequential-2"
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 24
+        },
+        {
+          "kind": "macro",
+          "ref": "sequential-3"
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 36
+        },
+        {
+          "kind": "macro",
+          "ref": "sequential-4"
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 48
+        },
+        {
+          "kind": "macro",
+          "ref": "sequential-5"
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 60
+        },
+        {
+          "kind": "macro",
+          "ref": "sequential-6"
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 72
+        },
+        {
+          "kind": "macro",
+          "ref": "sequential-7"
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 84
+        },
+        {
+          "kind": "macro",
+          "ref": "sequential-8"
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 96
+        },
+        {
+          "kind": "macro",
+          "ref": "sequential-9"
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 108
+        },
+        {
+          "kind": "macro",
+          "ref": "sequential-10"
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 120
+        },
+        {
+          "kind": "macro",
+          "ref": "sequential-11"
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 132
+        },
+        {
+          "kind": "macro",
+          "ref": "sequential-12"
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 144
+        },
+        {
+          "kind": "macro",
+          "ref": "sequential-13"
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 156
+        },
+        {
+          "kind": "macro",
+          "ref": "sequential-14"
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 168
+        },
+        {
+          "kind": "macro",
+          "ref": "sequential-15"
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 180
+        },
+        {
+          "kind": "macro",
+          "ref": "sequential-16"
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 192
+        },
+        {
+          "kind": "macro",
+          "ref": "sequential-17"
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 204
+        },
+        {
+          "kind": "macro",
+          "ref": "sequential-18"
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 216
+        },
+        {
+          "kind": "macro",
+          "ref": "sequential-19"
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 228
+        },
+        {
+          "kind": "macro",
+          "ref": "sequential-20"
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 240
+        },
+        {
+          "kind": "macro",
+          "ref": "sequential-21"
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 252
+        },
+        {
+          "kind": "macro",
+          "ref": "sequential-22"
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 264
+        },
+        {
+          "kind": "macro",
+          "ref": "sequential-23"
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 276
+        },
+        {
+          "kind": "macro",
+          "ref": "sequential-24"
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 288
+        },
+        {
+          "kind": "macro",
+          "ref": "sequential-25"
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 300
+        },
+        {
+          "kind": "macro",
+          "ref": "sequential-26"
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 312
+        },
+        {
+          "kind": "macro",
+          "ref": "sequential-27"
+        },
+        {
+          "kind": "atomic",
+          "slot_index": 324
+        },
+        {
+          "kind": "macro",
+          "ref": "sequential-28"
+        }
+      ]
+    }
+  ],
+  "macros": [
+    {
+      "id": "sequential-1",
+      "name": "12 \u00d7 sequential",
+      "repeat": 12,
+      "spec": {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      }
+    },
+    {
+      "id": "sequential-2",
+      "name": "11 \u00d7 sequential",
+      "repeat": 11,
+      "spec": {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      }
+    },
+    {
+      "id": "sequential-3",
+      "name": "11 \u00d7 sequential",
+      "repeat": 11,
+      "spec": {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      }
+    },
+    {
+      "id": "sequential-4",
+      "name": "11 \u00d7 sequential",
+      "repeat": 11,
+      "spec": {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      }
+    },
+    {
+      "id": "sequential-5",
+      "name": "11 \u00d7 sequential",
+      "repeat": 11,
+      "spec": {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      }
+    },
+    {
+      "id": "sequential-6",
+      "name": "11 \u00d7 sequential",
+      "repeat": 11,
+      "spec": {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      }
+    },
+    {
+      "id": "sequential-7",
+      "name": "11 \u00d7 sequential",
+      "repeat": 11,
+      "spec": {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      }
+    },
+    {
+      "id": "sequential-8",
+      "name": "11 \u00d7 sequential",
+      "repeat": 11,
+      "spec": {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      }
+    },
+    {
+      "id": "sequential-9",
+      "name": "11 \u00d7 sequential",
+      "repeat": 11,
+      "spec": {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      }
+    },
+    {
+      "id": "sequential-10",
+      "name": "11 \u00d7 sequential",
+      "repeat": 11,
+      "spec": {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      }
+    },
+    {
+      "id": "sequential-11",
+      "name": "11 \u00d7 sequential",
+      "repeat": 11,
+      "spec": {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      }
+    },
+    {
+      "id": "sequential-12",
+      "name": "11 \u00d7 sequential",
+      "repeat": 11,
+      "spec": {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      }
+    },
+    {
+      "id": "sequential-13",
+      "name": "11 \u00d7 sequential",
+      "repeat": 11,
+      "spec": {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      }
+    },
+    {
+      "id": "sequential-14",
+      "name": "11 \u00d7 sequential",
+      "repeat": 11,
+      "spec": {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      }
+    },
+    {
+      "id": "sequential-15",
+      "name": "11 \u00d7 sequential",
+      "repeat": 11,
+      "spec": {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      }
+    },
+    {
+      "id": "sequential-16",
+      "name": "11 \u00d7 sequential",
+      "repeat": 11,
+      "spec": {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      }
+    },
+    {
+      "id": "sequential-17",
+      "name": "11 \u00d7 sequential",
+      "repeat": 11,
+      "spec": {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      }
+    },
+    {
+      "id": "sequential-18",
+      "name": "11 \u00d7 sequential",
+      "repeat": 11,
+      "spec": {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      }
+    },
+    {
+      "id": "sequential-19",
+      "name": "11 \u00d7 sequential",
+      "repeat": 11,
+      "spec": {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      }
+    },
+    {
+      "id": "sequential-20",
+      "name": "11 \u00d7 sequential",
+      "repeat": 11,
+      "spec": {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      }
+    },
+    {
+      "id": "sequential-21",
+      "name": "11 \u00d7 sequential",
+      "repeat": 11,
+      "spec": {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      }
+    },
+    {
+      "id": "sequential-22",
+      "name": "11 \u00d7 sequential",
+      "repeat": 11,
+      "spec": {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      }
+    },
+    {
+      "id": "sequential-23",
+      "name": "11 \u00d7 sequential",
+      "repeat": 11,
+      "spec": {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      }
+    },
+    {
+      "id": "sequential-24",
+      "name": "11 \u00d7 sequential",
+      "repeat": 11,
+      "spec": {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      }
+    },
+    {
+      "id": "sequential-25",
+      "name": "11 \u00d7 sequential",
+      "repeat": 11,
+      "spec": {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      }
+    },
+    {
+      "id": "sequential-26",
+      "name": "11 \u00d7 sequential",
+      "repeat": 11,
+      "spec": {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      }
+    },
+    {
+      "id": "sequential-27",
+      "name": "11 \u00d7 sequential",
+      "repeat": 11,
+      "spec": {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      }
+    },
+    {
+      "id": "sequential-28",
+      "name": "11 \u00d7 sequential",
+      "repeat": 11,
+      "spec": {
+        "source": "STATEFUL_CONTENT",
+        "strategy": "sequential",
+        "size": 1,
+        "cursor_id": "STATEFUL_1"
+      }
+    }
+  ],
+  "layout_order": [
+    "segment-1"
+  ]
+}

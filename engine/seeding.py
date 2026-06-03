@@ -167,6 +167,10 @@ def main(argv: list[str] | None = None) -> int:
 _STARTER_POOLS = (
     ("STARTER_CONTENT", "starter-content.itunes.xml", "content"),
     ("STARTER_JINGLES", "starter-jingles.itunes.xml", "content"),
+    # §16.14.t1 c1 — stateful-starter content pool. D6 parity:
+    # auto-imports on first boot alongside the §16.14 starter pools,
+    # so the stateful station "just works" out of the box.
+    ("STATEFUL_CONTENT", "stateful-starter-content.itunes.xml", "content"),
 )
 
 

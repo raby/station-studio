@@ -265,6 +265,15 @@ check-deps-parity:
 refresh-starter-pools:
 	$(PY) -m scripts.generate_starter_pools
 
+# §16.14.t1 c1 — regenerate the stateful-starter station's content
+# pool. 336 tracks across 14 synthetic artists (24 tracks each),
+# Genre=Pop. The track count matches the persistent cursor's
+# cycle math exactly (24 advance/week × 14 weeks = 336). Edit
+# scripts/generate_stateful_starter_pools.py if you want a
+# different shape, then run this target.
+refresh-stateful-starter-pools:
+	$(PY) -m scripts.generate_stateful_starter_pools
+
 # §14.31 backfill: populate PlaylistEntry.slot_type for playlists
 # generated before the column existed. Idempotent — re-running after
 # the first pass is a no-op. Use --dry-run flag (`make

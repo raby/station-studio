@@ -28,14 +28,17 @@ from station_studio.bootstrap import bootstrap
 # --- pool auto-import ---
 
 
-def test_first_boot_auto_imports_two_starter_pools(
+def test_first_boot_auto_imports_three_starter_pools(
     isolated_cli_home,
 ) -> None:
     """Fresh app-home → bootstrap copies the bundled starter XMLs into
-    the stations dir → auto-import imports both as SourcePlaylist
-    rows. Result.pools_auto_imported == 2."""
+    the stations dir → auto-import imports all three (§16.14 starter +
+    §16.14.t1 stateful starter) as SourcePlaylist rows.
+
+    `result.pools_auto_imported == 3` after §16.14.t1's STATEFUL_CONTENT
+    was added to `engine.seeding._STARTER_POOLS`."""
     result = bootstrap()
-    assert result.pools_auto_imported == 2
+    assert result.pools_auto_imported == 3
 
     # SourcePlaylist rows actually landed.
     import sqlite3
@@ -49,6 +52,7 @@ def test_first_boot_auto_imports_two_starter_pools(
     assert rows == [
         ("STARTER_CONTENT", "content"),
         ("STARTER_JINGLES", "content"),
+        ("STATEFUL_CONTENT", "content"),
     ]
 
 
@@ -59,12 +63,12 @@ def test_second_boot_skips_auto_import(isolated_cli_home) -> None:
     home-existed check (so the guard is honest even if the home
     is recreated by hand)."""
     first = bootstrap()
-    assert first.pools_auto_imported == 2
+    assert first.pools_auto_imported == 3
 
     second = bootstrap()
     assert second.pools_auto_imported == 0
 
-    # Still exactly 2 rows; nothing duplicated, nothing nuked.
+    # Still exactly 3 rows; nothing duplicated, nothing nuked.
     import sqlite3
     db = sqlite3.connect(isolated_cli_home / "station_studio.db")
     try:
@@ -73,7 +77,7 @@ def test_second_boot_skips_auto_import(isolated_cli_home) -> None:
         ).fetchone()[0]
     finally:
         db.close()
-    assert count == 2
+    assert count == 3
 
 
 def test_user_imported_pool_blocks_starter_auto_import(
@@ -158,7 +162,7 @@ def test_user_deleted_pools_will_re_import_known_quirk(
     THIS test break + has to think about whether they're regressing
     the tutorial flow."""
     first = bootstrap()
-    assert first.pools_auto_imported == 2
+    assert first.pools_auto_imported == 3
 
     import sqlite3
     db = sqlite3.connect(isolated_cli_home / "station_studio.db")
@@ -171,7 +175,7 @@ def test_user_deleted_pools_will_re_import_known_quirk(
 
     second = bootstrap()
     # YES, re-imports. Documented quirk.
-    assert second.pools_auto_imported == 2
+    assert second.pools_auto_imported == 3
 
 
 # --- sidecar auto-derive ---
@@ -285,29 +289,35 @@ def test_bootstrap_result_carries_starter_signals(
 # --- c2-review 🟡-1: drift detection ---
 
 
-def test_starter_pools_table_matches_starter_json_sources() -> None:
-    """c2-review 🟡-1: `engine.seeding._STARTER_POOLS` hardcodes the
-    pool names that the auto-import will create. They MUST match
-    `stations/starter.json`'s `sources[*].name` — otherwise the
-    auto-import imports a pool the template can't find, and
-    generation silently fails with "no tracks in pool X."
+def test_starter_pools_table_matches_bundled_station_sources() -> None:
+    """c2-review 🟡-1 + §16.14.t1 update: `_STARTER_POOLS` hardcodes
+    the pool names auto-imported on first boot. They MUST match the
+    `sources[*].name` of every bundled station that depends on
+    auto-import — otherwise the auto-import imports a pool the
+    template can't find, and generation silently fails with "no
+    tracks in pool X."
 
-    Catches a rename in starter.json without the matching update to
-    _STARTER_POOLS (and vice versa).
+    The auto-import covers BOTH the §16.14 starter station AND the
+    §16.14.t1 stateful-starter station; union of their source names
+    must equal the set of names in `_STARTER_POOLS`.
     """
     import json
     from engine.seeding import _STARTER_POOLS
 
     repo_root = Path(__file__).resolve().parent.parent
-    starter = json.loads(
-        (repo_root / "stations" / "starter.json").read_text()
-    )
-    template_names = {s["name"] for s in starter["sources"]}
+    auto_import_stations = ("starter.json", "stateful-starter.json")
+
+    template_names: set[str] = set()
+    for filename in auto_import_stations:
+        raw = json.loads((repo_root / "stations" / filename).read_text())
+        template_names.update(s["name"] for s in raw["sources"])
+
     table_names = {name for name, _xml, _role in _STARTER_POOLS}
     assert template_names == table_names, (
-        f"starter.json sources {sorted(template_names)} drifted from "
-        f"_STARTER_POOLS {sorted(table_names)}. If you renamed a "
-        "pool, update both."
+        f"auto-import-station sources {sorted(template_names)} "
+        f"drifted from _STARTER_POOLS {sorted(table_names)}. If you "
+        "renamed a pool, update both. If you added a NEW bundled "
+        "auto-imported station, add its sources here too."
     )
 
 
