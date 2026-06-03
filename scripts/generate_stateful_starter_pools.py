@@ -159,7 +159,7 @@ def build_content_pool() -> bytes:
                 tid=tid,
                 name=f"{mood} {counter:03d}",
                 artist=artist,
-                album=f"{artist} — Twenty-Four Hours",
+                album=f"{artist} — Selected Works",
                 genre="Pop",
                 pid=_persistent_id("STFCONT", counter),
             ))

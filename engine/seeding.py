@@ -157,21 +157,36 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-# ---------- §16.14 c2 — starter pool auto-import + sidecar auto-derive ----
+# ---------- §16.14 c2 + §16.14.t1 — bundled-station auto-import + sidecar ----
+#
+# Renamed in §16.14.t1 c1-review 🟢-1 from `_STARTER_POOLS` to
+# `_FIRST_BOOT_POOLS` — covers the §16.14 starter AND the §16.14.t1
+# stateful-starter, and any future bundled station that needs its
+# companion XMLs auto-imported on a fresh install.
+#
+# Doc note (c1-review 🟢-2): originally this section only handled the
+# §16.14 starter; the §16.14.t1 stateful starter joined the table when
+# that slice landed. Keep this comment honest as more bundled stations
+# join — the test_starter_pools_table_matches_bundled_station_sources
+# pin enforces that the table's pool names match every bundled
+# station's `sources` block.
 
 
-# Naming + role + filename mapping for the bundled starter pools (D4).
-# Mirrors stations/starter.json's `sources` block by NAME so the
-# generated station finds the imported pools at slot-generation time.
-# Tuple shape: (pool name, iTunes-XML filename, role).
-_STARTER_POOLS = (
+# Tuple shape: (pool name, iTunes-XML filename, role). Pool names
+# mirror each bundled station's `sources` block by NAME so the
+# generator finds the imported pools at slot-generation time.
+_FIRST_BOOT_POOLS = (
+    # §16.14 starter (stateless, weighted + jingle).
     ("STARTER_CONTENT", "starter-content.itunes.xml", "content"),
     ("STARTER_JINGLES", "starter-jingles.itunes.xml", "content"),
-    # §16.14.t1 c1 — stateful-starter content pool. D6 parity:
-    # auto-imports on first boot alongside the §16.14 starter pools,
-    # so the stateful station "just works" out of the box.
+    # §16.14.t1 stateful-starter (persistent cursor, sequential + prev_ref).
     ("STATEFUL_CONTENT", "stateful-starter-content.itunes.xml", "content"),
 )
+
+# §16.14.t1 c1-review 🟢-1: back-compat alias for any external caller
+# (or future docs) still referencing the old name. Will warn-and-remove
+# at the next opportunity.
+_STARTER_POOLS = _FIRST_BOOT_POOLS
 
 
 def auto_import_starter_pools(
@@ -200,7 +215,7 @@ def auto_import_starter_pools(
         return 0
 
     imported = 0
-    for name, filename, role in _STARTER_POOLS:
+    for name, filename, role in _FIRST_BOOT_POOLS:
         xml_path = stations_dir / filename
         if not xml_path.is_file():
             continue

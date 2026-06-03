@@ -61,11 +61,14 @@ def test_template_strategy_mix_matches_design() -> None:
     prev_ref = [s for s in slots if s["strategy"] == "prev_ref"]
     assert len(sequential) == 309
     assert len(prev_ref) == 27
-    # prev_ref slots land at positions 12, 24, ..., 324 (every 12,
-    # starting AFTER position 0). The expected set is multiples of
-    # 12 in [12, 336) — same shape as the generator code.
+    # prev_ref slots' `position` field is 1-INDEXED against the
+    # previous playlist (per engine/strategies/prev_ref.py docstring).
+    # The self-referential mapping — "read week N-1's same slot
+    # index" — needs position = template_index + 1. Template slot
+    # indices land at 12, 24, ..., 324 (every 12 starting at 12);
+    # `position` is each one +1.
     actual_positions = {s["position"] for s in prev_ref}
-    expected = set(range(12, 336, 12))
+    expected = {i + 1 for i in range(12, 336, 12)}
     assert actual_positions == expected
 
 
@@ -211,6 +214,65 @@ def test_end_to_end_generate_two_weeks_advances_cursor(tmp_path) -> None:
         # Cursor advanced — same template position, different track.
         assert pids[1][0] != pids[2][0], (
             "persistent cursor did not advance between weeks 1 and 2"
+        )
+    finally:
+        db.close()
+
+
+def test_prev_ref_slot_in_week_N_reads_from_week_N_minus_1(
+    tmp_path,
+) -> None:
+    """c1-review 🟡-2 — the headline feature of this station.
+
+    A prev_ref slot at template position 12 in week 2 must return the
+    SAME track as the slot at position 12 in week 1's playlist.
+    That's literally what prev_ref means; without this pin, a future
+    engine bug (off-by-one on `position`, fallback_genre fires when
+    it shouldn't, wrong source lookup) would surface as "stateful
+    starter visualiser looks weird" rather than as a test failure.
+
+    Also pins the corollary: week 1's prev_ref slot at position 12
+    MUST fall back (no prior playlist exists) — the fallback_genre
+    branch fires only on week 1.
+    """
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from engine.importer import import_source
+    from engine.models import Base
+    from engine.persistence import generate_chain
+    from engine.seeding import seed_station
+
+    eng = create_engine(f"sqlite:///{tmp_path}/prev_ref.db")
+    Base.metadata.create_all(eng)
+    Session = sessionmaker(bind=eng)
+    db = Session()
+    try:
+        import_source(
+            db, STATEFUL_CONTENT_XML, "STATEFUL_CONTENT", role="content",
+        )
+        seed_station(db, STATEFUL_JSON)
+        db.commit()
+
+        pids = generate_chain(
+            db, station_slug="stateful-starter",
+            weeks=[1, 2], seed_base=42,
+        )
+        # Slot 12 is a prev_ref slot (per the template's "every 12
+        # starting at 12" pattern). In week 2 the engine reads from
+        # week 1's playlist at position 12 — same persistent ID.
+        assert pids[2][12] == pids[1][12], (
+            "prev_ref at slot 12 in week 2 did not match week 1's "
+            f"slot 12. week1={pids[1][12]} week2={pids[2][12]}. The "
+            "engine's prev_ref strategy may be regressed."
+        )
+        # And a sequential slot at the same position should DIFFER
+        # (cursor advanced between weeks). Pick slot 0 (always
+        # sequential).
+        assert pids[2][0] != pids[1][0], (
+            "sanity: slot 0 (sequential) should differ between weeks "
+            "1 and 2 due to cursor advance. If THIS fails too, the "
+            "issue is broader than prev_ref."
         )
     finally:
         db.close()

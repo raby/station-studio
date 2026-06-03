@@ -273,6 +273,52 @@ def test_existing_sidecar_is_never_overwritten(
 # --- BootstrapResult contract ---
 
 
+def test_bootstrap_then_generate_stateful_starter_end_to_end(
+    isolated_cli_home,
+) -> None:
+    """§16.14.t1 c1-review 🟡-1: pin the FULL chain — fresh app-home
+    → bootstrap → auto-import lands STATEFUL_CONTENT → stateful-starter
+    actually generates 336 picks.
+
+    The c1 unit tests cover direct generation (import the XML, seed
+    the station, run generate_chain). This test covers the
+    production-shaped path that a wheel-installed user actually
+    hits: bootstrap wires everything up before the engine sees a
+    template. A future refactor that breaks the link (wrong role
+    string in `_FIRST_BOOT_POOLS`, filename typo, etc) would surface
+    here.
+    """
+    bootstrap_result = bootstrap()
+    # Sanity: STATEFUL_CONTENT was one of the 3 pools imported.
+    assert bootstrap_result.pools_auto_imported == 3
+
+    # Bootstrap doesn't auto-seed Station rows — that's the
+    # api/main.py lifespan's job. Reproduce that step so the
+    # full production path (bootstrap → auto-import → lifespan
+    # seed → generate) is exercised end-to-end.
+    from engine.database import make_engine, make_sessionmaker
+    from engine.models import Base
+    from engine.persistence import generate_chain
+    from engine.seeding import _collect_paths, seed_all
+
+    eng = make_engine()
+    Base.metadata.create_all(eng)
+    SessionLocal = make_sessionmaker(eng)
+    with SessionLocal() as db:
+        seed_all(db, _collect_paths([]))
+        db.commit()
+        pids = generate_chain(
+            db, station_slug="stateful-starter",
+            weeks=[1], seed_base=42,
+        )
+    assert len(pids[1]) == 336, (
+        f"stateful-starter via bootstrap auto-import produced "
+        f"{len(pids[1])} picks; expected 336. Likely cause: "
+        "_FIRST_BOOT_POOLS entry for STATEFUL_CONTENT (role / "
+        "filename / name) drifted from stations/stateful-starter.json"
+    )
+
+
 def test_bootstrap_result_carries_starter_signals(
     isolated_cli_home,
 ) -> None:
@@ -290,19 +336,20 @@ def test_bootstrap_result_carries_starter_signals(
 
 
 def test_starter_pools_table_matches_bundled_station_sources() -> None:
-    """c2-review 🟡-1 + §16.14.t1 update: `_STARTER_POOLS` hardcodes
-    the pool names auto-imported on first boot. They MUST match the
-    `sources[*].name` of every bundled station that depends on
-    auto-import — otherwise the auto-import imports a pool the
-    template can't find, and generation silently fails with "no
+    """c2-review 🟡-1 + §16.14.t1 update: `_FIRST_BOOT_POOLS`
+    (formerly `_STARTER_POOLS` — renamed in §16.14.t1 c1-review
+    🟢-1) hardcodes the pool names auto-imported on first boot. They
+    MUST match the `sources[*].name` of every bundled station that
+    depends on auto-import — otherwise the auto-import imports a pool
+    the template can't find, and generation silently fails with "no
     tracks in pool X."
 
     The auto-import covers BOTH the §16.14 starter station AND the
     §16.14.t1 stateful-starter station; union of their source names
-    must equal the set of names in `_STARTER_POOLS`.
+    must equal the set of names in `_FIRST_BOOT_POOLS`.
     """
     import json
-    from engine.seeding import _STARTER_POOLS
+    from engine.seeding import _FIRST_BOOT_POOLS
 
     repo_root = Path(__file__).resolve().parent.parent
     auto_import_stations = ("starter.json", "stateful-starter.json")
@@ -312,11 +359,11 @@ def test_starter_pools_table_matches_bundled_station_sources() -> None:
         raw = json.loads((repo_root / "stations" / filename).read_text())
         template_names.update(s["name"] for s in raw["sources"])
 
-    table_names = {name for name, _xml, _role in _STARTER_POOLS}
+    table_names = {name for name, _xml, _role in _FIRST_BOOT_POOLS}
     assert template_names == table_names, (
         f"auto-import-station sources {sorted(template_names)} "
-        f"drifted from _STARTER_POOLS {sorted(table_names)}. If you "
-        "renamed a pool, update both. If you added a NEW bundled "
+        f"drifted from _FIRST_BOOT_POOLS {sorted(table_names)}. If "
+        "you renamed a pool, update both. If you added a NEW bundled "
         "auto-imported station, add its sources here too."
     )
 
