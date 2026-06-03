@@ -166,29 +166,49 @@ the parse-time guard firing. The "Generate next week" button on
 the station detail page hits the same endpoint and surfaces the
 same error in the UI's error toast.
 
+**Heads-up on the sidecar.** The parse-time guard ALSO fires
+during the lifespan's auto-seed step that runs on every restart
+— the lifespan catches the exception and continues (so the
+server still comes up), but the broken starter row doesn't get
+seeded. Check the serve log if you don't see the curl error you
+expect; the parse error often surfaces there as a warning before
+your first request.
+
+Also: editing `starter.json` does NOT auto-refresh the matching
+`starter.editor.json`. The bootstrap's auto-derive helper fills
+MISSING sidecars but won't refresh stale ones. If you also want
+the visualiser to reflect the broken state, delete
+`starter.editor.json` along with your edit — the auto-derive
+fires on next boot and rebuilds it from the new template.
+
 **To revert:** dev-clone users `git checkout
-stations/starter.json`. Wheel/docker users delete the edited
-file and restart `station-studio serve` — bootstrap re-seeds
-the original from the bundled copy on next boot.
+stations/starter.json stations/starter.editor.json`. Wheel/
+docker users delete BOTH files and restart `station-studio
+serve` — bootstrap re-seeds the original station and re-derives
+its sidecar from the bundled copy on next boot.
 
 ### Forward-looking utilities (not shipped)
 
-The reference role's value scales as the engine grows. Future
-slices may use it for:
+The reference role's value scales as the engine grows. Three
+slices are queued in `DESIGN.md` (each with its own trigger):
 
-* **Cross-pool dedup** — exclude tracks that appear in a
-  reference pool from the content sampler's pick set
-  (e.g. "never play anything already in my MASTER_ARCHIVE").
-* **Master-archive `prev_ref`** — let `prev_ref` slots read
-  from a curated reference pool instead of the previous
-  week's generated playlist.
-* **Allowlist enforcement** — restrict the content sampler to
-  tracks that ALSO appear in a reference pool, treating it as
-  a positive filter.
+* **Cross-pool dedup (§16.14.t5)** — exclude tracks that
+  appear in a reference pool from the content sampler's pick
+  set (e.g. "never play anything already in my
+  MASTER_ARCHIVE"). Trigger: a hobbyist asks for "exclude
+  archive tracks from the rotation."
+* **Master-archive `prev_ref` (§16.14.t6)** — let `prev_ref`
+  slots read from a curated reference pool instead of the
+  previous week's generated playlist. Trigger: a real station-
+  template author asks for the master-archive read pattern.
+* **Allowlist enforcement (§16.14.t7)** — restrict the content
+  sampler to tracks that ALSO appear in a reference pool,
+  treating it as a positive filter. Trigger: a hobbyist asks
+  for the positive-filter pattern.
 
 None shipped today; if you're reading this and one of those
-landed, this section is out of date and the slice that landed
-it should have rewritten this paragraph.
+landed, the slice that landed it should have rewritten this
+paragraph + removed the corresponding watch-list entry.
 
 ## Adding a new station
 

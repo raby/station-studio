@@ -9970,6 +9970,40 @@ sweep, matching the §16.13.t1-t9 cadence).
   | c1 (`bdabe99`) + review (`e1a552c`) | Engine artifacts: `REFERENCE_ARCHIVE` added to `stations/starter.json:sources[]` with role=reference (declared, unused in slot blocks). `scripts/generate_starter_pools.py` extended with `build_reference_pool()` emitting 9 tracks across 3 synthetic archive artists, Genre="Archive", PID prefix `STREF`. `engine.seeding._FIRST_BOOT_POOLS` gained the entry so auto-import lands it on first boot. The c1 review discovered the engine has **TWO** cross-check guards (parse-time AND load-pools-time), not one as the watch-list framing implied — both pinned by separate tests. 4 tests added (sources declaration, content_source_names exclusion, pool shape, parse-time cross-check, load-pools cross-check, sidecar stability) + 4 pool-count tests updated (3 → 4 pools auto-imported). |
   | **c2 (_this commit_)** | **Docs + slice closeout.** New "What does `role: reference` mean?" section in `stations/README.md` covering the engine contract (loaded vs not), the two safety rails (parse-time + load-pools-time), the canonical example (`starter.json:sources.REFERENCE_ARCHIVE`), a hands-on "Try the safety rail yourself" recipe, and an honest "Why is this so thin?" paragraph pointing at forward-looking utilities (cross-pool dedup, master-archive prev_ref, allowlist enforcement — none shipped). DESIGN §16.14.t3 marked SHIPPED with this shipped log; §15 status snapshot + §17 queued-order rows bumped. |
 
+* **§16.14.t5 — Reference-role: cross-pool dedup.** Today's
+  `weighted` strategy's artist-dedup window is purely within the
+  content pool. A natural extension: a content sampler excludes
+  any track that appears in a configured reference pool (e.g.
+  "never play anything already in MASTER_ARCHIVE"). Requires:
+  template field (which reference pool to consult), engine wiring
+  in the weighted/window samplers, a config-time check the
+  reference pool was imported. The §16.14.t3 docs page names
+  this as a forward-looking utility. **Home: separate slice
+  (~3-4 commits).** Trigger: a hobbyist asks for "exclude
+  archive tracks from the rotation."
+* **§16.14.t6 — Reference-role: master-archive `prev_ref`.**
+  Today `prev_ref` reads from the previous week's generated
+  playlist. Extension: an alternate form that reads from a
+  curated reference pool (the "master archive") at a given
+  position. Useful for "always play track 1 of master at 9am
+  on Monday" patterns the current `sequential` strategy can
+  almost express but not quite. Requires: new field on
+  `prev_ref` blocks (or a new strategy), engine plumbing,
+  template parser support. The §16.14.t3 docs page names this
+  as a forward-looking utility. **Home: separate slice (~2-3
+  commits).** Trigger: a real station-template author asks for
+  the master-archive read pattern.
+* **§16.14.t7 — Reference-role: allowlist enforcement.**
+  Inverse of §16.14.t5 — restrict the content sampler to
+  tracks that ALSO appear in a configured reference pool,
+  treating it as a positive filter. Useful for "only play
+  tracks tagged for daytime rotation" patterns the current
+  `mix` strategy almost expresses. Requires similar machinery
+  to t5 (reverse semantics). The §16.14.t3 docs page names
+  this as a forward-looking utility. **Home: separate slice
+  (~2-3 commits).** Trigger: a hobbyist asks for the
+  positive-filter pattern, OR §16.14.t5 ships and the inverse
+  becomes the natural next step.
 * **§16.14.t4 — Deeper jingle composition coverage.** Most
   likely a docs page in the future §16.15 docs site OR a
   DESIGN.md subsection — NOT a new bundled station unless the
