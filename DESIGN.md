@@ -9884,19 +9884,10 @@ sweep, matching the §16.13.t1-t9 cadence).
   | c1 (`b319239`) + review (`3d42902`) | Engine artifacts: `stations/stateful-starter.json` (336 slots, sequential + prev_ref every 12), synthetic content pool (`stateful-starter-content.itunes.xml` 336 tracks / 14 artists, exact cycle match), committed `stateful-starter.editor.json`, `scripts/generate_stateful_starter_pools.py` regenerator, `make refresh-stateful-starter-pools`. `_FIRST_BOOT_POOLS` renamed from `_STARTER_POOLS` + STATEFUL_CONTENT added so auto-import lands on first boot. Review caught a real semantic bug: `prev_ref.position` is 1-indexed against the prior playlist (not 0-indexed against the template); template + sidecar + XML regenerated. 12 tests including the headline `test_prev_ref_slot_in_week_N_reads_from_week_N_minus_1` pin + the bootstrap → auto-import → generate end-to-end. |
   | c2 (`04fd91e`) + review (`87bf982`) | Docs: `stations/README.md` reading-order table grew from 3→4 with stateful-starter as "your second station, with state"; D9's "How to add jingles to stateful-starter" recipe added with explicit safe-cadence pattern (every 12 starting at 6 — halfway between prev_ref slots, 28 jingles, no conflicts). Main `README.md` "Example stations included" + "Loading your music" updated. Review caught + fixed `make dev` lying about the recipe's step 3 — added `auto_derive_missing_sidecars` to `api/main.py:lifespan` so `make dev` (direct uvicorn) and `station-studio serve` (CLI → bootstrap) behave the same way. |
   | **c3 (_this commit_)** | **Slice closeout.** This DESIGN entry's "shipped this slice" log table (you're reading it). §15 status snapshot bumped: §16.14.t1 SHIPPED, hobbyist-starter row notes the stateful follow-up. §17 queued-order row marked. README's stateful-starter entry was already complete from c2. |
-* **§16.14.t2 — Hoist `derive_sidecar` into `engine/`.** The
-  `auto_derive_missing_sidecars` helper in `engine/seeding.py`
-  imports `from scripts.derive_sidecar import derive_sidecar` —
-  engine → scripts, the same coupling §16.13.t9 was supposed to
-  wash out. The `derive_sidecar` core helper (the pure function
-  that takes a station template dict and returns a sidecar dict;
-  not the `main()` CLI wrapper) would naturally fit in
-  `engine/editor_metadata.py` (or a sibling `engine/sidecar.py`).
-  Today's shape works because §16.13.t9 ships `scripts/` in the
-  wheel anyway as a deliberate over-include; closing this entry
-  would let the future `scripts/` library-vs-dev-tool split land
-  cleanly. **Home: ~1 commit when §16.13.t9 lands its split, or
-  when a third caller of `derive_sidecar` appears.**
+* **§16.14.t2 — see SHIPPED entry below** (closed during the
+  §16.14.t1 slice-review sweep, ahead of its trigger). Kept at
+  this position only as a pointer so a chronological reader
+  hits it where they expect to.
 * ~~**§16.14.t3 — Reference-role teaching annotation + docs page.**~~
   **SHIPPED.** Trigger fired (user explicitly asked for t3).
   Pre-c1 design talk surfaced that the original "bundled
