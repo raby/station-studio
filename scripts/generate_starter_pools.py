@@ -1,6 +1,7 @@
-"""§16.14 c1 — generate the starter station's synthetic iTunes XML pools.
+"""§16.14 c1 + §16.14.t3 c1 — generate the starter station's
+synthetic iTunes XML pools.
 
-Writes two committed XMLs alongside `stations/starter.json`:
+Writes THREE committed XMLs alongside `stations/starter.json`:
 
   * `stations/starter-content.itunes.xml` — 50 tracks across 10 fully
     synthetic artists (5 tracks each), Genre="Pop". Drives the
@@ -8,6 +9,15 @@ Writes two committed XMLs alongside `stations/starter.json`:
     variety to produce an interesting week.
   * `stations/starter-jingles.itunes.xml` — 5 tracks, Genre="Jingle".
     Drives the `jingle` strategy slots (every 8th position).
+  * `stations/starter-reference.itunes.xml` — 9 tracks across 3
+    fully-synthetic archive artists (3 tracks each), Genre="Archive".
+    §16.14.t3 teaching pool: declared in starter.json's `sources[]`
+    with `role: reference` but NOT used in any slot block. The
+    engine never samples from it; its purpose is to make the
+    reference-role concept tangible on the station detail page +
+    in the Sources page, and to anchor the cross-check test
+    (§14.35) that's the only real engine behaviour of role:
+    reference today. See stations/README.md for the full story.
 
 All track + artist names are entirely made-up (no public-domain
 attribution, no CC-0 matchback risk). Persistent IDs are

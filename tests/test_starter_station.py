@@ -326,16 +326,57 @@ def test_reference_pool_has_9_archive_tracks() -> None:
     assert genres == {"Archive"}
 
 
-def test_engine_cross_check_fires_on_role_mismatch(tmp_path) -> None:
-    """§16.14.t3 D4: the reference role's one real engine behaviour
-    today is the cross-check (§14.35) that raises TemplateError when
-    a template declares a source as content but the DB pool was
-    imported as reference. Pin that the safety rail actually fires —
-    this is the entire teaching surface of `role: reference`.
+def test_template_parse_rejects_content_block_pointing_at_reference_source() -> None:
+    """§16.14.t3 D4a (c1-review 🟡-2 cleaner shape, first guard): the
+    engine has TWO cross-check guards on the reference role. The
+    FIRST fires at `parse_template()` time: a slot block can't
+    reference a source whose `role: reference` is declared in the
+    template's own `sources[]`. This is the user-facing-first guard
+    — the c2 docs page will surface this as the safety rail most
+    hobbyists actually hit.
 
-    Approach: import the starter-reference XML as `STARTER_CONTENT`
-    with role=reference (forcing the mismatch). The starter template
-    declares STARTER_CONTENT as content; load_pools should raise."""
+    Reproduces the hobbyist mistake the c2 docs will warn against:
+    take the canonical starter template (which declares
+    REFERENCE_ARCHIVE with role: reference) and edit ONE slot block
+    to point a `weighted` content strategy at it. The parser
+    refuses, no DB needed.
+
+    Loose error match (c1-review 🟢-1): `match="reference"` instead
+    of the precise message phrasing.
+    """
+    from engine.template import TemplateError, parse_template
+
+    raw = json.loads(STARTER_JSON.read_text())
+    # The hobbyist mistake: edit one slot to source from
+    # REFERENCE_ARCHIVE with a content sampler.
+    raw["layout"]["flat_slots"][0] = {
+        "source": "REFERENCE_ARCHIVE",
+        "strategy": "weighted",
+        "size": 1,
+    }
+    with pytest.raises(TemplateError, match="reference"):
+        parse_template(raw)
+
+
+def test_engine_load_pools_rejects_db_role_mismatch(tmp_path) -> None:
+    """§16.14.t3 D4b: the SECOND guard fires at generation time, when
+    `load_pools` cross-checks the template's declared source roles
+    against the actual DB rows from the importer.
+
+    Specifically: if the template declares STARTER_CONTENT as content
+    (and uses it in slot blocks) but someone re-imported the pool
+    with role=reference, the engine refuses to load — even though
+    the template ITSELF is valid. This catches the case where the
+    user fixed their template after a typo-then-import but didn't
+    re-import the pool with the corrected role.
+
+    Pinned separately from the parse-time guard because the two
+    safety rails fire on DIFFERENT failure modes:
+      * parse_template: template internally inconsistent.
+      * load_pools: template fine, DB row from import mismatches.
+
+    Loose error match (c1-review 🟢-1): `match="(?i)reference"`.
+    """
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
 
@@ -349,13 +390,12 @@ def test_engine_cross_check_fires_on_role_mismatch(tmp_path) -> None:
     Session = sessionmaker(bind=eng)
     db = Session()
     try:
-        # Use the reference XML's content as the source — but import
-        # it under STARTER_CONTENT's name with role=reference. That
-        # forces the template-says-content / DB-says-reference
-        # mismatch the cross-check fires on.
+        # Force the DB-vs-template mismatch: import STARTER_CONTENT
+        # with role=reference even though the template declares it
+        # content. The template itself is unedited (and valid).
         import_source(
             db,
-            REPO_ROOT / "stations" / "starter-reference.itunes.xml",
+            REPO_ROOT / "stations" / "starter-content.itunes.xml",
             "STARTER_CONTENT",
             role="reference",
         )
@@ -363,7 +403,34 @@ def test_engine_cross_check_fires_on_role_mismatch(tmp_path) -> None:
 
         raw = json.loads(STARTER_JSON.read_text())
         tmpl = parse_template(raw)
-        with pytest.raises(TemplateError, match="role='reference'"):
+        with pytest.raises(TemplateError, match="(?i)reference"):
             load_pools(db, tmpl)
     finally:
         db.close()
+
+
+def test_starter_sidecar_stays_stable_after_t3_amendment() -> None:
+    """c1-review 🟢-2: declared-but-unused sources must NOT cause the
+    sidecar to drift. The canonical regen-match pin lives in
+    `tests/test_committed_sidecars.py::
+    test_starter_committed_sidecar_matches_derive_output` — that
+    test passing after §16.14.t3 amended `starter.json` is the real
+    proof. This test makes the implicit-pin EXPLICIT so a future
+    reader of test_starter_station.py finds the connection without
+    grepping. Re-runs the derive helper inline + asserts the
+    committed file matches.
+    """
+    from scripts.derive_sidecar import derive_sidecar
+
+    raw = json.loads(STARTER_JSON.read_text())
+    derived = (
+        json.dumps(derive_sidecar(raw), indent=2, sort_keys=False) + "\n"
+    )
+    assert derived == STARTER_SIDECAR.read_text(), (
+        "starter.editor.json drifted after a starter.json edit — "
+        "the §16.14.t3 amendment added a declared-but-unused source "
+        "(REFERENCE_ARCHIVE), which the derive helper should ignore. "
+        "If this test fails, the derive helper now considers "
+        "declared-but-unused sources somehow; surface that in DESIGN "
+        "or re-run `python -m scripts.derive_sidecar` + commit."
+    )
