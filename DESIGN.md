@@ -9897,20 +9897,70 @@ sweep, matching the §16.13.t1-t9 cadence).
   would let the future `scripts/` library-vs-dev-tool split land
   cleanly. **Home: ~1 commit when §16.13.t9 lands its split, or
   when a third caller of `derive_sidecar` appears.**
-* **§16.14.t3 — Reference-role starter station.** A bundled
-  example that genuinely demonstrates `role: reference` —
-  separate from the stateful starter (§16.14.t1) because the
-  reference role is orthogonal to persistent-cursor mechanics,
-  and conflating them in one station muddles the teaching
-  surface. Shape decision deferred to the trigger-time design
-  talk: the candidate uses include (a) `mix` strategy's
-  `exclusion_window` (real engine behaviour), or (b) a pure-
-  metadata teaching of the role concept (honest about today's
-  contract that role is mostly a label + a cross-check guard).
-  **Home: separate slice (~3 commits).** Trigger: a hobbyist
-  asks "what does role: reference actually do?" — that question
-  is the ONLY honest signal that the concept needs a station-
-  shaped example rather than a docs paragraph.
+* **§16.14.t3 — Reference-role teaching annotation + docs page.
+  IN FLIGHT.** Trigger fired (user explicitly asked for t3).
+  Pre-c1 design talk surfaced that the original "bundled
+  reference-role starter station" framing was disproportionate
+  to today's engine contract:
+
+  **What `role: reference` actually does today.** Pools imported
+  with `role="reference"` are NOT loaded at generation time
+  (`engine/persistence.py:load_pools` enumerates only
+  `template.content_source_names`). Beyond that, the role does
+  precisely one thing: trigger a cross-check (§14.35) that
+  raises `TemplateError` if a template declares a source as
+  `content` but the DB pool was imported as `reference` —
+  prevents the engine from accidentally sampling from a pool
+  the importer marked not-for-sampling. The opposite direction
+  is silently OK.
+
+  The watch-list entry's candidate (a) — "mix strategy's
+  exclusion_window" — was a misread on my part. `mix`'s
+  `exclusion_window` is pure within-mix-strategy behaviour,
+  unrelated to role. So today's reference role is genuinely
+  thin: a label + a safety rail. The honest scope:
+
+  * **D1 — Amend `stations/starter.json` to add a
+    `REFERENCE_ARCHIVE` source** with `role: "reference"`.
+    Companion synthetic XML pool ships with the wheel and
+    auto-imports on first boot like the other starter pools.
+    The pool is declared but not used in any slot — it sits
+    in `sources[]` as a teaching annotation visible in the
+    visualiser + the editor. Heavy `_teaching_note` comment in
+    the JSON.
+  * **D2 — Pool sized small** (~10 tracks across 3 synthetic
+    "archive artists"), distinct from `STARTER_CONTENT`'s
+    artists so a reader sees they're separate collections.
+    Filename `starter-reference.itunes.xml`, PID prefix
+    `STREF...`.
+  * **D3 — Docs page in `stations/README.md`** titled "What
+    does `role: reference` mean?" covering:
+      * The contract (loaded vs not, cross-check direction);
+      * The cross-check error message + when it fires;
+      * The "Why is this so thin?" honesty paragraph + pointers
+        to the forward-looking story (the reference role's
+        utility scales as the engine grows: cross-pool dedup,
+        master-archive `prev_ref`, allowlist enforcement —
+        none shipped today).
+      * Pointer at `starter.json:sources.REFERENCE_ARCHIVE` as
+        the canonical example.
+  * **D4 — Cross-check test pin.** New test that imports
+    `STARTER_CONTENT` with role=reference (forcing the
+    mismatch) and asserts the engine surfaces the §14.35
+    `TemplateError` — the safety rail's one real behaviour.
+  * **D5 — NO new bundled station.** Amend the existing starter
+    (per user's option B + A). The teaching-surface case for a
+    standalone reference-role station doesn't justify the
+    machinery cost given how thin today's contract is. If the
+    contract grows real teeth (the forward-looking items
+    above), revisit with a fresh slice.
+  * **D6 — Auto-import on first boot** via `_FIRST_BOOT_POOLS`
+    (parity with the other starter pools).
+
+  **Shape:** 2 commits (c1 engine artifacts + tests; c2 docs +
+  slice closeout) + 2 mid-slice reviews + 1 slice-review sweep.
+  Smaller than the standard 3-commit cadence — there's just
+  less surface here.
 * **§16.14.t4 — Deeper jingle composition coverage.** Most
   likely a docs page in the future §16.15 docs site OR a
   DESIGN.md subsection — NOT a new bundled station unless the
