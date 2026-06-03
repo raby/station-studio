@@ -131,14 +131,20 @@ wheel-smoke: wheel
 		$$TMPVENV/venv/bin/station-studio serve --host 127.0.0.1 --port 8765 \
 		>$$TMPVENV/serve.log 2>&1 & \
 	SMOKE_PID=$$!; \
-	for i in 1 2 3 4 5 6 7 8 9 10; do \
-		if curl -sf http://127.0.0.1:8765/api/stations >/dev/null 2>&1; then break; fi; \
+	for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30; do \
+		if curl -sf http://127.0.0.1:8765/api/stations >/dev/null 2>&1; then echo "  ready after $${i}s"; break; fi; \
 		sleep 1; \
 	done; \
 	echo "--- curl / (SPA shell) ---"; \
 	curl -sS -o /dev/null -w 'HTTP %{http_code} %{content_type}\n' http://127.0.0.1:8765/ | tee /dev/stderr | grep -q '^HTTP 200 text/html'; \
 	echo "--- curl /api/stations ---"; \
 	curl -sS -o /dev/null -w 'HTTP %{http_code} %{content_type}\n' http://127.0.0.1:8765/api/stations | tee /dev/stderr | grep -q '^HTTP 200 application/json'; \
+	echo "--- /api/stations: lists all four bundled stations ---"; \
+	BODY=$$(curl -sS http://127.0.0.1:8765/api/stations); \
+	for slug in starter stateful-starter rebirth-classics rebirth-radio; do \
+		echo "$$BODY" | grep -q "\"$$slug\"" || { echo "ERROR: $$slug missing from /api/stations response" >&2; exit 1; }; \
+	done; \
+	echo "  ✓ all four bundled stations present"; \
 	echo "--- curl /sources (SPA fallback) ---"; \
 	curl -sS -o /dev/null -w 'HTTP %{http_code} %{content_type}\n' http://127.0.0.1:8765/sources | tee /dev/stderr | grep -q '^HTTP 200 text/html'; \
 	echo "--- curl /api/sources (starter auto-import) ---"; \
@@ -188,10 +194,19 @@ image-smoke: image
 	curl -sS -o /dev/null -w 'HTTP %{http_code} %{content_type}\n' http://127.0.0.1:18001/ | tee /dev/stderr | grep -q '^HTTP 200 text/html'; \
 	echo "--- curl /api/stations ---"; \
 	curl -sS -o /dev/null -w 'HTTP %{http_code} %{content_type}\n' http://127.0.0.1:18001/api/stations | tee /dev/stderr | grep -q '^HTTP 200 application/json'; \
+	echo "--- /api/stations: lists all four bundled stations ---"; \
+	BODY=$$(curl -sS http://127.0.0.1:18001/api/stations); \
+	for slug in starter stateful-starter rebirth-classics rebirth-radio; do \
+		echo "$$BODY" | grep -q "\"$$slug\"" || { echo "FAIL: $$slug missing from /api/stations response in image" >&2; exit 1; }; \
+	done; \
+	echo "  ✓ all four bundled stations present"; \
 	echo "--- curl /sources (SPA fallback) ---"; \
 	curl -sS -o /dev/null -w 'HTTP %{http_code} %{content_type}\n' http://127.0.0.1:18001/sources | tee /dev/stderr | grep -q '^HTTP 200 text/html'; \
 	echo "--- curl /api/sources (starter auto-import) ---"; \
-	curl -sS http://127.0.0.1:18001/api/sources | tee /dev/stderr | grep -q 'STARTER_CONTENT' || { echo "FAIL: STARTER_CONTENT pool missing from /api/sources — bootstrap auto-import is broken in the image" >&2; exit 1; }; \
+	SOURCES=$$(curl -sS http://127.0.0.1:18001/api/sources); \
+	echo "$$SOURCES" | grep -q 'STARTER_CONTENT' || { echo "FAIL: STARTER_CONTENT pool missing from /api/sources — bootstrap auto-import is broken in the image" >&2; exit 1; }; \
+	echo "$$SOURCES" | grep -q 'STATEFUL_CONTENT' || { echo "FAIL: STATEFUL_CONTENT pool missing from /api/sources — stateful-starter auto-import is broken in the image" >&2; exit 1; }; \
+	echo "  ✓ both content pools auto-imported"; \
 	echo "==> Image smoke OK."
 
 # Alembic schema migrations (DESIGN.md §14.17 / §17 #8).

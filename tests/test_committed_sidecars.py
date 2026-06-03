@@ -281,3 +281,24 @@ def test_starter_committed_sidecar_matches_derive_output():
         "stations/starter.json --out stations/starter.editor.json` "
         "and commit the result."
     )
+
+
+# ---------- §16.14.t1 Stateful Starter (persistent cursor + prev_ref) ----
+
+
+def test_stateful_starter_sidecar_validates_against_template():
+    """§16.14.t1 slice-review 🟡-2: parallel drift-detection
+    coverage for the stateful starter sidecar in the canonical test
+    file. Same pattern as classics + radio + starter pins above —
+    catches a `stateful-starter.json` edit that wasn't followed by
+    a sidecar refresh.
+
+    The stateful-starter test file
+    (`tests/test_stateful_starter_station.py`) has its own
+    validate + regen-match tests; this one mirrors the convention
+    in this file so a future contributor looking only at
+    `test_committed_sidecars.py` finds drift coverage for every
+    bundled sidecar.
+    """
+    template, sidecar = _load_pair("stateful-starter")
+    validate_sidecar(sidecar, template)

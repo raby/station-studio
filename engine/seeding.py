@@ -245,8 +245,12 @@ def auto_derive_missing_sidecars(stations_dir: Path) -> int:
     info station-studio serve` sees what was skipped.
     """
     # Lazy import — keeps engine.seeding light when nobody calls the
-    # derive helper.
-    from scripts.derive_sidecar import derive_sidecar
+    # derive helper. §16.14.t2 / §16.14.t1 slice-review sweep:
+    # imports from `engine.editor_metadata` (the canonical home post
+    # lift), NOT `scripts.derive_sidecar` (the CLI shim that doesn't
+    # ship in the wheel post §16.13.t9). The pre-lift import was a
+    # production 🔴 — broke every CLI bootstrap on a wheel install.
+    from engine.editor_metadata import derive_sidecar
     from engine.template import TemplateError
 
     if not stations_dir.is_dir():

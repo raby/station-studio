@@ -105,12 +105,14 @@ def test_wheel_ships_bundled_stations(wheel_contents: set[str]) -> None:
     assert stations, (
         "no bundled stations in wheel — c3's first-run seed will break"
     )
-    # All three example stations from the repo's `stations/` dir
-    # made it through. §16.14 added `starter.json`.
+    # All four example stations from the repo's `stations/` dir
+    # made it through. §16.14 added `starter.json`; §16.14.t1
+    # added `stateful-starter.json`.
     names = {Path(p).name for p in stations}
     assert "rebirth-classics.json" in names
     assert "rebirth-radio.json" in names
     assert "starter.json" in names
+    assert "stateful-starter.json" in names
 
 
 def test_wheel_ships_starter_pool_xmls_and_sidecar(
@@ -146,6 +148,38 @@ def test_wheel_ships_starter_pool_xmls_and_sidecar(
     assert "starter.editor.json" in names, (
         "starter editor sidecar missing — visualiser will fall "
         "back to slow runtime derive on first boot"
+    )
+
+
+def test_wheel_ships_stateful_starter_pool_and_sidecar(
+    wheel_contents: set[str],
+) -> None:
+    """§16.14.t1 slice-review 🟡-1: pin that the stateful-starter
+    station's content pool + committed sidecar both ship. Same
+    failure mode as the §16.14 starter pool test (slice-review
+    🟡-2 closure) — the auto-import helper would silently skip
+    STATEFUL_CONTENT on first boot if the XML weren't bundled,
+    leaving the stateful-starter station with no tracks. The
+    sidecar landing pre-committed keeps the visualiser fast on
+    first paint.
+    """
+    bundled = {
+        p for p in wheel_contents
+        if p.startswith("station_studio/_bundled/stations/")
+    }
+    names = {Path(p).name for p in bundled}
+    # The content pool: D6 first-boot auto-import lands this; an
+    # absence here means STATEFUL_CONTENT silently won't import.
+    assert "stateful-starter-content.itunes.xml" in names, (
+        "stateful-starter content pool missing — auto-import on "
+        "first boot will silently skip STATEFUL_CONTENT and the "
+        "stateful-starter station will have zero tracks"
+    )
+    # The pre-committed editor sidecar (D8 parity with the
+    # stateless starter).
+    assert "stateful-starter.editor.json" in names, (
+        "stateful-starter editor sidecar missing — visualiser "
+        "falls back to slow runtime derive on first boot"
     )
 
 

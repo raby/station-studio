@@ -905,3 +905,178 @@ def _validate_macro_specs(sidecar: dict, station_template: dict) -> None:
                 f"macros[{i}].spec.size must be a positive int; "
                 f"got {size!r}."
             )
+
+
+# ---------------------------------------------------------------------------
+# §16.14.t2 — `derive_sidecar` core helper (lifted from
+# scripts/derive_sidecar.py). Previously the helper lived in scripts/,
+# but `scripts/` no longer ships in the wheel (closed §16.13.t9), and
+# `engine.seeding.auto_derive_missing_sidecars` imported from
+# scripts.derive_sidecar at function-body level — which crashed at
+# runtime with `ModuleNotFoundError` on any wheel install where
+# bootstrap fired the helper.
+#
+# Caught by the §16.14.t1 slice-review sweep manually running
+# `make wheel-smoke`. The function is pure (no I/O) and depends only
+# on stdlib + the EditorMetadataError + validate_sidecar already
+# defined above, so it lives here cleanly. The
+# `scripts/derive_sidecar.py` script remains as a thin CLI wrapper
+# importing this function — preserves the `python -m
+# scripts.derive_sidecar --station X --out Y` invocation that's used
+# from Makefile + docs + the CONTRIBUTING.md recipe.
+# ---------------------------------------------------------------------------
+
+
+# Minimum run length to propose a macro. Shorter runs stay atomic
+# (the macro overhead of {id, repeat, spec} isn't worth it for ~2
+# slots).
+_DERIVE_MIN_MACRO_RUN = 3
+
+
+def _derive_spec_key(slot: dict) -> str:
+    """Build a hashable key for spec equality. Two slots with the
+    same key can be grouped into one macro. JSON-with-sort_keys
+    handles arbitrary primitive + nested values, so a future strategy
+    adding a new spec field can't silently coalesce slots that differ
+    only in that field."""
+    import json as _json
+    return _json.dumps(slot, sort_keys=True)
+
+
+def _derive_is_daytime_jingle(slot: dict) -> bool:
+    """Section-boundary detector. A Daytime jingle starts a new
+    section."""
+    return (
+        slot.get("strategy") == "jingle"
+        and slot.get("genre") == "Daytime"
+    )
+
+
+def _derive_section_ranges(slots: list[dict]) -> list[tuple[int, int]]:
+    """Walk slots; return [(start, end_exclusive), ...] section ranges.
+
+    Each section starts at a Daytime jingle (or at slot 0 if the
+    template doesn't lead with one) and runs until the next Daytime
+    jingle or end-of-template."""
+    if not slots:
+        return []
+    boundaries = [
+        i for i, s in enumerate(slots) if _derive_is_daytime_jingle(s)
+    ]
+    if not boundaries or boundaries[0] != 0:
+        boundaries = [0] + boundaries
+    ranges = []
+    for i, start in enumerate(boundaries):
+        end = boundaries[i + 1] if i + 1 < len(boundaries) else len(slots)
+        ranges.append((start, end))
+    return ranges
+
+
+def _derive_build_section(
+    section_idx: int,
+    slot_range: tuple[int, int],
+    slots: list[dict],
+    macros: list[dict],
+    macro_counters: dict[str, int],
+) -> dict:
+    """Build a single section dict + append any macros it generates.
+
+    `macros` is mutated to collect new macro definitions; the
+    section's blocks list either references macros (kind=macro) or
+    atomic slots (kind=atomic). `macro_counters` tracks per-strategy
+    counters so macro IDs are stable + unique across the whole sidecar.
+    """
+    start, end = slot_range
+    section_slots = slots[start:end]
+    blocks: list[dict] = []
+
+    i = 0
+    while i < len(section_slots):
+        run_key = _derive_spec_key(section_slots[i])
+        run_len = 1
+        while (
+            i + run_len < len(section_slots)
+            and _derive_spec_key(section_slots[i + run_len]) == run_key
+        ):
+            run_len += 1
+
+        if run_len >= _DERIVE_MIN_MACRO_RUN:
+            strategy = section_slots[i].get("strategy", "block")
+            macro_counters[strategy] = macro_counters.get(strategy, 0) + 1
+            macro_id = f"{strategy}-{macro_counters[strategy]}"
+            macro_spec = dict(section_slots[i])
+            macros.append({
+                "id": macro_id,
+                "name": f"{run_len} × {strategy}",
+                "repeat": run_len,
+                "spec": macro_spec,
+            })
+            blocks.append({"kind": "macro", "ref": macro_id})
+            i += run_len
+        else:
+            for j in range(run_len):
+                slot_index = start + i + j
+                blocks.append({"kind": "atomic", "slot_index": slot_index})
+            i += run_len
+
+    return {
+        "id": f"segment-{section_idx + 1}",
+        "name": f"Segment {section_idx + 1}",
+        "blocks": blocks,
+    }
+
+
+def derive_sidecar(station_template: dict) -> dict:
+    """Derive a sidecar dict from a station template.
+
+    Runs the heuristic + validates the output against the station
+    template's drift rules before returning. If validation fails,
+    raises `EditorMetadataError` — the heuristic produced something
+    invalid, which is a derive-script bug, not a station bug.
+
+    Lifted from `scripts/derive_sidecar.py` in §16.14.t1's slice-
+    review sweep (closes the deferred §16.14.t2). The script of the
+    same name remains as the CLI wrapper for the `python -m
+    scripts.derive_sidecar` invocation.
+    """
+    layout = station_template.get("layout", {})
+    flat_slots = layout.get("flat_slots") or []
+    if not flat_slots:
+        raise EditorMetadataError(
+            "derive_sidecar supports flat_slots stations only. "
+            "row_template stations should be hand-authored (see "
+            "stations/rebirth-classics.editor.json for the canonical "
+            "shape)."
+        )
+
+    section_ranges = _derive_section_ranges(flat_slots)
+    macros: list[dict] = []
+    macro_counters: dict[str, int] = {}
+    sections: list[dict] = []
+
+    for idx, slot_range in enumerate(section_ranges):
+        sections.append(_derive_build_section(
+            idx, slot_range, flat_slots, macros, macro_counters,
+        ))
+
+    layout_order = [s["id"] for s in sections]
+
+    sidecar = {
+        "_comment": (
+            "Auto-derived from the station's flat_slots via "
+            "scripts/derive_sidecar.py. Heuristic: sections split at "
+            "Daytime jingles; macros for runs of ≥3 identical specs. "
+            "Refine section names + macro names to match your "
+            "programming concept (the heuristic can't infer 'Morning "
+            "Drive' from a block of 200 commercials)."
+        ),
+        "schema_version": 1,
+        "sections": sections,
+        "macros": macros,
+        "layout_order": layout_order,
+    }
+
+    # Drift-rule check — the heuristic should never produce invalid
+    # output; if it does, that's a derive-helper bug.
+    validate_sidecar(sidecar, station_template)
+    return sidecar

@@ -9922,19 +9922,36 @@ sweep, matching the §16.13.t1-t9 cadence).
   questions, and don't need new code to teach. **Home: 1 docs
   commit when triggered; bundled station only as last resort.**
   Trigger: a hobbyist asks for any of those graduation topics.
-* **§16.14.t2 — Hoist `derive_sidecar` into `engine/`.** The
-  `auto_derive_missing_sidecars` helper in `engine/seeding.py`
-  imports `from scripts.derive_sidecar import derive_sidecar` —
-  engine → scripts, the same coupling §16.13.t9 was supposed to
-  wash out. The `derive_sidecar` core helper (the pure function
-  that takes a station template dict and returns a sidecar dict;
-  not the `main()` CLI wrapper) would naturally fit in
-  `engine/editor_metadata.py` (or a sibling `engine/sidecar.py`).
-  Today's shape works because §16.13.t9 ships `scripts/` in the
-  wheel anyway as a deliberate over-include; closing this entry
-  would let the future `scripts/` library-vs-dev-tool split land
-  cleanly. **Home: ~1 commit when §16.13.t9 lands its split, or
-  when a third caller of `derive_sidecar` appears.**
+* ~~**§16.14.t2 — Hoist `derive_sidecar` into `engine/`.**~~
+  **SHIPPED** (during the §16.14.t1 slice-review sweep — was a
+  production 🔴 hit on the CLI bootstrap path, not a deferrable
+  cleanup as the original watch-list described).
+
+  The pre-lift coupling was worse than this entry's framing
+  implied: `engine.seeding.auto_derive_missing_sidecars` did
+  `from scripts.derive_sidecar import derive_sidecar` at
+  function-body level, AND `scripts/` doesn't ship in the wheel
+  (per the §16.13.t9 closure that ALREADY removed it). So every
+  `station-studio serve` on a wheel install crashed at bootstrap
+  with `ModuleNotFoundError: No module named 'scripts'`. The bug
+  had been live since §16.14 c2 shipped — neither §16.14 nor
+  §16.14.t1's per-commit smokes caught it because (a) `make
+  wheel-smoke` didn't fire the auto-derive path (the bundled
+  sidecars already existed in the home), and (b) the new pool
+  count from §16.14.t1 pushed the wheel-smoke past its 10s
+  readiness deadline, which is what surfaced the underlying
+  bootstrap crash for the first time.
+
+  Fix: lifted the core `derive_sidecar` + its helpers
+  (`_spec_key`, `_detect_section_ranges`, `_build_section`,
+  `MIN_MACRO_RUN`) into `engine/editor_metadata.py` — their
+  natural home alongside the parser + validator. The
+  `scripts/derive_sidecar.py` module becomes a thin CLI wrapper
+  importing from engine, with back-compat re-exports so
+  `tests/test_derive_sidecar.py`'s existing
+  `from scripts.derive_sidecar import _spec_key` etc keep
+  resolving without touching the test file. `engine.seeding`
+  updated to import from the new home.
 
 ---
 
