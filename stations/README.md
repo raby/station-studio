@@ -210,6 +210,201 @@ None shipped today; if you're reading this and one of those
 landed, the slice that landed it should have rewritten this
 paragraph + removed the corresponding watch-list entry.
 
+## Deeper jingle composition
+
+The §16.14 starter teaches the basics — one jingle pool, jingles
+every 8 slots. Real radio stations want more nuance: different
+jingles for different dayparts, separate pools for hourly IDs vs
+sweepers vs station tags, denser cadence in morning drive than
+overnight. This section covers the patterns. All of them work
+with TODAY's `jingle` strategy — no engine changes needed.
+
+### The `jingle` strategy contract (the short version)
+
+A jingle slot specifies a `source` (which pool to look in) AND a
+`genre` (which Genre tag to filter for). The engine:
+
+1. Loads the named source pool from the DB.
+2. Filters tracks where `track.Genre == genre` (case-sensitive
+   exact match).
+3. Picks one — first matching track in deterministic mode (`rng:
+   off`), `rng.choice(candidates)` in randomized mode (`rng: on`).
+4. Fails LOUD if no track matches: `JingleGenreNotFoundError("no
+   track with genre 'X'")`. There's no fallback, no nearest-match
+   — your iTunes XML must have at least one track tagged exactly
+   with the genre you ask for.
+
+This contract is the only knob. Every pattern below is just a
+different way of using it.
+
+### Pattern 1 — One pool, multiple genres (the Rebirth Radio shape)
+
+The simplest scaling pattern. One JINGLES pool holds every jingle
+clip the station might use, each tagged with its appropriate
+Genre. Different slot positions specify different genres:
+
+```jsonc
+"sources": [
+  { "name": "JINGLES", "colour": "#fb8500", "role": "content" },
+  { "name": "MUSIC",   "colour": "#3a86ff", "role": "content" }
+],
+"layout": {
+  ...
+  "flat_slots": [
+    { "source": "JINGLES", "strategy": "jingle", "size": 1,
+      "genre": "Daytime" },
+    { "source": "MUSIC",   "strategy": "weighted", "size": 1 },
+    { "source": "MUSIC",   "strategy": "weighted", "size": 1 },
+    { "source": "JINGLES", "strategy": "jingle", "size": 1,
+      "genre": "Mixzone" },
+    ...
+  ]
+}
+```
+
+In iTunes you tag each jingle track with its appropriate Genre
+(`Daytime`, `Mixzone`, `Hourly ID`, `Sweeper`, etc.). One XML
+import; the engine filters per-slot.
+
+This is how `stations/rebirth-radio.json` is structured — see
+the `JINGLES` source + its `genre: "Daytime"` / `genre:
+"Mixzone"` slots. Use this when:
+
+* You have **one curator** for all jingles (single mental model).
+* Genres are stable + well-defined ("daytime jingle" is a
+  category you can imagine independently).
+* You want the smallest number of pools in your `sources[]`.
+
+### Pattern 2 — Multiple pools (the explicit-separation shape)
+
+Each jingle type lives in its own pool:
+
+```jsonc
+"sources": [
+  { "name": "HOURLY_IDS",  "colour": "#fb8500", "role": "content" },
+  { "name": "SWEEPERS",    "colour": "#ffb703", "role": "content" },
+  { "name": "STATION_TAGS","colour": "#fd8a09", "role": "content" }
+],
+"layout": {
+  ...
+  "flat_slots": [
+    { "source": "HOURLY_IDS",   "strategy": "jingle", "size": 1,
+      "genre": "Hourly" },
+    ...
+    { "source": "SWEEPERS",     "strategy": "jingle", "size": 1,
+      "genre": "Sweeper" },
+    ...
+    { "source": "STATION_TAGS", "strategy": "jingle", "size": 1,
+      "genre": "Tag" },
+    ...
+  ]
+}
+```
+
+Each pool is one iTunes XML import via the Sources page. Use this
+when:
+
+* Different people maintain different jingle libraries (e.g.
+  IDs come from a station imaging service, sweepers from a
+  producer, tags from a designer).
+* You want per-pool dedup or per-pool versioning — each XML is
+  independently re-importable.
+* The pool count matters more than the slot count (e.g. you
+  rotate sweepers monthly; bumping `SWEEPERS` doesn't touch the
+  other pools).
+
+You still need `genre` on each block, even with separate pools.
+The engine's contract is "filter tracks by genre"; if all your
+sweepers carry `Genre: "Sweeper"` you can specify that and pick
+deterministically per slot. If `SWEEPERS` has only one genre,
+both `genre: "Sweeper"` and `genre: "Anything"` work as long as
+the actual tracks carry the matching tag.
+
+### Pattern 3 — Daypart cadence
+
+There's no engine-level "daypart" concept. Dayparts are just
+slot positions you choose to treat differently.
+
+Pick the daypart boundary at design time. E.g. for a 168-slot
+weekly template (one slot per hour, Mon→Sun):
+
+* Slots 0-5, 18-23 = overnight (hours 0-5, 18-23 of each day)
+* Slots 6-9 = morning drive
+* Slots 10-13 = midday
+* Slots 14-17 = afternoon
+
+Pop different jingle blocks into different daypart slot positions:
+
+```jsonc
+"flat_slots": [
+  // Overnight: just music, no jingles.
+  { "source": "MUSIC", "strategy": "weighted", "size": 1 },
+  // ... slots 1-5 ...
+
+  // Morning drive: jingle every other slot ("hot clock").
+  { "source": "JINGLES", "strategy": "jingle", "size": 1,
+    "genre": "Morning ID" },
+  { "source": "MUSIC",   "strategy": "weighted", "size": 1 },
+  { "source": "JINGLES", "strategy": "jingle", "size": 1,
+    "genre": "Morning ID" },
+  // ...
+
+  // Midday: jingle every 4 slots, different genre.
+  { "source": "JINGLES", "strategy": "jingle", "size": 1,
+    "genre": "Midday Sweep" },
+  // ... etc.
+]
+```
+
+The slot positions encode the daypart; the `genre` field per slot
+encodes which jingle subset to draw from. You can combine pattern
+1 (single pool, multi-genre) OR pattern 2 (multi-pool) with this
+slot-position-as-daypart trick.
+
+Use daypart cadence when:
+
+* Different times of day deserve different vibes (morning drive
+  high energy, overnight chill).
+* You want SILENCE in some dayparts — just don't put any jingle
+  slot in those positions.
+
+### Pattern 4 — Programmed cadence (every Nth slot)
+
+The §16.14 starter uses this: jingles every 8 slots, uniform
+across the week. Simplest cadence; least configuration. Mixes
+freely with patterns 1-3 (e.g. "every Nth slot is a jingle, and
+the genre changes by daypart").
+
+### Picking a pattern
+
+| Situation | Use |
+|---|---|
+| One curator, one library, jingles tagged with Genre | Pattern 1 (one pool, multi-genre) |
+| Multiple curators OR rotation cadences vary per type | Pattern 2 (multi-pool) |
+| Time-of-day matters for jingle type or frequency | Pattern 3 (daypart cadence) |
+| You're building your first multi-jingle station | Pattern 4 first; graduate to 1+3 |
+
+### What `jingle` can NOT do today
+
+Out of scope for this strategy as it exists:
+
+* **Per-track rotation memory.** Jingle picks have NO history-
+  aware exclusion. Track might be picked twice in a row by
+  chance (rng=on) or always (rng=off, only one candidate).
+  If you want "don't repeat the same ID twice in an hour," the
+  workaround is more genres (split your IDs into ID_A / ID_B /
+  ID_C and alternate slot genres) — a graduation problem this
+  docs page doesn't solve.
+* **Conditional jingles.** No "play sweeper X if previous slot
+  was genre Y." Jingle picks are pure source-+-genre lookups.
+* **Time-aware metadata.** No "play this jingle only on
+  Mondays." If you want Mon-only IDs, that's a daypart pattern
+  with a slot-position carve-out.
+
+If one of these limitations actually bites your station, that's
+the signal to file an issue — the docs page above stays accurate
+as long as the strategy contract stays the same.
+
 ## Adding a new station
 
 Drop `your-station.json` here. On next `station-studio serve`, the

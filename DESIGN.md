@@ -10004,17 +10004,29 @@ sweep, matching the §16.13.t1-t9 cadence).
   (~2-3 commits).** Trigger: a hobbyist asks for the
   positive-filter pattern, OR §16.14.t5 ships and the inverse
   becomes the natural next step.
-* **§16.14.t4 — Deeper jingle composition coverage.** Most
-  likely a docs page in the future §16.15 docs site OR a
-  DESIGN.md subsection — NOT a new bundled station unless the
-  docs prove insufficient. The existing §16.14 starter teaches
-  the basics (jingles every N slots, paired with weighted
-  content). The graduation topics (multiple jingle pools, per-
-  daypart selection, hourly IDs vs sweepers vs station tags) are
-  composition + cadence questions, not engine-behaviour
-  questions, and don't need new code to teach. **Home: 1 docs
-  commit when triggered; bundled station only as last resort.**
-  Trigger: a hobbyist asks for any of those graduation topics.
+* ~~**§16.14.t4 — Deeper jingle composition coverage.**~~
+  **SHIPPED.** Trigger fired (user explicitly asked for t4).
+  Single docs commit per the original framing — no bundled
+  station, no engine changes. New "Deeper jingle composition"
+  section in `stations/README.md` covering the four canonical
+  patterns:
+    * **Pattern 1** — one pool, multi-genre (Rebirth Radio's
+      shape; cleanest for a single curator).
+    * **Pattern 2** — multiple pools (one per jingle type;
+      cleanest when different people curate different pools or
+      rotation cadences differ).
+    * **Pattern 3** — daypart cadence (slot-position-as-daypart
+      with per-position genre / pool / both).
+    * **Pattern 4** — programmed cadence (every Nth slot, what
+      the §16.14 starter does; combines freely with 1-3).
+  Section opens with a `jingle` strategy contract recap (source
+  + genre + case-sensitive exact match + fail-loud on missing
+  genre), and closes with a "What `jingle` can NOT do today"
+  honesty paragraph naming three real limitations (no
+  per-track rotation memory, no conditional jingles, no time-
+  aware metadata) + the "file an issue if one bites you"
+  trigger for future engine work. No new tests — docs-only
+  slice.
 * ~~**§16.14.t2 — Hoist `derive_sidecar` into `engine/`.**~~
   **SHIPPED** (during the §16.14.t1 slice-review sweep — was a
   production 🔴 hit on the CLI bootstrap path, not a deferrable
