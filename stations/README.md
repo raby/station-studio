@@ -77,6 +77,100 @@ The engine doesn't care that the jingles come from a pool used
 by a different station — pools are pool names + tracks, nothing
 else.
 
+## What does `role: reference` mean?
+
+Every entry in a station's `sources[]` block carries a
+`role: "content"` or `role: "reference"` tag. The two roles
+have very different engine behaviour:
+
+* **`role: content`** — the engine samples from this pool.
+  Every content-sampling strategy (`weighted` / `window` /
+  `sequential` / `jingle` / `mix` / `prev_ref`) picks tracks
+  from one of the template's content sources. If you write a
+  slot block, it must point at a content source.
+* **`role: reference`** — the engine NEVER samples from this
+  pool. The implementation: `engine/persistence.py:load_pools`
+  enumerates only `template.content_source_names`, which
+  excludes reference-role entries. The pool is loaded into the
+  DB by the importer (or the bootstrap's first-boot auto-import)
+  but the generator silently skips it.
+
+### Why is this distinction so thin?
+
+Honestly: today, **it mostly isn't**. `role: reference` does
+three things and only three things:
+
+1. **Documents intent.** Other readers of your template (or you
+   in six months) see that the pool is part of the station's
+   declared world, even if no slot uses it.
+2. **Shows in the UI.** The station detail page renders the full
+   `sources[]` block in a "Source pools" panel; reference-role
+   pools appear there with their colour + role tag.
+3. **Triggers two safety rails (§14.35 cross-check).** This is
+   the engine behaviour that actually matters today:
+   * **At parse time** (`engine/template.py:parse_template`):
+     if a slot block in the layout references a source whose
+     role is `reference`, parsing fails with a `TemplateError`.
+     You can't even write a template that points a content
+     strategy at a reference pool.
+   * **At generation time**
+     (`engine/persistence.py:load_pools`): if the template
+     declares a source as content but the imported DB pool
+     was tagged `role="reference"`, generation fails with the
+     same exception class. This catches the case where you
+     fixed your template but forgot to re-import the pool with
+     the corrected role.
+
+### The canonical example
+
+`starter.json`'s `sources[]` (§16.14.t3) ships with three
+entries:
+
+```jsonc
+"sources": [
+  { "name": "STARTER_CONTENT",   "colour": "#3a86ff", "role": "content"   },
+  { "name": "STARTER_JINGLES",   "colour": "#fb8500", "role": "content"   },
+  { "name": "REFERENCE_ARCHIVE", "colour": "#9b9b9b", "role": "reference" }
+]
+```
+
+`REFERENCE_ARCHIVE` is declared but used in zero slot blocks.
+The companion `starter-reference.itunes.xml` (9 synthetic tracks
+across 3 "archive artists", Genre=Archive) auto-imports on first
+boot like the other starter pools. The generator never picks
+from it; the safety rails catch you if you try.
+
+### Try the safety rail yourself
+
+Open `stations/starter.json`, find the first slot in
+`flat_slots`, replace its `"source"` value with
+`"REFERENCE_ARCHIVE"` (e.g. change the first `{ "source":
+"STARTER_JINGLES", ... }` to `{ "source": "REFERENCE_ARCHIVE",
+"strategy": "weighted", "size": 1 }`). Restart
+`station-studio serve`. Opening the starter station's page or
+hitting `POST /api/stations/starter/generate` should surface a
+`TemplateError` mentioning the role mismatch — proof the rail
+fires. (Revert the edit before you forget.)
+
+### Forward-looking utilities (not shipped)
+
+The reference role's value scales as the engine grows. Future
+slices may use it for:
+
+* **Cross-pool dedup** — exclude tracks that appear in a
+  reference pool from the content sampler's pick set
+  (e.g. "never play anything already in my MASTER_ARCHIVE").
+* **Master-archive `prev_ref`** — let `prev_ref` slots read
+  from a curated reference pool instead of the previous
+  week's generated playlist.
+* **Allowlist enforcement** — restrict the content sampler to
+  tracks that ALSO appear in a reference pool, treating it as
+  a positive filter.
+
+None shipped today; if you're reading this and one of those
+landed, this section is out of date and the slice that landed
+it should have rewritten this paragraph.
+
 ## Adding a new station
 
 Drop `your-station.json` here. On next `station-studio serve`, the

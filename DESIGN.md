@@ -6177,7 +6177,7 @@ direction — spec slice §16.2.0 is the next planned work.
 | Stations list polish     | **Shipped (§16.12).** Landing page has search (name/slug substring), cadence + generated filter chips, sort (name / last-generated / recently-edited), + per-row "Last generated: WEEKLY 026 · 3 days ago" line. GET /api/stations returns enriched StationSummary aggregates (2 bounded queries, argmax-by-timestamp). Pure filter/sort logic in web/src/lib/stations.ts. |
 | Install story            | **SHIPPED — §16.13 (c1-c6, six commits + 5 review-fix commits).** Wheel + docker channels both live, smoke-passing, release-blocker-gated (`make wheel-smoke` + `make image-smoke` curl `/`, `/api/stations`, `/sources` against the fresh install). Docker image multi-stage, ~312MB, non-root, HEALTHCHECK, /data volume. README's unified "Install" section presents all three channels (docker / wheel / dev clone) as equals with a prerequisites-keyed picker. Retires §16.22's SSR premise (no Node at runtime). Watch-list: §16.13.t1 (PyPI publish), t2 (full CLI subcommand set), t3-t9 (smaller follow-ups). |
 | Pool-import UI           | **SHIPPED — §16.25.** `/sources` page (list + single/batch add + per-row Re-import + Delete) + per-station embed on `/stations/[slug]` that re-fetches the §16.19 overview on any panel change + §16.19 "not imported" badge deep-links to the prefilled add-form. File-upload primary, typed-path advanced. Six commits + multiple mid-slice review fixes. |
-| Hobbyist starter stations | **SHIPPED — §16.14 (stateless starter) + §16.14.t1 (stateful starter).** Two bundled examples teaching distinct concepts: starter (168 slots, `weighted` + `jingle`, no cursor state) and stateful-starter (336 slots, `sequential` + `prev_ref`, one persistent cursor advancing 24/week, cycling every 14 weeks). All three companion pools (`STARTER_CONTENT` + `STARTER_JINGLES` + `STATEFUL_CONTENT`) auto-import on first boot. README's "Example stations" reading-order table now spans four stations: starter → stateful-starter → rebirth-classics → rebirth-radio. Reference-role starter queued as §16.14.t3; deeper jingle composition coverage queued as §16.14.t4 (likely a docs page, not a station). |
+| Hobbyist starter stations | **SHIPPED — §16.14 (stateless starter) + §16.14.t1 (stateful starter) + §16.14.t3 (reference-role annotation + docs).** Two bundled examples teaching distinct concepts: starter (168 slots, `weighted` + `jingle`, no cursor state — now also carrying `REFERENCE_ARCHIVE` with `role: reference` as a teaching annotation) and stateful-starter (336 slots, `sequential` + `prev_ref`, one persistent cursor advancing 24/week, cycling every 14 weeks). All four companion pools (`STARTER_CONTENT` + `STARTER_JINGLES` + `REFERENCE_ARCHIVE` + `STATEFUL_CONTENT`) auto-import on first boot. README's "Example stations" reading-order table spans four stations; `stations/README.md` carries a "What does `role: reference` mean?" docs page covering the engine contract + the two cross-check guards. Deeper jingle composition coverage still queued as §16.14.t4 (likely a docs page, not a station). |
 | Docs site                | Deferred — §16.15. After §16.2 + §16.13 + §16.14 ship.           |
 | Disk-export prune endpoint | Queued — §16.16. Demand-gated. §14.3's prune punt. |
 | Excluded-candidates display | Queued — §16.17. Small. Trace records them (§14.23); viewer needs to surface them. |
@@ -6253,7 +6253,7 @@ Master order at a glance. Detailed briefs follow below.
 | 5 | ~~§16.12 Stations list polish (search / filter / recent generations)~~ | ✅ shipped | **SHIPPED.** Search + cadence/generated filter chips + sort (name / last-generated / recently-edited) + per-row last-generated line. GET /api/stations enriched with StationSummary aggregates. |
 | 6 | §16.25 Pool-import UI | **SHIPPED** | The §16.13 D1 gate-unblocker. `/sources` page + per-station embed + deep-link badge; six commits, multiple mid-slice review passes. |
 | 7 | ~~§16.13 Install story (pip / docker)~~ | ✅ shipped | **SHIPPED** (c1-c6, six commits). Wheel + docker channels both live + release-blocker-gated. Closed D1/D2/D3; retires §16.22 SSR premise. Watch-list (t1-t9) tracks deferred follow-ups; PyPI publish (t1) is the natural next slice if a stranger asks for clone-free install. |
-| 7 | ~~§16.14 + §16.14.t1 Hobbyist starter stations~~ | ✅ shipped | **SHIPPED** (§16.14: 3 + 3 review-fix; §16.14.t1: design + 3 + 3 review-fix). Two bundled examples: stateless starter (weighted + jingle) and stateful-starter (sequential + prev_ref, one persistent cursor). Both auto-import on first boot. Reference-role starter (§16.14.t3) + deeper jingle docs (§16.14.t4) queued. |
+| 7 | ~~§16.14 + §16.14.t1 + §16.14.t3 Hobbyist starter stations~~ | ✅ shipped | **SHIPPED** (§16.14: 3 + 3 review-fix; §16.14.t1: design + 3 + 3 review-fix + sweep; §16.14.t3: design + 2 + 1 review-fix). Two bundled stations (stateless + stateful starter), plus the §16.14 starter now also carries `REFERENCE_ARCHIVE` with role: reference as a teaching annotation backed by a docs page. All four pools auto-import on first boot. Deeper jingle docs (§16.14.t4) queued. |
 | 8 | §16.15 Docs site (MkDocs-Material) | medium | After enough product is built to justify a doc site. |
 
 Inserted into the strategic sequence based on §16.0 audit:
@@ -9897,8 +9897,8 @@ sweep, matching the §16.13.t1-t9 cadence).
   would let the future `scripts/` library-vs-dev-tool split land
   cleanly. **Home: ~1 commit when §16.13.t9 lands its split, or
   when a third caller of `derive_sidecar` appears.**
-* **§16.14.t3 — Reference-role teaching annotation + docs page.
-  IN FLIGHT.** Trigger fired (user explicitly asked for t3).
+* ~~**§16.14.t3 — Reference-role teaching annotation + docs page.**~~
+  **SHIPPED.** Trigger fired (user explicitly asked for t3).
   Pre-c1 design talk surfaced that the original "bundled
   reference-role starter station" framing was disproportionate
   to today's engine contract:
@@ -9961,6 +9961,15 @@ sweep, matching the §16.13.t1-t9 cadence).
   slice closeout) + 2 mid-slice reviews + 1 slice-review sweep.
   Smaller than the standard 3-commit cadence — there's just
   less surface here.
+
+  **Shipped this slice (design + c1-c2, running log).**
+
+  | Commit | Scope |
+  |--------|-------|
+  | design (`0848fc1`) | Locked D1-D6, dropped the standalone-station framing after the engine-contract reality-check ("today the role is mostly a label + cross-check guard"). User picked options B (amend existing starter) + A (docs page). |
+  | c1 (`bdabe99`) + review (`e1a552c`) | Engine artifacts: `REFERENCE_ARCHIVE` added to `stations/starter.json:sources[]` with role=reference (declared, unused in slot blocks). `scripts/generate_starter_pools.py` extended with `build_reference_pool()` emitting 9 tracks across 3 synthetic archive artists, Genre="Archive", PID prefix `STREF`. `engine.seeding._FIRST_BOOT_POOLS` gained the entry so auto-import lands it on first boot. The c1 review discovered the engine has **TWO** cross-check guards (parse-time AND load-pools-time), not one as the watch-list framing implied — both pinned by separate tests. 4 tests added (sources declaration, content_source_names exclusion, pool shape, parse-time cross-check, load-pools cross-check, sidecar stability) + 4 pool-count tests updated (3 → 4 pools auto-imported). |
+  | **c2 (_this commit_)** | **Docs + slice closeout.** New "What does `role: reference` mean?" section in `stations/README.md` covering the engine contract (loaded vs not), the two safety rails (parse-time + load-pools-time), the canonical example (`starter.json:sources.REFERENCE_ARCHIVE`), a hands-on "Try the safety rail yourself" recipe, and an honest "Why is this so thin?" paragraph pointing at forward-looking utilities (cross-pool dedup, master-archive prev_ref, allowlist enforcement — none shipped). DESIGN §16.14.t3 marked SHIPPED with this shipped log; §15 status snapshot + §17 queued-order rows bumped. |
+
 * **§16.14.t4 — Deeper jingle composition coverage.** Most
   likely a docs page in the future §16.15 docs site OR a
   DESIGN.md subsection — NOT a new bundled station unless the
