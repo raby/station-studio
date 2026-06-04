@@ -558,6 +558,23 @@ def test_starter_generation_excludes_content_echo_pids_end_to_end() -> None:
                 .all()
             )
             assert len(echoed_tracks) == 3
+            # c2 review F4: pin the direct integration — the 3 echoed
+            # Track rows ARE reachable via REFERENCE_ARCHIVE's
+            # SourcePlaylistEntry rows. If this breaks, the importer
+            # silently dropped the echoes or the dedup-by-PID logic
+            # regressed; failing here points the diagnostic at the
+            # importer rather than at apply_weighted.
+            from engine.models import SourcePlaylist, SourcePlaylistEntry
+            ref_pool = db.query(SourcePlaylist).filter_by(
+                name="REFERENCE_ARCHIVE",
+            ).one()
+            ref_pids = {
+                e.track.persistent_id
+                for e in db.query(SourcePlaylistEntry)
+                .filter_by(source_playlist_id=ref_pool.id)
+                .all()
+            }
+            assert set(CONTENT_ECHOED_PERSISTENT_IDS) <= ref_pids
 
             generate_chain(
                 db, station_slug="starter", weeks=[1], seed_base=42,

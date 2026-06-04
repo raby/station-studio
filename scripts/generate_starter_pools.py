@@ -231,7 +231,21 @@ def _content_track_at_counter(counter: int) -> dict:
     this file and obvious: the echoes BYTE-FOR-BYTE match the
     content tracks, which is the whole mechanism — same PID → one
     Track row in the importer's dedup-by-pid path.
+
+    Bounds: counter must be in `1..len(CONTENT_ARTISTS) *
+    len(TRACK_TITLES)` (currently 1..50). c2 review F2 sanity check —
+    a future edit that adds 51 to `_CONTENT_ECHO_COUNTERS` would
+    otherwise IndexError on CONTENT_ARTISTS[10] with a confusing
+    message far from the source.
     """
+    max_counter = len(CONTENT_ARTISTS) * len(TRACK_TITLES)
+    if not 1 <= counter <= max_counter:
+        raise ValueError(
+            f"_content_track_at_counter: counter={counter} out of "
+            f"range 1..{max_counter} (content pool is {len(CONTENT_ARTISTS)}"
+            f" artists × {len(TRACK_TITLES)} titles). Adjust "
+            f"_CONTENT_ECHO_COUNTERS to stay within the pool."
+        )
     artist_idx = (counter - 1) // len(TRACK_TITLES)
     title_idx = (counter - 1) % len(TRACK_TITLES)
     artist = CONTENT_ARTISTS[artist_idx]

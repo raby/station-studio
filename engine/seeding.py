@@ -95,8 +95,20 @@ def seed_station(db: Session, path: Path) -> dict:
     D8). Idempotent: re-seeding writes the same rule values without
     creating duplicate rows.
 
+    **Re-seed overwrites user customisations (§16.14.t5 c2 review F1).**
+    The list-rule application is unconditional — if a future Rules UI
+    (§16.5) lets a user edit cross_pool_dedup_sources to a different
+    value, a subsequent `make seed-stations` re-run silently reverts
+    it to the registry default. Today this is theoretical (no list-
+    rule UI), but the §16.5 slice should revisit either:
+      - guard with "skip if Rule row already exists for the key", OR
+      - only apply on action=='created', OR
+      - move list-rules into the template JSON itself (§16.14.t9).
+
     Returns a summary dict with slug, action
-    (created|updated|unchanged), and slot_count.
+    (created|updated|unchanged), slot_count, and
+    list_rules_applied — the count of list-rule keys upserted from
+    `_STATION_LIST_RULES` for this slug (0 when no registry entry).
     """
     with open(path) as f:
         raw = json.load(f)
@@ -123,7 +135,8 @@ def seed_station(db: Session, path: Path) -> dict:
     # §16.14.t5 c2: apply imperative list-rule defaults. Flush before
     # set_rule_list_value so the Station row's id is available for
     # the rule FK; set_rule_list_value re-flushes after upsert.
-    list_rules = _STATION_LIST_RULES.get(slug)
+    list_rules = _STATION_LIST_RULES.get(slug, {})
+    list_rules_applied = 0
     if list_rules:
         db.flush()
         station = db.query(Station).filter(Station.slug == slug).one()
@@ -131,11 +144,13 @@ def seed_station(db: Session, path: Path) -> dict:
             set_rule_list_value(
                 db, station_id=station.id, key=key, value=value,
             )
+            list_rules_applied += 1
 
     return {
         "slug": slug,
         "action": action,
         "slot_count": template.slots_per_week(),
+        "list_rules_applied": list_rules_applied,
     }
 
 
