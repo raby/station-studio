@@ -439,6 +439,56 @@ def test_put_then_delete_round_trip_for_list_rule(api):
     assert by_key["cross_pool_dedup_sources"]["value"] == []
 
 
+def test_put_list_value_to_int_key_dispatches_to_int_validator(api):
+    """§16.14.t10 c1 review F10: cross-shape dispatch pin.
+    PUT a list body to an INT-rule URL — the int handler runs,
+    the int validator rejects with "must be int". Catches a
+    future routing bug that mis-dispatches by key string rather
+    than registry membership."""
+    client, Session = api
+    _seed_station(Session)
+    r = client.put(
+        "/api/stations/rb/rules/artist_dedup_window",
+        json={"value": ["X"]},
+    )
+    assert r.status_code == 400
+    assert "must be int" in r.json()["detail"]
+
+
+def test_put_int_value_to_list_key_dispatches_to_list_validator(api):
+    """§16.14.t10 c1 review F10: cross-shape dispatch pin.
+    PUT an int body to a LIST-rule URL — the list handler runs,
+    the list validator rejects with "must be a list"."""
+    client, Session = api
+    _seed_station(Session)
+    r = client.put(
+        "/api/stations/rb/rules/cross_pool_dedup_sources",
+        json={"value": 5},
+    )
+    assert r.status_code == 400
+    assert "must be a list" in r.json()["detail"]
+
+
+def test_put_bool_value_rejected_at_schema_layer(api):
+    """§16.14.t10 c1 review F1: Pydantic StrictInt rejects JSON
+    `true` at the schema layer BEFORE our validator runs. Pre-
+    fix, Pydantic coerced `true` → int=1, silently bypassing the
+    D6 bool-rejection contract that engine.rules
+    validate_int_rule_value enforces.
+
+    StrictInt's rejection surfaces as a Pydantic ValidationError
+    → 422 (FastAPI's default Pydantic error mapping). Either
+    400 OR 422 is acceptable — both signal "operator typo" to
+    the frontend."""
+    client, Session = api
+    _seed_station(Session)
+    r = client.put(
+        "/api/stations/rb/rules/artist_dedup_window",
+        json={"value": True},
+    )
+    assert r.status_code in (400, 422)
+
+
 def test_list_rule_explicit_empty_persists_distinct_from_default(api):
     """Setting `[]` via PUT IS persisted as an explicit "no
     exclusion" override (is_override=True). Distinct from the

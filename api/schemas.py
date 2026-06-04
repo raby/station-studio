@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from typing import Any, Literal
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictInt
 
 
 class MetaResponse(BaseModel):
@@ -180,8 +180,19 @@ class RuleValueIn(BaseModel):
     """PUT body — `{value: int}` for int rules, `{value: [...]}` for
     list rules. The server dispatches by which registry the URL
     `{key}` belongs to (§16.14.t10).
+
+    `value` is typed `StrictInt | list[str]` (NOT plain `int`) so
+    Pydantic doesn't coerce JSON booleans into 1/0 (§16.14.t10 c1
+    review F1). Without StrictInt, a `{"value": true}` body lands
+    as int=1 BEFORE the validator runs — the D6 bool-rejection
+    contract that engine.rules.validate_int_rule_value enforces
+    would be silently bypassed at the API surface. StrictInt
+    rejects bool at the schema layer, returning a 422 (Pydantic
+    validation error). The downstream validator then handles
+    out-of-bounds + non-list-for-list-key + comma-in-entry +
+    empty-entry cases that StrictInt can't express.
     """
-    value: int | list[str]
+    value: StrictInt | list[str]
 
 
 # §16.11 c3 — job runner endpoints
