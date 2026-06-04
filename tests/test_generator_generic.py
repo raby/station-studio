@@ -1615,6 +1615,13 @@ def test_archive_ref_size_greater_than_one_reads_consecutive_positions():
     # Trace pool_index increments per consecutive position.
     archive_slots = r.trace.slots[1:]
     assert [s.pool_index for s in archive_slots] == [2, 3, 4]
+    # c1 review F3: all N picks belong to the SAME block (within row).
+    # The dispatch loop produces N slots for one block, not N separate
+    # blocks. Pins the size-loop boundary against a future refactor
+    # that accidentally advances block_idx per pick.
+    assert {s.block for s in archive_slots} == {2}
+    # And all share the same row index too (sanity).
+    assert {s.row for s in archive_slots} == {1}
 
 
 def test_archive_ref_position_beyond_pool_fails_loud():
@@ -1659,3 +1666,57 @@ def test_archive_ref_deterministic_across_weeks():
         picks_per_week.append(r.picks[1].name)
     # All 5 weeks pick M0001 from the archive.
     assert picks_per_week == ["M0001"] * 5
+
+
+def test_archive_ref_and_prev_ref_coexist_in_same_template():
+    """c1 review F2: pin that both reference-aware strategies live
+    side-by-side in the same template without interfering.
+
+    The two strategies share `position` field semantics + the
+    1-indexed convention, but their dispatch paths are independent
+    (prev_ref reads previous_playlist + has soft fallback;
+    archive_ref reads the reference pool directly). A future
+    refactor that accidentally couples them (e.g. via a shared
+    helper that leaks state) would surface here.
+    """
+    t = parse_template(mk_template(
+        sources=[
+            {"name": "A", "colour": "#111", "role": "content"},
+            {"name": "M", "colour": "#222", "role": "reference"},
+        ],
+        layout={
+            "unit": "day",
+            "unit_labels": ["Mon"],
+            "row_start_offsets": [0],
+            "row_template": [
+                # Content slot.
+                {"source": "A", "strategy": "window", "size": 1},
+                # archive_ref reads position 3 of M (deterministic).
+                {"source": "M", "strategy": "archive_ref",
+                 "size": 1, "position": 3},
+                # prev_ref reads previous playlist position 1, filters
+                # against A. Week 1 has no previous → fallback path.
+                {"source": "A", "strategy": "prev_ref", "size": 1,
+                 "position": 1, "fallback_genre": "Pop"},
+            ],
+        },
+    ))
+    # A's tracks need a 'genre' so the prev_ref mix-fallback can fire
+    # without exploding (it needs at least one track with the
+    # fallback_genre). Reuse the FakeTrack fixture for genre.
+    pool_a = [FakeTrack(id=i, name=f"A{i:04d}", genre="Pop") for i in range(1, 11)]
+    pool_m = mk_pool("M", 5)
+    r = generate(t, {"A": pool_a, "M": pool_m}, week=1)
+    # 3 slots emitted: window, archive_ref, prev_ref (fallback path).
+    assert len(r.picks) == 3
+    # Slot 2 is the archive_ref pick — position 3 of M = M0003.
+    assert r.picks[1].name == "M0003"
+    assert r.trace.slots[1].strategy == "archive_ref"
+    # Slot 3 is the prev_ref pick — week 1 fallback fires (no previous);
+    # we don't pin the exact track (mix-strategy fallback picks one of
+    # A's Pop tracks) but DO pin the strategy.
+    assert r.trace.slots[2].strategy == "prev_ref"
+    # Each strategy's pool_index is anchored to ITS OWN source pool,
+    # not shared state.
+    assert r.trace.slots[1].pool_index == 3       # archive_ref: M[3]
+    assert r.trace.slots[2].source == "A"          # prev_ref: from A

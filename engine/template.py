@@ -220,6 +220,15 @@ class Template:
 
     @property
     def content_source_names(self) -> list[str]:
+        """Names of `role: content` sources — the pools the content
+        sampler draws from. Drives ``load_pools``' primary pass.
+
+        See also ``reference_sampling_source_names`` (§16.14.t6) for
+        the companion property covering reference-role sources sampled
+        at fixed positions by ``archive_ref`` blocks. A source has ONE
+        role + the parser's strategy-aware role cross-check ensures a
+        source can't appear in BOTH lists.
+        """
         return [s.name for s in self.sources if s.role == "content"]
 
     @property

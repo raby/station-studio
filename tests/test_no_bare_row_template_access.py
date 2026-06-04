@@ -63,7 +63,7 @@ ALLOWED_SITES: set[tuple[str, int]] = {
     # XOR is exploited correctly here; one branch contributes 0).
     # (Line moved 204 → 221 in §16.14.t9 c1 when the rules: block
     # added 2 dataclass fields + a top-level import block.)
-    ("engine/template.py", 256),  # bumped from 222 in §16.14.t6 c1 (REFERENCE_SAMPLING_STRATEGIES + reference_sampling_source_names + role-check expansion)
+    ("engine/template.py", 265),  # bumped from 256 in §16.14.t6 c1-review F4 (content_source_names docstring expansion)
     # §14.32: _iterate_slots — engine's slot-dispatch loop; the
     # `else` branch after `if layout.flat_slots:` is the row_template
     # dispatch and CORRECTLY reads row_template only.
@@ -76,8 +76,10 @@ ALLOWED_SITES: set[tuple[str, int]] = {
     # 870 → 878 in §16.14.t5 c1 when both apply_weighted call sites
     # picked up the excluded_track_pids kwarg + comment lines;
     # 878 → 920 in §16.14.t6 c1 when the archive_ref dispatch case
-    # + the strategies-package import comment landed.)
-    ("engine/generator.py", 920),
+    # + the strategies-package import comment landed; 920 → 928 in
+    # §16.14.t6 c1-review F1 when block.position's parser-guarantee
+    # assertion replaced the type:ignore.)
+    ("engine/generator.py", 928),
     # NOTE: `LayoutSpec.all_blocks` itself (engine/template.py:174)
     # uses `self.row_template` (no `.layout.` prefix; it's a method
     # ON LayoutSpec) and so doesn't match this lint pattern. That's

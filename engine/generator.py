@@ -792,8 +792,16 @@ def generate_stream(
             # natural extension of "fill N slots from position P
             # onward" — any of those positions OOB raises with the
             # specific bad index in the message.
+            # c1 review F1: parser guarantees block.position is set for
+            # archive_ref blocks (required_for={'prev_ref', 'archive_ref'}
+            # in _parse_block). The explicit assert makes the contract
+            # visible to mypy + future readers without a type: ignore.
+            assert block.position is not None, (
+                "parser bug: archive_ref block reached generator without "
+                "a position field set"
+            )
             for i in range(block.size):
-                requested_position = block.position + i  # type: ignore[operator]
+                requested_position = block.position + i
                 try:
                     track = apply_archive_ref(
                         pool,
