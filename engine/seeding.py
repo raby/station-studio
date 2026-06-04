@@ -34,6 +34,7 @@ from sqlalchemy.orm import Session
 
 from engine.database import make_engine, make_sessionmaker
 from engine.models import Base, Station
+from engine.rules import set_rule_list_value
 
 
 logger = logging.getLogger(__name__)
@@ -64,8 +65,35 @@ def _resolve_stations_dir() -> Path:
 STATIONS_DIR = _REPO_STATIONS_DIR
 
 
+# §16.14.t5 c2 + D8: imperative list-rule seeding for bundled stations.
+#
+# Keyed by station slug → dict of list-rule key → list of source pool
+# names. Applied by `seed_station` after the Station row is upserted,
+# wraps `engine.rules.set_rule_list_value` so the rule lands in the
+# DB alongside the template. The starter station's
+# `cross_pool_dedup_sources=["REFERENCE_ARCHIVE"]` is the demo for
+# §16.14.t5: combined with the 3 content-echo tracks in
+# `scripts/generate_starter_pools.py:build_reference_pool`, it makes
+# the weighted strategy skip those 3 PIDs from STARTER_CONTENT every
+# generation.
+#
+# When §16.14.t9 (declarative `rules:` block in template JSON) lands,
+# this table moves into the JSON and this registry shrinks (or
+# disappears). For now D8 says imperative — keeps the slice small.
+_STATION_LIST_RULES: dict[str, dict[str, list[str]]] = {
+    "starter": {
+        "cross_pool_dedup_sources": ["REFERENCE_ARCHIVE"],
+    },
+}
+
+
 def seed_station(db: Session, path: Path) -> dict:
     """Load one station template from JSON and upsert it.
+
+    Also applies any imperative list-rule overrides registered in
+    `_STATION_LIST_RULES` for this station's slug (§16.14.t5 c2 +
+    D8). Idempotent: re-seeding writes the same rule values without
+    creating duplicate rows.
 
     Returns a summary dict with slug, action
     (created|updated|unchanged), and slot_count.
@@ -91,6 +119,18 @@ def seed_station(db: Session, path: Path) -> dict:
         action = "updated"
     else:
         action = "unchanged"
+
+    # §16.14.t5 c2: apply imperative list-rule defaults. Flush before
+    # set_rule_list_value so the Station row's id is available for
+    # the rule FK; set_rule_list_value re-flushes after upsert.
+    list_rules = _STATION_LIST_RULES.get(slug)
+    if list_rules:
+        db.flush()
+        station = db.query(Station).filter(Station.slug == slug).one()
+        for key, value in list_rules.items():
+            set_rule_list_value(
+                db, station_id=station.id, key=key, value=value,
+            )
 
     return {
         "slug": slug,

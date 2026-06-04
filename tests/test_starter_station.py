@@ -28,6 +28,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 STARTER_JSON = REPO_ROOT / "stations" / "starter.json"
 STARTER_CONTENT_XML = REPO_ROOT / "stations" / "starter-content.itunes.xml"
 STARTER_JINGLES_XML = REPO_ROOT / "stations" / "starter-jingles.itunes.xml"
+STARTER_REFERENCE_XML = REPO_ROOT / "stations" / "starter-reference.itunes.xml"
 STARTER_SIDECAR = REPO_ROOT / "stations" / "starter.editor.json"
 
 
@@ -224,6 +225,15 @@ def test_starter_station_generates_168_picks_end_to_end() -> None:
             import_source(
                 db, STARTER_JINGLES_XML, "STARTER_JINGLES", role="content",
             )
+            # §16.14.t5 c2: seed_station now sets the
+            # cross_pool_dedup_sources=["REFERENCE_ARCHIVE"] rule on
+            # the starter station, so REFERENCE_ARCHIVE must be
+            # imported before generation (otherwise
+            # load_excluded_track_pids fails loud per D5).
+            import_source(
+                db, STARTER_REFERENCE_XML, "REFERENCE_ARCHIVE",
+                role="reference",
+            )
             seed_station(db, STARTER_JSON)
             db.commit()
 
@@ -255,6 +265,13 @@ def test_starter_station_jingle_positions_match_template() -> None:
             )
             import_source(
                 db, STARTER_JINGLES_XML, "STARTER_JINGLES", role="content",
+            )
+            # §16.14.t5 c2: REFERENCE_ARCHIVE required by the auto-
+            # seeded cross_pool_dedup_sources rule (see end-to-end
+            # demo test below).
+            import_source(
+                db, STARTER_REFERENCE_XML, "REFERENCE_ARCHIVE",
+                role="reference",
             )
             seed_station(db, STARTER_JSON)
             db.commit()
@@ -308,22 +325,44 @@ def test_starter_declares_reference_archive_with_role_reference() -> None:
     }
 
 
-def test_reference_pool_has_9_archive_tracks() -> None:
-    """§16.14.t3 D2 lock: 9 tracks (3 archive artists × 3 titles
-    each), Genre=Archive. Small + distinct from STARTER_CONTENT so a
-    reader sees they're separate collections."""
+def test_reference_pool_has_9_archive_plus_3_content_echoes() -> None:
+    """§16.14.t3 D2 + §16.14.t5 c2 lock: 12 tracks total = 9 archive-
+    only (3 archive artists × 3 titles each, Genre=Archive) PLUS 3
+    content echoes (byte-identical copies of STARTER_CONTENT entries
+    at counters 1/25/50, Genre=Pop, PIDs in the STCONT namespace).
+
+    Two-genre pin is intentional: the demo's whole point is that the
+    REFERENCE_ARCHIVE pool can share PIDs with STARTER_CONTENT, and
+    the c2 integration test below proves those 3 PIDs get excluded
+    from the weighted strategy's pick set when the starter station's
+    `cross_pool_dedup_sources` rule is set.
+    """
     import plistlib
+
+    from scripts.generate_starter_pools import CONTENT_ECHOED_PERSISTENT_IDS
 
     starter_ref_xml = (
         REPO_ROOT / "stations" / "starter-reference.itunes.xml"
     )
     data = plistlib.loads(starter_ref_xml.read_bytes())
     tracks = data["Tracks"]
-    assert len(tracks) == 9
-    artists = {t["Artist"] for t in tracks.values()}
-    assert len(artists) == 3
-    genres = {t["Genre"] for t in tracks.values()}
-    assert genres == {"Archive"}
+    # Total = 9 archive-only + 3 content-echoes
+    assert len(tracks) == 12
+
+    by_genre: dict[str, list] = {}
+    for t in tracks.values():
+        by_genre.setdefault(t["Genre"], []).append(t)
+    # Archive-only subset matches the original §16.14.t3 contract.
+    assert len(by_genre["Archive"]) == 9
+    archive_artists = {t["Artist"] for t in by_genre["Archive"]}
+    assert len(archive_artists) == 3
+
+    # Content-echo subset: 3 tracks, Genre=Pop, PIDs in STCONT namespace
+    # and listed in scripts.generate_starter_pools.CONTENT_ECHOED_PERSISTENT_IDS.
+    assert len(by_genre["Pop"]) == 3
+    echo_pids = {t["Persistent ID"] for t in by_genre["Pop"]}
+    assert echo_pids == set(CONTENT_ECHOED_PERSISTENT_IDS)
+    assert all(p.startswith("STCONT") for p in echo_pids)
 
 
 def test_template_parse_rejects_content_block_pointing_at_reference_source() -> None:
@@ -434,3 +473,116 @@ def test_starter_sidecar_stays_stable_after_t3_amendment() -> None:
         "declared-but-unused sources somehow; surface that in DESIGN "
         "or re-run `python -m scripts.derive_sidecar` + commit."
     )
+
+
+# ---------- §16.14.t5 c2 — cross-pool dedup end-to-end demo ----------
+
+
+def test_starter_seed_sets_cross_pool_dedup_sources_rule() -> None:
+    """§16.14.t5 c2 + D8: seeding the starter station imperatively
+    sets `cross_pool_dedup_sources=["REFERENCE_ARCHIVE"]` via
+    `engine.seeding._STATION_LIST_RULES`. Pin so a future refactor
+    that drops the rule-seeding logic gets caught."""
+    from engine.models import Base
+    from engine.rules import get_rule_list_value
+    from engine.models import Station
+    from engine.seeding import seed_station
+
+    with tempfile.TemporaryDirectory() as tmp:
+        db_url = f"sqlite:///{tmp}/starter.db"
+        eng = create_engine(db_url)
+        Base.metadata.create_all(eng)
+        Session = sessionmaker(bind=eng)
+        with Session() as db:
+            seed_station(db, STARTER_JSON)
+            db.commit()
+            station = db.query(Station).filter_by(slug="starter").one()
+            assert get_rule_list_value(
+                db, station_id=station.id,
+                key="cross_pool_dedup_sources",
+            ) == ["REFERENCE_ARCHIVE"]
+
+
+def test_starter_generation_excludes_content_echo_pids_end_to_end() -> None:
+    """§16.14.t5 c2 end-to-end demo: with the starter pools imported
+    + the cross_pool_dedup_sources rule auto-seeded, the 3 STCONT
+    PIDs that REFERENCE_ARCHIVE echoes (counters 1, 25, 50) must
+    NEVER appear in the generated weekly playlist.
+
+    Proves the full §16.14.t5 wiring: list-rule seeding (c2) →
+    load_excluded_track_pids (c1) → apply_weighted exclusion (c1) →
+    persisted PlaylistEntry rows. Catches any future regression
+    along the chain.
+    """
+    from engine.importer import import_source
+    from engine.models import (
+        Base, Playlist, PlaylistEntry, Station, Track,
+    )
+    from engine.persistence import generate_chain
+    from engine.seeding import seed_station
+
+    from scripts.generate_starter_pools import (
+        CONTENT_ECHOED_PERSISTENT_IDS,
+    )
+
+    with tempfile.TemporaryDirectory() as tmp:
+        db_url = f"sqlite:///{tmp}/starter.db"
+        eng = create_engine(db_url)
+        Base.metadata.create_all(eng)
+        Session = sessionmaker(bind=eng)
+        with Session() as db:
+            # Auto-import order matches engine.seeding._FIRST_BOOT_POOLS:
+            # content + jingles + reference. The reference XML's content
+            # echoes reuse the Track rows already created by STARTER_CONTENT
+            # (importer dedups by Persistent ID).
+            import_source(
+                db, STARTER_CONTENT_XML, "STARTER_CONTENT", role="content",
+            )
+            import_source(
+                db, STARTER_JINGLES_XML, "STARTER_JINGLES", role="content",
+            )
+            import_source(
+                db, STARTER_REFERENCE_XML, "REFERENCE_ARCHIVE",
+                role="reference",
+            )
+            seed_station(db, STARTER_JSON)
+            db.commit()
+
+            # Sanity: starter station has the rule set + the 3 echoed
+            # Track rows are reachable from REFERENCE_ARCHIVE (importer
+            # didn't accidentally drop them).
+            station = db.query(Station).filter_by(slug="starter").one()
+            echoed_tracks = (
+                db.query(Track)
+                .filter(Track.persistent_id.in_(CONTENT_ECHOED_PERSISTENT_IDS))
+                .all()
+            )
+            assert len(echoed_tracks) == 3
+
+            generate_chain(
+                db, station_slug="starter", weeks=[1], seed_base=42,
+            )
+
+            playlist = db.query(Playlist).filter_by(
+                station_id=station.id, week=1,
+            ).one()
+            entries = (
+                db.query(PlaylistEntry)
+                .filter_by(playlist_id=playlist.id)
+                .all()
+            )
+            picked_pids = {
+                e.track.persistent_id for e in entries
+                if e.track is not None
+            }
+
+        # The whole point of the demo: NONE of the 3 echoed PIDs
+        # made it into the weighted picks.
+        overlap = picked_pids & set(CONTENT_ECHOED_PERSISTENT_IDS)
+        assert overlap == set(), (
+            f"cross_pool_dedup_sources did not exclude the echoed PIDs; "
+            f"overlap = {sorted(overlap)}"
+        )
+        # And the playlist isn't empty — the rule isn't accidentally
+        # excluding the entire weighted pool.
+        assert len(entries) == 168

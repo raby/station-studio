@@ -201,15 +201,76 @@ ARCHIVE_ARTISTS = [f"Archive Artist {i + 1}" for i in range(3)]
 ARCHIVE_TITLES = ["Archive Tape A", "Archive Tape B", "Archive Tape C"]
 
 
-def build_reference_pool() -> bytes:
-    """§16.14.t3 D1+D2: the reference-role companion pool.
+# §16.14.t5 c2 — content-echo counters for the cross-pool dedup demo.
+#
+# REFERENCE_ARCHIVE carries 9 archive-only tracks PLUS 3 "echoes" of
+# specific STARTER_CONTENT tracks (start / middle / end of the
+# content pool). Both XMLs declare the same `Persistent ID` for these
+# 3 tracks, so the importer reuses a single `Track` row across both
+# pools; load_excluded_track_pids resolves REFERENCE_ARCHIVE to a
+# 12-PID set, of which 3 are also in STARTER_CONTENT.
+#
+# At generation time the §16.14.t5 station rule
+# `cross_pool_dedup_sources=["REFERENCE_ARCHIVE"]` (seeded by
+# engine.seeding._STATION_LIST_RULES) makes the weighted strategy
+# drop those 3 PIDs from the STARTER_CONTENT pool before picking.
+#
+# The demo PIDs are exposed as a module-level constant so the c2
+# integration test + future docs can reference them by name without
+# re-deriving the counter math.
+_CONTENT_ECHO_COUNTERS = (1, 25, 50)
+CONTENT_ECHOED_PERSISTENT_IDS: tuple[str, ...] = tuple(
+    _persistent_id("STCONT", c) for c in _CONTENT_ECHO_COUNTERS
+)
 
-    Tracks are not driven by any slot strategy in starter.json — the
-    pool is declared in `sources[]` with role: reference as a
-    teaching annotation. Engine never samples from it; the
-    cross-check (§14.35) raises TemplateError if a template
-    accidentally points a content strategy at it. Pool exists to
-    make the role tangible in the visualiser + Sources page.
+
+def _content_track_at_counter(counter: int) -> dict:
+    """Rebuild the exact `_track_dict` `build_content_pool` would emit
+    at the given counter. Kept as a separate helper (vs reusing
+    build_content_pool() + indexing) so the echo logic is local to
+    this file and obvious: the echoes BYTE-FOR-BYTE match the
+    content tracks, which is the whole mechanism — same PID → one
+    Track row in the importer's dedup-by-pid path.
+    """
+    artist_idx = (counter - 1) // len(TRACK_TITLES)
+    title_idx = (counter - 1) % len(TRACK_TITLES)
+    artist = CONTENT_ARTISTS[artist_idx]
+    title = TRACK_TITLES[title_idx]
+    tid = 1000 + counter
+    return _track_dict(
+        tid=tid,
+        name=f"{title} {counter:02d}",
+        artist=artist,
+        album=f"{artist} — Selected Works",
+        genre="Pop",
+        pid=_persistent_id("STCONT", counter),
+    )
+
+
+def build_reference_pool() -> bytes:
+    """§16.14.t3 D1+D2 + §16.14.t5 c2: the reference-role companion pool.
+
+    Carries TWO kinds of tracks:
+
+    1. **Archive-only** (9 tracks). 3 fully-synthetic archive artists
+       × 3 titles each, Genre="Archive", PID namespace `STREF`. These
+       are the original §16.14.t3 teaching tracks — they sit in
+       REFERENCE_ARCHIVE only, distinct from STARTER_CONTENT.
+
+    2. **Content echoes** (3 tracks). Byte-identical copies of
+       STARTER_CONTENT entries at counters `_CONTENT_ECHO_COUNTERS`
+       (start / middle / end of the content pool). Same Persistent
+       ID → the importer reuses the existing Track row; the same
+       Track shows up in both SourcePlaylist rows. These exist to
+       make the §16.14.t5 cross-pool dedup demo tangible — the
+       starter station's rule `cross_pool_dedup_sources=
+       ["REFERENCE_ARCHIVE"]` (seeded imperatively in
+       engine.seeding._STATION_LIST_RULES) causes the weighted
+       strategy to drop these 3 PIDs from its pick set.
+
+    Total: 12 entries. Without the rule set, none of this matters
+    (the engine still doesn't sample from REFERENCE_ARCHIVE — it's
+    role=reference). The rule is what wires the demo end-to-end.
     """
     tracks: list[dict] = []
     counter = 0
@@ -225,6 +286,16 @@ def build_reference_pool() -> bytes:
                 genre="Archive",
                 pid=_persistent_id("STREF", counter),
             ))
+    # §16.14.t5 c2: append 3 content echoes. Track IDs reuse the
+    # content pool's numbering (1000-range) so the XML's "Track ID"
+    # field matches what STARTER_CONTENT publishes — iTunes Track IDs
+    # are per-library but the importer keys by Persistent ID, so the
+    # numeric Track ID is purely cosmetic. Echoes appear AFTER the
+    # archive-original tracks in playlist order so the trace + viewer
+    # show the archive-originals first (which is what hobbyists
+    # inspecting the pool expect to see).
+    for c in _CONTENT_ECHO_COUNTERS:
+        tracks.append(_content_track_at_counter(c))
     # c2-review 🟡-1: playlist_name MUST match the name the
     # `_FIRST_BOOT_POOLS` auto-import uses (REFERENCE_ARCHIVE) so a
     # user inspecting starter-reference.itunes.xml sees the same

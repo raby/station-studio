@@ -61,6 +61,18 @@
 					<key>Track ID</key>
 					<integer>3009</integer>
 				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>1001</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>1025</integer>
+				</dict>
+				<dict>
+					<key>Track ID</key>
+					<integer>1050</integer>
+				</dict>
 			</array>
 			<key>Playlist Persistent ID</key>
 			<string>STREFPLAYLIST001</string>
@@ -70,6 +82,63 @@
 	<true/>
 	<key>Tracks</key>
 	<dict>
+		<key>1001</key>
+		<dict>
+			<key>Album</key>
+			<string>Synthetic Artist 1 — Selected Works</string>
+			<key>Artist</key>
+			<string>Synthetic Artist 1</string>
+			<key>Genre</key>
+			<string>Pop</string>
+			<key>Name</key>
+			<string>Sunrise Loop 01</string>
+			<key>Persistent ID</key>
+			<string>STCONT000000000001</string>
+			<key>Total Time</key>
+			<integer>180000</integer>
+			<key>Track ID</key>
+			<integer>1001</integer>
+			<key>Track Type</key>
+			<string>File</string>
+		</dict>
+		<key>1025</key>
+		<dict>
+			<key>Album</key>
+			<string>Synthetic Artist 5 — Selected Works</string>
+			<key>Artist</key>
+			<string>Synthetic Artist 5</string>
+			<key>Genre</key>
+			<string>Pop</string>
+			<key>Name</key>
+			<string>Night Bridge 25</string>
+			<key>Persistent ID</key>
+			<string>STCONT000000000019</string>
+			<key>Total Time</key>
+			<integer>210000</integer>
+			<key>Track ID</key>
+			<integer>1025</integer>
+			<key>Track Type</key>
+			<string>File</string>
+		</dict>
+		<key>1050</key>
+		<dict>
+			<key>Album</key>
+			<string>Synthetic Artist 10 — Selected Works</string>
+			<key>Artist</key>
+			<string>Synthetic Artist 10</string>
+			<key>Genre</key>
+			<string>Pop</string>
+			<key>Name</key>
+			<string>Night Bridge 50</string>
+			<key>Persistent ID</key>
+			<string>STCONT000000000032</string>
+			<key>Total Time</key>
+			<integer>180000</integer>
+			<key>Track ID</key>
+			<integer>1050</integer>
+			<key>Track Type</key>
+			<string>File</string>
+		</dict>
 		<key>3001</key>
 		<dict>
 			<key>Album</key>
