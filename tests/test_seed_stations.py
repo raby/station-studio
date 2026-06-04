@@ -537,8 +537,12 @@ def test_seed_station_api_delete_then_reseed_restores_template_default(db, tmp_p
         db, station_id=station.id, key="cross_pool_dedup_sources",
     ) == ["OPERATOR_CUSTOM"]
 
-    # 3. Operator API-DELETEs the rule (clear_rule_list mirrors what
-    # the DELETE endpoint calls).
+    # 3. Operator clears the rule. The current Rules CRUD endpoint
+    # (at /api/stations/{slug}/rules/{key}) handles INT rules
+    # only — `clear_rule_list` is the engine-level helper a
+    # future §16.5 list-rule endpoint would call. This test pins
+    # the engine contract so the §16.5 plumb has a known-working
+    # revert flow to expose.
     assert clear_rule_list(
         db, station_id=station.id, key="cross_pool_dedup_sources",
     ) is True

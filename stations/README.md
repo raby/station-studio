@@ -200,15 +200,24 @@ pools whose tracks the `weighted` strategy must exclude from
 its pick set. Hobbyist framing: "never play anything that's
 also in my MASTER_ARCHIVE."
 
-**The starter ships with the demo wired up.** When you run
-`station-studio serve` for the first time, the auto-import lands
-all three starter pools, AND the seeder writes:
+**The starter ships with the demo wired up declaratively.** Open
+`stations/starter.json` and you'll see (§16.14.t9):
 
-```text
-station = starter
-rule    = cross_pool_dedup_sources
-value   = ["REFERENCE_ARCHIVE"]
+```json
+{
+  "station": "starter",
+  "name": "Starter Station — 168 slots (hourly, Mon→Sun)",
+  ...,
+  "rules": {
+    "cross_pool_dedup_sources": ["REFERENCE_ARCHIVE"]
+  },
+  ...
+}
 ```
+
+When you run `station-studio serve` for the first time, the
+auto-import lands all three starter pools, and the seeder reads
+the `rules:` block and writes the row to the DB.
 
 The starter's `REFERENCE_ARCHIVE` pool is 12 tracks: 9 archive-
 originals (the §16.14.t3 teaching tracks) plus 3 "content
@@ -230,7 +239,7 @@ Verify with:
 curl -X POST http://localhost:8001/api/stations/starter/generate \
   -H "Content-Type: application/json" \
   -d '{"week": 1}' | jq '[.entries[].track.persistent_id] |
-                          map(select(startswith("STCONT000000000001") or
+                          map(select(. == "STCONT000000000001" or
                                      . == "STCONT000000000019" or
                                      . == "STCONT000000000032"))'
 ```
@@ -239,62 +248,107 @@ Output: `[]`. Without the rule, those 3 PIDs would land
 several times across the 147 weighted picks (shuffle-bag
 guarantees every track plays once per cycle).
 
-**How to opt out.** Imperative for now (D8) — the rule is set
-by `engine.seeding._STATION_LIST_RULES`. To turn it off:
+#### The `rules:` block (§16.14.t9)
 
-* **Dev clones:** edit `engine/seeding.py` and delete the
-  `"starter": {...}` entry from `_STATION_LIST_RULES`; restart
-  the server. The Rule row from a prior boot persists in the
-  DB, so also `DELETE /api/stations/starter/rules/cross_pool_dedup_sources`
-  via the API.
-* **Wheel/docker users:** the `_STATION_LIST_RULES` table
-  isn't user-editable today — the cleanest opt-out is to set
-  the rule to `[]` (explicit empty) via the API once it's
-  exposed. The CRUD endpoints for list rules ship with §16.5
-  (Rules UI slice). Until then, the rule is permanent for the
-  bundled starter on these install paths — see the "Why is
-  the opt-out so awkward?" note below.
+Templates declare per-station rule values in a top-level
+`rules:` dict. Two value shapes are supported:
 
-**How to add it to your own station.** Two paths today:
+```json
+"rules": {
+  "artist_dedup_window": 15,                  // int rule
+  "cross_pool_dedup_sources": ["ARCHIVE"]     // list rule
+}
+```
 
-1. **Imperative.** Register your station in
-   `engine.seeding._STATION_LIST_RULES`. Pattern:
+The parser looks each key up in the rules registry, validates
+the value shape (int bounds + non-negative, list entries non-
+empty + comma-free), and rejects bad shapes at parse time with
+a `template.rules.<key>: ...` error. Unknown rule keys fail
+with the list of valid keys included in the message.
 
-   ```python
-   _STATION_LIST_RULES = {
-       "starter": {"cross_pool_dedup_sources": ["REFERENCE_ARCHIVE"]},
-       "your-slug": {"cross_pool_dedup_sources": ["YOUR_REFERENCE_POOL"]},
-   }
-   ```
+**Operator wins after customisation.** When `seed_station`
+applies the block, it writes a Rule row ONLY when no row
+already exists for that (station_id, key). Once you customise
+a rule (for int rules, that's `PUT
+/api/stations/{slug}/rules/{key}`; for list rules, see the
+API gap below), re-seeding leaves your value alone. The
+template value is the **factory default**; the DB row is the
+**live value**. They can diverge.
 
-   Each named pool must:
-   * be imported into the DB, AND
-   * have `role='reference'` on the `SourcePlaylist` row.
+To **revert a rule to its factory default**: clear the Rule
+row (for int rules via `DELETE
+/api/stations/{slug}/rules/{key}`; for list rules see below),
+then re-seed (next `seed_station` writes the template value
+back). This is the documented escape hatch.
 
-   Both checks fail loud at generation time (HTTP 400) if you
-   skip them. The error message names which check failed.
+**`cat starter.json` shows factory defaults, not live values.**
+If you want to know the live int-rule values, query
+`GET /api/stations/starter/rules`. For list-rule values, query
+the Rule table directly until §16.5 lands.
 
-2. **Programmatic.** Call `set_rule_list_value` directly:
+**List-rule API gap.** The CRUD endpoint at
+`/api/stations/{slug}/rules` today handles INT rules only —
+the response schema is integer-shaped, and `PUT`/`DELETE` go
+through accessors that reject list-rule keys with
+`UnknownRuleError`. The §16.5 Rules UI slice plumbs list
+rules through. Until then, list-rule customisations require
+programmatic access via `engine.rules.set_rule_list_value` /
+`clear_rule_list` (in dev clones: a Python session; in
+wheel/docker: no direct path yet, file an issue if you hit
+this). The c2-review F1 test (`test_seed_station_api_delete_
+then_reseed_restores_template_default`) pins the engine-level
+revert flow so §16.5 has a known-working contract to plumb.
 
-   ```python
-   from engine.rules import set_rule_list_value
-   set_rule_list_value(
-       db, station_id=station.id,
-       key="cross_pool_dedup_sources",
-       value=["YOUR_REFERENCE_POOL"],
-   )
-   db.commit()
-   ```
+#### How to opt out of the starter's cross-pool dedup
 
-   Same fail-loud guards apply.
+Two paths:
 
-**What the rule doesn't do today (deliberate punts).**
+* **Permanent (recommended):** edit `stations/starter.json`
+  and either delete the `rules:` block or set
+  `cross_pool_dedup_sources` to `[]`. Re-seeding the station
+  alone WON'T clear the existing Rule row (operator-wins
+  semantics) — you ALSO need to clear it via
+  `engine.rules.clear_rule_list(db, station_id=...,
+  key="cross_pool_dedup_sources")` from a Python session
+  (dev clones). The bootstrap auto-seed on next restart then
+  sees an empty `rules:` block + no Rule row, and the demo
+  stays off.
+* **Ad-hoc (dev clones only):** call
+  `engine.rules.set_rule_list_value(db, station_id=...,
+  key="cross_pool_dedup_sources", value=[])` from a Python
+  session. The explicit-empty override survives re-seeds
+  (the row exists with `[]`, so only-set-if-absent doesn't
+  touch it).
+
+#### How to add the rule to your own station
+
+Just edit the station's JSON:
+
+```json
+{
+  "station": "your-slug",
+  ...,
+  "rules": {
+    "cross_pool_dedup_sources": ["YOUR_REFERENCE_POOL"]
+  },
+  ...
+}
+```
+
+`make seed-stations` (or a server restart) reads the rule into
+the DB. Each named pool must:
+* be imported into the DB, AND
+* have `role='reference'` on the `SourcePlaylist` row.
+
+Both checks fail loud at generation time (HTTP 400) — the error
+message names which check failed.
+
+#### What the rule doesn't do today (deliberate punts)
 
 * **Per-source semantics.** The exclusion set is a UNION across
   every named pool. Listing two reference pools with overlapping
   PIDs is fine but you can't say "exclude pool A from source X
-  but not source Y." If you need that, the watch-list has
-  `cross_pool_dedup_sources` as a per-block override in §16.14.t9.
+  but not source Y." If you need that, file an issue.
 * **Window strategy.** Only `weighted` excludes today. `window`
   (used by `prev_ref` fallbacks + some cursor-stateful templates)
   is queued as §16.14.t8 — file an issue if you need it.
@@ -302,13 +356,12 @@ by `engine.seeding._STATION_LIST_RULES`. To turn it off:
   pools. Naming a content pool would footgun the operator (a
   pool excluding itself starves the strategy). Loosening this
   would need self-reference detection logic.
-
-**Why is the opt-out so awkward?** §16.14.t5 ships the engine
-+ persistence wiring + the bundled demo; the polymorphic Rules
-UI (§16.5) is what makes list-rules user-editable from the
-browser. D8 in this slice's design pass made the trade explicit:
-imperative seeding now, declarative `rules:` block (§16.14.t9)
-next, full UI later.
+* **Rules CRUD endpoint visibility.** `GET /api/stations/{slug}/rules`
+  surfaces ONLY int rules (the legacy API was built before list
+  rules existed). The §16.5 Rules UI slice plumbs list rules into
+  the polymorphic shape. Until then, list-rule customisations
+  happen via `PUT`/`DELETE` directly (the underlying endpoint
+  accepts the right key) but don't appear in the list response.
 
 ### Forward-looking utilities (not shipped)
 
