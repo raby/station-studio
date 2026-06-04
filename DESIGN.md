@@ -10067,7 +10067,76 @@ sweep, matching the §16.13.t1-t9 cadence).
   semantics need a small design pass. **Home: separate slice
   (~3-4 commits).** Trigger: §16.14.t5 ships (then this is
   the natural next step).
-* **§16.14.t10 — CRUD endpoint extension for list rules.**
+* **§16.14.t10 — CRUD endpoint extension for list rules. IN FLIGHT.**
+  Trigger fired (§16.14.t9 shipped; t10 was queued must-have at
+  t9 c3 closeout to close the §16.14.t5 c2-review F1 footgun).
+
+  **Decisions (locked in the pre-c1 design talk):**
+
+  * **D1 — Discriminator field name + values: `kind: "int"|"list"`.**
+    Short, JSON-friendly, two-tag closed set. Future shapes
+    (string scalars, int lists, bools) add new tags; "list"
+    today means list[str] specifically — documented in the
+    RuleOut docstring so a future reader knows the assumption.
+  * **D2 — `RuleOut.value` + `default_value` broadened to
+    `int | list[str]`; `max_value: int | None`** (already
+    Optional; list rules always have null max). Single endpoint
+    family — no parallel `/api/stations/{slug}/rules-list` URL.
+  * **D3 — Reuse the parse-time validators.** No copy-paste of
+    the bounds + comma + non-empty-entry checks already living
+    in `engine.template._parse_rules` (per §16.14.t9 c1). D6
+    extracts the per-key helpers so both the parser AND the
+    API call them.
+  * **D4 — Error mapping mirrors the int-rule path.** Unknown
+    key → HTTP 404 (current `UnknownRuleError` behavior).
+    Wrong type / out of bounds / comma / empty entry →
+    HTTP 400 with the validator's message verbatim. Matches
+    today's int-rule contract so the frontend's error
+    handling needs no new branches.
+  * **D5 — GET response ordering: stable alphabetical merge
+    across both registries.** `sorted(RULE_DEFAULTS) +
+    sorted(RULE_LIST_DEFAULTS)` is interleaved into a single
+    sorted list so the frontend gets one stable ordering
+    without per-kind chunking. Easier to scan; easier to
+    test (no per-kind sort assertions).
+  * **D6 — Validators extracted to `engine.rules` as public
+    helpers: `validate_int_rule_value(key, value)` +
+    `validate_list_rule_value(key, value)`.** Both raise
+    TemplateError on bad input. `engine.template._parse_rules`
+    calls them (replacing inline checks); `api/routers/rules.py`
+    calls them too. engine.rules becomes the single home for
+    the registries AND their validation surface. Avoids the
+    "private underscore name imported across modules" smell
+    t9 c1-review F1 already fixed once (LIST_SEPARATOR).
+  * **D7 — Frontend minimal patch in c1.** The existing
+    `<RulesPanel>` Rule TypeScript type today is `value:
+    number` — it can't render a list-rule row. c1 ships:
+      - `Rule.value: number | string[]`
+      - `Rule.kind: "int" | "list"`
+      - The panel filters list rows OR shows them as a
+        read-only placeholder (one line: `"<list rule —
+        edit via API until §16.14.t11>"`). Edit/Save
+        controls hidden for those rows.
+    The int-rule UX stays byte-identical. §16.14.t11 then
+    replaces the placeholder with the real `<ListRuleRow>`
+    chip-based component. No broken state between t10 and
+    t11.
+  * **D8 — c1 covers backend + validator + engine tests +
+    API tests + minimal frontend patch** in one coherent
+    commit. No API-coverage gap at c1 review time; the
+    reviewer can audit the full surface (Pydantic schema,
+    endpoint dispatch, validators, error mapping, frontend
+    placeholder) together.
+
+  **Shape:** c1 (backend schema + endpoint dispatch + validator
+  extraction + engine + API tests + minimal frontend patch),
+  c2 (docs + closeout — stations/README.md "list-rule API gap"
+  callout updated, DESIGN entries) + 2 mid-slice reviews +
+  slice-review sweep. Standard cadence.
+
+  **Triggers (post-t10):** §16.14.t11 (frontend `<ListRuleRow>`
+  component) is unblocked.
+
   Today `/api/stations/{slug}/rules` (the §14.29 CRUD endpoints
   shipped with the int-rule API) handles RULE_DEFAULTS only.
   The list (`RULE_LIST_DEFAULTS`) registry — sole entry today
