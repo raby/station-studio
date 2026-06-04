@@ -284,20 +284,33 @@ back). This is the documented escape hatch.
 **`cat starter.json` shows factory defaults, not live values.**
 If you want to know the live int-rule values, query
 `GET /api/stations/starter/rules`. For list-rule values, query
-the Rule table directly until §16.5 lands.
+the Rule table directly until §16.14.t10 lands.
 
 **List-rule API gap.** The CRUD endpoint at
 `/api/stations/{slug}/rules` today handles INT rules only —
 the response schema is integer-shaped, and `PUT`/`DELETE` go
 through accessors that reject list-rule keys with
-`UnknownRuleError`. The §16.5 Rules UI slice plumbs list
-rules through. Until then, list-rule customisations require
+`UnknownRuleError`. Two follow-up slices close this gap:
+
+* **§16.14.t10** — backend extension: `RuleOut` schema gains a
+  `kind: "int"|"list"` discriminator + `value: int | list[str]`;
+  `get_all_rules` iterates both registries; `PUT`/`DELETE`
+  dispatch per kind, reusing the §16.14.t9 `_parse_rules`
+  validator. Marked must-have to close the c2-review F1
+  footgun.
+* **§16.14.t11** — frontend extension: `<RulesPanel>` gains a
+  `<ListRuleRow>` component (chip-style multi-input, source-
+  pool autocomplete filtered to `role: reference`, per-row
+  "reset to template default" button). Triggered by t10.
+
+Until t10 ships, list-rule customisations require
 programmatic access via `engine.rules.set_rule_list_value` /
 `clear_rule_list` (in dev clones: a Python session; in
 wheel/docker: no direct path yet, file an issue if you hit
-this). The c2-review F1 test (`test_seed_station_api_delete_
-then_reseed_restores_template_default`) pins the engine-level
-revert flow so §16.5 has a known-working contract to plumb.
+this). The c2-review F1 test
+(`test_seed_station_api_delete_then_reseed_restores_template_default`)
+pins the engine-level revert flow so t10 has a known-working
+contract to plumb.
 
 #### How to opt out of the starter's cross-pool dedup
 
@@ -358,10 +371,11 @@ message names which check failed.
   would need self-reference detection logic.
 * **Rules CRUD endpoint visibility.** `GET /api/stations/{slug}/rules`
   surfaces ONLY int rules (the legacy API was built before list
-  rules existed). The §16.5 Rules UI slice plumbs list rules into
-  the polymorphic shape. Until then, list-rule customisations
-  happen via `PUT`/`DELETE` directly (the underlying endpoint
-  accepts the right key) but don't appear in the list response.
+  rules existed). §16.14.t10 extends the response schema with a
+  `kind` discriminator + per-row dispatch; §16.14.t11 wires the
+  result into the `<RulesPanel>` UI. Until then, list-rule
+  customisations require programmatic access (see the "List-
+  rule API gap" callout earlier in this section).
 
 ### Forward-looking utilities (not shipped)
 
