@@ -376,6 +376,82 @@ def test_weighted_tracks_without_persistent_id_pass_through():
 
 
 # =========================================================================
+# 4. Slice-review sweep pins (S3 + S4)
+# =========================================================================
+
+
+def test_set_rule_list_value_is_idempotent_under_repeated_seed(session_factory):
+    """§16.14.t5 slice-review S3 — pin re-seed idempotence for
+    list rules. `seed_station` re-runs the set on every call
+    (action='unchanged' included); calling the underlying accessor
+    twice with the same value must give exactly one Rule row.
+
+    A regression where `set_rule_list_value` accidentally INSERTed
+    rather than upserted would surface as `make seed-stations` (or
+    the lifespan's auto-seed) accumulating duplicate Rule rows on
+    every restart — silent until a primary-key constraint trips or
+    a `get_all_rules` callsite groans about cardinality.
+    """
+    from engine.models import Rule
+
+    station_id = _seed_station(session_factory)
+    with session_factory() as db:
+        for _ in range(3):  # simulate three boots of seed_station
+            set_rule_list_value(
+                db, station_id=station_id,
+                key="cross_pool_dedup_sources",
+                value=["MASTER"],
+            )
+            db.commit()
+        # Exactly one Rule row, value preserved.
+        assert db.query(Rule).filter_by(
+            station_id=station_id, key="cross_pool_dedup_sources",
+        ).count() == 1
+        assert get_rule_list_value(
+            db, station_id=station_id, key="cross_pool_dedup_sources",
+        ) == ["MASTER"]
+
+
+def test_rules_crud_endpoint_does_not_surface_list_rules(session_factory):
+    """§16.14.t5 slice-review S4 — pin the §16.5 Rules UI contract.
+
+    `get_all_rules` (which drives GET /api/stations/{slug}/rules) is
+    INT-shaped — its response items carry `value: int` and the
+    contract is "only the integer-typed rules". List rules
+    (RULE_LIST_DEFAULTS) intentionally don't appear there today
+    (the c1 review F4 fix documents the gap; the §16.5 Rules UI
+    slice plumbs them in).
+
+    A regression where someone merges the registries by accident
+    would shove `"cross_pool_dedup_sources"` into a response with
+    `value=[...]` instead of `value=int`, breaking the API
+    response_model + every frontend caller. This test locks the
+    invisibility until §16.5 lands.
+    """
+    from engine.rules import RULE_DEFAULTS, get_all_rules
+
+    station_id = _seed_station(session_factory)
+    with session_factory() as db:
+        # Set a list rule + an int rule to mirror the production
+        # state after seed_station runs against the starter station.
+        set_rule_list_value(
+            db, station_id=station_id,
+            key="cross_pool_dedup_sources", value=["REF"],
+        )
+        db.commit()
+
+        rows = get_all_rules(db, station_id=station_id)
+        keys = {r["key"] for r in rows}
+        # Only the int rules show up.
+        assert keys == set(RULE_DEFAULTS)
+        assert "cross_pool_dedup_sources" not in keys
+        # And every surfaced value is shaped int (the API
+        # response_model contract).
+        for r in rows:
+            assert isinstance(r["value"], int)
+
+
+# =========================================================================
 # 3. load_excluded_track_pids persistence helper
 # =========================================================================
 

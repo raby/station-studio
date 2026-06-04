@@ -208,7 +208,18 @@ def main(argv: list[str] | None = None) -> int:
         summaries = seed_all(db, paths)
 
     for s in summaries:
-        print(f"  {s['action']:<9}  {s['slug']:<30}  {s['slot_count']:>6} slots/week")
+        # §16.14.t5 slice-review S2: surface list_rules_applied so
+        # operators see when an imperative list-rule landed on an
+        # action='unchanged' station. Suffix is empty when no list
+        # rules apply — keeps the output clean for the common case.
+        list_rules = s.get("list_rules_applied", 0)
+        rules_suffix = (
+            f"  + {list_rules} list rule(s)" if list_rules else ""
+        )
+        print(
+            f"  {s['action']:<9}  {s['slug']:<30}  "
+            f"{s['slot_count']:>6} slots/week{rules_suffix}"
+        )
     return 0
 
 

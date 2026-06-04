@@ -135,10 +135,16 @@ entries:
 ```
 
 `REFERENCE_ARCHIVE` is declared but used in zero slot blocks.
-The companion `starter-reference.itunes.xml` (9 synthetic tracks
-across 3 "archive artists", Genre=Archive) auto-imports on first
-boot like the other starter pools. The generator never picks
-from it; the safety rails catch you if you try.
+The companion `starter-reference.itunes.xml` (12 synthetic
+tracks total: 9 archive-only across 3 "archive artists" with
+Genre=Archive, plus 3 "content echoes" — see the §16.14.t5
+section below) auto-imports on first boot like the other
+starter pools. The generator never *samples* from it as a slot
+pool; the safety rails catch you if you try. The §16.14.t5
+`cross_pool_dedup_sources` rule DOES read from it at
+generation time (to build the exclusion set for `weighted`),
+which is the role's first real engine use — see the new
+section a few hundred lines down.
 
 ### Try the safety rail yourself
 
