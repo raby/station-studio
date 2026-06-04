@@ -10032,18 +10032,98 @@ sweep, matching the §16.13.t1-t9 cadence).
   | c1 (`f31d01d`) + review (`1f27ecc`) | Engine + persistence wiring. `engine/rules.py` grew a parallel `RULE_LIST_DEFAULTS` registry + `get/set/clear_rule_list_value` accessors (comma-separated TEXT storage, rejects commas in entries, explicit-empty as override semantics). `apply_weighted` gained an `excluded_track_pids` kwarg that filters the pool BEFORE the empty-pool guard so fully-excluded sources raise a §16.14.t5-specific `IndexError` instead of a bare "pool is empty". `generate()` + `generate_stream()` thread the kwarg into both `apply_weighted` call sites (regular weighted + prev_ref fallback). `engine.persistence.load_excluded_track_pids` resolves the list-rule's source names to a `frozenset[str]` of `Track.persistent_id` — D5 fail-loud on missing (ValueError matching `load_pools`) + D6 reject role='content' (TemplateError). `generate_chain` + `api/routers/generate.py` wired in; API errors map to HTTP 400. 24 unit tests in `tests/test_cross_pool_dedup.py`. c1 review applied 4 fixes: F1 pool_index honesty under exclusion (docstring trade-off), F2 hoist `load_excluded_track_pids` out of `generate_chain`'s per-week loop, F3 drop the lazy `engine.rules` import (no circular risk), F4 document the Rules CRUD gap (list rules invisible to `get_all_rules`; backend extension queued as §16.14.t10, frontend RulesPanel extension as §16.14.t11) + acknowledge D8 imperative seeding. |
   | c2 (`0343aae`) + review (`9a20268`) | Bundled-station demo + integration test. `scripts/generate_starter_pools.py:build_reference_pool` grew from 9 archive-only to 12 entries — appends 3 "content echoes" (counters 1/25/50) that share Persistent IDs with `STARTER_CONTENT`. Module-level `CONTENT_ECHOED_PERSISTENT_IDS` tuple exposed for tests/docs. Regenerated `stations/starter-reference.itunes.xml` in-place. New `engine.seeding._STATION_LIST_RULES` registry (slug → {key: list[str]}) applied unconditionally inside `seed_station` after the Station row upserts; starter seeded with `cross_pool_dedup_sources=["REFERENCE_ARCHIVE"]` (D7 + D8). 2 new pinned tests (rule-was-seeded + end-to-end zero-overlap demo asserting 168 picks land), 1 existing test renamed + updated for the 12-entry shape, 2 existing starter end-to-end tests gained the REFERENCE_ARCHIVE import (the auto-seeded rule means generate_chain now requires it — matches production since the pool is in `_FIRST_BOOT_POOLS`). c2 review applied 4 fixes: F1 docstring honesty re: re-seed overwriting user-customized list-rules (with three forward-fix options for the §16.14.t9 D4 decision that flipped this to operator-wins), F2 bounds-check `_content_track_at_counter`, F3 surface `list_rules_applied` count in `seed_station`'s return dict, F4 pin the importer↔load_excluded_track_pids integration directly via SourcePlaylistEntry. |
   | **c3 (_this commit_)** | Docs + slice closeout. New "Cross-pool dedup with `cross_pool_dedup_sources` (§16.14.t5)" section in `stations/README.md` covering: what the rule does, the auto-seeded starter demo (one curl + `jq` recipe verifying the 3 echoed PIDs never land), opt-out paths (dev-clone via `_STATION_LIST_RULES` edit + API DELETE; wheel/docker awkwardness honestly named), how to add the rule to your own station (imperative + programmatic), four deliberate punts (per-source semantics → §16.14.t9, window strategy → §16.14.t8, content-role sources, opt-out UX). The pre-existing "Forward-looking utilities (not shipped)" section pruned: §16.14.t5 promoted out; only §16.14.t6 + §16.14.t7 remain queued. DESIGN §16.14.t5 marked SHIPPED with this shipped log; §15 status snapshot + §17 queued-order row bumped. |
-* **§16.14.t6 — Reference-role: master-archive `prev_ref`.**
-  Today `prev_ref` reads from the previous week's generated
-  playlist. Extension: an alternate form that reads from a
-  curated reference pool (the "master archive") at a given
-  position. Useful for "always play track 1 of master at 9am
-  on Monday" patterns the current `sequential` strategy can
-  almost express but not quite. Requires: new field on
-  `prev_ref` blocks (or a new strategy), engine plumbing,
-  template parser support. The §16.14.t3 docs page names this
-  as a forward-looking utility. **Home: separate slice (~2-3
-  commits).** Trigger: a real station-template author asks for
-  the master-archive read pattern.
+* **§16.14.t6 — `archive_ref` strategy: position-based lookup
+  into a reference pool. IN FLIGHT.**
+  Trigger fired (user explicitly asked for t6 as the next
+  slice after §16.14.t11 closed).
+
+  **Context.** Today `prev_ref` reads from `previous_playlist`
+  at a position + filters against the slot's content `source`
+  pool + falls back to mix/weighted on miss. The use case t6
+  serves is different: "always play track 1 of MASTER at 9am
+  Monday" — a deterministic, position-based lookup into a
+  role=reference pool with no filtering and no fallback. The
+  current `sequential` strategy almost expresses this but
+  ALWAYS advances via named cursors, so a fixed-position
+  read isn't directly representable.
+
+  The stub originally floated "new field on prev_ref blocks
+  (or a new strategy)." Reading the prev_ref implementation
+  made the case clear: prev_ref's `source` field is content-
+  role (the filter pool); reusing the same block for
+  reference-pool lookups would multiply prev_ref's mode
+  dimensions awkwardly. A new strategy is cleaner.
+
+  **Decisions (locked in the pre-c1 design talk):**
+
+  * **D1 — New strategy `archive_ref`.** Parallels `prev_ref`'s
+    naming pattern ("archive_ref" = reference the archive
+    pool, as "prev_ref" = reference the previous playlist).
+    Adds one entry to `SUPPORTED_STRATEGIES` + a dispatch
+    case in the generator.
+  * **D2 — 1-indexed position**, consistent with `prev_ref`.
+    Reuses the same mental model; the docs already explain
+    the 1-indexing.
+  * **D3 — Source pool must be `role: reference`.** Parser
+    cross-check extends the §14.35 content-only validation
+    to be strategy-aware: `archive_ref` requires the source
+    to be reference; every other strategy still requires
+    content. Single source field; the strategy-aware role
+    check keeps the grammar symmetric.
+  * **D4 — Position OOB → `IndexError` at generation time.**
+    Mirrors `PrevRefPositionOutOfRangeError`'s contract: the
+    template author chose this position; bad config fails
+    loud, not silently recovers.
+  * **D5 — No fallback path.** Pure deterministic lookup.
+    `prev_ref` has a soft fallback because previous_playlist
+    might not exist on the first generation; `archive_ref`'s
+    source pool is static + imported, so no equivalent
+    transient miss exists. Source-pool-missing failures
+    surface at load_pools time (TemplateError, like the
+    §16.14.t5 missing-source path); position OOB surfaces
+    at generation time. Both are TEMPLATE BUGS surfaced
+    loudly.
+  * **D6 — Trace records pool name + position + resolved
+    track**, matching `prev_ref`'s trace shape. The
+    `ExcludedCandidate` machinery doesn't apply (no
+    rejection candidates to surface).
+  * **D7 — No starter-station demo.** Adding an `archive_ref`
+    slot to `starter.json` would break the 168-slot pin +
+    cascade through every starter-related test. A docs
+    example in `stations/README.md`'s reference-role section
+    is the right home — operators learn from the example
+    without the bundled-station complexity.
+  * **D8 — `BlockSpec` adds no new field.** `position` already
+    exists for `prev_ref`; `archive_ref` reuses it. Parser
+    enforces position-required-for-archive_ref the same way
+    it enforces position-required-for-prev_ref. The
+    `fallback_genre` field stays prev_ref-only (archive_ref
+    has no fallback).
+  * **D9 — Source pool MUST be loaded** at generation time.
+    Today `load_pools` only loads content-role pools (the
+    template's `content_source_names` filter). t6 extends
+    this: `archive_ref` blocks contribute their source pool
+    to the load set even though it's reference-role. The
+    parse-time cross-check (D3) ensures the source IS
+    reference; load_pools' role-mismatch guard relaxes for
+    archive_ref. Symmetric with how `cross_pool_dedup_sources`
+    loads reference pools without going through the content
+    sampling path (just a different load site).
+
+  **Shape:** c1 (engine strategy + parser grammar +
+  generator dispatch + load_pools extension + tests), c2
+  (stations/README.md docs example + DESIGN closeout) + 2
+  mid-slice reviews + slice-review sweep. Standard cadence.
+  Slightly bigger than a typical 2-commit slice because the
+  parser-side strategy-aware role check touches multiple
+  cross-cutting sites (parse_template + load_pools).
+
+  **Closes:** the "always play track 1 of MASTER at 9am
+  Monday" pattern named in the §16.14.t3 docs page's
+  forward-looking utilities. Operators with curated
+  reference pools (e.g. station IDs, opener tracks,
+  recurring imaging) can express deterministic schedule
+  positions directly in the template.
 * **§16.14.t7 — Reference-role: allowlist enforcement.**
   Inverse of §16.14.t5 — restrict the content sampler to
   tracks that ALSO appear in a configured reference pool,
