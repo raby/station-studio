@@ -10,6 +10,11 @@ import { API, createStation } from './fixtures';
  *
  * Shared-DB-safe: each test uses a uniquely-slugged station
  * (rules10-*).
+ *
+ * §16.14.t10 sweep SR1: row count bumped from 4 → 5 to include
+ * the list rule `cross_pool_dedup_sources` (the t10 GET endpoint
+ * surfaces both int + list rules; the panel renders the list row
+ * as a read-only placeholder until §16.14.t11 ships the editor).
  */
 test.describe('§16.10 rules editor', () => {
   test('discovery link from station detail lands on the rules route', async ({
@@ -23,17 +28,22 @@ test.describe('§16.10 rules editor', () => {
     await expect(page.getByTestId('rules-panel')).toBeVisible();
   });
 
-  test('lists the 4 engine rules as defaults on a fresh station', async ({
+  test('lists every engine rule (int + list) as defaults on a fresh station', async ({
     page,
     request,
   }) => {
     await createStation(request, 'rules10-list', 'Rules10 List');
     await page.goto('/stations/rules10-list/rules');
     const rows = page.getByTestId('rule-row');
-    await expect(rows).toHaveCount(4);
+    // §16.14.t10: 4 int rules + 1 list rule (cross_pool_dedup_sources).
+    await expect(rows).toHaveCount(5);
     // All unset → every row shows the default badge, none overridden.
-    await expect(page.getByTestId('default-badge')).toHaveCount(4);
+    await expect(page.getByTestId('default-badge')).toHaveCount(5);
     await expect(page.getByTestId('override-badge')).toHaveCount(0);
+    // §16.14.t10: one row is the list-rule placeholder; the
+    // others are int rows with editable inputs.
+    await expect(page.getByTestId('rule-list-placeholder')).toHaveCount(1);
+    await expect(page.getByTestId('rule-input')).toHaveCount(4);
   });
 
   test('save an override then reset it — full round-trip', async ({

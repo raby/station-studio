@@ -368,18 +368,22 @@ def get_all_rules(db: Session, *, station_id: int) -> list[dict[str, Any]]:
 # absent rule is the registry default.
 #
 # Why parallel vs extending RULE_DEFAULTS: keeping int rules strictly
-# int-typed at the accessor level preserves the existing API + UI
-# shape (numeric inputs). A future polymorphic CRUD response
-# (§16.14.t10) merges the two registries behind a `kind:
-# "int"|"list"` discriminator — for now, keep the typing explicit
-# so the int-only API surface stays unambiguous.
+# int-typed at the accessor level keeps the two value shapes
+# unambiguous inside the engine (set_rule_value: int,
+# set_rule_list_value: list[str]). The §16.14.t10 CRUD response
+# merges the two registries behind a `kind: "int"|"list"`
+# discriminator — but only at the API surface, not at the
+# accessor level. Accessor-level polymorphism would force callers
+# to type-switch on every read/write; the registry split keeps
+# the engine code crisp.
 #
-# Surface note (§16.14.t5 c1 review F4): list rules are NOT exposed
-# by ``get_all_rules`` / the CRUD endpoint today. The factory
-# default lands via the template's `rules:` block (§16.14.t9
-# parser + seed_station wiring); the CRUD endpoint extension is
-# queued as §16.14.t10 (backend) + §16.14.t11 (frontend
-# RulesPanel extension).
+# Surface note (post-§16.14.t10): list rules ARE exposed by
+# ``get_all_rules`` / the CRUD endpoint with the kind
+# discriminator. The factory default still lands via the
+# template's `rules:` block (§16.14.t9 parser + seed_station
+# wiring); the API surface lets operators read/edit live values.
+# The `<RulesPanel>` UI renders list rules as a read-only
+# placeholder until §16.14.t11 ships the chip-based editor.
 
 
 LIST_SEPARATOR = ","

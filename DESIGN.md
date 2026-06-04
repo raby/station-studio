@@ -10146,46 +10146,7 @@ sweep, matching the §16.13.t1-t9 cadence).
   |---|---|
   | Design pass (`4694863`) | D1–D8 locked. Q1 (frontend backend + minimal patch) + Q2 (extract validators to engine.rules) + Q3 (engine + API tests in c1) chosen. D4 corrected mid-flight (unknown-key → 400, not 404 as initially drafted; matches today's CRUD behavior). |
   | c1 (`4688229`) + review (`dce2d2f`) | Backend + validator extraction + minimal frontend patch. **engine.rules**: new public `validate_int_rule_value` + `validate_list_rule_value` raising `InvalidRuleValueError` on bad input (returns cleaned list[str] for the list path). `set_rule_value` delegates to the int validator so parser, API, and direct callers reject the same inputs. `get_all_rules` iterates BOTH registries with the `kind` discriminator + native value shape, alphabetically interleaved (D5). **engine.template**: `_parse_rules` refactored to call the validators; wraps `InvalidRuleValueError` as `TemplateError` with `template.rules.{key}:` prefix so parse-time errors carry the JSON path. **api/schemas.py**: `RuleOut` gains `kind: str`, broadens `value` + `default_value` to `int | list[str]`. `RuleValueIn.value: StrictInt | list[str]` (per c1 review F1) so Pydantic doesn't coerce JSON `true` into 1, preserving the D6 bool-rejection contract at the API surface. **api/routers/rules.py**: PUT/DELETE dispatch by registry membership (RULE_DEFAULTS → int path, RULE_LIST_DEFAULTS → list path); unknown keys 400 with the union of valid keys listed. **web/src/lib/api.ts**: `Rule` interface broadens `value` to `number \| string[]`, adds `kind`. **web/src/lib/components/RulesPanel.svelte**: int rendering byte-identical (gated on `kind === 'int'`); new `{:else}` branch renders list rules as a read-only chip-style placeholder with the joined value + factory default + a hint pointing at §16.14.t11. **Tests**: 14 new engine validator units, 11 new API list-rule integration tests (incl. cross-shape dispatch pins + bool rejection at schema layer), 3 new frontend placeholder tests, all existing tests updated to carry the `kind` discriminator. c1 review applied 2 fixes: F1 🟡 Pydantic `StrictInt` closes the JSON-true coercion gap (the validator never ran because Pydantic coerced bool to int=1); F10 🟢 cross-shape dispatch pins (PUT a list body to an int URL → int handler runs → "must be int"; PUT an int body to a list URL → list handler runs → "must be a list"). F8 cleared on grep — no callers pass bool to set_rule_value. |
-  | **c2 (_this commit_)** | Docs + slice closeout. `stations/README.md` cross-pool dedup section rewritten: the "List-rule API gap" callout is GONE (gap closed); the new "Rules CRUD endpoint covers both kinds" callout shows three `curl` recipes (GET, PUT list value, DELETE) + honest "validation lives in engine.rules, shared with the template parser" note; the "Frontend status" callout describes the int-row + list-row placeholder split + names §16.14.t11 as the next step. "How to opt out" rewritten around the new API DELETE path. The "deliberate punts" list dropped the now-closed "Rules CRUD endpoint visibility" bullet; replaced with the t11 placeholder UX caveat. DESIGN §16.14.t10 marked SHIPPED with this shipped log; §15 status snapshot + §17 queued-order row bumped. |
-
-  Today `/api/stations/{slug}/rules` (the §14.29 CRUD endpoints
-  shipped with the int-rule API) handles RULE_DEFAULTS only.
-  The list (`RULE_LIST_DEFAULTS`) registry — sole entry today
-  is `cross_pool_dedup_sources` — is INVISIBLE on `GET` and
-  rejected with `UnknownRuleError` on `PUT`/`DELETE` because
-  `api/routers/rules.py` imports `set_rule_value` + `clear_rule`
-  (int-only accessors) rather than their `_list_value`/`_list`
-  siblings. t10 plumbs the list-rule accessors through:
-
-  * Extend `RuleOut` schema to support `value: int | list[str]`
-    + a `kind: "int" | "list"` discriminator (so the frontend
-    can dispatch on shape without inspecting types).
-  * `get_all_rules` iterates BOTH registries; response items
-    carry the discriminator + the value at its native shape.
-  * `PUT /api/stations/{slug}/rules/{key}` dispatches by which
-    registry the key belongs to. Body validation matches the
-    parse-time validation in `_parse_rules` (the §16.14.t9
-    helper) — reuse the validator as a shared helper rather
-    than duplicate the bounds + comma + non-empty checks
-    a second time.
-  * `DELETE` dispatches the same way.
-  * Tests cover GET shape, PUT happy path for both, every
-    rejection branch the parser tests, `cross_pool_dedup_sources`
-    round-trip end-to-end through the existing engine pipeline.
-
-  After t10, the operator-wins revert flow that
-  `test_seed_station_api_delete_then_reseed_restores_template_default`
-  pins at the engine level (§16.14.t9 c2 review F1) becomes
-  reachable from `curl`. The c2-review F1 test then graduates
-  into an API-level integration test the §16.14.t11 UI can
-  drive against.
-
-  **Home: separate slice (~3 commits — schema + dispatch +
-  tests, then API-level integration test, then docs +
-  closeout).** Trigger: §16.14.t9 ships (then this is the
-  natural next step toward closing the list-rule UX gap;
-  unblocks t11). Marked must-have to close the §16.14.t5
-  c2-review F1 footgun.
+  | **c2 (_this commit_)** | Docs + slice closeout. `stations/README.md` cross-pool dedup section rewritten: the "List-rule API gap" callout is GONE (gap closed); the new "Rules CRUD endpoint covers both kinds" callout shows three `curl` recipes (GET, PUT list value, DELETE) + honest "validation lives in engine.rules, shared with the template parser" note; the "Frontend status" callout describes the int-row + list-row placeholder split + names §16.14.t11 as the next step. "How to opt out" rewritten around the new API DELETE path. The "deliberate punts" list dropped the now-closed "Rules CRUD endpoint visibility" bullet; replaced with the t11 placeholder UX caveat. DESIGN §16.14.t10 marked SHIPPED with this shipped log; §15 status snapshot + §17 queued-order row bumped. Stale pre-t10 stub paragraphs deleted (the planning-phase framing of "today the endpoint handles RULE_DEFAULTS only" is no longer accurate; the shipped log + the docs cover the actual delivered surface). |
 * **§16.14.t11 — Frontend `<RulesPanel>` extension for list rules.**
   The §16.10 `<RulesPanel>` was built around integer values
   (numeric inputs, ±1 spinners, `min`/`max` from the
