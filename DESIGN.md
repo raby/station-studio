@@ -10147,38 +10147,101 @@ sweep, matching the §16.13.t1-t9 cadence).
   | Design pass (`4694863`) | D1–D8 locked. Q1 (frontend backend + minimal patch) + Q2 (extract validators to engine.rules) + Q3 (engine + API tests in c1) chosen. D4 corrected mid-flight (unknown-key → 400, not 404 as initially drafted; matches today's CRUD behavior). |
   | c1 (`4688229`) + review (`dce2d2f`) | Backend + validator extraction + minimal frontend patch. **engine.rules**: new public `validate_int_rule_value` + `validate_list_rule_value` raising `InvalidRuleValueError` on bad input (returns cleaned list[str] for the list path). `set_rule_value` delegates to the int validator so parser, API, and direct callers reject the same inputs. `get_all_rules` iterates BOTH registries with the `kind` discriminator + native value shape, alphabetically interleaved (D5). **engine.template**: `_parse_rules` refactored to call the validators; wraps `InvalidRuleValueError` as `TemplateError` with `template.rules.{key}:` prefix so parse-time errors carry the JSON path. **api/schemas.py**: `RuleOut` gains `kind: str`, broadens `value` + `default_value` to `int | list[str]`. `RuleValueIn.value: StrictInt | list[str]` (per c1 review F1) so Pydantic doesn't coerce JSON `true` into 1, preserving the D6 bool-rejection contract at the API surface. **api/routers/rules.py**: PUT/DELETE dispatch by registry membership (RULE_DEFAULTS → int path, RULE_LIST_DEFAULTS → list path); unknown keys 400 with the union of valid keys listed. **web/src/lib/api.ts**: `Rule` interface broadens `value` to `number \| string[]`, adds `kind`. **web/src/lib/components/RulesPanel.svelte**: int rendering byte-identical (gated on `kind === 'int'`); new `{:else}` branch renders list rules as a read-only chip-style placeholder with the joined value + factory default + a hint pointing at §16.14.t11. **Tests**: 14 new engine validator units, 11 new API list-rule integration tests (incl. cross-shape dispatch pins + bool rejection at schema layer), 3 new frontend placeholder tests, all existing tests updated to carry the `kind` discriminator. c1 review applied 2 fixes: F1 🟡 Pydantic `StrictInt` closes the JSON-true coercion gap (the validator never ran because Pydantic coerced bool to int=1); F10 🟢 cross-shape dispatch pins (PUT a list body to an int URL → int handler runs → "must be int"; PUT an int body to a list URL → list handler runs → "must be a list"). F8 cleared on grep — no callers pass bool to set_rule_value. |
   | **c2 (_this commit_)** | Docs + slice closeout. `stations/README.md` cross-pool dedup section rewritten: the "List-rule API gap" callout is GONE (gap closed); the new "Rules CRUD endpoint covers both kinds" callout shows three `curl` recipes (GET, PUT list value, DELETE) + honest "validation lives in engine.rules, shared with the template parser" note; the "Frontend status" callout describes the int-row + list-row placeholder split + names §16.14.t11 as the next step. "How to opt out" rewritten around the new API DELETE path. The "deliberate punts" list dropped the now-closed "Rules CRUD endpoint visibility" bullet; replaced with the t11 placeholder UX caveat. DESIGN §16.14.t10 marked SHIPPED with this shipped log; §15 status snapshot + §17 queued-order row bumped. Stale pre-t10 stub paragraphs deleted (the planning-phase framing of "today the endpoint handles RULE_DEFAULTS only" is no longer accurate; the shipped log + the docs cover the actual delivered surface). |
-* **§16.14.t11 — Frontend `<RulesPanel>` extension for list rules.**
-  The §16.10 `<RulesPanel>` was built around integer values
-  (numeric inputs, ±1 spinners, `min`/`max` from the
-  registry). List rules need a different control:
-  multi-input chip / tag list with add + remove affordances,
-  source-pool autocomplete (the rule values are
-  `SourcePlaylist.name`s — the frontend already has a
-  Sources list it can read from).
+* **§16.14.t11 — Frontend `<ListRuleRow>` chip editor. IN FLIGHT.**
+  Trigger fired (§16.14.t10 shipped; the t10 placeholder UX is
+  the documented stop-gap that t11 replaces).
 
-  Scope (one design talk's worth):
+  **Context.** Post-§16.14.t10 the `<RulesPanel>` already
+  fetches list rules + filters them into a read-only
+  placeholder. t11 replaces the placeholder with a chip-based
+  editor: add chips by typing + Enter (or picking from the
+  autocomplete suggestions), remove chips via per-chip ×
+  button, save via the int-row-style Save button, reset via
+  DELETE on the API. The hobbyist-clickable revert flow that
+  the §16.14.t5 c2-review F1 + the §16.14.t9 c3 docs both
+  named as a gap closes here.
 
-  * Wire the §16.14.t10 endpoint into the `<RulesPanel>`'s
-    data-load + save paths; the `kind` discriminator drives
-    per-row component selection.
-  * New `<ListRuleRow>` component: chip-style display, "Add
-    source" input with autocomplete from
-    `/api/stations/{slug}/sources` filtered to
-    `role: reference` (the §16.14.t5 D6 constraint), per-chip
-    remove button. Empty list = explicit "no exclusion"
-    override (matches the engine's semantics).
-  * "Reset to template default" button per row — DELETEs the
-    Rule row, re-seeds via a follow-up POST to
-    `/api/stations/{slug}/seed` (or relies on a server-side
-    re-seed trigger; design call).
-  * Honest "value = list" indicator in the row header so the
-    user sees the type difference vs the int rows.
+  **Decisions (locked in the pre-c1 design talk):**
 
-  **Home: separate slice (~3-4 commits — component + wiring +
-  routes test + DESIGN + a11y nits).** Trigger: §16.14.t10
-  ships (the endpoint is the prerequisite). Closes the
-  hobbyist-facing UX loop the §16.14.t5 c2-review F1 + the
-  §16.14.t9 c3 docs both honestly named as a gap.
+  * **D1 — Extract `<ListRuleRow>` as a child component.**
+    Int rows stay inline in `RulesPanel.svelte`; the
+    asymmetry is documented. Refactoring int rows out of
+    inline is NOT t11's job — a future polishing slice can
+    do it if a real need surfaces.
+  * **D2 — Reset = `DELETE /api/stations/{slug}/rules/{key}`.**
+    Removes the Rule row; the next GET returns the
+    registry/template default with `is_override: false`. No
+    re-seed endpoint needed (the stub originally floated one;
+    not necessary because GET already computes the effective
+    value).
+  * **D3 — Explicit Save button + local staging + dirty
+    tracking.** Mirrors the int-row pattern. Edits modify a
+    local `staged: string[]` array; Save enabled when
+    `staged !== rule.value`. Matches the int-row's predictable
+    "I'm editing, then I commit" model over auto-save.
+  * **D4 — Per-chip × remove button.** Conventional chip-input
+    pattern; one click → chip gone from local staging.
+  * **D5 — Autocomplete source: `GET /api/stations/{slug}/sources`
+    filtered client-side to `role === 'reference'`.** Cached
+    in-component on mount; no per-keystroke refetch. The
+    §16.14.t5 D6 constraint says only reference pools are
+    valid in `cross_pool_dedup_sources`, so filtering matches
+    the engine's contract.
+  * **D6 — Baseline a11y only.** Aria-label on the chip input
+    + per-chip remove button, label/control association,
+    keyboard activation (Enter to add chip, Tab to advance
+    focus, Backspace on empty input deletes the last chip
+    per chip-UI convention). Deep a11y work (focus rings,
+    aria-live for chip add/remove, keyboard nav across
+    chips) defers to §16.5 so the panel's a11y review is
+    coherent.
+  * **D7 — Test stack:** vitest component tests for
+    `<ListRuleRow>` (render, add chip via Enter + via
+    autocomplete click, remove chip, save dirty-tracking,
+    reset, error states, empty + non-empty inputs) +
+    Playwright e2e (real backend round-trip: PUT a chip,
+    verify GET reflects it, Reset, verify cleared).
+  * **D8 — Free-form input + autocomplete.** Typing a string
+    not in the autocomplete + pressing Enter ADDS it as a
+    chip. Lets the operator pre-configure a pool name that
+    hasn't been imported yet; backend's generation-time
+    cross-check catches truly missing pools loudly. Matches
+    "don't UI-block valid backend operations."
+  * **D9 — One chip per paste.** No comma-split on paste; a
+    pasted string fills the input + Enter adds it as a single
+    chip. YAGNI for the 1-3 chip counts the rule typically
+    has; revisit if a real workflow request appears.
+  * **D10 — Hide Reset when default == current.** Match
+    the int-row pattern ("Reset to default" only shows when
+    `is_override` is true). For list rules: if the staged
+    value equals the registry default, hide Reset. Cleanest
+    UX (no controls that do nothing).
+  * **D11 — Out of scope:** drag-to-reorder chips, inline
+    "create new source pool" affordance, paste-as-N-chips,
+    int-row component extraction.
+  * **D12 — Single c1 commit for the full component +
+    tests.** Splitting the component into "scaffolding +
+    render-only" + "interactive" produces intermediate
+    states that ship a NON-interactive component, which is
+    arguably worse UX than today's placeholder (the operator
+    sees chips with no way to edit them). c1 lands the full
+    `<ListRuleRow>` + vitest unit tests + e2e flow update;
+    c2 is docs + closeout.
+
+  **Shape:** c1 (full `<ListRuleRow>` component + RulesPanel
+  wiring + vitest unit tests + Playwright e2e update), c2
+  (stations/README.md — promote the t10 placeholder section
+  into the shipped t11 chip-editor section + DESIGN entries)
+  + 2 mid-slice reviews + slice-review sweep. Standard
+  cadence.
+
+  **Closes (post-t11):** the operator-clickable list-rule
+  revert flow that
+  `test_seed_station_api_delete_then_reseed_restores_template_default`
+  pins at the engine level (§16.14.t9 c2-review F1), wired
+  through `<RulesPanel>` → API → engine. The hobbyist UX
+  loop named in the §16.14.t5 c2-review F1 + §16.14.t9 c3
+  docs is fully closed.
 * **§16.14.t9 — Declarative `rules:` block in template JSON. SHIPPED.**
   Trigger fired (§16.14.t5 shipped; user explicitly asked for t9
   as the next slice).
