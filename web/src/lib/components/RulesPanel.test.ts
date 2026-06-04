@@ -6,6 +6,7 @@ const {
   getStationRulesMock,
   setStationRuleMock,
   clearStationRuleMock,
+  listSourcesMock,
   FakeApiError,
 } = vi.hoisted(() => {
   class FakeApiError extends Error {
@@ -20,6 +21,11 @@ const {
     getStationRulesMock: vi.fn(),
     setStationRuleMock: vi.fn(),
     clearStationRuleMock: vi.fn(),
+    // §16.14.t11: the embedded <ListRuleRow> fetches sources for
+    // its autocomplete; mock the call so it resolves without
+    // hitting the real API. Default to empty so most existing
+    // tests don't need to seed any data.
+    listSourcesMock: vi.fn().mockResolvedValue([]),
     FakeApiError,
   };
 });
@@ -28,6 +34,7 @@ vi.mock('$lib/api', () => ({
   getStationRules: (...a: unknown[]) => getStationRulesMock(...a),
   setStationRule: (...a: unknown[]) => setStationRuleMock(...a),
   clearStationRule: (...a: unknown[]) => clearStationRuleMock(...a),
+  listSources: (...a: unknown[]) => listSourcesMock(...a),
   ApiError: FakeApiError,
 }));
 
@@ -207,9 +214,9 @@ describe('<RulesPanel>', () => {
     expect(await screen.findByTestId('rules-error')).toHaveTextContent('station not found');
   });
 
-  // §16.14.t10 — list-rule placeholder branch
+  // §16.14.t11 — list-rule dispatch to <ListRuleRow>
 
-  it('renders a read-only placeholder for list-rule rows (§16.14.t10 D7)', async () => {
+  it('renders <ListRuleRow> for list-rule rows (replaces the t10 placeholder)', async () => {
     getStationRulesMock.mockResolvedValueOnce({
       rules: [
         rule({
@@ -224,33 +231,16 @@ describe('<RulesPanel>', () => {
       ],
     });
     render(RulesPanel, { slug: 'cls' });
-    const placeholder = await screen.findByTestId('rule-list-placeholder');
-    expect(placeholder).toBeInTheDocument();
-    // Renders the comma-joined value + the "(empty)" default hint.
-    expect(placeholder.textContent).toContain('REFERENCE_ARCHIVE, B');
-    expect(placeholder.textContent).toContain('(empty)');
-    // No int input or save button for list rows.
+    // §16.14.t11: list rows now render the editable chip component.
+    const listRow = await screen.findByTestId('list-rule-row');
+    expect(listRow).toBeInTheDocument();
+    // Chips show the values + the row's int controls are absent.
+    const chips = screen.getAllByTestId('list-rule-chip');
+    expect(chips).toHaveLength(2);
     expect(screen.queryByTestId('rule-input')).not.toBeInTheDocument();
     expect(screen.queryByTestId('rule-save')).not.toBeInTheDocument();
-  });
-
-  it('renders "(empty)" when a list-rule value is the empty list', async () => {
-    getStationRulesMock.mockResolvedValueOnce({
-      rules: [
-        rule({
-          key: 'cross_pool_dedup_sources',
-          kind: 'list',
-          value: [],
-          default_value: [],
-          max_value: null,
-          is_override: false,
-          description: 'List of source pool names to exclude.',
-        }),
-      ],
-    });
-    render(RulesPanel, { slug: 'cls' });
-    const placeholder = await screen.findByTestId('rule-list-placeholder');
-    expect(placeholder.textContent).toContain('(empty)');
+    // The t10 placeholder is gone.
+    expect(screen.queryByTestId('rule-list-placeholder')).not.toBeInTheDocument();
   });
 
   it('renders both int + list rows together (mixed registry response)', async () => {
@@ -270,7 +260,7 @@ describe('<RulesPanel>', () => {
     render(RulesPanel, { slug: 'cls' });
     // Int row still has its input.
     expect(await screen.findByTestId('rule-input')).toBeInTheDocument();
-    // List row has its placeholder.
-    expect(screen.getByTestId('rule-list-placeholder')).toBeInTheDocument();
+    // List row renders the chip editor.
+    expect(screen.getByTestId('list-rule-row')).toBeInTheDocument();
   });
 });

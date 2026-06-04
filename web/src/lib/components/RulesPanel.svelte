@@ -23,6 +23,7 @@
     type Rule,
   } from '$lib/api';
   import { onMount } from 'svelte';
+  import ListRuleRow from './ListRuleRow.svelte';
 
   export let slug: string;
 
@@ -77,13 +78,12 @@
     return spaced.charAt(0).toUpperCase() + spaced.slice(1);
   }
 
-  /** §16.14.t10: format a list-rule value for the read-only
-   *  placeholder. Handles both `string[]` (the list-rule shape)
-   *  and number (defensive — if a list-row came through with the
-   *  wrong shape we still render something rather than crash). */
-  function formatListValue(v: number | string[]): string {
-    if (!Array.isArray(v)) return String(v);
-    return v.length > 0 ? v.join(', ') : '(empty)';
+  /** §16.14.t11: splice the rule emitted by <ListRuleRow> into the
+   *  panel's `rules` array so the badge + descriptions stay in
+   *  sync with the canonical post-write state. The child component
+   *  owns its own staged state, so we don't touch that here. */
+  function onListRuleUpdated(updated: Rule) {
+    rules = rules.map((x) => (x.key === updated.key ? updated : x));
   }
 
   /** Client-side validation mirroring engine.rules: non-negative
@@ -221,24 +221,18 @@
             {/if}
           {:else}
             <!--
-              §16.14.t10 D7: read-only placeholder for list rules.
-              §16.14.t11 replaces this with the <ListRuleRow>
-              chip-based editor. Until then, list-rule values
-              display as a JSON-shaped read-only line. The
-              `data-testid` distinguishes from the int row so
-              tests can target each kind separately.
+              §16.14.t11: chip-based editor replacing the §16.14.t10
+              read-only placeholder. The component owns its own
+              staged + saving + error state; emits `updated` when
+              the canonical rule changes (Save or Reset succeeded),
+              and the parent splices the new rule into its
+              `rules` array so the badge + label stay in sync.
             -->
-            <div class="rule-edit list-rule-placeholder" data-testid="rule-list-placeholder">
-              <span class="list-value">
-                {formatListValue(r.value)}
-              </span>
-              <span class="rule-default-hint">
-                default: {formatListValue(r.default_value)}
-              </span>
-              <span class="placeholder-hint">
-                Edit via API until §16.14.t11 ships the list-rule UI.
-              </span>
-            </div>
+            <ListRuleRow
+              {slug}
+              rule={r}
+              on:updated={(e) => onListRuleUpdated(e.detail)}
+            />
           {/if}
         </li>
       {/each}
@@ -343,22 +337,5 @@
   .row-error {
     font-size: 0.85rem;
     margin: 0.35rem 0 0;
-  }
-  /* §16.14.t10: read-only placeholder for list rules. */
-  .list-rule-placeholder {
-    background: #fafafa;
-    border: 1px dashed #ddd;
-    border-radius: 4px;
-    padding: 0.5rem 0.75rem;
-  }
-  .list-value {
-    font-family: ui-monospace, monospace;
-    font-size: 0.85rem;
-  }
-  .placeholder-hint {
-    color: #888;
-    font-size: 0.78rem;
-    font-style: italic;
-    margin-left: auto;
   }
 </style>

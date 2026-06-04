@@ -32,18 +32,82 @@ test.describe('§16.10 rules editor', () => {
     page,
     request,
   }) => {
-    await createStation(request, 'rules10-list', 'Rules10 List');
-    await page.goto('/stations/rules10-list/rules');
+    await createStation(request, 'rules11-list', 'Rules11 List');
+    await page.goto('/stations/rules11-list/rules');
     const rows = page.getByTestId('rule-row');
     // §16.14.t10: 4 int rules + 1 list rule (cross_pool_dedup_sources).
     await expect(rows).toHaveCount(5);
     // All unset → every row shows the default badge, none overridden.
     await expect(page.getByTestId('default-badge')).toHaveCount(5);
     await expect(page.getByTestId('override-badge')).toHaveCount(0);
-    // §16.14.t10: one row is the list-rule placeholder; the
-    // others are int rows with editable inputs.
-    await expect(page.getByTestId('rule-list-placeholder')).toHaveCount(1);
+    // §16.14.t11: list row now renders the chip editor (replacing
+    // the t10 placeholder); int rows still have their inputs.
+    await expect(page.getByTestId('list-rule-row')).toHaveCount(1);
     await expect(page.getByTestId('rule-input')).toHaveCount(4);
+  });
+
+  // §16.14.t11 — chip editor round-trip
+
+  test('list-rule: add chip, save, reset (full round-trip via the UI)', async ({
+    page,
+    request,
+  }) => {
+    await createStation(request, 'rules11-chip', 'Rules11 Chip');
+    await page.goto('/stations/rules11-chip/rules');
+
+    const listRow = page.getByTestId('list-rule-row');
+    await expect(listRow).toBeVisible();
+
+    // Type a free-form pool name + Enter → chip lands in staged
+    // state (the backend hasn't been called yet).
+    const input = listRow.getByTestId('list-rule-input');
+    await input.fill('MY_REFERENCE_POOL');
+    await input.press('Enter');
+    await expect(listRow.getByTestId('list-rule-chip')).toHaveCount(1);
+
+    // Save → PUT, badge flips to overridden.
+    await listRow.getByTestId('list-rule-save').click();
+    await expect(listRow.getByTestId('override-badge')).toBeVisible();
+
+    // Verify via the API.
+    const r = await request.get(`${API}/api/stations/rules11-chip/rules`);
+    const body = await r.json();
+    const saved = body.rules.find((x: { key: string }) => x.key === 'cross_pool_dedup_sources');
+    expect(saved.value).toEqual(['MY_REFERENCE_POOL']);
+    expect(saved.is_override).toBe(true);
+
+    // Reset → DELETE the row, badge flips back, chips clear.
+    await listRow.getByTestId('list-rule-reset').click();
+    await expect(listRow.getByTestId('default-badge')).toBeVisible();
+    await expect(listRow.getByTestId('list-rule-chip')).toHaveCount(0);
+    const r2 = await request.get(`${API}/api/stations/rules11-chip/rules`);
+    const body2 = await r2.json();
+    const cleared = body2.rules.find((x: { key: string }) => x.key === 'cross_pool_dedup_sources');
+    expect(cleared.value).toEqual([]);
+    expect(cleared.is_override).toBe(false);
+  });
+
+  test('list-rule: per-chip × removes the chip from staged state', async ({
+    page,
+    request,
+  }) => {
+    await createStation(request, 'rules11-rm', 'Rules11 Remove');
+    await page.goto('/stations/rules11-rm/rules');
+    const listRow = page.getByTestId('list-rule-row');
+    const input = listRow.getByTestId('list-rule-input');
+
+    // Add two chips.
+    await input.fill('POOL_A');
+    await input.press('Enter');
+    await input.fill('POOL_B');
+    await input.press('Enter');
+    await expect(listRow.getByTestId('list-rule-chip')).toHaveCount(2);
+
+    // Click the FIRST × to remove POOL_A.
+    await listRow.getByTestId('list-rule-chip-remove').first().click();
+    const remainingChips = listRow.getByTestId('list-rule-chip');
+    await expect(remainingChips).toHaveCount(1);
+    await expect(remainingChips.first()).toContainText('POOL_B');
   });
 
   test('save an override then reset it — full round-trip', async ({
