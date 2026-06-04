@@ -958,3 +958,45 @@ def test_template_unknown_top_level_key_rejected_when_rule_singular():
     for `rules`."""
     with pytest.raises(TemplateError, match=r"unknown keys.*'rule'"):
         parse_template({**BASE, "rule": {"artist_dedup_window": 15}})
+
+
+# ---------- §16.14.t9 slice-review S4 — bundled-stations pin ----------
+
+
+def test_every_bundled_station_parses_under_t9_grammar():
+    """§16.14.t9 slice-review S4: every committed `stations/*.json`
+    parses cleanly under the new grammar.
+
+    A broken `rules:` block (or any other parser regression) in a
+    bundled station would otherwise only surface as a silent
+    lifespan skip — the auto-seed catches TemplateError + continues
+    (see api/main.py + tests/test_api.py::test_lifespan_continues_
+    on_broken_template). The server still comes up; the broken
+    station just never lands. This pin makes the failure loud at
+    test time.
+
+    Iterates the actual on-disk JSONs (not a fixed list) so a
+    future-added bundled station is automatically covered without
+    needing a per-station test.
+    """
+    import glob
+    import json
+    from pathlib import Path
+
+    repo_root = Path(__file__).resolve().parent.parent
+    station_paths = sorted(
+        p for p in glob.glob(str(repo_root / "stations" / "*.json"))
+        if not (p.endswith(".editor.json") or p.endswith(".pool-manifest.json"))
+    )
+    assert station_paths, "no bundled stations found under stations/*.json"
+    for path in station_paths:
+        with open(path) as f:
+            raw = json.load(f)
+        # Should not raise. Any TemplateError surfaces here with
+        # the offending station path in the assertion message.
+        try:
+            parse_template(raw)
+        except TemplateError as e:
+            raise AssertionError(
+                f"bundled station {path} failed t9-grammar parse: {e}"
+            )

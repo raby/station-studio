@@ -479,10 +479,20 @@ def test_starter_sidecar_stays_stable_after_t3_amendment() -> None:
 
 
 def test_starter_seed_sets_cross_pool_dedup_sources_rule() -> None:
-    """§16.14.t5 c2 + D8: seeding the starter station imperatively
-    sets `cross_pool_dedup_sources=["REFERENCE_ARCHIVE"]` via
-    `engine.seeding._STATION_LIST_RULES`. Pin so a future refactor
-    that drops the rule-seeding logic gets caught."""
+    """§16.14.t5 c2 + §16.14.t9 c2: seeding the starter station
+    writes `cross_pool_dedup_sources=["REFERENCE_ARCHIVE"]` to the
+    Rule table.
+
+    Source-of-truth note (§16.14.t9 slice-review S1): the rule's
+    factory default originally lived in
+    `engine.seeding._STATION_LIST_RULES["starter"]` (§16.14.t5 c2
+    + D8 imperative seeding); §16.14.t9 c2 migrated it into
+    `stations/starter.json:rules` and emptied the registry entry.
+    The end-state checked here is identical (rule lands in the
+    DB), but the seam moved.
+
+    Pin so a future refactor that drops the rule-seeding logic
+    gets caught."""
     from engine.models import Base
     from engine.rules import get_rule_list_value
     from engine.models import Station
