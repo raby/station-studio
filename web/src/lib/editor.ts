@@ -33,7 +33,11 @@ export interface EngineBlock {
     | 'jingle'
     | 'mix'
     | 'weighted'
-    | 'prev_ref';
+    | 'prev_ref'
+    // §16.14.t6: position-based lookup into a role: reference pool.
+    // Reuses the `position` field (1-indexed). No `fallback_genre`
+    // — pure deterministic, no fallback path.
+    | 'archive_ref';
   size: number;
   // Strategy-specific optional fields. Hand-mirrored from
   // engine.template.BlockSpec. Pinned by tests/test_editor_ts_schema_parity.py
@@ -321,6 +325,12 @@ export function compactStrategyLabel(block: EngineBlock): string {
       return block.genre ? `M:${block.genre}` : 'M';
     case 'prev_ref':
       return block.position !== undefined ? `P:${block.position}` : 'P';
+    case 'archive_ref':
+      // §16.14.t6: archive_ref shares prev_ref's `position` field
+      // semantics; abbreviate distinctly ("A:" vs "P:") so the
+      // chip surface tells the operator WHICH reference strategy
+      // a slot uses without expanding to the full strategy name.
+      return block.position !== undefined ? `A:${block.position}` : 'A';
     default: {
       // Exhaustiveness guard — TS narrows `strategy` to `never` if
       // every case is handled. A new strategy added to EngineBlock
@@ -686,6 +696,12 @@ export const EDITABLE_FIELDS: Record<EngineBlock['strategy'], EditableFieldSpec[
   prev_ref: [
     { name: 'position', label: 'Position (1-indexed)', type: 'int', required: true, min: 1 },
     { name: 'fallback_genre', label: 'Fallback genre', type: 'string', required: false },
+  ],
+  // §16.14.t6: archive_ref shares prev_ref's `position` field
+  // (1-indexed). NO `fallback_genre` — archive_ref has no
+  // fallback path (D5: pure deterministic, fail-loud on OOB).
+  archive_ref: [
+    { name: 'position', label: 'Position (1-indexed)', type: 'int', required: true, min: 1 },
   ],
 };
 

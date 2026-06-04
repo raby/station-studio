@@ -153,6 +153,39 @@ def test_block_spec_strategy_fields_mirrored_in_ts(editor_ts_text):
         )
 
 
+def test_engine_block_strategy_union_covers_all_supported_strategies(editor_ts_text):
+    """§16.14.t6 slice-review SR1+SR2+SR3: every entry in
+    ``engine.template.SUPPORTED_STRATEGIES`` must appear as a
+    quoted literal in the TS ``EngineBlock.strategy`` union.
+
+    Why this exists: archive_ref was added to SUPPORTED_STRATEGIES
+    in §16.14.t6 c1 but slipped past the TS union because the
+    parity test pinned only optional BlockSpec FIELDS — not the
+    strategy union itself. A template with archive_ref blocks
+    would fail TS validation on load. This guard catches the
+    next strategy addition (e.g. §16.14.t7 allowlist enforcement)
+    at test time instead of at first-template-load.
+
+    Also pins ``compactStrategyLabel``'s switch statement: TS's
+    exhaustiveness check (`_exhaustive: never`) compile-errors
+    when a strategy is in the union but unhandled. The pin keeps
+    the runtime + the compile-time guard aligned with the
+    backend's source of truth.
+    """
+    from engine.template import SUPPORTED_STRATEGIES
+
+    for strategy in SUPPORTED_STRATEGIES:
+        # Must appear as `'strategy'` (single-quoted, as TS union
+        # member). Allow `| 'strategy'` or first-position
+        # `strategy:\n    | 'strategy'`.
+        assert re.search(rf"'{re.escape(strategy)}'", editor_ts_text), (
+            f"SUPPORTED_STRATEGIES entry {strategy!r} missing from "
+            f"the `EngineBlock.strategy` union in editor.ts. Add it "
+            f"to the union + handle it in `compactStrategyLabel` "
+            f"(the exhaustiveness check will compile-error otherwise)."
+        )
+
+
 # ---------- structural sanity ------------------------------------------
 
 
