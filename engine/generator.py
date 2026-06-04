@@ -29,6 +29,10 @@ from engine.strategies import (
     apply_window, apply_pick, apply_jingle, apply_mix,
     apply_weighted, build_lookups, WeightedLookups,
     try_prev_ref_mirror, PrevRefPositionOutOfRangeError,
+    # §16.14.t6 — archive_ref: deterministic position lookup in a
+    # reference-role source pool. Sibling to prev_ref's mirror logic
+    # but without the fallback path.
+    apply_archive_ref, ArchiveRefPositionOutOfRangeError,
 )
 
 
@@ -778,6 +782,44 @@ def generate_stream(
                         # strategy populated.
                         excluded=failure_excluded + info.excluded_candidates,
                     ))
+        elif block.strategy == "archive_ref":
+            # §16.14.t6 — deterministic position lookup in a reference
+            # pool. No fallback path; OOB position fails loud (the
+            # operator chose a position knowing the pool's length).
+            #
+            # `block.size > 1` reads CONSECUTIVE positions starting
+            # at `block.position` (P, P+1, P+2, ...). Matches the
+            # natural extension of "fill N slots from position P
+            # onward" — any of those positions OOB raises with the
+            # specific bad index in the message.
+            for i in range(block.size):
+                requested_position = block.position + i  # type: ignore[operator]
+                try:
+                    track = apply_archive_ref(
+                        pool,
+                        position=requested_position,
+                        source_name=block.source,
+                    )
+                except ArchiveRefPositionOutOfRangeError as e:
+                    raise ValueError(
+                        f"template error in archive_ref slot "
+                        f"(row {row_idx + 1}, block {block_idx + 1}): {e}"
+                    )
+                slot_counter += 1
+                picks.append(track)
+                trace.slots.append(_make_trace_slot(
+                    slot=slot_counter,
+                    unit=unit_label,
+                    row=row_idx + 1,
+                    block=block_idx + 1,
+                    block_spec=block,
+                    pool_index=requested_position,
+                    track=track,
+                    reason=(
+                        f"archive_ref from '{block.source}' "
+                        f"position {requested_position}"
+                    ),
+                ))
         elif block.strategy == "pick":
             cursor = row_start_in_pool
             for _ in range(block.size):

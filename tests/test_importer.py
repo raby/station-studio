@@ -444,3 +444,116 @@ class TestValidatePoolName:
         from engine.importer import validate_pool_name
         with pytest.raises(ValueError, match="empty or whitespace-only"):
             validate_pool_name(None)  # type: ignore[arg-type]
+
+
+# ---------- §16.14.t6 — load_pools archive_ref extension ----------------
+
+
+def _template_with_archive_ref(
+    content_name: str, archive_name: str, position: int = 1,
+) -> dict:
+    """parse_template-valid template with one content slot + one
+    archive_ref slot pointing at the archive."""
+    return {
+        "station": "test",
+        "cadence": "weekly",
+        "rng": "off",
+        "sources": [
+            {"name": content_name, "colour": "#aaa", "role": "content"},
+            {"name": archive_name, "colour": "#bbb", "role": "reference"},
+        ],
+        "cursor": {"base_advance_per_week": 0, "cycle_weeks": 1},
+        "layout": {
+            "unit": "slot",
+            "unit_labels": [],
+            "row_start_offsets": [],
+            "cursors_init": {},
+            "flat_slots": [
+                {"source": content_name, "strategy": "weighted", "size": 1},
+                {"source": archive_name, "strategy": "archive_ref",
+                 "size": 1, "position": position},
+            ],
+        },
+    }
+
+
+def test_load_pools_loads_archive_ref_reference_source(
+    db_session, tmp_path,
+):
+    """§16.14.t6 D9: load_pools' second pass picks up reference
+    sources sampled by archive_ref blocks. Pre-t6, only
+    content_source_names were loaded; the archive_ref source
+    would be missing from the pools dict at generation time."""
+    from engine.persistence import load_pools
+    from engine.template import parse_template
+
+    content_path = tmp_path / "content.xml"
+    make_itunes_plist(content_path, "C", [track(1, "C0000000000000001", "C1")])
+    archive_path = tmp_path / "archive.xml"
+    make_itunes_plist(archive_path, "A", [
+        track(10, "A0000000000000010", "A-1"),
+        track(11, "A0000000000000011", "A-2"),
+    ])
+    import_source(db_session, content_path, "C", role="content")
+    import_source(db_session, archive_path, "A", role="reference")
+
+    tmpl = parse_template(_template_with_archive_ref("C", "A"))
+    pools = load_pools(db_session, tmpl)
+    # Both content + archive pools are in the dict.
+    assert set(pools.keys()) == {"C", "A"}
+    assert len(pools["C"]) == 1
+    assert len(pools["A"]) == 2
+    # Archive pool order matches SourcePlaylistEntry.position.
+    assert [t.name for t in pools["A"]] == ["A-1", "A-2"]
+
+
+def test_load_pools_missing_archive_ref_source_raises_value_error(
+    db_session, tmp_path,
+):
+    """Missing archive source → ValueError (matches the missing-
+    content-pool error type). The message names the missing pool
+    + tags it as archive_ref-referenced so the operator knows
+    where to look."""
+    from engine.persistence import load_pools
+    from engine.template import parse_template
+
+    content_path = tmp_path / "content.xml"
+    make_itunes_plist(content_path, "C", [track(1, "C0000000000000001", "C1")])
+    import_source(db_session, content_path, "C", role="content")
+    # Archive pool NOT imported.
+
+    tmpl = parse_template(_template_with_archive_ref("C", "MISSING_ARCHIVE"))
+    with pytest.raises(
+        ValueError,
+        match=r"reference source pool 'MISSING_ARCHIVE' not imported.*archive_ref",
+    ):
+        load_pools(db_session, tmpl)
+
+
+def test_load_pools_archive_ref_pool_with_content_role_raises_template_error(
+    db_session, tmp_path,
+):
+    """Inverse role mismatch (§16.14.t6 D9): template's archive_ref
+    block names a source; importer marked it role='content'. The
+    template parser passed (it just checked the template's
+    sources[] declaration); load_pools catches the DB-vs-template
+    drift. Message points at the role + how to fix."""
+    from engine.persistence import load_pools
+    from engine.template import parse_template, TemplateError
+
+    content_path = tmp_path / "content.xml"
+    make_itunes_plist(content_path, "C", [track(1, "C0000000000000001", "C1")])
+    archive_path = tmp_path / "archive.xml"
+    make_itunes_plist(archive_path, "A", [track(10, "A0000000000000010", "A-1")])
+    import_source(db_session, content_path, "C", role="content")
+    # Misconfigured: template's sources[] says 'A' is reference,
+    # but the operator imported it as content. The template parser
+    # accepts (role match in template) — load_pools catches at run.
+    import_source(db_session, archive_path, "A", role="content")  # wrong role!
+
+    tmpl = parse_template(_template_with_archive_ref("C", "A"))
+    with pytest.raises(
+        TemplateError,
+        match=r"role='content' but the template's archive_ref block requires role='reference'",
+    ):
+        load_pools(db_session, tmpl)

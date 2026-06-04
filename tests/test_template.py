@@ -427,11 +427,17 @@ def test_prev_ref_block_empty_fallback_genre_rejected():
         parse_template(bad)
 
 
-def test_position_on_non_prev_ref_strategy_rejected():
+def test_position_on_non_position_bearing_strategy_rejected():
+    """§16.14.t6: position is required by prev_ref + archive_ref;
+    forbidden for every other strategy. Error message lists both
+    valid strategies in sorted order."""
     bad = {**BASE, "layout": {**BASE["layout"], "row_template": [
         {"source": "A", "strategy": "window", "size": 3, "position": 100},
     ]}}
-    with pytest.raises(TemplateError, match=r"only valid when strategy in \['prev_ref'\]"):
+    with pytest.raises(
+        TemplateError,
+        match=r"only valid when strategy in \['archive_ref', 'prev_ref'\]",
+    ):
         parse_template(bad)
 
 
@@ -1007,3 +1013,166 @@ def test_every_bundled_station_parses_under_t9_grammar():
             raise AssertionError(
                 f"bundled station {path} failed t9-grammar parse: {e}"
             )
+
+
+# ---------- §16.14.t6 — archive_ref grammar -----------------------------
+#
+# BASE declares two sources: 'A' (content) and 'B' (reference). archive_ref
+# blocks require role=reference, so they reference 'B'. The existing
+# §14.35 cross-check (only-content-sources-in-layout) is what t6
+# extends — these tests pin both the happy path AND the strategy-
+# aware role rejections.
+
+
+def test_archive_ref_block_with_position_accepted():
+    """Happy path: archive_ref + reference source + position parses."""
+    tmpl = parse_template({**BASE, "layout": {**BASE["layout"], "row_template": [
+        {"source": "B", "strategy": "archive_ref", "size": 1, "position": 1},
+    ]}})
+    b = tmpl.layout.row_template[0]
+    assert (b.source, b.strategy, b.position) == ("B", "archive_ref", 1)
+    # archive_ref has no fallback_genre concept (D5).
+    assert b.fallback_genre is None
+
+
+def test_archive_ref_block_missing_position_rejected():
+    """position is required for archive_ref (D2) — same contract as
+    prev_ref. Shares the parser's `required_for={"prev_ref",
+    "archive_ref"}` set."""
+    bad = {**BASE, "layout": {**BASE["layout"], "row_template": [
+        {"source": "B", "strategy": "archive_ref", "size": 1},
+    ]}}
+    with pytest.raises(TemplateError, match="must specify position"):
+        parse_template(bad)
+
+
+def test_archive_ref_block_zero_position_rejected():
+    """1-indexed; 0 is below range."""
+    bad = {**BASE, "layout": {**BASE["layout"], "row_template": [
+        {"source": "B", "strategy": "archive_ref", "size": 1, "position": 0},
+    ]}}
+    with pytest.raises(TemplateError, match="position must be a positive integer"):
+        parse_template(bad)
+
+
+def test_archive_ref_block_negative_position_rejected():
+    bad = {**BASE, "layout": {**BASE["layout"], "row_template": [
+        {"source": "B", "strategy": "archive_ref", "size": 1, "position": -3},
+    ]}}
+    with pytest.raises(TemplateError, match="position must be a positive integer"):
+        parse_template(bad)
+
+
+def test_archive_ref_block_with_content_source_rejected():
+    """§16.14.t6 D3 — archive_ref REQUIRES role: reference. Pointing
+    at a content source fails parse with a message naming the
+    strategy + the required role, so the operator knows whether to
+    fix the strategy or the source declaration."""
+    bad = {**BASE, "layout": {**BASE["layout"], "row_template": [
+        {"source": "A", "strategy": "archive_ref", "size": 1, "position": 1},
+    ]}}
+    with pytest.raises(
+        TemplateError,
+        match=r"strategy 'archive_ref' requires role='reference'",
+    ):
+        parse_template(bad)
+
+
+def test_archive_ref_block_with_fallback_genre_rejected():
+    """archive_ref has no fallback (D5). fallback_genre stays
+    prev_ref-only; setting it on archive_ref fails with the
+    'only valid when strategy in ['prev_ref']' message."""
+    bad = {**BASE, "layout": {**BASE["layout"], "row_template": [
+        {"source": "B", "strategy": "archive_ref", "size": 1,
+         "position": 1, "fallback_genre": "Whatever"},
+    ]}}
+    with pytest.raises(
+        TemplateError,
+        match=r"fallback_genre is only valid when strategy in \['prev_ref'\]",
+    ):
+        parse_template(bad)
+
+
+def test_archive_ref_in_flat_slots_accepted():
+    """archive_ref doesn't need row-offset addressing (no cursor,
+    no row math); it's valid in flat_slots templates too — same
+    as prev_ref. The flat-form strategy-exclusion list (window +
+    pick) doesn't include archive_ref."""
+    tmpl = parse_template({
+        "station": "x", "cadence": "weekly", "rng": "off",
+        "sources": [
+            {"name": "A", "colour": "#111", "role": "content"},
+            {"name": "B", "colour": "#222", "role": "reference"},
+        ],
+        "cursor": {"base_advance_per_week": 0, "cycle_weeks": 1},
+        "layout": {
+            "unit": "slot",
+            "unit_labels": [],
+            "row_start_offsets": [],
+            "cursors_init": {},
+            "flat_slots": [
+                {"source": "B", "strategy": "archive_ref",
+                 "size": 1, "position": 1},
+            ],
+        },
+    })
+    assert tmpl.layout.flat_slots[0].strategy == "archive_ref"
+
+
+def test_archive_ref_size_greater_than_one_accepted():
+    """size > 1 reads consecutive positions starting at `position`
+    (P, P+1, P+2, ...). Parser doesn't constrain size."""
+    tmpl = parse_template({**BASE, "layout": {**BASE["layout"], "row_template": [
+        {"source": "B", "strategy": "archive_ref", "size": 4, "position": 1},
+    ]}})
+    b = tmpl.layout.row_template[0]
+    assert (b.size, b.position) == (4, 1)
+
+
+def test_reference_sampling_source_names_lists_archive_ref_sources():
+    """§16.14.t6: Template.reference_sampling_source_names returns
+    the deduplicated, sorted list of reference-role sources used
+    by archive_ref blocks. Drives load_pools' second pass."""
+    tmpl = parse_template({
+        **BASE,
+        "sources": [
+            {"name": "A", "colour": "#111", "role": "content"},
+            {"name": "B", "colour": "#222", "role": "reference"},
+            {"name": "C", "colour": "#333", "role": "reference"},
+        ],
+        "layout": {**BASE["layout"], "row_template": [
+            {"source": "A", "strategy": "window", "size": 1},
+            {"source": "C", "strategy": "archive_ref", "size": 1, "position": 1},
+            {"source": "B", "strategy": "archive_ref", "size": 1, "position": 2},
+            {"source": "C", "strategy": "archive_ref", "size": 1, "position": 3},
+        ]},
+    })
+    # Deduplicated + sorted; 'A' content source NOT included.
+    assert tmpl.reference_sampling_source_names == ["B", "C"]
+    # 'A' is in content_source_names; reference sources are NOT.
+    assert tmpl.content_source_names == ["A"]
+    assert "B" not in tmpl.content_source_names
+    assert "C" not in tmpl.content_source_names
+
+
+def test_reference_sampling_source_names_empty_when_no_archive_ref():
+    """The §14.35 dangerous-content-in-reference cross-check still
+    fires; a template with NO archive_ref blocks gets an empty
+    reference-sampling list."""
+    tmpl = parse_template(BASE)
+    assert tmpl.reference_sampling_source_names == []
+
+
+def test_content_block_pointing_at_reference_source_still_rejected():
+    """§14.35 contract preserved: content strategies (window, weighted,
+    etc.) still cannot reference reference-role sources. The t6
+    strategy-aware role check only relaxes for archive_ref."""
+    bad = {**BASE, "layout": {**BASE["layout"], "row_template": [
+        # weighted is a content sampler; 'B' is reference.
+        {"source": "B", "strategy": "weighted", "size": 1},
+    ]}}
+    with pytest.raises(
+        TemplateError,
+        match=r"only 'content' sources can be referenced by the layout",
+    ):
+        parse_template(bad)

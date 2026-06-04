@@ -17,29 +17,40 @@ from engine.template import Template, TemplateError
 
 
 def load_pools(db: Session, template) -> dict[str, list]:
-    """Load content source pools from the DB for the given template.
+    """Load source pools from the DB for the given template.
 
     Returns a dict mapping source name -> list of Track objects, ordered by
     their position within the source playlist.
 
+    Loads TWO categories of source (§16.14.t6 extension):
+
+    1. **Content sources** (``template.content_source_names``) — the
+       pools the content sampler draws from. Must be role='content'
+       in the DB; role='reference' raises ``TemplateError`` per the
+       §14.35 contract (the dangerous direction where the generator
+       would otherwise sample from a pool marked not-for-sampling).
+    2. **Reference-sampling sources** (§16.14.t6 —
+       ``template.reference_sampling_source_names``) — pools sampled
+       at fixed positions by ``archive_ref`` blocks. Must be
+       role='reference' in the DB; role='content' raises
+       ``TemplateError`` (the OPPOSITE direction — the operator
+       declared a reference-strategy pool but imported it as
+       content; either the strategy is wrong or the import is wrong).
+
     Uses joinedload to avoid an N+1 query (one per entry) when accessing
     track metadata.
 
-    Raises ValueError if a required content pool hasn't been imported.
-    Raises TemplateError (§14.35 cross-check) if a content-role template
-    source maps to a DB pool flagged `role='reference'` — the dangerous
-    direction where the engine would otherwise sample from a pool the
-    importer explicitly marked as not-for-sampling. The opposite
-    direction (template says reference, DB says content) is silently
-    OK: the template skips loading it, so the DB-side role is moot —
-    usually just config drift from a reimport.
+    Raises ValueError if any required pool hasn't been imported.
+    Raises TemplateError on either-direction role mismatch.
 
-    The two errors are deliberately different types: missing-pool is
+    The two error types are deliberately different: missing-pool is
     a setup problem (run the importer), role-mismatch is a config-
     consistency problem (fix the template OR re-import with the right
     role). Callers and the API error mapping can distinguish them.
     """
     pools: dict[str, list] = {}
+    # Content sources — the §14.35 cross-check direction (content-in-
+    # template, reference-in-DB → error).
     for src_name in template.content_source_names:
         sp = db.query(SourcePlaylist).filter_by(name=src_name).first()
         if sp is None:
@@ -51,6 +62,43 @@ def load_pools(db: Session, template) -> dict[str, list]:
                 f"the pool with role='content' (the generator would otherwise "
                 f"sample from a pool marked not-for-sampling) or fix the "
                 f"template's sources[] entry."
+            )
+        entries = (
+            db.query(SourcePlaylistEntry)
+            .options(joinedload(SourcePlaylistEntry.track))
+            .filter_by(source_playlist_id=sp.id)
+            .order_by(SourcePlaylistEntry.position)
+            .all()
+        )
+        pools[src_name] = [e.track for e in entries]
+    # §16.14.t6: reference-sampling sources (archive_ref). The
+    # opposite-direction role cross-check applies (template wants
+    # reference; DB must agree).
+    for src_name in template.reference_sampling_source_names:
+        if src_name in pools:
+            # Defensive: a future template that declared a source as
+            # BOTH content (in sources[]) and reference-sampled (by an
+            # archive_ref block) would mean the role check already
+            # passed for the content interpretation. Parse-time
+            # role-aware cross-check makes this impossible today (a
+            # source has ONE role + archive_ref REQUIRES reference),
+            # so this branch is unreachable; guard anyway so a future
+            # grammar change doesn't silently double-load.
+            continue
+        sp = db.query(SourcePlaylist).filter_by(name=src_name).first()
+        if sp is None:
+            raise ValueError(
+                f"reference source pool '{src_name}' not imported "
+                "(used by an archive_ref block; §16.14.t6)"
+            )
+        if sp.role != "reference":
+            raise TemplateError(
+                f"source pool '{src_name}' is imported with role="
+                f"'{sp.role}' but the template's archive_ref block "
+                "requires role='reference'. Re-import the pool with "
+                "role='reference' (it'll be deterministically read at "
+                "fixed positions, not sampled like a content pool), "
+                "or change the strategy to a content-sampling one."
             )
         entries = (
             db.query(SourcePlaylistEntry)

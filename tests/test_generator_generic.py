@@ -1554,3 +1554,108 @@ def test_flat_slots_weighted_populates_excluded_candidates():
     sample = next(iter(r.trace.slots[1].excluded))
     assert "artist key" in sample.reason or "artist keys" in sample.reason
     assert "in dedup window" in sample.reason
+
+
+# ---------- §16.14.t6 — archive_ref end-to-end --------------------------
+
+
+def _archive_ref_template(position: int, size: int = 1) -> dict:
+    """Template with one content slot + one archive_ref slot in
+    row_template. 'M' is the reference (archive) source."""
+    return mk_template(
+        sources=[
+            {"name": "A", "colour": "#111", "role": "content"},
+            {"name": "M", "colour": "#222", "role": "reference"},
+        ],
+        layout={
+            "unit": "day",
+            "unit_labels": ["Mon"],
+            "row_start_offsets": [0],
+            "row_template": [
+                {"source": "A", "strategy": "window", "size": 1},
+                {"source": "M", "strategy": "archive_ref",
+                 "size": size, "position": position},
+            ],
+        },
+    )
+
+
+def test_archive_ref_returns_track_at_position():
+    """End-to-end: archive_ref reads pool[position-1] (1-indexed) and
+    emits it as the slot's pick. Trace records the pool name +
+    position + the resolved track."""
+    t = parse_template(_archive_ref_template(position=2))
+    pools = {"A": mk_pool("A", 100), "M": mk_pool("M", 5)}
+    r = generate(t, pools, week=1)
+
+    # 2 slots: content window + archive_ref at position 2 of M.
+    assert len(r.picks) == 2
+    assert r.picks[1].name == "M0002"  # M's pool[1] (1-indexed: position 2)
+    # Trace shape: slot 2 carries archive_ref reason + pool_index.
+    slot2 = r.trace.slots[1]
+    assert slot2.strategy == "archive_ref"
+    assert slot2.source == "M"
+    assert slot2.pool_index == 2
+    assert "archive_ref from 'M' position 2" in slot2.reason
+
+
+def test_archive_ref_size_greater_than_one_reads_consecutive_positions():
+    """§16.14.t6 generator dispatch: size > 1 reads P, P+1, P+2,
+    ... NOT the same track size times. Operator's natural mental
+    model: 'fill 3 slots from position 2 of master.'"""
+    t = parse_template(_archive_ref_template(position=2, size=3))
+    pools = {"A": mk_pool("A", 100), "M": mk_pool("M", 5)}
+    r = generate(t, pools, week=1)
+
+    # 4 slots: 1 content + 3 archive_ref reading positions 2, 3, 4.
+    assert len(r.picks) == 4
+    assert r.picks[1].name == "M0002"
+    assert r.picks[2].name == "M0003"
+    assert r.picks[3].name == "M0004"
+    # Trace pool_index increments per consecutive position.
+    archive_slots = r.trace.slots[1:]
+    assert [s.pool_index for s in archive_slots] == [2, 3, 4]
+
+
+def test_archive_ref_position_beyond_pool_fails_loud():
+    """OOB at generation time → ValueError naming the row/block
+    + the underlying out-of-range message. The dispatch wraps
+    ArchiveRefPositionOutOfRangeError in ValueError to match the
+    prev_ref-OOB pattern (template error surfaces as a generation
+    failure)."""
+    t = parse_template(_archive_ref_template(position=99))
+    pools = {"A": mk_pool("A", 100), "M": mk_pool("M", 5)}
+    with pytest.raises(
+        ValueError,
+        match=r"template error in archive_ref slot.*position 99 out of range",
+    ):
+        generate(t, pools, week=1)
+
+
+def test_archive_ref_size_greater_than_one_partial_oob_fails_loud():
+    """size=3 starting at position 4 of a 5-track pool reads
+    positions 4, 5, 6 — position 6 OOB. The dispatch fails on
+    the first OOB position; any picks emitted before then aren't
+    saved (generate raises before returning)."""
+    t = parse_template(_archive_ref_template(position=4, size=3))
+    pools = {"A": mk_pool("A", 100), "M": mk_pool("M", 5)}
+    with pytest.raises(
+        ValueError,
+        match=r"position 6 out of range for source 'M'",
+    ):
+        generate(t, pools, week=1)
+
+
+def test_archive_ref_deterministic_across_weeks():
+    """Pure deterministic lookup: archive_ref returns the SAME
+    track every week regardless of week, seed, or any other
+    template state. That's the 'always play track 1 of master
+    at 9am Monday' contract."""
+    t = parse_template(_archive_ref_template(position=1))
+    pools = {"A": mk_pool("A", 100), "M": mk_pool("M", 10)}
+    picks_per_week = []
+    for week in range(1, 6):
+        r = generate(t, pools, week=week, seed=week)
+        picks_per_week.append(r.picks[1].name)
+    # All 5 weeks pick M0001 from the archive.
+    assert picks_per_week == ["M0001"] * 5

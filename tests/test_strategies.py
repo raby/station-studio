@@ -772,3 +772,98 @@ def test_prev_ref_mirror_empty_source_pool_falls_back():
     assert track is None
     assert failure is not None
     assert failure.kind == "not_in_source"
+
+
+# ---------- §16.14.t6 — archive_ref strategy ----------------------------
+
+
+from engine.strategies.archive_ref import (
+    apply_archive_ref, ArchiveRefPositionOutOfRangeError,
+)
+
+
+@dataclass
+class ArchiveTrack:
+    """Minimal track stand-in for archive_ref tests. The strategy
+    treats the pool as an opaque list; no field access needed beyond
+    the value passed through, so a single attribute suffices."""
+    id: int
+    name: str
+
+
+def _archive_pool() -> list[ArchiveTrack]:
+    return [
+        ArchiveTrack(id=1, name="A-1"),
+        ArchiveTrack(id=2, name="A-2"),
+        ArchiveTrack(id=3, name="A-3"),
+        ArchiveTrack(id=4, name="A-4"),
+    ]
+
+
+def test_archive_ref_returns_first_track_for_position_1():
+    """1-indexed contract: position 1 → pool[0]. Matches prev_ref's
+    convention so operators don't context-switch."""
+    pool = _archive_pool()
+    track = apply_archive_ref(pool, position=1, source_name="MASTER")
+    assert track is pool[0]
+
+
+def test_archive_ref_returns_last_track_for_position_len():
+    """Boundary: position == len(pool) → pool[-1], the last entry."""
+    pool = _archive_pool()
+    track = apply_archive_ref(pool, position=len(pool), source_name="MASTER")
+    assert track is pool[-1]
+
+
+def test_archive_ref_returns_middle_track_for_arbitrary_position():
+    pool = _archive_pool()
+    track = apply_archive_ref(pool, position=3, source_name="MASTER")
+    assert track is pool[2]
+
+
+def test_archive_ref_position_zero_raises():
+    """Position is 1-indexed; 0 is below range. Parser should
+    reject this earlier but the strategy guards too."""
+    pool = _archive_pool()
+    with pytest.raises(
+        ArchiveRefPositionOutOfRangeError,
+        match="position 0 out of range",
+    ):
+        apply_archive_ref(pool, position=0, source_name="MASTER")
+
+
+def test_archive_ref_position_beyond_pool_raises():
+    """Position > len(pool) → ArchiveRefPositionOutOfRangeError with
+    the pool name + actual length + valid range named in the message
+    so the operator can fix the template without grepping."""
+    pool = _archive_pool()
+    with pytest.raises(
+        ArchiveRefPositionOutOfRangeError,
+        match=r"position 99 out of range for source 'MASTER'.*pool has 4 tracks.*1\.\.4",
+    ):
+        apply_archive_ref(pool, position=99, source_name="MASTER")
+
+
+def test_archive_ref_negative_position_raises():
+    """Defensive: parser would reject this but strategy guards."""
+    pool = _archive_pool()
+    with pytest.raises(ArchiveRefPositionOutOfRangeError):
+        apply_archive_ref(pool, position=-1, source_name="MASTER")
+
+
+def test_archive_ref_empty_pool_raises_with_zero_length():
+    """Empty pool → any position is OOB; message names the
+    zero length so the operator sees the pool wasn't imported
+    (or was imported empty)."""
+    with pytest.raises(
+        ArchiveRefPositionOutOfRangeError,
+        match=r"pool has 0 tracks",
+    ):
+        apply_archive_ref([], position=1, source_name="EMPTY")
+
+
+def test_archive_ref_error_subclasses_index_error():
+    """ArchiveRefPositionOutOfRangeError is-a IndexError so catch-
+    everything callers (`except IndexError`) still trigger the
+    right path. Mirrors PrevRefPositionOutOfRangeError's contract."""
+    assert issubclass(ArchiveRefPositionOutOfRangeError, IndexError)

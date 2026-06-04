@@ -27,7 +27,18 @@ from engine.rules import (
 
 SUPPORTED_STRATEGIES = {
     "window", "pick", "sequential", "jingle", "mix", "weighted", "prev_ref",
+    "archive_ref",
 }
+
+# §16.14.t6: strategies that read from a `role: reference` source pool
+# instead of `role: content`. Drives the strategy-aware role cross-check
+# (parse_template's §14.35 extension) + load_pools' inclusion of the
+# referenced pool even when it's not in `content_source_names`.
+#
+# Today this is a single-strategy set; future reference-sampling
+# strategies (e.g. §16.14.t7 allowlist enforcement, when it lands)
+# join here.
+REFERENCE_SAMPLING_STRATEGIES = {"archive_ref"}
 # v1 had {"window", "pick"} only. `sequential` lands in §14.22 (§17 Phase B
 # first bit) as the Weekly-port generalisation: a slot that reads its start
 # position from a NAMED CURSOR (declared in layout.cursors_init) instead of
@@ -126,9 +137,12 @@ class BlockSpec:
     # 10 when absent. Sub-slice #13's Rule table will provide a station-
     # wide default; per-block `window` overrides it.
     window: int | None = None
-    # position is required for strategy='prev_ref' (§14.28); forbidden
-    # for any other strategy. 1-indexed slot lookup into the previous
-    # playlist for this station.
+    # position is required for strategy='prev_ref' (§14.28) and
+    # strategy='archive_ref' (§16.14.t6); forbidden for any other
+    # strategy. 1-indexed slot lookup — into the previous playlist
+    # for prev_ref, or into the reference source pool for
+    # archive_ref. Both strategies share the same 1-indexed
+    # convention so authoring transfers between them cleanly.
     position: int | None = None
     # fallback_genre is optional for strategy='prev_ref' (§14.28);
     # forbidden for any other strategy. When set, the mirror-miss
@@ -207,6 +221,26 @@ class Template:
     @property
     def content_source_names(self) -> list[str]:
         return [s.name for s in self.sources if s.role == "content"]
+
+    @property
+    def reference_sampling_source_names(self) -> list[str]:
+        """§16.14.t6 — names of `role: reference` sources sampled at
+        slot positions by reference-sampling strategies (today: just
+        ``archive_ref``; §16.14.t7 allowlist enforcement may join).
+
+        Distinct from ``content_source_names``: those drive the content
+        sampler's load path; THESE drive an additional load path for
+        reference pools that the engine reads at generation time
+        (deterministic position lookups, not weighted picks). The
+        ``load_pools`` extension in §16.14.t6 iterates both.
+
+        Returns sorted, deduplicated names so multiple archive_ref
+        blocks referencing the same pool resolve to one load call.
+        """
+        return sorted({
+            b.source for b in self.layout.all_blocks()
+            if b.strategy in REFERENCE_SAMPLING_STRATEGIES
+        })
 
     def source_by_name(self, name: str) -> SourceSpec:
         for s in self.sources:
@@ -326,11 +360,27 @@ def parse_template(raw: dict) -> Template:
                 f"strategy '{b.strategy}' not supported. Supported: {sorted(SUPPORTED_STRATEGIES)}"
             )
         src = tmpl.source_by_name(b.source)
-        if src.role != "content":
-            raise TemplateError(
-                f"block uses source '{b.source}' with role '{src.role}'; "
-                "only 'content' sources can be referenced by the layout"
-            )
+        # §16.14.t6 — strategy-aware role cross-check. Reference-
+        # sampling strategies (archive_ref today) REQUIRE
+        # role='reference'; every other strategy still requires
+        # role='content' (the §14.35 contract). The error messages
+        # diverge so the operator sees which way the mismatch goes.
+        if b.strategy in REFERENCE_SAMPLING_STRATEGIES:
+            if src.role != "reference":
+                raise TemplateError(
+                    f"block uses source '{b.source}' with role "
+                    f"'{src.role}'; strategy '{b.strategy}' requires "
+                    "role='reference' (it samples from a curated "
+                    "reference pool at a fixed position). Re-declare "
+                    "the source's role in the template's sources[] "
+                    "block, or pick a content-sampling strategy."
+                )
+        else:
+            if src.role != "content":
+                raise TemplateError(
+                    f"block uses source '{b.source}' with role '{src.role}'; "
+                    "only 'content' sources can be referenced by the layout"
+                )
 
     # §14.30 — cross-block cursor↔source consistency. Persistent cursors
     # advance against the pool of their referencing sequential block's
@@ -580,7 +630,7 @@ def _parse_layout(raw: dict, *, known_sources: set[str]) -> LayoutSpec:
                     f"and is only valid inside row_template. Use "
                     f"row_template instead, or pick a different "
                     f"strategy (sequential / jingle / mix / weighted "
-                    f"/ prev_ref)."
+                    f"/ prev_ref / archive_ref)."
                 )
 
     return LayoutSpec(
@@ -667,17 +717,22 @@ def _parse_block(
             f"block window must be a non-negative integer, got {v!r}"
         ),
     )
-    # §14.28 — prev_ref couplings:
-    #   `position`: required for prev_ref (1-indexed positive integer)
-    #   `fallback_genre`: optional for prev_ref; when set, must be a
-    #                     non-empty string (drives mix-fallback path)
+    # §14.28 + §16.14.t6 — position-bearing strategies:
+    #   prev_ref (§14.28): position required, fallback_genre optional
+    #   archive_ref (§16.14.t6): position required, NO fallback
+    # Both use 1-indexed positive integers; the validators are shared
+    # so the error message phrasing stays identical between
+    # strategies (operators who learn one transfer to the other).
     _require_strategy_field(
         strategy, "position", position,
-        required_for={"prev_ref"},
+        required_for={"prev_ref", "archive_ref"},
         validator=lambda v: v if (isinstance(v, int) and not isinstance(v, bool) and v >= 1) else _err(
             f"block position must be a positive integer (1-indexed), got {v!r}"
         ),
     )
+    # fallback_genre stays prev_ref-only — archive_ref has no fallback
+    # path (the reference pool is static + a missing pool fails loud
+    # at load_pools time per §16.14.t6 D5).
     _require_strategy_field(
         strategy, "fallback_genre", fallback_genre,
         required_for=set(),

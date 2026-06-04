@@ -13,9 +13,13 @@ from engine.strategies.weighted import (
 from engine.strategies.prev_ref import (
     try_prev_ref_mirror, PrevRefMirrorFailure, PrevRefPositionOutOfRangeError,
 )
+from engine.strategies.archive_ref import (
+    apply_archive_ref, ArchiveRefPositionOutOfRangeError,
+)
 
 __all__ = [
     "apply_window", "apply_pick", "apply_jingle", "apply_mix",
     "apply_weighted", "build_lookups", "WeightedLookups", "WeightedPickInfo",
     "try_prev_ref_mirror", "PrevRefMirrorFailure", "PrevRefPositionOutOfRangeError",
+    "apply_archive_ref", "ArchiveRefPositionOutOfRangeError",
 ]
