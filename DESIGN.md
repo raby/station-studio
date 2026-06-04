@@ -10067,20 +10067,78 @@ sweep, matching the §16.13.t1-t9 cadence).
   semantics need a small design pass. **Home: separate slice
   (~3-4 commits).** Trigger: §16.14.t5 ships (then this is
   the natural next step).
-* **§16.14.t9 — Declarative `rules:` block in template JSON.**
-  Per §16.14.t5 D8 (user's Q8 answer): t5 sets the
-  `cross_pool_dedup_sources` rule imperatively in
-  `scripts.seed_stations.seed_station` for the starter station
-  because adding a top-level `rules:` block to the template
-  JSON grammar is a separate concern from shipping the
-  rule-wiring itself. The long-term shape: templates declare
-  their rules in the JSON file. Then `seed_station` reads
-  `raw.get("rules", {})` and writes the rows; the Rules UI
-  (§16.5) reads + writes the same dict. **Marked must-have
-  follow-up by the user** — should land immediately after t5.
-  **Home: separate slice (~3 commits — template grammar +
-  parser support + seed_station wiring + tests).** Trigger:
-  §16.14.t5 ships (then this is queued next).
+* **§16.14.t9 — Declarative `rules:` block in template JSON. IN FLIGHT.**
+  Trigger fired (§16.14.t5 shipped; user explicitly asked for t9
+  as the next slice).
+
+  **Context.** §16.14.t5 D8 punted on adding a top-level `rules:`
+  key to template JSON for slice-size reasons; the starter
+  station's `cross_pool_dedup_sources` lives imperatively in
+  `engine.seeding._STATION_LIST_RULES`. t9 ships the grammar
+  + parser + seed_station wiring so templates declare their
+  rules in the JSON file alongside `sources`, `cursor`,
+  `layout`. Future Rules UI (§16.5) reads + writes the same
+  rows.
+
+  **Decisions (locked in the pre-c1 design talk):**
+
+  * **D1 — Block name: `rules:`** at template top level. Flat
+    dict of key → value. Matches the conceptual name; clean
+    against the existing top-level keys (`station`, `cadence`,
+    `rng`, `sources`, `cursor`, `layout`).
+  * **D2 — Value shape: type-inferred.** Parser looks up the
+    key in `RULE_DEFAULTS` first (int), then
+    `RULE_LIST_DEFAULTS` (list[str]). Both shapes accepted.
+    Unknown key → `TemplateError`. Mismatched value (e.g.
+    `artist_dedup_window: "fast"`) → `TemplateError`.
+  * **D3 — Validation at `parse_template()` time.** Bad key,
+    bad type, out-of-bounds int, comma in list entry — all
+    raise `TemplateError` BEFORE any DB activity. Most
+    user-friendly: errors surface when the operator edits the
+    JSON, not deep in `seed_station`. `engine.template` gains
+    a one-way dep on `engine.rules` (rules doesn't import
+    template, so no circular).
+  * **D4 — Conflict policy: only-set-if-absent (operator
+    wins).** `seed_station` writes the template's rule value
+    ONLY when no Rule row exists for `(station_id, key)`. API
+    customizations persist across re-seeds. To revert to the
+    template default, the operator `DELETE`s the rule via API;
+    the next `seed_station` writes the template value back.
+    Discoverability trade-off: `cat starter.json` shows the
+    FACTORY default, not necessarily the LIVE value — both are
+    documented in c3's docs page. Reverses the c2-review F1
+    flagged footgun (template wins) into "operator wins after
+    customization."
+  * **D5 — Scope: declared keys only.** `seed_station` touches
+    ONLY keys present in `rules:`. Keys not declared by the
+    template are left alone (no implicit deletion). Removing
+    a rule from the template doesn't nuke the existing row —
+    that's an explicit operator action.
+  * **D6 — `_STATION_LIST_RULES` kept as fallback, flipped to
+    only-set-if-absent.** Per the user's Q2 answer ("keep as
+    fallback"). The registry still applies for stations whose
+    template DOES NOT declare a `rules:` block, but now uses
+    the same only-set-if-absent semantics (uniform with D4 —
+    "operator wins" is a single property, not per-mechanism).
+    Starter migrates registry → template: its
+    `_STATION_LIST_RULES` entry is removed; the table stays
+    for forward use (e.g. host-specific defaults).
+  * **D7 — Editor metadata + sidecar: pass `rules:` through
+    opaquely.** The §16.2.1 metadata parser already ignores
+    unknown top-level keys (today's behavior); no work needed
+    in this slice. Future §16.5 Rules UI plumbs `rules:` into
+    the visualiser if it wants.
+  * **D8 — Scope: both int + list rules.** The grammar
+    supports both shapes; the starter migration only declares
+    `cross_pool_dedup_sources` (no int overrides), but future
+    templates can declare `artist_dedup_window: 15` or
+    `mix_exclusion_weeks: 25` in the same place.
+
+  **Shape:** c1 (parser grammar + parse-time validation +
+  tests), c2 (seed_station wiring + starter migration +
+  _STATION_LIST_RULES flip to only-set-if-absent + tests), c3
+  (stations/README.md docs + slice closeout) + 2 mid-slice
+  reviews + slice-review sweep. Standard cadence.
 * ~~**§16.14.t4 — Deeper jingle composition coverage.**~~
   **SHIPPED.** Trigger fired (user explicitly asked for t4).
   Single docs commit per the original framing — no bundled
