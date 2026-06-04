@@ -187,16 +187,129 @@ docker users delete BOTH files and restart `station-studio
 serve` — bootstrap re-seeds the original station and re-derives
 its sidecar from the bundled copy on next boot.
 
+### Cross-pool dedup with `cross_pool_dedup_sources` (§16.14.t5)
+
+The first real engine use of `role: reference`: name reference
+pools whose tracks the `weighted` strategy must exclude from
+its pick set. Hobbyist framing: "never play anything that's
+also in my MASTER_ARCHIVE."
+
+**The starter ships with the demo wired up.** When you run
+`station-studio serve` for the first time, the auto-import lands
+all three starter pools, AND the seeder writes:
+
+```text
+station = starter
+rule    = cross_pool_dedup_sources
+value   = ["REFERENCE_ARCHIVE"]
+```
+
+The starter's `REFERENCE_ARCHIVE` pool is 12 tracks: 9 archive-
+originals (the §16.14.t3 teaching tracks) plus 3 "content
+echoes" — byte-identical copies of `STARTER_CONTENT` entries
+at counters 1, 25, and 50 (start / middle / end of the content
+pool). Same Persistent ID in both XMLs → the importer's
+dedup-by-PID logic gives you a single `Track` row that lives in
+both `SourcePlaylist` rows.
+
+Result: generate week 1 on the starter and the 3 echoed PIDs
+NEVER appear in the playlist. The weighted strategy gets a
+49-then-47 effective pool (we drop 3 of 50 content tracks) and
+spreads the rest across the 147 weighted slots per the usual
+shuffle-bag + artist-dedup math.
+
+Verify with:
+
+```bash
+curl -X POST http://localhost:8001/api/stations/starter/generate \
+  -H "Content-Type: application/json" \
+  -d '{"week": 1}' | jq '[.entries[].track.persistent_id] |
+                          map(select(startswith("STCONT000000000001") or
+                                     . == "STCONT000000000019" or
+                                     . == "STCONT000000000032"))'
+```
+
+Output: `[]`. Without the rule, those 3 PIDs would land
+several times across the 147 weighted picks (shuffle-bag
+guarantees every track plays once per cycle).
+
+**How to opt out.** Imperative for now (D8) — the rule is set
+by `engine.seeding._STATION_LIST_RULES`. To turn it off:
+
+* **Dev clones:** edit `engine/seeding.py` and delete the
+  `"starter": {...}` entry from `_STATION_LIST_RULES`; restart
+  the server. The Rule row from a prior boot persists in the
+  DB, so also `DELETE /api/stations/starter/rules/cross_pool_dedup_sources`
+  via the API.
+* **Wheel/docker users:** the `_STATION_LIST_RULES` table
+  isn't user-editable today — the cleanest opt-out is to set
+  the rule to `[]` (explicit empty) via the API once it's
+  exposed. The CRUD endpoints for list rules ship with §16.5
+  (Rules UI slice). Until then, the rule is permanent for the
+  bundled starter on these install paths — see the "Why is
+  the opt-out so awkward?" note below.
+
+**How to add it to your own station.** Two paths today:
+
+1. **Imperative.** Register your station in
+   `engine.seeding._STATION_LIST_RULES`. Pattern:
+
+   ```python
+   _STATION_LIST_RULES = {
+       "starter": {"cross_pool_dedup_sources": ["REFERENCE_ARCHIVE"]},
+       "your-slug": {"cross_pool_dedup_sources": ["YOUR_REFERENCE_POOL"]},
+   }
+   ```
+
+   Each named pool must:
+   * be imported into the DB, AND
+   * have `role='reference'` on the `SourcePlaylist` row.
+
+   Both checks fail loud at generation time (HTTP 400) if you
+   skip them. The error message names which check failed.
+
+2. **Programmatic.** Call `set_rule_list_value` directly:
+
+   ```python
+   from engine.rules import set_rule_list_value
+   set_rule_list_value(
+       db, station_id=station.id,
+       key="cross_pool_dedup_sources",
+       value=["YOUR_REFERENCE_POOL"],
+   )
+   db.commit()
+   ```
+
+   Same fail-loud guards apply.
+
+**What the rule doesn't do today (deliberate punts).**
+
+* **Per-source semantics.** The exclusion set is a UNION across
+  every named pool. Listing two reference pools with overlapping
+  PIDs is fine but you can't say "exclude pool A from source X
+  but not source Y." If you need that, the watch-list has
+  `cross_pool_dedup_sources` as a per-block override in §16.14.t9.
+* **Window strategy.** Only `weighted` excludes today. `window`
+  (used by `prev_ref` fallbacks + some cursor-stateful templates)
+  is queued as §16.14.t8 — file an issue if you need it.
+* **Content-role sources.** D6 restricts the rule to reference
+  pools. Naming a content pool would footgun the operator (a
+  pool excluding itself starves the strategy). Loosening this
+  would need self-reference detection logic.
+
+**Why is the opt-out so awkward?** §16.14.t5 ships the engine
++ persistence wiring + the bundled demo; the polymorphic Rules
+UI (§16.5) is what makes list-rules user-editable from the
+browser. D8 in this slice's design pass made the trade explicit:
+imperative seeding now, declarative `rules:` block (§16.14.t9)
+next, full UI later.
+
 ### Forward-looking utilities (not shipped)
 
-The reference role's value scales as the engine grows. Three
-slices are queued in `DESIGN.md` (each with its own trigger):
+The reference role's value scales as the engine grows. Two
+more slices are queued in `DESIGN.md` (each with its own
+trigger):
 
-* **Cross-pool dedup (§16.14.t5)** — exclude tracks that
-  appear in a reference pool from the content sampler's pick
-  set (e.g. "never play anything already in my
-  MASTER_ARCHIVE"). Trigger: a hobbyist asks for "exclude
-  archive tracks from the rotation."
 * **Master-archive `prev_ref` (§16.14.t6)** — let `prev_ref`
   slots read from a curated reference pool instead of the
   previous week's generated playlist. Trigger: a real station-
@@ -206,7 +319,7 @@ slices are queued in `DESIGN.md` (each with its own trigger):
   treating it as a positive filter. Trigger: a hobbyist asks
   for the positive-filter pattern.
 
-None shipped today; if you're reading this and one of those
+Neither shipped today; if you're reading this and one of them
 landed, the slice that landed it should have rewritten this
 paragraph + removed the corresponding watch-list entry.
 
