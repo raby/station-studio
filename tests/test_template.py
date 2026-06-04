@@ -789,3 +789,172 @@ def test_row_template_unknown_strategy_still_rejected():
     }
     with pytest.raises(TemplateError, match="strategy 'bananatime' not supported"):
         parse_template(bad)
+
+
+# ---------- §16.14.t9 — rules: block grammar -----------------------------
+
+
+def test_template_without_rules_block_parses():
+    """No `rules:` key → both override dicts empty. Backward compat
+    with every pre-§16.14.t9 template (i.e. every template
+    currently in the repo)."""
+    tmpl = parse_template(BASE)
+    assert tmpl.rule_int_overrides == {}
+    assert tmpl.rule_list_overrides == {}
+
+
+def test_template_with_empty_rules_block_parses():
+    """`rules: {}` is the same as no `rules:` key."""
+    tmpl = parse_template({**BASE, "rules": {}})
+    assert tmpl.rule_int_overrides == {}
+    assert tmpl.rule_list_overrides == {}
+
+
+def test_template_rules_int_override_parses():
+    """An int rule from RULE_DEFAULTS lands in rule_int_overrides."""
+    tmpl = parse_template({
+        **BASE,
+        "rules": {"artist_dedup_window": 15},
+    })
+    assert tmpl.rule_int_overrides == {"artist_dedup_window": 15}
+    assert tmpl.rule_list_overrides == {}
+
+
+def test_template_rules_list_override_parses():
+    """A list rule from RULE_LIST_DEFAULTS lands in rule_list_overrides,
+    with whitespace stripped per entry."""
+    tmpl = parse_template({
+        **BASE,
+        "rules": {
+            "cross_pool_dedup_sources": ["  MASTER  ", "ARCHIVE"],
+        },
+    })
+    assert tmpl.rule_int_overrides == {}
+    assert tmpl.rule_list_overrides == {
+        "cross_pool_dedup_sources": ["MASTER", "ARCHIVE"],
+    }
+
+
+def test_template_rules_mixed_int_and_list_parses():
+    """Both kinds in the same block dispatch to the right dict."""
+    tmpl = parse_template({
+        **BASE,
+        "rules": {
+            "artist_dedup_window": 12,
+            "mix_exclusion_weeks": 30,
+            "cross_pool_dedup_sources": ["REF"],
+        },
+    })
+    assert tmpl.rule_int_overrides == {
+        "artist_dedup_window": 12,
+        "mix_exclusion_weeks": 30,
+    }
+    assert tmpl.rule_list_overrides == {"cross_pool_dedup_sources": ["REF"]}
+
+
+def test_template_rules_empty_list_value_parses():
+    """`[]` is a valid explicit "no exclusion" override."""
+    tmpl = parse_template({
+        **BASE,
+        "rules": {"cross_pool_dedup_sources": []},
+    })
+    assert tmpl.rule_list_overrides == {"cross_pool_dedup_sources": []}
+
+
+# ---- rejection paths ----
+
+
+def test_template_rules_unknown_key_rejected():
+    """Unknown key → TemplateError at parse time. Catches typos
+    before they reach seed_station."""
+    with pytest.raises(TemplateError, match="unknown rule key"):
+        parse_template({
+            **BASE,
+            "rules": {"artist_dedup_widnow": 15},  # typo
+        })
+
+
+def test_template_rules_non_dict_rejected():
+    """`rules: [...]` at the top level is a structural error."""
+    with pytest.raises(TemplateError, match="rules must be a dict"):
+        parse_template({**BASE, "rules": ["artist_dedup_window", 15]})
+
+
+def test_template_rules_int_with_string_value_rejected():
+    """String where an int rule expected."""
+    with pytest.raises(TemplateError, match="artist_dedup_window must be int"):
+        parse_template({
+            **BASE,
+            "rules": {"artist_dedup_window": "fast"},
+        })
+
+
+def test_template_rules_int_with_bool_value_rejected():
+    """Python booleans pass `isinstance(True, int)` — explicit reject
+    so `true` (which an operator might write meaning 'enabled')
+    doesn't sneak through as `1`."""
+    with pytest.raises(TemplateError, match="must be int"):
+        parse_template({
+            **BASE,
+            "rules": {"artist_dedup_window": True},
+        })
+
+
+def test_template_rules_int_negative_rejected():
+    with pytest.raises(TemplateError, match="non-negative"):
+        parse_template({
+            **BASE,
+            "rules": {"artist_dedup_window": -5},
+        })
+
+
+def test_template_rules_int_above_max_rejected():
+    """RULE_DEFAULTS["artist_dedup_window"].max_value is 1000."""
+    with pytest.raises(TemplateError, match="≤ 1000"):
+        parse_template({
+            **BASE,
+            "rules": {"artist_dedup_window": 5000},
+        })
+
+
+def test_template_rules_list_with_dict_value_rejected():
+    with pytest.raises(TemplateError, match="cross_pool_dedup_sources must be a list"):
+        parse_template({
+            **BASE,
+            "rules": {"cross_pool_dedup_sources": {"a": "b"}},
+        })
+
+
+def test_template_rules_list_with_non_string_entry_rejected():
+    with pytest.raises(TemplateError, match=r"cross_pool_dedup_sources\[1\] must be a string"):
+        parse_template({
+            **BASE,
+            "rules": {"cross_pool_dedup_sources": ["MASTER", 42]},
+        })
+
+
+def test_template_rules_list_empty_entry_rejected():
+    """Empty / whitespace-only entries are operator typos."""
+    with pytest.raises(TemplateError, match="non-empty string"):
+        parse_template({
+            **BASE,
+            "rules": {"cross_pool_dedup_sources": ["MASTER", "  "]},
+        })
+
+
+def test_template_rules_list_comma_in_entry_rejected():
+    """The on-disk format is comma-separated; entries with commas
+    would split silently on read. Reject at parse time."""
+    with pytest.raises(TemplateError, match="separator character"):
+        parse_template({
+            **BASE,
+            "rules": {"cross_pool_dedup_sources": ["Rare, Imports"]},
+        })
+
+
+def test_template_unknown_top_level_key_rejected_when_rule_singular():
+    """A misplaced `rule:` (singular) at template top level should
+    fail the strict-keys check, not be silently accepted as a typo
+    for `rules`."""
+    with pytest.raises(TemplateError, match=r"unknown keys.*'rule'"):
+        parse_template({**BASE, "rule": {"artist_dedup_window": 15}})

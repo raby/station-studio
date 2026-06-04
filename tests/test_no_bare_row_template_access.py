@@ -61,7 +61,9 @@ PATTERN = re.compile(r"\.layout\.row_template\b")
 ALLOWED_SITES: set[tuple[str, int]] = {
     # §14.32: Template.slots_per_week — sums BOTH layout forms (the
     # XOR is exploited correctly here; one branch contributes 0).
-    ("engine/template.py", 204),
+    # (Line moved 204 → 221 in §16.14.t9 c1 when the rules: block
+    # added 2 dataclass fields + a top-level import block.)
+    ("engine/template.py", 221),
     # §14.32: _iterate_slots — engine's slot-dispatch loop; the
     # `else` branch after `if layout.flat_slots:` is the row_template
     # dispatch and CORRECTLY reads row_template only.

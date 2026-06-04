@@ -13,6 +13,16 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+# §16.14.t9 D3: parse-time rule validation reads the registries.
+# Top-level import is fine — engine.rules doesn't import
+# engine.template (one-way dep), and engine.rules's transitive
+# costs (sqlalchemy.orm.Session + engine.models) are already paid
+# everywhere engine.template gets loaded.
+from engine.rules import (
+    InvalidRuleValueError, RULE_DEFAULTS, RULE_LIST_DEFAULTS,
+    UnknownRuleError, _LIST_SEPARATOR,
+)
+
 
 SUPPORTED_STRATEGIES = {
     "window", "pick", "sequential", "jingle", "mix", "weighted", "prev_ref",
@@ -183,6 +193,13 @@ class Template:
     cursor: CursorSpec
     layout: LayoutSpec
     raw: dict = field(repr=False)
+    # §16.14.t9: declarative rule overrides parsed from the
+    # template's `rules:` block. Empty dicts when the template
+    # has no `rules:` key OR an empty one. Split by type so
+    # seed_station can dispatch to the right accessor without
+    # re-resolving the value shape.
+    rule_int_overrides: dict[str, int] = field(default_factory=dict)
+    rule_list_overrides: dict[str, list[str]] = field(default_factory=dict)
 
     # --- convenience -------------------------------------------------------
 
@@ -253,7 +270,10 @@ def parse_template(raw: dict) -> Template:
         raw,
         {"station", "cadence", "rng", "sources", "cursor", "layout"},
         where="template",
-        optional={"name"},  # UI-only display name; ignored by the engine
+        optional={
+            "name",   # UI-only display name; ignored by the engine
+            "rules",  # §16.14.t9 declarative rule overrides
+        },
     )
 
     rng = raw["rng"]
@@ -268,6 +288,10 @@ def parse_template(raw: dict) -> Template:
     cursor = _parse_cursor(raw["cursor"])
     layout = _parse_layout(raw["layout"], known_sources=set(names))
 
+    # §16.14.t9 D3 — parse-time fail-loud rule validation. Two
+    # dispatchable dicts handed to seed_station.
+    rule_int_overrides, rule_list_overrides = _parse_rules(raw.get("rules"))
+
     tmpl = Template(
         station=raw["station"],
         cadence=raw["cadence"],
@@ -276,6 +300,8 @@ def parse_template(raw: dict) -> Template:
         cursor=cursor,
         layout=layout,
         raw=raw,
+        rule_int_overrides=rule_int_overrides,
+        rule_list_overrides=rule_list_overrides,
     )
 
     # Cross-field checks
@@ -337,6 +363,100 @@ def parse_template(raw: dict) -> Template:
             )
 
     return tmpl
+
+
+def _parse_rules(
+    raw: dict | None,
+) -> tuple[dict[str, int], dict[str, list[str]]]:
+    """§16.14.t9 — parse + validate the template's optional `rules:` block.
+
+    Returns ``(rule_int_overrides, rule_list_overrides)``. Both dicts
+    empty when ``raw`` is None or {}.
+
+    Validation (per D3, fail loud at parse time):
+
+      * ``rules`` must be a dict.
+      * Each key looked up in ``RULE_DEFAULTS`` (int) first, then
+        ``RULE_LIST_DEFAULTS`` (list[str]). Unknown key → TemplateError.
+      * Int rules: value must be int, non-negative, ≤ max_value (if set).
+        ``bool`` is rejected explicitly because Python's bool-is-int
+        would otherwise sneak ``True`` past an int check.
+      * List rules: value must be list. Each entry must be a non-empty
+        string. No commas in entries (the on-disk format is comma-
+        separated; entries with commas would split silently on read).
+
+    The validation mirrors ``engine.rules.set_rule_value`` +
+    ``set_rule_list_value`` — the accessors stay defense-in-depth for
+    callers that bypass parse_template (the API CRUD endpoints).
+    Duplicating the rules here keeps parse-time errors near the
+    operator's edit site.
+    """
+    if raw is None:
+        return {}, {}
+    if not isinstance(raw, dict):
+        raise TemplateError(
+            f"template.rules must be a dict, got {type(raw).__name__}"
+        )
+    int_overrides: dict[str, int] = {}
+    list_overrides: dict[str, list[str]] = {}
+    for key, value in raw.items():
+        if key in RULE_DEFAULTS:
+            defn = RULE_DEFAULTS[key]
+            # Reject bool explicitly — `isinstance(True, int)` is True,
+            # but a bool in a rule value is almost certainly an
+            # operator typo (e.g. wrote `true` meaning "enabled").
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise TemplateError(
+                    f"template.rules.{key} must be int, got "
+                    f"{type(value).__name__} ({value!r})"
+                )
+            if value < 0:
+                raise TemplateError(
+                    f"template.rules.{key} must be non-negative, "
+                    f"got {value}"
+                )
+            if defn.max_value is not None and value > defn.max_value:
+                raise TemplateError(
+                    f"template.rules.{key} must be ≤ {defn.max_value}, "
+                    f"got {value}"
+                )
+            int_overrides[key] = value
+        elif key in RULE_LIST_DEFAULTS:
+            if not isinstance(value, list):
+                raise TemplateError(
+                    f"template.rules.{key} must be a list, got "
+                    f"{type(value).__name__}"
+                )
+            cleaned: list[str] = []
+            for i, entry in enumerate(value):
+                if not isinstance(entry, str):
+                    raise TemplateError(
+                        f"template.rules.{key}[{i}] must be a string, "
+                        f"got {type(entry).__name__} ({entry!r})"
+                    )
+                stripped = entry.strip()
+                if not stripped:
+                    raise TemplateError(
+                        f"template.rules.{key}[{i}] must be a non-empty "
+                        f"string after stripping whitespace"
+                    )
+                if _LIST_SEPARATOR in stripped:
+                    raise TemplateError(
+                        f"template.rules.{key}[{i}] entry "
+                        f"{stripped!r} contains the separator character "
+                        f"{_LIST_SEPARATOR!r}; the on-disk format is "
+                        "comma-separated and can't escape commas. "
+                        "Rename the source pool."
+                    )
+                cleaned.append(stripped)
+            list_overrides[key] = cleaned
+        else:
+            known = sorted(set(RULE_DEFAULTS) | set(RULE_LIST_DEFAULTS))
+            raise TemplateError(
+                f"template.rules.{key}: unknown rule key. "
+                f"Known keys: {known}"
+            )
+    return int_overrides, list_overrides
 
 
 def _parse_source(raw: dict) -> SourceSpec:
