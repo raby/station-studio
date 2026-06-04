@@ -3,7 +3,7 @@
 Each strategy is a small module that, given a source pool and some parameters,
 emits tracks for a block. Strategies are pure: no DB, no side effects.
 """
-from engine.strategies.window import apply_window
+from engine.strategies.window import apply_window, WindowOutOfRangeError
 from engine.strategies.pick import apply_pick
 from engine.strategies.jingle import apply_jingle
 from engine.strategies.mix import apply_mix
@@ -18,7 +18,8 @@ from engine.strategies.archive_ref import (
 )
 
 __all__ = [
-    "apply_window", "apply_pick", "apply_jingle", "apply_mix",
+    "apply_window", "WindowOutOfRangeError",
+    "apply_pick", "apply_jingle", "apply_mix",
     "apply_weighted", "build_lookups", "WeightedLookups", "WeightedPickInfo",
     "try_prev_ref_mirror", "PrevRefMirrorFailure", "PrevRefPositionOutOfRangeError",
     "apply_archive_ref", "ArchiveRefPositionOutOfRangeError",

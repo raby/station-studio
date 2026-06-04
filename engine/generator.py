@@ -26,7 +26,8 @@ from typing import Any, Iterator, Mapping
 from engine.template import Template, BlockSpec
 from engine.trace import Trace, TraceSlot, ExcludedCandidate
 from engine.strategies import (
-    apply_window, apply_pick, apply_jingle, apply_mix,
+    apply_window, WindowOutOfRangeError,
+    apply_pick, apply_jingle, apply_mix,
     apply_weighted, build_lookups, WeightedLookups,
     try_prev_ref_mirror, PrevRefPositionOutOfRangeError,
     # §16.14.t6 — archive_ref: deterministic position lookup in a
@@ -34,10 +35,12 @@ from engine.strategies import (
     # but without the fallback path.
     apply_archive_ref, ArchiveRefPositionOutOfRangeError,
 )
-# §16.14.t8: sequential's empty-pool guard + cross-pool-dedup pre-check
-# both raise WindowOutOfRangeError (sequential reuses window's error
-# class — they share the "addressed-position invalid" semantic).
-from engine.strategies.window import WindowOutOfRangeError
+# §16.14.t8 c1-review F2: WindowOutOfRangeError now lives in the
+# strategies package __all__ (was a separate import line pre-fix;
+# consolidated for consistency with PrevRef/ArchiveRef error classes
+# which were already in the package re-exports). Used by the
+# sequential dispatch's inline cross-pool-dedup pre-check + the
+# empty-pool guard.
 
 
 # Engine-level fallback for the `weighted` strategy's artist-dedup

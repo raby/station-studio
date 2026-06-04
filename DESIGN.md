@@ -10211,10 +10211,20 @@ sweep, matching the §16.13.t1-t9 cadence).
   * **D7 — Trace shape:** the fail-loud paths (D3, D4, D5)
     raise BEFORE the slot's trace entry is appended — the
     exception IS the diagnostic + context (row + block + the
-    exclusion details). The pick(rng=on) D6 path populates
-    `excluded_candidates` on the slot (matches weighted's
-    pattern); each excluded track surfaces with reason
-    "in cross_pool_dedup_sources".
+    exclusion details). For pick(rng=on) the D6 path takes
+    the happy-path normally (filter + random pick) but does
+    NOT populate `excluded_candidates` (c1 review F1
+    correction: the original pre-c1 design pass committed to
+    populating them, matching weighted's pattern; reading the
+    actual call site clarified that the rejection reasons for
+    pick(rng=on) are UNIFORM ("in cross_pool_dedup_sources" —
+    same for every filtered-out track), whereas weighted has
+    DIFFERENT reasons per candidate (artist key, shuffle-bag).
+    Populating them for pick(rng=on) would surface N identical
+    rows of informational noise. Honest amendment: only
+    weighted populates ExcludedCandidate trace entries; the
+    other three strategies don't because their per-candidate
+    rejection rationale isn't informationally distinct.
   * **D8 — Generator dispatch wraps strategy exceptions** as
     `ValueError` with row+block context, matching how
     archive_ref (§16.14.t6) wraps `ArchiveRefPositionOutOfRangeError`

@@ -84,8 +84,10 @@ ALLOWED_SITES: set[tuple[str, int]] = {
     # cross-pool-dedup pre-check.)
     # 962 → 966 in t8 c1 when WindowOutOfRangeError moved to an
     # explicit module-level import for the sequential dispatch's
-    # raise site.
-    ("engine/generator.py", 966),
+    # raise site; 966 → 969 in t8 c1-review F2 when that import
+    # consolidated into the strategies-package re-exports + the
+    # explanatory comment expanded.
+    ("engine/generator.py", 969),
     # NOTE: `LayoutSpec.all_blocks` itself (engine/template.py:174)
     # uses `self.row_template` (no `.layout.` prefix; it's a method
     # ON LayoutSpec) and so doesn't match this lint pattern. That's
