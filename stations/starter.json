@@ -3,6 +3,9 @@
   "name": "Starter Station — 168 slots (hourly, Mon→Sun)",
   "cadence": "weekly",
   "rng": "on",
+  "rules": {
+    "cross_pool_dedup_sources": ["REFERENCE_ARCHIVE"]
+  },
   "sources": [
     { "name": "STARTER_CONTENT",    "colour": "#3a86ff", "role": "content"   },
     { "name": "STARTER_JINGLES",    "colour": "#fb8500", "role": "content"   },

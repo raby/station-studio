@@ -240,3 +240,264 @@ def test_scripts_shim_re_exports_canonical_names() -> None:
         assert getattr(shim, name) is getattr(canonical, name), (
             f"shim's {name!r} diverged from engine.seeding's"
         )
+
+
+# ---------- §16.14.t9 — declarative rules: block seeding -----------------
+
+
+def _template_with_rules(rules: dict | None = None) -> dict:
+    """Minimal template body, optionally carrying a rules: block."""
+    body = {
+        "station": "rb",
+        "cadence": "weekly",
+        "rng": "off",
+        "sources": [{"name": "A", "colour": "#aaa", "role": "content"}],
+        "cursor": {"base_advance_per_week": 10, "cycle_weeks": 4},
+        "layout": {
+            "unit": "day",
+            "unit_labels": ["Mon"],
+            "row_start_offsets": [0],
+            "row_template": [{"source": "A", "strategy": "window", "size": 3}],
+        },
+    }
+    if rules is not None:
+        body["rules"] = rules
+    return body
+
+
+def test_seed_station_writes_template_declared_int_rule(db, tmp_path):
+    """§16.14.t9 c2 happy path — int rule from `rules:` lands in
+    the DB. Summary's rules_applied counts the write."""
+    from engine.rules import get_rule_value
+
+    path = tmp_path / "t.json"
+    path.write_text(json.dumps(_template_with_rules({
+        "artist_dedup_window": 15,
+    })))
+
+    summary = seed_station(db, path)
+    db.commit()
+    station = db.query(Station).filter_by(slug="rb").one()
+    assert get_rule_value(
+        db, station_id=station.id, key="artist_dedup_window",
+    ) == 15
+    assert summary["rules_applied"] == 1
+
+
+def test_seed_station_writes_template_declared_list_rule(db, tmp_path):
+    """Same as the int case, but for a list rule."""
+    from engine.rules import get_rule_list_value
+
+    path = tmp_path / "t.json"
+    path.write_text(json.dumps(_template_with_rules({
+        "cross_pool_dedup_sources": ["REF"],
+    })))
+
+    summary = seed_station(db, path)
+    db.commit()
+    station = db.query(Station).filter_by(slug="rb").one()
+    assert get_rule_list_value(
+        db, station_id=station.id, key="cross_pool_dedup_sources",
+    ) == ["REF"]
+    assert summary["rules_applied"] == 1
+
+
+def test_seed_station_only_set_if_absent_for_int_rule(db, tmp_path):
+    """§16.14.t9 D4 — re-seeding doesn't overwrite an existing Rule
+    row. Simulates an operator's API edit by setting a different
+    value AFTER the first seed; the second seed leaves it alone
+    and rules_applied is 0."""
+    from engine.rules import get_rule_value, set_rule_value
+
+    path = tmp_path / "t.json"
+    path.write_text(json.dumps(_template_with_rules({
+        "artist_dedup_window": 15,
+    })))
+
+    seed_station(db, path)
+    db.commit()
+    station = db.query(Station).filter_by(slug="rb").one()
+    # Operator customises via API.
+    set_rule_value(
+        db, station_id=station.id, key="artist_dedup_window", value=25,
+    )
+    db.commit()
+
+    # Re-seed must NOT overwrite the customisation.
+    summary = seed_station(db, path)
+    db.commit()
+    assert get_rule_value(
+        db, station_id=station.id, key="artist_dedup_window",
+    ) == 25
+    assert summary["rules_applied"] == 0
+
+
+def test_seed_station_only_set_if_absent_for_list_rule(db, tmp_path):
+    """§16.14.t9 D4 — same operator-wins behaviour for list rules."""
+    from engine.rules import get_rule_list_value, set_rule_list_value
+
+    path = tmp_path / "t.json"
+    path.write_text(json.dumps(_template_with_rules({
+        "cross_pool_dedup_sources": ["REF_A"],
+    })))
+
+    seed_station(db, path)
+    db.commit()
+    station = db.query(Station).filter_by(slug="rb").one()
+    set_rule_list_value(
+        db, station_id=station.id, key="cross_pool_dedup_sources",
+        value=["REF_B", "REF_C"],
+    )
+    db.commit()
+
+    summary = seed_station(db, path)
+    db.commit()
+    assert get_rule_list_value(
+        db, station_id=station.id, key="cross_pool_dedup_sources",
+    ) == ["REF_B", "REF_C"]
+    assert summary["rules_applied"] == 0
+
+
+def test_seed_station_only_touches_declared_keys(db, tmp_path):
+    """§16.14.t9 D5 — keys NOT in the template's `rules:` block
+    are left alone. The operator's customisation for an undeclared
+    key survives unconditionally."""
+    from engine.rules import get_rule_value, set_rule_value
+
+    path = tmp_path / "t.json"
+    # Template declares ONLY artist_dedup_window.
+    path.write_text(json.dumps(_template_with_rules({
+        "artist_dedup_window": 15,
+    })))
+
+    seed_station(db, path)
+    db.commit()
+    station = db.query(Station).filter_by(slug="rb").one()
+    # Operator customises a DIFFERENT key not declared by the
+    # template. Re-seed must not touch it.
+    set_rule_value(
+        db, station_id=station.id, key="mix_exclusion_weeks", value=50,
+    )
+    db.commit()
+    seed_station(db, path)
+    db.commit()
+    assert get_rule_value(
+        db, station_id=station.id, key="mix_exclusion_weeks",
+    ) == 50
+
+
+def test_seed_station_template_wins_over_registry_for_same_key(db, tmp_path):
+    """§16.14.t9 D6 fallback — when both the registry and template
+    declare the same key, the template wins. The registry value
+    never gets written.
+
+    Synthetic registry mutation is the cleanest path: monkey-
+    patches `_STATION_LIST_RULES` to add an entry that conflicts
+    with the template's `rules:` block.
+    """
+    from engine.rules import get_rule_list_value
+    from engine import seeding
+
+    path = tmp_path / "t.json"
+    path.write_text(json.dumps(_template_with_rules({
+        "cross_pool_dedup_sources": ["FROM_TEMPLATE"],
+    })))
+
+    original = seeding._STATION_LIST_RULES
+    try:
+        seeding._STATION_LIST_RULES = {
+            "rb": {"cross_pool_dedup_sources": ["FROM_REGISTRY"]},
+        }
+        seed_station(db, path)
+        db.commit()
+    finally:
+        seeding._STATION_LIST_RULES = original
+
+    station = db.query(Station).filter_by(slug="rb").one()
+    assert get_rule_list_value(
+        db, station_id=station.id, key="cross_pool_dedup_sources",
+    ) == ["FROM_TEMPLATE"]
+
+
+def test_seed_station_registry_fallback_fills_undeclared_keys(db, tmp_path):
+    """§16.14.t9 D6 — registry entries for keys NOT declared in
+    the template DO get applied. Per D4 also only-set-if-absent."""
+    from engine.rules import get_rule_list_value
+    from engine import seeding
+
+    # Template has NO rules: block.
+    path = tmp_path / "t.json"
+    path.write_text(json.dumps(_template_with_rules()))
+
+    original = seeding._STATION_LIST_RULES
+    try:
+        seeding._STATION_LIST_RULES = {
+            "rb": {"cross_pool_dedup_sources": ["FROM_REGISTRY"]},
+        }
+        summary = seed_station(db, path)
+        db.commit()
+    finally:
+        seeding._STATION_LIST_RULES = original
+
+    station = db.query(Station).filter_by(slug="rb").one()
+    assert get_rule_list_value(
+        db, station_id=station.id, key="cross_pool_dedup_sources",
+    ) == ["FROM_REGISTRY"]
+    assert summary["rules_applied"] == 1
+
+
+def test_seed_station_rules_applied_counts_actual_writes(db, tmp_path):
+    """§16.14.t9 + the c2 review F3 / sweep S2 contract: the
+    summary's rules_applied is the count of Rule rows actually
+    written by THIS call (NOT a static count of declared keys).
+    Confirms the field's semantics for CLI consumers."""
+    from engine.rules import set_rule_value
+
+    path = tmp_path / "t.json"
+    path.write_text(json.dumps(_template_with_rules({
+        "artist_dedup_window": 15,
+        "mix_exclusion_weeks": 30,
+        "cross_pool_dedup_sources": ["REF"],
+    })))
+
+    # First seed: all 3 declared keys land.
+    first = seed_station(db, path)
+    db.commit()
+    assert first["rules_applied"] == 3
+
+    # Customise one of them; re-seed should write 0 (all 3 keys
+    # now have rows, none gets overwritten).
+    station = db.query(Station).filter_by(slug="rb").one()
+    set_rule_value(
+        db, station_id=station.id, key="artist_dedup_window", value=99,
+    )
+    db.commit()
+    second = seed_station(db, path)
+    db.commit()
+    assert second["rules_applied"] == 0
+
+
+def test_starter_template_declares_cross_pool_dedup_in_rules_block():
+    """§16.14.t9 c2 migration pin: the starter's
+    cross_pool_dedup_sources rule lives in the JSON's `rules:`
+    block (NOT in `_STATION_LIST_RULES` anymore). Catches a
+    future contributor who moves the rule back into the registry
+    by mistake."""
+    starter_json = REPO_ROOT / "stations" / "starter.json"
+    raw = json.loads(starter_json.read_text())
+    assert raw.get("rules") == {
+        "cross_pool_dedup_sources": ["REFERENCE_ARCHIVE"],
+    }
+
+
+def test_station_list_rules_no_longer_carries_starter():
+    """§16.14.t9 c2 D6 migration pin — _STATION_LIST_RULES should
+    not carry the starter entry (it's in the JSON now). The
+    registry stays as a forward-extension point, but the starter
+    is removed.
+
+    If this test breaks because someone re-added the starter to
+    the registry, they probably meant to amend the JSON instead.
+    """
+    from engine.seeding import _STATION_LIST_RULES
+    assert "starter" not in _STATION_LIST_RULES

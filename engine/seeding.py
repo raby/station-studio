@@ -33,8 +33,8 @@ from pathlib import Path
 from sqlalchemy.orm import Session
 
 from engine.database import make_engine, make_sessionmaker
-from engine.models import Base, Station
-from engine.rules import set_rule_list_value
+from engine.models import Base, Rule, Station
+from engine.rules import set_rule_list_value, set_rule_value
 
 
 logger = logging.getLogger(__name__)
@@ -65,50 +65,70 @@ def _resolve_stations_dir() -> Path:
 STATIONS_DIR = _REPO_STATIONS_DIR
 
 
-# §16.14.t5 c2 + D8: imperative list-rule seeding for bundled stations.
+# §16.14.t5 c2 + §16.14.t9 — imperative list-rule fallback registry.
 #
 # Keyed by station slug → dict of list-rule key → list of source pool
-# names. Applied by `seed_station` after the Station row is upserted,
-# wraps `engine.rules.set_rule_list_value` so the rule lands in the
-# DB alongside the template. The starter station's
-# `cross_pool_dedup_sources=["REFERENCE_ARCHIVE"]` is the demo for
-# §16.14.t5: combined with the 3 content-echo tracks in
-# `scripts/generate_starter_pools.py:build_reference_pool`, it makes
-# the weighted strategy skip those 3 PIDs from STARTER_CONTENT every
-# generation.
+# names. Applied by `seed_station` AFTER the template's own `rules:`
+# block; the template wins for keys declared in both, the registry
+# fills in for keys NOT declared by the template (D6 fallback).
 #
-# When §16.14.t9 (declarative `rules:` block in template JSON) lands,
-# this table moves into the JSON and this registry shrinks (or
-# disappears). For now D8 says imperative — keeps the slice small.
+# §16.14.t9 reasoning: templates declare their rules in the JSON
+# (the §16.14.t5 demo for the starter moved to
+# `stations/starter.json:rules`), so the registry is empty today.
+# It stays as a forward-extension point — e.g. host-specific
+# defaults that don't belong in the committed template JSON. If
+# no use case appears, a future slice can delete the table.
+#
+# Both the template-declared path AND this registry use
+# only-set-if-absent semantics (§16.14.t9 D4 + D6 uniformity):
+# the operator's API customisations persist across re-seeds. To
+# revert to the template default, DELETE the rule via API; the
+# next seed_station writes the template value back.
 _STATION_LIST_RULES: dict[str, dict[str, list[str]]] = {
-    "starter": {
-        "cross_pool_dedup_sources": ["REFERENCE_ARCHIVE"],
-    },
+    # Empty today (§16.14.t9 c2 migrated the starter's rule into
+    # stations/starter.json's `rules:` block). New entries land
+    # here only when a station can't carry the value in its
+    # committed template — extremely rare.
 }
+
+
+def _rule_row_exists(db: Session, *, station_id: int, key: str) -> bool:
+    """§16.14.t9 D4 helper: does a Rule row already exist for this
+    (station_id, key)?
+
+    seed_station consults this before writing template-declared or
+    registry-default rules so the operator's API edits persist
+    across re-seeds. The row's value isn't read — only its
+    presence determines whether seed_station writes the default.
+    """
+    return db.query(Rule).filter_by(
+        station_id=station_id, key=key,
+    ).first() is not None
 
 
 def seed_station(db: Session, path: Path) -> dict:
     """Load one station template from JSON and upsert it.
 
-    Also applies any imperative list-rule overrides registered in
-    `_STATION_LIST_RULES` for this station's slug (§16.14.t5 c2 +
-    D8). Idempotent: re-seeding writes the same rule values without
-    creating duplicate rows.
+    Also applies the template's declarative `rules:` block
+    (§16.14.t9) plus any `_STATION_LIST_RULES` registry fallback
+    for keys NOT declared by the template (D6). Both paths use
+    only-set-if-absent semantics (D4): the Rule row gets written
+    only when none exists for that (station_id, key). API
+    customisations persist across re-seeds. To revert a rule to
+    its template/registry default, DELETE it via API; the next
+    `seed_station` writes the default back.
 
-    **Re-seed overwrites user customisations (§16.14.t5 c2 review F1).**
-    The list-rule application is unconditional — if a future Rules UI
-    (§16.5) lets a user edit cross_pool_dedup_sources to a different
-    value, a subsequent `make seed-stations` re-run silently reverts
-    it to the registry default. Today this is theoretical (no list-
-    rule UI), but the §16.5 slice should revisit either:
-      - guard with "skip if Rule row already exists for the key", OR
-      - only apply on action=='created', OR
-      - move list-rules into the template JSON itself (§16.14.t9).
+    Precedence for a given key:
+      1. Existing Rule row (operator's API edit) — left untouched.
+      2. Template's `rules:` block (the "factory default" that
+         ships with the station).
+      3. `_STATION_LIST_RULES[slug]` (host-specific fallback when
+         the template doesn't declare the key).
 
     Returns a summary dict with slug, action
-    (created|updated|unchanged), slot_count, and
-    list_rules_applied — the count of list-rule keys upserted from
-    `_STATION_LIST_RULES` for this slug (0 when no registry entry).
+    (created|updated|unchanged), slot_count, and rules_applied —
+    the count of Rule rows actually written by THIS call (always 0
+    on a re-seed where every declared key already has a row).
     """
     with open(path) as f:
         raw = json.load(f)
@@ -132,25 +152,37 @@ def seed_station(db: Session, path: Path) -> dict:
     else:
         action = "unchanged"
 
-    # §16.14.t5 c2: apply imperative list-rule defaults. Flush before
-    # set_rule_list_value so the Station row's id is available for
-    # the rule FK; set_rule_list_value re-flushes after upsert.
-    list_rules = _STATION_LIST_RULES.get(slug, {})
-    list_rules_applied = 0
-    if list_rules:
+    # §16.14.t9: apply declarative rules from template + registry
+    # fallback. Template wins for keys declared in both; registry
+    # supplies keys absent from the template. Both use
+    # only-set-if-absent (D4 + D6).
+    registry_list = _STATION_LIST_RULES.get(slug, {})
+    # Template list-rules override registry entries for the same key.
+    effective_list = {**registry_list, **template.rule_list_overrides}
+    effective_int = dict(template.rule_int_overrides)
+
+    rules_applied = 0
+    if effective_int or effective_list:
         db.flush()
         station = db.query(Station).filter(Station.slug == slug).one()
-        for key, value in list_rules.items():
-            set_rule_list_value(
-                db, station_id=station.id, key=key, value=value,
-            )
-            list_rules_applied += 1
+        for key, value in effective_int.items():
+            if not _rule_row_exists(db, station_id=station.id, key=key):
+                set_rule_value(
+                    db, station_id=station.id, key=key, value=value,
+                )
+                rules_applied += 1
+        for key, value in effective_list.items():
+            if not _rule_row_exists(db, station_id=station.id, key=key):
+                set_rule_list_value(
+                    db, station_id=station.id, key=key, value=value,
+                )
+                rules_applied += 1
 
     return {
         "slug": slug,
         "action": action,
         "slot_count": template.slots_per_week(),
-        "list_rules_applied": list_rules_applied,
+        "rules_applied": rules_applied,
     }
 
 
@@ -208,14 +240,13 @@ def main(argv: list[str] | None = None) -> int:
         summaries = seed_all(db, paths)
 
     for s in summaries:
-        # §16.14.t5 slice-review S2: surface list_rules_applied so
-        # operators see when an imperative list-rule landed on an
-        # action='unchanged' station. Suffix is empty when no list
-        # rules apply — keeps the output clean for the common case.
-        list_rules = s.get("list_rules_applied", 0)
-        rules_suffix = (
-            f"  + {list_rules} list rule(s)" if list_rules else ""
-        )
+        # §16.14.t5 slice-review S2 + §16.14.t9: surface
+        # rules_applied so operators see when a template-declared
+        # OR registry-default rule landed. Suffix is empty when
+        # no rules wrote — keeps output clean for the common case
+        # (re-seeds where every declared key already has a row).
+        applied = s.get("rules_applied", 0)
+        rules_suffix = f"  + {applied} rule(s)" if applied else ""
         print(
             f"  {s['action']:<9}  {s['slug']:<30}  "
             f"{s['slot_count']:>6} slots/week{rules_suffix}"
