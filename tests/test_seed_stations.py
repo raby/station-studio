@@ -490,6 +490,69 @@ def test_starter_template_declares_cross_pool_dedup_in_rules_block():
     }
 
 
+def test_seed_station_api_delete_then_reseed_restores_template_default(db, tmp_path):
+    """§16.14.t9 c2 review F1: pin the operator's revert-to-default
+    flow. The seed_station docstring + design pass D4 both promise:
+    "To revert a rule to its template default, DELETE it via API;
+    the next seed_station writes the default back."
+
+    Sequence:
+      1. Seed (template writes value V1).
+      2. Operator customises to V2 via API (only-set-if-absent
+         leaves V2 alone on the next seed).
+      3. Operator API-DELETEs the rule (row removed).
+      4. Re-seed (row absent → V1 restored from template).
+
+    A regression that broke step 4 would silently strand the
+    operator with no clean way back to the factory default — and
+    no test caught it before.
+    """
+    from engine.rules import (
+        clear_rule_list, get_rule_list_value, set_rule_list_value,
+    )
+
+    path = tmp_path / "t.json"
+    path.write_text(json.dumps(_template_with_rules({
+        "cross_pool_dedup_sources": ["TEMPLATE_DEFAULT"],
+    })))
+
+    # 1. First seed writes the template's V1.
+    seed_station(db, path)
+    db.commit()
+    station = db.query(Station).filter_by(slug="rb").one()
+    assert get_rule_list_value(
+        db, station_id=station.id, key="cross_pool_dedup_sources",
+    ) == ["TEMPLATE_DEFAULT"]
+
+    # 2. Operator customises to V2.
+    set_rule_list_value(
+        db, station_id=station.id,
+        key="cross_pool_dedup_sources", value=["OPERATOR_CUSTOM"],
+    )
+    db.commit()
+    # Confirm only-set-if-absent leaves V2 alone on re-seed.
+    seed_station(db, path)
+    db.commit()
+    assert get_rule_list_value(
+        db, station_id=station.id, key="cross_pool_dedup_sources",
+    ) == ["OPERATOR_CUSTOM"]
+
+    # 3. Operator API-DELETEs the rule (clear_rule_list mirrors what
+    # the DELETE endpoint calls).
+    assert clear_rule_list(
+        db, station_id=station.id, key="cross_pool_dedup_sources",
+    ) is True
+    db.commit()
+
+    # 4. Re-seed restores V1 from the template.
+    summary = seed_station(db, path)
+    db.commit()
+    assert get_rule_list_value(
+        db, station_id=station.id, key="cross_pool_dedup_sources",
+    ) == ["TEMPLATE_DEFAULT"]
+    assert summary["rules_applied"] == 1
+
+
 def test_station_list_rules_no_longer_carries_starter():
     """§16.14.t9 c2 D6 migration pin — _STATION_LIST_RULES should
     not carry the starter entry (it's in the JSON now). The

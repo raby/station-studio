@@ -79,6 +79,18 @@ STATIONS_DIR = _REPO_STATIONS_DIR
 # defaults that don't belong in the committed template JSON. If
 # no use case appears, a future slice can delete the table.
 #
+# **List rules only (c2 review F2).** This registry intentionally
+# carries ONLY list rules (the type that survived from §16.14.t5's
+# original imperative path). Int rules MUST live in the template's
+# `rules:` block — adding an int-keyed entry here would crash
+# seed_station's set_rule_list_value call with an opaque "not a
+# list" error. If you have a need for host-specific int defaults,
+# either:
+#   - declare them in the template JSON, OR
+#   - generalise this registry to `dict[str, dict[str, int | list]]`
+#     and split the dispatch in seed_station (matches the parser's
+#     int/list separation; small refactor).
+#
 # Both the template-declared path AND this registry use
 # only-set-if-absent semantics (§16.14.t9 D4 + D6 uniformity):
 # the operator's API customisations persist across re-seeds. To
