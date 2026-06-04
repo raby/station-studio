@@ -79,6 +79,13 @@ EDITABLE_FIELDS_BY_STRATEGY: dict[str, set[str]] = {
     "mix": {"genre", "exclusion_window"},
     "weighted": {"window"},
     "prev_ref": {"position", "fallback_genre"},
+    # §16.14.t6: archive_ref shares prev_ref's `position` field
+    # (1-indexed). No `fallback_genre` — pure deterministic, no
+    # fallback. Caught by the editable-fields parity test on the
+    # backend ↔ frontend EDITABLE_FIELDS_BY_STRATEGY ↔
+    # EDITABLE_FIELDS pair (t8 c1 picked up this miss from the
+    # t6 sweep that only added the TS side).
+    "archive_ref": {"position"},
 }
 
 

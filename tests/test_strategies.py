@@ -867,3 +867,205 @@ def test_archive_ref_error_subclasses_index_error():
     everything callers (`except IndexError`) still trigger the
     right path. Mirrors PrevRefPositionOutOfRangeError's contract."""
     assert issubclass(ArchiveRefPositionOutOfRangeError, IndexError)
+
+
+# ---------- §16.14.t8 — window excluded_track_pids ----------------------
+
+
+@dataclass
+class _WindowTrack:
+    """Stand-in for engine.models.Track with the fields
+    apply_window's t8 check reads. CommercialTrack (used elsewhere
+    in this file) lacks persistent_id; we want explicit PIDs."""
+    id: int
+    name: str
+    persistent_id: str | None
+
+
+def _window_pool() -> list[_WindowTrack]:
+    return [
+        _WindowTrack(id=1, name="A1", persistent_id="PID0001"),
+        _WindowTrack(id=2, name="A2", persistent_id="PID0002"),
+        _WindowTrack(id=3, name="A3", persistent_id="PID0003"),
+        _WindowTrack(id=4, name="A4", persistent_id="PID0004"),
+        _WindowTrack(id=5, name="A5", persistent_id="PID0005"),
+    ]
+
+
+def test_window_no_exclusion_behaves_as_before():
+    """Backward-compat: no excluded_track_pids → existing behavior
+    (no t8 check fires)."""
+    pool = _window_pool()
+    picked = apply_window(pool, start=0, size=3, source_name="X")
+    assert [p[0] for p in picked] == [1, 2, 3]
+    assert [p[1].name for p in picked] == ["A1", "A2", "A3"]
+
+
+def test_window_empty_exclusion_set_behaves_as_before():
+    """Empty frozenset short-circuits cleanly — no false collisions."""
+    pool = _window_pool()
+    picked = apply_window(
+        pool, start=0, size=3, source_name="X",
+        excluded_track_pids=frozenset(),
+    )
+    assert len(picked) == 3
+
+
+def test_window_excluded_track_in_range_raises_at_first_hit():
+    """§16.14.t8 D3: fail-loud on the first addressed collision.
+    Window [0..2] with PID0001 excluded → raise immediately."""
+    pool = _window_pool()
+    with pytest.raises(
+        WindowOutOfRangeError,
+        match=r"window collided.*cross_pool_dedup_sources.*pool_index 1.*PID0001",
+    ):
+        apply_window(
+            pool, start=0, size=3, source_name="X",
+            excluded_track_pids=frozenset({"PID0001"}),
+        )
+
+
+def test_window_excluded_track_mid_range_raises_at_collision():
+    """Collision happens mid-window — error message names the
+    SPECIFIC offending position so the operator can fix without
+    grepping."""
+    pool = _window_pool()
+    with pytest.raises(
+        WindowOutOfRangeError,
+        match=r"pool_index 3.*PID0003",
+    ):
+        apply_window(
+            pool, start=0, size=4, source_name="X",
+            excluded_track_pids=frozenset({"PID0003"}),
+        )
+
+
+def test_window_excluded_track_outside_range_passes():
+    """If excluded PID is in the pool but NOT in the addressed
+    range [start, start+size), no collision. Operator's window
+    happens to miss the excluded track."""
+    pool = _window_pool()
+    picked = apply_window(
+        pool, start=0, size=2, source_name="X",
+        excluded_track_pids=frozenset({"PID0003", "PID0004", "PID0005"}),
+    )
+    assert len(picked) == 2  # PID0001 + PID0002, neither excluded
+
+
+def test_window_excluded_check_runs_after_oob_check():
+    """If the window is OOB AND would contain excluded tracks, the
+    OOB error fires first (the existing message — the operator's
+    pool is too small). The t8 check is reachable only when the
+    window is in-range."""
+    pool = _window_pool()
+    with pytest.raises(
+        WindowOutOfRangeError,
+        match=r"exceeds pool length 5",
+    ):
+        apply_window(
+            pool, start=3, size=10, source_name="X",
+            excluded_track_pids=frozenset({"PID0001"}),
+        )
+
+
+def test_window_tracks_without_persistent_id_pass_through():
+    """Defensive: pool tracks without `persistent_id` attribute
+    (e.g. legacy fixtures) get `None` from `getattr`. None won't
+    match any string PID in the set, so they pass."""
+    @dataclass
+    class _NoPid:
+        id: int
+        name: str
+
+    pool = [_NoPid(1, "A"), _NoPid(2, "B"), _NoPid(3, "C")]
+    picked = apply_window(
+        pool, start=0, size=3, source_name="X",
+        excluded_track_pids=frozenset({"PID0001"}),
+    )
+    assert len(picked) == 3
+
+
+# ---------- §16.14.t8 — pick excluded_track_pids ------------------------
+
+
+def test_pick_rng_none_no_exclusion_behaves_as_before():
+    pool = _window_pool()
+    idx, track, new_cursor = apply_pick(
+        pool, cursor=0, rng=None, source_name="X",
+    )
+    assert idx == 1
+    assert track.name == "A1"
+    assert new_cursor == 1
+
+
+def test_pick_rng_none_excluded_at_cursor_raises():
+    """§16.14.t8 D5: rng=None fails loud at the cursor position.
+    No skip-and-advance — explicit failure is the contract."""
+    pool = _window_pool()
+    with pytest.raises(
+        IndexError,
+        match=r"pick \(rng=None\) collided.*cursor 0.*PID0001",
+    ):
+        apply_pick(
+            pool, cursor=0, rng=None, source_name="X",
+            excluded_track_pids=frozenset({"PID0001"}),
+        )
+
+
+def test_pick_rng_none_excluded_at_different_cursor_passes():
+    """Exclusion only fires at the cursor's exact position; PID0003
+    excluded but cursor=0 → cursor's track is PID0001 → no
+    collision."""
+    pool = _window_pool()
+    idx, track, _ = apply_pick(
+        pool, cursor=0, rng=None, source_name="X",
+        excluded_track_pids=frozenset({"PID0003"}),
+    )
+    assert idx == 1
+    assert track.name == "A1"
+
+
+def test_pick_rng_on_no_exclusion_behaves_as_before():
+    """rng=on path with no exclusion: unchanged."""
+    pool = _window_pool()
+    rng = random.Random(42)
+    idx, track, new_cursor = apply_pick(
+        pool, cursor=99, rng=rng, source_name="X",
+    )
+    assert 1 <= idx <= 5
+    assert new_cursor == 99  # rng=on doesn't advance cursor
+
+
+def test_pick_rng_on_excluded_tracks_filtered_from_candidates():
+    """§16.14.t8 D6: rng=on pre-filters the pool — random pick
+    never returns an excluded track."""
+    pool = _window_pool()
+    rng = random.Random(42)
+    # Exclude 4 of 5 tracks — random pick MUST return the
+    # remaining one (PID0003 = A3).
+    for _ in range(20):
+        idx, track, _ = apply_pick(
+            pool, cursor=0, rng=rng, source_name="X",
+            excluded_track_pids=frozenset({
+                "PID0001", "PID0002", "PID0004", "PID0005",
+            }),
+        )
+        assert track.persistent_id == "PID0003"
+        assert idx == 3  # PID0003 is the 3rd entry, 1-indexed
+
+
+def test_pick_rng_on_all_excluded_raises_with_diagnostic():
+    """§16.14.t8 D6: rng=on filtered-pool-empty → fail loud with
+    a specific diagnostic naming pool size + the rule."""
+    pool = _window_pool()
+    rng = random.Random(42)
+    with pytest.raises(
+        IndexError,
+        match=r"pick \(rng=on\) found no non-excluded tracks.*all 5 pool tracks.*cross_pool_dedup_sources",
+    ):
+        apply_pick(
+            pool, cursor=0, rng=rng, source_name="X",
+            excluded_track_pids=frozenset({
+                "PID0001", "PID0002", "PID0003", "PID0004", "PID0005",
+            }),
+        )

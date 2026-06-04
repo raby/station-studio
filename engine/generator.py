@@ -34,6 +34,10 @@ from engine.strategies import (
     # but without the fallback path.
     apply_archive_ref, ArchiveRefPositionOutOfRangeError,
 )
+# §16.14.t8: sequential's empty-pool guard + cross-pool-dedup pre-check
+# both raise WindowOutOfRangeError (sequential reuses window's error
+# class — they share the "addressed-position invalid" semantic).
+from engine.strategies.window import WindowOutOfRangeError
 
 
 # Engine-level fallback for the `weighted` strategy's artist-dedup
@@ -380,11 +384,16 @@ def generate_stream(
     ):
         pool = pools[block.source]
         if block.strategy == "window":
+            # §16.14.t8 D3: window fails loud on any addressed
+            # collision with cross_pool_dedup_sources. apply_window
+            # checks each track in [start, start+size) and raises
+            # WindowOutOfRangeError on the first hit.
             picked = apply_window(
                 pool,
                 start=row_start_in_pool,
                 size=block.size,
                 source_name=block.source,
+                excluded_track_pids=excluded_track_pids,
             )
             reason_prefix = (
                 f"window size={block.size} from '{block.source}' "
@@ -443,6 +452,28 @@ def generate_stream(
                 )
                 for i in range(block.size)
             ]
+            # §16.14.t8 D4 — sequential fails loud on any addressed
+            # collision in the wrapped range. The check runs after
+            # `picked` is computed so the wrapped 1-indexed
+            # pool_index is already available for the diagnostic;
+            # any hit raises BEFORE the cursor offset advances or
+            # any slot's trace entry is appended (D7).
+            if excluded_track_pids:
+                for pool_idx_1based, t in picked:
+                    pid = getattr(t, "persistent_id", None)
+                    if pid in excluded_track_pids:
+                        raise WindowOutOfRangeError(
+                            f"source '{block.source}': sequential "
+                            f"(cursor='{block.cursor_id}') collided "
+                            f"with a track excluded by "
+                            f"cross_pool_dedup_sources (§16.14.t8) at "
+                            f"pool_index {pool_idx_1based} "
+                            f"(persistent_id={pid!r}). The rule's "
+                            "exclusion contract is absolute; either "
+                            "widen the pool, narrow "
+                            "cross_pool_dedup_sources, or shift the "
+                            "named cursor past the excluded track."
+                        )
             seq_offsets[block.cursor_id] = offset + block.size
             reason_prefix = (
                 f"sequential size={block.size} from '{block.source}' "
@@ -831,8 +862,15 @@ def generate_stream(
         elif block.strategy == "pick":
             cursor = row_start_in_pool
             for _ in range(block.size):
+                # §16.14.t8 D5/D6 — pick's exclusion semantics split
+                # by mode: rng=None fails loud at the cursor position
+                # (deterministic); rng=on pre-filters the pool +
+                # fails loud only if the filtered pool is empty
+                # (matches apply_weighted's pattern). apply_pick
+                # internalises the split.
                 pool_idx, track, cursor = apply_pick(
-                    pool, cursor=cursor, rng=rng, source_name=block.source
+                    pool, cursor=cursor, rng=rng, source_name=block.source,
+                    excluded_track_pids=excluded_track_pids,
                 )
                 slot_counter += 1
                 picks.append(track)

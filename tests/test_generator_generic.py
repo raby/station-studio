@@ -1720,3 +1720,175 @@ def test_archive_ref_and_prev_ref_coexist_in_same_template():
     # not shared state.
     assert r.trace.slots[1].pool_index == 3       # archive_ref: M[3]
     assert r.trace.slots[2].source == "A"          # prev_ref: from A
+
+
+# ---------- §16.14.t8 — cross-pool dedup for window/sequential/pick ----
+
+
+@dataclass
+class PidTrack:
+    """Track stand-in with persistent_id for t8's cross-pool dedup
+    checks. FakeTrack lacks pid; this is the augmented variant."""
+    id: int
+    name: str
+    persistent_id: str
+    artist: str | None = None
+    genre: str | None = None
+
+
+def _pid_pool(prefix: str, size: int) -> list[PidTrack]:
+    """Pool with `name` + `persistent_id` both keyed off the same
+    counter so tests can address tracks by either identity."""
+    return [
+        PidTrack(id=i, name=f"{prefix}{i:04d}",
+                 persistent_id=f"{prefix}PID{i:04d}")
+        for i in range(1, size + 1)
+    ]
+
+
+def test_window_t8_fail_loud_when_excluded_track_in_range():
+    """End-to-end: a window block whose addressed range contains
+    an excluded track raises through generate(). The dispatch
+    propagates apply_window's WindowOutOfRangeError as-is."""
+    t = parse_template(mk_template(
+        layout={
+            "unit": "day",
+            "unit_labels": ["Mon"],
+            "row_start_offsets": [0],
+            "row_template": [{"source": "A", "strategy": "window", "size": 3}],
+        },
+    ))
+    pool = _pid_pool("A", 5)
+    with pytest.raises(
+        IndexError,  # WindowOutOfRangeError is-a IndexError
+        match=r"window collided.*cross_pool_dedup_sources.*pool_index 2",
+    ):
+        generate(
+            t, {"A": pool}, week=1,
+            excluded_track_pids=frozenset({"APID0002"}),
+        )
+
+
+def test_window_t8_no_collision_passes_through():
+    """When the excluded set has PIDs but none collide with the
+    window's addressed range, generation succeeds normally."""
+    t = parse_template(mk_template(
+        layout={
+            "unit": "day",
+            "unit_labels": ["Mon"],
+            "row_start_offsets": [0],
+            "row_template": [{"source": "A", "strategy": "window", "size": 3}],
+        },
+    ))
+    pool = _pid_pool("A", 5)
+    r = generate(
+        t, {"A": pool}, week=1,
+        # Excluded PIDs exist in the pool but at positions 4-5
+        # (outside the window's [0..3) range).
+        excluded_track_pids=frozenset({"APID0004", "APID0005"}),
+    )
+    assert len(r.picks) == 3
+    assert [t.name for t in r.picks] == ["A0001", "A0002", "A0003"]
+
+
+def test_sequential_t8_fail_loud_when_excluded_track_in_wrapped_range():
+    """End-to-end: sequential's wrapped position lookup checks
+    each addressed track. Cursor starts at index 4 of a 5-track
+    pool, size=3 → positions 4, 0, 1 (wraps). Excluding pool[0]
+    (PID0001) causes the wrapped check at position 1 (1-indexed)
+    to raise."""
+    t = parse_template(mk_template(
+        sources=[{"name": "A", "colour": "#111", "role": "content"}],
+        cursor={"base_advance_per_week": 0, "cycle_weeks": 0},
+        layout={
+            "unit": "day",
+            "unit_labels": ["Mon"],
+            "row_start_offsets": [0],  # ignored for sequential
+            "cursors_init": {"C1": 4},
+            "row_template": [
+                {"source": "A", "strategy": "sequential",
+                 "size": 3, "cursor_id": "C1"},
+            ],
+        },
+    ))
+    pool = _pid_pool("A", 5)
+    with pytest.raises(
+        IndexError,
+        match=r"sequential.*cursor='C1'.*cross_pool_dedup_sources.*APID0001",
+    ):
+        generate(
+            t, {"A": pool}, week=1,
+            excluded_track_pids=frozenset({"APID0001"}),
+        )
+
+
+def test_sequential_t8_no_collision_passes_through():
+    """sequential block with exclusions outside the wrapped
+    addressed range generates normally."""
+    t = parse_template(mk_template(
+        sources=[{"name": "A", "colour": "#111", "role": "content"}],
+        cursor={"base_advance_per_week": 0, "cycle_weeks": 0},
+        layout={
+            "unit": "day",
+            "unit_labels": ["Mon"],
+            "row_start_offsets": [0],
+            "cursors_init": {"C1": 0},
+            "row_template": [
+                {"source": "A", "strategy": "sequential",
+                 "size": 2, "cursor_id": "C1"},
+            ],
+        },
+    ))
+    pool = _pid_pool("A", 10)
+    r = generate(
+        t, {"A": pool}, week=1,
+        # Exclusions all outside the [0..2) range.
+        excluded_track_pids=frozenset({"APID0005", "APID0010"}),
+    )
+    assert [t.name for t in r.picks] == ["A0001", "A0002"]
+
+
+def test_pick_t8_rng_none_fail_loud_at_cursor():
+    """End-to-end: pick(rng=None) checks pool[cursor]. Exclude
+    pool[0] (the row_start_in_pool default cursor) → raises."""
+    t = parse_template(mk_template(
+        layout={
+            "unit": "day",
+            "unit_labels": ["Mon"],
+            "row_start_offsets": [0],
+            "row_template": [{"source": "A", "strategy": "pick", "size": 1}],
+        },
+    ))
+    pool = _pid_pool("A", 5)
+    with pytest.raises(
+        IndexError,
+        match=r"pick \(rng=None\) collided.*cross_pool_dedup_sources.*APID0001",
+    ):
+        generate(
+            t, {"A": pool}, week=1,
+            excluded_track_pids=frozenset({"APID0001"}),
+        )
+
+
+def test_pick_t8_rng_on_pre_filters_pool():
+    """End-to-end: pick(rng=on) with exclusions filters the pool.
+    Excluding 4 of 5 tracks leaves a single candidate; every
+    pick returns that one track."""
+    t = parse_template(mk_template(
+        rng="on",
+        layout={
+            "unit": "day",
+            "unit_labels": ["Mon"],
+            "row_start_offsets": [0],
+            "row_template": [{"source": "A", "strategy": "pick", "size": 1}],
+        },
+    ))
+    pool = _pid_pool("A", 5)
+    r = generate(
+        t, {"A": pool}, week=1, seed=42,
+        excluded_track_pids=frozenset({
+            "APID0001", "APID0002", "APID0004", "APID0005",
+        }),
+    )
+    # Only APID0003 (= A0003) survived the filter.
+    assert r.picks[0].name == "A0003"

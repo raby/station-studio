@@ -78,8 +78,14 @@ ALLOWED_SITES: set[tuple[str, int]] = {
     # 878 → 920 in §16.14.t6 c1 when the archive_ref dispatch case
     # + the strategies-package import comment landed; 920 → 928 in
     # §16.14.t6 c1-review F1 when block.position's parser-guarantee
-    # assertion replaced the type:ignore.)
-    ("engine/generator.py", 928),
+    # assertion replaced the type:ignore; 928 → 962 in §16.14.t8 c1
+    # when window/pick/sequential dispatch cases gained the
+    # excluded_track_pids kwarg + comments + sequential's inline
+    # cross-pool-dedup pre-check.)
+    # 962 → 966 in t8 c1 when WindowOutOfRangeError moved to an
+    # explicit module-level import for the sequential dispatch's
+    # raise site.
+    ("engine/generator.py", 966),
     # NOTE: `LayoutSpec.all_blocks` itself (engine/template.py:174)
     # uses `self.row_template` (no `.layout.` prefix; it's a method
     # ON LayoutSpec) and so doesn't match this lint pattern. That's

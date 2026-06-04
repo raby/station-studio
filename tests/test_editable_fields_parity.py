@@ -77,9 +77,12 @@ def test_python_and_ts_editable_fields_match():
 
 def test_every_strategy_present_in_both():
     """No strategy missing from either side — covers the full engine
-    strategy set."""
+    strategy set. §16.14.t6 added `archive_ref` (TS side updated in
+    the t6 sweep; Python side updated in t8 c1 after the sweep
+    miss was caught by this very test)."""
     expected = {
-        "pick", "window", "sequential", "jingle", "mix", "weighted", "prev_ref",
+        "pick", "window", "sequential", "jingle", "mix", "weighted",
+        "prev_ref", "archive_ref",
     }
     assert set(EDITABLE_FIELDS_BY_STRATEGY) == expected
     assert set(_parse_ts_editable_fields()) == expected
@@ -102,6 +105,9 @@ def test_editable_fields_are_engine_accepted_optional_params():
         "mix": {"genre", "exclusion_window"},
         "weighted": {"window"},
         "prev_ref": {"position", "fallback_genre"},
+        # §16.14.t6: archive_ref shares prev_ref's `position`
+        # (required) field but NOT fallback_genre (no fallback path).
+        "archive_ref": {"position"},
     }
     for strategy, fields in EDITABLE_FIELDS_BY_STRATEGY.items():
         assert fields <= engine_accepts[strategy], (
