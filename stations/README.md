@@ -388,15 +388,65 @@ the DB. Each named pool must:
 Both checks fail loud at generation time (HTTP 400) — the error
 message names which check failed.
 
+#### Strategy coverage (§16.14.t8)
+
+The rule affects FOUR content-sampling strategies, with two
+different exclusion semantics depending on each strategy's
+determinism story:
+
+| Strategy | Mode | Exclusion semantic |
+|---|---|---|
+| `weighted` | always | Pre-filter candidate set; fail-loud if pool fully excluded |
+| `pick` | rng=on | Same as weighted: pre-filter pool; fail-loud if empty |
+| `pick` | rng=None | **Fail-loud at cursor position** — no skip-and-advance |
+| `window` | always | **Fail-loud if any track in `[start, start+size)` is excluded** |
+| `sequential` | always | **Fail-loud if any track in the wrapped position set is excluded** |
+
+The non-deterministic strategies (`weighted` and `pick rng=on`)
+sample from a candidate set — pre-filtering keeps them working
+as long as ANY non-excluded track survives. The deterministic
+positional strategies (`window`, `sequential`, `pick rng=None`)
+address tracks by position — the operator chose those positions
+explicitly, so an excluded track in the addressed range is a
+template-vs-rule conflict the engine surfaces immediately rather
+than silently violating the rule's "never play these tracks"
+promise.
+
+**Diagnostic.** Each fail-loud raise names the offending
+pool + 1-indexed position + persistent_id + three fix paths
+(widen pool, narrow rule, move the position past the excluded
+track). Example for window:
+
+```
+source 'STARTER_CONTENT': window collided with a track
+excluded by cross_pool_dedup_sources (§16.14.t8) at
+pool_index 12 (persistent_id='STCONT000000000012'). The
+rule's exclusion contract is absolute; either widen the
+pool, narrow cross_pool_dedup_sources, or move this
+window's start position past the excluded track.
+```
+
+**The Classics-style trade-off (honest disclosure).** Templates
+that use `window` for many slots (Rebirth Classics: ~2200 slots,
+contiguous window blocks across a single pool) become
+**incompatible** with `cross_pool_dedup_sources` for any
+exclusion set that touches the addressed range. A single
+excluded track at pool position 12 fails generation. The fix-
+paths above all require operator action (template redesign or
+rule narrowing). This is by design — the rule's promise is
+absolute, and silently skipping excluded tracks would violate it.
+
+If you're building a Classics-style station and want partial
+exclusion (skip-some-tracks-but-keep-going), the right shape
+is probably a custom strategy or a different rule. File an
+issue describing the use case.
+
 #### What the rule doesn't do today (deliberate punts)
 
 * **Per-source semantics.** The exclusion set is a UNION across
   every named pool. Listing two reference pools with overlapping
   PIDs is fine but you can't say "exclude pool A from source X
   but not source Y." If you need that, file an issue.
-* **Window strategy.** Only `weighted` excludes today. `window`
-  (used by `prev_ref` fallbacks + some cursor-stateful templates)
-  is queued as §16.14.t8 — file an issue if you need it.
 * **Content-role sources.** D6 restricts the rule to reference
   pools. Naming a content pool would footgun the operator (a
   pool excluding itself starves the strategy). Loosening this
