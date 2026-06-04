@@ -814,7 +814,26 @@ export interface ImportSummary {
   [extra: string]: unknown;
 }
 
-/** `GET /api/sources` — every imported pool with its current track count. */
+/** `GET /api/sources` — every imported pool with its current track count.
+ *
+ * §16.14.t11 c1 review F10: `SourcePlaylist` is GLOBAL (no
+ * `station_id` FK by design). The hobbyist model is "one music
+ * library on your machine, multiple stations as different
+ * configurations on top of it." Stations reference pools by
+ * NAME in their template's `sources[]` block; the cross-checks
+ * at `parse_template()` + `load_pools()` enforce role
+ * consistency, but pool names live in one shared namespace.
+ *
+ * Callers (e.g. <ListRuleRow>'s autocomplete) that want
+ * "station-relevant" pools either filter client-side OR rely
+ * on the engine's runtime cross-check at generation time. The
+ * autocomplete intentionally shows all reference pools — not
+ * just those declared in the current station's template —
+ * because the `cross_pool_dedup_sources` rule legitimately
+ * accepts pools the station doesn't formally declare (its
+ * whole purpose is "exclude tracks ALSO in this OTHER pool I
+ * don't sample from").
+ */
 export const listSources = (fetch_ = fetch): Promise<Source[]> =>
   fetch_('/api/sources').then((r) => json<Source[]>(r));
 

@@ -95,14 +95,25 @@
   }
 
   /** Push `name` onto the staged chip list. Idempotent: a chip
-   * already present is a no-op. */
+   * already present is a no-op.
+   *
+   * c1 review F5 — mirror the backend's comma rejection at
+   * input time. The on-disk format is comma-separated; entries
+   * with commas would 400 on Save. Catching it here gives the
+   * operator instant feedback instead of "type → Save → error
+   * → fix → re-Save." */
   function addChip(name: string) {
     const trimmed = name.trim();
     if (trimmed === '') return;
+    if (trimmed.includes(',')) {
+      error = `Source names can't contain commas (the on-disk separator). Rename the pool.`;
+      return;
+    }
     if (staged.includes(trimmed)) {
       inputText = '';
       return;
     }
+    error = null;
     staged = [...staged, trimmed];
     inputText = '';
   }
@@ -140,8 +151,33 @@
     }
   }
 
-  /** Reset = DELETE the Rule row (D2). The next GET will show the
-   * registry/template default with `is_override: false`. */
+  /** Reset = DELETE the Rule row (D2).
+   *
+   * **c1 review F1 — registry-vs-template default trap.** The
+   * design pass D2 said "next GET returns the registry/template
+   * default" assuming they're the same. They're NOT for list
+   * rules with template overrides. Example: the starter's
+   * `cross_pool_dedup_sources` ships as
+   * `rules: {cross_pool_dedup_sources: ["REFERENCE_ARCHIVE"]}`
+   * in stations/starter.json. After clicking Reset:
+   *
+   *   1. We DELETE the Rule row.
+   *   2. Next GET returns `[]` (the REGISTRY default from
+   *      `engine.rules.RULE_LIST_DEFAULTS`), NOT
+   *      `["REFERENCE_ARCHIVE"]` (the TEMPLATE default).
+   *   3. The template default reappears on the next
+   *      `seed_station` run (e.g. server restart) — the
+   *      only-set-if-absent logic in seed_station re-applies
+   *      the template's rules: block.
+   *
+   * So "Reset" really means "Clear my override" not "Restore
+   * the factory default." The button label is technically
+   * accurate for int rules (where registry and template
+   * defaults are usually the same) but misleading for list
+   * rules with template overrides. The engine-level fix
+   * (surfacing both defaults in the API response) defers to
+   * a future polish slice; until then, the placeholder hint
+   * near the button names the trap. */
   async function reset() {
     saving = true;
     error = null;
@@ -267,11 +303,26 @@
         data-testid="list-rule-reset"
         disabled={saving}
         on:click={reset}
+        aria-describedby="list-rule-reset-hint-{rule.key}"
       >
-        Reset to default
+        Clear override
       </button>
     {/if}
   </div>
+
+  {#if showReset}
+    <!--
+      §16.14.t11 c1 review F1: name the trap honestly.
+      "Reset" gives the REGISTRY default, not the template
+      default. Restart restores the template value via
+      only-set-if-absent. See ListRuleRow.svelte reset() docstring.
+    -->
+    <p id="list-rule-reset-hint-{rule.key}" class="reset-hint">
+      Removes the current value; restart the server (or
+      `make seed-stations`) to restore any template-declared
+      default for this rule.
+    </p>
+  {/if}
 
   {#if error}
     <p class="error" data-testid="list-rule-error">{error}</p>
@@ -425,6 +476,14 @@
   .error {
     color: crimson;
     font-size: 0.85rem;
+    margin: 0;
+  }
+  /* §16.14.t11 c1 review F1: hint named near the Clear-override
+   * button so the operator sees the registry-vs-template trap. */
+  .reset-hint {
+    color: #888;
+    font-size: 0.78rem;
+    font-style: italic;
     margin: 0;
   }
   .visually-hidden {

@@ -125,6 +125,19 @@ describe('<ListRuleRow>', () => {
     expect(screen.getAllByTestId('list-rule-chip')).toHaveLength(1);
   });
 
+  it('rejects a chip name containing a comma at input time (c1 review F5)', async () => {
+    // The backend would 400 with "separator character" because
+    // the on-disk format is comma-separated. Catching at input
+    // time gives the operator instant feedback.
+    render(ListRuleRow, { slug: 'rb', rule: listRule() });
+    const input = await screen.findByTestId('list-rule-input');
+    await fireEvent.input(input, { target: { value: 'Rare, Imports' } });
+    await fireEvent.keyDown(input, { key: 'Enter' });
+    // No chip added; error shown.
+    expect(screen.queryByTestId('list-rule-chip')).not.toBeInTheDocument();
+    expect(screen.getByTestId('list-rule-error')).toHaveTextContent(/comma/i);
+  });
+
   it('Backspace on an empty input deletes the last chip', async () => {
     const rule = listRule({ value: ['A', 'B'], is_override: true });
     render(ListRuleRow, { slug: 'rb', rule });

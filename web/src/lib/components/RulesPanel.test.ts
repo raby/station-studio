@@ -67,6 +67,11 @@ describe('<RulesPanel>', () => {
     getStationRulesMock.mockReset();
     setStationRuleMock.mockReset();
     clearStationRuleMock.mockReset();
+    // §16.14.t11 c1 review F9: re-apply the empty-array default
+    // after reset so any test that uses mockResolvedValueOnce
+    // doesn't leak state into the next test (the embedded
+    // <ListRuleRow> still fetches on mount; we want clean isolation).
+    listSourcesMock.mockReset().mockResolvedValue([]);
   });
 
   it('renders rows with default / override badges after load', async () => {
