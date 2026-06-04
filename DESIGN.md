@@ -10143,18 +10143,112 @@ sweep, matching the §16.13.t1-t9 cadence).
   (~2-3 commits).** Trigger: a hobbyist asks for the
   positive-filter pattern, OR §16.14.t5 ships and the inverse
   becomes the natural next step.
-* **§16.14.t8 — Extend cross-pool dedup to `window` strategy.**
-  Per §16.14.t5 D2 (user's Q2 answer): t5 ships rule-wiring for
-  `weighted` only this slice. `window` is the natural next
-  extension — same rule key (`cross_pool_dedup_sources`), same
-  exclusion semantics, applied at the `window` strategy's
-  pick step. Trickier than `weighted` because `window` picks
-  positionally (from the cursor + size), not from a candidate
-  set: the rule effectively makes window blocks SKIP
-  excluded tracks while still advancing the cursor — exact
-  semantics need a small design pass. **Home: separate slice
-  (~3-4 commits).** Trigger: §16.14.t5 ships (then this is
-  the natural next step).
+* **§16.14.t8 — Extend cross-pool dedup to `window` + `sequential`
+  + `pick` strategies. IN FLIGHT.**
+  Trigger fired (§16.14.t5 shipped + closed the t5-D2 punt's
+  promissory note; user explicitly asked for t8 as the next
+  slice after §16.14.t6 closed).
+
+  **Context.** §16.14.t5 D2 shipped `cross_pool_dedup_sources`
+  rule-wiring for the `weighted` strategy only. The positional
+  strategies (`window`, `sequential`, `pick`) need their own
+  dispatch paths because they don't sample from a candidate
+  set — they address tracks by deterministic position (window:
+  pool slice; sequential: cursor-driven wrap; pick rng=None:
+  cursor advance; pick rng=on: random over pool). t8 closes
+  the t5-D2 punt by extending the rule to all four positional
+  strategies, with semantics tailored to each.
+
+  **Decisions (locked in the pre-c1 design talk):**
+
+  * **D1 — Reuse t5's rule + load helper.** `cross_pool_dedup_sources`
+    rule key, `engine.persistence.load_excluded_track_pids`
+    helper, `excluded_track_pids: frozenset[str]` threading
+    through `generate()` + `generate_stream()` — all already
+    wired in t5. No parser changes; no new rule registration.
+  * **D2 — Strategy signatures gain `excluded_track_pids:
+    frozenset[str] | set[str] | None = None`** mirroring the
+    `apply_weighted` extension t5 c1 shipped. Generator passes
+    through; `None`/empty is a no-op (the pre-t8 contract).
+  * **D3 — `apply_window`: fail-loud on any addressed
+    collision.** If any track in `[start, start+size)` has a
+    `persistent_id` in `excluded_track_pids`, raise
+    `WindowOutOfRangeError` with a t8-specific diagnostic
+    naming the pool, the offending pool index, and the
+    excluded track's persistent_id. Operators see exactly
+    which addressed position collided. They fix by adding
+    pool tracks, narrowing the rule, or redesigning the
+    layout. The fail-loud contract matches t5's spirit
+    (D5/D6 fail loud on rule misconfiguration); for window
+    blocks, the analogous "configuration error" is "your
+    template's deterministic positions collide with the
+    exclusion."
+  * **D4 — `apply_sequential` (dispatch-level, no dedicated
+    strategy module today): fail-loud on any addressed
+    collision in the wrapped range.** The addressed positions
+    are `{(seq_start + offset + i) % pool_len for i in
+    range(size)}`. Same fail-loud semantic + diagnostic shape
+    as window; the only difference is the wrapped index
+    arithmetic in the error message.
+  * **D5 — `apply_pick` (rng=None): fail-loud at the cursor
+    position.** If `pool[cursor].persistent_id` is in the
+    exclusion set, raise. Cursor doesn't advance past
+    excluded tracks — the "skip and walk forward" semantic
+    was the rejected option; explicit failure is the chosen
+    contract.
+  * **D6 — `apply_pick` (rng=on): pre-filter + fail-if-empty.**
+    The non-deterministic-pick case doesn't have a
+    "deterministic addressed position" to collide. The
+    addressed range IS the whole pool. So we apply the
+    `apply_weighted`-style pattern: filter the pool to non-
+    excluded tracks BEFORE the random pick; raise if the
+    filtered pool is empty. Asymmetric with D3/D4/D5 but
+    consistent with the underlying determinism story
+    (deterministic strategies fail on addressed collision;
+    random strategies fail only when no valid choice exists).
+    Documented openly in the strategy module's docstring +
+    the c2 docs.
+  * **D7 — Trace shape:** the fail-loud paths (D3, D4, D5)
+    raise BEFORE the slot's trace entry is appended — the
+    exception IS the diagnostic + context (row + block + the
+    exclusion details). The pick(rng=on) D6 path populates
+    `excluded_candidates` on the slot (matches weighted's
+    pattern); each excluded track surfaces with reason
+    "in cross_pool_dedup_sources".
+  * **D8 — Generator dispatch wraps strategy exceptions** as
+    `ValueError` with row+block context, matching how
+    archive_ref (§16.14.t6) wraps `ArchiveRefPositionOutOfRangeError`
+    and how prev_ref wraps `PrevRefPositionOutOfRangeError`.
+  * **D9 — No parser/template changes.** The rule + grammar
+    + load helper + cross-check are all t5/t9 work. t8 is
+    pure strategy + dispatch + tests.
+
+  **Honest trade-off the user accepted (pre-c1 design talk):**
+  Fail-loud across positional strategies means a Classics-
+  style template (window-only, ~2200 slots) becomes
+  incompatible with `cross_pool_dedup_sources` for any
+  non-empty exclusion set that touches the addressed range.
+  The operator either accepts the layout-vs-rule conflict OR
+  redesigns. The alternative (silent skip-and-advance) was
+  rejected because the user prefers explicit failures over
+  invisible behavior. Documented in c2 docs as a deliberate
+  punt.
+
+  **Shape:** c1 (engine — `excluded_track_pids` kwarg on
+  apply_window + apply_pick; dispatch wiring for window,
+  sequential, pick; tests across strategy unit + integration),
+  c2 (stations/README.md docs update — extend the §16.14.t5
+  cross-pool dedup section to cover all four positional
+  strategies + name the fail-loud trade-off; DESIGN closeout),
+  + 2 mid-slice reviews + slice-review sweep. ~5-6 commits
+  total (vs t6's ~5 — comparable).
+
+  **Closes:** the §16.14.t5 D2 punt + the §16.14.t5 c3 docs'
+  named "Window strategy" punt under "What the rule doesn't
+  do today." Reference-role pools' first engine use
+  (cross-pool dedup) now covers the four content-sampling
+  strategies (window + sequential + pick + weighted),
+  symmetrically.
 * **§16.14.t10 — CRUD endpoint extension for list rules. SHIPPED.**
   Trigger fired (§16.14.t9 shipped; t10 was queued must-have at
   t9 c3 closeout to close the §16.14.t5 c2-review F1 footgun).
