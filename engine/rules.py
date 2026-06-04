@@ -409,13 +409,18 @@ RULE_LIST_DEFAULTS: dict[str, ListRuleDefault] = {
     "cross_pool_dedup_sources": ListRuleDefault(
         value=[],
         description=(
-            "§16.14.t5: list of source pool names whose tracks the "
-            "weighted strategy excludes from its pick set. Each named "
-            "pool must be imported with role=reference (cross-checked "
-            "at generation time via engine.persistence."
+            "§16.14.t5 (+ §16.14.t8 extension): list of source pool "
+            "names whose tracks the content-sampling strategies "
+            "exclude from their pick set. Each named pool must be "
+            "imported with role=reference (cross-checked at "
+            "generation time via engine.persistence."
             "load_excluded_track_pids). Empty list = no exclusion. "
-            "Used today by `weighted` only; `window` extension is "
-            "queued as §16.14.t8."
+            "Covers ALL four content-sampling strategies: weighted "
+            "+ pick(rng=on) pre-filter the candidate set (fail "
+            "if filtered pool empty); window + sequential + "
+            "pick(rng=None) fail-loud at the addressed position. "
+            "See stations/README.md's 'Strategy coverage' section "
+            "for the per-strategy semantics."
         ),
     ),
 }
