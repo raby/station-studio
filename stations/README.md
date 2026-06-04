@@ -413,24 +413,128 @@ message names which check failed.
   surface both defaults in the API response; deferred to a
   future polish slice if it bites enough operators.
 
+### Position-based archive lookup with `archive_ref` (§16.14.t6)
+
+The second engine use of `role: reference`: pick a track
+at a FIXED position from a reference pool. Hobbyist framing:
+"always play track 1 of MASTER_ARCHIVE at 9am Monday." The
+`sequential` strategy almost expresses this but ALWAYS
+advances via named cursors, so a fixed-position read isn't
+directly representable. `archive_ref` is that fixed-position
+read.
+
+**The shape.** A new strategy alongside `prev_ref`,
+`weighted`, `mix`, etc. Block fields:
+
+```json
+{
+  "source": "MASTER_ARCHIVE",
+  "strategy": "archive_ref",
+  "position": 1,
+  "size": 1
+}
+```
+
+* `source` — must be a `role: reference` pool (parser cross-
+  checks this). The bundled starter's `REFERENCE_ARCHIVE`
+  qualifies but isn't sampled by the starter template;
+  see "Try it yourself" below.
+* `position` — 1-indexed slot in the pool. Same convention
+  as `prev_ref` so authoring transfers cleanly.
+* `size` — `1` is the common case ("one specific track"). For
+  `size > 1`, reads CONSECUTIVE positions starting at
+  `position` (P, P+1, P+2, ...). Natural for "fill 4 slots
+  with master positions 1–4."
+
+**Semantics.** Pure deterministic lookup. No fallback path
+(unlike `prev_ref`'s soft fallback). Failure modes are
+template bugs that fail loud:
+
+* Source pool not imported → HTTP 400 at generation time
+  with `ValueError: reference source pool '...' not
+  imported (used by an archive_ref block; §16.14.t6)`.
+* Source pool imported with wrong role → HTTP 400 with
+  `TemplateError: source pool '...' is imported with
+  role='content' but the template's archive_ref block
+  requires role='reference'`. Re-import with the right
+  role, or change the block's strategy.
+* Position OOB → HTTP 400 with
+  `template error in archive_ref slot (row R, block B):
+  archive_ref position N out of range for source 'X' (pool
+  has K tracks; valid 1-indexed positions are 1..K)`. The
+  operator can fix the template without grepping.
+
+**Try it yourself on the starter.** The starter doesn't
+ship an `archive_ref` slot (the demo would force a 169th
+slot + cascade through pinned tests), but you can add one
+quickly:
+
+1. Open `stations/starter.json`.
+2. In `flat_slots`, replace ANY slot with:
+
+   ```json
+   { "source": "REFERENCE_ARCHIVE", "strategy": "archive_ref",
+     "position": 1, "size": 1 }
+   ```
+
+3. Restart `station-studio serve`.
+4. Generate week 1 and inspect the trace at the changed
+   position. The slot's `track` will be the first archive
+   pool entry; the `reason` will read `archive_ref from
+   'REFERENCE_ARCHIVE' position 1`.
+
+If you want consecutive positions, set `size` to N — the slot
+expands into N picks reading positions `position`,
+`position+1`, …, `position+N-1`.
+
+**Combining with `prev_ref`.** Both strategies share the
+1-indexed `position` field convention, so authoring transfers.
+A template can use both: a `prev_ref` block somewhere
+(reading last week's playlist with a soft fallback) and an
+`archive_ref` block somewhere else (deterministically reading
+a curated pool). The strategies are independent — neither
+shares state with the other.
+
+**When to use which.**
+
+* `archive_ref` — when the content at this slot is FIXED week
+  over week (station ID at the top of the hour, opener
+  tracks, recurring imaging).
+* `prev_ref` — when the content at this slot MIRRORS something
+  that varied last week (matching last week's slot N to
+  preserve cadence; falling back if the mirror misses).
+* `sequential` — when the content at this slot ADVANCES via
+  a per-week cursor (the rest of weekly Music's structure).
+
+**What `archive_ref` doesn't do today (deliberate punts).**
+
+* **No fallback path.** Source pool missing / wrong role /
+  position OOB all fail loud. The operator declared a
+  deterministic position; gracefully degrading would hide
+  the template bug.
+* **No `prev_ref`-style filter.** `archive_ref` reads
+  whatever's at the position, no "is this track also in
+  source X?" check. `prev_ref`'s `source`-as-filter
+  semantic is content-pool-flavoured; `archive_ref` doesn't
+  apply because the source IS the reference pool.
+* **No `archive_ref` in the bundled starter station.**
+  Adding a slot to `starter.json` would break the 168-slot
+  pin + every starter test. The "try it yourself" recipe
+  above is the intended UX for now.
+
 ### Forward-looking utilities (not shipped)
 
-The reference role's value scales as the engine grows. Two
-more slices are queued in `DESIGN.md` (each with its own
-trigger):
+The reference role's value scales as the engine grows. One
+more slice is queued in `DESIGN.md`:
 
-* **Master-archive `prev_ref` (§16.14.t6)** — let `prev_ref`
-  slots read from a curated reference pool instead of the
-  previous week's generated playlist. Trigger: a real station-
-  template author asks for the master-archive read pattern.
 * **Allowlist enforcement (§16.14.t7)** — restrict the content
   sampler to tracks that ALSO appear in a reference pool,
   treating it as a positive filter. Trigger: a hobbyist asks
   for the positive-filter pattern.
 
-Neither shipped today; if you're reading this and one of them
-landed, the slice that landed it should have rewritten this
-paragraph + removed the corresponding watch-list entry.
+Not shipped today; if you're reading this and it landed, the
+slice that landed it should have rewritten this paragraph +
+removed the corresponding watch-list entry.
 
 ## Deeper jingle composition
 
