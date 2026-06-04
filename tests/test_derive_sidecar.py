@@ -333,3 +333,33 @@ def test_derive_sidecar_layout_order_matches_sections():
     sidecar = derive_sidecar(template)
     section_ids = [s["id"] for s in sidecar["sections"]]
     assert sidecar["layout_order"] == section_ids
+
+
+# ---------- §16.14.t9 — D7 pass-through regression --------------------
+
+
+def test_derive_sidecar_passes_through_rules_block_opaquely():
+    """§16.14.t9 D7 + c1 review F4: derive_sidecar reads only
+    `layout` + `sources` from the template. A template with a
+    `rules:` block must derive a sidecar identical to the same
+    template WITHOUT the block.
+
+    Pins the contract so a future change to derive_sidecar (or
+    validate_sidecar) that starts touching top-level keys can't
+    silently regress on rules-bearing templates (i.e. the c2
+    starter migration).
+    """
+    base = _flat_template([
+        {"strategy": "jingle", "genre": "Daytime"},
+        {"source": "X", "strategy": "weighted", "size": 1},
+        {"source": "X", "strategy": "weighted", "size": 1},
+        {"source": "X", "strategy": "weighted", "size": 1},
+    ])
+    with_rules = {
+        **base,
+        "rules": {
+            "artist_dedup_window": 12,
+            "cross_pool_dedup_sources": ["ARCHIVE"],
+        },
+    }
+    assert derive_sidecar(with_rules) == derive_sidecar(base)

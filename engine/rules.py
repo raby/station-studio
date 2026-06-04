@@ -259,7 +259,7 @@ def get_all_rules(db: Session, *, station_id: int) -> list[dict[str, Any]]:
 # slice (§16.5) lands, this is the registry to plumb into it.
 
 
-_LIST_SEPARATOR = ","
+LIST_SEPARATOR = ","
 
 
 @dataclass(frozen=True)
@@ -313,7 +313,7 @@ def get_rule_list_value(
         raw = row.value or ""
         if not raw.strip():
             return []
-        return [s.strip() for s in raw.split(_LIST_SEPARATOR) if s.strip()]
+        return [s.strip() for s in raw.split(LIST_SEPARATOR) if s.strip()]
     # Return a copy so callers can't mutate the registry default.
     return list(RULE_LIST_DEFAULTS[key].value)
 
@@ -334,14 +334,14 @@ def set_rule_list_value(
         raise UnknownRuleError(f"unknown list-rule key: {key!r}")
     cleaned = [s.strip() for s in value if s and s.strip()]
     for entry in cleaned:
-        if _LIST_SEPARATOR in entry:
+        if LIST_SEPARATOR in entry:
             raise InvalidRuleValueError(
                 f"list-rule {key!r} entry {entry!r} contains the "
-                f"separator character {_LIST_SEPARATOR!r}; source pool "
+                f"separator character {LIST_SEPARATOR!r}; source pool "
                 "names with commas aren't supported by the on-disk "
                 "format. Rename the pool."
             )
-    encoded = _LIST_SEPARATOR.join(cleaned)
+    encoded = LIST_SEPARATOR.join(cleaned)
     row = (
         db.query(Rule)
         .filter(Rule.station_id == station_id, Rule.key == key)

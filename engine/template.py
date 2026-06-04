@@ -20,7 +20,7 @@ from pathlib import Path
 # everywhere engine.template gets loaded.
 from engine.rules import (
     InvalidRuleValueError, RULE_DEFAULTS, RULE_LIST_DEFAULTS,
-    UnknownRuleError, _LIST_SEPARATOR,
+    UnknownRuleError, LIST_SEPARATOR,
 )
 
 
@@ -390,6 +390,13 @@ def _parse_rules(
     callers that bypass parse_template (the API CRUD endpoints).
     Duplicating the rules here keeps parse-time errors near the
     operator's edit site.
+
+    Parser-vs-accessor divergence (c1 review F5): the parser is
+    STRICTER on list-rule entries. ``set_rule_list_value`` silently
+    DROPS empty/whitespace-only entries (a tolerant accessor for
+    UI / API callers); ``_parse_rules`` REJECTS them. The parse-time
+    path treats empty entries as operator typos worth surfacing.
+    Keep that asymmetry — don't "fix" the accessor to match.
     """
     if raw is None:
         return {}, {}
@@ -440,11 +447,11 @@ def _parse_rules(
                         f"template.rules.{key}[{i}] must be a non-empty "
                         f"string after stripping whitespace"
                     )
-                if _LIST_SEPARATOR in stripped:
+                if LIST_SEPARATOR in stripped:
                     raise TemplateError(
                         f"template.rules.{key}[{i}] entry "
                         f"{stripped!r} contains the separator character "
-                        f"{_LIST_SEPARATOR!r}; the on-disk format is "
+                        f"{LIST_SEPARATOR!r}; the on-disk format is "
                         "comma-separated and can't escape commas. "
                         "Rename the source pool."
                     )
