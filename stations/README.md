@@ -317,33 +317,53 @@ or call the API:
 Bad shapes return HTTP 400 with the validator's message
 verbatim — operator typos surface where they happen.
 
-**Frontend status.** The `<RulesPanel>` at
-`/stations/{slug}/rules` renders int rules with the existing
-edit + save + reset UX (byte-identical to pre-§16.14.t10).
-List rules render as a **read-only chip-style placeholder**
-showing the joined value + factory default + a hint pointing
-at §16.14.t11. The placeholder is a deliberate t10 stop-
-gap; §16.14.t11 replaces it with a full chip-based editor
-(add/remove entries, source-pool autocomplete, "reset to
-default" button).
+**Frontend status (§16.14.t11).** The `<RulesPanel>` at
+`/stations/{slug}/rules` renders BOTH int and list rules:
+
+* **Int rules** keep the existing edit + save + reset UX
+  (byte-identical to pre-§16.14.t10).
+* **List rules** use the new chip editor (`<ListRuleRow>`).
+  Each value is a chip with a × remove button; an "Add"
+  input below lets the operator type a source pool name +
+  press Enter (or pick from the reference-pool autocomplete
+  suggestions). Save persists the new list; **Clear override**
+  (rendered only when an override exists) DELETEs the Rule
+  row.
+
+**"Clear override" vs "Restore template default" (§16.14.t11
+c1 review F1).** The chip editor's button is labelled
+**Clear override** — not "Reset to default" — because what
+it actually does is remove the Rule row from the DB. The
+operator's NEXT GET will return the **registry default**
+from `engine.rules.RULE_LIST_DEFAULTS` (today: `[]`), NOT
+the template-declared default from `stations/starter.json`.
+The template default reappears on the next `seed_station`
+run (server restart or `make seed-stations`), because the
+only-set-if-absent semantics re-apply the template's
+`rules:` block. A helper line under the button names this
+behaviour so the operator isn't surprised when the empty
+state shows briefly + the template value returns on restart.
 
 #### How to opt out of the starter's cross-pool dedup
 
-Two paths:
+Three paths in increasing permanence:
 
-* **Easy (post-§16.14.t10):** `DELETE
+* **Easy clickable (§16.14.t11):** open
+  `/stations/starter/rules`, find the
+  `cross_pool_dedup_sources` row, click **Clear override**.
+  Chips disappear, badge flips to "default." Caveat: the
+  next server restart re-seeds the template value — this
+  is the operator-wins / template-restart cycle. For
+  permanent removal also do the JSON edit below.
+* **API (programmatic):** `DELETE
   /api/stations/starter/rules/cross_pool_dedup_sources`.
-  Removes the Rule row; future generations don't exclude
-  anything. Note per operator-wins: re-seeding does NOT bring
-  the rule back automatically — the next `seed_station` sees
-  no row + writes the template value, restoring the demo. If
-  you want the rule permanently off, also edit the JSON
-  (next bullet).
-* **Permanent:** edit `stations/starter.json` and remove the
-  `rules:` block (or change `cross_pool_dedup_sources` to
-  `[]`). Combine with the API DELETE above to clear the live
-  row. After the next restart, the bootstrap auto-seed sees
-  an empty `rules:` block + no Rule row → demo stays off.
+  Same effect as the UI click.
+* **Permanent:** edit `stations/starter.json` and remove
+  the `rules:` block (or change `cross_pool_dedup_sources`
+  to `[]`). Combine with the UI click / API DELETE above
+  to clear the live row. After the next restart, the
+  bootstrap auto-seed sees an empty `rules:` block + no
+  Rule row → demo stays off.
 
 #### How to add the rule to your own station
 
@@ -381,14 +401,17 @@ message names which check failed.
   pools. Naming a content pool would footgun the operator (a
   pool excluding itself starves the strategy). Loosening this
   would need self-reference detection logic.
-* **Frontend `<ListRuleRow>` (§16.14.t11).** The `<RulesPanel>`
-  renders list rules as a read-only placeholder today
-  (§16.14.t10 c1 D7). The full chip-based editor with source-
-  pool autocomplete + per-entry remove + "reset to factory
-  default" ships next. Until then, the API surface is the
-  intended path for non-developer operators on a dev clone
-  — wheel/docker users need to wait for t11 for a clickable
-  edit affordance.
+* **Surfacing the template default separately from the
+  registry default (§16.14.t11 c1 review F1).** GET
+  `/api/stations/{slug}/rules` returns the registry default
+  in `default_value`. The template's `rules:` block (the
+  thing that auto-seeds on restart via only-set-if-absent)
+  is NOT separately exposed — operators have to read the
+  JSON file to see it. "Clear override" therefore drops to
+  the registry default in the UI even when the template
+  declared a richer factory default. Engine-side fix would
+  surface both defaults in the API response; deferred to a
+  future polish slice if it bites enough operators.
 
 ### Forward-looking utilities (not shipped)
 
