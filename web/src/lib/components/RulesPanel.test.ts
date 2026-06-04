@@ -42,6 +42,9 @@ import RulesPanel from './RulesPanel.svelte';
 function rule(over: Partial<Record<string, unknown>> = {}) {
   return {
     key: 'artist_dedup_window',
+    // §16.14.t10: backend now sends `kind` on every row; mock
+    // defaults to 'int' so existing int-rule tests stay valid.
+    kind: 'int',
     value: 3,
     default_value: 3,
     description: 'Artist dedup lookback window.',
@@ -202,5 +205,72 @@ describe('<RulesPanel>', () => {
     getStationRulesMock.mockRejectedValueOnce(new FakeApiError(404, 'station not found'));
     render(RulesPanel, { slug: 'ghost' });
     expect(await screen.findByTestId('rules-error')).toHaveTextContent('station not found');
+  });
+
+  // §16.14.t10 — list-rule placeholder branch
+
+  it('renders a read-only placeholder for list-rule rows (§16.14.t10 D7)', async () => {
+    getStationRulesMock.mockResolvedValueOnce({
+      rules: [
+        rule({
+          key: 'cross_pool_dedup_sources',
+          kind: 'list',
+          value: ['REFERENCE_ARCHIVE', 'B'],
+          default_value: [],
+          max_value: null,
+          is_override: true,
+          description: 'List of source pool names to exclude.',
+        }),
+      ],
+    });
+    render(RulesPanel, { slug: 'cls' });
+    const placeholder = await screen.findByTestId('rule-list-placeholder');
+    expect(placeholder).toBeInTheDocument();
+    // Renders the comma-joined value + the "(empty)" default hint.
+    expect(placeholder.textContent).toContain('REFERENCE_ARCHIVE, B');
+    expect(placeholder.textContent).toContain('(empty)');
+    // No int input or save button for list rows.
+    expect(screen.queryByTestId('rule-input')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('rule-save')).not.toBeInTheDocument();
+  });
+
+  it('renders "(empty)" when a list-rule value is the empty list', async () => {
+    getStationRulesMock.mockResolvedValueOnce({
+      rules: [
+        rule({
+          key: 'cross_pool_dedup_sources',
+          kind: 'list',
+          value: [],
+          default_value: [],
+          max_value: null,
+          is_override: false,
+          description: 'List of source pool names to exclude.',
+        }),
+      ],
+    });
+    render(RulesPanel, { slug: 'cls' });
+    const placeholder = await screen.findByTestId('rule-list-placeholder');
+    expect(placeholder.textContent).toContain('(empty)');
+  });
+
+  it('renders both int + list rows together (mixed registry response)', async () => {
+    getStationRulesMock.mockResolvedValueOnce({
+      rules: [
+        rule({ key: 'artist_dedup_window', kind: 'int', value: 10 }),
+        rule({
+          key: 'cross_pool_dedup_sources',
+          kind: 'list',
+          value: ['REF'],
+          default_value: [],
+          max_value: null,
+          is_override: true,
+        }),
+      ],
+    });
+    render(RulesPanel, { slug: 'cls' });
+    // Int row still has its input.
+    expect(await screen.findByTestId('rule-input')).toBeInTheDocument();
+    // List row has its placeholder.
+    expect(screen.getByTestId('rule-list-placeholder')).toBeInTheDocument();
   });
 });

@@ -412,23 +412,16 @@ def test_set_rule_list_value_is_idempotent_under_repeated_seed(session_factory):
         ) == ["MASTER"]
 
 
-def test_rules_crud_endpoint_does_not_surface_list_rules(session_factory):
-    """§16.14.t5 slice-review S4 — pin the §16.5 Rules UI contract.
+def test_rules_crud_endpoint_surfaces_list_rules_with_kind_discriminator(session_factory):
+    """§16.14.t10: list rules ARE surfaced by `get_all_rules` (the
+    GET /api/stations/{slug}/rules driver), tagged with
+    `kind: "list"` and carrying their value as a list[str].
 
-    `get_all_rules` (which drives GET /api/stations/{slug}/rules) is
-    INT-shaped — its response items carry `value: int` and the
-    contract is "only the integer-typed rules". List rules
-    (RULE_LIST_DEFAULTS) intentionally don't appear there today
-    (the c1 review F4 fix documents the gap; the §16.5 Rules UI
-    slice plumbs them in).
-
-    A regression where someone merges the registries by accident
-    would shove `"cross_pool_dedup_sources"` into a response with
-    `value=[...]` instead of `value=int`, breaking the API
-    response_model + every frontend caller. This test locks the
-    invisibility until §16.5 lands.
+    Replaces the §16.14.t5 slice-review S4 test that pinned the
+    OPPOSITE behavior (list rules invisible). t10 flips the
+    contract; this test pins the new shape.
     """
-    from engine.rules import RULE_DEFAULTS, get_all_rules
+    from engine.rules import RULE_DEFAULTS, RULE_LIST_DEFAULTS, get_all_rules
 
     station_id = _seed_station(session_factory)
     with session_factory() as db:
@@ -442,13 +435,21 @@ def test_rules_crud_endpoint_does_not_surface_list_rules(session_factory):
 
         rows = get_all_rules(db, station_id=station_id)
         keys = {r["key"] for r in rows}
-        # Only the int rules show up.
-        assert keys == set(RULE_DEFAULTS)
-        assert "cross_pool_dedup_sources" not in keys
-        # And every surfaced value is shaped int (the API
-        # response_model contract).
-        for r in rows:
-            assert isinstance(r["value"], int)
+        # D5: all int + list rules surface, alphabetically interleaved.
+        assert keys == set(RULE_DEFAULTS) | set(RULE_LIST_DEFAULTS)
+        assert "cross_pool_dedup_sources" in keys
+
+        by_key = {r["key"]: r for r in rows}
+        # D1: list rule rows are tagged kind="list".
+        assert by_key["cross_pool_dedup_sources"]["kind"] == "list"
+        # D2: list rule value is the JSON-native list[str].
+        assert by_key["cross_pool_dedup_sources"]["value"] == ["REF"]
+        assert isinstance(by_key["cross_pool_dedup_sources"]["value"], list)
+        # max_value is always None for list rules.
+        assert by_key["cross_pool_dedup_sources"]["max_value"] is None
+        # int rule rows keep their kind + numeric value shape.
+        assert by_key["artist_dedup_window"]["kind"] == "int"
+        assert isinstance(by_key["artist_dedup_window"]["value"], int)
 
 
 # =========================================================================

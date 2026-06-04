@@ -152,16 +152,32 @@ def get_rule_value(db: Session, *, station_id: int, key: str) -> int:
     return RULE_DEFAULTS[key].value
 
 
-def set_rule_value(db: Session, *, station_id: int, key: str, value: int) -> None:
-    """Upsert a rule override for `(station_id, key)`. Caller commits.
+def validate_int_rule_value(key: str, value: Any) -> None:
+    """§16.14.t10 D6 — strict parse-time validator for int rules.
 
-    Raises:
-        UnknownRuleError if `key` isn't in RULE_DEFAULTS.
-        InvalidRuleValueError if `value` is negative or exceeds max_value.
+    Raises ``UnknownRuleError`` if ``key`` isn't in ``RULE_DEFAULTS``.
+    Raises ``InvalidRuleValueError`` for: bool, non-int type,
+    negative value, value above ``max_value``.
+
+    Pure function — no DB access; the accessors (``set_rule_value``)
+    delegate to this before persisting. The parser
+    (``engine.template._parse_rules``) calls it too via the
+    cross-module dep; the API endpoint
+    (``api/routers/rules.py``) calls it for PUT body validation.
+    Single home for the validation contract avoids the three-way
+    duplication the c1-c2 path threatened.
     """
     if key not in RULE_DEFAULTS:
         raise UnknownRuleError(f"unknown rule key: {key!r}")
     defn = RULE_DEFAULTS[key]
+    # Reject bool explicitly — `isinstance(True, int)` is True
+    # in Python, but a bool here is almost certainly an operator
+    # typo (e.g. `true` meaning "enabled" rather than "1").
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise InvalidRuleValueError(
+            f"rule {key!r} value must be int, got "
+            f"{type(value).__name__} ({value!r})"
+        )
     if value < 0:
         raise InvalidRuleValueError(
             f"rule {key!r} value must be non-negative, got {value}"
@@ -170,6 +186,73 @@ def set_rule_value(db: Session, *, station_id: int, key: str, value: int) -> Non
         raise InvalidRuleValueError(
             f"rule {key!r} value must be at most {defn.max_value}, got {value}"
         )
+
+
+def validate_list_rule_value(key: str, value: Any) -> list[str]:
+    """§16.14.t10 D6 — strict parse-time validator for list rules.
+
+    Raises ``UnknownRuleError`` if ``key`` isn't in
+    ``RULE_LIST_DEFAULTS``. Raises ``InvalidRuleValueError`` for:
+    non-list type, non-string entry, empty-or-whitespace-only
+    entry (rejected, NOT silently dropped — unlike the lenient
+    accessor ``set_rule_list_value``), comma in an entry (the
+    on-disk separator).
+
+    Returns the cleaned (strip-applied) list[str]. Callers persist
+    this canonical form so the on-disk + in-memory representations
+    agree.
+
+    Validator-vs-accessor divergence: ``set_rule_list_value``
+    DROPS empty entries silently — a deliberate tolerance for
+    UI / API callers passing already-validated input. This
+    validator REJECTS empty entries — a deliberate strictness
+    for parse-time + API-PUT use. Both paths call this validator
+    first (t10), so the accessor's tolerance only matters for
+    direct programmatic callers that bypass it (tests, scripts).
+    """
+    if key not in RULE_LIST_DEFAULTS:
+        raise UnknownRuleError(f"unknown rule key: {key!r}")
+    if not isinstance(value, list):
+        raise InvalidRuleValueError(
+            f"rule {key!r} value must be a list, got "
+            f"{type(value).__name__}"
+        )
+    cleaned: list[str] = []
+    for i, entry in enumerate(value):
+        if not isinstance(entry, str):
+            raise InvalidRuleValueError(
+                f"rule {key!r}[{i}] must be a string, "
+                f"got {type(entry).__name__} ({entry!r})"
+            )
+        stripped = entry.strip()
+        if not stripped:
+            raise InvalidRuleValueError(
+                f"rule {key!r}[{i}] must be a non-empty "
+                "string after stripping whitespace"
+            )
+        if LIST_SEPARATOR in stripped:
+            raise InvalidRuleValueError(
+                f"rule {key!r}[{i}] entry {stripped!r} contains "
+                f"the separator character {LIST_SEPARATOR!r}; the "
+                "on-disk format is comma-separated and can't "
+                "escape commas. Rename the source pool."
+            )
+        cleaned.append(stripped)
+    return cleaned
+
+
+def set_rule_value(db: Session, *, station_id: int, key: str, value: int) -> None:
+    """Upsert a rule override for `(station_id, key)`. Caller commits.
+
+    Raises:
+        UnknownRuleError if `key` isn't in RULE_DEFAULTS.
+        InvalidRuleValueError if `value` is negative or exceeds max_value
+        (or any other condition `validate_int_rule_value` enforces).
+    """
+    # §16.14.t10 D6: delegate to the shared validator so all
+    # callers (parser, API, direct programmatic access) reject
+    # the same set of bad inputs.
+    validate_int_rule_value(key, value)
     row = (
         db.query(Rule)
         .filter(Rule.station_id == station_id, Rule.key == key)
@@ -203,36 +286,71 @@ def clear_rule(db: Session, *, station_id: int, key: str) -> bool:
 
 
 def get_all_rules(db: Session, *, station_id: int) -> list[dict[str, Any]]:
-    """Return every INT rule with its effective value, default, and override.
+    """Return every rule (int + list) with its effective value, default, override.
 
-    Returns a list of dicts: ``{key, value, default_value, description,
-    max_value, is_override}``. Sorted by key for stable UI ordering.
+    Returns a list of dicts: ``{key, kind, value, default_value,
+    description, max_value, is_override}`` where:
+
+      * ``kind`` is ``"int"`` for ``RULE_DEFAULTS`` keys, ``"list"``
+        for ``RULE_LIST_DEFAULTS`` keys (§16.14.t10 D1).
+      * ``value`` + ``default_value`` are ``int`` for int rules,
+        ``list[str]`` for list rules (§16.14.t10 D2).
+      * ``max_value`` is ``int | None`` — always ``None`` for list
+        rules.
+      * Items are interleaved sort-by-key across both registries
+        (§16.14.t10 D5) so the UI gets a single stable ordering
+        without per-kind chunking.
+
     Drives the CRUD list endpoint at ``/api/stations/{slug}/rules``.
 
-    Scope note (§16.14.t5 c1 review F4): only iterates ``RULE_DEFAULTS``
-    (int rules). List-typed rules (``RULE_LIST_DEFAULTS``, e.g.
-    ``cross_pool_dedup_sources``) are NOT surfaced here — the CRUD
-    endpoint's value schema is integer-shaped. List rules land via
-    the template's `rules:` block (§16.14.t9) for the factory
-    default; the API CRUD surface for them is queued as §16.14.t10
-    (backend) + §16.14.t11 (frontend RulesPanel extension).
+    Scope expanded (§16.14.t10): pre-t10 this only iterated
+    ``RULE_DEFAULTS``. The §16.14.t5 c2-review F1 + §16.14.t9 c2-
+    review F1 footgun (operator can't see / clear list-rule rows
+    from the API) closes here: GET now surfaces list rules with
+    their JSON-native value shape; PUT + DELETE dispatch by kind.
     """
     overrides = {
         r.key: r
         for r in db.query(Rule).filter(Rule.station_id == station_id).all()
     }
     result = []
-    for key in sorted(RULE_DEFAULTS):
-        defn = RULE_DEFAULTS[key]
-        override = overrides.get(key)
-        result.append({
-            "key": key,
-            "value": int(override.value) if override is not None else defn.value,
-            "default_value": defn.value,
-            "description": defn.description,
-            "max_value": defn.max_value,
-            "is_override": override is not None,
-        })
+    # §16.14.t10 D5: alphabetical interleave across both registries.
+    all_keys = sorted(set(RULE_DEFAULTS) | set(RULE_LIST_DEFAULTS))
+    for key in all_keys:
+        if key in RULE_DEFAULTS:
+            defn = RULE_DEFAULTS[key]
+            override = overrides.get(key)
+            result.append({
+                "key": key,
+                "kind": "int",
+                "value": int(override.value) if override is not None else defn.value,
+                "default_value": defn.value,
+                "description": defn.description,
+                "max_value": defn.max_value,
+                "is_override": override is not None,
+            })
+        else:
+            # key in RULE_LIST_DEFAULTS — all_keys union guarantees
+            # this branch covers the rest. The Rule.value for a list
+            # rule is comma-separated TEXT; decode via the read
+            # accessor so the response shape stays canonical.
+            defn = RULE_LIST_DEFAULTS[key]
+            override = overrides.get(key)
+            if override is not None:
+                effective = get_rule_list_value(
+                    db, station_id=station_id, key=key,
+                )
+            else:
+                effective = list(defn.value)
+            result.append({
+                "key": key,
+                "kind": "list",
+                "value": effective,
+                "default_value": list(defn.value),
+                "description": defn.description,
+                "max_value": None,
+                "is_override": override is not None,
+            })
     return result
 
 

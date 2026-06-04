@@ -10088,11 +10088,14 @@ sweep, matching the §16.13.t1-t9 cadence).
     extracts the per-key helpers so both the parser AND the
     API call them.
   * **D4 — Error mapping mirrors the int-rule path.** Unknown
-    key → HTTP 404 (current `UnknownRuleError` behavior).
-    Wrong type / out of bounds / comma / empty entry →
-    HTTP 400 with the validator's message verbatim. Matches
-    today's int-rule contract so the frontend's error
-    handling needs no new branches.
+    key → HTTP 400 (matches the current `UnknownRuleError`
+    mapping in api/routers/rules.py; the design-pass first-draft
+    said 404 but that was wrong about today's behavior, and the
+    400-for-unknown contract is what the §16.10 frontend
+    already expects). Wrong type / out of bounds / comma /
+    empty entry → HTTP 400 with the validator's message
+    verbatim. Matches today's int-rule contract so the
+    frontend's error handling needs no new branches.
   * **D5 — GET response ordering: stable alphabetical merge
     across both registries.** `sorted(RULE_DEFAULTS) +
     sorted(RULE_LIST_DEFAULTS)` is interleaved into a single

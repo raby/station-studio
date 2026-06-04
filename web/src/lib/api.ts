@@ -316,11 +316,18 @@ export const getMeta = (fetch_ = fetch): Promise<Meta> =>
  * One rule's effective state for a station. Mirrors the backend's
  * RuleOut Pydantic schema. `value` is what the engine sees; if
  * `is_override` is false, value equals default_value.
+ *
+ * §16.14.t10: broadened to cover both int + list rules. The `kind`
+ * discriminator drives per-component dispatch; the existing
+ * RulesPanel renders int rules (today's UX byte-identical) and
+ * shows a read-only placeholder for list rules until §16.14.t11's
+ * `<ListRuleRow>` lands.
  */
 export interface Rule {
   key: string;
-  value: number;
-  default_value: number;
+  kind: 'int' | 'list';
+  value: number | string[];
+  default_value: number | string[];
   description: string;
   max_value: number | null;
   is_override: boolean;
@@ -340,14 +347,19 @@ export const getStationRules = (
   );
 
 /**
- * Upsert a per-station override. Backend validates `value`: must be
- * non-negative; capped at the rule's `max_value` if present (4xx on
- * violation, surfaced via ApiError per the rest of the api.ts shape).
+ * Upsert a per-station override. Backend validates `value`: int
+ * rules must be non-negative and within `max_value`; list rules
+ * must contain non-empty comma-free string entries. 4xx on
+ * violation, surfaced via ApiError.
+ *
+ * §16.14.t10: `value` accepts number OR string[]. The backend
+ * dispatches by the URL `{key}`'s registry membership; the caller
+ * is expected to pass the shape matching the rule's `kind`.
  */
 export const setStationRule = (
   slug: string,
   key: string,
-  value: number,
+  value: number | string[],
   fetch_ = fetch,
 ): Promise<Rule> =>
   fetch_(`/api/stations/${encodeURIComponent(slug)}/rules/${encodeURIComponent(key)}`, {

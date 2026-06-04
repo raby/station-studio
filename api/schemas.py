@@ -144,10 +144,28 @@ class RuleOut(BaseModel):
     `value` is what the engine will see; `default_value` is the
     engine's fallback when no override exists; `is_override` tells
     a UI whether to render "set" vs "default" controls.
+
+    §16.14.t10 — broadened to cover both int + list rules:
+
+      * ``kind`` (D1) is ``"int"`` for ``RULE_DEFAULTS`` keys,
+        ``"list"`` for ``RULE_LIST_DEFAULTS`` keys. The frontend
+        dispatches on this rather than inspecting value types.
+      * ``value`` + ``default_value`` (D2) are ``int`` when
+        ``kind == "int"``, ``list[str]`` when ``kind == "list"``.
+        "list" today means list-of-string specifically; a future
+        rule with different element types adds a new ``kind`` tag.
+      * ``max_value`` is always ``None`` for list rules.
+
+    Pre-t10 (the §14.29 + §16.10 surface) this schema was
+    int-only. t10 keeps the int-rule path byte-identical when
+    ``kind == "int"`` so the existing `<RulesPanel>` rendering
+    keeps working; §16.14.t11 adds the `<ListRuleRow>` component
+    for the list path.
     """
     key: str
-    value: int
-    default_value: int
+    kind: str  # "int" | "list"
+    value: int | list[str]
+    default_value: int | list[str]
     description: str
     max_value: int | None
     is_override: bool
@@ -159,8 +177,11 @@ class RuleListResponse(BaseModel):
 
 
 class RuleValueIn(BaseModel):
-    """PUT body — just the new integer value."""
-    value: int
+    """PUT body — `{value: int}` for int rules, `{value: [...]}` for
+    list rules. The server dispatches by which registry the URL
+    `{key}` belongs to (§16.14.t10).
+    """
+    value: int | list[str]
 
 
 # §16.11 c3 — job runner endpoints

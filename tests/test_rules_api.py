@@ -57,6 +57,10 @@ def _seed_station(Session: sessionmaker, slug: str = "rb") -> int:
 
 
 def test_list_rules_returns_all_defaults_when_no_overrides(api):
+    """§16.14.t10: GET surfaces BOTH int + list rules, alphabetically
+    interleaved (D5), with kind discriminator on every row (D1).
+    Pre-t10 this list was int-only (4 keys); t10 added
+    cross_pool_dedup_sources from RULE_LIST_DEFAULTS."""
     client, Session = api
     _seed_station(Session)
     r = client.get("/api/stations/rb/rules")
@@ -65,6 +69,7 @@ def test_list_rules_returns_all_defaults_when_no_overrides(api):
     keys = [rule["key"] for rule in body["rules"]]
     assert keys == [
         "artist_dedup_window",
+        "cross_pool_dedup_sources",
         "cursor_advance_step",
         "cursor_reset_cycle",
         "mix_exclusion_weeks",
@@ -73,6 +78,13 @@ def test_list_rules_returns_all_defaults_when_no_overrides(api):
     for rule in body["rules"]:
         assert rule["is_override"] is False
         assert rule["value"] == rule["default_value"]
+    # D1 kind discriminator + D2 value shape per kind.
+    by_key = {r["key"]: r for r in body["rules"]}
+    assert by_key["artist_dedup_window"]["kind"] == "int"
+    assert isinstance(by_key["artist_dedup_window"]["value"], int)
+    assert by_key["cross_pool_dedup_sources"]["kind"] == "list"
+    assert by_key["cross_pool_dedup_sources"]["value"] == []
+    assert by_key["cross_pool_dedup_sources"]["max_value"] is None
 
 
 def test_list_rules_unknown_station_returns_404(api):
@@ -268,3 +280,195 @@ def test_rule_override_threads_through_to_generate(api):
     r = client.post("/api/stations/rb/generate", json={"week": 3})
     trace = client.get(f"/api/playlists/{r.json()['playlist_id']}/trace").json()
     assert "window=10" in trace["slots"][0]["reason"]
+
+
+# ---------- §16.14.t10 — list-rule CRUD path -----------------------------
+
+
+def test_put_list_rule_creates_override(api):
+    """PUT with a list body lands the override; GET reflects it."""
+    client, Session = api
+    _seed_station(Session)
+    r = client.put(
+        "/api/stations/rb/rules/cross_pool_dedup_sources",
+        json={"value": ["REFERENCE_ARCHIVE"]},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["key"] == "cross_pool_dedup_sources"
+    assert body["kind"] == "list"
+    assert body["value"] == ["REFERENCE_ARCHIVE"]
+    assert body["is_override"] is True
+    # GET surfaces the persisted value.
+    r = client.get("/api/stations/rb/rules")
+    by_key = {ru["key"]: ru for ru in r.json()["rules"]}
+    assert by_key["cross_pool_dedup_sources"]["value"] == ["REFERENCE_ARCHIVE"]
+
+
+def test_put_list_rule_strips_whitespace_per_entry(api):
+    """Validator strips per-entry whitespace and persists the
+    canonical form. Read-back == cleaned form."""
+    client, Session = api
+    _seed_station(Session)
+    r = client.put(
+        "/api/stations/rb/rules/cross_pool_dedup_sources",
+        json={"value": ["  MASTER  ", "ARCHIVE"]},
+    )
+    assert r.status_code == 200
+    assert r.json()["value"] == ["MASTER", "ARCHIVE"]
+
+
+def test_put_list_rule_rejects_empty_entry(api):
+    """Strict validator (parser-side semantics): empty entries are
+    operator typos, not "drop silently" UX. 400 with the
+    validator's message."""
+    client, Session = api
+    _seed_station(Session)
+    r = client.put(
+        "/api/stations/rb/rules/cross_pool_dedup_sources",
+        json={"value": ["MASTER", "  "]},
+    )
+    assert r.status_code == 400
+    assert "non-empty" in r.json()["detail"]
+
+
+def test_put_list_rule_rejects_comma_in_entry(api):
+    """Comma is the on-disk separator; entries with commas
+    would split silently on read. 400 with the validator's message."""
+    client, Session = api
+    _seed_station(Session)
+    r = client.put(
+        "/api/stations/rb/rules/cross_pool_dedup_sources",
+        json={"value": ["Rare, Imports"]},
+    )
+    assert r.status_code == 400
+    assert "separator" in r.json()["detail"]
+
+
+def test_put_list_rule_rejects_non_list_value(api):
+    """`{"value": "not a list"}` for a list-rule key — 400 with the
+    validator's "must be a list" message."""
+    client, Session = api
+    _seed_station(Session)
+    r = client.put(
+        "/api/stations/rb/rules/cross_pool_dedup_sources",
+        # Pydantic accepts a str into `int | list[str]` as the union;
+        # the validator then rejects it. Use a dict to force a
+        # validator-level rejection.
+        json={"value": {"a": "b"}},
+    )
+    # Pydantic 400/422 OR validator 400 — both are acceptable
+    # "operator made a typo" surfaces.
+    assert r.status_code in (400, 422)
+
+
+def test_put_unknown_key_returns_400_with_known_keys_listed(api):
+    """Unknown key → 400 with the union of valid keys in the
+    error message (operator typo recovery)."""
+    client, Session = api
+    _seed_station(Session)
+    r = client.put(
+        "/api/stations/rb/rules/totally_made_up_rule",
+        json={"value": 42},
+    )
+    assert r.status_code == 400
+    detail = r.json()["detail"]
+    assert "totally_made_up_rule" in detail
+    assert "artist_dedup_window" in detail
+    assert "cross_pool_dedup_sources" in detail
+
+
+def test_delete_list_rule_clears_override(api):
+    """DELETE on a list-rule key clears the row; subsequent GET
+    shows the registry default (empty list); idempotent re-DELETE
+    returns 204."""
+    client, Session = api
+    _seed_station(Session)
+    # Set then delete.
+    client.put(
+        "/api/stations/rb/rules/cross_pool_dedup_sources",
+        json={"value": ["X"]},
+    )
+    r = client.delete("/api/stations/rb/rules/cross_pool_dedup_sources")
+    assert r.status_code == 204
+
+    by_key = {
+        ru["key"]: ru for ru in
+        client.get("/api/stations/rb/rules").json()["rules"]
+    }
+    assert by_key["cross_pool_dedup_sources"]["value"] == []
+    assert by_key["cross_pool_dedup_sources"]["is_override"] is False
+
+    # Idempotent — re-DELETE still 204.
+    r = client.delete("/api/stations/rb/rules/cross_pool_dedup_sources")
+    assert r.status_code == 204
+
+
+def test_put_then_delete_round_trip_for_list_rule(api):
+    """The §16.14.t9 c2-review F1 + §16.14.t10 design pass
+    contract: PUT → state X, DELETE → state default. The full
+    revert-via-API path that engine-level
+    test_seed_station_api_delete_then_reseed_restores_template_default
+    pinned at engine level now works through HTTP."""
+    client, Session = api
+    _seed_station(Session)
+
+    # Start clean.
+    r = client.get("/api/stations/rb/rules")
+    by_key = {ru["key"]: ru for ru in r.json()["rules"]}
+    assert by_key["cross_pool_dedup_sources"]["value"] == []
+
+    # PUT a value.
+    client.put(
+        "/api/stations/rb/rules/cross_pool_dedup_sources",
+        json={"value": ["A", "B"]},
+    )
+    by_key = {
+        ru["key"]: ru for ru in
+        client.get("/api/stations/rb/rules").json()["rules"]
+    }
+    assert by_key["cross_pool_dedup_sources"]["value"] == ["A", "B"]
+
+    # DELETE returns 204 + back to default.
+    r = client.delete("/api/stations/rb/rules/cross_pool_dedup_sources")
+    assert r.status_code == 204
+    by_key = {
+        ru["key"]: ru for ru in
+        client.get("/api/stations/rb/rules").json()["rules"]
+    }
+    assert by_key["cross_pool_dedup_sources"]["value"] == []
+
+
+def test_list_rule_explicit_empty_persists_distinct_from_default(api):
+    """Setting `[]` via PUT IS persisted as an explicit "no
+    exclusion" override (is_override=True). Distinct from the
+    registry default which also reads as [] but with
+    is_override=False. This is the engine-level distinction
+    (§16.14.t5 c1: set_rule_list_value persists empty), now
+    pinned at the API surface."""
+    client, Session = api
+    _seed_station(Session)
+
+    # Pre-PUT: default.
+    by_key = {
+        ru["key"]: ru for ru in
+        client.get("/api/stations/rb/rules").json()["rules"]
+    }
+    assert by_key["cross_pool_dedup_sources"]["is_override"] is False
+
+    # PUT [] (explicit empty).
+    r = client.put(
+        "/api/stations/rb/rules/cross_pool_dedup_sources",
+        json={"value": []},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["value"] == []
+    assert body["is_override"] is True
+
+    # GET confirms persistence.
+    by_key = {
+        ru["key"]: ru for ru in
+        client.get("/api/stations/rb/rules").json()["rules"]
+    }
+    assert by_key["cross_pool_dedup_sources"]["is_override"] is True

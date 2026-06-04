@@ -37,6 +37,10 @@
   // calling an isDirty() helper) so Svelte tracks `edited` as a direct
   // template dependency; a function call would hide the dependency and
   // leave the button stuck disabled after the first edit.
+  //
+  // §16.14.t10: int rules only. List rules render a read-only
+  // placeholder (no edit affordance) until §16.14.t11 ships the
+  // chip-based <ListRuleRow> component, so they never enter `edited`.
   let edited: Record<string, number> = {};
   // Per-key in-flight + error state so one row saving/erroring doesn't
   // blank the others.
@@ -51,7 +55,15 @@
     try {
       const res = await getStationRules(slug);
       rules = res.rules;
-      edited = Object.fromEntries(rules.map((r) => [r.key, r.value]));
+      // §16.14.t10: only int rules get an editable shadow value;
+      // list rules render as a read-only placeholder so we skip
+      // them. Narrows the value type for TS too (kind === 'int'
+      // → value is number).
+      edited = Object.fromEntries(
+        rules
+          .filter((r) => r.kind === 'int')
+          .map((r) => [r.key, r.value as number]),
+      );
     } catch (e) {
       loadError = e instanceof ApiError ? e.message : String(e);
     } finally {
@@ -63,6 +75,15 @@
   function humanise(key: string): string {
     const spaced = key.replace(/_/g, ' ');
     return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+  }
+
+  /** §16.14.t10: format a list-rule value for the read-only
+   *  placeholder. Handles both `string[]` (the list-rule shape)
+   *  and number (defensive — if a list-row came through with the
+   *  wrong shape we still render something rather than crash). */
+  function formatListValue(v: number | string[]): string {
+    if (!Array.isArray(v)) return String(v);
+    return v.length > 0 ? v.join(', ') : '(empty)';
   }
 
   /** Client-side validation mirroring engine.rules: non-negative
@@ -77,6 +98,11 @@
   }
 
   async function save(r: Rule) {
+    // §16.14.t10: list-rule rows are read-only placeholders today;
+    // §16.14.t11 will add the chip-based editor. Defensive bail
+    // here covers a future code path that calls save() on a list
+    // rule by mistake.
+    if (r.kind !== 'int') return;
     const value = edited[r.key];
     const err = validate(r, value);
     if (err !== null) {
@@ -89,7 +115,7 @@
       const updated = await setStationRule(slug, r.key, value);
       // Replace the row in place with the canonical post-write state.
       rules = rules.map((x) => (x.key === r.key ? updated : x));
-      edited = { ...edited, [r.key]: updated.value };
+      edited = { ...edited, [r.key]: updated.value as number };
     } catch (e) {
       rowError = {
         ...rowError,
@@ -152,45 +178,67 @@
             {/if}
           </div>
           <p class="rule-desc">{r.description}</p>
-          <div class="rule-edit">
-            <input
-              type="number"
-              min="0"
-              max={r.max_value ?? undefined}
-              data-testid="rule-input"
-              aria-label="{humanise(r.key)} value"
-              bind:value={edited[r.key]}
-            />
-            <span class="rule-default-hint">
-              default: {r.default_value}{r.max_value !== null
-                ? ` · max: ${r.max_value}`
-                : ''}
-            </span>
-            <button
-              type="button"
-              class="save"
-              data-testid="rule-save"
-              disabled={edited[r.key] === r.value || saving[r.key]}
-              on:click={() => save(r)}
-            >
-              {saving[r.key] ? 'Saving…' : 'Save'}
-            </button>
-            {#if r.is_override}
+          {#if r.kind === 'int'}
+            <div class="rule-edit">
+              <input
+                type="number"
+                min="0"
+                max={r.max_value ?? undefined}
+                data-testid="rule-input"
+                aria-label="{humanise(r.key)} value"
+                bind:value={edited[r.key]}
+              />
+              <span class="rule-default-hint">
+                default: {r.default_value}{r.max_value !== null
+                  ? ` · max: ${r.max_value}`
+                  : ''}
+              </span>
               <button
                 type="button"
-                class="reset"
-                data-testid="rule-reset"
-                disabled={saving[r.key]}
-                on:click={() => reset(r)}
+                class="save"
+                data-testid="rule-save"
+                disabled={edited[r.key] === r.value || saving[r.key]}
+                on:click={() => save(r)}
               >
-                Reset to default
+                {saving[r.key] ? 'Saving…' : 'Save'}
               </button>
+              {#if r.is_override}
+                <button
+                  type="button"
+                  class="reset"
+                  data-testid="rule-reset"
+                  disabled={saving[r.key]}
+                  on:click={() => reset(r)}
+                >
+                  Reset to default
+                </button>
+              {/if}
+            </div>
+            {#if rowError[r.key]}
+              <p class="error row-error" data-testid="rule-row-error">
+                {rowError[r.key]}
+              </p>
             {/if}
-          </div>
-          {#if rowError[r.key]}
-            <p class="error row-error" data-testid="rule-row-error">
-              {rowError[r.key]}
-            </p>
+          {:else}
+            <!--
+              §16.14.t10 D7: read-only placeholder for list rules.
+              §16.14.t11 replaces this with the <ListRuleRow>
+              chip-based editor. Until then, list-rule values
+              display as a JSON-shaped read-only line. The
+              `data-testid` distinguishes from the int row so
+              tests can target each kind separately.
+            -->
+            <div class="rule-edit list-rule-placeholder" data-testid="rule-list-placeholder">
+              <span class="list-value">
+                {formatListValue(r.value)}
+              </span>
+              <span class="rule-default-hint">
+                default: {formatListValue(r.default_value)}
+              </span>
+              <span class="placeholder-hint">
+                Edit via API until §16.14.t11 ships the list-rule UI.
+              </span>
+            </div>
           {/if}
         </li>
       {/each}
@@ -295,5 +343,22 @@
   .row-error {
     font-size: 0.85rem;
     margin: 0.35rem 0 0;
+  }
+  /* §16.14.t10: read-only placeholder for list rules. */
+  .list-rule-placeholder {
+    background: #fafafa;
+    border: 1px dashed #ddd;
+    border-radius: 4px;
+    padding: 0.5rem 0.75rem;
+  }
+  .list-value {
+    font-family: ui-monospace, monospace;
+    font-size: 0.85rem;
+  }
+  .placeholder-hint {
+    color: #888;
+    font-size: 0.78rem;
+    font-style: italic;
+    margin-left: auto;
   }
 </style>

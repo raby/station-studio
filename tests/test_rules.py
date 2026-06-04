@@ -197,17 +197,27 @@ def test_clear_rule_unknown_key_rejected(session_factory):
 
 
 def test_get_all_rules_lists_every_known_rule(session_factory):
-    """Returns one entry per RULE_DEFAULTS key, sorted by key, with
-    is_override flags reflecting persistence state."""
+    """§16.14.t10: returns one entry per RULE_DEFAULTS + RULE_LIST_DEFAULTS
+    key, alphabetically interleaved (D5), with `kind` discriminator
+    + is_override flags reflecting persistence state."""
+    from engine.rules import RULE_LIST_DEFAULTS
+
     Session = session_factory
     station_id = _seed_station(Session)
     with Session() as db:
         rows = get_all_rules(db, station_id=station_id)
         keys = [r["key"] for r in rows]
-        assert keys == sorted(RULE_DEFAULTS)
+        # D5: alphabetical interleave across both registries.
+        assert keys == sorted(set(RULE_DEFAULTS) | set(RULE_LIST_DEFAULTS))
         # No overrides yet → all defaults.
         assert all(r["is_override"] is False for r in rows)
         assert all(r["value"] == r["default_value"] for r in rows)
+        # D1: every row carries a kind discriminator.
+        kinds = {r["key"]: r["kind"] for r in rows}
+        for k in RULE_DEFAULTS:
+            assert kinds[k] == "int"
+        for k in RULE_LIST_DEFAULTS:
+            assert kinds[k] == "list"
 
 
 def test_get_all_rules_marks_overrides_correctly(session_factory):
@@ -254,3 +264,113 @@ def test_rule_rows_cascade_on_station_delete(session_factory):
         db.delete(station)
         db.commit()
         assert db.query(Rule).count() == 0
+
+
+# ---------- §16.14.t10 — validator extraction --------------------------------
+
+
+def test_validate_int_rule_value_accepts_in_range():
+    from engine.rules import validate_int_rule_value
+    # Returns None; raises on failure.
+    validate_int_rule_value("artist_dedup_window", 0)
+    validate_int_rule_value("artist_dedup_window", 1000)
+    validate_int_rule_value("artist_dedup_window", 42)
+
+
+def test_validate_int_rule_value_rejects_unknown_key():
+    from engine.rules import UnknownRuleError, validate_int_rule_value
+    with pytest.raises(UnknownRuleError, match="bogus"):
+        validate_int_rule_value("bogus_key", 5)
+
+
+def test_validate_int_rule_value_rejects_bool():
+    """Python's `isinstance(True, int)` is True; the validator
+    explicitly rejects bool because a `true` in JSON is almost
+    certainly an operator typo (meant 'enabled', not 1)."""
+    from engine.rules import InvalidRuleValueError, validate_int_rule_value
+    with pytest.raises(InvalidRuleValueError, match="must be int"):
+        validate_int_rule_value("artist_dedup_window", True)
+
+
+def test_validate_int_rule_value_rejects_non_int():
+    from engine.rules import InvalidRuleValueError, validate_int_rule_value
+    with pytest.raises(InvalidRuleValueError, match="must be int"):
+        validate_int_rule_value("artist_dedup_window", "5")
+    with pytest.raises(InvalidRuleValueError, match="must be int"):
+        validate_int_rule_value("artist_dedup_window", 5.5)
+
+
+def test_validate_int_rule_value_rejects_negative():
+    from engine.rules import InvalidRuleValueError, validate_int_rule_value
+    with pytest.raises(InvalidRuleValueError, match="non-negative"):
+        validate_int_rule_value("artist_dedup_window", -1)
+
+
+def test_validate_int_rule_value_rejects_above_max():
+    """RULE_DEFAULTS['artist_dedup_window'].max_value = 1000."""
+    from engine.rules import InvalidRuleValueError, validate_int_rule_value
+    with pytest.raises(InvalidRuleValueError, match="at most 1000"):
+        validate_int_rule_value("artist_dedup_window", 1001)
+
+
+def test_validate_int_rule_value_no_max_accepts_large():
+    """Rules with max_value=None accept arbitrarily large values."""
+    from engine.rules import validate_int_rule_value
+    # cursor_reset_cycle has max_value=None.
+    validate_int_rule_value("cursor_reset_cycle", 10**9)
+
+
+def test_validate_list_rule_value_returns_cleaned_list():
+    """Validator strips whitespace per entry + returns the
+    canonical form. Callers persist the returned list."""
+    from engine.rules import validate_list_rule_value
+    cleaned = validate_list_rule_value(
+        "cross_pool_dedup_sources", ["  MASTER  ", "ARCHIVE"],
+    )
+    assert cleaned == ["MASTER", "ARCHIVE"]
+
+
+def test_validate_list_rule_value_accepts_empty_list():
+    """Explicit `[]` is a valid "no exclusion" override."""
+    from engine.rules import validate_list_rule_value
+    assert validate_list_rule_value("cross_pool_dedup_sources", []) == []
+
+
+def test_validate_list_rule_value_rejects_unknown_key():
+    from engine.rules import UnknownRuleError, validate_list_rule_value
+    with pytest.raises(UnknownRuleError, match="bogus"):
+        validate_list_rule_value("bogus_list_key", ["X"])
+
+
+def test_validate_list_rule_value_rejects_non_list():
+    from engine.rules import InvalidRuleValueError, validate_list_rule_value
+    with pytest.raises(InvalidRuleValueError, match="must be a list"):
+        validate_list_rule_value("cross_pool_dedup_sources", "MASTER")
+
+
+def test_validate_list_rule_value_rejects_non_string_entry():
+    from engine.rules import InvalidRuleValueError, validate_list_rule_value
+    with pytest.raises(InvalidRuleValueError, match="must be a string"):
+        validate_list_rule_value(
+            "cross_pool_dedup_sources", ["MASTER", 42],
+        )
+
+
+def test_validate_list_rule_value_rejects_empty_entry():
+    """Validator-vs-accessor: this is STRICTER than
+    set_rule_list_value which silently drops empty entries. The
+    validator REJECTS them because empty-after-strip is almost
+    always an operator typo at the parser / API edit site."""
+    from engine.rules import InvalidRuleValueError, validate_list_rule_value
+    with pytest.raises(InvalidRuleValueError, match="non-empty"):
+        validate_list_rule_value(
+            "cross_pool_dedup_sources", ["MASTER", "  "],
+        )
+
+
+def test_validate_list_rule_value_rejects_comma_entry():
+    from engine.rules import InvalidRuleValueError, validate_list_rule_value
+    with pytest.raises(InvalidRuleValueError, match="separator"):
+        validate_list_rule_value(
+            "cross_pool_dedup_sources", ["Rare, Imports"],
+        )

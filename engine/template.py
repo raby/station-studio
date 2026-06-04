@@ -19,8 +19,9 @@ from pathlib import Path
 # costs (sqlalchemy.orm.Session + engine.models) are already paid
 # everywhere engine.template gets loaded.
 from engine.rules import (
-    InvalidRuleValueError, RULE_DEFAULTS, RULE_LIST_DEFAULTS,
-    UnknownRuleError, LIST_SEPARATOR,
+    InvalidRuleValueError, LIST_SEPARATOR, RULE_DEFAULTS,
+    RULE_LIST_DEFAULTS, UnknownRuleError,
+    validate_int_rule_value, validate_list_rule_value,
 )
 
 
@@ -408,54 +409,20 @@ def _parse_rules(
     list_overrides: dict[str, list[str]] = {}
     for key, value in raw.items():
         if key in RULE_DEFAULTS:
-            defn = RULE_DEFAULTS[key]
-            # Reject bool explicitly — `isinstance(True, int)` is True,
-            # but a bool in a rule value is almost certainly an
-            # operator typo (e.g. wrote `true` meaning "enabled").
-            if isinstance(value, bool) or not isinstance(value, int):
-                raise TemplateError(
-                    f"template.rules.{key} must be int, got "
-                    f"{type(value).__name__} ({value!r})"
-                )
-            if value < 0:
-                raise TemplateError(
-                    f"template.rules.{key} must be non-negative, "
-                    f"got {value}"
-                )
-            if defn.max_value is not None and value > defn.max_value:
-                raise TemplateError(
-                    f"template.rules.{key} must be ≤ {defn.max_value}, "
-                    f"got {value}"
-                )
+            try:
+                validate_int_rule_value(key, value)
+            except InvalidRuleValueError as e:
+                raise TemplateError(f"template.rules.{key}: {e}") from None
             int_overrides[key] = value
         elif key in RULE_LIST_DEFAULTS:
-            if not isinstance(value, list):
-                raise TemplateError(
-                    f"template.rules.{key} must be a list, got "
-                    f"{type(value).__name__}"
-                )
-            cleaned: list[str] = []
-            for i, entry in enumerate(value):
-                if not isinstance(entry, str):
-                    raise TemplateError(
-                        f"template.rules.{key}[{i}] must be a string, "
-                        f"got {type(entry).__name__} ({entry!r})"
-                    )
-                stripped = entry.strip()
-                if not stripped:
-                    raise TemplateError(
-                        f"template.rules.{key}[{i}] must be a non-empty "
-                        f"string after stripping whitespace"
-                    )
-                if LIST_SEPARATOR in stripped:
-                    raise TemplateError(
-                        f"template.rules.{key}[{i}] entry "
-                        f"{stripped!r} contains the separator character "
-                        f"{LIST_SEPARATOR!r}; the on-disk format is "
-                        "comma-separated and can't escape commas. "
-                        "Rename the source pool."
-                    )
-                cleaned.append(stripped)
+            try:
+                cleaned = validate_list_rule_value(key, value)
+            except InvalidRuleValueError as e:
+                # The validator's message names the bad entry +
+                # index; prepend the template-relative path so the
+                # operator sees `template.rules.{key}[i]: ...`
+                # instead of just `rule '{key}'[i]: ...`.
+                raise TemplateError(f"template.rules.{key}: {e}") from None
             list_overrides[key] = cleaned
         else:
             known = sorted(set(RULE_DEFAULTS) | set(RULE_LIST_DEFAULTS))

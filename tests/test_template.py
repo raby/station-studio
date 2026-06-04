@@ -881,8 +881,10 @@ def test_template_rules_non_dict_rejected():
 
 
 def test_template_rules_int_with_string_value_rejected():
-    """String where an int rule expected."""
-    with pytest.raises(TemplateError, match="artist_dedup_window must be int"):
+    """String where an int rule expected. Match is loose around
+    the validator's "rule '<key>' value must be int" phrasing
+    so a future error-message rewording doesn't break the test."""
+    with pytest.raises(TemplateError, match=r"artist_dedup_window.*must be int"):
         parse_template({
             **BASE,
             "rules": {"artist_dedup_window": "fast"},
@@ -909,8 +911,11 @@ def test_template_rules_int_negative_rejected():
 
 
 def test_template_rules_int_above_max_rejected():
-    """RULE_DEFAULTS["artist_dedup_window"].max_value is 1000."""
-    with pytest.raises(TemplateError, match="≤ 1000"):
+    """RULE_DEFAULTS["artist_dedup_window"].max_value is 1000.
+    Validator message is "at most 1000" (post-§16.14.t10
+    extraction); pattern matches loosely so a wording change
+    doesn't break the test."""
+    with pytest.raises(TemplateError, match=r"at most 1000|≤ 1000"):
         parse_template({
             **BASE,
             "rules": {"artist_dedup_window": 5000},
@@ -918,7 +923,7 @@ def test_template_rules_int_above_max_rejected():
 
 
 def test_template_rules_list_with_dict_value_rejected():
-    with pytest.raises(TemplateError, match="cross_pool_dedup_sources must be a list"):
+    with pytest.raises(TemplateError, match=r"cross_pool_dedup_sources.*must be a list"):
         parse_template({
             **BASE,
             "rules": {"cross_pool_dedup_sources": {"a": "b"}},
@@ -926,7 +931,9 @@ def test_template_rules_list_with_dict_value_rejected():
 
 
 def test_template_rules_list_with_non_string_entry_rejected():
-    with pytest.raises(TemplateError, match=r"cross_pool_dedup_sources\[1\] must be a string"):
+    """Validator message includes the bad entry's index in
+    `key'[i]` form; pattern matches the index marker loosely."""
+    with pytest.raises(TemplateError, match=r"cross_pool_dedup_sources.*\[1\].*must be a string"):
         parse_template({
             **BASE,
             "rules": {"cross_pool_dedup_sources": ["MASTER", 42]},
