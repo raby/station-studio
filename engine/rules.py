@@ -382,8 +382,10 @@ def get_all_rules(db: Session, *, station_id: int) -> list[dict[str, Any]]:
 # discriminator. The factory default still lands via the
 # template's `rules:` block (§16.14.t9 parser + seed_station
 # wiring); the API surface lets operators read/edit live values.
-# The `<RulesPanel>` UI renders list rules as a read-only
-# placeholder until §16.14.t11 ships the chip-based editor.
+# The `<RulesPanel>` UI renders list rules via the
+# `<ListRuleRow>` chip editor (§16.14.t11 — add via Enter or
+# autocomplete, per-chip × remove, Clear-override drops the
+# Rule row).
 
 
 LIST_SEPARATOR = ","

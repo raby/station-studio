@@ -318,10 +318,11 @@ export const getMeta = (fetch_ = fetch): Promise<Meta> =>
  * `is_override` is false, value equals default_value.
  *
  * §16.14.t10: broadened to cover both int + list rules. The `kind`
- * discriminator drives per-component dispatch; the existing
- * RulesPanel renders int rules (today's UX byte-identical) and
- * shows a read-only placeholder for list rules until §16.14.t11's
- * `<ListRuleRow>` lands.
+ * discriminator drives per-component dispatch; the RulesPanel
+ * renders int rules with its existing edit + save + reset UX and
+ * list rules via the <ListRuleRow> chip editor shipped in
+ * §16.14.t11 (add via Enter or autocomplete, per-chip × remove,
+ * Clear-override DELETEs the Rule row).
  */
 export interface Rule {
   key: string;

@@ -39,9 +39,9 @@
   // template dependency; a function call would hide the dependency and
   // leave the button stuck disabled after the first edit.
   //
-  // §16.14.t10: int rules only. List rules render a read-only
-  // placeholder (no edit affordance) until §16.14.t11 ships the
-  // chip-based <ListRuleRow> component, so they never enter `edited`.
+  // §16.14.t10: int rules only. List rules render via the
+  // <ListRuleRow> chip editor (§16.14.t11) which owns its OWN
+  // staged-value state, so they never enter `edited` here.
   let edited: Record<string, number> = {};
   // Per-key in-flight + error state so one row saving/erroring doesn't
   // blank the others.
@@ -56,10 +56,11 @@
     try {
       const res = await getStationRules(slug);
       rules = res.rules;
-      // §16.14.t10: only int rules get an editable shadow value;
-      // list rules render as a read-only placeholder so we skip
-      // them. Narrows the value type for TS too (kind === 'int'
-      // → value is number).
+      // §16.14.t10: only int rules get an editable shadow value
+      // in THIS panel; list rules render via <ListRuleRow>
+      // (§16.14.t11) which owns its own staged-value state. Skip
+      // them here. Narrows the value type for TS too (kind ===
+      // 'int' → value is number).
       edited = Object.fromEntries(
         rules
           .filter((r) => r.kind === 'int')
@@ -98,10 +99,10 @@
   }
 
   async function save(r: Rule) {
-    // §16.14.t10: list-rule rows are read-only placeholders today;
-    // §16.14.t11 will add the chip-based editor. Defensive bail
-    // here covers a future code path that calls save() on a list
-    // rule by mistake.
+    // §16.14.t10: list-rule rows route through <ListRuleRow>
+    // (§16.14.t11) which calls its own setStationRule on
+    // dirty-save. Defensive bail here covers a future code path
+    // that calls THIS panel's save() on a list rule by mistake.
     if (r.kind !== 'int') return;
     const value = edited[r.key];
     const err = validate(r, value);
@@ -221,12 +222,13 @@
             {/if}
           {:else}
             <!--
-              §16.14.t11: chip-based editor replacing the §16.14.t10
-              read-only placeholder. The component owns its own
-              staged + saving + error state; emits `updated` when
-              the canonical rule changes (Save or Reset succeeded),
-              and the parent splices the new rule into its
-              `rules` array so the badge + label stay in sync.
+              §16.14.t11: chip-based editor for list rules. Owns
+              its own staged + saving + error state; emits
+              `updated` when the canonical rule changes (Save or
+              Clear-override succeeded), and the parent splices
+              the new rule into its `rules` array so the badge +
+              label stay in sync. Pre-t11 list rules rendered as
+              a read-only placeholder one-liner; t11 retired it.
             -->
             <ListRuleRow
               {slug}
