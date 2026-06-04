@@ -282,56 +282,68 @@ then re-seed (next `seed_station` writes the template value
 back). This is the documented escape hatch.
 
 **`cat starter.json` shows factory defaults, not live values.**
-If you want to know the live int-rule values, query
-`GET /api/stations/starter/rules`. For list-rule values, query
-the Rule table directly until §16.14.t10 lands.
+For the live values of any rule (int or list), query
+`GET /api/stations/starter/rules` — each row carries `kind`
+(`"int"` or `"list"`), `value`, `default_value`, and
+`is_override`.
 
-**List-rule API gap.** The CRUD endpoint at
-`/api/stations/{slug}/rules` today handles INT rules only —
-the response schema is integer-shaped, and `PUT`/`DELETE` go
-through accessors that reject list-rule keys with
-`UnknownRuleError`. Two follow-up slices close this gap:
+**Rules CRUD endpoint covers both kinds (§16.14.t10).** All
+three verbs work for both int and list rules:
 
-* **§16.14.t10** — backend extension: `RuleOut` schema gains a
-  `kind: "int"|"list"` discriminator + `value: int | list[str]`;
-  `get_all_rules` iterates both registries; `PUT`/`DELETE`
-  dispatch per kind, reusing the §16.14.t9 `_parse_rules`
-  validator. Marked must-have to close the c2-review F1
-  footgun.
-* **§16.14.t11** — frontend extension: `<RulesPanel>` gains a
-  `<ListRuleRow>` component (chip-style multi-input, source-
-  pool autocomplete filtered to `role: reference`, per-row
-  "reset to template default" button). Triggered by t10.
+```bash
+# Read every rule, with kind discriminator + native value shape.
+curl http://localhost:8001/api/stations/starter/rules
 
-Until t10 ships, list-rule customisations require
-programmatic access via `engine.rules.set_rule_list_value` /
-`clear_rule_list` (in dev clones: a Python session; in
-wheel/docker: no direct path yet, file an issue if you hit
-this). The c2-review F1 test
-(`test_seed_station_api_delete_then_reseed_restores_template_default`)
-pins the engine-level revert flow so t10 has a known-working
-contract to plumb.
+# Set a list rule.
+curl -X PUT http://localhost:8001/api/stations/starter/rules/cross_pool_dedup_sources \
+  -H 'content-type: application/json' \
+  -d '{"value": ["ARCHIVE_A", "ARCHIVE_B"]}'
+
+# Revert to the factory default (template value).
+curl -X DELETE http://localhost:8001/api/stations/starter/rules/cross_pool_dedup_sources
+```
+
+Validation lives in `engine.rules` (`validate_int_rule_value`
++ `validate_list_rule_value`) and is shared with the template
+parser, so the rules are identical whether you edit the JSON
+or call the API:
+
+* Int rules: non-negative, ≤ max_value, bool rejected
+  explicitly (`{value: true}` 422s at the schema layer).
+* List rules: each entry must be a non-empty string with no
+  commas (the comma is the on-disk separator); whitespace
+  stripped per entry.
+
+Bad shapes return HTTP 400 with the validator's message
+verbatim — operator typos surface where they happen.
+
+**Frontend status.** The `<RulesPanel>` at
+`/stations/{slug}/rules` renders int rules with the existing
+edit + save + reset UX (byte-identical to pre-§16.14.t10).
+List rules render as a **read-only chip-style placeholder**
+showing the joined value + factory default + a hint pointing
+at §16.14.t11. The placeholder is a deliberate t10 stop-
+gap; §16.14.t11 replaces it with a full chip-based editor
+(add/remove entries, source-pool autocomplete, "reset to
+default" button).
 
 #### How to opt out of the starter's cross-pool dedup
 
 Two paths:
 
-* **Permanent (recommended):** edit `stations/starter.json`
-  and either delete the `rules:` block or set
-  `cross_pool_dedup_sources` to `[]`. Re-seeding the station
-  alone WON'T clear the existing Rule row (operator-wins
-  semantics) — you ALSO need to clear it via
-  `engine.rules.clear_rule_list(db, station_id=...,
-  key="cross_pool_dedup_sources")` from a Python session
-  (dev clones). The bootstrap auto-seed on next restart then
-  sees an empty `rules:` block + no Rule row, and the demo
-  stays off.
-* **Ad-hoc (dev clones only):** call
-  `engine.rules.set_rule_list_value(db, station_id=...,
-  key="cross_pool_dedup_sources", value=[])` from a Python
-  session. The explicit-empty override survives re-seeds
-  (the row exists with `[]`, so only-set-if-absent doesn't
-  touch it).
+* **Easy (post-§16.14.t10):** `DELETE
+  /api/stations/starter/rules/cross_pool_dedup_sources`.
+  Removes the Rule row; future generations don't exclude
+  anything. Note per operator-wins: re-seeding does NOT bring
+  the rule back automatically — the next `seed_station` sees
+  no row + writes the template value, restoring the demo. If
+  you want the rule permanently off, also edit the JSON
+  (next bullet).
+* **Permanent:** edit `stations/starter.json` and remove the
+  `rules:` block (or change `cross_pool_dedup_sources` to
+  `[]`). Combine with the API DELETE above to clear the live
+  row. After the next restart, the bootstrap auto-seed sees
+  an empty `rules:` block + no Rule row → demo stays off.
 
 #### How to add the rule to your own station
 
@@ -369,13 +381,14 @@ message names which check failed.
   pools. Naming a content pool would footgun the operator (a
   pool excluding itself starves the strategy). Loosening this
   would need self-reference detection logic.
-* **Rules CRUD endpoint visibility.** `GET /api/stations/{slug}/rules`
-  surfaces ONLY int rules (the legacy API was built before list
-  rules existed). §16.14.t10 extends the response schema with a
-  `kind` discriminator + per-row dispatch; §16.14.t11 wires the
-  result into the `<RulesPanel>` UI. Until then, list-rule
-  customisations require programmatic access (see the "List-
-  rule API gap" callout earlier in this section).
+* **Frontend `<ListRuleRow>` (§16.14.t11).** The `<RulesPanel>`
+  renders list rules as a read-only placeholder today
+  (§16.14.t10 c1 D7). The full chip-based editor with source-
+  pool autocomplete + per-entry remove + "reset to factory
+  default" ships next. Until then, the API surface is the
+  intended path for non-developer operators on a dev clone
+  — wheel/docker users need to wait for t11 for a clickable
+  edit affordance.
 
 ### Forward-looking utilities (not shipped)
 
