@@ -572,19 +572,137 @@ shares state with the other.
   pin + every starter test. The "try it yourself" recipe
   above is the intended UX for now.
 
-### Forward-looking utilities (not shipped)
+### Per-block allowlist with `allowlist_sources` (§16.14.t7)
 
-The reference role's value scales as the engine grows. One
-more slice is queued in `DESIGN.md`:
+The third engine use of `role: reference`: pick from a
+content pool BUT only tracks that ALSO appear in a curated
+reference pool. Hobbyist framing: "this slot only plays
+tracks from my Daytime Rotation playlist." Inverse of t5/t8
+(which EXCLUDE tracks also in a reference pool) — positive
+filter instead of negative.
 
-* **Allowlist enforcement (§16.14.t7)** — restrict the content
-  sampler to tracks that ALSO appear in a reference pool,
-  treating it as a positive filter. Trigger: a hobbyist asks
-  for the positive-filter pattern.
+**The shape.** New optional field on content-sampling
+blocks (`weighted`, `window`, `pick`, `sequential`):
 
-Not shipped today; if you're reading this and it landed, the
-slice that landed it should have rewritten this paragraph +
-removed the corresponding watch-list entry.
+```json
+{
+  "source": "STARTER_CONTENT",
+  "strategy": "weighted",
+  "size": 1,
+  "allowlist_sources": ["DAYTIME_ROTATION"]
+}
+```
+
+* `allowlist_sources` — list of `role: reference` pool names.
+  A track is eligible iff its `persistent_id` appears in AT
+  LEAST ONE named pool (UNION across listed pools). Parser
+  cross-checks every entry is reference-role.
+* Field is **per-block, not station-wide** — diverges from
+  t5's `cross_pool_dedup_sources` rule on purpose. The use
+  cases ("morning slots play daytime, other slots
+  unrestricted") are slot-specific. Station-wide allowlist
+  would be too coarse.
+* `allowlist_sources` is FORBIDDEN on non-sampling strategies
+  (`jingle`, `mix`, `prev_ref`, `archive_ref`): they don't
+  sample from a candidate set that benefits from an allowlist
+  filter. Parser rejects loudly.
+
+**Semantics.** Mirror of t8 with inverse meaning:
+
+* **`weighted` / `pick(rng=on)`**: pre-filter candidate pool
+  to allowlist intersection. Fail-loud if filtered pool is
+  empty (with a t7-specific diagnostic naming the pool
+  size + the allowlist constraint).
+* **`window` / `sequential` / `pick(rng=None)`**: fail-loud if
+  any addressed position references a track NOT in the
+  allowlist. The diagnostic names the position + the
+  offending track's persistent_id so the operator can fix
+  the layout or the allowlist.
+
+**Compose with `cross_pool_dedup_sources` (§16.14.t5).** Both
+filters apply: a track is eligible iff in the allowlist AND
+NOT in the exclusion set. The candidate-set strategies
+(`weighted`, `pick(rng=on)`) apply the allowlist filter
+first; positional strategies check exclusion first.
+Documented in the strategy modules; in practice the order
+matters only for the error message (set algebra makes the
+final candidate set identical).
+
+**Try it yourself on the starter.** The starter doesn't ship
+an allowlist (it would force a curated subset of
+`STARTER_CONTENT` that's hard to construct portably), but
+the recipe is:
+
+1. Import a small curated playlist as `role: reference`:
+
+   ```bash
+   curl -F file=@my-daytime.xml \
+        -F name=DAYTIME_ROTATION \
+        -F role=reference \
+        http://localhost:8001/api/sources/upload
+   ```
+
+2. Open `stations/starter.json`. Pick a slot in `flat_slots`
+   (say slot 10) and add the allowlist:
+
+   ```json
+   { "source": "STARTER_CONTENT", "strategy": "weighted",
+     "size": 1, "allowlist_sources": ["DAYTIME_ROTATION"] }
+   ```
+
+3. Restart `station-studio serve`. Generate week 1 + inspect
+   slot 10's pick — it'll be a track present in BOTH
+   STARTER_CONTENT and DAYTIME_ROTATION.
+
+4. If DAYTIME_ROTATION shares no PIDs with STARTER_CONTENT,
+   generation fails loud with a "no tracks in the block's
+   allowlist_sources" diagnostic. Add some shared tracks
+   (or rename the pool to one that overlaps).
+
+**Combining allowlist with the t5/t8 exclusion rule.** A slot
+can have BOTH a station-wide `cross_pool_dedup_sources` rule
+AND a per-block `allowlist_sources` field. The track is
+eligible iff:
+
+```
+(track in source pool) AND
+(track in allowlist UNION) AND
+(track NOT in exclusion UNION)
+```
+
+For positional strategies (window, sequential, pick rng=None)
+the addressed positions must satisfy ALL three; fail-loud on
+any violation.
+
+**When to use which.**
+
+| Pattern | Mechanism |
+|---|---|
+| "Never play tracks also in MASTER" | t5/t8 `cross_pool_dedup_sources` (station-wide) |
+| "Only play tracks from DAYTIME" | t7 `allowlist_sources` (per-block) |
+| "Pick at a fixed position from MASTER" | t6 `archive_ref` strategy |
+
+**What `allowlist_sources` doesn't do today (deliberate punts).**
+
+* **No station-wide allowlist rule.** Per-block only.
+  Station-wide would be too coarse for the actual use cases
+  (daytime rotation isn't every slot in the station).
+* **No INTERSECTION semantics.** Multi-pool allowlist is
+  UNION ("in pool A OR pool B"). Intersection ("in pool A
+  AND pool B") would require a different field or a tagged-
+  union grammar — punted; file an issue if you have a real
+  use case.
+* **No frontend editing affordance.** `allowlist_sources` is
+  edited in the template JSON; the §16.10 RulesPanel +
+  §16.14.t11 ListRuleRow chip editor target station-wide
+  list rules, not per-block fields. The block visualiser at
+  `/stations/{slug}` does not yet expose per-block fields
+  for editing (see §16.2.4/§16.2.5 in the roadmap). For
+  now, JSON edit + restart is the operator UX.
+* **No bundled-station demo.** Same reasoning as
+  `archive_ref` — adding to starter.json would break the
+  168-slot pin + cascade through pinned tests. The "try it
+  yourself" recipe above is the intended UX.
 
 ## Deeper jingle composition
 
