@@ -1069,3 +1069,187 @@ def test_pick_rng_on_all_excluded_raises_with_diagnostic():
                 "PID0001", "PID0002", "PID0003", "PID0004", "PID0005",
             }),
         )
+
+
+# ---------- §16.14.t7 — window allowed_track_pids ------------------------
+
+
+def test_window_allowlist_full_coverage_passes():
+    """All addressed positions are in the allowlist union → pass."""
+    pool = _window_pool()
+    picked = apply_window(
+        pool, start=0, size=3, source_name="X",
+        allowed_track_pids=frozenset({"PID0001", "PID0002", "PID0003"}),
+    )
+    assert [p[0] for p in picked] == [1, 2, 3]
+
+
+def test_window_allowlist_partial_coverage_raises():
+    """First addressed position not in allowlist → fail-loud at
+    the specific position."""
+    pool = _window_pool()
+    with pytest.raises(
+        WindowOutOfRangeError,
+        match=r"window collided.*NOT in the block's allowlist_sources.*pool_index 2.*PID0002",
+    ):
+        apply_window(
+            pool, start=0, size=3, source_name="X",
+            allowed_track_pids=frozenset({"PID0001", "PID0003"}),
+        )
+
+
+def test_window_allowlist_empty_set_means_nothing_allowed():
+    """Non-None but empty allowlist → no track is allowed; fail-loud
+    at position 1. (The dispatch layer normalizes empty allowlist
+    to None upstream, but the strategy defends.)"""
+    pool = _window_pool()
+    with pytest.raises(WindowOutOfRangeError):
+        apply_window(
+            pool, start=0, size=1, source_name="X",
+            allowed_track_pids=frozenset({"NONEXISTENT"}),
+        )
+
+
+def test_window_allowlist_and_excluded_compose():
+    """When both filters are set, exclusion is checked first (stable
+    order). Position 1: not excluded + allowed → pick.
+    Position 2: excluded → exclusion error first."""
+    pool = _window_pool()
+    with pytest.raises(
+        WindowOutOfRangeError,
+        match=r"excluded by cross_pool_dedup_sources.*pool_index 2",
+    ):
+        apply_window(
+            pool, start=0, size=3, source_name="X",
+            excluded_track_pids=frozenset({"PID0002"}),
+            allowed_track_pids=frozenset({"PID0001", "PID0003"}),  # PID0002 also not allowed
+        )
+
+
+# ---------- §16.14.t7 — pick allowed_track_pids --------------------------
+
+
+def test_pick_rng_none_allowlist_cursor_in_allowlist_passes():
+    pool = _window_pool()
+    idx, track, new_cursor = apply_pick(
+        pool, cursor=2, rng=None, source_name="X",
+        allowed_track_pids=frozenset({"PID0003"}),
+    )
+    assert track.persistent_id == "PID0003"
+    assert new_cursor == 3
+
+
+def test_pick_rng_none_allowlist_cursor_not_in_allowlist_raises():
+    """rng=None: fail-loud at the cursor's track when not allowed."""
+    pool = _window_pool()
+    with pytest.raises(
+        IndexError,
+        match=r"pick \(rng=None\) addressed a track NOT in the block's allowlist_sources.*cursor 0.*PID0001",
+    ):
+        apply_pick(
+            pool, cursor=0, rng=None, source_name="X",
+            allowed_track_pids=frozenset({"PID0003"}),  # cursor is at PID0001
+        )
+
+
+def test_pick_rng_on_allowlist_filters_pool():
+    """rng=on: pre-filter to allowlist; random pick draws from
+    filtered candidates only."""
+    pool = _window_pool()
+    rng = random.Random(123)
+    # Allow only PID0001 + PID0005.
+    for _ in range(20):
+        idx, track, _ = apply_pick(
+            pool, cursor=0, rng=rng, source_name="X",
+            allowed_track_pids=frozenset({"PID0001", "PID0005"}),
+        )
+        assert track.persistent_id in {"PID0001", "PID0005"}
+
+
+def test_pick_rng_on_allowlist_empty_pool_raises_with_t7_diagnostic():
+    """rng=on: filtered pool empty (none of the pool's PIDs are in
+    the allowlist) → fail-loud with a t7-specific message."""
+    pool = _window_pool()
+    rng = random.Random(42)
+    with pytest.raises(
+        IndexError,
+        match=r"pick \(rng=on\) found no tracks in the block's allowlist_sources.*none of the 5 pool tracks.*§16.14.t7",
+    ):
+        apply_pick(
+            pool, cursor=0, rng=rng, source_name="X",
+            allowed_track_pids=frozenset({"NOT_IN_POOL"}),
+        )
+
+
+def test_pick_rng_on_allowlist_and_exclusion_compose():
+    """Both filters: (pool ∩ allowlist) - exclusion. Pool has 5;
+    allowlist keeps 3 (PIDs 1, 2, 3); exclusion removes PID0002;
+    remaining candidates are PID0001 + PID0003."""
+    pool = _window_pool()
+    rng = random.Random(7)
+    seen_pids: set[str] = set()
+    for _ in range(30):
+        _, track, _ = apply_pick(
+            pool, cursor=0, rng=rng, source_name="X",
+            allowed_track_pids=frozenset({"PID0001", "PID0002", "PID0003"}),
+            excluded_track_pids=frozenset({"PID0002"}),
+        )
+        seen_pids.add(track.persistent_id)
+    assert seen_pids == {"PID0001", "PID0003"}
+
+
+# ---------- §16.14.t7 — weighted allowed_track_pids ----------------------
+
+
+def test_weighted_allowlist_filters_pool_before_pick():
+    """allowlist filter runs at the pool level (like exclusion);
+    surviving tracks compete in the weighted pick."""
+    pool = _weighted_pool()
+    lookups = build_lookups(pool)
+    rng = random.Random(11)
+    # Allow only id=1 + id=4 (Artist A + Artist B; sub-pool).
+    # CommercialTrack lacks persistent_id by default; we use the
+    # `id` attribute aliased via getattr. Add a small adapter.
+    class _Wrap:
+        def __init__(self, t, pid):
+            self._t = t
+            self.persistent_id = pid
+        def __getattr__(self, n):
+            return getattr(self._t, n)
+    allowed_pool = [_Wrap(t, f"P{t.id:04d}") for t in pool]
+    allow = frozenset({"P0001", "P0004"})
+    allow_lookups = build_lookups(allowed_pool)
+    track, info = apply_weighted(
+        allowed_pool, lookups=allow_lookups,
+        recent_artist_keys=[], used_track_ids=[],
+        rng=rng, source_name="C",
+        allowed_track_pids=allow,
+    )
+    # Only id=1 (Artist A) or id=4 (Artist B) survives the
+    # allowlist filter.
+    assert track.id in {1, 4}
+
+
+def test_weighted_allowlist_empty_after_filter_raises_t7_diagnostic():
+    """All pool tracks filtered out by allowlist → fail-loud with
+    a t7-specific message naming the pre-filter size."""
+    pool = _weighted_pool()
+    # Wrap with PIDs.
+    class _Wrap:
+        def __init__(self, t, pid):
+            self._t = t
+            self.persistent_id = pid
+        def __getattr__(self, n):
+            return getattr(self._t, n)
+    wrapped = [_Wrap(t, f"P{t.id:04d}") for t in pool]
+    lookups = build_lookups(wrapped)
+    with pytest.raises(
+        IndexError,
+        match=r"all 6 tracks filtered out by the block's allowlist_sources.*§16.14.t7",
+    ):
+        apply_weighted(
+            wrapped, lookups=lookups,
+            recent_artist_keys=[], used_track_ids=[],
+            rng=None, source_name="C",
+            allowed_track_pids=frozenset({"NOT_IN_POOL"}),
+        )

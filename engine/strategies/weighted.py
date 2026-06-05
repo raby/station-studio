@@ -140,6 +140,7 @@ def apply_weighted(
     rng: random.Random | None = None,
     source_name: str,
     excluded_track_pids: frozenset[str] | set[str] | None = None,
+    allowed_track_pids: frozenset[str] | set[str] | None = None,
 ) -> tuple[Any, WeightedPickInfo]:
     """Return (picked_track, info) for one weighted commercial slot.
 
@@ -165,6 +166,16 @@ def apply_weighted(
     artist-dedup + stalest-tracking work as if the excluded tracks
     were never imported. An empty/None set is a no-op (the rule's
     default).
+
+    `allowed_track_pids` (§16.14.t7): if non-empty, KEEPS only tracks
+    whose `persistent_id` appears in the set (positive filter; the
+    inverse of `excluded_track_pids`). Generator builds the union
+    from the block's `allowlist_sources` upstream. Composes with
+    `excluded_track_pids` per D8 — the final candidate set is
+    ``(pool ∩ allowlist) - exclusion`` (set-minus, written ``-``
+    here rather than ``\`` to avoid the docstring-escape ambiguity).
+    Per-filter empty-pool errors name the constraint that emptied
+    the pool so the operator can fix the right rule.
 
     **Caveat — `pool_index` semantics under exclusion.** When the
     filter drops tracks, the returned ``WeightedPickInfo.pool_index``
@@ -195,6 +206,30 @@ def apply_weighted(
                 f"excluded by cross_pool_dedup_sources (§16.14.t5). "
                 "Either narrow the dedup source list or import more "
                 "tracks into the content pool."
+            )
+
+    # §16.14.t7 D4: per-block allowlist as a pre-filter (positive
+    # filter). Pool tracks NOT in the allowlist union are dropped;
+    # fail-loud if the filtered pool is empty. Runs AFTER the
+    # exclusion filter so the post-filter pool reflects both
+    # constraints (D8: track eligible iff in allowlist AND NOT
+    # excluded; set algebra makes the order irrelevant for the
+    # final result but the per-filter empty-pool errors name
+    # whichever constraint emptied it).
+    if allowed_track_pids:
+        pre_allow_size = len(pool)
+        pool = [
+            t for t in pool
+            if getattr(t, "persistent_id", None) in allowed_track_pids
+        ]
+        if not pool:
+            raise IndexError(
+                f"source '{source_name}': all {pre_allow_size} tracks "
+                f"filtered out by the block's allowlist_sources "
+                "(§16.14.t7) — none of the pool's persistent_ids "
+                "appear in the allowlist union. Widen the allowlist "
+                "pool(s), remove the block's allowlist_sources, or "
+                "import more tracks into the content pool."
             )
 
     if not pool:

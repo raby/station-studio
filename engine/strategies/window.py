@@ -25,6 +25,7 @@ def apply_window(
     size: int,
     source_name: str,
     excluded_track_pids: frozenset[str] | set[str] | None = None,
+    allowed_track_pids: frozenset[str] | set[str] | None = None,
 ) -> list[tuple[int, Any]]:
     """Return [(pool_index_1based, track), ...] for `size` items starting at `start` (0-indexed).
 
@@ -39,6 +40,18 @@ def apply_window(
     operator either accepts the layout-vs-rule conflict OR redesigns;
     the engine honors the "never play these tracks" contract
     absolutely rather than silently walking past.
+
+    `allowed_track_pids` (§16.14.t7): if non-empty, checks each
+    track in the addressed range against the allowlist (UNION of
+    the block's `allowlist_sources` pools' pids). The FIRST
+    not-in-allowlist track raises WindowOutOfRangeError with a
+    t7-specific diagnostic. Same fail-loud contract as the
+    exclusion check — positional strategies don't skip past
+    rule-violating tracks. The exclusion check runs FIRST (so if
+    a track is both excluded AND not allowed, the operator sees
+    the exclusion diagnostic; the order is stable for tests but
+    operationally either error means "this addressed track
+    violates a rule, fix the layout or the rules").
     """
     if start < 0:
         raise WindowOutOfRangeError(
@@ -66,5 +79,22 @@ def apply_window(
                     "contract is absolute; either widen the pool, "
                     "narrow cross_pool_dedup_sources, or move this "
                     "window's start position past the excluded track."
+                )
+    if allowed_track_pids:
+        # §16.14.t7 D4: each addressed track must be in the block's
+        # allowlist union. Same fail-loud shape as exclusion above.
+        for i in range(size):
+            track = pool[start + i]
+            pid = getattr(track, "persistent_id", None)
+            if pid not in allowed_track_pids:
+                raise WindowOutOfRangeError(
+                    f"source '{source_name}': window collided with a "
+                    f"track NOT in the block's allowlist_sources "
+                    f"(§16.14.t7) at pool_index {start + i + 1} "
+                    f"(persistent_id={pid!r}). The allowlist's "
+                    "positive-filter contract is absolute; either "
+                    "widen the allowlist pool(s), remove the block's "
+                    "allowlist_sources, or move this window's start "
+                    "position to a span fully covered by the allowlist."
                 )
     return [(start + i + 1, pool[start + i]) for i in range(size)]

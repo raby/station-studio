@@ -1892,3 +1892,136 @@ def test_pick_t8_rng_on_pre_filters_pool():
     )
     # Only APID0003 (= A0003) survived the filter.
     assert r.picks[0].name == "A0003"
+
+
+# ---------- §16.14.t7 — end-to-end per-block allowlist ------------------
+
+
+def test_window_t7_end_to_end_pool_fully_in_allowlist_passes():
+    """End-to-end: weighted block declares allowlist_sources naming a
+    reference pool whose tracks INCLUDE every track in the addressed
+    window's range. Generation succeeds."""
+    t = parse_template(mk_template(
+        sources=[
+            {"name": "A", "colour": "#111", "role": "content"},
+            {"name": "ALLOW", "colour": "#bbb", "role": "reference"},
+        ],
+        layout={
+            "unit": "day",
+            "unit_labels": ["Mon"],
+            "row_start_offsets": [0],
+            "row_template": [
+                {"source": "A", "strategy": "window", "size": 2,
+                 "allowlist_sources": ["ALLOW"]},
+            ],
+        },
+    ))
+    pool_a = _pid_pool("A", 5)
+    # Allowlist pool shares persistent_ids with positions 1-2 of A.
+    pool_allow = [
+        PidTrack(id=99, name="ALLOW-1", persistent_id="APID0001"),
+        PidTrack(id=98, name="ALLOW-2", persistent_id="APID0002"),
+    ]
+    r = generate(t, {"A": pool_a, "ALLOW": pool_allow}, week=1)
+    assert [t.name for t in r.picks] == ["A0001", "A0002"]
+
+
+def test_window_t7_end_to_end_addressed_track_not_in_allowlist_raises():
+    """End-to-end: window block's addressed range includes a track
+    NOT in the allowlist. Generation raises at the dispatch layer."""
+    t = parse_template(mk_template(
+        sources=[
+            {"name": "A", "colour": "#111", "role": "content"},
+            {"name": "ALLOW", "colour": "#bbb", "role": "reference"},
+        ],
+        layout={
+            "unit": "day",
+            "unit_labels": ["Mon"],
+            "row_start_offsets": [0],
+            "row_template": [
+                {"source": "A", "strategy": "window", "size": 3,
+                 "allowlist_sources": ["ALLOW"]},
+            ],
+        },
+    ))
+    pool_a = _pid_pool("A", 5)
+    # Allowlist covers positions 1 + 2 but NOT 3.
+    pool_allow = [
+        PidTrack(id=99, name="ALLOW-1", persistent_id="APID0001"),
+        PidTrack(id=98, name="ALLOW-2", persistent_id="APID0002"),
+    ]
+    with pytest.raises(
+        IndexError,
+        match=r"window collided.*NOT in the block's allowlist_sources.*pool_index 3.*APID0003",
+    ):
+        generate(t, {"A": pool_a, "ALLOW": pool_allow}, week=1)
+
+
+def test_allowlist_union_across_multiple_sources():
+    """allowlist_sources can name multiple reference pools; the
+    addressed track is allowed iff its persistent_id appears in
+    AT LEAST ONE pool (UNION semantics per D2)."""
+    t = parse_template(mk_template(
+        sources=[
+            {"name": "A", "colour": "#111", "role": "content"},
+            {"name": "ALLOW1", "colour": "#bb1", "role": "reference"},
+            {"name": "ALLOW2", "colour": "#bb2", "role": "reference"},
+        ],
+        layout={
+            "unit": "day",
+            "unit_labels": ["Mon"],
+            "row_start_offsets": [0],
+            "row_template": [
+                {"source": "A", "strategy": "window", "size": 2,
+                 "allowlist_sources": ["ALLOW1", "ALLOW2"]},
+            ],
+        },
+    ))
+    pool_a = _pid_pool("A", 5)
+    # ALLOW1 covers position 1; ALLOW2 covers position 2.
+    # Neither alone covers both, but their UNION does.
+    pool_allow1 = [PidTrack(id=99, name="X", persistent_id="APID0001")]
+    pool_allow2 = [PidTrack(id=98, name="Y", persistent_id="APID0002")]
+    r = generate(
+        t,
+        {"A": pool_a, "ALLOW1": pool_allow1, "ALLOW2": pool_allow2},
+        week=1,
+    )
+    assert [t.name for t in r.picks] == ["A0001", "A0002"]
+
+
+def test_allowlist_composes_with_excluded_track_pids():
+    """When both filters are in play: allowlist AND not-excluded.
+    Track in allowlist but ALSO excluded → fail-loud (exclusion
+    check fires first, stable for tests)."""
+    t = parse_template(mk_template(
+        sources=[
+            {"name": "A", "colour": "#111", "role": "content"},
+            {"name": "ALLOW", "colour": "#bbb", "role": "reference"},
+        ],
+        layout={
+            "unit": "day",
+            "unit_labels": ["Mon"],
+            "row_start_offsets": [0],
+            "row_template": [
+                {"source": "A", "strategy": "window", "size": 2,
+                 "allowlist_sources": ["ALLOW"]},
+            ],
+        },
+    ))
+    pool_a = _pid_pool("A", 5)
+    pool_allow = [
+        PidTrack(id=99, name="ALLOW-1", persistent_id="APID0001"),
+        PidTrack(id=98, name="ALLOW-2", persistent_id="APID0002"),
+    ]
+    # Exclude APID0002 even though it's in the allowlist; the
+    # exclusion fires first (the dispatch checks exclusion before
+    # allowlist).
+    with pytest.raises(
+        IndexError,
+        match=r"excluded by cross_pool_dedup_sources.*pool_index 2",
+    ):
+        generate(
+            t, {"A": pool_a, "ALLOW": pool_allow}, week=1,
+            excluded_track_pids=frozenset({"APID0002"}),
+        )

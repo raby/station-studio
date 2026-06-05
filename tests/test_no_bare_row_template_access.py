@@ -86,8 +86,11 @@ ALLOWED_SITES: set[tuple[str, int]] = {
     # explicit module-level import for the sequential dispatch's
     # raise site; 966 → 969 in t8 c1-review F2 when that import
     # consolidated into the strategies-package re-exports + the
-    # explanatory comment expanded.
-    ("engine/generator.py", 969),
+    # explanatory comment expanded; 969 → 1029 in §16.14.t7 c2
+    # when window/pick/sequential/weighted dispatch sites picked
+    # up allowed_track_pids kwarg + the per-block allowlist union
+    # construction + sequential's inline allowlist check.
+    ("engine/generator.py", 1029),
     # NOTE: `LayoutSpec.all_blocks` itself (engine/template.py:174)
     # uses `self.row_template` (no `.layout.` prefix; it's a method
     # ON LayoutSpec) and so doesn't match this lint pattern. That's

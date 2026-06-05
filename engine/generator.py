@@ -386,17 +386,34 @@ def generate_stream(
         _iterate_slots(template, base_cursor)
     ):
         pool = pools[block.source]
+        # §16.14.t7 D7: precompute the per-block allowlist union.
+        # The block's `allowlist_sources` names role:reference
+        # pools (parser cross-checked + loaded by load_pools); each
+        # pool contributes its tracks' persistent_ids. None when
+        # the block doesn't declare an allowlist (the pre-t7
+        # contract) — strategies treat None/empty as no constraint.
+        allowed_track_pids: frozenset[str] | None = None
+        if block.allowlist_sources:
+            allowed_track_pids = frozenset(
+                t.persistent_id
+                for allow_name in block.allowlist_sources
+                for t in pools[allow_name]
+                if t.persistent_id is not None
+            )
         if block.strategy == "window":
             # §16.14.t8 D3: window fails loud on any addressed
             # collision with cross_pool_dedup_sources. apply_window
             # checks each track in [start, start+size) and raises
-            # WindowOutOfRangeError on the first hit.
+            # WindowOutOfRangeError on the first hit. §16.14.t7
+            # adds the symmetric allowlist check (same fail-loud
+            # contract on the inverse semantic).
             picked = apply_window(
                 pool,
                 start=row_start_in_pool,
                 size=block.size,
                 source_name=block.source,
                 excluded_track_pids=excluded_track_pids,
+                allowed_track_pids=allowed_track_pids,
             )
             reason_prefix = (
                 f"window size={block.size} from '{block.source}' "
@@ -476,6 +493,31 @@ def generate_stream(
                             "widen the pool, narrow "
                             "cross_pool_dedup_sources, or shift the "
                             "named cursor past the excluded track."
+                        )
+            # §16.14.t7 D4: sequential's allowlist counterpart —
+            # each addressed wrapped position must be in the
+            # block's allowlist union. Same fail-loud shape as
+            # the exclusion check above; runs after it so when
+            # both filters would fire on the same position, the
+            # operator sees the exclusion error first (stable
+            # for tests; operationally either error means "fix
+            # the layout-vs-rule conflict").
+            if allowed_track_pids:
+                for pool_idx_1based, t in picked:
+                    pid = getattr(t, "persistent_id", None)
+                    if pid not in allowed_track_pids:
+                        raise WindowOutOfRangeError(
+                            f"source '{block.source}': sequential "
+                            f"(cursor='{block.cursor_id}') addressed "
+                            f"a track NOT in the block's "
+                            f"allowlist_sources (§16.14.t7) at "
+                            f"pool_index {pool_idx_1based} "
+                            f"(persistent_id={pid!r}). The allowlist's "
+                            "positive-filter contract is absolute; "
+                            "widen the allowlist pool(s), remove the "
+                            "block's allowlist_sources, or shift the "
+                            "named cursor onto a span fully covered "
+                            "by the allowlist."
                         )
             seq_offsets[block.cursor_id] = offset + block.size
             reason_prefix = (
@@ -596,6 +638,8 @@ def generate_stream(
                     source_name=block.source,
                     # §16.14.t5: threaded from generate_stream's kwarg.
                     excluded_track_pids=excluded_track_pids,
+                    # §16.14.t7: per-block allowlist union (D7).
+                    allowed_track_pids=allowed_track_pids,
                 )
                 # Mutate state AFTER the pick (the strategy only reads).
                 state.recent_artist_keys.append(
@@ -785,6 +829,17 @@ def generate_stream(
                         # §16.14.t5: same exclusion applies on the
                         # prev_ref fallback path.
                         excluded_track_pids=excluded_track_pids,
+                        # §16.14.t7: same allowlist applies on the
+                        # prev_ref fallback path. Note: prev_ref
+                        # itself is non-sampling so its block doesn't
+                        # carry allowlist_sources — but its fallback
+                        # delegates to weighted, which IS sampling.
+                        # The block-level allowlist (None for
+                        # prev_ref blocks per the parser's
+                        # CONTENT_SAMPLING_STRATEGIES set) means no
+                        # constraint here; the kwarg stays None and
+                        # weighted's filter is a no-op on this path.
+                        allowed_track_pids=allowed_track_pids,
                     )
                     # Mutate _GenState same as the regular weighted
                     # dispatch — the prev_ref fallback's pick must
@@ -874,6 +929,11 @@ def generate_stream(
                 pool_idx, track, cursor = apply_pick(
                     pool, cursor=cursor, rng=rng, source_name=block.source,
                     excluded_track_pids=excluded_track_pids,
+                    # §16.14.t7: per-block allowlist union (D7) —
+                    # apply_pick internalises the rng-split: rng=None
+                    # fails loud if cursor track not allowed; rng=on
+                    # pre-filters to allowlist ∩ pool.
+                    allowed_track_pids=allowed_track_pids,
                 )
                 slot_counter += 1
                 picks.append(track)
