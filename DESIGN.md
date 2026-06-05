@@ -10132,17 +10132,133 @@ sweep, matching the §16.13.t1-t9 cadence).
   | Design pass (`6a665fc`) | D1–D9 locked. Q1 new strategy (not field on prev_ref); Q2 name `archive_ref`. D9 added mid-flight after reading the existing load_pools (load_pools' content-only iteration needs a second pass for reference-sampling sources, otherwise archive_ref's pool would be missing at generation time). |
   | c1 (`bd87b15`) + review (`308a58d`) | Engine + parser + load_pools + dispatch + tests. **engine/strategies/archive_ref.py** (new): `apply_archive_ref(pool, position, source_name)` pure position-based lookup with `ArchiveRefPositionOutOfRangeError` (subclass of IndexError for catch-IndexError parity with prev_ref). Error message names pool + position + valid 1..N range. **engine/template.py**: `SUPPORTED_STRATEGIES` gains "archive_ref"; new `REFERENCE_SAMPLING_STRATEGIES` set drives strategy-aware cross-checks (today `{"archive_ref"}`; future §16.14.t7 joins); new `Template.reference_sampling_source_names` property returns sorted/deduplicated reference-pool names from archive_ref blocks; strategy-aware §14.35 role cross-check (archive_ref requires reference, others still require content); `_parse_block`'s `required_for={"prev_ref", "archive_ref"}` for `position`; BlockSpec.position docstring extended; flat_slots strategy-exclusion error message updated. **engine/persistence.py:load_pools**: second pass loads reference-sampling sources; missing → ValueError; wrong-role → TemplateError. Defensive deduplication guard against future grammar that could ever land the same source in both lists. **engine/generator.py**: archive_ref dispatch; `block.size > 1` reads CONSECUTIVE positions starting at `block.position` (P, P+1, P+2, ...); OOB wraps as ValueError with row+block context. **Tests (+27)**: 8 strategy unit tests, 10 parser tests, 3 load_pools integration tests, 5 end-to-end generation tests. **c1 review applied 4 🟢 fixes**: F1 replaced `# type: ignore[operator]` in dispatch with explicit `assert block.position is not None` (parser guarantees, but mypy needs the bridge); F2 added a prev_ref + archive_ref coexistence-in-same-template test; F3 pinned block-index stability across the size > 1 trace slots; F4 added a docstring to `content_source_names` cross-referencing the new `reference_sampling_source_names` companion. |
   | **c2 (_this commit_)** | Docs + slice closeout. New "Position-based archive lookup with `archive_ref` (§16.14.t6)" section in `stations/README.md` covering: the shape (block fields), the semantics (pure deterministic, no fallback, fail-loud failure modes), a "try it yourself" recipe for adding an archive_ref slot to starter.json without committing it (matches D7's no-bundled-demo punt), combining with prev_ref, when to use which strategy (archive_ref vs prev_ref vs sequential), and four deliberate punts. The "Forward-looking utilities (not shipped)" section pruned: §16.14.t6 promoted out; only §16.14.t7 (allowlist enforcement) remains queued under reference-role utilities. DESIGN §16.14.t6 marked SHIPPED with this shipped log; §15 status snapshot + §17 queued-order row bumped (the §16.14 sub-slice tally adds t6; remaining queued under §16.14: §16.14.t7 + §16.14.t8). |
-* **§16.14.t7 — Reference-role: allowlist enforcement.**
-  Inverse of §16.14.t5 — restrict the content sampler to
-  tracks that ALSO appear in a configured reference pool,
-  treating it as a positive filter. Useful for "only play
-  tracks tagged for daytime rotation" patterns the current
-  `mix` strategy almost expresses. Requires similar machinery
-  to t5 (reverse semantics). The §16.14.t3 docs page names
-  this as a forward-looking utility. **Home: separate slice
-  (~2-3 commits).** Trigger: a hobbyist asks for the
-  positive-filter pattern, OR §16.14.t5 ships and the inverse
-  becomes the natural next step.
+* **§16.14.t7 — Reference-role: per-block allowlist enforcement.
+  IN FLIGHT.**
+  Trigger fired (user explicitly asked for t7 as the final
+  §16.14 sub-slice; completionist call closing the §16.14
+  plan).
+
+  **Context.** Mirror of §16.14.t5/t8: where t5/t8 EXCLUDE
+  tracks that also appear in named reference pools, t7
+  INCLUDES tracks only if they appear in named reference
+  pools. The "daytime rotation" / "spotlight slots" /
+  "ambient subset" patterns the §16.14.t3 docs named as
+  forward-looking utilities all want positive-filter
+  semantics that t5's exclusion can't express.
+
+  Reading the design talk surfaced one important divergence
+  from t5/t8: the natural use cases are SLOT-SPECIFIC
+  ("morning slots get daytime allowlist; other slots
+  unrestricted"), not station-wide. So t7 uses a PER-BLOCK
+  field rather than a station-wide rule.
+
+  **Decisions (locked in the pre-c1 design talk):**
+
+  * **D1 — Per-block field, not a station-wide rule.** New
+    `BlockSpec.allowlist_sources: list[str] | None`. Only
+    slots that declare an allowlist get the constraint;
+    other slots stay unrestricted. Matches the genuine
+    "daytime rotation"-class use case (constrain SOME slots
+    to a curated subset, not every slot in the station).
+    Station-wide allowlist would be too coarse — "every
+    slot is daytime" is rarely what an operator wants.
+    Diverges intentionally from t5's station-wide rule
+    shape; documented in c3 docs.
+  * **D2 — Multi-source list with UNION semantics.** Track
+    allowed if `persistent_id` appears in AT LEAST ONE named
+    pool. Common case is one pool (list of 1); the union
+    semantics handle "daytime OR weekend rotation" without
+    a grammar migration. Symmetric with t5's
+    `cross_pool_dedup_sources` list shape (which also unions
+    across listed pools, just on the exclusion side).
+  * **D3 — Source role: must be `role: reference`.** Parser
+    cross-check, same pattern as t5/t6. The §14.35 strategy-
+    aware role check extended in §16.14.t6 already supports
+    "this field expects reference role." t7 adds a third
+    field-level role check (alongside `source` for content
+    strategies + `source` for archive_ref). Documented near
+    `REFERENCE_SAMPLING_STRATEGIES`.
+  * **D4 — Per-strategy fail-loud mirrors t8.** Inverse
+    semantics, same trade-off contract:
+      - `weighted` / `pick(rng=on)`: pre-filter candidate
+        pool to allowlist union. Fail-loud if filtered pool
+        is empty.
+      - `window` / `sequential` / `pick(rng=None)`: fail-
+        loud if any addressed track is NOT in the allowlist
+        union. Specific diagnostic naming pool + position +
+        offending track's persistent_id, matching the t8
+        error-message shape.
+  * **D5 — Trace shape unchanged from t8.** Fail-loud paths
+    raise BEFORE slot append; the exception IS the
+    diagnostic. Pre-filter paths (weighted, pick(rng=on))
+    don't populate `excluded_candidates` — same honesty
+    amendment as t8 c1-review F1 (uniform "not in allowlist"
+    reasons would be informational noise).
+  * **D6 — `load_pools` extension picks up allowlist
+    sources.** Parallel to the §16.14.t6 `reference_sampling
+    _source_names` extension: a new
+    `Template.allowlist_source_names` property returns the
+    deduplicated sorted list of pools referenced by any
+    block's `allowlist_sources`. `load_pools` iterates
+    those (with the t6-style "missing pool → ValueError" +
+    "wrong role → TemplateError" guards) so the dispatch
+    has the pid sets available at generation time.
+  * **D7 — Dispatch-level allowlist union construction.**
+    Generator precomputes a per-block `frozenset[str]` of
+    allowed persistent_ids by unioning the named pools'
+    pids on first use (memoised per block, since blocks
+    don't share allowlist sets). Each strategy's check
+    consumes the precomputed set.
+  * **D8 — Strategy signatures gain `allowed_track_pids:
+    frozenset[str] | set[str] | None = None`** kwarg.
+    Separate from `excluded_track_pids` so t5/t8 and t7
+    can compose (a block could have BOTH a station-wide
+    dedup AND a per-block allowlist). The two filters
+    intersect: a track is eligible iff it's IN the allowlist
+    AND NOT in the exclusion set.
+  * **D9 — Parser-grammar field placement on BlockSpec.**
+    `allowlist_sources: list[str] | None = None` —
+    optional for ALL content-sampling strategies (weighted,
+    window, pick, sequential); forbidden for non-sampling
+    strategies (jingle, mix, prev_ref, archive_ref).
+    Validator rejects empty entries + commas in entries
+    (same string-list contract the §16.14.t9 parser
+    enforces on `cross_pool_dedup_sources` entries —
+    reuse the validator helper).
+  * **D10 — Slice shape: 3 commits + reviews + sweep.**
+      - c1: parser grammar (new field + `allowlist_source
+        _names` property + role cross-check) + load_pools
+        extension + parser tests
+      - c2: strategy + dispatch wiring (`allowed_track_pids`
+        kwarg on apply_window + apply_pick; sequential
+        inline pre-check; allowlist union construction in
+        generator; weighted's pre-filter extension) +
+        strategy unit + integration tests
+      - c3: docs (stations/README.md "Position-based
+        allowlist") + closeout
+      Plus 2 mid-slice reviews + slice-review sweep. ~6-7
+      commits total. Bigger than t8 because of the parser
+      grammar change.
+
+  **Trade-off the user accepted (pre-c1 design talk):**
+  Same fail-loud trade-off as t8 for positional strategies.
+  A Classics-style template with a window block on an
+  allowlist becomes incompatible with any allowlist that
+  doesn't fully cover the addressed range. Operators either
+  accept the layout-vs-allowlist conflict OR redesign.
+  Documented as a deliberate punt in c3.
+
+  **Shape:** c1 + c2 + c3 + 2 mid-slice reviews +
+  slice-review sweep. Standard cadence; ~6-7 commits.
+
+  **Closes:** the §16.14 plan entirely. Reference-role
+  pools' content-sampling integration becomes fully
+  bidirectional:
+    - t5/t8 (negative filter / exclude)
+    - t7 (positive filter / allowlist)
+    - t6 (positional sampling via archive_ref)
+
+  After t7 ships, §16.14 has nothing remaining queued.
 * **§16.14.t8 — Extend cross-pool dedup to `window` + `sequential`
   + `pick` strategies. SHIPPED.**
   Trigger fired (§16.14.t5 shipped + closed the t5-D2 punt's
