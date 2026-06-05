@@ -557,3 +557,157 @@ def test_load_pools_archive_ref_pool_with_content_role_raises_template_error(
         match=r"role='content' but the template's archive_ref block requires role='reference'",
     ):
         load_pools(db_session, tmpl)
+
+
+# ---------- §16.14.t7 — load_pools allowlist_sources extension ----------
+
+
+def _template_with_allowlist(
+    content_name: str, allowlist_name: str,
+) -> dict:
+    """parse_template-valid template: one weighted block with the
+    named allowlist_sources."""
+    return {
+        "station": "test",
+        "cadence": "weekly",
+        "rng": "off",
+        "sources": [
+            {"name": content_name, "colour": "#aaa", "role": "content"},
+            {"name": allowlist_name, "colour": "#bbb", "role": "reference"},
+        ],
+        "cursor": {"base_advance_per_week": 0, "cycle_weeks": 1},
+        "layout": {
+            "unit": "slot",
+            "unit_labels": [],
+            "row_start_offsets": [],
+            "cursors_init": {},
+            "flat_slots": [
+                {"source": content_name, "strategy": "weighted",
+                 "size": 1, "allowlist_sources": [allowlist_name]},
+            ],
+        },
+    }
+
+
+def test_load_pools_loads_allowlist_reference_source(db_session, tmp_path):
+    """§16.14.t7: load_pools' third pass picks up reference sources
+    used by any block's allowlist_sources. Without it, the
+    allowlist pool would be missing from the pools dict at
+    generation time."""
+    from engine.persistence import load_pools
+    from engine.template import parse_template
+
+    content_path = tmp_path / "content.xml"
+    make_itunes_plist(content_path, "C", [track(1, "C0000000000000001", "C1")])
+    allow_path = tmp_path / "allow.xml"
+    make_itunes_plist(allow_path, "ALLOW", [
+        track(10, "L0000000000000010", "L-1"),
+        track(11, "L0000000000000011", "L-2"),
+    ])
+    import_source(db_session, content_path, "C", role="content")
+    import_source(db_session, allow_path, "ALLOW", role="reference")
+
+    tmpl = parse_template(_template_with_allowlist("C", "ALLOW"))
+    pools = load_pools(db_session, tmpl)
+    assert set(pools.keys()) == {"C", "ALLOW"}
+    assert len(pools["C"]) == 1
+    assert len(pools["ALLOW"]) == 2
+
+
+def test_load_pools_missing_allowlist_source_raises_value_error(
+    db_session, tmp_path,
+):
+    """Missing allowlist pool → ValueError (matches the missing-
+    content + missing-archive_ref-source error type). Message
+    names the missing pool + tags it as allowlist-referenced."""
+    from engine.persistence import load_pools
+    from engine.template import parse_template
+
+    content_path = tmp_path / "content.xml"
+    make_itunes_plist(content_path, "C", [track(1, "C0000000000000001", "C1")])
+    import_source(db_session, content_path, "C", role="content")
+    # Allowlist source NOT imported.
+
+    tmpl = parse_template(_template_with_allowlist("C", "MISSING"))
+    with pytest.raises(
+        ValueError,
+        match=r"allowlist source pool 'MISSING' not imported.*allowlist_sources",
+    ):
+        load_pools(db_session, tmpl)
+
+
+def test_load_pools_allowlist_with_content_role_raises_template_error(
+    db_session, tmp_path,
+):
+    """Inverse role mismatch: template's allowlist_sources entry
+    names a pool; importer marked it content. The template parser
+    rejected the OPPOSITE direction (content slot using reference
+    source) but didn't see the DB-time role drift. load_pools
+    catches it."""
+    from engine.persistence import load_pools
+    from engine.template import parse_template, TemplateError
+
+    content_path = tmp_path / "content.xml"
+    make_itunes_plist(content_path, "C", [track(1, "C0000000000000001", "C1")])
+    allow_path = tmp_path / "allow.xml"
+    make_itunes_plist(allow_path, "ALLOW", [track(10, "L0000000000000010", "L-1")])
+    import_source(db_session, content_path, "C", role="content")
+    # Template's sources[] says ALLOW is reference (template parser
+    # accepts); importer set it to content. DB-vs-template drift.
+    import_source(db_session, allow_path, "ALLOW", role="content")
+
+    tmpl = parse_template(_template_with_allowlist("C", "ALLOW"))
+    with pytest.raises(
+        TemplateError,
+        match=r"role='content' but the template's allowlist_sources block field requires role='reference'",
+    ):
+        load_pools(db_session, tmpl)
+
+
+def test_load_pools_shared_allowlist_and_archive_ref_source_loaded_once(
+    db_session, tmp_path,
+):
+    """A reference pool used by BOTH an archive_ref block AND an
+    allowlist_sources entry loads exactly once (the if-already-
+    loaded guard short-circuits the third pass)."""
+    from engine.persistence import load_pools
+    from engine.template import parse_template
+
+    content_path = tmp_path / "content.xml"
+    make_itunes_plist(content_path, "C", [track(1, "C0000000000000001", "C1")])
+    ref_path = tmp_path / "ref.xml"
+    make_itunes_plist(ref_path, "REF", [
+        track(10, "R0000000000000010", "R-1"),
+        track(11, "R0000000000000011", "R-2"),
+    ])
+    import_source(db_session, content_path, "C", role="content")
+    import_source(db_session, ref_path, "REF", role="reference")
+
+    tmpl = parse_template({
+        "station": "test",
+        "cadence": "weekly",
+        "rng": "off",
+        "sources": [
+            {"name": "C", "colour": "#aaa", "role": "content"},
+            {"name": "REF", "colour": "#bbb", "role": "reference"},
+        ],
+        "cursor": {"base_advance_per_week": 0, "cycle_weeks": 1},
+        "layout": {
+            "unit": "slot",
+            "unit_labels": [],
+            "row_start_offsets": [],
+            "cursors_init": {},
+            "flat_slots": [
+                # archive_ref samples REF positionally.
+                {"source": "REF", "strategy": "archive_ref",
+                 "size": 1, "position": 1},
+                # weighted block uses REF as allowlist.
+                {"source": "C", "strategy": "weighted", "size": 1,
+                 "allowlist_sources": ["REF"]},
+            ],
+        },
+    })
+    pools = load_pools(db_session, tmpl)
+    # REF loaded exactly once with both tracks.
+    assert set(pools.keys()) == {"C", "REF"}
+    assert len(pools["REF"]) == 2

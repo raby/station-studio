@@ -150,6 +150,21 @@ class BlockSpec:
     # genre. When absent, the fallback uses the weighted strategy
     # (defensive — weekly's actual templates never trigger this).
     fallback_genre: str | None = None
+    # §16.14.t7 — per-block allowlist enforcement. List of `role:
+    # reference` source pool names whose tracks (by persistent_id)
+    # form the UNION-of-pools allowlist. When set, the strategy's
+    # candidate set is restricted to tracks whose persistent_id
+    # appears in AT LEAST ONE named pool; positional strategies
+    # (window, sequential, pick rng=None) fail-loud if any
+    # addressed track is not in the allowlist; weighted +
+    # pick(rng=on) pre-filter and fail-loud if the filtered pool
+    # is empty (same trade-off as §16.14.t8). Optional for ALL
+    # content-sampling strategies (weighted, window, pick,
+    # sequential); FORBIDDEN for jingle, mix, prev_ref,
+    # archive_ref (they don't sample from a candidate pool, so
+    # an allowlist would be meaningless). None / [] / absent =
+    # no allowlist constraint (the engine samples freely).
+    allowlist_sources: list[str] | None = None
 
 
 @dataclass
@@ -250,6 +265,27 @@ class Template:
             b.source for b in self.layout.all_blocks()
             if b.strategy in REFERENCE_SAMPLING_STRATEGIES
         })
+
+    @property
+    def allowlist_source_names(self) -> list[str]:
+        """§16.14.t7 — names of `role: reference` sources used in any
+        block's ``allowlist_sources`` field.
+
+        Drives ``load_pools``' THIRD pass (after content + reference-
+        sampling sources). Each named pool's persistent_ids form
+        part of the allowlist's union — the strategy-level check
+        composes the union from the loaded pools at generation time.
+
+        Returns sorted, deduplicated names so multiple blocks
+        referencing the same pool resolve to one load call. Empty
+        when no block declares an allowlist (the pre-t7 contract;
+        templates without allowlist_sources skip this path).
+        """
+        names: set[str] = set()
+        for b in self.layout.all_blocks():
+            if b.allowlist_sources:
+                names.update(b.allowlist_sources)
+        return sorted(names)
 
     def source_by_name(self, name: str) -> SourceSpec:
         for s in self.sources:
@@ -391,6 +427,35 @@ def parse_template(raw: dict) -> Template:
                     "only 'content' sources can be referenced by the layout"
                 )
 
+        # §16.14.t7 — allowlist_sources role cross-check. Every entry
+        # in a block's allowlist_sources MUST name a role:reference
+        # source declared in the template's sources[]. Same
+        # fail-loud shape as the source-field check above; the
+        # operator either re-declares the source role or removes
+        # the bad entry.
+        if b.allowlist_sources:
+            for allow_name in b.allowlist_sources:
+                try:
+                    allow_src = tmpl.source_by_name(allow_name)
+                except TemplateError:
+                    raise TemplateError(
+                        f"block allowlist_sources references unknown "
+                        f"source '{allow_name}'. Declare it in the "
+                        "template's sources[] (with role='reference') "
+                        "or remove it from the block's allowlist_sources."
+                    )
+                if allow_src.role != "reference":
+                    raise TemplateError(
+                        f"block allowlist_sources entry '{allow_name}' "
+                        f"has role '{allow_src.role}'; allowlist sources "
+                        "must be role='reference'. The allowlist is a "
+                        "positive filter against the content sampler; "
+                        "naming a content source would be meaningless "
+                        "(it'd intersect a pool with itself). Re-declare "
+                        "the source's role in sources[], or pick a "
+                        "different pool."
+                    )
+
     # §14.30 — cross-block cursor↔source consistency. Persistent cursors
     # advance against the pool of their referencing sequential block's
     # source; if two blocks reference the same cursor with DIFFERENT
@@ -490,6 +555,57 @@ def _parse_rules(
                 f"Known keys: {known}"
             )
     return int_overrides, list_overrides
+
+
+def _parse_allowlist_sources(
+    value, *, strategy: str,
+) -> list[str] | None:
+    """§16.14.t7 — validate the block-level allowlist_sources field.
+
+    Returns the cleaned list (whitespace stripped per entry) on
+    success or None when the field is absent. An empty list also
+    returns None (operator-visible "no allowlist" — same as absent;
+    the engine treats both as no constraint).
+
+    Forbidden for non-content-sampling strategies. The role check
+    for each entry's source happens at parse_template's cross-check
+    loop (after sources are resolved), not here.
+    """
+    if value is None:
+        return None
+    NON_SAMPLING = {"jingle", "mix", "prev_ref", "archive_ref"}
+    if strategy in NON_SAMPLING:
+        raise TemplateError(
+            f"block allowlist_sources is only valid for content-"
+            f"sampling strategies (weighted, window, pick, "
+            f"sequential); got strategy={strategy!r}. The "
+            "non-sampling strategies either pick deterministically "
+            "from a fixed position or sample from a reference pool "
+            "already, so an allowlist would be meaningless."
+        )
+    if not isinstance(value, list):
+        raise TemplateError(
+            f"block allowlist_sources must be a list, got "
+            f"{type(value).__name__}"
+        )
+    cleaned: list[str] = []
+    for i, entry in enumerate(value):
+        if not isinstance(entry, str):
+            raise TemplateError(
+                f"block allowlist_sources[{i}] must be a string, "
+                f"got {type(entry).__name__} ({entry!r})"
+            )
+        stripped = entry.strip()
+        if not stripped:
+            raise TemplateError(
+                f"block allowlist_sources[{i}] must be a non-empty "
+                "string after stripping whitespace"
+            )
+        cleaned.append(stripped)
+    # Empty list collapses to None — no allowlist constraint.
+    # Matches "[] = no constraint" UX consistent with the
+    # cross_pool_dedup_sources rule's explicit-empty handling.
+    return cleaned or None
 
 
 def _parse_source(raw: dict) -> SourceSpec:
@@ -669,6 +785,7 @@ def _parse_block(
             "window",             # §14.27 — optional when strategy='weighted' (default 10)
             "position",           # §14.28 — required when strategy='prev_ref'
             "fallback_genre",     # §14.28 — optional when strategy='prev_ref'
+            "allowlist_sources",  # §16.14.t7 — optional for content-sampling strategies
         },
     )
     if raw["source"] not in known_sources:
@@ -683,6 +800,7 @@ def _parse_block(
     window = raw.get("window")
     position = raw.get("position")
     fallback_genre = raw.get("fallback_genre")
+    allowlist_sources_raw = raw.get("allowlist_sources")
 
     # Strategy ↔ required-field coupling. Each strategy declares which extra
     # fields it requires; every other strategy forbids them. The helper
@@ -751,6 +869,16 @@ def _parse_block(
         ),
     )
 
+    # §16.14.t7 — allowlist_sources is optional for ALL content-
+    # sampling strategies (weighted, window, pick, sequential) and
+    # FORBIDDEN for non-sampling strategies (jingle, mix, prev_ref,
+    # archive_ref) — those either pick from a fixed pool with no
+    # candidate selection, or sample from a reference pool already,
+    # so an allowlist would be meaningless.
+    allowlist_sources = _parse_allowlist_sources(
+        allowlist_sources_raw, strategy=strategy,
+    )
+
     return BlockSpec(
         source=raw["source"],
         strategy=strategy,
@@ -761,6 +889,7 @@ def _parse_block(
         window=window,
         position=position,
         fallback_genre=fallback_genre,
+        allowlist_sources=allowlist_sources,
     )
 
 

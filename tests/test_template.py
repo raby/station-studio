@@ -1176,3 +1176,204 @@ def test_content_block_pointing_at_reference_source_still_rejected():
         match=r"only 'content' sources can be referenced by the layout",
     ):
         parse_template(bad)
+
+
+# ---------- §16.14.t7 — allowlist_sources grammar -----------------------
+#
+# BASE declares 'A' (content) + 'B' (reference). t7 tests reuse those —
+# allowlist_sources entries must be reference-role.
+
+
+def test_allowlist_sources_optional_for_weighted_accepted():
+    tmpl = parse_template({**BASE, "layout": {**BASE["layout"], "row_template": [
+        {"source": "A", "strategy": "weighted", "size": 3,
+         "allowlist_sources": ["B"]},
+    ]}})
+    assert tmpl.layout.row_template[0].allowlist_sources == ["B"]
+
+
+def test_allowlist_sources_optional_for_window_accepted():
+    tmpl = parse_template({**BASE, "layout": {**BASE["layout"], "row_template": [
+        {"source": "A", "strategy": "window", "size": 3,
+         "allowlist_sources": ["B"]},
+    ]}})
+    assert tmpl.layout.row_template[0].allowlist_sources == ["B"]
+
+
+def test_allowlist_sources_optional_for_pick_accepted():
+    tmpl = parse_template({**BASE, "layout": {**BASE["layout"], "row_template": [
+        {"source": "A", "strategy": "pick", "size": 1,
+         "allowlist_sources": ["B"]},
+    ]}})
+    assert tmpl.layout.row_template[0].allowlist_sources == ["B"]
+
+
+def test_allowlist_sources_optional_for_sequential_accepted():
+    """sequential is a content-sampling strategy — allowlist OK."""
+    tmpl = parse_template({
+        **BASE,
+        "cursor": {"base_advance_per_week": 0, "cycle_weeks": 0},
+        "layout": {
+            "unit": "day",
+            "unit_labels": ["Mon", "Tue"],
+            "row_start_offsets": [0, 5],
+            "cursors_init": {"C1": 0},
+            "row_template": [
+                {"source": "A", "strategy": "sequential", "size": 1,
+                 "cursor_id": "C1", "allowlist_sources": ["B"]},
+            ],
+        },
+    })
+    assert tmpl.layout.row_template[0].allowlist_sources == ["B"]
+
+
+def test_allowlist_sources_absent_returns_none():
+    """No allowlist_sources field → BlockSpec.allowlist_sources is None."""
+    tmpl = parse_template(BASE)
+    assert tmpl.layout.row_template[0].allowlist_sources is None
+
+
+def test_allowlist_sources_empty_list_collapses_to_none():
+    """Empty list = explicit 'no constraint'; parser normalizes to
+    None so downstream code only needs to check truthiness."""
+    tmpl = parse_template({**BASE, "layout": {**BASE["layout"], "row_template": [
+        {"source": "A", "strategy": "weighted", "size": 3,
+         "allowlist_sources": []},
+    ]}})
+    assert tmpl.layout.row_template[0].allowlist_sources is None
+
+
+def test_allowlist_sources_strips_whitespace_per_entry():
+    tmpl = parse_template({**BASE, "layout": {**BASE["layout"], "row_template": [
+        {"source": "A", "strategy": "weighted", "size": 3,
+         "allowlist_sources": ["  B  "]},
+    ]}})
+    assert tmpl.layout.row_template[0].allowlist_sources == ["B"]
+
+
+# ---- per-strategy forbidden cases ----
+
+
+def test_allowlist_sources_forbidden_on_jingle():
+    """jingle is non-sampling — allowlist forbidden."""
+    bad = {**BASE, "layout": {**BASE["layout"], "row_template": [
+        {"source": "A", "strategy": "jingle", "size": 1,
+         "genre": "ID", "allowlist_sources": ["B"]},
+    ]}}
+    with pytest.raises(TemplateError, match=r"allowlist_sources is only valid for content-sampling.*strategy='jingle'"):
+        parse_template(bad)
+
+
+def test_allowlist_sources_forbidden_on_mix():
+    bad = {**BASE, "layout": {**BASE["layout"], "row_template": [
+        {"source": "A", "strategy": "mix", "size": 1,
+         "genre": "X", "exclusion_window": 20,
+         "allowlist_sources": ["B"]},
+    ]}}
+    with pytest.raises(TemplateError, match=r"strategy='mix'"):
+        parse_template(bad)
+
+
+def test_allowlist_sources_forbidden_on_prev_ref():
+    bad = {**BASE, "layout": {**BASE["layout"], "row_template": [
+        {"source": "A", "strategy": "prev_ref", "size": 1,
+         "position": 1, "allowlist_sources": ["B"]},
+    ]}}
+    with pytest.raises(TemplateError, match=r"strategy='prev_ref'"):
+        parse_template(bad)
+
+
+def test_allowlist_sources_forbidden_on_archive_ref():
+    """archive_ref samples from a reference pool already — allowlist
+    would be meaningless."""
+    bad = {**BASE, "layout": {**BASE["layout"], "row_template": [
+        {"source": "B", "strategy": "archive_ref", "size": 1,
+         "position": 1, "allowlist_sources": ["B"]},
+    ]}}
+    with pytest.raises(TemplateError, match=r"strategy='archive_ref'"):
+        parse_template(bad)
+
+
+# ---- value-shape rejections ----
+
+
+def test_allowlist_sources_non_list_rejected():
+    bad = {**BASE, "layout": {**BASE["layout"], "row_template": [
+        {"source": "A", "strategy": "weighted", "size": 1,
+         "allowlist_sources": "B"},
+    ]}}
+    with pytest.raises(TemplateError, match=r"allowlist_sources must be a list"):
+        parse_template(bad)
+
+
+def test_allowlist_sources_non_string_entry_rejected():
+    bad = {**BASE, "layout": {**BASE["layout"], "row_template": [
+        {"source": "A", "strategy": "weighted", "size": 1,
+         "allowlist_sources": ["B", 42]},
+    ]}}
+    with pytest.raises(TemplateError, match=r"allowlist_sources\[1\] must be a string"):
+        parse_template(bad)
+
+
+def test_allowlist_sources_empty_entry_rejected():
+    bad = {**BASE, "layout": {**BASE["layout"], "row_template": [
+        {"source": "A", "strategy": "weighted", "size": 1,
+         "allowlist_sources": ["B", "  "]},
+    ]}}
+    with pytest.raises(TemplateError, match=r"non-empty string"):
+        parse_template(bad)
+
+
+# ---- role cross-check ----
+
+
+def test_allowlist_sources_entry_with_content_role_rejected():
+    """Allowlist sources must be role='reference'. Naming a content
+    source is rejected with a specific error."""
+    bad = {**BASE, "layout": {**BASE["layout"], "row_template": [
+        # 'A' is content; allowlist requires reference.
+        {"source": "A", "strategy": "weighted", "size": 1,
+         "allowlist_sources": ["A"]},
+    ]}}
+    with pytest.raises(
+        TemplateError,
+        match=r"allowlist_sources entry 'A' has role 'content'; allowlist sources must be role='reference'",
+    ):
+        parse_template(bad)
+
+
+def test_allowlist_sources_entry_with_unknown_source_rejected():
+    bad = {**BASE, "layout": {**BASE["layout"], "row_template": [
+        {"source": "A", "strategy": "weighted", "size": 1,
+         "allowlist_sources": ["NEVER_DECLARED"]},
+    ]}}
+    with pytest.raises(TemplateError, match=r"allowlist_sources references unknown source 'NEVER_DECLARED'"):
+        parse_template(bad)
+
+
+# ---- Template.allowlist_source_names property ----
+
+
+def test_allowlist_source_names_returns_sorted_dedup_union():
+    """Multiple blocks referencing the same allowlist pool resolve
+    to one entry; cross-block union is sorted + deduped."""
+    tmpl = parse_template({
+        **BASE,
+        "sources": [
+            {"name": "A", "colour": "#111", "role": "content"},
+            {"name": "B", "colour": "#222", "role": "reference"},
+            {"name": "C", "colour": "#333", "role": "reference"},
+        ],
+        "layout": {**BASE["layout"], "row_template": [
+            {"source": "A", "strategy": "weighted", "size": 1,
+             "allowlist_sources": ["C", "B"]},
+            {"source": "A", "strategy": "window", "size": 1,
+             "allowlist_sources": ["B"]},
+        ]},
+    })
+    assert tmpl.allowlist_source_names == ["B", "C"]
+
+
+def test_allowlist_source_names_empty_when_no_block_declares_allowlist():
+    tmpl = parse_template(BASE)
+    assert tmpl.allowlist_source_names == []

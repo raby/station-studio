@@ -49,6 +49,14 @@ export interface EngineBlock {
   genre?: string;           // jingle (required) / mix (required)
   position?: number;        // prev_ref (required, 1-indexed)
   fallback_genre?: string;  // prev_ref (optional fallback when mirror misses)
+  // §16.14.t7: per-block allowlist (positive filter). Optional for
+  // all content-sampling strategies (weighted, window, pick,
+  // sequential); forbidden for non-sampling strategies (jingle,
+  // mix, prev_ref, archive_ref). When set, the strategy is
+  // restricted to tracks whose persistent_id appears in AT LEAST
+  // ONE named role: reference pool (union semantics). Empty list
+  // collapses to None at parse time (= no constraint).
+  allowlist_sources?: string[];
 }
 
 

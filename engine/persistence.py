@@ -108,6 +108,49 @@ def load_pools(db: Session, template) -> dict[str, list]:
             .all()
         )
         pools[src_name] = [e.track for e in entries]
+    # §16.14.t7: allowlist sources (pools named in any block's
+    # allowlist_sources field). Same shape as the reference-
+    # sampling pass: must be role='reference'; missing → ValueError;
+    # wrong role → TemplateError. The dispatch unions multiple
+    # pools' pids per-block (D7) — load_pools just makes the
+    # pools available; the union math happens in the generator.
+    for src_name in template.allowlist_source_names:
+        if src_name in pools:
+            # Already loaded by the content or reference-sampling
+            # pass. Defensive: parse-time checks ensure
+            # allowlist_sources entries have role='reference', so
+            # they can't overlap with content_source_names (those
+            # are role='content'); they CAN overlap with
+            # reference_sampling_source_names (a pool could be
+            # both archive_ref'd AND allowlisted in different
+            # blocks). The if-already-loaded guard skips the
+            # double-load cleanly.
+            continue
+        sp = db.query(SourcePlaylist).filter_by(name=src_name).first()
+        if sp is None:
+            raise ValueError(
+                f"allowlist source pool '{src_name}' not imported "
+                "(used by a block's allowlist_sources; §16.14.t7)"
+            )
+        if sp.role != "reference":
+            raise TemplateError(
+                f"source pool '{src_name}' is imported with role="
+                f"'{sp.role}' but the template's allowlist_sources "
+                "block field requires role='reference'. The "
+                "allowlist is a positive filter against the "
+                "content sampler; naming a content source would "
+                "be meaningless (it'd intersect a pool with "
+                "itself). Re-import the pool with role='reference', "
+                "or remove it from the block's allowlist_sources."
+            )
+        entries = (
+            db.query(SourcePlaylistEntry)
+            .options(joinedload(SourcePlaylistEntry.track))
+            .filter_by(source_playlist_id=sp.id)
+            .order_by(SourcePlaylistEntry.position)
+            .all()
+        )
+        pools[src_name] = [e.track for e in entries]
     return pools
 
 
