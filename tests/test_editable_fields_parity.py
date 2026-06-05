@@ -98,12 +98,23 @@ def test_editable_fields_are_engine_accepted_optional_params():
     Source-of-truth expectations (engine/template.py `_parse_block`):
     """
     engine_accepts = {
-        "pick": set(),
-        "window": set(),
-        "sequential": {"cursor_id"},
+        # §16.14.t7 slice-review SR1: each content-sampling strategy
+        # (weighted, window, pick, sequential — the t7
+        # `CONTENT_SAMPLING_STRATEGIES` opt-in set) also accepts
+        # `allowlist_sources` per the t7 parser extension. The
+        # frontend EDITABLE_FIELDS deliberately doesn't expose it
+        # for editing yet (t7 c3 docs punt; the block visualiser
+        # at /stations/{slug} doesn't expose per-block fields for
+        # editing pending §16.2.4/§16.2.5) — but the engine's
+        # capability table needs to reflect REALITY, not the
+        # frontend's surface choices. Subset relation (EDITABLE
+        # ⊆ engine_accepts) still holds.
+        "pick": {"allowlist_sources"},
+        "window": {"allowlist_sources"},
+        "sequential": {"cursor_id", "allowlist_sources"},
         "jingle": {"genre"},
         "mix": {"genre", "exclusion_window"},
-        "weighted": {"window"},
+        "weighted": {"window", "allowlist_sources"},
         "prev_ref": {"position", "fallback_genre"},
         # §16.14.t6: archive_ref shares prev_ref's `position`
         # (required) field but NOT fallback_genre (no fallback path).
