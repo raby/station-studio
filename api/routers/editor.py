@@ -44,6 +44,7 @@ from sqlalchemy.orm import Session
 
 from api.deps import get_db, get_stations_dir
 from api.schemas import (
+    BlockAddress,
     BlockPatchRequest,
     BlockPatchResponse,
     BlockRetypeRequest,
@@ -407,9 +408,47 @@ def _resolve_macro_addresses(sidecar: dict, macro_id: str) -> list[dict]:
         cumulative = sum(_block_width(blocks_list[k]) for k in range(anchor_idx))
         section_start = anchor_pos - cumulative
 
+        # c1 review #3: a hand-authored sidecar with leading macros
+        # wider than the first atomic's slot_index gives a NEGATIVE
+        # section_start. Walking forward then hands Python negative
+        # slot_indices → `flat_slots[-1]` silently mutates blocks
+        # from the END of the layout. Fail loud instead.
+        if section_start < 0:
+            raise HTTPException(
+                400,
+                f"sidecar section '{section.get('id', '?')}': computed "
+                f"section_start={section_start} is negative — the "
+                f"leading macros' total width ({cumulative}) exceeds "
+                f"the first atomic anchor's position ({anchor_pos}). "
+                f"Fix the sidecar's section layout or regenerate via "
+                f"`python -m scripts.derive_sidecar`.",
+            )
+
         # 3. Walk + collect addresses for matching macros.
+        # c1 review #2: when a subsequent atomic block is encountered,
+        # cross-check that its declared slot_index/block_idx matches
+        # the running `pos`. If they disagree, the section has a gap
+        # (non-contiguous coverage) — the §16.2.1 orphan-slots check
+        # is SKIPPED whenever the sidecar has any macros (deliberate
+        # limitation), so gaps can silently slip through and produce
+        # wrong macro→slot mappings. Fail loud here instead.
         pos = section_start
         for b in blocks_list:
+            if b.get("kind") == "atomic":
+                declared = b.get("slot_index") if anchor_form == "flat" \
+                    else b.get("block_idx")
+                if declared != pos:
+                    field = "slot_index" if anchor_form == "flat" \
+                        else "block_idx"
+                    raise HTTPException(
+                        400,
+                        f"sidecar section '{section.get('id', '?')}': "
+                        f"atomic block's {field}={declared} doesn't "
+                        f"match the running position ({pos}) implied "
+                        f"by preceding blocks. The section's coverage "
+                        f"is non-contiguous — fix the sidecar or "
+                        f"regenerate it.",
+                    )
             w = _block_width(b)
             if b.get("kind") == "macro" and b.get("ref") == macro_id:
                 for i in range(w):
@@ -484,6 +523,23 @@ def patch_block_retype(
     if station is None:
         raise HTTPException(404, f"station '{slug}' not found")
     _check_optimistic_token(station, payload.expected_updated_at)
+
+    # c1 review #5: structural keys (strategy/source/size) must come
+    # via new_strategy/new_source/(structural-edits-§16.2.5), NOT
+    # smuggled through new_fields. Without this guard, an operator
+    # could clear `strategy` via `new_fields: {"strategy": null}` —
+    # step 3 would pop it, step 4 would drop everything except
+    # {strategy, source, size}, and parse_template would 400 with a
+    # confusing 'missing strategy' message. Reject up front instead.
+    STRUCTURAL_KEYS = {"strategy", "source", "size"}
+    smuggled = sorted(STRUCTURAL_KEYS & set(payload.new_fields))
+    if smuggled:
+        raise HTTPException(
+            400,
+            f"new_fields cannot carry structural keys {smuggled}. "
+            "Use new_strategy / new_source for strategy + source "
+            "changes; `size` changes are §16.2.5 (structural edits).",
+        )
 
     template = copy.deepcopy(station.template)
     block = _resolve_block_address(template, payload.address)
@@ -587,13 +643,37 @@ def patch_macro(
         try:
             # parse_sidecar takes a Path (mirrors GET /sidecar); it
             # also wraps JSONDecodeError as EditorMetadataError per
-            # §16.2.1 c1 review #6, so a single except suffices.
+            # §16.2.1 c1 review #6, so EditorMetadataError covers the
+            # validation + JSON-syntax paths.
             sidecar = parse_sidecar(sidecar_path, template)
         except EditorMetadataError as e:
             raise HTTPException(
                 400,
                 f"sidecar at {sidecar_path} is broken — fix it or "
                 f"delete to regenerate from the template ({e}).",
+            )
+        except Exception as e:  # noqa: BLE001
+            # c1 review #4: mirror GET /sidecar's wider catch. Two
+            # known non-EditorMetadataError sources:
+            #   1. OSError racing `is_file()` (file deleted / perms /
+            #      disk error).
+            #   2. KeyError/TypeError from a hand-edited station
+            #      template that drops layout keys parse_sidecar
+            #      assumes are present.
+            # Unlike GET (which trivially falls back), mutation paths
+            # can't safely synthesize-trivial — that'd silently lose
+            # the operator's macro grouping. So we 400 with the same
+            # phrasing as the validation path, but log the traceback
+            # for engine-bug forensics.
+            logger.exception(
+                "unexpected sidecar load error at %s during macro patch",
+                sidecar_path,
+            )
+            raise HTTPException(
+                400,
+                f"sidecar at {sidecar_path} failed to load "
+                f"({type(e).__name__}: {e}) — fix or delete it before "
+                f"editing macros.",
             )
     else:
         # Trivial sidecar has no macros by definition (one section,
@@ -618,16 +698,14 @@ def patch_macro(
     # Apply payload.fields to each addressed block. Parameter-only
     # guard fires per block — if any block rejects, the whole
     # transaction aborts (deep-copy isolation makes this clean).
-    layout = template.get("layout", {})
+    # c1 review #1: route through _resolve_block_address so any
+    # sidecar→template drift (stale slot_index, layout-form mismatch)
+    # surfaces as the same 400/404 contract patch_block uses, not
+    # an uncaught IndexError/KeyError → 500.
     blocks_touched = 0
     for addr_dict in deduped:
-        # Resolve the address against the deep-copied template.
-        if "slot_index" in addr_dict:
-            idx = addr_dict["slot_index"]
-            block = layout["flat_slots"][idx]
-        else:
-            idx = addr_dict["block_idx"]
-            block = layout["row_template"][idx]
+        addr = BlockAddress(**addr_dict)
+        block = _resolve_block_address(template, addr)
 
         strategy = block.get("strategy")
         allowed = EDITABLE_FIELDS_BY_STRATEGY.get(strategy, set())
