@@ -56,7 +56,9 @@ from api.schemas import (
 )
 from engine.editor_metadata import (
     EditorMetadataError,
+    MacroResolutionError,
     parse_sidecar,
+    resolve_macro_addresses,
     synthesize_trivial_sidecar,
 )
 from engine.models import Station
@@ -76,7 +78,13 @@ router = APIRouter(tags=["editor"])
 # / size (structural) are never in any set → always rejected (Decision
 # C: those are §16.2.4/§16.2.5). Kept in sync by
 # tests/test_editable_fields_parity.py.
-EDITABLE_FIELDS_BY_STRATEGY: dict[str, set[str]] = {
+# c1 review fix #8: frozenset values — mutable `set` at module level
+# is a foot-gun: any future caller could do
+# `EDITABLE_FIELDS_BY_STRATEGY["pick"].add(...)` and silently pollute
+# every endpoint's allowlist forever. frozenset makes mutation a
+# TypeError; the `set(payload.fields) - allowed` math works
+# identically against frozensets.
+EDITABLE_FIELDS_BY_STRATEGY: dict[str, frozenset[str]] = {
     # §16.2.4 D3: `allowlist_sources` joins the editable set for
     # the four content-sampling strategies (the
     # CONTENT_SAMPLING_STRATEGIES opt-in set from §16.14.t7).
@@ -85,20 +93,20 @@ EDITABLE_FIELDS_BY_STRATEGY: dict[str, set[str]] = {
     # §16.14.t7 c3 docs promise that "the block visualiser does
     # not yet expose per-block fields for editing (see
     # §16.2.4/§16.2.5 in the roadmap)."
-    "pick": {"allowlist_sources"},
-    "window": {"allowlist_sources"},
-    "sequential": {"cursor_id", "allowlist_sources"},
-    "jingle": {"genre"},
-    "mix": {"genre", "exclusion_window"},
-    "weighted": {"window", "allowlist_sources"},
-    "prev_ref": {"position", "fallback_genre"},
+    "pick": frozenset({"allowlist_sources"}),
+    "window": frozenset({"allowlist_sources"}),
+    "sequential": frozenset({"cursor_id", "allowlist_sources"}),
+    "jingle": frozenset({"genre"}),
+    "mix": frozenset({"genre", "exclusion_window"}),
+    "weighted": frozenset({"window", "allowlist_sources"}),
+    "prev_ref": frozenset({"position", "fallback_genre"}),
     # §16.14.t6: archive_ref shares prev_ref's `position` field
     # (1-indexed). No `fallback_genre` — pure deterministic, no
     # fallback. Caught by the editable-fields parity test on the
     # backend ↔ frontend EDITABLE_FIELDS_BY_STRATEGY ↔
     # EDITABLE_FIELDS pair (t8 c1 picked up this miss from the
     # t6 sweep that only added the TS side).
-    "archive_ref": {"position"},
+    "archive_ref": frozenset({"position"}),
 }
 
 
@@ -229,54 +237,20 @@ def patch_block(
     station = db.query(Station).filter(Station.slug == slug).first()
     if station is None:
         raise HTTPException(404, f"station '{slug}' not found")
-
-    current_token = _iso(station.updated_at)
-    if (
-        payload.expected_updated_at is not None
-        and payload.expected_updated_at != current_token
-    ):
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "message": (
-                    "station changed since you loaded it (another tab or the "
-                    "edit route). Reload to see the latest, then re-apply."
-                ),
-                "current_updated_at": current_token,
-            },
-        )
+    # c1 review #9: route through the shared helpers (extracted in c1)
+    # so this endpoint, /blocks/retype, and /macros/{macro_id} stay in
+    # lockstep on optimistic-concurrency + address-resolution phrasing.
+    _check_optimistic_token(station, payload.expected_updated_at)
 
     # Deep-copy so a mid-flight validation failure can't leave the
     # ORM object holding a partially-mutated template.
     template = copy.deepcopy(station.template)
-    layout = template.get("layout", {})
-    addr = payload.address
-
-    if addr.slot_index is not None and addr.block_idx is not None:
-        raise HTTPException(
-            400, "address must set exactly one of slot_index / block_idx"
-        )
-    if addr.slot_index is not None:
-        blocks = layout.get("flat_slots")
-        if not isinstance(blocks, list):
-            raise HTTPException(400, "station does not use a flat_slots layout")
-        if not (0 <= addr.slot_index < len(blocks)):
-            raise HTTPException(404, f"slot_index {addr.slot_index} out of range")
-        block = blocks[addr.slot_index]
-    elif addr.block_idx is not None:
-        blocks = layout.get("row_template")
-        if not isinstance(blocks, list):
-            raise HTTPException(400, "station does not use a row_template layout")
-        if not (0 <= addr.block_idx < len(blocks)):
-            raise HTTPException(404, f"block_idx {addr.block_idx} out of range")
-        block = blocks[addr.block_idx]
-    else:
-        raise HTTPException(400, "address must set slot_index or block_idx")
+    block = _resolve_block_address(template, payload.address)
 
     # Decision C: parameter-only. Any field outside the strategy's
     # editable set (including strategy/source/size) is rejected.
     strategy = block.get("strategy")
-    allowed = EDITABLE_FIELDS_BY_STRATEGY.get(strategy, set())
+    allowed = EDITABLE_FIELDS_BY_STRATEGY.get(strategy, frozenset())
     rejected = sorted(set(payload.fields) - allowed)
     if rejected:
         raise HTTPException(
@@ -316,7 +290,7 @@ def patch_block(
 # XOR-validation message phrasing needs to change.
 
 
-def _resolve_block_address(template: dict, addr) -> dict:
+def _resolve_block_address(template: dict, addr: BlockAddress) -> dict:
     """Return the block dict in `template.layout` named by `addr`.
 
     Raises HTTPException (400 / 404) with operator-readable messages
@@ -343,127 +317,6 @@ def _resolve_block_address(template: dict, addr) -> dict:
             raise HTTPException(404, f"block_idx {addr.block_idx} out of range")
         return blocks[addr.block_idx]
     raise HTTPException(400, "address must set slot_index or block_idx")
-
-
-def _resolve_macro_addresses(sidecar: dict, macro_id: str) -> list[dict]:
-    """Return the list of unique block-address dicts that expand from `macro_id`.
-
-    Sidecar grammar (§16.2.1): sections have a `blocks` list; each block
-    is either `{kind: atomic, slot_index | (row_idx, block_idx)}` or
-    `{kind: macro, ref: <id>}`. Macros don't carry slot positions —
-    they reference an entry in `sidecar["macros"]` with a `repeat`
-    count. So to compute the engine-template addresses a macro
-    instance covers we walk the SECTION it lives in:
-
-      1. Find the section's first atomic block — its slot_index /
-         block_idx anchors the section to a real layout position.
-      2. Compute `section_start` by subtracting the cumulative
-         width of blocks BEFORE the anchor (each atomic = 1, each
-         macro = its `repeat`).
-      3. Walk the section again, advancing a running `pos`. For
-         every macro block whose `ref == macro_id`, emit
-         `macro.repeat` consecutive addresses starting at `pos`.
-
-    De-dupes — for row_template addressing, the same shared
-    `block_idx` may be referenced by multiple sections (one per
-    row); applying the patch N times is redundant and wrong if any
-    field has side effects.
-
-    Sections that are 100% macros (no atomic anchor) are skipped:
-    we cannot compute slot positions without an anchor. If the
-    target macro lived only in such sections, the caller sees an
-    empty list → 404 with a meaningful message. (In practice the
-    derive_sidecar heuristic + hand-authored sidecars always
-    intersperse atomic blocks; an all-macro section would have to
-    be deliberately authored.)
-    """
-    macros_by_id = {m["id"]: m for m in sidecar.get("macros", [])}
-    addresses: list[dict] = []
-    seen: set[tuple] = set()
-
-    def _block_width(b: dict) -> int:
-        if b.get("kind") == "atomic":
-            return 1
-        m = macros_by_id.get(b.get("ref"))
-        return m.get("repeat", 1) if m else 1
-
-    for section in sidecar.get("sections", []):
-        blocks_list = section.get("blocks", [])
-        # 1. Find anchor (first atomic block) + its addressing form.
-        anchor_idx: int | None = None
-        anchor_pos: int | None = None
-        anchor_form: str | None = None  # "flat" | "row"
-        for j, b in enumerate(blocks_list):
-            if b.get("kind") != "atomic":
-                continue
-            if "slot_index" in b:
-                anchor_idx, anchor_pos, anchor_form = j, b["slot_index"], "flat"
-            else:
-                anchor_idx, anchor_pos, anchor_form = j, b["block_idx"], "row"
-            break
-        if anchor_idx is None:
-            continue  # all-macro section — un-anchorable, skip.
-
-        # 2. Compute section_start.
-        cumulative = sum(_block_width(blocks_list[k]) for k in range(anchor_idx))
-        section_start = anchor_pos - cumulative
-
-        # c1 review #3: a hand-authored sidecar with leading macros
-        # wider than the first atomic's slot_index gives a NEGATIVE
-        # section_start. Walking forward then hands Python negative
-        # slot_indices → `flat_slots[-1]` silently mutates blocks
-        # from the END of the layout. Fail loud instead.
-        if section_start < 0:
-            raise HTTPException(
-                400,
-                f"sidecar section '{section.get('id', '?')}': computed "
-                f"section_start={section_start} is negative — the "
-                f"leading macros' total width ({cumulative}) exceeds "
-                f"the first atomic anchor's position ({anchor_pos}). "
-                f"Fix the sidecar's section layout or regenerate via "
-                f"`python -m scripts.derive_sidecar`.",
-            )
-
-        # 3. Walk + collect addresses for matching macros.
-        # c1 review #2: when a subsequent atomic block is encountered,
-        # cross-check that its declared slot_index/block_idx matches
-        # the running `pos`. If they disagree, the section has a gap
-        # (non-contiguous coverage) — the §16.2.1 orphan-slots check
-        # is SKIPPED whenever the sidecar has any macros (deliberate
-        # limitation), so gaps can silently slip through and produce
-        # wrong macro→slot mappings. Fail loud here instead.
-        pos = section_start
-        for b in blocks_list:
-            if b.get("kind") == "atomic":
-                declared = b.get("slot_index") if anchor_form == "flat" \
-                    else b.get("block_idx")
-                if declared != pos:
-                    field = "slot_index" if anchor_form == "flat" \
-                        else "block_idx"
-                    raise HTTPException(
-                        400,
-                        f"sidecar section '{section.get('id', '?')}': "
-                        f"atomic block's {field}={declared} doesn't "
-                        f"match the running position ({pos}) implied "
-                        f"by preceding blocks. The section's coverage "
-                        f"is non-contiguous — fix the sidecar or "
-                        f"regenerate it.",
-                    )
-            w = _block_width(b)
-            if b.get("kind") == "macro" and b.get("ref") == macro_id:
-                for i in range(w):
-                    if anchor_form == "flat":
-                        key = ("slot_index", pos + i)
-                        addr = {"slot_index": pos + i}
-                    else:
-                        key = ("block_idx", pos + i)
-                        addr = {"block_idx": pos + i}
-                    if key not in seen:
-                        seen.add(key)
-                        addresses.append(addr)
-            pos += w
-
-    return addresses
 
 
 def _check_optimistic_token(station: Station, expected: str | None) -> None:
@@ -515,9 +368,21 @@ def patch_block_retype(
          (rather than 400ing — the operator explicitly chose a new
          strategy that obviates them).
 
-    Re-`parse_template` revalidates everything (role, valid-field-
-    set, pool existence, cross-block consistency). 400 on any
-    failure with the engine's error text inline.
+    Re-`parse_template` revalidates structure, role, valid-field-
+    set, and cross-block consistency. 400 on any failure with the
+    engine's error text inline.
+
+    NOTE — pool-existence is NOT checked here (c1 review #7).
+    parse_template is a pure structural validator; the actual pool
+    file (`pools/<source>.json` or whatever the manifest points at)
+    is loaded by `load_pools` at generation time. A retype that
+    points at a declared-but-pool-less source returns 200 here but
+    the next playlist generation will fail with a load_pools error.
+    Adding a load_pools check here would couple the editor to the
+    pool-manifest layer; the proper home is a dedicated
+    `/api/stations/{slug}/validate` endpoint (queued for a later
+    §16.x slice). Frontend mitigates by filtering source dropdowns
+    to declared sources only (D4 symmetric filtering).
     """
     station = db.query(Station).filter(Station.slug == slug).first()
     if station is None:
@@ -577,7 +442,7 @@ def patch_block_retype(
     # would 400 on stale ones anyway (e.g. `genre` on a non-jingle/mix
     # strategy); pre-dropping makes the retype's intent clear.
     strategy = block.get("strategy")
-    allowed = EDITABLE_FIELDS_BY_STRATEGY.get(strategy, set())
+    allowed = EDITABLE_FIELDS_BY_STRATEGY.get(strategy, frozenset())
     structural = {"strategy", "source", "size"}
     for key in list(block.keys()):
         if key in structural or key in allowed:
@@ -682,9 +547,23 @@ def patch_macro(
         sidecar = synthesize_trivial_sidecar(template)
 
     # Resolve macro_id → unique engine-template addresses by walking
-    # the sidecar. See _resolve_macro_addresses' docstring for the
-    # anchoring algorithm + de-dup rationale.
-    deduped = _resolve_macro_addresses(sidecar, macro_id)
+    # the sidecar. See engine.editor_metadata.resolve_macro_addresses
+    # for the anchoring algorithm + cross-checks. c1 review #10 moved
+    # this primitive next to expand_section / lookup_macro so the
+    # planned §16.2.4-design `expand_section` slot-position extension
+    # has one home, not two.
+    try:
+        deduped = resolve_macro_addresses(sidecar, macro_id)
+    except MacroResolutionError as e:
+        # c1 review #2 + #3: negative-section_start and non-
+        # contiguous-section errors come from the engine helper as
+        # MacroResolutionError; translate to a 400 with the
+        # operator-readable message + a regeneration hint.
+        raise HTTPException(
+            400,
+            f"{e} Fix the sidecar's section layout or regenerate via "
+            "`python -m scripts.derive_sidecar`.",
+        )
 
     if not deduped:
         raise HTTPException(
@@ -708,7 +587,7 @@ def patch_macro(
         block = _resolve_block_address(template, addr)
 
         strategy = block.get("strategy")
-        allowed = EDITABLE_FIELDS_BY_STRATEGY.get(strategy, set())
+        allowed = EDITABLE_FIELDS_BY_STRATEGY.get(strategy, frozenset())
         rejected = sorted(set(payload.fields) - allowed)
         if rejected:
             raise HTTPException(
@@ -730,6 +609,29 @@ def patch_macro(
         parse_template(template)
     except TemplateError as e:
         raise HTTPException(400, f"macro edit produces an invalid template: {e}")
+
+    # c1 review #6: update the sidecar's macros[].spec to mirror the
+    # mutated engine blocks, then write the sidecar back to disk.
+    # Without this, the committed sidecar's spec drifts from the
+    # template after every macro edit — GET /sidecar would return a
+    # macro chip whose DetailPanel shows the OLD spec value while
+    # the underlying engine blocks have the new one. The sidecar
+    # was loaded from disk above; only do the write when there's a
+    # real file (trivial-fallback path can't drift because it's
+    # synthesized fresh each GET).
+    spec_changed = False
+    for macro in sidecar.get("macros", []):
+        if macro.get("id") != macro_id:
+            continue
+        spec = macro.setdefault("spec", {})
+        for key, value in payload.fields.items():
+            if value is None:
+                spec.pop(key, None)
+            else:
+                spec[key] = value
+        spec_changed = True
+    if spec_changed and sidecar_path.is_file():
+        sidecar_path.write_text(json.dumps(sidecar, indent=2) + "\n")
 
     station.template = template
     db.commit()

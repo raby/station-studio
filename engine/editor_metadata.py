@@ -286,6 +286,135 @@ def lookup_macro(sidecar: dict, macro_id: str) -> dict | None:
     return None
 
 
+class MacroResolutionError(Exception):
+    """A sidecar's macro-position math can't be computed.
+
+    Raised by `resolve_macro_addresses` when a section's anchor
+    yields a negative `section_start` (leading macros wider than
+    the first atomic's slot_index) or when atomic blocks within a
+    section are non-contiguous (gaps not absorbed by macro
+    widths). These slip through `validate_sidecar` because drift
+    rule 1 (no-orphan-slots) is skipped whenever the sidecar has
+    any macros — see `_validate_no_orphan_slots`'s docstring.
+    Callers (`api/routers/editor.py:patch_macro`) translate the
+    exception into a 400 with the operator-readable detail.
+    """
+
+
+def resolve_macro_addresses(sidecar: dict, macro_id: str) -> list[dict]:
+    """Return the list of unique block-address dicts that expand from `macro_id`.
+
+    Sidecar grammar (§16.2.1): sections have a `blocks` list; each
+    block is either ``{kind: atomic, slot_index | (row_idx,
+    block_idx)}`` or ``{kind: macro, ref: <id>}``. Macros don't
+    carry slot positions — they reference an entry in
+    ``sidecar["macros"]`` with a `repeat` count. So to compute
+    the engine-template addresses a macro instance covers we walk
+    the SECTION it lives in:
+
+      1. Find the section's first atomic block — its slot_index /
+         block_idx anchors the section to a real layout position.
+      2. Compute `section_start` by subtracting the cumulative
+         width of blocks BEFORE the anchor (each atomic = 1, each
+         macro = its `repeat`).
+      3. Walk the section again, advancing a running `pos`. For
+         every macro block whose `ref == macro_id`, emit
+         `macro.repeat` consecutive addresses starting at `pos`.
+
+    Cross-checks every subsequent atomic's declared position
+    against the running `pos`; raises `MacroResolutionError` on
+    mismatch (drift rule 1's orphan check is skipped when
+    macros are present — see `_validate_no_orphan_slots`).
+
+    De-dupes — for row_template addressing, the same shared
+    `block_idx` may be referenced by multiple sections (one per
+    row); applying the patch N times is redundant and wrong if
+    any field has side effects.
+
+    Sections that are 100% macros (no atomic anchor) are skipped:
+    we cannot compute slot positions without an anchor. If the
+    target macro lived only in such sections, the caller sees an
+    empty list. (In practice derive_sidecar + hand-authored
+    sidecars always intersperse atomic blocks; an all-macro
+    section would have to be deliberately authored.)
+
+    Lifted here from `api/routers/editor.py` in §16.2.4 c1 review
+    fix #10: the algorithm is a fundamental sidecar-grammar
+    primitive (it derives the position information that
+    `expand_section`'s MacroPlaceholder doesn't carry today — see
+    §16.2.4's design note for the planned `expand_section`
+    extension). Lives next to `expand_section` + `lookup_macro`
+    so future macro-addressing work has one home.
+    """
+    macros_by_id = {m["id"]: m for m in sidecar.get("macros", [])}
+    addresses: list[dict] = []
+    seen: set[tuple] = set()
+
+    def _block_width(b: dict) -> int:
+        if b.get("kind") == "atomic":
+            return 1
+        m = macros_by_id.get(b.get("ref"))
+        return m.get("repeat", 1) if m else 1
+
+    for section in sidecar.get("sections", []):
+        blocks_list = section.get("blocks", [])
+        anchor_idx: int | None = None
+        anchor_pos: int | None = None
+        anchor_form: str | None = None  # "flat" | "row"
+        for j, b in enumerate(blocks_list):
+            if b.get("kind") != "atomic":
+                continue
+            if "slot_index" in b:
+                anchor_idx, anchor_pos, anchor_form = j, b["slot_index"], "flat"
+            else:
+                anchor_idx, anchor_pos, anchor_form = j, b["block_idx"], "row"
+            break
+        if anchor_idx is None:
+            continue  # all-macro section — un-anchorable, skip.
+
+        cumulative = sum(_block_width(blocks_list[k]) for k in range(anchor_idx))
+        section_start = anchor_pos - cumulative
+
+        if section_start < 0:
+            raise MacroResolutionError(
+                f"sidecar section '{section.get('id', '?')}': computed "
+                f"section_start={section_start} is negative — the "
+                f"leading macros' total width ({cumulative}) exceeds "
+                f"the first atomic anchor's position ({anchor_pos})."
+            )
+
+        pos = section_start
+        for b in blocks_list:
+            if b.get("kind") == "atomic":
+                declared = b.get("slot_index") if anchor_form == "flat" \
+                    else b.get("block_idx")
+                if declared != pos:
+                    field = "slot_index" if anchor_form == "flat" \
+                        else "block_idx"
+                    raise MacroResolutionError(
+                        f"sidecar section '{section.get('id', '?')}': "
+                        f"atomic block's {field}={declared} doesn't "
+                        f"match the running position ({pos}) implied "
+                        f"by preceding blocks. The section's coverage "
+                        f"is non-contiguous."
+                    )
+            w = _block_width(b)
+            if b.get("kind") == "macro" and b.get("ref") == macro_id:
+                for i in range(w):
+                    if anchor_form == "flat":
+                        key = ("slot_index", pos + i)
+                        addr = {"slot_index": pos + i}
+                    else:
+                        key = ("block_idx", pos + i)
+                        addr = {"block_idx": pos + i}
+                    if key not in seen:
+                        seen.add(key)
+                        addresses.append(addr)
+            pos += w
+
+    return addresses
+
+
 def expand_section(section: dict, sidecar: dict) -> list:
     """Resolve a section into the flat list of refs the editor renders.
 

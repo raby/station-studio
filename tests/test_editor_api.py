@@ -1256,3 +1256,29 @@ def test_macro_edit_layout_form_mismatch_via_helper(editor_api):
     })
     assert r.status_code == 200, r.json()
     assert r.json()["blocks_updated"] == 3
+
+
+def test_macro_edit_updates_sidecar_spec_on_disk(editor_api):
+    """c1 review #6: patch_macro must update the sidecar's
+    macros[].spec to mirror the mutated engine blocks AND write the
+    sidecar back to disk. Without this, the committed sidecar
+    drifts and GET /sidecar returns a macro chip whose DetailPanel
+    shows stale spec values."""
+    client, Session, stations_dir = editor_api
+    _macro_station(Session, stations_dir, "ms")
+    before = json.loads((stations_dir / "ms.editor.json").read_text())
+    assert before["macros"][0]["spec"]["genre"] == "G"
+
+    r = client.patch("/api/stations/ms/macros/jingle-1", json={
+        "fields": {"genre": "Boom"},
+        "expected_updated_at": _token(client, "ms"),
+    })
+    assert r.status_code == 200, r.json()
+
+    # Sidecar on disk now reflects the new genre.
+    after = json.loads((stations_dir / "ms.editor.json").read_text())
+    assert after["macros"][0]["spec"]["genre"] == "Boom"
+    # Engine template also reflects it (already covered by other tests).
+    body = client.get("/api/stations/ms/sidecar").json()
+    flat = body["template"]["layout"]["flat_slots"]
+    assert [s["genre"] for s in flat] == ["G", "Boom", "Boom", "Boom", "G"]
