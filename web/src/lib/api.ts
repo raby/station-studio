@@ -766,6 +766,122 @@ export const patchBlock = async (
   return json<BlockPatchResponse>(res);
 };
 
+// ---- §16.2.4 c2 — block retype + macro edit (PATCH) ------------------
+
+
+export interface BlockRetypeResponse {
+  block: Record<string, unknown>;
+  updated_at: string | null;
+}
+
+/**
+ * Change a block's `strategy` and/or `source` (§16.2.4 D2).
+ *
+ * Distinct from `patchBlock`'s parameter-only contract. Pass `null`
+ * for `newStrategy` / `newSource` to leave them unchanged.
+ * `newFields` carries any new-required-field values (e.g.
+ * `{ position: 1 }` when retyping to `archive_ref`); structural
+ * keys (strategy / source / size) are REJECTED by the server (c1
+ * review #5) — use newStrategy / newSource for those.
+ *
+ * Same 409-on-stale-token contract as `patchBlock`: throws
+ * `BlockPatchConflict` so the same `conflict` banner reuses.
+ */
+export const retypeBlock = async (
+  slug: string,
+  address: BlockAddress,
+  newStrategy: string | null,
+  newSource: string | null,
+  newFields: Record<string, string | number | null>,
+  expectedUpdatedAt: string | null,
+  fetch_ = fetch,
+): Promise<BlockRetypeResponse> => {
+  const res = await fetch_(
+    `/api/stations/${encodeURIComponent(slug)}/blocks/retype`,
+    {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        address,
+        new_strategy: newStrategy,
+        new_source: newSource,
+        new_fields: newFields,
+        expected_updated_at: expectedUpdatedAt,
+      }),
+    },
+  );
+  if (res.status === 409) {
+    let detail: { message?: string; current_updated_at?: string | null } | string = '';
+    try {
+      const parsed = await res.json();
+      detail = parsed?.detail ?? parsed;
+    } catch {
+      detail = await res.text();
+    }
+    if (detail && typeof detail === 'object') {
+      throw new BlockPatchConflict(
+        detail.message ?? 'station changed since you loaded it',
+        detail.current_updated_at ?? null,
+      );
+    }
+    throw new ApiError(409, `409 Conflict: ${JSON.stringify(detail)}`);
+  }
+  return json<BlockRetypeResponse>(res);
+};
+
+
+export interface MacroPatchResponse {
+  blocks_updated: number;
+  updated_at: string | null;
+}
+
+/**
+ * Edit-once-applies-to-all: PATCH a macro by id (§16.2.4 D1). The
+ * server resolves macro_id → expanded block addresses (via the
+ * sidecar's macros-by-id mapping + section anchoring) and applies
+ * `fields` to each in one transaction.
+ *
+ * Parameter-only guard fires PER expanded block — if any rejects,
+ * the whole transaction aborts. Same 409 contract as patchBlock.
+ */
+export const patchMacro = async (
+  slug: string,
+  macroId: string,
+  fields: Record<string, string | number | null>,
+  expectedUpdatedAt: string | null,
+  fetch_ = fetch,
+): Promise<MacroPatchResponse> => {
+  const res = await fetch_(
+    `/api/stations/${encodeURIComponent(slug)}/macros/${encodeURIComponent(macroId)}`,
+    {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        fields,
+        expected_updated_at: expectedUpdatedAt,
+      }),
+    },
+  );
+  if (res.status === 409) {
+    let detail: { message?: string; current_updated_at?: string | null } | string = '';
+    try {
+      const parsed = await res.json();
+      detail = parsed?.detail ?? parsed;
+    } catch {
+      detail = await res.text();
+    }
+    if (detail && typeof detail === 'object') {
+      throw new BlockPatchConflict(
+        detail.message ?? 'station changed since you loaded it',
+        detail.current_updated_at ?? null,
+      );
+    }
+    throw new ApiError(409, `409 Conflict: ${JSON.stringify(detail)}`);
+  }
+  return json<MacroPatchResponse>(res);
+};
+
+
 export interface TemplateExportResponse {
   path: string;
   bytes: number;

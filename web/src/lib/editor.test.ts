@@ -1,10 +1,14 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
+  ALL_STRATEGIES,
   DEFAULT_VIEW_MODE,
   EditorMetadataError,
+  REFERENCE_SAMPLING_STRATEGIES,
   availableCursorIds,
   chipColour,
   compactStrategyLabel,
+  compatibleSources,
+  compatibleStrategies,
   editableFieldsForBlock,
   expandSection,
   lookupEngineBlock,
@@ -625,16 +629,29 @@ describe('readViewMode / writeViewMode', () => {
 
 
 describe('editableFieldsForBlock', () => {
-  it('pick + window strategies have NO editable params', () => {
-    expect(editableFieldsForBlock({ source: 'A', strategy: 'pick', size: 1 })).toEqual([]);
-    // The `window` STRATEGY has no params — the `window` FIELD is weighted's.
-    expect(editableFieldsForBlock({ source: 'A', strategy: 'window', size: 5 })).toEqual([]);
+  it('pick + window strategies have only allowlist_sources (§16.2.4 D3)', () => {
+    // §16.2.4 D3: pick + window pick up `allowlist_sources` (the
+    // CONTENT_SAMPLING_STRATEGIES opt-in set). They previously had
+    // NO editable params at all (§16.2.3).
+    const pick = editableFieldsForBlock({ source: 'A', strategy: 'pick', size: 1 });
+    expect(pick.map((f) => f.name)).toEqual(['allowlist_sources']);
+    expect(pick[0]).toMatchObject({
+      required: false, type: 'string_list', sourceRoleFilter: 'reference',
+    });
+    const win = editableFieldsForBlock({ source: 'A', strategy: 'window', size: 5 });
+    expect(win.map((f) => f.name)).toEqual(['allowlist_sources']);
   });
 
-  it('sequential → cursor_id (required, enumFromCursors)', () => {
+  it('sequential → cursor_id (required, enumFromCursors) + allowlist_sources', () => {
     const fields = editableFieldsForBlock({ source: 'A', strategy: 'sequential', size: 1, cursor_id: 'C' });
-    expect(fields).toHaveLength(1);
-    expect(fields[0]).toMatchObject({ name: 'cursor_id', required: true, enumFromCursors: true });
+    // §16.2.4 D3: sequential gains allowlist_sources too.
+    expect(fields.map((f) => f.name)).toEqual(['cursor_id', 'allowlist_sources']);
+    expect(fields.find((f) => f.name === 'cursor_id')).toMatchObject({
+      required: true, enumFromCursors: true,
+    });
+    expect(fields.find((f) => f.name === 'allowlist_sources')).toMatchObject({
+      type: 'string_list', required: false,
+    });
   });
 
   it('jingle → genre (required)', () => {
@@ -651,10 +668,16 @@ describe('editableFieldsForBlock', () => {
     });
   });
 
-  it('weighted → window (optional, int ≥ 0)', () => {
+  it('weighted → window (optional, int ≥ 0) + allowlist_sources', () => {
     const fields = editableFieldsForBlock({ source: 'A', strategy: 'weighted', size: 1 });
-    expect(fields).toHaveLength(1);
-    expect(fields[0]).toMatchObject({ name: 'window', required: false, type: 'int', min: 0 });
+    // §16.2.4 D3: weighted gains allowlist_sources too.
+    expect(fields.map((f) => f.name)).toEqual(['window', 'allowlist_sources']);
+    expect(fields.find((f) => f.name === 'window')).toMatchObject({
+      required: false, type: 'int', min: 0,
+    });
+    expect(fields.find((f) => f.name === 'allowlist_sources')).toMatchObject({
+      type: 'string_list', required: false, sourceRoleFilter: 'reference',
+    });
   });
 
   it('prev_ref → position (required, ≥1) + fallback_genre (optional)', () => {
@@ -722,5 +745,79 @@ describe('validateEditableField', () => {
     };
     expect(validateEditableField(cursor, 'C', template)).toBeNull();
     expect(validateEditableField(cursor, 'NOPE', template)).toMatch(/must be one of/);
+  });
+});
+
+
+// ---- §16.2.4 c2 — role-aware bidirectional dropdowns (D4) ----------
+
+
+describe('compatibleStrategies', () => {
+  it('content role gets every strategy EXCEPT archive_ref', () => {
+    const result = compatibleStrategies('content');
+    expect(result).toContain('pick');
+    expect(result).toContain('weighted');
+    expect(result).toContain('jingle');
+    expect(result).toContain('prev_ref');
+    expect(result).not.toContain('archive_ref');
+  });
+
+  it('reference role gets ONLY archive_ref (today)', () => {
+    const result = compatibleStrategies('reference');
+    expect([...result]).toEqual(['archive_ref']);
+  });
+
+  it('covers every supported strategy across both roles', () => {
+    // The union must equal ALL_STRATEGIES — no strategy should be
+    // unreachable from any role. Pins the invariant when new
+    // strategies join the engine.
+    const union = new Set([
+      ...compatibleStrategies('content'),
+      ...compatibleStrategies('reference'),
+    ]);
+    expect(union).toEqual(new Set(ALL_STRATEGIES));
+  });
+});
+
+
+describe('compatibleSources', () => {
+  const sources: StationTemplate['sources'] = [
+    { name: 'A', role: 'content', colour: '#abc' },
+    { name: 'B', role: 'content', colour: '#def' },
+    { name: 'REF', role: 'reference', colour: '#fff' },
+  ];
+
+  it('content-sampling strategies → content sources only', () => {
+    expect(compatibleSources('pick', sources).map((s) => s.name)).toEqual(['A', 'B']);
+    expect(compatibleSources('weighted', sources).map((s) => s.name)).toEqual(['A', 'B']);
+    expect(compatibleSources('jingle', sources).map((s) => s.name)).toEqual(['A', 'B']);
+  });
+
+  it('archive_ref → reference sources only', () => {
+    expect(compatibleSources('archive_ref', sources).map((s) => s.name)).toEqual(['REF']);
+  });
+
+  it('preserves declaration order (operator intent)', () => {
+    const reordered: StationTemplate['sources'] = [
+      { name: 'Z', role: 'content', colour: '#000' },
+      { name: 'A', role: 'content', colour: '#fff' },
+    ];
+    expect(compatibleSources('pick', reordered).map((s) => s.name)).toEqual(['Z', 'A']);
+  });
+});
+
+
+describe('REFERENCE_SAMPLING_STRATEGIES + ALL_STRATEGIES', () => {
+  it('REFERENCE_SAMPLING_STRATEGIES is a subset of ALL_STRATEGIES', () => {
+    for (const s of REFERENCE_SAMPLING_STRATEGIES) {
+      expect(ALL_STRATEGIES).toContain(s);
+    }
+  });
+
+  it('ALL_STRATEGIES covers exactly the EngineBlock["strategy"] union', () => {
+    expect(new Set(ALL_STRATEGIES)).toEqual(new Set([
+      'pick', 'window', 'sequential', 'jingle', 'mix', 'weighted',
+      'prev_ref', 'archive_ref',
+    ]));
   });
 });

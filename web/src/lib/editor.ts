@@ -761,6 +761,70 @@ export function editableFieldsForBlock(block: EngineBlock): EditableFieldSpec[] 
 }
 
 
+// ---- §16.2.4 c2 — role-aware bidirectional dropdowns (D4) -----------
+
+
+/** All supported strategy names. The literal union from EngineBlock
+ *  isn't iterable; this is the runtime mirror used by retype helpers. */
+export type Strategy = EngineBlock['strategy'];
+
+export const ALL_STRATEGIES: readonly Strategy[] = [
+  'pick', 'window', 'sequential', 'jingle', 'mix', 'weighted',
+  'prev_ref', 'archive_ref',
+] as const;
+
+/** Strategies that sample from a `role: reference` pool (mirrors the
+ *  engine's `REFERENCE_SAMPLING_STRATEGIES`). archive_ref is the only
+ *  one today; new reference-sampling strategies join here. */
+export const REFERENCE_SAMPLING_STRATEGIES: readonly Strategy[] = [
+  'archive_ref',
+] as const;
+
+/** Strategies compatible with the given source role.
+ *
+ *  D4 (§16.2.4): the strategy dropdown filters by the CURRENT source's
+ *  role so retype options that would role-conflict are hidden up front
+ *  — prevents save-then-400 surprises. Server still validates via
+ *  parse_template's strategy-aware role cross-check.
+ *
+ *    content   → all strategies EXCEPT archive_ref
+ *    reference → ONLY archive_ref (today)
+ */
+export function compatibleStrategies(
+  sourceRole: 'content' | 'reference',
+): readonly Strategy[] {
+  if (sourceRole === 'reference') {
+    return REFERENCE_SAMPLING_STRATEGIES;
+  }
+  return ALL_STRATEGIES.filter(
+    (s) => !REFERENCE_SAMPLING_STRATEGIES.includes(s),
+  );
+}
+
+/** Sources compatible with the given strategy.
+ *
+ *  D4 (§16.2.4): symmetric to compatibleStrategies. The source
+ *  dropdown shows ONLY sources with a role the new strategy can
+ *  consume:
+ *
+ *    archive_ref      → reference sources only
+ *    any other        → content sources only
+ *
+ *  Returns the input sources filtered + in declaration order (the
+ *  template's `sources[]` order — preserves operator intent for
+ *  alphabetical/grouped lists).
+ */
+export function compatibleSources(
+  strategy: Strategy,
+  sources: StationTemplate['sources'],
+): StationTemplate['sources'] {
+  const wantsReference = REFERENCE_SAMPLING_STRATEGIES.includes(strategy);
+  return sources.filter((s) =>
+    wantsReference ? s.role === 'reference' : s.role === 'content',
+  );
+}
+
+
 /** The cursor ids a `sequential` block may point at — the keys of the
  *  station's `layout.cursors_init`. Drives the cursor_id <select>. */
 export function availableCursorIds(template: StationTemplate): string[] {

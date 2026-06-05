@@ -46,11 +46,19 @@
   export let template: StationTemplate;
   export let sidecar: Sidecar;
 
-  // §16.2.3 c2 — forward the DetailPanel's `save` event up to the
-  // route, which owns the slug + optimistic token + the PATCH call.
-  // The canvas stays persistence-agnostic.
+  // §16.2.3 c2 + §16.2.4 c2 — forward the DetailPanel's write-path
+  // events (atomic save, macro save, retype) up to the route, which
+  // owns the slug + optimistic token + the PATCH calls. The canvas
+  // stays persistence-agnostic.
   const dispatch = createEventDispatcher<{
     save: { ref: ExpandedRef; fields: Record<string, string | number | null> };
+    macroSave: { macroId: string; fields: Record<string, string | number | null> };
+    retype: {
+      ref: ExpandedRef;
+      newStrategy: string | null;
+      newSource: string | null;
+      newFields: Record<string, string | number | null>;
+    };
   }>();
 
   // §16.2.2 c4 — view-mode prefs, hydrated from localStorage +
@@ -103,6 +111,30 @@
   $: orderedSections = sidecar.layout_order
     .map((id) => sectionsById.get(id))
     .filter((s): s is NonNullable<typeof s> => s !== undefined);
+
+  // §16.2.4 c2 — forward the DetailPanel's write events as-is. Defined
+  // here (not inline in the template) because Svelte's template parser
+  // doesn't accept TS type annotations on arrow-function params.
+  function forwardSave(
+    e: CustomEvent<{ ref: ExpandedRef; fields: Record<string, string | number | null> }>,
+  ) {
+    dispatch('save', e.detail);
+  }
+  function forwardMacroSave(
+    e: CustomEvent<{ macroId: string; fields: Record<string, string | number | null> }>,
+  ) {
+    dispatch('macroSave', e.detail);
+  }
+  function forwardRetype(
+    e: CustomEvent<{
+      ref: ExpandedRef;
+      newStrategy: string | null;
+      newSource: string | null;
+      newFields: Record<string, string | number | null>;
+    }>,
+  ) {
+    dispatch('retype', e.detail);
+  }
 </script>
 
 <div
@@ -146,7 +178,9 @@
   {template}
   {sidecar}
   on:close={closeDetail}
-  on:save={(e) => dispatch('save', e.detail)}
+  on:save={forwardSave}
+  on:macroSave={forwardMacroSave}
+  on:retype={forwardRetype}
 />
 
 <style>

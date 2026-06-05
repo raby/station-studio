@@ -85,8 +85,16 @@ describe('<DetailPanel>', () => {
     expect(panel).toHaveTextContent('M1');
     expect(screen.getByTestId('detail-repeat')).toHaveTextContent('200');
     expect(screen.getByTestId('detail-strategy')).toHaveTextContent('weighted');
-    expect(panel).toHaveTextContent('window');
-    expect(panel).toHaveTextContent('7');
+    // §16.2.4 c2: macros are now EDITABLE. The form below shows the
+    // strategy's editable fields (here: `window` int + `allowlist_sources`
+    // string_list). The read-only spec dump from §16.2.3 was removed
+    // since the form covers the same fields.
+    expect(screen.getByTestId('edit-form')).toBeInTheDocument();
+    expect(screen.getByTestId('macro-fanout-warning')).toHaveTextContent(
+      /all 200 expanded blocks/i,
+    );
+    // window field rendered as int input seeded with 7.
+    expect(screen.getByTestId('input-window')).toHaveValue(7);
   });
 
   it('falls back to section.id when section.name is omitted', () => {
@@ -185,13 +193,19 @@ describe('<DetailPanel> — §16.2.3 c1 edit form', () => {
     expect(screen.getByTestId('input-exclusion_window')).toHaveValue(8);
   });
 
-  it('shows "no editable parameters" for a pick block', () => {
+  it('pick block now shows allowlist_sources field (§16.2.4 D3)', () => {
+    // §16.2.4 D3: pick + window strategies pick up `allowlist_sources`
+    // (string_list, optional). The "no editable parameters" placeholder
+    // from §16.2.3 no longer applies to pick.
     render(DetailPanel, {
       selected: { ref: { kind: 'atomic-ref', slot_index: 1 }, section: ESEC },
       template: makeEditTemplate(), sidecar: makeSidecar(),
     });
-    expect(screen.getByTestId('no-params')).toBeInTheDocument();
-    expect(screen.queryByTestId('detail-save')).toBeNull();
+    expect(screen.queryByTestId('no-params')).toBeNull();
+    expect(screen.getByTestId('field-allowlist_sources')).toBeInTheDocument();
+    // The chip-multi input renders a text input under the testIdPrefix.
+    expect(screen.getByTestId('input-allowlist_sources-input')).toBeInTheDocument();
+    expect(screen.getByTestId('detail-save')).toBeInTheDocument();
   });
 
   it('renders cursor_id as a <select> of cursors_init keys', () => {
@@ -305,12 +319,18 @@ describe('<DetailPanel> — §16.2.3 c1 edit form', () => {
     expect(screen.queryByTestId('shared-block-warning')).toBeNull();
   });
 
-  it('macro selection shows NO edit form (macro edit is §16.2.4)', () => {
+  it('macro selection NOW shows the edit form (§16.2.4 D1)', () => {
+    // §16.2.4 D1 inverts the §16.2.3 behaviour: macros are editable
+    // (edit-once-applies-to-all). The form fans out via a `macroSave`
+    // event with `{macroId, fields}` (NOT `save`/`ref`).
     const ref: MacroPlaceholder = { kind: 'macro-placeholder', macro_id: 'm1', pick_in_macro: 1 };
     render(DetailPanel, {
       selected: { ref, section: ESEC },
       template: makeEditTemplate(), sidecar: makeSidecar(),
     });
-    expect(screen.queryByTestId('edit-form')).toBeNull();
+    expect(screen.getByTestId('edit-form')).toBeInTheDocument();
+    expect(screen.getByTestId('macro-fanout-warning')).toBeInTheDocument();
+    // No retype panel on macros — that's per-block (PATCH /blocks/retype).
+    expect(screen.queryByTestId('retype-toggle')).toBeNull();
   });
 });

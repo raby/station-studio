@@ -23,16 +23,22 @@
   import { createEventDispatcher } from 'svelte';
   import {
     availableCursorIds,
+    compatibleSources,
+    compatibleStrategies,
     editableFieldsForBlock,
+    EDITABLE_FIELDS,
     lookupEngineBlock,
     lookupMacro,
     validateEditableField,
     type EditableFieldSpec,
+    type EngineBlock,
     type ExpandedRef,
     type Sidecar,
     type SidecarSection,
     type StationTemplate,
+    type Strategy,
   } from '$lib/editor';
+  import ChipMultiInput from './ChipMultiInput.svelte';
 
   /** The selected ref (or null when nothing's selected — panel is
    *  hidden in that case). */
@@ -40,9 +46,25 @@
   export let template: StationTemplate;
   export let sidecar: Sidecar;
 
+  /**
+   * §16.2.4 c2: dispatch contracts —
+   *  - `save`: atomic block parameter edit (PATCH /blocks)
+   *  - `retype`: atomic block strategy/source change (PATCH /blocks/retype).
+   *      `newFields` carries any newly-required fields (e.g.
+   *      `{position: 1}` when retyping to archive_ref). The route
+   *      handler is responsible for the API call.
+   *  - `macroSave`: macro-fanout edit (PATCH /macros/{macro_id})
+   */
   const dispatch = createEventDispatcher<{
     close: void;
     save: { ref: ExpandedRef; fields: Record<string, string | number | null> };
+    retype: {
+      ref: ExpandedRef;
+      newStrategy: string | null;
+      newSource: string | null;
+      newFields: Record<string, string | number | null>;
+    };
+    macroSave: { macroId: string; fields: Record<string, string | number | null> };
   }>();
 
   // Resolve the spec under the selection.
@@ -71,45 +93,126 @@
     };
   })();
 
-  // ----- §16.2.3 c1: edit-form state ---------------------------------
+  // ----- §16.2.3 c1 + §16.2.4 c2: edit-form state --------------------
   //
-  // Editable only for atomic blocks (macros = §16.2.4). The form binds
-  // string values (number inputs give strings); int conversion happens
-  // at validate + save time.
+  // The same form structure now serves THREE write paths:
+  //  - atomic-block parameter edit (§16.2.3, dispatches `save`)
+  //  - macro spec edit (§16.2.4 D1, dispatches `macroSave`)
+  //  - atomic-block retype (§16.2.4 D2, dispatches `retype`)
 
   // Editing a row_template block edits the SHARED row template — all
   // rows change. Decision B's required warning.
   $: isRowTemplateEdit =
     selected?.ref.kind === 'atomic-ref' && selected.ref.block_idx !== undefined;
 
+  // §16.2.4 D1: macros use the SAME EDITABLE_FIELDS table as atomic
+  // blocks — `detail.block` is the macro's spec for macros and the
+  // engine-block dict for atomics, both with a `strategy` key. So
+  // `editableFieldsForBlock` works for both, but each strategy's
+  // EDITABLE_FIELDS entry is what drives the form.
   $: editFields =
-    detail && detail.kind === 'atomic' && detail.block
-      ? editableFieldsForBlock(detail.block)
+    detail && detail.block
+      ? editableFieldsForBlock(detail.block as unknown as EngineBlock)
       : ([] as EditableFieldSpec[]);
+
+  // §16.2.4 c2: values type widened to include `string[]` so the
+  // string_list (allowlist_sources) field round-trips natively
+  // — see normStr's Array.isArray branch.
+  type EditVal = string | number | string[] | null;
 
   // Reseed the form whenever the SELECTION changes (not on every
   // reactive tick — that would clobber the user's in-progress edits).
   //
-  // Value type is string | number | null, NOT just string (c1 review
-  // 🟡-3): Svelte's `bind:value` on <input type="number"> coerces to
-  // a NUMBER (or null when cleared) regardless of the seeded type.
-  // The declared union forces every read site to normalize.
-  let editValues: Record<string, string | number | null> = {};
+  // Value type is string | number | string[] | null, NOT just string
+  // (c1 review 🟡-3 + §16.2.4): Svelte's `bind:value` on
+  // <input type="number"> coerces to a NUMBER (or null when cleared);
+  // ChipMultiInput emits a string[]. The declared union forces every
+  // read site to normalize.
+  let editValues: Record<string, EditVal> = {};
   let seededFor: string | null = null;
   $: {
     const key = selected ? JSON.stringify(selected.ref) : null;
     if (key !== seededFor) {
       seededFor = key;
-      const next: Record<string, string | number | null> = {};
-      if (detail && detail.kind === 'atomic' && detail.block) {
-        for (const f of editableFieldsForBlock(detail.block)) {
-          const v = detail.block[f.name];
-          next[f.name] = v === undefined || v === null ? '' : String(v);
+      const next: Record<string, EditVal> = {};
+      if (detail && detail.block) {
+        for (const f of editFields) {
+          const v = (detail.block as unknown as Record<string, unknown>)[f.name];
+          if (f.type === 'string_list') {
+            // §16.2.4 c2: native array binding. Empty list ↔ "no
+            // constraint" (engine collapses to None at parse time).
+            next[f.name] = Array.isArray(v) ? [...v] : [];
+          } else {
+            next[f.name] = v === undefined || v === null ? '' : String(v);
+          }
         }
       }
       editValues = next;
+      // Re-seed retype state on selection change too.
+      retypeOpen = false;
+      retypeStrategy = (detail?.block as { strategy?: Strategy } | null)?.strategy ?? null;
+      retypeSource = (detail?.block as { source?: string } | null)?.source ?? null;
+      retypeNewFields = {};
+      retypeError = null;
     }
   }
+
+  // ----- §16.2.4 c2: retype state (atomic blocks only) ---------------
+  //
+  // The retype panel is collapsed by default; toggled open by a
+  // "Change strategy / source" disclosure. When the operator picks a
+  // new strategy whose EDITABLE_FIELDS requires fields the current
+  // block doesn't carry (e.g. `position` when retyping TO
+  // archive_ref), an inline sub-form collects them; `newFields`
+  // is sent in the retype payload.
+  let retypeOpen = false;
+  let retypeStrategy: Strategy | null = null;
+  let retypeSource: string | null = null;
+  let retypeNewFields: Record<string, string | number | null> = {};
+  let retypeError: string | null = null;
+
+  // §16.2.4 D4: bidirectional dropdown filtering. Strategy options
+  // narrow by the CURRENT source's role; source options narrow by
+  // the CURRENT (possibly newly-picked) strategy's role requirement.
+  $: currentSourceRole = (() => {
+    if (!detail?.block) return 'content';
+    const srcName = (detail.block as { source?: string }).source;
+    return template.sources.find((s) => s.name === srcName)?.role ?? 'content';
+  })();
+  $: pickedSourceRole = (() => {
+    if (retypeSource === null) return currentSourceRole;
+    return template.sources.find((s) => s.name === retypeSource)?.role
+      ?? currentSourceRole;
+  })();
+  // Strategy list reflects whatever source is CURRENTLY picked in the
+  // retype panel (so swapping source first re-narrows strategy).
+  $: strategyChoices = compatibleStrategies(pickedSourceRole);
+  // Source list reflects whatever strategy is CURRENTLY picked.
+  $: sourceChoices = retypeStrategy
+    ? compatibleSources(retypeStrategy, template.sources)
+    : template.sources;
+
+  // Which fields the NEW strategy would require that the current
+  // block doesn't carry — these need values via `newFields` for the
+  // retype to land. e.g. retyping to archive_ref → `position` required.
+  $: retypeRequiredNew = (() => {
+    if (!retypeStrategy || !detail?.block) return [] as EditableFieldSpec[];
+    const newSpec = EDITABLE_FIELDS[retypeStrategy] ?? [];
+    const block = detail.block as unknown as Record<string, unknown>;
+    return newSpec.filter(
+      (f) => f.required && (block[f.name] === undefined || block[f.name] === null),
+    );
+  })();
+
+  $: retypeDirty =
+    retypeStrategy !== null &&
+    (retypeStrategy !== (detail?.block as { strategy?: string } | null)?.strategy ||
+      retypeSource !== (detail?.block as { source?: string } | null)?.source);
+
+  $: retypeNewFieldsValid = retypeRequiredNew.every((f) => {
+    const v = retypeNewFields[f.name];
+    return validateEditableField(f, v ?? undefined, template) === null;
+  });
 
   // Normalise a raw form value (string | number | null) to the
   // canonical string used for dirty-comparison + emptiness checks.
@@ -131,7 +234,15 @@
   // Per-field validation (mirrors engine validators via the helper).
   $: fieldErrors = Object.fromEntries(
     editFields.map((f) => {
-      const s = normStr(editValues[f.name]);
+      const raw = editValues[f.name];
+      if (f.type === 'string_list') {
+        // Empty list is "no constraint" — fine for an OPTIONAL field
+        // (the engine collapses [] → None at parse_template time).
+        // No string-list field is required today; if one ever is,
+        // wire up min-length here.
+        return [f.name, null];
+      }
+      const s = normStr(raw);
       const val = f.type === 'int' ? (s === '' ? undefined : Number(s)) : s;
       return [f.name, validateEditableField(f, val, template)];
     }),
@@ -140,50 +251,124 @@
   $: hasErrors = Object.values(fieldErrors).some((e) => e !== null);
 
   $: dirty =
-    detail && detail.kind === 'atomic' && detail.block
+    detail && detail.block
       ? editFields.some((f) => {
           // Compare normalised strings on BOTH sides so an int field
           // returned to its original value (number vs seeded string)
-          // doesn't read as dirty (c1 review 🟡-4).
-          const currentStr = normStr(detail.block![f.name]);
+          // doesn't read as dirty (c1 review 🟡-4). For string_list,
+          // normStr sorts + joins — order-only changes don't count as
+          // dirty (engine semantics are union over the list).
+          const currentStr = normStr(detail.block![f.name] as EditVal);
           return normStr(editValues[f.name]) !== currentStr;
         })
       : false;
 
   $: cursorIds = availableCursorIds(template);
 
+  // Reference-role sources available for the allowlist_sources
+  // autocomplete (§16.2.4 D3 — only reference pools are valid
+  // allowlist sources). Filtered once per template-prop change.
+  $: referenceSources = template.sources.filter((s) => s.role === 'reference');
+
+  /** Coerce a possibly-mixed edit value into a string[] for
+   *  ChipMultiInput's `values` prop. Svelte's template parser
+   *  rejects inline `as string[]` casts; this helper keeps the
+   *  cast in the <script> block where TS understands it. */
+  function asStringArray(v: EditVal): string[] {
+    return Array.isArray(v) ? v : [];
+  }
+
   function close() {
     dispatch('close');
+  }
+
+  /** Build the fields payload from current editValues. Shared by
+   *  the atomic-save and macro-save paths since both send the same
+   *  parameter-only PATCH body. */
+  function buildFieldsPayload(): Record<string, string | number | null> | string[] {
+    const fields: Record<string, string | number | null> = {};
+    for (const f of editFields) {
+      const raw = editValues[f.name];
+      if (f.type === 'string_list') {
+        // Empty array → null (clears key, matches the engine's
+        // empty-list-collapses-to-None contract). Non-empty array
+        // sent verbatim — the PATCH endpoint accepts string[] for
+        // `allowlist_sources`.
+        const arr = Array.isArray(raw) ? raw : [];
+        fields[f.name] = arr.length === 0 ? null : (arr as unknown as string);
+      } else {
+        const s = normStr(raw);
+        if (s === '') {
+          fields[f.name] = null;
+        } else {
+          fields[f.name] = f.type === 'int' ? Number(s) : s;
+        }
+      }
+    }
+    return fields;
   }
 
   function onSave() {
     if (
       selected === null ||
       detail === null ||
-      detail.kind !== 'atomic' ||
       !detail.block ||
       hasErrors ||
       !dirty
     ) {
       return;
     }
-    // Build the fields payload: each editable field's value, with an
-    // emptied OPTIONAL field sent as null (→ the PATCH endpoint clears
-    // the key). Required fields can't be empty (validation blocks save).
-    const fields: Record<string, string | number | null> = {};
-    for (const f of editFields) {
-      // normStr handles number | null | string uniformly (c1 review
-      // 🔴-1: Svelte makes edited int fields NUMBERS — calling .trim()
-      // on a number threw TypeError). Empty optional → null (PATCH
-      // clears the key); otherwise coerce by declared field type.
-      const s = normStr(editValues[f.name]);
-      if (s === '') {
-        fields[f.name] = null;
-      } else {
-        fields[f.name] = f.type === 'int' ? Number(s) : s;
+    const fields = buildFieldsPayload() as Record<string, string | number | null>;
+    if (detail.kind === 'macro') {
+      // §16.2.4 D1: macro fan-out edit.
+      const macroId = detail.macro?.id;
+      if (macroId !== undefined) {
+        dispatch('macroSave', { macroId, fields });
       }
+      return;
     }
     dispatch('save', { ref: selected.ref, fields });
+  }
+
+  /** §16.2.4 D2: dispatch a retype. The route handler does the API
+   *  call + refetch. Inline validation is light here — server
+   *  enforces via parse_template's role + field-set checks. */
+  function onRetype() {
+    if (selected === null || detail === null || detail.kind !== 'atomic') return;
+    if (!retypeDirty) return;
+    if (!retypeNewFieldsValid) {
+      retypeError = 'fill required fields for the new strategy';
+      return;
+    }
+    const block = detail.block as { strategy?: string; source?: string } | null;
+    const newStrategy =
+      retypeStrategy !== null && retypeStrategy !== block?.strategy
+        ? retypeStrategy
+        : null;
+    const newSource =
+      retypeSource !== null && retypeSource !== block?.source
+        ? retypeSource
+        : null;
+    // Coerce retypeNewFields by their EditableFieldSpec.type so int
+    // fields don't end up as string in the JSON body.
+    const newFields: Record<string, string | number | null> = {};
+    for (const f of retypeRequiredNew) {
+      const v = retypeNewFields[f.name];
+      if (v === null || v === undefined || v === '') {
+        newFields[f.name] = null;
+      } else if (f.type === 'int') {
+        newFields[f.name] = Number(v);
+      } else {
+        newFields[f.name] = String(v);
+      }
+    }
+    retypeError = null;
+    dispatch('retype', {
+      ref: selected.ref,
+      newStrategy,
+      newSource,
+      newFields,
+    });
   }
 
   // Esc to close.
@@ -234,8 +419,9 @@
       {/if}
 
       {#if detail.block}
-        <!-- Identity — read-only (strategy/source/size are structural;
-             §16.2.4/§16.2.5 own those edits). -->
+        <!-- Identity: read-only for macros + the static form. Atomic
+             blocks gain a retype affordance below (size is structural
+             → §16.2.5). -->
         <dt>Strategy</dt>
         <dd data-testid="detail-strategy">{detail.block.strategy}</dd>
 
@@ -245,29 +431,11 @@
         <dt>Size</dt>
         <dd>{detail.block.size}</dd>
 
-        {#if detail.kind === 'macro'}
-          <!-- Macros are read-only here (macro edit = §16.2.4): show
-               the spec's parameter fields inline. Atomic blocks edit
-               these via the form below instead. -->
-          {#if detail.block.cursor_id !== undefined}
-            <dt>cursor_id</dt><dd class="mono">{detail.block.cursor_id}</dd>
-          {/if}
-          {#if detail.block.window !== undefined}
-            <dt>window</dt><dd>{detail.block.window}</dd>
-          {/if}
-          {#if detail.block.exclusion_window !== undefined}
-            <dt>exclusion_window</dt><dd>{detail.block.exclusion_window}</dd>
-          {/if}
-          {#if detail.block.genre !== undefined}
-            <dt>genre</dt><dd class="mono">{detail.block.genre}</dd>
-          {/if}
-          {#if detail.block.position !== undefined}
-            <dt>position</dt><dd>{detail.block.position}</dd>
-          {/if}
-          {#if detail.block.fallback_genre !== undefined}
-            <dt>fallback_genre</dt><dd class="mono">{detail.block.fallback_genre}</dd>
-          {/if}
-        {/if}
+        <!-- §16.2.4 c2: §16.2.3 listed each engine block field
+             inline in this dl for MACROS only; the §16.2.4 macro
+             edit form below handles the same fields via the same
+             EDITABLE_FIELDS table the atomic path uses, so we don't
+             need the read-only display anymore. -->
       {:else}
         <dt>Status</dt>
         <dd class="warn">
@@ -277,12 +445,22 @@
       {/if}
     </dl>
 
-    <!-- §16.2.3 c1: edit form for atomic blocks only (macros = §16.2.4). -->
-    {#if detail.kind === 'atomic' && detail.block}
+    <!-- §16.2.3 c1 + §16.2.4 c2: edit form serves atomic blocks AND
+         macros (macros: edit-once-applies-to-all per D1). -->
+    {#if detail.block}
       <form class="edit-form" data-testid="edit-form" on:submit|preventDefault={onSave}>
         <h3>Parameters</h3>
 
-        {#if isRowTemplateEdit}
+        {#if detail.kind === 'macro'}
+          <p
+            class="shared-warning macro-warning"
+            data-testid="macro-fanout-warning"
+          >
+            Saving here applies to <strong>all
+            {detail.macro?.repeat ?? '?'} expanded blocks</strong>
+            of this macro (edit-once-applies-to-all).
+          </p>
+        {:else if isRowTemplateEdit}
           <p class="shared-warning" data-testid="shared-block-warning">
             This block is part of the shared <strong>row template</strong> —
             editing it changes <strong>every row</strong> that uses it.
@@ -319,6 +497,21 @@
                   data-testid="input-{f.name}"
                   bind:value={editValues[f.name]}
                 />
+              {:else if f.type === 'string_list'}
+                <!-- §16.2.4 D3: chip-multi for per-block
+                     allowlist_sources (or any future string[] field).
+                     Suggestions filter to the spec's named role
+                     (today: reference). -->
+                <ChipMultiInput
+                  values={asStringArray(editValues[f.name])}
+                  suggestions={f.sourceRoleFilter === 'reference'
+                    ? referenceSources
+                    : template.sources}
+                  testIdPrefix="input-{f.name}"
+                  inputLabel={f.label}
+                  placeholder="Type a {f.sourceRoleFilter ?? 'source'} name + Enter"
+                  on:change={(e) => (editValues[f.name] = e.detail)}
+                />
               {:else}
                 <input
                   type="text"
@@ -344,6 +537,90 @@
           </button>
         {/if}
       </form>
+    {/if}
+
+    <!-- §16.2.4 D2: retype panel — atomic blocks only. Collapsed by
+         default; toggling reveals strategy + source dropdowns with
+         D4 bidirectional role filtering. -->
+    {#if detail.kind === 'atomic' && detail.block}
+      <section class="retype" data-testid="retype-panel">
+        <button
+          type="button"
+          class="retype-toggle"
+          data-testid="retype-toggle"
+          on:click={() => (retypeOpen = !retypeOpen)}
+          aria-expanded={retypeOpen}
+        >
+          {retypeOpen ? '▾' : '▸'} Change strategy / source
+        </button>
+
+        {#if retypeOpen}
+          <div class="retype-body">
+            <label class="field" data-testid="retype-strategy-field">
+              <span class="field-label">Strategy</span>
+              <select
+                data-testid="retype-strategy"
+                bind:value={retypeStrategy}
+              >
+                {#each strategyChoices as s (s)}
+                  <option value={s}>{s}</option>
+                {/each}
+              </select>
+            </label>
+
+            <label class="field" data-testid="retype-source-field">
+              <span class="field-label">Source</span>
+              <select
+                data-testid="retype-source"
+                bind:value={retypeSource}
+              >
+                {#each sourceChoices as src (src.name)}
+                  <option value={src.name}>{src.name} ({src.role})</option>
+                {/each}
+              </select>
+            </label>
+
+            {#if retypeRequiredNew.length > 0}
+              <p class="hint" data-testid="retype-required-hint">
+                The new strategy requires:
+              </p>
+              {#each retypeRequiredNew as f (f.name)}
+                <label class="field" data-testid="retype-newfield-{f.name}">
+                  <span class="field-label">{f.label}</span>
+                  {#if f.type === 'int'}
+                    <input
+                      type="number"
+                      min={f.min ?? undefined}
+                      data-testid="retype-input-{f.name}"
+                      bind:value={retypeNewFields[f.name]}
+                    />
+                  {:else}
+                    <input
+                      type="text"
+                      data-testid="retype-input-{f.name}"
+                      bind:value={retypeNewFields[f.name]}
+                    />
+                  {/if}
+                </label>
+              {/each}
+            {/if}
+
+            {#if retypeError}
+              <p class="field-error" data-testid="retype-error">{retypeError}</p>
+            {/if}
+
+            <button
+              type="button"
+              class="save"
+              data-testid="retype-apply"
+              disabled={!retypeDirty || !retypeNewFieldsValid}
+              on:click={onRetype}
+            >
+              Retype
+            </button>
+          </div>
+        {/if}
+      </section>
     {/if}
   </aside>
 {/if}
@@ -471,5 +748,36 @@
   .save:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+  }
+
+  /* §16.2.4 c2 — retype panel */
+  .retype {
+    margin-top: 1rem;
+    border-top: 1px solid var(--border, #eee);
+    padding-top: 0.75rem;
+  }
+  .retype-toggle {
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    color: var(--text-muted, #555);
+    font-size: 0.88rem;
+    padding: 0;
+    font-weight: 500;
+  }
+  .retype-body {
+    margin-top: 0.6rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+  .hint {
+    color: var(--text-muted, #666);
+    font-size: 0.78rem;
+    margin: 0.2rem 0 0;
+  }
+  .macro-warning {
+    background: #eaf6f6;
+    border-color: #80cbc4;
   }
 </style>

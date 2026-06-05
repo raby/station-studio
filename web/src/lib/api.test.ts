@@ -24,7 +24,9 @@ import {
   getStationRules,
   JobStartConflict,
   patchBlock,
+  patchMacro,
   pollJob,
+  retypeBlock,
   setStationRule,
   clearStationRule,
   startGenerateJob,
@@ -865,6 +867,108 @@ describe('patchBlock', () => {
     const { fetch_, calls } = makeSpy({ body: { block: {}, updated_at: 't2' } });
     await patchBlock('cls', { block_idx: 1 }, { genre: 'Night' }, 't1', fetch_);
     expect(JSON.parse(calls[0].init!.body as string).address).toEqual({ block_idx: 1 });
+  });
+});
+
+
+// ---- §16.2.4 c2 — retypeBlock + patchMacro ---------------------------
+
+
+describe('retypeBlock', () => {
+  it('PATCHes /api/stations/{slug}/blocks/retype with all four payload keys', async () => {
+    const { fetch_, calls } = makeSpy({
+      body: { block: { strategy: 'archive_ref', source: 'REF', position: 1 }, updated_at: 't2' },
+    });
+    const out = await retypeBlock(
+      'cls', { slot_index: 3 }, 'archive_ref', 'REF', { position: 1 }, 't1', fetch_,
+    );
+    expect(calls[0].input).toBe('/api/stations/cls/blocks/retype');
+    expect(calls[0].init!.method).toBe('PATCH');
+    expect(JSON.parse(calls[0].init!.body as string)).toEqual({
+      address: { slot_index: 3 },
+      new_strategy: 'archive_ref',
+      new_source: 'REF',
+      new_fields: { position: 1 },
+      expected_updated_at: 't1',
+    });
+    expect(out.block.strategy).toBe('archive_ref');
+    expect(out.updated_at).toBe('t2');
+  });
+
+  it('null new_strategy / new_source pass through (partial retype)', async () => {
+    const { fetch_, calls } = makeSpy({ body: { block: {}, updated_at: 't2' } });
+    await retypeBlock('cls', { slot_index: 0 }, null, 'B', {}, 't1', fetch_);
+    expect(JSON.parse(calls[0].init!.body as string)).toMatchObject({
+      new_strategy: null,
+      new_source: 'B',
+      new_fields: {},
+    });
+  });
+
+  it('throws BlockPatchConflict on 409 (same contract as patchBlock)', async () => {
+    const { fetch_ } = makeSpy({
+      ok: false, status: 409,
+      body: { detail: { message: 'station changed', current_updated_at: 't9' } },
+    });
+    const err = await retypeBlock('cls', { slot_index: 0 }, 'pick', null, {}, 't1', fetch_)
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(BlockPatchConflict);
+    expect(err.current_updated_at).toBe('t9');
+  });
+
+  it('URL-encodes the slug', async () => {
+    const { fetch_, calls } = makeSpy({ body: { block: {}, updated_at: null } });
+    await retypeBlock('a b', { slot_index: 0 }, 'pick', null, {}, null, fetch_);
+    expect(calls[0].input).toBe('/api/stations/a%20b/blocks/retype');
+  });
+});
+
+
+describe('patchMacro', () => {
+  it('PATCHes /api/stations/{slug}/macros/{macro_id} with fields + token', async () => {
+    const { fetch_, calls } = makeSpy({
+      body: { blocks_updated: 3, updated_at: 't2' },
+    });
+    const out = await patchMacro(
+      'cls', 'jingle-1', { genre: 'Loud' }, 't1', fetch_,
+    );
+    expect(calls[0].input).toBe('/api/stations/cls/macros/jingle-1');
+    expect(calls[0].init!.method).toBe('PATCH');
+    expect(JSON.parse(calls[0].init!.body as string)).toEqual({
+      fields: { genre: 'Loud' },
+      expected_updated_at: 't1',
+    });
+    expect(out.blocks_updated).toBe(3);
+    expect(out.updated_at).toBe('t2');
+  });
+
+  it('URL-encodes BOTH slug and macro_id', async () => {
+    const { fetch_, calls } = makeSpy({ body: { blocks_updated: 0, updated_at: null } });
+    await patchMacro('a b', 'm/1', {}, null, fetch_);
+    expect(calls[0].input).toBe('/api/stations/a%20b/macros/m%2F1');
+  });
+
+  it('throws BlockPatchConflict on 409', async () => {
+    const { fetch_ } = makeSpy({
+      ok: false, status: 409,
+      body: { detail: { message: 'station changed', current_updated_at: 't9' } },
+    });
+    const err = await patchMacro('cls', 'm', { genre: 'X' }, 't1', fetch_)
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(BlockPatchConflict);
+    expect(err.current_updated_at).toBe('t9');
+  });
+
+  it('raises ApiError on 404 unknown macro_id', async () => {
+    const { fetch_ } = makeSpy({
+      ok: false, status: 404,
+      text: '{"detail":"macro_id \'ghost\' not found"}',
+    });
+    const err = await patchMacro('cls', 'ghost', { genre: 'X' }, 't1', fetch_)
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err).not.toBeInstanceOf(BlockPatchConflict);
+    expect(err.status).toBe(404);
   });
 });
 

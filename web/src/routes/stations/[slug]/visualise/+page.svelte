@@ -23,6 +23,8 @@
     exportStationTemplate,
     getStationSidecar,
     patchBlock,
+    patchMacro,
+    retypeBlock,
     type BlockAddress,
   } from '$lib/api';
   import type { ExpandedRef, Sidecar, StationTemplate } from '$lib/editor';
@@ -133,6 +135,78 @@
     }
   }
 
+  // §16.2.4 c2 — macro fan-out edit (PATCH /macros/{macro_id}). Same
+  // success/error flow as handleSave: PATCH first, refetch on success,
+  // surface 409 vs generic error distinctly.
+  async function handleMacroSave(
+    e: CustomEvent<{ macroId: string; fields: Record<string, string | number | null> }>,
+  ) {
+    saveError = null;
+    conflict = false;
+    exportMsg = null;
+    try {
+      await patchMacro(slug, e.detail.macroId, e.detail.fields, updatedAt);
+    } catch (err) {
+      if (err instanceof BlockPatchConflict) {
+        conflict = true;
+      } else {
+        saveError = err instanceof Error ? err.message : String(err);
+      }
+      return;
+    }
+    try {
+      await loadSidecar();
+    } catch (err) {
+      saveError =
+        'saved, but failed to refresh the view: ' +
+        (err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  // §16.2.4 c2 — atomic block retype (PATCH /blocks/retype). Reuses
+  // the same address-resolution + 409-conflict path as handleSave.
+  async function handleRetype(
+    e: CustomEvent<{
+      ref: import('$lib/editor').ExpandedRef;
+      newStrategy: string | null;
+      newSource: string | null;
+      newFields: Record<string, string | number | null>;
+    }>,
+  ) {
+    saveError = null;
+    conflict = false;
+    exportMsg = null;
+    const address = refToAddress(e.detail.ref);
+    if (address === null) {
+      saveError = 'cannot retype this block (no storage address)';
+      return;
+    }
+    try {
+      await retypeBlock(
+        slug,
+        address,
+        e.detail.newStrategy,
+        e.detail.newSource,
+        e.detail.newFields,
+        updatedAt,
+      );
+    } catch (err) {
+      if (err instanceof BlockPatchConflict) {
+        conflict = true;
+      } else {
+        saveError = err instanceof Error ? err.message : String(err);
+      }
+      return;
+    }
+    try {
+      await loadSidecar();
+    } catch (err) {
+      saveError =
+        'retype landed, but failed to refresh the view: ' +
+        (err instanceof Error ? err.message : String(err));
+    }
+  }
+
   async function reloadAfterConflict() {
     conflict = false;
     try {
@@ -209,7 +283,13 @@
       §16.2.3 — editable visual block canvas. The DetailPanel's `save`
       event bubbles up here (via EditorCanvas) to the PATCH call.
     -->
-    <EditorCanvas {template} {sidecar} on:save={handleSave} />
+    <EditorCanvas
+      {template}
+      {sidecar}
+      on:save={handleSave}
+      on:macroSave={handleMacroSave}
+      on:retype={handleRetype}
+    />
   {/if}
 </main>
 
