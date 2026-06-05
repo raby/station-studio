@@ -635,3 +635,442 @@ def test_export_unknown_station_404(editor_api):
     client, _Session, _dir = editor_api
     r = client.post("/api/stations/nope/export")
     assert r.status_code == 404
+
+
+# ---------- §16.2.4 c1: PATCH /api/stations/{slug}/blocks/retype ---------
+#
+# Decision D2 — distinct endpoint from PATCH /blocks. Body carries
+# address + new_strategy? + new_source? + new_fields; server drops
+# fields incompatible with the new strategy + revalidates via
+# parse_template. Same optimistic-concurrency contract.
+
+
+def _retypable_station(Session: sessionmaker, slug: str = "rty") -> dict:
+    """flat_slots station with TWO declared sources (a content + a
+    reference) + a single mix block at slot 0. Used to exercise:
+    strategy retype within content sampling, source swap, and
+    role-mismatch failure paths.
+
+    Mix block carries `genre` (mix-only field) → after retyping to
+    a non-mix strategy the field must be dropped server-side.
+    """
+    template = {
+        "station": slug, "name": "Rty", "cadence": "weekly", "rng": "off",
+        "sources": [
+            {"name": "A", "colour": "#abc", "role": "content"},
+            {"name": "REF", "colour": "#def", "role": "reference"},
+        ],
+        "cursor": {"base_advance_per_week": 0, "cycle_weeks": 1},
+        "layout": {
+            "unit": "slot", "unit_labels": [], "row_start_offsets": [],
+            "cursors_init": {"C": 0},
+            "flat_slots": [
+                {"source": "A", "strategy": "mix", "size": 1,
+                 "genre": "Old", "exclusion_window": 8},
+            ],
+        },
+    }
+    with Session() as db:
+        db.add(Station(slug=slug, name="Rty", template=template))
+        db.commit()
+    return template
+
+
+def test_retype_happy_strategy_swap_drops_stale_fields(editor_api):
+    """Retype mix → jingle keeps `source` and the still-valid `genre`
+    field (jingle.genre is required + has same shape), but DROPS the
+    mix-only `exclusion_window` field — the retyper drops keys not in
+    the new strategy's editable set rather than 400ing on them."""
+    client, Session, _dir = editor_api
+    _retypable_station(Session, "rty")
+    r = client.patch("/api/stations/rty/blocks/retype", json={
+        "address": {"slot_index": 0},
+        "new_strategy": "jingle",
+        "expected_updated_at": _token(client, "rty"),
+    })
+    assert r.status_code == 200, r.json()
+    block = r.json()["block"]
+    assert block["strategy"] == "jingle"
+    assert block["source"] == "A"
+    assert block["genre"] == "Old"  # shared field — carried over
+    assert "exclusion_window" not in block, (
+        "stale mix-only field should be dropped on retype"
+    )
+    # Persisted.
+    sidecar = client.get("/api/stations/rty/sidecar").json()
+    flat0 = sidecar["template"]["layout"]["flat_slots"][0]
+    assert flat0["strategy"] == "jingle"
+    assert "exclusion_window" not in flat0
+
+
+def test_retype_combined_strategy_source_and_new_fields(editor_api):
+    """Combined retype: mix(A) → archive_ref(REF) with position=1
+    applied in the SAME round-trip. `genre` (mix-only) is dropped,
+    role check is satisfied because new_source role matches the new
+    strategy's reference requirement."""
+    client, Session, _dir = editor_api
+    _retypable_station(Session, "rty")
+    r = client.patch("/api/stations/rty/blocks/retype", json={
+        "address": {"slot_index": 0},
+        "new_strategy": "archive_ref",
+        "new_source": "REF",
+        "new_fields": {"position": 1},
+        "expected_updated_at": _token(client, "rty"),
+    })
+    assert r.status_code == 200, r.json()
+    block = r.json()["block"]
+    assert block["strategy"] == "archive_ref"
+    assert block["source"] == "REF"
+    assert block["position"] == 1
+    # archive_ref's editable set is {"position"} only → genre +
+    # exclusion_window from the prior mix block are dropped.
+    assert "genre" not in block
+    assert "exclusion_window" not in block
+
+
+def test_retype_unknown_strategy_400(editor_api):
+    client, Session, _dir = editor_api
+    _retypable_station(Session, "rty")
+    r = client.patch("/api/stations/rty/blocks/retype", json={
+        "address": {"slot_index": 0},
+        "new_strategy": "make_up_a_strategy",
+        "expected_updated_at": _token(client, "rty"),
+    })
+    assert r.status_code == 400
+    assert "not supported" in r.json()["detail"]
+
+
+def test_retype_unknown_source_400(editor_api):
+    client, Session, _dir = editor_api
+    _retypable_station(Session, "rty")
+    r = client.patch("/api/stations/rty/blocks/retype", json={
+        "address": {"slot_index": 0},
+        "new_source": "GHOST",
+        "expected_updated_at": _token(client, "rty"),
+    })
+    assert r.status_code == 400
+    assert "not declared in template.sources" in r.json()["detail"]
+
+
+def test_retype_role_mismatch_caught_by_parse_template(editor_api):
+    """archive_ref requires a `role: reference` source; pointing it
+    at a content source must 400 via parse_template's strategy-aware
+    role cross-check (we don't duplicate the check upstream)."""
+    client, Session, _dir = editor_api
+    _retypable_station(Session, "rty")
+    r = client.patch("/api/stations/rty/blocks/retype", json={
+        "address": {"slot_index": 0},
+        "new_strategy": "archive_ref",
+        # Keep source=A (content) → role mismatch.
+        "new_fields": {"position": 1},
+        "expected_updated_at": _token(client, "rty"),
+    })
+    assert r.status_code == 400
+    assert "invalid template" in r.json()["detail"]
+
+
+def test_retype_stale_token_409(editor_api):
+    client, Session, _dir = editor_api
+    _retypable_station(Session, "rty")
+    r = client.patch("/api/stations/rty/blocks/retype", json={
+        "address": {"slot_index": 0},
+        "new_strategy": "jingle",
+        "expected_updated_at": "1999-01-01T00:00:00+00:00",
+    })
+    assert r.status_code == 409
+    assert "current_updated_at" in r.json()["detail"]
+
+
+def test_retype_bumps_updated_at_token(editor_api):
+    """Mirror of test_patch_block_bumps_updated_at_token — proves the
+    retype path goes through the SQLAlchemy onupdate hook (mutates
+    via reassignment, not in-place)."""
+    client, Session, _dir = editor_api
+    _retypable_station(Session, "rty")
+    before = _token(client, "rty")
+    r = client.patch("/api/stations/rty/blocks/retype", json={
+        "address": {"slot_index": 0},
+        "new_strategy": "jingle",
+        "expected_updated_at": before,
+    })
+    assert r.status_code == 200
+    after = r.json()["updated_at"]
+    assert after is not None and after != before
+    assert _token(client, "rty") == after
+
+
+def test_retype_unknown_station_404(editor_api):
+    client, _Session, _dir = editor_api
+    r = client.patch("/api/stations/nope/blocks/retype", json={
+        "address": {"slot_index": 0}, "new_strategy": "jingle",
+    })
+    assert r.status_code == 404
+
+
+def test_retype_out_of_range_404(editor_api):
+    client, Session, _dir = editor_api
+    _retypable_station(Session, "rty")
+    r = client.patch("/api/stations/rty/blocks/retype", json={
+        "address": {"slot_index": 99}, "new_strategy": "window",
+        "expected_updated_at": _token(client, "rty"),
+    })
+    assert r.status_code == 404
+    assert "out of range" in r.json()["detail"]
+
+
+# ---------- §16.2.4 c1: PATCH /api/stations/{slug}/macros/{macro_id} -----
+#
+# Decision D1 — edit-once-applies-to-all. Server resolves macro_id to
+# the set of expanded blocks via the sidecar + applies fields to each
+# in one transaction. The sidecar is the source of truth for which
+# template blocks constitute a macro.
+
+
+def _macro_station(
+    Session: sessionmaker, stations_dir: Path, slug: str = "mc"
+) -> tuple[dict, dict]:
+    """flat_slots station with five identical jingle blocks at slot
+    0-4 + a committed sidecar that groups slots 1-3 into a macro
+    (`jingle-1`, repeat=3). Slots 0 and 4 stay atomic to anchor the
+    section start + end so `_resolve_macro_addresses` can compute
+    positions without ambiguity.
+
+    Returns (template, sidecar) for follow-up assertions.
+    """
+    template = {
+        "station": slug, "name": "Mc", "cadence": "weekly", "rng": "off",
+        "sources": [{"name": "A", "colour": "#abc", "role": "content"}],
+        "cursor": {"base_advance_per_week": 0, "cycle_weeks": 1},
+        "layout": {
+            "unit": "slot", "unit_labels": [], "row_start_offsets": [],
+            "cursors_init": {},
+            "flat_slots": [
+                {"source": "A", "strategy": "jingle", "size": 1, "genre": "G"},
+                {"source": "A", "strategy": "jingle", "size": 1, "genre": "G"},
+                {"source": "A", "strategy": "jingle", "size": 1, "genre": "G"},
+                {"source": "A", "strategy": "jingle", "size": 1, "genre": "G"},
+                {"source": "A", "strategy": "jingle", "size": 1, "genre": "G"},
+            ],
+        },
+    }
+    sidecar = {
+        "schema_version": 1,
+        "sections": [
+            {
+                "id": "main",
+                "name": "Main",
+                "blocks": [
+                    {"kind": "atomic", "slot_index": 0},
+                    {"kind": "macro", "ref": "jingle-1"},
+                    {"kind": "atomic", "slot_index": 4},
+                ],
+            },
+        ],
+        "macros": [
+            {
+                "id": "jingle-1",
+                "name": "3 × jingle",
+                "repeat": 3,
+                "spec": {"source": "A", "strategy": "jingle",
+                         "size": 1, "genre": "G"},
+            },
+        ],
+        "layout_order": ["main"],
+    }
+    with Session() as db:
+        db.add(Station(slug=slug, name="Mc", template=template))
+        db.commit()
+    (stations_dir / f"{slug}.editor.json").write_text(
+        json.dumps(sidecar, indent=2),
+    )
+    return template, sidecar
+
+
+def test_macro_edit_applies_to_every_expanded_block(editor_api):
+    """Happy path: edit `genre` on the macro → all three slots
+    (1, 2, 3) get the new value; atomics outside the macro (0, 4)
+    are untouched."""
+    client, Session, stations_dir = editor_api
+    _macro_station(Session, stations_dir, "mc")
+    r = client.patch("/api/stations/mc/macros/jingle-1", json={
+        "fields": {"genre": "Loud"},
+        "expected_updated_at": _token(client, "mc"),
+    })
+    assert r.status_code == 200, r.json()
+    assert r.json()["blocks_updated"] == 3
+    # Inspect the template via GET /sidecar.
+    body = client.get("/api/stations/mc/sidecar").json()
+    slots = body["template"]["layout"]["flat_slots"]
+    assert [s["genre"] for s in slots] == ["G", "Loud", "Loud", "Loud", "G"]
+
+
+def test_macro_edit_unknown_macro_id_404(editor_api):
+    client, Session, stations_dir = editor_api
+    _macro_station(Session, stations_dir, "mc")
+    r = client.patch("/api/stations/mc/macros/ghost-99", json={
+        "fields": {"genre": "X"},
+        "expected_updated_at": _token(client, "mc"),
+    })
+    assert r.status_code == 404
+    assert "ghost-99" in r.json()["detail"]
+
+
+def test_macro_edit_rejects_non_parameter_field(editor_api):
+    """Parameter-only guard: `strategy` is structural → 400. The
+    transaction must roll back (no partial state on any expanded
+    block)."""
+    client, Session, stations_dir = editor_api
+    _macro_station(Session, stations_dir, "mc")
+    r = client.patch("/api/stations/mc/macros/jingle-1", json={
+        "fields": {"strategy": "pick"},
+        "expected_updated_at": _token(client, "mc"),
+    })
+    assert r.status_code == 400
+    assert "not" in r.json()["detail"] and "editable" in r.json()["detail"]
+    # Rollback proof: nothing changed.
+    body = client.get("/api/stations/mc/sidecar").json()
+    slots = body["template"]["layout"]["flat_slots"]
+    assert all(s["strategy"] == "jingle" for s in slots)
+
+
+def test_macro_edit_stale_token_409(editor_api):
+    client, Session, stations_dir = editor_api
+    _macro_station(Session, stations_dir, "mc")
+    r = client.patch("/api/stations/mc/macros/jingle-1", json={
+        "fields": {"genre": "X"},
+        "expected_updated_at": "1999-01-01T00:00:00+00:00",
+    })
+    assert r.status_code == 409
+    assert "current_updated_at" in r.json()["detail"]
+
+
+def test_macro_edit_unknown_station_404(editor_api):
+    client, _Session, _dir = editor_api
+    r = client.patch("/api/stations/nope/macros/jingle-1", json={
+        "fields": {"genre": "X"},
+    })
+    assert r.status_code == 404
+
+
+def test_macro_edit_broken_sidecar_400(editor_api):
+    """A malformed sidecar (JSON syntax error) on the macro PATCH
+    path is a HARD 400 — unlike GET /sidecar which falls back to a
+    trivial sidecar with a warning, mutation against a broken
+    sidecar is unsafe (we'd lose the operator's macro grouping
+    silently). The operator must fix the sidecar first."""
+    client, Session, stations_dir = editor_api
+    # Seed station + WRITE broken sidecar.
+    template = _minimal_template("brk")
+    with Session() as db:
+        db.add(Station(slug="brk", name="Brk", template=template))
+        db.commit()
+    (stations_dir / "brk.editor.json").write_text("{not valid json,")
+    r = client.patch("/api/stations/brk/macros/jingle-1", json={
+        "fields": {"genre": "X"},
+    })
+    assert r.status_code == 400
+    assert "sidecar" in r.json()["detail"] and "broken" in r.json()["detail"]
+
+
+def test_macro_edit_trivial_sidecar_falls_through_to_404(editor_api):
+    """No committed sidecar → server synthesizes the trivial one,
+    which has NO macros by definition. Any macro_id 404s with a
+    meaningful 'not found in sidecar' message (not 500)."""
+    client, Session, _dir = editor_api
+    _mix_station(Session, "mx")
+    r = client.patch("/api/stations/mx/macros/jingle-1", json={
+        "fields": {"genre": "X"},
+        "expected_updated_at": _token(client, "mx"),
+    })
+    assert r.status_code == 404
+    assert "jingle-1" in r.json()["detail"]
+
+
+def test_macro_edit_bumps_updated_at_token(editor_api):
+    client, Session, stations_dir = editor_api
+    _macro_station(Session, stations_dir, "mc")
+    before = _token(client, "mc")
+    r = client.patch("/api/stations/mc/macros/jingle-1", json={
+        "fields": {"genre": "Loud"},
+        "expected_updated_at": before,
+    })
+    assert r.status_code == 200
+    after = r.json()["updated_at"]
+    assert after is not None and after != before
+    assert _token(client, "mc") == after
+
+
+def test_macro_edit_row_template_macro_dedupes_block_idx(editor_api):
+    """A row_template macro can be referenced by multiple sections
+    (one per row), but they all point at the SAME shared
+    row_template[block_idx]. The de-dup in _resolve_macro_addresses
+    must collapse those to a single application per block_idx —
+    blocks_updated reflects unique blocks, not section occurrences."""
+    client, Session, stations_dir = editor_api
+    slug = "rtm"
+    template = {
+        "station": slug, "name": "RTM", "cadence": "weekly", "rng": "off",
+        "sources": [{"name": "A", "colour": "#abc", "role": "content"}],
+        "cursor": {"base_advance_per_week": 0, "cycle_weeks": 1},
+        "layout": {
+            "unit": "day", "unit_labels": ["Mon", "Tue"],
+            "row_start_offsets": [0, 10], "cursors_init": {},
+            # 4 row_template blocks: atomic, then a 3-wide macro.
+            "row_template": [
+                {"source": "A", "strategy": "jingle", "size": 1, "genre": "Lead"},
+                {"source": "A", "strategy": "jingle", "size": 1, "genre": "G"},
+                {"source": "A", "strategy": "jingle", "size": 1, "genre": "G"},
+                {"source": "A", "strategy": "jingle", "size": 1, "genre": "G"},
+            ],
+        },
+    }
+    sidecar = {
+        "schema_version": 1,
+        "sections": [
+            # Two row sections pointing at the same shared template.
+            # Both reference the same macro `jingle-shared` → dedup
+            # collapses to 3 unique block_idx applications, not 6.
+            {
+                "id": "mon",
+                "name": "Mon",
+                "blocks": [
+                    {"kind": "atomic", "row_idx": 0, "block_idx": 0},
+                    {"kind": "macro", "ref": "jingle-shared"},
+                ],
+            },
+            {
+                "id": "tue",
+                "name": "Tue",
+                "blocks": [
+                    {"kind": "atomic", "row_idx": 1, "block_idx": 0},
+                    {"kind": "macro", "ref": "jingle-shared"},
+                ],
+            },
+        ],
+        "macros": [
+            {
+                "id": "jingle-shared",
+                "name": "3 × jingle",
+                "repeat": 3,
+                "spec": {"source": "A", "strategy": "jingle",
+                         "size": 1, "genre": "G"},
+            },
+        ],
+        "layout_order": ["mon", "tue"],
+    }
+    with Session() as db:
+        db.add(Station(slug=slug, name="RTM", template=template))
+        db.commit()
+    (stations_dir / f"{slug}.editor.json").write_text(
+        json.dumps(sidecar, indent=2),
+    )
+    r = client.patch(f"/api/stations/{slug}/macros/jingle-shared", json={
+        "fields": {"genre": "Loud"},
+        "expected_updated_at": _token(client, slug),
+    })
+    assert r.status_code == 200, r.json()
+    # 3 unique block_idx values (1, 2, 3) — NOT 6 (3 per row × 2 rows).
+    assert r.json()["blocks_updated"] == 3
+    body = client.get(f"/api/stations/{slug}/sidecar").json()
+    rt = body["template"]["layout"]["row_template"]
+    assert [b["genre"] for b in rt] == ["Lead", "Loud", "Loud", "Loud"]

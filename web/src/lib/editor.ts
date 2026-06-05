@@ -648,12 +648,22 @@ export function parseEditorSidecarResponse(raw: unknown): ParsedEditorSidecar {
 // side; these specs drive the form + instant client feedback.
 
 
-export type EditableFieldType = 'string' | 'int';
+export type EditableFieldType = 'string' | 'int' | 'string_list';
 
 
 export interface EditableFieldSpec {
   /** Block field name. One of the EngineBlock parameter fields. */
-  name: 'cursor_id' | 'genre' | 'window' | 'exclusion_window' | 'position' | 'fallback_genre';
+  name:
+    | 'cursor_id'
+    | 'genre'
+    | 'window'
+    | 'exclusion_window'
+    | 'position'
+    | 'fallback_genre'
+    // §16.2.4 D3: per-block allowlist (§16.14.t7). Editable on the
+    // four content-sampling strategies (weighted, window, pick,
+    // sequential).
+    | 'allowlist_sources';
   /** Human label for the form. */
   label: string;
   type: EditableFieldType;
@@ -669,6 +679,15 @@ export interface EditableFieldSpec {
    *  <select>. Mirrors the engine validator
    *  `v in known_cursor_ids`. */
   enumFromCursors?: boolean;
+  /** string_list only (§16.2.4 D3): autocomplete from the station's
+   *  sources, filtered to the named role. `allowlist_sources` uses
+   *  'reference' (§16.14.t7 D3 — only reference pools are valid
+   *  allowlist sources). The form renders a chip-style multi-input
+   *  reusing the §16.14.t11 ListRuleRow pattern (free-form input +
+   *  autocomplete suggestions). Empty list / clearing the field
+   *  removes the key from the block (= "no constraint", matching
+   *  the engine's empty-list-collapses-to-None contract). */
+  sourceRoleFilter?: 'content' | 'reference';
 }
 
 
@@ -677,19 +696,37 @@ export interface EditableFieldSpec {
  * edit (pick / window strategies have no parameters).
  *
  * Source-of-truth cross-check: engine/template.py `_parse_block`:
- *   sequential → cursor_id (required, ∈ cursors_init)
+ *   sequential → cursor_id (required, ∈ cursors_init) + allowlist_sources
  *   jingle     → genre (required, non-empty)
  *   mix        → genre (required) + exclusion_window (optional, ≥0)
- *   weighted   → window (optional, ≥0; default 10)
+ *   weighted   → window (optional, ≥0; default 10) + allowlist_sources
  *   prev_ref   → position (required, ≥1) + fallback_genre (optional)
- *   pick       → (none)
- *   window     → (none — the `window` FIELD belongs to `weighted`)
+ *   pick       → allowlist_sources (§16.2.4 D3)
+ *   window     → allowlist_sources (§16.2.4 D3)
+ *
+ * §16.2.4 D3: `allowlist_sources` (§16.14.t7) joins on the four
+ * content-sampling strategies (weighted, window, pick, sequential
+ * — the engine's CONTENT_SAMPLING_STRATEGIES opt-in set). Closes
+ * the §16.14.t7 c3 docs promise that "the block visualiser does
+ * not yet expose per-block fields for editing." Source-pool
+ * autocomplete filters to `role: reference` per §16.14.t7 D3.
  */
+// §16.2.4 c1: inline the allowlist_sources spec (vs extracting a
+// shared constant). The editable-fields parity test
+// (tests/test_editable_fields_parity.py) parses `name: 'X'` literals
+// inside each strategy's array — a shared constant hides from the
+// regex. Inlining keeps the source-of-truth in the literal form
+// the parity test expects. Small duplication, big simplicity win.
 export const EDITABLE_FIELDS: Record<EngineBlock['strategy'], EditableFieldSpec[]> = {
-  pick: [],
-  window: [],
+  pick: [
+    { name: 'allowlist_sources', label: 'Allowlist sources (per-block positive filter)', type: 'string_list', required: false, sourceRoleFilter: 'reference' },
+  ],
+  window: [
+    { name: 'allowlist_sources', label: 'Allowlist sources (per-block positive filter)', type: 'string_list', required: false, sourceRoleFilter: 'reference' },
+  ],
   sequential: [
     { name: 'cursor_id', label: 'Cursor', type: 'string', required: true, enumFromCursors: true },
+    { name: 'allowlist_sources', label: 'Allowlist sources (per-block positive filter)', type: 'string_list', required: false, sourceRoleFilter: 'reference' },
   ],
   jingle: [
     { name: 'genre', label: 'Genre', type: 'string', required: true },
@@ -700,6 +737,7 @@ export const EDITABLE_FIELDS: Record<EngineBlock['strategy'], EditableFieldSpec[
   ],
   weighted: [
     { name: 'window', label: 'Artist-dedup window', type: 'int', required: false, min: 0 },
+    { name: 'allowlist_sources', label: 'Allowlist sources (per-block positive filter)', type: 'string_list', required: false, sourceRoleFilter: 'reference' },
   ],
   prev_ref: [
     { name: 'position', label: 'Position (1-indexed)', type: 'int', required: true, min: 1 },
@@ -708,6 +746,8 @@ export const EDITABLE_FIELDS: Record<EngineBlock['strategy'], EditableFieldSpec[
   // §16.14.t6: archive_ref shares prev_ref's `position` field
   // (1-indexed). NO `fallback_genre` — archive_ref has no
   // fallback path (D5: pure deterministic, fail-loud on OOB).
+  // NO `allowlist_sources` — archive_ref samples from a reference
+  // pool already (would be meaningless; parser rejects).
   archive_ref: [
     { name: 'position', label: 'Position (1-indexed)', type: 'int', required: true, min: 1 },
   ],

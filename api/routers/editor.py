@@ -46,7 +46,11 @@ from api.deps import get_db, get_stations_dir
 from api.schemas import (
     BlockPatchRequest,
     BlockPatchResponse,
+    BlockRetypeRequest,
+    BlockRetypeResponse,
     EditorSidecarResponse,
+    MacroPatchRequest,
+    MacroPatchResponse,
     TemplateExportResponse,
 )
 from engine.editor_metadata import (
@@ -55,7 +59,7 @@ from engine.editor_metadata import (
     synthesize_trivial_sidecar,
 )
 from engine.models import Station
-from engine.template import parse_template, TemplateError
+from engine.template import SUPPORTED_STRATEGIES, parse_template, TemplateError
 from api.timefmt import iso as _iso
 
 
@@ -72,12 +76,20 @@ router = APIRouter(tags=["editor"])
 # C: those are §16.2.4/§16.2.5). Kept in sync by
 # tests/test_editable_fields_parity.py.
 EDITABLE_FIELDS_BY_STRATEGY: dict[str, set[str]] = {
-    "pick": set(),
-    "window": set(),
-    "sequential": {"cursor_id"},
+    # §16.2.4 D3: `allowlist_sources` joins the editable set for
+    # the four content-sampling strategies (the
+    # CONTENT_SAMPLING_STRATEGIES opt-in set from §16.14.t7).
+    # Forbidden for the others (jingle, mix, prev_ref, archive_ref
+    # — they don't sample from a candidate set). Closes the
+    # §16.14.t7 c3 docs promise that "the block visualiser does
+    # not yet expose per-block fields for editing (see
+    # §16.2.4/§16.2.5 in the roadmap)."
+    "pick": {"allowlist_sources"},
+    "window": {"allowlist_sources"},
+    "sequential": {"cursor_id", "allowlist_sources"},
     "jingle": {"genre"},
     "mix": {"genre", "exclusion_window"},
-    "weighted": {"window"},
+    "weighted": {"window", "allowlist_sources"},
     "prev_ref": {"position", "fallback_genre"},
     # §16.14.t6: archive_ref shares prev_ref's `position` field
     # (1-indexed). No `fallback_genre` — pure deterministic, no
@@ -294,6 +306,361 @@ def patch_block(
     db.refresh(station)
 
     return BlockPatchResponse(block=block, updated_at=_iso(station.updated_at))
+
+
+# §16.2.4 c1: address-resolution helpers shared between PATCH /blocks,
+# PATCH /blocks/retype, and PATCH /macros/{macro_id}. Mirrors the
+# inline logic in patch_block above; extracting it keeps the three
+# endpoints' address-handling consistent + avoids drift if the
+# XOR-validation message phrasing needs to change.
+
+
+def _resolve_block_address(template: dict, addr) -> dict:
+    """Return the block dict in `template.layout` named by `addr`.
+
+    Raises HTTPException (400 / 404) with operator-readable messages
+    matching the patch_block phrasing — three endpoints share these
+    so changes stay in lockstep.
+    """
+    layout = template.get("layout", {})
+    if addr.slot_index is not None and addr.block_idx is not None:
+        raise HTTPException(
+            400, "address must set exactly one of slot_index / block_idx"
+        )
+    if addr.slot_index is not None:
+        blocks = layout.get("flat_slots")
+        if not isinstance(blocks, list):
+            raise HTTPException(400, "station does not use a flat_slots layout")
+        if not (0 <= addr.slot_index < len(blocks)):
+            raise HTTPException(404, f"slot_index {addr.slot_index} out of range")
+        return blocks[addr.slot_index]
+    if addr.block_idx is not None:
+        blocks = layout.get("row_template")
+        if not isinstance(blocks, list):
+            raise HTTPException(400, "station does not use a row_template layout")
+        if not (0 <= addr.block_idx < len(blocks)):
+            raise HTTPException(404, f"block_idx {addr.block_idx} out of range")
+        return blocks[addr.block_idx]
+    raise HTTPException(400, "address must set slot_index or block_idx")
+
+
+def _resolve_macro_addresses(sidecar: dict, macro_id: str) -> list[dict]:
+    """Return the list of unique block-address dicts that expand from `macro_id`.
+
+    Sidecar grammar (§16.2.1): sections have a `blocks` list; each block
+    is either `{kind: atomic, slot_index | (row_idx, block_idx)}` or
+    `{kind: macro, ref: <id>}`. Macros don't carry slot positions —
+    they reference an entry in `sidecar["macros"]` with a `repeat`
+    count. So to compute the engine-template addresses a macro
+    instance covers we walk the SECTION it lives in:
+
+      1. Find the section's first atomic block — its slot_index /
+         block_idx anchors the section to a real layout position.
+      2. Compute `section_start` by subtracting the cumulative
+         width of blocks BEFORE the anchor (each atomic = 1, each
+         macro = its `repeat`).
+      3. Walk the section again, advancing a running `pos`. For
+         every macro block whose `ref == macro_id`, emit
+         `macro.repeat` consecutive addresses starting at `pos`.
+
+    De-dupes — for row_template addressing, the same shared
+    `block_idx` may be referenced by multiple sections (one per
+    row); applying the patch N times is redundant and wrong if any
+    field has side effects.
+
+    Sections that are 100% macros (no atomic anchor) are skipped:
+    we cannot compute slot positions without an anchor. If the
+    target macro lived only in such sections, the caller sees an
+    empty list → 404 with a meaningful message. (In practice the
+    derive_sidecar heuristic + hand-authored sidecars always
+    intersperse atomic blocks; an all-macro section would have to
+    be deliberately authored.)
+    """
+    macros_by_id = {m["id"]: m for m in sidecar.get("macros", [])}
+    addresses: list[dict] = []
+    seen: set[tuple] = set()
+
+    def _block_width(b: dict) -> int:
+        if b.get("kind") == "atomic":
+            return 1
+        m = macros_by_id.get(b.get("ref"))
+        return m.get("repeat", 1) if m else 1
+
+    for section in sidecar.get("sections", []):
+        blocks_list = section.get("blocks", [])
+        # 1. Find anchor (first atomic block) + its addressing form.
+        anchor_idx: int | None = None
+        anchor_pos: int | None = None
+        anchor_form: str | None = None  # "flat" | "row"
+        for j, b in enumerate(blocks_list):
+            if b.get("kind") != "atomic":
+                continue
+            if "slot_index" in b:
+                anchor_idx, anchor_pos, anchor_form = j, b["slot_index"], "flat"
+            else:
+                anchor_idx, anchor_pos, anchor_form = j, b["block_idx"], "row"
+            break
+        if anchor_idx is None:
+            continue  # all-macro section — un-anchorable, skip.
+
+        # 2. Compute section_start.
+        cumulative = sum(_block_width(blocks_list[k]) for k in range(anchor_idx))
+        section_start = anchor_pos - cumulative
+
+        # 3. Walk + collect addresses for matching macros.
+        pos = section_start
+        for b in blocks_list:
+            w = _block_width(b)
+            if b.get("kind") == "macro" and b.get("ref") == macro_id:
+                for i in range(w):
+                    if anchor_form == "flat":
+                        key = ("slot_index", pos + i)
+                        addr = {"slot_index": pos + i}
+                    else:
+                        key = ("block_idx", pos + i)
+                        addr = {"block_idx": pos + i}
+                    if key not in seen:
+                        seen.add(key)
+                        addresses.append(addr)
+            pos += w
+
+    return addresses
+
+
+def _check_optimistic_token(station: Station, expected: str | None) -> None:
+    """409 if `expected` is set + doesn't match the station's current
+    `updated_at`. Shared by all three PATCH endpoints (Decision D2)."""
+    current_token = _iso(station.updated_at)
+    if expected is not None and expected != current_token:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": (
+                    "station changed since you loaded it (another tab or the "
+                    "edit route). Reload to see the latest, then re-apply."
+                ),
+                "current_updated_at": current_token,
+            },
+        )
+
+
+@router.patch(
+    "/api/stations/{slug}/blocks/retype",
+    response_model=BlockRetypeResponse,
+)
+def patch_block_retype(
+    slug: str,
+    payload: BlockRetypeRequest,
+    db: Session = Depends(get_db),
+):
+    """Retype a block: change its `strategy` and/or `source` (§16.2.4 D2).
+
+    Distinct from PATCH /blocks (parameter-only). Retyping shifts the
+    valid-field-set + may require new fields (e.g. `position` becomes
+    required when retyping to archive_ref/prev_ref). The endpoint
+    sequences three writes against a deep-copy of the template:
+
+      1. Apply `new_strategy` (if set) — validated against
+         ``SUPPORTED_STRATEGIES``.
+      2. Apply `new_source` (if set) — checked to exist in
+         ``template.sources[]``. The role compatibility check
+         (content vs reference per strategy) is left to
+         ``parse_template`` (the §16.14.t6 strategy-aware role
+         cross-check enforces it; we don't duplicate).
+      3. Apply `new_fields` (null clears a key). All strategy-
+         parameter fields are valid here (no parameter-only guard);
+         old fields incompatible with the new strategy are dropped
+         server-side AFTER the new_fields apply (so the operator
+         can both clear AND set in one round-trip).
+      4. Drop any keys NOT in the new strategy's editable set
+         (rather than 400ing — the operator explicitly chose a new
+         strategy that obviates them).
+
+    Re-`parse_template` revalidates everything (role, valid-field-
+    set, pool existence, cross-block consistency). 400 on any
+    failure with the engine's error text inline.
+    """
+    station = db.query(Station).filter(Station.slug == slug).first()
+    if station is None:
+        raise HTTPException(404, f"station '{slug}' not found")
+    _check_optimistic_token(station, payload.expected_updated_at)
+
+    template = copy.deepcopy(station.template)
+    block = _resolve_block_address(template, payload.address)
+
+    # 1. Apply new_strategy + 2. new_source on the in-place block
+    # (template was deep-copied so this doesn't poison the ORM
+    # state if validation later fails).
+    if payload.new_strategy is not None:
+        if payload.new_strategy not in SUPPORTED_STRATEGIES:
+            raise HTTPException(
+                400,
+                f"new_strategy '{payload.new_strategy}' not supported. "
+                f"Supported: {sorted(SUPPORTED_STRATEGIES)}.",
+            )
+        block["strategy"] = payload.new_strategy
+    if payload.new_source is not None:
+        known_sources = {s.get("name") for s in template.get("sources", [])}
+        if payload.new_source not in known_sources:
+            raise HTTPException(
+                400,
+                f"new_source '{payload.new_source}' not declared in "
+                "template.sources[]. Add it there first (with the "
+                "right role for the strategy) or pick an existing source.",
+            )
+        block["source"] = payload.new_source
+
+    # 3. Apply new_fields (null clears).
+    for key, value in payload.new_fields.items():
+        if value is None:
+            block.pop(key, None)
+        else:
+            block[key] = value
+
+    # 4. Drop keys not in the new strategy's editable set. parse_template
+    # would 400 on stale ones anyway (e.g. `genre` on a non-jingle/mix
+    # strategy); pre-dropping makes the retype's intent clear.
+    strategy = block.get("strategy")
+    allowed = EDITABLE_FIELDS_BY_STRATEGY.get(strategy, set())
+    structural = {"strategy", "source", "size"}
+    for key in list(block.keys()):
+        if key in structural or key in allowed:
+            continue
+        block.pop(key, None)
+
+    try:
+        parse_template(template)
+    except TemplateError as e:
+        raise HTTPException(400, f"retype produces an invalid template: {e}")
+
+    station.template = template
+    db.commit()
+    db.refresh(station)
+
+    return BlockRetypeResponse(block=block, updated_at=_iso(station.updated_at))
+
+
+@router.patch(
+    "/api/stations/{slug}/macros/{macro_id}",
+    response_model=MacroPatchResponse,
+)
+def patch_macro(
+    slug: str,
+    macro_id: str,
+    payload: MacroPatchRequest,
+    db: Session = Depends(get_db),
+    stations_dir: Path = Depends(get_stations_dir),
+):
+    """Edit-once-applies-to-all (§16.2.4 D1).
+
+    Resolves `macro_id` against the station's editor sidecar (parsed +
+    drift-validated) → gets the set of block addresses expanded from
+    the macro → applies `payload.fields` to each via the same
+    parameter-only logic as PATCH /blocks (per-block re-validation
+    via parse_template at the end). All-or-nothing transaction: any
+    block's parameter-only-guard rejection rolls back the whole
+    write.
+
+    The macro is resolved against the SIDECAR, not the template —
+    sidecars define the "this run of consecutive identical blocks
+    is a macro" grouping. If the sidecar is missing, broken, or
+    doesn't contain the named macro, 404.
+    """
+    station = db.query(Station).filter(Station.slug == slug).first()
+    if station is None:
+        raise HTTPException(404, f"station '{slug}' not found")
+    _check_optimistic_token(station, payload.expected_updated_at)
+
+    template = copy.deepcopy(station.template)
+
+    # Resolve the macro via the sidecar. Mirror the sidecar-resolution
+    # algorithm from GET /sidecar (look for `stations/{slug}.editor.
+    # json`; fall back to synthesize_trivial_sidecar on absence or
+    # parse failure). For PATCH we tolerate the trivial-sidecar
+    # fallback — un-authored stations have no MACROS by definition
+    # (every chip is its own atomic block), so a macro_id lookup
+    # against a trivial sidecar always 404s with a meaningful
+    # "macro_id not found" message.
+    sidecar_path = stations_dir / f"{slug}.editor.json"
+    sidecar: dict
+    if sidecar_path.is_file():
+        try:
+            # parse_sidecar takes a Path (mirrors GET /sidecar); it
+            # also wraps JSONDecodeError as EditorMetadataError per
+            # §16.2.1 c1 review #6, so a single except suffices.
+            sidecar = parse_sidecar(sidecar_path, template)
+        except EditorMetadataError as e:
+            raise HTTPException(
+                400,
+                f"sidecar at {sidecar_path} is broken — fix it or "
+                f"delete to regenerate from the template ({e}).",
+            )
+    else:
+        # Trivial sidecar has no macros by definition (one section,
+        # all atomic) → the macro_id lookup below will 404 with a
+        # meaningful message.
+        sidecar = synthesize_trivial_sidecar(template)
+
+    # Resolve macro_id → unique engine-template addresses by walking
+    # the sidecar. See _resolve_macro_addresses' docstring for the
+    # anchoring algorithm + de-dup rationale.
+    deduped = _resolve_macro_addresses(sidecar, macro_id)
+
+    if not deduped:
+        raise HTTPException(
+            404,
+            f"macro_id '{macro_id}' not found in the station's "
+            "sidecar. The macro either doesn't exist or the sidecar "
+            "is stale (regenerate via `python -m scripts.derive_sidecar` "
+            "if you've edited the template since).",
+        )
+
+    # Apply payload.fields to each addressed block. Parameter-only
+    # guard fires per block — if any block rejects, the whole
+    # transaction aborts (deep-copy isolation makes this clean).
+    layout = template.get("layout", {})
+    blocks_touched = 0
+    for addr_dict in deduped:
+        # Resolve the address against the deep-copied template.
+        if "slot_index" in addr_dict:
+            idx = addr_dict["slot_index"]
+            block = layout["flat_slots"][idx]
+        else:
+            idx = addr_dict["block_idx"]
+            block = layout["row_template"][idx]
+
+        strategy = block.get("strategy")
+        allowed = EDITABLE_FIELDS_BY_STRATEGY.get(strategy, set())
+        rejected = sorted(set(payload.fields) - allowed)
+        if rejected:
+            raise HTTPException(
+                400,
+                f"macro '{macro_id}': fields {rejected} are not "
+                f"editable for strategy '{strategy}' (block at "
+                f"{addr_dict}). Editable: {sorted(allowed) or '(none)'}. "
+                "(Macro retyping is PATCH /blocks/retype per block; "
+                "structural edits are §16.2.5.)",
+            )
+        for key, value in payload.fields.items():
+            if value is None:
+                block.pop(key, None)
+            else:
+                block[key] = value
+        blocks_touched += 1
+
+    try:
+        parse_template(template)
+    except TemplateError as e:
+        raise HTTPException(400, f"macro edit produces an invalid template: {e}")
+
+    station.template = template
+    db.commit()
+    db.refresh(station)
+
+    return MacroPatchResponse(
+        blocks_updated=blocks_touched,
+        updated_at=_iso(station.updated_at),
+    )
 
 
 @router.post(

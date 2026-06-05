@@ -364,6 +364,87 @@ class TemplateExportResponse(BaseModel):
     bytes: int
 
 
+class BlockRetypeRequest(BaseModel):
+    """PATCH /api/stations/{slug}/blocks/retype body (§16.2.4 D2).
+
+    Distinct endpoint from PATCH /blocks — the parameter-only guard
+    on /blocks stays crisp; retyping has its own contract.
+
+    * `address` — which block to retype (XOR slot_index / block_idx,
+      same shape as BlockPatchRequest).
+    * `new_strategy` — optional new strategy. When set, must be in
+      ``engine.template.SUPPORTED_STRATEGIES``. The block's
+      `strategy` field is overwritten.
+    * `new_source` — optional new source. When set, must be a name
+      declared in ``template.sources[]`` with a role compatible with
+      the resulting strategy (parse_template's role cross-check
+      enforces this; we don't duplicate here).
+    * `new_fields` — optional dict of new field values to set ALONG
+      WITH the retype, e.g. setting `position=1` when retyping to
+      archive_ref. Same null-clears-the-key semantics as
+      BlockPatchRequest. ALL strategy-parameter fields are valid
+      here (no parameter-only guard) because the retype changes the
+      valid-field-set — old fields incompatible with the new
+      strategy are dropped server-side.
+    * `expected_updated_at` — optimistic-concurrency token. 409 if
+      stale.
+
+    Server-side: applies new_strategy + new_source + new_fields to
+    a deep-copy of the block; drops fields that are no longer
+    valid for the new strategy (e.g. removing `genre` when retyping
+    away from jingle/mix); re-`parse_template`s the whole document;
+    400 on any TemplateError.
+    """
+    address: BlockAddress
+    new_strategy: str | None = None
+    new_source: str | None = None
+    new_fields: dict[str, Any] = Field(default_factory=dict)
+    expected_updated_at: str | None = None
+
+
+class BlockRetypeResponse(BaseModel):
+    """200 body for a successful block retype. Same shape as
+    BlockPatchResponse — returns the updated block (with the new
+    strategy/source/fields applied) + the refreshed updated_at
+    token."""
+    block: dict[str, Any]
+    updated_at: str | None = None
+
+
+class MacroPatchRequest(BaseModel):
+    """PATCH /api/stations/{slug}/macros/{macro_id} body (§16.2.4 D1).
+
+    Edit-once-applies-to-all: the server resolves the macro_id to
+    every block expanded from it + applies `fields` to each.
+
+    * `fields` — parameter fields to set; null clears a key. Subject
+      to the same `EDITABLE_FIELDS_BY_STRATEGY` parameter-only guard
+      as PATCH /blocks (Decision C). Strategy/source/size remain
+      forbidden here too — a macro retype is conceptually different
+      (it's `PATCH /blocks/retype` applied to each expanded block);
+      this slice keeps the two semantics distinct.
+    * `expected_updated_at` — optimistic-concurrency token. 409 if
+      stale.
+
+    Server-side: parses the sidecar to locate the macro + its
+    expanded block addresses; for each block, applies `fields`
+    (same null-clears + parameter-only guard); re-`parse_template`s
+    the whole document once at the end; 400 on TemplateError.
+    All-or-nothing: a failure on any block rolls back the whole
+    transaction (no partial macro state).
+    """
+    fields: dict[str, Any]
+    expected_updated_at: str | None = None
+
+
+class MacroPatchResponse(BaseModel):
+    """200 body for a successful macro PATCH. Returns the count of
+    blocks updated + the refreshed updated_at token. The frontend
+    refetches the sidecar to re-render the updated chips."""
+    blocks_updated: int
+    updated_at: str | None = None
+
+
 class JobStatusResponse(BaseModel):
     """200 body for `GET /api/jobs/{job_id}`. Mirrors `JobSnapshot`
     in api/job_runner.py with one transformation: monotonic-correlated

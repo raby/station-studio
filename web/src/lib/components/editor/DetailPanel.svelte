@@ -116,8 +116,16 @@
   // Centralises the c1-review 🟡-3/🟡-4 fix: Svelte's number-input
   // binding makes int-field values numbers, so neither dirty nor the
   // save payload can assume strings.
-  function normStr(v: string | number | null | undefined): string {
-    return v === undefined || v === null ? '' : String(v).trim();
+  function normStr(v: string | number | string[] | null | undefined): string {
+    if (v === undefined || v === null) return '';
+    // §16.2.4 c1: string[] (allowlist_sources, type: 'string_list')
+    // joined with a stable separator for dirty-compare. The c2
+    // chip-editor renders + edits the array directly; this
+    // normalised string is ONLY for dirty/equality math. Sorted
+    // to make order-only changes not count as dirty (the engine's
+    // semantics are union over the list — order is meaningless).
+    if (Array.isArray(v)) return v.slice().sort().join('|');
+    return String(v).trim();
   }
 
   // Per-field validation (mirrors engine validators via the helper).
