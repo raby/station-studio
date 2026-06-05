@@ -7755,6 +7755,124 @@ Frontend: `editor.ts` (EDITABLE_FIELDS + validators + updated_at),
 `DetailPanel.svelte` (edit form), `EditorCanvas.svelte` (save
 forward), visualise route (save/conflict/export wiring).
 
+### 16.2.4 Block retyping + macro editing + allowlist editor — design (paper)
+
+**Status.** IN FLIGHT. Trigger fired (§16.14 closed, freeing up
+the visual editor track; the t7 c3 docs explicit punt named
+§16.2.4 as the home for per-block allowlist editing).
+
+**Context.** Inherits the §16.2.3 surface: `PATCH /api/stations/
+{slug}/blocks` (parameter-only, optimistic-concurrency,
+parse_template revalidation), `<DetailPanel>` with edit form,
+`EDITABLE_FIELDS_BY_STRATEGY` registry pinned Python↔TS,
+sidecar with `macro_id`+`macros[]` shape. §16.2.4 extends this
+in THREE directions (the third was promised by the §16.14.t7 c3
+docs and folded in during the pre-c1 design talk):
+
+1. **Block retyping** — change a block's `strategy` / `source`
+2. **Macro editing** — edit-once-applies-to-all
+3. **`allowlist_sources` field editor** — the §16.14.t7 per-block
+   field gains a UI affordance (closes the t7 c3 punt)
+
+Plus a cross-cutting affordance:
+
+4. **Role-aware bidirectional dropdown filtering** — strategy
+   dropdown filters by current source's role; source dropdown
+   filters by current strategy's required role. Catches the
+   `archive_ref`-vs-content-source UX trap that §16.14.t6 opened.
+
+**Decisions (locked in the pre-c1 design talk):**
+
+* **D1 — Macro editing route: `PATCH /api/stations/{slug}/macros/
+  {macro_id}`** (NEW endpoint, distinct from PATCH /blocks).
+  Server resolves `macro_id` to the set of expanded blocks +
+  applies the patch to each in one transaction. Same
+  optimistic-concurrency model (`expected_updated_at`); the
+  whole batch is atomic — partial macro updates are not a
+  valid state. Cleaner than batching via the client (Q1
+  Option 3) or extending BlockAddress (Q1 Option 2): the
+  semantic difference between "edit one block" and "edit one
+  macro" is real enough to deserve a distinct endpoint.
+* **D2 — Block retyping route: `PATCH /api/stations/{slug}/
+  blocks/retype`** (NEW endpoint, distinct from PATCH /blocks).
+  Body carries the address + `new_strategy?` + `new_source?` +
+  any new-required-field values. Server validates via
+  `parse_template` — the role check, valid-field-set, and pool
+  existence are already enforced upstream so we don't
+  duplicate. Q2 picked the dedicated endpoint over relaxing
+  the parameter-only guard so the parameter-only contract
+  stays crisp + the retyping operation is observably distinct
+  in API traces.
+* **D3 — `allowlist_sources` editor in DetailPanel.** Adds
+  `allowlist_sources` to `EDITABLE_FIELDS_BY_STRATEGY` for the
+  four content-sampling strategies (weighted, window, pick,
+  sequential) on BOTH the Python and TS sides. Reuses the
+  `<ListRuleRow>` chip-input patterns from §16.14.t11 (the
+  component itself is rule-shaped; we extract the chip-input
+  affordance into a shared `<ChipMultiInput>` or reuse the
+  ListRuleRow rendering with a different save callback —
+  decided in c2). Source-pool autocomplete filters to
+  `role: reference` (same as ListRuleRow's filter). The field
+  is stored in the same PATCH /blocks body — it's a parameter
+  field, not structural.
+* **D4 — Role-aware bidirectional dropdown filtering.**
+  Strategy dropdown shows ONLY strategies whose role
+  requirement matches the current source's role:
+    * Source is content → show all strategies EXCEPT
+      `archive_ref`
+    * Source is reference → show ONLY `archive_ref` (today)
+  Source dropdown shows ONLY sources compatible with the
+  current strategy's required role:
+    * `archive_ref` strategy → reference sources only
+    * Any other strategy → content sources only
+  Server still validates as the source of truth (Q3 Option 1
+  picked symmetric filtering for best UX; prevents the
+  save-then-400 surprise). Frontend helper functions:
+  `compatibleStrategies(sourceRole)` + `compatibleSources(
+  strategy, sources)`. Drives the retype dropdowns; reusable
+  elsewhere if other affordances need the same.
+* **D5 — Macro palette sidebar PUNTED to §16.2.4.t1.** A
+  browseable list of macros (jump-to-canvas + maybe edit-
+  from-sidebar) is its own slice. §16.2.4 ships macro
+  editing via chip click only.
+* **D6 — Cadence shift to /code-review-driven mid-slice
+  reviews.** Replace the manual self-audit pattern that
+  §16.14 used with `/code-review --high` after each
+  c-commit. `--fix` applies findings to the working tree;
+  I audit the diff, drop anything questionable, then commit
+  as a single "c1 review" / "c2 review" commit (preserves
+  the review-finding breadcrumb). My fresh-eyes slice-review
+  sweep stays at the end for cross-cutting drift the tool
+  doesn't reason about (stale docs, fixture parity misses,
+  cadence cleanup).
+* **D7 — Slice shape:** standard 5-commit shape with the new
+  cadence:
+    * c1 — backend: PATCH /blocks/retype + PATCH /macros/{id}
+      + EDITABLE_FIELDS_BY_STRATEGY extension for
+      allowlist_sources + pytest
+    * /code-review → c1 review commit
+    * c2 — frontend: role-aware dropdowns + retype path in
+      DetailPanel + macro DetailPanel mode + allowlist_sources
+      chip editor + vitest + Playwright e2e
+    * /code-review → c2 review commit
+    * c3 — docs + closeout
+    * slice-review sweep — my fresh-eyes pass
+* **D8 — Punts (homed in the right slices — do not lose):**
+
+  | Punt | Home | Note |
+  |---|---|---|
+  | Macro palette sidebar | **§16.2.4.t1** | D5 punt. Browseable macro list + jump-to-canvas + maybe edit-from-sidebar. Spawned as a queued sub-slice. |
+  | Structural block edits (`size` / add / remove) | **§16.2.5** | Unchanged from §16.2.3's punts table — these change slot counts → must update sidecar atomic bounds → §16.2.5's "first slice with a sidecar write path." |
+  | Staged-edit + Discard | **§16.2.6** | Live-preview slice (Decision F2 from §16.2.3). |
+
+**Closes (post-§16.2.4):** the §16.14.t7 c3 docs explicit
+promise that "the block visualiser at /stations/{slug} does not
+yet expose per-block fields for editing (see §16.2.4/§16.2.5
+in the roadmap)." Per-block `allowlist_sources` editing becomes
+clickable. The retyping affordance closes the §16.2.3 punt
+(originally homed here). Role-aware dropdowns close the §16.14.t6
+UX trap implicitly. Three real promises kept in one slice.
+
 ### 16.3 Delete / station reset
 
 **Why this matters.** Today the only way to clean up a wizard test
