@@ -10221,10 +10221,31 @@ sweep, matching the §16.13.t1-t9 cadence).
     optional for ALL content-sampling strategies (weighted,
     window, pick, sequential); forbidden for non-sampling
     strategies (jingle, mix, prev_ref, archive_ref).
-    Validator rejects empty entries + commas in entries
-    (same string-list contract the §16.14.t9 parser
-    enforces on `cross_pool_dedup_sources` entries —
-    reuse the validator helper).
+    Validator rejects empty entries.
+
+    **c1 review F1 honest amendment:** the pre-c1 design pass
+    additionally committed to rejecting commas in entries
+    ("same string-list contract" as `cross_pool_dedup_sources`).
+    Reading the storage shape clarified the divergence:
+    `cross_pool_dedup_sources` is stored as a comma-separated
+    TEXT column in the Rule table (so commas in entries would
+    silently split on read — the rejection protects the storage
+    format); but `allowlist_sources` is stored in template JSON
+    as a real list — no separator concern. The comma rejection
+    would defend against a problem that doesn't exist for the
+    field shape. Pool names are not constrained anywhere else
+    in the engine to be comma-free, so the parser shouldn't
+    invent that constraint at this seam. Amendment: drop the
+    comma rejection from D9; keep the empty-entry rejection.
+
+    **c1 review F2 future-proofing:** allowlist-applicability is
+    expressed as an OPT-IN set `CONTENT_SAMPLING_STRATEGIES =
+    {"weighted", "window", "pick", "sequential"}` rather than
+    a NON_SAMPLING blocklist. A new strategy added to
+    `SUPPORTED_STRATEGIES` gets allowlist support only when
+    explicitly joining the opt-in set. Matches the
+    `REFERENCE_SAMPLING_STRATEGIES` (t6) pattern; consistent
+    with engine conventions.
   * **D10 — Slice shape: 3 commits + reviews + sweep.**
       - c1: parser grammar (new field + `allowlist_source
         _names` property + role cross-check) + load_pools

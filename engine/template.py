@@ -36,9 +36,19 @@ SUPPORTED_STRATEGIES = {
 # referenced pool even when it's not in `content_source_names`.
 #
 # Today this is a single-strategy set; future reference-sampling
-# strategies (e.g. §16.14.t7 allowlist enforcement, when it lands)
-# join here.
+# strategies join here.
 REFERENCE_SAMPLING_STRATEGIES = {"archive_ref"}
+
+# §16.14.t7 (c1 review F2): strategies that sample from a content
+# candidate set + therefore benefit from per-block
+# `allowlist_sources` enforcement. OPT-IN set: a new strategy added
+# to SUPPORTED_STRATEGIES gets allowlist support only when explicitly
+# joining this set. The inverse (allow-by-default with a NON_SAMPLING
+# blocklist) was future-fragile — a new strategy would silently
+# default to allowing allowlist_sources whether or not the semantics
+# made sense. Mirrors the REFERENCE_SAMPLING_STRATEGIES opt-in
+# pattern.
+CONTENT_SAMPLING_STRATEGIES = {"weighted", "window", "pick", "sequential"}
 # v1 had {"window", "pick"} only. `sequential` lands in §14.22 (§17 Phase B
 # first bit) as the Weekly-port generalisation: a slot that reads its start
 # position from a NAMED CURSOR (declared in layout.cursors_init) instead of
@@ -567,21 +577,35 @@ def _parse_allowlist_sources(
     returns None (operator-visible "no allowlist" — same as absent;
     the engine treats both as no constraint).
 
-    Forbidden for non-content-sampling strategies. The role check
-    for each entry's source happens at parse_template's cross-check
-    loop (after sources are resolved), not here.
+    Forbidden for strategies NOT in ``CONTENT_SAMPLING_STRATEGIES``
+    (c1 review F2 flip from a blocklist to an opt-in set —
+    future-proof against new strategies silently defaulting to
+    allowlist support). The role check for each entry's source
+    happens at parse_template's cross-check loop (after sources
+    are resolved), not here.
+
+    Parser-vs-rule divergence (c1 review F1 — honest D9
+    amendment): unlike `cross_pool_dedup_sources` (a list rule
+    stored as comma-separated TEXT in the Rule column), the
+    block-level `allowlist_sources` is stored in template JSON as
+    a real list — no separator concern. So this validator does
+    NOT reject commas in entries (the rule's storage-format
+    protection isn't applicable to the field). Source pool names
+    are themselves not constrained re: commas anywhere else in
+    the engine; an importer accepts arbitrary pool names.
     """
     if value is None:
         return None
-    NON_SAMPLING = {"jingle", "mix", "prev_ref", "archive_ref"}
-    if strategy in NON_SAMPLING:
+    if strategy not in CONTENT_SAMPLING_STRATEGIES:
         raise TemplateError(
             f"block allowlist_sources is only valid for content-"
-            f"sampling strategies (weighted, window, pick, "
-            f"sequential); got strategy={strategy!r}. The "
-            "non-sampling strategies either pick deterministically "
-            "from a fixed position or sample from a reference pool "
-            "already, so an allowlist would be meaningless."
+            f"sampling strategies "
+            f"({sorted(CONTENT_SAMPLING_STRATEGIES)}); got "
+            f"strategy={strategy!r}. Strategies outside the set "
+            "either pick deterministically from a fixed position "
+            "(prev_ref, archive_ref) or filter via genre "
+            "(jingle, mix); an allowlist would either be "
+            "meaningless or redundant."
         )
     if not isinstance(value, list):
         raise TemplateError(
