@@ -42,6 +42,17 @@ def _parse_ts_editable_fields() -> dict[str, set[str]]:
           ...
         };
     Parse the object body, then per-strategy collect `name: '...'`.
+
+    §16.2.4 c1 review #13 fragility note: the parser uses regex to
+    pull `name: 'X'` literals from each strategy's array body. If
+    a future refactor extracts the field spec into a named constant
+    (e.g. `pick: [ALLOWLIST_SOURCES_SPEC]`), the constant reference
+    is invisible to this regex → the parity test SILENTLY narrows
+    the TS side's set + hides a real drift. The
+    `test_ts_field_arrays_contain_only_object_literals` check below
+    fails loudly on that pattern; do NOT remove it without replacing
+    this parser with a real TS AST walker (tsc API / typescript
+    Python bindings).
     """
     text = EDITOR_TS.read_text()
     m = re.search(
@@ -63,6 +74,48 @@ def _parse_ts_editable_fields() -> dict[str, set[str]]:
         names = set(re.findall(r"name:\s*'([^']+)'", arr))
         out[strategy] = names
     return out
+
+
+def test_ts_field_arrays_contain_only_object_literals():
+    """c1 review #13: anti-fragility guard against extracted-constant
+    drift. The parity regex above only counts `name: 'X'` literals;
+    an extracted constant like `[ALLOWLIST_SOURCES_SPEC]` would slip
+    through invisibly and let the TS/Python sets disagree without
+    the parity test catching it.
+
+    This test walks each strategy's array body and asserts every
+    non-whitespace, non-comma element is an object literal (starts
+    with `{`). If the next big EDITABLE_FIELDS refactor wants to
+    DRY up duplicated specs, this fires first — replace the regex
+    parser with a real AST walker (tsc / TypeScript Python bindings)
+    before extracting any constants.
+    """
+    text = EDITOR_TS.read_text()
+    m = re.search(
+        r"export const EDITABLE_FIELDS[^=]*=\s*\{(.*?)\n\};",
+        text,
+        re.DOTALL,
+    )
+    assert m, "could not locate EDITABLE_FIELDS const in editor.ts"
+    body = m.group(1)
+    for sm in re.finditer(r"(\w+):\s*\[(.*?)\]", body, re.DOTALL):
+        strategy = sm.group(1)
+        arr = sm.group(2).strip()
+        if not arr:
+            continue  # empty array — fine.
+        # Strip out object-literal contents (matched braces, naive but
+        # sufficient — none of our specs nest braces). What's left
+        # should be whitespace + commas only.
+        stripped = re.sub(r"\{[^{}]*\}", "", arr)
+        leftovers = re.sub(r"[\s,]", "", stripped)
+        assert leftovers == "", (
+            f"strategy '{strategy}' in editor.ts EDITABLE_FIELDS has "
+            f"non-object-literal elements: {leftovers!r}. The parity "
+            f"regex can only see inline `{{ name: 'X' }}` specs; an "
+            f"extracted constant or identifier reference would silently "
+            f"hide field names. Either inline the spec or rewrite the "
+            f"parity parser to use a real TS AST walker."
+        )
 
 
 def test_python_and_ts_editable_fields_match():

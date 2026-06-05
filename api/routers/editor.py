@@ -581,6 +581,10 @@ def patch_macro(
     # sidecar→template drift (stale slot_index, layout-form mismatch)
     # surfaces as the same 400/404 contract patch_block uses, not
     # an uncaught IndexError/KeyError → 500.
+    # c1 review #11: hoist `set(payload.fields)` — it doesn't change
+    # across the loop, so recomputing N times for a wide macro is
+    # wasted work.
+    payload_keys = set(payload.fields)
     blocks_touched = 0
     for addr_dict in deduped:
         addr = BlockAddress(**addr_dict)
@@ -588,7 +592,7 @@ def patch_macro(
 
         strategy = block.get("strategy")
         allowed = EDITABLE_FIELDS_BY_STRATEGY.get(strategy, frozenset())
-        rejected = sorted(set(payload.fields) - allowed)
+        rejected = sorted(payload_keys - allowed)
         if rejected:
             raise HTTPException(
                 400,

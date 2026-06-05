@@ -637,6 +637,55 @@ def test_export_unknown_station_404(editor_api):
     assert r.status_code == 404
 
 
+# ---------- §16.2.4 c1 review #15: shared template-builder helper -------
+#
+# Many fixtures below (and the §16.2.2/3/4 ones above) duplicate the
+# full {station, name, cadence, rng, sources, cursor, layout} shape
+# with small per-test deltas. As §16.2.5+ grows the template
+# (structural edits, new top-level keys), the duplication compounds.
+# `_build_template` produces a baseline that callers override via the
+# block list + sources kwargs; new fixtures should prefer it. Existing
+# fixtures stay unmigrated to avoid risk-without-reward in this c1
+# review pass.
+
+
+def _build_template(
+    slug: str,
+    *,
+    name: str = "T",
+    sources: list[dict] | None = None,
+    flat_slots: list[dict] | None = None,
+    row_template: list[dict] | None = None,
+    row_offsets: list[int] | None = None,
+    cursors_init: dict | None = None,
+    unit_labels: list[str] | None = None,
+    unit: str = "slot",
+) -> dict:
+    """Baseline station template — supply EITHER flat_slots OR
+    (row_template + row_offsets). Defaults: single content source A,
+    no cursors, no unit_labels."""
+    if sources is None:
+        sources = [{"name": "A", "colour": "#abc", "role": "content"}]
+    if cursors_init is None:
+        cursors_init = {}
+    layout: dict = {
+        "unit": unit,
+        "unit_labels": unit_labels or [],
+        "row_start_offsets": row_offsets or [],
+        "cursors_init": cursors_init,
+    }
+    if flat_slots is not None:
+        layout["flat_slots"] = flat_slots
+    if row_template is not None:
+        layout["row_template"] = row_template
+    return {
+        "station": slug, "name": name, "cadence": "weekly", "rng": "off",
+        "sources": sources,
+        "cursor": {"base_advance_per_week": 0, "cycle_weeks": 1},
+        "layout": layout,
+    }
+
+
 # ---------- §16.2.4 c1: PATCH /api/stations/{slug}/blocks/retype ---------
 #
 # Decision D2 — distinct endpoint from PATCH /blocks. Body carries
@@ -1159,7 +1208,12 @@ def test_macro_edit_negative_section_start_400(editor_api):
         "expected_updated_at": _token(client, slug),
     })
     assert r.status_code == 400
-    assert "negative" in r.json()["detail"].lower()
+    # c1 review #12: caught at sidecar load time now via the
+    # _validate_no_overlapping_macros validator → "sidecar broken"
+    # wrapping; "unresolvable" comes from the engine's
+    # MacroResolutionError underneath.
+    detail = r.json()["detail"].lower()
+    assert "broken" in detail and "unresolvable" in detail
 
 
 def test_macro_edit_non_contiguous_section_400(editor_api):
@@ -1217,7 +1271,15 @@ def test_macro_edit_non_contiguous_section_400(editor_api):
         "expected_updated_at": _token(client, slug),
     })
     assert r.status_code == 400
-    assert "non-contiguous" in r.json()["detail"].lower()
+    # c1 review #12: parse_sidecar's new _validate_no_overlapping_macros
+    # rule catches macro-resolution failures at LOAD time now, so a
+    # non-contiguous sidecar surfaces as "sidecar broken" before the
+    # patch_macro endpoint even reaches its own resolve_macro_addresses
+    # call. The underlying detail message includes "unresolvable" from
+    # the engine's MacroResolutionError, but the wrapping phrasing is
+    # "sidecar...broken" + a fix-or-delete hint.
+    detail = r.json()["detail"].lower()
+    assert "broken" in detail and "unresolvable" in detail
 
 
 def test_macro_edit_layout_form_mismatch_via_helper(editor_api):

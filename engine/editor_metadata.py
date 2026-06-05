@@ -214,6 +214,7 @@ def validate_sidecar(sidecar: dict, station_template: dict) -> None:
     _validate_repeat_with_offsets(sidecar, station_template)
     _validate_atomic_bounds(sidecar, station_template)
     _validate_no_duplicate_atomics(sidecar, station_template)
+    _validate_no_overlapping_macros(sidecar, station_template)
     _validate_no_orphan_slots(sidecar, station_template)
 
 
@@ -439,8 +440,13 @@ def expand_section(section: dict, sidecar: dict) -> list:
     `MacroPlaceholder(macro_id, pick_in_macro)`. Placeholders don't
     address specific slot positions in the engine output yet because
     the engine treats macros as a single repeated BlockSpec. The
-    §16.2.4 (macro editing) slice will revisit when per-pick
-    addressing is needed for diff/preview.
+    `resolve_macro_addresses` helper above DOES compute slot
+    positions for a given macro_id (added in §16.2.4 c1 review
+    fix #10) — a future extension can stamp those positions onto
+    MacroPlaceholder so the editor's frontend (chip rendering,
+    diff/preview) gets per-pick addressing without re-walking the
+    sidecar. See `resolve_macro_addresses`'s docstring for the
+    anchoring + cross-check algorithm.
     """
     blocks = section.get("blocks", [])
     repeat_offsets = section.get("repeat_with_offsets")
@@ -943,6 +949,87 @@ def _validate_no_duplicate_atomics(sidecar: dict, station_template: dict) -> Non
                 f"one section. Each slot belongs to exactly one section."
             )
         seen.add(addr)
+
+
+def _validate_no_overlapping_macros(
+    sidecar: dict, station_template: dict,
+) -> None:
+    """Drift rule 11 (§16.2.4 c1 review #12): macros must not be
+    referenced by more than one section such that their expanded
+    slot ranges would overlap.
+
+    Drift rule 8 catches duplicate ATOMICS only; nothing catches
+    "section A and section B both reference macro M, both anchor
+    to non-overlapping section ranges, but M's expanded slots
+    overlap with the OTHER section's atomics or another macro
+    expansion." resolve_macro_addresses dedups silently rather
+    than raising, masking the broken sidecar from patch_macro.
+
+    Re-use resolve_macro_addresses for the heavy lifting: for each
+    macro_id, accumulate its emitted addresses across all sections.
+    If the same key appears via _flatten_atomic_addresses' atomic
+    set, OR if any single section's emit would land on an address
+    already produced by an EARLIER section, that's an overlap.
+
+    Sections that can't be anchored (all-macro sections — skipped
+    by resolve_macro_addresses) are also skipped here; their macro
+    references are effectively orphaned but not OVERLAPPING with
+    anything resolvable.
+    """
+    # Build the atomic-address set once (drift rule 8 already
+    # verified no internal duplicates).
+    atomic_addrs: set[tuple] = set()
+    for sec in sidecar["sections"]:
+        rwo = sec.get("repeat_with_offsets")
+        for b in sec["blocks"]:
+            if b.get("kind") != "atomic":
+                continue
+            if "slot_index" in b:
+                atomic_addrs.add(("flat", b["slot_index"]))
+            elif rwo is None:
+                atomic_addrs.add(("row", b["row_idx"], b["block_idx"]))
+            else:
+                for row_idx in range(len(rwo)):
+                    atomic_addrs.add(("row", row_idx, b["block_idx"]))
+
+    # For each macro_id, collect emitted addresses; raise if any
+    # collide with atomics OR with another macro's emissions.
+    macro_addrs: dict[str, set[tuple]] = {}
+    for macro in sidecar.get("macros", []):
+        mid = macro.get("id")
+        try:
+            addrs = resolve_macro_addresses(sidecar, mid)
+        except MacroResolutionError:
+            # Negative section_start / non-contiguous: a separate
+            # error class — surface as a validator failure too.
+            raise EditorMetadataError(
+                f"macro '{mid}' has unresolvable section positions. "
+                f"Fix the sidecar's section layout (run "
+                f"resolve_macro_addresses for the underlying error)."
+            )
+        keyed: set[tuple] = set()
+        for a in addrs:
+            if "slot_index" in a:
+                k = ("flat", a["slot_index"])
+            else:
+                k = ("row", -1, a["block_idx"])  # -1 = shared row_template
+            if k[0] == "flat" and k in atomic_addrs:
+                raise EditorMetadataError(
+                    f"macro '{mid}' expands onto slot_index={k[1]} "
+                    f"which is also referenced by an atomic block. "
+                    f"Each slot belongs to exactly one chip."
+                )
+            keyed.add(k)
+        for other_id, other in macro_addrs.items():
+            overlap = keyed & other
+            if overlap:
+                raise EditorMetadataError(
+                    f"macros '{mid}' and '{other_id}' expand onto "
+                    f"overlapping addresses {sorted(overlap)}. "
+                    f"Restructure sections so each slot is covered "
+                    f"by exactly one macro or atomic."
+                )
+        macro_addrs[mid] = keyed
 
 
 def _validate_no_orphan_slots(sidecar: dict, station_template: dict) -> None:
