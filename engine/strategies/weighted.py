@@ -172,10 +172,16 @@ def apply_weighted(
     inverse of `excluded_track_pids`). Generator builds the union
     from the block's `allowlist_sources` upstream. Composes with
     `excluded_track_pids` per D8 — the final candidate set is
-    ``(pool ∩ allowlist) - exclusion`` (set-minus, written ``-``
-    here rather than ``\`` to avoid the docstring-escape ambiguity).
-    Per-filter empty-pool errors name the constraint that emptied
-    the pool so the operator can fix the right rule.
+    ``(pool ∩ allowlist) - exclusion`` (set-minus, written with a
+    plain "-" rather than the conventional backslash to avoid a
+    docstring-escape ambiguity). Per-filter empty-pool errors name
+    the constraint that emptied the pool so the operator can fix
+    the right rule. Filter ORDER (c2-review F2): allowlist runs
+    BEFORE exclusion, matching ``apply_pick(rng=on)``'s order —
+    set algebra makes the order irrelevant for the final result,
+    but the error message depends on which filter empties first.
+    "Allowlist first" surfaces the positive-constraint error
+    preferentially, matching the operator's mental model.
 
     **Caveat — `pool_index` semantics under exclusion.** When the
     filter drops tracks, the returned ``WeightedPickInfo.pool_index``
@@ -194,28 +200,16 @@ def apply_weighted(
     # Post-filter pool_index reflects the filtered subset (see
     # docstring caveat) — operators inspecting the trace use
     # track_id, not pool_index, to locate the pick.
-    if excluded_track_pids:
-        pre_filter_size = len(pool)
-        pool = [
-            t for t in pool
-            if getattr(t, "persistent_id", None) not in excluded_track_pids
-        ]
-        if not pool:
-            raise IndexError(
-                f"source '{source_name}': all {pre_filter_size} tracks "
-                f"excluded by cross_pool_dedup_sources (§16.14.t5). "
-                "Either narrow the dedup source list or import more "
-                "tracks into the content pool."
-            )
-
-    # §16.14.t7 D4: per-block allowlist as a pre-filter (positive
-    # filter). Pool tracks NOT in the allowlist union are dropped;
-    # fail-loud if the filtered pool is empty. Runs AFTER the
-    # exclusion filter so the post-filter pool reflects both
-    # constraints (D8: track eligible iff in allowlist AND NOT
-    # excluded; set algebra makes the order irrelevant for the
-    # final result but the per-filter empty-pool errors name
-    # whichever constraint emptied it).
+    # §16.14.t7 D4 + c2-review F2: per-block allowlist as a pre-
+    # filter (positive filter). Runs BEFORE the exclusion filter
+    # so the order matches `apply_pick(rng=on)`'s order. Set
+    # algebra makes the final result independent of order; the
+    # error message is what depends on order. Operator's mental
+    # model: "first restrict to the allowlist, then exclude any
+    # in the deny list" — applying allowlist first surfaces the
+    # allowlist-too-narrow error preferentially over the deny-
+    # list-too-broad one, which matches "fix the positive
+    # constraint first" UX.
     if allowed_track_pids:
         pre_allow_size = len(pool)
         pool = [
@@ -230,6 +224,20 @@ def apply_weighted(
                 "appear in the allowlist union. Widen the allowlist "
                 "pool(s), remove the block's allowlist_sources, or "
                 "import more tracks into the content pool."
+            )
+
+    if excluded_track_pids:
+        pre_filter_size = len(pool)
+        pool = [
+            t for t in pool
+            if getattr(t, "persistent_id", None) not in excluded_track_pids
+        ]
+        if not pool:
+            raise IndexError(
+                f"source '{source_name}': all {pre_filter_size} tracks "
+                f"excluded by cross_pool_dedup_sources (§16.14.t5). "
+                "Either narrow the dedup source list or import more "
+                "tracks into the content pool."
             )
 
     if not pool:

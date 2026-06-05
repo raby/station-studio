@@ -2025,3 +2025,76 @@ def test_allowlist_composes_with_excluded_track_pids():
             t, {"A": pool_a, "ALLOW": pool_allow}, week=1,
             excluded_track_pids=frozenset({"APID0002"}),
         )
+
+
+def test_sequential_t7_fail_loud_when_addressed_track_not_in_allowlist():
+    """§16.14.t7 c2-review F1: end-to-end pin for sequential's
+    allowlist check (the dispatch-level inline branch added in c2).
+
+    Cursor starts at 0; size=3 reads positions 0, 1, 2 (no wrap
+    needed). Allowlist covers position 1 + 3 but NOT 2 → fail
+    at position 2 (1-indexed; corresponds to pool index 2).
+    """
+    t = parse_template(mk_template(
+        sources=[
+            {"name": "A", "colour": "#111", "role": "content"},
+            {"name": "ALLOW", "colour": "#bbb", "role": "reference"},
+        ],
+        cursor={"base_advance_per_week": 0, "cycle_weeks": 0},
+        layout={
+            "unit": "day",
+            "unit_labels": ["Mon"],
+            "row_start_offsets": [0],
+            "cursors_init": {"C1": 0},
+            "row_template": [
+                {"source": "A", "strategy": "sequential",
+                 "size": 3, "cursor_id": "C1",
+                 "allowlist_sources": ["ALLOW"]},
+            ],
+        },
+    ))
+    pool_a = _pid_pool("A", 5)
+    # Allowlist covers position 1 (APID0001) + 3 (APID0003) but
+    # NOT position 2 (APID0002).
+    pool_allow = [
+        PidTrack(id=99, name="ALLOW-1", persistent_id="APID0001"),
+        PidTrack(id=97, name="ALLOW-3", persistent_id="APID0003"),
+    ]
+    with pytest.raises(
+        IndexError,  # WindowOutOfRangeError is-a IndexError
+        match=r"sequential.*cursor='C1'.*NOT in the block's allowlist_sources.*pool_index 2.*APID0002",
+    ):
+        generate(
+            t, {"A": pool_a, "ALLOW": pool_allow}, week=1,
+        )
+
+
+def test_sequential_t7_full_coverage_passes():
+    """Sequential block whose wrapped addressed range is fully
+    covered by the allowlist generates normally."""
+    t = parse_template(mk_template(
+        sources=[
+            {"name": "A", "colour": "#111", "role": "content"},
+            {"name": "ALLOW", "colour": "#bbb", "role": "reference"},
+        ],
+        cursor={"base_advance_per_week": 0, "cycle_weeks": 0},
+        layout={
+            "unit": "day",
+            "unit_labels": ["Mon"],
+            "row_start_offsets": [0],
+            "cursors_init": {"C1": 0},
+            "row_template": [
+                {"source": "A", "strategy": "sequential",
+                 "size": 2, "cursor_id": "C1",
+                 "allowlist_sources": ["ALLOW"]},
+            ],
+        },
+    ))
+    pool_a = _pid_pool("A", 5)
+    # Allowlist covers positions 1 + 2.
+    pool_allow = [
+        PidTrack(id=99, name="X", persistent_id="APID0001"),
+        PidTrack(id=98, name="Y", persistent_id="APID0002"),
+    ]
+    r = generate(t, {"A": pool_a, "ALLOW": pool_allow}, week=1)
+    assert [t.name for t in r.picks] == ["A0001", "A0002"]
