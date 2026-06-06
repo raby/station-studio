@@ -154,89 +154,106 @@ def get_station_sidecar(
     )
 
 
-def _load_sidecar(
-    station: Station, template: dict, stations_dir: Path,
+def _resolve_sidecar(
+    station: Station,
+    template: dict,
+    stations_dir: Path,
+    *,
+    strict: bool,
 ) -> tuple[dict, str | None]:
-    """Resolve a station's sidecar with the §16.2.5 layered precedence.
+    """Layered DB→file→trivial sidecar resolution (§16.2.5 D1).
 
-    Order (§16.2.5 D1):
+    c1 review #7: unifies the two prior helpers (`_load_sidecar` for
+    GET, `_load_sidecar_for_mutation` for writes). They diverged in
+    one dimension only — what to do on a stored-but-broken sidecar:
+
+    * `strict=False` (GET) — degrade to trivial-with-sidecar_error.
+      Decision E from §16.2.2 says the frontend never handles "no
+      sidecar"; it always renders against a valid sidecar dict,
+      with `sidecar_error` populated for the warning banner.
+    * `strict=True`  (mutation) — RAISE 400. Applying a write
+      against the trivial fallback would silently lose the
+      operator's macro/section grouping for this transaction; the
+      operator has to fix the source before mutating.
+
+    Order (regardless of strictness):
       1. `Station.sidecar` JSON column — the new source-of-truth.
-         If non-NULL, validate it against the template (catches
-         drift after a template-only edit landed without re-syncing
-         the sidecar) and return.
-      2. On-disk file `stations/{slug}.editor.json` — legacy path
-         for stations imported before the migration AND the
-         operator-friendly "edit a sidecar from disk and reload"
-         authoring workflow. Same drift validation.
-      3. Trivial synthesized sidecar — the floor for un-authored
-         stations (Decision E from §16.2.2).
+      2. On-disk file `stations/{slug}.editor.json` — legacy + the
+         "drop a file in stations/ and reload" authoring workflow.
+      3. Trivial synthesised sidecar — the floor for un-authored
+         stations (NULL column + no disk file).
 
-    Returns `(sidecar_dict, error_message_or_None)`. error_message
-    is non-None only when a stored sidecar (DB or file) FAILED
-    validation; the caller renders a banner pointing the operator
-    at the bad source. Empty / missing sidecars surface as
-    `(synthesized_trivial, None)` — that's the design-intended
-    path, not an error.
+    Returns `(sidecar_dict, error_message_or_None)`. The mutation
+    callers ignore the second tuple element since they never see
+    an error (strict=True raises instead).
     """
+    slug = station.slug
+
+    def _broken(source: str, err: Exception) -> tuple[dict, str | None]:
+        if strict:
+            # Already EditorMetadataError or wider — preserve the
+            # exception class info in the message.
+            cls = (
+                type(err).__name__
+                if not isinstance(err, EditorMetadataError) else ""
+            )
+            cls_prefix = f"{cls}: " if cls else ""
+            raise HTTPException(
+                400,
+                f"{source} for '{slug}' failed validation — fix or "
+                f"clear it to fall back to disk/trivial "
+                f"({cls_prefix}{err}).",
+            )
+        logger.warning(
+            "%s for slug=%s failed validation; falling back to trivial: %s",
+            source, slug, err,
+        )
+        return synthesize_trivial_sidecar(template), str(err)
+
+    def _unexpected(source: str, err: Exception) -> tuple[dict, str | None]:
+        logger.exception(
+            "unexpected sidecar load error: %s for slug=%s", source, slug,
+        )
+        if strict:
+            raise HTTPException(
+                400,
+                f"{source} for '{slug}' failed to load "
+                f"({type(err).__name__}: {err}).",
+            )
+        return (
+            synthesize_trivial_sidecar(template),
+            f"sidecar load failed: {type(err).__name__}: {err}",
+        )
+
     # Case (1): DB column.
     if station.sidecar is not None:
         try:
             validate_sidecar(station.sidecar, template)
             return station.sidecar, None
         except EditorMetadataError as e:
-            logger.warning(
-                "Station.sidecar (DB) for slug=%s failed validation; "
-                "falling back to trivial: %s", station.slug, e,
-            )
-            return synthesize_trivial_sidecar(template), str(e)
+            return _broken("Station.sidecar (DB)", e)
         except Exception as e:  # noqa: BLE001
-            logger.exception(
-                "unexpected DB-sidecar load error for slug=%s; "
-                "falling back to trivial", station.slug,
-            )
-            return (
-                synthesize_trivial_sidecar(template),
-                f"sidecar load failed: {type(e).__name__}: {e}",
-            )
+            return _unexpected("Station.sidecar (DB)", e)
 
     # Case (2): on-disk file.
-    sidecar_path = stations_dir / f"{station.slug}.editor.json"
-    if not sidecar_path.is_file():
-        # Case (3): no committed sidecar anywhere — synthesize. This
-        # is the DESIGN-intended path for un-authored stations;
-        # sidecar_error stays None.
-        return synthesize_trivial_sidecar(template), None
+    sidecar_path = stations_dir / f"{slug}.editor.json"
+    if sidecar_path.is_file():
+        try:
+            return parse_sidecar(sidecar_path, template), None
+        except EditorMetadataError as e:
+            return _broken(f"sidecar file at {sidecar_path}", e)
+        except Exception as e:  # noqa: BLE001
+            return _unexpected(f"sidecar file at {sidecar_path}", e)
 
-    try:
-        sidecar = parse_sidecar(sidecar_path, template)
-        return sidecar, None
-    except EditorMetadataError as e:
-        # File present but broken (one of the 10 drift rules OR JSON
-        # syntax — parse_sidecar wraps JSONDecodeError per §16.2.1
-        # c1 review finding 6). Frontend renders a warning + the
-        # trivial fallback.
-        logger.warning(
-            "sidecar file %s failed validation; falling back to trivial: %s",
-            sidecar_path, e,
-        )
-        return synthesize_trivial_sidecar(template), str(e)
-    except Exception as e:  # noqa: BLE001 — see §16.2.2 c1 review 🟡-1
-        # Two known sources for non-EditorMetadataError:
-        #   1. OSError from `path.read_text()` racing the is_file()
-        #      check.
-        #   2. KeyError / TypeError from validate_sidecar() if the
-        #      stored TEMPLATE is corrupted.
-        # Decision E: frontend NEVER handles "no sidecar" — widen
-        # the catch + trivial-fallback. logger.exception preserves
-        # the traceback for the operator's logs.
-        logger.exception(
-            "unexpected sidecar load error at %s; falling back to trivial",
-            sidecar_path,
-        )
-        return (
-            synthesize_trivial_sidecar(template),
-            f"sidecar load failed: {type(e).__name__}: {e}",
-        )
+    # Case (3): trivial floor.
+    return synthesize_trivial_sidecar(template), None
+
+
+def _load_sidecar(
+    station: Station, template: dict, stations_dir: Path,
+) -> tuple[dict, str | None]:
+    """Lenient resolution for GET /sidecar. See `_resolve_sidecar`."""
+    return _resolve_sidecar(station, template, stations_dir, strict=False)
 
 
 @router.patch(
@@ -361,69 +378,14 @@ def _resolve_block_address(template: dict, addr: BlockAddress) -> dict:
 def _load_sidecar_for_mutation(
     station: Station, template: dict, stations_dir: Path, slug: str,
 ) -> dict:
-    """Strict sidecar resolution for mutation endpoints.
+    """Strict resolution for mutation endpoints. See `_resolve_sidecar`.
 
-    Unlike `_load_sidecar` (GET path, which degrades to trivial-with-
-    sidecar_error on bad data), this helper RAISES HTTPException 400
-    when a stored sidecar can't be parsed. Mutation paths can't
-    safely tolerate a silent fallback — applying a write against the
-    trivial fallback would lose the operator's macro/section
-    grouping for this transaction.
-
-    Order (§16.2.5 D1):
-      1. Station.sidecar (DB) — preferred; validate via
-         `validate_sidecar` (the same drift rules GET applies).
-      2. On-disk file — legacy + authoring path.
-      3. Trivial — only when NEITHER source has data. The macro
-         endpoint's caller surfaces a meaningful 404 ("macro_id
-         not found in the station's sidecar") since the trivial
-         sidecar has no macros by definition.
+    The slug arg is kept for API stability + clearer error messages
+    even though `station.slug` would do; existing call sites pass it
+    explicitly so changing the contract would cascade.
     """
-    if station.sidecar is not None:
-        try:
-            validate_sidecar(station.sidecar, template)
-            return station.sidecar
-        except EditorMetadataError as e:
-            raise HTTPException(
-                400,
-                f"Station.sidecar for '{slug}' failed validation "
-                f"— fix it or set it to NULL to fall back to disk/"
-                f"trivial ({e}).",
-            )
-        except Exception as e:  # noqa: BLE001
-            logger.exception(
-                "unexpected DB-sidecar load error for slug=%s during mutation",
-                slug,
-            )
-            raise HTTPException(
-                400,
-                f"Station.sidecar for '{slug}' failed to load "
-                f"({type(e).__name__}: {e}).",
-            )
-
-    sidecar_path = stations_dir / f"{slug}.editor.json"
-    if sidecar_path.is_file():
-        try:
-            return parse_sidecar(sidecar_path, template)
-        except EditorMetadataError as e:
-            raise HTTPException(
-                400,
-                f"sidecar at {sidecar_path} is broken — fix it or "
-                f"delete to regenerate from the template ({e}).",
-            )
-        except Exception as e:  # noqa: BLE001
-            logger.exception(
-                "unexpected sidecar load error at %s during mutation",
-                sidecar_path,
-            )
-            raise HTTPException(
-                400,
-                f"sidecar at {sidecar_path} failed to load "
-                f"({type(e).__name__}: {e}) — fix or delete it before "
-                f"editing.",
-            )
-
-    return synthesize_trivial_sidecar(template)
+    sidecar, _ = _resolve_sidecar(station, template, stations_dir, strict=True)
+    return sidecar
 
 
 def _check_optimistic_token(station: Station, expected: str | None) -> None:
@@ -782,6 +744,54 @@ def _find_section(sidecar: dict, section_id: str) -> dict | None:
     return None
 
 
+# c1 review #6: prepare/finish helpers extracted from the 6 sidecar-
+# mutation endpoints' scaffolding. Each endpoint shed ~10 lines of
+# duplicated boilerplate; future endpoints (§16.2.6 staged-edit,
+# §16.2.7 fork) reuse the same scaffold.
+
+
+def _prepare_sidecar_mutation(
+    slug: str,
+    db: Session,
+    stations_dir: Path,
+    expected_updated_at: str | None,
+) -> tuple[Station, dict, dict]:
+    """Run the shared pre-mutation steps (404 / 409 / load / deep-copy).
+
+    Returns `(station, template_deepcopy, sidecar_deepcopy)`. The
+    endpoint body receives ALREADY-DEEP-COPIED template + sidecar so
+    a mid-flight validation failure can't leave the ORM holding a
+    partially mutated dict.
+    """
+    station = db.query(Station).filter(Station.slug == slug).first()
+    if station is None:
+        raise HTTPException(404, f"station '{slug}' not found")
+    _check_optimistic_token(station, expected_updated_at)
+    template = copy.deepcopy(station.template)
+    sidecar = copy.deepcopy(
+        _load_sidecar_for_mutation(station, template, stations_dir, slug),
+    )
+    return station, template, sidecar
+
+
+def _finish_sidecar_mutation(
+    station: Station,
+    sidecar: dict,
+    db: Session,
+    template: dict | None = None,
+) -> SidecarMutationResponse:
+    """Run the shared post-mutation steps (validate, commit, refresh,
+    response build). Pass a `template` ONLY when the mutation changed
+    slot counts (structural edits); section-CRUD + block-move leave
+    the template untouched."""
+    _persist_sidecar(station, sidecar, template=template)
+    db.commit()
+    db.refresh(station)
+    return SidecarMutationResponse(
+        sidecar=sidecar, updated_at=_iso(station.updated_at),
+    )
+
+
 @router.post(
     "/api/stations/{slug}/sections",
     response_model=SidecarMutationResponse,
@@ -801,14 +811,8 @@ def create_section(
     starting with `_` (reserved for system bins) or duplicates of
     an existing section's id.
     """
-    station = db.query(Station).filter(Station.slug == slug).first()
-    if station is None:
-        raise HTTPException(404, f"station '{slug}' not found")
-    _check_optimistic_token(station, payload.expected_updated_at)
-
-    template = copy.deepcopy(station.template)
-    sidecar = copy.deepcopy(
-        _load_sidecar_for_mutation(station, template, stations_dir, slug),
+    station, _template, sidecar = _prepare_sidecar_mutation(
+        slug, db, stations_dir, payload.expected_updated_at,
     )
 
     if payload.id.startswith("_"):
@@ -832,12 +836,7 @@ def create_section(
     })
     sidecar.setdefault("layout_order", []).append(payload.id)
 
-    _persist_sidecar(station, sidecar)
-    db.commit()
-    db.refresh(station)
-    return SidecarMutationResponse(
-        sidecar=sidecar, updated_at=_iso(station.updated_at),
-    )
+    return _finish_sidecar_mutation(station, sidecar, db)
 
 
 @router.patch(
@@ -853,14 +852,8 @@ def rename_section(
 ):
     """Rename a section's `name` (the user-visible label). Id stays
     immutable here. Rejected for the `_unsorted` bin (system-managed)."""
-    station = db.query(Station).filter(Station.slug == slug).first()
-    if station is None:
-        raise HTTPException(404, f"station '{slug}' not found")
-    _check_optimistic_token(station, payload.expected_updated_at)
-
-    template = copy.deepcopy(station.template)
-    sidecar = copy.deepcopy(
-        _load_sidecar_for_mutation(station, template, stations_dir, slug),
+    station, _template, sidecar = _prepare_sidecar_mutation(
+        slug, db, stations_dir, payload.expected_updated_at,
     )
 
     if section_id == UNSORTED_SECTION_ID:
@@ -875,12 +868,7 @@ def rename_section(
         raise HTTPException(400, "section name must be a non-empty string.")
     section["name"] = payload.name
 
-    _persist_sidecar(station, sidecar)
-    db.commit()
-    db.refresh(station)
-    return SidecarMutationResponse(
-        sidecar=sidecar, updated_at=_iso(station.updated_at),
-    )
+    return _finish_sidecar_mutation(station, sidecar, db)
 
 
 @router.delete(
@@ -905,14 +893,8 @@ def delete_section(
     Rejected: deleting the `_unsorted` bin itself (it's system-
     managed; users empty it by moving blocks elsewhere).
     """
-    station = db.query(Station).filter(Station.slug == slug).first()
-    if station is None:
-        raise HTTPException(404, f"station '{slug}' not found")
-    _check_optimistic_token(station, expected_updated_at)
-
-    template = copy.deepcopy(station.template)
-    sidecar = copy.deepcopy(
-        _load_sidecar_for_mutation(station, template, stations_dir, slug),
+    station, _template, sidecar = _prepare_sidecar_mutation(
+        slug, db, stations_dir, expected_updated_at,
     )
 
     if section_id == UNSORTED_SECTION_ID:
@@ -926,15 +908,24 @@ def delete_section(
     if section is None:
         raise HTTPException(404, f"section '{section_id}' not found.")
 
-    blocks = section.get("blocks", [])
-    if blocks:
-        # Auto-move to _unsorted (D2). ensure_unsorted_section is
-        # idempotent.
+    # c1 review #10: capture the blocks AFTER ensure_unsorted_section's
+    # deep-copy + re-find, so the bin's blocks list holds the
+    # post-deepcopy block dicts (no aliasing with the pre-deepcopy
+    # section dicts). The prior implementation captured `blocks` from
+    # the pre-deepcopy section, then extended the bin with those
+    # ORIGINAL references — the bin worked by accident but mixed
+    # pre/post-deepcopy dicts in the same sidecar (a latent aliasing
+    # hazard for any code that mutates the bin's blocks expecting them
+    # to be fresh).
+    has_blocks = bool(section.get("blocks"))
+    if has_blocks:
         sidecar = ensure_unsorted_section(sidecar)
+        # Re-find both sections in the deep-copied sidecar.
+        moved_section = _find_section(sidecar, section_id)
         bin_section = _find_section(sidecar, UNSORTED_SECTION_ID)
-        bin_section["blocks"].extend(blocks)
-        # Re-find the target section in the freshly deep-copied sidecar.
-        section = _find_section(sidecar, section_id)
+        # Move the post-deepcopy blocks (these dicts are NEW; no
+        # aliasing with the pre-deepcopy section's blocks).
+        bin_section["blocks"].extend(moved_section.get("blocks", []))
 
     sidecar["sections"] = [
         s for s in sidecar["sections"] if s.get("id") != section_id
@@ -943,12 +934,7 @@ def delete_section(
         sid for sid in sidecar.get("layout_order", []) if sid != section_id
     ]
 
-    _persist_sidecar(station, sidecar)
-    db.commit()
-    db.refresh(station)
-    return SidecarMutationResponse(
-        sidecar=sidecar, updated_at=_iso(station.updated_at),
-    )
+    return _finish_sidecar_mutation(station, sidecar, db)
 
 
 @router.put(
@@ -963,14 +949,8 @@ def reorder_sections(
 ):
     """Replace `layout_order` with a permutation of the current
     section ids. add / drop ids → 400 (those are POST + DELETE)."""
-    station = db.query(Station).filter(Station.slug == slug).first()
-    if station is None:
-        raise HTTPException(404, f"station '{slug}' not found")
-    _check_optimistic_token(station, payload.expected_updated_at)
-
-    template = copy.deepcopy(station.template)
-    sidecar = copy.deepcopy(
-        _load_sidecar_for_mutation(station, template, stations_dir, slug),
+    station, _template, sidecar = _prepare_sidecar_mutation(
+        slug, db, stations_dir, payload.expected_updated_at,
     )
 
     current = {s.get("id") for s in sidecar.get("sections", [])}
@@ -989,12 +969,7 @@ def reorder_sections(
         )
     sidecar["layout_order"] = list(payload.layout_order)
 
-    _persist_sidecar(station, sidecar)
-    db.commit()
-    db.refresh(station)
-    return SidecarMutationResponse(
-        sidecar=sidecar, updated_at=_iso(station.updated_at),
-    )
+    return _finish_sidecar_mutation(station, sidecar, db)
 
 
 @router.patch(
@@ -1020,14 +995,8 @@ def move_block(
     matching atomic addressing — if multiple sections reference the
     same address (drift rule 8 catches that at load), 400.
     """
-    station = db.query(Station).filter(Station.slug == slug).first()
-    if station is None:
-        raise HTTPException(404, f"station '{slug}' not found")
-    _check_optimistic_token(station, payload.expected_updated_at)
-
-    template = copy.deepcopy(station.template)
-    sidecar = copy.deepcopy(
-        _load_sidecar_for_mutation(station, template, stations_dir, slug),
+    station, _template, sidecar = _prepare_sidecar_mutation(
+        slug, db, stations_dir, payload.expected_updated_at,
     )
 
     target = _find_section(sidecar, payload.target_section_id)
@@ -1095,12 +1064,7 @@ def move_block(
             raise HTTPException(400, "target_index must be >= 0.")
         target_blocks.insert(idx, moving_block)
 
-    _persist_sidecar(station, sidecar)
-    db.commit()
-    db.refresh(station)
-    return SidecarMutationResponse(
-        sidecar=sidecar, updated_at=_iso(station.updated_at),
-    )
+    return _finish_sidecar_mutation(station, sidecar, db)
 
 
 @router.patch(
@@ -1118,14 +1082,8 @@ def structural_block_edit(
     (D5). row_template is rejected for now — its block_idx-domain
     structural edits land in a follow-up slice (D8 punts table).
     """
-    station = db.query(Station).filter(Station.slug == slug).first()
-    if station is None:
-        raise HTTPException(404, f"station '{slug}' not found")
-    _check_optimistic_token(station, payload.expected_updated_at)
-
-    template = copy.deepcopy(station.template)
-    sidecar = copy.deepcopy(
-        _load_sidecar_for_mutation(station, template, stations_dir, slug),
+    station, template, sidecar = _prepare_sidecar_mutation(
+        slug, db, stations_dir, payload.expected_updated_at,
     )
     layout = template.get("layout", {})
 
@@ -1194,13 +1152,24 @@ def structural_block_edit(
         # call — observable + recoverable (operator can re-add via
         # op="add" if it was a mistake; the new block lands in
         # _unsorted).
+        #
+        # c1 review #9: single-pass cascade rather than per-section
+        # list-comprehension rebuild (which would re-allocate every
+        # section's blocks list even when no match). For Rebirth
+        # Radio's 2,196-chip sidecar the inner predicate evaluates
+        # exactly once per block — same asymptotics, ~3x fewer
+        # allocations in the common no-match-in-section case.
         for s in sidecar.get("sections", []):
-            s["blocks"] = [
-                b for b in s.get("blocks", [])
-                if not (
-                    b.get("kind") == "atomic" and b.get("slot_index") == idx
-                )
-            ]
+            blocks = s.get("blocks")
+            if not blocks:
+                continue
+            for i, b in enumerate(blocks):
+                if (
+                    b.get("kind") == "atomic"
+                    and b.get("slot_index") == idx
+                ):
+                    blocks.pop(i)
+                    break  # drift rule 8: at most one match across all sections
         flat_slots.pop(idx)
         # Sidecar atomic refs at slot_index > idx decrement by 1.
         sidecar = shift_atomic_slot_indices(
@@ -1216,12 +1185,7 @@ def structural_block_edit(
             400, f"structural edit produces an invalid template: {e}",
         )
 
-    _persist_sidecar(station, sidecar, template=template)
-    db.commit()
-    db.refresh(station)
-    return SidecarMutationResponse(
-        sidecar=sidecar, updated_at=_iso(station.updated_at),
-    )
+    return _finish_sidecar_mutation(station, sidecar, db, template=template)
 
 
 @router.post(

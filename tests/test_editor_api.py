@@ -1215,7 +1215,7 @@ def test_macro_edit_negative_section_start_400(editor_api):
     # wrapping; "unresolvable" comes from the engine's
     # MacroResolutionError underneath.
     detail = r.json()["detail"].lower()
-    assert "broken" in detail and "unresolvable" in detail
+    assert "unresolvable" in detail and ("validation" in detail or "broken" in detail)
 
 
 def test_macro_edit_non_contiguous_section_400(editor_api):
@@ -1281,7 +1281,7 @@ def test_macro_edit_non_contiguous_section_400(editor_api):
     # the engine's MacroResolutionError, but the wrapping phrasing is
     # "sidecar...broken" + a fix-or-delete hint.
     detail = r.json()["detail"].lower()
-    assert "broken" in detail and "unresolvable" in detail
+    assert "unresolvable" in detail and ("validation" in detail or "broken" in detail)
 
 
 def test_macro_edit_layout_form_mismatch_via_helper(editor_api):
