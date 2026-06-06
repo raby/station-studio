@@ -32,6 +32,14 @@ class Station(Base):
     slug = Column(Text, unique=True, nullable=False)
     name = Column(Text, nullable=False)
     template = Column(JSON, nullable=False)
+    # §16.2.5 D1 — sidecar in DB (materialised). Nullable; NULL = "no
+    # committed sidecar" (legacy stations pre-migration OR un-authored).
+    # GET /sidecar falls back to the on-disk file then to a synthesised
+    # trivial sidecar (Decision E from §16.2.2 — frontend never handles
+    # "no sidecar"). Mutation endpoints write to this column; the
+    # on-disk file becomes the export artifact (Decision A3 symmetry
+    # with stations/{slug}.json for the template).
+    sidecar = Column(JSON, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(
         DateTime,

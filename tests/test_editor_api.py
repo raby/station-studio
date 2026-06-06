@@ -1322,16 +1322,185 @@ def test_macro_edit_layout_form_mismatch_via_helper(editor_api):
     assert r.json()["blocks_updated"] == 3
 
 
-def test_macro_edit_updates_sidecar_spec_on_disk(editor_api):
-    """c1 review #6: patch_macro must update the sidecar's
-    macros[].spec to mirror the mutated engine blocks AND write the
-    sidecar back to disk. Without this, the committed sidecar
-    drifts and GET /sidecar returns a macro chip whose DetailPanel
-    shows stale spec values."""
+# ---------- §16.2.5 c1: Station.sidecar in DB ---------------------------
+
+
+def test_get_sidecar_prefers_db_column_over_disk_file(editor_api):
+    """§16.2.5 D1: when Station.sidecar is populated, the GET path
+    uses THAT instead of reading the on-disk file. Pin by writing
+    DIFFERENT sidecars to the two stores + asserting the DB wins."""
+    client, Session, stations_dir = editor_api
+    template = _minimal_template("prefer-db")
+    db_sidecar = {
+        "schema_version": 1,
+        "sections": [{
+            "id": "from-db", "name": "From DB",
+            "blocks": [
+                {"kind": "atomic", "slot_index": 0},
+                {"kind": "atomic", "slot_index": 1},
+                {"kind": "atomic", "slot_index": 2},
+            ],
+        }],
+        "macros": [],
+        "layout_order": ["from-db"],
+    }
+    file_sidecar = {
+        "schema_version": 1,
+        "sections": [{
+            "id": "from-disk", "name": "From Disk",
+            "blocks": [
+                {"kind": "atomic", "slot_index": 0},
+                {"kind": "atomic", "slot_index": 1},
+                {"kind": "atomic", "slot_index": 2},
+            ],
+        }],
+        "macros": [],
+        "layout_order": ["from-disk"],
+    }
+    with Session() as db:
+        db.add(Station(
+            slug="prefer-db", name="Prefer DB",
+            template=template, sidecar=db_sidecar,
+        ))
+        db.commit()
+    (stations_dir / "prefer-db.editor.json").write_text(
+        json.dumps(file_sidecar, indent=2),
+    )
+
+    r = client.get("/api/stations/prefer-db/sidecar")
+    assert r.status_code == 200
+    body = r.json()
+    # DB column wins — the file's "from-disk" section is ignored.
+    assert body["sidecar"]["sections"][0]["id"] == "from-db"
+    assert body["sidecar_error"] is None
+
+
+def test_get_sidecar_falls_back_to_disk_when_db_column_null(editor_api):
+    """§16.2.5 D1: when Station.sidecar IS NULL (legacy + un-authored
+    stations), the on-disk file is the next preferred source. This is
+    the pre-§16.2.5 behaviour and must keep working — operators who
+    drop a sidecar file in stations/ during authoring still see it."""
+    client, Session, stations_dir = editor_api
+    template = _minimal_template("disk-only")
+    file_sidecar = {
+        "schema_version": 1,
+        "sections": [{
+            "id": "disk", "name": "Disk",
+            "blocks": [
+                {"kind": "atomic", "slot_index": 0},
+                {"kind": "atomic", "slot_index": 1},
+                {"kind": "atomic", "slot_index": 2},
+            ],
+        }],
+        "macros": [],
+        "layout_order": ["disk"],
+    }
+    with Session() as db:
+        # sidecar column intentionally NULL (default).
+        db.add(Station(slug="disk-only", name="Disk Only", template=template))
+        db.commit()
+    (stations_dir / "disk-only.editor.json").write_text(
+        json.dumps(file_sidecar, indent=2),
+    )
+
+    r = client.get("/api/stations/disk-only/sidecar")
+    body = r.json()
+    assert body["sidecar"]["sections"][0]["id"] == "disk"
+
+
+def test_get_sidecar_db_broken_falls_back_with_error(editor_api):
+    """§16.2.5: a malformed Station.sidecar value (e.g. somebody
+    hand-edited the DB row to invalid JSON-shape) falls back to the
+    trivial sidecar + populates sidecar_error — mirrors the on-disk
+    broken-file path."""
+    client, Session, _dir = editor_api
+    template = _minimal_template("brk-db")
+    # Missing required `layout_order` key → drift rule.
+    broken = {"schema_version": 1, "sections": [{
+        "id": "x", "blocks": [{"kind": "atomic", "slot_index": 0},
+                              {"kind": "atomic", "slot_index": 1},
+                              {"kind": "atomic", "slot_index": 2}],
+    }]}
+    with Session() as db:
+        db.add(Station(
+            slug="brk-db", name="Broken DB",
+            template=template, sidecar=broken,
+        ))
+        db.commit()
+
+    r = client.get("/api/stations/brk-db/sidecar")
+    body = r.json()
+    # Trivial fallback.
+    assert body["sidecar"]["sections"][0]["id"] == "all-slots"
+    # Error populated.
+    assert body["sidecar_error"]
+    assert "layout_order" in body["sidecar_error"].lower()
+
+
+def test_macro_edit_writes_to_db_column_when_starting_from_disk(editor_api):
+    """§16.2.5 D1 migration path: a station with a DISK sidecar (DB
+    column NULL) gets the column POPULATED on the first macro edit.
+    Future reads come from the DB column without touching the file."""
+    client, Session, stations_dir = editor_api
+    _macro_station(Session, stations_dir, "migrate")
+    # Sanity: column starts NULL.
+    with Session() as db:
+        row = db.query(Station).filter(Station.slug == "migrate").first()
+        assert row.sidecar is None
+
+    r = client.patch("/api/stations/migrate/macros/jingle-1", json={
+        "fields": {"genre": "Loud"},
+        "expected_updated_at": _token(client, "migrate"),
+    })
+    assert r.status_code == 200, r.json()
+
+    # Column now populated with the post-edit sidecar.
+    with Session() as db:
+        row = db.query(Station).filter(Station.slug == "migrate").first()
+        assert row.sidecar is not None
+        assert row.sidecar["macros"][0]["spec"]["genre"] == "Loud"
+
+
+def test_macro_edit_against_trivial_sidecar_leaves_db_column_null(editor_api):
+    """§16.2.5: a station with NEITHER a DB sidecar NOR a disk file
+    falls back to the trivial sidecar (which has no macros), so a
+    macro PATCH 404s. The DB column must stay NULL — materialising
+    the trivial sidecar would falsely flip 'un-authored' to
+    'authored-trivial' (defeats the §16.2.2 progressive-disclosure
+    affordance + breaks the GET path's NULL-means-fallback contract)."""
+    client, Session, _dir = editor_api
+    template = _minimal_template("triv")
+    with Session() as db:
+        db.add(Station(slug="triv", name="Triv", template=template))
+        db.commit()
+
+    r = client.patch("/api/stations/triv/macros/jingle-1", json={
+        "fields": {"genre": "X"},
+        "expected_updated_at": _token(client, "triv"),
+    })
+    assert r.status_code == 404  # no macros in trivial sidecar
+
+    # Column still NULL.
+    with Session() as db:
+        row = db.query(Station).filter(Station.slug == "triv").first()
+        assert row.sidecar is None
+
+
+def test_macro_edit_updates_sidecar_spec_in_db(editor_api):
+    """c1 review #6 (updated for §16.2.5 D1): patch_macro must update
+    the sidecar's macros[].spec to mirror the mutated engine blocks.
+
+    §16.2.4 c1 review #6 wrote back to disk; §16.2.5 D1 flipped the
+    source-of-truth to the DB column (`Station.sidecar`). The disk
+    file becomes the export artifact. GET /sidecar prefers the DB
+    column, so the user-visible value comes from there — pinned via
+    the GET round-trip below. The on-disk file is intentionally
+    UNCHANGED by macro edits now (it gets refreshed via POST
+    /export only)."""
     client, Session, stations_dir = editor_api
     _macro_station(Session, stations_dir, "ms")
-    before = json.loads((stations_dir / "ms.editor.json").read_text())
-    assert before["macros"][0]["spec"]["genre"] == "G"
+    before_file = json.loads((stations_dir / "ms.editor.json").read_text())
+    assert before_file["macros"][0]["spec"]["genre"] == "G"
 
     r = client.patch("/api/stations/ms/macros/jingle-1", json={
         "fields": {"genre": "Boom"},
@@ -1339,10 +1508,14 @@ def test_macro_edit_updates_sidecar_spec_on_disk(editor_api):
     })
     assert r.status_code == 200, r.json()
 
-    # Sidecar on disk now reflects the new genre.
-    after = json.loads((stations_dir / "ms.editor.json").read_text())
-    assert after["macros"][0]["spec"]["genre"] == "Boom"
-    # Engine template also reflects it (already covered by other tests).
+    # GET /sidecar reads from the DB column, which carries the new
+    # macros[].spec value.
     body = client.get("/api/stations/ms/sidecar").json()
+    assert body["sidecar"]["macros"][0]["spec"]["genre"] == "Boom"
+    # Engine template also reflects it (already covered by other tests).
     flat = body["template"]["layout"]["flat_slots"]
     assert [s["genre"] for s in flat] == ["G", "Boom", "Boom", "Boom", "G"]
+    # The on-disk file is INTENTIONALLY unchanged — export is the
+    # only path that writes the file under §16.2.5 D1.
+    after_file = json.loads((stations_dir / "ms.editor.json").read_text())
+    assert after_file["macros"][0]["spec"]["genre"] == "G"

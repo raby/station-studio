@@ -134,73 +134,99 @@ def get_station_sidecar(
         raise HTTPException(404, f"station '{slug}' not found")
 
     template: dict = station.template  # JSON column → dict
+    sidecar, error_message = _load_sidecar(station, template, stations_dir)
+    return EditorSidecarResponse(
+        template=template,
+        sidecar=sidecar,
+        sidecar_error=error_message,
+        updated_at=_iso(station.updated_at),
+    )
 
-    sidecar_path = stations_dir / f"{slug}.editor.json"
+
+def _load_sidecar(
+    station: Station, template: dict, stations_dir: Path,
+) -> tuple[dict, str | None]:
+    """Resolve a station's sidecar with the §16.2.5 layered precedence.
+
+    Order (§16.2.5 D1):
+      1. `Station.sidecar` JSON column — the new source-of-truth.
+         If non-NULL, validate it against the template (catches
+         drift after a template-only edit landed without re-syncing
+         the sidecar) and return.
+      2. On-disk file `stations/{slug}.editor.json` — legacy path
+         for stations imported before the migration AND the
+         operator-friendly "edit a sidecar from disk and reload"
+         authoring workflow. Same drift validation.
+      3. Trivial synthesized sidecar — the floor for un-authored
+         stations (Decision E from §16.2.2).
+
+    Returns `(sidecar_dict, error_message_or_None)`. error_message
+    is non-None only when a stored sidecar (DB or file) FAILED
+    validation; the caller renders a banner pointing the operator
+    at the bad source. Empty / missing sidecars surface as
+    `(synthesized_trivial, None)` — that's the design-intended
+    path, not an error.
+    """
+    # Case (1): DB column.
+    if station.sidecar is not None:
+        try:
+            from engine.editor_metadata import validate_sidecar
+            validate_sidecar(station.sidecar, template)
+            return station.sidecar, None
+        except EditorMetadataError as e:
+            logger.warning(
+                "Station.sidecar (DB) for slug=%s failed validation; "
+                "falling back to trivial: %s", station.slug, e,
+            )
+            return synthesize_trivial_sidecar(template), str(e)
+        except Exception as e:  # noqa: BLE001
+            logger.exception(
+                "unexpected DB-sidecar load error for slug=%s; "
+                "falling back to trivial", station.slug,
+            )
+            return (
+                synthesize_trivial_sidecar(template),
+                f"sidecar load failed: {type(e).__name__}: {e}",
+            )
+
+    # Case (2): on-disk file.
+    sidecar_path = stations_dir / f"{station.slug}.editor.json"
     if not sidecar_path.is_file():
-        # Case (a): no committed sidecar — synthesize the trivial
-        # one. This is the DESIGN-intended path for un-authored
-        # stations; sidecar_error stays null.
-        return EditorSidecarResponse(
-            template=template,
-            sidecar=synthesize_trivial_sidecar(template),
-            sidecar_error=None,
-            updated_at=_iso(station.updated_at),
-        )
+        # Case (3): no committed sidecar anywhere — synthesize. This
+        # is the DESIGN-intended path for un-authored stations;
+        # sidecar_error stays None.
+        return synthesize_trivial_sidecar(template), None
 
     try:
         sidecar = parse_sidecar(sidecar_path, template)
+        return sidecar, None
     except EditorMetadataError as e:
-        # Case (c): committed sidecar exists but is broken (one of the
-        # 10 drift rules + grammar checks failed, OR JSON syntax was
-        # bad — parse_sidecar wraps JSONDecodeError into the same
-        # exception class per §16.2.1 c1 review finding 6).
-        # Frontend renders a warning + the trivial fallback.
+        # File present but broken (one of the 10 drift rules OR JSON
+        # syntax — parse_sidecar wraps JSONDecodeError per §16.2.1
+        # c1 review finding 6). Frontend renders a warning + the
+        # trivial fallback.
         logger.warning(
-            "sidecar at %s failed validation; falling back to trivial: %s",
+            "sidecar file %s failed validation; falling back to trivial: %s",
             sidecar_path, e,
         )
-        error_message = str(e)
-    except Exception as e:  # noqa: BLE001 — see c1 review 🟡-1 below
-        # Case (c'): non-EditorMetadataError raised during the sidecar
-        # load. Two known sources:
-        #
+        return synthesize_trivial_sidecar(template), str(e)
+    except Exception as e:  # noqa: BLE001 — see §16.2.2 c1 review 🟡-1
+        # Two known sources for non-EditorMetadataError:
         #   1. OSError from `path.read_text()` racing the is_file()
-        #      check (file deleted / perm flipped / disk full).
+        #      check.
         #   2. KeyError / TypeError from validate_sidecar() if the
-        #      stored TEMPLATE is corrupted (DB hand-edit, partial
-        #      restore). synthesize_trivial_sidecar already defends
-        #      against missing-layout-keys; parse_sidecar doesn't.
-        #
-        # Decision E's contract: "frontend NEVER handles 'no sidecar'
-        # — always renders the canvas against a valid sidecar." A 500
-        # here breaks that contract. So we widen the catch + treat
-        # any failure as a sidecar problem → trivial fallback +
-        # populated sidecar_error.
-        #
-        # `logger.exception` preserves the traceback in case the
-        # broader catch is hiding a real engine bug; the operator
-        # sees it in the log without it blowing up the UI.
+        #      stored TEMPLATE is corrupted.
+        # Decision E: frontend NEVER handles "no sidecar" — widen
+        # the catch + trivial-fallback. logger.exception preserves
+        # the traceback for the operator's logs.
         logger.exception(
             "unexpected sidecar load error at %s; falling back to trivial",
             sidecar_path,
         )
-        error_message = f"sidecar load failed: {type(e).__name__}: {e}"
-    else:
-        # Case (b): committed + valid sidecar.
-        return EditorSidecarResponse(
-            template=template,
-            sidecar=sidecar,
-            sidecar_error=None,
-            updated_at=_iso(station.updated_at),
+        return (
+            synthesize_trivial_sidecar(template),
+            f"sidecar load failed: {type(e).__name__}: {e}",
         )
-
-    # Shared fallback path for both except branches.
-    return EditorSidecarResponse(
-        template=template,
-        sidecar=synthesize_trivial_sidecar(template),
-        sidecar_error=error_message,
-        updated_at=_iso(station.updated_at),
-    )
 
 
 @router.patch(
@@ -320,6 +346,76 @@ def _resolve_block_address(template: dict, addr: BlockAddress) -> dict:
             raise HTTPException(404, f"block_idx {addr.block_idx} out of range")
         return blocks[addr.block_idx]
     raise HTTPException(400, "address must set slot_index or block_idx")
+
+
+def _load_sidecar_for_mutation(
+    station: Station, template: dict, stations_dir: Path, slug: str,
+) -> dict:
+    """Strict sidecar resolution for mutation endpoints.
+
+    Unlike `_load_sidecar` (GET path, which degrades to trivial-with-
+    sidecar_error on bad data), this helper RAISES HTTPException 400
+    when a stored sidecar can't be parsed. Mutation paths can't
+    safely tolerate a silent fallback — applying a write against the
+    trivial fallback would lose the operator's macro/section
+    grouping for this transaction.
+
+    Order (§16.2.5 D1):
+      1. Station.sidecar (DB) — preferred; validate via
+         `validate_sidecar` (the same drift rules GET applies).
+      2. On-disk file — legacy + authoring path.
+      3. Trivial — only when NEITHER source has data. The macro
+         endpoint's caller surfaces a meaningful 404 ("macro_id
+         not found in the station's sidecar") since the trivial
+         sidecar has no macros by definition.
+    """
+    from engine.editor_metadata import validate_sidecar
+
+    if station.sidecar is not None:
+        try:
+            validate_sidecar(station.sidecar, template)
+            return station.sidecar
+        except EditorMetadataError as e:
+            raise HTTPException(
+                400,
+                f"Station.sidecar for '{slug}' failed validation "
+                f"— fix it or set it to NULL to fall back to disk/"
+                f"trivial ({e}).",
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.exception(
+                "unexpected DB-sidecar load error for slug=%s during mutation",
+                slug,
+            )
+            raise HTTPException(
+                400,
+                f"Station.sidecar for '{slug}' failed to load "
+                f"({type(e).__name__}: {e}).",
+            )
+
+    sidecar_path = stations_dir / f"{slug}.editor.json"
+    if sidecar_path.is_file():
+        try:
+            return parse_sidecar(sidecar_path, template)
+        except EditorMetadataError as e:
+            raise HTTPException(
+                400,
+                f"sidecar at {sidecar_path} is broken — fix it or "
+                f"delete to regenerate from the template ({e}).",
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.exception(
+                "unexpected sidecar load error at %s during mutation",
+                sidecar_path,
+            )
+            raise HTTPException(
+                400,
+                f"sidecar at {sidecar_path} failed to load "
+                f"({type(e).__name__}: {e}) — fix or delete it before "
+                f"editing.",
+            )
+
+    return synthesize_trivial_sidecar(template)
 
 
 def _check_optimistic_token(station: Station, expected: str | None) -> None:
@@ -497,57 +593,14 @@ def patch_macro(
 
     template = copy.deepcopy(station.template)
 
-    # Resolve the macro via the sidecar. Mirror the sidecar-resolution
-    # algorithm from GET /sidecar (look for `stations/{slug}.editor.
-    # json`; fall back to synthesize_trivial_sidecar on absence or
-    # parse failure). For PATCH we tolerate the trivial-sidecar
-    # fallback — un-authored stations have no MACROS by definition
-    # (every chip is its own atomic block), so a macro_id lookup
-    # against a trivial sidecar always 404s with a meaningful
-    # "macro_id not found" message.
-    sidecar_path = stations_dir / f"{slug}.editor.json"
-    sidecar: dict
-    if sidecar_path.is_file():
-        try:
-            # parse_sidecar takes a Path (mirrors GET /sidecar); it
-            # also wraps JSONDecodeError as EditorMetadataError per
-            # §16.2.1 c1 review #6, so EditorMetadataError covers the
-            # validation + JSON-syntax paths.
-            sidecar = parse_sidecar(sidecar_path, template)
-        except EditorMetadataError as e:
-            raise HTTPException(
-                400,
-                f"sidecar at {sidecar_path} is broken — fix it or "
-                f"delete to regenerate from the template ({e}).",
-            )
-        except Exception as e:  # noqa: BLE001
-            # c1 review #4: mirror GET /sidecar's wider catch. Two
-            # known non-EditorMetadataError sources:
-            #   1. OSError racing `is_file()` (file deleted / perms /
-            #      disk error).
-            #   2. KeyError/TypeError from a hand-edited station
-            #      template that drops layout keys parse_sidecar
-            #      assumes are present.
-            # Unlike GET (which trivially falls back), mutation paths
-            # can't safely synthesize-trivial — that'd silently lose
-            # the operator's macro grouping. So we 400 with the same
-            # phrasing as the validation path, but log the traceback
-            # for engine-bug forensics.
-            logger.exception(
-                "unexpected sidecar load error at %s during macro patch",
-                sidecar_path,
-            )
-            raise HTTPException(
-                400,
-                f"sidecar at {sidecar_path} failed to load "
-                f"({type(e).__name__}: {e}) — fix or delete it before "
-                f"editing macros.",
-            )
-    else:
-        # Trivial sidecar has no macros by definition (one section,
-        # all atomic) → the macro_id lookup below will 404 with a
-        # meaningful message.
-        sidecar = synthesize_trivial_sidecar(template)
+    # §16.2.5 D1: resolve the sidecar via the layered helper —
+    # Station.sidecar (DB column) → on-disk file → trivial fallback.
+    # Mutation paths can't safely accept the trivial fallback unless
+    # the sidecar is genuinely absent (no DB column AND no file);
+    # a broken DB column or file is a 400 here (operator must fix
+    # before mutating). Unlike GET, we can't silently degrade —
+    # that'd lose the operator's macro grouping for this write.
+    sidecar = _load_sidecar_for_mutation(station, template, stations_dir, slug)
 
     # Resolve macro_id → unique engine-template addresses by walking
     # the sidecar. See engine.editor_metadata.resolve_macro_addresses
@@ -617,15 +670,19 @@ def patch_macro(
     except TemplateError as e:
         raise HTTPException(400, f"macro edit produces an invalid template: {e}")
 
-    # c1 review #6: update the sidecar's macros[].spec to mirror the
-    # mutated engine blocks, then write the sidecar back to disk.
-    # Without this, the committed sidecar's spec drifts from the
-    # template after every macro edit — GET /sidecar would return a
-    # macro chip whose DetailPanel shows the OLD spec value while
-    # the underlying engine blocks have the new one. The sidecar
-    # was loaded from disk above; only do the write when there's a
-    # real file (trivial-fallback path can't drift because it's
-    # synthesized fresh each GET).
+    # §16.2.5 D1: update the sidecar's macros[].spec + write to DB
+    # (not disk — that's now the export artifact). Without this, the
+    # committed sidecar's spec drifts from the template after every
+    # macro edit — GET /sidecar would return a macro chip whose
+    # DetailPanel shows the OLD spec value while the underlying
+    # engine blocks have the new one.
+    #
+    # When the sidecar came from the trivial fallback (Station.sidecar
+    # IS NULL AND no on-disk file), there's nothing to write back —
+    # un-authored stations have no macros[] entries by definition, so
+    # the `for macro in ...` loop is a no-op + we skip the column
+    # update to avoid materializing the trivial sidecar in the DB
+    # (preserves the "NULL = un-authored" semantics).
     spec_changed = False
     for macro in sidecar.get("macros", []):
         if macro.get("id") != macro_id:
@@ -637,10 +694,16 @@ def patch_macro(
             else:
                 spec[key] = value
         spec_changed = True
-    if spec_changed and sidecar_path.is_file():
-        sidecar_path.write_text(json.dumps(sidecar, indent=2) + "\n")
 
     station.template = template
+    # Only materialise the sidecar in the DB column when we made a
+    # real change to a stored sidecar (DB or file). A trivial-
+    # fallback sidecar wouldn't have hit the spec-change branch
+    # (no macros[]); writing it would falsely flip the column from
+    # NULL to a synthesised value + GET would prefer that over the
+    # legitimate template-driven trivial.
+    if spec_changed:
+        station.sidecar = copy.deepcopy(sidecar)
     db.commit()
     db.refresh(station)
 
