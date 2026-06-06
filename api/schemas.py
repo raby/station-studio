@@ -490,10 +490,24 @@ class SectionsOrderRequest(BaseModel):
 class BlockMoveRequest(BaseModel):
     """PATCH /api/stations/{slug}/blocks/move body (§16.2.5 D4).
 
-    Move a block (atomic or macro) from its current section to
+    Move an ATOMIC block from its current section to
     `target_section_id`, optionally at a specific `target_index`
-    within that section's blocks list (default = append).
-    Sidecar-only mutation — the engine TEMPLATE is unchanged.
+    within the target's blocks list (default = append). Sidecar-
+    only mutation — the engine TEMPLATE is unchanged.
+
+    Address is XOR — exactly one of slot_index / block_idx.
+
+    SCOPE — ATOMIC BLOCKS ONLY (c1 review #2). The prior docstring
+    said "atomic or macro" but moving a MACRO between sections is
+    semantically broken by the sidecar's position-math:
+    `resolve_macro_addresses` derives a macro's slot range from
+    its section's first atomic anchor + cumulative widths, so
+    relocating the macro element changes its computed slot range
+    → mis-aligned ↔ slot_indices the macro is supposed to cover.
+    Macros stay anchored where derive_sidecar (or the operator's
+    hand-authored grouping) placed them; to reorganise macros,
+    the operator hand-edits via the wizard-edit PUT until
+    §16.2.6's macro-relocation affordance lands.
     """
     address: BlockAddress
     target_section_id: str

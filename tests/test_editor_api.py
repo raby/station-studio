@@ -1858,18 +1858,101 @@ def test_structural_add_inserts_block_and_shifts_atomics(editor_api):
     assert sidecar["layout_order"][-1] == "_unsorted"
 
 
-def test_structural_remove_404s_when_slot_still_referenced(editor_api):
-    """§16.2.5 D5 + UX guard: removing a slot that's still referenced
-    by a sidecar atomic block returns 400 with a "move first" hint."""
+def test_structural_remove_cascades_sidecar_atomic_ref(editor_api):
+    """§16.2.5 c1 review #1: op=remove drops the matching sidecar
+    atomic ref BEFORE popping flat_slots. The original implementation
+    rejected with 'move to _unsorted first' but the move didn't
+    actually unblock the remove (the chip still referenced the
+    slot) — operator was stuck. The cascade is safe because drift
+    rule 8 enforces at most one atomic ref per slot."""
     client, Session, _dir = editor_api
     _composition_station(Session, "comp")
     r = client.patch("/api/stations/comp/blocks/structure", json={
         "edit": {"op": "remove", "slot_index": 0},
         "expected_updated_at": _token(client, "comp"),
     })
+    assert r.status_code == 200, r.json()
+    body = client.get("/api/stations/comp/sidecar").json()
+    flat = body["template"]["layout"]["flat_slots"]
+    # Slot was popped; flat_slots shrunk from 6 to 5.
+    assert len(flat) == 5
+    # 'lead' had {0, 1, 2}; slot 0's ref was dropped, slots 1, 2
+    # shifted to 0, 1.
+    sidecar = body["sidecar"]
+    lead = next(s for s in sidecar["sections"] if s["id"] == "lead")
+    assert sorted(b["slot_index"] for b in lead["blocks"]) == [0, 1]
+    # 'tail' had {3, 4, 5}; all shift down by 1.
+    tail = next(s for s in sidecar["sections"] if s["id"] == "tail")
+    assert sorted(b["slot_index"] for b in tail["blocks"]) == [2, 3, 4]
+
+
+def test_move_atomic_block_message_explains_macro_limitation(editor_api):
+    """§16.2.5 c1 review #2: macros aren't movable in §16.2.5
+    (the sidecar grammar's section-anchored position math can't
+    sustain macro relocation without slot_index drift). The 404
+    error message points the operator at the limitation rather
+    than silently 404ing the way the prior implementation did."""
+    client, Session, _dir = editor_api
+    _composition_station(Session, "comp")
+    # Try to move slot 99 (non-existent atomic) — exercise the
+    # not-found path; the error message must call out macros.
+    r = client.patch("/api/stations/comp/blocks/move", json={
+        "address": {"slot_index": 99},
+        "target_section_id": "tail",
+        "expected_updated_at": _token(client, "comp"),
+    })
+    assert r.status_code == 404
+    assert "macros" in r.json()["detail"].lower()
+
+
+def test_ensure_unsorted_section_heals_layout_order_unit(editor_api):
+    """c1 review #5: pin the helper's heal behavior directly. A
+    sidecar with `_unsorted` in sections[] but missing from
+    layout_order — when fed to ensure_unsorted_section — should
+    return a sidecar with both invariants restored.
+
+    Tested at the helper level (not via an endpoint) because the
+    validate-on-load drift check rejects this hand-corrupt state
+    before any endpoint would call the helper. The fix is
+    defensive against FUTURE in-memory corruption introduced by a
+    mid-request mutation."""
+    from engine.editor_metadata import ensure_unsorted_section
+    sidecar = {
+        "schema_version": 1,
+        "sections": [
+            {"id": "a", "name": "A", "blocks": []},
+            {"id": "_unsorted", "name": "Unsorted", "blocks": []},
+        ],
+        "macros": [],
+        # _unsorted intentionally missing from layout_order.
+        "layout_order": ["a"],
+    }
+    out = ensure_unsorted_section(sidecar)
+    assert "_unsorted" in out["layout_order"]
+    # Original input untouched (deep-copy semantics).
+    assert "_unsorted" not in sidecar["layout_order"]
+
+
+def test_macro_edit_revalidates_sidecar_drift_rules(editor_api):
+    """c1 review #3: patch_macro now routes through _persist_sidecar
+    so drift rules re-run on the post-edit sidecar. A spec mutation
+    that would break a drift rule (e.g. clearing a required field)
+    must surface as a 400 from parse_template / validate_sidecar
+    rather than silently persisting."""
+    client, Session, stations_dir = editor_api
+    _macro_station(Session, stations_dir, "mr")
+    # Clearing `genre` on a jingle macro: jingle.genre is REQUIRED,
+    # so parse_template (via _persist_sidecar's eff_template path —
+    # macro edits go through parse_template directly, then
+    # _persist_sidecar→validate_sidecar) should reject.
+    r = client.patch("/api/stations/mr/macros/jingle-1", json={
+        "fields": {"genre": None},  # clear required field
+        "expected_updated_at": _token(client, "mr"),
+    })
+    # parse_template's per-block validator catches this before
+    # _persist_sidecar (the WHOLE template is invalid). 400 either
+    # way — pin the 400 contract.
     assert r.status_code == 400
-    assert "_unsorted" in r.json()["detail"].lower() or \
-           "move" in r.json()["detail"].lower()
 
 
 def test_structural_size_rejects_zero_or_negative(editor_api):

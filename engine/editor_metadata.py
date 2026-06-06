@@ -470,24 +470,29 @@ def shift_atomic_slot_indices(sidecar: dict, threshold: int, delta: int) -> dict
 
 def ensure_unsorted_section(sidecar: dict) -> dict:
     """Return a deep-copied sidecar with an `_unsorted` section
-    appended if one doesn't already exist.
+    present in BOTH `sections[]` AND `layout_order`.
 
     Used by DELETE /sections/{id} (Decision D2): when the deleted
     section has blocks, they move into the Unsorted bin. The bin's
     `id` starts with an underscore (UI hides the rename affordance);
-    the layout_order append keeps it visible at the end of the
-    canvas.
+    the layout_order entry keeps it visible at the end of the canvas.
+
+    c1 review #5: the prior implementation early-returned when the
+    section existed in `sections[]` without checking layout_order.
+    A hand-edited sidecar (or one partially mutated by a prior
+    buggy write) could have the section but NOT the layout_order
+    entry — blocks landed there but rendered nowhere. Heal both
+    invariants unconditionally.
     """
     import copy as _copy
     out = _copy.deepcopy(sidecar)
     sections = out.setdefault("sections", [])
-    if any(s.get("id") == UNSORTED_SECTION_ID for s in sections):
-        return out
-    sections.append({
-        "id": UNSORTED_SECTION_ID,
-        "name": UNSORTED_SECTION_NAME,
-        "blocks": [],
-    })
+    if not any(s.get("id") == UNSORTED_SECTION_ID for s in sections):
+        sections.append({
+            "id": UNSORTED_SECTION_ID,
+            "name": UNSORTED_SECTION_NAME,
+            "blocks": [],
+        })
     layout_order = out.setdefault("layout_order", [])
     if UNSORTED_SECTION_ID not in layout_order:
         layout_order.append(UNSORTED_SECTION_ID)

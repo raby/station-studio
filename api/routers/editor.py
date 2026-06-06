@@ -706,15 +706,20 @@ def patch_macro(
                 spec[key] = value
         spec_changed = True
 
-    station.template = template
-    # Only materialise the sidecar in the DB column when we made a
-    # real change to a stored sidecar (DB or file). A trivial-
-    # fallback sidecar wouldn't have hit the spec-change branch
-    # (no macros[]); writing it would falsely flip the column from
-    # NULL to a synthesised value + GET would prefer that over the
-    # legitimate template-driven trivial.
+    # c1 review #3: route through _persist_sidecar so drift rules
+    # re-run on the post-edit sidecar (rule 10 — macro spec validity
+    # — could otherwise drift if a spec mutation introduced a now-
+    # invalid field). Mirrors the 6 §16.2.5 endpoints' shape;
+    # consistent revalidation across all write paths.
     if spec_changed:
-        station.sidecar = copy.deepcopy(sidecar)
+        _persist_sidecar(station, copy.deepcopy(sidecar), template=template)
+    else:
+        # Trivial-fallback path (no macros[] entry to update) → just
+        # the template. We DON'T persist the synthesised sidecar:
+        # writing it would falsely flip Station.sidecar from NULL
+        # to a synthesised value + GET would prefer that over the
+        # legitimate template-driven trivial.
+        station.template = template
     db.commit()
     db.refresh(station)
 
@@ -1034,9 +1039,14 @@ def move_block(
             404, f"target section '{payload.target_section_id}' not found.",
         )
 
-    # Match by addressing. row_template stations use block_idx
-    # (row_idx omitted per Decision B from §16.2.3 — block_idx
-    # is the shared template slot).
+    # c1 review #2: ATOMIC ONLY. Moving a macro between sections
+    # mis-aligns its slot range (resolve_macro_addresses derives
+    # positions from section context); the schema's docstring spells
+    # out the limitation. The matcher rejects macros explicitly so
+    # operators see a clear 400 rather than a silent 404 if the
+    # frontend forgets to send `address` (BlockAddress is required
+    # by the schema, but a future BlockMoveRequest extension might
+    # XOR with macro_id again — this guard catches that drift).
     addr = payload.address
     if addr.slot_index is None and addr.block_idx is None:
         raise HTTPException(
@@ -1071,8 +1081,10 @@ def move_block(
     if source is None or moving_block is None:
         raise HTTPException(
             404,
-            f"no block matching address {addr.model_dump(exclude_none=True)} "
-            "found in any section.",
+            f"no atomic block matching address "
+            f"{addr.model_dump(exclude_none=True)} found in any section. "
+            "(Macros aren't movable in §16.2.5 — see BlockMoveRequest "
+            "docstring; queued for §16.2.6 + a sidecar grammar update.)",
         )
 
     # Remove from source, insert into target.
@@ -1171,21 +1183,27 @@ def structural_block_edit(
     elif edit.op == "remove":
         if not (0 <= idx < len(flat_slots)):
             raise HTTPException(404, f"slot_index {idx} out of range.")
-        # Reject removal of a slot referenced by a sidecar atomic
-        # block — that'd require a follow-up "remove the chip"
-        # mutation. Force the operator to delete the chip first via
-        # /blocks/move into _unsorted then re-issue. (§16.2.6 may
-        # bundle these into a single "delete chip" UX later.)
+        # c1 review #1: cascade-drop matching sidecar atomic refs
+        # before popping flat_slots. The prior implementation 400'd
+        # with a "move to _unsorted first" hint, but moving doesn't
+        # REMOVE the reference — it just relocates it. The operator
+        # would be stuck (move-then-remove still 400s; there's no
+        # in-UI "delete chip" path until §16.2.6's chip-deletion
+        # affordance lands).
+        #
+        # The cascade is safe: a slot can have AT MOST one atomic
+        # reference (drift rule 8 catches duplicates at load time).
+        # So at most one block disappears from one section per
+        # call — observable + recoverable (operator can re-add via
+        # op="add" if it was a mistake; the new block lands in
+        # _unsorted).
         for s in sidecar.get("sections", []):
-            for b in s.get("blocks", []):
-                if b.get("kind") == "atomic" and b.get("slot_index") == idx:
-                    raise HTTPException(
-                        400,
-                        f"slot_index {idx} is still referenced by a "
-                        f"sidecar atomic block in section "
-                        f"'{s.get('id', '?')}'. Move the chip to "
-                        f"`{UNSORTED_SECTION_ID}` first, then retry.",
-                    )
+            s["blocks"] = [
+                b for b in s.get("blocks", [])
+                if not (
+                    b.get("kind") == "atomic" and b.get("slot_index") == idx
+                )
+            ]
         flat_slots.pop(idx)
         # Sidecar atomic refs at slot_index > idx decrement by 1.
         sidecar = shift_atomic_slot_indices(
