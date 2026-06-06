@@ -58,18 +58,33 @@ def _stations_dir() -> Path | None:
 
     Honors `STATION_STUDIO_STATIONS_DIR` (set by tests, Docker,
     Playwright webServer) for parity with the runtime path
-    `api.deps.get_stations_dir`. Returns None if the override is
-    set to an empty value (interpreted as "skip backfill") so a
-    fresh CI database doesn't error trying to read a repo path
-    that doesn't exist in the migration sandbox.
+    `api.deps.get_stations_dir`.
+
+    c1 review #4: the prior default `Path("stations")` was
+    CWD-RELATIVE — common alembic invocations from a non-repo-
+    root cwd (e.g. `cd migrations && alembic upgrade head`,
+    operator-typed paths, Docker shells starting in /app) would
+    miss the directory + silently no-op the backfill. The runtime
+    side (`api/deps.py:_STATIONS_DIR`) is absolute: it climbs from
+    `__file__` to the repo root. Mirror that exactly so the
+    backfill + runtime agree on the same `stations/` directory
+    regardless of cwd.
+
+    Returns the absolute Path, or None when the override is set
+    but empty (explicit "skip").
     """
-    override = os.environ.get("STATION_STUDIO_STATIONS_DIR", "").strip()
-    if override == "":
-        # Default location relative to the repo (where stations/
-        # lives in dev). Falls through to `if not d.is_dir()` below
-        # so a CI sandbox without `stations/` quietly skips.
-        return Path("stations")
-    return Path(override)
+    override = os.environ.get("STATION_STUDIO_STATIONS_DIR")
+    if override is not None:
+        override = override.strip()
+        if override == "":
+            # Explicit empty override → skip (some CI configs use
+            # this signal to disable disk IO during migration).
+            return None
+        return Path(override).resolve()
+    # Default: climb from this migration file to the repo root,
+    # then `stations/`. Matches api/deps.py's resolution:
+    # migrations/versions/<file>.py → migrations/ → repo root.
+    return (Path(__file__).resolve().parent.parent.parent / "stations")
 
 
 def upgrade() -> None:

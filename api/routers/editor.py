@@ -181,7 +181,6 @@ def _load_sidecar(
     # Case (1): DB column.
     if station.sidecar is not None:
         try:
-            from engine.editor_metadata import validate_sidecar
             validate_sidecar(station.sidecar, template)
             return station.sidecar, None
         except EditorMetadataError as e:
@@ -380,8 +379,6 @@ def _load_sidecar_for_mutation(
          not found in the station's sidecar") since the trivial
          sidecar has no macros by definition.
     """
-    from engine.editor_metadata import validate_sidecar
-
     if station.sidecar is not None:
         try:
             validate_sidecar(station.sidecar, template)
