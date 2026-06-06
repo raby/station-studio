@@ -75,8 +75,9 @@ router = APIRouter(tags=["editor"])
 # the TS `EDITABLE_FIELDS` in web/src/lib/editor.ts AND the engine's
 # `_require_strategy_field` coupling in engine/template.py. A block
 # PATCH may only touch fields in its strategy's set; strategy / source
-# / size (structural) are never in any set → always rejected (Decision
-# C: those are §16.2.4/§16.2.5). Kept in sync by
+# / size are never in any set → always rejected. Strategy + source
+# edits go through PATCH /blocks/retype (§16.2.4 SHIPPED); size + add/
+# remove are §16.2.5 (structural). Kept in sync by
 # tests/test_editable_fields_parity.py.
 # c1 review fix #8: frozenset values — mutable `set` at module level
 # is a foot-gun: any future caller could do
@@ -89,10 +90,11 @@ EDITABLE_FIELDS_BY_STRATEGY: dict[str, frozenset[str]] = {
     # the four content-sampling strategies (the
     # CONTENT_SAMPLING_STRATEGIES opt-in set from §16.14.t7).
     # Forbidden for the others (jingle, mix, prev_ref, archive_ref
-    # — they don't sample from a candidate set). Closes the
+    # — they don't sample from a candidate set). Closed the
     # §16.14.t7 c3 docs promise that "the block visualiser does
-    # not yet expose per-block fields for editing (see
-    # §16.2.4/§16.2.5 in the roadmap)."
+    # not yet expose per-block fields for editing" — operators
+    # now edit allowlist_sources per chip via the §16.2.4 c2
+    # DetailPanel `<ChipMultiInput>`.
     "pick": frozenset({"allowlist_sources"}),
     "window": frozenset({"allowlist_sources"}),
     "sequential": frozenset({"cursor_id", "allowlist_sources"}),
@@ -257,7 +259,8 @@ def patch_block(
             400,
             f"fields {rejected} are not editable for strategy '{strategy}'. "
             f"Editable: {sorted(allowed) or '(none)'}. "
-            f"(strategy/source/size + structural edits are §16.2.4/§16.2.5.)",
+            f"(strategy/source go through PATCH /blocks/retype; "
+            f"size + structural edits are §16.2.5.)",
         )
 
     # Apply: null clears an optional key; otherwise set.

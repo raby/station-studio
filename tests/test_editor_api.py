@@ -639,14 +639,15 @@ def test_export_unknown_station_404(editor_api):
 
 # ---------- §16.2.4 c1 review #15: shared template-builder helper -------
 #
-# Many fixtures below (and the §16.2.2/3/4 ones above) duplicate the
-# full {station, name, cadence, rng, sources, cursor, layout} shape
-# with small per-test deltas. As §16.2.5+ grows the template
-# (structural edits, new top-level keys), the duplication compounds.
-# `_build_template` produces a baseline that callers override via the
-# block list + sources kwargs; new fixtures should prefer it. Existing
-# fixtures stay unmigrated to avoid risk-without-reward in this c1
-# review pass.
+# Many fixtures above duplicate the full {station, name, cadence, rng,
+# sources, cursor, layout} shape with small per-test deltas. As §16.2.5+
+# grows the template (structural edits, new top-level keys), the
+# duplication compounds. `_build_template` produces a baseline that
+# callers override via the block list + sources kwargs; new fixtures
+# should prefer it. The slice-review sweep migrated
+# `_retypable_station` as the first real caller (proof + pattern);
+# other existing fixtures stay unmigrated until they need a
+# template-shape change so the migration isn't risk-without-reward.
 
 
 def _build_template(
@@ -702,23 +703,24 @@ def _retypable_station(Session: sessionmaker, slug: str = "rty") -> dict:
 
     Mix block carries `genre` (mix-only field) → after retyping to
     a non-mix strategy the field must be dropped server-side.
+
+    Slice-review sweep: migrated to the `_build_template` helper
+    (c1 review #15) as the first real caller — proves the helper
+    works in practice + sets the pattern for future fixtures.
     """
-    template = {
-        "station": slug, "name": "Rty", "cadence": "weekly", "rng": "off",
-        "sources": [
+    template = _build_template(
+        slug,
+        name="Rty",
+        sources=[
             {"name": "A", "colour": "#abc", "role": "content"},
             {"name": "REF", "colour": "#def", "role": "reference"},
         ],
-        "cursor": {"base_advance_per_week": 0, "cycle_weeks": 1},
-        "layout": {
-            "unit": "slot", "unit_labels": [], "row_start_offsets": [],
-            "cursors_init": {"C": 0},
-            "flat_slots": [
-                {"source": "A", "strategy": "mix", "size": 1,
-                 "genre": "Old", "exclusion_window": 8},
-            ],
-        },
-    }
+        cursors_init={"C": 0},
+        flat_slots=[
+            {"source": "A", "strategy": "mix", "size": 1,
+             "genre": "Old", "exclusion_window": 8},
+        ],
+    )
     with Session() as db:
         db.add(Station(slug=slug, name="Rty", template=template))
         db.commit()

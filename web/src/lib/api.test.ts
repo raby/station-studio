@@ -868,6 +868,26 @@ describe('patchBlock', () => {
     await patchBlock('cls', { block_idx: 1 }, { genre: 'Night' }, 't1', fetch_);
     expect(JSON.parse(calls[0].init!.body as string).address).toEqual({ block_idx: 1 });
   });
+
+  it('allowlist_sources rides through as a JSON array (§16.2.4 D3 + c2 review #2)', async () => {
+    // Slice-review sweep: pin the wire shape for the string_list
+    // field type. c2 review #2 widened the fields union to include
+    // `string[]`; without this regression a future refactor that
+    // re-narrows the type would silently coerce the array to a
+    // string (the original `as unknown as string` cast did exactly
+    // that on the DetailPanel side).
+    const { fetch_, calls } = makeSpy({ body: { block: {}, updated_at: 't2' } });
+    await patchBlock(
+      'cls', { slot_index: 0 },
+      { allowlist_sources: ['REFERENCE_ARCHIVE', 'REFERENCE_CLASSICS'] },
+      't1', fetch_,
+    );
+    const body = JSON.parse(calls[0].init!.body as string);
+    expect(body.fields.allowlist_sources).toEqual(
+      ['REFERENCE_ARCHIVE', 'REFERENCE_CLASSICS'],
+    );
+    expect(Array.isArray(body.fields.allowlist_sources)).toBe(true);
+  });
 });
 
 

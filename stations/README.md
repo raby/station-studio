@@ -692,13 +692,17 @@ any violation.
   AND pool B") would require a different field or a tagged-
   union grammar — punted; file an issue if you have a real
   use case.
-* **No frontend editing affordance.** `allowlist_sources` is
-  edited in the template JSON; the §16.10 RulesPanel +
-  §16.14.t11 ListRuleRow chip editor target station-wide
-  list rules, not per-block fields. The block visualiser at
-  `/stations/{slug}` does not yet expose per-block fields
-  for editing (see §16.2.4/§16.2.5 in the roadmap). For
-  now, JSON edit + restart is the operator UX.
+* **Frontend editing affordance: SHIPPED in §16.2.4.** The
+  block visualiser at `/stations/{slug}/visualise` now exposes
+  `allowlist_sources` as a per-block chip editor on the four
+  content-sampling strategies (pick, window, sequential,
+  weighted). Click a chip → DetailPanel → the
+  `Allowlist sources (per-block positive filter)` field
+  accepts reference-pool names via free-form input +
+  autocomplete (the `<ChipMultiInput>` component). Saves go
+  through `PATCH /api/stations/{slug}/blocks` with
+  optimistic concurrency. Direct JSON edit + restart still
+  works for power users + scripted edits.
 * **No bundled-station demo.** Same reasoning as
   `archive_ref` — adding to starter.json would break the
   168-slot pin + cascade through pinned tests. The "try it

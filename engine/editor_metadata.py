@@ -122,8 +122,12 @@ class MacroPlaceholder:
     Macros emit N placeholders (one per repeat); the editor renders
     them as a single grouped chip with a count. v1 placeholders
     don't know which specific slot they correspond to in the engine
-    output — the §16.2.4 (macro editing) slice will revisit when
-    per-pick addressing is needed for diff/preview.
+    output. §16.2.4 SHIPPED `resolve_macro_addresses` (below) which
+    derives the addresses externally — patch_macro uses it for the
+    edit-once-applies-to-all fanout without stamping them onto the
+    placeholder itself. Future per-pick diff/preview surfaces (e.g.
+    §16.2.6 staged-edit) can stamp positions onto MacroPlaceholder
+    if the cost of re-walking the sidecar becomes meaningful.
 
     Kept as a separate type from `AtomicRef` so the strict XOR
     invariant on `AtomicRef` stays intact + callers explicitly
@@ -1036,15 +1040,20 @@ def _validate_no_orphan_slots(sidecar: dict, station_template: dict) -> None:
     """Drift rule 1: every slot in the station template must be referenced
     by some atomic block in the sidecar.
 
-    Limitation: macro blocks don't have known addresses yet (see
-    `expand_section` docstring note). This means stations using
-    macros today get a more lenient orphan check — any slot not
-    explicitly atomic-referenced is treated as "covered by a macro
-    somewhere" and skipped. Sidecars where every slot has a macro
-    cover technically pass this rule even if the coverage is wrong.
+    Limitation: macro blocks' addresses are derived at lookup time
+    (resolve_macro_addresses above), not stored on the placeholder.
+    This rule treats any slot not explicitly atomic-referenced as
+    "covered by a macro somewhere" and skips it; sidecars where
+    every slot has a macro cover technically pass this rule even
+    if the coverage is wrong.
 
-    The §16.2.4 (macro editing) slice will revisit this when macros
-    gain per-pick addressing.
+    Partial mitigation (§16.2.4 c1 review #12):
+    `_validate_no_overlapping_macros` catches the cases this rule
+    can't — sections with negative section_start, non-contiguous
+    coverage, or macro/atomic overlap. Together they bound the
+    drift surface, though a "macro covers slots N..M but should
+    cover N..M-1" mis-grouping is still invisible (the macro is
+    the source of truth for its own coverage).
     """
     form = _layout_form(station_template)
     addresses = set(_flatten_atomic_addresses(sidecar))

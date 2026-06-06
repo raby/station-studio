@@ -1,20 +1,24 @@
 <script lang="ts">
   /**
-   * <DetailPanel> — §16.2.2 c4 + §16.2.3 c1 (atomic edit form).
+   * <DetailPanel> — §16.2.2 c4 + §16.2.3 c1 + §16.2.4 c2.
    *
    * Slides in from the right when the user clicks a chip. Shows the
-   * full spec for that chip:
+   * full spec for that chip + offers up to three write paths:
    *
-   *   - atomic: identity (strategy/source/size, read-only) + an
-   *     EDIT FORM for the strategy's parameter fields (§16.2.3 c1).
-   *   - macro: read-only spec + repeat (macro edit is §16.2.4).
+   *   - atomic block: parameter-only edit form (§16.2.3, dispatches
+   *     `save`) + collapsible "Change strategy / source" retype
+   *     panel (§16.2.4 D2, dispatches `retype`).
+   *   - macro chip: same parameter-only edit form, but Save fans
+   *     out via §16.2.4 D1's edit-once-applies-to-all contract
+   *     (dispatches `macroSave`). A yellow banner names the
+   *     expanded-block count.
    *
-   * §16.2.3 c1 scope: the form edits PARAMETER fields only (Decision
-   * C — cursor_id / genre / window / exclusion_window / position /
-   * fallback_genre). strategy / source / size are read-only here.
-   * Save dispatches a `save` event with `{ ref, fields }`; the route
-   * wires persistence (the PATCH endpoint) in c2 — this component
-   * does no fetching.
+   * Parameter fields are the strategy-specific editable set
+   * (Decision C / §16.2.4 D3): cursor_id / genre / window /
+   * exclusion_window / position / fallback_genre / allowlist_sources.
+   * `size` stays read-only here (structural — §16.2.5 territory).
+   * Save dispatches an event; the route wires persistence (the
+   * PATCH endpoints) — this component does no fetching.
    *
    * row_template caveat (Decision B): editing a row_template block
    * edits the SHARED template block → every row changes. The form
@@ -363,14 +367,15 @@
     const fields = buildFieldsPayload();
     if (detail.kind === 'macro') {
       // §16.2.4 D1: macro fan-out edit.
-      // c2 review #6: detail.macro can be missing if the sidecar is
-      // a synthesize_trivial_sidecar fallback (no macros[]) but the
-      // selected ref is a stale macro-placeholder from a prior
-      // refetch. The Save button's `dirty` guard normally hides it
-      // (no editFields → no dirty), but if a future change relaxes
-      // dirty, silently no-oping a Save click would be a UX
-      // black hole. Surface as a save-state error the route can
-      // display instead of swallowing the dispatch.
+      // c2 review #6 (slice-review-sweep honesty note): today the
+      // `detail` resolver couples `detail.macro` and `detail.block`
+      // — `detail.block = macro?.spec ?? null`, so if macro is null
+      // block is null + the form doesn't render + Save isn't
+      // reachable. This guard is therefore defensive against a
+      // FUTURE refactor that decouples them (e.g. resolving
+      // `detail.block` from the engine template independently).
+      // Costs nothing to keep; surfaces a save-state error rather
+      // than silently swallowing the dispatch.
       const macroId = detail.macro?.id;
       if (macroId === undefined) {
         saveStateError =
