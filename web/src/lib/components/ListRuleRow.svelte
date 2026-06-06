@@ -19,6 +19,20 @@
    * single `updated` event when the row's canonical state changes
    * (after Save or Reset succeeds) so the parent can refresh its
    * rules array.
+   *
+   * §16.2.4 c2 review #7 — convergence note: the chip + input +
+   * Add-button cluster here overlaps with the §16.2.4 c2
+   * <ChipMultiInput> component (web/src/lib/components/editor/).
+   * ChipMultiInput is a focused controlled input (no server
+   * state); ListRuleRow owns server state (Save/Reset + global
+   * `/api/sources` fetch + suggestion metadata). A clean refactor
+   * would extract a third-tier `<Chips>` primitive that both
+   * compose around — but ListRuleRow's suggestion items show
+   * `name · role · N tracks` metadata that ChipMultiInput
+   * currently doesn't render, so the merge needs a slot/callback
+   * for the suggestion row. Deferred to the §16.2.4 slice-review
+   * sweep (or a separate cleanup slice) so c2 review #7 doesn't
+   * grow into a cross-cutting test-surface change.
    */
   import {
     ApiError,

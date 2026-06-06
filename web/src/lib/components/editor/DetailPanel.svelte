@@ -183,6 +183,7 @@
       retypeSource = (detail?.block as { source?: string } | null)?.source ?? null;
       retypeNewFields = {};
       retypeError = null;
+      saveStateError = null;
     }
   }
 
@@ -199,6 +200,11 @@
   let retypeSource: string | null = null;
   let retypeNewFields: Record<string, string | number | null> = {};
   let retypeError: string | null = null;
+  // c2 review #6: local Save-state error for client-side guards
+  // (e.g. macro.id missing). Distinct from the route's `saveError`
+  // (server/network errors) so the inline message lives next to
+  // the Save button without a round-trip.
+  let saveStateError: string | null = null;
 
   // §16.2.4 D4: bidirectional dropdown filtering. Strategy options
   // narrow by the CURRENT source's role; source options narrow by
@@ -351,10 +357,21 @@
     const fields = buildFieldsPayload();
     if (detail.kind === 'macro') {
       // §16.2.4 D1: macro fan-out edit.
+      // c2 review #6: detail.macro can be missing if the sidecar is
+      // a synthesize_trivial_sidecar fallback (no macros[]) but the
+      // selected ref is a stale macro-placeholder from a prior
+      // refetch. The Save button's `dirty` guard normally hides it
+      // (no editFields → no dirty), but if a future change relaxes
+      // dirty, silently no-oping a Save click would be a UX
+      // black hole. Surface as a save-state error the route can
+      // display instead of swallowing the dispatch.
       const macroId = detail.macro?.id;
-      if (macroId !== undefined) {
-        dispatch('macroSave', { macroId, fields });
+      if (macroId === undefined) {
+        saveStateError =
+          'cannot save: the selected macro is missing from the sidecar (stale view). Reload to refresh.';
+        return;
       }
+      dispatch('macroSave', { macroId, fields });
       return;
     }
     dispatch('save', { ref: selected.ref, fields });
@@ -568,6 +585,15 @@
           >
             Save
           </button>
+
+          {#if saveStateError}
+            <!-- c2 review #6: client-side save guard (e.g. missing
+                 macro.id) surfaces inline rather than silently
+                 no-op'ing the click. -->
+            <p class="field-error" data-testid="save-state-error">
+              {saveStateError}
+            </p>
+          {/if}
         {/if}
       </form>
     {/if}

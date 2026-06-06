@@ -80,48 +80,62 @@
     return null;
   }
 
-  // §16.2.3 c2 — DetailPanel save → PATCH → refetch. On 409 (someone
-  // else changed the station) show a reload prompt; on other errors
-  // show the message inline.
-  async function handleSave(
-    e: CustomEvent<{ ref: ExpandedRef; fields: Record<string, string | number | string[] | null> }>,
-  ) {
+  // c2 review #5: extract the PATCH-then-refetch lifecycle that
+  // every write-path handler shares. Resets the three banner
+  // variables, runs the supplied PATCH (catching 409 via the
+  // shared BlockPatchConflict contract — Mid-slice review 🟡-1: do
+  // NOT adopt the server's token; force the operator to Reload
+  // before retrying so concurrent changes aren't silently
+  // overwritten), then refetches the canvas. Refetch failures
+  // surface with a distinct `refetchVerbPrefix` so the operator
+  // can tell "save itself failed" from "save landed but the view
+  // didn't refresh."
+  async function withSaveLifecycle(
+    doPatch: () => Promise<unknown>,
+    refetchVerbPrefix: string,
+  ): Promise<void> {
     saveError = null;
     conflict = false;
     exportMsg = null;
-    const address = refToAddress(e.detail.ref);
-    if (address === null) {
-      saveError = 'cannot edit this block (no storage address)';
-      return;
-    }
-    // PATCH first; only on success refetch. Splitting the two
-    // (mid-slice review 🟢-3) means a refetch network blip AFTER a
-    // successful save doesn't masquerade as a save failure.
     try {
-      await patchBlock(slug, address, e.detail.fields, updatedAt);
+      await doPatch();
     } catch (err) {
       if (err instanceof BlockPatchConflict) {
-        // Mid-slice review 🟡-1: do NOT adopt the server's current
-        // token here. Keeping the STALE `updatedAt` means a retry
-        // without reloading 409s again — the user must reload (which
-        // refreshes content + token together) before their edit can
-        // land. Adopting the token would silently arm the next save
-        // to overwrite the concurrent change, defeating D2.
         conflict = true;
       } else {
         saveError = err instanceof Error ? err.message : String(err);
       }
       return;
     }
-    // Save landed — refresh canvas + optimistic token. A failure here
-    // is a refetch problem, not a save problem; surface it distinctly.
+    // PATCH landed — refresh canvas + optimistic token. Distinct
+    // (mid-slice review 🟢-3) so a refetch blip after a successful
+    // save doesn't masquerade as a save failure.
     try {
       await loadSidecar();
     } catch (err) {
       saveError =
-        'saved, but failed to refresh the view: ' +
+        `${refetchVerbPrefix}, but failed to refresh the view: ` +
         (err instanceof Error ? err.message : String(err));
     }
+  }
+
+  // §16.2.3 c2 — DetailPanel save → PATCH → refetch. On 409 (someone
+  // else changed the station) show a reload prompt; on other errors
+  // show the message inline.
+  async function handleSave(
+    e: CustomEvent<{ ref: ExpandedRef; fields: Record<string, string | number | string[] | null> }>,
+  ) {
+    const address = refToAddress(e.detail.ref);
+    if (address === null) {
+      saveError = 'cannot edit this block (no storage address)';
+      conflict = false;
+      exportMsg = null;
+      return;
+    }
+    await withSaveLifecycle(
+      () => patchBlock(slug, address, e.detail.fields, updatedAt),
+      'saved',
+    );
   }
 
   async function handleExport() {
@@ -135,76 +149,43 @@
     }
   }
 
-  // §16.2.4 c2 — macro fan-out edit (PATCH /macros/{macro_id}). Same
-  // success/error flow as handleSave: PATCH first, refetch on success,
-  // surface 409 vs generic error distinctly.
+  // §16.2.4 c2 — macro fan-out edit (PATCH /macros/{macro_id}).
   async function handleMacroSave(
     e: CustomEvent<{ macroId: string; fields: Record<string, string | number | string[] | null> }>,
   ) {
-    saveError = null;
-    conflict = false;
-    exportMsg = null;
-    try {
-      await patchMacro(slug, e.detail.macroId, e.detail.fields, updatedAt);
-    } catch (err) {
-      if (err instanceof BlockPatchConflict) {
-        conflict = true;
-      } else {
-        saveError = err instanceof Error ? err.message : String(err);
-      }
-      return;
-    }
-    try {
-      await loadSidecar();
-    } catch (err) {
-      saveError =
-        'saved, but failed to refresh the view: ' +
-        (err instanceof Error ? err.message : String(err));
-    }
+    await withSaveLifecycle(
+      () => patchMacro(slug, e.detail.macroId, e.detail.fields, updatedAt),
+      'saved',
+    );
   }
 
-  // §16.2.4 c2 — atomic block retype (PATCH /blocks/retype). Reuses
-  // the same address-resolution + 409-conflict path as handleSave.
+  // §16.2.4 c2 — atomic block retype (PATCH /blocks/retype).
   async function handleRetype(
     e: CustomEvent<{
-      ref: import('$lib/editor').ExpandedRef;
+      ref: ExpandedRef;
       newStrategy: string | null;
       newSource: string | null;
       newFields: Record<string, string | number | string[] | null>;
     }>,
   ) {
-    saveError = null;
-    conflict = false;
-    exportMsg = null;
     const address = refToAddress(e.detail.ref);
     if (address === null) {
       saveError = 'cannot retype this block (no storage address)';
+      conflict = false;
+      exportMsg = null;
       return;
     }
-    try {
-      await retypeBlock(
+    await withSaveLifecycle(
+      () => retypeBlock(
         slug,
         address,
         e.detail.newStrategy,
         e.detail.newSource,
         e.detail.newFields,
         updatedAt,
-      );
-    } catch (err) {
-      if (err instanceof BlockPatchConflict) {
-        conflict = true;
-      } else {
-        saveError = err instanceof Error ? err.message : String(err);
-      }
-      return;
-    }
-    try {
-      await loadSidecar();
-    } catch (err) {
-      saveError =
-        'retype landed, but failed to refresh the view: ' +
-        (err instanceof Error ? err.message : String(err));
-    }
+      ),
+      'retype landed',
+    );
   }
 
   async function reloadAfterConflict() {

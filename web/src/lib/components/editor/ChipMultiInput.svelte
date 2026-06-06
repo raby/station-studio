@@ -21,6 +21,15 @@
    * Free-form input still works when a typed name isn't in the
    * suggestions list — the engine cross-checks at parse_template
    * time (mirrors §16.14.t11's behavior).
+   *
+   * §16.2.4 c2 review #7 — convergence note: <ListRuleRow>
+   * (§16.14.t11) implements a similar chip+input UI but with
+   * server-state semantics (Save/Reset + suggestion fetch +
+   * suggestion metadata rendering). A third-tier `<Chips>`
+   * primitive that both compose around is the planned convergence
+   * point; see ListRuleRow's docstring for the surface-area
+   * mismatch (suggestion metadata slot) that blocks an immediate
+   * merge. Deferred to the §16.2.4 slice-review sweep.
    */
   import { createEventDispatcher } from 'svelte';
 
