@@ -7995,6 +7995,156 @@ branch so future required string_list fields validate uniformly;
   (which has more route-level surface to drive) or for the
   slice-review sweep.
 
+### 16.2.5 Section composition + structural block edits — design (paper)
+
+**Status.** IN FLIGHT. Trigger fired: §16.2.4 closed cleanly + the
+§16.2.4 c2 review #5 `withSaveLifecycle` helper anticipated a
+future §16.2.5 handler reusing the same lifecycle. The §16.2.3
+punts table homed `size` / add / remove blocks here from day one;
+§16.2.2's note that this is "the first slice with a sidecar write
+path" stays — the §16.2.4 macro edit folded a small sidecar-spec
+write back in for the c1 review #6 fix, but that was a single
+field on an existing macro. §16.2.5 introduces sidecar mutations
+that change the SHAPE of the editable structure.
+
+**Context.** Inherits the full §16.2.4 surface (PATCH /blocks,
+/blocks/retype, /macros/{macro_id}; the `<DetailPanel>` write
+form; D4 role-aware dropdowns; the shared
+`engine.editor_metadata.resolve_macro_addresses`,
+`MacroResolutionError`, and `_validate_no_overlapping_macros`
+drift rule; the `withSaveLifecycle` route helper). §16.2.5
+extends this in FOUR directions:
+
+1. **Section CRUD** — create / rename / delete sections.
+2. **Section reorder** — change `layout_order` (the operator's
+   visible section sequence).
+3. **Move blocks between sections** — drag a chip (or its
+   containing macro) into another section; sidecar mutates, the
+   ENGINE template stays unchanged.
+4. **Structural block edits** — `size` / add / remove blocks
+   directly. These DO change the engine template's slot count;
+   the sidecar's atomic-block references need their slot indices
+   bumped in lockstep with the template write.
+
+**Decisions (locked in the pre-c1 design talk):**
+
+* **D1 — Sidecar persistence: `Station.sidecar` JSON column,
+  materialised in the DB.** Today the sidecar lives in
+  `stations/{slug}.editor.json` on disk; every GET /sidecar
+  reads the file. §16.2.5 needs atomic update of template +
+  sidecar in the same request, and the disk-IO-per-GET cost
+  scales poorly with chip count. Add `Station.sidecar` as a
+  nullable JSON column; backfill via Alembic from the on-disk
+  file when present; un-authored stations stay NULL (GET
+  synthesises trivial as today). The disk file becomes the
+  EXPORT artifact, symmetric to `stations/{slug}.json` for the
+  template (Decision A3 from §16.2.3 — DB-as-truth + on-demand
+  disk export). User picked the "materialised" framing in the
+  pre-c1 question. NOT splitting sections/macros across columns
+  — full sidecar dict in one column keeps reads simple +
+  matches the wire shape `EditorSidecarResponse` already
+  returns.
+
+* **D2 — Section delete semantic: auto-move to 'Unsorted' bin.**
+  DELETE /sections/{id} re-homes the section's blocks into a
+  synthesised `_unsorted` section if any exist (server creates
+  it on first need; layout_order appends). Blocks survive the
+  delete; visual structure is preserved; the operator can
+  reorganize from there. User picked this over the safer
+  "reject if non-empty" — the §16.2.0 progressive-disclosure
+  ethos says the editor should never put the operator in a
+  state where they can't undo (deleted blocks = data loss;
+  unsorted blocks = visible recoverable). The bin is reserved
+  (id starts with `_`; UI hides the rename affordance).
+
+* **D3 — Slice shape: single §16.2.5 with many c-commits.**
+  User picked over splitting into .t1/.t2/.t3. Standard 5-
+  commit shape with the §16.2.4 cadence (/code-review --high
+  after each c-commit → folded review commits → c3 docs →
+  slice-review sweep). Larger blast radius per commit; larger
+  /code-review surface; offset by the §16.2.4 review-tool muscle
+  memory.
+
+* **D4 — Endpoint shape: REST verbs over a single bulk PUT.**
+  Each affordance gets its own endpoint:
+    * `POST /api/stations/{slug}/sections` — create
+    * `PATCH /api/stations/{slug}/sections/{id}` — rename
+    * `DELETE /api/stations/{slug}/sections/{id}` — delete
+      (auto-move per D2)
+    * `PUT /api/stations/{slug}/sections/order` — reorder
+      (full new layout_order list)
+    * `PATCH /api/stations/{slug}/blocks/move` — move a block
+      between sections (sidecar-only mutation)
+    * `PATCH /api/stations/{slug}/blocks/structure` —
+      structural edits (size / add / remove a block)
+  Optimistic-concurrency (`expected_updated_at`) applies
+  uniformly; each endpoint reuses `_check_optimistic_token`
+  + the shared parse_sidecar revalidation step. Rejected: one
+  bulk `PUT /api/stations/{slug}/sidecar` — would let the
+  client clobber concurrent changes without merge intent;
+  optimistic 409s become useless when the payload is the
+  whole document.
+
+* **D5 — Structural-edit index-shift contract.** When the
+  operator ADDS a block at `slot_index = N`, every
+  `slot_index ≥ N` in the sidecar's atomic blocks bumps by 1
+  in the same transaction. Same for REMOVE (decrement). Macros
+  don't carry slot_indices today — their positions are
+  derived at read time via `resolve_macro_addresses` (§16.2.4
+  c1 review #10), so they shift implicitly when atomic anchors
+  shift. `_validate_no_overlapping_macros` re-runs at the end
+  of every structural edit and catches any miscount.
+  `repeat_with_offsets` row_template sections: index-shift
+  happens against `block_idx` (not slot_index); structural
+  edits to row_template are restricted to the SHARED template
+  (per Decision B from §16.2.3 — editing block_idx changes
+  every row).
+
+* **D6 — Drag-drop UX: HTML5 native + dropdown fallback.**
+  Section headers + chips become drag handles via native
+  HTML5 drag events (no JS lib). A "Move to section…" dropdown
+  in the DetailPanel covers the keyboard-only + touch + screen-
+  reader paths (existing dropdown a11y patterns from §16.2.4
+  D4 carry over). Section reorder uses the same drag handles
+  with a dropdown fallback button in the SectionHeader for
+  "Move up / Move down" — keeps reorder accessible without
+  drag.
+
+* **D7 — Slice shape (commits):**
+    * c1 — backend: Alembic migration (Station.sidecar +
+      backfill) + 6 new endpoints + structural-edit index-shift
+      helper + pytest (~25 cases)
+    * /code-review → c1 review commits
+    * c2 — frontend: SectionHeader rename + Add Section button +
+      Move dropdown + structural-edit DetailPanel affordance +
+      drag-drop wiring + vitest + (FINALLY) Playwright e2e
+      click-through for the four §16.2.x slices
+    * /code-review → c2 review commits
+    * c3 — docs + closeout (DESIGN.md verification + deltas,
+      §15 status snapshot, stations/README.md "Edit a station
+      in the browser" recipe)
+    * slice-review sweep — my fresh-eyes pass
+
+* **D8 — Punts (homed in the right slices — do not lose):**
+
+  | Punt | Home | Note |
+  |---|---|---|
+  | Section colour-coding | **§16.2.6** | Visual nicety; doesn't affect structure. Folds into the live-preview slice if the staged-edit framing makes it cheap. |
+  | "Defined but hidden" section state | **§16.2.6** | The §16.2.2 punts table already homed this here. |
+  | Section nesting / sub-sections | DEFERRED indefinitely | No real operator demand; would balloon the sidecar grammar. |
+  | row_template drag-drop reorder | DEFERRED indefinitely | row_template stations (Classics) are rarer + structurally constrained; section operations on flat_slots cover the common case. |
+  | Staged-edit + Discard | **§16.2.6** | Live-preview slice (Decision F2 from §16.2.3). |
+  | Bulk operations (multi-select chips) | DEFERRED | No design pass yet; single-chip ops cover the common case. |
+
+**Closes (post-§16.2.5):** the §16.2.3 punts table's
+"Structural edits (`size` / add / remove blocks) — §16.2.5"
+row. The §16.2.0 progressive-disclosure narrative's "operator
+authoring beyond what derive_sidecar produces" gap (today the
+operator can't add a new section without hand-editing the file).
+The §16.2.4 c3 closeout's "no Playwright e2e yet" deferral —
+c2 folds in an e2e click-through that drives §16.2.3 + §16.2.4
++ §16.2.5 affordances as one regression suite.
+
 ### 16.3 Delete / station reset
 
 **Why this matters.** Today the only way to clean up a wizard test
