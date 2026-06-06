@@ -262,7 +262,13 @@
     // normalised string is ONLY for dirty/equality math. Sorted
     // to make order-only changes not count as dirty (the engine's
     // semantics are union over the list — order is meaningless).
-    if (Array.isArray(v)) return v.slice().sort().join('|');
+    //
+    // c3 review #10: use JSON.stringify of the sorted array rather
+    // than a delimiter-joined string. A previous `|`-join collided
+    // for inputs like `['A|B']` vs `['A', 'B']` (both stringified
+    // to `'A|B'` → dirty=false when they should differ). JSON's
+    // quote+escape rules guarantee a structural comparison.
+    if (Array.isArray(v)) return JSON.stringify(v.slice().sort());
     return String(v).trim();
   }
 

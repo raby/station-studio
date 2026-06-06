@@ -780,6 +780,18 @@ export const REFERENCE_SAMPLING_STRATEGIES: readonly Strategy[] = [
   'archive_ref',
 ] as const;
 
+/** Single source of truth for "what source role does this strategy
+ *  need" (c3 review #9 cleanup). The pair `compatibleStrategies` /
+ *  `compatibleSources` are now both expressed in terms of this
+ *  function — a future second reference-sampling strategy joins
+ *  `REFERENCE_SAMPLING_STRATEGIES` and both filters update via this
+ *  single helper. */
+export function roleForStrategy(strategy: Strategy): 'content' | 'reference' {
+  return REFERENCE_SAMPLING_STRATEGIES.includes(strategy)
+    ? 'reference'
+    : 'content';
+}
+
 /** Strategies compatible with the given source role.
  *
  *  D4 (§16.2.4): the strategy dropdown filters by the CURRENT source's
@@ -793,12 +805,7 @@ export const REFERENCE_SAMPLING_STRATEGIES: readonly Strategy[] = [
 export function compatibleStrategies(
   sourceRole: 'content' | 'reference',
 ): readonly Strategy[] {
-  if (sourceRole === 'reference') {
-    return REFERENCE_SAMPLING_STRATEGIES;
-  }
-  return ALL_STRATEGIES.filter(
-    (s) => !REFERENCE_SAMPLING_STRATEGIES.includes(s),
-  );
+  return ALL_STRATEGIES.filter((s) => roleForStrategy(s) === sourceRole);
 }
 
 /** Sources compatible with the given strategy.
@@ -818,10 +825,8 @@ export function compatibleSources(
   strategy: Strategy,
   sources: StationTemplate['sources'],
 ): StationTemplate['sources'] {
-  const wantsReference = REFERENCE_SAMPLING_STRATEGIES.includes(strategy);
-  return sources.filter((s) =>
-    wantsReference ? s.role === 'reference' : s.role === 'content',
-  );
+  const required = roleForStrategy(strategy);
+  return sources.filter((s) => s.role === required);
 }
 
 

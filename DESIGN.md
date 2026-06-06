@@ -6167,7 +6167,7 @@ direction — spec slice §16.2.0 is the next planned work.
 | Backup / restore         | Shipped (§14.18). `make backup` / `make restore date=...` with WAL-aware sqlite3 .backup + pre-restore safety copy. |
 | **§17 port roadmap**     | **Phase A + Phase B both complete. Phase A (§14.17–§14.21): pre-port unblocks. Phase B (§14.22–§14.41): port — byte-equality verified at depth against weekly + Classics. Phase C (production cutover): operational, not engineering — external validation in flight with the station owner. Next engineering direction: §16.0 OSS framing shift (shipped) + §16.2 visual block editor (the flagship hobbyist feature). |
 | **Product framing**      | **OSS for radio hobbyists (§16.0). MIT-licensed. README hobbyist-facing; CONTRIBUTING.md codifies slice pattern. Two example stations (Classics + Rebirth Radio) ship; hobbyist starter station queued (§16.7).** |
-| Visual block editor      | **§16.2.2 SHIPPED** — read-only canvas at `/stations/[slug]/visualise`. `GET /api/stations/{slug}/sidecar` endpoint serves template + sidecar in one fetch; trivial-sidecar fallback for un-authored stations (Decision E — frontend never handles "no sidecar"). 7 Svelte components (`<EditorCanvas>`, `<Section>`, `<SectionHeader>`, `<ChipFlow>`, `<Chip>`, `<ViewModeToggle>`, `<DetailPanel>`) compose the canvas. View-mode prefs (labels / colour / macros) persist to localStorage. Chips are native `<button>`s (keyboard a11y); click opens a slide-in DetailPanel with full BlockSpec / macro spec. `<500-chip` sections start expanded; `>500` sections start collapsed with "Large station" hint. Discoverability via "🗺 Visualise template" link from `/stations/[slug]`. **§16.2.3 SHIPPED** — atomic slot editing: click a chip → DetailPanel edit form (parameter fields only; cursor_id as a select) → Save → `PATCH /api/stations/{slug}/blocks` (server-enforced parameter-only, optimistic-concurrency 409, parse_template revalidation) → refetch. "Export to disk" writes `stations/{slug}.json` (Decision A3, DB-as-truth). row_template edits warn they change every row. **Next**: §16.2.4 macro editing + block retyping. |
+| Visual block editor      | **§16.2.2 SHIPPED** — read-only canvas at `/stations/[slug]/visualise`. `GET /api/stations/{slug}/sidecar` endpoint serves template + sidecar in one fetch; trivial-sidecar fallback for un-authored stations (Decision E — frontend never handles "no sidecar"). 7 Svelte components (`<EditorCanvas>`, `<Section>`, `<SectionHeader>`, `<ChipFlow>`, `<Chip>`, `<ViewModeToggle>`, `<DetailPanel>`) compose the canvas. View-mode prefs (labels / colour / macros) persist to localStorage. Chips are native `<button>`s (keyboard a11y); click opens a slide-in DetailPanel with full BlockSpec / macro spec. `<500-chip` sections start expanded; `>500` sections start collapsed with "Large station" hint. Discoverability via "🗺 Visualise template" link from `/stations/[slug]`. **§16.2.3 SHIPPED** — atomic slot editing: click a chip → DetailPanel edit form (parameter fields only; cursor_id as a select) → Save → `PATCH /api/stations/{slug}/blocks` (server-enforced parameter-only, optimistic-concurrency 409, parse_template revalidation) → refetch. "Export to disk" writes `stations/{slug}.json` (Decision A3, DB-as-truth). row_template edits warn they change every row. **§16.2.4 SHIPPED** — macro editing + block retyping + `allowlist_sources` per-block editor (closes §16.14.t7 c3 docs promise). Three new write paths: `PATCH /blocks/retype` (strategy+source swap with role validation via parse_template), `PATCH /macros/{macro_id}` (edit-once-applies-to-all fanout — server resolves macro_id → expanded block addresses via `engine.editor_metadata.resolve_macro_addresses`), plus extended PATCH /blocks accepting `allowlist_sources` for the 4 content-sampling strategies. New `<ChipMultiInput>` Svelte component for the chip-list editor. DetailPanel grew a collapsible "Change strategy / source" retype panel with D4 bidirectional role-filtered dropdowns; macros + atomics share the same form scaffolding (yellow fanout warning for macros). All-or-nothing macro transactions; new `_validate_no_overlapping_macros` drift rule. **Next**: §16.2.5 section composition + structural block edits. |
 | Station detail page      | **§16.19 SHIPPED** — `/stations/[slug]` overview bundle (`GET /api/stations/{slug}/overview`): template summary, source pools (not-imported gap flagged red), persistent cursor positions, generation rollup + staleness hint (`stale_count`, `updated_at`-proxy; precise fix §16.19.t1). Non-fatal fetch; bounded aggregate queries. **§16.25 extension**: not-imported badge is a deep-link to `/sources?pool=…&role=…`; `<PoolImportPanel>` embedded below the overview, scoped to declared sources; panel-driven changes refresh the overview live. |
 | Pool-import UI           | **§16.25 SHIPPED** — `/sources` page (list + single/batch add + per-row Re-import/Delete) + per-station embed + deep-link badge. `POST /api/sources/upload` multipart endpoint (streaming + `mkstemp` + `finally` cleanup). File-upload primary, typed-path advanced. CLI manifest (`make import-weekly-pools`) kept as the power-user channel. **Closed §16.13 D1.** Watch-list: §16.25.t1 (mid-batch mode-switch UX), §16.25.t2 (upload cancel / AbortController). |
 | Trace versioning         | Deferred. See §16.4 (queued; not on the critical path post-Phase-B). |
@@ -6965,7 +6965,7 @@ Seven implementation slices, each independently shippable:
 | **§16.2.1** | Sidecar grammar + parser | The schema (decision 2 above), `engine/editor_metadata.py` parser, drift detector, tests. No UI. **Plus** the two committed-station sidecars (`stations/rebirth-radio.editor.json` + `stations/rebirth-classics.editor.json`) authored using the grammar — without these, §16.2.2 has nothing to render. | Low-Medium — pure data layer, but ships two real-station sidecars so §16.2.2 can render something on day one. |
 | **§16.2.2** | Read-only canvas | `/stations/[slug]/visualise` route renders sections + macros from the sidecar shipped in §16.2.1. View only; no edits. **Coupling note:** §16.2.2 is paired with §16.2.1 in practice — without §16.2.1's committed sidecars, this route has nothing to render. Independently shippable in CODE terms (the route exists and works for any sidecar) but not in DEMO terms (the demo requires the sidecars). Treat the pair as one ~1-week unit; the 8-slice estimate already accounts for this. | Low — UI scaffold + sidecar consumer. |
 | **§16.2.3** | Atomic slot editing | Click chip → edit form → save (parameter fields only; see locked design below). **Targeted `PATCH /api/stations/{slug}/blocks`** with optimistic `expected_updated_at`; DB-as-truth + on-demand disk export. NO drag-drop (reorder is §16.2.5), NO retyping (§16.2.4), NO structural edits (§16.2.5). | Medium — first write path; resolved via the locked design (decisions A–F). |
-| **§16.2.4** | Macro editing | Edit-once-applies-to-all. Macro palette in sidebar. **+ block retyping** (change a block's `strategy` / `source`) punted here from §16.2.3 — needs valid-field-set swap + pool/cursor existence checks. | Medium. |
+| **§16.2.4** | Macro editing | **SHIPPED.** Edit-once-applies-to-all (PATCH /macros/{macro_id} fan-out via resolve_macro_addresses). **+ block retyping** (PATCH /blocks/retype with role-validated strategy+source swap) closes the §16.2.3 punt. **+ per-block `allowlist_sources` editor** via the new `<ChipMultiInput>` component — closes §16.14.t7 c3 docs promise. D4 role-aware bidirectional dropdowns. Macro palette sidebar PUNTED to §16.2.4.t1 (D5). | Medium. |
 | **§16.2.5** | Section composition | Create / rename / reorder sections. Drag macros between sections. **+ structural block edits** (`size` / add / remove) punted here from §16.2.3 — these change slot counts and must update the sidecar's atomic bounds in the same write (first slice with a sidecar write path). | Medium. |
 | **§16.2.6** | Live preview endpoint + UI | `POST /api/stations/{slug}/preview` (in-memory; no persistence side-effects) + editor wires it to a debounced auto-refresh trace panel. **Implementation note:** `excluded_mix_ids` must be RECOMPUTED per request from the DB's current MixUsage (not cached at page-load) — if the user edits a mix block's `exclusion_window` value in the editor, the new window changes which MixUsage rows are in scope. Same for `previous_playlist` if the user is on a non-week-1 preview. The endpoint reads all rule-derived inputs fresh from the request body + DB; nothing is cached across edits within a session. **+ staged-edit + Discard (F2)** punted here from §16.2.3 — the in-memory edit-accumulation + Discard model lands with live preview, since preview inherently needs staging; §16.2.3 ships immediate per-block save. | Medium — new API surface; debounce + state-management UX. |
 | **§16.2.7** | Compare against saved | "Show what changed since save" button → slot-by-slot diff using `byte_equality.py` helpers. | Low — diff helpers exist; UI plumbing. |
@@ -7046,7 +7046,7 @@ is §16.2.2 (read-only visualiser); v1 feature-complete at §16.2.8.
 - **§16.2.1** Sidecar grammar + parser + drift detector
 - **§16.2.2** Read-only visual canvas (`/stations/[slug]/visualise`)
 - **§16.2.3** Atomic slot editing
-- **§16.2.4** Macro editing
+- **§16.2.4** Macro editing **SHIPPED**
 - **§16.2.5** Section composition
 - **§16.2.6** Live preview endpoint + UI (debounced auto-refresh)
 - **§16.2.7** Compare against saved (slot-by-slot diff)
@@ -7872,6 +7872,128 @@ in the roadmap)." Per-block `allowlist_sources` editing becomes
 clickable. The retyping affordance closes the §16.2.3 punt
 (originally homed here). Role-aware dropdowns close the §16.14.t6
 UX trap implicitly. Three real promises kept in one slice.
+
+#### What §16.2.4 shipped — verification + deltas
+
+**c1 — backend (commit `f97b7b7`, 5 files, +950 lines).** Two new
+FastAPI endpoints close D1 + D2:
+
+* `PATCH /api/stations/{slug}/blocks/retype` — body carries
+  address + `new_strategy?` + `new_source?` + `new_fields`.
+  Server applies in order (strategy → source → fields), drops
+  keys not in the new strategy's editable set, re-`parse_template`s.
+  Distinct endpoint keeps PATCH /blocks's parameter-only contract
+  crisp.
+* `PATCH /api/stations/{slug}/macros/{macro_id}` — server reads
+  the sidecar, resolves macro_id → expanded block addresses via
+  the shared `engine.editor_metadata.resolve_macro_addresses`
+  helper (anchor-then-walk + cross-checks, see §16.2.1 c1 review
+  fix #10), applies fields to each block under the same
+  parameter-only guard, re-`parse_template`s. All-or-nothing —
+  any block's rejection rolls back the whole write.
+
+`EDITABLE_FIELDS_BY_STRATEGY` (Python) + `EDITABLE_FIELDS` (TS)
+extended with `allowlist_sources` on the four content-sampling
+strategies (D3). Parity test grew an anti-fragility guard
+(`test_ts_field_arrays_contain_only_object_literals`) so a
+future extracted-constant refactor fails loud first.
+
+c1 grew 3 review commits (15 findings — 5 correctness + 5 drift/
+altitude + 5 cleanup): negative-section_start guard +
+non-contiguous-section cross-check + IndexError → 400, retype
+new_fields structural-key rejection, OSError catch widening,
+sidecar macros[].spec write-back on macro edit, frozenset for
+EDITABLE_FIELDS_BY_STRATEGY, patch_block refactored to use shared
+helpers, the macro-address primitive moved to
+`engine.editor_metadata`, parity-test anti-fragility guard, new
+`_validate_no_overlapping_macros` drift rule, plus minor
+cleanup.
+
+**c2 — frontend (commit `25c563d`, 10 files, +1262 lines).**
+
+* `<ChipMultiInput>` (220 lines) — focused controlled chip-list
+  editor. Suggestions filter by parent-supplied list + input
+  text; Enter/Backspace keyboard conventions; comma guard.
+  ListRuleRow (§16.14.t11) has a convergence note for a future
+  shared `<Chips>` primitive (deferred to slice-review sweep —
+  suggestion metadata mismatch blocks an immediate merge).
+* `<DetailPanel>` upgraded: macros are now editable (D1 — same
+  form scaffolding, yellow "applies to all N expanded blocks"
+  fanout warning); atomic blocks gain a collapsible "Change
+  strategy / source" retype panel (D2) with D4 bidirectional
+  role-filtered dropdowns + an inline sub-form for newly-required
+  fields (e.g. `position` when retyping → archive_ref);
+  `allowlist_sources` renders via `<ChipMultiInput>`.
+* `web/src/lib/editor.ts` grew runtime mirrors of
+  `ALL_STRATEGIES` + `REFERENCE_SAMPLING_STRATEGIES` + the
+  `roleForStrategy(s)` helper (c3 review #9 dedupe). The
+  D4 filters `compatibleStrategies` / `compatibleSources` both
+  pivot on it.
+* `web/src/lib/api.ts` grew `retypeBlock` + `patchMacro` (same
+  `BlockPatchConflict` 409 contract as `patchBlock`; URL-encodes
+  slug + macro_id).
+* Route `/stations/{slug}/visualise` factored `withSaveLifecycle`
+  (c2 review #5) — the three write-path handlers
+  (handleSave / handleMacroSave / handleRetype) are 3-line
+  wrappers around it. Future §16.2.5 structural-edit handler
+  reuses the same lifecycle.
+
+c2 grew 2 review commits + this docs commit (10 findings — 4
+correctness + 3 cleanup + 3 lower-tier docs/altitude). Notable:
+the `seededFor` key now includes the resolved block's
+`strategy/source` so a retype refetch re-seeds editValues +
+retypeStrategy; `validateEditableField` gained a `string_list`
+branch so future required string_list fields validate uniformly;
+`normStr`'s sort-join switched to `JSON.stringify` so
+`['A|B']` no longer collides with `['A', 'B']`.
+
+**Verification + deltas.**
+
+* pytest: 1149 passed, 1 skipped. vitest: 520 passed. svelte-check:
+  0 errors. Editable-fields parity test green (Python + TS
+  EDITABLE_FIELDS_BY_STRATEGY agree).
+* Engine: no engine changes. The editor mutates `Station.template`
+  via SQLAlchemy reassignment (onupdate fires → updated_at bumps
+  → 409 contract works end-to-end).
+* Sidecar: `engine.editor_metadata.resolve_macro_addresses` +
+  `MacroResolutionError` are new public names; the
+  `_validate_no_overlapping_macros` drift rule fires at
+  parse_sidecar time, catching negative-section_start +
+  non-contiguous-section + overlap with atomics + macro-onto-
+  macro before mutation paths reach them.
+
+**Known limitations + queued punts.**
+
+* **Macro palette sidebar — §16.2.4.t1 (D5 punt).** Today macros
+  are reachable by clicking a macro chip on the canvas. A
+  browseable list (jump-to-canvas, edit-from-sidebar) is the
+  follow-up slice.
+* **Pool-existence at retype** — `parse_template` is a pure
+  structural validator. Retyping to a declared-but-pool-less
+  source returns 200; next playlist generation fails at
+  load_pools time. Mitigated by D4 source-dropdown filtering
+  (only declared sources appear). The proper home for a real
+  check is a dedicated `/api/stations/{slug}/validate` endpoint
+  (queued, no slice number yet).
+* **archive_ref retype from a content-source block — UX trap.**
+  The D4 strategy dropdown filters by the CURRENT source's role,
+  so retyping to `archive_ref` from a content-source block
+  requires picking a reference source FIRST (then archive_ref
+  appears). Considered: show grayed-out archive_ref with a
+  tooltip, or invert the dependency (strategy-first). Decision:
+  KEEP the source-first ordering — it mirrors the canonical
+  thought process ("I want to pull from THAT pool, in THIS
+  role"). Documented here so it doesn't get re-litigated.
+* **ListRuleRow + ChipMultiInput convergence — slice-review
+  sweep.** Both components own a similar chip+input UX with
+  different test/suggestion-metadata surfaces. A future shared
+  `<Chips>` primitive is the convergence target; deferred to
+  keep this slice from cross-cutting the §16.14.t11 test surface.
+* **No Playwright e2e for retype + macro yet.** vitest coverage
+  is exhaustive at the component + helper layer; an e2e click-
+  through is queued for the §16.2.5 structural-edit slice
+  (which has more route-level surface to drive) or for the
+  slice-review sweep.
 
 ### 16.3 Delete / station reset
 
