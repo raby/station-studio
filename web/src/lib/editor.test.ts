@@ -821,3 +821,49 @@ describe('REFERENCE_SAMPLING_STRATEGIES + ALL_STRATEGIES', () => {
     ]));
   });
 });
+
+
+// ---- c2 review #3/#4: validateEditableField string_list branch ------
+
+
+describe('validateEditableField — string_list', () => {
+  it('null + empty array are valid for an OPTIONAL string_list', () => {
+    const spec = {
+      name: 'allowlist_sources', label: 'Allowlist',
+      type: 'string_list' as const, required: false,
+    };
+    expect(validateEditableField(spec, [], undefined)).toBeNull();
+    expect(validateEditableField(spec, undefined, undefined)).toBeNull();
+  });
+
+  it('empty array fails a REQUIRED string_list with "is required"', () => {
+    // No required string_list field exists today; this pins the
+    // contract so a future required string_list (e.g. denylist_sources)
+    // wires through without a special case at the call sites.
+    const spec = {
+      name: 'must_pick', label: 'Must Pick',
+      type: 'string_list' as const, required: true,
+    };
+    expect(validateEditableField(spec, [], undefined)).toMatch(/is required/);
+    expect(validateEditableField(spec, undefined, undefined)).toMatch(/is required/);
+  });
+
+  it('non-empty array passes a REQUIRED string_list', () => {
+    const spec = {
+      name: 'must_pick', label: 'Must Pick',
+      type: 'string_list' as const, required: true,
+    };
+    expect(validateEditableField(spec, ['A'], undefined)).toBeNull();
+    expect(validateEditableField(spec, ['A', 'B'], undefined)).toBeNull();
+  });
+
+  it('rejects an array passed to a non-list spec with a clear error', () => {
+    // Catches a bug class where editValues for a string field
+    // accidentally holds an array (e.g. a future component swap).
+    const spec = {
+      name: 'genre', label: 'Genre',
+      type: 'string' as const, required: true,
+    };
+    expect(validateEditableField(spec, ['Day'], undefined)).toMatch(/single value/);
+  });
+});

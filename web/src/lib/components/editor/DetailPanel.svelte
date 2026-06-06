@@ -40,6 +40,14 @@
   } from '$lib/editor';
   import ChipMultiInput from './ChipMultiInput.svelte';
 
+  // c2 review #2: shared field-value union covering every editable
+  // type the form can hold. `string | number | null` covers the
+  // string + int fields; `string[]` covers string_list
+  // (allowlist_sources today). Exported indirectly via the dispatch
+  // event types so EditorCanvas + the route handlers can import the
+  // same shape without re-declaring.
+  type FieldValue = string | number | string[] | null;
+
   /** The selected ref (or null when nothing's selected — panel is
    *  hidden in that case). */
   export let selected: { ref: ExpandedRef; section: SidecarSection } | null = null;
@@ -55,16 +63,23 @@
    *      handler is responsible for the API call.
    *  - `macroSave`: macro-fanout edit (PATCH /macros/{macro_id})
    */
+  // c2 review #2: the fields payload's value union now includes
+  // `string[]` end-to-end so `allowlist_sources` (string_list) can
+  // ride along without the `as unknown as string` cast that the
+  // initial c2 implementation used. JSON.stringify serializes the
+  // array shape happily; widening the type contract makes that
+  // explicit + lets downstream consumers (api.ts, route handler)
+  // type-check honestly.
   const dispatch = createEventDispatcher<{
     close: void;
-    save: { ref: ExpandedRef; fields: Record<string, string | number | null> };
+    save: { ref: ExpandedRef; fields: Record<string, FieldValue> };
     retype: {
       ref: ExpandedRef;
       newStrategy: string | null;
       newSource: string | null;
-      newFields: Record<string, string | number | null>;
+      newFields: Record<string, FieldValue>;
     };
-    macroSave: { macroId: string; fields: Record<string, string | number | null> };
+    macroSave: { macroId: string; fields: Record<string, FieldValue> };
   }>();
 
   // Resolve the spec under the selection.
@@ -131,7 +146,21 @@
   let editValues: Record<string, EditVal> = {};
   let seededFor: string | null = null;
   $: {
-    const key = selected ? JSON.stringify(selected.ref) : null;
+    // c2 review #1: the seededFor key MUST reflect any change to the
+    // resolved block content, not just the selection ref. Without
+    // this, a successful retype (which keeps `selected.ref` stable
+    // and only mutates `detail.block` via refetch) would skip the
+    // reseed → editValues stays for the OLD strategy's fields,
+    // retypeStrategy / retypeSource hold the pre-retype values, and
+    // the form renders blank inputs for the new strategy's fields.
+    // JSON.stringify of selected.ref + the block's stable identity
+    // fields (strategy + source) catches the retype case + leaves
+    // parameter-only edits as no-ops (block.strategy/source unchanged
+    // → same key → no clobber of in-progress edits).
+    const blockKey = detail?.block
+      ? `${detail.block.strategy}/${detail.block.source}`
+      : 'null';
+    const key = selected ? `${JSON.stringify(selected.ref)}#${blockKey}` : null;
     if (key !== seededFor) {
       seededFor = key;
       const next: Record<string, EditVal> = {};
@@ -232,15 +261,14 @@
   }
 
   // Per-field validation (mirrors engine validators via the helper).
+  // c2 review #3: string_list dispatches to the same helper —
+  // validateEditableField gained a string_list branch that respects
+  // spec.required, so no field type is special-cased here anymore.
   $: fieldErrors = Object.fromEntries(
     editFields.map((f) => {
       const raw = editValues[f.name];
       if (f.type === 'string_list') {
-        // Empty list is "no constraint" — fine for an OPTIONAL field
-        // (the engine collapses [] → None at parse_template time).
-        // No string-list field is required today; if one ever is,
-        // wire up min-length here.
-        return [f.name, null];
+        return [f.name, validateEditableField(f, Array.isArray(raw) ? raw : [], template)];
       }
       const s = normStr(raw);
       const val = f.type === 'int' ? (s === '' ? undefined : Number(s)) : s;
@@ -284,9 +312,11 @@
 
   /** Build the fields payload from current editValues. Shared by
    *  the atomic-save and macro-save paths since both send the same
-   *  parameter-only PATCH body. */
-  function buildFieldsPayload(): Record<string, string | number | null> | string[] {
-    const fields: Record<string, string | number | null> = {};
+   *  parameter-only PATCH body. c2 review #2: now honestly typed
+   *  with `FieldValue` — the string_list branch returns the actual
+   *  string[] without the `as unknown as string` lie. */
+  function buildFieldsPayload(): Record<string, FieldValue> {
+    const fields: Record<string, FieldValue> = {};
     for (const f of editFields) {
       const raw = editValues[f.name];
       if (f.type === 'string_list') {
@@ -295,7 +325,7 @@
         // sent verbatim — the PATCH endpoint accepts string[] for
         // `allowlist_sources`.
         const arr = Array.isArray(raw) ? raw : [];
-        fields[f.name] = arr.length === 0 ? null : (arr as unknown as string);
+        fields[f.name] = arr.length === 0 ? null : arr;
       } else {
         const s = normStr(raw);
         if (s === '') {
@@ -318,7 +348,7 @@
     ) {
       return;
     }
-    const fields = buildFieldsPayload() as Record<string, string | number | null>;
+    const fields = buildFieldsPayload();
     if (detail.kind === 'macro') {
       // §16.2.4 D1: macro fan-out edit.
       const macroId = detail.macro?.id;
@@ -350,8 +380,11 @@
         ? retypeSource
         : null;
     // Coerce retypeNewFields by their EditableFieldSpec.type so int
-    // fields don't end up as string in the JSON body.
-    const newFields: Record<string, string | number | null> = {};
+    // fields don't end up as string in the JSON body. The inline
+    // retype sub-form renders int + string inputs only (string_list
+    // fields require the chip-multi editor, which lives in the main
+    // form not here) — so newFields entries are always scalar.
+    const newFields: Record<string, FieldValue> = {};
     for (const f of retypeRequiredNew) {
       const v = retypeNewFields[f.name];
       if (v === null || v === undefined || v === '') {

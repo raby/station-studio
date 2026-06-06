@@ -50,14 +50,18 @@
   // events (atomic save, macro save, retype) up to the route, which
   // owns the slug + optimistic token + the PATCH calls. The canvas
   // stays persistence-agnostic.
+  //
+  // c2 review #2: field-value union widened to include `string[]`
+  // (for allowlist_sources). DetailPanel + api.ts use the same union.
+  type FieldValue = string | number | string[] | null;
   const dispatch = createEventDispatcher<{
-    save: { ref: ExpandedRef; fields: Record<string, string | number | null> };
-    macroSave: { macroId: string; fields: Record<string, string | number | null> };
+    save: { ref: ExpandedRef; fields: Record<string, FieldValue> };
+    macroSave: { macroId: string; fields: Record<string, FieldValue> };
     retype: {
       ref: ExpandedRef;
       newStrategy: string | null;
       newSource: string | null;
-      newFields: Record<string, string | number | null>;
+      newFields: Record<string, FieldValue>;
     };
   }>();
 
@@ -116,12 +120,12 @@
   // here (not inline in the template) because Svelte's template parser
   // doesn't accept TS type annotations on arrow-function params.
   function forwardSave(
-    e: CustomEvent<{ ref: ExpandedRef; fields: Record<string, string | number | null> }>,
+    e: CustomEvent<{ ref: ExpandedRef; fields: Record<string, FieldValue> }>,
   ) {
     dispatch('save', e.detail);
   }
   function forwardMacroSave(
-    e: CustomEvent<{ macroId: string; fields: Record<string, string | number | null> }>,
+    e: CustomEvent<{ macroId: string; fields: Record<string, FieldValue> }>,
   ) {
     dispatch('macroSave', e.detail);
   }
@@ -130,7 +134,7 @@
       ref: ExpandedRef;
       newStrategy: string | null;
       newSource: string | null;
-      newFields: Record<string, string | number | null>;
+      newFields: Record<string, FieldValue>;
     }>,
   ) {
     dispatch('retype', e.detail);

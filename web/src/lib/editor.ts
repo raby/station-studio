@@ -844,9 +844,21 @@ export function availableCursorIds(template: StationTemplate): string[] {
  */
 export function validateEditableField(
   spec: EditableFieldSpec,
-  value: string | number | undefined,
+  value: string | number | string[] | undefined,
   template?: StationTemplate,
 ): string | null {
+  // c2 review #3 + #4: explicit string_list branch — previously the
+  // call sites special-cased string_list to always-null which lied
+  // about validity for any future required string_list field. Now
+  // the type checks here against the spec.type and respects spec.required.
+  if (spec.type === 'string_list') {
+    const arr = Array.isArray(value) ? value : [];
+    if (arr.length === 0 && spec.required) {
+      return `${spec.label} is required`;
+    }
+    return null;
+  }
+
   const empty =
     value === undefined ||
     value === '' ||
@@ -865,7 +877,11 @@ export function validateEditableField(
     return null;
   }
 
-  // string
+  // string (or anything that survived the int branch). Reject
+  // accidental array values for non-list specs.
+  if (Array.isArray(value)) {
+    return `${spec.label} must be a single value, got a list`;
+  }
   const s = String(value);
   if (spec.enumFromCursors && template) {
     const ids = availableCursorIds(template);

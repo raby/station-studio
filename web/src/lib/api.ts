@@ -734,7 +734,7 @@ export class BlockPatchConflict extends ApiError {
 export const patchBlock = async (
   slug: string,
   address: BlockAddress,
-  fields: Record<string, string | number | null>,
+  fields: Record<string, string | number | string[] | null>,
   expectedUpdatedAt: string | null,
   fetch_ = fetch,
 ): Promise<BlockPatchResponse> => {
@@ -792,7 +792,7 @@ export const retypeBlock = async (
   address: BlockAddress,
   newStrategy: string | null,
   newSource: string | null,
-  newFields: Record<string, string | number | null>,
+  newFields: Record<string, string | number | string[] | null>,
   expectedUpdatedAt: string | null,
   fetch_ = fetch,
 ): Promise<BlockRetypeResponse> => {
@@ -847,7 +847,7 @@ export interface MacroPatchResponse {
 export const patchMacro = async (
   slug: string,
   macroId: string,
-  fields: Record<string, string | number | null>,
+  fields: Record<string, string | number | string[] | null>,
   expectedUpdatedAt: string | null,
   fetch_ = fetch,
 ): Promise<MacroPatchResponse> => {

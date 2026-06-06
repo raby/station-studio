@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup } from '@testing-library/svelte';
 import '@testing-library/jest-dom/vitest';
+import { tick } from 'svelte';
 import DetailPanel from './DetailPanel.svelte';
 import type {
   AtomicRef,
@@ -332,5 +333,36 @@ describe('<DetailPanel> — §16.2.3 c1 edit form', () => {
     expect(screen.getByTestId('macro-fanout-warning')).toBeInTheDocument();
     // No retype panel on macros — that's per-block (PATCH /blocks/retype).
     expect(screen.queryByTestId('retype-toggle')).toBeNull();
+  });
+
+  it('c2 review #1: editValues re-seed when block.strategy changes (same ref, post-retype)', async () => {
+    // c2 review #1: seededFor key includes block strategy+source so
+    // a refetch after retype (selected.ref unchanged, template
+    // mutated) re-seeds editValues for the NEW strategy's fields.
+    // Render mix slot (genre + exclusion_window), then swap the
+    // template to a jingle block at the same slot_index → form
+    // should now show only `genre`.
+    const ref: AtomicRef = { kind: 'atomic-ref', slot_index: 0 };
+    const sidecar = makeSidecar();
+    const { component } = render(DetailPanel, {
+      selected: { ref, section: ESEC },
+      template: makeEditTemplate(), sidecar,
+    });
+    expect(screen.getByTestId('input-genre')).toHaveValue('Old');
+    expect(screen.getByTestId('input-exclusion_window')).toBeInTheDocument();
+
+    // Swap template: slot 0 is now jingle. Selection ref is the same
+    // object reference. The block content (strategy/source) shifted.
+    const t2 = makeEditTemplate();
+    t2.layout.flat_slots![0] = {
+      source: 'A', strategy: 'jingle', size: 1, genre: 'Bumper',
+    };
+    component.$set({ template: t2 });
+    await tick();
+    // jingle has only `genre` editable → exclusion_window disappears,
+    // genre re-seeds to the new block's value (proves the reseed
+    // actually fired vs sticking with 'Old' from the prior block).
+    expect(screen.queryByTestId('input-exclusion_window')).toBeNull();
+    expect(screen.getByTestId('input-genre')).toHaveValue('Bumper');
   });
 });

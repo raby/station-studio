@@ -84,7 +84,7 @@
   // else changed the station) show a reload prompt; on other errors
   // show the message inline.
   async function handleSave(
-    e: CustomEvent<{ ref: ExpandedRef; fields: Record<string, string | number | null> }>,
+    e: CustomEvent<{ ref: ExpandedRef; fields: Record<string, string | number | string[] | null> }>,
   ) {
     saveError = null;
     conflict = false;
@@ -139,7 +139,7 @@
   // success/error flow as handleSave: PATCH first, refetch on success,
   // surface 409 vs generic error distinctly.
   async function handleMacroSave(
-    e: CustomEvent<{ macroId: string; fields: Record<string, string | number | null> }>,
+    e: CustomEvent<{ macroId: string; fields: Record<string, string | number | string[] | null> }>,
   ) {
     saveError = null;
     conflict = false;
@@ -170,7 +170,7 @@
       ref: import('$lib/editor').ExpandedRef;
       newStrategy: string | null;
       newSource: string | null;
-      newFields: Record<string, string | number | null>;
+      newFields: Record<string, string | number | string[] | null>;
     }>,
   ) {
     saveError = null;
