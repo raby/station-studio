@@ -1519,3 +1519,388 @@ def test_macro_edit_updates_sidecar_spec_in_db(editor_api):
     # only path that writes the file under §16.2.5 D1.
     after_file = json.loads((stations_dir / "ms.editor.json").read_text())
     assert after_file["macros"][0]["spec"]["genre"] == "G"
+
+
+# ---------- §16.2.5 c1: section composition + structural block edits ---
+
+
+def _composition_station(
+    Session: sessionmaker, slug: str = "comp",
+) -> dict:
+    """flat_slots station with 6 atomic blocks across 2 sections —
+    enough surface for create/rename/delete/order + move + structural
+    edits without piling fixtures in every test."""
+    template = _build_template(
+        slug, name="Comp",
+        sources=[{"name": "A", "colour": "#abc", "role": "content"}],
+        flat_slots=[
+            {"source": "A", "strategy": "jingle", "size": 1, "genre": f"G{i}"}
+            for i in range(6)
+        ],
+    )
+    sidecar = {
+        "schema_version": 1,
+        "sections": [
+            {"id": "lead", "name": "Lead",
+             "blocks": [{"kind": "atomic", "slot_index": i} for i in range(3)]},
+            {"id": "tail", "name": "Tail",
+             "blocks": [{"kind": "atomic", "slot_index": i} for i in range(3, 6)]},
+        ],
+        "macros": [],
+        "layout_order": ["lead", "tail"],
+    }
+    with Session() as db:
+        db.add(Station(
+            slug=slug, name="Comp", template=template, sidecar=sidecar,
+        ))
+        db.commit()
+    return sidecar
+
+
+# ---- POST /sections -------------------------------------------------------
+
+
+def test_create_section_appends_to_layout_order(editor_api):
+    client, Session, _dir = editor_api
+    _composition_station(Session, "comp")
+    r = client.post("/api/stations/comp/sections", json={
+        "id": "bridge", "name": "Bridge",
+        "expected_updated_at": _token(client, "comp"),
+    })
+    assert r.status_code == 201, r.json()
+    body = r.json()
+    assert body["sidecar"]["layout_order"][-1] == "bridge"
+    assert any(s["id"] == "bridge" for s in body["sidecar"]["sections"])
+    assert _find_blocks(body["sidecar"], "bridge") == []
+
+
+def test_create_section_rejects_leading_underscore(editor_api):
+    client, Session, _dir = editor_api
+    _composition_station(Session, "comp")
+    r = client.post("/api/stations/comp/sections", json={
+        "id": "_oops", "expected_updated_at": _token(client, "comp"),
+    })
+    assert r.status_code == 400
+    assert "_unsorted" in r.json()["detail"]
+
+
+def test_create_section_409_on_duplicate_id(editor_api):
+    client, Session, _dir = editor_api
+    _composition_station(Session, "comp")
+    r = client.post("/api/stations/comp/sections", json={
+        "id": "lead", "expected_updated_at": _token(client, "comp"),
+    })
+    assert r.status_code == 409
+    assert "already exists" in r.json()["detail"]
+
+
+def test_create_section_409_on_stale_token(editor_api):
+    client, Session, _dir = editor_api
+    _composition_station(Session, "comp")
+    r = client.post("/api/stations/comp/sections", json={
+        "id": "x", "expected_updated_at": "1999-01-01T00:00:00+00:00",
+    })
+    assert r.status_code == 409
+    assert "current_updated_at" in r.json()["detail"]
+
+
+def test_create_section_unknown_station_404(editor_api):
+    client, _Session, _dir = editor_api
+    r = client.post("/api/stations/nope/sections", json={"id": "x"})
+    assert r.status_code == 404
+
+
+# ---- PATCH /sections/{id} (rename) ----------------------------------------
+
+
+def test_rename_section_updates_name(editor_api):
+    client, Session, _dir = editor_api
+    _composition_station(Session, "comp")
+    r = client.patch("/api/stations/comp/sections/lead", json={
+        "name": "Opening", "expected_updated_at": _token(client, "comp"),
+    })
+    assert r.status_code == 200
+    sections = r.json()["sidecar"]["sections"]
+    assert next(s for s in sections if s["id"] == "lead")["name"] == "Opening"
+
+
+def test_rename_section_rejects_unsorted_bin(editor_api):
+    client, Session, stations_dir = editor_api
+    # Set up an existing _unsorted section by delete-then-rename.
+    sidecar = _composition_station(Session, "comp")
+    sidecar["sections"].append({
+        "id": "_unsorted", "name": "Unsorted", "blocks": [],
+    })
+    sidecar["layout_order"].append("_unsorted")
+    with Session() as db:
+        row = db.query(Station).filter(Station.slug == "comp").first()
+        row.sidecar = sidecar
+        db.commit()
+    r = client.patch("/api/stations/comp/sections/_unsorted", json={
+        "name": "Renamed", "expected_updated_at": _token(client, "comp"),
+    })
+    assert r.status_code == 400
+    assert "_unsorted" in r.json()["detail"]
+
+
+def test_rename_section_404_unknown(editor_api):
+    client, Session, _dir = editor_api
+    _composition_station(Session, "comp")
+    r = client.patch("/api/stations/comp/sections/ghost", json={
+        "name": "X", "expected_updated_at": _token(client, "comp"),
+    })
+    assert r.status_code == 404
+
+
+# ---- DELETE /sections/{id} ------------------------------------------------
+
+
+def test_delete_empty_section_just_drops_it(editor_api):
+    client, Session, _dir = editor_api
+    _composition_station(Session, "comp")
+    # Create empty then delete.
+    client.post("/api/stations/comp/sections", json={
+        "id": "scratch", "expected_updated_at": _token(client, "comp"),
+    })
+    r = client.delete(
+        f"/api/stations/comp/sections/scratch?expected_updated_at={_token(client, 'comp')}",
+    )
+    assert r.status_code == 200, r.json()
+    sidecar = r.json()["sidecar"]
+    assert all(s["id"] != "scratch" for s in sidecar["sections"])
+    assert "scratch" not in sidecar["layout_order"]
+    # No _unsorted bin created — empty source.
+    assert all(s["id"] != "_unsorted" for s in sidecar["sections"])
+
+
+def test_delete_nonempty_section_moves_blocks_to_unsorted(editor_api):
+    client, Session, _dir = editor_api
+    _composition_station(Session, "comp")
+    r = client.delete(
+        f"/api/stations/comp/sections/tail?expected_updated_at={_token(client, 'comp')}",
+    )
+    assert r.status_code == 200
+    sidecar = r.json()["sidecar"]
+    assert all(s["id"] != "tail" for s in sidecar["sections"])
+    unsorted = next(s for s in sidecar["sections"] if s["id"] == "_unsorted")
+    # tail had slots 3, 4, 5 — now in _unsorted in order.
+    assert [b["slot_index"] for b in unsorted["blocks"]] == [3, 4, 5]
+    assert "_unsorted" in sidecar["layout_order"]
+
+
+def test_delete_unsorted_bin_rejected(editor_api):
+    client, Session, _dir = editor_api
+    _composition_station(Session, "comp")
+    # First create the bin via a real delete.
+    client.delete(
+        f"/api/stations/comp/sections/tail?expected_updated_at={_token(client, 'comp')}",
+    )
+    r = client.delete(
+        f"/api/stations/comp/sections/_unsorted?expected_updated_at={_token(client, 'comp')}",
+    )
+    assert r.status_code == 400
+    assert "_unsorted" in r.json()["detail"]
+
+
+# ---- PUT /sections/order --------------------------------------------------
+
+
+def test_reorder_sections_swaps_order(editor_api):
+    client, Session, _dir = editor_api
+    _composition_station(Session, "comp")
+    r = client.put("/api/stations/comp/sections/order", json={
+        "layout_order": ["tail", "lead"],
+        "expected_updated_at": _token(client, "comp"),
+    })
+    assert r.status_code == 200
+    assert r.json()["sidecar"]["layout_order"] == ["tail", "lead"]
+
+
+def test_reorder_sections_rejects_unknown_id(editor_api):
+    client, Session, _dir = editor_api
+    _composition_station(Session, "comp")
+    r = client.put("/api/stations/comp/sections/order", json={
+        "layout_order": ["lead", "ghost"],
+        "expected_updated_at": _token(client, "comp"),
+    })
+    assert r.status_code == 400
+    assert "ghost" in r.json()["detail"]
+
+
+def test_reorder_sections_rejects_dropped_id(editor_api):
+    client, Session, _dir = editor_api
+    _composition_station(Session, "comp")
+    r = client.put("/api/stations/comp/sections/order", json={
+        "layout_order": ["lead"],  # dropped 'tail'
+        "expected_updated_at": _token(client, "comp"),
+    })
+    assert r.status_code == 400
+    assert "tail" in r.json()["detail"]
+
+
+def test_reorder_sections_rejects_duplicates(editor_api):
+    client, Session, _dir = editor_api
+    _composition_station(Session, "comp")
+    r = client.put("/api/stations/comp/sections/order", json={
+        "layout_order": ["lead", "lead"],
+        "expected_updated_at": _token(client, "comp"),
+    })
+    assert r.status_code == 400
+
+
+# ---- PATCH /blocks/move ---------------------------------------------------
+
+
+def test_move_block_into_target_section_appends(editor_api):
+    client, Session, _dir = editor_api
+    _composition_station(Session, "comp")
+    r = client.patch("/api/stations/comp/blocks/move", json={
+        "address": {"slot_index": 0},  # was in 'lead'
+        "target_section_id": "tail",
+        "expected_updated_at": _token(client, "comp"),
+    })
+    assert r.status_code == 200, r.json()
+    sidecar = r.json()["sidecar"]
+    # 'lead' no longer contains slot 0.
+    lead = next(s for s in sidecar["sections"] if s["id"] == "lead")
+    assert all(b.get("slot_index") != 0 for b in lead["blocks"])
+    # 'tail' contains it at the END.
+    tail = next(s for s in sidecar["sections"] if s["id"] == "tail")
+    assert tail["blocks"][-1] == {"kind": "atomic", "slot_index": 0}
+
+
+def test_move_block_with_target_index_inserts_at_position(editor_api):
+    client, Session, _dir = editor_api
+    _composition_station(Session, "comp")
+    r = client.patch("/api/stations/comp/blocks/move", json={
+        "address": {"slot_index": 0},
+        "target_section_id": "tail",
+        "target_index": 0,
+        "expected_updated_at": _token(client, "comp"),
+    })
+    assert r.status_code == 200
+    tail = next(s for s in r.json()["sidecar"]["sections"] if s["id"] == "tail")
+    assert tail["blocks"][0] == {"kind": "atomic", "slot_index": 0}
+
+
+def test_move_block_404_when_address_not_found(editor_api):
+    client, Session, _dir = editor_api
+    _composition_station(Session, "comp")
+    r = client.patch("/api/stations/comp/blocks/move", json={
+        "address": {"slot_index": 99},
+        "target_section_id": "tail",
+        "expected_updated_at": _token(client, "comp"),
+    })
+    assert r.status_code == 404
+
+
+def test_move_block_404_when_target_section_unknown(editor_api):
+    client, Session, _dir = editor_api
+    _composition_station(Session, "comp")
+    r = client.patch("/api/stations/comp/blocks/move", json={
+        "address": {"slot_index": 0},
+        "target_section_id": "ghost",
+        "expected_updated_at": _token(client, "comp"),
+    })
+    assert r.status_code == 404
+
+
+# ---- PATCH /blocks/structure ----------------------------------------------
+
+
+def test_structural_size_change_bumps_block_size(editor_api):
+    client, Session, _dir = editor_api
+    _composition_station(Session, "comp")
+    r = client.patch("/api/stations/comp/blocks/structure", json={
+        "edit": {"op": "size", "slot_index": 0, "new_size": 5},
+        "expected_updated_at": _token(client, "comp"),
+    })
+    assert r.status_code == 200, r.json()
+    body = client.get("/api/stations/comp/sidecar").json()
+    assert body["template"]["layout"]["flat_slots"][0]["size"] == 5
+
+
+def test_structural_add_inserts_block_and_shifts_atomics(editor_api):
+    """§16.2.5 D5 + D2: insert NEW at slot 2; existing slot indices
+    >= 2 in the sidecar shift up by 1; the new block's atomic ref
+    auto-joins `_unsorted` so the operator can re-home it via a
+    follow-up move (mirrors the "auto-move on delete" philosophy +
+    means the orphan-slots drift rule stays satisfied)."""
+    client, Session, _dir = editor_api
+    _composition_station(Session, "comp")
+    r = client.patch("/api/stations/comp/blocks/structure", json={
+        "edit": {
+            "op": "add", "slot_index": 2,
+            "new_block": {
+                "source": "A", "strategy": "jingle",
+                "size": 1, "genre": "NEW",
+            },
+        },
+        "expected_updated_at": _token(client, "comp"),
+    })
+    assert r.status_code == 200, r.json()
+    body = client.get("/api/stations/comp/sidecar").json()
+    flat = body["template"]["layout"]["flat_slots"]
+    assert len(flat) == 7
+    assert flat[2]["genre"] == "NEW"
+    sidecar = body["sidecar"]
+    # 'lead' had {0,1,2} — only slot 2 was >= threshold=2, so it
+    # SHIFTED to 3. {0, 1, 3} now.
+    lead = next(s for s in sidecar["sections"] if s["id"] == "lead")
+    assert sorted(b["slot_index"] for b in lead["blocks"]) == [0, 1, 3]
+    # 'tail' had {3, 4, 5} — all shifted: {4, 5, 6}.
+    tail = next(s for s in sidecar["sections"] if s["id"] == "tail")
+    assert sorted(b["slot_index"] for b in tail["blocks"]) == [4, 5, 6]
+    # New ref at slot 2 lands in the auto-created _unsorted bin.
+    unsorted = next(s for s in sidecar["sections"] if s["id"] == "_unsorted")
+    assert unsorted["blocks"] == [{"kind": "atomic", "slot_index": 2}]
+    # _unsorted appended to layout_order.
+    assert sidecar["layout_order"][-1] == "_unsorted"
+
+
+def test_structural_remove_404s_when_slot_still_referenced(editor_api):
+    """§16.2.5 D5 + UX guard: removing a slot that's still referenced
+    by a sidecar atomic block returns 400 with a "move first" hint."""
+    client, Session, _dir = editor_api
+    _composition_station(Session, "comp")
+    r = client.patch("/api/stations/comp/blocks/structure", json={
+        "edit": {"op": "remove", "slot_index": 0},
+        "expected_updated_at": _token(client, "comp"),
+    })
+    assert r.status_code == 400
+    assert "_unsorted" in r.json()["detail"].lower() or \
+           "move" in r.json()["detail"].lower()
+
+
+def test_structural_size_rejects_zero_or_negative(editor_api):
+    client, Session, _dir = editor_api
+    _composition_station(Session, "comp")
+    r = client.patch("/api/stations/comp/blocks/structure", json={
+        "edit": {"op": "size", "slot_index": 0, "new_size": 0},
+        "expected_updated_at": _token(client, "comp"),
+    })
+    assert r.status_code == 400
+
+
+def test_structural_edit_rejects_row_template_station(editor_api):
+    """§16.2.5 D8 punt: row_template structural edits are queued. The
+    endpoint 400s with a clear pointer to use the wizard-edit PUT
+    instead of pretending to support the mutation."""
+    client, Session, _dir = editor_api
+    _row_template_station(Session, "rt")
+    r = client.patch("/api/stations/rt/blocks/structure", json={
+        "edit": {"op": "size", "slot_index": 0, "new_size": 5},
+        "expected_updated_at": _token(client, "rt"),
+    })
+    assert r.status_code == 400
+    assert "row_template" in r.json()["detail"]
+
+
+# ---- helpers --------------------------------------------------------------
+
+
+def _find_blocks(sidecar: dict, section_id: str) -> list[dict]:
+    for s in sidecar.get("sections", []):
+        if s.get("id") == section_id:
+            return s.get("blocks", [])
+    return []

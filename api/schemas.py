@@ -445,6 +445,102 @@ class MacroPatchResponse(BaseModel):
     updated_at: str | None = None
 
 
+# ---- §16.2.5 c1: section composition + structural block edits -------
+
+
+class SectionCreateRequest(BaseModel):
+    """POST /api/stations/{slug}/sections body (§16.2.5 D4).
+
+    Creates an EMPTY section at the end of layout_order. The
+    operator moves blocks into it via subsequent
+    PATCH /blocks/move calls. `id` is operator-supplied (must be a
+    non-empty string, not already in use, NOT starting with `_`
+    — leading underscore is reserved for system bins like
+    `_unsorted`).
+    """
+    id: str
+    name: str | None = None
+    expected_updated_at: str | None = None
+
+
+class SectionRenameRequest(BaseModel):
+    """PATCH /api/stations/{slug}/sections/{id} body (§16.2.5 D4).
+
+    Renames the section's `name` (the user-visible label). The
+    section's `id` is part of the URL and immutable here — changing
+    an id would invalidate every layout_order reference + every
+    block's section membership, which is a different operation
+    (queued; not in §16.2.5).
+    """
+    name: str
+    expected_updated_at: str | None = None
+
+
+class SectionsOrderRequest(BaseModel):
+    """PUT /api/stations/{slug}/sections/order body (§16.2.5 D4).
+
+    Full replacement of `layout_order`. The server validates that
+    the new list is a permutation of the existing section ids
+    (no add/drop allowed here — those are POST + DELETE).
+    """
+    layout_order: list[str]
+    expected_updated_at: str | None = None
+
+
+class BlockMoveRequest(BaseModel):
+    """PATCH /api/stations/{slug}/blocks/move body (§16.2.5 D4).
+
+    Move a block (atomic or macro) from its current section to
+    `target_section_id`, optionally at a specific `target_index`
+    within that section's blocks list (default = append).
+    Sidecar-only mutation — the engine TEMPLATE is unchanged.
+    """
+    address: BlockAddress
+    target_section_id: str
+    target_index: int | None = None
+    expected_updated_at: str | None = None
+
+
+class StructuralBlockEdit(BaseModel):
+    """One structural edit step — discriminated by `op`:
+      * `op="size"`   — change a block's `size` field; no slot-count
+        change.
+      * `op="add"`    — INSERT a new block at `slot_index`; every
+        downstream atomic-ref shifts by +1.
+      * `op="remove"` — DELETE the block at `slot_index`; every
+        downstream atomic-ref shifts by -1.
+    """
+    op: Literal["size", "add", "remove"]
+    slot_index: int
+    # For `op="size"`: required, new size value.
+    # For `op="add"`: required, the new block dict (must include
+    #   strategy, source, size + any required parameter fields).
+    # For `op="remove"`: ignored.
+    new_size: int | None = None
+    new_block: dict[str, Any] | None = None
+
+
+class BlockStructureRequest(BaseModel):
+    """PATCH /api/stations/{slug}/blocks/structure body (§16.2.5 D4).
+
+    Applies one structural edit. v1 ships single-edit semantics
+    (one op per request) — bulk edits would compound the
+    index-shift math (D5) + complicate optimistic concurrency.
+    Future slices may relax to a list[StructuralBlockEdit].
+    """
+    edit: StructuralBlockEdit
+    expected_updated_at: str | None = None
+
+
+class SidecarMutationResponse(BaseModel):
+    """200 body for endpoints that mutate the sidecar (section CRUD,
+    block move, block structure). Returns the new sidecar dict +
+    refreshed updated_at; the frontend uses the new sidecar to
+    re-render without a separate GET round-trip."""
+    sidecar: dict[str, Any]
+    updated_at: str | None = None
+
+
 class JobStatusResponse(BaseModel):
     """200 body for `GET /api/jobs/{job_id}`. Mirrors `JobSnapshot`
     in api/job_runner.py with one transformation: monotonic-correlated

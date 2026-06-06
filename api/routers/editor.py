@@ -45,21 +45,32 @@ from sqlalchemy.orm import Session
 from api.deps import get_db, get_stations_dir
 from api.schemas import (
     BlockAddress,
+    BlockMoveRequest,
     BlockPatchRequest,
     BlockPatchResponse,
     BlockRetypeRequest,
     BlockRetypeResponse,
+    BlockStructureRequest,
     EditorSidecarResponse,
     MacroPatchRequest,
     MacroPatchResponse,
+    SectionCreateRequest,
+    SectionRenameRequest,
+    SectionsOrderRequest,
+    SidecarMutationResponse,
     TemplateExportResponse,
 )
 from engine.editor_metadata import (
     EditorMetadataError,
     MacroResolutionError,
+    UNSORTED_SECTION_ID,
+    UNSORTED_SECTION_NAME,
+    ensure_unsorted_section,
     parse_sidecar,
     resolve_macro_addresses,
+    shift_atomic_slot_indices,
     synthesize_trivial_sidecar,
+    validate_sidecar,
 )
 from engine.models import Station
 from engine.template import SUPPORTED_STRATEGIES, parse_template, TemplateError
@@ -710,6 +721,491 @@ def patch_macro(
     return MacroPatchResponse(
         blocks_updated=blocks_touched,
         updated_at=_iso(station.updated_at),
+    )
+
+
+# ============================================================
+# §16.2.5 c1: section composition + structural block edits
+# ============================================================
+#
+# Six new endpoints share the same lifecycle (§16.2.4 c2 review #5
+# `withSaveLifecycle` would generalise these, but the route-level
+# helper is frontend-only). All six:
+#
+#   1. Resolve station (404)
+#   2. _check_optimistic_token (409)
+#   3. Load sidecar via _load_sidecar_for_mutation (400 on broken)
+#   4. Apply mutation to a deep-copy of the sidecar (and template
+#      for structural edits)
+#   5. validate_sidecar against the (possibly new) template
+#   6. Commit + return the new sidecar in the response so the
+#      frontend can re-render without a separate GET
+#
+# `_persist_sidecar` is the shared step-5 + step-6 helper.
+
+
+def _persist_sidecar(
+    station: Station,
+    sidecar: dict,
+    template: dict | None = None,
+) -> None:
+    """Validate + commit a sidecar mutation.
+
+    `template` defaults to the station's current template; pass
+    a NEW template (deep-copy with structural edits applied)
+    when the mutation changes slot counts. The function:
+
+      1. validate_sidecar(sidecar, template) — drift rules +
+         grammar
+      2. Reassign station.sidecar (+ template if supplied) so the
+         SQLAlchemy onupdate fires for `updated_at`
+      3. Caller commits + refreshes; this helper deliberately
+         does NOT commit so transactional all-or-nothing semantics
+         stay with the endpoint
+    """
+    eff_template = template if template is not None else station.template
+    try:
+        validate_sidecar(sidecar, eff_template)
+    except EditorMetadataError as e:
+        raise HTTPException(400, f"mutation produces an invalid sidecar: {e}")
+    if template is not None:
+        station.template = template
+    station.sidecar = sidecar
+
+
+def _find_section(sidecar: dict, section_id: str) -> dict | None:
+    for s in sidecar.get("sections", []):
+        if s.get("id") == section_id:
+            return s
+    return None
+
+
+@router.post(
+    "/api/stations/{slug}/sections",
+    response_model=SidecarMutationResponse,
+    status_code=201,
+)
+def create_section(
+    slug: str,
+    payload: SectionCreateRequest,
+    db: Session = Depends(get_db),
+    stations_dir: Path = Depends(get_stations_dir),
+):
+    """Create an empty section + append to layout_order.
+
+    `id` is operator-supplied (the §16.2.5 brief picks
+    operator-control over server-generated ids — the visual editor
+    treats ids as labels, not opaque handles). Rejected: ids
+    starting with `_` (reserved for system bins) or duplicates of
+    an existing section's id.
+    """
+    station = db.query(Station).filter(Station.slug == slug).first()
+    if station is None:
+        raise HTTPException(404, f"station '{slug}' not found")
+    _check_optimistic_token(station, payload.expected_updated_at)
+
+    template = copy.deepcopy(station.template)
+    sidecar = copy.deepcopy(
+        _load_sidecar_for_mutation(station, template, stations_dir, slug),
+    )
+
+    if payload.id.startswith("_"):
+        raise HTTPException(
+            400,
+            "section id can't start with `_` (reserved for system bins "
+            f"like `{UNSORTED_SECTION_ID}`).",
+        )
+    if not payload.id:
+        raise HTTPException(400, "section id must be a non-empty string.")
+    if _find_section(sidecar, payload.id) is not None:
+        raise HTTPException(
+            409,
+            f"section id '{payload.id}' already exists.",
+        )
+
+    sidecar.setdefault("sections", []).append({
+        "id": payload.id,
+        "name": payload.name or payload.id,
+        "blocks": [],
+    })
+    sidecar.setdefault("layout_order", []).append(payload.id)
+
+    _persist_sidecar(station, sidecar)
+    db.commit()
+    db.refresh(station)
+    return SidecarMutationResponse(
+        sidecar=sidecar, updated_at=_iso(station.updated_at),
+    )
+
+
+@router.patch(
+    "/api/stations/{slug}/sections/{section_id}",
+    response_model=SidecarMutationResponse,
+)
+def rename_section(
+    slug: str,
+    section_id: str,
+    payload: SectionRenameRequest,
+    db: Session = Depends(get_db),
+    stations_dir: Path = Depends(get_stations_dir),
+):
+    """Rename a section's `name` (the user-visible label). Id stays
+    immutable here. Rejected for the `_unsorted` bin (system-managed)."""
+    station = db.query(Station).filter(Station.slug == slug).first()
+    if station is None:
+        raise HTTPException(404, f"station '{slug}' not found")
+    _check_optimistic_token(station, payload.expected_updated_at)
+
+    template = copy.deepcopy(station.template)
+    sidecar = copy.deepcopy(
+        _load_sidecar_for_mutation(station, template, stations_dir, slug),
+    )
+
+    if section_id == UNSORTED_SECTION_ID:
+        raise HTTPException(
+            400,
+            f"can't rename the system `{UNSORTED_SECTION_ID}` section.",
+        )
+    section = _find_section(sidecar, section_id)
+    if section is None:
+        raise HTTPException(404, f"section '{section_id}' not found.")
+    if not payload.name:
+        raise HTTPException(400, "section name must be a non-empty string.")
+    section["name"] = payload.name
+
+    _persist_sidecar(station, sidecar)
+    db.commit()
+    db.refresh(station)
+    return SidecarMutationResponse(
+        sidecar=sidecar, updated_at=_iso(station.updated_at),
+    )
+
+
+@router.delete(
+    "/api/stations/{slug}/sections/{section_id}",
+    response_model=SidecarMutationResponse,
+)
+def delete_section(
+    slug: str,
+    section_id: str,
+    db: Session = Depends(get_db),
+    stations_dir: Path = Depends(get_stations_dir),
+    expected_updated_at: str | None = None,
+):
+    """Delete a section (§16.2.5 D2: auto-move blocks to `_unsorted`).
+
+    Empty sections delete cleanly. Non-empty sections re-home their
+    blocks into the `_unsorted` bin (server creates it on first
+    need) then remove the original. The bin's blocks list APPENDS
+    — never inserts at the head — so prior bin contents stay in
+    place + the operator's most-recent orphans land at the end.
+
+    Rejected: deleting the `_unsorted` bin itself (it's system-
+    managed; users empty it by moving blocks elsewhere).
+    """
+    station = db.query(Station).filter(Station.slug == slug).first()
+    if station is None:
+        raise HTTPException(404, f"station '{slug}' not found")
+    _check_optimistic_token(station, expected_updated_at)
+
+    template = copy.deepcopy(station.template)
+    sidecar = copy.deepcopy(
+        _load_sidecar_for_mutation(station, template, stations_dir, slug),
+    )
+
+    if section_id == UNSORTED_SECTION_ID:
+        raise HTTPException(
+            400,
+            f"can't delete the system `{UNSORTED_SECTION_ID}` section "
+            "(it's auto-managed; move its blocks into other sections "
+            "to empty it).",
+        )
+    section = _find_section(sidecar, section_id)
+    if section is None:
+        raise HTTPException(404, f"section '{section_id}' not found.")
+
+    blocks = section.get("blocks", [])
+    if blocks:
+        # Auto-move to _unsorted (D2). ensure_unsorted_section is
+        # idempotent.
+        sidecar = ensure_unsorted_section(sidecar)
+        bin_section = _find_section(sidecar, UNSORTED_SECTION_ID)
+        bin_section["blocks"].extend(blocks)
+        # Re-find the target section in the freshly deep-copied sidecar.
+        section = _find_section(sidecar, section_id)
+
+    sidecar["sections"] = [
+        s for s in sidecar["sections"] if s.get("id") != section_id
+    ]
+    sidecar["layout_order"] = [
+        sid for sid in sidecar.get("layout_order", []) if sid != section_id
+    ]
+
+    _persist_sidecar(station, sidecar)
+    db.commit()
+    db.refresh(station)
+    return SidecarMutationResponse(
+        sidecar=sidecar, updated_at=_iso(station.updated_at),
+    )
+
+
+@router.put(
+    "/api/stations/{slug}/sections/order",
+    response_model=SidecarMutationResponse,
+)
+def reorder_sections(
+    slug: str,
+    payload: SectionsOrderRequest,
+    db: Session = Depends(get_db),
+    stations_dir: Path = Depends(get_stations_dir),
+):
+    """Replace `layout_order` with a permutation of the current
+    section ids. add / drop ids → 400 (those are POST + DELETE)."""
+    station = db.query(Station).filter(Station.slug == slug).first()
+    if station is None:
+        raise HTTPException(404, f"station '{slug}' not found")
+    _check_optimistic_token(station, payload.expected_updated_at)
+
+    template = copy.deepcopy(station.template)
+    sidecar = copy.deepcopy(
+        _load_sidecar_for_mutation(station, template, stations_dir, slug),
+    )
+
+    current = {s.get("id") for s in sidecar.get("sections", [])}
+    proposed = set(payload.layout_order)
+    if proposed != current:
+        added = sorted(proposed - current)
+        dropped = sorted(current - proposed)
+        raise HTTPException(
+            400,
+            f"layout_order must be a PERMUTATION of existing section ids. "
+            f"Added (unknown): {added}; dropped: {dropped}.",
+        )
+    if len(payload.layout_order) != len(set(payload.layout_order)):
+        raise HTTPException(
+            400, "layout_order must not contain duplicate ids.",
+        )
+    sidecar["layout_order"] = list(payload.layout_order)
+
+    _persist_sidecar(station, sidecar)
+    db.commit()
+    db.refresh(station)
+    return SidecarMutationResponse(
+        sidecar=sidecar, updated_at=_iso(station.updated_at),
+    )
+
+
+@router.patch(
+    "/api/stations/{slug}/blocks/move",
+    response_model=SidecarMutationResponse,
+)
+def move_block(
+    slug: str,
+    payload: BlockMoveRequest,
+    db: Session = Depends(get_db),
+    stations_dir: Path = Depends(get_stations_dir),
+):
+    """Move a block between sections (sidecar-only — template unchanged).
+
+    Resolves the source via `payload.address` (XOR slot_index /
+    block_idx), removes it from its current section's blocks list,
+    inserts into `target_section_id` at `target_index` (default
+    append). The block dict is moved by VALUE (an atomic ref carries
+    just `{kind: atomic, slot_index | (row_idx, block_idx)}`; a
+    macro ref carries `{kind: macro, ref}`); no template touch.
+
+    Source section is the one currently containing a block with
+    matching atomic addressing — if multiple sections reference the
+    same address (drift rule 8 catches that at load), 400.
+    """
+    station = db.query(Station).filter(Station.slug == slug).first()
+    if station is None:
+        raise HTTPException(404, f"station '{slug}' not found")
+    _check_optimistic_token(station, payload.expected_updated_at)
+
+    template = copy.deepcopy(station.template)
+    sidecar = copy.deepcopy(
+        _load_sidecar_for_mutation(station, template, stations_dir, slug),
+    )
+
+    target = _find_section(sidecar, payload.target_section_id)
+    if target is None:
+        raise HTTPException(
+            404, f"target section '{payload.target_section_id}' not found.",
+        )
+
+    # Match by addressing. row_template stations use block_idx
+    # (row_idx omitted per Decision B from §16.2.3 — block_idx
+    # is the shared template slot).
+    addr = payload.address
+    if addr.slot_index is None and addr.block_idx is None:
+        raise HTTPException(
+            400, "address must set slot_index or block_idx.",
+        )
+    if addr.slot_index is not None and addr.block_idx is not None:
+        raise HTTPException(
+            400,
+            "address must set exactly one of slot_index / block_idx.",
+        )
+
+    def _matches(b: dict) -> bool:
+        if b.get("kind") != "atomic":
+            return False
+        if addr.slot_index is not None:
+            return b.get("slot_index") == addr.slot_index
+        return b.get("block_idx") == addr.block_idx
+
+    source: dict | None = None
+    moving_block: dict | None = None
+    for s in sidecar["sections"]:
+        for b in s.get("blocks", []):
+            if _matches(b):
+                if source is not None:
+                    raise HTTPException(
+                        400,
+                        "address matches blocks in multiple sections "
+                        "(sidecar drift — re-derive).",
+                    )
+                source = s
+                moving_block = b
+    if source is None or moving_block is None:
+        raise HTTPException(
+            404,
+            f"no block matching address {addr.model_dump(exclude_none=True)} "
+            "found in any section.",
+        )
+
+    # Remove from source, insert into target.
+    source["blocks"] = [b for b in source["blocks"] if b is not moving_block]
+    target_blocks = target.setdefault("blocks", [])
+    idx = payload.target_index
+    if idx is None or idx >= len(target_blocks):
+        target_blocks.append(moving_block)
+    else:
+        if idx < 0:
+            raise HTTPException(400, "target_index must be >= 0.")
+        target_blocks.insert(idx, moving_block)
+
+    _persist_sidecar(station, sidecar)
+    db.commit()
+    db.refresh(station)
+    return SidecarMutationResponse(
+        sidecar=sidecar, updated_at=_iso(station.updated_at),
+    )
+
+
+@router.patch(
+    "/api/stations/{slug}/blocks/structure",
+    response_model=SidecarMutationResponse,
+)
+def structural_block_edit(
+    slug: str,
+    payload: BlockStructureRequest,
+    db: Session = Depends(get_db),
+    stations_dir: Path = Depends(get_stations_dir),
+):
+    """Apply one structural edit (size / add / remove) to the
+    template's flat_slots, shifting sidecar atomic refs in lockstep
+    (D5). row_template is rejected for now — its block_idx-domain
+    structural edits land in a follow-up slice (D8 punts table).
+    """
+    station = db.query(Station).filter(Station.slug == slug).first()
+    if station is None:
+        raise HTTPException(404, f"station '{slug}' not found")
+    _check_optimistic_token(station, payload.expected_updated_at)
+
+    template = copy.deepcopy(station.template)
+    sidecar = copy.deepcopy(
+        _load_sidecar_for_mutation(station, template, stations_dir, slug),
+    )
+    layout = template.get("layout", {})
+
+    if "flat_slots" not in layout or not isinstance(layout["flat_slots"], list):
+        raise HTTPException(
+            400,
+            "structural edits to row_template stations aren't supported in "
+            "§16.2.5 (D8 punt — block_idx-domain edits land in a future "
+            "slice). Convert the layout via the wizard-edit PUT first.",
+        )
+
+    flat_slots = layout["flat_slots"]
+    edit = payload.edit
+    idx = edit.slot_index
+
+    if edit.op == "size":
+        if not (0 <= idx < len(flat_slots)):
+            raise HTTPException(404, f"slot_index {idx} out of range.")
+        if edit.new_size is None or edit.new_size < 1:
+            raise HTTPException(
+                400, "size edits require new_size >= 1.",
+            )
+        flat_slots[idx]["size"] = edit.new_size
+        # No slot-count change → no sidecar shift required.
+
+    elif edit.op == "add":
+        if not (0 <= idx <= len(flat_slots)):
+            raise HTTPException(
+                404,
+                f"slot_index {idx} out of range for insert "
+                f"(valid 0..{len(flat_slots)} inclusive).",
+            )
+        if edit.new_block is None:
+            raise HTTPException(
+                400, "add edits require new_block.",
+            )
+        flat_slots.insert(idx, edit.new_block)
+        # Sidecar atomic refs at slot_index >= idx (BEFORE the insert)
+        # become slot_index + 1 (AFTER). Use the helper which deep-
+        # copies the sidecar; re-bind to the result.
+        sidecar = shift_atomic_slot_indices(sidecar, threshold=idx, delta=1)
+        # Auto-add the new block's atomic ref to `_unsorted` (D2
+        # philosophy: never leave a slot orphaned + give the operator
+        # a recoverable starting position). They move it to a real
+        # section via a follow-up PATCH /blocks/move call.
+        sidecar = ensure_unsorted_section(sidecar)
+        bin_section = _find_section(sidecar, UNSORTED_SECTION_ID)
+        bin_section["blocks"].append(
+            {"kind": "atomic", "slot_index": idx},
+        )
+
+    elif edit.op == "remove":
+        if not (0 <= idx < len(flat_slots)):
+            raise HTTPException(404, f"slot_index {idx} out of range.")
+        # Reject removal of a slot referenced by a sidecar atomic
+        # block — that'd require a follow-up "remove the chip"
+        # mutation. Force the operator to delete the chip first via
+        # /blocks/move into _unsorted then re-issue. (§16.2.6 may
+        # bundle these into a single "delete chip" UX later.)
+        for s in sidecar.get("sections", []):
+            for b in s.get("blocks", []):
+                if b.get("kind") == "atomic" and b.get("slot_index") == idx:
+                    raise HTTPException(
+                        400,
+                        f"slot_index {idx} is still referenced by a "
+                        f"sidecar atomic block in section "
+                        f"'{s.get('id', '?')}'. Move the chip to "
+                        f"`{UNSORTED_SECTION_ID}` first, then retry.",
+                    )
+        flat_slots.pop(idx)
+        # Sidecar atomic refs at slot_index > idx decrement by 1.
+        sidecar = shift_atomic_slot_indices(
+            sidecar, threshold=idx + 1, delta=-1,
+        )
+
+    # parse_template revalidates the WHOLE template (structural edits
+    # could leave cursor refs dangling, role mismatches, etc.).
+    try:
+        parse_template(template)
+    except TemplateError as e:
+        raise HTTPException(
+            400, f"structural edit produces an invalid template: {e}",
+        )
+
+    _persist_sidecar(station, sidecar, template=template)
+    db.commit()
+    db.refresh(station)
+    return SidecarMutationResponse(
+        sidecar=sidecar, updated_at=_iso(station.updated_at),
     )
 
 

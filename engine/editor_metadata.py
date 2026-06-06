@@ -420,6 +420,80 @@ def resolve_macro_addresses(sidecar: dict, macro_id: str) -> list[dict]:
     return addresses
 
 
+# §16.2.5: structural-edit support
+#
+# `_unsorted` is the reserved section id for orphaned blocks (Decision
+# D2 — when an operator deletes a non-empty section, its atomic blocks
+# move here instead of being lost). The leading underscore is the UI
+# signal that this is a system bin (the editor hides the rename
+# affordance on it). The handler creates it on first need and appends
+# to layout_order so it stays visible.
+UNSORTED_SECTION_ID = "_unsorted"
+UNSORTED_SECTION_NAME = "Unsorted (moved from a deleted section)"
+
+
+def shift_atomic_slot_indices(sidecar: dict, threshold: int, delta: int) -> dict:
+    """Return a deep-copied sidecar with every atomic block's
+    `slot_index >= threshold` shifted by `delta`.
+
+    Used by structural block edits (add/remove a flat_slots block):
+    a NEW block at slot_index=N bumps every existing reference at
+    slot_index >= N by +1; a REMOVED block at slot_index=N decrements
+    every reference at slot_index > N by -1. Macros don't carry slot
+    indices — their positions derive at read time via
+    `resolve_macro_addresses` (§16.2.4 c1 review #10), so they shift
+    implicitly when atomic anchors shift.
+
+    This helper does NOT validate the resulting sidecar; the caller
+    re-runs `validate_sidecar` + `_validate_no_overlapping_macros`
+    after the template's structural change lands. Splitting the
+    shift from the validation keeps the helper composable (add +
+    remove paths share it).
+
+    `repeat_with_offsets` sections store atomic blocks by
+    `(row_idx, block_idx)`, NOT slot_index — those are unaffected by
+    this shift (row_template structural edits are §16.2.5's
+    block_idx-domain analogue, not yet implemented; the structural
+    endpoint rejects with 400 until they are).
+    """
+    import copy as _copy
+    out = _copy.deepcopy(sidecar)
+    for section in out.get("sections", []):
+        for block in section.get("blocks", []):
+            if block.get("kind") != "atomic":
+                continue
+            si = block.get("slot_index")
+            if isinstance(si, int) and si >= threshold:
+                block["slot_index"] = si + delta
+    return out
+
+
+def ensure_unsorted_section(sidecar: dict) -> dict:
+    """Return a deep-copied sidecar with an `_unsorted` section
+    appended if one doesn't already exist.
+
+    Used by DELETE /sections/{id} (Decision D2): when the deleted
+    section has blocks, they move into the Unsorted bin. The bin's
+    `id` starts with an underscore (UI hides the rename affordance);
+    the layout_order append keeps it visible at the end of the
+    canvas.
+    """
+    import copy as _copy
+    out = _copy.deepcopy(sidecar)
+    sections = out.setdefault("sections", [])
+    if any(s.get("id") == UNSORTED_SECTION_ID for s in sections):
+        return out
+    sections.append({
+        "id": UNSORTED_SECTION_ID,
+        "name": UNSORTED_SECTION_NAME,
+        "blocks": [],
+    })
+    layout_order = out.setdefault("layout_order", [])
+    if UNSORTED_SECTION_ID not in layout_order:
+        layout_order.append(UNSORTED_SECTION_ID)
+    return out
+
+
 def expand_section(section: dict, sidecar: dict) -> list:
     """Resolve a section into the flat list of refs the editor renders.
 
