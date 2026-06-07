@@ -63,6 +63,7 @@
     on:delete
     on:moveUp
     on:moveDown
+    on:chipDrop
   />
 
   {#if expanded}

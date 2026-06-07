@@ -5,7 +5,8 @@
  * inline rename, Move up / Move down, and Delete affordances —
  * with the system `_unsorted` bin suppressing all four.
  */
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { tick } from 'svelte';
 import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/svelte';
 import SectionHeader from './SectionHeader.svelte';
@@ -164,6 +165,115 @@ describe('<SectionHeader> — §16.2.5 c2 affordances', () => {
     await fireEvent.input(input, { target: { value: 'Discarded' } });
     await fireEvent.keyDown(input, { key: 'Escape' });
     await fireEvent.blur(input);
+    expect(handler).not.toHaveBeenCalled();
+  });
+});
+
+
+// ---- §16.2.5 c2 — drag-drop tests ---------------------------------------
+
+
+/** Construct a synthetic DragEvent with a DataTransfer that mimics
+ *  the browser's payload-carrying behavior. jsdom doesn't ship a
+ *  DataTransfer constructor, so we attach a minimal stand-in that
+ *  the component's getData/setData calls can read. */
+function makeDragEvent(
+  type: string,
+  mime: string,
+  data?: string,
+): Event {
+  const e = new Event(type, { bubbles: true, cancelable: true });
+  const store: Record<string, string> = {};
+  if (data !== undefined) store[mime] = data;
+  Object.defineProperty(e, 'dataTransfer', {
+    value: {
+      types: data !== undefined ? [mime] : [],
+      getData: (k: string) => store[k] ?? '',
+      setData: (k: string, v: string) => { store[k] = v; },
+      dropEffect: 'none',
+      effectAllowed: 'all',
+    },
+    writable: false,
+  });
+  return e;
+}
+
+
+describe('<SectionHeader> — c2 drag-drop', () => {
+  beforeEach(() => cleanup());
+
+  it('dragover with our MIME calls preventDefault → drop is enabled', async () => {
+    render(SectionHeader, {
+      section: SEC, chipCount: 1, expanded: true,
+    });
+    const header = screen.getByTestId('section-header');
+    const e = makeDragEvent(
+      'dragover',
+      'application/x-station-chip-ref',
+      JSON.stringify({ kind: 'atomic-ref', slot_index: 0 }),
+    );
+    header.dispatchEvent(e);
+    // preventDefault means the browser permits the drop event later.
+    expect(e.defaultPrevented).toBe(true);
+  });
+
+  it('dragover with a different MIME is ignored (no preventDefault)', async () => {
+    render(SectionHeader, {
+      section: SEC, chipCount: 1, expanded: true,
+    });
+    const header = screen.getByTestId('section-header');
+    const e = makeDragEvent('dragover', 'text/plain', 'hello');
+    header.dispatchEvent(e);
+    expect(e.defaultPrevented).toBe(false);
+  });
+
+  it('dragenter flips the visual drag-over state on', async () => {
+    render(SectionHeader, {
+      section: SEC, chipCount: 1, expanded: true,
+    });
+    const header = screen.getByTestId('section-header');
+    expect(header).toHaveAttribute('data-drag-over', 'false');
+    header.dispatchEvent(makeDragEvent(
+      'dragenter',
+      'application/x-station-chip-ref',
+      JSON.stringify({ kind: 'atomic-ref', slot_index: 0 }),
+    ));
+    await tick();
+    expect(header).toHaveAttribute('data-drag-over', 'true');
+  });
+
+  it('drop dispatches `chipDrop` with the JSON-decoded ref + section id', async () => {
+    const handler = vi.fn();
+    const { component } = render(SectionHeader, {
+      section: SEC, chipCount: 1, expanded: true,
+    });
+    component.$on('chipDrop', handler);
+    const header = screen.getByTestId('section-header');
+    const payload = { kind: 'atomic-ref' as const, slot_index: 3 };
+    header.dispatchEvent(makeDragEvent(
+      'drop',
+      'application/x-station-chip-ref',
+      JSON.stringify(payload),
+    ));
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(handler.mock.calls[0][0].detail).toEqual({
+      ref: payload,
+      targetSectionId: 'lead',
+    });
+  });
+
+  it('drop with malformed JSON does NOT dispatch chipDrop', async () => {
+    const handler = vi.fn();
+    const { component } = render(SectionHeader, {
+      section: SEC, chipCount: 1, expanded: true,
+    });
+    component.$on('chipDrop', handler);
+    const header = screen.getByTestId('section-header');
+    header.dispatchEvent(makeDragEvent(
+      'drop',
+      'application/x-station-chip-ref',
+      '{ not-valid-json',
+    ));
     expect(handler).not.toHaveBeenCalled();
   });
 });

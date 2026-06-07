@@ -163,6 +163,29 @@
     });
   }
 
+  // §16.2.5 c2 D6 — drop event from SectionHeader → blockMove.
+  // The dropped payload is `unknown` because it came through JSON
+  // round-trip + DataTransfer; type-narrow to an atomic ExpandedRef
+  // before forwarding. Macro chips can't be dropped (Chip's
+  // dragstart blocks the drag), so we expect only atomic-ref here;
+  // a defensive check guards against future divergence.
+  function handleChipDrop(
+    e: CustomEvent<{ ref: unknown; targetSectionId: string }>,
+  ) {
+    const r = e.detail.ref;
+    if (
+      !r || typeof r !== 'object' ||
+      (r as { kind?: unknown }).kind !== 'atomic-ref'
+    ) {
+      return;
+    }
+    dispatch('blockMove', {
+      ref: r as ExpandedRef,
+      targetSectionId: e.detail.targetSectionId,
+      targetIndex: null,
+    });
+  }
+
   // §16.2.5 c2 — Add Section: minimal modeless flow. A small inline
   // input lets the operator type an id; Enter / Add commits via
   // sectionCreate. The id becomes both the wire id AND the default
@@ -247,6 +270,7 @@
       on:select={(e) => onSelect(e, section)}
       on:rename={(e) => dispatch('sectionRename', e.detail)}
       on:delete={(e) => dispatch('sectionDelete', e.detail)}
+      on:chipDrop={handleChipDrop}
       on:moveUp={handleMoveUp}
       on:moveDown={handleMoveDown}
     />

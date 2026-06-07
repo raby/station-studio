@@ -38,6 +38,22 @@
 
   const dispatch = createEventDispatcher<{ select: { ref: ExpandedRef } }>();
 
+  // §16.2.5 c2 drag-drop: only atomic chips are draggable. Macro
+  // chips show a grab cursor on hover but native drag is disabled —
+  // moving a macro between sections breaks the position math (see
+  // c1 review #2 docstring on BlockMoveRequest). The drop targets
+  // (SectionHeaders) read the JSON payload via dataTransfer.
+  $: isDraggable = ref.kind === 'atomic-ref';
+  const DRAG_MIME = 'application/x-station-chip-ref';
+  function onDragStart(e: DragEvent) {
+    if (!isDraggable || !e.dataTransfer) {
+      e.preventDefault();
+      return;
+    }
+    e.dataTransfer.setData(DRAG_MIME, JSON.stringify(ref));
+    e.dataTransfer.effectAllowed = 'move';
+  }
+
   // Resolve the visual fields per ref kind.
   $: data = (() => {
     if (ref.kind === 'atomic-ref') {
@@ -111,7 +127,9 @@
   data-testid="chip"
   data-chip-kind={data.kind}
   data-source={data.source}
+  draggable={isDraggable}
   on:click={activate}
+  on:dragstart={onDragStart}
 >
   <span class="label">{data.label}</span>
   {#if data.isMacro && data.repeatCount > 1}

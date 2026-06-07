@@ -221,3 +221,57 @@ describe('<Chip>', () => {
     }
   });
 });
+
+
+// ---- §16.2.5 c2 — drag-source tests -------------------------------------
+
+
+function makeDragEvent(): Event {
+  const e = new Event('dragstart', { bubbles: true, cancelable: true });
+  const store: Record<string, string> = {};
+  Object.defineProperty(e, 'dataTransfer', {
+    value: {
+      types: [] as string[],
+      getData: (k: string) => store[k] ?? '',
+      setData: (k: string, v: string) => {
+        store[k] = v;
+        (e as unknown as { _store: typeof store })._store = store;
+      },
+      dropEffect: 'none',
+      effectAllowed: 'all',
+    },
+    writable: false,
+  });
+  return e;
+}
+
+
+describe('<Chip> — c2 drag source', () => {
+  it('atomic chips are draggable + carry the ref JSON in dataTransfer', () => {
+    const template = makeFlatTemplate();
+    const ref: AtomicRef = { kind: 'atomic-ref', slot_index: 0 };
+    render(Chip, {
+      ref, template, sidecar: makeSidecarWithMacro(), viewMode: VM,
+    });
+    const chip = screen.getByTestId('chip');
+    expect(chip).toHaveAttribute('draggable', 'true');
+    const e = makeDragEvent();
+    chip.dispatchEvent(e);
+    const dt = (e as unknown as { dataTransfer: { getData: (k: string) => string } })
+      .dataTransfer;
+    const payload = dt.getData('application/x-station-chip-ref');
+    expect(JSON.parse(payload)).toEqual(ref);
+  });
+
+  it('macro chips are NOT draggable (preserves section-position math)', () => {
+    const template = makeFlatTemplate();
+    const ref: MacroPlaceholder = {
+      kind: 'macro-placeholder', macro_id: 'm1', pick_in_macro: 1,
+    };
+    render(Chip, {
+      ref, template, sidecar: makeSidecarWithMacro(), viewMode: VM,
+    });
+    const chip = screen.getByTestId('chip');
+    expect(chip).toHaveAttribute('draggable', 'false');
+  });
+});

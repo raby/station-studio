@@ -35,6 +35,10 @@
     delete: { sectionId: string };
     moveUp: { sectionId: string };
     moveDown: { sectionId: string };
+    // §16.2.5 c2 drag-drop — fires when an atomic chip lands on
+    // this header. Payload is the raw chip ref the source set via
+    // dataTransfer; EditorCanvas converts to blockMove.
+    chipDrop: { ref: unknown; targetSectionId: string };
   }>();
 
   // Display name falls back to id when omitted (mid-slice review
@@ -87,13 +91,73 @@
       cancelRename();
     }
   }
+
+  // §16.2.5 c2 D6 — HTML5 drag-drop target. The DataTransfer payload
+  // carries the source chip's ref as JSON (set by Chip's dragstart).
+  // We accept ONLY our custom MIME so unrelated drags (e.g. text,
+  // links from outside the canvas) don't trigger a section drop.
+  const DRAG_MIME = 'application/x-station-chip-ref';
+  let dragOver = false;
+  // Counter so nested dragenter/dragleave (the inner toggle button +
+  // actions can fire enter/leave events as the cursor moves) don't
+  // flicker the visual state. Increment on enter, decrement on
+  // leave, dragOver is true while counter > 0.
+  let dragEnterDepth = 0;
+
+  function _hasChipPayload(e: DragEvent): boolean {
+    if (!e.dataTransfer) return false;
+    // .types is a DOMStringList; spec-compliant browsers expose
+    // 'includes' via the iterable interface.
+    return Array.from(e.dataTransfer.types).includes(DRAG_MIME);
+  }
+
+  function onDragEnter(e: DragEvent) {
+    if (!_hasChipPayload(e)) return;
+    e.preventDefault();
+    dragEnterDepth += 1;
+    dragOver = true;
+  }
+  function onDragOver(e: DragEvent) {
+    if (!_hasChipPayload(e)) return;
+    // preventDefault on dragover is what enables the drop event to
+    // fire — without it the browser treats the target as "not a
+    // valid drop target" and rejects the drop.
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+  }
+  function onDragLeave(e: DragEvent) {
+    if (!_hasChipPayload(e)) return;
+    dragEnterDepth = Math.max(0, dragEnterDepth - 1);
+    if (dragEnterDepth === 0) dragOver = false;
+  }
+  function onDrop(e: DragEvent) {
+    if (!_hasChipPayload(e)) return;
+    e.preventDefault();
+    dragOver = false;
+    dragEnterDepth = 0;
+    const raw = e.dataTransfer?.getData(DRAG_MIME);
+    if (!raw) return;
+    let ref: unknown;
+    try { ref = JSON.parse(raw); }
+    catch { return; }
+    dispatch('chipDrop', { ref, targetSectionId: section.id });
+  }
 </script>
 
+<!-- svelte-ignore a11y-no-static-element-interactions -->
 <header
   class="section-header"
+  class:drag-over={dragOver}
   data-testid="section-header"
   data-section-id={section.id}
   data-expanded={expanded}
+  data-drag-over={dragOver}
+  role="group"
+  aria-label="Section {displayName} header (drop target for chip moves)"
+  on:dragenter={onDragEnter}
+  on:dragover={onDragOver}
+  on:dragleave={onDragLeave}
+  on:drop={onDrop}
 >
   <button
     type="button"
@@ -175,6 +239,15 @@
     align-items: center;
     gap: 0.4rem;
     margin: 0.4rem 0 0.2rem;
+    /* §16.2.5 c2 D6 — visible-ring transition when a chip drag is
+       over this header. Subtle background + outlined border so
+       the operator sees the drop target without it jumping. */
+    border-radius: 4px;
+    transition: background 80ms ease-out, box-shadow 80ms ease-out;
+  }
+  .section-header.drag-over {
+    background: color-mix(in srgb, var(--accent, #2c7a7b) 12%, transparent);
+    box-shadow: 0 0 0 2px var(--accent, #2c7a7b);
   }
   .toggle {
     display: flex;
