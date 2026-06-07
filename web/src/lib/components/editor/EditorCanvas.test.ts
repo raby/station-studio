@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { render, screen, cleanup } from '@testing-library/svelte';
+import { cleanup, fireEvent, render, screen } from '@testing-library/svelte';
 import '@testing-library/jest-dom/vitest';
 import EditorCanvas from './EditorCanvas.svelte';
 import type { Sidecar, StationTemplate } from '$lib/editor';
@@ -146,5 +146,39 @@ describe('<EditorCanvas>', () => {
     render(EditorCanvas, { template, sidecar });
     expect(screen.getByTestId('section-name')).toHaveTextContent('All slots');
     expect(screen.getAllByTestId('chip')).toHaveLength(3);
+  });
+});
+
+
+// ---- §16.2.5 c2 review #2 fixes -----------------------------------------
+
+
+describe('<EditorCanvas> — c2 review #8 (addError clears on edit)', () => {
+  beforeEach(() => cleanup());
+
+  it('blanks the inline Add-Section error when the operator edits the input', async () => {
+    const template = makeTemplate(2);
+    const sidecar = makeSidecar({
+      sections: [{
+        id: 'lead', name: 'Lead',
+        blocks: [
+          { kind: 'atomic', slot_index: 0 },
+          { kind: 'atomic', slot_index: 1 },
+        ],
+      }],
+      layout_order: ['lead'],
+    });
+    render(EditorCanvas, { template, sidecar });
+
+    // Open the Add Section affordance.
+    await fireEvent.click(screen.getByTestId('add-section'));
+    const input = screen.getByTestId('add-section-input');
+    // Type a leading-underscore id → click Add → error appears.
+    await fireEvent.input(input, { target: { value: '_x' } });
+    await fireEvent.click(screen.getByTestId('add-section-commit'));
+    expect(screen.getByTestId('add-section-error')).toHaveTextContent(/_/);
+    // Edit the input past the error condition — error blanks.
+    await fireEvent.input(input, { target: { value: 'good-id' } });
+    expect(screen.queryByTestId('add-section-error')).toBeNull();
   });
 });

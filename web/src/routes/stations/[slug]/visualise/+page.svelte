@@ -261,9 +261,19 @@
   async function handleStructuralEdit(
     e: CustomEvent<{ edit: StructuralBlockEdit }>,
   ) {
+    // c2 review #10: name the op in the refetch-failure prefix so a
+    // refresh blip after a successful structural edit tells the
+    // operator WHICH mutation landed ('resized slot 3' vs
+    // 'removed slot 5' vs 'added slot 2'). The generic prior
+    // 'applied' was indistinct + the recovery path depends on op.
+    const verb = ({
+      size: `resized slot ${e.detail.edit.slot_index}`,
+      add: `added slot ${e.detail.edit.slot_index}`,
+      remove: `removed slot ${e.detail.edit.slot_index}`,
+    } as Record<string, string>)[e.detail.edit.op] ?? 'applied structural edit';
     await withSaveLifecycle(
       () => structuralBlockEdit(slug, e.detail.edit, updatedAt),
-      'applied',
+      verb,
     );
   }
 

@@ -18,6 +18,7 @@
    * so the drop handler can map back to the API call.
    */
   import { createEventDispatcher } from 'svelte';
+  import { focusOnMount } from '$lib/actions';
   import type { SidecarSection } from '$lib/editor';
 
   export let section: SidecarSection;
@@ -113,7 +114,7 @@
         on:keydown={onRenameKey}
         on:blur={commitRename}
         on:click|stopPropagation
-        autofocus
+        use:focusOnMount
         aria-label="Rename section"
       />
     {:else}

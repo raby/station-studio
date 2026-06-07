@@ -42,6 +42,7 @@
     type StationTemplate,
     type Strategy,
   } from '$lib/editor';
+  import type { StructuralBlockEdit } from '$lib/api';
   import ChipMultiInput from './ChipMultiInput.svelte';
 
   // c2 review #2: shared field-value union covering every editable
@@ -74,14 +75,9 @@
   // array shape happily; widening the type contract makes that
   // explicit + lets downstream consumers (api.ts, route handler)
   // type-check honestly.
-  // §16.2.5 c2 — structural-edit + move event types.
-  type StructuralOp = 'size' | 'add' | 'remove';
-  interface StructuralBlockEdit {
-    op: StructuralOp;
-    slot_index: number;
-    new_size?: number;
-    new_block?: Record<string, unknown>;
-  }
+  // c2 review #6: structural-edit type imported from $lib/api so
+  // there's ONE source-of-truth for the wire shape (was duplicated
+  // here + in EditorCanvas + in api.ts; now: only api.ts).
   const dispatch = createEventDispatcher<{
     close: void;
     save: { ref: ExpandedRef; fields: Record<string, FieldValue> };

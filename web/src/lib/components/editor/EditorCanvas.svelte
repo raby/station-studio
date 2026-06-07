@@ -38,6 +38,8 @@
     type StationTemplate,
     type ViewModeState,
   } from '$lib/editor';
+  import type { StructuralBlockEdit } from '$lib/api';
+  import { focusOnMount } from '$lib/actions';
   import { createEventDispatcher } from 'svelte';
   import DetailPanel from './DetailPanel.svelte';
   import Section from './Section.svelte';
@@ -54,14 +56,10 @@
   // c2 review #2: field-value union widened to include `string[]`
   // (for allowlist_sources). DetailPanel + api.ts use the same union.
   type FieldValue = string | number | string[] | null;
-  // §16.2.5 c2 — structural-edit event type mirrors api.StructuralBlockEdit.
-  type StructuralOp = 'size' | 'add' | 'remove';
-  interface StructuralBlockEdit {
-    op: StructuralOp;
-    slot_index: number;
-    new_size?: number;
-    new_block?: Record<string, unknown>;
-  }
+  // c2 review #6: StructuralBlockEdit is the single source of truth
+  // in $lib/api; EditorCanvas + DetailPanel + the route handler all
+  // import it. No inline duplicates so a schema change in api.ts
+  // can't silently desync the dispatch payload + the api call.
   const dispatch = createEventDispatcher<{
     save: { ref: ExpandedRef; fields: Record<string, FieldValue> };
     macroSave: { macroId: string; fields: Record<string, FieldValue> };
@@ -135,55 +133,11 @@
     .map((id) => sectionsById.get(id))
     .filter((s): s is NonNullable<typeof s> => s !== undefined);
 
-  // §16.2.4 c2 — forward the DetailPanel's write events as-is. Defined
-  // here (not inline in the template) because Svelte's template parser
-  // doesn't accept TS type annotations on arrow-function params.
-  function forwardSave(
-    e: CustomEvent<{ ref: ExpandedRef; fields: Record<string, FieldValue> }>,
-  ) {
-    dispatch('save', e.detail);
-  }
-  function forwardMacroSave(
-    e: CustomEvent<{ macroId: string; fields: Record<string, FieldValue> }>,
-  ) {
-    dispatch('macroSave', e.detail);
-  }
-  function forwardRetype(
-    e: CustomEvent<{
-      ref: ExpandedRef;
-      newStrategy: string | null;
-      newSource: string | null;
-      newFields: Record<string, FieldValue>;
-    }>,
-  ) {
-    dispatch('retype', e.detail);
-  }
-
-  // §16.2.5 c2 — section + structural-edit forwarders.
-  function forwardSectionRename(
-    e: CustomEvent<{ sectionId: string; name: string }>,
-  ) {
-    dispatch('sectionRename', e.detail);
-  }
-  function forwardSectionDelete(
-    e: CustomEvent<{ sectionId: string }>,
-  ) {
-    dispatch('sectionDelete', e.detail);
-  }
-  function forwardBlockMove(
-    e: CustomEvent<{
-      ref: ExpandedRef;
-      targetSectionId: string;
-      targetIndex: number | null;
-    }>,
-  ) {
-    dispatch('blockMove', e.detail);
-  }
-  function forwardStructuralEdit(
-    e: CustomEvent<{ edit: StructuralBlockEdit }>,
-  ) {
-    dispatch('structuralEdit', e.detail);
-  }
+  // c2 review #9: events that just forward from DetailPanel up to
+  // the route use Svelte's `on:eventname` shorthand (no handler) in
+  // the template — no TS-annotated arrow-function wrappers needed.
+  // The dispatcher above still declares each event's payload type
+  // so consumers stay type-safe at the route handler.
 
   // §16.2.5 c2 — Move up / Move down → reorder layout_order by
   // swapping the section's slot with its neighbor.
@@ -216,6 +170,22 @@
   let addingSection = false;
   let newSectionId = '';
   let addError: string | null = null;
+  // c2 review #8: clear `addError` the moment the operator types
+  // past the input that triggered the prior validation failure.
+  // `errorForInput` snapshots which newSectionId value the error
+  // belongs to; the reactive guard clears addError IFF the input
+  // has diverged from that snapshot. Without this, a stale message
+  // (e.g. "id can't start with `_`") stays visible until the next
+  // click — operator can't tell whether their fix took.
+  let errorForInput = '';
+  $: if (addError !== null && newSectionId !== errorForInput) {
+    addError = null;
+  }
+
+  function _setAddError(msg: string) {
+    addError = msg;
+    errorForInput = newSectionId;
+  }
 
   function startAddSection() {
     addingSection = true;
@@ -229,15 +199,15 @@
   function commitAddSection() {
     const trimmed = newSectionId.trim();
     if (trimmed === '') {
-      addError = 'id must not be empty';
+      _setAddError('id must not be empty');
       return;
     }
     if (trimmed.startsWith('_')) {
-      addError = 'id can\'t start with `_` (reserved for system bins)';
+      _setAddError('id can\'t start with `_` (reserved for system bins)');
       return;
     }
     if (sidecar.sections.some((s) => s.id === trimmed)) {
-      addError = `id "${trimmed}" already exists`;
+      _setAddError(`id "${trimmed}" already exists`);
       return;
     }
     dispatch('sectionCreate', { id: trimmed, name: null });
@@ -275,8 +245,8 @@
       canMoveUp={i > 0}
       canMoveDown={i < orderedSections.length - 1}
       on:select={(e) => onSelect(e, section)}
-      on:rename={forwardSectionRename}
-      on:delete={forwardSectionDelete}
+      on:rename={(e) => dispatch('sectionRename', e.detail)}
+      on:delete={(e) => dispatch('sectionDelete', e.detail)}
       on:moveUp={handleMoveUp}
       on:moveDown={handleMoveDown}
     />
@@ -291,7 +261,7 @@
   {/if}
 
   <!-- §16.2.5 c2 — Add Section affordance at the bottom of the canvas. -->
-  <div class="add-section" data-testid="add-section">
+  <div class="add-section" data-testid="add-section-row">
     {#if addingSection}
       <input
         type="text"
@@ -299,7 +269,7 @@
         placeholder="Section id (e.g. mornings)"
         bind:value={newSectionId}
         on:keydown={onAddKey}
-        autofocus
+        use:focusOnMount
       />
       <button
         type="button"
@@ -331,11 +301,11 @@
   {template}
   {sidecar}
   on:close={closeDetail}
-  on:save={forwardSave}
-  on:macroSave={forwardMacroSave}
-  on:retype={forwardRetype}
-  on:blockMove={forwardBlockMove}
-  on:structuralEdit={forwardStructuralEdit}
+  on:save
+  on:macroSave
+  on:retype
+  on:blockMove
+  on:structuralEdit
 />
 
 <style>
