@@ -30,6 +30,10 @@
    * fall back to a fresh computation.
    */
   export let chipCount: number | undefined = undefined;
+  /** §16.2.5 c2 — Move boundaries; EditorCanvas computes from
+   *  layout_order index. */
+  export let canMoveUp: boolean = false;
+  export let canMoveDown: boolean = false;
 
   let expanded = initialExpanded;
 
@@ -48,7 +52,18 @@
   data-testid="section"
   data-section-id={section.id}
 >
-  <SectionHeader {section} chipCount={effectiveCount} {expanded} on:toggle={toggle} />
+  <SectionHeader
+    {section}
+    chipCount={effectiveCount}
+    {expanded}
+    {canMoveUp}
+    {canMoveDown}
+    on:toggle={toggle}
+    on:rename
+    on:delete
+    on:moveUp
+    on:moveDown
+  />
 
   {#if expanded}
     <div

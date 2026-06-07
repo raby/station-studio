@@ -23,10 +23,16 @@ import {
   getMeta,
   getStationRules,
   JobStartConflict,
+  createSection,
+  deleteSection,
+  moveBlock,
   patchBlock,
   patchMacro,
   pollJob,
+  renameSection,
+  reorderSections,
   retypeBlock,
+  structuralBlockEdit,
   setStationRule,
   clearStationRule,
   startGenerateJob,
@@ -989,6 +995,186 @@ describe('patchMacro', () => {
     expect(err).toBeInstanceOf(ApiError);
     expect(err).not.toBeInstanceOf(BlockPatchConflict);
     expect(err.status).toBe(404);
+  });
+});
+
+
+// ---- §16.2.5 c2 — section CRUD + move + structural --------------------
+
+
+describe('createSection', () => {
+  it('POSTs /api/stations/{slug}/sections with id + name + token', async () => {
+    const { fetch_, calls } = makeSpy({
+      body: {
+        sidecar: { schema_version: 1, sections: [], macros: [], layout_order: [] },
+        updated_at: 't2',
+      },
+    });
+    const out = await createSection('cls', 'mornings', 'Mornings', 't1', fetch_);
+    expect(calls[0].input).toBe('/api/stations/cls/sections');
+    expect(calls[0].init!.method).toBe('POST');
+    expect(JSON.parse(calls[0].init!.body as string)).toEqual({
+      id: 'mornings', name: 'Mornings', expected_updated_at: 't1',
+    });
+    expect(out.updated_at).toBe('t2');
+  });
+
+  it('null name passes through', async () => {
+    const { fetch_, calls } = makeSpy({
+      body: { sidecar: {}, updated_at: null },
+    });
+    await createSection('cls', 'x', null, null, fetch_);
+    expect(JSON.parse(calls[0].init!.body as string).name).toBeNull();
+  });
+
+  it('409 → BlockPatchConflict with current_updated_at', async () => {
+    const { fetch_ } = makeSpy({
+      ok: false, status: 409,
+      body: { detail: { message: 'stale', current_updated_at: 't9' } },
+    });
+    const err = await createSection('cls', 'x', null, 't1', fetch_).catch((e) => e);
+    expect(err).toBeInstanceOf(BlockPatchConflict);
+    expect(err.current_updated_at).toBe('t9');
+  });
+});
+
+
+describe('renameSection', () => {
+  it('PATCHes /sections/{id} with name + token', async () => {
+    const { fetch_, calls } = makeSpy({
+      body: { sidecar: {}, updated_at: 't2' },
+    });
+    await renameSection('cls', 'lead', 'Opening', 't1', fetch_);
+    expect(calls[0].input).toBe('/api/stations/cls/sections/lead');
+    expect(calls[0].init!.method).toBe('PATCH');
+    expect(JSON.parse(calls[0].init!.body as string)).toEqual({
+      name: 'Opening', expected_updated_at: 't1',
+    });
+  });
+
+  it('URL-encodes both slug + section_id', async () => {
+    const { fetch_, calls } = makeSpy({ body: { sidecar: {}, updated_at: null } });
+    await renameSection('a b', 'my/section', 'X', null, fetch_);
+    expect(calls[0].input).toBe('/api/stations/a%20b/sections/my%2Fsection');
+  });
+});
+
+
+describe('deleteSection', () => {
+  it('DELETEs with expected_updated_at as query string', async () => {
+    const { fetch_, calls } = makeSpy({
+      body: { sidecar: {}, updated_at: 't2' },
+    });
+    await deleteSection('cls', 'lead', 't1', fetch_);
+    expect(calls[0].input).toBe(
+      '/api/stations/cls/sections/lead?expected_updated_at=t1',
+    );
+    expect(calls[0].init!.method).toBe('DELETE');
+    // DELETE bodies aren't universally supported → no body sent.
+    expect(calls[0].init!.body).toBeUndefined();
+  });
+
+  it('omits qs entirely when expected_updated_at is null', async () => {
+    const { fetch_, calls } = makeSpy({
+      body: { sidecar: {}, updated_at: null },
+    });
+    await deleteSection('cls', 'lead', null, fetch_);
+    expect(calls[0].input).toBe('/api/stations/cls/sections/lead');
+  });
+
+  it('URL-encodes the token (handles + and = safely)', async () => {
+    const { fetch_, calls } = makeSpy({
+      body: { sidecar: {}, updated_at: null },
+    });
+    await deleteSection('cls', 'lead', '2026-06-08T07:30:00+00:00', fetch_);
+    expect(calls[0].input).toContain('expected_updated_at=2026-06-08T07%3A30%3A00%2B00%3A00');
+  });
+});
+
+
+describe('reorderSections', () => {
+  it('PUTs /sections/order with the full layout_order array', async () => {
+    const { fetch_, calls } = makeSpy({
+      body: { sidecar: {}, updated_at: 't2' },
+    });
+    await reorderSections('cls', ['b', 'a'], 't1', fetch_);
+    expect(calls[0].input).toBe('/api/stations/cls/sections/order');
+    expect(calls[0].init!.method).toBe('PUT');
+    expect(JSON.parse(calls[0].init!.body as string)).toEqual({
+      layout_order: ['b', 'a'], expected_updated_at: 't1',
+    });
+  });
+});
+
+
+describe('moveBlock', () => {
+  it('PATCHes /blocks/move with address + target_section + index', async () => {
+    const { fetch_, calls } = makeSpy({
+      body: { sidecar: {}, updated_at: 't2' },
+    });
+    await moveBlock('cls', { slot_index: 3 }, 'tail', 0, 't1', fetch_);
+    expect(calls[0].input).toBe('/api/stations/cls/blocks/move');
+    expect(JSON.parse(calls[0].init!.body as string)).toEqual({
+      address: { slot_index: 3 },
+      target_section_id: 'tail',
+      target_index: 0,
+      expected_updated_at: 't1',
+    });
+  });
+
+  it('null target_index passes through (server appends)', async () => {
+    const { fetch_, calls } = makeSpy({
+      body: { sidecar: {}, updated_at: null },
+    });
+    await moveBlock('cls', { slot_index: 0 }, 'tail', null, null, fetch_);
+    expect(JSON.parse(calls[0].init!.body as string).target_index).toBeNull();
+  });
+});
+
+
+describe('structuralBlockEdit', () => {
+  it('PATCHes /blocks/structure with edit + token (size op)', async () => {
+    const { fetch_, calls } = makeSpy({
+      body: { sidecar: {}, updated_at: 't2' },
+    });
+    await structuralBlockEdit(
+      'cls',
+      { op: 'size', slot_index: 0, new_size: 5 },
+      't1', fetch_,
+    );
+    expect(calls[0].input).toBe('/api/stations/cls/blocks/structure');
+    expect(JSON.parse(calls[0].init!.body as string)).toEqual({
+      edit: { op: 'size', slot_index: 0, new_size: 5 },
+      expected_updated_at: 't1',
+    });
+  });
+
+  it('add op carries new_block payload', async () => {
+    const { fetch_, calls } = makeSpy({
+      body: { sidecar: {}, updated_at: null },
+    });
+    await structuralBlockEdit(
+      'cls',
+      {
+        op: 'add', slot_index: 2,
+        new_block: { source: 'A', strategy: 'jingle', size: 1, genre: 'X' },
+      },
+      null, fetch_,
+    );
+    const body = JSON.parse(calls[0].init!.body as string);
+    expect(body.edit.op).toBe('add');
+    expect(body.edit.new_block.genre).toBe('X');
+  });
+
+  it('409 → BlockPatchConflict', async () => {
+    const { fetch_ } = makeSpy({
+      ok: false, status: 409,
+      body: { detail: { message: 'stale', current_updated_at: 't9' } },
+    });
+    const err = await structuralBlockEdit(
+      'cls', { op: 'remove', slot_index: 0 }, 't1', fetch_,
+    ).catch((e) => e);
+    expect(err).toBeInstanceOf(BlockPatchConflict);
   });
 });
 

@@ -882,6 +882,195 @@ export const patchMacro = async (
 };
 
 
+// ---- §16.2.5 c2 — section CRUD + structural block edits ----------------
+//
+// Six new endpoints all return the same shape (the full new sidecar +
+// updated_at), so frontend reuses one response handler. Optimistic-
+// concurrency contract matches PATCH /blocks: 409 → BlockPatchConflict.
+
+
+export interface SidecarMutationResponse {
+  sidecar: import('./editor').Sidecar;
+  updated_at: string | null;
+}
+
+
+/** Shared 409-handler for the 6 sidecar-mutation endpoints. Mirrors
+ *  the inline conflict-extraction logic from patchBlock. */
+async function _handleSidecarConflict(res: Response): Promise<never> {
+  let detail: { message?: string; current_updated_at?: string | null } | string = '';
+  try {
+    const parsed = await res.json();
+    detail = parsed?.detail ?? parsed;
+  } catch {
+    detail = await res.text();
+  }
+  if (detail && typeof detail === 'object') {
+    throw new BlockPatchConflict(
+      detail.message ?? 'station changed since you loaded it',
+      detail.current_updated_at ?? null,
+    );
+  }
+  throw new ApiError(409, `409 Conflict: ${JSON.stringify(detail)}`);
+}
+
+
+/** POST /api/stations/{slug}/sections — create an empty section
+ *  (§16.2.5 D4). Server appends to layout_order. */
+export const createSection = async (
+  slug: string,
+  id: string,
+  name: string | null,
+  expectedUpdatedAt: string | null,
+  fetch_ = fetch,
+): Promise<SidecarMutationResponse> => {
+  const res = await fetch_(
+    `/api/stations/${encodeURIComponent(slug)}/sections`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        id, name, expected_updated_at: expectedUpdatedAt,
+      }),
+    },
+  );
+  if (res.status === 409) await _handleSidecarConflict(res);
+  return json<SidecarMutationResponse>(res);
+};
+
+
+/** PATCH /api/stations/{slug}/sections/{section_id} — rename a section.
+ *  Id stays immutable; only `name` changes. */
+export const renameSection = async (
+  slug: string,
+  sectionId: string,
+  name: string,
+  expectedUpdatedAt: string | null,
+  fetch_ = fetch,
+): Promise<SidecarMutationResponse> => {
+  const res = await fetch_(
+    `/api/stations/${encodeURIComponent(slug)}/sections/${encodeURIComponent(sectionId)}`,
+    {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name, expected_updated_at: expectedUpdatedAt }),
+    },
+  );
+  if (res.status === 409) await _handleSidecarConflict(res);
+  return json<SidecarMutationResponse>(res);
+};
+
+
+/** DELETE /api/stations/{slug}/sections/{section_id} — delete a section.
+ *  D2: non-empty sections re-home their blocks into the `_unsorted`
+ *  bin server-side. The optimistic-token rides as a query string
+ *  because DELETE bodies aren't universally supported. */
+export const deleteSection = async (
+  slug: string,
+  sectionId: string,
+  expectedUpdatedAt: string | null,
+  fetch_ = fetch,
+): Promise<SidecarMutationResponse> => {
+  const qs = expectedUpdatedAt !== null
+    ? `?expected_updated_at=${encodeURIComponent(expectedUpdatedAt)}`
+    : '';
+  const res = await fetch_(
+    `/api/stations/${encodeURIComponent(slug)}/sections/${encodeURIComponent(sectionId)}${qs}`,
+    { method: 'DELETE' },
+  );
+  if (res.status === 409) await _handleSidecarConflict(res);
+  return json<SidecarMutationResponse>(res);
+};
+
+
+/** PUT /api/stations/{slug}/sections/order — full layout_order
+ *  replacement; must be a permutation of the existing section ids. */
+export const reorderSections = async (
+  slug: string,
+  layoutOrder: string[],
+  expectedUpdatedAt: string | null,
+  fetch_ = fetch,
+): Promise<SidecarMutationResponse> => {
+  const res = await fetch_(
+    `/api/stations/${encodeURIComponent(slug)}/sections/order`,
+    {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        layout_order: layoutOrder,
+        expected_updated_at: expectedUpdatedAt,
+      }),
+    },
+  );
+  if (res.status === 409) await _handleSidecarConflict(res);
+  return json<SidecarMutationResponse>(res);
+};
+
+
+/** PATCH /api/stations/{slug}/blocks/move — move an ATOMIC block
+ *  to another section. Macros aren't movable in §16.2.5 (the sidecar
+ *  position-math can't sustain it without grammar changes); the
+ *  server 404s with an operator-readable hint. */
+export const moveBlock = async (
+  slug: string,
+  address: BlockAddress,
+  targetSectionId: string,
+  targetIndex: number | null,
+  expectedUpdatedAt: string | null,
+  fetch_ = fetch,
+): Promise<SidecarMutationResponse> => {
+  const res = await fetch_(
+    `/api/stations/${encodeURIComponent(slug)}/blocks/move`,
+    {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        address,
+        target_section_id: targetSectionId,
+        target_index: targetIndex,
+        expected_updated_at: expectedUpdatedAt,
+      }),
+    },
+  );
+  if (res.status === 409) await _handleSidecarConflict(res);
+  return json<SidecarMutationResponse>(res);
+};
+
+
+/** PATCH /api/stations/{slug}/blocks/structure — one of three
+ *  structural edits (size / add / remove). Add inserts at
+ *  slot_index + auto-files in `_unsorted`; remove cascades the
+ *  sidecar atomic ref drop. */
+export type StructuralOp = 'size' | 'add' | 'remove';
+export interface StructuralBlockEdit {
+  op: StructuralOp;
+  slot_index: number;
+  /** Required when op === 'size'. */
+  new_size?: number;
+  /** Required when op === 'add'. */
+  new_block?: Record<string, unknown>;
+}
+export const structuralBlockEdit = async (
+  slug: string,
+  edit: StructuralBlockEdit,
+  expectedUpdatedAt: string | null,
+  fetch_ = fetch,
+): Promise<SidecarMutationResponse> => {
+  const res = await fetch_(
+    `/api/stations/${encodeURIComponent(slug)}/blocks/structure`,
+    {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        edit, expected_updated_at: expectedUpdatedAt,
+      }),
+    },
+  );
+  if (res.status === 409) await _handleSidecarConflict(res);
+  return json<SidecarMutationResponse>(res);
+};
+
+
 export interface TemplateExportResponse {
   path: string;
   bytes: number;

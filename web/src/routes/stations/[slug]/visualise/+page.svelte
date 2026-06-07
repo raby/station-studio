@@ -20,12 +20,19 @@
   import { page } from '$app/stores';
   import {
     BlockPatchConflict,
+    createSection,
+    deleteSection,
     exportStationTemplate,
     getStationSidecar,
+    moveBlock,
     patchBlock,
     patchMacro,
+    renameSection,
+    reorderSections,
     retypeBlock,
+    structuralBlockEdit,
     type BlockAddress,
+    type StructuralBlockEdit,
   } from '$lib/api';
   import type { ExpandedRef, Sidecar, StationTemplate } from '$lib/editor';
   import EditorCanvas from '$lib/components/editor/EditorCanvas.svelte';
@@ -188,6 +195,78 @@
     );
   }
 
+  // §16.2.5 c2 — section CRUD + structural-edit + move handlers.
+  // Each is a thin wrapper over `withSaveLifecycle` (extracted in
+  // §16.2.4 c2 review #5) for uniform 409 / refetch / banner flow.
+
+  async function handleSectionCreate(
+    e: CustomEvent<{ id: string; name: string | null }>,
+  ) {
+    await withSaveLifecycle(
+      () => createSection(slug, e.detail.id, e.detail.name, updatedAt),
+      'created',
+    );
+  }
+
+  async function handleSectionRename(
+    e: CustomEvent<{ sectionId: string; name: string }>,
+  ) {
+    await withSaveLifecycle(
+      () => renameSection(slug, e.detail.sectionId, e.detail.name, updatedAt),
+      'renamed',
+    );
+  }
+
+  async function handleSectionDelete(
+    e: CustomEvent<{ sectionId: string }>,
+  ) {
+    await withSaveLifecycle(
+      () => deleteSection(slug, e.detail.sectionId, updatedAt),
+      'deleted',
+    );
+  }
+
+  async function handleSectionsReorder(
+    e: CustomEvent<{ layoutOrder: string[] }>,
+  ) {
+    await withSaveLifecycle(
+      () => reorderSections(slug, e.detail.layoutOrder, updatedAt),
+      'reordered',
+    );
+  }
+
+  async function handleBlockMove(
+    e: CustomEvent<{
+      ref: ExpandedRef;
+      targetSectionId: string;
+      targetIndex: number | null;
+    }>,
+  ) {
+    const address = refToAddress(e.detail.ref);
+    if (address === null) {
+      saveError = 'cannot move this block (no storage address)';
+      conflict = false;
+      exportMsg = null;
+      return;
+    }
+    await withSaveLifecycle(
+      () => moveBlock(
+        slug, address, e.detail.targetSectionId,
+        e.detail.targetIndex, updatedAt,
+      ),
+      'moved',
+    );
+  }
+
+  async function handleStructuralEdit(
+    e: CustomEvent<{ edit: StructuralBlockEdit }>,
+  ) {
+    await withSaveLifecycle(
+      () => structuralBlockEdit(slug, e.detail.edit, updatedAt),
+      'applied',
+    );
+  }
+
   async function reloadAfterConflict() {
     conflict = false;
     try {
@@ -270,6 +349,12 @@
       on:save={handleSave}
       on:macroSave={handleMacroSave}
       on:retype={handleRetype}
+      on:sectionCreate={handleSectionCreate}
+      on:sectionRename={handleSectionRename}
+      on:sectionDelete={handleSectionDelete}
+      on:sectionsReorder={handleSectionsReorder}
+      on:blockMove={handleBlockMove}
+      on:structuralEdit={handleStructuralEdit}
     />
   {/if}
 </main>

@@ -54,6 +54,14 @@
   // c2 review #2: field-value union widened to include `string[]`
   // (for allowlist_sources). DetailPanel + api.ts use the same union.
   type FieldValue = string | number | string[] | null;
+  // §16.2.5 c2 — structural-edit event type mirrors api.StructuralBlockEdit.
+  type StructuralOp = 'size' | 'add' | 'remove';
+  interface StructuralBlockEdit {
+    op: StructuralOp;
+    slot_index: number;
+    new_size?: number;
+    new_block?: Record<string, unknown>;
+  }
   const dispatch = createEventDispatcher<{
     save: { ref: ExpandedRef; fields: Record<string, FieldValue> };
     macroSave: { macroId: string; fields: Record<string, FieldValue> };
@@ -63,6 +71,17 @@
       newSource: string | null;
       newFields: Record<string, FieldValue>;
     };
+    // §16.2.5 c2 — section composition + structural edits.
+    sectionCreate: { id: string; name: string | null };
+    sectionRename: { sectionId: string; name: string };
+    sectionDelete: { sectionId: string };
+    sectionsReorder: { layoutOrder: string[] };
+    blockMove: {
+      ref: ExpandedRef;
+      targetSectionId: string;
+      targetIndex: number | null;
+    };
+    structuralEdit: { edit: StructuralBlockEdit };
   }>();
 
   // §16.2.2 c4 — view-mode prefs, hydrated from localStorage +
@@ -139,6 +158,95 @@
   ) {
     dispatch('retype', e.detail);
   }
+
+  // §16.2.5 c2 — section + structural-edit forwarders.
+  function forwardSectionRename(
+    e: CustomEvent<{ sectionId: string; name: string }>,
+  ) {
+    dispatch('sectionRename', e.detail);
+  }
+  function forwardSectionDelete(
+    e: CustomEvent<{ sectionId: string }>,
+  ) {
+    dispatch('sectionDelete', e.detail);
+  }
+  function forwardBlockMove(
+    e: CustomEvent<{
+      ref: ExpandedRef;
+      targetSectionId: string;
+      targetIndex: number | null;
+    }>,
+  ) {
+    dispatch('blockMove', e.detail);
+  }
+  function forwardStructuralEdit(
+    e: CustomEvent<{ edit: StructuralBlockEdit }>,
+  ) {
+    dispatch('structuralEdit', e.detail);
+  }
+
+  // §16.2.5 c2 — Move up / Move down → reorder layout_order by
+  // swapping the section's slot with its neighbor.
+  function _swap(order: string[], a: number, b: number): string[] {
+    const next = order.slice();
+    const tmp = next[a];
+    next[a] = next[b];
+    next[b] = tmp;
+    return next;
+  }
+  function handleMoveUp(e: CustomEvent<{ sectionId: string }>) {
+    const i = sidecar.layout_order.indexOf(e.detail.sectionId);
+    if (i <= 0) return;
+    dispatch('sectionsReorder', {
+      layoutOrder: _swap(sidecar.layout_order, i - 1, i),
+    });
+  }
+  function handleMoveDown(e: CustomEvent<{ sectionId: string }>) {
+    const i = sidecar.layout_order.indexOf(e.detail.sectionId);
+    if (i < 0 || i >= sidecar.layout_order.length - 1) return;
+    dispatch('sectionsReorder', {
+      layoutOrder: _swap(sidecar.layout_order, i, i + 1),
+    });
+  }
+
+  // §16.2.5 c2 — Add Section: minimal modeless flow. A small inline
+  // input lets the operator type an id; Enter / Add commits via
+  // sectionCreate. The id becomes both the wire id AND the default
+  // name (rename via the SectionHeader pencil after).
+  let addingSection = false;
+  let newSectionId = '';
+  let addError: string | null = null;
+
+  function startAddSection() {
+    addingSection = true;
+    newSectionId = '';
+    addError = null;
+  }
+  function cancelAddSection() {
+    addingSection = false;
+    addError = null;
+  }
+  function commitAddSection() {
+    const trimmed = newSectionId.trim();
+    if (trimmed === '') {
+      addError = 'id must not be empty';
+      return;
+    }
+    if (trimmed.startsWith('_')) {
+      addError = 'id can\'t start with `_` (reserved for system bins)';
+      return;
+    }
+    if (sidecar.sections.some((s) => s.id === trimmed)) {
+      addError = `id "${trimmed}" already exists`;
+      return;
+    }
+    dispatch('sectionCreate', { id: trimmed, name: null });
+    addingSection = false;
+  }
+  function onAddKey(e: KeyboardEvent) {
+    if (e.key === 'Enter') { e.preventDefault(); commitAddSection(); }
+    else if (e.key === 'Escape') { e.preventDefault(); cancelAddSection(); }
+  }
 </script>
 
 <div
@@ -156,7 +264,7 @@
     </p>
   {/if}
 
-  {#each orderedSections as section (section.id)}
+  {#each orderedSections as section, i (section.id)}
     <Section
       {section}
       {template}
@@ -164,7 +272,13 @@
       {viewMode}
       chipCount={sectionChipCounts.get(section.id) ?? 0}
       initialExpanded={initialExpanded}
+      canMoveUp={i > 0}
+      canMoveDown={i < orderedSections.length - 1}
       on:select={(e) => onSelect(e, section)}
+      on:rename={forwardSectionRename}
+      on:delete={forwardSectionDelete}
+      on:moveUp={handleMoveUp}
+      on:moveDown={handleMoveDown}
     />
   {/each}
 
@@ -175,6 +289,41 @@
       or regenerate with <code>make derive-sidecar STATION={template.station}</code>.)
     </p>
   {/if}
+
+  <!-- §16.2.5 c2 — Add Section affordance at the bottom of the canvas. -->
+  <div class="add-section" data-testid="add-section">
+    {#if addingSection}
+      <input
+        type="text"
+        data-testid="add-section-input"
+        placeholder="Section id (e.g. mornings)"
+        bind:value={newSectionId}
+        on:keydown={onAddKey}
+        autofocus
+      />
+      <button
+        type="button"
+        class="primary"
+        data-testid="add-section-commit"
+        on:click={commitAddSection}
+      >Add</button>
+      <button
+        type="button"
+        data-testid="add-section-cancel"
+        on:click={cancelAddSection}
+      >Cancel</button>
+      {#if addError}
+        <span class="err" data-testid="add-section-error">{addError}</span>
+      {/if}
+    {:else}
+      <button
+        type="button"
+        class="primary"
+        data-testid="add-section"
+        on:click={startAddSection}
+      >+ Add section</button>
+    {/if}
+  </div>
 </div>
 
 <DetailPanel
@@ -185,6 +334,8 @@
   on:save={forwardSave}
   on:macroSave={forwardMacroSave}
   on:retype={forwardRetype}
+  on:blockMove={forwardBlockMove}
+  on:structuralEdit={forwardStructuralEdit}
 />
 
 <style>
@@ -210,5 +361,37 @@
     background: #f4f4f4;
     padding: 0.1em 0.3em;
     border-radius: 3px;
+  }
+  /* §16.2.5 c2 — Add Section affordance. */
+  .add-section {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin: 0.6rem 0 0.3rem;
+  }
+  .add-section input {
+    flex: 0 1 220px;
+    padding: 0.3rem 0.5rem;
+    border: 1px solid var(--border, #ccc);
+    border-radius: 4px;
+    font: inherit;
+    font-size: 0.85rem;
+  }
+  .add-section button {
+    padding: 0.3rem 0.7rem;
+    border: 1px solid var(--border, #ccc);
+    background: white;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.85rem;
+  }
+  .add-section button.primary {
+    background: var(--accent, #2c7a7b);
+    color: white;
+    border-color: var(--accent, #2c7a7b);
+  }
+  .add-section .err {
+    color: var(--error, #c0392b);
+    font-size: 0.8rem;
   }
 </style>

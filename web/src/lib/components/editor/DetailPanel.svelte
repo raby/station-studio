@@ -74,6 +74,14 @@
   // array shape happily; widening the type contract makes that
   // explicit + lets downstream consumers (api.ts, route handler)
   // type-check honestly.
+  // §16.2.5 c2 — structural-edit + move event types.
+  type StructuralOp = 'size' | 'add' | 'remove';
+  interface StructuralBlockEdit {
+    op: StructuralOp;
+    slot_index: number;
+    new_size?: number;
+    new_block?: Record<string, unknown>;
+  }
   const dispatch = createEventDispatcher<{
     close: void;
     save: { ref: ExpandedRef; fields: Record<string, FieldValue> };
@@ -84,6 +92,13 @@
       newFields: Record<string, FieldValue>;
     };
     macroSave: { macroId: string; fields: Record<string, FieldValue> };
+    // §16.2.5 c2: D6 dropdown-fallback for move; D5 structural edits.
+    blockMove: {
+      ref: ExpandedRef;
+      targetSectionId: string;
+      targetIndex: number | null;
+    };
+    structuralEdit: { edit: StructuralBlockEdit };
   }>();
 
   // Resolve the spec under the selection.
@@ -436,6 +451,78 @@
   function onKey(e: KeyboardEvent) {
     if (e.key === 'Escape' && selected !== null) close();
   }
+
+  // §16.2.5 c2 — Move-to-section dropdown (D6 fallback for drag-drop;
+  // ALSO serves keyboard + screen-reader users). The dropdown lists
+  // every section EXCEPT the source and `_unsorted` (the system bin
+  // shouldn't be a routine drop target; deletes auto-route there).
+  $: currentSectionId = selected?.section.id ?? null;
+  $: moveTargets = sidecar.sections.filter(
+    (s) => s.id !== currentSectionId && !s.id.startsWith('_'),
+  );
+  let moveTarget = '';
+  // Reset move target whenever selection changes.
+  $: if (selected !== null && moveTargets.length > 0) {
+    if (!moveTargets.some((s) => s.id === moveTarget)) {
+      moveTarget = moveTargets[0]?.id ?? '';
+    }
+  }
+
+  function onMove() {
+    if (selected === null || selected.ref.kind !== 'atomic-ref') return;
+    if (!moveTarget) return;
+    dispatch('blockMove', {
+      ref: selected.ref,
+      targetSectionId: moveTarget,
+      targetIndex: null,
+    });
+  }
+
+  // §16.2.5 c2 — structural-edit state (atomic flat_slots only).
+  //   * size: bumped via a number input + Apply.
+  //   * remove: confirms via the operator clicking Delete; the server
+  //     cascade-drops the sidecar ref + pops the slot.
+  //   * add is the EditorCanvas's "Add Section"-equivalent at the
+  //     block level; not exposed here in v1 (operator can clone via
+  //     wizard-edit). Keeps the panel scope tight.
+  let newSize: number | null = null;
+  $: structuralOpen = false;
+  $: currentSize = (() => {
+    if (selected?.ref.kind !== 'atomic-ref') return null;
+    if (selected.ref.slot_index === undefined) return null;
+    const block = template.layout.flat_slots?.[selected.ref.slot_index];
+    return typeof block?.size === 'number' ? block.size : null;
+  })();
+  // Reset newSize on selection change.
+  $: if (selected !== null) {
+    if (newSize === null && currentSize !== null) newSize = currentSize;
+  }
+
+  // Atomic flat_slots only — row_template structural edits are
+  // server-rejected (D8 punt); macros aren't structural-edit targets.
+  $: canStructural =
+    selected?.ref.kind === 'atomic-ref' &&
+    selected.ref.slot_index !== undefined;
+
+  function onResize() {
+    if (selected?.ref.kind !== 'atomic-ref') return;
+    if (selected.ref.slot_index === undefined) return;
+    if (newSize === null || newSize < 1) return;
+    dispatch('structuralEdit', {
+      edit: {
+        op: 'size',
+        slot_index: selected.ref.slot_index,
+        new_size: newSize,
+      },
+    });
+  }
+  function onDelete() {
+    if (selected?.ref.kind !== 'atomic-ref') return;
+    if (selected.ref.slot_index === undefined) return;
+    dispatch('structuralEdit', {
+      edit: { op: 'remove', slot_index: selected.ref.slot_index },
+    });
+  }
 </script>
 
 <svelte:window on:keydown={onKey} />
@@ -691,6 +778,68 @@
           </div>
         {/if}
       </section>
+
+      <!-- §16.2.5 c2 D6 — Move-to-section dropdown (drag-drop
+           fallback for keyboard, touch, screen-reader, and
+           operators who prefer explicit form-based moves). -->
+      {#if moveTargets.length > 0}
+        <section class="move" data-testid="move-panel">
+          <h3>Move to section</h3>
+          <div class="move-row">
+            <select
+              data-testid="move-target"
+              bind:value={moveTarget}
+            >
+              {#each moveTargets as t (t.id)}
+                <option value={t.id}>{t.name ?? t.id}</option>
+              {/each}
+            </select>
+            <button
+              type="button"
+              class="save"
+              data-testid="move-apply"
+              disabled={!moveTarget}
+              on:click={onMove}
+            >Move</button>
+          </div>
+        </section>
+      {/if}
+
+      <!-- §16.2.5 D5 — Structural edits (atomic flat_slots only).
+           op=size + op=remove; op=add is the canvas's "+ slot"
+           affordance and not exposed at the per-block level. -->
+      {#if canStructural}
+        <section class="structural" data-testid="structural-panel">
+          <h3>Structural</h3>
+          <label class="field" data-testid="structural-size-field">
+            <span class="field-label">Slot size (picks)</span>
+            <div class="size-row">
+              <input
+                type="number"
+                min="1"
+                data-testid="structural-size-input"
+                bind:value={newSize}
+              />
+              <button
+                type="button"
+                class="save"
+                data-testid="structural-size-apply"
+                disabled={newSize === null || newSize < 1 || newSize === currentSize}
+                on:click={onResize}
+              >Apply</button>
+            </div>
+          </label>
+          <div class="delete-row">
+            <button
+              type="button"
+              class="delete"
+              data-testid="structural-delete"
+              title="Remove this slot (the engine block + its sidecar chip)"
+              on:click={onDelete}
+            >Delete slot</button>
+          </div>
+        </section>
+      {/if}
     {/if}
   </aside>
 {/if}
@@ -849,5 +998,43 @@
   .macro-warning {
     background: #eaf6f6;
     border-color: #80cbc4;
+  }
+
+  /* §16.2.5 c2 — Move + Structural panels share the retype panel's
+     spacing. */
+  .move, .structural {
+    margin-top: 1rem;
+    border-top: 1px solid var(--border, #eee);
+    padding-top: 0.75rem;
+  }
+  .move h3, .structural h3 {
+    margin: 0 0 0.5rem;
+    font-size: 0.9rem;
+    color: var(--text-muted, #555);
+  }
+  .move-row, .size-row {
+    display: flex;
+    gap: 0.4rem;
+    align-items: center;
+  }
+  .move-row select { flex: 1; padding: 0.3rem; }
+  .size-row input {
+    flex: 0 1 100px;
+  }
+  .delete-row {
+    margin-top: 0.5rem;
+  }
+  .delete-row .delete {
+    background: transparent;
+    border: 1px solid var(--error, #c0392b);
+    color: var(--error, #c0392b);
+    padding: 0.35rem 0.8rem;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.82rem;
+  }
+  .delete-row .delete:hover {
+    background: var(--error, #c0392b);
+    color: white;
   }
 </style>
