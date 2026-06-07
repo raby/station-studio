@@ -47,20 +47,33 @@
   // §16.2.5 c2 — inline rename state.
   let renaming = false;
   let renameValue = '';
+  // c2 review #4 fix: latch so the blur handler can't fire a second
+  // dispatch after Enter committed. When Enter runs commitRename, we
+  // set this flag; the blur handler short-circuits if it's true. The
+  // flag resets on startRename so each rename cycle is independent.
+  // Without this guard, real browsers fire blur on the unmounting
+  // input (jsdom doesn't, so the §16.2.5 c2 vitest passed) → the
+  // second commitRename dispatches a duplicate PATCH /sections/{id}.
+  let committed = false;
 
   function startRename() {
     renameValue = displayName;
+    committed = false;
     renaming = true;
   }
   function cancelRename() {
+    committed = true;  // suppress the blur firing during unmount
     renaming = false;
   }
   function commitRename() {
+    if (committed) return;
     const trimmed = renameValue.trim();
     if (trimmed === '' || trimmed === displayName) {
+      committed = true;
       renaming = false;
       return;
     }
+    committed = true;
     dispatch('rename', { sectionId: section.id, name: trimmed });
     renaming = false;
   }

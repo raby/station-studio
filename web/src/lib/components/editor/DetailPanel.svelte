@@ -486,16 +486,35 @@
   //     block level; not exposed here in v1 (operator can clone via
   //     wizard-edit). Keeps the panel scope tight.
   let newSize: number | null = null;
-  $: structuralOpen = false;
+  // c2 review #2 fix: remove the dead `$: structuralOpen = false;`
+  // line — it was reactive-overwritten every cycle and never read,
+  // dead-code that would have collided with any future disclosure
+  // wiring.
   $: currentSize = (() => {
     if (selected?.ref.kind !== 'atomic-ref') return null;
     if (selected.ref.slot_index === undefined) return null;
     const block = template.layout.flat_slots?.[selected.ref.slot_index];
     return typeof block?.size === 'number' ? block.size : null;
   })();
-  // Reset newSize on selection change.
-  $: if (selected !== null) {
-    if (newSize === null && currentSize !== null) newSize = currentSize;
+  // c2 review #1 + #5 fix: selection-keyed reset for newSize. The
+  // prior `if (newSize === null && currentSize !== null) newSize =
+  // currentSize` only fired when newSize was null AND once — which
+  // meant (a) the previous block's size leaked into a new selection
+  // (wrong-block mutation risk), AND (b) clearing the input snapped
+  // the value back to currentSize so the operator couldn't type a
+  // new value from scratch. Track which slot_index we last seeded
+  // for; reseed ONLY when the selection's slot_index changes (not
+  // every reactive cycle).
+  let newSizeSeededFor: number | null = null;
+  $: {
+    const slot =
+      selected?.ref.kind === 'atomic-ref'
+        ? selected.ref.slot_index ?? null
+        : null;
+    if (slot !== newSizeSeededFor) {
+      newSizeSeededFor = slot;
+      newSize = currentSize;
+    }
   }
 
   // Atomic flat_slots only — row_template structural edits are
@@ -516,13 +535,41 @@
       },
     });
   }
+
+  // c2 review #3 fix: two-step Delete-slot confirmation.
+  // First click arms the button (changes label + colour for 3s);
+  // second click within the window actually dispatches. Esc / clicking
+  // away cancels the armed state. Operator can't fat-finger a slot
+  // away (the prior single-click flow was destructive + un-undoable
+  // without an in-UI undo affordance).
+  let deleteArmedAt: number | null = null;
+  const DELETE_CONFIRM_MS = 3000;
+  $: deleteArmed = deleteArmedAt !== null;
   function onDelete() {
     if (selected?.ref.kind !== 'atomic-ref') return;
     if (selected.ref.slot_index === undefined) return;
+    const now = Date.now();
+    if (deleteArmedAt === null || now - deleteArmedAt > DELETE_CONFIRM_MS) {
+      // First click (or after the confirm window expired): arm.
+      deleteArmedAt = now;
+      // Auto-disarm after the window so an idle armed button doesn't
+      // leak across selections.
+      setTimeout(() => {
+        if (deleteArmedAt !== null && Date.now() - deleteArmedAt >= DELETE_CONFIRM_MS) {
+          deleteArmedAt = null;
+        }
+      }, DELETE_CONFIRM_MS + 50);
+      return;
+    }
+    // Second click within window: commit.
+    deleteArmedAt = null;
     dispatch('structuralEdit', {
       edit: { op: 'remove', slot_index: selected.ref.slot_index },
     });
   }
+  // Reset arm-state on selection change so the operator never sees a
+  // pre-armed Delete on a freshly-clicked chip.
+  $: if (selected !== null) deleteArmedAt = null;
 </script>
 
 <svelte:window on:keydown={onKey} />
@@ -833,10 +880,14 @@
             <button
               type="button"
               class="delete"
+              class:armed={deleteArmed}
               data-testid="structural-delete"
-              title="Remove this slot (the engine block + its sidecar chip)"
+              data-armed={deleteArmed}
+              title={deleteArmed
+                ? 'Click again within 3 seconds to confirm'
+                : 'Remove this slot (the engine block + its sidecar chip)'}
               on:click={onDelete}
-            >Delete slot</button>
+            >{deleteArmed ? 'Confirm delete?' : 'Delete slot'}</button>
           </div>
         </section>
       {/if}
@@ -1036,5 +1087,12 @@
   .delete-row .delete:hover {
     background: var(--error, #c0392b);
     color: white;
+  }
+  /* c2 review #3 — armed state: button is filled red until the
+     operator confirms (or the 3s window expires). */
+  .delete-row .delete.armed {
+    background: var(--error, #c0392b);
+    color: white;
+    font-weight: 600;
   }
 </style>

@@ -130,4 +130,40 @@ describe('<SectionHeader> — §16.2.5 c2 affordances', () => {
     await fireEvent.click(screen.getByTestId('section-delete'));
     expect(handler.mock.calls[0][0].detail).toEqual({ sectionId: 'lead' });
   });
+
+  // c2 review #4: blur fires on the input as it unmounts after
+  // Enter commits — without the `committed` latch the blur handler
+  // would dispatch a SECOND identical rename event. Real browsers
+  // fire blur even when the element is being removed; jsdom doesn't,
+  // so this test seeds the bug condition by firing blur explicitly.
+  it('Enter then blur on the unmounting input does NOT double-dispatch', async () => {
+    const handler = vi.fn();
+    const { component } = render(SectionHeader, {
+      section: SEC, chipCount: 1, expanded: true,
+    });
+    component.$on('rename', handler);
+    await fireEvent.click(screen.getByTestId('section-rename'));
+    const input = screen.getByTestId('section-rename-input');
+    await fireEvent.input(input, { target: { value: 'Opening' } });
+    await fireEvent.keyDown(input, { key: 'Enter' });
+    // Simulate the post-Enter blur browsers fire on the unmounting
+    // input (jsdom doesn't replay this naturally; the latch must
+    // suppress the second commitRename either way).
+    await fireEvent.blur(input);
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it('Escape then blur does NOT dispatch from the cancel path', async () => {
+    const handler = vi.fn();
+    const { component } = render(SectionHeader, {
+      section: SEC, chipCount: 1, expanded: true,
+    });
+    component.$on('rename', handler);
+    await fireEvent.click(screen.getByTestId('section-rename'));
+    const input = screen.getByTestId('section-rename-input');
+    await fireEvent.input(input, { target: { value: 'Discarded' } });
+    await fireEvent.keyDown(input, { key: 'Escape' });
+    await fireEvent.blur(input);
+    expect(handler).not.toHaveBeenCalled();
+  });
 });

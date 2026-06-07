@@ -392,3 +392,130 @@ describe('<DetailPanel> — §16.2.3 c1 edit form', () => {
     expect(screen.getByTestId('input-genre')).toHaveValue('Bumper');
   });
 });
+
+
+// ---- §16.2.5 c2 review #1 fixes ----------------------------------------
+
+
+function makeStructTemplate(): StationTemplate {
+  return {
+    station: 'st', name: 'St',
+    sources: [{ name: 'A', colour: '#abc', role: 'content' }],
+    layout: {
+      unit: 'slot', unit_labels: [], row_start_offsets: [],
+      flat_slots: [
+        { source: 'A', strategy: 'jingle', size: 1, genre: 'G' },
+        { source: 'A', strategy: 'jingle', size: 4, genre: 'G' },
+        { source: 'A', strategy: 'jingle', size: 8, genre: 'G' },
+      ],
+    },
+  };
+}
+
+function makeStructSidecar(): Sidecar {
+  return {
+    schema_version: 1,
+    sections: [{
+      id: 'lead', name: 'Lead',
+      blocks: [
+        { kind: 'atomic', slot_index: 0 },
+        { kind: 'atomic', slot_index: 1 },
+        { kind: 'atomic', slot_index: 2 },
+      ],
+    }],
+    macros: [],
+    layout_order: ['lead'],
+  };
+}
+
+const STRUCT_SEC: SidecarSection = makeStructSidecar().sections[0];
+
+
+describe('<DetailPanel> — c2 review #1 fixes', () => {
+  beforeEach(() => cleanup());
+
+  it('newSize re-seeds when the selected slot changes', async () => {
+    // c2 review #1: prior `if (newSize === null) ...` only fired
+    // once → switching from slot 1 (size=4) to slot 2 (size=8)
+    // left the input showing 4. Selection-keyed reseed must
+    // populate the input with each new slot's currentSize.
+    const tpl = makeStructTemplate();
+    const sc = makeStructSidecar();
+    const { component } = render(DetailPanel, {
+      selected: {
+        ref: { kind: 'atomic-ref', slot_index: 1 } as AtomicRef,
+        section: STRUCT_SEC,
+      },
+      template: tpl, sidecar: sc,
+    });
+    expect((screen.getByTestId('structural-size-input') as HTMLInputElement)
+      .value).toBe('4');
+    // Flip to slot 2 (size=8).
+    component.$set({
+      selected: {
+        ref: { kind: 'atomic-ref', slot_index: 2 } as AtomicRef,
+        section: STRUCT_SEC,
+      },
+    });
+    await tick();
+    expect((screen.getByTestId('structural-size-input') as HTMLInputElement)
+      .value).toBe('8');
+  });
+
+  it('Delete-slot is two-step — first click arms, second commits', async () => {
+    const handler = vi.fn();
+    const { component } = render(DetailPanel, {
+      selected: {
+        ref: { kind: 'atomic-ref', slot_index: 0 } as AtomicRef,
+        section: STRUCT_SEC,
+      },
+      template: makeStructTemplate(), sidecar: makeStructSidecar(),
+    });
+    component.$on('structuralEdit', handler);
+    const btn = screen.getByTestId('structural-delete');
+    expect(btn).toHaveTextContent('Delete slot');
+    // First click: arms (text/state changes), no dispatch.
+    await fireEvent.click(btn);
+    expect(handler).not.toHaveBeenCalled();
+    expect(btn).toHaveTextContent(/confirm delete/i);
+    expect(btn).toHaveAttribute('data-armed', 'true');
+    // Second click within the 3s window: commits.
+    await fireEvent.click(btn);
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(handler.mock.calls[0][0].detail.edit).toEqual({
+      op: 'remove', slot_index: 0,
+    });
+  });
+
+  it('Delete-slot arm-state resets when selection changes', async () => {
+    const handler = vi.fn();
+    const { component } = render(DetailPanel, {
+      selected: {
+        ref: { kind: 'atomic-ref', slot_index: 0 } as AtomicRef,
+        section: STRUCT_SEC,
+      },
+      template: makeStructTemplate(), sidecar: makeStructSidecar(),
+    });
+    component.$on('structuralEdit', handler);
+    // Arm on slot 0.
+    await fireEvent.click(screen.getByTestId('structural-delete'));
+    expect(screen.getByTestId('structural-delete')).toHaveAttribute(
+      'data-armed', 'true',
+    );
+    // Switch to slot 1 — arm state must reset so a single click on
+    // the new selection doesn't immediately commit.
+    component.$set({
+      selected: {
+        ref: { kind: 'atomic-ref', slot_index: 1 } as AtomicRef,
+        section: STRUCT_SEC,
+      },
+    });
+    await tick();
+    expect(screen.getByTestId('structural-delete')).toHaveAttribute(
+      'data-armed', 'false',
+    );
+    // Click on the new selection arms, doesn't commit.
+    await fireEvent.click(screen.getByTestId('structural-delete'));
+    expect(handler).not.toHaveBeenCalled();
+  });
+});
