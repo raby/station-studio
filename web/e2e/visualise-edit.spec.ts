@@ -102,10 +102,23 @@ test.describe('§16.2.5 e2e — section + structural happy paths', () => {
     const sizeInput = page.getByTestId('structural-size-input');
     await sizeInput.fill('7');
     await page.getByTestId('structural-size-apply').click();
-    // Refetch; reopen the same chip; size now reads 7.
-    await expect(page.getByTestId('detail-panel')).toBeHidden({
-      timeout: 5_000,
-    }).catch(() => {});
+    // c2 review #3 fix #3: positive assertion that the PATCH landed.
+    // Previously we waited for the panel to hide with a swallowed
+    // catch; the panel actually stays open after a structural edit
+    // (it just refetches), so the catch was masking a never-true
+    // assertion. Hit the GET endpoint directly + assert the new
+    // size is in the persisted template. `expect.poll` retries
+    // until the refetch settles or the timeout fires.
+    await expect.poll(
+      async () => {
+        const r = await request.get(`${API}/api/stations/e2e-525/template`);
+        if (r.status() !== 200) return null;
+        const body = await r.json();
+        const slots = body?.template?.layout?.flat_slots ?? [];
+        return slots.map((s: { size?: number }) => s.size ?? null);
+      },
+      { timeout: 5_000 },
+    ).toContain(7);
     // The canvas re-renders. Click the same chip and confirm size=7.
     await page.locator(
       'section[data-section-id="all-slots"] [data-testid="chip"]',

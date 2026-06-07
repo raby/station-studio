@@ -169,6 +169,19 @@
   // before forwarding. Macro chips can't be dropped (Chip's
   // dragstart blocks the drag), so we expect only atomic-ref here;
   // a defensive check guards against future divergence.
+  //
+  // c2 review #3 fix #4: tighten the guard to require slot_index OR
+  // block_idx — a payload like `{kind: 'atomic-ref'}` (no address)
+  // previously passed the kind check and dispatched a malformed
+  // blockMove. Today the route handler surfaces it as
+  // 'cannot move this block (no storage address)' but the narrowing
+  // is cleaner at the dispatch boundary.
+  //
+  // c2 review #3 fix #2: skip same-section drops. A drop on the
+  // chip's OWN section is a no-op (server would remove then re-
+  // append to the same blocks list, silently re-ordering). Find
+  // the source section by walking sidecar.sections; skip the
+  // dispatch if it matches the drop target.
   function handleChipDrop(
     e: CustomEvent<{ ref: unknown; targetSectionId: string }>,
   ) {
@@ -177,6 +190,23 @@
       !r || typeof r !== 'object' ||
       (r as { kind?: unknown }).kind !== 'atomic-ref'
     ) {
+      return;
+    }
+    const slotIndex = (r as { slot_index?: unknown }).slot_index;
+    const blockIdx = (r as { block_idx?: unknown }).block_idx;
+    if (typeof slotIndex !== 'number' && typeof blockIdx !== 'number') {
+      return;
+    }
+    // Skip same-section drops. Lookup the source by matching the
+    // ref's addressing against each section's atomic blocks.
+    const sourceSection = sidecar.sections.find((s) =>
+      (s.blocks ?? []).some((b) => {
+        if (b.kind !== 'atomic') return false;
+        if (typeof slotIndex === 'number') return b.slot_index === slotIndex;
+        return b.block_idx === blockIdx;
+      })
+    );
+    if (sourceSection && sourceSection.id === e.detail.targetSectionId) {
       return;
     }
     dispatch('blockMove', {

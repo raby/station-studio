@@ -43,6 +43,7 @@
     type Strategy,
   } from '$lib/editor';
   import type { StructuralBlockEdit } from '$lib/api';
+  import { moveTargets as computeMoveTargets } from '$lib/drag-drop';
   import ChipMultiInput from './ChipMultiInput.svelte';
 
   // c2 review #2: shared field-value union covering every editable
@@ -452,10 +453,16 @@
   // ALSO serves keyboard + screen-reader users). The dropdown lists
   // every section EXCEPT the source and `_unsorted` (the system bin
   // shouldn't be a routine drop target; deletes auto-route there).
+  //
+  // c2 review #3 fix #1: the filter policy lives in $lib/drag-drop
+  // so the drag-drop target (SectionHeader) + this dropdown share
+  // one source of truth — a future change to the bin-id convention
+  // (or adding more system sections) only needs to touch the
+  // helper. Renamed import to `computeMoveTargets` to avoid
+  // shadowing the local reactive `moveTargets` binding the template
+  // already reads.
   $: currentSectionId = selected?.section.id ?? null;
-  $: moveTargets = sidecar.sections.filter(
-    (s) => s.id !== currentSectionId && !s.id.startsWith('_'),
-  );
+  $: moveTargets = computeMoveTargets(sidecar, currentSectionId);
   let moveTarget = '';
   // Reset move target whenever selection changes.
   $: if (selected !== null && moveTargets.length > 0) {

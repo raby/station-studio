@@ -19,6 +19,7 @@
    */
   import { createEventDispatcher } from 'svelte';
   import { focusOnMount } from '$lib/actions';
+  import { CHIP_DRAG_MIME, canDropOn } from '$lib/drag-drop';
   import type { SidecarSection } from '$lib/editor';
 
   export let section: SidecarSection;
@@ -96,7 +97,12 @@
   // carries the source chip's ref as JSON (set by Chip's dragstart).
   // We accept ONLY our custom MIME so unrelated drags (e.g. text,
   // links from outside the canvas) don't trigger a section drop.
-  const DRAG_MIME = 'application/x-station-chip-ref';
+  //
+  // c2 review #3 fix #1: the system bin (`_unsorted`) is not a
+  // valid manual-move target. `canDropOn` enforces this; without
+  // it the drag path bypassed the dropdown's filter + let operators
+  // accidentally route chips into the bin via drag.
+  $: acceptsDrops = canDropOn(section);
   let dragOver = false;
   // Counter so nested dragenter/dragleave (the inner toggle button +
   // actions can fire enter/leave events as the cursor moves) don't
@@ -108,17 +114,18 @@
     if (!e.dataTransfer) return false;
     // .types is a DOMStringList; spec-compliant browsers expose
     // 'includes' via the iterable interface.
-    return Array.from(e.dataTransfer.types).includes(DRAG_MIME);
+    return Array.from(e.dataTransfer.types).includes(CHIP_DRAG_MIME);
   }
 
   function onDragEnter(e: DragEvent) {
-    if (!_hasChipPayload(e)) return;
-    e.preventDefault();
+    if (!_hasChipPayload(e) || !acceptsDrops) return;
+    // c2 review #4 fix #7: removed dead `e.preventDefault()` —
+    // only `dragover` needs preventDefault for drop-enablement.
     dragEnterDepth += 1;
     dragOver = true;
   }
   function onDragOver(e: DragEvent) {
-    if (!_hasChipPayload(e)) return;
+    if (!_hasChipPayload(e) || !acceptsDrops) return;
     // preventDefault on dragover is what enables the drop event to
     // fire — without it the browser treats the target as "not a
     // valid drop target" and rejects the drop.
@@ -126,20 +133,27 @@
     if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
   }
   function onDragLeave(e: DragEvent) {
-    if (!_hasChipPayload(e)) return;
+    if (!_hasChipPayload(e) || !acceptsDrops) return;
     dragEnterDepth = Math.max(0, dragEnterDepth - 1);
     if (dragEnterDepth === 0) dragOver = false;
   }
   function onDrop(e: DragEvent) {
-    if (!_hasChipPayload(e)) return;
+    if (!_hasChipPayload(e) || !acceptsDrops) return;
     e.preventDefault();
     dragOver = false;
     dragEnterDepth = 0;
-    const raw = e.dataTransfer?.getData(DRAG_MIME);
+    const raw = e.dataTransfer?.getData(CHIP_DRAG_MIME);
     if (!raw) return;
     let ref: unknown;
     try { ref = JSON.parse(raw); }
-    catch { return; }
+    catch (err) {
+      // c2 review #4 fix #8: log the parse failure so operators
+      // can debug a misbehaving drag source instead of silently
+      // dropping. console.warn keeps it out of the operator's
+      // face but visible in dev tools.
+      console.warn('SectionHeader: invalid chip-drop JSON', err, raw);
+      return;
+    }
     dispatch('chipDrop', { ref, targetSectionId: section.id });
   }
 </script>
