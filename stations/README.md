@@ -903,6 +903,62 @@ If one of these limitations actually bites your station, that's
 the signal to file an issue — the docs page above stays accurate
 as long as the strategy contract stays the same.
 
+## Editing a station in the browser (§16.2.3 – §16.2.5)
+
+You don't have to hand-edit the JSON. Once the server's running,
+every station has a visual editor at `/stations/<slug>/visualise`
+that covers the operations most edits actually need.
+
+**Open it.** Go to `http://localhost:8001/stations/<slug>` and
+click the "🗺 Visualise template" link. You get a chip-per-slot
+canvas grouped into sections.
+
+**What clicks-and-types let you do today.**
+
+| Affordance                            | UI path                                                  | Slice    |
+|---------------------------------------|----------------------------------------------------------|----------|
+| Edit parameter fields on a chip       | Click chip → DetailPanel → field → Save                  | §16.2.3  |
+| Change a chip's strategy or source    | Click chip → "Change strategy / source" → pick → Retype  | §16.2.4  |
+| Edit a macro (applies to all repeats) | Click macro chip → DetailPanel → Save (yellow warning)   | §16.2.4  |
+| Edit `allowlist_sources` per block    | DetailPanel → "Allowlist sources" chip input             | §16.2.4  |
+| Create / rename / delete a section    | "+ Add section", pencil ✎, 🗑 (two-click delete)         | §16.2.5  |
+| Reorder sections                      | ▲ / ▼ buttons on each section header                     | §16.2.5  |
+| Move a chip between sections          | Drag-drop OR DetailPanel → Move to section dropdown      | §16.2.5  |
+| Resize / add / remove a slot          | DetailPanel → Structural panel → size input / Delete     | §16.2.5  |
+
+**What it does NOT do today.**
+
+* **No section-header drag-drop reorder yet.** Use the ▲ / ▼
+  buttons (covers keyboard + screen-reader too).
+* **No within-section chip reorder.** Drag-drop targets the
+  section as a whole — chips land at the end. Punted to a
+  future slice.
+* **No row_template structural edits.** Editing block_idx
+  changes every row; the Structural panel is hidden for
+  Classics-shape stations. Edit `stations/<slug>.json` by hand.
+* **Macros can't move between sections.** Macros don't carry
+  pinned positions in the sidecar grammar — moving one would
+  break the slot math. Macro chips are non-draggable on
+  purpose. (Edit the macro's spec in place, or hand-edit the
+  sidecar.)
+* **No live preview yet.** Edits save immediately; you have to
+  regenerate to see what the playlist looks like. Debounced
+  preview ships with §16.2.6.
+* **No multi-chip select.** Single chip at a time.
+
+**Sidecar persistence.** As of §16.2.5, the editor sidecar lives
+in the `Station.sidecar` JSON column in the DB (DB-as-truth). The
+on-disk `stations/<slug>.editor.json` is the EXPORT artifact —
+symmetric to `stations/<slug>.json` for the template. Click
+"Export to disk" from the station detail page to refresh both
+files; the Alembic migration `e695658879de` backfills the column
+from the disk file for stations that existed before §16.2.5.
+
+**Heads-up on concurrent edits.** Every write carries an
+`expected_updated_at` token; two tabs editing the same station
+give the second tab a 409 with a "reload + retry" message. The
+editor never silently clobbers another tab's work.
+
 ## Adding a new station
 
 Drop `your-station.json` here. On next `station-studio serve`, the
