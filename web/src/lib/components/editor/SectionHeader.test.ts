@@ -171,32 +171,10 @@ describe('<SectionHeader> — §16.2.5 c2 affordances', () => {
 
 
 // ---- §16.2.5 c2 — drag-drop tests ---------------------------------------
-
-
-/** Construct a synthetic DragEvent with a DataTransfer that mimics
- *  the browser's payload-carrying behavior. jsdom doesn't ship a
- *  DataTransfer constructor, so we attach a minimal stand-in that
- *  the component's getData/setData calls can read. */
-function makeDragEvent(
-  type: string,
-  mime: string,
-  data?: string,
-): Event {
-  const e = new Event(type, { bubbles: true, cancelable: true });
-  const store: Record<string, string> = {};
-  if (data !== undefined) store[mime] = data;
-  Object.defineProperty(e, 'dataTransfer', {
-    value: {
-      types: data !== undefined ? [mime] : [],
-      getData: (k: string) => store[k] ?? '',
-      setData: (k: string, v: string) => { store[k] = v; },
-      dropEffect: 'none',
-      effectAllowed: 'all',
-    },
-    writable: false,
-  });
-  return e;
-}
+// c2 review #4 #6: synthetic DragEvent builder hoisted to
+// __tests__/drag-fixture.ts so the matching builder in Chip.test.ts
+// can't drift.
+import { makeDragEvent } from './__tests__/drag-fixture';
 
 
 describe('<SectionHeader> — c2 drag-drop', () => {

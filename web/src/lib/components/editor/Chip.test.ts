@@ -224,26 +224,8 @@ describe('<Chip>', () => {
 
 
 // ---- §16.2.5 c2 — drag-source tests -------------------------------------
-
-
-function makeDragEvent(): Event {
-  const e = new Event('dragstart', { bubbles: true, cancelable: true });
-  const store: Record<string, string> = {};
-  Object.defineProperty(e, 'dataTransfer', {
-    value: {
-      types: [] as string[],
-      getData: (k: string) => store[k] ?? '',
-      setData: (k: string, v: string) => {
-        store[k] = v;
-        (e as unknown as { _store: typeof store })._store = store;
-      },
-      dropEffect: 'none',
-      effectAllowed: 'all',
-    },
-    writable: false,
-  });
-  return e;
-}
+// c2 review #4 #6: shared synthetic-event builder.
+import { makeDragEvent } from './__tests__/drag-fixture';
 
 
 describe('<Chip> — c2 drag source', () => {
@@ -255,7 +237,7 @@ describe('<Chip> — c2 drag source', () => {
     });
     const chip = screen.getByTestId('chip');
     expect(chip).toHaveAttribute('draggable', 'true');
-    const e = makeDragEvent();
+    const e = makeDragEvent('dragstart');
     chip.dispatchEvent(e);
     const dt = (e as unknown as { dataTransfer: { getData: (k: string) => string } })
       .dataTransfer;

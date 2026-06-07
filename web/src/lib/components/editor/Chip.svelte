@@ -30,6 +30,7 @@
     type StationTemplate,
     type ViewModeState,
   } from '$lib/editor';
+  import { CHIP_DRAG_MIME } from '$lib/drag-drop';
 
   export let ref: ExpandedRef;
   export let template: StationTemplate;
@@ -43,14 +44,17 @@
   // moving a macro between sections breaks the position math (see
   // c1 review #2 docstring on BlockMoveRequest). The drop targets
   // (SectionHeaders) read the JSON payload via dataTransfer.
+  //
+  // c2 review #4 fix #9: macros have `draggable={false}` on the
+  // element so the browser never fires dragstart for them — the
+  // `!isDraggable` guard below is unreachable for macros. The
+  // remaining `!e.dataTransfer` guard is the real defensive branch
+  // (rare browser quirk where DataTransfer is null on synthetic
+  // events).
   $: isDraggable = ref.kind === 'atomic-ref';
-  const DRAG_MIME = 'application/x-station-chip-ref';
   function onDragStart(e: DragEvent) {
-    if (!isDraggable || !e.dataTransfer) {
-      e.preventDefault();
-      return;
-    }
-    e.dataTransfer.setData(DRAG_MIME, JSON.stringify(ref));
+    if (!e.dataTransfer) return;
+    e.dataTransfer.setData(CHIP_DRAG_MIME, JSON.stringify(ref));
     e.dataTransfer.effectAllowed = 'move';
   }
 

@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type APIRequestContext } from '@playwright/test';
 import { API, importTinyPool } from './fixtures';
 
 /**
@@ -22,7 +22,9 @@ import { API, importTinyPool } from './fixtures';
  */
 
 async function createFlatStation(
-  request: any,
+  // c2 review #4 #10: type as APIRequestContext so the `request.post`
+  // surface is enforced at compile time instead of typed `any`.
+  request: APIRequestContext,
   slug: string,
   sourceName = 'A',
 ) {
