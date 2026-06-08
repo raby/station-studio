@@ -66,6 +66,7 @@ from engine.editor_metadata import (
     UNSORTED_SECTION_ID,
     UNSORTED_SECTION_NAME,
     ensure_unsorted_section,
+    lookup_section,
     parse_sidecar,
     resolve_macro_addresses,
     shift_atomic_slot_indices,
@@ -145,7 +146,9 @@ def get_station_sidecar(
         raise HTTPException(404, f"station '{slug}' not found")
 
     template: dict = station.template  # JSON column → dict
-    sidecar, error_message = _load_sidecar(station, template, stations_dir)
+    sidecar, error_message = _resolve_sidecar(
+        station, template, stations_dir, strict=False,
+    )
     return EditorSidecarResponse(
         template=template,
         sidecar=sidecar,
@@ -163,9 +166,11 @@ def _resolve_sidecar(
 ) -> tuple[dict, str | None]:
     """Layered DB→file→trivial sidecar resolution (§16.2.5 D1).
 
-    c1 review #7: unifies the two prior helpers (`_load_sidecar` for
-    GET, `_load_sidecar_for_mutation` for writes). They diverged in
-    one dimension only — what to do on a stored-but-broken sidecar:
+    c1 review #7 + slice-review sweep: single entry point for both
+    GET (lenient) + mutation (strict) callers. Earlier `_load_sidecar`
+    + `_load_sidecar_for_mutation` shims were 1-line wrappers around
+    this; inlined for clarity — the `strict=True/False` kwarg reads
+    more explicitly at call sites than the wrapper names did.
 
     * `strict=False` (GET) — degrade to trivial-with-sidecar_error.
       Decision E from §16.2.2 says the frontend never handles "no
@@ -247,13 +252,6 @@ def _resolve_sidecar(
 
     # Case (3): trivial floor.
     return synthesize_trivial_sidecar(template), None
-
-
-def _load_sidecar(
-    station: Station, template: dict, stations_dir: Path,
-) -> tuple[dict, str | None]:
-    """Lenient resolution for GET /sidecar. See `_resolve_sidecar`."""
-    return _resolve_sidecar(station, template, stations_dir, strict=False)
 
 
 @router.patch(
@@ -373,19 +371,6 @@ def _resolve_block_address(template: dict, addr: BlockAddress) -> dict:
             raise HTTPException(404, f"block_idx {addr.block_idx} out of range")
         return blocks[addr.block_idx]
     raise HTTPException(400, "address must set slot_index or block_idx")
-
-
-def _load_sidecar_for_mutation(
-    station: Station, template: dict, stations_dir: Path, slug: str,
-) -> dict:
-    """Strict resolution for mutation endpoints. See `_resolve_sidecar`.
-
-    The slug arg is kept for API stability + clearer error messages
-    even though `station.slug` would do; existing call sites pass it
-    explicitly so changing the contract would cascade.
-    """
-    sidecar, _ = _resolve_sidecar(station, template, stations_dir, strict=True)
-    return sidecar
 
 
 def _check_optimistic_token(station: Station, expected: str | None) -> None:
@@ -573,16 +558,16 @@ def patch_macro(
     #
     # Slice-review sweep: deep-copy the loaded sidecar BEFORE the
     # `for macro in sidecar.get("macros", [])` mutation loop below.
-    # When `Station.sidecar` is populated, `_load_sidecar_for_mutation`
-    # returns the ORM-attached dict by reference (see _resolve_sidecar
-    # case 1 — `return station.sidecar, None`). The macro-spec mutation
-    # loop's `spec.setdefault(...)` + `spec[key] = value` would then
-    # write to the live ORM attribute before drift validation runs in
+    # When `Station.sidecar` is populated, `_resolve_sidecar` returns
+    # the ORM-attached dict by reference (case 1 —
+    # `return station.sidecar, None`). The macro-spec mutation loop's
+    # `spec.setdefault(...)` + `spec[key] = value` would then write
+    # to the live ORM attribute before drift validation runs in
     # `_persist_sidecar`. The sibling §16.2.5 endpoints all route
-    # through `_prepare_sidecar_mutation` which deep-copies (line 771);
-    # patch_macro is the §16.2.4-era outlier. Mirror the same shape.
+    # through `_prepare_sidecar_mutation` which deep-copies; patch_macro
+    # is the §16.2.4-era outlier. Mirror the same shape.
     sidecar = copy.deepcopy(
-        _load_sidecar_for_mutation(station, template, stations_dir, slug),
+        _resolve_sidecar(station, template, stations_dir, strict=True)[0],
     )
 
     # Resolve macro_id → unique engine-template addresses by walking
@@ -713,7 +698,7 @@ def patch_macro(
 #
 #   1. Resolve station (404)
 #   2. _check_optimistic_token (409)
-#   3. Load sidecar via _load_sidecar_for_mutation (400 on broken)
+#   3. Load sidecar via _resolve_sidecar(strict=True) (400 on broken)
 #   4. Apply mutation to a deep-copy of the sidecar (and template
 #      for structural edits)
 #   5. validate_sidecar against the (possibly new) template
@@ -752,11 +737,12 @@ def _persist_sidecar(
     station.sidecar = sidecar
 
 
-def _find_section(sidecar: dict, section_id: str) -> dict | None:
-    for s in sidecar.get("sections", []):
-        if s.get("id") == section_id:
-            return s
-    return None
+# Slice-review sweep: the router-local `_find_section` was renamed +
+# hoisted to `engine.editor_metadata.lookup_section` (sibling to
+# `lookup_macro`). Both are fundamental sidecar dict-scans by id —
+# living next to each other in the engine module means future macro/
+# section drift detectors can use them without an api→engine reverse
+# import.
 
 
 # c1 review #6: prepare/finish helpers extracted from the 6 sidecar-
@@ -784,7 +770,7 @@ def _prepare_sidecar_mutation(
     _check_optimistic_token(station, expected_updated_at)
     template = copy.deepcopy(station.template)
     sidecar = copy.deepcopy(
-        _load_sidecar_for_mutation(station, template, stations_dir, slug),
+        _resolve_sidecar(station, template, stations_dir, strict=True)[0],
     )
     return station, template, sidecar
 
@@ -838,7 +824,7 @@ def create_section(
         )
     if not payload.id:
         raise HTTPException(400, "section id must be a non-empty string.")
-    if _find_section(sidecar, payload.id) is not None:
+    if lookup_section(sidecar, payload.id) is not None:
         raise HTTPException(
             409,
             f"section id '{payload.id}' already exists.",
@@ -876,7 +862,7 @@ def rename_section(
             400,
             f"can't rename the system `{UNSORTED_SECTION_ID}` section.",
         )
-    section = _find_section(sidecar, section_id)
+    section = lookup_section(sidecar, section_id)
     if section is None:
         raise HTTPException(404, f"section '{section_id}' not found.")
     if not payload.name:
@@ -919,7 +905,7 @@ def delete_section(
             "(it's auto-managed; move its blocks into other sections "
             "to empty it).",
         )
-    section = _find_section(sidecar, section_id)
+    section = lookup_section(sidecar, section_id)
     if section is None:
         raise HTTPException(404, f"section '{section_id}' not found.")
 
@@ -936,8 +922,8 @@ def delete_section(
     if has_blocks:
         sidecar = ensure_unsorted_section(sidecar)
         # Re-find both sections in the deep-copied sidecar.
-        moved_section = _find_section(sidecar, section_id)
-        bin_section = _find_section(sidecar, UNSORTED_SECTION_ID)
+        moved_section = lookup_section(sidecar, section_id)
+        bin_section = lookup_section(sidecar, UNSORTED_SECTION_ID)
         # Move the post-deepcopy blocks (these dicts are NEW; no
         # aliasing with the pre-deepcopy section's blocks).
         bin_section["blocks"].extend(moved_section.get("blocks", []))
@@ -1041,7 +1027,7 @@ def move_block(
             "section. The bin is auto-filled by section delete + structural "
             "add (D2). Move to a real section instead.",
         )
-    target = _find_section(sidecar, payload.target_section_id)
+    target = lookup_section(sidecar, payload.target_section_id)
     if target is None:
         raise HTTPException(
             404, f"target section '{payload.target_section_id}' not found.",
@@ -1172,7 +1158,7 @@ def structural_block_edit(
         # a recoverable starting position). They move it to a real
         # section via a follow-up PATCH /blocks/move call.
         sidecar = ensure_unsorted_section(sidecar)
-        bin_section = _find_section(sidecar, UNSORTED_SECTION_ID)
+        bin_section = lookup_section(sidecar, UNSORTED_SECTION_ID)
         bin_section["blocks"].append(
             {"kind": "atomic", "slot_index": idx},
         )
@@ -1232,7 +1218,7 @@ def structural_block_edit(
         # help when `_unsorted` itself may lack an anchor. The error
         # names the macros so the operator knows what to move.
         if touched_section_id is not None:
-            touched = _find_section(sidecar, touched_section_id)
+            touched = lookup_section(sidecar, touched_section_id)
             if touched is not None:
                 remaining = touched.get("blocks", [])
                 has_atomic_after = any(

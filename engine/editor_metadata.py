@@ -432,6 +432,21 @@ UNSORTED_SECTION_ID = "_unsorted"
 UNSORTED_SECTION_NAME = "Unsorted (moved from a deleted section)"
 
 
+def lookup_section(sidecar: dict, section_id: str) -> dict | None:
+    """Return the section dict in `sidecar` whose `id` matches, or None.
+
+    Sibling to `lookup_macro` — both are fundamental dict-scans over
+    sidecar's id-keyed lists. Lives here so the 7 router call sites
+    that need section lookup share one home with the engine's other
+    sidecar-grammar primitives (and so future macro/section drift
+    detectors can reach them without an api→engine reverse import).
+    """
+    for s in sidecar.get("sections", []):
+        if s.get("id") == section_id:
+            return s
+    return None
+
+
 def shift_atomic_slot_indices(sidecar: dict, threshold: int, delta: int) -> dict:
     """Return a deep-copied sidecar with every atomic block's
     `slot_index >= threshold` shifted by `delta`.

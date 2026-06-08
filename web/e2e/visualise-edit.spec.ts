@@ -1,5 +1,11 @@
-import { test, expect, type APIRequestContext } from '@playwright/test';
-import { API, importTinyPool } from './fixtures';
+import { test, expect } from '@playwright/test';
+import {
+  API,
+  createStation,
+  importTinyPool,
+  minimalFlatTemplate,
+} from './fixtures';
+import type { APIRequestContext } from '@playwright/test';
 
 /**
  * §16.2.5 c2 — end-to-end click-through covering the §16.2.3 →
@@ -21,35 +27,18 @@ import { API, importTinyPool } from './fixtures';
  * with 400.
  */
 
+// Slice-review sweep: the inline 30-line `createFlatStation` literal
+// got hoisted into `web/e2e/fixtures.ts` as `minimalFlatTemplate` +
+// reused via the existing `createStation` helper. The local wrapper
+// stays only to keep the call-site signature compact.
 async function createFlatStation(
-  // c2 review #4 #10: type as APIRequestContext so the `request.post`
-  // surface is enforced at compile time instead of typed `any`.
   request: APIRequestContext,
   slug: string,
   sourceName = 'A',
-) {
-  const r = await request.post(`${API}/api/stations`, {
-    data: {
-      slug, name: slug,
-      template: {
-        station: slug, name: slug, cadence: 'weekly', rng: 'off',
-        sources: [{ name: sourceName, colour: '#117733', role: 'content' }],
-        cursor: { base_advance_per_week: 0, cycle_weeks: 1 },
-        layout: {
-          unit: 'slot', unit_labels: [], row_start_offsets: [],
-          cursors_init: {},
-          flat_slots: [
-            { source: sourceName, strategy: 'jingle', size: 1, genre: 'G' },
-            { source: sourceName, strategy: 'jingle', size: 2, genre: 'G' },
-            { source: sourceName, strategy: 'jingle', size: 4, genre: 'G' },
-          ],
-        },
-      },
-    },
-  });
-  if (r.status() !== 201) {
-    throw new Error(`createFlatStation failed: ${r.status()} ${await r.text()}`);
-  }
+): Promise<void> {
+  await createStation(
+    request, slug, slug, sourceName, minimalFlatTemplate(slug, sourceName),
+  );
 }
 
 

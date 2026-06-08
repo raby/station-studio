@@ -747,22 +747,7 @@ export const patchBlock = async (
       expected_updated_at: expectedUpdatedAt,
     }),
   });
-  if (res.status === 409) {
-    let detail: { message?: string; current_updated_at?: string | null } | string = '';
-    try {
-      const parsed = await res.json();
-      detail = parsed?.detail ?? parsed;
-    } catch {
-      detail = await res.text();
-    }
-    if (detail && typeof detail === 'object') {
-      throw new BlockPatchConflict(
-        detail.message ?? 'station changed since you loaded it',
-        detail.current_updated_at ?? null,
-      );
-    }
-    throw new ApiError(409, `409 Conflict: ${JSON.stringify(detail)}`);
-  }
+  if (res.status === 409) await _handleConcurrencyConflict(res);
   return json<BlockPatchResponse>(res);
 };
 
@@ -810,22 +795,7 @@ export const retypeBlock = async (
       }),
     },
   );
-  if (res.status === 409) {
-    let detail: { message?: string; current_updated_at?: string | null } | string = '';
-    try {
-      const parsed = await res.json();
-      detail = parsed?.detail ?? parsed;
-    } catch {
-      detail = await res.text();
-    }
-    if (detail && typeof detail === 'object') {
-      throw new BlockPatchConflict(
-        detail.message ?? 'station changed since you loaded it',
-        detail.current_updated_at ?? null,
-      );
-    }
-    throw new ApiError(409, `409 Conflict: ${JSON.stringify(detail)}`);
-  }
+  if (res.status === 409) await _handleConcurrencyConflict(res);
   return json<BlockRetypeResponse>(res);
 };
 
@@ -862,22 +832,7 @@ export const patchMacro = async (
       }),
     },
   );
-  if (res.status === 409) {
-    let detail: { message?: string; current_updated_at?: string | null } | string = '';
-    try {
-      const parsed = await res.json();
-      detail = parsed?.detail ?? parsed;
-    } catch {
-      detail = await res.text();
-    }
-    if (detail && typeof detail === 'object') {
-      throw new BlockPatchConflict(
-        detail.message ?? 'station changed since you loaded it',
-        detail.current_updated_at ?? null,
-      );
-    }
-    throw new ApiError(409, `409 Conflict: ${JSON.stringify(detail)}`);
-  }
+  if (res.status === 409) await _handleConcurrencyConflict(res);
   return json<MacroPatchResponse>(res);
 };
 
@@ -895,9 +850,12 @@ export interface SidecarMutationResponse {
 }
 
 
-/** Shared 409-handler for the 6 sidecar-mutation endpoints. Mirrors
- *  the inline conflict-extraction logic from patchBlock. */
-async function _handleSidecarConflict(res: Response): Promise<never> {
+/** Shared 409-handler for every PATCH endpoint with optimistic
+ *  concurrency. Slice-review sweep folded the §16.2.3 `patchBlock`,
+ *  §16.2.4 `retypeBlock` + `patchMacro` inline copies into this
+ *  helper too — renamed from `_handleConcurrencyConflict` since it now
+ *  serves both template-mutation + sidecar-mutation paths. */
+async function _handleConcurrencyConflict(res: Response): Promise<never> {
   let detail: { message?: string; current_updated_at?: string | null } | string = '';
   try {
     const parsed = await res.json();
@@ -934,7 +892,7 @@ export const createSection = async (
       }),
     },
   );
-  if (res.status === 409) await _handleSidecarConflict(res);
+  if (res.status === 409) await _handleConcurrencyConflict(res);
   return json<SidecarMutationResponse>(res);
 };
 
@@ -956,7 +914,7 @@ export const renameSection = async (
       body: JSON.stringify({ name, expected_updated_at: expectedUpdatedAt }),
     },
   );
-  if (res.status === 409) await _handleSidecarConflict(res);
+  if (res.status === 409) await _handleConcurrencyConflict(res);
   return json<SidecarMutationResponse>(res);
 };
 
@@ -978,7 +936,7 @@ export const deleteSection = async (
     `/api/stations/${encodeURIComponent(slug)}/sections/${encodeURIComponent(sectionId)}${qs}`,
     { method: 'DELETE' },
   );
-  if (res.status === 409) await _handleSidecarConflict(res);
+  if (res.status === 409) await _handleConcurrencyConflict(res);
   return json<SidecarMutationResponse>(res);
 };
 
@@ -1002,7 +960,7 @@ export const reorderSections = async (
       }),
     },
   );
-  if (res.status === 409) await _handleSidecarConflict(res);
+  if (res.status === 409) await _handleConcurrencyConflict(res);
   return json<SidecarMutationResponse>(res);
 };
 
@@ -1032,7 +990,7 @@ export const moveBlock = async (
       }),
     },
   );
-  if (res.status === 409) await _handleSidecarConflict(res);
+  if (res.status === 409) await _handleConcurrencyConflict(res);
   return json<SidecarMutationResponse>(res);
 };
 
@@ -1066,7 +1024,7 @@ export const structuralBlockEdit = async (
       }),
     },
   );
-  if (res.status === 409) await _handleSidecarConflict(res);
+  if (res.status === 409) await _handleConcurrencyConflict(res);
   return json<SidecarMutationResponse>(res);
 };
 

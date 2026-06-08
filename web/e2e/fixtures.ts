@@ -44,15 +44,54 @@ export function minimalTemplate(slug: string, sourceName = 'A') {
   };
 }
 
-/** Create a station via the API. Throws on non-201. */
+/** Canonical minimal flat_slots template — one source, three jingle
+ *  slots. §16.2.5+ structural-edit + section-composition specs need
+ *  flat_slots (row_template structural edits are D8 punts — server
+ *  rejects with 400). Sibling to `minimalTemplate` so the e2e fan-out
+ *  doesn't grow N inline 30-line literals per spec.
+ *
+ *  Slice-review sweep extracted this from a `createFlatStation` copy
+ *  in visualise-edit.spec.ts. */
+export function minimalFlatTemplate(slug: string, sourceName = 'A') {
+  return {
+    station: slug,
+    name: slug,
+    cadence: 'weekly',
+    rng: 'off',
+    sources: [{ name: sourceName, colour: '#117733', role: 'content' }],
+    cursor: { base_advance_per_week: 0, cycle_weeks: 1 },
+    layout: {
+      unit: 'slot',
+      unit_labels: [],
+      row_start_offsets: [],
+      cursors_init: {},
+      flat_slots: [
+        { source: sourceName, strategy: 'jingle', size: 1, genre: 'G' },
+        { source: sourceName, strategy: 'jingle', size: 2, genre: 'G' },
+        { source: sourceName, strategy: 'jingle', size: 4, genre: 'G' },
+      ],
+    },
+  };
+}
+
+/** Create a station via the API. Throws on non-201.
+ *
+ *  Accepts an optional `template` override for specs that need a
+ *  non-default layout shape (e.g. `minimalFlatTemplate` for
+ *  §16.2.5+ structural-edit specs). Defaults to `minimalTemplate`
+ *  for backward compatibility. */
 export async function createStation(
   request: APIRequestContext,
   slug: string,
   name: string,
   sourceName = 'A',
+  template?: ReturnType<typeof minimalTemplate>,
 ) {
   const r = await request.post(`${API}/api/stations`, {
-    data: { slug, name, template: minimalTemplate(slug, sourceName) },
+    data: {
+      slug, name,
+      template: template ?? minimalTemplate(slug, sourceName),
+    },
   });
   if (r.status() !== 201) {
     throw new Error(
