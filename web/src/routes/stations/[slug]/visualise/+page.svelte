@@ -101,17 +101,18 @@
    *  SidecarMutationResponse (the 6 §16.2.5 endpoints)? If yes,
    *  apply it directly and skip the GET refetch. Falls back to
    *  GET for §16.2.3 patchBlock + §16.2.4 retypeBlock + patchMacro,
-   *  which return different shapes (BlockPatchResponse /
-   *  BlockRetypeResponse / MacroPatchResponse). */
+   *  which return different shapes (no top-level `sidecar` field).
+   *
+   *  Slice-review c1-rescue #6: single-condition discriminator —
+   *  no other PATCH wrapper in this file has a top-level `sidecar`
+   *  key, so presence is sufficient. The structural narrow
+   *  (typeof sidecar === 'object') was overkill for the threat
+   *  model + made the helper read like it was guarding against
+   *  arbitrary backend drift it doesn't actually catch. */
   function _isSidecarMutationResponse(
     r: unknown,
   ): r is { sidecar: Sidecar; template?: Record<string, unknown>; updated_at: string | null } {
-    return (
-      r !== null && typeof r === 'object' &&
-      'sidecar' in r &&
-      typeof (r as { sidecar: unknown }).sidecar === 'object' &&
-      (r as { sidecar: unknown }).sidecar !== null
-    );
+    return r !== null && typeof r === 'object' && 'sidecar' in r;
   }
 
   async function withSaveLifecycle(

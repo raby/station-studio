@@ -341,36 +341,15 @@ def auto_import_starter_pools(
 
 
 def populate_db_sidecars(db, stations_dir: Path) -> int:
-    """§16.2.5.t3 — DB-as-truth lifespan helper.
+    """§16.2.5.t3 — populate `Station.sidecar` for un-authored
+    stations (column IS NULL) from disk file if present, else
+    `derive_sidecar(template)`. Returns count populated. Idempotent.
 
-    For each Station whose `sidecar` column IS NULL, populate it
-    from `stations/{slug}.editor.json` on disk (if present) or by
-    deriving from the template. Returns the count populated.
-
-    This closes the broken `rm stations/{slug}.editor.json + restart`
-    regen recipe stations/README.md previously advertised. Under the
-    pre-§16.2.5.t3 lifecycle, lifespan auto-derive wrote a fresh
-    disk file, but `Station.sidecar` (DB column) stayed populated
-    with the old value — runtime preferred the DB column, so the
-    operator saw the stale sidecar. The new recovery path is purely
-    DB-side:
-
-      1. `UPDATE station SET sidecar = NULL WHERE slug = '...'`
-      2. Restart server
-      3. Lifespan re-derives + populates DB from disk (or template)
-
-    The disk file remains the EXPORT artifact (Decision A3) —
-    committed to git, shared across machines, never authoritative
-    at runtime once the DB column is non-NULL.
-
-    Idempotent: stations whose `sidecar` is already populated are
-    skipped (no re-derive, no disk read). Stations whose template
-    doesn't parse get logged + skipped so a broken station doesn't
-    block bootstrap of healthy ones.
-
-    Lazy imports for the same reason `auto_derive_missing_sidecars`
-    does: keep engine.seeding light when nobody invokes the helper.
+    Disk is the EXPORT artifact; DB column is runtime truth. Recovery
+    recipe + rationale: DESIGN.md §16.2.5.t3 + stations/README.md.
     """
+    # Lazy imports — keep engine.seeding light when nobody calls
+    # the helper (matches auto_derive_missing_sidecars's pattern).
     from engine.editor_metadata import (
         EditorMetadataError, derive_sidecar, parse_sidecar,
     )

@@ -2201,6 +2201,25 @@ def test_create_section_response_omits_template(editor_api):
     assert body["template"] is None  # but not populated
 
 
+def _t3_unauthored_station(Session: sessionmaker, slug: str, name: str) -> dict:
+    """Slice-review c1-rescue #8: shared scaffold for the
+    populate_db_sidecars tests. Builds a Station with the canonical
+    1-jingle-slot template + sidecar IS NULL. Returns the template
+    so callers can write a matching disk sidecar (or skip for the
+    derive-fallback case)."""
+    template = _build_template(
+        slug, name=name,
+        sources=[{"name": "A", "colour": "#abc", "role": "content"}],
+        flat_slots=[
+            {"source": "A", "strategy": "jingle", "size": 1, "genre": "G"},
+        ],
+    )
+    with Session() as db:
+        db.add(Station(slug=slug, name=name, template=template))
+        db.commit()
+    return template
+
+
 def test_populate_db_sidecars_seeds_unauthored_from_disk(editor_api):
     """§16.2.5.t3: lifespan populates Station.sidecar from disk file
     when present + sidecar IS NULL. Operator recovery path:
@@ -2209,15 +2228,7 @@ def test_populate_db_sidecars_seeds_unauthored_from_disk(editor_api):
     from engine.seeding import populate_db_sidecars
     client, Session, stations_dir = editor_api
     slug = "t3-disk"
-    # Build station WITHOUT sidecar in DB; write authored sidecar to
-    # disk.
-    template = _build_template(
-        slug, name="Disk",
-        sources=[{"name": "A", "colour": "#abc", "role": "content"}],
-        flat_slots=[
-            {"source": "A", "strategy": "jingle", "size": 1, "genre": "G"},
-        ],
-    )
+    _t3_unauthored_station(Session, slug, "Disk")
     sidecar_on_disk = {
         "schema_version": 1,
         "sections": [{"id": "lead", "name": "Authored on disk",
@@ -2225,17 +2236,12 @@ def test_populate_db_sidecars_seeds_unauthored_from_disk(editor_api):
         "macros": [],
         "layout_order": ["lead"],
     }
-    with Session() as db:
-        db.add(Station(slug=slug, name="Disk", template=template))
-        db.commit()
     (stations_dir / f"{slug}.editor.json").write_text(
         json.dumps(sidecar_on_disk, indent=2),
     )
-    # Run the lifespan helper.
     with Session() as db:
         n = populate_db_sidecars(db, stations_dir)
     assert n == 1
-    # Verify DB now holds the disk content (not derived from template).
     with Session() as db:
         station = db.query(Station).filter_by(slug=slug).first()
         assert station.sidecar is not None
@@ -2249,16 +2255,7 @@ def test_populate_db_sidecars_derives_when_disk_missing(editor_api):
     from engine.seeding import populate_db_sidecars
     client, Session, stations_dir = editor_api
     slug = "t3-derive"
-    template = _build_template(
-        slug, name="Derive",
-        sources=[{"name": "A", "colour": "#abc", "role": "content"}],
-        flat_slots=[
-            {"source": "A", "strategy": "jingle", "size": 1, "genre": "G"},
-        ],
-    )
-    with Session() as db:
-        db.add(Station(slug=slug, name="Derive", template=template))
-        db.commit()
+    template = _t3_unauthored_station(Session, slug, "Derive")
     # No disk file written.
     with Session() as db:
         n = populate_db_sidecars(db, stations_dir)
@@ -2266,10 +2263,8 @@ def test_populate_db_sidecars_derives_when_disk_missing(editor_api):
     with Session() as db:
         station = db.query(Station).filter_by(slug=slug).first()
         assert station.sidecar is not None
-        # Derived sidecar has at least one section + atomic refs.
         sections = station.sidecar["sections"]
         assert len(sections) >= 1
-        # Atomic refs cover every flat_slot index.
         all_atomics = [
             b for s in sections for b in s.get("blocks", [])
             if b.get("kind") == "atomic"
