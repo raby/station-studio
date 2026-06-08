@@ -108,6 +108,24 @@ def upgrade() -> None:
     if not rows:
         return
 
+    # Slice-review sweep: declare a lightweight table reference so the
+    # UPDATE uses SQLAlchemy's `sa.JSON()` bind processor. The prior
+    # `sa.text("UPDATE ... SET sidecar = :s")` with `json.dumps(content)`
+    # accidentally round-tripped on SQLite (TEXT affinity + read-side
+    # `json.loads`) but on Postgres JSONB the column expects a native
+    # dict + the bind processor wraps `json.dumps` itself; passing a
+    # pre-serialised string would store the LITERAL string (a JSON-
+    # encoded scalar string), and reads would return `str` not `dict`
+    # — runtime `validate_sidecar` would then 400 every station with
+    # `sidecar must be a JSON object, got str`. Letting the JSON
+    # column type handle serialisation keeps the migration dialect-
+    # portable.
+    station_t = sa.table(
+        'station',
+        sa.column('id', sa.Integer()),
+        sa.column('sidecar', sa.JSON()),
+    )
+
     backfilled = 0
     skipped: list[tuple[str, str]] = []  # (slug, reason)
     for row in rows:
@@ -116,7 +134,11 @@ def upgrade() -> None:
         if not sidecar_path.is_file():
             continue
         try:
-            content = json.loads(sidecar_path.read_text())
+            # Slice-review sweep: explicit utf-8 encoding — operator-
+            # committed sidecars with non-ASCII section names (accents,
+            # non-Latin scripts) would crash the migration on Windows
+            # where Path.read_text defaults to cp1252.
+            content = json.loads(sidecar_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as e:
             skipped.append((slug, f"{type(e).__name__}: {e}"))
             continue
@@ -129,8 +151,9 @@ def upgrade() -> None:
         # import engine.editor_metadata, which couples the
         # migration to engine code that may evolve.
         conn.execute(
-            sa.text("UPDATE station SET sidecar = :s WHERE id = :i"),
-            {"s": json.dumps(content), "i": row.id},
+            station_t.update()
+                .where(station_t.c.id == row.id)
+                .values(sidecar=content),
         )
         backfilled += 1
 

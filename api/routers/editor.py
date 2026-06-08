@@ -570,7 +570,20 @@ def patch_macro(
     # a broken DB column or file is a 400 here (operator must fix
     # before mutating). Unlike GET, we can't silently degrade —
     # that'd lose the operator's macro grouping for this write.
-    sidecar = _load_sidecar_for_mutation(station, template, stations_dir, slug)
+    #
+    # Slice-review sweep: deep-copy the loaded sidecar BEFORE the
+    # `for macro in sidecar.get("macros", [])` mutation loop below.
+    # When `Station.sidecar` is populated, `_load_sidecar_for_mutation`
+    # returns the ORM-attached dict by reference (see _resolve_sidecar
+    # case 1 — `return station.sidecar, None`). The macro-spec mutation
+    # loop's `spec.setdefault(...)` + `spec[key] = value` would then
+    # write to the live ORM attribute before drift validation runs in
+    # `_persist_sidecar`. The sibling §16.2.5 endpoints all route
+    # through `_prepare_sidecar_mutation` which deep-copies (line 771);
+    # patch_macro is the §16.2.4-era outlier. Mirror the same shape.
+    sidecar = copy.deepcopy(
+        _load_sidecar_for_mutation(station, template, stations_dir, slug),
+    )
 
     # Resolve macro_id → unique engine-template addresses by walking
     # the sidecar. See engine.editor_metadata.resolve_macro_addresses
@@ -671,7 +684,9 @@ def patch_macro(
     # invalid field). Mirrors the 6 §16.2.5 endpoints' shape;
     # consistent revalidation across all write paths.
     if spec_changed:
-        _persist_sidecar(station, copy.deepcopy(sidecar), template=template)
+        # Slice-review sweep: deep-copy moved to the load step above,
+        # so `sidecar` here is already isolated from `Station.sidecar`.
+        _persist_sidecar(station, sidecar, template=template)
     else:
         # Trivial-fallback path (no macros[] entry to update) → just
         # the template. We DON'T persist the synthesised sidecar:
@@ -967,6 +982,19 @@ def reorder_sections(
         raise HTTPException(
             400, "layout_order must not contain duplicate ids.",
         )
+    # Slice-review sweep: pin `_unsorted` at the end. The bin's
+    # visual contract is "orphan landing zone" — putting it above
+    # user-authored sections breaks the canvas's progressive-
+    # disclosure flow. The SectionHeader hides up/down buttons on
+    # `_unsorted`, but a direct API client could PUT a layout_order
+    # that routes it elsewhere. Enforce server-side too.
+    if UNSORTED_SECTION_ID in payload.layout_order:
+        if payload.layout_order[-1] != UNSORTED_SECTION_ID:
+            raise HTTPException(
+                400,
+                f"the `{UNSORTED_SECTION_ID}` bin must stay at the END of "
+                f"layout_order (it's a system section, not user-orderable).",
+            )
     sidecar["layout_order"] = list(payload.layout_order)
 
     return _finish_sidecar_mutation(station, sidecar, db)
@@ -999,6 +1027,20 @@ def move_block(
         slug, db, stations_dir, payload.expected_updated_at,
     )
 
+    # Slice-review sweep: reject `_unsorted` as a target for manual
+    # moves. D2 reserves the bin for auto-rescue (non-empty section
+    # delete + structural add) — manual routing in would erode the
+    # bin's "these chips lost their section" semantic. The frontend's
+    # `canDropOn` predicate filters this client-side; mirror the
+    # check server-side so direct API consumers + future surfaces
+    # (keyboard shortcuts, batch ops, scripts) can't bypass it.
+    if payload.target_section_id == UNSORTED_SECTION_ID:
+        raise HTTPException(
+            400,
+            f"can't manually move into the system `{UNSORTED_SECTION_ID}` "
+            "section. The bin is auto-filled by section delete + structural "
+            "add (D2). Move to a real section instead.",
+        )
     target = _find_section(sidecar, payload.target_section_id)
     if target is None:
         raise HTTPException(
@@ -1159,6 +1201,11 @@ def structural_block_edit(
         # Radio's 2,196-chip sidecar the inner predicate evaluates
         # exactly once per block — same asymptotics, ~3x fewer
         # allocations in the common no-match-in-section case.
+        #
+        # Slice-review sweep: track which section the cascade touched
+        # so we can detect orphan-macro creation below. Drift rule 8
+        # caps matches at one — so once we find it, both loops exit.
+        touched_section_id: str | None = None
         for s in sidecar.get("sections", []):
             blocks = s.get("blocks")
             if not blocks:
@@ -1169,7 +1216,46 @@ def structural_block_edit(
                     and b.get("slot_index") == idx
                 ):
                     blocks.pop(i)
-                    break  # drift rule 8: at most one match across all sections
+                    touched_section_id = s.get("id")
+                    break
+            if touched_section_id is not None:
+                break  # drift rule 8: at most one match across all sections
+
+        # Slice-review sweep: if the cascade emptied the section of
+        # atomic anchors but left macros, those macros become
+        # unreachable — `resolve_macro_addresses` silently skips macro-
+        # only sections (engine/editor_metadata.py:378 `continue`), and
+        # `_validate_no_overlapping_macros` can raise
+        # MacroResolutionError on the next mutation when section_start
+        # math goes negative. Reject the remove here so the operator
+        # can restructure first; auto-rescue to `_unsorted` doesn't
+        # help when `_unsorted` itself may lack an anchor. The error
+        # names the macros so the operator knows what to move.
+        if touched_section_id is not None:
+            touched = _find_section(sidecar, touched_section_id)
+            if touched is not None:
+                remaining = touched.get("blocks", [])
+                has_atomic_after = any(
+                    b.get("kind") == "atomic" for b in remaining
+                )
+                orphan_macro_refs = sorted({
+                    b.get("ref") for b in remaining
+                    if b.get("kind") == "macro" and b.get("ref")
+                })
+                if not has_atomic_after and orphan_macro_refs:
+                    raise HTTPException(
+                        400,
+                        f"removing slot {idx} would orphan macros "
+                        f"{orphan_macro_refs} in section "
+                        f"'{touched_section_id}' (no atomic anchor would "
+                        f"remain — `resolve_macro_addresses` can't compute "
+                        f"positions for a macro-only section). Delete the "
+                        f"section first (DELETE /sections/{touched_section_id} "
+                        f"auto-moves blocks to `{UNSORTED_SECTION_ID}`), or "
+                        f"move the macros to a section with at least one "
+                        f"atomic anchor.",
+                    )
+
         flat_slots.pop(idx)
         # Sidecar atomic refs at slot_index > idx decrement by 1.
         sidecar = shift_atomic_slot_indices(
@@ -1214,5 +1300,10 @@ def export_template(
     doc["name"] = station.name
     text = json.dumps(doc, indent=2, ensure_ascii=False) + "\n"
     path = stations_dir / f"{slug}.json"
-    path.write_text(text)
+    # Slice-review sweep: explicit utf-8 — `ensure_ascii=False` above
+    # may emit non-Latin characters (station names, genres,
+    # allowlist_sources entries with accents / non-Latin scripts),
+    # which would crash on Windows where `Path.write_text` defaults
+    # to cp1252.
+    path.write_text(text, encoding="utf-8")
     return TemplateExportResponse(path=str(path), bytes=len(text.encode("utf-8")))

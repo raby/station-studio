@@ -1979,6 +1979,219 @@ def test_structural_edit_rejects_row_template_station(editor_api):
     assert "row_template" in r.json()["detail"]
 
 
+# ---- §16.2.5 slice-review sweep -------------------------------------------
+
+
+def test_move_block_rejects_unsorted_target(editor_api):
+    """Slice-review sweep: `_unsorted` is D2-reserved for auto-rescue
+    on section delete + structural add. Manual moves into the bin
+    erode the visual semantic; backend must mirror the frontend's
+    `canDropOn` guard so direct API consumers can't bypass it."""
+    client, Session, _dir = editor_api
+    _composition_station(Session, "comp")
+    # First delete a section to materialize `_unsorted`.
+    client.delete(
+        f"/api/stations/comp/sections/tail?expected_updated_at={_token(client, 'comp')}",
+    )
+    # Now try to move slot 0 into `_unsorted`.
+    r = client.patch("/api/stations/comp/blocks/move", json={
+        "address": {"slot_index": 0},
+        "target_section_id": "_unsorted",
+        "expected_updated_at": _token(client, "comp"),
+    })
+    assert r.status_code == 400, r.json()
+    assert "_unsorted" in r.json()["detail"]
+    assert "manually move" in r.json()["detail"].lower()
+
+
+def test_reorder_sections_pins_unsorted_at_end(editor_api):
+    """Slice-review sweep: the bin's visual contract is
+    'orphan landing zone' — it must stay at the end of layout_order.
+    SectionHeader hides up/down buttons for `_unsorted` but a direct
+    PUT /sections/order could route it elsewhere."""
+    client, Session, _dir = editor_api
+    _composition_station(Session, "comp")
+    client.delete(
+        f"/api/stations/comp/sections/tail?expected_updated_at={_token(client, 'comp')}",
+    )
+    # Try to put `_unsorted` at the top.
+    r = client.put("/api/stations/comp/sections/order", json={
+        "layout_order": ["_unsorted", "lead"],
+        "expected_updated_at": _token(client, "comp"),
+    })
+    assert r.status_code == 400, r.json()
+    assert "_unsorted" in r.json()["detail"]
+    # The valid order (bin at end) succeeds.
+    r = client.put("/api/stations/comp/sections/order", json={
+        "layout_order": ["lead", "_unsorted"],
+        "expected_updated_at": _token(client, "comp"),
+    })
+    assert r.status_code == 200, r.json()
+
+
+def test_structural_remove_rejects_orphan_macro_creation(editor_api):
+    """Slice-review sweep: if the cascade leaves a section with macros
+    but no atomic anchor, those macros become unreachable —
+    `resolve_macro_addresses` silently skips macro-only sections
+    (engine/editor_metadata.py:378). The remove must 400 with the
+    affected macros named so the operator can restructure first."""
+    client, Session, stations_dir = editor_api
+    slug = "orphan-detect"
+    # Build a station with a section containing 1 atomic + 1 macro
+    # (refs that atomic as its anchor via repeat=2 starting after it).
+    template = _build_template(
+        slug, name="Orphan",
+        sources=[{"name": "A", "colour": "#abc", "role": "content"}],
+        flat_slots=[
+            {"source": "A", "strategy": "jingle", "size": 1, "genre": "G0"},
+            {"source": "A", "strategy": "jingle", "size": 1, "genre": "G1"},
+            {"source": "A", "strategy": "jingle", "size": 1, "genre": "G2"},
+        ],
+    )
+    sidecar = {
+        "schema_version": 1,
+        "sections": [
+            {"id": "anchored", "name": "Anchored",
+             "blocks": [
+                 {"kind": "atomic", "slot_index": 0},
+                 {"kind": "macro", "ref": "m1"},
+             ]},
+        ],
+        "macros": [
+            {"id": "m1", "name": "Pair", "repeat": 2,
+             "spec": {"source": "A", "strategy": "jingle",
+                      "size": 1, "genre": "G1"}},
+        ],
+        "layout_order": ["anchored"],
+    }
+    with Session() as db:
+        db.add(Station(
+            slug=slug, name="Orphan", template=template, sidecar=sidecar,
+        ))
+        db.commit()
+
+    # Remove slot 0 — the section's only atomic anchor.
+    r = client.patch(f"/api/stations/{slug}/blocks/structure", json={
+        "edit": {"op": "remove", "slot_index": 0},
+        "expected_updated_at": _token(client, slug),
+    })
+    assert r.status_code == 400, r.json()
+    detail = r.json()["detail"]
+    assert "orphan" in detail.lower()
+    assert "m1" in detail  # names the macro that would be orphaned
+    assert "anchored" in detail  # names the section
+
+
+def test_structural_remove_allows_safe_remove_in_macro_section(editor_api):
+    """Companion to the above: when the section has MULTIPLE atomic
+    anchors, removing one leaves the macros still anchored — the
+    cascade should succeed."""
+    client, Session, stations_dir = editor_api
+    slug = "anchor-safe"
+    template = _build_template(
+        slug, name="Safe",
+        sources=[{"name": "A", "colour": "#abc", "role": "content"}],
+        flat_slots=[
+            {"source": "A", "strategy": "jingle", "size": 1, "genre": "G0"},
+            {"source": "A", "strategy": "jingle", "size": 1, "genre": "G1"},
+            {"source": "A", "strategy": "jingle", "size": 1, "genre": "G2"},
+        ],
+    )
+    sidecar = {
+        "schema_version": 1,
+        "sections": [
+            {"id": "section1", "name": "S1",
+             "blocks": [
+                 {"kind": "atomic", "slot_index": 0},
+                 {"kind": "atomic", "slot_index": 1},
+                 {"kind": "atomic", "slot_index": 2},
+             ]},
+        ],
+        "macros": [],
+        "layout_order": ["section1"],
+    }
+    with Session() as db:
+        db.add(Station(
+            slug=slug, name="Safe", template=template, sidecar=sidecar,
+        ))
+        db.commit()
+    r = client.patch(f"/api/stations/{slug}/blocks/structure", json={
+        "edit": {"op": "remove", "slot_index": 0},
+        "expected_updated_at": _token(client, slug),
+    })
+    assert r.status_code == 200, r.json()
+
+
+def test_patch_macro_does_not_mutate_orm_attached_sidecar(editor_api):
+    """Slice-review sweep: `patch_macro` must deep-copy the sidecar
+    before the spec-update loop. Prior to the fix it mutated
+    `Station.sidecar` in place (since `_load_sidecar_for_mutation`
+    returns the ORM-attached dict by reference when the DB column is
+    populated). The post-validation rollback then left the in-memory
+    ORM holding a partially-mutated dict — observable as a
+    persistence hazard once `MutableDict.as_mutable` lands or any
+    other commit flushes the polluted session.
+    """
+    client, Session, _stations_dir = editor_api
+    slug = "macroref"
+    # Build a macro station whose sidecar is materialised in
+    # `Station.sidecar` directly so _resolve_sidecar's case-1 path
+    # fires (returns the ORM-attached dict by reference).
+    template = {
+        "station": slug, "name": "Mc", "cadence": "weekly", "rng": "off",
+        "sources": [{"name": "A", "colour": "#abc", "role": "content"}],
+        "cursor": {"base_advance_per_week": 0, "cycle_weeks": 1},
+        "layout": {
+            "unit": "slot", "unit_labels": [], "row_start_offsets": [],
+            "cursors_init": {},
+            "flat_slots": [
+                {"source": "A", "strategy": "jingle", "size": 1, "genre": "G"},
+                {"source": "A", "strategy": "jingle", "size": 1, "genre": "G"},
+                {"source": "A", "strategy": "jingle", "size": 1, "genre": "G"},
+                {"source": "A", "strategy": "jingle", "size": 1, "genre": "G"},
+                {"source": "A", "strategy": "jingle", "size": 1, "genre": "G"},
+            ],
+        },
+    }
+    sidecar = {
+        "schema_version": 1,
+        "sections": [{
+            "id": "main", "name": "Main",
+            "blocks": [
+                {"kind": "atomic", "slot_index": 0},
+                {"kind": "macro", "ref": "jingle-1"},
+                {"kind": "atomic", "slot_index": 4},
+            ],
+        }],
+        "macros": [{
+            "id": "jingle-1", "name": "3 × jingle", "repeat": 3,
+            "spec": {"source": "A", "strategy": "jingle",
+                     "size": 1, "genre": "G"},
+        }],
+        "layout_order": ["main"],
+    }
+    with Session() as db:
+        db.add(Station(
+            slug=slug, name="Mc", template=template, sidecar=sidecar,
+        ))
+        db.commit()
+
+    before_genre = "G"
+    # Force a 400 by clearing a required field. The endpoint should
+    # raise without committing — the ORM-attached sidecar must be
+    # untouched after the request rolls back.
+    r = client.patch(f"/api/stations/{slug}/macros/jingle-1", json={
+        "fields": {"genre": None},
+        "expected_updated_at": _token(client, slug),
+    })
+    assert r.status_code == 400
+    with Session() as db:
+        after = db.query(Station).filter_by(slug=slug).first().sidecar
+        # spec.genre must be the SAME as before — proves we didn't
+        # bleed the partial mutation into the ORM-tracked dict.
+        assert after["macros"][0]["spec"].get("genre") == before_genre
+
+
 # ---- helpers --------------------------------------------------------------
 
 
