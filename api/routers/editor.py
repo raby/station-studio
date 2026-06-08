@@ -66,6 +66,7 @@ from engine.editor_metadata import (
     UNSORTED_SECTION_ID,
     UNSORTED_SECTION_NAME,
     ensure_unsorted_section,
+    is_system_section,
     lookup_section,
     parse_sidecar,
     resolve_macro_addresses,
@@ -822,7 +823,7 @@ def create_section(
         slug, db, stations_dir, payload.expected_updated_at,
     )
 
-    if payload.id.startswith("_"):
+    if is_system_section(payload.id):
         raise HTTPException(
             400,
             "section id can't start with `_` (reserved for system bins "
@@ -863,10 +864,10 @@ def rename_section(
         slug, db, stations_dir, payload.expected_updated_at,
     )
 
-    if section_id == UNSORTED_SECTION_ID:
+    if is_system_section(section_id):
         raise HTTPException(
             400,
-            f"can't rename the system `{UNSORTED_SECTION_ID}` section.",
+            f"can't rename the system `{section_id}` section.",
         )
     section = lookup_section(sidecar, section_id)
     if section is None:
@@ -904,10 +905,10 @@ def delete_section(
         slug, db, stations_dir, expected_updated_at,
     )
 
-    if section_id == UNSORTED_SECTION_ID:
+    if is_system_section(section_id):
         raise HTTPException(
             400,
-            f"can't delete the system `{UNSORTED_SECTION_ID}` section "
+            f"can't delete the system `{section_id}` section "
             "(it's auto-managed; move its blocks into other sections "
             "to empty it).",
         )
@@ -1026,11 +1027,11 @@ def move_block(
     # `canDropOn` predicate filters this client-side; mirror the
     # check server-side so direct API consumers + future surfaces
     # (keyboard shortcuts, batch ops, scripts) can't bypass it.
-    if payload.target_section_id == UNSORTED_SECTION_ID:
+    if is_system_section(payload.target_section_id):
         raise HTTPException(
             400,
-            f"can't manually move into the system `{UNSORTED_SECTION_ID}` "
-            "section. The bin is auto-filled by section delete + structural "
+            f"can't manually move into the system `{payload.target_section_id}` "
+            "section. System bins are auto-filled by section delete + structural "
             "add (D2). Move to a real section instead.",
         )
     target = lookup_section(sidecar, payload.target_section_id)

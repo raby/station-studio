@@ -39,6 +39,20 @@ export const SECTION_DRAG_MIME = 'application/x-station-section-ref';
 
 
 /**
+ * §16.2.5.t2 — system-section abstraction (TypeScript mirror of
+ * engine/editor_metadata.py's `is_system_section`). The leading-
+ * underscore convention is the visual contract; `SYSTEM_SECTION_IDS`
+ * is the canonical list. Both checks are conflated for honesty
+ * (matches the Python helper) so a new bin added to the convention
+ * before the frozen list is updated still trips.
+ */
+export const SYSTEM_SECTION_IDS: ReadonlySet<string> = new Set(['_unsorted']);
+
+export function isSystemSection(sectionId: string): boolean {
+  return sectionId.startsWith('_') || SYSTEM_SECTION_IDS.has(sectionId);
+}
+
+/**
  * Decide whether a chip can be dropped into / moved into `target`.
  *
  * The system bin (`_unsorted`) is reserved for AUTO-moves on
@@ -50,9 +64,12 @@ export const SECTION_DRAG_MIME = 'application/x-station-section-ref';
  * c2 review #3 fix #1: the prior implementation enforced this
  * filter on the dropdown only — drag-drop bypassed it. This helper
  * is now the single policy gate; both surfaces call it.
+ *
+ * §16.2.5.t2: routed through `isSystemSection` so adding a 2nd
+ * system bin (`_archived`, etc.) is a one-site change.
  */
 export function canDropOn(target: SidecarSection): boolean {
-  return !target.id.startsWith('_');
+  return !isSystemSection(target.id);
 }
 
 

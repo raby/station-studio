@@ -432,6 +432,29 @@ UNSORTED_SECTION_ID = "_unsorted"
 UNSORTED_SECTION_NAME = "Unsorted (moved from a deleted section)"
 
 
+# §16.2.5.t2 — system-section abstraction. The "reserved id" convention
+# is a leading underscore (today only `_unsorted`); centralising the
+# predicate makes adding a second bin (`_archived` on retype,
+# `_macro_orphans` on cascade) a single-site change. Before this, the
+# `id.startswith('_')` literal was duplicated across 5 sites in 3
+# layers (canDropOn / SectionHeader / EditorCanvas / create_section /
+# rename+delete guards).
+SYSTEM_SECTION_IDS: frozenset[str] = frozenset({UNSORTED_SECTION_ID})
+
+
+def is_system_section(section_id: str) -> bool:
+    """True if `section_id` is a reserved system bin.
+
+    Two checks are conflated for honesty: (a) named in
+    `SYSTEM_SECTION_IDS` (the canonical list), and (b) leading
+    underscore convention (operator-authored sidecars can't accidentally
+    name a section with a leading underscore — drift rules enforce).
+    The leading-underscore catches future bins added to the convention
+    before the SYSTEM_SECTION_IDS frozenset is updated.
+    """
+    return section_id.startswith("_") or section_id in SYSTEM_SECTION_IDS
+
+
 # §16.2.5.t4: SQLAlchemy TypeDecorator wrapping the JSON column.
 #
 # Goal: validate the sidecar's GRAMMAR at the SQL bind boundary so any

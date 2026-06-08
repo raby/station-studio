@@ -40,6 +40,7 @@
   } from '$lib/editor';
   import type { StructuralBlockEdit } from '$lib/api';
   import { focusOnMount } from '$lib/actions';
+  import { isSystemSection } from '$lib/drag-drop';
   import { createEventDispatcher } from 'svelte';
   import DetailPanel from './DetailPanel.svelte';
   import Section from './Section.svelte';
@@ -291,7 +292,7 @@
       _setAddError('id must not be empty');
       return;
     }
-    if (trimmed.startsWith('_')) {
+    if (isSystemSection(trimmed)) {
       _setAddError('id can\'t start with `_` (reserved for system bins)');
       return;
     }

@@ -19,7 +19,7 @@
    */
   import { createEventDispatcher } from 'svelte';
   import { focusOnMount } from '$lib/actions';
-  import { CHIP_DRAG_MIME, SECTION_DRAG_MIME, canDropOn } from '$lib/drag-drop';
+  import { CHIP_DRAG_MIME, SECTION_DRAG_MIME, canDropOn, isSystemSection } from '$lib/drag-drop';
   import type { SidecarSection } from '$lib/editor';
 
   export let section: SidecarSection;
@@ -53,7 +53,9 @@
 
   // System bin (`_unsorted`) — leading underscore reserved per
   // §16.2.5 D2; UI hides the operator-control affordances.
-  $: isSystemBin = section.id.startsWith('_');
+  // §16.2.5.t2 — routed through shared `isSystemSection` helper
+  // so adding a 2nd system bin is one site to update.
+  $: isSystemBin = isSystemSection(section.id);
 
   // §16.2.5 c2 — inline rename state.
   let renaming = false;
