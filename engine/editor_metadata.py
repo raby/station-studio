@@ -432,6 +432,94 @@ UNSORTED_SECTION_ID = "_unsorted"
 UNSORTED_SECTION_NAME = "Unsorted (moved from a deleted section)"
 
 
+# §16.2.5.t4: SQLAlchemy TypeDecorator wrapping the JSON column.
+#
+# Goal: validate the sidecar's GRAMMAR at the SQL bind boundary so any
+# code path that writes to `Station.sidecar` — fixtures, scripts,
+# future endpoints that forget to route through `_persist_sidecar` —
+# gets the same shape check the runtime mutation path runs. Reads stay
+# pass-through (no per-access perf cost; lenient `_resolve_sidecar`
+# already handles legacy/broken data).
+#
+# What's enforced: REQUIRED_TOP_LEVEL keys (`sections`, `macros`,
+# `layout_order`, `schema_version`), schema_version == 1, no unknown
+# top-level keys, sections/macros are lists, blocks have valid `kind`,
+# atomic refs have slot_index OR (row_idx + block_idx). Cross-document
+# checks (atomic_bounds against `station.template`'s flat_slots length,
+# macro_refs reachability, layout_order ↔ sections id parity) STAY
+# OUT — they need the template, which the TypeDecorator doesn't have
+# access to at bind time; route layer's `validate_sidecar` covers them.
+#
+# Why this is the right altitude: a future grammar bump (e.g. §16.2.6
+# macro-pinning fields) only needs to update `_validate_grammar` here;
+# every write path automatically picks up the new shape check. Prior
+# to this, the lenient `_resolve_sidecar(strict=False)` branch was
+# the silent normal path for any drift between Python's grammar +
+# the DB's stored shape.
+
+
+def validate_sidecar_grammar(sidecar: dict) -> None:
+    """Public alias for `_validate_grammar` — the shape-only check
+    the `SidecarJSON` TypeDecorator calls at bind time.
+
+    Renamed-not-aliased because the leading-underscore form is the
+    INTERNAL implementation detail; the public name signals the
+    contract: "structural / type validation, NO cross-document
+    consistency."
+    """
+    _validate_grammar(sidecar)
+
+
+try:
+    from sqlalchemy.types import TypeDecorator
+    from sqlalchemy import JSON as _SaJSON
+
+
+    class SidecarJSON(TypeDecorator):
+        """SQLAlchemy `JSON` column with bind-time grammar validation.
+
+        Strictly validates the sidecar's grammar (no cross-document
+        consistency) on every bind — writes through any code path
+        (ORM, raw `.values()`, future endpoints) get the same shape
+        check the runtime route layer runs. Result reads are
+        pass-through; lenient `_resolve_sidecar(strict=False)` handles
+        legacy/broken data so existing operator-friendly recovery
+        paths stay intact.
+
+        `Python None → SQL NULL` (not JSON 'null') because the
+        `populate_db_sidecars` lifespan helper and the c1 `Station.sidecar.is_(None)`
+        filter rely on SQL NULL semantics. Without `none_as_null=True`
+        the JSON impl would serialise `None` to the literal string
+        'null' and the IS NULL filter would silently miss those rows.
+
+        Defense in depth: even though `_persist_sidecar` already calls
+        `validate_sidecar` before commit, this catches writes that
+        bypass the route layer (fixtures, scripts, future endpoints
+        that forget to route through the shared helper).
+        """
+        # `none_as_null=True` so Python None binds to SQL NULL (not
+        # JSON 'null'). Critical for the populate_db_sidecars filter.
+        impl = _SaJSON(none_as_null=True)
+        cache_ok = True
+
+        def process_bind_param(self, value, dialect):
+            if value is None:
+                return None
+            validate_sidecar_grammar(value)
+            return value
+
+        def process_result_value(self, value, dialect):
+            # Pass-through: callers (`_resolve_sidecar`) handle
+            # validation contextually so we don't lose the
+            # lenient-degradation path for grandfathered data.
+            return value
+except ImportError:
+    # SQLAlchemy is a required dep, but keep the import optional in
+    # case someone uses `editor_metadata` standalone (e.g. the CLI
+    # `derive_sidecar` shim or a fixture script with no DB).
+    SidecarJSON = None  # type: ignore[assignment]
+
+
 def lookup_section(sidecar: dict, section_id: str) -> dict | None:
     """Return the section dict in `sidecar` whose `id` matches, or None.
 

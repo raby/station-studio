@@ -1412,7 +1412,15 @@ def test_get_sidecar_db_broken_falls_back_with_error(editor_api):
     """§16.2.5: a malformed Station.sidecar value (e.g. somebody
     hand-edited the DB row to invalid JSON-shape) falls back to the
     trivial sidecar + populates sidecar_error — mirrors the on-disk
-    broken-file path."""
+    broken-file path.
+
+    §16.2.5.t4: the `SidecarJSON` TypeDecorator now blocks malformed
+    sidecars at the SQL bind boundary, so we write via raw SQL (which
+    bypasses the bind processor) to simulate grandfathered/historical
+    drift. This pins the lenient-degradation contract for legacy
+    data WHILE keeping new writes strict.
+    """
+    import sqlalchemy as sa
     client, Session, _dir = editor_api
     template = _minimal_template("brk-db")
     # Missing required `layout_order` key → drift rule.
@@ -1422,10 +1430,14 @@ def test_get_sidecar_db_broken_falls_back_with_error(editor_api):
                               {"kind": "atomic", "slot_index": 2}],
     }]}
     with Session() as db:
-        db.add(Station(
-            slug="brk-db", name="Broken DB",
-            template=template, sidecar=broken,
-        ))
+        db.add(Station(slug="brk-db", name="Broken DB", template=template))
+        db.commit()
+        # Raw SQL update bypasses SidecarJSON's bind validator so we
+        # can simulate a historically-malformed DB row.
+        db.execute(
+            sa.text("UPDATE station SET sidecar = :s WHERE slug = :slug"),
+            {"s": json.dumps(broken), "slug": "brk-db"},
+        )
         db.commit()
 
     r = client.get("/api/stations/brk-db/sidecar")
@@ -1435,6 +1447,40 @@ def test_get_sidecar_db_broken_falls_back_with_error(editor_api):
     # Error populated.
     assert body["sidecar_error"]
     assert "layout_order" in body["sidecar_error"].lower()
+
+
+def test_sidecar_json_typedecorator_blocks_invalid_writes(editor_api):
+    """§16.2.5.t4: writing an invalid sidecar via ORM raises at flush
+    time so future bugs (fixtures, scripts, endpoints that bypass
+    `_persist_sidecar`) get caught before they corrupt the DB."""
+    import pytest as _pytest
+    from sqlalchemy.exc import StatementError
+    from engine.editor_metadata import EditorMetadataError
+    client, Session, _dir = editor_api
+    template = _minimal_template("typed-bind")
+    broken = {"schema_version": 1, "sections": []}  # missing layout_order
+    with Session() as db:
+        db.add(Station(
+            slug="typed-bind", name="Typed Bind",
+            template=template, sidecar=broken,
+        ))
+        with _pytest.raises((StatementError, EditorMetadataError)):
+            db.commit()
+
+
+def test_sidecar_json_typedecorator_passes_null_through(editor_api):
+    """§16.2.5.t4: NULL is a legitimate value (un-authored stations) —
+    must not run through the validator (validate_sidecar_grammar
+    raises on non-dict)."""
+    client, Session, _dir = editor_api
+    template = _minimal_template("typed-null")
+    with Session() as db:
+        # No sidecar arg = column default NULL.
+        db.add(Station(slug="typed-null", name="Null OK", template=template))
+        db.commit()
+    with Session() as db:
+        s = db.query(Station).filter_by(slug="typed-null").first()
+        assert s.sidecar is None  # written + read back as NULL
 
 
 def test_macro_edit_writes_to_db_column_when_starting_from_disk(editor_api):

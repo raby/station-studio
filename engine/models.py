@@ -22,6 +22,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import relationship
 
 from engine.database import Base
+from engine.editor_metadata import SidecarJSON
 
 
 class Station(Base):
@@ -39,7 +40,17 @@ class Station(Base):
     # "no sidecar"). Mutation endpoints write to this column; the
     # on-disk file becomes the export artifact (Decision A3 symmetry
     # with stations/{slug}.json for the template).
-    sidecar = Column(JSON, nullable=True)
+    #
+    # §16.2.5.t4 — `SidecarJSON` is a `TypeDecorator` over `JSON` that
+    # runs `validate_sidecar_grammar` on every bind so the shape check
+    # fires whether the write comes through `_persist_sidecar`, a
+    # fixture, an alembic data migration, or a future endpoint that
+    # forgets the shared helper. NULL passes through; reads stay
+    # pass-through (lenient `_resolve_sidecar` handles legacy data).
+    # The underlying SQL column type stays `JSON` — no schema migration
+    # needed.
+    sidecar = Column(SidecarJSON if SidecarJSON is not None else JSON,
+                     nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(
         DateTime,
