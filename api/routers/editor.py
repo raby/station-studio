@@ -783,12 +783,20 @@ def _finish_sidecar_mutation(
     template: dict | None = None,
 ) -> SidecarMutationResponse:
     """Run the shared post-mutation steps (validate, commit, refresh,
-    response build). Pass a `template` ONLY when the mutation changed
-    slot counts (structural edits) or block parameter fields (macro
-    edits); section-CRUD + block-move leave the template untouched.
+    response build) for the 6 §16.2.5 sidecar-mutation endpoints.
+
+    Pass `template` ONLY for structural edits (size/add/remove)
+    where `flat_slots` changed; section CRUD, reorder, and move
+    leave the template untouched.
 
     §16.2.5.t5: the response carries the (possibly updated) template
     when set so the frontend can skip a GET /sidecar refetch.
+
+    NOT used by patch_macro (returns MacroPatchResponse). Slice-
+    review c1-rescue #4 corrected this docstring — an earlier
+    version's "block parameter fields (macro edits)" wording was
+    wrong; routing patch_macro through here would break the
+    `blocks_updated` contract its tests pin.
     """
     _persist_sidecar(station, sidecar, template=template)
     db.commit()

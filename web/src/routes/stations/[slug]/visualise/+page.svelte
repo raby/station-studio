@@ -136,21 +136,29 @@
     //
     // §16.2.5.t5: if the response carries the new sidecar (and
     // optionally the new template), apply it directly — no GET
-    // refetch needed. The 6 §16.2.5 endpoints + the macro endpoint
-    // return SidecarMutationResponse; the §16.2.3 patchBlock +
-    // §16.2.4 retypeBlock don't, so they fall through to the
-    // refetch branch below. Net: section drag / move / structural
-    // edits drop a per-mutation 2x round-trip + a redundant
-    // server-side validate_sidecar pass.
+    // refetch needed. The 6 §16.2.5 endpoints (section CRUD,
+    // reorder, move, structural) return SidecarMutationResponse;
+    // §16.2.3 patchBlock + §16.2.4 retypeBlock + patchMacro do
+    // NOT — they fall through to the GET refetch below. Net:
+    // section drag / move / structural edits drop a per-mutation
+    // 2x round-trip + a redundant server-side validate_sidecar
+    // pass.
     if (_isSidecarMutationResponse(result)) {
       sidecar = result.sidecar;
-      if (result.template !== undefined) {
-        // Re-narrow via the existing validator so we surface the
-        // same shape errors GET /sidecar would (defensive against
-        // backend drift; cost is one structural traversal).
+      if (result.template !== undefined && result.template !== null) {
+        // No runtime validation here — the cast is purely a
+        // TypeScript assertion. Backend drift surfaces as render-
+        // time crashes downstream, not at assignment. (If a real
+        // validator is wanted, wire `parseEditorSidecarResponse`
+        // from $lib/editor — same path GET /sidecar uses.)
         template = result.template as unknown as StationTemplate;
       }
       updatedAt = result.updated_at;
+      // Slice-review c1-rescue #1: a successful PATCH means the
+      // server-validated sidecar is back in sync. Clear any stale
+      // warning from a prior GET that landed with sidecar_error
+      // populated — `loadSidecar()` would have done the same.
+      sidecarError = null;
       return;
     }
     // Fallback: refetch via GET. Distinct error prefix (mid-slice

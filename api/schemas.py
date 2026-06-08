@@ -547,18 +547,27 @@ class BlockStructureRequest(BaseModel):
 
 
 class SidecarMutationResponse(BaseModel):
-    """200 body for endpoints that mutate the sidecar (section CRUD,
-    block move, block structure, macro edit). Returns the new sidecar
-    dict + refreshed updated_at; the frontend uses the new sidecar to
-    re-render without a separate GET round-trip.
+    """200 body for the 6 §16.2.5 sidecar-mutation endpoints:
+    section CRUD (POST/PATCH/DELETE /sections), reorder
+    (PUT /sections/order), block move (PATCH /blocks/move), and
+    structural edits (PATCH /blocks/structure).
+
+    Returns the new sidecar dict + refreshed updated_at; frontend
+    re-renders without a separate GET round-trip.
 
     §16.2.5.t5 — `template` is populated ONLY when the mutation also
-    changed the template (structural edits — size/add/remove). Section
-    CRUD, reorder, and move leave the template untouched + omit the
-    field. Macro edits do mutate the template (per-block spec writes)
-    + include it. Frontend reads `template` defensively: if present,
-    apply alongside the sidecar; if absent, the template hasn't
-    changed (current value remains valid).
+    changed the template (structural edits — size/add/remove change
+    `flat_slots`). Section CRUD, reorder, and move leave the template
+    untouched + omit the field (`null` on the wire). Frontend reads
+    `template` defensively: if present + non-null, apply alongside
+    the sidecar; otherwise the template hasn't changed.
+
+    NOT used by the §16.2.4 macro endpoint — that returns
+    `MacroPatchResponse` ({blocks_updated, updated_at}, no sidecar).
+    The §16.2.3 `patchBlock` + §16.2.4 `retypeBlock` endpoints also
+    use their own response models. Slice-review c1-rescue #4
+    corrected this docstring; an earlier version misled future
+    contributors into thinking macro edits used SidecarMutationResponse.
     """
     sidecar: dict[str, Any]
     template: dict[str, Any] | None = None
