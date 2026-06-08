@@ -545,34 +545,107 @@
   // away cancels the armed state. Operator can't fat-finger a slot
   // away (the prior single-click flow was destructive + un-undoable
   // without an in-UI undo affordance).
+  //
+  // Slice-review sweep fixes (3 stacked correctness bugs):
+  //
+  // (a) `Date.now()` → `performance.now()`. Date.now is wall-clock;
+  //     an NTP sync, DST transition, or tab-pause clock drift between
+  //     clicks could either auto-disarm immediately (forward jump)
+  //     or keep the armed state live well past 3s (backward jump).
+  //     performance.now() is monotonic.
+  //
+  // (b) A generation counter invalidates stale `setTimeout`s. If
+  //     the operator arms, commits, re-arms within the original
+  //     timer's lifetime, the FIRST timer's callback would see the
+  //     NEW deleteArmedAt and auto-disarm the fresh arm. Each arm
+  //     captures its own generation; the timer only disarms if its
+  //     generation is still the latest.
+  //
+  // (c) Logical-selection sentinel instead of identity-reset. The
+  //     prior `$: if (selected !== null) deleteArmedAt = null;` fired
+  //     on every reactive reassignment of `selected` — a refetch
+  //     during the 3s arm window (another tab's save, optimistic
+  //     poller) would silently disarm the operator's first click.
+  //     Key by (sectionId, atomic addressing or macro_id) so only a
+  //     real chip change resets the arm.
+  //
+  // (d) On commit, dispatch `close` along with `structuralEdit`.
+  //     After the parent refetches, `selected.ref.slot_index` is
+  //     stale (the slot it pointed to no longer exists; flat_slots
+  //     shifted). `currentSize` would then read a DIFFERENT block's
+  //     size as if it were the selection — an Apply-resize click
+  //     would mutate the WRONG block. Closing forces the operator
+  //     to re-click to continue editing.
   let deleteArmedAt: number | null = null;
+  let armGeneration = 0;
+  let armTimer: ReturnType<typeof setTimeout> | null = null;
   const DELETE_CONFIRM_MS = 3000;
   $: deleteArmed = deleteArmedAt !== null;
+
+  function _disarm() {
+    deleteArmedAt = null;
+    if (armTimer !== null) {
+      clearTimeout(armTimer);
+      armTimer = null;
+    }
+  }
+
   function onDelete() {
     if (selected?.ref.kind !== 'atomic-ref') return;
     if (selected.ref.slot_index === undefined) return;
-    const now = Date.now();
+    const now = performance.now();
     if (deleteArmedAt === null || now - deleteArmedAt > DELETE_CONFIRM_MS) {
-      // First click (or after the confirm window expired): arm.
+      _disarm();  // clear any straggling timer first
       deleteArmedAt = now;
-      // Auto-disarm after the window so an idle armed button doesn't
-      // leak across selections.
-      setTimeout(() => {
-        if (deleteArmedAt !== null && Date.now() - deleteArmedAt >= DELETE_CONFIRM_MS) {
-          deleteArmedAt = null;
-        }
+      armGeneration += 1;
+      const myGen = armGeneration;
+      armTimer = setTimeout(() => {
+        // Only disarm if this timer's generation is still the live
+        // one — guards against a re-arm or commit having advanced
+        // the counter between schedule + fire.
+        if (armGeneration === myGen) _disarm();
       }, DELETE_CONFIRM_MS + 50);
       return;
     }
-    // Second click within window: commit.
-    deleteArmedAt = null;
+    // Second click within window: commit + close.
+    _disarm();
     dispatch('structuralEdit', {
       edit: { op: 'remove', slot_index: selected.ref.slot_index },
     });
+    dispatch('close');
   }
-  // Reset arm-state on selection change so the operator never sees a
-  // pre-armed Delete on a freshly-clicked chip.
-  $: if (selected !== null) deleteArmedAt = null;
+
+  // Reset arm-state ONLY when the logical chip changes. Refetch-
+  // driven identity churn (parent rebuilds ExpandedRef on every
+  // sidecar reload) leaves `armedFor` unchanged → arm survives.
+  function _selectionKey(
+    s: { ref: ExpandedRef; section: SidecarSection },
+  ): string {
+    const r = s.ref;
+    if (r.kind === 'atomic-ref') {
+      const addr = r.slot_index !== undefined
+        ? `s${r.slot_index}`
+        : `r${r.row_idx}/b${r.block_idx}`;
+      return `${s.section.id}#atomic:${addr}`;
+    }
+    return `${s.section.id}#macro:${r.macro_id}`;
+  }
+  let armedFor: string | null = null;
+  $: {
+    const key = selected ? _selectionKey(selected) : null;
+    if (key !== armedFor) {
+      armedFor = key;
+      // Inline the disarm writes so Svelte's compiler tracks the
+      // `deleteArmedAt` write at the call site (calling `_disarm()`
+      // from a reactive block doesn't reliably invalidate
+      // downstream `$: deleteArmed = ...` in Svelte 4).
+      deleteArmedAt = null;
+      if (armTimer !== null) {
+        clearTimeout(armTimer);
+        armTimer = null;
+      }
+    }
+  }
 </script>
 
 <svelte:window on:keydown={onKey} />

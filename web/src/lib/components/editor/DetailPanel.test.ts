@@ -518,4 +518,68 @@ describe('<DetailPanel> — c2 review #1 fixes', () => {
     await fireEvent.click(screen.getByTestId('structural-delete'));
     expect(handler).not.toHaveBeenCalled();
   });
+
+  it('Delete-slot arm survives refetch-driven `selected` identity churn', async () => {
+    // Slice-review sweep: the prior `$: if (selected !== null)
+    // deleteArmedAt = null;` reset on any new object identity for
+    // `selected`. A background refetch (parent rebuilds ExpandedRef
+    // on every sidecar reload) would silently disarm the operator's
+    // first click. The new key-based reset compares the LOGICAL chip
+    // (sectionId + slot_index) so refetches leave the arm intact.
+    const handler = vi.fn();
+    const ref0: AtomicRef = { kind: 'atomic-ref', slot_index: 0 };
+    const { component } = render(DetailPanel, {
+      selected: { ref: ref0, section: STRUCT_SEC },
+      template: makeStructTemplate(), sidecar: makeStructSidecar(),
+    });
+    component.$on('structuralEdit', handler);
+    // Arm.
+    await fireEvent.click(screen.getByTestId('structural-delete'));
+    expect(screen.getByTestId('structural-delete')).toHaveAttribute(
+      'data-armed', 'true',
+    );
+    // Simulate a refetch: parent passes a NEW object identity for
+    // the SAME logical chip (same section.id + slot_index).
+    component.$set({
+      selected: {
+        ref: { kind: 'atomic-ref', slot_index: 0 } as AtomicRef,
+        section: { ...STRUCT_SEC },
+      },
+      sidecar: makeStructSidecar(),  // also a fresh sidecar
+      template: makeStructTemplate(),
+    });
+    await tick();
+    // Arm state must SURVIVE the refetch.
+    expect(screen.getByTestId('structural-delete')).toHaveAttribute(
+      'data-armed', 'true',
+    );
+    // Second click commits — proving the arm wasn't silently reset.
+    await fireEvent.click(screen.getByTestId('structural-delete'));
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it('Delete-slot commit dispatches `close` so the stale selection clears', async () => {
+    // Slice-review sweep: after a successful remove, the parent
+    // refetches; `selected.ref.slot_index` is then stale (the slot
+    // it pointed to no longer exists; flat_slots shifted). The
+    // structural panel's `currentSize` would read what's now a
+    // DIFFERENT block's size — a follow-up Apply-resize would
+    // mutate the wrong block. Dispatching `close` on commit forces
+    // the operator to re-click to continue editing.
+    const onStructural = vi.fn();
+    const onClose = vi.fn();
+    const { component } = render(DetailPanel, {
+      selected: {
+        ref: { kind: 'atomic-ref', slot_index: 0 } as AtomicRef,
+        section: STRUCT_SEC,
+      },
+      template: makeStructTemplate(), sidecar: makeStructSidecar(),
+    });
+    component.$on('structuralEdit', onStructural);
+    component.$on('close', onClose);
+    await fireEvent.click(screen.getByTestId('structural-delete'));  // arm
+    await fireEvent.click(screen.getByTestId('structural-delete'));  // commit
+    expect(onStructural).toHaveBeenCalledTimes(1);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
 });
