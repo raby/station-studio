@@ -19,7 +19,7 @@
    */
   import { createEventDispatcher } from 'svelte';
   import { focusOnMount } from '$lib/actions';
-  import { CHIP_DRAG_MIME, canDropOn } from '$lib/drag-drop';
+  import { CHIP_DRAG_MIME, SECTION_DRAG_MIME, canDropOn } from '$lib/drag-drop';
   import type { SidecarSection } from '$lib/editor';
 
   export let section: SidecarSection;
@@ -40,6 +40,11 @@
     // this header. Payload is the raw chip ref the source set via
     // dataTransfer; EditorCanvas converts to blockMove.
     chipDrop: { ref: unknown; targetSectionId: string };
+    // §16.2.5.t1 — section-header drag-reorder. Fires when ANOTHER
+    // section header is dropped on this one. The dropped section
+    // moves to BEFORE this section in layout_order. EditorCanvas
+    // converts to a sectionsReorder dispatch.
+    sectionDrop: { sourceSectionId: string; beforeSectionId: string };
   }>();
 
   // Display name falls back to id when omitted (mid-slice review
@@ -116,16 +121,44 @@
     // 'includes' via the iterable interface.
     return Array.from(e.dataTransfer.types).includes(CHIP_DRAG_MIME);
   }
+  function _hasSectionPayload(e: DragEvent): boolean {
+    if (!e.dataTransfer) return false;
+    return Array.from(e.dataTransfer.types).includes(SECTION_DRAG_MIME);
+  }
+  function _hasAnyDragPayload(e: DragEvent): boolean {
+    return _hasChipPayload(e) || _hasSectionPayload(e);
+  }
+
+  // §16.2.5.t1 — section-header drag SOURCE. Operator grabs the
+  // header to reorder. System bin (`_unsorted`) is not draggable
+  // (it stays at the end of layout_order). Rename mode disables
+  // drag so the input doesn't fight the drag handler.
+  $: isDraggableSource = !isSystemBin && !renaming;
+  function onSectionDragStart(e: DragEvent) {
+    if (!e.dataTransfer) return;
+    e.dataTransfer.setData(SECTION_DRAG_MIME, section.id);
+    e.dataTransfer.effectAllowed = 'move';
+  }
 
   function onDragEnter(e: DragEvent) {
-    if (!_hasChipPayload(e) || !acceptsDrops) return;
+    if (!_hasAnyDragPayload(e) || !acceptsDrops) return;
     // c2 review #4 fix #7: removed dead `e.preventDefault()` —
     // only `dragover` needs preventDefault for drop-enablement.
     dragEnterDepth += 1;
     dragOver = true;
   }
   function onDragOver(e: DragEvent) {
-    if (!_hasChipPayload(e) || !acceptsDrops) return;
+    if (!_hasAnyDragPayload(e) || !acceptsDrops) return;
+    // §16.2.5.t1 — don't highlight a section header when the
+    // operator is dragging that SAME section over itself; the
+    // drop would be a no-op (move section X to before X).
+    if (_hasSectionPayload(e)) {
+      const src = e.dataTransfer?.getData(SECTION_DRAG_MIME);
+      // Note: most browsers expose getData on drop ONLY for
+      // dragover. Some hide the value until drop fires — handled
+      // by the same-section check in onDrop as a fallback.
+      if (src === section.id) return;
+    }
     // preventDefault on dragover is what enables the drop event to
     // fire — without it the browser treats the target as "not a
     // valid drop target" and rejects the drop.
@@ -133,15 +166,29 @@
     if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
   }
   function onDragLeave(e: DragEvent) {
-    if (!_hasChipPayload(e) || !acceptsDrops) return;
+    if (!_hasAnyDragPayload(e) || !acceptsDrops) return;
     dragEnterDepth = Math.max(0, dragEnterDepth - 1);
     if (dragEnterDepth === 0) dragOver = false;
   }
   function onDrop(e: DragEvent) {
-    if (!_hasChipPayload(e) || !acceptsDrops) return;
+    if (!_hasAnyDragPayload(e) || !acceptsDrops) return;
     e.preventDefault();
     dragOver = false;
     dragEnterDepth = 0;
+    // §16.2.5.t1 — section-reorder drop. SECTION_DRAG_MIME wins
+    // over CHIP_DRAG_MIME because a SectionHeader can be dropped
+    // on another SectionHeader directly; chip drops on a header
+    // bar mean "append to this section" (handled below).
+    if (_hasSectionPayload(e)) {
+      const sourceSectionId = e.dataTransfer?.getData(SECTION_DRAG_MIME);
+      if (!sourceSectionId) return;
+      if (sourceSectionId === section.id) return;  // self-drop no-op
+      dispatch('sectionDrop', {
+        sourceSectionId,
+        beforeSectionId: section.id,
+      });
+      return;
+    }
     const raw = e.dataTransfer?.getData(CHIP_DRAG_MIME);
     if (!raw) return;
     let ref: unknown;
@@ -162,12 +209,15 @@
 <header
   class="section-header"
   class:drag-over={dragOver}
+  class:draggable-source={isDraggableSource}
   data-testid="section-header"
   data-section-id={section.id}
   data-expanded={expanded}
   data-drag-over={dragOver}
   role="group"
-  aria-label="Section {displayName} header (drop target for chip moves)"
+  aria-label="Section {displayName} header (drop target for chip moves; drag handle for section reorder)"
+  draggable={isDraggableSource}
+  on:dragstart={onSectionDragStart}
   on:dragenter={onDragEnter}
   on:dragover={onDragOver}
   on:dragleave={onDragLeave}
@@ -258,6 +308,17 @@
        the operator sees the drop target without it jumping. */
     border-radius: 4px;
     transition: background 80ms ease-out, box-shadow 80ms ease-out;
+  }
+  /* §16.2.5.t1 — `grab` cursor signals the header is a drag handle
+     for section reorder. The toggle button inside keeps its own
+     `pointer` cursor; the user-select disable prevents text-select
+     from interfering with drag start. */
+  .section-header.draggable-source {
+    cursor: grab;
+    user-select: none;
+  }
+  .section-header.draggable-source:active {
+    cursor: grabbing;
   }
   .section-header.drag-over {
     background: color-mix(in srgb, var(--accent, #2c7a7b) 12%, transparent);

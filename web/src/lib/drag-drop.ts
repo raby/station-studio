@@ -22,6 +22,21 @@ import type { Sidecar, SidecarSection } from './editor';
  */
 export const CHIP_DRAG_MIME = 'application/x-station-chip-ref';
 
+/**
+ * Custom MIME for whole-section reorder payloads. SectionHeader is
+ * both a drag SOURCE (drag the header bar to reorder) and a drop
+ * TARGET (a chip OR another section dropped on it). The MIME
+ * discriminates so the drop handler routes to the right dispatch
+ * (chipDrop vs sectionDrop).
+ *
+ * §16.2.5.t1 — section-header drag-reorder. Drop semantics: dropped-
+ * section moves to BEFORE the dropped-on section in layout_order.
+ * The system bin (`_unsorted`) is neither a valid drag source NOR a
+ * valid drop target — `canDropOn` filters target; the source is
+ * gated by SectionHeader's `isSystemBin` check (no drag handle).
+ */
+export const SECTION_DRAG_MIME = 'application/x-station-section-ref';
+
 
 /**
  * Decide whether a chip can be dropped into / moved into `target`.

@@ -182,8 +182,39 @@
   // append to the same blocks list, silently re-ordering). Find
   // the source section by walking sidecar.sections; skip the
   // dispatch if it matches the drop target.
+  // §16.2.5.t1 — section-header drag-reorder. The dropped section
+  // moves to BEFORE the dropped-on section in layout_order. Self-drop
+  // is filtered at the SectionHeader level; we also filter
+  // `_unsorted` (system bin can't move via reorder — pinned at end).
+  function handleSectionDrop(
+    e: CustomEvent<{ sourceSectionId: string; beforeSectionId: string }>,
+  ) {
+    const { sourceSectionId, beforeSectionId } = e.detail;
+    if (sourceSectionId === beforeSectionId) return;
+    const order = sidecar.layout_order ?? [];
+    const srcIdx = order.indexOf(sourceSectionId);
+    const dstIdx = order.indexOf(beforeSectionId);
+    if (srcIdx < 0 || dstIdx < 0) return;
+    // Build new order: remove source, insert at destination's slot.
+    const next = order.slice();
+    next.splice(srcIdx, 1);
+    // After removal, recompute the dst index — the source's old
+    // position may have shifted dst by 1 if source was before dst.
+    const adjustedDst = srcIdx < dstIdx ? dstIdx - 1 : dstIdx;
+    next.splice(adjustedDst, 0, sourceSectionId);
+    if (next.join() === order.join()) return;  // no-op (same order)
+    dispatch('sectionsReorder', { layoutOrder: next });
+  }
+
   function handleChipDrop(
-    e: CustomEvent<{ ref: unknown; targetSectionId: string }>,
+    e: CustomEvent<{
+      ref: unknown;
+      targetSectionId: string;
+      // §16.2.5.t1: optional. ChipFlow drops (within-section
+      // granular) supply a computed index; SectionHeader drops
+      // (drop on header bar = append) omit it.
+      targetIndex?: number;
+    }>,
   ) {
     const r = e.detail.ref;
     if (
@@ -197,8 +228,9 @@
     if (typeof slotIndex !== 'number' && typeof blockIdx !== 'number') {
       return;
     }
-    // Skip same-section drops. Lookup the source by matching the
-    // ref's addressing against each section's atomic blocks.
+    // Skip same-section drops UNLESS targetIndex is supplied (which
+    // means reorder within the section — that's a legitimate move).
+    // §16.2.5.t1: enables the within-section drag-reorder affordance.
     const sourceSection = sidecar.sections.find((s) =>
       (s.blocks ?? []).some((b) => {
         if (b.kind !== 'atomic') return false;
@@ -206,13 +238,17 @@
         return b.block_idx === blockIdx;
       })
     );
-    if (sourceSection && sourceSection.id === e.detail.targetSectionId) {
-      return;
+    if (
+      sourceSection &&
+      sourceSection.id === e.detail.targetSectionId &&
+      e.detail.targetIndex === undefined
+    ) {
+      return;  // same-section drop on the section header is a no-op
     }
     dispatch('blockMove', {
       ref: r as ExpandedRef,
       targetSectionId: e.detail.targetSectionId,
-      targetIndex: null,
+      targetIndex: e.detail.targetIndex ?? null,
     });
   }
 
@@ -301,6 +337,7 @@
       on:rename={(e) => dispatch('sectionRename', e.detail)}
       on:delete={(e) => dispatch('sectionDelete', e.detail)}
       on:chipDrop={handleChipDrop}
+      on:sectionDrop={handleSectionDrop}
       on:moveUp={handleMoveUp}
       on:moveDown={handleMoveDown}
     />

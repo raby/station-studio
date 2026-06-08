@@ -64,6 +64,7 @@
     on:moveUp
     on:moveDown
     on:chipDrop
+    on:sectionDrop
   />
 
   {#if expanded}
@@ -72,7 +73,7 @@
       id={`section-body-${section.id}`}
       data-testid="section-body"
     >
-      <ChipFlow {section} {template} {sidecar} {viewMode} on:select />
+      <ChipFlow {section} {template} {sidecar} {viewMode} on:select on:chipDrop />
     </div>
   {/if}
 </section>
