@@ -783,13 +783,19 @@ def _finish_sidecar_mutation(
 ) -> SidecarMutationResponse:
     """Run the shared post-mutation steps (validate, commit, refresh,
     response build). Pass a `template` ONLY when the mutation changed
-    slot counts (structural edits); section-CRUD + block-move leave
-    the template untouched."""
+    slot counts (structural edits) or block parameter fields (macro
+    edits); section-CRUD + block-move leave the template untouched.
+
+    §16.2.5.t5: the response carries the (possibly updated) template
+    when set so the frontend can skip a GET /sidecar refetch.
+    """
     _persist_sidecar(station, sidecar, template=template)
     db.commit()
     db.refresh(station)
     return SidecarMutationResponse(
-        sidecar=sidecar, updated_at=_iso(station.updated_at),
+        sidecar=sidecar,
+        template=template,  # None for sidecar-only mutations
+        updated_at=_iso(station.updated_at),
     )
 
 

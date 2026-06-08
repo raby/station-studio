@@ -74,7 +74,7 @@ async def lifespan(app: FastAPI):
     # > 0 and is a no-op).
     from engine.seeding import (
         _collect_paths, auto_derive_missing_sidecars,
-        auto_import_starter_pools, seed_all,
+        auto_import_starter_pools, populate_db_sidecars, seed_all,
     )
     from api.deps import get_stations_dir
 
@@ -114,19 +114,36 @@ async def lifespan(app: FastAPI):
                     imported,
                 )
 
+            # §16.2.5.t3 — DB-as-truth: populate Station.sidecar for
+            # un-authored stations (sidecar IS NULL) from disk file
+            # if present, else derive from template. The disk file
+            # stays the EXPORT artifact (Decision A3); runtime reads
+            # the DB column. Recovery from a bad DB sidecar:
+            # `UPDATE station SET sidecar = NULL` then restart.
+            populated = populate_db_sidecars(db, get_stations_dir())
+            if populated:
+                logger.info(
+                    "populated Station.sidecar for %d un-authored station(s).",
+                    populated,
+                )
+
         # §16.14.t1 c2-review 🟡-1: sidecar auto-derive. Same
         # asymmetry the slice-review 🟡-1 closed for auto-import —
         # `station-studio serve` (CLI path) ran derive via bootstrap,
-        # but `make dev` (direct uvicorn) didn't. Mirror the helper
-        # here so a contributor who drops a station JSON without
-        # a committed sidecar (or deletes a sidecar to force a
-        # regen, per stations/README.md's "how to add jingles"
-        # recipe step 3) gets the same auto-derive behaviour on
-        # both paths. Idempotent: never overwrites existing files.
+        # but `make dev` (direct uvicorn) didn't.
+        #
+        # §16.2.5.t3 — this step now only ensures the EXPORT
+        # artifact exists on disk for newly-dropped station JSONs
+        # (bundled stations + operator-added templates). The
+        # runtime no longer reads disk for un-authored stations —
+        # `populate_db_sidecars` above is the truth source. We keep
+        # the disk write so the `git diff stations/{slug}.editor.json`
+        # workflow + the operator's "share my authored sidecar via
+        # PR" recipe still produce a committable file.
         derived = auto_derive_missing_sidecars(get_stations_dir())
         if derived:
             logger.info(
-                "auto-derived %d missing sidecar(s).", derived,
+                "auto-derived %d missing sidecar file(s) for export.", derived,
             )
     except Exception as e:  # noqa: BLE001 — see docstring
         logger.warning(

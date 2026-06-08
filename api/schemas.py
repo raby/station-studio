@@ -548,10 +548,20 @@ class BlockStructureRequest(BaseModel):
 
 class SidecarMutationResponse(BaseModel):
     """200 body for endpoints that mutate the sidecar (section CRUD,
-    block move, block structure). Returns the new sidecar dict +
-    refreshed updated_at; the frontend uses the new sidecar to
-    re-render without a separate GET round-trip."""
+    block move, block structure, macro edit). Returns the new sidecar
+    dict + refreshed updated_at; the frontend uses the new sidecar to
+    re-render without a separate GET round-trip.
+
+    §16.2.5.t5 — `template` is populated ONLY when the mutation also
+    changed the template (structural edits — size/add/remove). Section
+    CRUD, reorder, and move leave the template untouched + omit the
+    field. Macro edits do mutate the template (per-block spec writes)
+    + include it. Frontend reads `template` defensively: if present,
+    apply alongside the sidecar; if absent, the template hasn't
+    changed (current value remains valid).
+    """
     sidecar: dict[str, Any]
+    template: dict[str, Any] | None = None
     updated_at: str | None = None
 
 

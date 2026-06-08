@@ -846,6 +846,11 @@ export const patchMacro = async (
 
 export interface SidecarMutationResponse {
   sidecar: import('./editor').Sidecar;
+  /** §16.2.5.t5: present only when the mutation changed the template
+   *  (structural edits — size/add/remove). Section CRUD + reorder +
+   *  move omit it (template untouched). Frontend applies alongside
+   *  the sidecar when present; skips when absent. */
+  template?: Record<string, unknown>;
   updated_at: string | null;
 }
 

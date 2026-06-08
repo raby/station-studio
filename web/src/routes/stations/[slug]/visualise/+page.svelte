@@ -97,6 +97,23 @@
   // surface with a distinct `refetchVerbPrefix` so the operator
   // can tell "save itself failed" from "save landed but the view
   // didn't refresh."
+  /** §16.2.5.t5 type guard: did the PATCH return a self-contained
+   *  SidecarMutationResponse (the 6 §16.2.5 endpoints)? If yes,
+   *  apply it directly and skip the GET refetch. Falls back to
+   *  GET for §16.2.3 patchBlock + §16.2.4 retypeBlock + patchMacro,
+   *  which return different shapes (BlockPatchResponse /
+   *  BlockRetypeResponse / MacroPatchResponse). */
+  function _isSidecarMutationResponse(
+    r: unknown,
+  ): r is { sidecar: Sidecar; template?: Record<string, unknown>; updated_at: string | null } {
+    return (
+      r !== null && typeof r === 'object' &&
+      'sidecar' in r &&
+      typeof (r as { sidecar: unknown }).sidecar === 'object' &&
+      (r as { sidecar: unknown }).sidecar !== null
+    );
+  }
+
   async function withSaveLifecycle(
     doPatch: () => Promise<unknown>,
     refetchVerbPrefix: string,
@@ -104,8 +121,9 @@
     saveError = null;
     conflict = false;
     exportMsg = null;
+    let result: unknown;
     try {
-      await doPatch();
+      result = await doPatch();
     } catch (err) {
       if (err instanceof BlockPatchConflict) {
         conflict = true;
@@ -114,9 +132,30 @@
       }
       return;
     }
-    // PATCH landed — refresh canvas + optimistic token. Distinct
-    // (mid-slice review 🟢-3) so a refetch blip after a successful
-    // save doesn't masquerade as a save failure.
+    // PATCH landed.
+    //
+    // §16.2.5.t5: if the response carries the new sidecar (and
+    // optionally the new template), apply it directly — no GET
+    // refetch needed. The 6 §16.2.5 endpoints + the macro endpoint
+    // return SidecarMutationResponse; the §16.2.3 patchBlock +
+    // §16.2.4 retypeBlock don't, so they fall through to the
+    // refetch branch below. Net: section drag / move / structural
+    // edits drop a per-mutation 2x round-trip + a redundant
+    // server-side validate_sidecar pass.
+    if (_isSidecarMutationResponse(result)) {
+      sidecar = result.sidecar;
+      if (result.template !== undefined) {
+        // Re-narrow via the existing validator so we surface the
+        // same shape errors GET /sidecar would (defensive against
+        // backend drift; cost is one structural traversal).
+        template = result.template as unknown as StationTemplate;
+      }
+      updatedAt = result.updated_at;
+      return;
+    }
+    // Fallback: refetch via GET. Distinct error prefix (mid-slice
+    // review 🟢-3) so a refetch blip after a successful save
+    // doesn't masquerade as a save failure.
     try {
       await loadSidecar();
     } catch (err) {

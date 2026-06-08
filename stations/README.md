@@ -182,16 +182,39 @@ your first request.
 
 Also: editing `starter.json` does NOT auto-refresh the matching
 `starter.editor.json`. The bootstrap's auto-derive helper fills
-MISSING sidecars but won't refresh stale ones. If you also want
-the visualiser to reflect the broken state, delete
-`starter.editor.json` along with your edit — the auto-derive
-fires on next boot and rebuilds it from the new template.
+MISSING sidecars but won't refresh stale ones, AND since
+§16.2.5.t3 the runtime reads `Station.sidecar` (DB column) — not
+the disk file — once the station has been seeded. So the recovery
+path is now:
+
+```bash
+# Sqlite: clear the DB sidecar column so lifespan re-populates it.
+sqlite3 ~/.local/share/station-studio/db.sqlite \
+  "UPDATE station SET sidecar = NULL WHERE slug = 'starter';"
+
+# Optionally delete the disk file too if you want a fresh derive
+# rather than re-using the committed sidecar:
+rm stations/starter.editor.json
+
+station-studio serve   # lifespan repopulates Station.sidecar from
+                       # the disk file (or derives if absent).
+```
 
 **To revert:** dev-clone users `git checkout
-stations/starter.json stations/starter.editor.json`. Wheel/
-docker users delete BOTH files and restart `station-studio
-serve` — bootstrap re-seeds the original station and re-derives
-its sidecar from the bundled copy on next boot.
+stations/starter.json stations/starter.editor.json` (resets both
+files), then run the SQL above (resets the DB column so the next
+boot picks up the committed sidecar). Wheel/docker users delete
+BOTH files and run the SQL — bootstrap re-seeds the original
+station + re-derives + re-populates the DB column on next boot.
+
+**Why the SQL step?** §16.2.5 D1 flipped the runtime source-of-truth
+from disk to DB column (atomic template+sidecar writes, no two-store
+mutation race). The disk file is now the EXPORT artifact — the
+thing you commit to share authored sidecars across machines — but
+not what the runtime reads once `Station.sidecar IS NOT NULL`. The
+lifespan helper `populate_db_sidecars` re-fills the DB from disk
+whenever the column is NULL, so the recovery path is "clear the DB
+column" rather than "delete the file."
 
 ### Cross-pool dedup with `cross_pool_dedup_sources` (§16.14.t5)
 

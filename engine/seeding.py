@@ -340,6 +340,79 @@ def auto_import_starter_pools(
     return imported
 
 
+def populate_db_sidecars(db, stations_dir: Path) -> int:
+    """§16.2.5.t3 — DB-as-truth lifespan helper.
+
+    For each Station whose `sidecar` column IS NULL, populate it
+    from `stations/{slug}.editor.json` on disk (if present) or by
+    deriving from the template. Returns the count populated.
+
+    This closes the broken `rm stations/{slug}.editor.json + restart`
+    regen recipe stations/README.md previously advertised. Under the
+    pre-§16.2.5.t3 lifecycle, lifespan auto-derive wrote a fresh
+    disk file, but `Station.sidecar` (DB column) stayed populated
+    with the old value — runtime preferred the DB column, so the
+    operator saw the stale sidecar. The new recovery path is purely
+    DB-side:
+
+      1. `UPDATE station SET sidecar = NULL WHERE slug = '...'`
+      2. Restart server
+      3. Lifespan re-derives + populates DB from disk (or template)
+
+    The disk file remains the EXPORT artifact (Decision A3) —
+    committed to git, shared across machines, never authoritative
+    at runtime once the DB column is non-NULL.
+
+    Idempotent: stations whose `sidecar` is already populated are
+    skipped (no re-derive, no disk read). Stations whose template
+    doesn't parse get logged + skipped so a broken station doesn't
+    block bootstrap of healthy ones.
+
+    Lazy imports for the same reason `auto_derive_missing_sidecars`
+    does: keep engine.seeding light when nobody invokes the helper.
+    """
+    from engine.editor_metadata import (
+        EditorMetadataError, derive_sidecar, parse_sidecar,
+    )
+    from engine.models import Station
+    from engine.template import TemplateError
+
+    populated = 0
+    stations = db.query(Station).filter(Station.sidecar.is_(None)).all()
+    for station in stations:
+        slug = station.slug
+        sidecar_path = stations_dir / f"{slug}.editor.json"
+        sidecar: dict | None = None
+        # Prefer the on-disk file if present (operator-committed
+        # sidecar with hand-edited section names) — falls through
+        # to derive_sidecar(template) when the file is absent or
+        # broken.
+        if sidecar_path.is_file():
+            try:
+                sidecar = parse_sidecar(sidecar_path, station.template)
+            except (EditorMetadataError, OSError, json.JSONDecodeError) as e:
+                logger.warning(
+                    "populate_db_sidecars: %s.editor.json broken — "
+                    "deriving from template instead (%s: %s)",
+                    slug, type(e).__name__, e,
+                )
+        if sidecar is None:
+            try:
+                sidecar = derive_sidecar(station.template)
+            except (KeyError, ValueError, TemplateError) as e:
+                logger.warning(
+                    "populate_db_sidecars: can't derive for %s — "
+                    "skipping (%s: %s)",
+                    slug, type(e).__name__, e,
+                )
+                continue
+        station.sidecar = sidecar
+        populated += 1
+    if populated:
+        db.commit()
+    return populated
+
+
 def auto_derive_missing_sidecars(stations_dir: Path) -> int:
     """§16.14 D8: if a station JSON ships without a committed
     `.editor.json` sidecar, derive one in-place so the visualiser is
