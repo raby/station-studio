@@ -6167,7 +6167,7 @@ direction — spec slice §16.2.0 is the next planned work.
 | Backup / restore         | Shipped (§14.18). `make backup` / `make restore date=...` with WAL-aware sqlite3 .backup + pre-restore safety copy. |
 | **§17 port roadmap**     | **Phase A + Phase B both complete. Phase A (§14.17–§14.21): pre-port unblocks. Phase B (§14.22–§14.41): port — byte-equality verified at depth against weekly + Classics. Phase C (production cutover): operational, not engineering — external validation in flight with the station owner. Next engineering direction: §16.0 OSS framing shift (shipped) + §16.2 visual block editor (the flagship hobbyist feature). |
 | **Product framing**      | **OSS for radio hobbyists (§16.0). MIT-licensed. README hobbyist-facing; CONTRIBUTING.md codifies slice pattern. Two example stations (Classics + Rebirth Radio) ship; hobbyist starter station queued (§16.7).** |
-| Visual block editor      | **§16.2.2 SHIPPED** — read-only canvas at `/stations/[slug]/visualise`. `GET /api/stations/{slug}/sidecar` endpoint serves template + sidecar in one fetch; trivial-sidecar fallback for un-authored stations (Decision E — frontend never handles "no sidecar"). 7 Svelte components (`<EditorCanvas>`, `<Section>`, `<SectionHeader>`, `<ChipFlow>`, `<Chip>`, `<ViewModeToggle>`, `<DetailPanel>`) compose the canvas. View-mode prefs (labels / colour / macros) persist to localStorage. Chips are native `<button>`s (keyboard a11y); click opens a slide-in DetailPanel with full BlockSpec / macro spec. `<500-chip` sections start expanded; `>500` sections start collapsed with "Large station" hint. Discoverability via "🗺 Visualise template" link from `/stations/[slug]`. **§16.2.3 SHIPPED** — atomic slot editing: click a chip → DetailPanel edit form (parameter fields only; cursor_id as a select) → Save → `PATCH /api/stations/{slug}/blocks` (server-enforced parameter-only, optimistic-concurrency 409, parse_template revalidation) → refetch. "Export to disk" writes `stations/{slug}.json` (Decision A3, DB-as-truth). row_template edits warn they change every row. **§16.2.4 SHIPPED** — macro editing + block retyping + `allowlist_sources` per-block editor (closes §16.14.t7 c3 docs promise). Three new write paths: `PATCH /blocks/retype` (strategy+source swap with role validation via parse_template), `PATCH /macros/{macro_id}` (edit-once-applies-to-all fanout — server resolves macro_id → expanded block addresses via `engine.editor_metadata.resolve_macro_addresses`), plus extended PATCH /blocks accepting `allowlist_sources` for the 4 content-sampling strategies. New `<ChipMultiInput>` Svelte component for the chip-list editor. DetailPanel grew a collapsible "Change strategy / source" retype panel with D4 bidirectional role-filtered dropdowns; macros + atomics share the same form scaffolding (yellow fanout warning for macros). All-or-nothing macro transactions; new `_validate_no_overlapping_macros` drift rule. **§16.2.5 SHIPPED** — section composition + structural block edits. New `Station.sidecar` JSON column (D1 — DB-as-truth, disk file becomes export artifact) + Alembic backfill from on-disk `*.editor.json`. Six REST endpoints: POST/PATCH/DELETE /sections, PUT /sections/order, PATCH /blocks/move, PATCH /blocks/structure. D2 auto-`_unsorted` bin on non-empty section delete; D5 structural-edit index-shift contract (`shift_atomic_slot_indices` bumps every `slot_index ≥ N` in the same transaction). Frontend: SectionHeader rename/move/delete affordances + HTML5 drag-drop target; Chip drag source (atomic only — JSON-in-DataTransfer via shared `CHIP_DRAG_MIME` + `canDropOn` policy module); DetailPanel Move dropdown (D6 keyboard fallback) + Structural panel (size input + two-step Delete via 3s arm window). First Playwright e2e click-through covers §16.2.3 + §16.2.4 + §16.2.5 affordances against a real backend. **Next**: §16.2.6 live preview endpoint + UI. |
+| Visual block editor      | **§16.2.2 SHIPPED** — read-only canvas at `/stations/[slug]/visualise`. `GET /api/stations/{slug}/sidecar` endpoint serves template + sidecar in one fetch; trivial-sidecar fallback for un-authored stations (Decision E — frontend never handles "no sidecar"). 7 Svelte components (`<EditorCanvas>`, `<Section>`, `<SectionHeader>`, `<ChipFlow>`, `<Chip>`, `<ViewModeToggle>`, `<DetailPanel>`) compose the canvas. View-mode prefs (labels / colour / macros) persist to localStorage. Chips are native `<button>`s (keyboard a11y); click opens a slide-in DetailPanel with full BlockSpec / macro spec. `<500-chip` sections start expanded; `>500` sections start collapsed with "Large station" hint. Discoverability via "🗺 Visualise template" link from `/stations/[slug]`. **§16.2.3 SHIPPED** — atomic slot editing: click a chip → DetailPanel edit form (parameter fields only; cursor_id as a select) → Save → `PATCH /api/stations/{slug}/blocks` (server-enforced parameter-only, optimistic-concurrency 409, parse_template revalidation) → refetch. "Export to disk" writes `stations/{slug}.json` (Decision A3, DB-as-truth). row_template edits warn they change every row. **§16.2.4 SHIPPED** — macro editing + block retyping + `allowlist_sources` per-block editor (closes §16.14.t7 c3 docs promise). Three new write paths: `PATCH /blocks/retype` (strategy+source swap with role validation via parse_template), `PATCH /macros/{macro_id}` (edit-once-applies-to-all fanout — server resolves macro_id → expanded block addresses via `engine.editor_metadata.resolve_macro_addresses`), plus extended PATCH /blocks accepting `allowlist_sources` for the 4 content-sampling strategies. New `<ChipMultiInput>` Svelte component for the chip-list editor. DetailPanel grew a collapsible "Change strategy / source" retype panel with D4 bidirectional role-filtered dropdowns; macros + atomics share the same form scaffolding (yellow fanout warning for macros). All-or-nothing macro transactions; new `_validate_no_overlapping_macros` drift rule. **§16.2.5 SHIPPED** — section composition + structural block edits. New `Station.sidecar` JSON column (D1 — DB-as-truth, disk file becomes export artifact) + Alembic backfill from on-disk `*.editor.json`. Six REST endpoints: POST/PATCH/DELETE /sections, PUT /sections/order, PATCH /blocks/move, PATCH /blocks/structure. D2 auto-`_unsorted` bin on non-empty section delete; D5 structural-edit index-shift contract (`shift_atomic_slot_indices` bumps every `slot_index ≥ N` in the same transaction). Frontend: SectionHeader rename/move/delete affordances + HTML5 drag-drop target; Chip drag source (atomic only — JSON-in-DataTransfer via shared `CHIP_DRAG_MIME` + `canDropOn` policy module); DetailPanel Move dropdown (D6 keyboard fallback) + Structural panel (size input + two-step Delete via `performance.now()` 3s arm window). First Playwright e2e click-through covers §16.2.3 + §16.2.4 + §16.2.5 affordances against a real backend. Slice-review sweep landed 3 follow-up commits (`ce51567` backend correctness, `048eb48` DetailPanel arm/stale-selection, `13c8aca` dedup) + queued §16.2.5.t1-.t6 (within-section drag-reorder, system-section abstraction, dual-write semantics, sidecar `TypeDecorator`, inline-sidecar refetch elision, shared inline-edit/arm Svelte actions). **Next**: §16.2.6 live preview endpoint + UI. |
 | Station detail page      | **§16.19 SHIPPED** — `/stations/[slug]` overview bundle (`GET /api/stations/{slug}/overview`): template summary, source pools (not-imported gap flagged red), persistent cursor positions, generation rollup + staleness hint (`stale_count`, `updated_at`-proxy; precise fix §16.19.t1). Non-fatal fetch; bounded aggregate queries. **§16.25 extension**: not-imported badge is a deep-link to `/sources?pool=…&role=…`; `<PoolImportPanel>` embedded below the overview, scoped to declared sources; panel-driven changes refresh the overview live. |
 | Pool-import UI           | **§16.25 SHIPPED** — `/sources` page (list + single/batch add + per-row Re-import/Delete) + per-station embed + deep-link badge. `POST /api/sources/upload` multipart endpoint (streaming + `mkstemp` + `finally` cleanup). File-upload primary, typed-path advanced. CLI manifest (`make import-weekly-pools`) kept as the power-user channel. **Closed §16.13 D1.** Watch-list: §16.25.t1 (mid-batch mode-switch UX), §16.25.t2 (upload cancel / AbortController). |
 | Trace versioning         | Deferred. See §16.4 (queued; not on the critical path post-Phase-B). |
@@ -6282,6 +6282,12 @@ Inserted into the strategic sequence based on §16.0 audit:
 | ~~**§16.2.2.t4** `_REPO_ROOT` calculation brittleness~~ | **CLOSED** (post-c5 sweep) | Two import-time assertions in `api/deps.py`: (a) `engine/` sibling dir exists (load-bearing import target the whole codebase shares), (b) `_STATIONS_DIR` exists. Repo-name-agnostic — checks structure not naming, so forks work. Catches a future `api/deps.py` move at import time with a clear stack trace instead of "stations directory not found" once the editor endpoint is hit. |
 | **§16.11.t4** Sub-second precision in job-state timestamps | tiny (~1 commit) | `_iso_utc` truncates to whole seconds for the `started_at` / `finished_at` response fields (§16.11 c3 mid-slice review 🟢-7). Fine for human-readable display; a future benchmark / audit looking at job-duration would need millisecond precision. The raw `time.time()` float still lives on `JobSnapshot` — a `started_at_unix: float` response field could be added later without breaking the existing ISO field. |
 | **§16.19.t1** Precise template-staleness via a `template_updated_at` column | small (migration + write-path) | The station-overview `stale_count` (§16.19) uses `station.updated_at < ...` as a proxy for "template changed" (§16.19 c1 review 🟡-1). But the wizard-edit PUT reassigns `s.template` unconditionally, so a name-only edit bumps `updated_at` and falsely flags existing playlists as stale. Mild (regenerating an unchanged template reproduces identical output). The precise fix: a dedicated `template_updated_at` column bumped only when the template content actually changes (PUT diff-check + the §16.2.3 PATCH), and compare against THAT. Promote if the false-positive confuses a real user. |
+| **§16.2.5.t1** Drag-drop reorder + chip-position-within-section | small-medium | Named in the §16.2.5 c3 closeout's "Known limitations." Today's drop targets the section as a whole; `targetIndex` is always `null` (server appends to the section's blocks list). Operators move chips BETWEEN sections via drag but must use move-up / move-down handlers for intra-section reordering — and there's no drag-drop reorder of sections by their headers (the up/down buttons cover keyboard / SR paths). Two related affordances: (a) within-section chip reorder with a drop-line indicator + `targetIndex` wiring (server already accepts the field), (b) section-header drag-drop reorder via the existing PUT /sections/order endpoint. Promote when an operator complains about button-clicking through a long reorder. |
+| **§16.2.5.t2** System-section abstraction (`is_system_section()` predicate) | small (~1 commit) | §16.2.5 slice-review sweep AL1. The "reserved id starts with `_`" convention is spelled out 5 times across 3 layers: `web/src/lib/drag-drop.ts` (`canDropOn`), `SectionHeader.svelte` (`isSystemBin`), `EditorCanvas.svelte` (commitAddSection client guard), `api/routers/editor.py` (create_section server guard), plus equality checks against `UNSORTED_SECTION_ID` in rename/delete/move/reorder. Adding a second bin (`_archived` on retype, `_macro_orphans` on cascade) needs touching all five with no compile/test signal if one is missed. Promote when the second bin lands: introduce `engine.editor_metadata.SYSTEM_SECTION_IDS = frozenset({...})` + `is_system_section(id)` helper, re-export to TS via a shared module. Optional altitude fix: add a `kind: 'user' | 'system'` field on the section dict (validated by drift rules) so the leading-underscore convention becomes an internal serialisation detail. |
+| **§16.2.5.t3** Dual-write semantics: lifespan auto-derive vs DB-as-truth | small-medium | §16.2.5 slice-review sweep AL3. D1 flipped `Station.sidecar` to source-of-truth + made the disk file the "export artifact," but `api/main.py`'s lifespan still calls `auto_derive_missing_sidecars` (engine/seeding.py:396) which WRITES `stations/{slug}.editor.json` to disk on every boot. After the migration runs, those new disk files are write-only orphans — runtime prefers the DB column (NULL → falls through → trivial), mutations write only the DB column. The `rm stations/foo.editor.json` regen workflow that stations/README.md still advertises produces a fresh disk file the runtime ignores in favor of stale DB sidecar. Three viable directions: (a) lifespan writes to `Station.sidecar` not disk, README teaches `UPDATE station SET sidecar = NULL`; (b) every sidecar mutation also writes the disk file as a side effect (true dual-write); (c) lifespan reads disk file mtime + refreshes the DB column when disk is newer (giving the `rm + restart` recipe a clear contract). Pick one + document. Promote when a contributor reports surprise after `rm`-and-reload. |
+| **§16.2.5.t4** SQLAlchemy `TypeDecorator` for `Station.sidecar` (read/write grammar validation) | medium (migration + decorator + Pydantic mirror) | §16.2.5 slice-review sweep AL4. `Station.sidecar` is a schemaless `JSON` column today (engine/models.py:39); the migration deliberately skips `parse_sidecar` during backfill ("validation belongs to the runtime GET path"). Once the grammar bumps in §16.2.6 (likely macro-pinning fields) or §16.2.7, the DB can hold sidecars in "historical" shapes with zero alembic signal; the lenient `_resolve_sidecar(strict=False)` branch becomes the silent normal path instead of an actual exception handler. Fix: wrap `JSON` in a `SidecarJSON` `TypeDecorator` that runs `validate_sidecar` (or `_normalize_sidecar` for permissive normalisation) on `process_result_value` + `process_bind_param`. Mirror in `SidecarMutationResponse` with a discriminated Pydantic `Sidecar` model. When the grammar bumps, a single Alembic data migration upgrades existing rows AND the TypeDecorator enforces the new shape going forward. Promote at the first grammar bump (§16.2.6) — cheaper to do then than the cumulative cost of "we'll catch it at runtime." |
+| **§16.2.5.t5** `withSaveLifecycle` consumes inline sidecar response (skip GET refetch) | small (~1 commit) | §16.2.5 slice-review sweep EF1. All 9 §16.2.4 + §16.2.5 PATCH endpoints already return `SidecarMutationResponse {sidecar, updated_at}` inline (api/schemas.py + `_finish_sidecar_mutation` line 790). But `withSaveLifecycle` in the visualise route discards the PATCH response and re-runs `loadSidecar()` → fresh `GET /api/stations/{slug}/sidecar`. For Rebirth Radio's 2,196-chip sidecar each mutation costs 2× round-trip (PATCH + GET) + a second full `validate_sidecar` traversal server-side. Consume `r.sidecar + r.updated_at` from the PATCH response; fall back to GET only on a response-shape mismatch (for future endpoints that don't return the inline sidecar). Promote when §16.2.6 live-preview makes the per-edit latency felt. |
+| **§16.2.5.t6** Shared inline-edit + arm-to-confirm Svelte actions | small-medium (~1 commit) | §16.2.5 slice-review sweep AL6 + AL7. Two patterns are now load-bearing in DetailPanel + SectionHeader: (a) `committed` latch in `commitRename` that suppresses blur-after-Enter double-dispatch (real-browser hazard jsdom doesn't simulate), and (b) `Date.now()` → `performance.now()` + generation-counter arm window for two-click Delete. Both will recur — section-rename DetailPanel surface, in-line section-create input in EditorCanvas (which currently doesn't even handle the blur case → silent half-state), future destructive buttons (macro delete, allowlist clear, station-delete confirmation). Hoist into `web/src/lib/actions.ts` as `use:commitOnEnterEscapeBlur={{onCommit, onCancel}}` + `use:armToConfirm={{timeoutMs, onConfirm}}`. The arm action is the natural home for tab-pause Page-Visibility-aware clock handling (when that becomes a real complaint). Promote at the third copy of either pattern. |
 | ~~**§16.2.2.t5** `chipCount` prop drilling~~ | **CLOSED in post-c5 sweep** | `<EditorCanvas>` builds a `sectionChipCounts: Map<id, count>` once, derives `totalChips` from its values, passes each section's count to `<Section>` as a `chipCount` prop. Section retains an `expandSection` fallback for tests / standalone use. |
 | ~~**§16.2.2.t6** Chip keyboard accessibility~~ | **CLOSED in c4** | Chips are now `<button>`s — native focus + Enter/Space activation. Click + key both dispatch the `select` event. Pinned by `Chip.test.ts > chip is a native <button>` + the click→select event test. |
 
@@ -8309,6 +8315,86 @@ SectionHeader.test.ts), plus minor cleanup.
   macro requires `slot_index` pinning on macros which today
   doesn't exist in the sidecar grammar. The macro chip is
   `draggable={false}` so the UI never offers the affordance.
+
+#### Slice-review sweep — what shipped + what's queued
+
+The post-c3 slice-review sweep ran `/code-review --high` across the
+13-commit §16.2.5 cycle via 7 independent finder angles. The
+correctness + cleanup findings landed as three follow-up commits:
+
+* **Slice-review sweep c1 — backend correctness** (`ce51567`). Six
+  fixes: `patch_macro` deep-copies the loaded sidecar before
+  mutation (the §16.2.4-era endpoint was the outlier vs the §16.2.5
+  endpoints' `_prepare_sidecar_mutation` shape); `move_block`
+  rejects `_unsorted` as a target (server-side parity with frontend
+  `canDropOn`); `reorder_sections` pins `_unsorted` at the end of
+  `layout_order`; `structural_remove` rejects orphan-macro-creating
+  removes with the affected macros named (closes the
+  `resolve_macro_addresses` "silently skip macro-only section" hole
+  the angle surfaced); migration uses SQLAlchemy `table.update()`
+  for the JSON column so Postgres JSONB's bind processor fires
+  correctly (the prior `sa.text + json.dumps` worked accidentally on
+  SQLite); `export_template` + migration `read_text` pin utf-8
+  encoding for Windows safety.
+
+* **Slice-review sweep c2 — DetailPanel two-step Delete + stale-
+  selection** (`048eb48`). Four stacked correctness bugs in the 3s
+  arm window: `Date.now()` → `performance.now()` (wall-clock drift
+  on NTP/DST/tab-pause); generation counter invalidates stale
+  `setTimeout` callbacks across re-arm cycles; logical-selection
+  sentinel replaces identity-reset so background refetches during
+  the arm window don't silently disarm; `close` dispatched on
+  remove commit so the stale `selected.ref.slot_index` can't drive
+  an Apply-resize against the wrong block.
+
+* **Slice-review sweep c3 — dedup + helper hoists** (`13c8aca`).
+  Four cleanup fixes: 3× inline 409-handler copies in
+  `patchBlock` / `retypeBlock` / `patchMacro` collapse into the
+  shared `_handleConcurrencyConflict` (renamed from
+  `_handleSidecarConflict` since it now serves all 9 PATCH
+  endpoints); `_find_section` hoisted to
+  `engine.editor_metadata.lookup_section` next to `lookup_macro`;
+  the `_load_sidecar` + `_load_sidecar_for_mutation` 1-line wrappers
+  inlined at their 3 call sites (the `strict=True/False` kwarg
+  reads more explicitly than the wrapper names); the e2e
+  `createFlatStation` 30-line inline literal extracted as
+  `minimalFlatTemplate` in `web/e2e/fixtures.ts`, reused via the
+  existing `createStation` helper.
+
+Six higher-altitude observations carry §16.2.5.tX queue slots in
+the cross-cutting table:
+
+* **§16.2.5.t1** — Drag-drop reorder + chip-position-within-section.
+  Named in this closeout's "Known limitations." Within-section
+  drop indicator + targetIndex wiring + section-header drag
+  reorder. Promote when an operator complains about button-clicking
+  through a long reorder.
+* **§16.2.5.t2** — System-section abstraction (sweep AL1). The
+  `id.startsWith('_')` predicate is scattered across 5 sites in 3
+  layers; promote when a second system bin appears.
+* **§16.2.5.t3** — Dual-write semantics: lifespan auto-derive disk
+  vs DB-as-truth (sweep AL3). Pick one direction + document;
+  promote when a contributor reports surprise after `rm` + reload.
+* **§16.2.5.t4** — SQLAlchemy `TypeDecorator` on `Station.sidecar`
+  for read/write-time grammar validation (sweep AL4). Promote at
+  the first grammar bump (§16.2.6's expected macro-pinning fields).
+* **§16.2.5.t5** — `withSaveLifecycle` consumes the inline sidecar
+  in the PATCH response instead of re-fetching (sweep EF1).
+  Promote when §16.2.6 live-preview makes the per-edit latency felt.
+* **§16.2.5.t6** — Shared `commitOnEnterEscapeBlur` +
+  `armToConfirm` Svelte actions (sweep AL6 + AL7). Promote at the
+  third copy of either pattern.
+
+Two finder angles hit session limits + returned empty; their
+candidate space overlapped substantially with the wrapper/proxy and
+language-pitfall angles, so the dedup loss is limited. A few lower-
+confidence observations were deliberately not promoted: row_template
+multi-section move's `block_idx`-only matcher (already 400s with the
+known D8-punt phrasing); `_resolve_sidecar` lenient mode's
+disk-file-skipping when DB is broken (the SQL recovery path is
+documented + fixing it would muddy "DB is source-of-truth"); the
+`drag-fixture.ts` `MockDataTransfer` covering only the surface used
+today (defer until a test forks the fixture).
 
 ### 16.3 Delete / station reset
 
