@@ -42,15 +42,28 @@ class Station(Base):
     # with stations/{slug}.json for the template).
     #
     # §16.2.5.t4 — `SidecarJSON` is a `TypeDecorator` over `JSON` that
-    # runs `validate_sidecar_grammar` on every bind so the shape check
-    # fires whether the write comes through `_persist_sidecar`, a
-    # fixture, an alembic data migration, or a future endpoint that
+    # runs `_validate_grammar` on every ORM-attribute bind so
+    # the shape check fires whether the write comes through
+    # `_persist_sidecar`, a test fixture, or a future endpoint that
     # forgets the shared helper. NULL passes through; reads stay
     # pass-through (lenient `_resolve_sidecar` handles legacy data).
     # The underlying SQL column type stays `JSON` — no schema migration
     # needed.
-    sidecar = Column(SidecarJSON if SidecarJSON is not None else JSON,
-                     nullable=True)
+    #
+    # NOT covered: alembic data migrations that construct an ad-hoc
+    # `sa.table('station', sa.column('sidecar', sa.JSON()))` reference
+    # (the §16.2.5 migration `e695658879de` does this on purpose to
+    # avoid importing engine code from the migration). Those writes
+    # bypass the validator by design + the runtime read path degrades
+    # via `_resolve_sidecar(strict=False)` warning banner.
+    #
+    # c2 review #3 finding #2: dropped the conditional
+    # `SidecarJSON if SidecarJSON is not None else JSON` fallback. The
+    # fallback silently downgraded to plain JSON if the SidecarJSON
+    # import EVER failed (a future circular import, a partial
+    # SQLAlchemy install) — no log, no warning, validation gone. Fail
+    # loud at import time instead.
+    sidecar = Column(SidecarJSON, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(
         DateTime,

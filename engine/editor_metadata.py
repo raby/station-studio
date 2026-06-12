@@ -497,8 +497,9 @@ def is_system_section(section_id: str) -> bool:
 # pass-through (no per-access perf cost; lenient `_resolve_sidecar`
 # already handles legacy/broken data).
 #
-# What's enforced: REQUIRED_TOP_LEVEL keys (`sections`, `macros`,
-# `layout_order`, `schema_version`), schema_version == 1, no unknown
+# What's enforced: REQUIRED_TOP_LEVEL keys (`sections`,
+# `layout_order`, `schema_version` — note: `macros` is OPTIONAL +
+# defaults to `[]`), schema_version == 1, no unknown
 # top-level keys, sections/macros are lists, blocks have valid `kind`,
 # atomic refs have slot_index OR (row_idx + block_idx). Cross-document
 # checks (atomic_bounds against `station.template`'s flat_slots length,
@@ -514,66 +515,68 @@ def is_system_section(section_id: str) -> bool:
 # the DB's stored shape.
 
 
-def validate_sidecar_grammar(sidecar: dict) -> None:
-    """Public alias for `_validate_grammar` — the shape-only check
-    the `SidecarJSON` TypeDecorator calls at bind time.
+# c2 review #3 finding #11: dropped the `validate_sidecar_grammar`
+# wrapper — it was a 1-line alias to `_validate_grammar` with no
+# external callers. The SidecarJSON TypeDecorator now calls
+# `_validate_grammar` directly. Future callers who want the public
+# grammar-only check can either call the leading-underscore form
+# (acceptable for an internal-to-engine module) or promote it via a
+# rename in §16.2.5.t14 (the EditorMetadataError-base cleanup).
 
-    Renamed-not-aliased because the leading-underscore form is the
-    INTERNAL implementation detail; the public name signals the
-    contract: "structural / type validation, NO cross-document
-    consistency."
+
+# c2 review #3 finding #2: dropped the `try / except ImportError`
+# fallback. SQLAlchemy is a hard requirement (every consumer of this
+# module's `SidecarJSON` already needs SQLAlchemy installed via
+# engine/models.py). The fallback silently downgraded to plain JSON
+# with no log + no warning if any future ImportError reached this
+# block — exactly the opposite of defense in depth. Fail loud at
+# import time instead. The CLI `scripts/derive_sidecar` doesn't
+# import SidecarJSON, so its standalone path is unaffected.
+from sqlalchemy.types import TypeDecorator
+from sqlalchemy import JSON as _SaJSON
+
+
+class SidecarJSON(TypeDecorator):
+    """SQLAlchemy column type wrapping `JSON(none_as_null=True)` that
+    runs `validate_sidecar_grammar` on every ORM-attribute bind. See
+    DESIGN.md §16.2.5.t4 for the rationale; the docstring here pins
+    the coverage contract.
+
+    **Coverage:** writes via the ORM Station attribute
+    (`station.sidecar = ...; db.commit()` — fixtures, endpoints,
+    scripts using the ORM).
+
+    **Bypass (intentional):** alembic data migrations that construct
+    an ad-hoc `sa.table('station', sa.column('sidecar', sa.JSON()))`
+    bypass the validator by design — the runtime read path degrades
+    via `_resolve_sidecar(strict=False)` warning banner. See
+    migrations/versions/e695658879de for the pattern.
+
+    **Reads:** pass-through (no `process_result_value` override —
+    SQLAlchemy's impl-chain handles JSON deserialisation, lenient
+    `_resolve_sidecar(strict=False)` handles legacy/broken data).
+
+    `none_as_null=True` is on the impl so Python None binds to SQL
+    NULL (not the JSON 'null' string literal). Critical for
+    `populate_db_sidecars`'s `Station.sidecar.is_(None)` filter.
     """
-    _validate_grammar(sidecar)
+    impl = _SaJSON(none_as_null=True)
+    cache_ok = True
 
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return None
+        # c2 review #3 finding #11: call _validate_grammar directly —
+        # the public `validate_sidecar_grammar` alias was a 1-line
+        # wrapper around the same internal function.
+        _validate_grammar(value)
+        return value
 
-try:
-    from sqlalchemy.types import TypeDecorator
-    from sqlalchemy import JSON as _SaJSON
-
-
-    class SidecarJSON(TypeDecorator):
-        """SQLAlchemy `JSON` column with bind-time grammar validation.
-
-        Strictly validates the sidecar's grammar (no cross-document
-        consistency) on every bind — writes through any code path
-        (ORM, raw `.values()`, future endpoints) get the same shape
-        check the runtime route layer runs. Result reads are
-        pass-through; lenient `_resolve_sidecar(strict=False)` handles
-        legacy/broken data so existing operator-friendly recovery
-        paths stay intact.
-
-        `Python None → SQL NULL` (not JSON 'null') because the
-        `populate_db_sidecars` lifespan helper and the c1 `Station.sidecar.is_(None)`
-        filter rely on SQL NULL semantics. Without `none_as_null=True`
-        the JSON impl would serialise `None` to the literal string
-        'null' and the IS NULL filter would silently miss those rows.
-
-        Defense in depth: even though `_persist_sidecar` already calls
-        `validate_sidecar` before commit, this catches writes that
-        bypass the route layer (fixtures, scripts, future endpoints
-        that forget to route through the shared helper).
-        """
-        # `none_as_null=True` so Python None binds to SQL NULL (not
-        # JSON 'null'). Critical for the populate_db_sidecars filter.
-        impl = _SaJSON(none_as_null=True)
-        cache_ok = True
-
-        def process_bind_param(self, value, dialect):
-            if value is None:
-                return None
-            validate_sidecar_grammar(value)
-            return value
-
-        def process_result_value(self, value, dialect):
-            # Pass-through: callers (`_resolve_sidecar`) handle
-            # validation contextually so we don't lose the
-            # lenient-degradation path for grandfathered data.
-            return value
-except ImportError:
-    # SQLAlchemy is a required dep, but keep the import optional in
-    # case someone uses `editor_metadata` standalone (e.g. the CLI
-    # `derive_sidecar` shim or a fixture script with no DB).
-    SidecarJSON = None  # type: ignore[assignment]
+    # c2 review #3 finding #4: NO `process_result_value` override.
+    # Defining a pass-through method flips SQLAlchemy's
+    # `_has_result_processor` to True and forces every read through
+    # a no-op closure. Letting the base class handle it (no override)
+    # makes reads route through the impl's JSON deserialiser directly.
 
 
 def lookup_section(sidecar: dict, section_id: str) -> dict | None:

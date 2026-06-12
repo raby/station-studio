@@ -40,6 +40,7 @@ import logging
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.exc import StatementError
 from sqlalchemy.orm import Session
 
 from api.deps import get_db, get_stations_dir
@@ -375,6 +376,38 @@ def _resolve_block_address(template: dict, addr: BlockAddress) -> dict:
     raise HTTPException(400, "address must set slot_index or block_idx")
 
 
+def _commit_with_sidecar_validation(db: Session) -> None:
+    """`db.commit()` that translates SQLAlchemy `StatementError` wrapping
+    an `EditorMetadataError` (from `SidecarJSON.process_bind_param`) into
+    `HTTPException(400)`.
+
+    c2 review #3 finding #1: §16.2.5.t4's TypeDecorator catches grammar
+    violations at SQL bind time — the exact safety net for fixtures /
+    scripts / future endpoints that bypass `_persist_sidecar`. But
+    SQLAlchemy wraps the EditorMetadataError inside StatementError, and
+    FastAPI's default handler returns 500 'Internal Server Error' for
+    uncaught StatementError. So the defense-in-depth path produced
+    WORSE error semantics than the route layer (which translates
+    EditorMetadataError → 400 via _persist_sidecar's try/except).
+    Catch + unwrap here so every commit-time grammar failure surfaces
+    as a clean 400 with the original error message.
+    """
+    try:
+        db.commit()
+    except StatementError as e:
+        # Only translate when the underlying cause is our grammar
+        # validator — leave generic SQL errors (IntegrityError, etc.)
+        # to propagate as 500 since those reflect schema bugs, not
+        # operator-input failures.
+        orig = getattr(e, "orig", None) or e.__cause__
+        if isinstance(orig, EditorMetadataError):
+            raise HTTPException(
+                400,
+                f"mutation produces an invalid sidecar (grammar): {orig}",
+            ) from e
+        raise
+
+
 def _check_optimistic_token(station: Station, expected: str | None) -> None:
     """409 if `expected` is set + doesn't match the station's current
     `updated_at`. Shared by all three PATCH endpoints (Decision D2)."""
@@ -681,7 +714,11 @@ def patch_macro(
         # to a synthesised value + GET would prefer that over the
         # legitimate template-driven trivial.
         station.template = template
-    db.commit()
+    # c2 review #3 finding #1: route the commit through the
+    # SidecarJSON-aware helper — translates StatementError(grammar
+    # validator) → HTTPException(400). Block patches above didn't
+    # touch sidecar, so their `db.commit()` stays unwrapped.
+    _commit_with_sidecar_validation(db)
     db.refresh(station)
 
     return MacroPatchResponse(
@@ -811,7 +848,13 @@ def _finish_sidecar_mutation(
     edit-rate.
     """
     _persist_sidecar(station, sidecar, template=template)
-    db.commit()
+    # c2 review #3 finding #1: SidecarJSON's bind processor can raise
+    # at commit time on a grammar violation (in defense-in-depth scope:
+    # a fixture / script / future endpoint that bypassed
+    # _persist_sidecar's validate_sidecar). Translate StatementError
+    # → 400 so the operator gets the same shape of error they would
+    # have gotten from validate_sidecar at the route layer.
+    _commit_with_sidecar_validation(db)
     db.refresh(station)
     return SidecarMutationResponse(
         sidecar=sidecar,

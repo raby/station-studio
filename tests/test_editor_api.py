@@ -18,11 +18,14 @@ import json
 from pathlib import Path
 
 import pytest
+import sqlalchemy as sa
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import StatementError
 from sqlalchemy.orm import sessionmaker
 
 from api.deps import get_db, get_stations_dir
 from api.main import app
+from engine.editor_metadata import EditorMetadataError
 from engine.database import make_engine, make_sessionmaker
 from engine.models import Base, Station
 
@@ -1419,8 +1422,17 @@ def test_get_sidecar_db_broken_falls_back_with_error(editor_api):
     bypasses the bind processor) to simulate grandfathered/historical
     drift. This pins the lenient-degradation contract for legacy
     data WHILE keeping new writes strict.
+
+    c2 review #3 finding #8: bind the `broken` dict via
+    `sa.bindparam('s', type_=sa.JSON())` so SA's portable JSON
+    serializer handles the encoding instead of pre-stringifying.
+    Pre-fix the `json.dumps(broken)` + `:s` literal landed as a JSON-
+    encoded SCALAR STRING on Postgres JSONB (not a JSONB object) —
+    reads would return `str` not `dict` and `validate_sidecar` would
+    raise the wrong error message. Works on SQLite by accident (TEXT
+    affinity round-trips). Matches the lesson from migration
+    `e695658879de`'s c1 review.
     """
-    import sqlalchemy as sa
     client, Session, _dir = editor_api
     template = _minimal_template("brk-db")
     # Missing required `layout_order` key → drift rule.
@@ -1433,10 +1445,12 @@ def test_get_sidecar_db_broken_falls_back_with_error(editor_api):
         db.add(Station(slug="brk-db", name="Broken DB", template=template))
         db.commit()
         # Raw SQL update bypasses SidecarJSON's bind validator so we
-        # can simulate a historically-malformed DB row.
+        # can simulate a historically-malformed DB row. JSON bindparam
+        # is dialect-portable.
         db.execute(
-            sa.text("UPDATE station SET sidecar = :s WHERE slug = :slug"),
-            {"s": json.dumps(broken), "slug": "brk-db"},
+            sa.text("UPDATE station SET sidecar = :s WHERE slug = :slug")
+                .bindparams(sa.bindparam("s", type_=sa.JSON())),
+            {"s": broken, "slug": "brk-db"},
         )
         db.commit()
 
@@ -1452,26 +1466,53 @@ def test_get_sidecar_db_broken_falls_back_with_error(editor_api):
 def test_sidecar_json_typedecorator_blocks_invalid_writes(editor_api):
     """§16.2.5.t4: writing an invalid sidecar via ORM raises at flush
     time so future bugs (fixtures, scripts, endpoints that bypass
-    `_persist_sidecar`) get caught before they corrupt the DB."""
-    import pytest as _pytest
-    from sqlalchemy.exc import StatementError
-    from engine.editor_metadata import EditorMetadataError
+    `_persist_sidecar`) get caught before they corrupt the DB.
+
+    c2 review #3 finding #9: catch only `StatementError` + assert
+    `exc.value.orig` is the underlying `EditorMetadataError`. The
+    prior tuple-raises `(StatementError, EditorMetadataError)`
+    silently accepted either wrapping behavior; a future SQLAlchemy
+    upgrade that changed the wrapping wouldn't fail the test. Also
+    assert post-rollback the row was NOT created — pins the 'no
+    corruption' contract the TypeDecorator exists for.
+
+    c2 review #3 finding #10: use a fixture that fails on the missing
+    `layout_order` rule (matching the test name's intent), not on the
+    empty-sections rule that the prior fixture tripped first.
+    """
     client, Session, _dir = editor_api
     template = _minimal_template("typed-bind")
-    broken = {"schema_version": 1, "sections": []}  # missing layout_order
+    # Non-empty sections so we don't trip rule 'sections must have
+    # at least one entry' before getting to the missing-layout_order
+    # check — matches the test's stated purpose.
+    broken = {
+        "schema_version": 1,
+        "sections": [{
+            "id": "x", "name": "X",
+            "blocks": [{"kind": "atomic", "slot_index": 0}],
+        }],
+        # No layout_order → drift rule.
+    }
     with Session() as db:
         db.add(Station(
             slug="typed-bind", name="Typed Bind",
             template=template, sidecar=broken,
         ))
-        with _pytest.raises((StatementError, EditorMetadataError)):
+        with pytest.raises(StatementError) as exc_info:
             db.commit()
+        # SA wraps EditorMetadataError in StatementError with .orig.
+        assert isinstance(exc_info.value.orig, EditorMetadataError)
+        assert "layout_order" in str(exc_info.value.orig).lower()
+        db.rollback()
+    # Pin 'no corruption' — failed commit must leave NO row.
+    with Session() as db:
+        assert db.query(Station).filter_by(slug="typed-bind").first() is None
 
 
 def test_sidecar_json_typedecorator_passes_null_through(editor_api):
     """§16.2.5.t4: NULL is a legitimate value (un-authored stations) —
-    must not run through the validator (validate_sidecar_grammar
-    raises on non-dict)."""
+    must not run through the validator (`_validate_grammar` raises on
+    non-dict)."""
     client, Session, _dir = editor_api
     template = _minimal_template("typed-null")
     with Session() as db:
@@ -1481,6 +1522,44 @@ def test_sidecar_json_typedecorator_passes_null_through(editor_api):
     with Session() as db:
         s = db.query(Station).filter_by(slug="typed-null").first()
         assert s.sidecar is None  # written + read back as NULL
+
+
+def test_commit_helper_translates_typedecorator_statementerror_to_400(editor_api):
+    """c2 review #3 finding #1: when the SidecarJSON bind processor
+    raises EditorMetadataError at commit time, SQLAlchemy wraps it in
+    `StatementError`. The route layer's `_commit_with_sidecar_validation`
+    helper unwraps + raises HTTPException(400) so the operator sees a
+    clean 'grammar' error instead of FastAPI's default 500.
+
+    Verifies the unwrap directly: hook a Station + manually bypass
+    `validate_sidecar` in the route helper (which the test simulates
+    by directly invoking `_commit_with_sidecar_validation` on a
+    Session with a pending bad sidecar)."""
+    from api.routers.editor import _commit_with_sidecar_validation
+    from fastapi import HTTPException
+    _client, Session, _dir = editor_api
+    template = _minimal_template("commit-helper")
+    broken = {
+        "schema_version": 1,
+        "sections": [{
+            "id": "x", "name": "X",
+            "blocks": [{"kind": "atomic", "slot_index": 0}],
+        }],
+        # No layout_order.
+    }
+    with Session() as db:
+        db.add(Station(
+            slug="commit-helper", name="CH",
+            template=template, sidecar=broken,
+        ))
+        with pytest.raises(HTTPException) as exc_info:
+            _commit_with_sidecar_validation(db)
+        assert exc_info.value.status_code == 400
+        assert "grammar" in str(exc_info.value.detail).lower()
+        db.rollback()
+    # No row landed.
+    with Session() as db:
+        assert db.query(Station).filter_by(slug="commit-helper").first() is None
 
 
 def test_macro_edit_writes_to_db_column_when_starting_from_disk(editor_api):
