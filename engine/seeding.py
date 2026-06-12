@@ -369,26 +369,57 @@ def populate_db_sidecars(db, stations_dir: Path) -> int:
         if sidecar_path.is_file():
             try:
                 sidecar = parse_sidecar(sidecar_path, station.template)
-            except (EditorMetadataError, OSError, json.JSONDecodeError) as e:
+            except (EditorMetadataError, OSError) as e:
+                # c1 review #3 finding #2: parse_sidecar now wraps
+                # UnicodeDecodeError → EditorMetadataError, so the
+                # catch tuple no longer needs json.JSONDecodeError
+                # explicitly. OSError stays for read-time failures
+                # (permission, broken symlink). c1 review #3
+                # finding #4: log at WARNING with the slug + reason
+                # so the operator's serve log NAMES the file +
+                # explicit "FALLING BACK TO DERIVE" so the silent-
+                # discard of operator-authored content surfaces.
                 logger.warning(
-                    "populate_db_sidecars: %s.editor.json broken — "
-                    "deriving from template instead (%s: %s)",
-                    slug, type(e).__name__, e,
+                    "populate_db_sidecars[%s]: disk sidecar at %s "
+                    "FAILED VALIDATION (%s: %s) — falling back to "
+                    "derive_sidecar(template). Operator-authored "
+                    "section names + macros will be LOST until the "
+                    "disk file is fixed. To preserve, edit the disk "
+                    "file + `UPDATE station SET sidecar = NULL` "
+                    "then restart.",
+                    slug, sidecar_path, type(e).__name__, e,
                 )
         if sidecar is None:
             try:
                 sidecar = derive_sidecar(station.template)
-            except (KeyError, ValueError, TemplateError) as e:
+            except (
+                KeyError, ValueError, TemplateError,
+                # c1 review #3 finding #1: derive_sidecar raises
+                # EditorMetadataError (AssertionError subclass) for
+                # row_template stations + heuristic-bug paths.
+                # Pre-fix, an uncaught EditorMetadataError aborted
+                # the whole loop + rolled back ALL prior in-memory
+                # assignments via the SessionLocal __exit__ close.
+                EditorMetadataError,
+            ) as e:
                 logger.warning(
-                    "populate_db_sidecars: can't derive for %s — "
-                    "skipping (%s: %s)",
+                    "populate_db_sidecars[%s]: can't derive sidecar "
+                    "from template (%s: %s) — skipping. "
+                    "Visualiser will render the §16.2.2 trivial "
+                    "fallback (single 'all slots' section + no "
+                    "macros) for this station.",
                     slug, type(e).__name__, e,
                 )
                 continue
         station.sidecar = sidecar
-        populated += 1
-    if populated:
+        # c1 review #3 finding #3: per-station commit. Pre-fix the
+        # commit was after the loop, so ANY uncaught mid-loop
+        # exception (e.g. the EditorMetadataError gap above) rolled
+        # back every station populated before the crash. Per-station
+        # commit preserves partial progress; the next boot retries
+        # only the still-NULL rows.
         db.commit()
+        populated += 1
     return populated
 
 
@@ -418,7 +449,9 @@ def auto_derive_missing_sidecars(stations_dir: Path) -> int:
     # lift), NOT `scripts.derive_sidecar` (the CLI shim that doesn't
     # ship in the wheel post §16.13.t9). The pre-lift import was a
     # production 🔴 — broke every CLI bootstrap on a wheel install.
-    from engine.editor_metadata import derive_sidecar
+    from engine.editor_metadata import (
+        EditorMetadataError, derive_sidecar,
+    )
     from engine.template import TemplateError
 
     if not stations_dir.is_dir():
@@ -436,17 +469,28 @@ def auto_derive_missing_sidecars(stations_dir: Path) -> int:
         if sidecar_path.exists():
             continue
         try:
-            raw = json.loads(station_path.read_text())
+            # c1 review #3 finding #2: explicit utf-8 +
+            # UnicodeDecodeError catch for non-UTF-8 station JSONs.
+            raw = json.loads(station_path.read_text(encoding="utf-8"))
             sidecar = derive_sidecar(raw)
-        except (json.JSONDecodeError, KeyError, ValueError,
-                TemplateError) as e:
+        except (
+            json.JSONDecodeError, KeyError, ValueError, TemplateError,
+            # c1 review #3 finding #1: derive_sidecar raises
+            # EditorMetadataError (AssertionError subclass) on
+            # row_template stations + heuristic-bug paths. Without
+            # this, one row_template-only station JSON crashes the
+            # entire glob loop + every subsequent flat_slots station
+            # also misses its disk-write.
+            EditorMetadataError,
+        ) as e:
             logger.warning(
                 "auto_derive: skipping %s — %s: %s",
                 station_path.name, type(e).__name__, e,
             )
             continue
         sidecar_path.write_text(
-            json.dumps(sidecar, indent=2, sort_keys=False) + "\n"
+            json.dumps(sidecar, indent=2, sort_keys=False) + "\n",
+            encoding="utf-8",  # c1 review #3 finding #2 (write side)
         )
         derived += 1
     return derived

@@ -40,7 +40,7 @@
   } from '$lib/editor';
   import type { StructuralBlockEdit } from '$lib/api';
   import { focusOnMount } from '$lib/actions';
-  import { isSystemSection } from '$lib/drag-drop';
+  import { isReservedIdPrefix } from '$lib/drag-drop';
   import { createEventDispatcher } from 'svelte';
   import DetailPanel from './DetailPanel.svelte';
   import Section from './Section.svelte';
@@ -292,8 +292,12 @@
       _setAddError('id must not be empty');
       return;
     }
-    if (isSystemSection(trimmed)) {
-      _setAddError('id can\'t start with `_` (reserved for system bins)');
+    // c1 review #3: forward-compat guard at CREATE — use the
+    // prefix-only check so we block ANY underscore-prefixed id, not
+    // just current system bins. The server's `is_reserved_id_prefix`
+    // mirror enforces the same.
+    if (isReservedIdPrefix(trimmed)) {
+      _setAddError('id can\'t start with `_` (reserved for current + future system bins)');
       return;
     }
     if (sidecar.sections.some((s) => s.id === trimmed)) {

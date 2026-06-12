@@ -40,16 +40,25 @@ export const SECTION_DRAG_MIME = 'application/x-station-section-ref';
 
 /**
  * §16.2.5.t2 — system-section abstraction (TypeScript mirror of
- * engine/editor_metadata.py's `is_system_section`). The leading-
- * underscore convention is the visual contract; `SYSTEM_SECTION_IDS`
- * is the canonical list. Both checks are conflated for honesty
- * (matches the Python helper) so a new bin added to the convention
- * before the frozen list is updated still trips.
+ * engine/editor_metadata.py).
+ *
+ * c1 review #3 finding (Reuse angle): the two semantics are now
+ * split. `isReservedIdPrefix` enforces the leading-underscore
+ * convention at CREATE time (forward-compat against operators
+ * claiming a future-system-bin name). `isSystemSection` is the
+ * narrower membership-only check used by rename / delete / move
+ * runtime guards — so legacy hand-authored sidecars containing
+ * `_archive` / `_specials` etc. remain operator-manageable rather
+ * than being trapped by a leading-underscore prefix-match.
  */
 export const SYSTEM_SECTION_IDS: ReadonlySet<string> = new Set(['_unsorted']);
 
+export function isReservedIdPrefix(sectionId: string): boolean {
+  return sectionId.startsWith('_');
+}
+
 export function isSystemSection(sectionId: string): boolean {
-  return sectionId.startsWith('_') || SYSTEM_SECTION_IDS.has(sectionId);
+  return SYSTEM_SECTION_IDS.has(sectionId);
 }
 
 /**

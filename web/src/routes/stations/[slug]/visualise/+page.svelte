@@ -34,7 +34,10 @@
     type BlockAddress,
     type StructuralBlockEdit,
   } from '$lib/api';
-  import type { ExpandedRef, Sidecar, StationTemplate } from '$lib/editor';
+  import {
+    parseEditorSidecarResponse,
+    type ExpandedRef, type Sidecar, type StationTemplate,
+  } from '$lib/editor';
   import EditorCanvas from '$lib/components/editor/EditorCanvas.svelte';
 
   let template: StationTemplate | null = null;
@@ -103,16 +106,23 @@
    *  GET for §16.2.3 patchBlock + §16.2.4 retypeBlock + patchMacro,
    *  which return different shapes (no top-level `sidecar` field).
    *
-   *  Slice-review c1-rescue #6: single-condition discriminator —
-   *  no other PATCH wrapper in this file has a top-level `sidecar`
-   *  key, so presence is sufficient. The structural narrow
-   *  (typeof sidecar === 'object') was overkill for the threat
-   *  model + made the helper read like it was guarding against
-   *  arbitrary backend drift it doesn't actually catch. */
+   *  c1 review #3 finding #5: re-tighten the structural narrow.
+   *  The c1-rescue #6 "presence is sufficient" simplification was
+   *  wrong — a future async-202 or backend regression returning
+   *  `{sidecar: null}` would pass `'sidecar' in r` and assign null
+   *  to the local `sidecar` binding; the next EditorCanvas render
+   *  would crash on `sidecar.sections.map(...)` with no saveError,
+   *  no banner, white screen. The threat model includes "the server
+   *  returns the shape but with a null/wrong-type sidecar value,"
+   *  not just "the server doesn't return a sidecar field at all."
+   *  Cost of the deeper check: 3 lines vs 1. */
   function _isSidecarMutationResponse(
     r: unknown,
-  ): r is { sidecar: Sidecar; template?: Record<string, unknown>; updated_at: string | null } {
-    return r !== null && typeof r === 'object' && 'sidecar' in r;
+  ): r is { sidecar: Sidecar; template: Record<string, unknown>; updated_at: string | null } {
+    if (r === null || typeof r !== 'object') return false;
+    if (!('sidecar' in r)) return false;
+    const s = (r as { sidecar: unknown }).sidecar;
+    return s !== null && typeof s === 'object' && !Array.isArray(s);
   }
 
   async function withSaveLifecycle(
@@ -136,25 +146,50 @@
     // PATCH landed.
     //
     // §16.2.5.t5: if the response carries the new sidecar (and
-    // optionally the new template), apply it directly — no GET
-    // refetch needed. The 6 §16.2.5 endpoints (section CRUD,
-    // reorder, move, structural) return SidecarMutationResponse;
-    // §16.2.3 patchBlock + §16.2.4 retypeBlock + patchMacro do
-    // NOT — they fall through to the GET refetch below. Net:
-    // section drag / move / structural edits drop a per-mutation
-    // 2x round-trip + a redundant server-side validate_sidecar
-    // pass.
+    // template), apply it directly — no GET refetch needed. The
+    // 6 §16.2.5 endpoints (section CRUD, reorder, move, structural)
+    // return SidecarMutationResponse with BOTH sidecar + template
+    // (c1 review #3 finding #6 — eliminates the two-tab drift
+    // hazard from sending template=None for sidecar-only edits).
+    // §16.2.3 patchBlock + §16.2.4 retypeBlock + patchMacro do NOT
+    // return this shape — they fall through to the GET refetch
+    // below. Net: section drag / move / structural edits drop a
+    // per-mutation 2× round-trip + a redundant server-side
+    // validate_sidecar pass.
+    //
+    // c1 review #3 finding #7: route the response through
+    // `parseEditorSidecarResponse` (the same validator GET uses).
+    // The prior `as unknown as StationTemplate` cast was a pure
+    // TypeScript assertion with zero runtime work — backend drift
+    // (a partial-template response from a refactor bug) would
+    // crash deep in EditorCanvas with no signal pointing at the
+    // PATCH that drifted. Wire the validator + surface failures
+    // as a saveError naming the offending field.
     if (_isSidecarMutationResponse(result)) {
-      sidecar = result.sidecar;
-      if (result.template !== undefined && result.template !== null) {
-        // No runtime validation here — the cast is purely a
-        // TypeScript assertion. Backend drift surfaces as render-
-        // time crashes downstream, not at assignment. (If a real
-        // validator is wanted, wire `parseEditorSidecarResponse`
-        // from $lib/editor — same path GET /sidecar uses.)
-        template = result.template as unknown as StationTemplate;
+      try {
+        const parsed = parseEditorSidecarResponse({
+          template: result.template,
+          sidecar: result.sidecar,
+          sidecar_error: null,
+          updated_at: result.updated_at,
+        });
+        template = parsed.template;
+        sidecar = parsed.sidecar;
+        updatedAt = parsed.updated_at;
+      } catch (err) {
+        // Validation failed → backend drift. Fall through to the
+        // GET refetch so the operator at least sees the canvas
+        // against the next-fetched (validated) sidecar.
+        saveError =
+          `${refetchVerbPrefix}, but the response shape failed validation: ` +
+          (err instanceof Error ? err.message : String(err));
+        try {
+          await loadSidecar();
+        } catch {
+          // Compound failure — keep the validation error visible.
+        }
+        return;
       }
-      updatedAt = result.updated_at;
       // Slice-review c1-rescue #1: a successful PATCH means the
       // server-validated sidecar is back in sync. Clear any stale
       // warning from a prior GET that landed with sidecar_error

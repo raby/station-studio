@@ -846,11 +846,13 @@ export const patchMacro = async (
 
 export interface SidecarMutationResponse {
   sidecar: import('./editor').Sidecar;
-  /** §16.2.5.t5: present only when the mutation changed the template
-   *  (structural edits — size/add/remove). Section CRUD + reorder +
-   *  move omit it (template untouched). Frontend applies alongside
-   *  the sidecar when present; skips when absent. */
-  template?: Record<string, unknown>;
+  /** §16.2.5.t5 + c1 review #3 finding #6: ALWAYS the live
+   *  post-mutation template. Pre-fix this was optional ('only when
+   *  the route changed it') — sending it every time eliminates the
+   *  two-tab drift hazard where sidecar-only mutations left the
+   *  frontend's local template stale against a parallel writer's
+   *  structural edit. */
+  template: Record<string, unknown>;
   updated_at: string | null;
 }
 

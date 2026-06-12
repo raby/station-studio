@@ -66,6 +66,7 @@ from engine.editor_metadata import (
     UNSORTED_SECTION_ID,
     UNSORTED_SECTION_NAME,
     ensure_unsorted_section,
+    is_reserved_id_prefix,
     is_system_section,
     lookup_section,
     parse_sidecar,
@@ -797,13 +798,28 @@ def _finish_sidecar_mutation(
     version's "block parameter fields (macro edits)" wording was
     wrong; routing patch_macro through here would break the
     `blocks_updated` contract its tests pin.
+
+    c1 review #3 finding #6: response ALWAYS carries the live
+    `station.template` (post-refresh), not just when the route
+    modified it. Pre-fix, section-CRUD/move/reorder returned
+    `template: None` — the frontend kept its stale local template,
+    so between two-tab edits the canvas could render the new
+    sidecar against an old template (atomic refs to since-removed
+    slots). Sending the live template every time eliminates the
+    drift hazard. Wire cost: Rebirth Radio's template is ~50KB raw
+    + ~5KB gzipped — acceptable for the rare operator-triggered
+    edit-rate.
     """
     _persist_sidecar(station, sidecar, template=template)
     db.commit()
     db.refresh(station)
     return SidecarMutationResponse(
         sidecar=sidecar,
-        template=template,  # None for sidecar-only mutations
+        # Always include the live post-refresh template (not the
+        # route-supplied arg, which is None for sidecar-only edits).
+        # Reads station.template (which db.refresh just synced from
+        # the DB row), so it reflects any concurrent writer too.
+        template=station.template,
         updated_at=_iso(station.updated_at),
     )
 
@@ -831,11 +847,16 @@ def create_section(
         slug, db, stations_dir, payload.expected_updated_at,
     )
 
-    if is_system_section(payload.id):
+    # c1 review #3: at CREATE time, reject the prefix convention
+    # (forward-compat against operators claiming a future-system-bin
+    # name). Rename / delete / move guards use the narrower
+    # `is_system_section` (membership-only) so legacy hand-authored
+    # sidecars with `_archive` etc. remain operator-manageable.
+    if is_reserved_id_prefix(payload.id):
         raise HTTPException(
             400,
-            "section id can't start with `_` (reserved for system bins "
-            f"like `{UNSORTED_SECTION_ID}`).",
+            "section id can't start with `_` (reserved for current + "
+            f"future system bins like `{UNSORTED_SECTION_ID}`).",
         )
     if not payload.id:
         raise HTTPException(400, "section id must be a non-empty string.")

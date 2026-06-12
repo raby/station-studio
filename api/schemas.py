@@ -552,15 +552,19 @@ class SidecarMutationResponse(BaseModel):
     (PUT /sections/order), block move (PATCH /blocks/move), and
     structural edits (PATCH /blocks/structure).
 
-    Returns the new sidecar dict + refreshed updated_at; frontend
-    re-renders without a separate GET round-trip.
+    Returns the new sidecar + live template + refreshed updated_at;
+    frontend re-renders without a separate GET round-trip.
 
-    §16.2.5.t5 — `template` is populated ONLY when the mutation also
-    changed the template (structural edits — size/add/remove change
-    `flat_slots`). Section CRUD, reorder, and move leave the template
-    untouched + omit the field (`null` on the wire). Frontend reads
-    `template` defensively: if present + non-null, apply alongside
-    the sidecar; otherwise the template hasn't changed.
+    §16.2.5.t5 + c1 review #3 finding #6 — `template` is ALWAYS
+    populated with the live `station.template` (post-refresh). The
+    earlier "optional, only set for structural edits" shape created
+    a two-tab drift hazard: between mutation N (sidecar-only,
+    template=None) and N+1 a parallel writer's structural edit could
+    leave the frontend rendering the new sidecar against its stale
+    local template (atomic refs pointing at since-removed slots →
+    confusing 404s on the next save). Sending the live template on
+    every response is ~5KB gzipped for Rebirth Radio's 2,196-slot
+    station; acceptable for the rare operator-triggered edit-rate.
 
     NOT used by the §16.2.4 macro endpoint — that returns
     `MacroPatchResponse` ({blocks_updated, updated_at}, no sidecar).
@@ -570,7 +574,7 @@ class SidecarMutationResponse(BaseModel):
     contributors into thinking macro edits used SidecarMutationResponse.
     """
     sidecar: dict[str, Any]
-    template: dict[str, Any] | None = None
+    template: dict[str, Any]
     updated_at: str | None = None
 
 

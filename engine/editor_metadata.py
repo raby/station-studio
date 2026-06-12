@@ -160,9 +160,20 @@ def parse_sidecar(path: Path, station_template: dict) -> dict:
     # Mid-slice review finding 6: wrap JSONDecodeError so callers get
     # a uniform editor-error surface; raw JSON syntax problems shouldn't
     # leak through a different exception class.
+    #
+    # c1 review #3 finding #2: explicit `encoding='utf-8'` + catch
+    # UnicodeDecodeError. Without these, a sidecar file saved by a
+    # Windows editor as cp1252 or UTF-16 (BOM mismatch) raises
+    # UnicodeDecodeError (subclass of ValueError) from read_text()
+    # using the locale default. Pre-fix, that escaped parse_sidecar
+    # entirely + bubbled to populate_db_sidecars's `(EditorMetadataError,
+    # OSError, json.JSONDecodeError)` catch (no ValueError) → lifespan
+    # 'auto-seed failed' and every other un-authored station stays
+    # NULL too. Wrapping here keeps the "all disk-format failures
+    # become EditorMetadataError" contract intact for every caller.
     try:
-        raw = json.loads(path.read_text())
-    except json.JSONDecodeError as e:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError) as e:
         raise EditorMetadataError(
             f"sidecar JSON malformed at {path}: {e}"
         ) from e
@@ -442,17 +453,39 @@ UNSORTED_SECTION_NAME = "Unsorted (moved from a deleted section)"
 SYSTEM_SECTION_IDS: frozenset[str] = frozenset({UNSORTED_SECTION_ID})
 
 
-def is_system_section(section_id: str) -> bool:
-    """True if `section_id` is a reserved system bin.
+def is_reserved_id_prefix(section_id: str) -> bool:
+    """True if `section_id` uses the reserved leading-underscore
+    convention. Used by `create_section` to BLOCK new operator-named
+    ids that look system-managed (forward-compat for adding more
+    SYSTEM_SECTION_IDS later — operators can't claim `_archived`
+    today, then have a future system bin steal the name).
 
-    Two checks are conflated for honesty: (a) named in
-    `SYSTEM_SECTION_IDS` (the canonical list), and (b) leading
-    underscore convention (operator-authored sidecars can't accidentally
-    name a section with a leading underscore — drift rules enforce).
-    The leading-underscore catches future bins added to the convention
-    before the SYSTEM_SECTION_IDS frozenset is updated.
+    Distinct from `is_system_section` (which checks
+    SYSTEM_SECTION_IDS membership). Pre-c1-review #3: the two were
+    conflated, so operators with legacy hand-authored sidecars
+    containing `_archive` etc. could not rename / delete / move
+    those sections through the UI even though the id wasn't a
+    current system bin.
     """
-    return section_id.startswith("_") or section_id in SYSTEM_SECTION_IDS
+    return section_id.startswith("_")
+
+
+def is_system_section(section_id: str) -> bool:
+    """True if `section_id` is a CURRENT reserved system bin (member
+    of `SYSTEM_SECTION_IDS`). Used by rename / delete / move guards
+    to refuse runtime mutation of system-managed sections.
+
+    c1 review #3 finding (Reuse angle): membership-only check.
+    Previously this also matched any leading-underscore id, which
+    blocked legacy hand-authored sidecars using `_archive` /
+    `_specials` etc. from being managed by the operator. The
+    leading-underscore convention is now enforced ONLY at
+    `create_section` (via `is_reserved_id_prefix`) — forward-compat
+    against operators claiming a future-system-bin name. Existing
+    sidecars whose ids escaped that guard (legacy + hand-authored)
+    are still operator-managed.
+    """
+    return section_id in SYSTEM_SECTION_IDS
 
 
 # §16.2.5.t4: SQLAlchemy TypeDecorator wrapping the JSON column.

@@ -2186,10 +2186,14 @@ def test_structural_size_response_includes_updated_template(editor_api):
     assert body["template"]["layout"]["flat_slots"][0]["size"] == 7
 
 
-def test_create_section_response_omits_template(editor_api):
-    """§16.2.5.t5: section CRUD doesn't change the template, so the
-    response carries `template: null`. Frontend skips the template
-    apply step when this happens."""
+def test_create_section_response_includes_live_template(editor_api):
+    """§16.2.5.t5 + c1 review #3 finding #6: ALL §16.2.5 mutation
+    responses carry the live `station.template` post-refresh — not
+    just structural edits. The earlier `template: None for sidecar-
+    only mutations` shape created a two-tab drift hazard where the
+    frontend's local template went stale against a parallel
+    writer's structural edit. Pin the new contract: section CRUD
+    responses also carry the (unchanged) template inline."""
     client, Session, _dir = editor_api
     _composition_station(Session, "comp")
     r = client.post("/api/stations/comp/sections", json={
@@ -2197,8 +2201,130 @@ def test_create_section_response_omits_template(editor_api):
     })
     assert r.status_code == 201, r.json()
     body = r.json()
-    assert "template" in body  # field present (Pydantic emits)
-    assert body["template"] is None  # but not populated
+    assert "template" in body
+    assert body["template"] is not None
+    # Live template matches what GET /sidecar returns + carries the
+    # 6 flat_slots that _composition_station built (unchanged by
+    # section CRUD).
+    assert len(body["template"]["layout"]["flat_slots"]) == 6
+
+
+def test_block_move_response_includes_live_template(editor_api):
+    """Companion to the above — also pin the move endpoint's response.
+    The frontend's inline-apply path uses BOTH sidecar + template; if
+    template ever goes missing here the frontend's
+    `_isSidecarMutationResponse` validation step would reject."""
+    client, Session, _dir = editor_api
+    _composition_station(Session, "comp")
+    r = client.patch("/api/stations/comp/blocks/move", json={
+        "address": {"slot_index": 0},
+        "target_section_id": "tail",
+        "expected_updated_at": _token(client, "comp"),
+    })
+    assert r.status_code == 200, r.json()
+    body = r.json()
+    assert body["template"] is not None
+    assert len(body["template"]["layout"]["flat_slots"]) == 6
+
+
+# ---- c1 review #3: legacy `_archive` regression -----------------------------
+
+
+def test_rename_legacy_underscore_section_succeeds(editor_api):
+    """c1 review #3 finding (Reuse angle): hand-authored sidecars with
+    section ids like `_archive` / `_specials` (legal pre-§16.2.5.t2)
+    were trapped by the previous `is_system_section` check which
+    matched ANY leading underscore. Operator could not rename / delete
+    / move those sections through the UI — 400 'system section'.
+
+    Post-fix: `is_system_section` is membership-only (current
+    `SYSTEM_SECTION_IDS`). Legacy underscore-prefixed ids are
+    operator-managed. The create-time `is_reserved_id_prefix` check
+    still blocks NEW operator-named system-looking ids."""
+    client, Session, _dir = editor_api
+    # Build a station whose sidecar HAS a `_archive` section (legal
+    # pre-fix; operator-committed). Set sidecar directly to bypass
+    # create_section's guard.
+    template = _build_template(
+        "leg", name="Legacy",
+        sources=[{"name": "A", "colour": "#abc", "role": "content"}],
+        flat_slots=[
+            {"source": "A", "strategy": "jingle", "size": 1, "genre": "G"},
+        ],
+    )
+    sidecar = {
+        "schema_version": 1,
+        "sections": [{
+            "id": "_archive", "name": "Archive",
+            "blocks": [{"kind": "atomic", "slot_index": 0}],
+        }],
+        "macros": [],
+        "layout_order": ["_archive"],
+    }
+    with Session() as db:
+        db.add(Station(
+            slug="leg", name="Legacy", template=template, sidecar=sidecar,
+        ))
+        db.commit()
+
+    # Rename succeeds (was previously blocked with 400).
+    r = client.patch("/api/stations/leg/sections/_archive", json={
+        "name": "Archive Renamed",
+        "expected_updated_at": _token(client, "leg"),
+    })
+    assert r.status_code == 200, r.json()
+    renamed = next(
+        s for s in r.json()["sidecar"]["sections"] if s["id"] == "_archive"
+    )
+    assert renamed["name"] == "Archive Renamed"
+
+
+def test_create_section_still_rejects_underscore_prefix(editor_api):
+    """Companion to the above: at CREATE time the prefix convention
+    still blocks operators from claiming a future-system-bin name
+    (forward-compat). Even though `_archive` isn't in
+    `SYSTEM_SECTION_IDS` today, a new section with that id is
+    rejected to keep the reserved namespace clean."""
+    client, Session, _dir = editor_api
+    _composition_station(Session, "comp")
+    r = client.post("/api/stations/comp/sections", json={
+        "id": "_archive",
+        "expected_updated_at": _token(client, "comp"),
+    })
+    assert r.status_code == 400
+    assert "future system bins" in r.json()["detail"].lower()
+
+
+# ---- c1 review #3: parse_sidecar UTF-8 ------------------------------------
+
+
+def test_parse_sidecar_handles_utf8_bom(editor_api, tmp_path):
+    """c1 review #3 finding #2: parse_sidecar's `path.read_text()`
+    pre-fix used the locale default encoding — a sidecar saved by a
+    Windows editor as UTF-16 (BOM mismatch) raised UnicodeDecodeError
+    (ValueError subclass), escaping populate_db_sidecars's catch
+    tuple and crashing the lifespan loop.
+
+    Post-fix: read_text(encoding='utf-8') + the try block also
+    catches UnicodeDecodeError → wraps as EditorMetadataError. So a
+    cp1252-encoded sidecar surfaces as the same uniform editor
+    error rather than crashing the loop."""
+    from engine.editor_metadata import EditorMetadataError, parse_sidecar
+    # Write a sidecar with non-UTF-8 content (cp1252 'caf\xe9').
+    p = tmp_path / "broken.editor.json"
+    p.write_bytes(b'{"sections": [{"name": "Caf\xe9"}]}')
+    template = _build_template(
+        "u", name="U", sources=[{"name": "A", "colour": "#abc", "role": "content"}],
+        flat_slots=[{"source": "A", "strategy": "jingle", "size": 1, "genre": "G"}],
+    )
+    # The catch should fire cleanly + return a typed error.
+    import pytest
+    with pytest.raises(EditorMetadataError) as exc_info:
+        parse_sidecar(p, template)
+    # Either UnicodeDecodeError or JSONDecodeError surfaces depending
+    # on where exactly the cp1252 byte falls; both should be caught
+    # + wrapped to EditorMetadataError.
+    assert "malformed" in str(exc_info.value).lower()
 
 
 def _t3_unauthored_station(Session: sessionmaker, slug: str, name: str) -> dict:
