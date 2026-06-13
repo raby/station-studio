@@ -39,7 +39,7 @@
     type ViewModeState,
   } from '$lib/editor';
   import type { StructuralBlockEdit } from '$lib/api';
-  import { focusOnMount } from '$lib/actions';
+  import { commitOnEnterEscapeBlur, focusOnMount } from '$lib/actions';
   import { isReservedIdPrefix } from '$lib/drag-drop';
   import { createEventDispatcher } from 'svelte';
   import DetailPanel from './DetailPanel.svelte';
@@ -358,10 +358,12 @@
     dispatch('sectionCreate', { id: trimmed, name: null });
     addingSection = false;
   }
-  function onAddKey(e: KeyboardEvent) {
-    if (e.key === 'Enter') { e.preventDefault(); commitAddSection(); }
-    else if (e.key === 'Escape') { e.preventDefault(); cancelAddSection(); }
-  }
+  // c4 review #1: migrated to the shared `commitOnEnterEscapeBlur`
+  // action. Closes the silent-half-state bug the action's docstring
+  // explicitly names — pre-fix, clicking-away mid-typing left
+  // `addingSection = true` + the input visible but with no commit
+  // path other than re-clicking Add/Cancel. Now blur commits via
+  // the action.
 </script>
 
 <div
@@ -415,8 +417,11 @@
         data-testid="add-section-input"
         placeholder="Section id (e.g. mornings)"
         bind:value={newSectionId}
-        on:keydown={onAddKey}
         use:focusOnMount
+        use:commitOnEnterEscapeBlur={{
+          onCommit: () => commitAddSection(),
+          onCancel: () => cancelAddSection(),
+        }}
       />
       <button
         type="button"
