@@ -19,7 +19,10 @@
    */
   import { createEventDispatcher } from 'svelte';
   import { focusOnMount } from '$lib/actions';
-  import { CHIP_DRAG_MIME, SECTION_DRAG_MIME, canDropOn, isSystemSection } from '$lib/drag-drop';
+  import {
+    CHIP_DRAG_MIME, SECTION_DRAG_MIME,
+    canDropOn, draggingSectionId, isSystemSection,
+  } from '$lib/drag-drop';
   import type { SidecarSection } from '$lib/editor';
 
   export let section: SidecarSection;
@@ -140,10 +143,35 @@
     if (!e.dataTransfer) return;
     e.dataTransfer.setData(SECTION_DRAG_MIME, section.id);
     e.dataTransfer.effectAllowed = 'move';
+    // c3 review #1 finding #4: pin the dragged section's id into a
+    // module-local Svelte store so the dragover same-section check
+    // is reliable across browsers. `dataTransfer.getData(MIME)` is
+    // blanked by Firefox/Safari during dragover (DataTransfer
+    // 'protected mode') — only `types` is exposed pre-drop. Without
+    // this store, the source's own header would flash the
+    // drop-target ring during self-drag-over.
+    draggingSectionId.set(section.id);
+  }
+  function onSectionDragEnd() {
+    // c3 review #1 finding #5: clear the dragend state so a
+    // cancelled drag (ESC) or source-removed-mid-drag doesn't leave
+    // the next drag cycle thinking a section is still mid-flight.
+    draggingSectionId.set(null);
+    dragOver = false;
+    dragEnterDepth = 0;
   }
 
   function onDragEnter(e: DragEvent) {
     if (!_hasAnyDragPayload(e) || !acceptsDrops) return;
+    // c3 review #1 finding #4: skip the highlight if THIS header is
+    // the dragging-source. The earlier same-section-check in
+    // onDragOver was unreliable cross-browser; the store is set
+    // synchronously inside dragstart on the source so it's safe
+    // to read here.
+    if (
+      _hasSectionPayload(e) &&
+      $draggingSectionId === section.id
+    ) return;
     // c2 review #4 fix #7: removed dead `e.preventDefault()` —
     // only `dragover` needs preventDefault for drop-enablement.
     dragEnterDepth += 1;
@@ -151,16 +179,14 @@
   }
   function onDragOver(e: DragEvent) {
     if (!_hasAnyDragPayload(e) || !acceptsDrops) return;
-    // §16.2.5.t1 — don't highlight a section header when the
-    // operator is dragging that SAME section over itself; the
-    // drop would be a no-op (move section X to before X).
-    if (_hasSectionPayload(e)) {
-      const src = e.dataTransfer?.getData(SECTION_DRAG_MIME);
-      // Note: most browsers expose getData on drop ONLY for
-      // dragover. Some hide the value until drop fires — handled
-      // by the same-section check in onDrop as a fallback.
-      if (src === section.id) return;
-    }
+    // c3 review #1 finding #4: use the module store instead of
+    // `dataTransfer.getData(SECTION_DRAG_MIME)` which is blanked
+    // by Firefox/Safari during dragover. Same source-of-truth as
+    // onDragEnter above.
+    if (
+      _hasSectionPayload(e) &&
+      $draggingSectionId === section.id
+    ) return;
     // preventDefault on dragover is what enables the drop event to
     // fire — without it the browser treats the target as "not a
     // valid drop target" and rejects the drop.
@@ -171,6 +197,13 @@
     if (!_hasAnyDragPayload(e) || !acceptsDrops) return;
     dragEnterDepth = Math.max(0, dragEnterDepth - 1);
     if (dragEnterDepth === 0) dragOver = false;
+  }
+  function onDropEnd() {
+    // c3 review #1 finding #5: window-scoped dragend cleanup mirror
+    // for the target side. The drag source's `dragend` fires after
+    // any drop or cancel — both clear the highlight ring.
+    dragOver = false;
+    dragEnterDepth = 0;
   }
   function onDrop(e: DragEvent) {
     if (!_hasAnyDragPayload(e) || !acceptsDrops) return;
@@ -223,15 +256,24 @@
   on:dragenter={onDragEnter}
   on:dragover={onDragOver}
   on:dragleave={onDragLeave}
+  on:dragend={onSectionDragEnd}
   on:drop={onDrop}
 >
+  <!-- c3 review #1 finding #3: `draggable="false"` on all inner
+       interactive elements. Pre-fix, `<header draggable={true}>`
+       made every child <button> + the rename <input> part of the
+       drag handle — a mousedown-and-drift on Move-Up / Delete /
+       Toggle could initiate a section-drag and cancel the click.
+       Native HTML5 drag inheritance is opt-OUT, not opt-in. -->
   <button
     type="button"
     class="toggle"
     aria-expanded={expanded}
     aria-controls={`section-body-${section.id}`}
     data-testid="section-toggle"
+    draggable="false"
     on:click={() => dispatch('toggle')}
+    on:dragend={onDropEnd}
   >
     <span class="caret" aria-hidden="true">{expanded ? '▼' : '▶'}</span>
     {#if renaming}
@@ -240,6 +282,7 @@
         type="text"
         class="rename-input"
         data-testid="section-rename-input"
+        draggable="false"
         bind:value={renameValue}
         on:keydown={onRenameKey}
         on:blur={commitRename}
@@ -270,6 +313,7 @@
         class="act"
         data-testid="section-rename"
         title="Rename section"
+        draggable="false"
         on:click={startRename}
       >✎</button>
       <button
@@ -278,6 +322,7 @@
         data-testid="section-move-up"
         title="Move section up"
         disabled={!canMoveUp}
+        draggable="false"
         on:click={() => dispatch('moveUp', { sectionId: section.id })}
       >▲</button>
       <button
@@ -286,6 +331,7 @@
         data-testid="section-move-down"
         title="Move section down"
         disabled={!canMoveDown}
+        draggable="false"
         on:click={() => dispatch('moveDown', { sectionId: section.id })}
       >▼</button>
       <button
@@ -293,6 +339,7 @@
         class="act delete"
         data-testid="section-delete"
         title="Delete section (non-empty sections move to Unsorted)"
+        draggable="false"
         on:click={() => dispatch('delete', { sectionId: section.id })}
       >🗑</button>
     </div>

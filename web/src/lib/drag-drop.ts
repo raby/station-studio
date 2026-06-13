@@ -6,7 +6,25 @@
  * Single source-of-truth so the Chip source, SectionHeader target,
  * and the DetailPanel's dropdown all agree.
  */
+import { writable } from 'svelte/store';
 import type { Sidecar, SidecarSection } from './editor';
+
+
+/**
+ * c3 review #1 finding #4 — module-local store pinning the
+ * currently-dragging section's id (or null when no section drag is
+ * in flight). SectionHeader's `onSectionDragStart` writes it; the
+ * `onSectionDragEnd` clears it.
+ *
+ * Why a store: `dataTransfer.getData(SECTION_DRAG_MIME)` is blanked
+ * by Firefox/Safari during `dragover` (DataTransfer 'protected mode'
+ * exposes `types` but blocks value reads pre-drop), so the
+ * same-section-highlight-suppression in the dragover/dragenter
+ * handlers can't rely on it. The store is set synchronously inside
+ * `dragstart` on the source element — safe to read from any other
+ * SectionHeader's handlers cross-browser.
+ */
+export const draggingSectionId = writable<string | null>(null);
 
 
 /**

@@ -49,7 +49,31 @@
     chipDrop: { ref: unknown; targetSectionId: string; targetIndex: number };
   }>();
   let dropIndicatorAt: number | null = null;
-  $: acceptsDrops = canDropOn(section);
+  // c3 review #1 finding #2: fine-grained drop requires
+  // `rendered.length === section.blocks.length` (visual ↔ blocks
+  // index parity). Two cases violate this:
+  //
+  //   (a) Sections containing macros — `rendered` collapses macro
+  //       spans to a single chip (pick_in_macro===1), so a section
+  //       with [A, macro×3, B] renders 3 chips for 3 block entries
+  //       at indices 0/1/2 — OK there. BUT: drop landing AROUND the
+  //       macro must address the macro's index, not an atomic
+  //       within the span. Operators dragging a chip onto the macro
+  //       chip's region would silently mis-address. Punt.
+  //   (b) row_template stations — `expandSection` emits one ref
+  //       per (row × block), so rendered.length is rows×blocks.
+  //       targetIndex from the rendered walk can't map back to
+  //       section.blocks index without a parallel table.
+  //
+  // For both cases, disable the fine-grained drop indicator. The
+  // SectionHeader bar drop (targetIndex=null → server appends)
+  // still works for cross-section moves; within-section reorder
+  // falls through to the ▲/▼ buttons (when present) or stays a
+  // §16.2.5.t16 punt.
+  $: hasFineGrainedSupport =
+    template.layout.flat_slots !== undefined &&
+    !(section.blocks ?? []).some((b) => b.kind === 'macro');
+  $: acceptsDrops = canDropOn(section) && hasFineGrainedSupport;
 
   function _hasChipPayload(e: DragEvent): boolean {
     if (!e.dataTransfer) return false;
@@ -88,10 +112,22 @@
     if (next && container.contains(next)) return;
     dropIndicatorAt = null;
   }
+
+  // c3 review #1 finding #5: dragend cleanup. ESC-cancelled drags
+  // (or any drag-source-removed-mid-drag path) fire `dragend` on the
+  // source but NOT `dragleave` on the target — without this listener
+  // the 2px indicator bar would remain visible until the next drag
+  // cycle moves the cursor across the container boundary.
+  function onDragEnd() {
+    dropIndicatorAt = null;
+  }
   function onDrop(e: DragEvent) {
     if (!_hasChipPayload(e) || !acceptsDrops) return;
     e.preventDefault();
-    e.stopPropagation();  // prevent the SectionHeader's bubble-up drop
+    // c3 review #1 finding #10: removed the stopPropagation +
+    // misleading comment. SectionHeader is a SIBLING of ChipFlow
+    // inside <section>, not an ancestor — drops on ChipFlow's div
+    // never bubble to the header.
     const targetIndex = _computeTargetIndex(
       e, e.currentTarget as HTMLElement,
     );
@@ -136,6 +172,7 @@
   data-drop-at={dropIndicatorAt}
   on:dragover={onDragOver}
   on:dragleave={onDragLeave}
+  on:dragend={onDragEnd}
   on:drop={onDrop}
 >
   {#each rendered as ref, i (refKey(ref, i))}
@@ -144,7 +181,11 @@
     {/if}
     <Chip {ref} {template} {sidecar} {viewMode} on:select />
   {/each}
-  {#if dropIndicatorAt === rendered.length && rendered.length > 0}
+  <!-- c3 review #1 finding #11: trailing indicator covers both the
+       'drop at end of populated section' AND 'drop into empty
+       section' cases. Pre-fix the `rendered.length > 0` guard
+       suppressed visual feedback in empty sections. -->
+  {#if dropIndicatorAt === rendered.length}
     <span class="drop-indicator" data-testid="drop-indicator" aria-hidden="true"></span>
   {/if}
 </div>

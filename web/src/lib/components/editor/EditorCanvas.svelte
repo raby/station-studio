@@ -192,7 +192,15 @@
   ) {
     const { sourceSectionId, beforeSectionId } = e.detail;
     if (sourceSectionId === beforeSectionId) return;
-    const order = sidecar.layout_order ?? [];
+    // c3 review #1 finding #7: fall back to sidecar.sections.map
+    // when layout_order is missing or partial (sections not in
+    // layout_order render at the tail per the grammar). Without
+    // this, indexOf returns -1 → silent early return → looks like
+    // drag-reorder is broken even though ▲/▼ still works.
+    const rawOrder = sidecar.layout_order ?? [];
+    const allIds = sidecar.sections.map((s) => s.id);
+    const missingFromOrder = allIds.filter((id) => !rawOrder.includes(id));
+    const order = [...rawOrder, ...missingFromOrder];
     const srcIdx = order.indexOf(sourceSectionId);
     const dstIdx = order.indexOf(beforeSectionId);
     if (srcIdx < 0 || dstIdx < 0) return;
@@ -204,6 +212,20 @@
     const adjustedDst = srcIdx < dstIdx ? dstIdx - 1 : dstIdx;
     next.splice(adjustedDst, 0, sourceSectionId);
     if (next.join() === order.join()) return;  // no-op (same order)
+
+    // c3 review #1 finding #8: re-pin `_unsorted` at the end. If
+    // the bin was last in the original order (the documented
+    // invariant), an arbitrary section drop could leave it
+    // mid-list — server PUT /sections/order then 400s with
+    // 'must stay at end'. Pop + push so the bin stays anchored.
+    const unsortedIdx = next.indexOf('_unsorted');
+    if (unsortedIdx >= 0 && unsortedIdx !== next.length - 1) {
+      const wasLast = order[order.length - 1] === '_unsorted';
+      if (wasLast) {
+        next.splice(unsortedIdx, 1);
+        next.push('_unsorted');
+      }
+    }
     dispatch('sectionsReorder', { layoutOrder: next });
   }
 
@@ -246,10 +268,39 @@
     ) {
       return;  // same-section drop on the section header is a no-op
     }
+
+    // c3 review #1 finding #1: same-section reorder off-by-one
+    // adjustment. The server (api/routers/editor.py move_block)
+    // removes the source from blocks FIRST then inserts at
+    // target_index. So when source.idx < target.idx, the post-
+    // removal blocks list is shifted by one and the chip lands one
+    // slot LATER than the operator targeted. Mirror the section-
+    // reorder compensation that handleSectionDrop applies via
+    // `adjustedDst = srcIdx < dstIdx ? dstIdx - 1 : dstIdx`.
+    let adjustedTargetIndex = e.detail.targetIndex;
+    if (
+      sourceSection &&
+      sourceSection.id === e.detail.targetSectionId &&
+      adjustedTargetIndex !== undefined
+    ) {
+      const blocks = sourceSection.blocks ?? [];
+      const sourceBlockIdx = blocks.findIndex((b) => {
+        if (b.kind !== 'atomic') return false;
+        if (typeof slotIndex === 'number') return b.slot_index === slotIndex;
+        return b.block_idx === blockIdx;
+      });
+      if (sourceBlockIdx >= 0 && sourceBlockIdx < adjustedTargetIndex) {
+        adjustedTargetIndex = adjustedTargetIndex - 1;
+      }
+      // Skip dispatch if the adjusted target equals the source's
+      // current index — that's a no-op same-position drop.
+      if (adjustedTargetIndex === sourceBlockIdx) return;
+    }
+
     dispatch('blockMove', {
       ref: r as ExpandedRef,
       targetSectionId: e.detail.targetSectionId,
-      targetIndex: e.detail.targetIndex ?? null,
+      targetIndex: adjustedTargetIndex ?? null,
     });
   }
 
