@@ -921,10 +921,9 @@ def test_preview_recomputes_excluded_mix_ids_per_request(jobs_api):
     # track. Attach to week 2's Playlist (the most-recent week before
     # the previewed week=3).
     with Session() as db:
+        station = db.query(Station).filter_by(slug="mix-rb").first()
         week2_playlist = db.query(Playlist).filter_by(
-            station_id=db.query(Station).filter_by(
-                slug="mix-rb").first().id,
-            week=2,
+            station_id=station.id, week=2,
         ).first()
         db.add(MixUsage(
             playlist_id=week2_playlist.id,
