@@ -396,6 +396,20 @@ def _commit_with_sidecar_validation(db: Session) -> None:
     try:
         db.commit()
     except StatementError as e:
+        # §16.2.5.t15 review #1 fix #5: explicit rollback before
+        # re-raising. SQLAlchemy 2.0 leaves the session in
+        # `in_rollback` state after a failed commit; the next op
+        # raises PendingRollbackError unless something calls
+        # db.rollback() or db.close(). FastAPI's session-scoped
+        # dependency cleanup runs db.close() at request end + handles
+        # it for the happy path, but middleware / audit hooks /
+        # tests that touch the session between this catch + the
+        # cleanup would PendingRollbackError. Pre-§16.2.5.t15 this
+        # never bit because `_persist_sidecar`'s validate ran pre-
+        # commit, so commit() never failed via this path. Post-t15
+        # the route layer's grammar gate IS this path; rollback
+        # explicitly so callers can trust the session afterward.
+        db.rollback()
         # Only translate when the underlying cause is our grammar
         # validator — leave generic SQL errors (IntegrityError, etc.)
         # to propagate as 500 since those reflect schema bugs, not

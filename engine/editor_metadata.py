@@ -181,6 +181,31 @@ def parse_sidecar(path: Path, station_template: dict) -> dict:
     return raw
 
 
+def _check_template_xor_invariant(station_template: dict) -> None:
+    """Engine's flat_slots-XOR-row_template guard for raw-JSON templates.
+
+    `parse_template` enforces this on PARSED templates; callers that
+    receive raw JSON (sidecar validation, derive_sidecar, disk-load)
+    must invoke this explicitly so a hand-edited station with BOTH
+    fields populated produces a clean template-shape error rather
+    than masquerading as a sidecar bug.
+
+    Extracted in §16.2.5.t15 review #1 fix #4 so the `validate_sidecar`
+    wrapper can run it BEFORE grammar (the original "fail fast on the
+    real problem" order). `validate_sidecar_semantics` also calls it
+    for direct callers that bypass the wrapper.
+    """
+    layout = station_template.get("layout", {})
+    has_flat = bool(layout.get("flat_slots"))
+    has_row = bool(layout.get("row_template"))
+    if has_flat and has_row:
+        raise EditorMetadataError(
+            "station_template has BOTH flat_slots and row_template "
+            "populated; the engine's XOR invariant is violated. Fix "
+            "the station JSON before validating its sidecar."
+        )
+
+
 def validate_sidecar_grammar(sidecar: dict) -> None:
     """Structural checks: types + allowlist + required keys.
 
@@ -228,23 +253,19 @@ def validate_sidecar_semantics(sidecar: dict, station_template: dict) -> None:
       rule 9   non-overlapping macros
       rule 1   orphan slots
 
-    Mid-slice review finding 3 (kept here): enforce the engine's
-    XOR invariant on `station_template` up-front. `parse_template`
-    enforces it on PARSED templates; here we get raw JSON and must
-    guard against a hand-edited station JSON with both flat_slots
-    AND row_template populated (which would otherwise validate the
+    Mid-slice review finding 3 (preserved): enforce the engine's
+    XOR invariant on `station_template` up-front via the shared
+    `_check_template_xor_invariant` helper. `parse_template` enforces
+    it on PARSED templates; here we get raw JSON and must guard
+    against a hand-edited station JSON with both flat_slots AND
+    row_template populated (which would otherwise validate the
     sidecar against the flat-form rules only, masking the underlying
-    station bug).
+    station bug). The wrapper `validate_sidecar` runs the XOR check
+    BEFORE grammar so the cleanest error surfaces first; this direct-
+    call entry point re-runs the helper so `_persist_sidecar` (which
+    calls only semantics) still gets defense-in-depth.
     """
-    layout = station_template.get("layout", {})
-    has_flat = bool(layout.get("flat_slots"))
-    has_row = bool(layout.get("row_template"))
-    if has_flat and has_row:
-        raise EditorMetadataError(
-            "station_template has BOTH flat_slots and row_template "
-            "populated; the engine's XOR invariant is violated. Fix "
-            "the station JSON before validating its sidecar."
-        )
+    _check_template_xor_invariant(station_template)
 
     _validate_layout_form_consistency(sidecar, station_template)
     _validate_macro_refs(sidecar)
@@ -258,12 +279,21 @@ def validate_sidecar_semantics(sidecar: dict, station_template: dict) -> None:
 
 
 def validate_sidecar(sidecar: dict, station_template: dict) -> None:
-    """Run grammar + semantics in the structural-first order.
+    """Run template-XOR → grammar → semantics in the cleanest-error order.
 
     Use for any caller that wants to fail-fast on the cleanest error
-    message: malformed input gets a grammar error rather than a
-    cross-reference confusion from a semantic check tripping on bad
-    structure.
+    message: a station with a malformed template (both flat_slots
+    AND row_template populated) surfaces the TEMPLATE error before
+    any sidecar-shape complaint; malformed sidecar structure surfaces
+    a grammar error before semantic cross-reference confusion.
+
+    Order matches the pre-§16.2.5.t15 monolithic `validate_sidecar`:
+
+      1. `_check_template_xor_invariant(template)` — template shape
+      2. `validate_sidecar_grammar(sidecar)` — sidecar structure
+      3. `validate_sidecar_semantics(sidecar, template)` — cross-doc
+         drift rules (which re-runs the XOR helper for defense-in-
+         depth in case it's called directly — cheap)
 
     Callers:
       - `_load_sidecar_disk` — disk JSON, never pre-validated
@@ -280,6 +310,7 @@ def validate_sidecar(sidecar: dict, station_template: dict) -> None:
     Rebirth Radio's 2,196-block scale and at §16.2.6 live-preview's
     per-keystroke validate cadence).
     """
+    _check_template_xor_invariant(station_template)
     validate_sidecar_grammar(sidecar)
     validate_sidecar_semantics(sidecar, station_template)
 
@@ -556,7 +587,9 @@ def is_system_section(section_id: str) -> bool:
 # checks (atomic_bounds against `station.template`'s flat_slots length,
 # macro_refs reachability, layout_order ↔ sections id parity) STAY
 # OUT — they need the template, which the TypeDecorator doesn't have
-# access to at bind time; route layer's `validate_sidecar` covers them.
+# access to at bind time; route layer's `validate_sidecar_semantics`
+# covers them (§16.2.5.t15 split the prior monolithic `validate_sidecar`
+# so route mutations only walk grammar once, here, at bind time).
 #
 # Why this is the right altitude: a future grammar bump (e.g. §16.2.6
 # macro-pinning fields) only needs to update `_validate_grammar` here;
@@ -566,13 +599,16 @@ def is_system_section(section_id: str) -> bool:
 # the DB's stored shape.
 
 
-# c2 review #3 finding #11: dropped the `validate_sidecar_grammar`
-# wrapper — it was a 1-line alias to `_validate_grammar` with no
-# external callers. The SidecarJSON TypeDecorator now calls
-# `_validate_grammar` directly. Future callers who want the public
-# grammar-only check can either call the leading-underscore form
-# (acceptable for an internal-to-engine module) or promote it via a
-# rename in §16.2.5.t14 (the EditorMetadataError-base cleanup).
+# §16.2.5.t15 re-introduced `validate_sidecar_grammar` as a stable
+# public name now that there IS an external caller (the split
+# `validate_sidecar` wrapper at line 257 composes it with
+# `validate_sidecar_semantics`; future external callers — fixtures,
+# scripts, drift detectors — route through the public name).
+# SidecarJSON's bind processor still calls `_validate_grammar`
+# directly to keep the bind path one indirection shorter; both names
+# resolve to the same internal function. The prior c2 review #3
+# finding #11 rationale ('1-line alias with no external callers')
+# no longer holds.
 
 
 # c2 review #3 finding #2: dropped the `try / except ImportError`
@@ -617,9 +653,12 @@ class SidecarJSON(TypeDecorator):
     def process_bind_param(self, value, dialect):
         if value is None:
             return None
-        # c2 review #3 finding #11: call _validate_grammar directly —
-        # the public `validate_sidecar_grammar` alias was a 1-line
-        # wrapper around the same internal function.
+        # Calls the internal `_validate_grammar` directly (skipping
+        # the public `validate_sidecar_grammar` alias re-introduced
+        # in §16.2.5.t15) to keep the per-flush bind path one
+        # indirection shorter. Both names resolve to the same
+        # function; external callers use the public name for
+        # discoverability.
         _validate_grammar(value)
         return value
 
