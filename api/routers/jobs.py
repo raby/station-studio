@@ -44,6 +44,7 @@ endpoint's response — Decision E1's "both endpoints keep working".
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
@@ -118,6 +119,84 @@ def _iso_utc(ts: float | None) -> str | None:
     return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+@dataclass
+class _EngineInputs:
+    """The engine kwargs both `/jobs/generate` and `/jobs/preview`
+    need. §16.2.6 c1 review #1 finding #4 extracted from the
+    duplicated input-loading regions.
+
+    EXCLUDED on purpose:
+      - `cursor_advance_step` / `cursor_reset_cycle` — only used by
+        `advance_cursors` in /jobs/generate's `on_result`; preview
+        never advances cursors so loading them is wasted.
+      - `excluded_track_pids` — the sync `/generate` endpoint loads
+        this (api/routers/generate.py); `/jobs/generate` doesn't
+        (pre-existing gap, separate from this review). Preview loads
+        it inline. Promote into the helper if/when the
+        `/jobs/generate` alignment lands as its own commit.
+    """
+    pools: dict[str, list[Any]]
+    artist_dedup_window: int | None
+    excluded_mix_ids: Any
+    alias_map: dict[str, str]
+    previous_playlist: list[Any] | None
+    named_cursor_positions: dict[str, int] | None
+
+
+def _load_engine_inputs(
+    db: Session, station: Station, template: Any, week: int,
+) -> _EngineInputs:
+    """Load the engine kwargs shared by /jobs/generate + /jobs/preview.
+
+    `template` is the PARSED Template (not the raw dict). Returns
+    `_EngineInputs` — the closure captures the dataclass instead of
+    7 individual locals so future per-station-rule additions land in
+    one site.
+
+    Raises HTTPException(400) on `load_pools` ValueError — the
+    operator's edited template referenced a source pool that doesn't
+    exist server-side. Same surface area as both endpoints had
+    inline pre-extraction.
+    """
+    try:
+        pools = load_pools(db, template)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+    # §14.29: per-station rule defaults. Resolved BEFORE the mix
+    # exclusion set so a station that omits BlockSpec.exclusion_window
+    # on some mix slots still feeds the right lookback into the query.
+    artist_dedup_window = get_rule_value(
+        db, station_id=station.id, key="artist_dedup_window",
+    )
+    mix_exclusion_weeks = get_rule_value(
+        db, station_id=station.id, key="mix_exclusion_weeks",
+    )
+
+    excluded_mix_ids = load_excluded_mix_ids(
+        db,
+        station_id=station.id,
+        window=max_mix_exclusion_window(template, default=mix_exclusion_weeks),
+    )
+    alias_map = load_alias_map(db)
+    previous_playlist = load_previous_playlist(
+        db, station_id=station.id, current_week=week,
+    )
+    named_cursor_positions = None
+    if template.cursor.persist:
+        named_cursor_positions = load_cursor_positions(
+            db, station_id=station.id, template=template,
+        )
+    return _EngineInputs(
+        pools=pools,
+        artist_dedup_window=artist_dedup_window,
+        excluded_mix_ids=excluded_mix_ids,
+        alias_map=alias_map,
+        previous_playlist=previous_playlist,
+        named_cursor_positions=named_cursor_positions,
+    )
+
+
 def _snapshot_to_response(snap: JobSnapshot) -> JobStatusResponse:
     """Project a `JobSnapshot` (runner-internal) onto the public
     `JobStatusResponse`. Just timestamp conversion + Pydantic wrap.
@@ -188,10 +267,6 @@ def start_generate_job(
         # corruption to the operator.
         raise HTTPException(500, f"stored template is invalid: {e}")
 
-    try:
-        pools = load_pools(db, template)
-    except ValueError as e:
-        raise HTTPException(400, str(e))
     # ⚠ Detached-pool caveat (mid-slice review 🟡-4):
     # `pools` is `dict[str, list[Track]]` where Track is a SQLAlchemy
     # ORM instance bound to `db`. When the request returns, FastAPI's
@@ -205,36 +280,16 @@ def start_generate_job(
     # here into plain dataclasses before capturing into the closure.
     # The c3 byte-equality tests pin today's scalar-only behaviour.
 
-    # §14.29: per-station rule defaults. Resolved BEFORE the mix
-    # exclusion set so a station that omits BlockSpec.exclusion_window
-    # on some mix slots still feeds the right lookback into the query.
-    artist_dedup_window = get_rule_value(
-        db, station_id=station.id, key="artist_dedup_window",
-    )
-    mix_exclusion_weeks = get_rule_value(
-        db, station_id=station.id, key="mix_exclusion_weeks",
-    )
+    inputs = _load_engine_inputs(db, station, template, payload.week)
+
+    # advance_cursors-only rule values (NOT in _EngineInputs since
+    # they're /jobs/generate-specific — preview never advances).
     cursor_advance_step = get_rule_value(
         db, station_id=station.id, key="cursor_advance_step",
     )
     cursor_reset_cycle = get_rule_value(
         db, station_id=station.id, key="cursor_reset_cycle",
     )
-
-    excluded_mix_ids = load_excluded_mix_ids(
-        db,
-        station_id=station.id,
-        window=max_mix_exclusion_window(template, default=mix_exclusion_weeks),
-    )
-    alias_map = load_alias_map(db)
-    previous_playlist = load_previous_playlist(
-        db, station_id=station.id, current_week=payload.week,
-    )
-    named_cursor_positions = None
-    if template.cursor.persist:
-        named_cursor_positions = load_cursor_positions(
-            db, station_id=station.id, template=template,
-        )
 
     # Capture identity values that the worker will need but that we
     # can't safely read off the ORM-bound `station` instance after
@@ -252,13 +307,13 @@ def start_generate_job(
 
     def stream_factory():
         return generate_stream(
-            template, pools,
+            template, inputs.pools,
             week=week, seed=seed,
-            excluded_mix_ids=excluded_mix_ids,
-            alias_map=alias_map,
-            previous_playlist=previous_playlist,
-            weighted_window_default=artist_dedup_window,
-            named_cursor_positions=named_cursor_positions,
+            excluded_mix_ids=inputs.excluded_mix_ids,
+            alias_map=inputs.alias_map,
+            previous_playlist=inputs.previous_playlist,
+            weighted_window_default=inputs.artist_dedup_window,
+            named_cursor_positions=inputs.named_cursor_positions,
         )
 
     # on_result runs inside the worker thread. The request's `db` is
@@ -316,7 +371,7 @@ def start_generate_job(
                     worker_db,
                     station_id=worker_station.id,
                     template=template,
-                    pools=dict(pools),
+                    pools=dict(inputs.pools),
                     advance_step=cursor_advance_step,
                     reset_cycle=cursor_reset_cycle,
                     generation_count=week - 1,
@@ -416,8 +471,12 @@ def start_preview_job(
 
     # Parse the operator's in-memory template. 400 on invalid input —
     # operator can fix the edit + retry; not 500 (no data corruption).
+    # The variable is named `parsed_template` (review #1 #9) to make
+    # the dict-vs-parsed distinction obvious to future editors:
+    # `payload.template` is the raw dict (Pydantic field), while
+    # `parsed_template` is the engine's structured Template.
     try:
-        template = parse_template(payload.template)
+        parsed_template = parse_template(payload.template)
     except TemplateError as e:
         raise HTTPException(400, f"invalid template: {e}")
 
@@ -426,53 +485,26 @@ def start_preview_job(
     # + not pre-validated. §16.2.5.t15's _persist_sidecar optimization
     # (semantics-only at route layer) does NOT apply here — preview's
     # input doesn't traverse the SidecarJSON TypeDecorator (no commit),
-    # so grammar must run explicitly.
+    # so grammar must run explicitly. validate_sidecar takes the RAW
+    # dict template (`payload.template`), not the parsed one.
     try:
         validate_sidecar(payload.sidecar, payload.template)
     except EditorMetadataError as e:
         raise HTTPException(400, f"invalid sidecar: {e}")
 
-    # Pools loaded against the OPERATOR'S template (not station.template
-    # — the operator may have edited sources). load_pools raises
-    # ValueError on missing-source-pool; surfaces as 400.
-    try:
-        pools = load_pools(db, template)
-    except ValueError as e:
-        raise HTTPException(400, str(e))
+    # ⚠ Detached-pool caveat (mid-slice review 🟡-4):
+    # `inputs.pools` is `dict[str, list[Track]]` where Track is a
+    # SQLAlchemy ORM instance bound to `db`. The worker thread
+    # iterates them after the request's `db` closes. Today's
+    # scalar-only access path is safe; future ORM-relationship
+    # access would DetachedInstanceError.
 
-    # ⚠ Same detached-pool caveat as start_generate_job: pools are
-    # ORM-bound Tracks; the worker thread iterates them after the
-    # request's `db` closes. Today's scalar-only access path is safe.
+    inputs = _load_engine_inputs(db, station, parsed_template, payload.week)
 
-    # Per-station rule defaults — same precedence as /generate +
-    # /jobs/generate. Preview reads these but the on_result NEVER
-    # writes back (cursors don't advance on preview).
-    artist_dedup_window = get_rule_value(
-        db, station_id=station.id, key="artist_dedup_window",
-    )
-    mix_exclusion_weeks = get_rule_value(
-        db, station_id=station.id, key="mix_exclusion_weeks",
-    )
-
-    # Recompute excluded_mix_ids from current MixUsage. The operator
-    # may have edited an exclusion_window field mid-session; this
-    # value reflects the JUST-EDITED window, not a page-load snapshot.
-    excluded_mix_ids = load_excluded_mix_ids(
-        db,
-        station_id=station.id,
-        window=max_mix_exclusion_window(template, default=mix_exclusion_weeks),
-    )
-    alias_map = load_alias_map(db)
-    previous_playlist = load_previous_playlist(
-        db, station_id=station.id, current_week=payload.week,
-    )
-    named_cursor_positions = None
-    if template.cursor.persist:
-        named_cursor_positions = load_cursor_positions(
-            db, station_id=station.id, template=template,
-        )
     # §16.14.t5: cross-pool dedup exclusion set. Matches the sync
-    # /generate endpoint's input set.
+    # /generate endpoint's input set. NOT in _EngineInputs because
+    # /jobs/generate doesn't load it (pre-existing inconsistency
+    # noted in the helper's docstring).
     try:
         excluded_track_pids = load_excluded_track_pids(
             db, station_id=station.id,
@@ -489,13 +521,13 @@ def start_preview_job(
     # ----- Closures -------------------------------------------------
     def stream_factory():
         return generate_stream(
-            template, pools,
+            parsed_template, inputs.pools,
             week=week, seed=seed,
-            excluded_mix_ids=excluded_mix_ids,
-            alias_map=alias_map,
-            previous_playlist=previous_playlist,
-            weighted_window_default=artist_dedup_window,
-            named_cursor_positions=named_cursor_positions,
+            excluded_mix_ids=inputs.excluded_mix_ids,
+            alias_map=inputs.alias_map,
+            previous_playlist=inputs.previous_playlist,
+            weighted_window_default=inputs.artist_dedup_window,
+            named_cursor_positions=inputs.named_cursor_positions,
             excluded_track_pids=excluded_track_pids,
         )
 

@@ -546,32 +546,10 @@ def test_job_result_dict_keys_match_generate_response_schema(jobs_api):
 # ---------- §16.2.6 c1: POST /api/stations/{slug}/jobs/preview ---------
 
 
-def _trivial_sidecar_3_slots() -> dict:
-    """Sidecar matching _seed_station_with_pool's 3-slot flat_slots
-    template. All atomic refs in one section; minimal valid shape."""
+def _template_for_3_slots() -> dict:
+    """Source-of-truth template literal matching _seed_station_with_pool.
+    Returned fresh per call so tests can splice overrides safely."""
     return {
-        "schema_version": 1,
-        "sections": [
-            {
-                "id": "all",
-                "name": "All slots",
-                "blocks": [
-                    {"kind": "atomic", "slot_index": 0},
-                    {"kind": "atomic", "slot_index": 1},
-                    {"kind": "atomic", "slot_index": 2},
-                ],
-            },
-        ],
-        "layout_order": ["all"],
-    }
-
-
-def _preview_body(template_overrides: dict | None = None,
-                  sidecar_overrides: dict | None = None,
-                  week: int = 1, seed: int | None = 42) -> dict:
-    """Build a preview request body mirroring _seed_station_with_pool's
-    template shape. Overrides splice in for the failure-path tests."""
-    template = {
         "station": "ts",
         "name": "Test",
         "cadence": "weekly",
@@ -586,9 +564,28 @@ def _preview_body(template_overrides: dict | None = None,
             "flat_slots": [
                 {"source": "A", "strategy": "sequential", "size": 1,
                  "cursor_id": "C"}
-            ] * 3,
+                for _ in range(3)
+            ],
         },
     }
+
+
+def _trivial_sidecar_3_slots() -> dict:
+    """Sidecar matching _template_for_3_slots(). Delegates to the
+    engine's `synthesize_trivial_sidecar` so the test fixture stays
+    in sync with production sidecar grammar — a future schema bump
+    updates synthesize_trivial_sidecar in one place + this fixture
+    follows automatically."""
+    from engine.editor_metadata import synthesize_trivial_sidecar
+    return synthesize_trivial_sidecar(_template_for_3_slots())
+
+
+def _preview_body(template_overrides: dict | None = None,
+                  sidecar_overrides: dict | None = None,
+                  week: int = 1, seed: int | None = 42) -> dict:
+    """Build a preview request body mirroring _seed_station_with_pool's
+    template shape. Overrides splice in for the failure-path tests."""
+    template = _template_for_3_slots()
     if template_overrides:
         template.update(template_overrides)
     sidecar = _trivial_sidecar_3_slots()
