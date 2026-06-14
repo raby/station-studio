@@ -34,7 +34,7 @@ from api.deps import get_db, get_session_factory
 from api.job_runner import JobStore, get_job_store
 from api.main import app
 from engine.database import make_engine, make_sessionmaker
-from engine.generator import GenerationResult, ProgressEvent
+from engine.generator import GenerationResult, ProgressEvent, generate_stream
 from engine.models import Base, Playlist, SourcePlaylist, SourcePlaylistEntry, Station, Track
 
 
@@ -541,3 +541,234 @@ def test_job_result_dict_keys_match_generate_response_schema(jobs_api):
         f"job.result key drift from GenerateResponse: "
         f"missing={expected - got}, extra={got - expected}"
     )
+
+
+# ---------- §16.2.6 c1: POST /api/stations/{slug}/jobs/preview ---------
+
+
+def _trivial_sidecar_3_slots() -> dict:
+    """Sidecar matching _seed_station_with_pool's 3-slot flat_slots
+    template. All atomic refs in one section; minimal valid shape."""
+    return {
+        "schema_version": 1,
+        "sections": [
+            {
+                "id": "all",
+                "name": "All slots",
+                "blocks": [
+                    {"kind": "atomic", "slot_index": 0},
+                    {"kind": "atomic", "slot_index": 1},
+                    {"kind": "atomic", "slot_index": 2},
+                ],
+            },
+        ],
+        "layout_order": ["all"],
+    }
+
+
+def _preview_body(template_overrides: dict | None = None,
+                  sidecar_overrides: dict | None = None,
+                  week: int = 1, seed: int | None = 42) -> dict:
+    """Build a preview request body mirroring _seed_station_with_pool's
+    template shape. Overrides splice in for the failure-path tests."""
+    template = {
+        "station": "ts",
+        "name": "Test",
+        "cadence": "weekly",
+        "rng": "off",
+        "sources": [{"name": "A", "colour": "#abc", "role": "content"}],
+        "cursor": {"base_advance_per_week": 0, "cycle_weeks": 1},
+        "layout": {
+            "unit": "slot",
+            "unit_labels": [],
+            "row_start_offsets": [],
+            "cursors_init": {"C": 0},
+            "flat_slots": [
+                {"source": "A", "strategy": "sequential", "size": 1,
+                 "cursor_id": "C"}
+            ] * 3,
+        },
+    }
+    if template_overrides:
+        template.update(template_overrides)
+    sidecar = _trivial_sidecar_3_slots()
+    if sidecar_overrides:
+        sidecar.update(sidecar_overrides)
+    body: dict = {"template": template, "sidecar": sidecar, "week": week}
+    if seed is not None:
+        body["seed"] = seed
+    return body
+
+
+def test_preview_start_returns_201_with_location_header(jobs_api):
+    client, Session, _store = jobs_api
+    _seed_station_with_pool(Session)
+
+    r = client.post("/api/stations/ts/jobs/preview", json=_preview_body())
+    assert r.status_code == 201, r.json()
+    body = r.json()
+    assert "job_id" in body
+    assert body["status"] == "running"
+    assert r.headers["Location"] == f"/api/jobs/{body['job_id']}"
+
+
+def test_preview_runs_to_done_returns_trace_with_no_persistence(jobs_api):
+    """§16.2.6 D1 pin: a preview call followed by `db.refresh(station)`
+    MUST show no changes. Verified end-to-end: zero Playlist rows +
+    zero MixUsage rows + station.template untouched after a successful
+    preview."""
+    from engine.models import MixUsage
+    client, Session, _store = jobs_api
+    _seed_station_with_pool(Session)
+
+    with Session() as db:
+        before_template = db.query(Station).filter_by(slug="ts").first().template
+
+    r = client.post("/api/stations/ts/jobs/preview", json=_preview_body())
+    job_id = r.json()["job_id"]
+    final = _wait_for_status(client, job_id, "done")
+
+    # Result shape: trace dict + slot_count.
+    assert final["error"] is None
+    assert "trace" in final["result"]
+    assert final["result"]["slot_count"] == 3
+    trace = final["result"]["trace"]
+    assert "slots" in trace
+    assert len(trace["slots"]) == 3
+    assert trace["station"] == "ts"
+    assert trace["week"] == 1
+
+    # No persistence side-effects.
+    with Session() as db:
+        assert db.query(Playlist).count() == 0
+        assert db.query(MixUsage).count() == 0
+        after_template = db.query(Station).filter_by(slug="ts").first().template
+        assert after_template == before_template
+
+
+def test_preview_deterministic_seed_produces_identical_trace(jobs_api):
+    """§16.2.6 D1 pin: same seed + same template + same DB state →
+    identical trace slots across runs. Pins the engine's determinism
+    AND the route's recompute-per-request behavior (helpers must
+    return identical values across two requests when DB state hasn't
+    changed)."""
+    client, Session, _store = jobs_api
+    _seed_station_with_pool(Session)
+
+    body = _preview_body(seed=12345)
+
+    job_a = client.post("/api/stations/ts/jobs/preview", json=body).json()["job_id"]
+    trace_a = _wait_for_status(client, job_a, "done")["result"]["trace"]
+    job_b = client.post("/api/stations/ts/jobs/preview", json=body).json()["job_id"]
+    trace_b = _wait_for_status(client, job_b, "done")["result"]["trace"]
+
+    # trace_id + generated_at vary per call; slots must match.
+    assert trace_a["slots"] == trace_b["slots"]
+
+
+def test_preview_400_on_invalid_template(jobs_api):
+    """Operator's in-memory template refers to a source pool that
+    doesn't exist server-side. load_pools raises ValueError →
+    HTTPException(400). The error surfaces synchronously — no job
+    spawned."""
+    client, Session, _store = jobs_api
+    _seed_station_with_pool(Session)
+
+    body = _preview_body(template_overrides={
+        # Source 'A' exists in the DB but the template references 'NONEXISTENT'.
+        "sources": [{"name": "NONEXISTENT", "colour": "#abc", "role": "content"}],
+        # flat_slots reference the bogus source via its name.
+        "layout": {
+            "unit": "slot",
+            "unit_labels": [],
+            "row_start_offsets": [],
+            "cursors_init": {"C": 0},
+            "flat_slots": [
+                {"source": "NONEXISTENT", "strategy": "sequential",
+                 "size": 1, "cursor_id": "C"}
+            ] * 3,
+        },
+    })
+    r = client.post("/api/stations/ts/jobs/preview", json=body)
+    assert r.status_code == 400, r.json()
+
+
+def test_preview_400_on_invalid_sidecar(jobs_api):
+    """Operator's in-memory sidecar fails grammar validation
+    (missing required `layout_order` key). validate_sidecar raises
+    EditorMetadataError → HTTPException(400). Synchronous; no job
+    spawned."""
+    client, Session, _store = jobs_api
+    _seed_station_with_pool(Session)
+
+    bad_sidecar = {
+        "schema_version": 1,
+        "sections": [
+            {"id": "all", "name": "All",
+             "blocks": [{"kind": "atomic", "slot_index": 0}]},
+        ],
+        # layout_order missing — REQUIRED_TOP_LEVEL key
+    }
+    body = _preview_body()
+    body["sidecar"] = bad_sidecar
+    r = client.post("/api/stations/ts/jobs/preview", json=body)
+    assert r.status_code == 400, r.json()
+    assert "sidecar" in r.json()["detail"].lower()
+
+
+def test_preview_cancel_existing_supersedes_running_preview(jobs_api):
+    """§16.2.6 D6 pin: POLICY_CANCEL_EXISTING means a new preview job
+    for the same (slug, KIND_PREVIEW) supersedes any running preview.
+    Both POSTs return 201; the FIRST job ends up cancelled (or done
+    if it raced past the supersede). Second job runs to done."""
+    client, Session, _store = jobs_api
+    _seed_station_with_pool(Session)
+
+    # Patch generate_stream to add a small sleep so the first job is
+    # in-flight long enough for the second POST to supersede it. The
+    # 3-slot fixture would otherwise finish in microseconds.
+    real_stream = generate_stream
+
+    def slow_stream(*args, **kwargs):
+        import itertools as _it
+        stream = real_stream(*args, **kwargs)
+        for ev in stream:
+            time.sleep(0.05)
+            yield ev
+
+    with patch("api.routers.jobs.generate_stream", side_effect=slow_stream):
+        r1 = client.post(
+            "/api/stations/ts/jobs/preview", json=_preview_body(seed=1),
+        )
+        assert r1.status_code == 201
+        job_a = r1.json()["job_id"]
+        # Second POST — supersedes.
+        r2 = client.post(
+            "/api/stations/ts/jobs/preview", json=_preview_body(seed=2),
+        )
+        assert r2.status_code == 201
+        job_b = r2.json()["job_id"]
+        assert job_a != job_b
+        # Second job runs to done.
+        final_b = _wait_for_status(client, job_b, "done")
+        assert final_b["result"]["slot_count"] == 3
+
+    # First job's final state is either 'cancelled' or 'done'. With
+    # the slow_stream sleep + JobStore's supersede + GC grace period,
+    # cancelled is the expected outcome — but the 'done' race is
+    # legitimate (the engine finished mid-supersede). Assert it's NOT
+    # 'running' (would mean POLICY_CANCEL_EXISTING didn't supersede).
+    r = client.get(f"/api/jobs/{job_a}")
+    if r.status_code == 200:
+        status = r.json()["status"]
+        assert status in ("cancelled", "done"), (
+            f"job_a should be superseded (cancelled) or completed (done) "
+            f"after job_b started; got {status}"
+        )
+    # 404 is also acceptable — JobStore GC may have evicted by now.
+
+
+def test_preview_unknown_station_returns_404(jobs_api):
+    client, _Session, _store = jobs_api
+    r = client.post("/api/stations/no-such/jobs/preview", json=_preview_body())
+    assert r.status_code == 404

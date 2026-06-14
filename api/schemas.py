@@ -92,6 +92,28 @@ class GenerateRequest(BaseModel):
     seed: int | None = None
 
 
+class PreviewRequest(BaseModel):
+    """Body for §16.2.6 live-preview endpoint — `POST /api/stations/
+    {slug}/jobs/preview`.
+
+    Carries ONLY editor-mutated state (template, sidecar, week, seed).
+    Server-recomputed inputs (`excluded_mix_ids`, `previous_playlist`,
+    `alias_map`, named-cursor positions) are looked up fresh from DB
+    per request — sending them would let a stale frontend snapshot
+    override fresh server state, defeating the recompute-per-request
+    guarantee the live-preview slice depends on. See DESIGN §16.2.6
+    "API surface" for the rationale.
+
+    `template`/`sidecar` are dicts on the wire — same shape as the
+    stored Station columns. The route layer parses/validates both
+    before spawning the job.
+    """
+    template: dict
+    sidecar: dict
+    week: int = Field(ge=1)
+    seed: int | None = None
+
+
 class GenerateResponse(BaseModel):
     playlist_id: int
     trace_id: str

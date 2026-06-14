@@ -49,12 +49,13 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
+from engine.editor_metadata import EditorMetadataError, validate_sidecar
 from engine.generator import GenerationResult, generate_stream
 from engine.models import Station
 from engine.persistence import (
     advance_cursors, load_alias_map, load_cursor_positions,
-    load_excluded_mix_ids, load_pools, load_previous_playlist,
-    max_mix_exclusion_window, save_playlist,
+    load_excluded_mix_ids, load_excluded_track_pids, load_pools,
+    load_previous_playlist, max_mix_exclusion_window, save_playlist,
 )
 from engine.rules import get_rule_value
 from engine.template import parse_template, TemplateError
@@ -64,6 +65,8 @@ from api.job_runner import (
     JobStartConflict,
     JobStore,
     KIND_GENERATE,
+    KIND_PREVIEW,
+    POLICY_CANCEL_EXISTING,
     POLICY_REJECT,
     get_job_store,
 )
@@ -72,6 +75,7 @@ from api.schemas import (
     JobErrorBody,
     JobStartResponse,
     JobStatusResponse,
+    PreviewRequest,
 )
 
 
@@ -347,6 +351,172 @@ def start_generate_job(
                 "existing_job_id": e.existing_job_id,
             },
         )
+
+    response.headers["Location"] = f"/api/jobs/{job_id}"
+    return JobStartResponse(job_id=job_id, status="running")
+
+
+@router.post(
+    "/api/stations/{slug}/jobs/preview",
+    response_model=JobStartResponse,
+    status_code=201,
+)
+def start_preview_job(
+    slug: str,
+    payload: PreviewRequest,
+    response: Response,
+    db: Session = Depends(get_db),
+    job_store: JobStore = Depends(get_job_store),
+):
+    """Start a §16.2.6 live-preview job. Runs the engine against the
+    operator's IN-MEMORY editor state (template + sidecar in the
+    request body) + returns the resulting trace via the §16.11 job-id
+    transport. NO persistence side-effects.
+
+    Synchronous validation (runs in the request thread; 4xx errors
+    surface before any job exists):
+
+      * 404 — station slug doesn't exist
+      * 400 — template fails to parse (operator edited into an
+              invalid state)
+      * 400 — sidecar fails grammar OR semantics validation
+              (operator edit + template combo invalid)
+      * 400 — pools missing for some source the in-memory template
+              references
+
+    Concurrent policy is `POLICY_CANCEL_EXISTING` (§16.2.6 D6 latest-
+    wins): a new preview job for the same (slug, KIND_PREVIEW)
+    supersedes any running preview job. Implements the DESIGN's
+    "cancel in-flight on new edit" — the frontend doesn't even
+    need to explicitly DELETE; firing the next preview cancels the
+    last automatically. The explicit DELETE remains supported for
+    operator-initiated cancellation (Discard mid-PREVIEWING).
+
+    No session_factory dep: preview's on_result is a pure
+    transformation of the GenerationResult — no DB writes.
+
+    Inputs the server recomputes from DB (NOT from the request body,
+    per the design's recompute-per-request guarantee):
+
+      * `excluded_mix_ids` — from current MixUsage; reflects any
+        intervening mix-block exclusion_window edits
+      * `previous_playlist` — looked up by `week - 1`
+      * `alias_map`, `excluded_track_pids` — current DB rules
+      * `named_cursor_positions` — current cursors (preview READS;
+        the on_result deliberately does NOT advance them)
+      * per-station rule defaults (artist_dedup_window,
+        mix_exclusion_weeks)
+    """
+    # ----- Synchronous validation + engine input loading -------------
+    station = db.query(Station).filter(Station.slug == slug).first()
+    if not station:
+        raise HTTPException(404, f"station '{slug}' not found")
+
+    # Parse the operator's in-memory template. 400 on invalid input —
+    # operator can fix the edit + retry; not 500 (no data corruption).
+    try:
+        template = parse_template(payload.template)
+    except TemplateError as e:
+        raise HTTPException(400, f"invalid template: {e}")
+
+    # Validate the operator's in-memory sidecar. Uses the full wrapper
+    # (grammar + semantics) since the request body is operator-edited
+    # + not pre-validated. §16.2.5.t15's _persist_sidecar optimization
+    # (semantics-only at route layer) does NOT apply here — preview's
+    # input doesn't traverse the SidecarJSON TypeDecorator (no commit),
+    # so grammar must run explicitly.
+    try:
+        validate_sidecar(payload.sidecar, payload.template)
+    except EditorMetadataError as e:
+        raise HTTPException(400, f"invalid sidecar: {e}")
+
+    # Pools loaded against the OPERATOR'S template (not station.template
+    # — the operator may have edited sources). load_pools raises
+    # ValueError on missing-source-pool; surfaces as 400.
+    try:
+        pools = load_pools(db, template)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+    # ⚠ Same detached-pool caveat as start_generate_job: pools are
+    # ORM-bound Tracks; the worker thread iterates them after the
+    # request's `db` closes. Today's scalar-only access path is safe.
+
+    # Per-station rule defaults — same precedence as /generate +
+    # /jobs/generate. Preview reads these but the on_result NEVER
+    # writes back (cursors don't advance on preview).
+    artist_dedup_window = get_rule_value(
+        db, station_id=station.id, key="artist_dedup_window",
+    )
+    mix_exclusion_weeks = get_rule_value(
+        db, station_id=station.id, key="mix_exclusion_weeks",
+    )
+
+    # Recompute excluded_mix_ids from current MixUsage. The operator
+    # may have edited an exclusion_window field mid-session; this
+    # value reflects the JUST-EDITED window, not a page-load snapshot.
+    excluded_mix_ids = load_excluded_mix_ids(
+        db,
+        station_id=station.id,
+        window=max_mix_exclusion_window(template, default=mix_exclusion_weeks),
+    )
+    alias_map = load_alias_map(db)
+    previous_playlist = load_previous_playlist(
+        db, station_id=station.id, current_week=payload.week,
+    )
+    named_cursor_positions = None
+    if template.cursor.persist:
+        named_cursor_positions = load_cursor_positions(
+            db, station_id=station.id, template=template,
+        )
+    # §16.14.t5: cross-pool dedup exclusion set. Matches the sync
+    # /generate endpoint's input set.
+    try:
+        excluded_track_pids = load_excluded_track_pids(
+            db, station_id=station.id,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except TemplateError as e:
+        raise HTTPException(400, str(e))
+
+    # Capture identity values that the worker closure needs.
+    week = payload.week
+    seed = payload.seed
+
+    # ----- Closures -------------------------------------------------
+    def stream_factory():
+        return generate_stream(
+            template, pools,
+            week=week, seed=seed,
+            excluded_mix_ids=excluded_mix_ids,
+            alias_map=alias_map,
+            previous_playlist=previous_playlist,
+            weighted_window_default=artist_dedup_window,
+            named_cursor_positions=named_cursor_positions,
+            excluded_track_pids=excluded_track_pids,
+        )
+
+    def on_result(result: GenerationResult) -> dict[str, Any]:
+        # NO persistence side-effects. Pure transformation: the trace
+        # dict the frontend renders + a slot_count summary for the
+        # JobSnapshot's UI.
+        return {
+            "trace": result.trace.to_dict(),
+            "slot_count": len(result.picks),
+        }
+
+    # ----- Spawn the job --------------------------------------------
+    # POLICY_CANCEL_EXISTING (§16.2.6 D6): a running preview job for
+    # this same slug gets cancelled + replaced. No JobStartConflict
+    # to catch here (the policy never raises one).
+    job_id = job_store.start(
+        slug=slug,
+        kind=KIND_PREVIEW,
+        stream_factory=stream_factory,
+        on_result=on_result,
+        concurrent_policy=POLICY_CANCEL_EXISTING,
+    )
 
     response.headers["Location"] = f"/api/jobs/{job_id}"
     return JobStartResponse(job_id=job_id, status="running")
