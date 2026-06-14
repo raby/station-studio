@@ -34,6 +34,7 @@ from api.deps import get_db, get_session_factory
 from api.job_runner import JobStore, get_job_store
 from api.main import app
 from engine.database import make_engine, make_sessionmaker
+from engine.editor_metadata import synthesize_trivial_sidecar
 from engine.generator import GenerationResult, ProgressEvent, generate_stream
 from engine.models import Base, Playlist, SourcePlaylist, SourcePlaylistEntry, Station, Track
 
@@ -805,3 +806,143 @@ def test_preview_unknown_station_returns_404(jobs_api):
     client, _Session, _store = jobs_api
     r = client.post("/api/stations/no-such/jobs/preview", json=_preview_body())
     assert r.status_code == 404
+
+
+# ---------- §16.2.6 c1 review #1 batch C: exclusion_window recompute ---
+
+
+def _seed_mix_station_for_preview(Session: sessionmaker) -> dict:
+    """Insert a station with a SINGLE-slot mix template + 3 House tracks
+    + 2 saved Playlist rows. Returns the template dict (for the
+    preview request body).
+
+    The fixture exists in this state:
+      - Playlist for week 1 exists (no entries needed — just an anchor
+        for MixUsage rows below).
+      - Playlist for week 2 exists (same).
+      - MixUsage table starts EMPTY — the test inserts rows mid-flight
+        to drive the recompute regression.
+
+    Returns the template dict so the test can splice
+    exclusion_window edits into the preview request body.
+    """
+    from engine.models import Playlist
+    template = {
+        "station": "mix-rb",
+        "name": "Mix Rebirth",
+        "cadence": "weekly",
+        "rng": "off",
+        "sources": [{"name": "MIXES", "colour": "#0cf", "role": "content"}],
+        "cursor": {"base_advance_per_week": 0, "cycle_weeks": 1},
+        "layout": {
+            "unit": "slot",
+            "unit_labels": ["1"],
+            "row_start_offsets": [0],
+            "row_template": [
+                {"source": "MIXES", "strategy": "mix", "size": 1,
+                 "genre": "House", "exclusion_window": 5},
+            ],
+        },
+    }
+    with Session() as db:
+        # 3 House tracks in the MIXES pool.
+        tracks = [
+            Track(persistent_id=f"P-H{i}", name=f"House-{i}",
+                  artist=f"DJ-{i}", album=None, genre="House",
+                  itunes_track_id=i + 100)
+            for i in range(1, 4)
+        ]
+        db.add_all(tracks)
+        db.commit()
+        pool = SourcePlaylist(name="MIXES", role="content")
+        db.add(pool)
+        db.commit()
+        for pos, t in enumerate(tracks, start=1):
+            db.add(SourcePlaylistEntry(
+                source_playlist_id=pool.id, position=pos, track_id=t.id,
+            ))
+        station = Station(slug="mix-rb", name="Mix Rebirth", template=template)
+        db.add(station)
+        db.commit()
+        # Anchor Playlist rows for weeks 1 + 2 so MixUsage can attach.
+        db.add(Playlist(station_id=station.id, week=1, trace_id="t-w1"))
+        db.add(Playlist(station_id=station.id, week=2, trace_id="t-w2"))
+        db.commit()
+    return template
+
+
+def test_preview_recomputes_excluded_mix_ids_per_request(jobs_api):
+    """§16.2.6 D1 pin (the design's load-bearing 'mid-edit
+    exclusion_window change affects the next preview' regression):
+    each preview call recomputes excluded_mix_ids from CURRENT
+    MixUsage — not from a cached page-load snapshot.
+
+    Setup:
+      - Mix station with 3 House tracks (House-1, House-2, House-3)
+      - Playlists exist for weeks 1 + 2 (anchors for MixUsage)
+      - MixUsage table starts empty
+
+    Sequence:
+      1. Preview week 3 → trace's mix slot picks T_first (no
+         exclusions; the engine deterministically picks the
+         lowest-position eligible track).
+      2. Insert MixUsage row for T_first against week 2's Playlist.
+      3. Preview week 3 again (same body) → trace's mix slot picks
+         T_second ≠ T_first.
+
+    If recompute didn't fire, the second preview would return T_first
+    again (cached set). The behavior pins the route-layer
+    `load_excluded_mix_ids` recompute that happens on EVERY preview
+    request, not just on the first.
+
+    NOT covered today: editing the template's `exclusion_window`
+    field in the request body (would need to vary the body across
+    calls). That path is exercised by the per-request body
+    parsing already pinned in
+    test_preview_400_on_invalid_template — every preview re-parses
+    the body's template + recomputes the helper's window arg.
+    """
+    from engine.models import MixUsage, Playlist
+    client, Session, _store = jobs_api
+    template = _seed_mix_station_for_preview(Session)
+    sidecar = synthesize_trivial_sidecar(template)
+
+    body = {"template": template, "sidecar": sidecar, "week": 3}
+
+    # Preview 1 — empty MixUsage, all tracks eligible.
+    job_1 = client.post(
+        "/api/stations/mix-rb/jobs/preview", json=body,
+    ).json()["job_id"]
+    trace_1 = _wait_for_status(client, job_1, "done")["result"]["trace"]
+    first_track_id = trace_1["slots"][0]["track_id"]
+    assert first_track_id is not None
+
+    # Mid-session: insert a MixUsage row excluding the just-picked
+    # track. Attach to week 2's Playlist (the most-recent week before
+    # the previewed week=3).
+    with Session() as db:
+        week2_playlist = db.query(Playlist).filter_by(
+            station_id=db.query(Station).filter_by(
+                slug="mix-rb").first().id,
+            week=2,
+        ).first()
+        db.add(MixUsage(
+            playlist_id=week2_playlist.id,
+            track_id=first_track_id,
+            genre="House",
+        ))
+        db.commit()
+
+    # Preview 2 — same body, but MixUsage now excludes first_track_id.
+    job_2 = client.post(
+        "/api/stations/mix-rb/jobs/preview", json=body,
+    ).json()["job_id"]
+    trace_2 = _wait_for_status(client, job_2, "done")["result"]["trace"]
+    second_track_id = trace_2["slots"][0]["track_id"]
+    assert second_track_id is not None
+    assert second_track_id != first_track_id, (
+        f"recompute failed: preview returned the same mix track "
+        f"({first_track_id}) after MixUsage was added to exclude it. "
+        f"Either load_excluded_mix_ids was cached across requests, or "
+        f"the helper didn't run on the second preview call."
+    )
