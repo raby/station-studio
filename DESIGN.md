@@ -8594,18 +8594,62 @@ strip. State (open/closed + width) persists to localStorage.
   whole point of live preview — feedback latency includes the
   navigation. Rejected.
 
+**D2(b) — DetailPanel ↔ TracePane coexistence: TracePane wins.**
+
+Today DetailPanel slides in from the LEFT when the operator
+clicks a chip (~25% of viewport for parameter editing). D2 puts
+TracePane on the RIGHT (~30%). Both open simultaneously would
+squeeze the canvas to ~45% — SectionHeader's `{N} picks` count
+might still read fine but ChipFlow's wrap-flow could collapse
+to 1 chip per row, and the §16.2.5 section-reorder drag handles
+get tiny.
+
+Pinned: **clicking a chip while TracePane is open auto-closes
+TracePane** (toggle stays ON; reopening on the next edit-idle
+debounce restores it). The DetailPanel slide-in is the
+ACTIVE editing focus; TracePane is the PASSIVE feedback surface
+that yields to it. Operator saves/cancels in DetailPanel →
+DetailPanel closes → next debounced preview fires → TracePane
+slides back in.
+
+Why TracePane yields (not the reverse): the operator only
+opens DetailPanel via deliberate action (clicking a chip);
+TracePane appears reactively after debounce. Making the user-
+initiated action win matches the operator's intent.
+
+**Alternative documented for future revisit**:
+
+- **Alt-A: Both stay open, canvas shrinks**. Acceptable on
+  ultra-wide displays (>1920px). v1 targets ~1440px laptops;
+  the squeeze hurts. Reconsider with media query gating: on
+  wide displays, both panes stay open + canvas absorbs the
+  difference; on narrow, TracePane auto-closes.
+- **Alt-B: DetailPanel becomes a modal**. Floats over the
+  canvas + TracePane. Sharper focus on parameter editing but
+  loses the edit-in-context spatial relationship to the chip.
+  Bigger UX shift than the slice budgets for.
+
 **D3 — Trace rendering: inline `<TracePane>` Svelte component.**
 
 The trace pane is a Svelte component that renders the trace JSON
-as a virtualised flat list:
+as a flat list:
 
 ```svelte
 <TracePane {trace} {viewMode}>
-  {#each visibleSlots as slot, i}
+  {#each trace.slots as slot, i (i)}
     <TraceRow {slot} {i} on:select={jumpToSlot} />
   {/each}
 </TracePane>
 ```
+
+No virtualisation at v1 — Rebirth Radio's 2,196 rows × ~30px
+native row height render fine in modern browsers + virtualisation
+machinery (row-height assumptions, scroll-position handling,
+intersection observers) is ~200 LoC the slice doesn't need. The
+already-queued §16.18 (trace viewer virtualisation) covers the
+SAVED trace viewer at the same scale and will fold preview-pane
+virtualisation in if scroll perf ever bites — both panes share
+the row-rendering primitive.
 
 Each row shows: slot index, source (sampled track name when
 available), strategy, macro-id (if part of a span), divergence
