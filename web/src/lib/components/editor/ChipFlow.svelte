@@ -120,6 +120,39 @@
     cachedChipRects = null;
   }
 
+  // §16.2.5.t22 (a) — viewport-coord invalidation. cachedChipRects
+  // holds `getBoundingClientRect()` results, which are viewport-
+  // relative. HTML5 drag near a viewport edge triggers native auto-
+  // scroll: chips translate in viewport space while `clientX` stays
+  // fresh-viewport → cached midpoints address the wrong chip. Same
+  // for any concurrent layout shift outside the drag interaction
+  // (sibling section expand/collapse, inspector panel open). Window
+  // scroll + resize while the cache is live → invalidate; the next
+  // dragover refetches automatically via `_ensureRects`.
+  //
+  // Listeners are scoped to the drag-cycle lifetime: registered when
+  // the cache first populates, removed by `_resetDragState`. Passive
+  // because they only invalidate state, never mutate DOM or call
+  // preventDefault. `capture: true` so the handlers see scrolls in
+  // any ancestor scroll container — `scroll` doesn't bubble.
+  let listenersAttached = false;
+  function _attachScrollListeners() {
+    if (listenersAttached) return;
+    listenersAttached = true;
+    window.addEventListener('scroll', _invalidateRectCache, {
+      passive: true, capture: true,
+    });
+    window.addEventListener('resize', _invalidateRectCache, { passive: true });
+  }
+  function _detachScrollListeners() {
+    if (!listenersAttached) return;
+    listenersAttached = false;
+    window.removeEventListener('scroll', _invalidateRectCache, {
+      capture: true,
+    });
+    window.removeEventListener('resize', _invalidateRectCache);
+  }
+
   function _ensureRects(container: HTMLElement): DOMRect[] {
     if (cachedChipRects !== null) return cachedChipRects;
     const chips = container.querySelectorAll('[data-testid="chip"]');
@@ -128,6 +161,7 @@
       rects[i] = (chips[i] as HTMLElement).getBoundingClientRect();
     }
     cachedChipRects = rects;
+    _attachScrollListeners();
     return rects;
   }
 
@@ -152,12 +186,12 @@
 
   // Common cleanup invoked by dragleave (real container-leave),
   // dragend, drop, and destroy. Combines pending-rAF cancel + rect-
-  // cache invalidation + indicator clear into one site so future
-  // cleanup steps (e.g. §16.2.5.t22's window scroll/resize listener
-  // teardown) land in one place.
+  // cache invalidation + scroll-listener teardown + indicator clear
+  // into one site so the lifecycle invariants stay together.
   function _resetDragState() {
     _cancelPendingFrame();
     _invalidateRectCache();
+    _detachScrollListeners();
     dropIndicatorAt = null;
   }
 
