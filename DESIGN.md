@@ -6274,7 +6274,7 @@ Inserted into the strategic sequence based on §16.0 audit:
 | §16.21 Test follow-ups (mutation + perf) | medium | When refactor confidence demands stronger regression coverage. |
 | §16.22 Trace viewer SSR migration | small | Flash-of-empty-shell becomes annoying or SEO matters. |
 | **§16.11.t1** Pre-materialise pools as dataclasses for the async path | small (~1 commit) | A future engine strategy lazily reads an ORM `Track` relationship → `DetachedInstanceError` only in `/jobs/generate`, not `/generate`. Documented at `start_generate_job`'s `load_pools` call. Promote when it bites. |
-| **§16.11.t2** Adaptive / long-poll polling for job state | small-medium | §16.2.6 live-preview's polling tax (~250ms median) becomes a felt UX issue. Two mitigations queued in §16.11 punts table: adaptive (250ms while running) or long-poll (`GET /api/jobs/{id}?wait=2000`). Both protocol-compatible — no breaking changes. |
+| **§16.11.t2** Adaptive / long-poll polling for job state | small-medium | §16.2.6 live-preview multiplies the polling tax: a 1.5s preview at 250ms poll = ~6 polls per preview × 5 quick edits = ~30 polls per editing burst. Two mitigations queued in §16.11 punts table: adaptive (250ms-running / 1000ms-idle, frontend-only) or long-poll (`GET /api/jobs/{id}?wait=2000`, server changes). Both protocol-compatible — no breaking changes. **Promotion timing: land within ~1 week of §16.2.6 c4 ships** so the polling tax doesn't linger past the slice that creates it. (§16.2.6's design review #1 folded a duplicate `§16.2.6.t1` entry back into this row; the work item belongs here, not in §16.2.6's sub-slice numbering.) |
 | **§16.11.t3** Server-restart toast UX refinement | tiny (~1 commit) | Today: generic "job vanished mid-poll" inline error. Design called for a toast pointer to the retry button. Adequate for v1; reconsider when a user reports the experience as confusing. |
 | ~~**§16.2.2.t1** Runtime validation of `/api/stations/{slug}/sidecar`~~ | **CLOSED** (`1815c57`) | `parseEditorSidecarResponse` in `web/src/lib/editor.ts` narrows the response from `unknown` to `{template: StationTemplate, sidecar: Sidecar, sidecar_error}`. Wired into `getStationSidecar`; route dropped both `as unknown as` casts. Per-element drift checks (`template.sources[i].name`, `sidecar.sections[i].{id, blocks}`, `sidecar.layout_order[i]`) added in the post-c5 review fix; 14 vitest cases pin both top-level and per-element drift. |
 | ~~**§16.2.2.t2** Visualise route load-function test~~ | **CLOSED in post-c5 sweep** | New `visualise.test.ts` pins loading / error / 404 / warning-banner / happy-path / missing-slug states. 6 tests. |
@@ -6990,7 +6990,7 @@ Seven implementation slices, each independently shippable:
 | **§16.2.3** | Atomic slot editing | Click chip → edit form → save (parameter fields only; see locked design below). **Targeted `PATCH /api/stations/{slug}/blocks`** with optimistic `expected_updated_at`; DB-as-truth + on-demand disk export. NO drag-drop (reorder is §16.2.5), NO retyping (§16.2.4), NO structural edits (§16.2.5). | Medium — first write path; resolved via the locked design (decisions A–F). |
 | **§16.2.4** | Macro editing | **SHIPPED.** Edit-once-applies-to-all (PATCH /macros/{macro_id} fan-out via resolve_macro_addresses). **+ block retyping** (PATCH /blocks/retype with role-validated strategy+source swap) closes the §16.2.3 punt. **+ per-block `allowlist_sources` editor** via the new `<ChipMultiInput>` component — closes §16.14.t7 c3 docs promise. D4 role-aware bidirectional dropdowns. Macro palette sidebar PUNTED to §16.2.4.t1 (D5). | Medium. |
 | **§16.2.5** | Section composition | **SHIPPED.** Create / rename / reorder sections + auto-`_unsorted` bin on non-empty delete (D2). Drag atomic chips between sections (HTML5 + dropdown fallback per D6); macros stay pinned (move requires slot_index pinning on macros — punted indefinitely). **+ structural block edits** (`size` / add / remove) close the §16.2.3 punt — D5 index-shift contract bumps every `slot_index ≥ N` in the sidecar atomic refs in the same transaction. D1 sidecar-in-DB (`Station.sidecar` JSON column) + Alembic backfill. First Playwright e2e covers the §16.2.3 + §16.2.4 + §16.2.5 surface. | Medium. |
-| **§16.2.6** | Live preview endpoint + UI + staged-edit + Discard | **Design locked** (full entry below at §16.2.6). `POST /api/stations/{slug}/jobs/preview` (§16.11 job-id transport; in-memory; no persistence side-effects) + editor wires it to a debounced auto-refresh trace panel. **D1 opt-in via toggle** (default OFF preserves §16.2.5's immediate-per-block-save mental model). **D2 side panel** (right drawer, ~30% width, drag-resizable). **D3 inline `<TracePane>`** Svelte component (NOT iframe — avoids activating §16.2.5.t22(b) masked-types dragleave). **D4 polling unchanged at v1** (§16.11's 250ms pattern); adaptive/long-poll fast-follow as §16.2.6.t1. **D5 lost-on-tab-close at v1**; staged-edit recovery queued as §16.2.6.t2 (multi-tab + stale-state semantics need a separate design pass). **Implementation note:** `excluded_mix_ids` must be RECOMPUTED per request from the DB's current MixUsage (not cached at page-load) — if the user edits a mix block's `exclusion_window` value in the editor, the new window changes which MixUsage rows are in scope. Same for `previous_playlist` if the user is on a non-week-1 preview. The endpoint reads all rule-derived inputs fresh from the request body + DB; nothing is cached across edits within a session. **+ staged-edit + Discard (F2)** punted here from §16.2.3 — the in-memory edit-accumulation + Discard model lands with live preview, since preview inherently needs staging; §16.2.3 ships immediate per-block save. **Plan**: c1 backend preview endpoint + JobStore wire-up, c2 frontend toggle + TracePane, c3 Save/Discard + 409 conflict UX (folds §16.2.5.t12), c4 docs + closeout (folds .t11/.t19/.t21/.t22 b/c/d). | Medium — new API surface; debounce + state-management UX. |
+| **§16.2.6** | Live preview endpoint + UI + staged-edit + Discard | **Design locked** (full entry below at §16.2.6). `POST /api/stations/{slug}/jobs/preview` (§16.11 job-id transport; in-memory; no persistence side-effects) + editor wires it to a debounced auto-refresh trace panel. **D1 opt-in via toggle** (default OFF preserves §16.2.5's immediate-per-block-save mental model). **D2 side panel** (right drawer, ~30% width, drag-resizable). **D3 inline `<TracePane>`** Svelte component (NOT iframe — cheaper cross-pane event dispatch for §16.2.6.t4's click-trace-row → jump-to-chip; no CSS-isolation problem to solve for a flat read-only row list; iframe would duplicate the Svelte runtime). **D4 polling unchanged at v1** (§16.11's 250ms pattern); adaptive/long-poll fast-follow lives in §16.11.t2 (its natural home) with a "within ~1 week of §16.2.6 c4" promotion clause. **D5 lost-on-tab-close at v1**; staged-edit recovery queued as §16.2.6.t1 (multi-tab + stale-state semantics need a separate design pass). **Implementation note:** `excluded_mix_ids` must be RECOMPUTED per request from the DB's current MixUsage (not cached at page-load) — if the user edits a mix block's `exclusion_window` value in the editor, the new window changes which MixUsage rows are in scope. Same for `previous_playlist` if the user is on a non-week-1 preview. The endpoint reads all rule-derived inputs fresh from the request body + DB; nothing is cached across edits within a session. **+ staged-edit + Discard (F2)** punted here from §16.2.3 — the in-memory edit-accumulation + Discard model lands with live preview, since preview inherently needs staging; §16.2.3 ships immediate per-block save. **Plan**: c1 backend preview endpoint + JobStore wire-up (reuses `generate_stream` — no new engine function), c2 frontend toggle + TracePane + staging buffer skeleton, c3 Save/Discard + Retry-vs-Drop partial-failure modal + preview-error banner + toggle-off prompt (folds §16.2.5.t12), c4 docs-only closeout. Adjacent migrations (§16.2.5.t11, .t19, .t21, .t22 c+d) land as their own commits between c3 and c4; .t22(b) stays latent (D3 chose inline DOM, no iframe → no masked-types dragleave activation). | Medium — new API surface; debounce + state-management UX. |
 | **§16.2.7** | Compare against saved | "Show what changed since save" button → slot-by-slot diff using `byte_equality.py` helpers. | Low — diff helpers exist; UI plumbing. |
 | **§16.2.8** | Fork action | "Fork this station" → duplicates JSON + sidecar. | Low — file copy + slug-rename UI. |
 
@@ -8613,17 +8613,32 @@ marker (if compare-against-saved is on — §16.2.7 will populate
 this; §16.2.6 just renders the column with a stub).
 
 NOT an iframe embedding `/stations/[slug]/visualise`. Iframe was
-considered: process-isolated, cleaner CSS scoping. But:
+considered for process-isolation / cleaner CSS scoping. Rejected
+because the trace pane is a flat read-only list (no drop targets,
+no drag-drop interactions to isolate) so the iframe benefits don't
+apply, and:
 
-- Activates §16.2.5.t22(b) — Firefox/Safari mask `dataTransfer.types`
-  across iframe boundaries during dragleave, which would cause
-  the existing chip drag-drop to leak indicator state.
-- The trace shape is a flat list — no CSS-scoping problem to
-  solve.
-- Iframe communication (postMessage, etc.) for the
-  "click-trace-row → jump-to-chip" interaction (queued §16.2.6 or
-  §16.2.7) would be heavier than a parent-component event
-  dispatch.
+- **Cross-pane event dispatch (the deciding factor for §16.2.6.t4)**.
+  Click-trace-row → jump-to-chip needs the trace row to fire a
+  Svelte event the parent canvas listens for. Inline DOM:
+  `on:select={jumpToSlot}` — one event-dispatch hop. Iframe:
+  `postMessage({type: 'jump', slotIdx})` + a parent-side message
+  listener + JSON-serialise/deserialise + cross-document security
+  origin check. Same logic but ~5× the wiring + slower.
+- **CSS scoping not needed**. The trace shape is `<div>` rows
+  with className-namespaced styles. Svelte's scoped CSS already
+  isolates the component; an iframe's separate-document isolation
+  is overkill for content this simple.
+- **Cheaper memory footprint**. Iframes share no Svelte runtime
+  with the parent — embedding `/stations/[slug]/visualise` would
+  duplicate the editor's JS bundle + state stores. Inline DOM
+  reuses the parent's runtime.
+
+(The §16.2.5.t22(b) masked-types dragleave issue does NOT apply
+here — the trace pane has no drop targets so dragleave never
+fires across the iframe boundary. The §16.2.5.t22(b) entry's
+iframe-dependency clause refers to a hypothetical FUTURE iframe
+embedding the editor canvas itself, not this trace pane.)
 
 **Alternative documented for future revisit:**
 
@@ -8711,8 +8726,7 @@ Content-Type: application/json
 {
   "template": {...},      # full template (in-memory editor state)
   "sidecar": {...},       # full sidecar (in-memory editor state)
-  "week_number": 1,       # which week to generate (default 1)
-  "previous_playlist": null   # explicit for week 1; required for week N+1
+  "week_number": 1        # which week to generate (default 1)
 }
 
 → 202 Accepted
@@ -8722,6 +8736,16 @@ Content-Type: application/json
 }
 ```
 
+The request body carries ONLY the editor-mutated state (template,
+sidecar, week_number). Inputs the server can look up from the DB
+on its own — `excluded_mix_ids` (recomputed from MixUsage),
+`previous_playlist` (looked up by `week_number - 1`) — are NOT
+client-supplied. Sending them would let a stale frontend snapshot
+override fresh server state (e.g. the operator just edited a mix
+block's `exclusion_window` field; if the client sent the
+pre-edit `excluded_mix_ids` the recompute guarantee would be
+silently broken).
+
 The endpoint:
 1. Parses the template via `engine.template.parse_template` (400
    on TemplateError).
@@ -8729,14 +8753,15 @@ The endpoint:
    (400 on EditorMetadataError — uses the full wrapper, not the
    §16.2.5.t15 semantics-only split, since preview input is
    operator-edited + not yet known-grammar-valid).
-3. Recomputes `excluded_mix_ids` from current DB MixUsage (NOT
-   cached) — the operator may have edited a `exclusion_window`
-   field; the new window changes which MixUsage rows are in
-   scope.
-4. Recomputes `previous_playlist` from DB for non-week-1 previews
-   (same rationale).
-5. Starts a §16.11-style job via `engine.preview_stream(...)`
-   yielding `ProgressEvent | PreviewResult`.
+3. Recomputes `excluded_mix_ids` from current DB MixUsage — the
+   operator may have edited an `exclusion_window` field; the new
+   window changes which MixUsage rows are in scope. NOT cached
+   across requests within a session.
+4. Looks up `previous_playlist` from DB by `week_number - 1` for
+   non-week-1 previews (same recompute-from-DB rationale).
+5. Starts a §16.11-style job via `engine.generate_stream(...)`
+   (see preview_stream note below) yielding
+   `ProgressEvent | GenerationResult`.
 6. Returns the job-id; the frontend polls `GET /api/jobs/{job_id}`
    per §16.11's pattern.
 
@@ -8745,134 +8770,324 @@ NO persistence side-effects. The endpoint MUST NOT write to
 any other table. Tested explicitly: a preview call followed by a
 `db.refresh(station)` MUST show no changes.
 
-#### Frontend state machine — staging buffer
+#### Engine `preview_stream` — relationship to §16.11's `generate_stream`
+
+§16.11 ships `engine.generator.generate_stream(template, pools, *,
+week, seed, excluded_mix_ids, previous_playlist, ...)` — the
+generator pattern the job runner drives. The preview endpoint
+needs the same shape (in-memory template + pools, no persistence
+writes), so v1 **reuses `generate_stream` directly** rather than
+introducing a parallel `preview_stream`. The route handler:
+
+1. Parses the request-body template via `parse_template`.
+2. Loads pools for the parsed template (same `load_pools` call
+   `/jobs/generate` uses).
+3. Recomputes `excluded_mix_ids` + `previous_playlist` from DB
+   (steps 3-4 above).
+4. Calls `generate_stream(template, pools, week=..., seed=...,
+   excluded_mix_ids=..., previous_playlist=...)` and feeds the
+   stream into a §16.11 JobStore.
+
+A separate `preview_stream` only becomes necessary if a future
+slice needs the engine to behave differently for preview vs save
+(e.g. compute trace diagnostics that the saved generation doesn't
+emit, or apply a temporary per-section seed override the saved
+generation can't see). At that point introduce `preview_stream` as
+a thin wrapper around `generate_stream`. Today the wrapper would
+be pure overhead.
+
+**Why this is a meaningful c1 scope cut**: my earlier sketch had
+`preview_stream(template, sidecar, pools, prev_playlist,
+excluded_mix_ids)` — a NEW engine function. Implementer would have
+to define its signature, document the relationship to
+generate_stream, write tests pinning the parallel-not-divergent
+contract. None of that is needed: route-layer reuse of
+generate_stream + a new ROUTE handler is the whole c1 backend
+delta.
+
+#### Frontend staging buffer — storage shape
+
+Two pieces of state, written together, derived from a common base:
+
+- **`opLog: Edit[]`** — the AUTHORITATIVE store. An ordered list
+  of edits the operator made since the last Save (or since toggle-
+  on). Each entry mirrors the existing PATCH endpoints' request
+  shapes: `{kind: 'patchBlock', addr, fields}`,
+  `{kind: 'renameSection', sectionId, name}`,
+  `{kind: 'moveBlock', addr, targetSectionId, targetIndex}`, etc.
+  Save replays this list against the DB as sequential PATCHes;
+  Discard drops it.
+- **`stagedSidecar`** — DERIVED via
+  `applyEdits(baseSidecar, opLog)`. Recomputed whenever opLog
+  changes (cheap — same machinery the canvas already uses to
+  visualise mutations). This is what the preview endpoint receives
+  in its request body.
+
+`baseSidecar` is the sidecar at the moment the toggle went ON. It
+never mutates while the toggle is on; Discard restores
+stagedSidecar = baseSidecar by emptying opLog.
+
+**Why op log primary instead of cloned sidecar primary**: Save's
+contract is "replay each staged edit as a PATCH" — that requires
+the edit-level granularity. A cloned-sidecar-as-primary design
+would lose the op boundaries (you can't reverse-engineer "rename
+A→B then B→C" from a final-state diff against the original; both
+collapse to "rename A→C"). Keeping the op log canonical + the
+sidecar derived gives Save what it needs without double-bookkeeping.
+
+#### Frontend state machine
+
+Two layers: a TOP-LEVEL mode (toggle OFF vs ON) + an INNER state
+inside the ON mode.
 
 ```
-                    ┌──── Toggle OFF ────┐
-                    │                    │
-                    │   (default)        │
-                    │                    │
-                    └─→ §16.2.5 mental ──┘
-                        model unchanged
-                        — every PATCH
-                        flushes immediately
+                    ┌──── Toggle OFF (default) ──────────────┐
+                    │  §16.2.5 mental model unchanged —      │
+                    │  every PATCH flushes immediately. No   │
+                    │  buffer, no preview pane.              │
+                    └────────────────────────────────────────┘
 
-                    ┌──── Toggle ON ─────┐
-                    │                    │
-                    ▼                    │
-        ┌─ stagedSidecar = clone(sidecar)│
-        │  stagedTemplate = clone(template)
-        │
-        ▼
-   ┌────────────┐    edit chip       ┌──────────────┐
-   │   IDLE     │ ─────────────────→ │   STAGING    │
-   └────────────┘                    └──────────────┘
-        ▲                                  │
-        │ Discard                          │ 500ms idle
-        │ (stagedSidecar = sidecar)        ▼
-        │                            ┌──────────────┐
-        │                            │  PREVIEWING  │
-        │                            │  (job pending)│
-        │                            └──────────────┘
-        │                                  │
-        │ Save success                     │ trace returned
-        │ (PATCHes run + refetch)          ▼
-        └─────────────────────────── ┌──────────────┐
-                                     │   STAGED     │
-                                     │  (trace shown)│
-                                     └──────────────┘
-                                          ↓ Save
-                                     ┌──────────────┐
-                                     │   SAVING     │
-                                     │ (replaying   │
-                                     │  PATCHes)    │
-                                     └──────────────┘
+                    ┌──── Toggle ON ─────────────────────────┐
+                    │                                        │
+                    │  baseSidecar = current sidecar         │
+                    │  opLog = []                            │
+                    │                                        │
+                    │  ┌─────────┐  edit chip   ┌──────────┐│
+                    │  │  IDLE   │ ───────────→ │ STAGING  ││
+                    │  └─────────┘              └──────────┘│
+                    │       ▲                       │       │
+                    │       │ Save success          │ 500ms │
+                    │       │ Discard               │ idle  │
+                    │       │                       ▼       │
+                    │       │                  ┌────────────┐│
+                    │       │                  │ PREVIEWING ││
+                    │       │                  │ (job in    ││
+                    │       │                  │  flight)   ││
+                    │       │                  └────────────┘│
+                    │       │                       │       │
+                    │       │           trace OK ──┤        │
+                    │       │           preview 400 ┤       │
+                    │       │                       ▼       │
+                    │       │                  ┌────────────┐│
+                    │       │                  │  STAGED    ││
+                    │       │                  │  (trace    ││
+                    │       │                  │  shown OR  ││
+                    │       │                  │  error     ││
+                    │       │                  │  banner    ││
+                    │       │                  │  over last-││
+                    │       │                  │  good      ││
+                    │       │                  │  trace)    ││
+                    │       │                  └────────────┘│
+                    │       │                       │ Save  │
+                    │       │                       ▼       │
+                    │       │                  ┌────────────┐│
+                    │       │                  │  SAVING    ││
+                    │       │                  │  (replay   ││
+                    │       │                  │   PATCHes  ││
+                    │       │                  │   in       ││
+                    │       │                  │   order)   ││
+                    │       │                  └────────────┘│
+                    │       │                       │       │
+                    │       └───────────────────────┘       │
+                    │                                        │
+                    └────────────────────────────────────────┘
 ```
 
-**Save**: replay each staged edit as a sequential PATCH against the
-current DB state. Each PATCH carries the current `updated_at` token;
-a 409 conflict aborts the replay + surfaces "Save failed — another
-session changed this station. Discard your edits and reload?"
-Atomicity: not transactional across edits (each PATCH is its own
-transaction). A mid-replay 500 leaves the DB partially mutated —
-the operator sees an error banner + can either Discard or retry.
-The latter is acceptable for v1; transactional all-or-nothing Save
-queued as **§16.2.6.t3** (would need a server-side "batch PATCH"
-endpoint or a savepoint-wrapped multi-PATCH).
+**Edit during PREVIEWING (in-flight cancellation)**: when a new
+edit fires while a preview job is pending, cancel the in-flight
+job via §16.11's existing `DELETE /api/jobs/{id}` + transition
+back to STAGING with the new edit appended. Reset the 500ms
+debounce timer. Result: one preview ever in flight per station;
+no stale-trace flashes; matches §16.11's cancel-on-supersede
+pattern for `/jobs/generate`.
 
-**Discard**: clears the staging buffer + refetches sidecar via
-`GET /api/stations/{slug}/sidecar`. No server call to "abandon" —
-nothing was sent.
+**PREVIEW_FAILED handling**: the preview endpoint can return 400
+on a mid-edit invalid template/sidecar (e.g. operator renamed a
+section to empty string — `_validate_grammar` rejects). The
+STAGED state distinguishes (a) successful trace render vs (b) error
+banner over last-good trace via internal status. The trace pane
+keeps showing the last-good trace so the operator's frame of
+reference doesn't disappear when they're mid-typing; the banner
+names the validation error inline. The next valid preview clears
+the banner. Trace pane only goes empty when the toggle goes off
+or Discard runs.
+
+**Toggle OFF mid-stage (explicit prompt)**: operator with non-empty
+opLog tries to flip the toggle OFF. Modal: "You have {N} staged
+edits. Save them, Discard them, or Cancel?" Three buttons:
+- **Save** — replay opLog as PATCHes (the normal Save path); on
+  success, toggle OFF + clear buffer.
+- **Discard** — drop opLog, toggle OFF.
+- **Cancel** — keep toggle ON, modal closes, no change.
+
+The same modal fires on tab-close (`beforeunload` listener) with
+the same three options — except Cancel becomes the default if
+the operator clicks Reload or closes the dialog, since v1 D5 is
+lost-on-tab-close. §16.2.6.t2 (recovery) replaces this with a
+true persistence path.
+
+#### Save semantics — partial-failure UX
+
+Save replays each opLog entry as a sequential PATCH against the
+current DB state. Each PATCH carries the current `updated_at`
+token; the §16.2.5 endpoints' optimistic-concurrency layer catches
+409s. Three outcomes per Save attempt:
+
+**All PATCHes succeed**: opLog cleared, baseSidecar refreshed
+from the final PATCH's inline sidecar response (§16.2.5.t5 wired
+this), transition to IDLE.
+
+**409 conflict on edit K**: another session changed this station
+since the toggle went ON. Edits 1..K-1 are committed; edit K is
+rejected; edits K+1..N are not attempted. Modal: "Save failed at
+edit {K} — another session changed this station while you were
+editing. Your earlier edits (1..{K-1}) are saved. What about the
+rest?"
+- **Retry remaining** — refetch the sidecar (now reflects the
+  conflicting session's writes), recompute the staged sidecar
+  via `applyEdits(refreshedBase, opLog.slice(K-1))`, attempt to
+  save just K..N. If their patches still apply against the
+  refreshed base, succeed; if K still 409s, repeat the dialog.
+- **Drop remaining** — drop K..N from opLog, refresh base from
+  the new DB state, return to STAGED (or IDLE if K..N was the
+  whole remainder).
+
+**500 on edit K (or any non-409 error)**: same shape of dialog,
+but "Save failed at edit {K} due to a server error." Retry /
+Drop semantics identical to the 409 case.
+
+The explicit two-button modal (Retry vs Drop) is the key fix —
+the original design's "operator can either Discard or retry"
+collapsed two distinct user intents into one ambiguous Discard
+button that also wipes the un-attempted edits + leaves the
+committed prefix in a now-non-rollback-able state. Naming the
+choice forces the operator to acknowledge what's committed +
+what's at risk.
+
+Transactional all-or-nothing Save (where edits 1..K-1 also
+roll back on the K failure) is queued as **§16.2.6.t3** — would
+need either a server-side "batch PATCH" endpoint or savepoint-
+wrapped multi-PATCH. Promote when the partial-Save modal feels
+clunky in real usage.
+
+#### Discard
+
+Clears `opLog`, recomputes `stagedSidecar = baseSidecar`, leaves
+toggle ON, returns to IDLE state. No server call ("nothing was
+sent" — true now that the buffer is op-log primary). Trace pane
+clears (or shows the baseSidecar's last-known trace if §16.2.6
+ever caches that — not in v1).
 
 #### Plan / commit order
 
-**§16.2.6 c1 — backend preview endpoint + JobStore integration.**
-Engine adds `preview_stream(template, sidecar, pools, prev_playlist,
-excluded_mix_ids) -> Iterator[ProgressEvent | PreviewResult]`. Route
-adds `POST /api/stations/{slug}/jobs/preview` wiring to JobStore.
-`excluded_mix_ids` + `previous_playlist` recomputation helpers
-extracted (shared with regular `/jobs/generate`). Pytest pins: no
-persistence side-effects, deterministic seed produces identical
-trace across runs, mid-edit `exclusion_window` change affects the
-next preview (the regression the queue-table implementation note
-calls out).
+**§16.2.6 c1 — backend preview endpoint.**
+Route adds `POST /api/stations/{slug}/jobs/preview` wiring to
+JobStore. NO new engine function — reuses §16.11's existing
+`engine.generator.generate_stream(template, pools, *, week, seed,
+excluded_mix_ids, previous_playlist, ...)`. The route handler
+parses the request-body template via `parse_template`, loads pools
+via the existing `load_pools` helper (same path
+`/jobs/generate` uses), recomputes `excluded_mix_ids` from current
+MixUsage + looks up `previous_playlist` by `week_number - 1`, then
+feeds `generate_stream` into a new JobStore entry tagged with kind
+`'preview'`. Pytest pins: no persistence side-effects (a preview
+call followed by `db.refresh(station)` shows no changes),
+deterministic seed produces identical trace across runs, mid-edit
+`exclusion_window` change affects the next preview (the regression
+the recompute-per-request guarantee creates).
 
-**§16.2.6 c2 — frontend live-preview pane + toggle.**
-`<LivePreviewToggle>` button in canvas header. `<TracePane>`
-component renders the returned trace JSON. `editor-state.ts`
-adds the staging buffer + toggle persistence. DetailPanel's Save
-button label switches based on toggle state. Toggle OFF behavior
-matches §16.2.5 exactly (vitest regression pin). Playwright e2e:
-toggle on → edit chip → wait for trace → trace reflects edit.
+**§16.2.6 c2 — frontend live-preview pane + toggle + staging
+buffer skeleton.**
+`<LivePreviewToggle>` button in canvas header (persists per-station
+to localStorage; default OFF). `<TracePane>` Svelte component
+renders the returned trace JSON. `editor-state.ts` (or a new
+`live-preview-state.ts`) adds `opLog`, `baseSidecar`,
+`stagedSidecar` (derived), state machine + debounce logic.
+DetailPanel's Save button label switches to "Stage edit" when
+toggle ON. Toggle OFF behavior matches §16.2.5 exactly (vitest
+regression pin). Playwright e2e: toggle on → edit chip → wait for
+trace → trace reflects edit. NO Save/Discard buttons yet — those
+land in c3.
 
-**§16.2.6 c3 — staged-edit Save / Discard affordances + 409
-conflict UX.**
+**§16.2.6 c3 — Save / Discard affordances + partial-failure UX +
+preview-error banner.**
 Canvas header gains Save + Discard buttons (visible only when
-toggle ON + staging buffer non-empty). Save replays staged edits
-via sequential PATCH. 409 surfaces the §16.2.5.t12 conflict-UX
-panel (folds in the queued sub-slice). Discard refetches +
-clears.
+toggle ON + opLog non-empty). Save replays opLog as sequential
+PATCHes. The "edit K failed (409 or 500) — Retry remaining vs Drop
+remaining" modal lands here (Save semantics section above). Discard
+clears opLog + resets stagedSidecar (no server call). Preview-error
+banner over last-good trace lands here (PREVIEW_FAILED handling
+above). Folds §16.2.5.t12 (multi-tab conflict UX — t12's queued
+work is essentially the c3 Retry/Drop modal). Toggle-off-mid-stage
+prompt + `beforeunload` prompt also land here.
 
 **§16.2.6 c4 — docs + closeout.**
-DESIGN.md §16.2.6 marked SHIPPED + status snapshot bump. Folds in
-sub-slices §16.2.5.t11 (applySidecarState helper), §16.2.5.t12
-(conflict UX, landed in c3), §16.2.5.t19 + §16.2.5.t21 (shared
-actions migrations) + §16.2.5.t22 b/c/d (drag-target lifecycle
-hardening — landed earlier if c1's iframe-vs-DOM choice activated
-masked-types in the meantime). Cross-link from §16.2.7 (compare-
-against-saved) when that slice queues.
+DESIGN.md §16.2.6 marked SHIPPED + status snapshot bump.
+Cross-link from §16.2.7 (compare-against-saved) when that slice
+queues. **NO migration work folded** — c4 stays docs-only.
+
+**Adjacent migrations land as their own sub-slice commits between
+c3 and c4** (each is independently green; bundling them into c4
+would inflate the "closeout" commit by ~6 sub-slices' worth of
+code):
+- §16.2.5.t11 (applySidecarState helper) — natural touchpoint
+  since c2/c3 add a 7th sidecar-mutating endpoint (the preview
+  job's response shape) + the new `live-preview-state.ts` benefits
+  from the helper for consistency.
+- §16.2.5.t19 (SectionHeader rename + DetailPanel arm migrations
+  to shared actions) — Save/Discard buttons in c3 are the third
+  arm-to-confirm consumer; the t19 entry already flagged this as
+  the natural moment.
+- §16.2.5.t21 (`<ConfirmButton>` Svelte component) — replaces
+  armToConfirm at the same moment t19 migrates DetailPanel. Pair
+  with t19 in a single migration commit.
+- §16.2.5.t22(c)+(d) (drag-target lifecycle hardening —
+  child-transition skip + cross-section dragend leak). The
+  iframe-gated (b) STAYS LATENT because D3 chose inline DOM (no
+  iframe → no masked-types dragleave activation).
+
+Each adjacent migration is its own commit; all land between c3 and
+c4. c4's docs job then accurately reflects what shipped.
 
 #### Cross-cutting punts (queued §16.2.6.tX)
 
-**§16.2.6.t1** (small-medium) — adaptive backoff OR long-poll for
-live-preview's polling tax. Promotes §16.11.t2 onto §16.2.6's tail.
-Pick adaptive (250ms-running / 1000ms-idle, frontend-only) if it's
-enough; long-poll (server `wait_until_done(timeout_ms)`) if not.
-Land within ~1 week of §16.2.6 c4.
-
-**§16.2.6.t2** (medium) — staged-edit persistence + recovery. The
+**§16.2.6.t1** (medium) — staged-edit persistence + recovery. The
 GOAL is recovery; v1 ships lost-on-tab-close because the conflict
 + stale-state semantics need a separate design pass. Sub-decisions:
 storage (localStorage vs IndexedDB), freshness check (compare staged
 template against current DB), multi-tab conflict (last-write-wins
 vs cross-tab lock vs "another tab has staged edits — open in
 read-only?"), recovery UX (silent vs prompt). Promote after §16.2.6
-c4 + at least one operator's feedback session.
+c4 + at least one operator's feedback session. (Was originally
+numbered .t2 in the c1-draft entry; promoted to .t1 since the
+former .t1 — polling adaptive/long-poll — folded into §16.11.t2;
+see closeout note.)
 
-**§16.2.6.t3** (small-medium) — transactional all-or-nothing Save.
+**§16.2.6.t2** (small-medium) — transactional all-or-nothing Save.
 Today Save replays edits as sequential PATCHes; mid-replay error
-leaves DB partially mutated. Options: server-side batch endpoint
-(`POST /sidecar/batch` accepting an array of mutations + applying
-in one transaction) OR savepoint-wrapped multi-PATCH (FastAPI
-endpoint loops + uses SQLAlchemy SAVEPOINTs). Promote when an
-operator hits the partial-replay state in real usage.
+leaves DB partially mutated + surfaces the Retry/Drop modal.
+Options: server-side batch endpoint (`POST /sidecar/batch`
+accepting an array of mutations + applying in one transaction) OR
+savepoint-wrapped multi-PATCH (FastAPI endpoint loops + uses
+SQLAlchemy SAVEPOINTs). Promote when an operator hits the
+partial-Save modal regularly + reports the Retry workflow as
+clunky. (Was .t3.)
 
-**§16.2.6.t4** (small) — click-trace-row → jump-to-chip cross-pane
+**§16.2.6.t3** (small) — click-trace-row → jump-to-chip cross-pane
 interaction. Trace rows already render slot index + macro_id; the
 chip the slot belongs to is one event dispatch away. Promote when
 operators report navigating between trace + canvas feels disjointed.
 The §16.2.0 D4 follow-up note ("LATER (§16.2.6 or §16.2.7)") homes
-this here.
+this here. (Was .t4.)
+
+**Polling cadence (adaptive backoff or long-poll) was originally
+queued as a §16.2.6.t1 fast-follow.** Folded into the existing
+§16.11.t2 entry — that's where the work item already lives, and
+splitting the same optimization across two queued slices would
+fork the decision tree. §16.11.t2's promotion clause now reads
+"land within ~1 week of §16.2.6 c4 ships" instead of "becomes a
+felt UX issue"; the §16.2.6 closeout (c4) cross-references it
+explicitly so the fast-follow doesn't get lost.
 
 #### Out-of-scope / explicit deferrals
 
