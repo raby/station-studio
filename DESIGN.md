@@ -9124,6 +9124,57 @@ operators report navigating between trace + canvas feels disjointed.
 The §16.2.0 D4 follow-up note ("LATER (§16.2.6 or §16.2.7)") homes
 this here. (Was .t4.)
 
+**§16.2.6.t4** (small) — Cancellation-edge polish on
+`POLICY_CANCEL_EXISTING` supersede. §16.2.6 c1 review #1 finding
+#7. `test_preview_cancel_existing_supersedes_running_preview`
+accepts a 404 on the GET for the superseded job (JobStore GC may
+have evicted it). The 404-acceptable branch silently passes if a
+future bug prematurely evicts cancelled jobs (e.g. someone drops
+the 60s grace period). Tighten by: (a) introducing a separate test
+that exercises the grace-period eviction path explicitly, OR (b)
+downgrading the 404-acceptable comment to an xfail with a named
+condition. Promote when the supersede semantics need re-pinning
+for a different reason (e.g. §16.2.6.t2 transactional Save fans
+out into multi-job orchestration).
+
+**§16.2.6.t5** (small) — `PreviewRequest` strict Pydantic config.
+§16.2.6 c1 review #1 finding #12. Today
+`PreviewRequest.template`/`sidecar` are unconstrained `dict` fields;
+a malformed nested structure would pass through Pydantic + only
+fail at the engine boundary. Add `model_config =
+ConfigDict(strict=True)` so a future schema field gets enforced at
+the wire. Same pattern as the existing §16.2.5.t8 entry for
+`SidecarMutationResponse`. Pair the promotion of these two for
+shared OpenAPI codegen prep. Promote when the next significant
+template / sidecar schema bump lands.
+
+**§16.2.6.t6** (small) — Request-body size limit on `PreviewRequest`.
+§16.2.6 c1 review #1 finding #11. Today `template`/`sidecar` accept
+any dict; a 100MB body would crash on memory before reaching
+validate_sidecar. FastAPI's MAX_BODY_SIZE setting isn't enforced
+by default. Defensive: add a custom validator that asserts
+`len(json.dumps(v)) < 5MB` per field, or configure FastAPI's
+max-body-size at the app level. Realistic? Probably not for a
+single-user hobbyist app — DoS isn't the threat model. Promote
+if a multi-user deployment scenario surfaces OR if a regression
+introduces accidental request inflation (e.g. template grows to
+include track-level metadata for some reason).
+
+**§16.2.6.t7** (small) — `/jobs/generate` `excluded_track_pids`
+alignment. Pre-existing inconsistency surfaced by §16.2.6 c1
+review #1 batch B. The sync `/generate` endpoint loads
+`excluded_track_pids` via `load_excluded_track_pids` (§16.14.t5);
+the async `/jobs/generate` endpoint doesn't. Result: same template
+via `/generate` vs `/jobs/generate` produces different playlists
+when `cross_pool_dedup_sources` rules are configured.
+`/jobs/preview` (added in c1) loads it inline matching `/generate`.
+Fix: add the same load to `/jobs/generate` (and move it INTO
+`_EngineInputs` if both endpoints then need it). Out of c1's
+review scope since the bug pre-dates §16.2.6 — but the c1 review's
+helper-extraction made the gap explicit, so queue it for
+visibility. Promote when an operator reports `/jobs/generate`
+divergence from `/generate` OR when §16.14.t5's adoption broadens.
+
 **Polling cadence (adaptive backoff or long-poll) was originally
 queued as a §16.2.6.t1 fast-follow.** Folded into the existing
 §16.11.t2 entry — that's where the work item already lives, and
