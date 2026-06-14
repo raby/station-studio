@@ -25,7 +25,7 @@
    */
   import { createEventDispatcher } from 'svelte';
   import { expandSection, type ExpandedRef, type Sidecar, type SidecarSection, type StationTemplate, type ViewModeState } from '$lib/editor';
-  import { CHIP_DRAG_MIME, canDropOn } from '$lib/drag-drop';
+  import { CHIP_DRAG_MIME, canDropOn, hasDragType } from '$lib/drag-drop';
   import Chip from './Chip.svelte';
 
   export let section: SidecarSection;
@@ -76,32 +76,101 @@
   $: acceptsDrops = canDropOn(section) && hasFineGrainedSupport;
 
   function _hasChipPayload(e: DragEvent): boolean {
-    if (!e.dataTransfer) return false;
-    return Array.from(e.dataTransfer.types).includes(CHIP_DRAG_MIME);
+    return hasDragType(e, CHIP_DRAG_MIME);
   }
 
-  function _computeTargetIndex(e: DragEvent, container: HTMLElement): number {
-    // Walk the container's chip children and find the cursor's
-    // position. Left-of-midpoint of chip[i] → insert at index i.
-    // Right-of-everything → append (index === chip count).
-    const chips = Array.from(
-      container.querySelectorAll('[data-testid="chip"]'),
-    ) as HTMLElement[];
+  // §16.2.5.t18 — perf throttling for the dragover hot path.
+  //
+  // Pre-fix: `_computeTargetIndex` walked the container's chip
+  // children + called `getBoundingClientRect()` on each one — on
+  // every dragover (~60Hz × N chips ≈ 3000 forced layouts/sec for a
+  // 50-chip section). The rects don't change mid-drag (chips don't
+  // move while the operator drags one above them), so the per-frame
+  // recompute is pure waste.
+  //
+  // Two cheap fixes:
+  //
+  //   (a) Cache chip rects on first dragover, reuse for subsequent
+  //       dragovers + the final drop. Invalidate on dragleave (real
+  //       container-leave, not a child transition) / dragend / drop.
+  //       Indicator-position writes also invalidate the cache lazily
+  //       since `dropIndicatorAt` change → DOM reflow next tick →
+  //       chips at index ≥ indicator shift right by 2px. So we
+  //       invalidate after each rAF write.
+  //
+  //   (b) rAF-coalesce the `dropIndicatorAt` write. The visual
+  //       indicator only needs frame-rate updates; dragover firing
+  //       at sub-frame granularity is the browser oversampling. One
+  //       rAF in flight at a time; subsequent dragovers just update
+  //       the pending clientX.
+  //
+  // §16.2.6 live-preview adds debounced re-renders on edits; without
+  // this throttle they'd stack on top of the drag's per-frame layout
+  // work and double-spend the budget on idle drag motion.
+  let cachedChipRects: DOMRect[] | null = null;
+  let pendingClientX: number | null = null;
+  let pendingContainer: HTMLElement | null = null;
+  let rafId: number | null = null;
+
+  function _invalidateRectCache() {
+    cachedChipRects = null;
+  }
+
+  function _ensureRects(container: HTMLElement): DOMRect[] {
+    if (cachedChipRects !== null) return cachedChipRects;
+    const chips = container.querySelectorAll('[data-testid="chip"]');
+    const rects: DOMRect[] = new Array(chips.length);
     for (let i = 0; i < chips.length; i++) {
-      const r = chips[i].getBoundingClientRect();
-      const midX = r.left + r.width / 2;
-      if (e.clientX < midX) return i;
+      rects[i] = (chips[i] as HTMLElement).getBoundingClientRect();
     }
-    return chips.length;
+    cachedChipRects = rects;
+    return rects;
+  }
+
+  function _computeTargetIndex(clientX: number, container: HTMLElement): number {
+    // Left-of-midpoint of chip[i] → insert at index i. Right-of-
+    // everything → append (index === chip count).
+    const rects = _ensureRects(container);
+    for (let i = 0; i < rects.length; i++) {
+      const midX = rects[i].left + rects[i].width / 2;
+      if (clientX < midX) return i;
+    }
+    return rects.length;
+  }
+
+  function _cancelPendingFrame() {
+    if (rafId !== null) {
+      cancelAnimationFrame(rafId);
+      rafId = null;
+    }
+    pendingClientX = null;
+    pendingContainer = null;
   }
 
   function onDragOver(e: DragEvent) {
     if (!_hasChipPayload(e) || !acceptsDrops) return;
     e.preventDefault();  // enables drop
     if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
-    dropIndicatorAt = _computeTargetIndex(
-      e, e.currentTarget as HTMLElement,
-    );
+    // §16.2.5.t18(b) — coalesce indicator-position writes to frame
+    // rate. Capture the latest clientX + container; one scheduled
+    // rAF reads them when the frame fires.
+    pendingClientX = e.clientX;
+    pendingContainer = e.currentTarget as HTMLElement;
+    if (rafId !== null) return;
+    rafId = requestAnimationFrame(() => {
+      rafId = null;
+      if (pendingClientX === null || pendingContainer === null) return;
+      const next = _computeTargetIndex(pendingClientX, pendingContainer);
+      pendingClientX = null;
+      pendingContainer = null;
+      if (next !== dropIndicatorAt) {
+        dropIndicatorAt = next;
+        // Indicator inserts a 2px span; chips at index ≥ next shift
+        // right. Force a rect refetch on the next dragover so we
+        // don't read stale cached midpoints.
+        _invalidateRectCache();
+      }
+    });
   }
   function onDragLeave(e: DragEvent) {
     if (!_hasChipPayload(e)) return;
@@ -110,6 +179,8 @@
     const container = e.currentTarget as HTMLElement;
     const next = e.relatedTarget as Node | null;
     if (next && container.contains(next)) return;
+    _cancelPendingFrame();
+    _invalidateRectCache();
     dropIndicatorAt = null;
   }
 
@@ -119,6 +190,8 @@
   // the 2px indicator bar would remain visible until the next drag
   // cycle moves the cursor across the container boundary.
   function onDragEnd() {
+    _cancelPendingFrame();
+    _invalidateRectCache();
     dropIndicatorAt = null;
   }
   function onDrop(e: DragEvent) {
@@ -128,9 +201,15 @@
     // misleading comment. SectionHeader is a SIBLING of ChipFlow
     // inside <section>, not an ancestor — drops on ChipFlow's div
     // never bubble to the header.
+    //
+    // Drop must compute the index synchronously — rAF won't fire
+    // before the event completes. Use the cached rects if available
+    // (set by the last dragover frame); otherwise compute fresh.
     const targetIndex = _computeTargetIndex(
-      e, e.currentTarget as HTMLElement,
+      e.clientX, e.currentTarget as HTMLElement,
     );
+    _cancelPendingFrame();
+    _invalidateRectCache();
     dropIndicatorAt = null;
     const raw = e.dataTransfer?.getData(CHIP_DRAG_MIME);
     if (!raw) return;

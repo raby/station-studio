@@ -21,7 +21,7 @@
   import { focusOnMount } from '$lib/actions';
   import {
     CHIP_DRAG_MIME, SECTION_DRAG_MIME,
-    canDropOn, draggingSectionId, isSystemSection,
+    canDropOn, draggingSectionId, hasDragType, isSystemSection,
   } from '$lib/drag-drop';
   import type { SidecarSection } from '$lib/editor';
 
@@ -121,14 +121,10 @@
   let dragEnterDepth = 0;
 
   function _hasChipPayload(e: DragEvent): boolean {
-    if (!e.dataTransfer) return false;
-    // .types is a DOMStringList; spec-compliant browsers expose
-    // 'includes' via the iterable interface.
-    return Array.from(e.dataTransfer.types).includes(CHIP_DRAG_MIME);
+    return hasDragType(e, CHIP_DRAG_MIME);
   }
   function _hasSectionPayload(e: DragEvent): boolean {
-    if (!e.dataTransfer) return false;
-    return Array.from(e.dataTransfer.types).includes(SECTION_DRAG_MIME);
+    return hasDragType(e, SECTION_DRAG_MIME);
   }
   function _hasAnyDragPayload(e: DragEvent): boolean {
     return _hasChipPayload(e) || _hasSectionPayload(e);

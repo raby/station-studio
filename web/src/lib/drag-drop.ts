@@ -80,6 +80,28 @@ export function isSystemSection(sectionId: string): boolean {
 }
 
 /**
+ * §16.2.5.t18 — `DataTransfer.types` membership check without the
+ * `Array.from(types).includes(mime)` allocation. Called from every
+ * `dragenter` / `dragover` / `dragleave` / `drop` handler on every
+ * drop surface — for a 50-chip section that's ~60 calls/sec × N
+ * surfaces. The DOMStringList exposes `.length` + indexed access;
+ * the loop short-circuits on first match and allocates nothing.
+ *
+ * Single source-of-truth so future MIME additions only need to
+ * touch this signature, not three independent checks across
+ * ChipFlow + SectionHeader.
+ */
+export function hasDragType(e: DragEvent, mime: string): boolean {
+  if (!e.dataTransfer) return false;
+  const types = e.dataTransfer.types;
+  for (let i = 0; i < types.length; i++) {
+    if (types[i] === mime) return true;
+  }
+  return false;
+}
+
+
+/**
  * Decide whether a chip can be dropped into / moved into `target`.
  *
  * The system bin (`_unsorted`) is reserved for AUTO-moves on
