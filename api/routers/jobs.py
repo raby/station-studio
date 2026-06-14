@@ -20,8 +20,10 @@ Three endpoints (Decision A1):
 
 Concurrency policy is hard-coded to POLICY_REJECT for /jobs/generate
 (Decision F: persistence side-effects make racing two saves on the
-same station catastrophic). /jobs/preview (§16.2.6, future) will use
-POLICY_CANCEL_EXISTING for the debounce-restart UX.
+same station catastrophic). /jobs/preview (added in §16.2.6 c1
+`b5314b7`) uses POLICY_CANCEL_EXISTING for the debounce-restart UX —
+a new preview supersedes any running preview without the frontend
+needing to explicitly DELETE the old job.
 
 Engine seam (Decision B2): the endpoint validates synchronously (404 /
 400 / 422 paths fire BEFORE the job is started), then constructs two

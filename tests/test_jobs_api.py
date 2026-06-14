@@ -612,17 +612,45 @@ def test_preview_start_returns_201_with_location_header(jobs_api):
     assert r.headers["Location"] == f"/api/jobs/{body['job_id']}"
 
 
-def test_preview_runs_to_done_returns_trace_with_no_persistence(jobs_api):
+@pytest.mark.parametrize("persist_cursors", [False, True])
+def test_preview_runs_to_done_returns_trace_with_no_persistence(
+    jobs_api, persist_cursors,
+):
     """§16.2.6 D1 pin: a preview call followed by `db.refresh(station)`
-    MUST show no changes. Verified end-to-end: zero Playlist rows +
-    zero MixUsage rows + station.template untouched after a successful
-    preview."""
-    from engine.models import MixUsage
-    client, Session, _store = jobs_api
-    _seed_station_with_pool(Session)
+    MUST show no changes. Verified end-to-end across BOTH cursor
+    persistence modes: zero Playlist rows + zero MixUsage rows +
+    station.template untouched + station.sidecar untouched +
+    CursorState row count unchanged after a successful preview.
 
+    Why parametrise over persist_cursors: with persist=True, the
+    /jobs/generate worker's on_result calls advance_cursors which
+    upserts a CursorState row. Preview's on_result must NEVER write
+    to CursorState — running the same fixture but with persist=True
+    catches a future bug that wires preview's on_result to
+    advance_cursors mistakenly (the no-persistence-on-persist=False
+    case would silently pass because advance_cursors only runs when
+    template.cursor.persist is True).
+
+    Review #1 finding #1 + #2: pre-fix the test asserted Playlist +
+    MixUsage + station.template, but NOT station.sidecar (a rogue
+    sidecar write would slip through) and NOT CursorState
+    (advance_cursors would slip through in persist=True mode).
+    """
+    from engine.models import CursorState, MixUsage
+    client, Session, _store = jobs_api
+    _seed_station_with_pool(Session, persist_cursors=persist_cursors)
+
+    # Seed a sidecar so the post-preview comparison has something
+    # non-trivial to check (the route validates against it; if it
+    # accidentally writes back the validated copy, the diff would
+    # surface).
     with Session() as db:
-        before_template = db.query(Station).filter_by(slug="ts").first().template
+        station = db.query(Station).filter_by(slug="ts").first()
+        station.sidecar = _trivial_sidecar_3_slots()
+        db.commit()
+        before_template = station.template
+        before_sidecar = station.sidecar
+        before_cursor_count = db.query(CursorState).count()
 
     r = client.post("/api/stations/ts/jobs/preview", json=_preview_body())
     job_id = r.json()["job_id"]
@@ -642,8 +670,17 @@ def test_preview_runs_to_done_returns_trace_with_no_persistence(jobs_api):
     with Session() as db:
         assert db.query(Playlist).count() == 0
         assert db.query(MixUsage).count() == 0
-        after_template = db.query(Station).filter_by(slug="ts").first().template
-        assert after_template == before_template
+        station = db.query(Station).filter_by(slug="ts").first()
+        assert station.template == before_template, (
+            "preview wrote to station.template — broke D1 guarantee"
+        )
+        assert station.sidecar == before_sidecar, (
+            "preview wrote to station.sidecar — broke D1 guarantee"
+        )
+        assert db.query(CursorState).count() == before_cursor_count, (
+            "preview wrote to CursorState (advance_cursors fired?) — "
+            "broke D1 guarantee"
+        )
 
 
 def test_preview_deterministic_seed_produces_identical_trace(jobs_api):
@@ -730,7 +767,6 @@ def test_preview_cancel_existing_supersedes_running_preview(jobs_api):
     real_stream = generate_stream
 
     def slow_stream(*args, **kwargs):
-        import itertools as _it
         stream = real_stream(*args, **kwargs)
         for ev in stream:
             time.sleep(0.05)
