@@ -92,24 +92,28 @@
   //
   //   (a) Cache chip rects on first dragover, reuse for subsequent
   //       dragovers + the final drop. Invalidate on dragleave (real
-  //       container-leave, not a child transition) / dragend / drop.
-  //       Indicator-position writes also invalidate the cache lazily
-  //       since `dropIndicatorAt` change → DOM reflow next tick →
-  //       chips at index ≥ indicator shift right by 2px. So we
-  //       invalidate after each rAF write.
+  //       container-leave, not a child transition), dragend, drop,
+  //       and destroy. The drop-indicator is layout-neutral by CSS
+  //       (`width: 2px; margin: 0 -1px` → effective inline size 0px;
+  //       a single flex `gap: 0.05rem` ≈ 0.8px is the only residual
+  //       shift), so indicator-change does NOT invalidate the cache
+  //       — sub-pixel midpoint drift is below cursor resolution.
   //
   //   (b) rAF-coalesce the `dropIndicatorAt` write. The visual
   //       indicator only needs frame-rate updates; dragover firing
   //       at sub-frame granularity is the browser oversampling. One
   //       rAF in flight at a time; subsequent dragovers just update
-  //       the pending clientX.
+  //       the pending payload.
   //
   // §16.2.6 live-preview adds debounced re-renders on edits; without
   // this throttle they'd stack on top of the drag's per-frame layout
   // work and double-spend the budget on idle drag motion.
+  //
+  // `pending` collapses (clientX, container) into one record — they
+  // always move together (written by onDragOver, consumed + cleared
+  // by the rAF + onDrop, nulled by _resetDragState).
   let cachedChipRects: DOMRect[] | null = null;
-  let pendingClientX: number | null = null;
-  let pendingContainer: HTMLElement | null = null;
+  let pending: { clientX: number; container: HTMLElement } | null = null;
   let rafId: number | null = null;
 
   function _invalidateRectCache() {
@@ -143,8 +147,18 @@
       cancelAnimationFrame(rafId);
       rafId = null;
     }
-    pendingClientX = null;
-    pendingContainer = null;
+    pending = null;
+  }
+
+  // Common cleanup invoked by dragleave (real container-leave),
+  // dragend, drop, and destroy. Combines pending-rAF cancel + rect-
+  // cache invalidation + indicator clear into one site so future
+  // cleanup steps (e.g. §16.2.5.t22's window scroll/resize listener
+  // teardown) land in one place.
+  function _resetDragState() {
+    _cancelPendingFrame();
+    _invalidateRectCache();
+    dropIndicatorAt = null;
   }
 
   // §16.2.5.t18 review #1 fix #1: cancel any pending rAF + clear the
@@ -155,10 +169,7 @@
   // `dropIndicatorAt` on a torn-down component (Svelte 4 silently
   // swallows but logs in dev) and the detached container subtree's
   // GC is delayed one frame.
-  onDestroy(() => {
-    _cancelPendingFrame();
-    _invalidateRectCache();
-  });
+  onDestroy(_resetDragState);
 
   function onDragOver(e: DragEvent) {
     if (!_hasChipPayload(e) || !acceptsDrops) return;
@@ -167,12 +178,14 @@
     // §16.2.5.t18(b) — coalesce indicator-position writes to frame
     // rate. Capture the latest clientX + container; one scheduled
     // rAF reads them when the frame fires.
-    pendingClientX = e.clientX;
-    pendingContainer = e.currentTarget as HTMLElement;
+    pending = {
+      clientX: e.clientX,
+      container: e.currentTarget as HTMLElement,
+    };
     if (rafId !== null) return;
     rafId = requestAnimationFrame(() => {
       rafId = null;
-      if (pendingClientX === null || pendingContainer === null) return;
+      if (pending === null) return;
       // §16.2.5.t18 review #1 fix #3: re-check `acceptsDrops` at fire
       // time, not at schedule time. §16.2.6 live-preview can mutate
       // section.blocks mid-drag (add a macro → hasFineGrainedSupport
@@ -180,20 +193,12 @@
       // previously-scheduled rAF would write an indicator for a
       // section that no longer accepts drops.
       if (!acceptsDrops) {
-        pendingClientX = null;
-        pendingContainer = null;
+        pending = null;
         return;
       }
-      const next = _computeTargetIndex(pendingClientX, pendingContainer);
-      pendingClientX = null;
-      pendingContainer = null;
-      if (next !== dropIndicatorAt) {
-        dropIndicatorAt = next;
-        // Indicator inserts a 2px span; chips at index ≥ next shift
-        // right. Force a rect refetch on the next dragover so we
-        // don't read stale cached midpoints.
-        _invalidateRectCache();
-      }
+      const next = _computeTargetIndex(pending.clientX, pending.container);
+      pending = null;
+      if (next !== dropIndicatorAt) dropIndicatorAt = next;
     });
   }
   function onDragLeave(e: DragEvent) {
@@ -203,9 +208,7 @@
     const container = e.currentTarget as HTMLElement;
     const next = e.relatedTarget as Node | null;
     if (next && container.contains(next)) return;
-    _cancelPendingFrame();
-    _invalidateRectCache();
-    dropIndicatorAt = null;
+    _resetDragState();
   }
 
   // c3 review #1 finding #5: dragend cleanup. ESC-cancelled drags
@@ -214,9 +217,7 @@
   // the 2px indicator bar would remain visible until the next drag
   // cycle moves the cursor across the container boundary.
   function onDragEnd() {
-    _cancelPendingFrame();
-    _invalidateRectCache();
-    dropIndicatorAt = null;
+    _resetDragState();
   }
   function onDrop(e: DragEvent) {
     // §16.2.5.t18 review #1 fix #5: split the gate so preventDefault
@@ -242,20 +243,18 @@
     // visible bar. Operator mental model: "drop where the bar is".
     //
     // Synchronously flush any pending rAF first so dropIndicatorAt
-    // reflects the latest pendingClientX (not the prior frame's).
+    // reflects the latest pending clientX (not the prior frame's).
     // Fallback to clientX-recompute only when there's never been a
     // dragover (no pending + dropIndicatorAt still null — drop on
     // first frame).
-    if (rafId !== null && pendingClientX !== null && pendingContainer !== null) {
-      const next = _computeTargetIndex(pendingClientX, pendingContainer);
+    if (rafId !== null && pending !== null) {
+      const next = _computeTargetIndex(pending.clientX, pending.container);
       if (next !== dropIndicatorAt) dropIndicatorAt = next;
     }
     const targetIndex = dropIndicatorAt ?? _computeTargetIndex(
       e.clientX, e.currentTarget as HTMLElement,
     );
-    _cancelPendingFrame();
-    _invalidateRectCache();
-    dropIndicatorAt = null;
+    _resetDragState();
     const raw = e.dataTransfer?.getData(CHIP_DRAG_MIME);
     if (!raw) return;
     let ref: unknown;
