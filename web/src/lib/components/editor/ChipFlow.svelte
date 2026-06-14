@@ -23,7 +23,7 @@
    *      chips on a single visual row when there's space, wrapping
    *      to multiple rows for wide sections (Decision B2: wrap-flow).
    */
-  import { createEventDispatcher } from 'svelte';
+  import { createEventDispatcher, onDestroy } from 'svelte';
   import { expandSection, type ExpandedRef, type Sidecar, type SidecarSection, type StationTemplate, type ViewModeState } from '$lib/editor';
   import { CHIP_DRAG_MIME, canDropOn, hasDragType } from '$lib/drag-drop';
   import Chip from './Chip.svelte';
@@ -147,6 +147,19 @@
     pendingContainer = null;
   }
 
+  // §16.2.5.t18 review #1 fix #1: cancel any pending rAF + clear the
+  // rect cache on unmount. Without this, an in-flight frame fires
+  // after destroy (parent re-renders sections + the now-empty source
+  // section unmounts mid-drag — see EditorCanvas's reactive
+  // sidecar-driven re-render after blockMove). The callback writes
+  // `dropIndicatorAt` on a torn-down component (Svelte 4 silently
+  // swallows but logs in dev) and the detached container subtree's
+  // GC is delayed one frame.
+  onDestroy(() => {
+    _cancelPendingFrame();
+    _invalidateRectCache();
+  });
+
   function onDragOver(e: DragEvent) {
     if (!_hasChipPayload(e) || !acceptsDrops) return;
     e.preventDefault();  // enables drop
@@ -160,6 +173,17 @@
     rafId = requestAnimationFrame(() => {
       rafId = null;
       if (pendingClientX === null || pendingContainer === null) return;
+      // §16.2.5.t18 review #1 fix #3: re-check `acceptsDrops` at fire
+      // time, not at schedule time. §16.2.6 live-preview can mutate
+      // section.blocks mid-drag (add a macro → hasFineGrainedSupport
+      // flips false → acceptsDrops false). Without this guard, the
+      // previously-scheduled rAF would write an indicator for a
+      // section that no longer accepts drops.
+      if (!acceptsDrops) {
+        pendingClientX = null;
+        pendingContainer = null;
+        return;
+      }
       const next = _computeTargetIndex(pendingClientX, pendingContainer);
       pendingClientX = null;
       pendingContainer = null;
@@ -195,17 +219,38 @@
     dropIndicatorAt = null;
   }
   function onDrop(e: DragEvent) {
-    if (!_hasChipPayload(e) || !acceptsDrops) return;
+    // §16.2.5.t18 review #1 fix #5: split the gate so preventDefault
+    // is unconditional on chip-payload presence. Pre-fix, the last
+    // dragover's preventDefault enabled the drop; if `acceptsDrops`
+    // flipped false between then + drop fire (mid-drag template
+    // mutation per fix #3), the asymmetric guard returned without
+    // preventDefault → browser default for any auxiliary MIME the
+    // source set (text/plain, text/uri-list) could trigger.
+    if (!_hasChipPayload(e)) return;
     e.preventDefault();
+    if (!acceptsDrops) return;
     // c3 review #1 finding #10: removed the stopPropagation +
     // misleading comment. SectionHeader is a SIBLING of ChipFlow
     // inside <section>, not an ancestor — drops on ChipFlow's div
     // never bubble to the header.
     //
-    // Drop must compute the index synchronously — rAF won't fire
-    // before the event completes. Use the cached rects if available
-    // (set by the last dragover frame); otherwise compute fresh.
-    const targetIndex = _computeTargetIndex(
+    // §16.2.5.t18 review #1 fix #2: drop position is the LAST VISIBLE
+    // indicator, not a fresh recompute from e.clientX. Under rapid
+    // scrubbing the rAF coalesce means dropIndicatorAt can lag the
+    // cursor by up to one frame; if the operator releases during the
+    // lag the cursor's clientX maps to a different gap than the
+    // visible bar. Operator mental model: "drop where the bar is".
+    //
+    // Synchronously flush any pending rAF first so dropIndicatorAt
+    // reflects the latest pendingClientX (not the prior frame's).
+    // Fallback to clientX-recompute only when there's never been a
+    // dragover (no pending + dropIndicatorAt still null — drop on
+    // first frame).
+    if (rafId !== null && pendingClientX !== null && pendingContainer !== null) {
+      const next = _computeTargetIndex(pendingClientX, pendingContainer);
+      if (next !== dropIndicatorAt) dropIndicatorAt = next;
+    }
+    const targetIndex = dropIndicatorAt ?? _computeTargetIndex(
       e.clientX, e.currentTarget as HTMLElement,
     );
     _cancelPendingFrame();
