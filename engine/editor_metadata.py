@@ -181,35 +181,60 @@ def parse_sidecar(path: Path, station_template: dict) -> dict:
     return raw
 
 
-def validate_sidecar(sidecar: dict, station_template: dict) -> None:
-    """Run all 10 drift rules + grammar validation against the sidecar.
+def validate_sidecar_grammar(sidecar: dict) -> None:
+    """Structural checks: types + allowlist + required keys.
 
-    Raises `EditorMetadataError` on the first violation found.
+    §16.2.5.t15 split: grammar is the only check needed at the SQL
+    bind boundary (`SidecarJSON.process_bind_param`). Semantic checks
+    need the template + don't run during ORM commit.
 
-    Call order mirrors the §16.2.0 drift-rule numbering:
+    Single-document — does not require a station_template. Suitable
+    for the TypeDecorator's bind-time gate AND for cheap top-level-
+    shape validation when the caller doesn't have a template handy
+    yet.
 
-      structural (grammar)           — type/allowlist/required checks
-      rule 6  layout form consistency
-      rule 2  macro refs
-      rule 3  layout_order refs
-      rule 10 macro spec validity
+    Public alias of the internal `_validate_grammar`. Kept as a thin
+    forwarder so external callers route through a stable name (the
+    internal one moved between two private helpers earlier in
+    §16.2.5; the public name is the contract).
+    """
+    _validate_grammar(sidecar)
+
+
+def validate_sidecar_semantics(sidecar: dict, station_template: dict) -> None:
+    """Cross-document drift rules — sidecar against its station_template.
+
+    §16.2.5.t15 split: this is what `_persist_sidecar` calls. The
+    grammar walk is now the TypeDecorator's responsibility at bind
+    time (one walk per mutation, not two).
+
+    Assumes `sidecar` has already passed `validate_sidecar_grammar`
+    OR is structurally well-formed by construction (Pydantic-
+    validated route input + a deep-copy of an already-stored
+    Station.sidecar are both safe). If you got the sidecar from an
+    untrusted source — disk, third-party tool — call
+    `validate_sidecar` instead (composes both passes in the
+    structural-first order that gives clean error messages).
+
+    Call order (drift-rule numbering per §16.2.0):
+
+      rule 6   layout form consistency
+      rule 2   macro refs
+      rule 3   layout_order refs
+      rule 10  macro spec validity
       rule 4+5 repeat_with_offsets cardinality + values
-      rule 7  atomic bounds
-      rule 8  duplicate atomics
-      rule 1  orphan slots
+      rule 7   atomic bounds
+      rule 8   duplicate atomics
+      rule 9   non-overlapping macros
+      rule 1   orphan slots
 
-    Validation order is structural-first (grammar) then semantic
-    (cross-references with the station template), so a malformed
-    sidecar fails on a clean grammar error rather than a confusing
-    cross-reference error.
-
-    Mid-slice review finding 3: enforce the engine's XOR invariant
-    on `station_template` up-front. The engine's `parse_template`
-    enforces this on PARSED templates; here we get raw JSON and
-    must guard against a hand-edited station JSON with both
-    flat_slots and row_template populated (which would otherwise
-    validate the sidecar against the flat-form rules only, masking
-    the underlying station bug).
+    Mid-slice review finding 3 (kept here): enforce the engine's
+    XOR invariant on `station_template` up-front. `parse_template`
+    enforces it on PARSED templates; here we get raw JSON and must
+    guard against a hand-edited station JSON with both flat_slots
+    AND row_template populated (which would otherwise validate the
+    sidecar against the flat-form rules only, masking the underlying
+    station bug).
     """
     layout = station_template.get("layout", {})
     has_flat = bool(layout.get("flat_slots"))
@@ -221,7 +246,6 @@ def validate_sidecar(sidecar: dict, station_template: dict) -> None:
             "the station JSON before validating its sidecar."
         )
 
-    _validate_grammar(sidecar)
     _validate_layout_form_consistency(sidecar, station_template)
     _validate_macro_refs(sidecar)
     _validate_layout_order_refs(sidecar)
@@ -231,6 +255,33 @@ def validate_sidecar(sidecar: dict, station_template: dict) -> None:
     _validate_no_duplicate_atomics(sidecar, station_template)
     _validate_no_overlapping_macros(sidecar, station_template)
     _validate_no_orphan_slots(sidecar, station_template)
+
+
+def validate_sidecar(sidecar: dict, station_template: dict) -> None:
+    """Run grammar + semantics in the structural-first order.
+
+    Use for any caller that wants to fail-fast on the cleanest error
+    message: malformed input gets a grammar error rather than a
+    cross-reference confusion from a semantic check tripping on bad
+    structure.
+
+    Callers:
+      - `_load_sidecar_disk` — disk JSON, never pre-validated
+      - `_resolve_sidecar` route-layer DB read — possibly grandfathered
+        broken DB-column content (lenient mode falls back; strict
+        mode 400s)
+      - `derive_sidecar` — re-validates the derived output
+      - tests + fixtures
+
+    NOT used by `_persist_sidecar` since §16.2.5.t15 — that path
+    relies on the TypeDecorator for grammar at bind time + calls
+    `validate_sidecar_semantics` directly to avoid the double walk
+    (2× O(sections+blocks+macros) → 1× per mutation; matters at
+    Rebirth Radio's 2,196-block scale and at §16.2.6 live-preview's
+    per-keystroke validate cadence).
+    """
+    validate_sidecar_grammar(sidecar)
+    validate_sidecar_semantics(sidecar, station_template)
 
 
 def synthesize_trivial_sidecar(station_template: dict) -> dict:

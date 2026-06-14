@@ -75,6 +75,7 @@ from engine.editor_metadata import (
     shift_atomic_slot_indices,
     synthesize_trivial_sidecar,
     validate_sidecar,
+    validate_sidecar_semantics,
 )
 from engine.models import Station
 from engine.template import SUPPORTED_STRATEGIES, parse_template, TemplateError
@@ -740,11 +741,14 @@ def patch_macro(
 #   3. Load sidecar via _resolve_sidecar(strict=True) (400 on broken)
 #   4. Apply mutation to a deep-copy of the sidecar (and template
 #      for structural edits)
-#   5. validate_sidecar against the (possibly new) template
-#   6. Commit + return the new sidecar in the response so the
-#      frontend can re-render without a separate GET
+#   5. validate semantics against the (possibly new) template
+#   6. Commit (grammar walk runs at SQL bind time) + return the new
+#      sidecar in the response so the frontend can re-render without
+#      a separate GET
 #
-# `_persist_sidecar` is the shared step-5 + step-6 helper.
+# `_persist_sidecar` is the shared step-5 helper; step 6's commit
+# runs in `_finish_sidecar_mutation` via `_commit_with_sidecar_validation`
+# so grammar errors at bind time route through the same 400 handler.
 
 
 def _persist_sidecar(
@@ -752,25 +756,45 @@ def _persist_sidecar(
     sidecar: dict,
     template: dict | None = None,
 ) -> None:
-    """Validate + commit a sidecar mutation.
+    """Validate (semantics only) + assign a sidecar mutation.
 
     `template` defaults to the station's current template; pass
     a NEW template (deep-copy with structural edits applied)
     when the mutation changes slot counts. The function:
 
-      1. validate_sidecar(sidecar, template) — drift rules +
-         grammar
+      1. `validate_sidecar_semantics(sidecar, template)` — the
+         cross-document drift rules
       2. Reassign station.sidecar (+ template if supplied) so the
          SQLAlchemy onupdate fires for `updated_at`
       3. Caller commits + refreshes; this helper deliberately
          does NOT commit so transactional all-or-nothing semantics
          stay with the endpoint
+
+    §16.2.5.t15: only the semantic pass runs here. The grammar walk
+    moved to `SidecarJSON.process_bind_param` (already there for
+    defense-in-depth via §16.2.5.t4) — one walk per mutation instead
+    of two. Route input is Pydantic-validated + the sidecar came from
+    a deep-copy of an already-stored `Station.sidecar`, so the
+    structure is well-formed by construction; the bind-time check
+    catches anything that slips through (fixtures / scripts /
+    future endpoints that bypass this helper) and surfaces as a
+    clean 400 via `_commit_with_sidecar_validation`.
+
+    Rollback semantics: a bind-time grammar error raises during
+    `db.commit()` (one stack frame up in `_finish_sidecar_mutation`),
+    AFTER `station.sidecar = sidecar` has dirtied the session.
+    SQLAlchemy enters in-rollback state automatically on the failed
+    commit; FastAPI's session-scoped dependency runs `db.close()`
+    which finalizes the rollback. The next request gets a fresh
+    session — no state leaks across requests.
     """
     eff_template = template if template is not None else station.template
     try:
-        validate_sidecar(sidecar, eff_template)
+        validate_sidecar_semantics(sidecar, eff_template)
     except EditorMetadataError as e:
-        raise HTTPException(400, f"mutation produces an invalid sidecar: {e}")
+        raise HTTPException(
+            400, f"mutation produces an invalid sidecar (semantics): {e}"
+        )
     if template is not None:
         station.template = template
     station.sidecar = sidecar
