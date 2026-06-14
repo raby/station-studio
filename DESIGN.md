@@ -6990,7 +6990,7 @@ Seven implementation slices, each independently shippable:
 | **§16.2.3** | Atomic slot editing | Click chip → edit form → save (parameter fields only; see locked design below). **Targeted `PATCH /api/stations/{slug}/blocks`** with optimistic `expected_updated_at`; DB-as-truth + on-demand disk export. NO drag-drop (reorder is §16.2.5), NO retyping (§16.2.4), NO structural edits (§16.2.5). | Medium — first write path; resolved via the locked design (decisions A–F). |
 | **§16.2.4** | Macro editing | **SHIPPED.** Edit-once-applies-to-all (PATCH /macros/{macro_id} fan-out via resolve_macro_addresses). **+ block retyping** (PATCH /blocks/retype with role-validated strategy+source swap) closes the §16.2.3 punt. **+ per-block `allowlist_sources` editor** via the new `<ChipMultiInput>` component — closes §16.14.t7 c3 docs promise. D4 role-aware bidirectional dropdowns. Macro palette sidebar PUNTED to §16.2.4.t1 (D5). | Medium. |
 | **§16.2.5** | Section composition | **SHIPPED.** Create / rename / reorder sections + auto-`_unsorted` bin on non-empty delete (D2). Drag atomic chips between sections (HTML5 + dropdown fallback per D6); macros stay pinned (move requires slot_index pinning on macros — punted indefinitely). **+ structural block edits** (`size` / add / remove) close the §16.2.3 punt — D5 index-shift contract bumps every `slot_index ≥ N` in the sidecar atomic refs in the same transaction. D1 sidecar-in-DB (`Station.sidecar` JSON column) + Alembic backfill. First Playwright e2e covers the §16.2.3 + §16.2.4 + §16.2.5 surface. | Medium. |
-| **§16.2.6** | Live preview endpoint + UI | `POST /api/stations/{slug}/preview` (in-memory; no persistence side-effects) + editor wires it to a debounced auto-refresh trace panel. **Implementation note:** `excluded_mix_ids` must be RECOMPUTED per request from the DB's current MixUsage (not cached at page-load) — if the user edits a mix block's `exclusion_window` value in the editor, the new window changes which MixUsage rows are in scope. Same for `previous_playlist` if the user is on a non-week-1 preview. The endpoint reads all rule-derived inputs fresh from the request body + DB; nothing is cached across edits within a session. **+ staged-edit + Discard (F2)** punted here from §16.2.3 — the in-memory edit-accumulation + Discard model lands with live preview, since preview inherently needs staging; §16.2.3 ships immediate per-block save. | Medium — new API surface; debounce + state-management UX. |
+| **§16.2.6** | Live preview endpoint + UI + staged-edit + Discard | **Design locked** (full entry below at §16.2.6). `POST /api/stations/{slug}/jobs/preview` (§16.11 job-id transport; in-memory; no persistence side-effects) + editor wires it to a debounced auto-refresh trace panel. **D1 opt-in via toggle** (default OFF preserves §16.2.5's immediate-per-block-save mental model). **D2 side panel** (right drawer, ~30% width, drag-resizable). **D3 inline `<TracePane>`** Svelte component (NOT iframe — avoids activating §16.2.5.t22(b) masked-types dragleave). **D4 polling unchanged at v1** (§16.11's 250ms pattern); adaptive/long-poll fast-follow as §16.2.6.t1. **D5 lost-on-tab-close at v1**; staged-edit recovery queued as §16.2.6.t2 (multi-tab + stale-state semantics need a separate design pass). **Implementation note:** `excluded_mix_ids` must be RECOMPUTED per request from the DB's current MixUsage (not cached at page-load) — if the user edits a mix block's `exclusion_window` value in the editor, the new window changes which MixUsage rows are in scope. Same for `previous_playlist` if the user is on a non-week-1 preview. The endpoint reads all rule-derived inputs fresh from the request body + DB; nothing is cached across edits within a session. **+ staged-edit + Discard (F2)** punted here from §16.2.3 — the in-memory edit-accumulation + Discard model lands with live preview, since preview inherently needs staging; §16.2.3 ships immediate per-block save. **Plan**: c1 backend preview endpoint + JobStore wire-up, c2 frontend toggle + TracePane, c3 Save/Discard + 409 conflict UX (folds §16.2.5.t12), c4 docs + closeout (folds .t11/.t19/.t21/.t22 b/c/d). | Medium — new API surface; debounce + state-management UX. |
 | **§16.2.7** | Compare against saved | "Show what changed since save" button → slot-by-slot diff using `byte_equality.py` helpers. | Low — diff helpers exist; UI plumbing. |
 | **§16.2.8** | Fork action | "Fork this station" → duplicates JSON + sidecar. | Low — file copy + slug-rename UI. |
 
@@ -8458,7 +8458,435 @@ documented + fixing it would muddy "DB is source-of-truth"); the
 `drag-fixture.ts` `MockDataTransfer` covering only the surface used
 today (defer until a test forks the fixture).
 
-### 16.3 Delete / station reset
+### 16.2.6 Live preview + staged-edit + Discard — design (paper)
+
+**Status**: design pass complete; implementation pending.
+
+**Inherits from upstream**. §16.2.0 D4 (the "two coexisting feedback
+surfaces" decision) locked the cost model + UX framing. §16.11 (in-UI
+generation progress) locked the transport: `POST /api/stations/{slug}/jobs/preview`
+→ poll `GET /api/jobs/{id}` → render trace from the final result.
+§16.2.3 F2 punted the staged-edit + Discard model here. §16.2.5.t15
++ §16.2.5.t18 (the two pre-§16.2.6 prep slices) cut the per-mutation
+cost so live-preview's debounced loop lands on the cheaper baseline.
+
+#### Why this matters
+
+§16.2.0 D4 framed it: 1.5s feedback isn't real-time, but it IS "I
+see the impact of my edit before I forget what I was thinking." The
+operator's mental model when authoring a station is *write a slot →
+see what it generates*; today's flow is *write five slots → click
+Generate → scan a 2,196-row trace → notice one was wrong → write
+again*. Live preview shortens the inner loop from minutes to
+seconds.
+
+The staged-edit half ("F2 from §16.2.3") matters for a different
+reason: live preview NEEDS staging. Per-keystroke PATCHes against
+the DB would generate 30+ HTTP round-trips for a sentence-length
+edit + cascade through optimistic-concurrency tokens. Worse — every
+mid-edit state would be persisted, so "I started typing and changed
+my mind" leaves a half-formed slot in the DB. Staging gives the
+operator a coherent commit boundary: edit → preview → adjust →
+preview → Save (or Discard).
+
+The two halves bundle naturally — staging is the storage model
+that makes per-edit preview cheap (frontend POSTs the staged
+sidecar, server reads it, generates, returns); preview is the
+feedback that makes staging worth the extra UX step.
+
+#### Decisions
+
+**D1 — Staged-edit scope: opt-in via live-preview toggle.**
+
+§16.2.3-5 ship immediate-per-block save: click chip → edit → click
+Save in the DetailPanel → one PATCH → server mutates DB → response
+refreshes the canvas. Mental model: *each edit is committed
+immediately, exactly when you decide it's right.*
+
+§16.2.6 inherits the F2 punt but DOES NOT force every user into
+staged mode. The live-preview toggle (a single button in the canvas
+header) is the gate:
+
+- **Toggle OFF (default for v1)** — behavior is unchanged from
+  §16.2.5: every edit goes straight to the DB via the existing
+  PATCH endpoints. No preview pane. No staging. Users editing one
+  chip at a time get the §16.2.3 experience.
+- **Toggle ON** — DetailPanel's Save button changes label to "Stage
+  edit" and dispatches to a frontend draft buffer instead of
+  PATCHing. The preview pane appears alongside the canvas. After
+  ~500ms of edit idle, the staged sidecar + template POSTs to the
+  preview endpoint; the returned trace renders in the side panel.
+  Two new top-level buttons appear in the canvas header: **Save**
+  (replays the staged edits as a sequence of PATCHes against the
+  current DB state — optimistic-concurrency per edit, all-or-nothing
+  rollback on any 409) and **Discard** (drops the staged buffer +
+  refetches sidecar from the DB).
+
+The toggle's state persists to localStorage per-station-slug — if
+an operator turned preview on while editing Rebirth Radio, it stays
+on when they come back. Default OFF so first-time users see the
+familiar §16.2.5 flow.
+
+**Why opt-in, not always-on**: §16.2.3-5 ship a working mental
+model that we don't want to break. Operators who learned "click
+chip → edit → Save → done" shouldn't be confused by an extra
+staging step that exists only because some other operator (one
+edit-batching power user) wanted live preview. The toggle is the
+explicit signal: "I'm exploring, batch my edits."
+
+**Alternatives documented for future revisit:**
+
+- **Alt-A: Always-staged.** Every edit goes to a local draft. Save
+  / Discard required. Simpler implementation (one storage model),
+  but breaks the §16.2.3-5 inner loop for users who just want to
+  tweak one chip. Reconsider if (a) operators report the toggle is
+  confusing, OR (b) usage data (when we add it) shows >80% of
+  sessions turn the toggle on.
+- **Alt-C: First-edit immediate, subsequent edits batch.** Smooth
+  onramp but the mode is implicit — the operator doesn't know
+  whether they're staging or not after their first edit. Rejected
+  as too clever for v1; might revisit if Alt-A's "every edit
+  staged" turns out to be the right model and we want a softer
+  transition.
+
+**D2 — Trace surface: side panel (right drawer).**
+
+The preview trace renders in a collapsible right-side panel
+alongside the canvas:
+
+```
+┌─────────────────────────┬─────────────┐
+│  EditorCanvas           │  Preview    │
+│  (left, primary)        │  (right,    │
+│  ┌─ SectionHeader       │   collapsible) │
+│  │  ChipFlow            │  ┌─ TracePane│
+│  │  ChipFlow            │  │  slot 0  │
+│  └─ SectionHeader       │  │  slot 1  │
+│     ...                 │  │  slot 2  │
+│                         │  │  ...      │
+│  DetailPanel (slide-in) │  └─         │
+└─────────────────────────┴─────────────┘
+```
+
+Width: 30% of viewport default, drag-resizable, collapses to a 32px
+strip. State (open/closed + width) persists to localStorage.
+
+**Why side panel**:
+- Cause-and-effect visibility — edit a chip on the left, watch the
+  affected slots on the right shift within ~1.5s.
+- The trace is conceptually parallel to the canvas (both are
+  visualizations of the same template); stacking them vertically
+  reads as "two unrelated panes" rather than "two views of the
+  same thing."
+- Mobile is a non-issue at v1 (Rebirth Radio editing isn't a
+  mobile workflow); a future §16.20 mobile pass can collapse the
+  side panel into a tab.
+
+**Alternatives documented for future revisit:**
+
+- **Alt-A: Inline below canvas.** Full width, stacked vertically.
+  Bigger trace area but loses the edit↔preview side-by-side cause-
+  and-effect. Reconsider if operators report wanting more trace
+  width OR if the slot-rows-per-screen at 30% width feels too
+  cramped.
+- **Alt-B: New page (`/preview`).** Operator navigates between
+  editing + preview views. Cleanest separation but defeats the
+  whole point of live preview — feedback latency includes the
+  navigation. Rejected.
+
+**D3 — Trace rendering: inline `<TracePane>` Svelte component.**
+
+The trace pane is a Svelte component that renders the trace JSON
+as a virtualised flat list:
+
+```svelte
+<TracePane {trace} {viewMode}>
+  {#each visibleSlots as slot, i}
+    <TraceRow {slot} {i} on:select={jumpToSlot} />
+  {/each}
+</TracePane>
+```
+
+Each row shows: slot index, source (sampled track name when
+available), strategy, macro-id (if part of a span), divergence
+marker (if compare-against-saved is on — §16.2.7 will populate
+this; §16.2.6 just renders the column with a stub).
+
+NOT an iframe embedding `/stations/[slug]/visualise`. Iframe was
+considered: process-isolated, cleaner CSS scoping. But:
+
+- Activates §16.2.5.t22(b) — Firefox/Safari mask `dataTransfer.types`
+  across iframe boundaries during dragleave, which would cause
+  the existing chip drag-drop to leak indicator state.
+- The trace shape is a flat list — no CSS-scoping problem to
+  solve.
+- Iframe communication (postMessage, etc.) for the
+  "click-trace-row → jump-to-chip" interaction (queued §16.2.6 or
+  §16.2.7) would be heavier than a parent-component event
+  dispatch.
+
+**Alternative documented for future revisit:**
+
+- **Alt: Iframe-embedded preview canvas.** Reconsider if the trace
+  pane's CSS leaks into / conflicts with the canvas. Today
+  ChipFlow + Chip + DetailPanel are well-scoped; if a future
+  preview-pane visualization needs different theme tokens (e.g.
+  embedded analytics charts), an iframe might pay off. At that
+  point we'd also need §16.2.5.t22(b)'s fix — masked-types
+  dragleave handler — for the chip drag-drop to keep working.
+
+**D4 — Polling cadence: §16.11's 250ms polling at v1; promote
+adaptive / long-poll as fast-follow.**
+
+§16.11 ships 250ms polling on `GET /api/jobs/{id}`. With a 1.5s
+preview job, that's ~6 polls per preview; with 5 quick edits, ~30
+polls per active editing burst. Not catastrophic, but the
+queued §16.11.t2 entry already names the mitigation (adaptive
+backoff or `GET /api/jobs/{id}?wait=2000` long-poll).
+
+§16.2.6 c1 ships with the §16.11 polling pattern unchanged. A new
+sub-slice **§16.2.6.t1** (queued in the cross-cutting table) promotes
+§16.11.t2 to ride on §16.2.6's tail so the polling tax doesn't
+linger past the live-preview slice that creates it. Splitting it
+out of §16.2.6 c1 keeps the c1 blast radius bounded (no job-runner
+internals); landing it immediately as §16.2.6.t1 means
+production-grade preview lands within a sub-slice of the
+slice itself.
+
+**Why not ship long-poll in c1**: long-poll requires changes to
+`engine/jobs.py` (or wherever §16.11's JobStore lives) — adding a
+`wait_until_done(timeout_ms)` primitive + thread coordination + a
+`?wait=N` query param + timeout handling. That's a meaningful
+expansion of §16.2.6 c1's job-runner-internals surface area; doing
+it under §16.2.6.t1 lets §16.2.6 c1 stay focused on preview
+endpoint + frontend wiring.
+
+**Alternative documented**: adaptive 250ms-during-running /
+1000ms-while-idle. Simpler than long-poll (no server changes — just
+a frontend timer that backs off when the last poll returned a
+"still running" status). May be enough on its own; long-poll only
+needed if 250ms polls themselves feel laggy. §16.2.6.t1 picks the
+cheaper of the two based on what the live-preview UX actually
+needs.
+
+**D5 — Discard persistence: lost-on-tab-close at v1; recovery
+queued as §16.2.6.t2.**
+
+When the operator closes a tab with staged edits, the edits are
+discarded. No localStorage persistence at v1.
+
+Why: recovery introduces a chain of decisions the v1 slice can't
+absorb without doubling in scope:
+- Multi-tab conflict: tab A has staged edits; tab B saves a
+  conflicting change. On reopen, which wins?
+- Stale-state hazard: the staged sidecar references a template
+  that's been structurally edited since (slot count changed). Now
+  the staged refs are dangling.
+- Recovery UX: "You have unsaved changes — restore?" modal vs
+  silent restore vs new tab opens to a fresh sidecar. Each has
+  trade-offs.
+- Cross-device recovery: localStorage is per-browser-per-device;
+  the user editing on laptop + opening on desktop would not see
+  their stage.
+
+**The goal IS recovery — just not in §16.2.6 c1.** Queue
+**§16.2.6.t2** (cross-cutting table) for staged-edit persistence
+with explicit conflict + stale-state semantics. Land after §16.2.6
+c1 ships + operator feedback identifies the actual recovery patterns
+people want.
+
+**Alternative documented**: recover via localStorage with last-write-
+wins multi-tab + a freshness check (compare staged sidecar's
+template snapshot against current DB template; if drift → discard
++ warn). Simpler than the full conflict UX above, but a real
+hazard if the operator made structural edits in another session.
+§16.2.6.t2 picks the right balance based on usage data.
+
+#### API surface
+
+```http
+POST /api/stations/{slug}/jobs/preview
+Content-Type: application/json
+
+{
+  "template": {...},      # full template (in-memory editor state)
+  "sidecar": {...},       # full sidecar (in-memory editor state)
+  "week_number": 1,       # which week to generate (default 1)
+  "previous_playlist": null   # explicit for week 1; required for week N+1
+}
+
+→ 202 Accepted
+{
+  "job_id": "abc123...",
+  "status_url": "/api/jobs/abc123..."
+}
+```
+
+The endpoint:
+1. Parses the template via `engine.template.parse_template` (400
+   on TemplateError).
+2. Validates the sidecar via `engine.editor_metadata.validate_sidecar`
+   (400 on EditorMetadataError — uses the full wrapper, not the
+   §16.2.5.t15 semantics-only split, since preview input is
+   operator-edited + not yet known-grammar-valid).
+3. Recomputes `excluded_mix_ids` from current DB MixUsage (NOT
+   cached) — the operator may have edited a `exclusion_window`
+   field; the new window changes which MixUsage rows are in
+   scope.
+4. Recomputes `previous_playlist` from DB for non-week-1 previews
+   (same rationale).
+5. Starts a §16.11-style job via `engine.preview_stream(...)`
+   yielding `ProgressEvent | PreviewResult`.
+6. Returns the job-id; the frontend polls `GET /api/jobs/{job_id}`
+   per §16.11's pattern.
+
+NO persistence side-effects. The endpoint MUST NOT write to
+`Station.sidecar`, `Station.template`, `Playlist`, `MixUsage`, or
+any other table. Tested explicitly: a preview call followed by a
+`db.refresh(station)` MUST show no changes.
+
+#### Frontend state machine — staging buffer
+
+```
+                    ┌──── Toggle OFF ────┐
+                    │                    │
+                    │   (default)        │
+                    │                    │
+                    └─→ §16.2.5 mental ──┘
+                        model unchanged
+                        — every PATCH
+                        flushes immediately
+
+                    ┌──── Toggle ON ─────┐
+                    │                    │
+                    ▼                    │
+        ┌─ stagedSidecar = clone(sidecar)│
+        │  stagedTemplate = clone(template)
+        │
+        ▼
+   ┌────────────┐    edit chip       ┌──────────────┐
+   │   IDLE     │ ─────────────────→ │   STAGING    │
+   └────────────┘                    └──────────────┘
+        ▲                                  │
+        │ Discard                          │ 500ms idle
+        │ (stagedSidecar = sidecar)        ▼
+        │                            ┌──────────────┐
+        │                            │  PREVIEWING  │
+        │                            │  (job pending)│
+        │                            └──────────────┘
+        │                                  │
+        │ Save success                     │ trace returned
+        │ (PATCHes run + refetch)          ▼
+        └─────────────────────────── ┌──────────────┐
+                                     │   STAGED     │
+                                     │  (trace shown)│
+                                     └──────────────┘
+                                          ↓ Save
+                                     ┌──────────────┐
+                                     │   SAVING     │
+                                     │ (replaying   │
+                                     │  PATCHes)    │
+                                     └──────────────┘
+```
+
+**Save**: replay each staged edit as a sequential PATCH against the
+current DB state. Each PATCH carries the current `updated_at` token;
+a 409 conflict aborts the replay + surfaces "Save failed — another
+session changed this station. Discard your edits and reload?"
+Atomicity: not transactional across edits (each PATCH is its own
+transaction). A mid-replay 500 leaves the DB partially mutated —
+the operator sees an error banner + can either Discard or retry.
+The latter is acceptable for v1; transactional all-or-nothing Save
+queued as **§16.2.6.t3** (would need a server-side "batch PATCH"
+endpoint or a savepoint-wrapped multi-PATCH).
+
+**Discard**: clears the staging buffer + refetches sidecar via
+`GET /api/stations/{slug}/sidecar`. No server call to "abandon" —
+nothing was sent.
+
+#### Plan / commit order
+
+**§16.2.6 c1 — backend preview endpoint + JobStore integration.**
+Engine adds `preview_stream(template, sidecar, pools, prev_playlist,
+excluded_mix_ids) -> Iterator[ProgressEvent | PreviewResult]`. Route
+adds `POST /api/stations/{slug}/jobs/preview` wiring to JobStore.
+`excluded_mix_ids` + `previous_playlist` recomputation helpers
+extracted (shared with regular `/jobs/generate`). Pytest pins: no
+persistence side-effects, deterministic seed produces identical
+trace across runs, mid-edit `exclusion_window` change affects the
+next preview (the regression the queue-table implementation note
+calls out).
+
+**§16.2.6 c2 — frontend live-preview pane + toggle.**
+`<LivePreviewToggle>` button in canvas header. `<TracePane>`
+component renders the returned trace JSON. `editor-state.ts`
+adds the staging buffer + toggle persistence. DetailPanel's Save
+button label switches based on toggle state. Toggle OFF behavior
+matches §16.2.5 exactly (vitest regression pin). Playwright e2e:
+toggle on → edit chip → wait for trace → trace reflects edit.
+
+**§16.2.6 c3 — staged-edit Save / Discard affordances + 409
+conflict UX.**
+Canvas header gains Save + Discard buttons (visible only when
+toggle ON + staging buffer non-empty). Save replays staged edits
+via sequential PATCH. 409 surfaces the §16.2.5.t12 conflict-UX
+panel (folds in the queued sub-slice). Discard refetches +
+clears.
+
+**§16.2.6 c4 — docs + closeout.**
+DESIGN.md §16.2.6 marked SHIPPED + status snapshot bump. Folds in
+sub-slices §16.2.5.t11 (applySidecarState helper), §16.2.5.t12
+(conflict UX, landed in c3), §16.2.5.t19 + §16.2.5.t21 (shared
+actions migrations) + §16.2.5.t22 b/c/d (drag-target lifecycle
+hardening — landed earlier if c1's iframe-vs-DOM choice activated
+masked-types in the meantime). Cross-link from §16.2.7 (compare-
+against-saved) when that slice queues.
+
+#### Cross-cutting punts (queued §16.2.6.tX)
+
+**§16.2.6.t1** (small-medium) — adaptive backoff OR long-poll for
+live-preview's polling tax. Promotes §16.11.t2 onto §16.2.6's tail.
+Pick adaptive (250ms-running / 1000ms-idle, frontend-only) if it's
+enough; long-poll (server `wait_until_done(timeout_ms)`) if not.
+Land within ~1 week of §16.2.6 c4.
+
+**§16.2.6.t2** (medium) — staged-edit persistence + recovery. The
+GOAL is recovery; v1 ships lost-on-tab-close because the conflict
++ stale-state semantics need a separate design pass. Sub-decisions:
+storage (localStorage vs IndexedDB), freshness check (compare staged
+template against current DB), multi-tab conflict (last-write-wins
+vs cross-tab lock vs "another tab has staged edits — open in
+read-only?"), recovery UX (silent vs prompt). Promote after §16.2.6
+c4 + at least one operator's feedback session.
+
+**§16.2.6.t3** (small-medium) — transactional all-or-nothing Save.
+Today Save replays edits as sequential PATCHes; mid-replay error
+leaves DB partially mutated. Options: server-side batch endpoint
+(`POST /sidecar/batch` accepting an array of mutations + applying
+in one transaction) OR savepoint-wrapped multi-PATCH (FastAPI
+endpoint loops + uses SQLAlchemy SAVEPOINTs). Promote when an
+operator hits the partial-replay state in real usage.
+
+**§16.2.6.t4** (small) — click-trace-row → jump-to-chip cross-pane
+interaction. Trace rows already render slot index + macro_id; the
+chip the slot belongs to is one event dispatch away. Promote when
+operators report navigating between trace + canvas feels disjointed.
+The §16.2.0 D4 follow-up note ("LATER (§16.2.6 or §16.2.7)") homes
+this here.
+
+#### Out-of-scope / explicit deferrals
+
+| Item | Where | Rationale |
+|---|---|---|
+| Per-keystroke real-time preview | §16.2.6 NOT v1 | §16.2.0 D4 punt — needs incremental regeneration (engine refactor). Debounced ~500ms is the v1 target. |
+| Compare-against-saved diff | §16.2.7 | Different feedback surface (delta vs current); §16.2.0 D4 splits them. |
+| Cross-station preview | NEVER | Out of scope; preview is per-station. |
+| Mobile / narrow-viewport preview UX | §16.20 | Side-panel collapses to tab in mobile pass. v1 is desktop-only. |
+| Preview during multi-tab race | §16.2.6.t2 | Tied to recovery design; both share conflict semantics. |
+| Realtime cursor / collaborative editing | NEVER | Single-user tool; out of scope. |
+| Trace export (CSV / JSON download from preview pane) | §16.2.7 or later | Preview is exploratory; export is the saved-trace workflow. |
+
+
 
 **Why this matters.** Today the only way to clean up a wizard test
 station, or to remove a playlist that was generated by accident, is
