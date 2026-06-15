@@ -131,6 +131,17 @@ function _patchBlock(
   const flat = layout.flat_slots;
   const rows = layout.row_template;
 
+  // c3 review #1 fix #10: defensive XOR guard. The engine enforces
+  // flat_slots XOR row_template via parse_template; a corrupted
+  // station with BOTH populated would otherwise get silently
+  // misrouted by the if-else below (flat wins) — operator sees the
+  // edit reflected locally, then the preview endpoint 400s when
+  // parse_template rejects the template. No-op + let the engine
+  // surface the XOR error explicitly.
+  if (flat !== undefined && rows !== undefined) {
+    return template;
+  }
+
   // Locate the target block — flat or row_template. Defensive
   // no-op on out-of-range or wrong-kind address.
   let targetIdx: number;

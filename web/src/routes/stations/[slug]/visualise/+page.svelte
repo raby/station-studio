@@ -112,16 +112,14 @@
   // stagedSidecar reflect (base + applyEdits). Otherwise they're
   // the same references as the loaded template + sidecar. The
   // preview endpoint receives whichever is current.
-  $: stagedView = (() => {
-    if (!livePreviewOn || opLog.length === 0 || !template || !sidecar) {
-      return { template, sidecar };
-    }
-    return applyEdits(
-      template,
-      sidecar as unknown,
-      opLog,
-    ) as { template: StationTemplate; sidecar: Sidecar };
-  })();
+  //
+  // Review #1 fix #8: ternary instead of IIFE. The IIFE worked
+  // (Svelte's reactive dependency tracker handles the nested
+  // function), but read as defensive-against-Svelte; the ternary
+  // makes the data flow obvious + drops a function literal.
+  $: stagedView = livePreviewOn && opLog.length > 0 && template && sidecar
+    ? applyEdits(template, sidecar as unknown, opLog) as { template: StationTemplate; sidecar: Sidecar }
+    : { template, sidecar };
   $: stagedTemplate = stagedView.template;
   $: stagedSidecar = stagedView.sidecar;
 
@@ -525,9 +523,26 @@
     // through to the existing withSaveLifecycle path — c3b extends
     // the interception to the other 8 op kinds.
     if (livePreviewOn) {
+      // Review #1 fix #9: defensive skip when there are no actual
+      // field changes. DetailPanel COULD emit a save with empty
+      // fields (operator opens panel + clicks Save without
+      // editing); pre-fix the empty edit was silently queued + the
+      // button label showed "Save 1 edit" for nothing.
+      const fieldKeys = Object.keys(e.detail.fields);
+      if (fieldKeys.length === 0) return;
+      // Review #1 fix #3: shallow-copy the fields dict + the
+      // address into the opLog entry. The DetailPanel emits + then
+      // doesn't retain a reference today, but if a future change
+      // adds a 'reset form' or 'remove this field' affordance that
+      // mutates the same object, the staged op would silently
+      // drift. Cheap insurance.
       opLog = [
         ...opLog,
-        { kind: 'patchBlock', address, fields: e.detail.fields },
+        {
+          kind: 'patchBlock',
+          address: { ...address },
+          fields: { ...e.detail.fields },
+        },
       ];
       saveError = null;
       conflict = false;

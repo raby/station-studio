@@ -140,6 +140,30 @@ describe('applyEdit — patchBlock', () => {
     const { template: next } = applyEdit(template, {}, op);
     expect(next.layout.flat_slots).toEqual(template.layout.flat_slots);
   });
+
+  it('no-ops on XOR-violating template (BOTH flat_slots AND row_template populated)', () => {
+    // c3 review #1 fix #10: engine enforces flat_slots XOR
+    // row_template; a corrupted station with both populated would
+    // otherwise silently misroute the edit to flat_slots (the
+    // if-flat-first branch). Defensive: return template unchanged
+    // + let the engine's parse_template surface the XOR error
+    // when the preview job runs.
+    const template: StationTemplate = {
+      ...makeFlatTemplate(),
+      layout: {
+        unit: 'slot', unit_labels: [], row_start_offsets: [],
+        flat_slots: [{ source: 'A', strategy: 'pick', size: 1 }],
+        row_template: [{ source: 'A', strategy: 'pick', size: 2 }],
+      },
+    };
+    const op: Edit = {
+      kind: 'patchBlock',
+      address: { slot_index: 0 },
+      fields: { size: 99 },
+    };
+    const { template: next } = applyEdit(template, {}, op);
+    expect(next).toBe(template);  // identity — unchanged
+  });
 });
 
 
