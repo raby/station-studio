@@ -9065,6 +9065,38 @@ above). Folds §16.2.5.t12 (multi-tab conflict UX — t12's queued
 work is essentially the c3 Retry/Drop modal). Toggle-off-mid-stage
 prompt + `beforeunload` prompt also land here.
 
+**c3 implementation split into c3 + c3b + c3c + c3d/polish.**
+The single-commit c3 scope above was too large; landed as 4 sub-
+slices to keep each commit reviewable + reversible:
+
+- **c3 (`1a61dfb`)** — chip-edit (`patchBlock`) intercept + Save +
+  Discard buttons + `opLog` + `applyEdit` + simple error-stop on
+  partial failure (Retry/Drop modal deferred).
+- **c3b (`f5e7ec4`)** — staging extended to `patchMacro` +
+  `renameSection` (the 2nd + 3rd most common operator actions
+  after chip-edits).
+- **c3c — pending.** Remaining 6 structural edit kinds:
+  `sectionCreate`, `sectionDelete`, `reorderSections`, `moveBlock`,
+  `retypeBlock`, `structuralBlockEdit`. They share index-shift
+  mechanics (slot_index renumbering on add/remove/resize per the
+  §16.2.5 backend contract) so they belong in one cohesive batch
+  rather than incremental adds. **c3c also extracts the handler-
+  intercept pattern** — c3 + c3b copy-pasted the
+  `if (livePreviewOn) { opLog = [...opLog, op]; reset; schedule }`
+  block into 3 handlers; c3c will have 9 total, so c3c c1 extracts
+  a `_interceptToOpLog(op)` helper as part of adding the 6 new
+  intercepts (saves ~50 LoC vs adding each one paste-style). This
+  is finding #8 from c3b review #1; deferred here so it lands
+  once across all 9 handlers rather than refactoring 3 now + 6
+  later. **Tested via `replayOpLog`** — the pure replay function
+  extracted in c3b review #1 batch C lets each new dispatch case
+  be unit-tested without rendering the page (Svelte 4 component-
+  event-via-DOM blocker no longer in the path).
+- **c3d / polish — pending.** Retry/Drop partial-failure modal,
+  toggle-off-mid-stage prompt, `beforeunload` prompt, DetailPanel
+  ↔ TracePane mutual-exclusivity (D2(b)). UX layer; lands after
+  c3c so the staging buffer is fully behavioral first.
+
 **§16.2.6 c4 — docs + closeout.**
 DESIGN.md §16.2.6 marked SHIPPED + status snapshot bump.
 Cross-link from §16.2.7 (compare-against-saved) when that slice

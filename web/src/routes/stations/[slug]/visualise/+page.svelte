@@ -105,11 +105,22 @@
   // The opLog data structure carries all kinds; only the dispatch
   // wiring needs adding per kind.
   //
+  // **c3c also extracts the intercept-pattern duplication**: today
+  // each handler (handleSave / handleMacroSave / handleSectionRename
+  // below) copies the same `if (livePreviewOn) { opLog = [...opLog,
+  // op]; saveError/conflict/exportMsg reset; _schedulePreview }`
+  // block. c3c adds 6 more handlers — extracting a
+  // `_interceptToOpLog(op)` helper there saves ~50 LoC across the
+  // 9 sites + keeps the reset shape in one place. This is c3b
+  // review #1 finding #8; deferred to c3c so the extraction lands
+  // once across all 9 handlers rather than refactoring 3 now + 6
+  // later.
+  //
   // saveError surfacing during Save replay reuses the existing
-  // `saveError` banner — the Retry/Drop modal lands in c3c. On any
-  // replay error the loop stops + the operator sees which edit
-  // failed; remaining edits stay in opLog so a fix-and-retry
-  // sequence works.
+  // `saveError` banner — the Retry/Drop modal lands in c3d /
+  // polish. On any replay error the loop stops + the operator
+  // sees which edit failed; remaining edits stay in opLog so a
+  // fix-and-retry sequence works.
   let opLog: Edit[] = [];
   let saving = false;
 
