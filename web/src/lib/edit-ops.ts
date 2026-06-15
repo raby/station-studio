@@ -35,7 +35,7 @@
  * staged preview until c3b lands.
  */
 import type { BlockAddress } from './api';
-import { isReservedIdPrefix } from './drag-drop';
+import { isReservedIdPrefix, isSystemSection } from './drag-drop';
 import { editableFieldNamesForStrategy } from './editor';
 import type { EngineBlock, StationTemplate } from './editor';
 
@@ -668,23 +668,27 @@ function _moveBlock(
   targetIndex: number | null,
 ): unknown {
   if (!_isSidecarLike(sidecar)) return sidecar;
-  // c3d review #1 batch B finding #3: backend rejects system bins
-  // (leading-underscore ids per §16.2.5.t2 reservation) as manual
-  // move targets. canDropOn filters this client-side in normal
-  // drag-drop, but keyboard / scripted / future surfaces bypass
-  // that — mirror the 400 so the staged op never lies.
-  if (targetSectionId.startsWith('_')) return sidecar;
+  // c3d sweep S1: use the narrower membership helper, mirroring the
+  // backend's `is_system_section` (editor.py:1140). Earlier Batch B
+  // used `startsWith('_')` (drag-drop.ts's `isReservedIdPrefix`), but
+  // that helper is for CREATE-time forward-compat — at runtime it
+  // would trap legacy hand-authored sidecars containing `_archive` /
+  // `_specials` etc. The design (drag-drop.ts:59-71) explicitly keeps
+  // those operator-manageable; only `_unsorted` is reserved today.
+  if (isSystemSection(targetSectionId)) return sidecar;
   // c3d review #1 batch B finding #4: backend 400s on negative idx.
   if (targetIndex !== null && targetIndex < 0) return sidecar;
   const dict = sidecar as Record<string, unknown>;
   const sections = dict.sections;
   if (!Array.isArray(sections)) return sidecar;
 
-  // Find the target section first — bail early if absent.
-  const targetSection = sections.find(
-    (s) => s && typeof s === 'object' && (s as Record<string, unknown>).id === targetSectionId,
-  ) as Record<string, unknown> | undefined;
-  if (!targetSection) return sidecar;
+  // c3d sweep S3: presence-only pre-check for the target section —
+  // bail early if absent. Don't bind the find result; the
+  // reconstruction walk below re-finds it by id (cleaner than
+  // threading a stale reference through the map).
+  if (!sections.some((s) => s && typeof s === 'object' && (s as Record<string, unknown>).id === targetSectionId)) {
+    return sidecar;
+  }
 
   // Walk every section (NO early-out on first hit). c3d review #1
   // batch B finding #5: backend 400s when the address matches
@@ -703,6 +707,12 @@ function _moveBlock(
       const b = blocks[j];
       if (!b || typeof b !== 'object') continue;
       const block = b as Record<string, unknown>;
+      // c3d sweep S5: ATOMIC ONLY (mirrors backend
+      // _matches at editor.py:1173). Today's macro blocks don't
+      // carry slot_index / block_idx so the comparison below would
+      // naturally miss them; the explicit check future-proofs
+      // against new block kinds that DO carry one of those keys.
+      if (block.kind !== 'atomic') continue;
       // address.slot_index matches block.slot_index (flat_slots);
       // address.block_idx matches block.block_idx (row_template).
       if (

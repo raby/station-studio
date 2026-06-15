@@ -694,7 +694,7 @@ describe('applyEdit — moveBlock (§16.2.6 c3d)', () => {
     expect(result.sidecar).toBe(baseSidecar);
   });
 
-  it('c3d batch B finding #3: no-op on system-bin target (`_unsorted` and other leading-underscore ids)', () => {
+  it('c3d batch B finding #3: no-op on system-bin target (`_unsorted`)', () => {
     // System bins are auto-filled by section delete + structural add (D2);
     // backend 400s on manual moves into them. canDropOn filters client-
     // side in drag-drop, but keyboard / scripted paths bypass that.
@@ -713,6 +713,72 @@ describe('applyEdit — moveBlock (§16.2.6 c3d)', () => {
     };
     const result = applyEdit(makeFlatTemplate(), sidecarWithBin, op);
     expect(result.sidecar).toBe(sidecarWithBin);
+  });
+
+  it('c3d sweep S1: legacy leading-underscore section names stay movable (NOT a system bin)', () => {
+    // drag-drop.ts:isSystemSection narrows to ['_unsorted'] only —
+    // hand-authored legacy ids like `_archive` should NOT be trapped.
+    // Earlier Batch B used `startsWith('_')` which over-rejected
+    // these; sweep S1 switched to the membership check.
+    const sidecarWithLegacy = {
+      ...baseSidecar,
+      sections: [
+        ...baseSidecar.sections,
+        { id: '_archive', name: 'Legacy archive', blocks: [] },
+      ],
+    };
+    const op: Edit = {
+      kind: 'moveBlock',
+      address: { slot_index: 0 },
+      targetSectionId: '_archive',
+      targetIndex: 0,
+    };
+    const { sidecar: next } = applyEdit(makeFlatTemplate(), sidecarWithLegacy, op);
+    const ns = next as typeof sidecarWithLegacy;
+    expect(ns.sections.find((s) => s.id === '_archive')!.blocks).toEqual([
+      { kind: 'atomic', slot_index: 0 },
+    ]);
+  });
+
+  it('c3d sweep S5: non-atomic block carrying the matching slot_index is skipped (future-proof)', () => {
+    // Today macros don't carry slot_index, so the existing matcher
+    // misses them by accident; sweep S5 adds an explicit
+    // `kind !== 'atomic' → continue` so a future block kind that
+    // DOES carry slot_index can't be erroneously matched. Construct
+    // a synthetic non-atomic block with the same slot_index to
+    // exercise the new guard.
+    const sidecarWithNonAtomic = {
+      ...baseSidecar,
+      sections: [
+        // Two sections: morning has a non-atomic block (synthetic
+        // future shape) carrying slot_index: 0; evening has the
+        // real atomic match. Only the atomic one should be picked
+        // as the source.
+        { id: 'morning', name: 'Morning', blocks: [
+          { kind: 'macro', ref: 'm1', slot_index: 0 }, // future shape, ignored.
+          { kind: 'atomic', slot_index: 1 },
+        ]},
+        { id: 'evening', name: 'Evening', blocks: [
+          { kind: 'atomic', slot_index: 0 },
+        ]},
+      ],
+    };
+    const op: Edit = {
+      kind: 'moveBlock',
+      address: { slot_index: 0 },
+      targetSectionId: 'morning',
+      targetIndex: 0,
+    };
+    const { sidecar: next } = applyEdit(makeFlatTemplate(), sidecarWithNonAtomic, op);
+    const ns = next as typeof sidecarWithNonAtomic;
+    // The atomic block from evening should move into morning at
+    // index 0; the synthetic macro stays put in morning untouched.
+    expect(ns.sections.find((s) => s.id === 'morning')!.blocks).toEqual([
+      { kind: 'atomic', slot_index: 0 },
+      { kind: 'macro', ref: 'm1', slot_index: 0 },
+      { kind: 'atomic', slot_index: 1 },
+    ]);
+    expect(ns.sections.find((s) => s.id === 'evening')!.blocks).toEqual([]);
   });
 
   it('c3d batch B finding #4: no-op on negative targetIndex (backend 400s)', () => {
