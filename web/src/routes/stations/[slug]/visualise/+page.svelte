@@ -163,6 +163,20 @@
           sidecar as unknown as Record<string, unknown>,
           1,
         );
+        // Review #1 fix #1: a supersede or onDestroy that fired
+        // DURING the POST already bumped previewGeneration, but
+        // could only no-op-cancel because currentPreviewJobId was
+        // still null at the time. The just-spawned job is now
+        // orphaned server-side — explicitly cancel it before
+        // returning. Without this, the server runs the unwanted
+        // preview to completion (POLICY_CANCEL_EXISTING only
+        // supersedes when a NEW preview starts).
+        if (myGeneration !== previewGeneration) {
+          void cancelJob(start.job_id).catch(() => {
+            // Idempotent — 204 / 404 / network blip all fine.
+          });
+          return;
+        }
         currentPreviewJobId = start.job_id;
         for await (const snap of watchJob(start.job_id)) {
           if (myGeneration !== previewGeneration) return;
@@ -170,12 +184,18 @@
             // The worker's on_result returned {trace, slot_count}
             // (PreviewResult). Discriminate from GenerateResponse by
             // shape: PreviewResult has `trace` (a Trace object),
-            // GenerateResponse has `playlist_id`. Defensive narrow
-            // — if the server ever swaps shapes, last-good trace
-            // stays visible + nothing else breaks.
+            // GenerateResponse has `playlist_id`.
             const r = snap.result;
             if (r && typeof r === 'object' && 'trace' in r) {
               previewTrace = (r as { trace: Trace }).trace;
+            } else {
+              // Review #1 fix #13: defensive narrow used to silently
+              // keep the previous trace + clear `previewing` — the
+              // operator saw stale data with no error indication. Now
+              // we surface the unexpected shape as a preview error so
+              // the banner names it; the (possibly stale) trace stays
+              // visible per the design's "frame of reference" rule.
+              previewError = 'preview returned an unexpected shape';
             }
             previewing = false;
             currentPreviewJobId = null;
