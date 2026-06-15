@@ -36,6 +36,8 @@ import {
   setStationRule,
   clearStationRule,
   startGenerateJob,
+  isGenerateResult,
+  isPreviewResult,
   startPreviewJob,
   watchJob,
   type JobSnapshot,
@@ -1507,5 +1509,46 @@ describe('deleteSource', () => {
     const err = await deleteSource(999, fetch_).catch((e) => e);
     expect(err).toBeInstanceOf(ApiError);
     expect(err.status).toBe(404);
+  });
+});
+
+
+// §16.2.6 c3 review #1 — type guard pins for JobSnapshot.result
+// discriminator. Single-line predicates but they're the load-bearing
+// discriminator + ship as the canonical narrow per c2 review #1
+// finding #12.
+describe('isGenerateResult / isPreviewResult', () => {
+  const generateResult = {
+    playlist_id: 42, trace_id: 't-1', station: 'cls', week: 5, slot_count: 10,
+  };
+  const previewResult = {
+    trace: {
+      trace_id: 'pv', station: 'cls', week: 1, rng: 'off', seed: null,
+      generated_at: '2026-06-15T12:00:00Z', slots: [],
+    },
+    slot_count: 0,
+  };
+
+  it('isGenerateResult: true for GenerateResponse-shaped, false for PreviewResult / null', () => {
+    expect(isGenerateResult(generateResult)).toBe(true);
+    expect(isGenerateResult(previewResult)).toBe(false);
+    expect(isGenerateResult(null)).toBe(false);
+    expect(isGenerateResult(undefined)).toBe(false);
+  });
+
+  it('isPreviewResult: true for PreviewResult-shaped, false for GenerateResponse / null', () => {
+    expect(isPreviewResult(previewResult)).toBe(true);
+    expect(isPreviewResult(generateResult)).toBe(false);
+    expect(isPreviewResult(null)).toBe(false);
+    expect(isPreviewResult(undefined)).toBe(false);
+  });
+
+  it('discriminator is exclusive: no shape passes both guards', () => {
+    // The whole point of the discriminator. If both ever returned
+    // true for the same input, every consumer's narrow would be
+    // ambiguous — the JobSnapshot.result widening (c2) only works
+    // because the two shapes are disjoint.
+    expect(isGenerateResult(generateResult) && isPreviewResult(generateResult)).toBe(false);
+    expect(isGenerateResult(previewResult) && isPreviewResult(previewResult)).toBe(false);
   });
 });

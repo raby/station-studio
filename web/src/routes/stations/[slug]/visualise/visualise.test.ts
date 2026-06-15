@@ -20,6 +20,7 @@ import '@testing-library/jest-dom/vitest';
 
 const {
   getStationSidecarMock,
+  patchBlockMock,
   startPreviewJobMock,
   watchJobMock,
   cancelJobMock,
@@ -58,6 +59,10 @@ const {
     })),
     watchJobMock: vi.fn(),
     cancelJobMock: vi.fn(async () => {}),
+    // §16.2.6 c3 review #1: patchBlock spy for the staging-flow
+    // integration test. Default no-op succeeds so a Save replay
+    // through it doesn't 4xx.
+    patchBlockMock: vi.fn(async () => undefined),
     FakeApiError,
     pageStore,
     setSlug,
@@ -84,7 +89,7 @@ vi.mock('$lib/api', () => ({
   deleteSection: vi.fn(),
   exportStationTemplate: vi.fn(),
   moveBlock: vi.fn(),
-  patchBlock: vi.fn(),
+  patchBlock: patchBlockMock,
   patchMacro: vi.fn(),
   renameSection: vi.fn(),
   reorderSections: vi.fn(),
@@ -399,6 +404,29 @@ describe('visualise +page.svelte — §16.2.6 c3 staging mode', () => {
     expect(screen.queryByTestId('staged-save')).not.toBeInTheDocument();
     expect(screen.queryByTestId('staged-discard')).not.toBeInTheDocument();
   });
+
+  // Full staging-flow integration test (toggle ON + simulated chip
+  // save → opLog grows → Save replays → opLog clears) requires
+  // mocking EditorCanvas as a test stub that exposes a way to fire
+  // its `save` event programmatically. Svelte 4's
+  // createEventDispatcher delivers events through component-instance
+  // callbacks ($on/$dispatch), NOT through native DOM dispatch — so
+  // a synthetic `el.dispatchEvent(new CustomEvent('save'))` on the
+  // editor-canvas root does NOT reach `on:save={handleSave}`.
+  //
+  // Two options for c3b:
+  //   (a) `vi.mock` EditorCanvas with a stub that renders a
+  //       test-only "fire save" button + lets the test set the
+  //       payload via a hoisted store.
+  //   (b) Render a tiny <EditorCanvasFake> wrapper test that drives
+  //       the page via the actual DetailPanel render path (real
+  //       components, real interaction — but requires more setup +
+  //       Section/Chip rendering).
+  //
+  // c3b's coverage extension will pick one. Until then the saveError
+  // bug fix (c3 review #1 batch A) is verified manually + the type-
+  // guard / button-visibility tests pin everything observable from
+  // outside the page's event handlers.
 });
 
 // Re-import `act` for the cases above. Done at the bottom so the
