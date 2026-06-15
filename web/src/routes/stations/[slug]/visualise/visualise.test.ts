@@ -104,6 +104,33 @@ vi.mock('$app/stores', () => ({
   page: pageStore,
 }));
 
+// §16.2.6 c3d — EditorCanvas stub. Closes c3c review #1 finding #4:
+// the page's handler intercepts (handleSave / handleMacroSave / etc.)
+// can be tested by replacing EditorCanvas with the stub + driving
+// its `dispatch` via the test helper below.
+vi.mock(
+  '$lib/components/editor/EditorCanvas.svelte',
+  () => import('./__test-stubs/EditorCanvasStub.svelte'),
+);
+
+/** Test helper — fires a Svelte event on the mocked EditorCanvas.
+ *  Returns the same value `dispatch` returns (`true` if a listener
+ *  consumed the event). Throws if the stub hasn't mounted yet. */
+function fireEditorCanvasEvent(
+  kind: string,
+  detail: unknown,
+): boolean {
+  const w = window as unknown as {
+    __editorCanvasStubDispatch?: (k: string, d: unknown) => boolean;
+  };
+  if (!w.__editorCanvasStubDispatch) {
+    throw new Error(
+      'EditorCanvas stub not mounted — render(Page) + await the stub element before firing',
+    );
+  }
+  return w.__editorCanvasStubDispatch(kind, detail);
+}
+
 
 import Page from './+page.svelte';
 
@@ -155,10 +182,12 @@ describe('visualise +page.svelte', () => {
     });
     render(Page);
     expect(await screen.findByTestId('editor-canvas')).toBeInTheDocument();
-    // The canvas renders the one chip from the minimal fixture.
-    expect(await screen.findByTestId('chip')).toBeInTheDocument();
     // No warning banner on the happy path.
     expect(screen.queryByTestId('sidecar-warning')).toBeNull();
+    // (Chip rendering inside EditorCanvas is no longer asserted
+    // here because §16.2.6 c3d mocked EditorCanvas with a stub for
+    // the handler-intercept tests below. EditorCanvas's internal
+    // composition is covered by its own component test file.)
   });
 
   it('renders the sidecar_error warning banner on broken-sidecar fallback', async () => {
@@ -432,3 +461,164 @@ describe('visualise +page.svelte — §16.2.6 c3 staging mode', () => {
 // Re-import `act` for the cases above. Done at the bottom so the
 // existing tests' imports (line 2) stay untouched.
 import { act } from '@testing-library/svelte';
+
+
+// §16.2.6 c3d — handler-intercept coverage. Closes c3c review #1
+// finding #4: the staging-mode intercepts in handleSave /
+// handleMacroSave / handleSectionRename / handleSectionCreate /
+// handleSectionDelete / handleSectionsReorder / handleBlockMove /
+// handleRetype had zero unit-test coverage because Svelte 4's
+// createEventDispatcher delivers component events through
+// component-instance callbacks ($on/$dispatch), not native DOM
+// dispatch — so a synthetic CustomEvent on the editor-canvas root
+// didn't reach the on:save={handleSave} listener. The
+// EditorCanvasStub (mocked at module-mock time at top of file)
+// gives tests a direct handle to the dispatcher.
+describe('visualise +page.svelte — §16.2.6 c3d handler intercepts (toggle ON → opLog queues)', () => {
+  beforeEach(() => {
+    getStationSidecarMock.mockReset();
+    patchBlockMock.mockReset();
+    startPreviewJobMock.mockReset();
+    watchJobMock.mockReset();
+    cancelJobMock.mockReset();
+    startPreviewJobMock.mockResolvedValue({
+      job_id: 'pv-default', status: 'running',
+    });
+    cancelJobMock.mockResolvedValue(undefined);
+    setSlug('viz-test');
+    try { window.localStorage.clear(); } catch { /* */ }
+    // Seed the toggle ON so every test's intercept path fires.
+    window.localStorage.setItem('livePreview:viz-test', 'on');
+    // Default sidecar response.
+    getStationSidecarMock.mockResolvedValue({
+      template: makeTemplate(),
+      sidecar: makeSidecar(),
+      sidecar_error: null,
+    });
+    // Stub a successful preview reply so the rAF cancel doesn't
+    // blow up the test (the page schedules preview after each
+    // intercept).
+    watchJobMock.mockReturnValue({
+      [Symbol.asyncIterator]() {
+        return { async next() { return { done: true, value: undefined }; } };
+      },
+    });
+  });
+
+  /** Mount the page + wait until the EditorCanvas stub has registered
+   *  the global dispatch hook. */
+  async function mountAndAwaitStub() {
+    render(Page);
+    await screen.findByTestId('editor-canvas');
+    // Tick once so the onMount completes + dispatch is registered.
+    await act(async () => {});
+  }
+
+  it('patchBlock — save event → opLog grows, staged-save shows "1 edit", no immediate PATCH', async () => {
+    await mountAndAwaitStub();
+    await act(async () => {
+      fireEditorCanvasEvent('save', {
+        ref: { kind: 'atomic-ref', slot_index: 0 },
+        fields: { size: 5 },
+      });
+    });
+    expect(await screen.findByTestId('staged-save')).toHaveTextContent(/Save 1 edit/);
+    expect(patchBlockMock).not.toHaveBeenCalled();
+  });
+
+  it('patchMacro — macroSave event → opLog grows', async () => {
+    await mountAndAwaitStub();
+    await act(async () => {
+      fireEditorCanvasEvent('macroSave', {
+        macroId: 'm1',
+        fields: { strategy: 'window' },
+      });
+    });
+    expect(await screen.findByTestId('staged-save')).toHaveTextContent(/Save 1 edit/);
+  });
+
+  it('renameSection — sectionRename event → opLog grows', async () => {
+    await mountAndAwaitStub();
+    await act(async () => {
+      fireEditorCanvasEvent('sectionRename', {
+        sectionId: 'all-slots',
+        name: 'Morning',
+      });
+    });
+    expect(await screen.findByTestId('staged-save')).toHaveTextContent(/Save 1 edit/);
+  });
+
+  it('sectionCreate — sectionCreate event → opLog grows', async () => {
+    await mountAndAwaitStub();
+    await act(async () => {
+      fireEditorCanvasEvent('sectionCreate', {
+        id: 'evening',
+        name: 'Evening',
+      });
+    });
+    expect(await screen.findByTestId('staged-save')).toHaveTextContent(/Save 1 edit/);
+  });
+
+  it('sectionDelete — sectionDelete event → opLog grows', async () => {
+    await mountAndAwaitStub();
+    await act(async () => {
+      fireEditorCanvasEvent('sectionDelete', {
+        sectionId: 'all-slots',
+      });
+    });
+    expect(await screen.findByTestId('staged-save')).toHaveTextContent(/Save 1 edit/);
+  });
+
+  it('reorderSections — sectionsReorder event → opLog grows', async () => {
+    await mountAndAwaitStub();
+    await act(async () => {
+      fireEditorCanvasEvent('sectionsReorder', {
+        layoutOrder: ['all-slots'],
+      });
+    });
+    expect(await screen.findByTestId('staged-save')).toHaveTextContent(/Save 1 edit/);
+  });
+
+  it('moveBlock — blockMove event → opLog grows (§16.2.6 c3d)', async () => {
+    await mountAndAwaitStub();
+    await act(async () => {
+      fireEditorCanvasEvent('blockMove', {
+        ref: { kind: 'atomic-ref', slot_index: 0 },
+        targetSectionId: 'all-slots',
+        targetIndex: 0,
+      });
+    });
+    expect(await screen.findByTestId('staged-save')).toHaveTextContent(/Save 1 edit/);
+  });
+
+  it('retypeBlock — retype event → opLog grows (§16.2.6 c3d)', async () => {
+    await mountAndAwaitStub();
+    await act(async () => {
+      fireEditorCanvasEvent('retype', {
+        ref: { kind: 'atomic-ref', slot_index: 0 },
+        newStrategy: 'window',
+        newSource: null,
+        newFields: { window: 4 },
+      });
+    });
+    expect(await screen.findByTestId('staged-save')).toHaveTextContent(/Save 1 edit/);
+  });
+
+  it('multiple intercepts accumulate in opLog (count rises with each event)', async () => {
+    await mountAndAwaitStub();
+    await act(async () => {
+      fireEditorCanvasEvent('save', {
+        ref: { kind: 'atomic-ref', slot_index: 0 },
+        fields: { size: 5 },
+      });
+    });
+    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 1 edit/);
+    await act(async () => {
+      fireEditorCanvasEvent('sectionRename', {
+        sectionId: 'all-slots',
+        name: 'Morning',
+      });
+    });
+    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 2 edits/);
+  });
+});

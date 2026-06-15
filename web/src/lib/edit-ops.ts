@@ -123,13 +123,50 @@ export interface ReorderSectionsOp {
   layoutOrder: string[];
 }
 
+/**
+ * §16.2.6 c3d — block move across sections (PATCH /blocks/move).
+ * `address` identifies the source block via slot_index (flat_slots)
+ * or block_idx (row_template); the block relocates to
+ * `targetSectionId` at `targetIndex` (or appended at end if null).
+ * Replayed as `moveBlock(slug, address, targetSectionId,
+ * targetIndex, ...)`.
+ *
+ * applyEdit walks every section to find the block matching the
+ * address — atomic ids are unique across sections per the §16.2.5
+ * canonical-layout invariant.
+ */
+export interface MoveBlockOp {
+  kind: 'moveBlock';
+  address: BlockAddress;
+  targetSectionId: string;
+  targetIndex: number | null;
+}
+
+/**
+ * §16.2.6 c3d — block retype (PATCH /blocks/retype). Changes the
+ * template entry's `strategy` + `source` + replaces the parameter
+ * fields. Affects the TEMPLATE (not the sidecar) — sidecar atomic
+ * refs by slot_index stay valid because slot_index is unchanged.
+ * Replayed as `retypeBlock(slug, address, newStrategy, newSource,
+ * newFields, ...)`.
+ */
+export interface RetypeBlockOp {
+  kind: 'retypeBlock';
+  address: BlockAddress;
+  newStrategy: string | null;
+  newSource: string | null;
+  newFields: Record<string, string | number | string[] | null>;
+}
+
 export type Edit =
   | PatchBlockOp
   | PatchMacroOp
   | RenameSectionOp
   | SectionCreateOp
   | SectionDeleteOp
-  | ReorderSectionsOp;
+  | ReorderSectionsOp
+  | MoveBlockOp
+  | RetypeBlockOp;
 
 
 /**
@@ -192,6 +229,16 @@ export function applyEdit(
       return {
         template,
         sidecar: _reorderSections(sidecar, op.layoutOrder),
+      };
+    case 'moveBlock':
+      return {
+        template,
+        sidecar: _moveBlock(sidecar, op.address, op.targetSectionId, op.targetIndex),
+      };
+    case 'retypeBlock':
+      return {
+        template: _retypeBlock(template, op.address, op.newStrategy, op.newSource, op.newFields),
+        sidecar,
       };
     default: {
       // §16.2.6 c3b: exhaustiveness pin. The Edit union now has
@@ -576,6 +623,230 @@ function _reorderSections(
 }
 
 
+/**
+ * §16.2.6 c3d — relocate a block from its current section into
+ * `targetSectionId` at `targetIndex` (or append at end if null).
+ *
+ * Block identity uses `address` (slot_index for flat_slots,
+ * block_idx for row_template). Per §16.2.5's canonical-layout
+ * invariant, each atomic ref appears in EXACTLY ONE section so the
+ * address uniquely identifies the source section + block. applyEdit
+ * walks sections to find the match.
+ *
+ * Backend semantic mirror (api.routers.editor.move_block):
+ *   - Find the source section by address-matching against
+ *     section.blocks.
+ *   - Remove the matched block from source.blocks.
+ *   - Insert the block into targetSection.blocks at targetIndex
+ *     (or append at end when targetIndex is null).
+ *   - Moving to the SAME section + a different index is the
+ *     "within-section reorder" path; backend supports it + so do we.
+ *
+ * Defensive no-ops:
+ *   - sidecar isn't a dict
+ *   - sections isn't an array
+ *   - target section doesn't exist
+ *   - source block not found in any section (address mismatch)
+ *   - targetIndex out of range (< 0 or > target.blocks.length)
+ *
+ * Returns a new sidecar dict (PURE).
+ */
+function _moveBlock(
+  sidecar: unknown,
+  address: BlockAddress,
+  targetSectionId: string,
+  targetIndex: number | null,
+): unknown {
+  if (!_isSidecarLike(sidecar)) return sidecar;
+  const dict = sidecar as Record<string, unknown>;
+  const sections = dict.sections;
+  if (!Array.isArray(sections)) return sidecar;
+
+  // Find the target section first — bail early if absent.
+  const targetSection = sections.find(
+    (s) => s && typeof s === 'object' && (s as Record<string, unknown>).id === targetSectionId,
+  ) as Record<string, unknown> | undefined;
+  if (!targetSection) return sidecar;
+
+  // Walk sections to find the source block + its position.
+  let sourceSectionIdx = -1;
+  let sourceBlockIdx = -1;
+  let movedBlock: Record<string, unknown> | null = null;
+  for (let i = 0; i < sections.length; i++) {
+    const sec = sections[i];
+    if (!sec || typeof sec !== 'object') continue;
+    const blocks = (sec as Record<string, unknown>).blocks;
+    if (!Array.isArray(blocks)) continue;
+    for (let j = 0; j < blocks.length; j++) {
+      const b = blocks[j];
+      if (!b || typeof b !== 'object') continue;
+      const block = b as Record<string, unknown>;
+      // address.slot_index matches block.slot_index (flat_slots);
+      // address.block_idx matches block.block_idx (row_template).
+      if (
+        (address.slot_index !== undefined &&
+          block.slot_index === address.slot_index) ||
+        (address.block_idx !== undefined &&
+          block.block_idx === address.block_idx)
+      ) {
+        sourceSectionIdx = i;
+        sourceBlockIdx = j;
+        movedBlock = block;
+        break;
+      }
+    }
+    if (movedBlock !== null) break;
+  }
+  if (movedBlock === null) return sidecar;
+
+  // Reconstruct each section. For source: remove the block. For
+  // target: insert. For same-section reorder, both happen on the
+  // SAME section's blocks (handle via a single transform).
+  const sourceSection = sections[sourceSectionIdx] as Record<string, unknown>;
+  const sourceBlocks = sourceSection.blocks as unknown[];
+
+  // Identify whether source === target by id (not by index — the
+  // walk gave us indices but the comparison is id-based).
+  const sourceSectionId = sourceSection.id as string;
+  const isSameSection = sourceSectionId === targetSectionId;
+
+  const nextSections = sections.map((s, i) => {
+    if (!s || typeof s !== 'object') return s;
+    const sec = s as Record<string, unknown>;
+    if (isSameSection && i === sourceSectionIdx) {
+      // Same-section reorder: remove + reinsert on this section's blocks.
+      const withoutSource = [
+        ...sourceBlocks.slice(0, sourceBlockIdx),
+        ...sourceBlocks.slice(sourceBlockIdx + 1),
+      ];
+      const insertAt =
+        targetIndex === null
+          ? withoutSource.length
+          : Math.max(0, Math.min(withoutSource.length, targetIndex));
+      const next = [
+        ...withoutSource.slice(0, insertAt),
+        movedBlock!,
+        ...withoutSource.slice(insertAt),
+      ];
+      return { ...sec, blocks: next };
+    }
+    if (i === sourceSectionIdx) {
+      // Cross-section move: remove the block from source.
+      return {
+        ...sec,
+        blocks: [
+          ...sourceBlocks.slice(0, sourceBlockIdx),
+          ...sourceBlocks.slice(sourceBlockIdx + 1),
+        ],
+      };
+    }
+    if (sec.id === targetSectionId) {
+      // Cross-section move: insert into target at index.
+      const tb = Array.isArray(sec.blocks) ? (sec.blocks as unknown[]) : [];
+      const insertAt =
+        targetIndex === null
+          ? tb.length
+          : Math.max(0, Math.min(tb.length, targetIndex));
+      return {
+        ...sec,
+        blocks: [
+          ...tb.slice(0, insertAt),
+          movedBlock!,
+          ...tb.slice(insertAt),
+        ],
+      };
+    }
+    return sec;
+  });
+
+  return { ...dict, sections: nextSections };
+}
+
+
+/**
+ * §16.2.6 c3d — retype a block (PATCH /blocks/retype). Changes the
+ * targeted template entry's `strategy` + `source` + REPLACES the
+ * parameter fields (not a merge — retype resets the spec to the
+ * new strategy's allowlist + `newFields` populated).
+ *
+ * Backend semantic mirror (api.routers.editor.retype_block):
+ *   - Replace the block entry's `strategy` + `source` fields.
+ *   - DROP every old parameter field (any key not in
+ *     `EDITABLE_FIELDS_BY_STRATEGY[newStrategy]` + the structural
+ *     `size`/`source`/`strategy` set).
+ *   - Apply `newFields` on top.
+ *
+ * Locally we simplify: keep `size` (structural), set strategy/source,
+ * REPLACE all other fields with `newFields`. If a future field
+ * becomes structural-but-mutable, this contract needs revisiting.
+ *
+ * Sidecar is untouched — slot_index identity is preserved through
+ * the retype, so existing atomic refs stay valid.
+ *
+ * Defensive no-ops:
+ *   - template isn't a dict, or layout is missing
+ *   - address shape doesn't match layout form
+ *   - address out of range
+ *
+ * Returns a new template dict (PURE).
+ */
+function _retypeBlock(
+  template: StationTemplate,
+  address: BlockAddress,
+  newStrategy: string | null,
+  newSource: string | null,
+  newFields: Record<string, string | number | string[] | null>,
+): StationTemplate {
+  const layout = template.layout;
+  const flat = layout.flat_slots;
+  const rows = layout.row_template;
+
+  // XOR guard — same as _patchBlock.
+  if (flat !== undefined && rows !== undefined) return template;
+
+  let targetIdx: number;
+  let targetList: Record<string, unknown>[] | undefined;
+  if (flat !== undefined && address.slot_index !== undefined) {
+    if (address.slot_index < 0 || address.slot_index >= flat.length) {
+      return template;
+    }
+    targetIdx = address.slot_index;
+    targetList = flat as unknown as Record<string, unknown>[];
+  } else if (rows !== undefined && address.block_idx !== undefined) {
+    if (address.block_idx < 0 || address.block_idx >= rows.length) {
+      return template;
+    }
+    targetIdx = address.block_idx;
+    targetList = rows as unknown as Record<string, unknown>[];
+  } else {
+    return template;
+  }
+
+  // Build the retyped block: preserve `size` (structural-but-shared
+  // across strategies), set new strategy/source, replace fields.
+  const oldBlock = targetList[targetIdx];
+  const newBlock: Record<string, unknown> = {};
+  if (oldBlock.size !== undefined) newBlock.size = oldBlock.size;
+  if (newStrategy !== null) newBlock.strategy = newStrategy;
+  if (newSource !== null) newBlock.source = newSource;
+  // Apply newFields (null entries are silently skipped — retype's
+  // contract is "set or omit", not the patchBlock merge semantics).
+  for (const [k, v] of Object.entries(newFields)) {
+    if (v !== null) newBlock[k] = v;
+  }
+
+  const nextList = targetList.slice();
+  nextList[targetIdx] = newBlock;
+  const nextLayout = { ...layout };
+  if (targetList === (flat as unknown as Record<string, unknown>[])) {
+    (nextLayout as Record<string, unknown>).flat_slots = nextList;
+  } else {
+    (nextLayout as Record<string, unknown>).row_template = nextList;
+  }
+  return { ...template, layout: nextLayout } as StationTemplate;
+}
+
+
 /** Merge fields into a target dict — null removes the key, anything
  *  else sets it. Matches the backend's parameter-only contract used
  *  by patchBlock + patchMacro. Returns a new dict (PURE). */
@@ -635,6 +906,19 @@ export interface ReplayDeps {
   createSection: (sectionId: string, name: string | null) => Promise<unknown>;
   deleteSection: (sectionId: string) => Promise<unknown>;
   reorderSections: (layoutOrder: string[]) => Promise<unknown>;
+  // §16.2.6 c3d — block-level structural kinds (excl. structural
+  // edit + index shifts; that's c3d-follow-up).
+  moveBlock: (
+    address: BlockAddress,
+    targetSectionId: string,
+    targetIndex: number | null,
+  ) => Promise<unknown>;
+  retypeBlock: (
+    address: BlockAddress,
+    newStrategy: string | null,
+    newSource: string | null,
+    newFields: Record<string, string | number | string[] | null>,
+  ) => Promise<unknown>;
   /** Called after each successful PATCH so the next op's
    *  optimistic-concurrency token is fresh. */
   refreshUpdatedAt: () => Promise<void>;
@@ -683,6 +967,14 @@ export async function replayOpLog(
           break;
         case 'reorderSections':
           await deps.reorderSections(op.layoutOrder);
+          break;
+        case 'moveBlock':
+          await deps.moveBlock(op.address, op.targetSectionId, op.targetIndex);
+          break;
+        case 'retypeBlock':
+          await deps.retypeBlock(
+            op.address, op.newStrategy, op.newSource, op.newFields,
+          );
           break;
         default: {
           // Same exhaustiveness pin as applyEdit's switch — a

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   applyEdit, applyEdits, replayOpLog,
-  type Edit, type ReplayDeps,
+  type BlockAddress, type Edit, type ReplayDeps,
 } from './edit-ops';
 import type { StationTemplate } from './editor';
 
@@ -586,7 +586,239 @@ describe('applyEdit — reorderSections (§16.2.6 c3c)', () => {
 });
 
 
-describe('replayOpLog — §16.2.6 c3c section-kind dispatch', () => {
+describe('applyEdit — moveBlock (§16.2.6 c3d)', () => {
+  const baseSidecar = {
+    schema_version: 1,
+    sections: [
+      { id: 'morning', name: 'Morning', blocks: [
+        { kind: 'atomic', slot_index: 0 },
+        { kind: 'atomic', slot_index: 1 },
+      ]},
+      { id: 'evening', name: 'Evening', blocks: [
+        { kind: 'atomic', slot_index: 2 },
+      ]},
+    ],
+    macros: [],
+    layout_order: ['morning', 'evening'],
+  };
+
+  it('cross-section move with explicit targetIndex inserts at that position', () => {
+    // Move slot 0 from morning to evening at index 0 (front).
+    const op: Edit = {
+      kind: 'moveBlock',
+      address: { slot_index: 0 },
+      targetSectionId: 'evening',
+      targetIndex: 0,
+    };
+    const { sidecar: next } = applyEdit(makeFlatTemplate(), baseSidecar, op);
+    const ns = next as typeof baseSidecar;
+    expect(ns.sections.find((s) => s.id === 'morning')!.blocks).toEqual([
+      { kind: 'atomic', slot_index: 1 },
+    ]);
+    expect(ns.sections.find((s) => s.id === 'evening')!.blocks).toEqual([
+      { kind: 'atomic', slot_index: 0 },
+      { kind: 'atomic', slot_index: 2 },
+    ]);
+  });
+
+  it('cross-section move with targetIndex=null appends to target', () => {
+    const op: Edit = {
+      kind: 'moveBlock',
+      address: { slot_index: 0 },
+      targetSectionId: 'evening',
+      targetIndex: null,
+    };
+    const { sidecar: next } = applyEdit(makeFlatTemplate(), baseSidecar, op);
+    const ns = next as typeof baseSidecar;
+    expect(ns.sections.find((s) => s.id === 'evening')!.blocks).toEqual([
+      { kind: 'atomic', slot_index: 2 },
+      { kind: 'atomic', slot_index: 0 },
+    ]);
+  });
+
+  it('same-section reorder via move (drag chip to new position within section)', () => {
+    // Move slot 0 within morning to position 1 (after slot 1).
+    const op: Edit = {
+      kind: 'moveBlock',
+      address: { slot_index: 0 },
+      targetSectionId: 'morning',
+      targetIndex: 1,
+    };
+    const { sidecar: next } = applyEdit(makeFlatTemplate(), baseSidecar, op);
+    const ns = next as typeof baseSidecar;
+    expect(ns.sections.find((s) => s.id === 'morning')!.blocks).toEqual([
+      { kind: 'atomic', slot_index: 1 },
+      { kind: 'atomic', slot_index: 0 },
+    ]);
+    // evening untouched.
+    expect(ns.sections.find((s) => s.id === 'evening')!.blocks).toEqual(
+      baseSidecar.sections.find((s) => s.id === 'evening')!.blocks,
+    );
+  });
+
+  it('targetIndex out-of-range gets clamped to nearest valid index', () => {
+    // 999 → end of target.
+    const op: Edit = {
+      kind: 'moveBlock',
+      address: { slot_index: 0 },
+      targetSectionId: 'evening',
+      targetIndex: 999,
+    };
+    const { sidecar: next } = applyEdit(makeFlatTemplate(), baseSidecar, op);
+    const ns = next as typeof baseSidecar;
+    expect(ns.sections.find((s) => s.id === 'evening')!.blocks).toEqual([
+      { kind: 'atomic', slot_index: 2 },
+      { kind: 'atomic', slot_index: 0 },
+    ]);
+  });
+
+  it('no-op on unknown targetSectionId', () => {
+    const op: Edit = {
+      kind: 'moveBlock',
+      address: { slot_index: 0 },
+      targetSectionId: 'nope',
+      targetIndex: 0,
+    };
+    const result = applyEdit(makeFlatTemplate(), baseSidecar, op);
+    expect(result.sidecar).toBe(baseSidecar);
+  });
+
+  it('no-op on unknown source address', () => {
+    const op: Edit = {
+      kind: 'moveBlock',
+      address: { slot_index: 999 },
+      targetSectionId: 'evening',
+      targetIndex: 0,
+    };
+    const result = applyEdit(makeFlatTemplate(), baseSidecar, op);
+    expect(result.sidecar).toBe(baseSidecar);
+  });
+
+  it('PURE: input not mutated', () => {
+    const snapshot = JSON.parse(JSON.stringify(baseSidecar));
+    const op: Edit = {
+      kind: 'moveBlock',
+      address: { slot_index: 0 },
+      targetSectionId: 'evening',
+      targetIndex: 0,
+    };
+    applyEdit(makeFlatTemplate(), baseSidecar, op);
+    expect(baseSidecar).toEqual(snapshot);
+  });
+});
+
+
+describe('applyEdit — retypeBlock (§16.2.6 c3d)', () => {
+  function makeRetypeTemplate(): StationTemplate {
+    return {
+      station: 'ts',
+      name: 'Test',
+      sources: [
+        { name: 'A', colour: '#abc', role: 'content' },
+        { name: 'B', colour: '#def', role: 'content' },
+      ],
+      layout: {
+        unit: 'slot',
+        unit_labels: [],
+        row_start_offsets: [],
+        flat_slots: [
+          {
+            source: 'A',
+            strategy: 'pick',
+            size: 1,
+            exclusion_window: 4,
+          },
+          { source: 'A', strategy: 'sequential', size: 2 },
+        ],
+      },
+    };
+  }
+
+  it('replaces strategy + source + fields (drops fields not in newFields, preserves size)', () => {
+    const template = makeRetypeTemplate();
+    const op: Edit = {
+      kind: 'retypeBlock',
+      address: { slot_index: 0 },
+      newStrategy: 'window',
+      newSource: 'B',
+      newFields: { window: 12 },
+    };
+    const { template: next } = applyEdit(template, {}, op);
+    // size preserved; strategy + source updated; new fields applied;
+    // old fields dropped (exclusion_window from original gone).
+    expect(next.layout.flat_slots![0]).toEqual({
+      size: 1,
+      strategy: 'window',
+      source: 'B',
+      window: 12,
+    });
+    expect(next.layout.flat_slots![0]).not.toHaveProperty('exclusion_window');
+    // Sibling unchanged.
+    expect(next.layout.flat_slots![1]).toEqual(template.layout.flat_slots![1]);
+  });
+
+  it('newStrategy null preserves the existing strategy', () => {
+    const template = makeRetypeTemplate();
+    const op: Edit = {
+      kind: 'retypeBlock',
+      address: { slot_index: 0 },
+      newStrategy: null,
+      newSource: 'B',
+      newFields: {},
+    };
+    const { template: next } = applyEdit(template, {}, op);
+    // No strategy key when newStrategy is null + we drop all old
+    // params (retype semantic: replace, not merge). size preserved.
+    expect(next.layout.flat_slots![0]).toEqual({
+      size: 1,
+      source: 'B',
+    });
+  });
+
+  it('PURE: input template not mutated', () => {
+    const template = makeRetypeTemplate();
+    const snapshot = JSON.parse(JSON.stringify(template));
+    const op: Edit = {
+      kind: 'retypeBlock',
+      address: { slot_index: 0 },
+      newStrategy: 'window',
+      newSource: null,
+      newFields: { window: 4 },
+    };
+    applyEdit(template, {}, op);
+    expect(template).toEqual(snapshot);
+  });
+
+  it('sidecar returned unchanged (retype affects template only)', () => {
+    const template = makeRetypeTemplate();
+    const sidecar = { schema_version: 1, sections: [], layout_order: [] };
+    const op: Edit = {
+      kind: 'retypeBlock',
+      address: { slot_index: 0 },
+      newStrategy: 'window',
+      newSource: 'B',
+      newFields: {},
+    };
+    const result = applyEdit(template, sidecar, op);
+    expect(result.sidecar).toBe(sidecar);
+  });
+
+  it('no-op on out-of-range slot_index', () => {
+    const template = makeRetypeTemplate();
+    const op: Edit = {
+      kind: 'retypeBlock',
+      address: { slot_index: 999 },
+      newStrategy: 'window',
+      newSource: null,
+      newFields: {},
+    };
+    const { template: next } = applyEdit(template, {}, op);
+    expect(next).toBe(template);
+  });
+});
+
+
+describe('replayOpLog — §16.2.6 c3c + c3d block-kind dispatch', () => {
   function baseDepsC3c(): ReplayDeps {
     return {
       patchBlock: async () => {},
@@ -595,10 +827,64 @@ describe('replayOpLog — §16.2.6 c3c section-kind dispatch', () => {
       createSection: async () => {},
       deleteSection: async () => {},
       reorderSections: async () => {},
+      moveBlock: async () => {},
+      retypeBlock: async () => {},
       refreshUpdatedAt: async () => {},
       isConflict: () => false,
     };
   }
+
+  it('§16.2.6 c3d — moveBlock dispatches to deps.moveBlock with (address, targetSectionId, targetIndex)', async () => {
+    const calls: Array<{ address: BlockAddress; tgt: string; idx: number | null }> = [];
+    const deps: ReplayDeps = {
+      ...baseDepsC3c(),
+      moveBlock: async (address, tgt, idx) => {
+        calls.push({ address, tgt, idx });
+      },
+    };
+    const ops: Edit[] = [
+      { kind: 'moveBlock', address: { slot_index: 0 }, targetSectionId: 'evening', targetIndex: 1 },
+      { kind: 'moveBlock', address: { slot_index: 1 }, targetSectionId: 'morning', targetIndex: null },
+    ];
+    const result = await replayOpLog(ops, deps);
+    expect(result.success).toBe(true);
+    expect(calls).toEqual([
+      { address: { slot_index: 0 }, tgt: 'evening', idx: 1 },
+      { address: { slot_index: 1 }, tgt: 'morning', idx: null },
+    ]);
+  });
+
+  it('§16.2.6 c3d — retypeBlock dispatches to deps.retypeBlock with (address, newStrategy, newSource, newFields)', async () => {
+    let captured: {
+      address?: BlockAddress;
+      ns?: string | null;
+      nsrc?: string | null;
+      nf?: Record<string, unknown>;
+    } = {};
+    const deps: ReplayDeps = {
+      ...baseDepsC3c(),
+      retypeBlock: async (address, newStrategy, newSource, newFields) => {
+        captured = { address, ns: newStrategy, nsrc: newSource, nf: { ...newFields } };
+      },
+    };
+    const ops: Edit[] = [
+      {
+        kind: 'retypeBlock',
+        address: { slot_index: 2 },
+        newStrategy: 'window',
+        newSource: 'B',
+        newFields: { window: 5 },
+      },
+    ];
+    const result = await replayOpLog(ops, deps);
+    expect(result.success).toBe(true);
+    expect(captured).toEqual({
+      address: { slot_index: 2 },
+      ns: 'window',
+      nsrc: 'B',
+      nf: { window: 5 },
+    });
+  });
 
   it('sectionCreate dispatches to deps.createSection with (id, name)', async () => {
     const calls: Array<{ sectionId: string; name: string | null }> = [];
@@ -688,6 +974,8 @@ describe('replayOpLog — §16.2.6 c3b review #1 batch C', () => {
       createSection: async () => {},
       deleteSection: async () => {},
       reorderSections: async () => {},
+      moveBlock: async () => {},
+      retypeBlock: async () => {},
       refreshUpdatedAt: async () => {},
       isConflict: () => false,
     };

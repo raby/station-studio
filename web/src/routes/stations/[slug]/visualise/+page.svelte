@@ -99,10 +99,13 @@
   //   - `sectionCreate` (c3c — Add Section input)
   //   - `sectionDelete` (c3c — SectionHeader Delete button)
   //   - `reorderSections` (c3c — section-header drag-reorder)
+  //   - `moveBlock` (c3d — chip drag between sections)
+  //   - `retypeBlock` (c3d — DetailPanel retype panel)
   //
-  // **Still falls through to immediate-PATCH when toggle ON** (c3d
-  // extends both applyEdit + the handler interception):
-  //   - moveBlock / retypeBlock / structuralBlockEdit
+  // **Still falls through to immediate-PATCH when toggle ON**
+  // (c3d-follow-up extends applyEdit + handler interception):
+  //   - structuralBlockEdit (size / add / remove with slot_index
+  //     shifts — gnarliest of the 9 kinds; its own sub-slice)
   //
   // The opLog data structure carries all kinds; only the dispatch
   // wiring needs adding per kind.
@@ -602,6 +605,11 @@
           deleteSection(slug, sectionId, updatedAt),
         reorderSections: (layoutOrder) =>
           reorderSections(slug, layoutOrder, updatedAt),
+        // §16.2.6 c3d — block-level structural kinds.
+        moveBlock: (address, targetSectionId, targetIndex) =>
+          moveBlock(slug, address, targetSectionId, targetIndex, updatedAt),
+        retypeBlock: (address, newStrategy, newSource, newFields) =>
+          retypeBlock(slug, address, newStrategy, newSource, newFields, updatedAt),
         refreshUpdatedAt: loadSidecar,
         isConflict: (err) => err instanceof BlockPatchConflict,
       });
@@ -699,6 +707,17 @@
       saveError = 'cannot retype this block (no storage address)';
       conflict = false;
       exportMsg = null;
+      return;
+    }
+    // §16.2.6 c3d: intercept retype when live-preview is ON.
+    if (livePreviewOn) {
+      _interceptToOpLog({
+        kind: 'retypeBlock',
+        address: { ...address },
+        newStrategy: e.detail.newStrategy,
+        newSource: e.detail.newSource,
+        newFields: { ...e.detail.newFields },
+      });
       return;
     }
     await withSaveLifecycle(
@@ -816,6 +835,16 @@
       saveError = 'cannot move this block (no storage address)';
       conflict = false;
       exportMsg = null;
+      return;
+    }
+    // §16.2.6 c3d: intercept block move when live-preview is ON.
+    if (livePreviewOn) {
+      _interceptToOpLog({
+        kind: 'moveBlock',
+        address: { ...address },
+        targetSectionId: e.detail.targetSectionId,
+        targetIndex: e.detail.targetIndex,
+      });
       return;
     }
     await withSaveLifecycle(
