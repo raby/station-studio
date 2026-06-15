@@ -9175,6 +9175,40 @@ helper-extraction made the gap explicit, so queue it for
 visibility. Promote when an operator reports `/jobs/generate`
 divergence from `/generate` OR when §16.14.t5's adoption broadens.
 
+**§16.2.6.t8** (small-medium) — week selector for the live-preview
+endpoint. c2 hardcodes `week=1` in `_schedulePreview`'s
+`startPreviewJob` call, matching the c2 commit's "deliberate
+simplification" framing. The endpoint already accepts a week
+parameter (c1 review #1 batch C's exclusion_window test exercises
+week=2 against MixUsage); only the FRONTEND chooses week=1
+unconditionally. For non-week-1 stations the operator sees a
+week-1 trace regardless of which week they were actually editing
+toward. Sub-decisions to resolve when promoting: where does the
+week control live (sidebar in the canvas? top-of-trace-pane?
+inferred from the URL via `?week=N`?), how is it persisted
+(localStorage like the toggle? per-station? or session-scoped?),
+and how does it interact with `previous_playlist` recompute (the
+backend already looks it up from `week - 1`, so the only frontend
+work is choosing which `N` to send). Promote when the first
+multi-week-aware station ships OR when an operator asks "why does
+my week 5 mix block preview produce the same exclusions as
+week 1?" — the answer requires fixing this. The §16.2.0 D4 cost
+table already assumed multi-week preview was on the menu.
+
+**Folded for §16.2.6 c3: PreviewResult type guard pair.**
+c2 review #1 finding #12 noted the JobSnapshot.result widening to
+`GenerateResponse | PreviewResult | null` makes callers
+discriminate by shape (`'playlist_id' in r` vs `'trace' in r`).
+The narrows in this commit are correct but a new contributor
+writing a third job kind would have to reverse-engineer the
+convention. Adding `function isGenerateResult(r): r is
+GenerateResponse` + `isPreviewResult(r): r is PreviewResult` type
+guards next to the interfaces is cheap (~10 LOC) but better
+landed in c3 where the Save retry flow may grow new code reading
+these results — the right moment to ship the type guards is
+alongside the second-batch consumer that benefits from them.
+NOT a queued sub-slice; explicit c3-scope adjacent work.
+
 **Polling cadence (adaptive backoff or long-poll) was originally
 queued as a §16.2.6.t1 fast-follow.** Folded into the existing
 §16.11.t2 entry — that's where the work item already lives, and
