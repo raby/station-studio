@@ -5,6 +5,7 @@
     getStation,
     getStationPlaylists,
     getStationOverview,
+    isGenerateResult,
     startGenerateJob,
     watchJob,
     cancelJob,
@@ -177,14 +178,16 @@
     try {
       for await (const snap of watchJob(jobId)) {
         currentJob = snap;
-        if (snap.status === 'done' && snap.result && 'playlist_id' in snap.result) {
-          // §16.2.6 c2: JobSnapshot.result widened to include
-          // PreviewResult; narrow on `playlist_id` (GenerateResponse-
-          // only) before navigating. A preview job snapshot
-          // shouldn't land here (this route only starts generate
-          // jobs) but the narrow is a cheap belt-and-suspenders.
-          // Lands on the trace viewer for the freshly generated
-          // playlist. No `generating = false` — navigating away.
+        if (snap.status === 'done' && isGenerateResult(snap.result)) {
+          // c3 review #1 batch C: migrated from the inline
+          // `'playlist_id' in snap.result` narrow to the hoisted
+          // `isGenerateResult` type guard (c3 single source of
+          // truth for the JobSnapshot.result discriminator). A
+          // preview job snapshot shouldn't land here (this route
+          // only starts generate jobs) but the narrow is a cheap
+          // belt-and-suspenders. Lands on the trace viewer for
+          // the freshly generated playlist. No `generating =
+          // false` — navigating away.
           await goto(`/playlists/${snap.result.playlist_id}`);
           return;
         }

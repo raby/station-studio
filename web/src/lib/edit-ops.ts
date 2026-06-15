@@ -34,23 +34,21 @@
  * §16.2.5 baseline) — they just don't appear in the trace pane's
  * staged preview until c3b lands.
  */
+import type { BlockAddress } from './api';
 import type { StationTemplate } from './editor';
 
-
-/**
- * A single staged edit awaiting Save. Mirrors the request shape of
- * the matching `$lib/api` PATCH helper so Save's replay can pass
- * the captured fields straight through. Discriminated by `kind`.
- *
- * `BlockAddress` is duplicated locally to avoid the cyclic import
- * (`$lib/api` imports `Sidecar` from `./editor` which imports from
- * here in c3b once macros/sections are wired). Shape matches the
- * `$lib/api::BlockAddress` interface exactly.
- */
-export interface BlockAddress {
-  slot_index?: number;
-  block_idx?: number;
-}
+// Re-export so consumers that import the Edit union from here also
+// have access to the address shape. The `BlockAddress` interface
+// lives in `./api` because the PATCH helpers (patchBlock,
+// moveBlock, structuralBlockEdit) consume it directly — single
+// source of truth for the address shape.
+//
+// c3 review #1 finding #6: prior version duplicated the interface
+// locally with a comment claiming a cyclic import existed.
+// Verified: no cycle (`./editor` doesn't import from here or
+// `./api`); the duplication was drift hazard. Importing from `./api`
+// keeps the address shape in one place.
+export type { BlockAddress };
 
 /**
  * Edit op produced by the chip-edit DetailPanel Save flow. Replayed

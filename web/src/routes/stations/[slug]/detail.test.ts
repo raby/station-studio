@@ -93,6 +93,12 @@ vi.mock('$lib/api', () => ({
   deleteStation: (...args: unknown[]) => deleteStationMock(...args),
   ApiError: FakeApiError,
   JobStartConflict: FakeJobStartConflict,
+  // §16.2.6 c3 review #1 batch C: the page migrated from the
+  // inline `'playlist_id' in r` narrow to `isGenerateResult`.
+  // Mock as the same predicate so tests that drive snap.result
+  // through the done branch still navigate.
+  isGenerateResult: (r: unknown) =>
+    r !== null && typeof r === 'object' && 'playlist_id' in r,
   // §16.25 c5: the page embeds <PoolImportPanel> which calls into
   // these helpers. Defaults are no-op resolutions (the panel mounts
   // cleanly without polluting station-detail assertions). Individual
