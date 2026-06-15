@@ -420,6 +420,33 @@ export interface PreviewResult {
   slot_count: number;
 }
 
+
+/**
+ * §16.2.6 c3 — type guards for the `JobSnapshot.result` union.
+ *
+ * The widening from `GenerateResponse` to `GenerateResponse |
+ * PreviewResult | null` makes every consumer narrow before reading
+ * kind-specific fields. The c2 narrows used inline `'playlist_id'
+ * in r` / `'trace' in r` checks; c2 review #1 finding #12 flagged
+ * this as a maintainability gap — a future contributor writing a
+ * third job kind would have to reverse-engineer the convention.
+ *
+ * Hoisted as named guards next to the interfaces so the
+ * discriminator (presence of `playlist_id` vs `trace`) is a single
+ * source of truth + IDE refactors can find every callsite.
+ */
+export function isGenerateResult(
+  r: GenerateResponse | PreviewResult | null | undefined,
+): r is GenerateResponse {
+  return r !== null && r !== undefined && 'playlist_id' in r;
+}
+
+export function isPreviewResult(
+  r: GenerateResponse | PreviewResult | null | undefined,
+): r is PreviewResult {
+  return r !== null && r !== undefined && 'trace' in r;
+}
+
 /**
  * Snapshot returned by GET /api/jobs/{job_id}. Mirrors the backend's
  * `JobStatusResponse` (api/schemas.py). The `result` shape varies by

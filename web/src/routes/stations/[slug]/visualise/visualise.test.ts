@@ -349,6 +349,58 @@ describe('visualise +page.svelte — §16.2.6 c2 live-preview wiring', () => {
   });
 });
 
+
+// §16.2.6 c3 — staging mode: toggle ON intercepts chip edits into
+// the opLog instead of immediately PATCHing. Save / Discard
+// affordances appear when opLog is non-empty. These tests cover
+// the toggle-OFF passthrough (existing §16.2.5 behaviour) + the
+// toggle-ON interception + Save/Discard visibility.
+
+describe('visualise +page.svelte — §16.2.6 c3 staging mode', () => {
+  beforeEach(() => {
+    getStationSidecarMock.mockReset();
+    startPreviewJobMock.mockReset();
+    watchJobMock.mockReset();
+    cancelJobMock.mockReset();
+    startPreviewJobMock.mockResolvedValue({
+      job_id: 'pv-default', status: 'running',
+    });
+    cancelJobMock.mockResolvedValue(undefined);
+    setSlug('viz-test');
+    try { window.localStorage.clear(); } catch { /* */ }
+  });
+
+  it('Save / Discard buttons are hidden when opLog is empty (toggle ON, no edits)', async () => {
+    window.localStorage.setItem('livePreview:viz-test', 'on');
+    getStationSidecarMock.mockResolvedValueOnce({
+      template: makeTemplate(),
+      sidecar: makeSidecar(),
+      sidecar_error: null,
+    });
+    watchJobMock.mockReturnValue(snapsAsAsyncIterable([fakeDoneTrace()]));
+    render(Page);
+
+    // Toggle is on but no staged edits exist yet — buttons absent.
+    await screen.findByTestId('live-preview-checkbox');
+    expect(screen.queryByTestId('staged-save')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('staged-discard')).not.toBeInTheDocument();
+  });
+
+  it('Save / Discard buttons are hidden when toggle is OFF (preserves §16.2.5 baseline)', async () => {
+    // Toggle defaults OFF — no staging UX visible regardless.
+    getStationSidecarMock.mockResolvedValueOnce({
+      template: makeTemplate(),
+      sidecar: makeSidecar(),
+      sidecar_error: null,
+    });
+    render(Page);
+
+    await screen.findByTestId('editor-canvas');
+    expect(screen.queryByTestId('staged-save')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('staged-discard')).not.toBeInTheDocument();
+  });
+});
+
 // Re-import `act` for the cases above. Done at the bottom so the
 // existing tests' imports (line 2) stay untouched.
 import { act } from '@testing-library/svelte';

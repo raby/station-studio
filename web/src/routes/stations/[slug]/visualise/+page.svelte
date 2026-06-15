@@ -25,7 +25,9 @@
     deleteSection,
     exportStationTemplate,
     getStationSidecar,
+    isPreviewResult,
     moveBlock,
+    type Trace,
     patchBlock,
     patchMacro,
     renameSection,
@@ -36,12 +38,12 @@
     watchJob,
     type BlockAddress,
     type StructuralBlockEdit,
-    type Trace,
   } from '$lib/api';
   import {
     parseEditorSidecarResponse,
     type ExpandedRef, type Sidecar, type StationTemplate,
   } from '$lib/editor';
+  import { applyEdits, type Edit } from '$lib/edit-ops';
   import EditorCanvas from '$lib/components/editor/EditorCanvas.svelte';
   import TracePane from '$lib/components/editor/TracePane.svelte';
 
@@ -85,6 +87,43 @@
   // they diverge.
   let previewGeneration = 0;
   const PREVIEW_DEBOUNCE_MS = 500;
+
+  // §16.2.6 c3 — staging buffer. opLog is the AUTHORITATIVE store;
+  // `stagedTemplate` + `stagedSidecar` are derived. Save replays
+  // opLog as sequential PATCHes; Discard clears it.
+  //
+  // **c3 MVP scope**: only `patchBlock` (the chip-edit Save path) is
+  // intercepted. The other 8 edit kinds (sectionCreate, delete,
+  // rename, reorder, moveBlock, retype, structural, patchMacro)
+  // still fall through to immediate PATCH even when toggle is ON —
+  // c3b extends both applyEdit + the handler interception to cover
+  // them. The opLog data structure carries the future kinds; only
+  // the dispatch wiring needs adding per kind.
+  //
+  // saveError surfacing during Save replay reuses the existing
+  // `saveError` banner — c3 doesn't add the Retry/Drop modal
+  // (that's c3b). On any replay error the loop stops + the operator
+  // sees which edit failed; remaining edits stay in opLog so they
+  // can re-try once the conflict is resolved.
+  let opLog: Edit[] = [];
+  let saving = false;
+
+  // Derived: when toggle ON + opLog non-empty, stagedTemplate +
+  // stagedSidecar reflect (base + applyEdits). Otherwise they're
+  // the same references as the loaded template + sidecar. The
+  // preview endpoint receives whichever is current.
+  $: stagedView = (() => {
+    if (!livePreviewOn || opLog.length === 0 || !template || !sidecar) {
+      return { template, sidecar };
+    }
+    return applyEdits(
+      template,
+      sidecar as unknown,
+      opLog,
+    ) as { template: StationTemplate; sidecar: Sidecar };
+  })();
+  $: stagedTemplate = stagedView.template;
+  $: stagedSidecar = stagedView.sidecar;
 
   $: slug = $page.params.slug ?? '';
 
@@ -200,10 +239,15 @@
       previewing = true;
       previewError = null;
       try {
+        // §16.2.6 c3: preview against the STAGED view, not the
+        // loaded view. With toggle ON + opLog empty, stagedTemplate
+        // === template so the body is identical to c2's behavior.
+        // With opLog non-empty, the operator's queued edits show
+        // up in the trace before they Save.
         const start = await startPreviewJob(
           slug,
-          template as unknown as Record<string, unknown>,
-          sidecar as unknown as Record<string, unknown>,
+          stagedTemplate as unknown as Record<string, unknown>,
+          stagedSidecar as unknown as Record<string, unknown>,
           1,
         );
         // Review #1 fix #1: a supersede or onDestroy that fired
@@ -224,13 +268,13 @@
         for await (const snap of watchJob(start.job_id)) {
           if (myGeneration !== previewGeneration) return;
           if (snap.status === 'done') {
-            // The worker's on_result returned {trace, slot_count}
-            // (PreviewResult). Discriminate from GenerateResponse by
-            // shape: PreviewResult has `trace` (a Trace object),
-            // GenerateResponse has `playlist_id`.
+            // Discriminate via the hoisted type guard (§16.2.6 c3
+            // fold-in of c2 review #1 finding #12) — single
+            // source of truth for the PreviewResult / GenerateResponse
+            // discriminator.
             const r = snap.result;
-            if (r && typeof r === 'object' && 'trace' in r) {
-              previewTrace = (r as { trace: Trace }).trace;
+            if (isPreviewResult(r)) {
+              previewTrace = r.trace;
             } else {
               // Review #1 fix #13: defensive narrow used to silently
               // keep the previous trace + clear `previewing` — the
@@ -472,10 +516,99 @@
       exportMsg = null;
       return;
     }
+    // §16.2.6 c3: when live-preview is ON, intercept the chip edit
+    // into the staging buffer instead of immediately PATCHing. The
+    // operator's edit shows up in the previewed trace; nothing
+    // commits until they click Save.
+    //
+    // Toggle OFF (or any non-patchBlock edit kind in c3 MVP) falls
+    // through to the existing withSaveLifecycle path — c3b extends
+    // the interception to the other 8 op kinds.
+    if (livePreviewOn) {
+      opLog = [
+        ...opLog,
+        { kind: 'patchBlock', address, fields: e.detail.fields },
+      ];
+      saveError = null;
+      conflict = false;
+      exportMsg = null;
+      // Schedule a debounced preview against the new staged state.
+      _schedulePreview();
+      return;
+    }
     await withSaveLifecycle(
       () => patchBlock(slug, address, e.detail.fields, updatedAt),
       'saved',
     );
+  }
+
+  // §16.2.6 c3 — replay the opLog as sequential PATCHes. On the
+  // first failure, stop + surface the error inline. Remaining edits
+  // stay in opLog so a fix-and-retry sequence works. The Retry/Drop
+  // modal (with explicit "drop the un-attempted edits" semantics)
+  // lands in c3b.
+  async function handleStagedSave() {
+    if (opLog.length === 0) return;
+    saving = true;
+    saveError = null;
+    conflict = false;
+    exportMsg = null;
+    try {
+      while (opLog.length > 0) {
+        const op = opLog[0];
+        if (op.kind === 'patchBlock') {
+          try {
+            await patchBlock(slug, op.address, op.fields, updatedAt);
+          } catch (err) {
+            if (err instanceof BlockPatchConflict) {
+              conflict = true;
+              // c3 MVP: stop on conflict, surface the existing
+              // conflict banner, leave the rest in opLog. The
+              // Retry/Drop modal in c3b replaces this with an
+              // explicit per-edit prompt.
+              return;
+            }
+            saveError =
+              `Save failed at staged edit ${opLog.length}/${opLog.length + opLog.length}: ` +
+              (err instanceof Error ? err.message : String(err));
+            return;
+          }
+          // Refresh updated_at from the latest fetch so the next
+          // PATCH in the replay carries the freshest token. We
+          // refetch + drop the just-replayed op together so a
+          // failure mid-replay leaves consistent state.
+          await loadSidecar();
+          opLog = opLog.slice(1);
+        } else {
+          // c3 MVP: unknown kind shouldn't happen (only patchBlock
+          // is ever added), but defensively drop it from the queue.
+          opLog = opLog.slice(1);
+        }
+      }
+      // All edits applied. Trigger a preview refresh.
+      _schedulePreview();
+    } finally {
+      saving = false;
+    }
+  }
+
+  // §16.2.6 c3 — drop all staged edits + restore the displayed
+  // state to the last-saved sidecar. Refetches via GET so the
+  // canvas re-renders against fresh server state (covers the case
+  // where another session changed the station while these edits
+  // were staged — the operator sees the conflict winner's content
+  // rather than their stale base).
+  async function handleDiscard() {
+    if (opLog.length === 0) return;
+    opLog = [];
+    saveError = null;
+    conflict = false;
+    try {
+      await loadSidecar();
+      _schedulePreview();
+    } catch (err) {
+      saveError = err instanceof Error ? err.message : String(err);
+    }
   }
 
   async function handleExport() {
@@ -678,6 +811,31 @@
         />
         Live preview
       </label>
+      <!-- §16.2.6 c3 — Save / Discard controls for staged edits.
+           Visible only when toggle ON + opLog has at least one
+           edit (no Save target otherwise). The button labels
+           include the count so the operator sees what they're
+           committing. -->
+      {#if livePreviewOn && opLog.length > 0}
+        <button
+          type="button"
+          class="staged-save"
+          data-testid="staged-save"
+          disabled={saving}
+          on:click={handleStagedSave}
+        >
+          {saving ? 'Saving…' : `Save ${opLog.length} edit${opLog.length === 1 ? '' : 's'}`}
+        </button>
+        <button
+          type="button"
+          class="staged-discard"
+          data-testid="staged-discard"
+          disabled={saving}
+          on:click={handleDiscard}
+        >
+          Discard
+        </button>
+      {/if}
       {#if exportMsg}
         <span class="export-msg" data-testid="export-msg">{exportMsg}</span>
       {/if}
@@ -786,6 +944,39 @@
   .live-preview-toggle input[type='checkbox'] {
     margin: 0;
     cursor: pointer;
+  }
+  /* §16.2.6 c3 — staged-edit Save / Discard controls. */
+  .staged-save {
+    padding: 0.4rem 0.9rem;
+    background: var(--accent, #2c7a7b);
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.85rem;
+  }
+  .staged-save:hover:not([disabled]) {
+    background: color-mix(in srgb, var(--accent, #2c7a7b) 85%, black);
+  }
+  .staged-save[disabled] {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+  .staged-discard {
+    padding: 0.4rem 0.9rem;
+    background: transparent;
+    color: var(--text-muted, #555);
+    border: 1px solid var(--border, #ddd);
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.85rem;
+  }
+  .staged-discard:hover:not([disabled]) {
+    background: var(--bg-hover, #f0f0f0);
+  }
+  .staged-discard[disabled] {
+    opacity: 0.6;
+    cursor: not-allowed;
   }
   .editor-actions {
     display: flex;
