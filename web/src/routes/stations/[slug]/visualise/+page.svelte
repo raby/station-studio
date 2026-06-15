@@ -88,6 +88,23 @@
 
   $: slug = $page.params.slug ?? '';
 
+  // §16.2.6 c2 review #1 fix #10: re-hydrate the toggle when slug
+  // changes. SvelteKit may re-use the same route component across
+  // station navigations (without firing a fresh onMount), so the
+  // initial-mount hydration alone leaves the toggle stuck on the
+  // previous station's value. This reactive re-reads localStorage
+  // for the CURRENT slug whenever slug changes; pair with a
+  // _cancelPreview to drop any in-flight preview from the old
+  // station (its template/sidecar are stale for the new slug).
+  let _lastHydratedSlug: string | null = null;
+  $: if (slug && slug !== _lastHydratedSlug) {
+    _cancelPreview();
+    previewTrace = null;
+    previewError = null;
+    livePreviewOn = readLivePreview(slug);
+    _lastHydratedSlug = slug;
+  }
+
   // §16.2.6 c2 — per-station localStorage key. The toggle's intent
   // ("I'm exploring this station, show me previews") is most useful
   // when scoped to the station; switching to a different station
@@ -116,6 +133,28 @@
       // state just doesn't persist across page reloads in those
       // sessions.
     }
+  }
+
+  // §16.2.6 c2 review #1 fix #8: operator-facing error sanitiser.
+  // Backend's clean 400 messages ("invalid sidecar (grammar):
+  // missing required keys [layout_order]") are operator-readable +
+  // pass through. Internal exception strings (Python tracebacks,
+  // module-qualified class names, KeyError quotes) should NOT be
+  // exposed in the trace pane banner — they're confusing + leak
+  // internals. Heuristic: cap length at 200 chars + strip the
+  // common Python-y prefixes that escape from job_runner's error
+  // handler.
+  function _friendlyPreviewError(raw: string | undefined): string {
+    if (!raw) return 'preview failed';
+    let msg = raw;
+    // Strip module-qualified class prefix: "engine.editor_metadata.EditorMetadataError: foo" → "foo"
+    msg = msg.replace(/^[a-zA-Z_][\w.]*Error:\s*/, '');
+    // Strip leading "Traceback (most recent call last):" + the rest.
+    if (msg.startsWith('Traceback')) return 'preview failed (internal error)';
+    // Cap length. Long traceback fragments shouldn't dominate the
+    // banner; 200 chars holds the typical backend 400 message + room.
+    if (msg.length > 200) msg = msg.slice(0, 197) + '…';
+    return msg;
   }
 
   // Cancel any pending or in-flight preview job. Called from
@@ -147,9 +186,13 @@
   function _schedulePreview() {
     if (!livePreviewOn) return;
     if (!template || !sidecar) return;
+    // _cancelPreview bumped previewGeneration; the resulting value
+    // IS this schedule's generation token. Review #1 finding #6:
+    // pre-fix added a second `+= 1` here on the (mis-?)reading that
+    // both invalidation steps needed their own gen — the double-
+    // bump was harmless but read as suspicious.
     _cancelPreview();
-    const myGeneration = previewGeneration + 1;
-    previewGeneration = myGeneration;
+    const myGeneration = previewGeneration;
     previewDebounceTimer = setTimeout(async () => {
       previewDebounceTimer = null;
       if (myGeneration !== previewGeneration) return;
@@ -202,7 +245,7 @@
             return;
           }
           if (snap.status === 'error') {
-            previewError = snap.error?.message ?? 'preview failed';
+            previewError = _friendlyPreviewError(snap.error?.message);
             previewing = false;
             currentPreviewJobId = null;
             return;
@@ -218,7 +261,9 @@
         }
       } catch (err) {
         if (myGeneration !== previewGeneration) return;
-        previewError = err instanceof Error ? err.message : String(err);
+        previewError = _friendlyPreviewError(
+          err instanceof Error ? err.message : String(err),
+        );
         previewing = false;
         currentPreviewJobId = null;
       }

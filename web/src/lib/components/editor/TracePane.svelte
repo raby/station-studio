@@ -14,8 +14,11 @@
    *
    * Per the design's §16.2.6.t3 forward-pointer the click-trace-row →
    * jump-to-chip interaction lands in a future sub-slice. c2 just
-   * renders the rows; the parent dispatches a `select` event on row
-   * click so c3 / .t3 can wire it later without component changes.
+   * renders the rows inline (no `<TraceRow>` sub-component — the row
+   * markup is short enough that an extra component would add wiring
+   * without payoff). The parent dispatches a `select` event on row
+   * click (or Enter/Space keyboard activation) so c3 / .t3 can wire
+   * the jump-to-chip handler later without component changes.
    *
    * NO virtualisation at v1 — Rebirth Radio's 2,196 rows × ~30px row
    * height render fine in modern browsers; §16.18 (saved-trace
@@ -76,13 +79,31 @@
   {#if trace && trace.slots.length > 0}
     <ol class="slots" data-testid="trace-slots">
       {#each trace.slots as slot, i (i)}
-        <!-- svelte-ignore a11y-click-events-have-key-events -->
-        <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
+        <!-- §16.2.6 c2 review #1 fix #7: keyboard a11y on trace
+             rows. `role="button"` + `tabindex="0"` make rows
+             keyboard-focusable; Enter and Space both dispatch the
+             same select event as the click handler. Wraps the
+             §16.2.6.t3 jump-to-chip interaction in keyboard
+             support from day one. The
+             a11y-no-noninteractive-element-to-interactive-role
+             warning is intentional: an inner <button> would
+             complicate the grid layout + duplicate the click
+             surface; the role+tabindex+keydown trio gives the
+             same accessibility outcome with simpler markup. -->
+        <!-- svelte-ignore a11y-no-noninteractive-element-to-interactive-role -->
         <li
           class="slot"
           data-testid="trace-row"
           data-slot-index={slot.slot}
+          role="button"
+          tabindex="0"
           on:click={() => onRowClick(slot.slot)}
+          on:keydown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              onRowClick(slot.slot);
+            }
+          }}
         >
           <span class="idx">{slot.slot}</span>
           <span class="source" title={slot.source}>{slot.source}</span>
