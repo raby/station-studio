@@ -20,6 +20,9 @@ import '@testing-library/jest-dom/vitest';
 
 const {
   getStationSidecarMock,
+  startPreviewJobMock,
+  watchJobMock,
+  cancelJobMock,
   FakeApiError,
   pageStore,
   setSlug,
@@ -47,6 +50,14 @@ const {
   };
   return {
     getStationSidecarMock: vi.fn(),
+    // §16.2.6 c2: preview transport mocks. Default impls return
+    // empty/no-op so the existing visualise tests (which don't
+    // care about preview) don't have to set them up.
+    startPreviewJobMock: vi.fn(async () => ({
+      job_id: 'pv-default', status: 'running',
+    })),
+    watchJobMock: vi.fn(),
+    cancelJobMock: vi.fn(async () => {}),
     FakeApiError,
     pageStore,
     setSlug,
@@ -55,8 +66,32 @@ const {
 
 
 vi.mock('$lib/api', () => ({
-  getStationSidecar: (...args: unknown[]) => getStationSidecarMock(...args),
+  // Mock surface widened for §16.2.6 c2 preview transport. Pass
+  // the hoisted vi.fn instances directly — per-test mock
+  // configuration (mockReturnValueOnce, mockResolvedValueOnce)
+  // flows through. The signature-mismatch errors that bit the
+  // wrapped-args form (`(...args: unknown[]) => mock(...args)`)
+  // don't apply because vi.fn's polymorphic type satisfies any
+  // function position TS expects.
+  getStationSidecar: getStationSidecarMock,
+  startPreviewJob: startPreviewJobMock,
+  watchJob: watchJobMock,
+  cancelJob: cancelJobMock,
+  // The other api exports the page imports (createSection,
+  // patchBlock, etc.) aren't exercised by these tests; default
+  // them to no-ops so the page mounts cleanly.
+  createSection: vi.fn(),
+  deleteSection: vi.fn(),
+  exportStationTemplate: vi.fn(),
+  moveBlock: vi.fn(),
+  patchBlock: vi.fn(),
+  patchMacro: vi.fn(),
+  renameSection: vi.fn(),
+  reorderSections: vi.fn(),
+  retypeBlock: vi.fn(),
+  structuralBlockEdit: vi.fn(),
   ApiError: FakeApiError,
+  BlockPatchConflict: class BlockPatchConflict extends FakeApiError {},
 }));
 
 
@@ -168,3 +203,152 @@ describe('visualise +page.svelte', () => {
     expect(getStationSidecarMock).not.toHaveBeenCalled();
   });
 });
+
+
+// §16.2.6 c2 review #1 batch B — page-level tests for the live-
+// preview wiring: toggle + debounce + scheduler + localStorage.
+//
+// These pin the contracts the commit message claimed but didn't
+// land: toggle-OFF baseline (preserves §16.2.5 behavior — no
+// startPreviewJob ever called), toggle-ON triggers preview after
+// debounce, localStorage round-trip per station.
+
+function snapsAsAsyncIterable(snaps: unknown[]): AsyncIterable<unknown> {
+  return {
+    async *[Symbol.asyncIterator]() {
+      for (const s of snaps) yield s;
+    },
+  };
+}
+
+function fakeDoneTrace(slotCount: number = 2) {
+  return {
+    job_id: 'pv-1',
+    slug: 'viz-test',
+    kind: 'preview',
+    status: 'done',
+    phase: 'done',
+    current: slotCount,
+    total: slotCount,
+    label: null,
+    error: null,
+    started_at: '2026-06-15T12:00:00Z',
+    finished_at: '2026-06-15T12:00:01Z',
+    result: {
+      trace: {
+        trace_id: 'pv-trace',
+        station: 'viz-test',
+        week: 1,
+        rng: 'off',
+        seed: null,
+        generated_at: '2026-06-15T12:00:00Z',
+        slots: Array.from({ length: slotCount }, (_, i) => ({
+          slot: i + 1, unit: 'slot', row: 1, block: i + 1,
+          source: 'A', strategy: 'pick', pool_index: i + 1,
+          track_id: 100 + i, track_name: `T${i + 1}`,
+          track_artist: null, reason: '', excluded: [],
+        })),
+      },
+      slot_count: slotCount,
+    },
+  };
+}
+
+
+describe('visualise +page.svelte — §16.2.6 c2 live-preview wiring', () => {
+  beforeEach(() => {
+    getStationSidecarMock.mockReset();
+    startPreviewJobMock.mockReset();
+    watchJobMock.mockReset();
+    cancelJobMock.mockReset();
+    startPreviewJobMock.mockResolvedValue({
+      job_id: 'pv-default', status: 'running',
+    });
+    cancelJobMock.mockResolvedValue(undefined);
+    setSlug('viz-test');
+    // Wipe localStorage between cases so the toggle state is
+    // deterministic.
+    try { window.localStorage.clear(); } catch { /* */ }
+  });
+
+  it('toggle defaults OFF — no preview POST fires on mount + no TracePane renders (preserves §16.2.5 behavior)', async () => {
+    getStationSidecarMock.mockResolvedValueOnce({
+      template: makeTemplate(),
+      sidecar: makeSidecar(),
+      sidecar_error: null,
+    });
+    render(Page);
+    // Page mounts.
+    expect(await screen.findByTestId('editor-canvas')).toBeInTheDocument();
+    // Toggle is visible + unchecked.
+    const cb = await screen.findByTestId('live-preview-checkbox') as HTMLInputElement;
+    expect(cb.checked).toBe(false);
+    // No preview pane.
+    expect(screen.queryByTestId('trace-pane')).not.toBeInTheDocument();
+    // No preview POST.
+    expect(startPreviewJobMock).not.toHaveBeenCalled();
+  });
+
+  it('hydrates toggle from localStorage on mount (per-station scoped key)', async () => {
+    // Pre-seed the toggle's localStorage as "on" for this slug.
+    window.localStorage.setItem('livePreview:viz-test', 'on');
+    getStationSidecarMock.mockResolvedValueOnce({
+      template: makeTemplate(),
+      sidecar: makeSidecar(),
+      sidecar_error: null,
+    });
+    // Provide a watchJob response so the auto-mount preview can
+    // resolve cleanly without timing out.
+    watchJobMock.mockReturnValue(snapsAsAsyncIterable([fakeDoneTrace()]));
+
+    render(Page);
+    const cb = await screen.findByTestId('live-preview-checkbox') as HTMLInputElement;
+    expect(cb.checked).toBe(true);
+    // The trace pane renders even before any preview has resolved
+    // (in the empty-state branch). Confirms the layout flipped.
+    expect(await screen.findByTestId('trace-pane')).toBeInTheDocument();
+  });
+
+  it('toggle ON writes "on" to localStorage for the current slug', async () => {
+    getStationSidecarMock.mockResolvedValueOnce({
+      template: makeTemplate(),
+      sidecar: makeSidecar(),
+      sidecar_error: null,
+    });
+    watchJobMock.mockReturnValue(snapsAsAsyncIterable([fakeDoneTrace()]));
+    render(Page);
+
+    const cb = await screen.findByTestId('live-preview-checkbox') as HTMLInputElement;
+    expect(window.localStorage.getItem('livePreview:viz-test')).toBeNull();
+    await act(async () => {
+      cb.click();
+    });
+    expect(window.localStorage.getItem('livePreview:viz-test')).toBe('on');
+    expect(cb.checked).toBe(true);
+  });
+
+  it('toggle OFF clears the trace + writes "off" to localStorage', async () => {
+    window.localStorage.setItem('livePreview:viz-test', 'on');
+    getStationSidecarMock.mockResolvedValueOnce({
+      template: makeTemplate(),
+      sidecar: makeSidecar(),
+      sidecar_error: null,
+    });
+    watchJobMock.mockReturnValue(snapsAsAsyncIterable([fakeDoneTrace()]));
+    render(Page);
+
+    const cb = await screen.findByTestId('live-preview-checkbox') as HTMLInputElement;
+    expect(cb.checked).toBe(true);
+    await act(async () => {
+      cb.click();
+    });
+    expect(cb.checked).toBe(false);
+    expect(window.localStorage.getItem('livePreview:viz-test')).toBe('off');
+    // Pane disappears.
+    expect(screen.queryByTestId('trace-pane')).not.toBeInTheDocument();
+  });
+});
+
+// Re-import `act` for the cases above. Done at the bottom so the
+// existing tests' imports (line 2) stay untouched.
+import { act } from '@testing-library/svelte';
