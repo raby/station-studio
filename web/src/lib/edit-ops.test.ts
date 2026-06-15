@@ -694,6 +694,64 @@ describe('applyEdit — moveBlock (§16.2.6 c3d)', () => {
     expect(result.sidecar).toBe(baseSidecar);
   });
 
+  it('c3d batch B finding #3: no-op on system-bin target (`_unsorted` and other leading-underscore ids)', () => {
+    // System bins are auto-filled by section delete + structural add (D2);
+    // backend 400s on manual moves into them. canDropOn filters client-
+    // side in drag-drop, but keyboard / scripted paths bypass that.
+    const sidecarWithBin = {
+      ...baseSidecar,
+      sections: [
+        ...baseSidecar.sections,
+        { id: '_unsorted', name: 'Unsorted', blocks: [] },
+      ],
+    };
+    const op: Edit = {
+      kind: 'moveBlock',
+      address: { slot_index: 0 },
+      targetSectionId: '_unsorted',
+      targetIndex: 0,
+    };
+    const result = applyEdit(makeFlatTemplate(), sidecarWithBin, op);
+    expect(result.sidecar).toBe(sidecarWithBin);
+  });
+
+  it('c3d batch B finding #4: no-op on negative targetIndex (backend 400s)', () => {
+    const op: Edit = {
+      kind: 'moveBlock',
+      address: { slot_index: 0 },
+      targetSectionId: 'evening',
+      targetIndex: -1,
+    };
+    const result = applyEdit(makeFlatTemplate(), baseSidecar, op);
+    expect(result.sidecar).toBe(baseSidecar);
+  });
+
+  it('c3d batch B finding #5: no-op when address matches blocks in multiple sections (drift)', () => {
+    // Drift-rule 8 catches this at load time, but staging mode
+    // shouldn't paper over it — backend 400s with "address matches
+    // blocks in multiple sections" so the optimistic preview should
+    // bail rather than picking the first hit.
+    const drifted = {
+      ...baseSidecar,
+      sections: [
+        { id: 'morning', name: 'Morning', blocks: [
+          { kind: 'atomic', slot_index: 0 },
+        ]},
+        { id: 'evening', name: 'Evening', blocks: [
+          { kind: 'atomic', slot_index: 0 }, // duplicate slot_index!
+        ]},
+      ],
+    };
+    const op: Edit = {
+      kind: 'moveBlock',
+      address: { slot_index: 0 },
+      targetSectionId: 'morning',
+      targetIndex: 1,
+    };
+    const result = applyEdit(makeFlatTemplate(), drifted, op);
+    expect(result.sidecar).toBe(drifted);
+  });
+
   it('PURE: input not mutated', () => {
     const snapshot = JSON.parse(JSON.stringify(baseSidecar));
     const op: Edit = {

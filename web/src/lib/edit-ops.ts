@@ -634,20 +634,29 @@ function _reorderSections(
  * walks sections to find the match.
  *
  * Backend semantic mirror (api.routers.editor.move_block):
+ *   - Reject `_unsorted` (and any leading-underscore system bin) as
+ *     a manual move target — system bins are auto-filled by section
+ *     delete + structural add only (D2; backend editor.py:1140).
+ *   - Reject negative `targetIndex` (backend editor.py:1208).
  *   - Find the source section by address-matching against
  *     section.blocks.
+ *   - Reject when the address matches blocks in MULTIPLE sections
+ *     (drift; backend editor.py:1184).
  *   - Remove the matched block from source.blocks.
  *   - Insert the block into targetSection.blocks at targetIndex
  *     (or append at end when targetIndex is null).
  *   - Moving to the SAME section + a different index is the
  *     "within-section reorder" path; backend supports it + so do we.
  *
- * Defensive no-ops:
+ * Defensive no-ops (each mirrors a backend 400 so the optimistic
+ * preview never stages an op that Save will reject):
  *   - sidecar isn't a dict
  *   - sections isn't an array
+ *   - targetSectionId is a system bin (leading underscore)
+ *   - targetIndex < 0
  *   - target section doesn't exist
  *   - source block not found in any section (address mismatch)
- *   - targetIndex out of range (< 0 or > target.blocks.length)
+ *   - source block matches more than one section (sidecar drift)
  *
  * Returns a new sidecar dict (PURE).
  */
@@ -658,6 +667,14 @@ function _moveBlock(
   targetIndex: number | null,
 ): unknown {
   if (!_isSidecarLike(sidecar)) return sidecar;
+  // c3d review #1 batch B finding #3: backend rejects system bins
+  // (leading-underscore ids per §16.2.5.t2 reservation) as manual
+  // move targets. canDropOn filters this client-side in normal
+  // drag-drop, but keyboard / scripted / future surfaces bypass
+  // that — mirror the 400 so the staged op never lies.
+  if (targetSectionId.startsWith('_')) return sidecar;
+  // c3d review #1 batch B finding #4: backend 400s on negative idx.
+  if (targetIndex !== null && targetIndex < 0) return sidecar;
   const dict = sidecar as Record<string, unknown>;
   const sections = dict.sections;
   if (!Array.isArray(sections)) return sidecar;
@@ -668,10 +685,14 @@ function _moveBlock(
   ) as Record<string, unknown> | undefined;
   if (!targetSection) return sidecar;
 
-  // Walk sections to find the source block + its position.
+  // Walk every section (NO early-out on first hit). c3d review #1
+  // batch B finding #5: backend 400s when the address matches
+  // multiple sections (drift rule 8). Continue scanning so we can
+  // detect + no-op a multi-match — Save would otherwise reject.
   let sourceSectionIdx = -1;
   let sourceBlockIdx = -1;
   let movedBlock: Record<string, unknown> | null = null;
+  let matchCount = 0;
   for (let i = 0; i < sections.length; i++) {
     const sec = sections[i];
     if (!sec || typeof sec !== 'object') continue;
@@ -689,13 +710,13 @@ function _moveBlock(
         (address.block_idx !== undefined &&
           block.block_idx === address.block_idx)
       ) {
+        matchCount += 1;
+        if (matchCount > 1) return sidecar; // drift — backend would 400.
         sourceSectionIdx = i;
         sourceBlockIdx = j;
         movedBlock = block;
-        break;
       }
     }
-    if (movedBlock !== null) break;
   }
   if (movedBlock === null) return sidecar;
 
