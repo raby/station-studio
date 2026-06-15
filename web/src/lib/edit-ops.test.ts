@@ -240,6 +240,43 @@ describe('applyEdit — patchMacro (§16.2.6 c3b)', () => {
     expect(result.sidecar).toBe(baseSidecar);
   });
 
+  it('no-ops when target macro has no spec (review #1 fix #2: prevents partial-spec replay)', () => {
+    const template = makeFlatTemplate();
+    const sidecarWithBrokenMacro = {
+      schema_version: 1, sections: [], macros: [
+        { id: 'm1', name: 'NoSpec', repeat: 1 },  // spec missing
+      ], layout_order: [],
+    };
+    const op: Edit = {
+      kind: 'patchMacro',
+      macroId: 'm1',
+      fields: { size: 5 },
+    };
+    const result = applyEdit(template, sidecarWithBrokenMacro, op);
+    // Identity — the corrupted macro stays as-is so the engine's
+    // validate_sidecar surfaces the spec-missing error rather than
+    // applyEdit synthesizing a partial spec.
+    expect(result.sidecar).toBe(sidecarWithBrokenMacro);
+  });
+
+  it('no-ops when target macro spec is an array (review #1 fix #4)', () => {
+    // typeof [] === 'object' so the pre-fix object-check accepted
+    // arrays + spreading them produced an index-keyed dict.
+    const template = makeFlatTemplate();
+    const sidecarWithArraySpec = {
+      schema_version: 1, sections: [], macros: [
+        { id: 'm1', name: 'ArrSpec', repeat: 1, spec: ['weird'] },
+      ], layout_order: [],
+    };
+    const op: Edit = {
+      kind: 'patchMacro',
+      macroId: 'm1',
+      fields: { size: 5 },
+    };
+    const result = applyEdit(template, sidecarWithArraySpec, op);
+    expect(result.sidecar).toBe(sidecarWithArraySpec);
+  });
+
   it('no-ops on sidecar missing macros array', () => {
     const template = makeFlatTemplate();
     const sidecarNoMacros = { schema_version: 1, sections: [], layout_order: [] };

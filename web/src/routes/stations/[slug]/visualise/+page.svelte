@@ -602,6 +602,22 @@
             case 'renameSection':
               await renameSection(slug, op.sectionId, op.name, updatedAt);
               break;
+            default: {
+              // Review #1 fix #1: exhaustiveness pin. Pre-fix the
+              // switch had no default; a future kind added without
+              // a case here would silently drop on Save (slice(1)
+              // runs unconditionally after) — operator's edit
+              // vanishes with no error. The `never` assignment
+              // fails compile if any Edit kind isn't covered, so
+              // c3c's six new kinds will all need their dispatch
+              // case added here.
+              const _exhaustive: never = op;
+              void _exhaustive;
+              throw new Error(
+                `Save replay: unknown op kind '${(op as Edit).kind}' ` +
+                `— add a dispatch case to handleStagedSave or remove the op from the Edit union`,
+              );
+            }
           }
         } catch (err) {
           if (err instanceof BlockPatchConflict) {

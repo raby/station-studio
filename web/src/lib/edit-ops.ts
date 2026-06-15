@@ -139,8 +139,15 @@ export function applyEdit(
       // 3+ kinds so TS narrows correctly to `never` after the
       // exhaustive switch. A future kind added without an
       // applyEdit case fails at compile time here.
+      //
+      // Review #1 fix #6: dropped the pointless `_exhaustive ??
+      // sidecar` — `_exhaustive` is `never` at type level, so the
+      // `??` was dead code. Return the original snapshot unchanged
+      // if the default ever runs at runtime (which it can't under
+      // a sound union — the assignment fails compile if not).
       const _exhaustive: never = op;
-      return { template, sidecar: _exhaustive ?? sidecar };
+      void _exhaustive;
+      return { template, sidecar };
     }
   }
 }
@@ -203,13 +210,13 @@ function _patchBlock(
     return template;
   }
 
-  // Build the new block dict by merging fields. null removes.
+  // Build the new block dict by merging fields. Review #1 fix #5:
+  // use the shared `_mergeFields` helper instead of an inline
+  // copy of the same merge loop — same null=remove / value=set
+  // semantic as the patchMacro path, kept in one place so a
+  // future change to the parameter-only contract updates both.
   const oldBlock = targetList[targetIdx];
-  const newBlock: Record<string, unknown> = { ...oldBlock };
-  for (const [k, v] of Object.entries(fields)) {
-    if (v === null) delete newBlock[k];
-    else newBlock[k] = v;
-  }
+  const newBlock = _mergeFields(oldBlock, fields);
 
   // Reconstruct the template with the new block spliced in. Deep-
   // copy only the surrounding structure (the rest of the template is
@@ -251,18 +258,38 @@ function _patchMacro(
   const macros = (sidecar as Record<string, unknown>).macros;
   if (!Array.isArray(macros)) return sidecar;
   let found = false;
+  let bailed = false;
   const nextMacros = macros.map((m) => {
     if (!m || typeof m !== 'object') return m;
     const macro = m as Record<string, unknown>;
     if (macro.id !== macroId) return m;
     found = true;
-    const oldSpec =
-      macro.spec && typeof macro.spec === 'object'
-        ? (macro.spec as Record<string, unknown>)
-        : {};
-    return { ...macro, spec: _mergeFields(oldSpec, fields) };
+    // Review #1 fix #2 + #4: bail when spec is missing OR is an
+    // array. Pre-fix the defensive default `{}` produced a
+    // synthetic partial spec (e.g. `{size: 5}` with no strategy /
+    // source) — the replayed PATCH would 400 at the engine OR
+    // (worse) commit a fragment. Bail leaves the macro untouched
+    // + lets validate_sidecar surface the corruption at the next
+    // mutation. `typeof [] === 'object'` so the prior `&& typeof
+    // === 'object'` check ACCEPTED arrays + would have spread
+    // them into an index-keyed dict — same fix covers both.
+    if (
+      !macro.spec ||
+      typeof macro.spec !== 'object' ||
+      Array.isArray(macro.spec)
+    ) {
+      bailed = true;
+      return m;
+    }
+    return {
+      ...macro,
+      spec: _mergeFields(macro.spec as Record<string, unknown>, fields),
+    };
   });
-  if (!found) return sidecar;
+  // If the target was found but bailed on a malformed spec, return
+  // the original sidecar (matches the "no observable change"
+  // contract for non-applicable edits).
+  if (!found || bailed) return sidecar;
   return { ...(sidecar as Record<string, unknown>), macros: nextMacros };
 }
 
@@ -313,5 +340,10 @@ function _mergeFields(
 
 
 function _isSidecarLike(value: unknown): boolean {
-  return value !== null && typeof value === 'object';
+  // Review #1 fix #7: arrays are typeof === 'object' so the prior
+  // check accepted them. Downstream `Array.isArray(.macros)` /
+  // `Array.isArray(.sections)` reads catch the array case
+  // defensively, but the helper's contract is "looks like a
+  // sidecar dict" — tighten so the name matches the check.
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
