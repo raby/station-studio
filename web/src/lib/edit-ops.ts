@@ -764,27 +764,36 @@ function _moveBlock(
 
 
 /**
- * §16.2.6 c3d — retype a block (PATCH /blocks/retype). Changes the
- * targeted template entry's `strategy` + `source` + REPLACES the
- * parameter fields (not a merge — retype resets the spec to the
- * new strategy's allowlist + `newFields` populated).
+ * §16.2.6 c3d — retype a block (PATCH /blocks/retype). Mirrors the
+ * backend's merge-then-filter sequence (api.routers.editor.patch_block_retype):
  *
- * Backend semantic mirror (api.routers.editor.retype_block):
- *   - Replace the block entry's `strategy` + `source` fields.
- *   - DROP every old parameter field (any key not in
- *     `EDITABLE_FIELDS_BY_STRATEGY[newStrategy]` + the structural
- *     `size`/`source`/`strategy` set).
- *   - Apply `newFields` on top.
+ *   1. Start from a SHALLOW COPY of the existing block (preserves
+ *      `strategy`/`source`/`size`/all existing parameter fields).
+ *   2. Apply `newStrategy` IF non-null — null means "don't change".
+ *   3. Apply `newSource` IF non-null — same null contract.
+ *   4. Merge `newFields`: null clears the key, non-null sets.
  *
- * Locally we simplify: keep `size` (structural), set strategy/source,
- * REPLACE all other fields with `newFields`. If a future field
- * becomes structural-but-mutable, this contract needs revisiting.
+ * The c3d-batch-A correction: previous implementation built a fresh
+ * block from scratch + dropped fields wholesale. That broke two
+ * preview invariants:
+ *   - `newStrategy: null` / `newSource: null` silently dropped the
+ *     existing values (backend preserves them).
+ *   - Existing parameter fields not in `newFields` vanished from the
+ *     optimistic preview, then reappeared on Save (backend kept them
+ *     through the merge + only dropped via allowlist filter).
+ *
+ * The backend ALSO applies an `EDITABLE_FIELDS_BY_STRATEGY[strategy]`
+ * filter as a final step (drops keys that the new strategy doesn't
+ * accept). We don't mirror that yet — it requires the allowlist mirror
+ * to live somewhere on the frontend. Tracked separately as c3d
+ * cosmetic-divergence follow-up; in practice the operator picks valid
+ * fields via the strategy-aware editor UI so the drift is rare.
  *
  * Sidecar is untouched — slot_index identity is preserved through
- * the retype, so existing atomic refs stay valid.
+ * the retype so existing atomic refs stay valid.
  *
  * Defensive no-ops:
- *   - template isn't a dict, or layout is missing
+ *   - layout sets both flat_slots + row_template (XOR violation)
  *   - address shape doesn't match layout form
  *   - address out of range
  *
@@ -822,17 +831,18 @@ function _retypeBlock(
     return template;
   }
 
-  // Build the retyped block: preserve `size` (structural-but-shared
-  // across strategies), set new strategy/source, replace fields.
-  const oldBlock = targetList[targetIdx];
-  const newBlock: Record<string, unknown> = {};
-  if (oldBlock.size !== undefined) newBlock.size = oldBlock.size;
+  // 1. Start from a shallow copy of the existing block — preserves
+  //    every field by default; subsequent steps override.
+  const newBlock: Record<string, unknown> = { ...targetList[targetIdx] };
+  // 2. Apply newStrategy if non-null (null = preserve existing).
   if (newStrategy !== null) newBlock.strategy = newStrategy;
+  // 3. Apply newSource if non-null (null = preserve existing).
   if (newSource !== null) newBlock.source = newSource;
-  // Apply newFields (null entries are silently skipped — retype's
-  // contract is "set or omit", not the patchBlock merge semantics).
+  // 4. Merge newFields: null clears, non-null sets. Matches the
+  //    backend's "patch-then-allowlist-filter" middle step.
   for (const [k, v] of Object.entries(newFields)) {
-    if (v !== null) newBlock[k] = v;
+    if (v === null) delete newBlock[k];
+    else newBlock[k] = v;
   }
 
   const nextList = targetList.slice();

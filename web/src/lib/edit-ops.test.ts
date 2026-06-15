@@ -734,7 +734,7 @@ describe('applyEdit — retypeBlock (§16.2.6 c3d)', () => {
     };
   }
 
-  it('replaces strategy + source + fields (drops fields not in newFields, preserves size)', () => {
+  it('sets strategy + source + merges newFields onto existing block (preserves unrelated fields)', () => {
     const template = makeRetypeTemplate();
     const op: Edit = {
       kind: 'retypeBlock',
@@ -744,20 +744,21 @@ describe('applyEdit — retypeBlock (§16.2.6 c3d)', () => {
       newFields: { window: 12 },
     };
     const { template: next } = applyEdit(template, {}, op);
-    // size preserved; strategy + source updated; new fields applied;
-    // old fields dropped (exclusion_window from original gone).
+    // Backend merges newFields onto the existing block + only filters
+    // by allowlist as a final step (not yet mirrored). c3d batch A:
+    // preserve `exclusion_window` since the operator didn't touch it.
     expect(next.layout.flat_slots![0]).toEqual({
       size: 1,
       strategy: 'window',
       source: 'B',
+      exclusion_window: 4,
       window: 12,
     });
-    expect(next.layout.flat_slots![0]).not.toHaveProperty('exclusion_window');
     // Sibling unchanged.
     expect(next.layout.flat_slots![1]).toEqual(template.layout.flat_slots![1]);
   });
 
-  it('newStrategy null preserves the existing strategy', () => {
+  it('newStrategy null preserves the existing strategy (c3d batch A: backend semantic mirror)', () => {
     const template = makeRetypeTemplate();
     const op: Edit = {
       kind: 'retypeBlock',
@@ -767,12 +768,53 @@ describe('applyEdit — retypeBlock (§16.2.6 c3d)', () => {
       newFields: {},
     };
     const { template: next } = applyEdit(template, {}, op);
-    // No strategy key when newStrategy is null + we drop all old
-    // params (retype semantic: replace, not merge). size preserved.
+    // Backend's contract: `null` means "don't change". The original
+    // strategy ('pick') + all existing parameter fields survive; only
+    // `source` swaps because newSource was non-null.
     expect(next.layout.flat_slots![0]).toEqual({
       size: 1,
+      strategy: 'pick',
       source: 'B',
+      exclusion_window: 4,
     });
+  });
+
+  it('newSource null preserves the existing source (c3d batch A)', () => {
+    const template = makeRetypeTemplate();
+    const op: Edit = {
+      kind: 'retypeBlock',
+      address: { slot_index: 0 },
+      newStrategy: 'window',
+      newSource: null,
+      newFields: {},
+    };
+    const { template: next } = applyEdit(template, {}, op);
+    // strategy swaps; source preserved (was 'A').
+    expect(next.layout.flat_slots![0]).toEqual({
+      size: 1,
+      strategy: 'window',
+      source: 'A',
+      exclusion_window: 4,
+    });
+  });
+
+  it('newFields null entry clears the existing key (backend merge contract)', () => {
+    const template = makeRetypeTemplate();
+    const op: Edit = {
+      kind: 'retypeBlock',
+      address: { slot_index: 0 },
+      newStrategy: null,
+      newSource: null,
+      newFields: { exclusion_window: null },
+    };
+    const { template: next } = applyEdit(template, {}, op);
+    // exclusion_window cleared; strategy + source + size preserved.
+    expect(next.layout.flat_slots![0]).toEqual({
+      size: 1,
+      strategy: 'pick',
+      source: 'A',
+    });
+    expect(next.layout.flat_slots![0]).not.toHaveProperty('exclusion_window');
   });
 
   it('PURE: input template not mutated', () => {
