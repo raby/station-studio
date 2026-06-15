@@ -177,7 +177,12 @@
     try {
       for await (const snap of watchJob(jobId)) {
         currentJob = snap;
-        if (snap.status === 'done' && snap.result) {
+        if (snap.status === 'done' && snap.result && 'playlist_id' in snap.result) {
+          // §16.2.6 c2: JobSnapshot.result widened to include
+          // PreviewResult; narrow on `playlist_id` (GenerateResponse-
+          // only) before navigating. A preview job snapshot
+          // shouldn't land here (this route only starts generate
+          // jobs) but the narrow is a cheap belt-and-suspenders.
           // Lands on the trace viewer for the freshly generated
           // playlist. No `generating = false` — navigating away.
           await goto(`/playlists/${snap.result.playlist_id}`);

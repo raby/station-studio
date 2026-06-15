@@ -36,6 +36,7 @@ import {
   setStationRule,
   clearStationRule,
   startGenerateJob,
+  startPreviewJob,
   watchJob,
   type JobSnapshot,
 } from './api';
@@ -576,6 +577,84 @@ describe('startGenerateJob', () => {
     expect(err.status).toBe(404);
     // Plain ApiError, not JobStartConflict.
     expect(err).not.toBeInstanceOf(JobStartConflict);
+  });
+});
+
+
+// §16.2.6 c2 — startPreviewJob hits /jobs/preview with the
+// editor's IN-MEMORY template + sidecar. Server-recomputed
+// inputs (excluded_mix_ids, previous_playlist, alias_map) are
+// deliberately ABSENT from the request body — pinning this
+// shape protects the recompute-per-request guarantee.
+describe('startPreviewJob', () => {
+  const stubTemplate = { station: 's', name: 'S' } as Record<string, unknown>;
+  const stubSidecar = {
+    schema_version: 1, sections: [], layout_order: [],
+  } as Record<string, unknown>;
+
+  it('POSTs template + sidecar + week (+ seed when supplied) to /jobs/preview', async () => {
+    const { fetch_, calls } = makeSpy({
+      status: 201,
+      body: { job_id: 'pv-abc', status: 'running' },
+    });
+    const out = await startPreviewJob(
+      'cls', stubTemplate, stubSidecar, 3, 99, fetch_,
+    );
+    expect(out).toEqual({ job_id: 'pv-abc', status: 'running' });
+    expect(calls[0].input).toBe('/api/stations/cls/jobs/preview');
+    const init = calls[0].init!;
+    expect(init.method).toBe('POST');
+    const body = JSON.parse(init.body as string);
+    expect(body).toEqual({
+      template: stubTemplate,
+      sidecar: stubSidecar,
+      week: 3,
+      seed: 99,
+    });
+    // Recompute-per-request guarantee — server-derived inputs
+    // are NOT in the body.
+    expect(body).not.toHaveProperty('excluded_mix_ids');
+    expect(body).not.toHaveProperty('previous_playlist');
+    expect(body).not.toHaveProperty('alias_map');
+  });
+
+  it('omits seed from the body when not passed', async () => {
+    const { fetch_, calls } = makeSpy({
+      status: 201,
+      body: { job_id: 'pv', status: 'running' },
+    });
+    await startPreviewJob(
+      'cls', stubTemplate, stubSidecar, 1, undefined, fetch_,
+    );
+    const body = JSON.parse(calls[0].init!.body as string);
+    expect(body).toEqual({
+      template: stubTemplate, sidecar: stubSidecar, week: 1,
+    });
+    expect(body).not.toHaveProperty('seed');
+  });
+
+  it('URL-encodes the slug', async () => {
+    const { fetch_, calls } = makeSpy({
+      status: 201,
+      body: { job_id: 'pv', status: 'running' },
+    });
+    await startPreviewJob(
+      'a b/c', stubTemplate, stubSidecar, 1, undefined, fetch_,
+    );
+    expect(calls[0].input).toBe('/api/stations/a%20b%2Fc/jobs/preview');
+  });
+
+  it('throws ApiError on 400 (invalid template/sidecar from operator edit)', async () => {
+    const { fetch_ } = makeSpy({
+      ok: false,
+      status: 400,
+      text: '{"detail":"invalid sidecar (grammar): missing layout_order"}',
+    });
+    const err = await startPreviewJob(
+      'ts', stubTemplate, stubSidecar, 1, undefined, fetch_,
+    ).catch((e) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.status).toBe(400);
   });
 });
 

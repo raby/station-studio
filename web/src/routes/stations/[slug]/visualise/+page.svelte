@@ -16,10 +16,11 @@
    * design's "first-impression" treatment); c2 is reachable only by
    * direct URL or test.
    */
-  import { onMount } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
   import { page } from '$app/stores';
   import {
     BlockPatchConflict,
+    cancelJob,
     createSection,
     deleteSection,
     exportStationTemplate,
@@ -30,15 +31,19 @@
     renameSection,
     reorderSections,
     retypeBlock,
+    startPreviewJob,
     structuralBlockEdit,
+    watchJob,
     type BlockAddress,
     type StructuralBlockEdit,
+    type Trace,
   } from '$lib/api';
   import {
     parseEditorSidecarResponse,
     type ExpandedRef, type Sidecar, type StationTemplate,
   } from '$lib/editor';
   import EditorCanvas from '$lib/components/editor/EditorCanvas.svelte';
+  import TracePane from '$lib/components/editor/TracePane.svelte';
 
   let template: StationTemplate | null = null;
   let sidecar: Sidecar | null = null;
@@ -52,7 +57,172 @@
   let conflict = false;
   let exportMsg: string | null = null;
 
+  // §16.2.6 c2 — live-preview state. Toggle defaults OFF; persists
+  // per-station to localStorage. When ON: every edit's
+  // `withSaveLifecycle` success schedules a debounced preview job
+  // that watches via §16.11's job-id transport; the resulting trace
+  // renders in <TracePane>. The toggle gates VISIBILITY of the
+  // preview pane + the scheduler — toggle OFF is identical to
+  // §16.2.5 behavior (no scheduler, no TracePane, no new event
+  // listeners). c3 adds the staging buffer (opLog primary +
+  // stagedSidecar derived), Save/Discard, partial-failure modal,
+  // and the DetailPanel ↔ TracePane mutual-exclusivity (D2(b)).
+  // c2 ships the scheduler skeleton + visualisation only.
+  let livePreviewOn = false;
+  let previewTrace: Trace | null = null;
+  let previewing = false;
+  let previewError: string | null = null;
+  // Debounce + cancel tracking. The 500ms idle window matches §16.2.0
+  // D4's debounce target. `currentPreviewJobId` is the latest spawned
+  // job — stored so onDestroy + a new debounce-fire can cancel it
+  // (POLICY_CANCEL_EXISTING on the server also supersedes, but the
+  // client cancel keeps the polling loop from hanging on a stale id).
+  let previewDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+  let currentPreviewJobId: string | null = null;
+  // Token incremented per scheduled preview so an in-flight watchJob
+  // loop can self-cancel when superseded. The watchJob async iterator
+  // checks its captured token against this on every yield + bails if
+  // they diverge.
+  let previewGeneration = 0;
+  const PREVIEW_DEBOUNCE_MS = 500;
+
   $: slug = $page.params.slug ?? '';
+
+  // §16.2.6 c2 — per-station localStorage key. The toggle's intent
+  // ("I'm exploring this station, show me previews") is most useful
+  // when scoped to the station; switching to a different station
+  // resets to the default OFF. Cross-station shared toggle was
+  // considered but deferred — operators typically edit one station
+  // at a time + the per-station shape mirrors viewMode persistence.
+  function _livePreviewKey(s: string): string {
+    return `livePreview:${s}`;
+  }
+
+  function readLivePreview(s: string): boolean {
+    if (typeof window === 'undefined') return false;
+    try {
+      return window.localStorage.getItem(_livePreviewKey(s)) === 'on';
+    } catch {
+      return false;
+    }
+  }
+
+  function writeLivePreview(s: string, on: boolean): void {
+    if (typeof window === 'undefined') return;
+    try {
+      window.localStorage.setItem(_livePreviewKey(s), on ? 'on' : 'off');
+    } catch {
+      // localStorage quota / privacy-mode block — non-fatal, toggle
+      // state just doesn't persist across page reloads in those
+      // sessions.
+    }
+  }
+
+  // Cancel any pending or in-flight preview job. Called from
+  // onDestroy + on toggle-off + before scheduling a new preview.
+  // The previewGeneration bump invalidates any watchJob loop that
+  // captured the old generation.
+  function _cancelPreview() {
+    previewGeneration += 1;
+    if (previewDebounceTimer !== null) {
+      clearTimeout(previewDebounceTimer);
+      previewDebounceTimer = null;
+    }
+    if (currentPreviewJobId !== null) {
+      const jobId = currentPreviewJobId;
+      currentPreviewJobId = null;
+      void cancelJob(jobId).catch(() => {
+        // cancelJob is idempotent (204 / 404 both succeed); any
+        // network error here is non-fatal — POLICY_CANCEL_EXISTING
+        // on the server-side supersede covers the same need.
+      });
+    }
+    previewing = false;
+  }
+
+  /** Schedule a debounced preview job. Called from withSaveLifecycle
+   *  after a successful PATCH when livePreviewOn. Resets the debounce
+   *  timer + cancels the in-flight job (latest-wins behavior matching
+   *  §16.2.0 D4). */
+  function _schedulePreview() {
+    if (!livePreviewOn) return;
+    if (!template || !sidecar) return;
+    _cancelPreview();
+    const myGeneration = previewGeneration + 1;
+    previewGeneration = myGeneration;
+    previewDebounceTimer = setTimeout(async () => {
+      previewDebounceTimer = null;
+      if (myGeneration !== previewGeneration) return;
+      if (!template || !sidecar) return;
+      previewing = true;
+      previewError = null;
+      try {
+        const start = await startPreviewJob(
+          slug,
+          template as unknown as Record<string, unknown>,
+          sidecar as unknown as Record<string, unknown>,
+          1,
+        );
+        currentPreviewJobId = start.job_id;
+        for await (const snap of watchJob(start.job_id)) {
+          if (myGeneration !== previewGeneration) return;
+          if (snap.status === 'done') {
+            // The worker's on_result returned {trace, slot_count}
+            // (PreviewResult). Discriminate from GenerateResponse by
+            // shape: PreviewResult has `trace` (a Trace object),
+            // GenerateResponse has `playlist_id`. Defensive narrow
+            // — if the server ever swaps shapes, last-good trace
+            // stays visible + nothing else breaks.
+            const r = snap.result;
+            if (r && typeof r === 'object' && 'trace' in r) {
+              previewTrace = (r as { trace: Trace }).trace;
+            }
+            previewing = false;
+            currentPreviewJobId = null;
+            return;
+          }
+          if (snap.status === 'error') {
+            previewError = snap.error?.message ?? 'preview failed';
+            previewing = false;
+            currentPreviewJobId = null;
+            return;
+          }
+          if (snap.status === 'cancelled') {
+            // Superseded by a newer preview OR explicitly cancelled.
+            // Don't update previewTrace; let the supersede's eventual
+            // result land or leave the last-good trace visible.
+            previewing = false;
+            currentPreviewJobId = null;
+            return;
+          }
+        }
+      } catch (err) {
+        if (myGeneration !== previewGeneration) return;
+        previewError = err instanceof Error ? err.message : String(err);
+        previewing = false;
+        currentPreviewJobId = null;
+      }
+    }, PREVIEW_DEBOUNCE_MS);
+  }
+
+  function toggleLivePreview() {
+    livePreviewOn = !livePreviewOn;
+    writeLivePreview(slug, livePreviewOn);
+    if (!livePreviewOn) {
+      _cancelPreview();
+      previewTrace = null;
+      previewError = null;
+    } else {
+      // Toggle-on: schedule an immediate preview against the current
+      // template/sidecar so the operator sees a trace without having
+      // to edit first.
+      _schedulePreview();
+    }
+  }
+
+  onDestroy(() => {
+    _cancelPreview();
+  });
 
   async function loadSidecar() {
     const r = await getStationSidecar(slug);
@@ -68,11 +238,21 @@
       loading = false;
       return;
     }
+    // Hydrate the live-preview toggle from localStorage BEFORE the
+    // sidecar loads — so a returning operator's preferred mode is
+    // already active when the canvas renders. No preview job fires
+    // here; the operator's first edit triggers _schedulePreview if
+    // the toggle is ON.
+    livePreviewOn = readLivePreview(slug);
     try {
       // §16.2.2.t1 — getStationSidecar validates the response shape
       // before return. Both ApiError (network/4xx) and
       // EditorMetadataError (shape) carry `.message`.
       await loadSidecar();
+      // If the operator's saved preference is "live preview ON",
+      // fire one preview right after the sidecar lands so the trace
+      // pane shows actual content instead of the empty-state nudge.
+      if (livePreviewOn) _schedulePreview();
     } catch (e) {
       loadError = e instanceof Error ? e.message : String(e);
     } finally {
@@ -195,6 +375,10 @@
       // warning from a prior GET that landed with sidecar_error
       // populated — `loadSidecar()` would have done the same.
       sidecarError = null;
+      // §16.2.6 c2: schedule a debounced preview against the new
+      // in-memory state. _schedulePreview is a no-op when
+      // livePreviewOn is false, so toggle OFF behavior is unchanged.
+      _schedulePreview();
       return;
     }
     // Fallback: refetch via GET. Distinct error prefix (mid-slice
@@ -202,6 +386,7 @@
     // doesn't masquerade as a save failure.
     try {
       await loadSidecar();
+      _schedulePreview();
     } catch (err) {
       saveError =
         `${refetchVerbPrefix}, but failed to refresh the view: ` +
@@ -415,6 +600,19 @@
       >
         Export to disk
       </button>
+      <!-- §16.2.6 c2 — live-preview toggle. Default OFF preserves
+           §16.2.5 mental model; ON enables debounced trace pane on
+           the right of the canvas. Persists per-station to
+           localStorage. -->
+      <label class="live-preview-toggle" data-testid="live-preview-toggle">
+        <input
+          type="checkbox"
+          checked={livePreviewOn}
+          on:change={toggleLivePreview}
+          data-testid="live-preview-checkbox"
+        />
+        Live preview
+      </label>
       {#if exportMsg}
         <span class="export-msg" data-testid="export-msg">{exportMsg}</span>
       {/if}
@@ -435,20 +633,42 @@
     <!--
       §16.2.3 — editable visual block canvas. The DetailPanel's `save`
       event bubbles up here (via EditorCanvas) to the PATCH call.
+
+      §16.2.6 c2: when livePreviewOn, wrap the canvas + <TracePane>
+      in a flex row so the trace appears to the right of the canvas
+      (D2 side panel). Toggle OFF returns to the centered max-width
+      layout untouched.
     -->
-    <EditorCanvas
-      {template}
-      {sidecar}
-      on:save={handleSave}
-      on:macroSave={handleMacroSave}
-      on:retype={handleRetype}
-      on:sectionCreate={handleSectionCreate}
-      on:sectionRename={handleSectionRename}
-      on:sectionDelete={handleSectionDelete}
-      on:sectionsReorder={handleSectionsReorder}
-      on:blockMove={handleBlockMove}
-      on:structuralEdit={handleStructuralEdit}
-    />
+    <div
+      class="editor-region"
+      class:has-trace={livePreviewOn}
+      data-testid="editor-region"
+    >
+      <div class="canvas-col">
+        <EditorCanvas
+          {template}
+          {sidecar}
+          on:save={handleSave}
+          on:macroSave={handleMacroSave}
+          on:retype={handleRetype}
+          on:sectionCreate={handleSectionCreate}
+          on:sectionRename={handleSectionRename}
+          on:sectionDelete={handleSectionDelete}
+          on:sectionsReorder={handleSectionsReorder}
+          on:blockMove={handleBlockMove}
+          on:structuralEdit={handleStructuralEdit}
+        />
+      </div>
+      {#if livePreviewOn}
+        <div class="trace-col">
+          <TracePane
+            trace={previewTrace}
+            previewing={previewing}
+            errorMessage={previewError}
+          />
+        </div>
+      {/if}
+    </div>
   {/if}
 </main>
 
@@ -458,6 +678,49 @@
     max-width: 900px;
     margin: 2rem auto;
     padding: 0 1rem;
+  }
+  /* §16.2.6 c2: when live-preview is on, the main relaxes its
+     max-width so the trace pane has room on the right. */
+  main:has(.editor-region.has-trace) {
+    max-width: 1400px;
+  }
+  .editor-region {
+    /* Toggle OFF: canvas-col is the only child; flexbox is a no-op
+       (single block-level child). Toggle ON: canvas-col + trace-col
+       sit side-by-side. */
+    display: flex;
+    gap: 1rem;
+    align-items: stretch;
+  }
+  .canvas-col {
+    /* Canvas gets the rest of the available space when trace is
+       visible; full width when trace is hidden. */
+    flex: 1;
+    min-width: 0;
+  }
+  .trace-col {
+    /* D2: ~30% viewport on a 1400px max main. The pane internally
+       handles its own scrolling. Max-height matches what the canvas
+       would visually occupy on a typical edit session. */
+    width: 30%;
+    min-width: 280px;
+    max-height: 80vh;
+    border-radius: 4px;
+    overflow: hidden;
+    border: 1px solid var(--border, #ddd);
+  }
+  .live-preview-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.85rem;
+    color: var(--text-muted, #555);
+    cursor: pointer;
+    user-select: none;
+  }
+  .live-preview-toggle input[type='checkbox'] {
+    margin: 0;
+    cursor: pointer;
   }
   .editor-actions {
     display: flex;

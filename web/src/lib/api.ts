@@ -409,10 +409,23 @@ export interface JobErrorBody {
 }
 
 /**
+ * §16.2.6 c2 — result shape for /jobs/preview's worker on_result.
+ * Distinct from GenerateResponse — preview returns the trace dict
+ * (no playlist_id / station / week / slot_count summary — those
+ * are persistence-side concerns; preview's slot_count is included
+ * for parity with the job-snapshot label rendering).
+ */
+export interface PreviewResult {
+  trace: Trace;
+  slot_count: number;
+}
+
+/**
  * Snapshot returned by GET /api/jobs/{job_id}. Mirrors the backend's
- * `JobStatusResponse` (api/schemas.py). The `result` shape for a
- * generate job matches `GenerateResponse` exactly — the wrapper-vs-
- * job parity Decision E1 promised.
+ * `JobStatusResponse` (api/schemas.py). The `result` shape varies by
+ * job kind: `GenerateResponse` for kind="generate" (Decision E1
+ * wrapper-vs-job parity); `PreviewResult` for kind="preview".
+ * Callers discriminate on `kind` before narrowing.
  */
 export interface JobSnapshot {
   job_id: string;
@@ -426,9 +439,9 @@ export interface JobSnapshot {
   current: number;
   total: number;
   label: string | null;
-  /** Populated when status === "done". For generate jobs this is the
-   *  same shape as GenerateResponse. */
-  result: GenerateResponse | null;
+  /** Populated when status === "done". Shape depends on `kind`:
+   *  GenerateResponse for generate jobs, PreviewResult for preview. */
+  result: GenerateResponse | PreviewResult | null;
   /** Populated when status === "error". */
   error: JobErrorBody | null;
   /** ISO-8601 UTC (Z-suffix), never null. */
@@ -1173,6 +1186,50 @@ export const importSourceByPath = (
  */
 export const deleteSource = (id: number, fetch_ = fetch): Promise<void> =>
   fetch_(`/api/sources/${id}`, { method: 'DELETE' }).then((r) => noContent(r));
+
+
+// ----- §16.2.6 c1 live-preview transport ---------------------------------
+//
+// `POST /api/stations/{slug}/jobs/preview` shares the §16.11 job-id
+// transport with /jobs/generate — JobStartResponse + watchJob + pollJob +
+// cancelJob all reused. The only thing unique to preview at the client
+// surface is the request body shape: the operator's IN-MEMORY editor
+// state (template + sidecar) NOT the stored station's. The backend
+// recomputes excluded_mix_ids / previous_playlist / alias_map fresh
+// from DB per request — sending them from the frontend would defeat
+// the recompute-per-request guarantee. See DESIGN §16.2.6 "API surface."
+//
+// Concurrent policy on the server is POLICY_CANCEL_EXISTING — calling
+// startPreviewJob again for the same slug supersedes the in-flight
+// preview without the frontend needing an explicit cancelJob. The
+// cancelJob entry-point remains supported for Discard mid-PREVIEWING
+// (when c3 ships).
+
+export const startPreviewJob = async (
+  slug: string,
+  template: Record<string, unknown>,
+  sidecar: Record<string, unknown>,
+  week: number,
+  seed?: number,
+  fetch_ = fetch,
+): Promise<JobStartResponse> => {
+  const body: {
+    template: Record<string, unknown>;
+    sidecar: Record<string, unknown>;
+    week: number;
+    seed?: number;
+  } = { template, sidecar, week };
+  if (seed !== undefined) body.seed = seed;
+  const res = await fetch_(
+    `/api/stations/${encodeURIComponent(slug)}/jobs/preview`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    },
+  );
+  return json<JobStartResponse>(res);
+};
 
 
 export { ApiError };
