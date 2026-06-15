@@ -36,7 +36,8 @@
  */
 import type { BlockAddress } from './api';
 import { isReservedIdPrefix } from './drag-drop';
-import type { StationTemplate } from './editor';
+import { editableFieldNamesForStrategy } from './editor';
+import type { EngineBlock, StationTemplate } from './editor';
 
 // Re-export so consumers that import the Edit union from here also
 // have access to the address shape. The `BlockAddress` interface
@@ -784,31 +785,32 @@ function _moveBlock(
 }
 
 
+/** Structural block keys preserved across the retype's allowlist
+ *  filter (mirrors backend `STRUCTURAL` set at editor.py:550). */
+const _RETYPE_STRUCTURAL_KEYS: ReadonlySet<string> = new Set([
+  'strategy', 'source', 'size',
+]);
+
+
 /**
  * §16.2.6 c3d — retype a block (PATCH /blocks/retype). Mirrors the
- * backend's merge-then-filter sequence (api.routers.editor.patch_block_retype):
+ * backend's full 5-step sequence (api.routers.editor.patch_block_retype):
  *
  *   1. Start from a SHALLOW COPY of the existing block (preserves
  *      `strategy`/`source`/`size`/all existing parameter fields).
  *   2. Apply `newStrategy` IF non-null — null means "don't change".
  *   3. Apply `newSource` IF non-null — same null contract.
  *   4. Merge `newFields`: null clears the key, non-null sets.
+ *   5. Drop keys not in (structural ∪ EDITABLE_FIELDS[strategy]) —
+ *      mirrors editor.py:551-554 so the optimistic preview drops the
+ *      same stale-for-new-strategy fields the backend will.
  *
- * The c3d-batch-A correction: previous implementation built a fresh
- * block from scratch + dropped fields wholesale. That broke two
- * preview invariants:
- *   - `newStrategy: null` / `newSource: null` silently dropped the
- *     existing values (backend preserves them).
- *   - Existing parameter fields not in `newFields` vanished from the
- *     optimistic preview, then reappeared on Save (backend kept them
- *     through the merge + only dropped via allowlist filter).
- *
- * The backend ALSO applies an `EDITABLE_FIELDS_BY_STRATEGY[strategy]`
- * filter as a final step (drops keys that the new strategy doesn't
- * accept). We don't mirror that yet — it requires the allowlist mirror
- * to live somewhere on the frontend. Tracked separately as c3d
- * cosmetic-divergence follow-up; in practice the operator picks valid
- * fields via the strategy-aware editor UI so the drift is rare.
+ * Batch C correction (this commit): the previous c3d-batch-A version
+ * skipped step 5, which left "stale" fields (e.g. `position` on a
+ * retype to `pick`) sitting in the optimistic preview until Save,
+ * when the backend dropped them. Step 5 now mirrors backend behaviour
+ * via `editableFieldNamesForStrategy` — both surfaces share
+ * `editor.ts:EDITABLE_FIELDS` so they stay in lock-step automatically.
  *
  * Sidecar is untouched — slot_index identity is preserved through
  * the retype so existing atomic refs stay valid.
@@ -834,47 +836,62 @@ function _retypeBlock(
   // XOR guard — same as _patchBlock.
   if (flat !== undefined && rows !== undefined) return template;
 
+  // Resolve the target list + index in a single typed pass — no
+  // double-cast through Record<string, unknown>[] (c3d batch C
+  // finding #8: both flat_slots and row_template are typed
+  // EngineBlock[] already).
   let targetIdx: number;
-  let targetList: Record<string, unknown>[] | undefined;
+  let targetKind: 'flat_slots' | 'row_template';
+  let targetList: EngineBlock[];
   if (flat !== undefined && address.slot_index !== undefined) {
     if (address.slot_index < 0 || address.slot_index >= flat.length) {
       return template;
     }
     targetIdx = address.slot_index;
-    targetList = flat as unknown as Record<string, unknown>[];
+    targetKind = 'flat_slots';
+    targetList = flat;
   } else if (rows !== undefined && address.block_idx !== undefined) {
     if (address.block_idx < 0 || address.block_idx >= rows.length) {
       return template;
     }
     targetIdx = address.block_idx;
-    targetList = rows as unknown as Record<string, unknown>[];
+    targetKind = 'row_template';
+    targetList = rows;
   } else {
     return template;
   }
 
-  // 1. Start from a shallow copy of the existing block — preserves
-  //    every field by default; subsequent steps override.
+  // 1. Start from a shallow copy of the existing block.
   const newBlock: Record<string, unknown> = { ...targetList[targetIdx] };
-  // 2. Apply newStrategy if non-null (null = preserve existing).
+  // 2-3. Apply newStrategy / newSource if non-null.
   if (newStrategy !== null) newBlock.strategy = newStrategy;
-  // 3. Apply newSource if non-null (null = preserve existing).
   if (newSource !== null) newBlock.source = newSource;
-  // 4. Merge newFields: null clears, non-null sets. Matches the
-  //    backend's "patch-then-allowlist-filter" middle step.
+  // 4. Merge newFields: null clears, non-null sets.
   for (const [k, v] of Object.entries(newFields)) {
     if (v === null) delete newBlock[k];
     else newBlock[k] = v;
   }
+  // 5. Drop keys not in (structural ∪ allowlist). Empty allowlist
+  //    for unknown strategies (mirrors the backend's `frozenset()`
+  //    default at editor.py:549) — every non-structural field drops.
+  const allowed = editableFieldNamesForStrategy(
+    typeof newBlock.strategy === 'string' ? newBlock.strategy : undefined,
+  );
+  for (const k of Object.keys(newBlock)) {
+    if (_RETYPE_STRUCTURAL_KEYS.has(k) || allowed.has(k)) continue;
+    delete newBlock[k];
+  }
 
   const nextList = targetList.slice();
-  nextList[targetIdx] = newBlock;
-  const nextLayout = { ...layout };
-  if (targetList === (flat as unknown as Record<string, unknown>[])) {
-    (nextLayout as Record<string, unknown>).flat_slots = nextList;
-  } else {
-    (nextLayout as Record<string, unknown>).row_template = nextList;
-  }
-  return { ...template, layout: nextLayout } as StationTemplate;
+  // The merge built `newBlock` as a structural-shape Record (so the
+  // dynamic strategy / source / field writes don't fight the
+  // EngineBlock literal-union types). At assignment time the runtime
+  // shape matches EngineBlock as long as `parse_template` would
+  // accept it — the backend re-validates on Save, so a transient
+  // mid-edit shape that doesn't fit isn't a correctness break here.
+  nextList[targetIdx] = newBlock as unknown as EngineBlock;
+  const nextLayout: StationTemplate['layout'] = { ...layout, [targetKind]: nextList };
+  return { ...template, layout: nextLayout };
 }
 
 

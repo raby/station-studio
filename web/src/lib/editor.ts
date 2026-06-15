@@ -761,6 +761,20 @@ export function editableFieldsForBlock(block: EngineBlock): EditableFieldSpec[] 
 }
 
 
+/** The set of editable parameter field names for `strategy`, by name
+ *  only. Empty for unknown / null / undefined strategies (matches the
+ *  backend's `EDITABLE_FIELDS_BY_STRATEGY.get(strategy, frozenset())`
+ *  fallback at api/routers/editor.py:549). Used by `_retypeBlock` to
+ *  mirror the backend's final allowlist filter step in retype. */
+export function editableFieldNamesForStrategy(
+  strategy: string | null | undefined,
+): ReadonlySet<string> {
+  if (strategy === null || strategy === undefined) return new Set();
+  const specs = EDITABLE_FIELDS[strategy as EngineBlock['strategy']] ?? [];
+  return new Set(specs.map((s) => s.name));
+}
+
+
 // ---- §16.2.4 c2 — role-aware bidirectional dropdowns (D4) -----------
 
 

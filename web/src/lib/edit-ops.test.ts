@@ -767,6 +767,11 @@ describe('applyEdit — moveBlock (§16.2.6 c3d)', () => {
 
 
 describe('applyEdit — retypeBlock (§16.2.6 c3d)', () => {
+  // c3d batch C: fixture switched from `pick` (single param field) to
+  // `mix` (genre + exclusion_window) so the merge-vs-allowlist tests
+  // can exercise both branches: same-strategy retypes preserve mix's
+  // params; cross-strategy retypes (mix → window) demonstrate the
+  // allowlist filter dropping genre + exclusion_window.
   function makeRetypeTemplate(): StationTemplate {
     return {
       station: 'ts',
@@ -782,8 +787,9 @@ describe('applyEdit — retypeBlock (§16.2.6 c3d)', () => {
         flat_slots: [
           {
             source: 'A',
-            strategy: 'pick',
+            strategy: 'mix',
             size: 1,
+            genre: 'jazz',
             exclusion_window: 4,
           },
           { source: 'A', strategy: 'sequential', size: 2 },
@@ -792,28 +798,75 @@ describe('applyEdit — retypeBlock (§16.2.6 c3d)', () => {
     };
   }
 
-  it('sets strategy + source + merges newFields onto existing block (preserves unrelated fields)', () => {
+  it('same-strategy retype merges newFields + preserves other allowlist-allowed fields', () => {
+    // mix → mix: genre + exclusion_window are BOTH in mix's allowlist
+    // so they survive. newFields swaps exclusion_window; genre stays.
+    const template = makeRetypeTemplate();
+    const op: Edit = {
+      kind: 'retypeBlock',
+      address: { slot_index: 0 },
+      newStrategy: null, // stays 'mix'
+      newSource: 'B',
+      newFields: { exclusion_window: 8 },
+    };
+    const { template: next } = applyEdit(template, {}, op);
+    expect(next.layout.flat_slots![0]).toEqual({
+      size: 1,
+      strategy: 'mix',
+      source: 'B',
+      genre: 'jazz',
+      exclusion_window: 8,
+    });
+    // Sibling unchanged.
+    expect(next.layout.flat_slots![1]).toEqual(template.layout.flat_slots![1]);
+  });
+
+  it('c3d batch C finding #6: cross-strategy retype drops fields not in new strategy allowlist', () => {
+    // mix → window: genre + exclusion_window aren't in window's
+    // allowlist (which is just `allowlist_sources`) so both drop.
+    // Mirrors backend editor.py:551-554 — pre-Batch-C, the optimistic
+    // preview kept the stale fields until Save dropped them.
     const template = makeRetypeTemplate();
     const op: Edit = {
       kind: 'retypeBlock',
       address: { slot_index: 0 },
       newStrategy: 'window',
       newSource: 'B',
-      newFields: { window: 12 },
+      newFields: { allowlist_sources: ['p1'] },
     };
     const { template: next } = applyEdit(template, {}, op);
-    // Backend merges newFields onto the existing block + only filters
-    // by allowlist as a final step (not yet mirrored). c3d batch A:
-    // preserve `exclusion_window` since the operator didn't touch it.
     expect(next.layout.flat_slots![0]).toEqual({
       size: 1,
       strategy: 'window',
       source: 'B',
-      exclusion_window: 4,
-      window: 12,
+      allowlist_sources: ['p1'],
     });
-    // Sibling unchanged.
-    expect(next.layout.flat_slots![1]).toEqual(template.layout.flat_slots![1]);
+    expect(next.layout.flat_slots![0]).not.toHaveProperty('genre');
+    expect(next.layout.flat_slots![0]).not.toHaveProperty('exclusion_window');
+  });
+
+  it('c3d batch C: unknown strategy → empty allowlist → all non-structural fields drop', () => {
+    // Backend fallback: EDITABLE_FIELDS_BY_STRATEGY.get(strategy, frozenset())
+    // — anything unrecognised has an empty allowlist, so the filter
+    // strips every non-structural field. Tests the defensive fallback
+    // path (`editableFieldNamesForStrategy` returns an empty set).
+    const template = makeRetypeTemplate();
+    const op: Edit = {
+      kind: 'retypeBlock',
+      address: { slot_index: 0 },
+      // Cast through unknown so the typed Edit union doesn't reject
+      // the bogus strategy. In practice the schema-typed editor UI
+      // never produces this; the test exists for the defensive path.
+      newStrategy: 'made_up_strategy' as unknown as string,
+      newSource: null,
+      newFields: { irrelevant_param: 99 },
+    };
+    const { template: next } = applyEdit(template, {}, op);
+    expect(next.layout.flat_slots![0]).toEqual({
+      size: 1,
+      strategy: 'made_up_strategy',
+      source: 'A',
+    });
   });
 
   it('newStrategy null preserves the existing strategy (c3d batch A: backend semantic mirror)', () => {
@@ -826,13 +879,13 @@ describe('applyEdit — retypeBlock (§16.2.6 c3d)', () => {
       newFields: {},
     };
     const { template: next } = applyEdit(template, {}, op);
-    // Backend's contract: `null` means "don't change". The original
-    // strategy ('pick') + all existing parameter fields survive; only
-    // `source` swaps because newSource was non-null.
+    // Backend's contract: `null` means "don't change". Strategy
+    // stays 'mix'; mix's allowlist keeps both genre + exclusion_window.
     expect(next.layout.flat_slots![0]).toEqual({
       size: 1,
-      strategy: 'pick',
+      strategy: 'mix',
       source: 'B',
+      genre: 'jazz',
       exclusion_window: 4,
     });
   });
@@ -847,12 +900,13 @@ describe('applyEdit — retypeBlock (§16.2.6 c3d)', () => {
       newFields: {},
     };
     const { template: next } = applyEdit(template, {}, op);
-    // strategy swaps; source preserved (was 'A').
+    // strategy swaps; source preserved (was 'A'); mix-only fields
+    // (genre + exclusion_window) drop because they're not in window's
+    // allowlist (c3d batch C allowlist filter).
     expect(next.layout.flat_slots![0]).toEqual({
       size: 1,
       strategy: 'window',
       source: 'A',
-      exclusion_window: 4,
     });
   });
 
@@ -866,11 +920,12 @@ describe('applyEdit — retypeBlock (§16.2.6 c3d)', () => {
       newFields: { exclusion_window: null },
     };
     const { template: next } = applyEdit(template, {}, op);
-    // exclusion_window cleared; strategy + source + size preserved.
+    // exclusion_window cleared; strategy + source + size + genre preserved.
     expect(next.layout.flat_slots![0]).toEqual({
       size: 1,
-      strategy: 'pick',
+      strategy: 'mix',
       source: 'A',
+      genre: 'jazz',
     });
     expect(next.layout.flat_slots![0]).not.toHaveProperty('exclusion_window');
   });
