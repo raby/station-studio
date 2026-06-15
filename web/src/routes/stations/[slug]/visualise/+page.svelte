@@ -553,9 +553,18 @@
     saveError = null;
     conflict = false;
     exportMsg = null;
+    // Review #1 fix #1: capture the original count + track which
+    // edit (1-indexed) we're currently replaying so the error
+    // banner can say "edit 3 of 5" instead of the pre-fix
+    // nonsense `${opLog.length}/${opLog.length + opLog.length}`
+    // (which expanded to `K/2K` — visually a fraction but
+    // semantically wrong).
+    const totalEdits = opLog.length;
+    let currentEditIdx = 0;
     try {
       while (opLog.length > 0) {
         const op = opLog[0];
+        currentEditIdx += 1;
         if (op.kind === 'patchBlock') {
           try {
             await patchBlock(slug, op.address, op.fields, updatedAt);
@@ -569,7 +578,7 @@
               return;
             }
             saveError =
-              `Save failed at staged edit ${opLog.length}/${opLog.length + opLog.length}: ` +
+              `Save failed at staged edit ${currentEditIdx} of ${totalEdits}: ` +
               (err instanceof Error ? err.message : String(err));
             return;
           }
