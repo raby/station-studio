@@ -43,7 +43,7 @@
     parseEditorSidecarResponse,
     type ExpandedRef, type Sidecar, type StationTemplate,
   } from '$lib/editor';
-  import { applyEdits, type Edit } from '$lib/edit-ops';
+  import { applyEdits, replayOpLog, type Edit } from '$lib/edit-ops';
   import EditorCanvas from '$lib/components/editor/EditorCanvas.svelte';
   import TracePane from '$lib/components/editor/TracePane.svelte';
 
@@ -573,71 +573,42 @@
     saveError = null;
     conflict = false;
     exportMsg = null;
-    // Review #1 fix #1: capture the original count + track which
-    // edit (1-indexed) we're currently replaying so the error
-    // banner can say "edit 3 of 5" instead of the pre-fix
-    // nonsense `${opLog.length}/${opLog.length + opLog.length}`
-    // (which expanded to `K/2K` — visually a fraction but
-    // semantically wrong).
-    const totalEdits = opLog.length;
-    let currentEditIdx = 0;
+    // §16.2.6 c3b review #1 batch C: delegate the replay loop to
+    // the pure `replayOpLog` function in `$lib/edit-ops`. The
+    // function dispatches each op via the injected deps, refreshes
+    // updated_at between PATCHes, and returns a structured result
+    // we map into local UI state below. The dispatch + error
+    // routing is now testable without rendering the page.
     try {
-      while (opLog.length > 0) {
-        const op = opLog[0];
-        currentEditIdx += 1;
-        try {
-          // §16.2.6 c3b: dispatch on op.kind for the three currently-
-          // intercepted edits. The other 6 kinds (sectionCreate /
-          // Delete / reorderSections / moveBlock / retypeBlock /
-          // structuralEdit) still hit immediate-PATCH when toggle
-          // is ON — c3c extends this dispatch + the matching
-          // handler intercepts.
-          switch (op.kind) {
-            case 'patchBlock':
-              await patchBlock(slug, op.address, op.fields, updatedAt);
-              break;
-            case 'patchMacro':
-              await patchMacro(slug, op.macroId, op.fields, updatedAt);
-              break;
-            case 'renameSection':
-              await renameSection(slug, op.sectionId, op.name, updatedAt);
-              break;
-            default: {
-              // Review #1 fix #1: exhaustiveness pin. Pre-fix the
-              // switch had no default; a future kind added without
-              // a case here would silently drop on Save (slice(1)
-              // runs unconditionally after) — operator's edit
-              // vanishes with no error. The `never` assignment
-              // fails compile if any Edit kind isn't covered, so
-              // c3c's six new kinds will all need their dispatch
-              // case added here.
-              const _exhaustive: never = op;
-              void _exhaustive;
-              throw new Error(
-                `Save replay: unknown op kind '${(op as Edit).kind}' ` +
-                `— add a dispatch case to handleStagedSave or remove the op from the Edit union`,
-              );
-            }
-          }
-        } catch (err) {
-          if (err instanceof BlockPatchConflict) {
-            conflict = true;
-            // c3 MVP: stop on conflict, surface the existing
-            // conflict banner, leave the rest in opLog. The
-            // Retry/Drop modal lands in c3c.
-            return;
-          }
-          saveError =
-            `Save failed at staged edit ${currentEditIdx} of ${totalEdits}: ` +
-            (err instanceof Error ? err.message : String(err));
+      const result = await replayOpLog(opLog, {
+        patchBlock: (address, fields) =>
+          patchBlock(slug, address, fields, updatedAt),
+        patchMacro: (macroId, fields) =>
+          patchMacro(slug, macroId, fields, updatedAt),
+        renameSection: (sectionId, name) =>
+          renameSection(slug, sectionId, name, updatedAt),
+        refreshUpdatedAt: loadSidecar,
+        isConflict: (err) => err instanceof BlockPatchConflict,
+      });
+      // Replay drained 0-or-more edits from the front of the queue;
+      // the result carries what's left so a fix-and-retry sequence
+      // works.
+      opLog = result.remaining;
+      if (!result.success) {
+        if ('conflict' in result && result.conflict) {
+          conflict = true;
           return;
         }
-        // Refresh updated_at from the latest fetch so the next
-        // PATCH in the replay carries the freshest token. We
-        // refetch + drop the just-replayed op together so a
-        // failure mid-replay leaves consistent state.
-        await loadSidecar();
-        opLog = opLog.slice(1);
+        // Non-conflict failure: surface "edit K of N: <message>".
+        // The 1-indexed count is what the operator sees in the
+        // staged-save button label ("Save 5 edits"), so it maps
+        // back unambiguously.
+        if ('error' in result) {
+          saveError =
+            `Save failed at staged edit ${result.failedAtIdx} of ${result.totalEdits}: ` +
+            result.error;
+        }
+        return;
       }
       // All edits applied. Trigger a preview refresh.
       _schedulePreview();

@@ -339,6 +339,120 @@ function _mergeFields(
 }
 
 
+/**
+ * §16.2.6 c3b review #1 batch C — Save replay as a pure function.
+ *
+ * Extracted from the visualise page's `handleStagedSave` so the
+ * dispatch + error handling are TESTABLE without rendering the
+ * page (Svelte 4's component-event-via-DOM limitation flagged in
+ * c3 batch B blocks the equivalent page-level integration test).
+ *
+ * The caller injects the PATCH callables + the "refresh after
+ * each successful PATCH" hook via `deps`. Returns a structured
+ * result the caller maps to local UI state — never sets state
+ * directly.
+ *
+ * **What's tested via this extraction:**
+ * - Dispatch correctness: each Edit kind routes to the matching
+ *   deps callable (a regression to the switch case order or
+ *   signature is caught immediately).
+ * - Order: ops execute in queue order; refresh happens between
+ *   each successful PATCH.
+ * - Failure stops the loop + reports the 1-indexed edit number +
+ *   total + remaining queue (so the caller can show "edit K of N").
+ * - 409-via-isConflict callback distinguishes conflict from
+ *   generic error so the caller's banner branches correctly.
+ *
+ * **What stays in the page** (not in this function):
+ * - The `saving` flag.
+ * - The mapping from ReplayResult → saveError / conflict / etc.
+ * - The _schedulePreview() trigger after success.
+ */
+export interface ReplayDeps {
+  patchBlock: (
+    address: BlockAddress,
+    fields: Record<string, string | number | string[] | null>,
+  ) => Promise<unknown>;
+  patchMacro: (
+    macroId: string,
+    fields: Record<string, string | number | string[] | null>,
+  ) => Promise<unknown>;
+  renameSection: (sectionId: string, name: string) => Promise<unknown>;
+  /** Called after each successful PATCH so the next op's
+   *  optimistic-concurrency token is fresh. */
+  refreshUpdatedAt: () => Promise<void>;
+  /** Distinguishes 409 conflicts from generic errors. The caller
+   *  imports BlockPatchConflict + passes the check; tests pass a
+   *  simple predicate. */
+  isConflict: (err: unknown) => boolean;
+}
+
+export type ReplayResult =
+  | { success: true; totalEdits: number; remaining: Edit[] }
+  | {
+      success: false;
+      totalEdits: number;
+      /** 1-indexed position of the edit that failed. */
+      failedAtIdx: number;
+      remaining: Edit[];
+    } & ({ conflict: true } | { conflict?: false; error: string });
+
+export async function replayOpLog(
+  ops: Edit[],
+  deps: ReplayDeps,
+): Promise<ReplayResult> {
+  const totalEdits = ops.length;
+  let remaining = ops.slice();
+  let currentIdx = 0;
+  while (remaining.length > 0) {
+    const op = remaining[0];
+    currentIdx += 1;
+    try {
+      switch (op.kind) {
+        case 'patchBlock':
+          await deps.patchBlock(op.address, op.fields);
+          break;
+        case 'patchMacro':
+          await deps.patchMacro(op.macroId, op.fields);
+          break;
+        case 'renameSection':
+          await deps.renameSection(op.sectionId, op.name);
+          break;
+        default: {
+          // Same exhaustiveness pin as applyEdit's switch — a
+          // future Edit kind without a dispatch case fails compile.
+          const _exhaustive: never = op;
+          void _exhaustive;
+          throw new Error(
+            `replayOpLog: unknown op kind '${(op as Edit).kind}'`,
+          );
+        }
+      }
+    } catch (err) {
+      if (deps.isConflict(err)) {
+        return {
+          success: false,
+          totalEdits,
+          failedAtIdx: currentIdx,
+          remaining,
+          conflict: true,
+        };
+      }
+      return {
+        success: false,
+        totalEdits,
+        failedAtIdx: currentIdx,
+        remaining,
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
+    await deps.refreshUpdatedAt();
+    remaining = remaining.slice(1);
+  }
+  return { success: true, totalEdits, remaining };
+}
+
+
 function _isSidecarLike(value: unknown): boolean {
   // Review #1 fix #7: arrays are typeof === 'object' so the prior
   // check accepted them. Downstream `Array.isArray(.macros)` /
