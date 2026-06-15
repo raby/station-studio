@@ -35,6 +35,7 @@
  * staged preview until c3b lands.
  */
 import type { BlockAddress } from './api';
+import { isReservedIdPrefix } from './drag-drop';
 import type { StationTemplate } from './editor';
 
 // Re-export so consumers that import the Edit union from here also
@@ -400,6 +401,13 @@ function _sectionCreate(
   name: string | null,
 ): unknown {
   if (!_isSidecarLike(sidecar)) return sidecar;
+  // c3c review #1 fix #6: reject reserved-prefix ids (leading
+  // underscore) — those are claimed for system bins per §16.2.5.t2.
+  // EditorCanvas's Add Section input already gates on this at the
+  // input layer; the local applyEdit mirroring the rejection keeps
+  // the preview honest if a manual op ever bypasses the input
+  // gate (e.g. a future programmatic-stage path).
+  if (isReservedIdPrefix(sectionId)) return sidecar;
   const dict = sidecar as Record<string, unknown>;
   const sections = dict.sections;
   const layoutOrder = dict.layout_order;
@@ -433,6 +441,24 @@ function _sectionCreate(
  * `_unsorted` system bin (created on demand at the END of
  * layout_order if absent). Mirrored locally so preview reflects the
  * post-delete state.
+ *
+ * **Backend cross-check (c3c review #1 fix #2):** the local mirror
+ * matches `api.routers.editor.delete_section` +
+ * `engine.editor_metadata.ensure_unsorted_section` in two key
+ * details:
+ *   - Block order: re-homed blocks are APPENDED to the END of any
+ *     existing `_unsorted.blocks` (backend uses
+ *     `bin_section["blocks"].extend(moved_section.get("blocks",
+ *     []))` — list-extend is append-to-end).
+ *   - Auto-created `_unsorted` carries the `name` field
+ *     `"Unsorted (moved from a deleted section)"`
+ *     (engine.editor_metadata.UNSORTED_SECTION_NAME constant).
+ *
+ * If the backend semantic ever changes, the mirror needs the same
+ * change — there is no auto-sync. A backend pytest pin on the order
+ * + name (in test_editor_api.py) would catch drift early; not added
+ * here because the constants live on the backend's side of the
+ * boundary.
  *
  * Defensive no-ops:
  *   - sidecar isn't a dict
@@ -486,9 +512,20 @@ function _sectionDelete(sidecar: unknown, sectionId: string): unknown {
       ];
     } else {
       // Create the bin at the end of sections + layout_order.
+      // c3c review #1 fix #8: include the `name` field that the
+      // backend's `ensure_unsorted_section` sets — pre-fix the
+      // newly-created bin lacked a display name + the preview
+      // showed an unlabeled chunk between Save attempts. Pinned
+      // string matches engine.editor_metadata.UNSORTED_SECTION_NAME;
+      // if the backend constant changes the frontend mirror
+      // diverges until the next change here.
       nextSections = [
         ...nextSections,
-        { id: '_unsorted', blocks: targetBlocks },
+        {
+          id: '_unsorted',
+          name: 'Unsorted (moved from a deleted section)',
+          blocks: targetBlocks,
+        },
       ];
       nextLayoutOrder = [...nextLayoutOrder, '_unsorted'];
     }
@@ -523,8 +560,18 @@ function _reorderSections(
   const oldOrder = dict.layout_order;
   if (!Array.isArray(oldOrder)) return sidecar;
   if (oldOrder.length !== layoutOrder.length) return sidecar;
+  // c3c review #1 fix #1: the prior length + set-membership check
+  // ACCEPTED an ordering with duplicate ids — e.g.
+  // `['a','a','b']` against current `['a','b','c']` (same length,
+  // all members in oldSet) silently dropped 'c' + duplicated 'a'.
+  // Tighten to: same id SET (no dupes + exactly the old members).
+  const newSet = new Set(layoutOrder);
+  if (newSet.size !== layoutOrder.length) return sidecar;  // had dupes
   const oldSet = new Set(oldOrder);
-  if (!layoutOrder.every((id) => oldSet.has(id))) return sidecar;
+  if (newSet.size !== oldSet.size) return sidecar;
+  for (const id of newSet) {
+    if (!oldSet.has(id)) return sidecar;
+  }
   return { ...dict, layout_order: [...layoutOrder] };
 }
 

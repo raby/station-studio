@@ -723,13 +723,17 @@
   ) {
     // §16.2.6 c3c: intercept section creates when live-preview is
     // ON. EditorCanvas's Add Section input already validates the
-    // id format before emitting, so the page-level intercept
-    // trusts the payload.
+    // id format before emitting; the page coerces empty-string
+    // names to null per c3c review #1 fix #5 (matches the backend
+    // contract — name absent vs name='' are semantically the same
+    // "operator skipped the name field").
     if (livePreviewOn) {
+      const name =
+        e.detail.name && e.detail.name.trim() ? e.detail.name : null;
       _interceptToOpLog({
         kind: 'sectionCreate',
         sectionId: e.detail.id,
-        name: e.detail.name,
+        name,
       });
       return;
     }

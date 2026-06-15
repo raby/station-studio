@@ -9093,6 +9093,29 @@ slices to keep each commit reviewable + reversible:
   Mechanically distinct from c3c's section kinds — separated so
   c3c can ship + get reviewed before c3d's harder index-shift
   semantics land.
+  
+  **c3d MUST close the c3c review #1 finding #4 gap:** the
+  `_interceptToOpLog` refactor + the 9 handler intercepts have
+  zero unit-test coverage. The page-integration test for the
+  staging flow has been blocked since c3 batch B by Svelte 4's
+  component-event-via-DOM limitation (component events deliver
+  through component-instance callbacks `$on`/`$dispatch`, NOT
+  through native DOM dispatch — so `el.dispatchEvent(new
+  CustomEvent('save'))` on the editor-canvas root doesn't reach
+  the `on:save={handleSave}` listener). c3d's review cycle must
+  pick one of the two patterns flagged in c3 batch B:
+    (a) `vi.mock` EditorCanvas with a stub that renders a test-only
+        "fire `save`" button + lets the test set the payload via a
+        hoisted store, then the test clicks the button to drive
+        handleSave; OR
+    (b) Drive the page via the actual DetailPanel render path —
+        more realistic but requires Section / Chip rendering.
+  
+  Pick (a) for c3d c1's test set; once the harness exists, every
+  handler intercept (9 by end of c3d) gets a 5-line test pinning
+  "toggle ON + dispatch event of kind K → opLog has the
+  expected `{kind: K, ...}` op". c3e/polish picks up the harness
+  for the Retry/Drop modal tests too.
 - **c3e / polish — pending.** Retry/Drop partial-failure modal,
   toggle-off-mid-stage prompt, `beforeunload` prompt, DetailPanel
   ↔ TracePane mutual-exclusivity (D2(b)). UX layer; lands after

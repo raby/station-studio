@@ -395,6 +395,20 @@ describe('applyEdit — sectionCreate (§16.2.6 c3c)', () => {
     expect(result.sidecar).toBe(baseSidecar);
   });
 
+  it('no-ops on reserved-prefix id (leading underscore — c3c review #1 fix #6)', () => {
+    // System-bin ids (`_unsorted`, future `_archived`) are reserved
+    // per §16.2.5.t2 / §16.2.5.t20. EditorCanvas's Add Section
+    // input gates on the prefix at the input layer; this test pins
+    // the defense-in-depth at the applyEdit layer.
+    const op: Edit = {
+      kind: 'sectionCreate',
+      sectionId: '_archived',
+      name: 'Archived',
+    };
+    const result = applyEdit(makeFlatTemplate(), baseSidecar, op);
+    expect(result.sidecar).toBe(baseSidecar);
+  });
+
   it('PURE: input not mutated', () => {
     const snapshot = JSON.parse(JSON.stringify(baseSidecar));
     const op: Edit = { kind: 'sectionCreate', sectionId: 'x', name: 'X' };
@@ -453,7 +467,7 @@ describe('applyEdit — sectionDelete (§16.2.6 c3c)', () => {
     ]);
   });
 
-  it('non-empty section: _unsorted CREATED on demand if absent', () => {
+  it('non-empty section: _unsorted CREATED on demand if absent + carries the UNSORTED_SECTION_NAME mirror (c3c review #1 fix #8)', () => {
     const sidecar = {
       schema_version: 1,
       sections: [
@@ -464,11 +478,17 @@ describe('applyEdit — sectionDelete (§16.2.6 c3c)', () => {
     };
     const op: Edit = { kind: 'sectionDelete', sectionId: 'morning' };
     const { sidecar: next } = applyEdit(makeFlatTemplate(), sidecar, op);
-    const ns = next as typeof sidecar;
-    // _unsorted exists now + holds the orphan block.
+    const ns = next as {
+      sections: Array<{ id: string; name?: string; blocks: unknown[] }>;
+      layout_order: string[];
+    };
+    // _unsorted exists now + holds the orphan block + has the
+    // display name field mirrored from
+    // engine.editor_metadata.UNSORTED_SECTION_NAME.
     const unsorted = ns.sections.find((s) => s.id === '_unsorted')!;
     expect(unsorted).toBeDefined();
     expect(unsorted.blocks).toEqual([{ kind: 'atomic', slot_index: 0 }]);
+    expect(unsorted.name).toBe('Unsorted (moved from a deleted section)');
     expect(ns.layout_order).toEqual(['_unsorted']);
   });
 
@@ -535,6 +555,20 @@ describe('applyEdit — reorderSections (§16.2.6 c3c)', () => {
     const op: Edit = {
       kind: 'reorderSections',
       layoutOrder: ['a', 'b', 'newId'],  // _unsorted dropped, newId added
+    };
+    const result = applyEdit(makeFlatTemplate(), baseSidecar, op);
+    expect(result.sidecar).toBe(baseSidecar);
+  });
+
+  it('no-ops on DUPLICATE ids in the new order (c3c review #1 fix #1)', () => {
+    // Pre-fix the length + set-membership check ACCEPTED an order
+    // like `['a','a','b']` against `['a','b','_unsorted']`:
+    // length matches (3), all members in oldSet — but the result
+    // would silently drop '_unsorted' + duplicate 'a'. Tighten:
+    // no-op when the new order has duplicate ids.
+    const op: Edit = {
+      kind: 'reorderSections',
+      layoutOrder: ['a', 'a', 'b'],
     };
     const result = applyEdit(makeFlatTemplate(), baseSidecar, op);
     expect(result.sidecar).toBe(baseSidecar);
