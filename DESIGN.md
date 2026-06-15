@@ -9075,27 +9075,35 @@ slices to keep each commit reviewable + reversible:
 - **c3b (`f5e7ec4`)** — staging extended to `patchMacro` +
   `renameSection` (the 2nd + 3rd most common operator actions
   after chip-edits).
-- **c3c — pending.** Remaining 6 structural edit kinds:
-  `sectionCreate`, `sectionDelete`, `reorderSections`, `moveBlock`,
-  `retypeBlock`, `structuralBlockEdit`. They share index-shift
-  mechanics (slot_index renumbering on add/remove/resize per the
-  §16.2.5 backend contract) so they belong in one cohesive batch
-  rather than incremental adds. **c3c also extracts the handler-
-  intercept pattern** — c3 + c3b copy-pasted the
-  `if (livePreviewOn) { opLog = [...opLog, op]; reset; schedule }`
-  block into 3 handlers; c3c will have 9 total, so c3c c1 extracts
-  a `_interceptToOpLog(op)` helper as part of adding the 6 new
-  intercepts (saves ~50 LoC vs adding each one paste-style). This
-  is finding #8 from c3b review #1; deferred here so it lands
-  once across all 9 handlers rather than refactoring 3 now + 6
-  later. **Tested via `replayOpLog`** — the pure replay function
-  extracted in c3b review #1 batch C lets each new dispatch case
-  be unit-tested without rendering the page (Svelte 4 component-
-  event-via-DOM blocker no longer in the path).
-- **c3d / polish — pending.** Retry/Drop partial-failure modal,
+- **c3c — pending.** 3 section-level structural kinds:
+  `sectionCreate`, `sectionDelete`, `reorderSections`. These are
+  pure sidecar manipulations (sections / layout_order) with no
+  template touches or slot_index shifts — cohesive sub-batch.
+  **c3c also extracts the handler-intercept pattern** —
+  `_interceptToOpLog(op)` helper across all 9 handlers
+  (c3-c3c's section kinds + c3d's block kinds will use it).
+  This is finding #8 from c3b review #1; extracting in c3c covers
+  the 3+3=6 handlers that exist at c3c-time, and c3d's 3 new
+  handlers ride on the helper for free.
+- **c3d — pending.** 3 block-level structural kinds: `moveBlock`,
+  `retypeBlock`, `structuralBlockEdit`. These touch the template
+  (retype changes flat_slots[i].strategy/source; structural changes
+  the slot count + shifts every slot_index ≥ N) OR the sidecar's
+  block placement (moveBlock relocates blocks across sections).
+  Mechanically distinct from c3c's section kinds — separated so
+  c3c can ship + get reviewed before c3d's harder index-shift
+  semantics land.
+- **c3e / polish — pending.** Retry/Drop partial-failure modal,
   toggle-off-mid-stage prompt, `beforeunload` prompt, DetailPanel
   ↔ TracePane mutual-exclusivity (D2(b)). UX layer; lands after
-  c3c so the staging buffer is fully behavioral first.
+  c3d so the staging buffer is fully behavioral across all 9 kinds
+  first.
+
+All sub-slices test their replayOpLog dispatch via the pure
+`replayOpLog` function extracted in c3b review #1 batch C —
+each new kind's dispatch case is unit-tested without rendering
+the page (Svelte 4 component-event-via-DOM blocker no longer in
+the path).
 
 **§16.2.6 c4 — docs + closeout.**
 DESIGN.md §16.2.6 marked SHIPPED + status snapshot bump.

@@ -85,7 +85,50 @@ export interface RenameSectionOp {
   name: string;
 }
 
-export type Edit = PatchBlockOp | PatchMacroOp | RenameSectionOp;
+/**
+ * §16.2.6 c3c — section-create (POST /sections). Backend allocates
+ * a new section with `id` + optional `name` + an empty `blocks`
+ * array, inserted into `layout_order` just BEFORE the system bin
+ * `_unsorted` (or appended at the end if `_unsorted` is absent).
+ * Replayed as `createSection(slug, sectionId, name, ...)`.
+ */
+export interface SectionCreateOp {
+  kind: 'sectionCreate';
+  sectionId: string;
+  name: string | null;
+}
+
+/**
+ * §16.2.6 c3c — section-delete (DELETE /sections/{id}). Per §16.2.5
+ * D2, non-empty sections re-home their blocks to the `_unsorted`
+ * system bin (created on demand if absent). applyEdit mirrors this
+ * locally so the preview reflects the post-delete state accurately.
+ * Replayed as `deleteSection(slug, sectionId, ...)`.
+ */
+export interface SectionDeleteOp {
+  kind: 'sectionDelete';
+  sectionId: string;
+}
+
+/**
+ * §16.2.6 c3c — sections reorder (PUT /sections/order). The new
+ * `layoutOrder` must contain exactly the same ids as the current
+ * `sidecar.layout_order` (backend validates); applyEdit no-ops on
+ * mismatch as a defensive guard. Replayed as
+ * `reorderSections(slug, layoutOrder, ...)`.
+ */
+export interface ReorderSectionsOp {
+  kind: 'reorderSections';
+  layoutOrder: string[];
+}
+
+export type Edit =
+  | PatchBlockOp
+  | PatchMacroOp
+  | RenameSectionOp
+  | SectionCreateOp
+  | SectionDeleteOp
+  | ReorderSectionsOp;
 
 
 /**
@@ -133,6 +176,21 @@ export function applyEdit(
       return {
         template,
         sidecar: _renameSection(sidecar, op.sectionId, op.name),
+      };
+    case 'sectionCreate':
+      return {
+        template,
+        sidecar: _sectionCreate(sidecar, op.sectionId, op.name),
+      };
+    case 'sectionDelete':
+      return {
+        template,
+        sidecar: _sectionDelete(sidecar, op.sectionId),
+      };
+    case 'reorderSections':
+      return {
+        template,
+        sidecar: _reorderSections(sidecar, op.layoutOrder),
       };
     default: {
       // §16.2.6 c3b: exhaustiveness pin. The Edit union now has
@@ -323,6 +381,154 @@ function _renameSection(
 }
 
 
+/**
+ * §16.2.6 c3c — append a new section to sidecar.sections + insert
+ * its id into layout_order. New sections land BEFORE the system
+ * bin `_unsorted` (or appended at the end if `_unsorted` is
+ * absent) — mirrors the §16.2.5 `create_section` backend semantic.
+ *
+ * Defensive no-ops:
+ *   - sidecar isn't a dict
+ *   - sections or layout_order isn't an array
+ *   - sectionId already exists (duplicate id)
+ *
+ * Returns a new sidecar dict (PURE).
+ */
+function _sectionCreate(
+  sidecar: unknown,
+  sectionId: string,
+  name: string | null,
+): unknown {
+  if (!_isSidecarLike(sidecar)) return sidecar;
+  const dict = sidecar as Record<string, unknown>;
+  const sections = dict.sections;
+  const layoutOrder = dict.layout_order;
+  if (!Array.isArray(sections) || !Array.isArray(layoutOrder)) return sidecar;
+  if (sections.some(
+    (s) => s && typeof s === 'object' && (s as Record<string, unknown>).id === sectionId,
+  )) {
+    return sidecar;
+  }
+  const newSection: Record<string, unknown> = { id: sectionId, blocks: [] };
+  if (name !== null) newSection.name = name;
+  const unsortedIdx = layoutOrder.indexOf('_unsorted');
+  const nextLayoutOrder = unsortedIdx >= 0
+    ? [
+        ...layoutOrder.slice(0, unsortedIdx),
+        sectionId,
+        ...layoutOrder.slice(unsortedIdx),
+      ]
+    : [...layoutOrder, sectionId];
+  return {
+    ...dict,
+    sections: [...sections, newSection],
+    layout_order: nextLayoutOrder,
+  };
+}
+
+
+/**
+ * §16.2.6 c3c — remove a section from sidecar.sections + layout_order.
+ * Per §16.2.5 D2, non-empty sections re-home their blocks to the
+ * `_unsorted` system bin (created on demand at the END of
+ * layout_order if absent). Mirrored locally so preview reflects the
+ * post-delete state.
+ *
+ * Defensive no-ops:
+ *   - sidecar isn't a dict
+ *   - sections or layout_order isn't an array
+ *   - target sectionId not found
+ *   - target IS `_unsorted` (the system bin is undeletable per §16.2.5.t2;
+ *     backend rejects + applyEdit must agree)
+ *
+ * Returns a new sidecar dict (PURE).
+ */
+function _sectionDelete(sidecar: unknown, sectionId: string): unknown {
+  if (!_isSidecarLike(sidecar)) return sidecar;
+  // The system bin is undeletable.
+  if (sectionId === '_unsorted') return sidecar;
+  const dict = sidecar as Record<string, unknown>;
+  const sections = dict.sections;
+  const layoutOrder = dict.layout_order;
+  if (!Array.isArray(sections) || !Array.isArray(layoutOrder)) return sidecar;
+  const target = sections.find(
+    (s) => s && typeof s === 'object' && (s as Record<string, unknown>).id === sectionId,
+  ) as Record<string, unknown> | undefined;
+  if (!target) return sidecar;
+
+  const targetBlocks = Array.isArray(target.blocks)
+    ? (target.blocks as unknown[])
+    : [];
+  let nextSections = sections.filter(
+    (s) => !(s && typeof s === 'object' && (s as Record<string, unknown>).id === sectionId),
+  );
+  let nextLayoutOrder = layoutOrder.filter((id) => id !== sectionId);
+
+  if (targetBlocks.length > 0) {
+    // Auto-_unsorted-bin: append the deleted section's blocks to
+    // `_unsorted`. Create the bin if it doesn't exist.
+    const unsortedIdx = nextSections.findIndex(
+      (s) => s && typeof s === 'object' && (s as Record<string, unknown>).id === '_unsorted',
+    );
+    if (unsortedIdx >= 0) {
+      const unsorted = nextSections[unsortedIdx] as Record<string, unknown>;
+      const unsortedBlocks = Array.isArray(unsorted.blocks)
+        ? (unsorted.blocks as unknown[])
+        : [];
+      const updatedUnsorted = {
+        ...unsorted,
+        blocks: [...unsortedBlocks, ...targetBlocks],
+      };
+      nextSections = [
+        ...nextSections.slice(0, unsortedIdx),
+        updatedUnsorted,
+        ...nextSections.slice(unsortedIdx + 1),
+      ];
+    } else {
+      // Create the bin at the end of sections + layout_order.
+      nextSections = [
+        ...nextSections,
+        { id: '_unsorted', blocks: targetBlocks },
+      ];
+      nextLayoutOrder = [...nextLayoutOrder, '_unsorted'];
+    }
+  }
+
+  return {
+    ...dict,
+    sections: nextSections,
+    layout_order: nextLayoutOrder,
+  };
+}
+
+
+/**
+ * §16.2.6 c3c — replace sidecar.layout_order with the supplied
+ * order. Backend validates that the new order contains EXACTLY the
+ * same ids as the current order; applyEdit no-ops on mismatch.
+ *
+ * Defensive no-ops:
+ *   - sidecar isn't a dict
+ *   - sections or layout_order isn't an array
+ *   - length differs or the id set differs from current
+ *
+ * Returns a new sidecar dict (PURE).
+ */
+function _reorderSections(
+  sidecar: unknown,
+  layoutOrder: string[],
+): unknown {
+  if (!_isSidecarLike(sidecar)) return sidecar;
+  const dict = sidecar as Record<string, unknown>;
+  const oldOrder = dict.layout_order;
+  if (!Array.isArray(oldOrder)) return sidecar;
+  if (oldOrder.length !== layoutOrder.length) return sidecar;
+  const oldSet = new Set(oldOrder);
+  if (!layoutOrder.every((id) => oldSet.has(id))) return sidecar;
+  return { ...dict, layout_order: [...layoutOrder] };
+}
+
+
 /** Merge fields into a target dict — null removes the key, anything
  *  else sets it. Matches the backend's parameter-only contract used
  *  by patchBlock + patchMacro. Returns a new dict (PURE). */
@@ -378,6 +584,10 @@ export interface ReplayDeps {
     fields: Record<string, string | number | string[] | null>,
   ) => Promise<unknown>;
   renameSection: (sectionId: string, name: string) => Promise<unknown>;
+  // §16.2.6 c3c — section-level structural kinds.
+  createSection: (sectionId: string, name: string | null) => Promise<unknown>;
+  deleteSection: (sectionId: string) => Promise<unknown>;
+  reorderSections: (layoutOrder: string[]) => Promise<unknown>;
   /** Called after each successful PATCH so the next op's
    *  optimistic-concurrency token is fresh. */
   refreshUpdatedAt: () => Promise<void>;
@@ -417,6 +627,15 @@ export async function replayOpLog(
           break;
         case 'renameSection':
           await deps.renameSection(op.sectionId, op.name);
+          break;
+        case 'sectionCreate':
+          await deps.createSection(op.sectionId, op.name);
+          break;
+        case 'sectionDelete':
+          await deps.deleteSection(op.sectionId);
+          break;
+        case 'reorderSections':
+          await deps.reorderSections(op.layoutOrder);
           break;
         default: {
           // Same exhaustiveness pin as applyEdit's switch — a

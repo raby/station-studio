@@ -345,6 +345,277 @@ describe('applyEdit — renameSection (§16.2.6 c3b)', () => {
 });
 
 
+describe('applyEdit — sectionCreate (§16.2.6 c3c)', () => {
+  const baseSidecar = {
+    schema_version: 1,
+    sections: [
+      { id: 's1', name: 'First', blocks: [] },
+      { id: '_unsorted', blocks: [{ kind: 'atomic', slot_index: 0 }] },
+    ],
+    macros: [],
+    layout_order: ['s1', '_unsorted'],
+  };
+
+  it('appends a new section with empty blocks + inserts id BEFORE _unsorted in layout_order', () => {
+    const op: Edit = {
+      kind: 'sectionCreate',
+      sectionId: 'morning',
+      name: 'Morning',
+    };
+    const { sidecar: next } = applyEdit(makeFlatTemplate(), baseSidecar, op);
+    const ns = next as typeof baseSidecar;
+    const newSec = ns.sections.find((s) => s.id === 'morning')!;
+    expect(newSec).toMatchObject({ id: 'morning', name: 'Morning', blocks: [] });
+    // _unsorted stays at the end; new section is BEFORE it.
+    expect(ns.layout_order).toEqual(['s1', 'morning', '_unsorted']);
+  });
+
+  it('appends to layout_order END when _unsorted is absent', () => {
+    const sidecarNoUnsorted = {
+      schema_version: 1,
+      sections: [{ id: 's1', name: 'First', blocks: [] }],
+      macros: [],
+      layout_order: ['s1'],
+    };
+    const op: Edit = {
+      kind: 'sectionCreate',
+      sectionId: 'evening',
+      name: null,
+    };
+    const { sidecar: next } = applyEdit(makeFlatTemplate(), sidecarNoUnsorted, op);
+    const ns = next as typeof sidecarNoUnsorted;
+    expect(ns.layout_order).toEqual(['s1', 'evening']);
+    // name null → no `name` key on the section.
+    expect(ns.sections[1]).not.toHaveProperty('name');
+  });
+
+  it('no-ops on duplicate sectionId', () => {
+    const op: Edit = { kind: 'sectionCreate', sectionId: 's1', name: 'Dup' };
+    const result = applyEdit(makeFlatTemplate(), baseSidecar, op);
+    expect(result.sidecar).toBe(baseSidecar);
+  });
+
+  it('PURE: input not mutated', () => {
+    const snapshot = JSON.parse(JSON.stringify(baseSidecar));
+    const op: Edit = { kind: 'sectionCreate', sectionId: 'x', name: 'X' };
+    applyEdit(makeFlatTemplate(), baseSidecar, op);
+    expect(baseSidecar).toEqual(snapshot);
+  });
+});
+
+
+describe('applyEdit — sectionDelete (§16.2.6 c3c)', () => {
+  it('removes empty section from sections + layout_order; _unsorted untouched', () => {
+    const sidecar = {
+      schema_version: 1,
+      sections: [
+        { id: 'a', blocks: [] },
+        { id: 'b', blocks: [] },
+        { id: '_unsorted', blocks: [{ kind: 'atomic', slot_index: 0 }] },
+      ],
+      macros: [],
+      layout_order: ['a', 'b', '_unsorted'],
+    };
+    const op: Edit = { kind: 'sectionDelete', sectionId: 'a' };
+    const { sidecar: next } = applyEdit(makeFlatTemplate(), sidecar, op);
+    const ns = next as typeof sidecar;
+    expect(ns.sections.find((s) => s.id === 'a')).toBeUndefined();
+    expect(ns.layout_order).toEqual(['b', '_unsorted']);
+    // _unsorted unchanged (no blocks to re-home).
+    expect(ns.sections.find((s) => s.id === '_unsorted')!.blocks)
+      .toEqual(sidecar.sections.find((s) => s.id === '_unsorted')!.blocks);
+  });
+
+  it('non-empty section: blocks re-home to existing _unsorted (§16.2.5 D2)', () => {
+    const sidecar = {
+      schema_version: 1,
+      sections: [
+        { id: 'morning', blocks: [
+          { kind: 'atomic', slot_index: 0 },
+          { kind: 'atomic', slot_index: 1 },
+        ]},
+        { id: '_unsorted', blocks: [{ kind: 'atomic', slot_index: 2 }] },
+      ],
+      macros: [],
+      layout_order: ['morning', '_unsorted'],
+    };
+    const op: Edit = { kind: 'sectionDelete', sectionId: 'morning' };
+    const { sidecar: next } = applyEdit(makeFlatTemplate(), sidecar, op);
+    const ns = next as typeof sidecar;
+    expect(ns.sections.find((s) => s.id === 'morning')).toBeUndefined();
+    expect(ns.layout_order).toEqual(['_unsorted']);
+    // _unsorted now carries the original block + the re-homed pair (appended at end).
+    const unsorted = ns.sections.find((s) => s.id === '_unsorted')!;
+    expect(unsorted.blocks).toEqual([
+      { kind: 'atomic', slot_index: 2 },
+      { kind: 'atomic', slot_index: 0 },
+      { kind: 'atomic', slot_index: 1 },
+    ]);
+  });
+
+  it('non-empty section: _unsorted CREATED on demand if absent', () => {
+    const sidecar = {
+      schema_version: 1,
+      sections: [
+        { id: 'morning', blocks: [{ kind: 'atomic', slot_index: 0 }] },
+      ],
+      macros: [],
+      layout_order: ['morning'],
+    };
+    const op: Edit = { kind: 'sectionDelete', sectionId: 'morning' };
+    const { sidecar: next } = applyEdit(makeFlatTemplate(), sidecar, op);
+    const ns = next as typeof sidecar;
+    // _unsorted exists now + holds the orphan block.
+    const unsorted = ns.sections.find((s) => s.id === '_unsorted')!;
+    expect(unsorted).toBeDefined();
+    expect(unsorted.blocks).toEqual([{ kind: 'atomic', slot_index: 0 }]);
+    expect(ns.layout_order).toEqual(['_unsorted']);
+  });
+
+  it('no-ops on attempt to delete the system bin _unsorted', () => {
+    const sidecar = {
+      schema_version: 1,
+      sections: [{ id: '_unsorted', blocks: [] }],
+      macros: [],
+      layout_order: ['_unsorted'],
+    };
+    const op: Edit = { kind: 'sectionDelete', sectionId: '_unsorted' };
+    const result = applyEdit(makeFlatTemplate(), sidecar, op);
+    expect(result.sidecar).toBe(sidecar);
+  });
+
+  it('no-ops on unknown sectionId', () => {
+    const sidecar = {
+      schema_version: 1,
+      sections: [{ id: 'a', blocks: [] }],
+      macros: [],
+      layout_order: ['a'],
+    };
+    const op: Edit = { kind: 'sectionDelete', sectionId: 'nope' };
+    const result = applyEdit(makeFlatTemplate(), sidecar, op);
+    expect(result.sidecar).toBe(sidecar);
+  });
+});
+
+
+describe('applyEdit — reorderSections (§16.2.6 c3c)', () => {
+  const baseSidecar = {
+    schema_version: 1,
+    sections: [
+      { id: 'a', blocks: [] },
+      { id: 'b', blocks: [] },
+      { id: '_unsorted', blocks: [] },
+    ],
+    macros: [],
+    layout_order: ['a', 'b', '_unsorted'],
+  };
+
+  it('replaces layout_order with the new order', () => {
+    const op: Edit = {
+      kind: 'reorderSections',
+      layoutOrder: ['b', 'a', '_unsorted'],
+    };
+    const { sidecar: next } = applyEdit(makeFlatTemplate(), baseSidecar, op);
+    const ns = next as typeof baseSidecar;
+    expect(ns.layout_order).toEqual(['b', 'a', '_unsorted']);
+    // sections array unchanged (only layout_order moves).
+    expect(ns.sections).toEqual(baseSidecar.sections);
+  });
+
+  it('no-ops on length mismatch (defensive — backend rejects too)', () => {
+    const op: Edit = {
+      kind: 'reorderSections',
+      layoutOrder: ['a', 'b'],  // missing _unsorted
+    };
+    const result = applyEdit(makeFlatTemplate(), baseSidecar, op);
+    expect(result.sidecar).toBe(baseSidecar);
+  });
+
+  it('no-ops on id-set mismatch', () => {
+    const op: Edit = {
+      kind: 'reorderSections',
+      layoutOrder: ['a', 'b', 'newId'],  // _unsorted dropped, newId added
+    };
+    const result = applyEdit(makeFlatTemplate(), baseSidecar, op);
+    expect(result.sidecar).toBe(baseSidecar);
+  });
+
+  it('PURE: input layoutOrder not mutated by reference identity', () => {
+    const inputOrder = ['b', 'a', '_unsorted'];
+    const op: Edit = { kind: 'reorderSections', layoutOrder: inputOrder };
+    const { sidecar: next } = applyEdit(makeFlatTemplate(), baseSidecar, op);
+    const ns = next as typeof baseSidecar;
+    // Copy made; mutating the input doesn't drift the staged state.
+    inputOrder.push('mutated');
+    expect(ns.layout_order).toEqual(['b', 'a', '_unsorted']);
+  });
+});
+
+
+describe('replayOpLog — §16.2.6 c3c section-kind dispatch', () => {
+  function baseDepsC3c(): ReplayDeps {
+    return {
+      patchBlock: async () => {},
+      patchMacro: async () => {},
+      renameSection: async () => {},
+      createSection: async () => {},
+      deleteSection: async () => {},
+      reorderSections: async () => {},
+      refreshUpdatedAt: async () => {},
+      isConflict: () => false,
+    };
+  }
+
+  it('sectionCreate dispatches to deps.createSection with (id, name)', async () => {
+    const calls: Array<{ sectionId: string; name: string | null }> = [];
+    const deps: ReplayDeps = {
+      ...baseDepsC3c(),
+      createSection: async (sectionId, name) => {
+        calls.push({ sectionId, name });
+      },
+    };
+    const ops: Edit[] = [
+      { kind: 'sectionCreate', sectionId: 'morning', name: 'Morning' },
+      { kind: 'sectionCreate', sectionId: 'evening', name: null },
+    ];
+    const result = await replayOpLog(ops, deps);
+    expect(result.success).toBe(true);
+    expect(calls).toEqual([
+      { sectionId: 'morning', name: 'Morning' },
+      { sectionId: 'evening', name: null },
+    ]);
+  });
+
+  it('sectionDelete dispatches to deps.deleteSection with sectionId', async () => {
+    const calls: string[] = [];
+    const deps: ReplayDeps = {
+      ...baseDepsC3c(),
+      deleteSection: async (sectionId) => { calls.push(sectionId); },
+    };
+    const ops: Edit[] = [
+      { kind: 'sectionDelete', sectionId: 'morning' },
+    ];
+    const result = await replayOpLog(ops, deps);
+    expect(result.success).toBe(true);
+    expect(calls).toEqual(['morning']);
+  });
+
+  it('reorderSections dispatches to deps.reorderSections with the new order', async () => {
+    let captured: string[] | null = null;
+    const deps: ReplayDeps = {
+      ...baseDepsC3c(),
+      reorderSections: async (layoutOrder) => { captured = [...layoutOrder]; },
+    };
+    const ops: Edit[] = [
+      { kind: 'reorderSections', layoutOrder: ['b', 'a', '_unsorted'] },
+    ];
+    const result = await replayOpLog(ops, deps);
+    expect(result.success).toBe(true);
+    expect(captured).toEqual(['b', 'a', '_unsorted']);
+  });
+});
+
+
 describe('applyEdits — composition', () => {
   it('applies ops in order; later ops see earlier ops effects', () => {
     const template = makeFlatTemplate();
@@ -371,45 +642,20 @@ describe('applyEdits — composition', () => {
 
 
 describe('replayOpLog — §16.2.6 c3b review #1 batch C', () => {
-  /** Build a fake ReplayDeps that records every call + lets the
-   *  test inject errors per op. */
-  function makeDeps(opts: {
-    patchBlockError?: unknown;
-    patchMacroError?: unknown;
-    renameSectionError?: unknown;
-    isConflict?: (err: unknown) => boolean;
-  } = {}): ReplayDeps & {
-    calls: Array<{ kind: string; args: unknown[] }>;
-    refreshCount: number;
-  } {
-    const calls: Array<{ kind: string; args: unknown[] }> = [];
-    let refreshCount = 0;
+  /** Minimal ReplayDeps with all 9 callables as no-op success. Tests
+   *  override the kinds they care about per case. Centralised so the
+   *  test bodies don't repeat the full 9-prop scaffolding. */
+  function baseDeps(): ReplayDeps {
     return {
-      calls, refreshCount,
-      patchBlock: async (address, fields) => {
-        calls.push({ kind: 'patchBlock', args: [address, fields] });
-        if (opts.patchBlockError) throw opts.patchBlockError;
-      },
-      patchMacro: async (macroId, fields) => {
-        calls.push({ kind: 'patchMacro', args: [macroId, fields] });
-        if (opts.patchMacroError) throw opts.patchMacroError;
-      },
-      renameSection: async (sectionId, name) => {
-        calls.push({ kind: 'renameSection', args: [sectionId, name] });
-        if (opts.renameSectionError) throw opts.renameSectionError;
-      },
-      refreshUpdatedAt: async () => {
-        refreshCount += 1;
-        // Expose the live count through the closure ref.
-        // (replayOpLog calls this after each successful PATCH.)
-        // The returned `refreshCount` static value is a snapshot;
-        // tests reach `deps.refreshCount` after the await — but
-        // we updated the closure, not the property. Workaround:
-        // re-bind via the returned object (see test assertions).
-      },
-      isConflict: opts.isConflict ?? (() => false),
-      // The harness exposes `refreshCount` only as a snapshot;
-      // tests that need the live count use a side-channel below.
+      patchBlock: async () => {},
+      patchMacro: async () => {},
+      renameSection: async () => {},
+      // §16.2.6 c3c — section-level kinds.
+      createSection: async () => {},
+      deleteSection: async () => {},
+      reorderSections: async () => {},
+      refreshUpdatedAt: async () => {},
+      isConflict: () => false,
     };
   }
 
@@ -417,6 +663,7 @@ describe('replayOpLog — §16.2.6 c3b review #1 batch C', () => {
     const calls: Array<{ kind: string; args: unknown[] }> = [];
     let refreshCount = 0;
     const deps: ReplayDeps = {
+      ...baseDeps(),
       patchBlock: async (address, fields) => {
         calls.push({ kind: 'patchBlock', args: [address, fields] });
       },
@@ -427,7 +674,6 @@ describe('replayOpLog — §16.2.6 c3b review #1 batch C', () => {
         calls.push({ kind: 'renameSection', args: [sectionId, name] });
       },
       refreshUpdatedAt: async () => { refreshCount += 1; },
-      isConflict: () => false,
     };
     const ops: Edit[] = [
       { kind: 'patchBlock', address: { slot_index: 0 }, fields: { size: 3 } },
@@ -455,11 +701,11 @@ describe('replayOpLog — §16.2.6 c3b review #1 batch C', () => {
   it('empty op list: no calls, success', async () => {
     let refreshCount = 0;
     const deps: ReplayDeps = {
+      ...baseDeps(),
       patchBlock: async () => { throw new Error('should not run'); },
       patchMacro: async () => { throw new Error('should not run'); },
       renameSection: async () => { throw new Error('should not run'); },
       refreshUpdatedAt: async () => { refreshCount += 1; },
-      isConflict: () => false,
     };
     const result = await replayOpLog([], deps);
     expect(result.success).toBe(true);
@@ -474,13 +720,13 @@ describe('replayOpLog — §16.2.6 c3b review #1 batch C', () => {
     const calls: Array<string> = [];
     const conflictErr = new Error('409');
     const deps: ReplayDeps = {
+      ...baseDeps(),
       patchBlock: async () => { calls.push('patchBlock'); },
       patchMacro: async () => {
         calls.push('patchMacro');
         throw conflictErr;
       },
       renameSection: async () => { calls.push('renameSection'); },
-      refreshUpdatedAt: async () => {},
       isConflict: (err) => err === conflictErr,
     };
     const ops: Edit[] = [
@@ -506,11 +752,8 @@ describe('replayOpLog — §16.2.6 c3b review #1 batch C', () => {
   it('non-conflict error on edit 1: returns error string + failedAtIdx=1', async () => {
     const networkErr = new Error('network down');
     const deps: ReplayDeps = {
+      ...baseDeps(),
       patchBlock: async () => { throw networkErr; },
-      patchMacro: async () => {},
-      renameSection: async () => {},
-      refreshUpdatedAt: async () => {},
-      isConflict: () => false,
     };
     const ops: Edit[] = [
       { kind: 'patchBlock', address: { slot_index: 0 }, fields: { size: 1 } },
@@ -531,11 +774,9 @@ describe('replayOpLog — §16.2.6 c3b review #1 batch C', () => {
   it('refreshUpdatedAt is called AFTER each successful PATCH but NOT after a failure', async () => {
     let refreshCount = 0;
     const deps: ReplayDeps = {
-      patchBlock: async () => {},
+      ...baseDeps(),
       patchMacro: async () => { throw new Error('fail'); },
-      renameSection: async () => {},
       refreshUpdatedAt: async () => { refreshCount += 1; },
-      isConflict: () => false,
     };
     const ops: Edit[] = [
       { kind: 'patchBlock', address: { slot_index: 0 }, fields: { size: 1 } },

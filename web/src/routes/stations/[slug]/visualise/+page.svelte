@@ -96,25 +96,21 @@
   //   - `patchBlock` (c3 — chip-edit DetailPanel Save)
   //   - `patchMacro` (c3b — macro-edit DetailPanel Save)
   //   - `renameSection` (c3b — inline section rename)
+  //   - `sectionCreate` (c3c — Add Section input)
+  //   - `sectionDelete` (c3c — SectionHeader Delete button)
+  //   - `reorderSections` (c3c — section-header drag-reorder)
   //
-  // **Still falls through to immediate-PATCH when toggle ON** (c3c
+  // **Still falls through to immediate-PATCH when toggle ON** (c3d
   // extends both applyEdit + the handler interception):
-  //   - sectionCreate / sectionDelete / reorderSections
   //   - moveBlock / retypeBlock / structuralBlockEdit
   //
   // The opLog data structure carries all kinds; only the dispatch
   // wiring needs adding per kind.
   //
-  // **c3c also extracts the intercept-pattern duplication**: today
-  // each handler (handleSave / handleMacroSave / handleSectionRename
-  // below) copies the same `if (livePreviewOn) { opLog = [...opLog,
-  // op]; saveError/conflict/exportMsg reset; _schedulePreview }`
-  // block. c3c adds 6 more handlers — extracting a
-  // `_interceptToOpLog(op)` helper there saves ~50 LoC across the
-  // 9 sites + keeps the reset shape in one place. This is c3b
-  // review #1 finding #8; deferred to c3c so the extraction lands
-  // once across all 9 handlers rather than refactoring 3 now + 6
-  // later.
+  // **Intercept-pattern extraction landed in c3c** as the
+  // `_interceptToOpLog(op)` helper just above handleSave — c3b
+  // review #1 finding #8. The 6 currently-intercepted handlers all
+  // use it; c3d's 3 new handlers ride on the same helper for free.
   //
   // saveError surfacing during Save replay reuses the existing
   // `saveError` banner — the Retry/Drop modal lands in c3d /
@@ -517,6 +513,21 @@
     }
   }
 
+  // §16.2.6 c3c — staging intercept helper. Each
+  // livePreviewOn-gated handler queues its op via this function so
+  // the queue-append + reset-state + preview-schedule shape stays
+  // in one place. Extracted in c3c per c3b review #1 finding #8
+  // when the handler count grew from 3 (c3 + c3b) to 6 (c3c).
+  // c3d adds 3 more handlers (moveBlock / retype / structural)
+  // that ride on the same helper for free.
+  function _interceptToOpLog(op: Edit): void {
+    opLog = [...opLog, op];
+    saveError = null;
+    conflict = false;
+    exportMsg = null;
+    _schedulePreview();
+  }
+
   // §16.2.3 c2 — DetailPanel save → PATCH → refetch. On 409 (someone
   // else changed the station) show a reload prompt; on other errors
   // show the message inline.
@@ -539,32 +550,18 @@
     // through to the existing withSaveLifecycle path — c3b extends
     // the interception to the other 8 op kinds.
     if (livePreviewOn) {
-      // Review #1 fix #9: defensive skip when there are no actual
-      // field changes. DetailPanel COULD emit a save with empty
-      // fields (operator opens panel + clicks Save without
-      // editing); pre-fix the empty edit was silently queued + the
-      // button label showed "Save 1 edit" for nothing.
+      // c3 review #1 fix #9 defensive skip — empty-fields save
+      // (DetailPanel quirk) gets silently dropped before queueing.
       const fieldKeys = Object.keys(e.detail.fields);
       if (fieldKeys.length === 0) return;
-      // Review #1 fix #3: shallow-copy the fields dict + the
-      // address into the opLog entry. The DetailPanel emits + then
-      // doesn't retain a reference today, but if a future change
-      // adds a 'reset form' or 'remove this field' affordance that
-      // mutates the same object, the staged op would silently
-      // drift. Cheap insurance.
-      opLog = [
-        ...opLog,
-        {
-          kind: 'patchBlock',
-          address: { ...address },
-          fields: { ...e.detail.fields },
-        },
-      ];
-      saveError = null;
-      conflict = false;
-      exportMsg = null;
-      // Schedule a debounced preview against the new staged state.
-      _schedulePreview();
+      // c3 review #1 fix #3 shallow-copy — fields + address into
+      // the queued op so a future DetailPanel change that mutates
+      // the emitted dict doesn't drift the staged op.
+      _interceptToOpLog({
+        kind: 'patchBlock',
+        address: { ...address },
+        fields: { ...e.detail.fields },
+      });
       return;
     }
     await withSaveLifecycle(
@@ -598,6 +595,13 @@
           patchMacro(slug, macroId, fields, updatedAt),
         renameSection: (sectionId, name) =>
           renameSection(slug, sectionId, name, updatedAt),
+        // §16.2.6 c3c — section-level structural kinds.
+        createSection: (sectionId, name) =>
+          createSection(slug, sectionId, name, updatedAt),
+        deleteSection: (sectionId) =>
+          deleteSection(slug, sectionId, updatedAt),
+        reorderSections: (layoutOrder) =>
+          reorderSections(slug, layoutOrder, updatedAt),
         refreshUpdatedAt: loadSidecar,
         isConflict: (err) => err instanceof BlockPatchConflict,
       });
@@ -663,24 +667,16 @@
     e: CustomEvent<{ macroId: string; fields: Record<string, string | number | string[] | null> }>,
   ) {
     // §16.2.6 c3b: intercept macro edits into the staging buffer
-    // when live-preview is ON. Same shape as the chip-edit
-    // intercept in handleSave: empty-fields skip + shallow-copy +
-    // schedule a debounced preview against the new staged state.
+    // when live-preview is ON. Same shape as handleSave (empty-
+    // fields skip + shallow-copy fields).
     if (livePreviewOn) {
       const fieldKeys = Object.keys(e.detail.fields);
       if (fieldKeys.length === 0) return;
-      opLog = [
-        ...opLog,
-        {
-          kind: 'patchMacro',
-          macroId: e.detail.macroId,
-          fields: { ...e.detail.fields },
-        },
-      ];
-      saveError = null;
-      conflict = false;
-      exportMsg = null;
-      _schedulePreview();
+      _interceptToOpLog({
+        kind: 'patchMacro',
+        macroId: e.detail.macroId,
+        fields: { ...e.detail.fields },
+      });
       return;
     }
     await withSaveLifecycle(
@@ -725,6 +721,18 @@
   async function handleSectionCreate(
     e: CustomEvent<{ id: string; name: string | null }>,
   ) {
+    // §16.2.6 c3c: intercept section creates when live-preview is
+    // ON. EditorCanvas's Add Section input already validates the
+    // id format before emitting, so the page-level intercept
+    // trusts the payload.
+    if (livePreviewOn) {
+      _interceptToOpLog({
+        kind: 'sectionCreate',
+        sectionId: e.detail.id,
+        name: e.detail.name,
+      });
+      return;
+    }
     await withSaveLifecycle(
       () => createSection(slug, e.detail.id, e.detail.name, updatedAt),
       'created',
@@ -735,24 +743,15 @@
     e: CustomEvent<{ sectionId: string; name: string }>,
   ) {
     // §16.2.6 c3b: intercept section renames into the staging
-    // buffer when live-preview is ON. Same shape as the chip-edit
-    // + macro-edit intercepts (skip if name is empty / unchanged
-    // would be ideal but the SectionHeader rename input only emits
-    // on non-empty + dirty commits, so the page-level intercept
-    // can trust the payload).
+    // buffer when live-preview is ON. SectionHeader's rename input
+    // only emits on non-empty + dirty commits so the page-level
+    // intercept trusts the payload (no empty-name guard needed).
     if (livePreviewOn) {
-      opLog = [
-        ...opLog,
-        {
-          kind: 'renameSection',
-          sectionId: e.detail.sectionId,
-          name: e.detail.name,
-        },
-      ];
-      saveError = null;
-      conflict = false;
-      exportMsg = null;
-      _schedulePreview();
+      _interceptToOpLog({
+        kind: 'renameSection',
+        sectionId: e.detail.sectionId,
+        name: e.detail.name,
+      });
       return;
     }
     await withSaveLifecycle(
@@ -764,6 +763,17 @@
   async function handleSectionDelete(
     e: CustomEvent<{ sectionId: string }>,
   ) {
+    // §16.2.6 c3c: intercept section deletes. applyEdit mirrors the
+    // §16.2.5 D2 auto-_unsorted-bin behavior locally (non-empty
+    // section's blocks re-home to _unsorted) so the preview
+    // reflects the actual post-delete state.
+    if (livePreviewOn) {
+      _interceptToOpLog({
+        kind: 'sectionDelete',
+        sectionId: e.detail.sectionId,
+      });
+      return;
+    }
     await withSaveLifecycle(
       () => deleteSection(slug, e.detail.sectionId, updatedAt),
       'deleted',
@@ -773,6 +783,17 @@
   async function handleSectionsReorder(
     e: CustomEvent<{ layoutOrder: string[] }>,
   ) {
+    // §16.2.6 c3c: intercept sections reorder. EditorCanvas's drag
+    // handler already validates the new order has the same id set
+    // before emitting, so the page trusts the payload (defensive
+    // mismatch check still lives in applyEdit).
+    if (livePreviewOn) {
+      _interceptToOpLog({
+        kind: 'reorderSections',
+        layoutOrder: [...e.detail.layoutOrder],
+      });
+      return;
+    }
     await withSaveLifecycle(
       () => reorderSections(slug, e.detail.layoutOrder, updatedAt),
       'reordered',
