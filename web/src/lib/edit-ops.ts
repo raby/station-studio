@@ -53,7 +53,6 @@ export type { BlockAddress };
 /**
  * Edit op produced by the chip-edit DetailPanel Save flow. Replayed
  * by the page's Save handler as `patchBlock(slug, address, fields, ...)`.
- * c3b extends the union with the other 8 PATCH-endpoint variants.
  */
 export interface PatchBlockOp {
   kind: 'patchBlock';
@@ -61,7 +60,32 @@ export interface PatchBlockOp {
   fields: Record<string, string | number | string[] | null>;
 }
 
-export type Edit = PatchBlockOp;
+/**
+ * §16.2.6 c3b — macro-edit DetailPanel Save flow. The replay calls
+ * `patchMacro(slug, macroId, fields, ...)`. Field merge mirrors the
+ * backend's parameter-only contract on the macro's spec (same null=
+ * remove / value=set semantic as patchBlock).
+ */
+export interface PatchMacroOp {
+  kind: 'patchMacro';
+  macroId: string;
+  fields: Record<string, string | number | string[] | null>;
+}
+
+/**
+ * §16.2.6 c3b — section-rename via inline edit (SectionHeader's
+ * rename input + commit). Replayed as
+ * `renameSection(slug, sectionId, name, ...)`. The section id stays
+ * immutable; only `name` changes — matches the backend PATCH
+ * /sections/{id} contract.
+ */
+export interface RenameSectionOp {
+  kind: 'renameSection';
+  sectionId: string;
+  name: string;
+}
+
+export type Edit = PatchBlockOp | PatchMacroOp | RenameSectionOp;
 
 
 /**
@@ -94,16 +118,31 @@ export function applyEdit(
   sidecar: unknown,
   op: Edit,
 ): { template: StationTemplate; sidecar: unknown } {
-  if (op.kind === 'patchBlock') {
-    const nextTemplate = _patchBlock(template, op.address, op.fields);
-    return { template: nextTemplate, sidecar };
+  switch (op.kind) {
+    case 'patchBlock':
+      return {
+        template: _patchBlock(template, op.address, op.fields),
+        sidecar,
+      };
+    case 'patchMacro':
+      return {
+        template,
+        sidecar: _patchMacro(sidecar, op.macroId, op.fields),
+      };
+    case 'renameSection':
+      return {
+        template,
+        sidecar: _renameSection(sidecar, op.sectionId, op.name),
+      };
+    default: {
+      // §16.2.6 c3b: exhaustiveness pin. The Edit union now has
+      // 3+ kinds so TS narrows correctly to `never` after the
+      // exhaustive switch. A future kind added without an
+      // applyEdit case fails at compile time here.
+      const _exhaustive: never = op;
+      return { template, sidecar: _exhaustive ?? sidecar };
+    }
   }
-  // c3b will add the exhaustiveness pin (`const _: never = op`)
-  // once the Edit union has 2+ kinds — TS doesn't narrow a single-
-  // kind union to never after the matching branch returns, so the
-  // assert would error today. Until c3b: this fall-through is
-  // unreachable (Edit = PatchBlockOp).
-  return { template, sidecar };
 }
 
 
@@ -185,4 +224,94 @@ function _patchBlock(
     (nextLayout as Record<string, unknown>).row_template = nextList;
   }
   return { ...template, layout: nextLayout } as StationTemplate;
+}
+
+
+/**
+ * §16.2.6 c3b — apply field updates to a macro's spec inside the
+ * sidecar. Mirrors the backend `/macros/{macro_id}` PATCH semantics:
+ * fields merge into `macros[i].spec`; null deletes a key; anything
+ * else sets it. The macro's `id` + `name` + `repeat` stay
+ * top-level + are NOT touched by patchMacro (they have their own
+ * mutation paths).
+ *
+ * Defensive no-op when:
+ *   - sidecar isn't a dict
+ *   - macros is missing or not an array
+ *   - no macro matches macroId
+ *
+ * Returns a new sidecar dict (PURE — does not mutate input).
+ */
+function _patchMacro(
+  sidecar: unknown,
+  macroId: string,
+  fields: Record<string, string | number | string[] | null>,
+): unknown {
+  if (!_isSidecarLike(sidecar)) return sidecar;
+  const macros = (sidecar as Record<string, unknown>).macros;
+  if (!Array.isArray(macros)) return sidecar;
+  let found = false;
+  const nextMacros = macros.map((m) => {
+    if (!m || typeof m !== 'object') return m;
+    const macro = m as Record<string, unknown>;
+    if (macro.id !== macroId) return m;
+    found = true;
+    const oldSpec =
+      macro.spec && typeof macro.spec === 'object'
+        ? (macro.spec as Record<string, unknown>)
+        : {};
+    return { ...macro, spec: _mergeFields(oldSpec, fields) };
+  });
+  if (!found) return sidecar;
+  return { ...(sidecar as Record<string, unknown>), macros: nextMacros };
+}
+
+
+/**
+ * §16.2.6 c3b — rename a section in the sidecar. Section id is
+ * immutable per the backend PATCH /sections/{id} contract; only
+ * `name` changes. Defensive no-op on missing section or non-array
+ * sections.
+ *
+ * Returns a new sidecar dict (PURE).
+ */
+function _renameSection(
+  sidecar: unknown,
+  sectionId: string,
+  name: string,
+): unknown {
+  if (!_isSidecarLike(sidecar)) return sidecar;
+  const sections = (sidecar as Record<string, unknown>).sections;
+  if (!Array.isArray(sections)) return sidecar;
+  let found = false;
+  const nextSections = sections.map((s) => {
+    if (!s || typeof s !== 'object') return s;
+    const section = s as Record<string, unknown>;
+    if (section.id !== sectionId) return s;
+    found = true;
+    return { ...section, name };
+  });
+  if (!found) return sidecar;
+  return { ...(sidecar as Record<string, unknown>), sections: nextSections };
+}
+
+
+/** Merge fields into a target dict — null removes the key, anything
+ *  else sets it. Matches the backend's parameter-only contract used
+ *  by patchBlock + patchMacro. Returns a new dict (PURE). */
+function _mergeFields(
+  target: Record<string, unknown>,
+  fields: Record<string, string | number | string[] | null>,
+): Record<string, unknown> {
+  const next: Record<string, unknown> = { ...target };
+  for (const [k, v] of Object.entries(fields)) {
+    if (v === null) delete next[k];
+    else next[k] = v;
+  }
+  return next;
+}
+
+
+function _isSidecarLike(value: unknown): boolean {
+  return value !== null && typeof value === 'object';
 }

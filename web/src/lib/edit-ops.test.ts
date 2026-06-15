@@ -167,6 +167,144 @@ describe('applyEdit — patchBlock', () => {
 });
 
 
+describe('applyEdit — patchMacro (§16.2.6 c3b)', () => {
+  const baseSidecar = {
+    schema_version: 1,
+    sections: [{ id: 'all', name: 'All', blocks: [{ kind: 'atomic', slot_index: 0 }] }],
+    macros: [
+      {
+        id: 'm1', name: 'Jingle', repeat: 3,
+        spec: { source: 'A', strategy: 'pick', size: 1, exclusion_window: 4 },
+      },
+      {
+        id: 'm2', name: 'Other', repeat: 1,
+        spec: { source: 'A', strategy: 'window', size: 2 },
+      },
+    ],
+    layout_order: ['all'],
+  };
+
+  it('merges field updates into the targeted macro spec', () => {
+    const template = makeFlatTemplate();
+    const op: Edit = {
+      kind: 'patchMacro',
+      macroId: 'm1',
+      fields: { size: 5, exclusion_window: null, strategy: 'window' },
+    };
+    const { sidecar: next } = applyEdit(template, baseSidecar, op);
+    const nextSidecar = next as typeof baseSidecar;
+    const target = nextSidecar.macros.find((m) => m.id === 'm1')!;
+    expect(target.spec).toMatchObject({
+      source: 'A', strategy: 'window', size: 5,
+    });
+    expect(target.spec).not.toHaveProperty('exclusion_window');
+    // Other macro untouched.
+    expect(nextSidecar.macros.find((m) => m.id === 'm2')!.spec)
+      .toEqual(baseSidecar.macros.find((m) => m.id === 'm2')!.spec);
+    // Top-level macro fields (name, repeat) untouched on target too.
+    expect(target.name).toBe('Jingle');
+    expect(target.repeat).toBe(3);
+  });
+
+  it('PURE: does not mutate the input sidecar', () => {
+    const template = makeFlatTemplate();
+    const snapshot = JSON.parse(JSON.stringify(baseSidecar));
+    const op: Edit = {
+      kind: 'patchMacro',
+      macroId: 'm1',
+      fields: { size: 99 },
+    };
+    applyEdit(template, baseSidecar, op);
+    expect(baseSidecar).toEqual(snapshot);
+  });
+
+  it('returns the input template unchanged', () => {
+    const template = makeFlatTemplate();
+    const op: Edit = {
+      kind: 'patchMacro',
+      macroId: 'm1',
+      fields: { size: 99 },
+    };
+    const result = applyEdit(template, baseSidecar, op);
+    expect(result.template).toBe(template);
+  });
+
+  it('no-ops on unknown macroId (defensive — opLog shouldn\'t have invalid ids)', () => {
+    const template = makeFlatTemplate();
+    const op: Edit = {
+      kind: 'patchMacro',
+      macroId: 'nope',
+      fields: { size: 99 },
+    };
+    const result = applyEdit(template, baseSidecar, op);
+    expect(result.sidecar).toBe(baseSidecar);
+  });
+
+  it('no-ops on sidecar missing macros array', () => {
+    const template = makeFlatTemplate();
+    const sidecarNoMacros = { schema_version: 1, sections: [], layout_order: [] };
+    const op: Edit = {
+      kind: 'patchMacro',
+      macroId: 'm1',
+      fields: { size: 99 },
+    };
+    const result = applyEdit(template, sidecarNoMacros, op);
+    expect(result.sidecar).toBe(sidecarNoMacros);
+  });
+});
+
+
+describe('applyEdit — renameSection (§16.2.6 c3b)', () => {
+  const baseSidecar = {
+    schema_version: 1,
+    sections: [
+      { id: 'morning', name: 'Morning slot', blocks: [] },
+      { id: 'evening', name: 'Evening slot', blocks: [] },
+    ],
+    macros: [],
+    layout_order: ['morning', 'evening'],
+  };
+
+  it('updates section.name for the targeted section id', () => {
+    const template = makeFlatTemplate();
+    const op: Edit = {
+      kind: 'renameSection',
+      sectionId: 'morning',
+      name: 'Breakfast',
+    };
+    const { sidecar: next } = applyEdit(template, baseSidecar, op);
+    const nextSidecar = next as typeof baseSidecar;
+    expect(nextSidecar.sections.find((s) => s.id === 'morning')!.name).toBe('Breakfast');
+    expect(nextSidecar.sections.find((s) => s.id === 'evening')!.name).toBe('Evening slot');
+    // layout_order unchanged — only name flips.
+    expect(nextSidecar.layout_order).toEqual(baseSidecar.layout_order);
+  });
+
+  it('PURE: does not mutate the input sidecar', () => {
+    const template = makeFlatTemplate();
+    const snapshot = JSON.parse(JSON.stringify(baseSidecar));
+    const op: Edit = {
+      kind: 'renameSection',
+      sectionId: 'morning',
+      name: 'X',
+    };
+    applyEdit(template, baseSidecar, op);
+    expect(baseSidecar).toEqual(snapshot);
+  });
+
+  it('no-ops on unknown sectionId', () => {
+    const template = makeFlatTemplate();
+    const op: Edit = {
+      kind: 'renameSection',
+      sectionId: 'nope',
+      name: 'X',
+    };
+    const result = applyEdit(template, baseSidecar, op);
+    expect(result.sidecar).toBe(baseSidecar);
+  });
+});
+
+
 describe('applyEdits — composition', () => {
   it('applies ops in order; later ops see earlier ops effects', () => {
     const template = makeFlatTemplate();

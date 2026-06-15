@@ -92,19 +92,24 @@
   // `stagedTemplate` + `stagedSidecar` are derived. Save replays
   // opLog as sequential PATCHes; Discard clears it.
   //
-  // **c3 MVP scope**: only `patchBlock` (the chip-edit Save path) is
-  // intercepted. The other 8 edit kinds (sectionCreate, delete,
-  // rename, reorder, moveBlock, retype, structural, patchMacro)
-  // still fall through to immediate PATCH even when toggle is ON —
-  // c3b extends both applyEdit + the handler interception to cover
-  // them. The opLog data structure carries the future kinds; only
-  // the dispatch wiring needs adding per kind.
+  // **Intercepted edit kinds (toggle ON queues to opLog):**
+  //   - `patchBlock` (c3 — chip-edit DetailPanel Save)
+  //   - `patchMacro` (c3b — macro-edit DetailPanel Save)
+  //   - `renameSection` (c3b — inline section rename)
+  //
+  // **Still falls through to immediate-PATCH when toggle ON** (c3c
+  // extends both applyEdit + the handler interception):
+  //   - sectionCreate / sectionDelete / reorderSections
+  //   - moveBlock / retypeBlock / structuralBlockEdit
+  //
+  // The opLog data structure carries all kinds; only the dispatch
+  // wiring needs adding per kind.
   //
   // saveError surfacing during Save replay reuses the existing
-  // `saveError` banner — c3 doesn't add the Retry/Drop modal
-  // (that's c3b). On any replay error the loop stops + the operator
-  // sees which edit failed; remaining edits stay in opLog so they
-  // can re-try once the conflict is resolved.
+  // `saveError` banner — the Retry/Drop modal lands in c3c. On any
+  // replay error the loop stops + the operator sees which edit
+  // failed; remaining edits stay in opLog so a fix-and-retry
+  // sequence works.
   let opLog: Edit[] = [];
   let saving = false;
 
@@ -580,34 +585,43 @@
       while (opLog.length > 0) {
         const op = opLog[0];
         currentEditIdx += 1;
-        if (op.kind === 'patchBlock') {
-          try {
-            await patchBlock(slug, op.address, op.fields, updatedAt);
-          } catch (err) {
-            if (err instanceof BlockPatchConflict) {
-              conflict = true;
-              // c3 MVP: stop on conflict, surface the existing
-              // conflict banner, leave the rest in opLog. The
-              // Retry/Drop modal in c3b replaces this with an
-              // explicit per-edit prompt.
-              return;
-            }
-            saveError =
-              `Save failed at staged edit ${currentEditIdx} of ${totalEdits}: ` +
-              (err instanceof Error ? err.message : String(err));
+        try {
+          // §16.2.6 c3b: dispatch on op.kind for the three currently-
+          // intercepted edits. The other 6 kinds (sectionCreate /
+          // Delete / reorderSections / moveBlock / retypeBlock /
+          // structuralEdit) still hit immediate-PATCH when toggle
+          // is ON — c3c extends this dispatch + the matching
+          // handler intercepts.
+          switch (op.kind) {
+            case 'patchBlock':
+              await patchBlock(slug, op.address, op.fields, updatedAt);
+              break;
+            case 'patchMacro':
+              await patchMacro(slug, op.macroId, op.fields, updatedAt);
+              break;
+            case 'renameSection':
+              await renameSection(slug, op.sectionId, op.name, updatedAt);
+              break;
+          }
+        } catch (err) {
+          if (err instanceof BlockPatchConflict) {
+            conflict = true;
+            // c3 MVP: stop on conflict, surface the existing
+            // conflict banner, leave the rest in opLog. The
+            // Retry/Drop modal lands in c3c.
             return;
           }
-          // Refresh updated_at from the latest fetch so the next
-          // PATCH in the replay carries the freshest token. We
-          // refetch + drop the just-replayed op together so a
-          // failure mid-replay leaves consistent state.
-          await loadSidecar();
-          opLog = opLog.slice(1);
-        } else {
-          // c3 MVP: unknown kind shouldn't happen (only patchBlock
-          // is ever added), but defensively drop it from the queue.
-          opLog = opLog.slice(1);
+          saveError =
+            `Save failed at staged edit ${currentEditIdx} of ${totalEdits}: ` +
+            (err instanceof Error ? err.message : String(err));
+          return;
         }
+        // Refresh updated_at from the latest fetch so the next
+        // PATCH in the replay carries the freshest token. We
+        // refetch + drop the just-replayed op together so a
+        // failure mid-replay leaves consistent state.
+        await loadSidecar();
+        opLog = opLog.slice(1);
       }
       // All edits applied. Trigger a preview refresh.
       _schedulePreview();
@@ -650,6 +664,27 @@
   async function handleMacroSave(
     e: CustomEvent<{ macroId: string; fields: Record<string, string | number | string[] | null> }>,
   ) {
+    // §16.2.6 c3b: intercept macro edits into the staging buffer
+    // when live-preview is ON. Same shape as the chip-edit
+    // intercept in handleSave: empty-fields skip + shallow-copy +
+    // schedule a debounced preview against the new staged state.
+    if (livePreviewOn) {
+      const fieldKeys = Object.keys(e.detail.fields);
+      if (fieldKeys.length === 0) return;
+      opLog = [
+        ...opLog,
+        {
+          kind: 'patchMacro',
+          macroId: e.detail.macroId,
+          fields: { ...e.detail.fields },
+        },
+      ];
+      saveError = null;
+      conflict = false;
+      exportMsg = null;
+      _schedulePreview();
+      return;
+    }
     await withSaveLifecycle(
       () => patchMacro(slug, e.detail.macroId, e.detail.fields, updatedAt),
       'saved',
@@ -701,6 +736,27 @@
   async function handleSectionRename(
     e: CustomEvent<{ sectionId: string; name: string }>,
   ) {
+    // §16.2.6 c3b: intercept section renames into the staging
+    // buffer when live-preview is ON. Same shape as the chip-edit
+    // + macro-edit intercepts (skip if name is empty / unchanged
+    // would be ideal but the SectionHeader rename input only emits
+    // on non-empty + dirty commits, so the page-level intercept
+    // can trust the payload).
+    if (livePreviewOn) {
+      opLog = [
+        ...opLog,
+        {
+          kind: 'renameSection',
+          sectionId: e.detail.sectionId,
+          name: e.detail.name,
+        },
+      ];
+      saveError = null;
+      conflict = false;
+      exportMsg = null;
+      _schedulePreview();
+      return;
+    }
     await withSaveLifecycle(
       () => renameSection(slug, e.detail.sectionId, e.detail.name, updatedAt),
       'renamed',
