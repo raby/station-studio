@@ -9085,37 +9085,78 @@ slices to keep each commit reviewable + reversible:
   This is finding #8 from c3b review #1; extracting in c3c covers
   the 3+3=6 handlers that exist at c3c-time, and c3d's 3 new
   handlers ride on the helper for free.
-- **c3d — pending.** 3 block-level structural kinds: `moveBlock`,
-  `retypeBlock`, `structuralBlockEdit`. These touch the template
-  (retype changes flat_slots[i].strategy/source; structural changes
-  the slot count + shifts every slot_index ≥ N) OR the sidecar's
-  block placement (moveBlock relocates blocks across sections).
-  Mechanically distinct from c3c's section kinds — separated so
-  c3c can ship + get reviewed before c3d's harder index-shift
-  semantics land.
+- **c3d (`eb86ddf` + reviews `8403f23`/`31a6585`/`c6b74d5` + sweep
+  `9a2ba38`) — SHIPPED.** 2 of 3 block-level structural kinds:
+  `moveBlock` + `retypeBlock`. Both touch the template (retype
+  rewrites flat_slots[i].strategy/source/params) or the sidecar
+  (moveBlock relocates blocks across sections, with same-section
+  reorder as a degenerate case).
   
-  **c3d MUST close the c3c review #1 finding #4 gap:** the
-  `_interceptToOpLog` refactor + the 9 handler intercepts have
-  zero unit-test coverage. The page-integration test for the
-  staging flow has been blocked since c3 batch B by Svelte 4's
-  component-event-via-DOM limitation (component events deliver
-  through component-instance callbacks `$on`/`$dispatch`, NOT
-  through native DOM dispatch — so `el.dispatchEvent(new
-  CustomEvent('save'))` on the editor-canvas root doesn't reach
-  the `on:save={handleSave}` listener). c3d's review cycle must
-  pick one of the two patterns flagged in c3 batch B:
-    (a) `vi.mock` EditorCanvas with a stub that renders a test-only
-        "fire `save`" button + lets the test set the payload via a
-        hoisted store, then the test clicks the button to drive
-        handleSave; OR
+  **structuralBlockEdit deferred to c3d-follow-up** as its own
+  sub-slice (size / add / remove blocks shifts every slot_index ≥
+  N — the gnarliest of the 3 block kinds, distinct enough to land +
+  review on its own).
+  
+  **MUST-close from c3c review #1 finding #4 — CLOSED in c3d via
+  `EditorCanvasStub.svelte` (pattern (a) below).** Page-integration
+  test for the staging flow had been blocked since c3 batch B by
+  Svelte 4's component-event-via-DOM limitation (component events
+  deliver through component-instance callbacks `$on`/`$dispatch`,
+  NOT through native DOM dispatch — so `el.dispatchEvent(new
+  CustomEvent('save'))` on the editor-canvas root never reached
+  the `on:save={handleSave}` listener). Two patterns flagged in c3
+  batch B:
+    (a) `vi.mock` EditorCanvas with a stub that exposes its
+        `dispatch` function globally so tests can fire any of the 9
+        canvas events with arbitrary payloads — **chosen.**
     (b) Drive the page via the actual DetailPanel render path —
         more realistic but requires Section / Chip rendering.
   
-  Pick (a) for c3d c1's test set; once the harness exists, every
-  handler intercept (9 by end of c3d) gets a 5-line test pinning
+  Each handler intercept now has a 5-line test pinning
   "toggle ON + dispatch event of kind K → opLog has the
   expected `{kind: K, ...}` op". c3e/polish picks up the harness
   for the Retry/Drop modal tests too.
+  
+  **c3d review #1 closed across 3 batches** (8 findings total —
+  all closed):
+    - Batch A (`8403f23`) — findings #1 + #2 + #7. `_retypeBlock`
+      built blocks from scratch instead of merging — null
+      `newStrategy` / `newSource` silently dropped existing
+      values; unrelated parameter fields vanished from the staged
+      preview until Save. Rewrote to mirror backend's merge-
+      then-filter semantic. Test "preserves the existing strategy"
+      had a title that contradicted its (wrong) assertion — fixed.
+    - Batch B (`31a6585`) — findings #3 + #4 + #5. `_moveBlock`
+      defensive mirrors for 3 backend 400s (system-bin reject,
+      negative idx reject, multi-match drift detection).
+    - Batch C (`c6b74d5`) — findings #6 + #8. `_retypeBlock` now
+      mirrors the backend's final allowlist filter via new
+      `editableFieldNamesForStrategy` (shares EDITABLE_FIELDS with
+      the strategy-aware editor UI — drift-proof). Type cleanup
+      replaced double-cast `Record<string, unknown>[]` with
+      properly-typed `EngineBlock[]`. Fixture switched from `pick`
+      to `mix` so merge/allowlist test scenarios use a
+      semantically valid base (the pre-Batch-C fixture had
+      `exclusion_window: 4` on a `pick` block — a combination the
+      backend would reject; transient artifact of merge-semantic
+      discovery, corrected at Batch C).
+  
+  **c3d slice-review sweep (`9a2ba38`) closed 3 follow-ups
+  visible only at slice altitude:**
+    - S1: Batch B's `targetSectionId.startsWith('_')` used the
+      wrong helper from drag-drop.ts. Switched to `isSystemSection`
+      (the narrower membership check used by all runtime guards;
+      mirrors backend `is_system_section`). Pre-fix would have
+      trapped legacy hand-authored sidecars containing `_archive` /
+      `_specials` etc.
+    - S3: Dead `targetSection = sections.find(...)` binding in
+      `_moveBlock` — replaced with `sections.some(...)` presence
+      check.
+    - S5: Explicit `kind !== 'atomic'` continue in the matcher loop
+      (future-proof; mirrors backend `_matches`).
+  
+  Remaining sweep follow-ups deferred to §16.2.6.tX (queued
+  below).
 - **c3e / polish — pending.** Retry/Drop partial-failure modal,
   toggle-off-mid-stage prompt, `beforeunload` prompt, DetailPanel
   ↔ TracePane mutual-exclusivity (D2(b)). UX layer; lands after
