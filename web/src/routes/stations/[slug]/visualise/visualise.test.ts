@@ -632,3 +632,127 @@ describe('visualise +page.svelte — §16.2.6 c3d handler intercepts (toggle ON 
     expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 2 edits/);
   });
 });
+
+
+// §16.2.6 c3e c1 — guard against silent loss of staged edits:
+//   (a) Toggling live-preview OFF with staged edits prompts the
+//       operator; confirm clears opLog, cancel keeps the toggle ON.
+//   (b) `beforeunload` calls preventDefault when staged edits exist
+//       so the browser shows its native "leave site?" prompt.
+describe('visualise +page.svelte — §16.2.6 c3e c1 staged-edit loss guards', () => {
+  let confirmSpy: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    getStationSidecarMock.mockReset();
+    patchBlockMock.mockReset();
+    startPreviewJobMock.mockReset();
+    watchJobMock.mockReset();
+    cancelJobMock.mockReset();
+    startPreviewJobMock.mockResolvedValue({
+      job_id: 'pv-default', status: 'running',
+    });
+    cancelJobMock.mockResolvedValue(undefined);
+    setSlug('viz-test');
+    try { window.localStorage.clear(); } catch { /* */ }
+    window.localStorage.setItem('livePreview:viz-test', 'on');
+    getStationSidecarMock.mockResolvedValue({
+      template: makeTemplate(),
+      sidecar: makeSidecar(),
+      sidecar_error: null,
+    });
+    watchJobMock.mockReturnValue({
+      [Symbol.asyncIterator]() {
+        return { async next() { return { done: true, value: undefined }; } };
+      },
+    });
+    confirmSpy = vi.spyOn(window, 'confirm');
+  });
+
+  async function mountAndAwaitStub() {
+    render(Page);
+    await screen.findByTestId('editor-canvas');
+    await act(async () => {});
+  }
+
+  it('toggle OFF with no staged edits: no prompt, toggle flips silently', async () => {
+    await mountAndAwaitStub();
+    confirmSpy.mockReturnValue(true);
+    await act(async () => {
+      screen.getByTestId('live-preview-checkbox').click();
+    });
+    // Toggle went OFF without ever calling confirm — there's nothing
+    // to warn about.
+    expect(confirmSpy).not.toHaveBeenCalled();
+  });
+
+  it('toggle OFF with staged edits: confirm() called; on accept, opLog cleared + toggle flips', async () => {
+    await mountAndAwaitStub();
+    // Queue one staged edit.
+    await act(async () => {
+      fireEditorCanvasEvent('save', {
+        ref: { kind: 'atomic-ref', slot_index: 0 },
+        fields: { size: 5 },
+      });
+    });
+    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 1 edit/);
+    // Accept the discard prompt.
+    confirmSpy.mockReturnValue(true);
+    await act(async () => {
+      screen.getByTestId('live-preview-checkbox').click();
+    });
+    // Prompt fired with a copy that mentions the count.
+    expect(confirmSpy).toHaveBeenCalledTimes(1);
+    expect(confirmSpy.mock.calls[0][0]).toMatch(/1 staged edit/);
+    // opLog cleared (staged-save chip gone).
+    expect(screen.queryByTestId('staged-save')).toBeNull();
+  });
+
+  it('toggle OFF with staged edits: on cancel, toggle stays ON + opLog preserved', async () => {
+    await mountAndAwaitStub();
+    await act(async () => {
+      fireEditorCanvasEvent('save', {
+        ref: { kind: 'atomic-ref', slot_index: 0 },
+        fields: { size: 5 },
+      });
+    });
+    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 1 edit/);
+    // Decline.
+    confirmSpy.mockReturnValue(false);
+    await act(async () => {
+      screen.getByTestId('live-preview-checkbox').click();
+    });
+    // confirm() fired on the click (may fire again as Svelte's
+    // `checked={livePreviewOn}` reverts the DOM after our cancel
+    // path skipped updating the reactive var — the count is jsdom-
+    // dependent, the user-visible behavior is just "prompted, said
+    // no, nothing happened").
+    expect(confirmSpy).toHaveBeenCalled();
+    // opLog still there.
+    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 1 edit/);
+  });
+
+  it('beforeunload with no staged edits: preventDefault NOT called (no warning)', async () => {
+    await mountAndAwaitStub();
+    const e = new Event('beforeunload', { cancelable: true }) as BeforeUnloadEvent;
+    const pd = vi.spyOn(e, 'preventDefault');
+    window.dispatchEvent(e);
+    expect(pd).not.toHaveBeenCalled();
+  });
+
+  it('beforeunload with staged edits: preventDefault called (browser shows native prompt)', async () => {
+    await mountAndAwaitStub();
+    await act(async () => {
+      fireEditorCanvasEvent('save', {
+        ref: { kind: 'atomic-ref', slot_index: 0 },
+        fields: { size: 5 },
+      });
+    });
+    const e = new Event('beforeunload', { cancelable: true }) as BeforeUnloadEvent;
+    const pd = vi.spyOn(e, 'preventDefault');
+    window.dispatchEvent(e);
+    // preventDefault is the modern signal that we want to block.
+    // jsdom doesn't surface the historical returnValue setter
+    // semantics reliably, but preventDefault is sufficient — both
+    // signals are set in the handler for cross-browser coverage.
+    expect(pd).toHaveBeenCalled();
+  });
+});

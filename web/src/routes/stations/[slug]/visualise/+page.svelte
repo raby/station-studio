@@ -134,6 +134,15 @@
   $: stagedTemplate = stagedView.template;
   $: stagedSidecar = stagedView.sidecar;
 
+  // §16.2.6 c3e — "operator has unsaved staged edits" predicate. Used
+  // by the toggle-off-mid-stage prompt + the beforeunload listener
+  // below to guard against silent loss of queued ops. NOT derived
+  // from `livePreviewOn`: toggling OFF clears opLog explicitly, so
+  // we want the guard to fire on `opLog.length > 0` regardless of
+  // the current toggle state (the toggle-off path checks opLog
+  // BEFORE clearing it; beforeunload sees both situations).
+  $: hasStagedEdits = opLog.length > 0;
+
   $: slug = $page.params.slug ?? '';
 
   // §16.2.6 c2 review #1 fix #10: re-hydrate the toggle when slug
@@ -324,6 +333,20 @@
   }
 
   function toggleLivePreview() {
+    // §16.2.6 c3e — guard the OFF transition when staged edits
+    // exist. confirm() returning false aborts the toggle and leaves
+    // the operator in staging mode; true clears opLog + disables
+    // preview (the staged edits are dropped). The "save then turn
+    // off" path is c3e c2 work (needs a 3-button modal: Save,
+    // Discard, Cancel — not a binary confirm).
+    if (livePreviewOn && hasStagedEdits) {
+      const ok = window.confirm(
+        `You have ${opLog.length} staged edit${opLog.length === 1 ? '' : 's'} ` +
+        'that will be discarded if you turn live preview off. Continue?',
+      );
+      if (!ok) return;
+      opLog = [];
+    }
     livePreviewOn = !livePreviewOn;
     writeLivePreview(slug, livePreviewOn);
     if (!livePreviewOn) {
@@ -338,8 +361,21 @@
     }
   }
 
+  // §16.2.6 c3e — beforeunload listener. Browsers display a generic
+  // "leave site?" prompt when `preventDefault()` runs inside a
+  // beforeunload handler. We only want the prompt when staged edits
+  // would be lost — clean-state navigation (no edits, or just-saved)
+  // should never warn. The listener is registered in onMount + torn
+  // down in onDestroy so it doesn't leak across page navigations
+  // within the SPA.
+  let _beforeUnloadHandler: ((e: BeforeUnloadEvent) => void) | null = null;
+
   onDestroy(() => {
     _cancelPreview();
+    if (_beforeUnloadHandler) {
+      window.removeEventListener('beforeunload', _beforeUnloadHandler);
+      _beforeUnloadHandler = null;
+    }
   });
 
   async function loadSidecar() {
@@ -356,6 +392,21 @@
       loading = false;
       return;
     }
+    // §16.2.6 c3e — register the beforeunload listener at mount.
+    // Captures `hasStagedEdits` reactively at fire-time (the
+    // closure reads the current values of the reactive bindings).
+    _beforeUnloadHandler = (e: BeforeUnloadEvent) => {
+      if (hasStagedEdits) {
+        // Per spec, modern browsers ignore the returned string
+        // and show a generic prompt; setting returnValue is the
+        // historical signal that we want to block, and
+        // preventDefault is the modern one. Set both for
+        // cross-browser coverage.
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
+    window.addEventListener('beforeunload', _beforeUnloadHandler);
     // Hydrate the live-preview toggle from localStorage BEFORE the
     // sidecar loads — so a returning operator's preferred mode is
     // already active when the canvas renders. No preview job fires
