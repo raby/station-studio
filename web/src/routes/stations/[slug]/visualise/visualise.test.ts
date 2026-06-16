@@ -1357,6 +1357,67 @@ describe('visualise +page.svelte — §16.2.6 c3e c1 staged-edit loss guards', (
     expect(screen.queryByTestId('staged-save')).toBeNull();
   });
 
+  it('§16.2.6.t1-follow-up review M1: cross-tab payload with newer updatedAtSnapshot triggers loadSidecar refresh', async () => {
+    getStationSidecarMock.mockResolvedValue({
+      template: makeTemplate(),
+      sidecar: makeSidecar(),
+      sidecar_error: null,
+      updated_at: 'ts-1',
+    });
+    await mountAndAwaitStub();
+    expect(getStationSidecarMock).toHaveBeenCalledTimes(1);
+    // Cross-tab payload was authored against a NEWER server version.
+    const newPayload = JSON.stringify({
+      schemaVersion: 1,
+      opLog: [{
+        kind: 'patchBlock',
+        address: { slot_index: 0 },
+        fields: { size: 9 },
+      }],
+      updatedAtSnapshot: 'ts-2',
+    });
+    window.localStorage.setItem('stagedEdits:viz-test', newPayload);
+    await act(async () => {
+      window.dispatchEvent(new StorageEvent('storage', {
+        key: 'stagedEdits:viz-test',
+        oldValue: null,
+        newValue: newPayload,
+        storageArea: window.localStorage,
+      }));
+    });
+    // Second loadSidecar fired by the cross-tab snapshot-drift
+    // detection. opLog updated too.
+    expect(getStationSidecarMock).toHaveBeenCalledTimes(2);
+    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 1 edit/);
+  });
+
+  it('§16.2.6.t1-follow-up review M2: storage listener removed on unmount', async () => {
+    const removeSpy = vi.spyOn(window, 'removeEventListener');
+    const { unmount } = render(Page);
+    await screen.findByTestId('editor-canvas');
+    await act(async () => {});
+    await act(async () => {
+      unmount();
+    });
+    // onDestroy fired + storage listener detached.
+    expect(removeSpy).toHaveBeenCalledWith('storage', expect.any(Function));
+    removeSpy.mockRestore();
+  });
+
+  it('§16.2.6.t1-follow-up review M3: storage event from sessionStorage is ignored (defensive)', async () => {
+    await mountAndAwaitStub();
+    await act(async () => {
+      window.dispatchEvent(new StorageEvent('storage', {
+        key: 'stagedEdits:viz-test',
+        oldValue: null,
+        newValue: '{"schemaVersion":1,"opLog":[{"kind":"patchBlock","address":{"slot_index":0},"fields":{"size":7}}],"updatedAtSnapshot":"ts-1"}',
+        storageArea: window.sessionStorage, // ← NOT localStorage.
+      }));
+    });
+    // Ignored — no staged-save chip.
+    expect(screen.queryByTestId('staged-save')).toBeNull();
+  });
+
   it('§16.2.6.t1-follow-up: cross-tab storage event with newValue=null clears in-memory opLog', async () => {
     getStationSidecarMock.mockResolvedValue({
       template: makeTemplate(),

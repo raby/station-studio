@@ -591,10 +591,16 @@
     };
     window.addEventListener('beforeunload', _beforeUnloadHandler);
     // §16.2.6.t1-follow-up — register the cross-tab `storage`
-    // listener. Filters by key so other-station entries don't
-    // perturb this station's opLog; ignores no-op events
-    // (`oldValue === newValue`) that some browsers emit.
+    // listener. Filters by `storageArea` (sessionStorage events
+    // also trigger this listener per spec), then by key so other-
+    // station entries don't perturb this station's opLog; ignores
+    // no-op events (`oldValue === newValue`) that some browsers
+    // emit.
     _storageHandler = (e: StorageEvent) => {
+      // M3 follow-up review: defensive `storageArea` guard. Per
+      // WHATWG spec, sessionStorage writes also fire on this
+      // listener; we only care about localStorage.
+      if (e.storageArea !== window.localStorage) return;
       if (e.key !== _stagedEditsKey(slug)) return;
       if (e.newValue === e.oldValue) return;
       if (e.newValue === null) {
@@ -607,7 +613,23 @@
       // schemaVersion / known-kind defensive filters used at mount.
       const persisted = _readStagedEdits(slug);
       if (persisted === null) return;
-      opLog = persisted.opLog;
+      // M4 follow-up review: defensive copy of the parsed array so
+      // a future contributor's in-place push on `opLog` doesn't
+      // mutate the parsed payload.
+      opLog = persisted.opLog.slice();
+      // M1 follow-up review: cross-tab payload was authored against
+      // a different base (Tab A saved, server stamped a new
+      // updated_at, Tab A then staged new edits against ts-2 while
+      // we're still on ts-1). The staged preview would apply Tab A's
+      // ops against our stale base — refresh so the preview's
+      // index space matches Tab A's. Conflict path on subsequent
+      // Save remains unchanged (PATCH still fires with the freshest
+      // updated_at the refetch hands us).
+      if (persisted.updatedAtSnapshot !== updatedAt) {
+        loadSidecar().catch((err) => {
+          saveError = err instanceof Error ? err.message : String(err);
+        });
+      }
     };
     window.addEventListener('storage', _storageHandler);
     // Hydrate the live-preview toggle from localStorage BEFORE the
