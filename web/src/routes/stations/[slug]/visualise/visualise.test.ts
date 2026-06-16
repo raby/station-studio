@@ -928,6 +928,122 @@ describe('visualise +page.svelte — §16.2.6 c3e c1 staged-edit loss guards', (
     expect(screen.getByTestId('save-error')).toHaveTextContent(/validation failed/);
   });
 
+  it('c3e c3 review J4: Retry that fails again re-opens the modal with the latest error', async () => {
+    await mountAndAwaitStub();
+    await act(async () => {
+      fireEditorCanvasEvent('save', {
+        ref: { kind: 'atomic-ref', slot_index: 0 },
+        fields: { size: 5 },
+      });
+    });
+    // Two consecutive failures, different error messages.
+    patchBlockMock
+      .mockRejectedValueOnce(new Error('first failure'))
+      .mockRejectedValueOnce(new Error('second failure'));
+    await act(async () => {
+      screen.getByTestId('staged-save').click();
+    });
+    expect(screen.getByTestId('save-error')).toHaveTextContent(/first failure/);
+    await act(async () => {
+      screen.getByTestId('retry-modal-retry').click();
+    });
+    // Modal still visible; banner shows the SECOND error.
+    expect(screen.getByTestId('retry-modal')).toBeInTheDocument();
+    expect(screen.getByTestId('save-error')).toHaveTextContent(/second failure/);
+  });
+
+  it('c3e c3 review J5: Drop into a cascade failure re-opens the modal on the next op', async () => {
+    await mountAndAwaitStub();
+    // Queue 2 edits; both fail.
+    await act(async () => {
+      fireEditorCanvasEvent('save', {
+        ref: { kind: 'atomic-ref', slot_index: 0 },
+        fields: { size: 5 },
+      });
+    });
+    await act(async () => {
+      fireEditorCanvasEvent('save', {
+        ref: { kind: 'atomic-ref', slot_index: 1 },
+        fields: { size: 7 },
+      });
+    });
+    patchBlockMock
+      .mockRejectedValueOnce(new Error('op0 failed'))
+      .mockRejectedValueOnce(new Error('op1 failed'));
+    await act(async () => {
+      screen.getByTestId('staged-save').click();
+    });
+    expect(screen.getByTestId('save-error')).toHaveTextContent(/op0 failed/);
+    await act(async () => {
+      screen.getByTestId('retry-modal-drop').click();
+    });
+    // After drop + cascade fail: modal re-opens with op1's error.
+    await waitFor(() => {
+      expect(screen.getByTestId('save-error')).toHaveTextContent(/op1 failed/);
+    });
+    expect(screen.getByTestId('retry-modal')).toBeInTheDocument();
+  });
+
+  it('c3e c3 review J1: ESC anywhere closes the modal (preserves opLog + saveError like Cancel)', async () => {
+    await mountAndAwaitStub();
+    await act(async () => {
+      fireEditorCanvasEvent('save', {
+        ref: { kind: 'atomic-ref', slot_index: 0 },
+        fields: { size: 5 },
+      });
+    });
+    patchBlockMock.mockRejectedValueOnce(new Error('fail'));
+    await act(async () => {
+      screen.getByTestId('staged-save').click();
+    });
+    expect(screen.getByTestId('retry-modal')).toBeInTheDocument();
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    });
+    expect(screen.queryByTestId('retry-modal')).toBeNull();
+    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 1 edit/);
+    expect(screen.getByTestId('save-error')).toBeInTheDocument();
+  });
+
+  it('c3e c3 review J6: backdrop click closes the modal (preserves opLog + saveError like Cancel)', async () => {
+    await mountAndAwaitStub();
+    await act(async () => {
+      fireEditorCanvasEvent('save', {
+        ref: { kind: 'atomic-ref', slot_index: 0 },
+        fields: { size: 5 },
+      });
+    });
+    patchBlockMock.mockRejectedValueOnce(new Error('fail'));
+    await act(async () => {
+      screen.getByTestId('staged-save').click();
+    });
+    await act(async () => {
+      screen.getByTestId('retry-modal-backdrop').click();
+    });
+    expect(screen.queryByTestId('retry-modal')).toBeNull();
+    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 1 edit/);
+  });
+
+  it('c3e c3 review J6: click INSIDE the dialog does NOT close the modal (stopPropagation guard)', async () => {
+    await mountAndAwaitStub();
+    await act(async () => {
+      fireEditorCanvasEvent('save', {
+        ref: { kind: 'atomic-ref', slot_index: 0 },
+        fields: { size: 5 },
+      });
+    });
+    patchBlockMock.mockRejectedValueOnce(new Error('fail'));
+    await act(async () => {
+      screen.getByTestId('staged-save').click();
+    });
+    // Click on the dialog title (inside the dialog box, NOT the backdrop).
+    await act(async () => {
+      screen.getByText(/Save failed mid-replay/).click();
+    });
+    // Modal still visible — click didn't propagate to backdrop.
+    expect(screen.getByTestId('retry-modal')).toBeInTheDocument();
+  });
+
   it('c3e c3 Drop with only the failed edit: opLog clears + modal closes (no replay)', async () => {
     await mountAndAwaitStub();
     await act(async () => {

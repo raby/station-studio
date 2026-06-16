@@ -752,6 +752,9 @@
   async function handleDrop() {
     showRetryModal = false;
     opLog = opLog.slice(1);
+    // c3e c3 review J3: load-bearing in the empty-queue branch
+    // below — handleStagedSave never runs to clear it, so the
+    // operator would see a stale banner. Keep the explicit clear.
     saveError = null;
     if (opLog.length === 0) return;
     await handleStagedSave();
@@ -762,6 +765,23 @@
   // it inline + click Save again (fix-and-retry-later flow).
   function handleCancelRetry() {
     showRetryModal = false;
+  }
+
+  // §16.2.6 c3e c3 review J2: autofocus action — focus the bound
+  // element when it mounts. Lets the modal's primary action (Retry)
+  // grab focus on open so keyboard operators don't have to tab in.
+  function autofocus(node: HTMLElement) {
+    node.focus();
+  }
+
+  // §16.2.6 c3e c3 review J1: ESC-anywhere-on-page closes the modal
+  // (matches modern modal a11y expectations). Wired via
+  // <svelte:window on:keydown> below; guarded on `showRetryModal`
+  // so non-modal pages aren't burdened.
+  function handleModalKeydown(e: KeyboardEvent) {
+    if (showRetryModal && e.key === 'Escape') {
+      handleCancelRetry();
+    }
   }
 
   // §16.2.6 c3e c1 review G1 — drop all staged edits + clear stale
@@ -1035,6 +1055,11 @@
   <title>Visualise — {template?.name ?? slug} — Station Studio</title>
 </svelte:head>
 
+<!-- §16.2.6 c3e c3 review J1: ESC anywhere on the page dismisses
+     the Retry/Drop modal. The handler self-guards on
+     `showRetryModal` so this is a no-op when no modal is open. -->
+<svelte:window on:keydown={handleModalKeydown} />
+
 <main>
   <p class="crumbs">
     <a href="/stations/{encodeURIComponent(slug)}">← {slug}</a>
@@ -1137,16 +1162,26 @@
          operator responses; the saveError banner above stays
          visible underneath so the operator sees what failed. -->
     {#if showRetryModal}
+      <!-- §16.2.6 c3e c3 review J6: clicking the backdrop is
+           equivalent to Cancel — a common operator convention.
+           stopPropagation on the dialog so clicks INSIDE it
+           don't bubble out and re-trigger Cancel. -->
       <div
         class="retry-modal-backdrop"
         data-testid="retry-modal-backdrop"
+        on:click={handleCancelRetry}
+        on:keydown|self={() => { /* surface area only */ }}
+        role="presentation"
       >
+        <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
         <div
           role="dialog"
           aria-modal="true"
           aria-labelledby="retry-modal-title"
           class="retry-modal"
           data-testid="retry-modal"
+          on:click|stopPropagation
+          on:keydown|stopPropagation
         >
           <h2 id="retry-modal-title">Save failed mid-replay</h2>
           <p>{saveError}</p>
@@ -1161,6 +1196,7 @@
               data-testid="retry-modal-retry"
               disabled={saving}
               on:click={handleRetry}
+              use:autofocus
             >Retry the failed edit</button>
             <button
               type="button"
