@@ -332,20 +332,25 @@
     }, PREVIEW_DEBOUNCE_MS);
   }
 
-  function toggleLivePreview() {
+  async function toggleLivePreview() {
     // §16.2.6 c3e — guard the OFF transition when staged edits
     // exist. confirm() returning false aborts the toggle and leaves
-    // the operator in staging mode; true clears opLog + disables
-    // preview (the staged edits are dropped). The "save then turn
-    // off" path is c3e c2 work (needs a 3-button modal: Save,
-    // Discard, Cancel — not a binary confirm).
+    // the operator in staging mode; true runs _resetStagedState()
+    // (shared with handleDiscard) so the OFF transition matches the
+    // explicit Discard button semantically — clears opLog, clears
+    // any stale saveError/conflict banner, refetches the sidecar
+    // (G1 review fix: pre-extract the path skipped saveError +
+    // conflict, leaving stale error banners visible past the OFF
+    // transition). The "save then turn off" path is c3e c2 work
+    // (needs a 3-button modal: Save, Discard, Cancel — not a binary
+    // confirm).
     if (livePreviewOn && hasStagedEdits) {
       const ok = window.confirm(
         `You have ${opLog.length} staged edit${opLog.length === 1 ? '' : 's'} ` +
         'that will be discarded if you turn live preview off. Continue?',
       );
       if (!ok) return;
-      opLog = [];
+      await _resetStagedState();
     }
     livePreviewOn = !livePreviewOn;
     writeLivePreview(slug, livePreviewOn);
@@ -692,6 +697,26 @@
     }
   }
 
+  // §16.2.6 c3e c1 review G1 — drop all staged edits + clear stale
+  // error/conflict banners + refetch the sidecar. Shared between the
+  // Discard button (handleDiscard) and the toggle-off-with-confirm
+  // path (toggleLivePreview), so both surfaces present the same
+  // "clean slate" semantic. Returns true iff the reload succeeded;
+  // the caller decides whether to schedule a fresh preview after
+  // (Discard does, toggle-off doesn't — preview is turning OFF).
+  async function _resetStagedState(): Promise<boolean> {
+    opLog = [];
+    saveError = null;
+    conflict = false;
+    try {
+      await loadSidecar();
+      return true;
+    } catch (err) {
+      saveError = err instanceof Error ? err.message : String(err);
+      return false;
+    }
+  }
+
   // §16.2.6 c3 — drop all staged edits + restore the displayed
   // state to the last-saved sidecar. Refetches via GET so the
   // canvas re-renders against fresh server state (covers the case
@@ -700,15 +725,7 @@
   // rather than their stale base).
   async function handleDiscard() {
     if (opLog.length === 0) return;
-    opLog = [];
-    saveError = null;
-    conflict = false;
-    try {
-      await loadSidecar();
-      _schedulePreview();
-    } catch (err) {
-      saveError = err instanceof Error ? err.message : String(err);
-    }
+    if (await _resetStagedState()) _schedulePreview();
   }
 
   async function handleExport() {

@@ -730,6 +730,27 @@ describe('visualise +page.svelte — §16.2.6 c3e c1 staged-edit loss guards', (
     expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 1 edit/);
   });
 
+  it('c3e c1 review G1: toggle OFF with staged edits + accept fetches a fresh sidecar (mirrors Discard)', async () => {
+    // The shared `_resetStagedState` helper reloads the sidecar after
+    // clearing opLog so the displayed canvas reflects fresh server
+    // state. Pin that the toggle-off-confirm path calls
+    // getStationSidecar a second time (initial mount + reset).
+    await mountAndAwaitStub();
+    expect(getStationSidecarMock).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      fireEditorCanvasEvent('save', {
+        ref: { kind: 'atomic-ref', slot_index: 0 },
+        fields: { size: 5 },
+      });
+    });
+    confirmSpy.mockReturnValue(true);
+    await act(async () => {
+      screen.getByTestId('live-preview-checkbox').click();
+    });
+    // Second fetch fired by _resetStagedState's loadSidecar call.
+    expect(getStationSidecarMock).toHaveBeenCalledTimes(2);
+  });
+
   it('beforeunload with no staged edits: preventDefault NOT called (no warning)', async () => {
     await mountAndAwaitStub();
     const e = new Event('beforeunload', { cancelable: true }) as BeforeUnloadEvent;
