@@ -1103,29 +1103,59 @@ function _structuralBlockEdit(
       edit.new_block as unknown as EngineBlock,
       ...flat.slice(idx),
     ];
-    // Shift atomic refs at slot_index >= idx by +1 (BEFORE the insert
-    // — matches the backend's order: shift first, then add the new
-    // block's ref to `_unsorted`).
-    let nextSidecar = _shiftAtomicSlotIndices(sidecar, idx, +1);
-    nextSidecar = _ensureUnsortedSection(nextSidecar);
-    // Append the new atomic ref to `_unsorted` (D2 auto-rescue).
-    if (_isSidecarLike(nextSidecar)) {
-      const sd = nextSidecar as Record<string, unknown>;
-      const secs = (sd.sections as unknown[]).map((s) => {
-        if (!s || typeof s !== 'object') return s;
-        const sec = s as Record<string, unknown>;
-        if (sec.id !== '_unsorted') return sec;
-        const bs = Array.isArray(sec.blocks) ? (sec.blocks as unknown[]) : [];
-        return {
-          ...sec,
-          blocks: [...bs, { kind: 'atomic', slot_index: idx }],
-        };
+    // c3d-follow-up review F2: collapse the three sequential
+    // sections[] rebuilds (shift / ensure / auto-rescue append)
+    // into a single pass. Backend does it in one in-place mutation
+    // pass; the previous functional version walked sections.length
+    // three times (~3x allocations vs the minimum). At scale (50+
+    // sections) the perf difference is small, but the single pass
+    // also reads better: each section gets ONE transform that does
+    // everything it needs.
+    const sd = sidecar as Record<string, unknown>;
+    const sections = sd.sections as unknown[];
+    const layoutOrder = Array.isArray(sd.layout_order)
+      ? (sd.layout_order as unknown[])
+      : [];
+    let sawUnsorted = false;
+    const newRef = { kind: 'atomic', slot_index: idx };
+    const nextSections = sections.map((s) => {
+      if (!s || typeof s !== 'object') return s;
+      const sec = s as Record<string, unknown>;
+      const bs = Array.isArray(sec.blocks) ? (sec.blocks as unknown[]) : [];
+      // Shift atomic refs at slot_index >= idx by +1.
+      const shifted = bs.map((b) => {
+        if (!b || typeof b !== 'object') return b;
+        const block = b as Record<string, unknown>;
+        if (block.kind !== 'atomic') return block;
+        const si = block.slot_index;
+        if (typeof si !== 'number' || si < idx) return block;
+        return { ...block, slot_index: si + 1 };
       });
-      nextSidecar = { ...sd, sections: secs };
-    }
+      // _unsorted: also append the new ref in the same pass.
+      if (sec.id === '_unsorted') {
+        sawUnsorted = true;
+        return { ...sec, blocks: [...shifted, newRef] };
+      }
+      return { ...sec, blocks: shifted };
+    });
+    // _unsorted absent → create it at end of sections + layout_order
+    // (mirrors _ensureUnsortedSection, but folded into this pass).
+    const finalSections = sawUnsorted
+      ? nextSections
+      : [
+          ...nextSections,
+          {
+            id: '_unsorted',
+            name: 'Unsorted (moved from a deleted section)',
+            blocks: [newRef],
+          },
+        ];
+    const finalLayoutOrder = layoutOrder.includes('_unsorted')
+      ? layoutOrder
+      : [...layoutOrder, '_unsorted'];
     return {
       template: { ...template, layout: { ...layout, flat_slots: nextFlat } },
-      sidecar: nextSidecar,
+      sidecar: { ...sd, sections: finalSections, layout_order: finalLayoutOrder },
     };
   }
 
@@ -1184,8 +1214,12 @@ function _structuralBlockEdit(
       (s) => s && typeof s === 'object' && (s as Record<string, unknown>).id === touchedSectionId,
     ) as Record<string, unknown> | undefined;
     if (touched) {
+      // c3d-follow-up review F4: widen the element type so the
+      // `b?.kind` optional chaining stops looking redundant — block
+      // entries CAN be null after a partial-walk no-op leaves the
+      // original (untrusted) sidecar shape.
       const remaining = Array.isArray(touched.blocks)
-        ? (touched.blocks as Array<Record<string, unknown>>)
+        ? (touched.blocks as Array<Record<string, unknown> | null>)
         : [];
       const hasAtomicAfter = remaining.some((b) => b?.kind === 'atomic');
       const hasMacroAfter = remaining.some((b) => b?.kind === 'macro');
