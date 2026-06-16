@@ -814,7 +814,7 @@ describe('watchJob', () => {
     ]);
     const sleep = vi.fn(async () => {});
     const snaps: JobSnapshot[] = [];
-    for await (const snap of watchJob('j-1', 500, 1000, fetch_, sleep)) {
+    for await (const snap of watchJob('j-1', { initialIntervalMs: 500, maxIntervalMs: 1000, fetch_, sleepFn: sleep })) {
       snaps.push(snap);
     }
     expect(snaps.map((s) => [s.status, s.current])).toEqual([
@@ -831,6 +831,29 @@ describe('watchJob', () => {
     expect(sleep).toHaveBeenNthCalledWith(2, 1000);
   });
 
+  it('§16.11.t2 review K1: zero-args uses 250/1000 defaults (production callers do this)', async () => {
+    // Both production callers (`+page.svelte` detail view +
+    // visualise live-preview) call `watchJob(jobId)` with no
+    // options. Pin the defaults so an accidental swap in the
+    // function signature can't silently change production cadence.
+    const { fetch_ } = makeSequencedSpy([
+      { body: fakeSnap({ status: 'running', current: 0 }) },
+      { body: fakeSnap({ status: 'running', current: 50 }) },
+      { body: fakeSnap({ status: 'done', current: 100,
+                         finished_at: '2026-05-27T10:00:05Z',
+                         result: { playlist_id: 7, trace_id: 't',
+                                   station: 'ts', week: 1, slot_count: 100 } }) },
+    ]);
+    const sleep = vi.fn(async () => {});
+    // Inject fetch_ + sleepFn but leave the interval defaults alone.
+    for await (const _ of watchJob('j-1', { fetch_, sleepFn: sleep })) {
+      // drain
+    }
+    // Default initial=250, max=1000 → schedule 250 then 500.
+    expect(sleep).toHaveBeenNthCalledWith(1, 250);
+    expect(sleep).toHaveBeenNthCalledWith(2, 500);
+  });
+
   it('stops cleanly when the job 404s mid-poll (yields nothing on 404)', async () => {
     const { fetch_ } = makeSequencedSpy([
       { body: fakeSnap({ status: 'running' }) },
@@ -838,7 +861,7 @@ describe('watchJob', () => {
     ]);
     const sleep = vi.fn(async () => {});
     const snaps: JobSnapshot[] = [];
-    for await (const snap of watchJob('j-1', 500, 1000, fetch_, sleep)) {
+    for await (const snap of watchJob('j-1', { initialIntervalMs: 500, maxIntervalMs: 1000, fetch_, sleepFn: sleep })) {
       snaps.push(snap);
     }
     // First snapshot was yielded; second poll 404'd → generator
@@ -858,7 +881,7 @@ describe('watchJob', () => {
     ]);
     const sleep = vi.fn(async () => {});
     const snaps: JobSnapshot[] = [];
-    for await (const snap of watchJob('j-1', 500, 1000, fetch_, sleep)) {
+    for await (const snap of watchJob('j-1', { initialIntervalMs: 500, maxIntervalMs: 1000, fetch_, sleepFn: sleep })) {
       snaps.push(snap);
     }
     expect(snaps.length).toBe(1);
@@ -873,7 +896,7 @@ describe('watchJob', () => {
     ]);
     const sleep = vi.fn(async () => {});
     const snaps: JobSnapshot[] = [];
-    for await (const snap of watchJob('j-1', 500, 1000, fetch_, sleep)) {
+    for await (const snap of watchJob('j-1', { initialIntervalMs: 500, maxIntervalMs: 1000, fetch_, sleepFn: sleep })) {
       snaps.push(snap);
     }
     expect(snaps[0].status).toBe('cancelled');
@@ -896,7 +919,7 @@ describe('watchJob', () => {
     ]);
     const sleep = vi.fn(async () => {});
     const snaps: JobSnapshot[] = [];
-    for await (const snap of watchJob('j-1', 250, 1000, fetch_, sleep)) {
+    for await (const snap of watchJob('j-1', { initialIntervalMs: 250, maxIntervalMs: 1000, fetch_, sleepFn: sleep })) {
       snaps.push(snap);
     }
     expect(snaps).toHaveLength(6);
@@ -920,11 +943,32 @@ describe('watchJob', () => {
                                    station: 'ts', week: 1, slot_count: 100 } }) },
     ]);
     const sleep = vi.fn(async () => {});
-    for await (const _ of watchJob('j-1', 2000, 500, fetch_, sleep)) {
+    for await (const _ of watchJob('j-1', { initialIntervalMs: 2000, maxIntervalMs: 500, fetch_, sleepFn: sleep })) {
       // drain
     }
     expect(sleep).toHaveBeenCalledTimes(1);
     expect(sleep).toHaveBeenCalledWith(500);
+  });
+
+  it('§16.11.t2 review K4: maxIntervalMs <= 0 falls back to the default cap (defensive)', async () => {
+    // Silly input: maxIntervalMs = 0 → sleep(0) tight-loop without
+    // the guard. We restore the default cap (1000) so the server
+    // can't be DoS'd by a typo.
+    const { fetch_ } = makeSequencedSpy([
+      { body: fakeSnap({ status: 'running' }) },
+      { body: fakeSnap({ status: 'done',
+                         finished_at: '2026-05-27T10:00:05Z',
+                         result: { playlist_id: 7, trace_id: 't',
+                                   station: 'ts', week: 1, slot_count: 100 } }) },
+    ]);
+    const sleep = vi.fn(async () => {});
+    for await (const _ of watchJob('j-1', { initialIntervalMs: 300, maxIntervalMs: 0, fetch_, sleepFn: sleep })) {
+      // drain
+    }
+    // initial=300 clamped against the restored cap (1000) → 300
+    // is fine; sleep called once with 300.
+    expect(sleep).toHaveBeenCalledTimes(1);
+    expect(sleep).toHaveBeenCalledWith(300);
   });
 
   it('propagates non-404 fetch errors out of the generator', async () => {
@@ -934,7 +978,7 @@ describe('watchJob', () => {
     const sleep = vi.fn(async () => {});
     const err = await (async () => {
       try {
-        for await (const _ of watchJob('j-1', 500, 1000, fetch_, sleep)) {
+        for await (const _ of watchJob('j-1', { initialIntervalMs: 500, maxIntervalMs: 1000, fetch_, sleepFn: sleep })) {
           // unreachable — pollJob raises before any yield
         }
       } catch (e) {

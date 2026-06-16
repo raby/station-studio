@@ -592,6 +592,23 @@ export const cancelJob = async (
   }
 };
 
+/** §16.11.t2 review K3 — options object for `watchJob`. The
+ *  positional signature was creeping past 4 params (jobId + 2
+ *  intervals + fetch_ + sleepFn). Reads cleaner + tolerates future
+ *  additions (e.g. a `waitTimeoutMs` field if long-poll lands). */
+export interface WatchJobOptions {
+  /** Initial poll interval in ms. Defaults to 250 — covers the
+   *  typical §16.2.6 live-preview job (~1.5s) in ~3 polls. */
+  initialIntervalMs?: number;
+  /** Backoff cap in ms. Defaults to 1000 — DESIGN's "1000ms-while-
+   *  idle" contract. Long-running jobs settle to this cadence. */
+  maxIntervalMs?: number;
+  /** Injected for unit tests. */
+  fetch_?: typeof fetch;
+  /** Injected for unit tests so they don't actually sleep. */
+  sleepFn?: (ms: number) => Promise<void>;
+}
+
 /**
  * Async-iterable wrapper around `pollJob`. Yields one snapshot per
  * poll until either `status !== "running"` or the job 404s mid-poll
@@ -604,15 +621,17 @@ export const cancelJob = async (
  *     if (state.status === 'error') showToast(state.error);
  *   }
  *
- * **§16.11.t2 — adaptive backoff.** Starts at `initialIntervalMs`
- * (250ms by default) and doubles after every "still running" poll up
- * to `maxIntervalMs` (1000ms by default). The §16.2.6 live-preview
- * driver fires ~6 polls per 1.5s preview today; under the prior
- * fixed-500ms cadence, 5 quick edits cost ~30 polls per editing
- * burst. With adaptive backoff the same burst settles to ~4 polls
- * (250 + 500 + 1000 + ... < 1.5s for typical previews), and a long-
- * running job (server side bug, complex template) settles to 1Hz
- * instead of 4Hz — protocol-compatible, no server changes.
+ * **§16.11.t2 — adaptive backoff.** DESIGN's "250ms-during-running
+ * / 1000ms-while-idle" contract: start at `initialIntervalMs`
+ * (250ms by default), double the interval after every "still
+ * running" poll, cap at `maxIntervalMs` (1000ms by default). The
+ * §16.2.6 live-preview driver fires ~6 polls per 1.5s preview
+ * today; under the prior fixed-500ms cadence, 5 quick edits cost
+ * ~30 polls per editing burst. With adaptive backoff the same burst
+ * settles to ~4 polls (250 + 500 + 1000 + ... < 1.5s for typical
+ * previews), and a long-running job (server-side bug, complex
+ * template) settles to 1Hz instead of 4Hz — protocol-compatible,
+ * no server changes.
  *
  * The DESIGN punt notes long-poll (`GET /api/jobs/{id}?wait=2000`)
  * is the next mitigation tier; .t2 picked adaptive backoff because
@@ -621,16 +640,28 @@ export const cancelJob = async (
  * (c) long-poll requires JobStore primitive changes that .t2's
  * sub-slice budget doesn't accommodate.
  *
- * `sleepFn` is injectable for tests so they don't actually sleep.
+ * Backoff implicitly resets on edit-supersede: `_schedulePreview`
+ * cancels the in-flight job and starts a new `watchJob` loop on
+ * every edit, so editing bursts always get fast polling for free.
  */
 export async function* watchJob(
   jobId: string,
-  initialIntervalMs = 250,
-  maxIntervalMs = 1000,
-  fetch_ = fetch,
-  sleepFn: (ms: number) => Promise<void> = (ms) =>
-    new Promise((r) => setTimeout(r, ms)),
+  options: WatchJobOptions = {},
 ): AsyncIterable<JobSnapshot> {
+  const {
+    initialIntervalMs = 250,
+    maxIntervalMs = 1000,
+    fetch_ = fetch,
+    sleepFn = (ms: number) => new Promise<void>((r) => setTimeout(r, ms)),
+  } = options;
+
+  // c3e c3 review K4: defensive minimum-interval guard. A caller
+  // passing maxIntervalMs <= 0 (silly input) would hit `sleep(0)`
+  // tight-loop the server; clamp to a sane floor. Belt-and-braces
+  // since no production caller does this today.
+  const effectiveMax = maxIntervalMs >= 1 ? maxIntervalMs : 1000;
+  const effectiveInitial = Math.max(1, Math.min(initialIntervalMs, effectiveMax));
+
   // Loop until the job reaches a terminal status OR 404s. We poll
   // BEFORE sleeping on the first iteration so the caller sees fresh
   // state immediately rather than waiting `initialIntervalMs` for
@@ -641,7 +672,7 @@ export async function* watchJob(
   // generation. If we ever blow past this it's a bug (engine stuck,
   // never reaches a terminal state).
   let safety = 7200;
-  let currentIntervalMs = Math.min(initialIntervalMs, maxIntervalMs);
+  let currentIntervalMs = effectiveInitial;
   while (safety-- > 0) {
     const snap = await pollJob(jobId, fetch_);
     if (snap === null) {
@@ -654,11 +685,11 @@ export async function* watchJob(
     yield snap;
     if (snap.status !== 'running') return;
     await sleepFn(currentIntervalMs);
-    // Adaptive backoff: double the interval, cap at maxIntervalMs.
-    // Doubling = ~3 polls to settle from 250ms to the 1000ms cap
-    // (250 → 500 → 1000), matching the DESIGN's "fast at first,
-    // settle when the job's clearly long-running" contract.
-    currentIntervalMs = Math.min(currentIntervalMs * 2, maxIntervalMs);
+    // Adaptive backoff: double the interval, cap at effectiveMax.
+    // The 250 → 500 → 1000 schedule = 3 polls before the cap engages,
+    // which matches DESIGN's "250ms-during-running / 1000ms-while-
+    // idle" contract.
+    currentIntervalMs = Math.min(currentIntervalMs * 2, effectiveMax);
   }
   throw new Error(
     `watchJob(${jobId}) iteration limit exceeded — engine may be stuck`,
