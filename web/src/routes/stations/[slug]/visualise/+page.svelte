@@ -227,6 +227,82 @@
     }
   }
 
+  // §16.2.6.t1 — staged-edit persistence + recovery. localStorage
+  // key + helpers. Design summary (DESIGN §16.2.6.t1 design pass):
+  //
+  //   - **Storage**: localStorage per-station — `stagedEdits:<slug>`.
+  //     Single-operator hobbyist scale; the realistic opLog upper
+  //     bound (~50 ops × few hundred bytes) fits well under
+  //     localStorage's ~5MB quota. IndexedDB's async API overkill
+  //     for the scope.
+  //   - **Shape**: `{ opLog, updatedAtSnapshot }` — the snapshot is
+  //     the `updated_at` token at stage-time. Reused on recovery to
+  //     detect "the station changed under me" drift.
+  //   - **Multi-tab**: v1 — last-write-wins via natural localStorage
+  //     write semantics. No `storage` event listener; the solo-
+  //     operator scenario the project targets rarely has two tabs
+  //     open on the same station. Cross-tab live sync deferred as
+  //     §16.2.6.t1-follow-up.
+  //   - **Recovery UX**: silent if `updatedAtSnapshot === updatedAt`
+  //     (the staged edits apply against the same base they were
+  //     authored against). Otherwise window.confirm: cancel to
+  //     recover anyway, confirm to discard. Mirrors the toggle-off
+  //     prompt's interaction shape.
+  interface PersistedStagedEdits {
+    opLog: Edit[];
+    updatedAtSnapshot: string;
+  }
+  function _stagedEditsKey(s: string): string {
+    return `stagedEdits:${s}`;
+  }
+  function _readStagedEdits(s: string): PersistedStagedEdits | null {
+    if (typeof window === 'undefined') return null;
+    try {
+      const raw = window.localStorage.getItem(_stagedEditsKey(s));
+      if (raw === null) return null;
+      const parsed = JSON.parse(raw) as PersistedStagedEdits;
+      // Defensive: minimum shape sanity. A localStorage entry from a
+      // pre-t1 build, or a corrupted entry, is dropped silently.
+      if (
+        !parsed ||
+        typeof parsed !== 'object' ||
+        !Array.isArray(parsed.opLog) ||
+        typeof parsed.updatedAtSnapshot !== 'string'
+      ) {
+        return null;
+      }
+      return parsed;
+    } catch {
+      return null;
+    }
+  }
+  function _writeStagedEdits(s: string, payload: PersistedStagedEdits | null): void {
+    if (typeof window === 'undefined') return;
+    try {
+      const key = _stagedEditsKey(s);
+      if (payload === null || payload.opLog.length === 0) {
+        window.localStorage.removeItem(key);
+      } else {
+        window.localStorage.setItem(key, JSON.stringify(payload));
+      }
+    } catch {
+      // localStorage quota / privacy-mode block — non-fatal. Worst
+      // case: staged edits stay in-memory only for this session.
+    }
+  }
+
+  /** §16.2.6.t1 — write the current opLog + updatedAt token to
+   *  localStorage. Called at every opLog mutation site so persistence
+   *  stays in lockstep with in-memory state. */
+  function _persistOpLog(): void {
+    _writeStagedEdits(
+      slug,
+      opLog.length > 0 && updatedAt !== null
+        ? { opLog, updatedAtSnapshot: updatedAt }
+        : null,
+    );
+  }
+
   // §16.2.6 c2 review #1 fix #8: operator-facing error sanitiser.
   // Backend's clean 400 messages ("invalid sidecar (grammar):
   // missing required keys [layout_order]") are operator-readable +
@@ -458,9 +534,22 @@
       // before return. Both ApiError (network/4xx) and
       // EditorMetadataError (shape) carry `.message`.
       await loadSidecar();
+      // §16.2.6.t1 — recover staged edits from localStorage.
+      // Gated on livePreviewOn: if the operator's saved preference
+      // is OFF, recovering staged edits silently would surprise
+      // them (the staged-save controls only render when toggle ON,
+      // so recovered ops would persist invisibly). When OFF, drop
+      // any stored opLog instead.
+      if (livePreviewOn) {
+        _recoverStagedEdits();
+      } else {
+        _writeStagedEdits(slug, null);
+      }
       // If the operator's saved preference is "live preview ON",
       // fire one preview right after the sidecar lands so the trace
       // pane shows actual content instead of the empty-state nudge.
+      // With recovered staged edits, the preview reflects the
+      // applied state via the `stagedView` reactive derivation.
       if (livePreviewOn) _schedulePreview();
     } catch (e) {
       loadError = e instanceof Error ? e.message : String(e);
@@ -468,6 +557,45 @@
       loading = false;
     }
   });
+
+  // §16.2.6.t1 — recover persisted opLog. Called from onMount AFTER
+  // loadSidecar succeeds so `updatedAt` is populated for the
+  // freshness check. Silently skipped when no entry exists; prompts
+  // (window.confirm) when the staged edits were authored against a
+  // different `updated_at` than the current sidecar. Confirm =
+  // discard; cancel = recover anyway.
+  function _recoverStagedEdits(): void {
+    const persisted = _readStagedEdits(slug);
+    if (persisted === null) return;
+    if (persisted.opLog.length === 0) {
+      _writeStagedEdits(slug, null);
+      return;
+    }
+    const fresh = persisted.updatedAtSnapshot === updatedAt;
+    if (fresh) {
+      // Silent recovery — the staged edits apply against the same
+      // base they were authored against.
+      opLog = persisted.opLog;
+      return;
+    }
+    // Stale — prompt. Default to discard (confirm = discard).
+    const ok = window.confirm(
+      `Found ${persisted.opLog.length} staged edit${persisted.opLog.length === 1 ? '' : 's'} ` +
+      `from a previous session, but this station has changed since then ` +
+      `(the saved version may have been edited elsewhere). Discard the ` +
+      `staged edits? (Cancel to recover them anyway.)`,
+    );
+    if (ok) {
+      _writeStagedEdits(slug, null);
+    } else {
+      opLog = persisted.opLog;
+      // Re-persist with the CURRENT updatedAt as the new snapshot —
+      // the operator chose to apply the staged edits against the
+      // current base, so the recovery prompt shouldn't fire again
+      // on the next load.
+      _persistOpLog();
+    }
+  }
 
   // Map a chip's ExpandedRef to the storage BlockAddress. row_idx is
   // dropped — a row_template edit targets the shared block_idx
@@ -612,6 +740,7 @@
   // that ride on the same helper for free.
   function _interceptToOpLog(op: Edit): void {
     opLog = [...opLog, op];
+    _persistOpLog();
     saveError = null;
     conflict = false;
     exportMsg = null;
@@ -709,6 +838,7 @@
       // the result carries what's left so a fix-and-retry sequence
       // works.
       opLog = result.remaining;
+      _persistOpLog();
       if (!result.success) {
         if ('conflict' in result && result.conflict) {
           conflict = true;
@@ -752,6 +882,7 @@
   async function handleDrop() {
     showRetryModal = false;
     opLog = opLog.slice(1);
+    _persistOpLog();
     // c3e c3 review J3: load-bearing in the empty-queue branch
     // below — handleStagedSave never runs to clear it, so the
     // operator would see a stale banner. Keep the explicit clear.
@@ -793,6 +924,7 @@
   // (Discard does, toggle-off doesn't — preview is turning OFF).
   async function _resetStagedState(): Promise<boolean> {
     opLog = [];
+    _persistOpLog();
     saveError = null;
     conflict = false;
     try {

@@ -665,6 +665,10 @@ describe('visualise +page.svelte — §16.2.6 c3e c1 staged-edit loss guards', (
       },
     });
     confirmSpy = vi.spyOn(window, 'confirm');
+    // §16.2.6.t1 — vi.spyOn returns the same spy across tests; clear
+    // call history so cross-test pollution doesn't leak into the
+    // recovery-prompt assertions.
+    confirmSpy.mockClear();
   });
 
   async function mountAndAwaitStub() {
@@ -1064,6 +1068,130 @@ describe('visualise +page.svelte — §16.2.6 c3e c1 staged-edit loss guards', (
     expect(screen.queryByTestId('staged-save')).toBeNull();
     // No additional patch call — opLog was empty after the drop.
     expect(patchBlockMock.mock.calls.length).toBe(callCountAtFailure);
+  });
+
+  it('§16.2.6.t1: intercepted edits persist to localStorage with the current updatedAt snapshot', async () => {
+    getStationSidecarMock.mockResolvedValue({
+      template: makeTemplate(),
+      sidecar: makeSidecar(),
+      sidecar_error: null,
+      updated_at: 'ts-1',
+    });
+    await mountAndAwaitStub();
+    await act(async () => {
+      fireEditorCanvasEvent('save', {
+        ref: { kind: 'atomic-ref', slot_index: 0 },
+        fields: { size: 5 },
+      });
+    });
+    const stored = window.localStorage.getItem('stagedEdits:viz-test');
+    expect(stored).not.toBeNull();
+    const parsed = JSON.parse(stored!);
+    expect(parsed.updatedAtSnapshot).toBe('ts-1');
+    expect(parsed.opLog).toHaveLength(1);
+    expect(parsed.opLog[0].kind).toBe('patchBlock');
+  });
+
+  it('§16.2.6.t1: recovery — matching updatedAt → silent restore (no confirm prompt)', async () => {
+    const persisted = {
+      opLog: [{
+        kind: 'patchBlock',
+        address: { slot_index: 0 },
+        fields: { size: 7 },
+      }],
+      updatedAtSnapshot: 'ts-2',
+    };
+    window.localStorage.setItem('stagedEdits:viz-test', JSON.stringify(persisted));
+    getStationSidecarMock.mockResolvedValue({
+      template: makeTemplate(),
+      sidecar: makeSidecar(),
+      sidecar_error: null,
+      updated_at: 'ts-2',
+    });
+    await mountAndAwaitStub();
+    // No confirm prompt + staged-save reflects the recovered opLog.
+    expect(confirmSpy).not.toHaveBeenCalled();
+    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 1 edit/);
+  });
+
+  it('§16.2.6.t1: recovery — mismatched updatedAt → confirm(); accept = discard', async () => {
+    window.localStorage.setItem(
+      'stagedEdits:viz-test',
+      JSON.stringify({
+        opLog: [{
+          kind: 'patchBlock',
+          address: { slot_index: 0 },
+          fields: { size: 9 },
+        }],
+        updatedAtSnapshot: 'ts-OLD',
+      }),
+    );
+    getStationSidecarMock.mockResolvedValue({
+      template: makeTemplate(),
+      sidecar: makeSidecar(),
+      sidecar_error: null,
+      updated_at: 'ts-NEW',
+    });
+    confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    await mountAndAwaitStub();
+    // Prompt fired + accept = discard the staged edits + clear
+    // localStorage.
+    expect(confirmSpy).toHaveBeenCalled();
+    expect(screen.queryByTestId('staged-save')).toBeNull();
+    expect(window.localStorage.getItem('stagedEdits:viz-test')).toBeNull();
+  });
+
+  it('§16.2.6.t1: recovery — mismatched updatedAt → confirm(); cancel = recover anyway + re-snapshot', async () => {
+    window.localStorage.setItem(
+      'stagedEdits:viz-test',
+      JSON.stringify({
+        opLog: [{
+          kind: 'patchBlock',
+          address: { slot_index: 0 },
+          fields: { size: 11 },
+        }],
+        updatedAtSnapshot: 'ts-OLD',
+      }),
+    );
+    getStationSidecarMock.mockResolvedValue({
+      template: makeTemplate(),
+      sidecar: makeSidecar(),
+      sidecar_error: null,
+      updated_at: 'ts-NEW',
+    });
+    confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    await mountAndAwaitStub();
+    // Cancel = recover anyway.
+    expect(confirmSpy).toHaveBeenCalled();
+    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 1 edit/);
+    // Re-snapshot: the localStorage entry now carries the NEW updatedAt.
+    const restored = JSON.parse(window.localStorage.getItem('stagedEdits:viz-test')!);
+    expect(restored.updatedAtSnapshot).toBe('ts-NEW');
+  });
+
+  it('§16.2.6.t1: livePreviewOn=false at mount → drops any persisted opLog (no surprise invisible state)', async () => {
+    window.localStorage.setItem('livePreview:viz-test', 'off');
+    window.localStorage.setItem(
+      'stagedEdits:viz-test',
+      JSON.stringify({
+        opLog: [{
+          kind: 'patchBlock',
+          address: { slot_index: 0 },
+          fields: { size: 1 },
+        }],
+        updatedAtSnapshot: 'ts-1',
+      }),
+    );
+    await mountAndAwaitStub();
+    // Persistence cleared; no recovery.
+    expect(window.localStorage.getItem('stagedEdits:viz-test')).toBeNull();
+  });
+
+  it('§16.2.6.t1: malformed localStorage entry is silently dropped (defensive)', async () => {
+    window.localStorage.setItem('stagedEdits:viz-test', 'not-json');
+    await mountAndAwaitStub();
+    expect(confirmSpy).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('staged-save')).toBeNull();
   });
 
   it('beforeunload with no staged edits: preventDefault NOT called (no warning)', async () => {

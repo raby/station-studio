@@ -9312,17 +9312,38 @@ c4. c4's docs job then accurately reflects what shipped.
 
 #### Cross-cutting punts (queued §16.2.6.tX)
 
-**§16.2.6.t1** (medium) — staged-edit persistence + recovery. The
-GOAL is recovery; v1 ships lost-on-tab-close because the conflict
-+ stale-state semantics need a separate design pass. Sub-decisions:
-storage (localStorage vs IndexedDB), freshness check (compare staged
-template against current DB), multi-tab conflict (last-write-wins
-vs cross-tab lock vs "another tab has staged edits — open in
-read-only?"), recovery UX (silent vs prompt). Promote after §16.2.6
-c4 + at least one operator's feedback session. (Was originally
-numbered .t2 in the c1-draft entry; promoted to .t1 since the
-former .t1 — polling adaptive/long-poll — folded into §16.11.t2;
-see closeout note.)
+~~**§16.2.6.t1** (medium) — staged-edit persistence + recovery.~~
+**SHIPPED post-§16.2.6 c4.** Design pass resolved the four
+sub-decisions:
+
+  - **Storage**: localStorage per-station — `stagedEdits:<slug>`.
+    Hobbyist scale; opLog upper bound (~50 ops × few hundred bytes)
+    fits well under localStorage's ~5MB quota. IndexedDB's async
+    API overkill.
+  - **Freshness**: persist `updated_at` snapshot at stage-time;
+    compare on recovery. Reuses the existing optimistic-concurrency
+    anchor.
+  - **Multi-tab**: v1 — last-write-wins via natural localStorage
+    write semantics; no `storage` event listener. Single-operator
+    hobbyist scenario rarely has two tabs on the same station.
+    Cross-tab live sync remains deferred as t1-follow-up if the
+    project ever needs it.
+  - **Recovery UX**: silent if `updatedAtSnapshot === updatedAt`;
+    `window.confirm()` if mismatched (default = discard, cancel =
+    recover anyway + re-snapshot against the current `updatedAt`).
+    Mirrors the toggle-off-with-staged-edits prompt's interaction
+    shape.
+
+Implementation: `_persistOpLog()` helper called at all 4 opLog
+mutation sites (`_interceptToOpLog`, post-replay drain in
+`handleStagedSave`, `handleDrop`'s pop, `_resetStagedState`'s
+clear). `_recoverStagedEdits()` runs in `onMount` after
+`loadSidecar`. Gated on `livePreviewOn` — if the operator's
+saved toggle preference is OFF, drop any persisted opLog
+(surfacing invisible staged state would surprise them; the
+staged-save controls only render when toggle ON). Malformed
+localStorage entries are silently dropped via shape sanity
+check. 6 new visualise.test.ts cases cover all branches.
 
 **§16.2.6.t2** (small-medium) — transactional all-or-nothing Save.
 Today Save replays edits as sequential PATCHes; mid-replay error
