@@ -1087,13 +1087,128 @@ describe('visualise +page.svelte — §16.2.6 c3e c1 staged-edit loss guards', (
     const stored = window.localStorage.getItem('stagedEdits:viz-test');
     expect(stored).not.toBeNull();
     const parsed = JSON.parse(stored!);
+    expect(parsed.schemaVersion).toBe(1);
     expect(parsed.updatedAtSnapshot).toBe('ts-1');
     expect(parsed.opLog).toHaveLength(1);
     expect(parsed.opLog[0].kind).toBe('patchBlock');
   });
 
+  it('§16.2.6.t1 review L2: persisted opLog entry with unknown `kind` is filtered out on recovery', async () => {
+    window.localStorage.setItem(
+      'stagedEdits:viz-test',
+      JSON.stringify({
+        schemaVersion: 1,
+        opLog: [
+          { kind: 'patchBlock', address: { slot_index: 0 }, fields: { size: 5 } },
+          { kind: 'futureKindThatNoLongerExists', wibble: 'wobble' },
+          { kind: 'patchBlock', address: { slot_index: 1 }, fields: { size: 7 } },
+        ],
+        updatedAtSnapshot: 'ts-1',
+      }),
+    );
+    getStationSidecarMock.mockResolvedValue({
+      template: makeTemplate(),
+      sidecar: makeSidecar(),
+      sidecar_error: null,
+      updated_at: 'ts-1',
+    });
+    await mountAndAwaitStub();
+    // Both valid entries recovered; unknown kind dropped silently —
+    // staged-save count == 2.
+    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 2 edits/);
+  });
+
+  it('§16.2.6.t1 review L3: persisted entry with mismatched schemaVersion is silently dropped', async () => {
+    window.localStorage.setItem(
+      'stagedEdits:viz-test',
+      JSON.stringify({
+        schemaVersion: 999,
+        opLog: [{ kind: 'patchBlock', address: { slot_index: 0 }, fields: { size: 5 } }],
+        updatedAtSnapshot: 'ts-1',
+      }),
+    );
+    await mountAndAwaitStub();
+    expect(screen.queryByTestId('staged-save')).toBeNull();
+  });
+
+  it('§16.2.6.t1 review L4: successful Save clears localStorage', async () => {
+    getStationSidecarMock.mockResolvedValue({
+      template: makeTemplate(),
+      sidecar: makeSidecar(),
+      sidecar_error: null,
+      updated_at: 'ts-1',
+    });
+    await mountAndAwaitStub();
+    // Stage an edit + verify persisted.
+    await act(async () => {
+      fireEditorCanvasEvent('save', {
+        ref: { kind: 'atomic-ref', slot_index: 0 },
+        fields: { size: 5 },
+      });
+    });
+    expect(window.localStorage.getItem('stagedEdits:viz-test')).not.toBeNull();
+    // Save (patchBlockMock default = success).
+    await act(async () => {
+      screen.getByTestId('staged-save').click();
+    });
+    await waitFor(() => {
+      expect(screen.queryByTestId('staged-save')).toBeNull();
+    });
+    // localStorage cleared.
+    expect(window.localStorage.getItem('stagedEdits:viz-test')).toBeNull();
+  });
+
+  it('§16.2.6.t1 review L5: Discard button clears localStorage', async () => {
+    getStationSidecarMock.mockResolvedValue({
+      template: makeTemplate(),
+      sidecar: makeSidecar(),
+      sidecar_error: null,
+      updated_at: 'ts-1',
+    });
+    await mountAndAwaitStub();
+    await act(async () => {
+      fireEditorCanvasEvent('save', {
+        ref: { kind: 'atomic-ref', slot_index: 0 },
+        fields: { size: 5 },
+      });
+    });
+    expect(window.localStorage.getItem('stagedEdits:viz-test')).not.toBeNull();
+    // Click Discard.
+    await act(async () => {
+      screen.getByTestId('staged-discard').click();
+    });
+    await waitFor(() => {
+      expect(window.localStorage.getItem('stagedEdits:viz-test')).toBeNull();
+    });
+  });
+
+  it('§16.2.6.t1 review L1: loadSidecar 404 clears orphan stagedEdits entry', async () => {
+    // Seed an orphan entry — station no longer exists serverside.
+    window.localStorage.setItem(
+      'stagedEdits:viz-test',
+      JSON.stringify({
+        schemaVersion: 1,
+        opLog: [{ kind: 'patchBlock', address: { slot_index: 0 }, fields: { size: 5 } }],
+        updatedAtSnapshot: 'ts-1',
+      }),
+    );
+    // Make loadSidecar throw the 404 ApiError shape (matches
+    // `getStationSidecar`'s wrapped error contract).
+    getStationSidecarMock.mockRejectedValue(
+      new FakeApiError(404, '404 Not Found'),
+    );
+    await act(async () => {
+      render(Page);
+    });
+    // loadError populated; localStorage entry purged.
+    await waitFor(() => {
+      expect(window.localStorage.getItem('stagedEdits:viz-test')).toBeNull();
+    });
+  });
+
   it('§16.2.6.t1: recovery — matching updatedAt → silent restore (no confirm prompt)', async () => {
     const persisted = {
+      schemaVersion: 1,
       opLog: [{
         kind: 'patchBlock',
         address: { slot_index: 0 },
@@ -1118,6 +1233,7 @@ describe('visualise +page.svelte — §16.2.6 c3e c1 staged-edit loss guards', (
     window.localStorage.setItem(
       'stagedEdits:viz-test',
       JSON.stringify({
+        schemaVersion: 1,
         opLog: [{
           kind: 'patchBlock',
           address: { slot_index: 0 },
@@ -1145,6 +1261,7 @@ describe('visualise +page.svelte — §16.2.6 c3e c1 staged-edit loss guards', (
     window.localStorage.setItem(
       'stagedEdits:viz-test',
       JSON.stringify({
+        schemaVersion: 1,
         opLog: [{
           kind: 'patchBlock',
           address: { slot_index: 0 },
@@ -1174,6 +1291,7 @@ describe('visualise +page.svelte — §16.2.6 c3e c1 staged-edit loss guards', (
     window.localStorage.setItem(
       'stagedEdits:viz-test',
       JSON.stringify({
+        schemaVersion: 1,
         opLog: [{
           kind: 'patchBlock',
           address: { slot_index: 0 },

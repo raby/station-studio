@@ -19,6 +19,7 @@
   import { onDestroy, onMount } from 'svelte';
   import { page } from '$app/stores';
   import {
+    ApiError,
     BlockPatchConflict,
     cancelJob,
     createSection,
@@ -248,7 +249,33 @@
   //     authored against). Otherwise window.confirm: cancel to
   //     recover anyway, confirm to discard. Mirrors the toggle-off
   //     prompt's interaction shape.
+  /** §16.2.6.t1 review L3 — bump on any breaking change to the
+   *  persisted Edit shape (added required fields on an existing
+   *  kind, etc.). Entries with a mismatched version drop silently
+   *  in `_readStagedEdits`, so an evolved frontend doesn't try to
+   *  replay an op whose semantics have shifted under it. */
+  const STAGED_EDITS_SCHEMA_VERSION = 1;
+
+  /** §16.2.6.t1 review L2 — known Edit kinds for recovery
+   *  filtering. If the persisted opLog has an entry whose `kind`
+   *  isn't in this set (a future build dropped the kind, the
+   *  persisted entry was hand-edited, etc.), it gets dropped
+   *  silently to avoid crashing `replayOpLog`'s exhaustiveness pin.
+   *  Keep in lockstep with the `Edit` union in `$lib/edit-ops`. */
+  const KNOWN_EDIT_KINDS: ReadonlySet<string> = new Set([
+    'patchBlock',
+    'patchMacro',
+    'renameSection',
+    'sectionCreate',
+    'sectionDelete',
+    'reorderSections',
+    'moveBlock',
+    'retypeBlock',
+    'structuralBlockEdit',
+  ]);
+
   interface PersistedStagedEdits {
+    schemaVersion: number;
     opLog: Edit[];
     updatedAtSnapshot: string;
   }
@@ -262,16 +289,28 @@
       if (raw === null) return null;
       const parsed = JSON.parse(raw) as PersistedStagedEdits;
       // Defensive: minimum shape sanity. A localStorage entry from a
-      // pre-t1 build, or a corrupted entry, is dropped silently.
+      // pre-t1 build, a schema-version mismatch, or a corrupted entry
+      // is dropped silently.
       if (
         !parsed ||
         typeof parsed !== 'object' ||
+        parsed.schemaVersion !== STAGED_EDITS_SCHEMA_VERSION ||
         !Array.isArray(parsed.opLog) ||
         typeof parsed.updatedAtSnapshot !== 'string'
       ) {
         return null;
       }
-      return parsed;
+      // L2 filter: drop entries whose `kind` isn't in the current
+      // known set. Today the Edit union only grows, but a future
+      // schema-version bump that removes a kind would crash
+      // replayOpLog without this guard.
+      const filtered = parsed.opLog.filter(
+        (op) =>
+          op !== null &&
+          typeof op === 'object' &&
+          KNOWN_EDIT_KINDS.has((op as { kind?: unknown }).kind as string),
+      );
+      return { ...parsed, opLog: filtered };
     } catch {
       return null;
     }
@@ -291,14 +330,28 @@
     }
   }
 
-  /** §16.2.6.t1 — write the current opLog + updatedAt token to
-   *  localStorage. Called at every opLog mutation site so persistence
-   *  stays in lockstep with in-memory state. */
+  /**
+   * §16.2.6.t1 — write the current opLog + updatedAt token to
+   * localStorage. Called at every opLog mutation site so persistence
+   * stays in lockstep with in-memory state.
+   *
+   * L6: keep in lockstep with the 4 opLog mutation sites:
+   *   1. `_interceptToOpLog` — append on a staging-mode handler.
+   *   2. `handleStagedSave` — drain on replay (success = empty,
+   *      failure = `result.remaining` keeps the failed head).
+   *   3. `handleDrop` — pop opLog[0] after the Retry/Drop modal's
+   *      Drop action.
+   *   4. `_resetStagedState` — clear on Discard / toggle-off-with-
+   *      confirm. Also routes through here on the loadSidecar 404
+   *      orphan-cleanup path (L1).
+   * A 5th mutation site should add a `_persistOpLog()` call OR
+   * route through one of the above helpers.
+   */
   function _persistOpLog(): void {
     _writeStagedEdits(
       slug,
       opLog.length > 0 && updatedAt !== null
-        ? { opLog, updatedAtSnapshot: updatedAt }
+        ? { schemaVersion: STAGED_EDITS_SCHEMA_VERSION, opLog, updatedAtSnapshot: updatedAt }
         : null,
     );
   }
@@ -553,6 +606,13 @@
       if (livePreviewOn) _schedulePreview();
     } catch (e) {
       loadError = e instanceof Error ? e.message : String(e);
+      // L1: 404 on loadSidecar means the station was deleted
+      // elsewhere (DB delete, manual SQL, external workflow).
+      // Clear any orphan localStorage entry so it doesn't
+      // accumulate forever for a slug that no longer exists.
+      if (e instanceof ApiError && e.status === 404) {
+        _writeStagedEdits(slug, null);
+      }
     } finally {
       loading = false;
     }
