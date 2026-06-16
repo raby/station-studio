@@ -539,11 +539,25 @@
   // within the SPA.
   let _beforeUnloadHandler: ((e: BeforeUnloadEvent) => void) | null = null;
 
+  // §16.2.6.t1-follow-up — cross-tab `storage` event listener.
+  // Browsers dispatch the `storage` event on OTHER tabs (never the
+  // tab that called setItem). When the operator has two tabs open
+  // on the same station: Tab A stages an edit → its `_persistOpLog`
+  // writes to localStorage → Tab B's storage handler fires, re-reads
+  // the persisted entry, and updates its in-memory opLog to match.
+  // Last-write-wins, but the loser SEES the change rather than
+  // shadowing it with stale state until the next reload.
+  let _storageHandler: ((e: StorageEvent) => void) | null = null;
+
   onDestroy(() => {
     _cancelPreview();
     if (_beforeUnloadHandler) {
       window.removeEventListener('beforeunload', _beforeUnloadHandler);
       _beforeUnloadHandler = null;
+    }
+    if (_storageHandler) {
+      window.removeEventListener('storage', _storageHandler);
+      _storageHandler = null;
     }
   });
 
@@ -576,6 +590,26 @@
       }
     };
     window.addEventListener('beforeunload', _beforeUnloadHandler);
+    // §16.2.6.t1-follow-up — register the cross-tab `storage`
+    // listener. Filters by key so other-station entries don't
+    // perturb this station's opLog; ignores no-op events
+    // (`oldValue === newValue`) that some browsers emit.
+    _storageHandler = (e: StorageEvent) => {
+      if (e.key !== _stagedEditsKey(slug)) return;
+      if (e.newValue === e.oldValue) return;
+      if (e.newValue === null) {
+        // Other tab cleared the entry (Save, Discard, or
+        // navigate-away). Drop our in-memory opLog to match.
+        opLog = [];
+        return;
+      }
+      // Other tab mutated the entry. Re-read with the same shape /
+      // schemaVersion / known-kind defensive filters used at mount.
+      const persisted = _readStagedEdits(slug);
+      if (persisted === null) return;
+      opLog = persisted.opLog;
+    };
+    window.addEventListener('storage', _storageHandler);
     // Hydrate the live-preview toggle from localStorage BEFORE the
     // sidecar loads — so a returning operator's preferred mode is
     // already active when the canvas renders. No preview job fires

@@ -1312,6 +1312,82 @@ describe('visualise +page.svelte — §16.2.6 c3e c1 staged-edit loss guards', (
     expect(screen.queryByTestId('staged-save')).toBeNull();
   });
 
+  it('§16.2.6.t1-follow-up: cross-tab storage event with matching key updates in-memory opLog', async () => {
+    getStationSidecarMock.mockResolvedValue({
+      template: makeTemplate(),
+      sidecar: makeSidecar(),
+      sidecar_error: null,
+      updated_at: 'ts-1',
+    });
+    await mountAndAwaitStub();
+    // Simulate Tab A writing a new staged edit + firing the storage
+    // event Tab B (this page) would receive.
+    const newPayload = JSON.stringify({
+      schemaVersion: 1,
+      opLog: [{
+        kind: 'patchBlock',
+        address: { slot_index: 0 },
+        fields: { size: 9 },
+      }],
+      updatedAtSnapshot: 'ts-1',
+    });
+    window.localStorage.setItem('stagedEdits:viz-test', newPayload);
+    await act(async () => {
+      window.dispatchEvent(new StorageEvent('storage', {
+        key: 'stagedEdits:viz-test',
+        oldValue: null,
+        newValue: newPayload,
+        storageArea: window.localStorage,
+      }));
+    });
+    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 1 edit/);
+  });
+
+  it('§16.2.6.t1-follow-up: cross-tab storage event with non-matching key is ignored', async () => {
+    await mountAndAwaitStub();
+    await act(async () => {
+      window.dispatchEvent(new StorageEvent('storage', {
+        key: 'stagedEdits:OTHER-STATION',
+        oldValue: null,
+        newValue: '{"schemaVersion":1,"opLog":[{"kind":"patchBlock","address":{"slot_index":0},"fields":{"size":1}}],"updatedAtSnapshot":"ts-1"}',
+        storageArea: window.localStorage,
+      }));
+    });
+    // viz-test's opLog unchanged.
+    expect(screen.queryByTestId('staged-save')).toBeNull();
+  });
+
+  it('§16.2.6.t1-follow-up: cross-tab storage event with newValue=null clears in-memory opLog', async () => {
+    getStationSidecarMock.mockResolvedValue({
+      template: makeTemplate(),
+      sidecar: makeSidecar(),
+      sidecar_error: null,
+      updated_at: 'ts-1',
+    });
+    await mountAndAwaitStub();
+    // Stage an edit locally first.
+    await act(async () => {
+      fireEditorCanvasEvent('save', {
+        ref: { kind: 'atomic-ref', slot_index: 0 },
+        fields: { size: 5 },
+      });
+    });
+    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 1 edit/);
+    // Simulate Tab A discarding its staged edits → storage event with
+    // newValue=null on this tab.
+    window.localStorage.removeItem('stagedEdits:viz-test');
+    await act(async () => {
+      window.dispatchEvent(new StorageEvent('storage', {
+        key: 'stagedEdits:viz-test',
+        oldValue: 'whatever',
+        newValue: null,
+        storageArea: window.localStorage,
+      }));
+    });
+    // Our in-memory opLog cleared too.
+    expect(screen.queryByTestId('staged-save')).toBeNull();
+  });
+
   it('beforeunload with no staged edits: preventDefault NOT called (no warning)', async () => {
     await mountAndAwaitStub();
     const e = new Event('beforeunload', { cancelable: true }) as BeforeUnloadEvent;

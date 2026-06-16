@@ -9324,10 +9324,17 @@ sub-decisions:
     compare on recovery. Reuses the existing optimistic-concurrency
     anchor.
   - **Multi-tab**: v1 — last-write-wins via natural localStorage
-    write semantics; no `storage` event listener. Single-operator
-    hobbyist scenario rarely has two tabs on the same station.
-    Cross-tab live sync remains deferred as t1-follow-up if the
-    project ever needs it.
+    write semantics. Cross-tab live sync via `storage` event
+    listener landed as the t1-follow-up immediately after t1's
+    review batch (the same session that shipped t1 + the L1-L6
+    review continued straight into the follow-up). Now: Tab A's
+    persist fires Tab B's storage handler → Tab B re-reads + updates
+    its in-memory `opLog`. Still last-write-wins on the storage
+    side, but the loser SEES the change rather than shadowing it
+    with stale state. Filtered by key so other-station entries
+    don't perturb this station's opLog; no-op events
+    (`oldValue === newValue`) skipped; `newValue === null` clears
+    in-memory opLog (Tab A discarded or saved).
   - **Recovery UX**: silent if `updatedAtSnapshot === updatedAt`;
     `window.confirm()` if mismatched (default = discard, cancel =
     recover anyway + re-snapshot against the current `updatedAt`).
