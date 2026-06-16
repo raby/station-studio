@@ -752,16 +752,22 @@ describe('visualise +page.svelte — §16.2.6 c3e c1 staged-edit loss guards', (
 
   it('c3e c2 D2(b): TracePane visible when livePreviewOn + DetailPanel closed', async () => {
     await mountAndAwaitStub();
-    expect(screen.getByTestId('trace-col')).toBeInTheDocument();
+    const trace = screen.getByTestId('trace-col');
+    expect(trace).toBeInTheDocument();
+    expect(trace.className).not.toContain('trace-col--hidden');
   });
 
-  it('c3e c2 D2(b): detailOpen=true hides TracePane (DetailPanel claims the right-side real estate)', async () => {
+  it('c3e c2 D2(b): detailOpen=true hides TracePane via CSS (DetailPanel claims the right-side real estate; review H4 — no remount)', async () => {
     await mountAndAwaitStub();
     expect(screen.getByTestId('trace-col')).toBeInTheDocument();
     await act(async () => {
       fireEditorCanvasEvent('detailOpen', { open: true });
     });
-    expect(screen.queryByTestId('trace-col')).toBeNull();
+    // Element stays in DOM (H4 — no remount on every open/close);
+    // hidden via class instead.
+    const trace = screen.getByTestId('trace-col');
+    expect(trace).toBeInTheDocument();
+    expect(trace.className).toContain('trace-col--hidden');
   });
 
   it('c3e c2 D2(b): detailOpen=false restores TracePane (close DetailPanel → trace reappears)', async () => {
@@ -769,11 +775,48 @@ describe('visualise +page.svelte — §16.2.6 c3e c1 staged-edit loss guards', (
     await act(async () => {
       fireEditorCanvasEvent('detailOpen', { open: true });
     });
-    expect(screen.queryByTestId('trace-col')).toBeNull();
+    expect(screen.getByTestId('trace-col').className).toContain('trace-col--hidden');
     await act(async () => {
       fireEditorCanvasEvent('detailOpen', { open: false });
     });
-    expect(screen.getByTestId('trace-col')).toBeInTheDocument();
+    expect(screen.getByTestId('trace-col').className).not.toContain('trace-col--hidden');
+  });
+
+  it('c3e c2 review H2: livePreviewOn=false → TracePane absent regardless of detailOpen (toggle hide overrides)', async () => {
+    // Pin the `livePreviewOn && !detailPanelOpen` gate's livePreviewOn
+    // half. A refactor that dropped the toggle check would silently
+    // start showing TracePane when live-preview is OFF.
+    window.localStorage.setItem('livePreview:viz-test', 'off');
+    await mountAndAwaitStub();
+    expect(screen.queryByTestId('trace-col')).toBeNull();
+    // Even if EditorCanvas fires detailOpen events, no trace appears.
+    await act(async () => {
+      fireEditorCanvasEvent('detailOpen', { open: false });
+    });
+    expect(screen.queryByTestId('trace-col')).toBeNull();
+  });
+
+  it('c3e c2 review H5: opening DetailPanel does NOT cancel the in-flight preview job', async () => {
+    // The H4 comment promises TracePane reactively updates while
+    // hidden so the closing transition shows a fresh trace. That
+    // depends on _cancelPreview NOT firing on detailOpen=true. Pin
+    // it by spying on cancelJobMock across the open transition.
+    await mountAndAwaitStub();
+    // Trigger an edit so a preview job actually starts (the
+    // _schedulePreview path runs after every intercept).
+    await act(async () => {
+      fireEditorCanvasEvent('save', {
+        ref: { kind: 'atomic-ref', slot_index: 0 },
+        fields: { size: 5 },
+      });
+    });
+    cancelJobMock.mockClear();
+    // Open DetailPanel.
+    await act(async () => {
+      fireEditorCanvasEvent('detailOpen', { open: true });
+    });
+    // No cancel call.
+    expect(cancelJobMock).not.toHaveBeenCalled();
   });
 
   it('beforeunload with no staged edits: preventDefault NOT called (no warning)', async () => {

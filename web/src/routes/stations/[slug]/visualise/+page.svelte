@@ -1112,9 +1112,17 @@
            it doesn't compete for the right-side real estate. The
            trace data + ongoing preview job keep running in the
            background (no _cancelPreview on DetailPanel open) so the
-           operator gets a fresh trace as soon as they close. -->
-      {#if livePreviewOn && !detailPanelOpen}
-        <div class="trace-col" data-testid="trace-col">
+           operator gets a fresh trace as soon as they close.
+           c3e c2 review H4: use CSS hide instead of `{#if}` unmount
+           — TracePane reactively re-renders as `previewTrace`
+           updates even while hidden, so closing DetailPanel shows
+           the latest trace with no remount cost. -->
+      {#if livePreviewOn}
+        <div
+          class="trace-col"
+          class:trace-col--hidden={detailPanelOpen}
+          data-testid="trace-col"
+        >
           <TracePane
             trace={previewTrace}
             previewing={previewing}
@@ -1162,6 +1170,15 @@
     border-radius: 4px;
     overflow: hidden;
     border: 1px solid var(--border, #ddd);
+  }
+  .trace-col--hidden {
+    /* §16.2.6 c3e c2 review H4: hide via display:none instead of
+       unmounting via {#if}. The component stays in the DOM, reacts
+       to previewTrace updates while DetailPanel is open, and shows
+       the latest trace immediately when DetailPanel closes — no
+       remount cost. display:none also drops the element from the
+       a11y tree, matching the visibility-hidden semantic. */
+    display: none;
   }
   .live-preview-toggle {
     display: inline-flex;

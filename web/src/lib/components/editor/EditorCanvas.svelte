@@ -102,10 +102,38 @@
   let selected: { ref: ExpandedRef; section: SidecarSection } | null = null;
 
   // §16.2.6 c3e c2 — emit `detailOpen` whenever the selection
-  // state flips. Reactive `$:` so any future code path that sets
-  // `selected` (programmatic open from a query param, etc.) also
-  // emits; keeping the dispatch out of the handlers avoids drift.
-  $: dispatch('detailOpen', { open: selected !== null });
+  // OPEN/CLOSED transition flips. Reactive `$:` catches any code
+  // path that sets `selected` (programmatic open from a query
+  // param, etc.) — keeping the dispatch out of the handlers
+  // avoids drift.
+  //
+  // c3e c2 review H1: the initial-state contract is implicit but
+  // load-bearing. EditorCanvas defaults `selected = null`; the
+  // route defaults its `detailPanelOpen = false`. The first
+  // reactive run after mount dispatches `{open: false}` which the
+  // route receives + assigns (no-op for state, but exercises the
+  // wire). If someone refactors to "fire only on changes" later,
+  // the route's initial `detailPanelOpen` MUST stay synced with
+  // EditorCanvas's `selected === null` default — re-derive the
+  // route's default if either side flips.
+  //
+  // c3e c2 review H3: track the last-emitted open state so chip-
+  // to-chip clicks (selected: {A} → {B}, both non-null) only emit
+  // ONE `detailOpen: { open: true }` per open/close cycle. Without
+  // this, every chip-mutation re-fires the same `open: true` event.
+  //
+  // `null` sentinel means "never emitted" — guarantees the FIRST
+  // reactive run dispatches the initial state (`{open: false}` at
+  // mount), so the route doesn't depend on the implicit "both
+  // sides defaulted to false" assumption from H1.
+  let _lastDetailOpen: boolean | null = null;
+  $: {
+    const isOpen = selected !== null;
+    if (isOpen !== _lastDetailOpen) {
+      _lastDetailOpen = isOpen;
+      dispatch('detailOpen', { open: isOpen });
+    }
+  }
 
   function onSelect(e: CustomEvent<{ ref: ExpandedRef }>, section: SidecarSection) {
     selected = { ref: e.detail.ref, section };
