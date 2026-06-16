@@ -1087,6 +1087,17 @@ function _structuralBlockEdit(
     if (edit.new_block === undefined || edit.new_block === null) {
       return { template, sidecar };
     }
+    // c3d-follow-up review F1: gate on the FULL sidecar-walk
+    // precondition (object-like + sections is an array) BEFORE the
+    // template insert. The cheaper `_isSidecarLike` check accepts
+    // shapes like `{sections: 'not an array'}` that `_shiftAtomicSlotIndices`
+    // would silently no-op on — leaving the template ahead of stale
+    // refs. Other paths follow the same all-or-nothing pattern (see
+    // _moveBlock). `size` is exempt because it doesn't touch sidecar.
+    if (!_isSidecarLike(sidecar)) return { template, sidecar };
+    if (!Array.isArray((sidecar as Record<string, unknown>).sections)) {
+      return { template, sidecar };
+    }
     const nextFlat = [
       ...flat.slice(0, idx),
       edit.new_block as unknown as EngineBlock,
@@ -1120,6 +1131,14 @@ function _structuralBlockEdit(
 
   // op === 'remove'
   if (!(Number.isInteger(idx) && idx >= 0 && idx < flat.length)) {
+    return { template, sidecar };
+  }
+  // c3d-follow-up review F1: same all-or-nothing gate as `add` —
+  // both _isSidecarLike + sections-is-array. Without this, a
+  // non-sidecar input would still pop flat_slots while every
+  // sidecar-side adjustment silently no-oped.
+  if (!_isSidecarLike(sidecar)) return { template, sidecar };
+  if (!Array.isArray((sidecar as Record<string, unknown>).sections)) {
     return { template, sidecar };
   }
   // Cascade-drop the matching sidecar atomic ref. Track the touched

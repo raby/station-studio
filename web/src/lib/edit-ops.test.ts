@@ -1326,6 +1326,57 @@ describe('applyEdit — structuralBlockEdit (§16.2.6 c3d-follow-up)', () => {
     expect(template).toEqual(templateSnap);
     expect(baseSidecar3).toEqual(sidecarSnap);
   });
+
+  it('c3d-follow-up review F1: add with non-sidecar input no-ops the WHOLE op (no half-applied template+sidecar)', () => {
+    // Without the gate, the template insert ran but the sidecar
+    // shift + auto-rescue silently skipped — leaving flat_slots
+    // ahead of stale atomic refs. The gate matches `_moveBlock` /
+    // `_sectionDelete`: all-or-nothing.
+    const template = makeFlatTemplate3();
+    const badSidecar = 'not a sidecar';
+    const op: Edit = {
+      kind: 'structuralBlockEdit',
+      edit: {
+        op: 'add', slot_index: 1,
+        new_block: { source: 'A', strategy: 'pick', size: 1 },
+      },
+    };
+    const result = applyEdit(template, badSidecar, op);
+    expect(result.template).toBe(template);
+    expect(result.sidecar).toBe(badSidecar);
+  });
+
+  it('c3d-follow-up review F1: remove with non-sidecar input no-ops the WHOLE op', () => {
+    // Symmetric pin for `remove`: pre-fix, flat_slots.pop ran but
+    // _shiftAtomicSlotIndices early-returned on the non-sidecar
+    // input — template lost a slot while every sidecar ref at
+    // slot_index > idx stayed in place.
+    const template = makeFlatTemplate3();
+    const badSidecar = { sections: 'not an array' }; // wrong shape
+    const op: Edit = {
+      kind: 'structuralBlockEdit',
+      edit: { op: 'remove', slot_index: 1 },
+    };
+    const result = applyEdit(template, badSidecar, op);
+    expect(result.template).toBe(template);
+    expect(result.sidecar).toBe(badSidecar);
+  });
+
+  it('c3d-follow-up review F1: size with non-sidecar input STILL applies (size doesn\'t touch sidecar)', () => {
+    // Contrast pin: the F1 gate lives in the `add` + `remove`
+    // branches only. `size` is sidecar-independent — it should
+    // still resize the template even if the sidecar is broken,
+    // because no sidecar-side adjustment exists to skip.
+    const template = makeFlatTemplate3();
+    const badSidecar = 'not a sidecar';
+    const op: Edit = {
+      kind: 'structuralBlockEdit',
+      edit: { op: 'size', slot_index: 0, new_size: 7 },
+    };
+    const result = applyEdit(template, badSidecar, op);
+    expect(result.template.layout.flat_slots![0].size).toBe(7);
+    expect(result.sidecar).toBe(badSidecar);
+  });
 });
 
 
