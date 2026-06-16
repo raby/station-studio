@@ -142,6 +142,28 @@
   // operator's explicit intent; the trace is ambient).
   let detailPanelOpen = false;
 
+  // §16.2.6 c3e c3 — Retry/Drop partial-failure modal. When
+  // `handleStagedSave` stops mid-replay on a non-conflict error,
+  // the operator gets a 3-option modal instead of just a banner:
+  //
+  //   - **Retry the failed edit** — re-run replayOpLog from the
+  //     head (the failed op stayed at opLog[0] per replay
+  //     semantics). Right move when the failure was transient
+  //     (network blip, race on updated_at, etc.).
+  //   - **Drop the failed edit and continue** — pop opLog[0], then
+  //     re-run replayOpLog on the rest. Right move when the
+  //     failure is permanent (bad input, server rejected the
+  //     operation outright) and the operator wants the OTHER
+  //     staged edits to land.
+  //   - **Cancel** — close the modal; saveError banner stays. The
+  //     operator can examine the failed op, fix it (maybe re-open
+  //     the chip in DetailPanel + re-stage), then click Save again.
+  //
+  // The conflict path (`conflict = true`) gets its own banner
+  // (with Reload latest) — the modal is for non-conflict errors
+  // only (validation, server reject, etc.).
+  let showRetryModal = false;
+
   // §16.2.6 c3e — "operator has unsaved staged edits" predicate.
   // Reactive to `opLog`, NOT to `livePreviewOn`. The reactive-to-opLog-
   // only contract matters for two reasons:
@@ -700,6 +722,11 @@
           saveError =
             `Save failed at staged edit ${result.failedAtIdx} of ${result.totalEdits}: ` +
             result.error;
+          // §16.2.6 c3e c3 — surface the Retry/Drop modal so the
+          // operator gets actionable choices, not just a banner.
+          // Banner stays underneath so Cancel keeps the failure
+          // context visible.
+          showRetryModal = true;
         }
         return;
       }
@@ -708,6 +735,33 @@
     } finally {
       saving = false;
     }
+  }
+
+  // §16.2.6 c3e c3 — Retry: close the modal + re-run handleStagedSave.
+  // The failed op stayed at opLog[0] (replay's remaining-on-failure
+  // semantic), so retry replays the same head op against fresh
+  // updated_at (loadSidecar ran between attempts in the prior path).
+  async function handleRetry() {
+    showRetryModal = false;
+    await handleStagedSave();
+  }
+
+  // §16.2.6 c3e c3 — Drop & continue: pop the failed op from opLog
+  // + re-run handleStagedSave on the rest. If the drop leaves an
+  // empty queue (failure was on the last op), just clear state.
+  async function handleDrop() {
+    showRetryModal = false;
+    opLog = opLog.slice(1);
+    saveError = null;
+    if (opLog.length === 0) return;
+    await handleStagedSave();
+  }
+
+  // §16.2.6 c3e c3 — Cancel: close modal but leave saveError +
+  // opLog intact so the operator can examine the failed op + fix
+  // it inline + click Save again (fix-and-retry-later flow).
+  function handleCancelRetry() {
+    showRetryModal = false;
   }
 
   // §16.2.6 c3e c1 review G1 — drop all staged edits + clear stale
@@ -1077,6 +1131,54 @@
       <p class="error" data-testid="save-error">{saveError}</p>
     {/if}
 
+    <!-- §16.2.6 c3e c3 — Retry/Drop partial-failure modal. Shown
+         when handleStagedSave stops mid-replay on a non-conflict
+         error. Three actions matching the three reasonable
+         operator responses; the saveError banner above stays
+         visible underneath so the operator sees what failed. -->
+    {#if showRetryModal}
+      <div
+        class="retry-modal-backdrop"
+        data-testid="retry-modal-backdrop"
+      >
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="retry-modal-title"
+          class="retry-modal"
+          data-testid="retry-modal"
+        >
+          <h2 id="retry-modal-title">Save failed mid-replay</h2>
+          <p>{saveError}</p>
+          <p class="retry-modal__hint">
+            {opLog.length} staged edit{opLog.length === 1 ? '' : 's'} remain in the queue.
+            Choose how to proceed:
+          </p>
+          <div class="retry-modal__actions">
+            <button
+              type="button"
+              class="primary"
+              data-testid="retry-modal-retry"
+              disabled={saving}
+              on:click={handleRetry}
+            >Retry the failed edit</button>
+            <button
+              type="button"
+              data-testid="retry-modal-drop"
+              disabled={saving}
+              on:click={handleDrop}
+            >Drop &amp; continue</button>
+            <button
+              type="button"
+              data-testid="retry-modal-cancel"
+              disabled={saving}
+              on:click={handleCancelRetry}
+            >Cancel</button>
+          </div>
+        </div>
+      </div>
+    {/if}
+
     <!--
       §16.2.3 — editable visual block canvas. The DetailPanel's `save`
       event bubbles up here (via EditorCanvas) to the PATCH call.
@@ -1179,6 +1281,57 @@
        remount cost. display:none also drops the element from the
        a11y tree, matching the visibility-hidden semantic. */
     display: none;
+  }
+  /* §16.2.6 c3e c3 — Retry/Drop modal styles. Centered overlay on
+     a semi-transparent backdrop; modal has a small drop shadow to
+     separate from the page. Action buttons live in a row with the
+     primary (Retry) emphasized. */
+  .retry-modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+  }
+  .retry-modal {
+    background: var(--surface, #fff);
+    border-radius: 6px;
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.18);
+    padding: 1.25rem 1.5rem;
+    max-width: 480px;
+    width: calc(100% - 2rem);
+  }
+  .retry-modal h2 {
+    margin: 0 0 0.5rem 0;
+    font-size: 1.05rem;
+  }
+  .retry-modal p {
+    margin: 0.25rem 0;
+    font-size: 0.9rem;
+  }
+  .retry-modal__hint {
+    color: var(--text-muted, #555);
+    margin-top: 0.75rem;
+  }
+  .retry-modal__actions {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 1rem;
+    justify-content: flex-end;
+  }
+  .retry-modal__actions button {
+    cursor: pointer;
+  }
+  .retry-modal__actions button.primary {
+    background: var(--accent, #3a80c0);
+    color: #fff;
+    border: 1px solid var(--accent, #3a80c0);
+  }
+  .retry-modal__actions button[disabled] {
+    opacity: 0.6;
+    cursor: not-allowed;
   }
   .live-preview-toggle {
     display: inline-flex;

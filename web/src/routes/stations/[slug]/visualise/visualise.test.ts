@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/svelte';
+import { render, screen, waitFor } from '@testing-library/svelte';
 import '@testing-library/jest-dom/vitest';
 
 /**
@@ -817,6 +817,137 @@ describe('visualise +page.svelte — §16.2.6 c3e c1 staged-edit loss guards', (
     });
     // No cancel call.
     expect(cancelJobMock).not.toHaveBeenCalled();
+  });
+
+  it('c3e c3: non-conflict Save failure surfaces Retry/Drop modal + leaves opLog intact', async () => {
+    await mountAndAwaitStub();
+    // Queue 2 edits.
+    await act(async () => {
+      fireEditorCanvasEvent('save', {
+        ref: { kind: 'atomic-ref', slot_index: 0 },
+        fields: { size: 5 },
+      });
+    });
+    await act(async () => {
+      fireEditorCanvasEvent('save', {
+        ref: { kind: 'atomic-ref', slot_index: 1 },
+        fields: { size: 7 },
+      });
+    });
+    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 2 edits/);
+    // First patch fails with a non-conflict error.
+    patchBlockMock.mockRejectedValueOnce(new Error('server rejected: bad size'));
+    await act(async () => {
+      screen.getByTestId('staged-save').click();
+    });
+    // Modal visible; banner visible underneath; opLog still has 2.
+    expect(screen.getByTestId('retry-modal')).toBeInTheDocument();
+    expect(screen.getByTestId('save-error')).toHaveTextContent(/server rejected/);
+    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 2 edits/);
+  });
+
+  it('c3e c3 Retry: re-runs handleStagedSave; success drains opLog + closes modal', async () => {
+    await mountAndAwaitStub();
+    await act(async () => {
+      fireEditorCanvasEvent('save', {
+        ref: { kind: 'atomic-ref', slot_index: 0 },
+        fields: { size: 5 },
+      });
+    });
+    patchBlockMock.mockRejectedValueOnce(new Error('transient failure'));
+    await act(async () => {
+      screen.getByTestId('staged-save').click();
+    });
+    expect(screen.getByTestId('retry-modal')).toBeInTheDocument();
+    // Retry — patchBlock will succeed this time.
+    await act(async () => {
+      screen.getByTestId('retry-modal-retry').click();
+    });
+    // The retry kicks off another handleStagedSave (async); wait
+    // for opLog drain to settle the reactive state.
+    await waitFor(() => {
+      expect(screen.queryByTestId('staged-save')).toBeNull();
+    });
+    expect(screen.queryByTestId('retry-modal')).toBeNull();
+  });
+
+  it('c3e c3 Drop: pops opLog[0] + replays the rest; head edit gone', async () => {
+    await mountAndAwaitStub();
+    // Queue 2 edits.
+    await act(async () => {
+      fireEditorCanvasEvent('save', {
+        ref: { kind: 'atomic-ref', slot_index: 0 },
+        fields: { size: 5 },
+      });
+    });
+    await act(async () => {
+      fireEditorCanvasEvent('save', {
+        ref: { kind: 'atomic-ref', slot_index: 1 },
+        fields: { size: 7 },
+      });
+    });
+    // First patch (slot 0) fails.
+    patchBlockMock.mockRejectedValueOnce(new Error('server reject'));
+    await act(async () => {
+      screen.getByTestId('staged-save').click();
+    });
+    expect(screen.getByTestId('retry-modal')).toBeInTheDocument();
+    const callCountBeforeDrop = patchBlockMock.mock.calls.length;
+    // Drop the failed op; replay the remaining 1 edit (slot 1)
+    // against patchBlock (this call succeeds — default mock).
+    await act(async () => {
+      screen.getByTestId('retry-modal-drop').click();
+    });
+    // Wait for the second handleStagedSave to drain opLog.
+    await waitFor(() => {
+      expect(screen.queryByTestId('staged-save')).toBeNull();
+    });
+    expect(screen.queryByTestId('retry-modal')).toBeNull();
+    // patchBlock got one more call (the slot 1 replay), not two.
+    expect(patchBlockMock.mock.calls.length).toBe(callCountBeforeDrop + 1);
+  });
+
+  it('c3e c3 Cancel: closes modal but preserves opLog + saveError for fix-and-retry-later', async () => {
+    await mountAndAwaitStub();
+    await act(async () => {
+      fireEditorCanvasEvent('save', {
+        ref: { kind: 'atomic-ref', slot_index: 0 },
+        fields: { size: 5 },
+      });
+    });
+    patchBlockMock.mockRejectedValueOnce(new Error('validation failed'));
+    await act(async () => {
+      screen.getByTestId('staged-save').click();
+    });
+    await act(async () => {
+      screen.getByTestId('retry-modal-cancel').click();
+    });
+    // Modal closed; staged-save + banner still there.
+    expect(screen.queryByTestId('retry-modal')).toBeNull();
+    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 1 edit/);
+    expect(screen.getByTestId('save-error')).toHaveTextContent(/validation failed/);
+  });
+
+  it('c3e c3 Drop with only the failed edit: opLog clears + modal closes (no replay)', async () => {
+    await mountAndAwaitStub();
+    await act(async () => {
+      fireEditorCanvasEvent('save', {
+        ref: { kind: 'atomic-ref', slot_index: 0 },
+        fields: { size: 5 },
+      });
+    });
+    patchBlockMock.mockRejectedValueOnce(new Error('reject'));
+    await act(async () => {
+      screen.getByTestId('staged-save').click();
+    });
+    const callCountAtFailure = patchBlockMock.mock.calls.length;
+    await act(async () => {
+      screen.getByTestId('retry-modal-drop').click();
+    });
+    expect(screen.queryByTestId('retry-modal')).toBeNull();
+    expect(screen.queryByTestId('staged-save')).toBeNull();
+    // No additional patch call — opLog was empty after the drop.
+    expect(patchBlockMock.mock.calls.length).toBe(callCountAtFailure);
   });
 
   it('beforeunload with no staged edits: preventDefault NOT called (no warning)', async () => {
