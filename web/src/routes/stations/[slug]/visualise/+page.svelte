@@ -101,19 +101,15 @@
   //   - `reorderSections` (c3c — section-header drag-reorder)
   //   - `moveBlock` (c3d — chip drag between sections)
   //   - `retypeBlock` (c3d — DetailPanel retype panel)
+  //   - `structuralBlockEdit` (c3d-follow-up — size / add / remove
+  //     with slot_index shifts; closes the 9th + final kind)
   //
-  // **Still falls through to immediate-PATCH when toggle ON**
-  // (c3d-follow-up extends applyEdit + handler interception):
-  //   - structuralBlockEdit (size / add / remove with slot_index
-  //     shifts — gnarliest of the 9 kinds; its own sub-slice)
-  //
-  // The opLog data structure carries all kinds; only the dispatch
-  // wiring needs adding per kind.
+  // All 9 staging kinds are now intercepted. No fall-through paths
+  // remain when the toggle is ON.
   //
   // **Intercept-pattern extraction landed in c3c** as the
   // `_interceptToOpLog(op)` helper just above handleSave — c3b
-  // review #1 finding #8. The 6 currently-intercepted handlers all
-  // use it; c3d's 3 new handlers ride on the same helper for free.
+  // review #1 finding #8. Every handler uses it.
   //
   // saveError surfacing during Save replay reuses the existing
   // `saveError` banner — the Retry/Drop modal lands in c3d /
@@ -610,6 +606,11 @@
           moveBlock(slug, address, targetSectionId, targetIndex, updatedAt),
         retypeBlock: (address, newStrategy, newSource, newFields) =>
           retypeBlock(slug, address, newStrategy, newSource, newFields, updatedAt),
+        // §16.2.6 c3d-follow-up — structural block edit (size /
+        // add / remove with slot_index shifts). Closes the 9th
+        // staging intercept kind.
+        structuralBlockEdit: (edit) =>
+          structuralBlockEdit(slug, edit, updatedAt),
         refreshUpdatedAt: loadSidecar,
         isConflict: (err) => err instanceof BlockPatchConflict,
       });
@@ -859,6 +860,16 @@
   async function handleStructuralEdit(
     e: CustomEvent<{ edit: StructuralBlockEdit }>,
   ) {
+    // §16.2.6 c3d-follow-up: intercept structural edit when
+    // live-preview is ON. Shallow-copy the edit payload so the
+    // op log doesn't hold a reference the caller could mutate.
+    if (livePreviewOn) {
+      _interceptToOpLog({
+        kind: 'structuralBlockEdit',
+        edit: { ...e.detail.edit },
+      });
+      return;
+    }
     // c2 review #10: name the op in the refetch-failure prefix so a
     // refresh blip after a successful structural edit tells the
     // operator WHICH mutation landed ('resized slot 3' vs

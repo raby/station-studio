@@ -1039,6 +1039,296 @@ describe('applyEdit — retypeBlock (§16.2.6 c3d)', () => {
 });
 
 
+describe('applyEdit — structuralBlockEdit (§16.2.6 c3d-follow-up)', () => {
+  function makeFlatTemplate3(): StationTemplate {
+    return {
+      station: 'ts',
+      name: 'Test',
+      sources: [
+        { name: 'A', colour: '#abc', role: 'content' },
+      ],
+      layout: {
+        unit: 'slot',
+        unit_labels: [],
+        row_start_offsets: [],
+        flat_slots: [
+          { source: 'A', strategy: 'pick', size: 1 },
+          { source: 'A', strategy: 'pick', size: 1 },
+          { source: 'A', strategy: 'pick', size: 1 },
+        ],
+      },
+    };
+  }
+  const baseSidecar3 = {
+    schema_version: 1,
+    sections: [
+      { id: 'morning', name: 'Morning', blocks: [
+        { kind: 'atomic', slot_index: 0 },
+        { kind: 'atomic', slot_index: 1 },
+      ]},
+      { id: 'evening', name: 'Evening', blocks: [
+        { kind: 'atomic', slot_index: 2 },
+      ]},
+    ],
+    macros: [],
+    layout_order: ['morning', 'evening'],
+  };
+
+  it('size: changes flat_slots[idx].size; sidecar untouched', () => {
+    const op: Edit = {
+      kind: 'structuralBlockEdit',
+      edit: { op: 'size', slot_index: 1, new_size: 5 },
+    };
+    const { template: nextT, sidecar: nextS } = applyEdit(
+      makeFlatTemplate3(), baseSidecar3, op,
+    );
+    expect(nextT.layout.flat_slots![1].size).toBe(5);
+    expect(nextT.layout.flat_slots![0].size).toBe(1);
+    expect(nextS).toBe(baseSidecar3);
+  });
+
+  it('size: no-op on missing new_size', () => {
+    const op: Edit = {
+      kind: 'structuralBlockEdit',
+      edit: { op: 'size', slot_index: 1 },
+    };
+    const template = makeFlatTemplate3();
+    const result = applyEdit(template, baseSidecar3, op);
+    expect(result.template).toBe(template);
+    expect(result.sidecar).toBe(baseSidecar3);
+  });
+
+  it('size: no-op on new_size < 1', () => {
+    const op: Edit = {
+      kind: 'structuralBlockEdit',
+      edit: { op: 'size', slot_index: 1, new_size: 0 },
+    };
+    const template = makeFlatTemplate3();
+    const result = applyEdit(template, baseSidecar3, op);
+    expect(result.template).toBe(template);
+  });
+
+  it('size: no-op on idx out of range', () => {
+    const op: Edit = {
+      kind: 'structuralBlockEdit',
+      edit: { op: 'size', slot_index: 999, new_size: 5 },
+    };
+    const template = makeFlatTemplate3();
+    const result = applyEdit(template, baseSidecar3, op);
+    expect(result.template).toBe(template);
+  });
+
+  it('add: inserts new block + shifts atomic refs by +1 + auto-rescues to _unsorted', () => {
+    // Insert at slot_index=1: slots become [old0, NEW, old1, old2].
+    // Sidecar refs at slot_index >= 1 shift to 2, 3.
+    // New ref {slot_index: 1} appended to (auto-created) _unsorted.
+    const newBlock = { source: 'A', strategy: 'pick', size: 1 };
+    const op: Edit = {
+      kind: 'structuralBlockEdit',
+      edit: { op: 'add', slot_index: 1, new_block: newBlock },
+    };
+    const { template: nextT, sidecar: nextS } = applyEdit(
+      makeFlatTemplate3(), baseSidecar3, op,
+    );
+    expect(nextT.layout.flat_slots!.length).toBe(4);
+    expect(nextT.layout.flat_slots![1]).toEqual(newBlock);
+    const ns = nextS as typeof baseSidecar3;
+    // Atomic refs at slot_index >= 1 shifted.
+    expect(ns.sections.find((s) => s.id === 'morning')!.blocks).toEqual([
+      { kind: 'atomic', slot_index: 0 },
+      { kind: 'atomic', slot_index: 2 }, // was 1
+    ]);
+    expect(ns.sections.find((s) => s.id === 'evening')!.blocks).toEqual([
+      { kind: 'atomic', slot_index: 3 }, // was 2
+    ]);
+    // _unsorted auto-created with the new ref.
+    const unsorted = ns.sections.find((s) => s.id === '_unsorted')!;
+    expect(unsorted.name).toBe('Unsorted (moved from a deleted section)');
+    expect(unsorted.blocks).toEqual([
+      { kind: 'atomic', slot_index: 1 },
+    ]);
+    expect(ns.layout_order).toContain('_unsorted');
+  });
+
+  it('add: existing _unsorted is reused (no duplicate section, name preserved)', () => {
+    const sidecarWithBin = {
+      ...baseSidecar3,
+      sections: [
+        ...baseSidecar3.sections,
+        { id: '_unsorted', name: 'Custom name', blocks: [
+          { kind: 'atomic', slot_index: 99 },
+        ]},
+      ],
+      layout_order: [...baseSidecar3.layout_order, '_unsorted'],
+    };
+    const newBlock = { source: 'A', strategy: 'pick', size: 1 };
+    const op: Edit = {
+      kind: 'structuralBlockEdit',
+      edit: { op: 'add', slot_index: 0, new_block: newBlock },
+    };
+    const { sidecar: nextS } = applyEdit(
+      makeFlatTemplate3(), sidecarWithBin, op,
+    );
+    const ns = nextS as typeof sidecarWithBin;
+    const unsortedSections = ns.sections.filter((s) => s.id === '_unsorted');
+    expect(unsortedSections.length).toBe(1);
+    expect(unsortedSections[0].name).toBe('Custom name'); // preserved
+    expect(unsortedSections[0].blocks).toEqual([
+      { kind: 'atomic', slot_index: 100 }, // was 99, shifted +1
+      { kind: 'atomic', slot_index: 0 },   // new ref at insert idx
+    ]);
+  });
+
+  it('add: no-op on missing new_block', () => {
+    const op: Edit = {
+      kind: 'structuralBlockEdit',
+      edit: { op: 'add', slot_index: 1 },
+    };
+    const template = makeFlatTemplate3();
+    const result = applyEdit(template, baseSidecar3, op);
+    expect(result.template).toBe(template);
+    expect(result.sidecar).toBe(baseSidecar3);
+  });
+
+  it('add: idx === flat_slots.length (append at end) is valid', () => {
+    const newBlock = { source: 'A', strategy: 'pick', size: 1 };
+    const op: Edit = {
+      kind: 'structuralBlockEdit',
+      edit: { op: 'add', slot_index: 3, new_block: newBlock },
+    };
+    const { template: nextT } = applyEdit(
+      makeFlatTemplate3(), baseSidecar3, op,
+    );
+    expect(nextT.layout.flat_slots!.length).toBe(4);
+    expect(nextT.layout.flat_slots![3]).toEqual(newBlock);
+  });
+
+  it('remove: cascade-drops the matching atomic ref + shifts higher refs by -1', () => {
+    // Remove slot_index=1: morning loses its slot-1 ref;
+    // evening's slot-2 ref shifts to slot-1.
+    const op: Edit = {
+      kind: 'structuralBlockEdit',
+      edit: { op: 'remove', slot_index: 1 },
+    };
+    const { template: nextT, sidecar: nextS } = applyEdit(
+      makeFlatTemplate3(), baseSidecar3, op,
+    );
+    expect(nextT.layout.flat_slots!.length).toBe(2);
+    const ns = nextS as typeof baseSidecar3;
+    expect(ns.sections.find((s) => s.id === 'morning')!.blocks).toEqual([
+      { kind: 'atomic', slot_index: 0 },
+    ]);
+    expect(ns.sections.find((s) => s.id === 'evening')!.blocks).toEqual([
+      { kind: 'atomic', slot_index: 1 }, // was 2
+    ]);
+  });
+
+  it('remove: no-op (rolls back template + sidecar) when cascade would orphan macros', () => {
+    // Section has only one atomic anchor (slot_index=0) + a macro.
+    // Removing slot 0 would leave a macro-only section that
+    // resolve_macro_addresses can't position. Backend 400s; frontend
+    // no-ops so the staged preview stays honest.
+    const orphanRisky = {
+      ...baseSidecar3,
+      sections: [
+        { id: 'morning', name: 'Morning', blocks: [
+          { kind: 'atomic', slot_index: 0 },
+          { kind: 'macro', ref: 'm1' },
+        ]},
+        { id: 'evening', name: 'Evening', blocks: [
+          { kind: 'atomic', slot_index: 2 },
+        ]},
+      ],
+    };
+    const op: Edit = {
+      kind: 'structuralBlockEdit',
+      edit: { op: 'remove', slot_index: 0 },
+    };
+    const template = makeFlatTemplate3();
+    const result = applyEdit(template, orphanRisky, op);
+    // Template unchanged (no pop); sidecar reference-equal.
+    expect(result.template).toBe(template);
+    expect(result.sidecar).toBe(orphanRisky);
+  });
+
+  it('remove: removing the only atomic from an ALL-macro section IS allowed if no macros remain', () => {
+    // Same shape as the orphan test but no macro — cascade leaves an
+    // empty section, which is fine (not orphaning anything).
+    const op: Edit = {
+      kind: 'structuralBlockEdit',
+      edit: { op: 'remove', slot_index: 0 },
+    };
+    const allEmpty = {
+      ...baseSidecar3,
+      sections: [
+        { id: 'morning', name: 'Morning', blocks: [
+          { kind: 'atomic', slot_index: 0 },
+        ]},
+        { id: 'evening', name: 'Evening', blocks: [
+          { kind: 'atomic', slot_index: 2 },
+        ]},
+      ],
+    };
+    const { template: nextT } = applyEdit(
+      makeFlatTemplate3(), allEmpty, op,
+    );
+    expect(nextT.layout.flat_slots!.length).toBe(2);
+  });
+
+  it('remove: no-op on idx out of range', () => {
+    const op: Edit = {
+      kind: 'structuralBlockEdit',
+      edit: { op: 'remove', slot_index: 999 },
+    };
+    const template = makeFlatTemplate3();
+    const result = applyEdit(template, baseSidecar3, op);
+    expect(result.template).toBe(template);
+    expect(result.sidecar).toBe(baseSidecar3);
+  });
+
+  it('row_template stations are rejected (backend 400 mirror — whole-op no-op)', () => {
+    // Backend rejects structural edits on row_template-based layouts
+    // (block_idx-domain analogue is a future slice). Frontend mirror.
+    const rowTemplate: StationTemplate = {
+      station: 'ts',
+      name: 'Test',
+      sources: [{ name: 'A', colour: '#abc', role: 'content' }],
+      layout: {
+        unit: 'slot',
+        unit_labels: [],
+        row_start_offsets: [],
+        row_template: [
+          { source: 'A', strategy: 'pick', size: 1 },
+        ],
+      },
+    };
+    const op: Edit = {
+      kind: 'structuralBlockEdit',
+      edit: { op: 'size', slot_index: 0, new_size: 5 },
+    };
+    const result = applyEdit(rowTemplate, baseSidecar3, op);
+    expect(result.template).toBe(rowTemplate);
+    expect(result.sidecar).toBe(baseSidecar3);
+  });
+
+  it('PURE: input template + sidecar not mutated by add', () => {
+    const template = makeFlatTemplate3();
+    const templateSnap = JSON.parse(JSON.stringify(template));
+    const sidecarSnap = JSON.parse(JSON.stringify(baseSidecar3));
+    const op: Edit = {
+      kind: 'structuralBlockEdit',
+      edit: {
+        op: 'add', slot_index: 1,
+        new_block: { source: 'A', strategy: 'pick', size: 1 },
+      },
+    };
+    applyEdit(template, baseSidecar3, op);
+    expect(template).toEqual(templateSnap);
+    expect(baseSidecar3).toEqual(sidecarSnap);
+  });
+});
+
+
 describe('replayOpLog — §16.2.6 c3c + c3d block-kind dispatch', () => {
   function baseDepsC3c(): ReplayDeps {
     return {
@@ -1050,6 +1340,7 @@ describe('replayOpLog — §16.2.6 c3c + c3d block-kind dispatch', () => {
       reorderSections: async () => {},
       moveBlock: async () => {},
       retypeBlock: async () => {},
+      structuralBlockEdit: async () => {},
       refreshUpdatedAt: async () => {},
       isConflict: () => false,
     };
@@ -1105,6 +1396,28 @@ describe('replayOpLog — §16.2.6 c3c + c3d block-kind dispatch', () => {
       nsrc: 'B',
       nf: { window: 5 },
     });
+  });
+
+  it('§16.2.6 c3d-follow-up — structuralBlockEdit dispatches to deps.structuralBlockEdit with the edit payload', async () => {
+    const calls: Array<{ op: string; slot_index: number; new_size?: number; new_block?: Record<string, unknown> }> = [];
+    const deps: ReplayDeps = {
+      ...baseDepsC3c(),
+      structuralBlockEdit: async (edit) => {
+        calls.push({ ...edit });
+      },
+    };
+    const ops: Edit[] = [
+      { kind: 'structuralBlockEdit', edit: { op: 'size', slot_index: 0, new_size: 3 } },
+      { kind: 'structuralBlockEdit', edit: { op: 'add', slot_index: 1, new_block: { source: 'A', strategy: 'pick', size: 1 } } },
+      { kind: 'structuralBlockEdit', edit: { op: 'remove', slot_index: 2 } },
+    ];
+    const result = await replayOpLog(ops, deps);
+    expect(result.success).toBe(true);
+    expect(calls).toEqual([
+      { op: 'size', slot_index: 0, new_size: 3 },
+      { op: 'add', slot_index: 1, new_block: { source: 'A', strategy: 'pick', size: 1 } },
+      { op: 'remove', slot_index: 2 },
+    ]);
   });
 
   it('sectionCreate dispatches to deps.createSection with (id, name)', async () => {
@@ -1197,6 +1510,7 @@ describe('replayOpLog — §16.2.6 c3b review #1 batch C', () => {
       reorderSections: async () => {},
       moveBlock: async () => {},
       retypeBlock: async () => {},
+      structuralBlockEdit: async () => {},
       refreshUpdatedAt: async () => {},
       isConflict: () => false,
     };

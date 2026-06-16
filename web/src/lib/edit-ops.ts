@@ -159,6 +159,40 @@ export interface RetypeBlockOp {
   newFields: Record<string, string | number | string[] | null>;
 }
 
+/**
+ * §16.2.6 c3d-follow-up — structural block edit (PATCH /blocks/structure).
+ * Three sub-ops discriminated by `edit.op`:
+ *
+ *   - `size`   — change `flat_slots[slot_index].size`. No slot-count
+ *     change, no sidecar shift.
+ *   - `add`    — insert `new_block` at `flat_slots[slot_index]`. Every
+ *     sidecar atomic ref at slot_index >= idx shifts by +1. The new
+ *     block auto-files to `_unsorted` (D2 philosophy — never leave a
+ *     slot orphaned).
+ *   - `remove` — pop `flat_slots[slot_index]`. The sidecar atomic ref
+ *     at that slot_index is cascade-dropped first; remaining refs at
+ *     slot_index > idx shift by -1. Rejected if the cascade would
+ *     orphan macros (no atomic anchor would remain in a macro-only
+ *     section — `resolve_macro_addresses` can't compute positions).
+ *
+ * row_template stations are 400'd by the backend (the block_idx-
+ * domain analogue is a future slice); the frontend mirror is a no-op
+ * for symmetry.
+ *
+ * Replayed as `structuralBlockEdit(slug, edit, ...)`.
+ */
+export interface StructuralBlockEditOp {
+  kind: 'structuralBlockEdit';
+  edit: {
+    op: 'size' | 'add' | 'remove';
+    slot_index: number;
+    /** Required when op === 'size'. */
+    new_size?: number;
+    /** Required when op === 'add'. */
+    new_block?: Record<string, unknown>;
+  };
+}
+
 export type Edit =
   | PatchBlockOp
   | PatchMacroOp
@@ -167,7 +201,8 @@ export type Edit =
   | SectionDeleteOp
   | ReorderSectionsOp
   | MoveBlockOp
-  | RetypeBlockOp;
+  | RetypeBlockOp
+  | StructuralBlockEditOp;
 
 
 /**
@@ -241,6 +276,8 @@ export function applyEdit(
         template: _retypeBlock(template, op.address, op.newStrategy, op.newSource, op.newFields),
         sidecar,
       };
+    case 'structuralBlockEdit':
+      return _structuralBlockEdit(template, sidecar, op.edit);
     default: {
       // §16.2.6 c3b: exhaustiveness pin. The Edit union now has
       // 3+ kinds so TS narrows correctly to `never` after the
@@ -905,6 +942,252 @@ function _retypeBlock(
 }
 
 
+/**
+ * §16.2.6 c3d-follow-up — shift every atomic block's `slot_index`
+ * (where `slot_index >= threshold`) by `delta`. Mirrors backend
+ * `engine.editor_metadata.shift_atomic_slot_indices`.
+ *
+ * Used by structural add (delta=+1) + remove (delta=-1) paths to
+ * keep sidecar atomic refs in lockstep with the template's
+ * flat_slots reshuffle. Macros derive positions implicitly via
+ * `resolve_macro_addresses` (no slot_index field to shift).
+ *
+ * Returns a new sidecar dict (PURE).
+ */
+function _shiftAtomicSlotIndices(
+  sidecar: unknown,
+  threshold: number,
+  delta: number,
+): unknown {
+  if (!_isSidecarLike(sidecar)) return sidecar;
+  const dict = sidecar as Record<string, unknown>;
+  const sections = dict.sections;
+  if (!Array.isArray(sections)) return sidecar;
+  const nextSections = sections.map((s) => {
+    if (!s || typeof s !== 'object') return s;
+    const sec = s as Record<string, unknown>;
+    const blocks = sec.blocks;
+    if (!Array.isArray(blocks)) return sec;
+    const nextBlocks = blocks.map((b) => {
+      if (!b || typeof b !== 'object') return b;
+      const block = b as Record<string, unknown>;
+      if (block.kind !== 'atomic') return block;
+      const si = block.slot_index;
+      if (typeof si !== 'number' || si < threshold) return block;
+      return { ...block, slot_index: si + delta };
+    });
+    return { ...sec, blocks: nextBlocks };
+  });
+  return { ...dict, sections: nextSections };
+}
+
+
+/**
+ * §16.2.6 c3d-follow-up — ensure `_unsorted` section exists in BOTH
+ * `sections[]` AND `layout_order`. Mirrors backend
+ * `engine.editor_metadata.ensure_unsorted_section`.
+ *
+ * Used by structural add to auto-rescue the new block's atomic ref
+ * (D2 philosophy — new structural blocks land in `_unsorted` until
+ * the operator moves them). The `name` matches the backend
+ * `UNSORTED_SECTION_NAME` constant — see the cross-check comment in
+ * `_sectionDelete` for the drift consequence.
+ *
+ * Heals both invariants unconditionally (matches backend c1 review
+ * #5: prior version only checked sections[] presence, leaving
+ * partially-mutated sidecars with orphan layout_order entries).
+ *
+ * Returns a new sidecar dict (PURE).
+ */
+function _ensureUnsortedSection(sidecar: unknown): unknown {
+  if (!_isSidecarLike(sidecar)) return sidecar;
+  const dict = sidecar as Record<string, unknown>;
+  const sections = Array.isArray(dict.sections) ? dict.sections : [];
+  const layoutOrder = Array.isArray(dict.layout_order) ? dict.layout_order : [];
+  const hasSection = sections.some(
+    (s) => s && typeof s === 'object' && (s as Record<string, unknown>).id === '_unsorted',
+  );
+  const hasOrderEntry = layoutOrder.includes('_unsorted');
+  if (hasSection && hasOrderEntry) return sidecar;
+  const nextSections = hasSection
+    ? sections
+    : [
+        ...sections,
+        {
+          id: '_unsorted',
+          name: 'Unsorted (moved from a deleted section)',
+          blocks: [],
+        },
+      ];
+  const nextLayoutOrder = hasOrderEntry
+    ? layoutOrder
+    : [...layoutOrder, '_unsorted'];
+  return { ...dict, sections: nextSections, layout_order: nextLayoutOrder };
+}
+
+
+/**
+ * §16.2.6 c3d-follow-up — apply one structural edit (size / add /
+ * remove) to the template's flat_slots, shifting sidecar atomic
+ * refs in lockstep (D5). Mirrors `api.routers.editor.structural_block_edit`.
+ *
+ * Three sub-ops:
+ *   - `size`   — set `flat_slots[idx].size = new_size`. No sidecar shift.
+ *   - `add`    — insert `new_block` at idx; shift atomic refs at
+ *     slot_index >= idx by +1; ensure `_unsorted` exists; append
+ *     `{kind:'atomic', slot_index: idx}` to it.
+ *   - `remove` — cascade-drop the matching sidecar atomic ref;
+ *     reject if removing leaves a macro-only section (orphan); pop
+ *     flat_slots[idx]; shift atomic refs at slot_index > idx by -1.
+ *
+ * row_template stations are rejected (backend 400 — block_idx-domain
+ * structural edits land in a future slice). Frontend mirrors that as
+ * a no-op so the staged op doesn't lie about a successful preview
+ * the Save will reject.
+ *
+ * Defensive no-ops (all mirror backend errors):
+ *   - template.layout.flat_slots is absent (row_template station)
+ *   - size: idx out of range, new_size missing or < 1
+ *   - add: idx out of range [0, len], new_block missing
+ *   - remove: idx out of range, orphan-macro guard fires
+ *
+ * Returns `{template, sidecar}` (both potentially new — PURE).
+ */
+function _structuralBlockEdit(
+  template: StationTemplate,
+  sidecar: unknown,
+  edit: StructuralBlockEditOp['edit'],
+): { template: StationTemplate; sidecar: unknown } {
+  const layout = template.layout;
+  const flat = layout.flat_slots;
+  // Frontend mirror of backend's row_template 400. Whole slice no-op.
+  if (!Array.isArray(flat)) return { template, sidecar };
+
+  const idx = edit.slot_index;
+
+  if (edit.op === 'size') {
+    if (!(Number.isInteger(idx) && idx >= 0 && idx < flat.length)) {
+      return { template, sidecar };
+    }
+    if (typeof edit.new_size !== 'number' || edit.new_size < 1) {
+      return { template, sidecar };
+    }
+    const nextFlat = flat.slice();
+    nextFlat[idx] = { ...nextFlat[idx], size: edit.new_size };
+    return {
+      template: { ...template, layout: { ...layout, flat_slots: nextFlat } },
+      sidecar,
+    };
+  }
+
+  if (edit.op === 'add') {
+    if (!(Number.isInteger(idx) && idx >= 0 && idx <= flat.length)) {
+      return { template, sidecar };
+    }
+    if (edit.new_block === undefined || edit.new_block === null) {
+      return { template, sidecar };
+    }
+    const nextFlat = [
+      ...flat.slice(0, idx),
+      edit.new_block as unknown as EngineBlock,
+      ...flat.slice(idx),
+    ];
+    // Shift atomic refs at slot_index >= idx by +1 (BEFORE the insert
+    // — matches the backend's order: shift first, then add the new
+    // block's ref to `_unsorted`).
+    let nextSidecar = _shiftAtomicSlotIndices(sidecar, idx, +1);
+    nextSidecar = _ensureUnsortedSection(nextSidecar);
+    // Append the new atomic ref to `_unsorted` (D2 auto-rescue).
+    if (_isSidecarLike(nextSidecar)) {
+      const sd = nextSidecar as Record<string, unknown>;
+      const secs = (sd.sections as unknown[]).map((s) => {
+        if (!s || typeof s !== 'object') return s;
+        const sec = s as Record<string, unknown>;
+        if (sec.id !== '_unsorted') return sec;
+        const bs = Array.isArray(sec.blocks) ? (sec.blocks as unknown[]) : [];
+        return {
+          ...sec,
+          blocks: [...bs, { kind: 'atomic', slot_index: idx }],
+        };
+      });
+      nextSidecar = { ...sd, sections: secs };
+    }
+    return {
+      template: { ...template, layout: { ...layout, flat_slots: nextFlat } },
+      sidecar: nextSidecar,
+    };
+  }
+
+  // op === 'remove'
+  if (!(Number.isInteger(idx) && idx >= 0 && idx < flat.length)) {
+    return { template, sidecar };
+  }
+  // Cascade-drop the matching sidecar atomic ref. Track the touched
+  // section so we can run the orphan-macro guard against its post-
+  // cascade state (mirrors backend editor.py:1311-1325).
+  let touchedSectionId: string | null = null;
+  let nextSidecar = sidecar;
+  if (_isSidecarLike(nextSidecar)) {
+    const sd = nextSidecar as Record<string, unknown>;
+    const secs = sd.sections as unknown[];
+    if (Array.isArray(secs)) {
+      let foundOnce = false;
+      const nextSecs = secs.map((s) => {
+        if (foundOnce || !s || typeof s !== 'object') return s;
+        const sec = s as Record<string, unknown>;
+        const bs = Array.isArray(sec.blocks) ? (sec.blocks as unknown[]) : [];
+        const hitIdx = bs.findIndex(
+          (b) =>
+            b !== null &&
+            typeof b === 'object' &&
+            (b as Record<string, unknown>).kind === 'atomic' &&
+            (b as Record<string, unknown>).slot_index === idx,
+        );
+        if (hitIdx < 0) return sec;
+        foundOnce = true;
+        touchedSectionId = sec.id as string;
+        return {
+          ...sec,
+          blocks: [...bs.slice(0, hitIdx), ...bs.slice(hitIdx + 1)],
+        };
+      });
+      nextSidecar = { ...sd, sections: nextSecs };
+    }
+  }
+  // Orphan-macro guard: if the cascade emptied the section of atomic
+  // anchors but left macros, those macros would become unreachable
+  // (resolve_macro_addresses silently skips macro-only sections).
+  // Mirrors backend editor.py:1337-1360 — the op no-ops here so the
+  // staged preview doesn't show a remove that Save will 400.
+  if (touchedSectionId !== null && _isSidecarLike(nextSidecar)) {
+    const sd = nextSidecar as Record<string, unknown>;
+    const touched = (sd.sections as unknown[]).find(
+      (s) => s && typeof s === 'object' && (s as Record<string, unknown>).id === touchedSectionId,
+    ) as Record<string, unknown> | undefined;
+    if (touched) {
+      const remaining = Array.isArray(touched.blocks)
+        ? (touched.blocks as Array<Record<string, unknown>>)
+        : [];
+      const hasAtomicAfter = remaining.some((b) => b?.kind === 'atomic');
+      const hasMacroAfter = remaining.some((b) => b?.kind === 'macro');
+      if (!hasAtomicAfter && hasMacroAfter) {
+        // Roll back — return the ORIGINAL sidecar + template (no shift,
+        // no pop). Op stages but applies to nothing.
+        return { template, sidecar };
+      }
+    }
+  }
+  // Pop flat_slots[idx].
+  const nextFlat = [...flat.slice(0, idx), ...flat.slice(idx + 1)];
+  // Shift atomic refs at slot_index > idx by -1.
+  nextSidecar = _shiftAtomicSlotIndices(nextSidecar, idx + 1, -1);
+  return {
+    template: { ...template, layout: { ...layout, flat_slots: nextFlat } },
+    sidecar: nextSidecar,
+  };
+}
+
+
 /** Merge fields into a target dict — null removes the key, anything
  *  else sets it. Matches the backend's parameter-only contract used
  *  by patchBlock + patchMacro. Returns a new dict (PURE). */
@@ -977,6 +1260,12 @@ export interface ReplayDeps {
     newSource: string | null,
     newFields: Record<string, string | number | string[] | null>,
   ) => Promise<unknown>;
+  // §16.2.6 c3d-follow-up — structural block edit (size / add /
+  // remove with slot_index shifts). Closes the 9th + final staging
+  // intercept kind.
+  structuralBlockEdit: (
+    edit: StructuralBlockEditOp['edit'],
+  ) => Promise<unknown>;
   /** Called after each successful PATCH so the next op's
    *  optimistic-concurrency token is fresh. */
   refreshUpdatedAt: () => Promise<void>;
@@ -1033,6 +1322,9 @@ export async function replayOpLog(
           await deps.retypeBlock(
             op.address, op.newStrategy, op.newSource, op.newFields,
           );
+          break;
+        case 'structuralBlockEdit':
+          await deps.structuralBlockEdit(op.edit);
           break;
         default: {
           // Same exhaustiveness pin as applyEdit's switch — a

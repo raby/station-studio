@@ -604,6 +604,16 @@ describe('visualise +page.svelte — §16.2.6 c3d handler intercepts (toggle ON 
     expect(await screen.findByTestId('staged-save')).toHaveTextContent(/Save 1 edit/);
   });
 
+  it('structuralBlockEdit — structuralEdit event → opLog grows (§16.2.6 c3d-follow-up; 9th + final kind)', async () => {
+    await mountAndAwaitStub();
+    await act(async () => {
+      fireEditorCanvasEvent('structuralEdit', {
+        edit: { op: 'size', slot_index: 0, new_size: 5 },
+      });
+    });
+    expect(await screen.findByTestId('staged-save')).toHaveTextContent(/Save 1 edit/);
+  });
+
   it('multiple intercepts accumulate in opLog (count rises with each event)', async () => {
     await mountAndAwaitStub();
     await act(async () => {
