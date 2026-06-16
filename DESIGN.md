@@ -6167,7 +6167,7 @@ direction — spec slice §16.2.0 is the next planned work.
 | Backup / restore         | Shipped (§14.18). `make backup` / `make restore date=...` with WAL-aware sqlite3 .backup + pre-restore safety copy. |
 | **§17 port roadmap**     | **Phase A + Phase B both complete. Phase A (§14.17–§14.21): pre-port unblocks. Phase B (§14.22–§14.41): port — byte-equality verified at depth against weekly + Classics. Phase C (production cutover): operational, not engineering — external validation in flight with the station owner. Next engineering direction: §16.0 OSS framing shift (shipped) + §16.2 visual block editor (the flagship hobbyist feature). |
 | **Product framing**      | **OSS for radio hobbyists (§16.0). MIT-licensed. README hobbyist-facing; CONTRIBUTING.md codifies slice pattern. Two example stations (Classics + Rebirth Radio) ship; hobbyist starter station queued (§16.7).** |
-| Visual block editor      | **§16.2.2 SHIPPED** — read-only canvas at `/stations/[slug]/visualise`. `GET /api/stations/{slug}/sidecar` endpoint serves template + sidecar in one fetch; trivial-sidecar fallback for un-authored stations (Decision E — frontend never handles "no sidecar"). 7 Svelte components (`<EditorCanvas>`, `<Section>`, `<SectionHeader>`, `<ChipFlow>`, `<Chip>`, `<ViewModeToggle>`, `<DetailPanel>`) compose the canvas. View-mode prefs (labels / colour / macros) persist to localStorage. Chips are native `<button>`s (keyboard a11y); click opens a slide-in DetailPanel with full BlockSpec / macro spec. `<500-chip` sections start expanded; `>500` sections start collapsed with "Large station" hint. Discoverability via "🗺 Visualise template" link from `/stations/[slug]`. **§16.2.3 SHIPPED** — atomic slot editing: click a chip → DetailPanel edit form (parameter fields only; cursor_id as a select) → Save → `PATCH /api/stations/{slug}/blocks` (server-enforced parameter-only, optimistic-concurrency 409, parse_template revalidation) → refetch. "Export to disk" writes `stations/{slug}.json` (Decision A3, DB-as-truth). row_template edits warn they change every row. **§16.2.4 SHIPPED** — macro editing + block retyping + `allowlist_sources` per-block editor (closes §16.14.t7 c3 docs promise). Three new write paths: `PATCH /blocks/retype` (strategy+source swap with role validation via parse_template), `PATCH /macros/{macro_id}` (edit-once-applies-to-all fanout — server resolves macro_id → expanded block addresses via `engine.editor_metadata.resolve_macro_addresses`), plus extended PATCH /blocks accepting `allowlist_sources` for the 4 content-sampling strategies. New `<ChipMultiInput>` Svelte component for the chip-list editor. DetailPanel grew a collapsible "Change strategy / source" retype panel with D4 bidirectional role-filtered dropdowns; macros + atomics share the same form scaffolding (yellow fanout warning for macros). All-or-nothing macro transactions; new `_validate_no_overlapping_macros` drift rule. **§16.2.5 SHIPPED** — section composition + structural block edits. New `Station.sidecar` JSON column (D1 — DB-as-truth, disk file becomes export artifact) + Alembic backfill from on-disk `*.editor.json`. Six REST endpoints: POST/PATCH/DELETE /sections, PUT /sections/order, PATCH /blocks/move, PATCH /blocks/structure. D2 auto-`_unsorted` bin on non-empty section delete; D5 structural-edit index-shift contract (`shift_atomic_slot_indices` bumps every `slot_index ≥ N` in the same transaction). Frontend: SectionHeader rename/move/delete affordances + HTML5 drag-drop target; Chip drag source (atomic only — JSON-in-DataTransfer via shared `CHIP_DRAG_MIME` + `canDropOn` policy module); DetailPanel Move dropdown (D6 keyboard fallback) + Structural panel (size input + two-step Delete via `performance.now()` 3s arm window). First Playwright e2e click-through covers §16.2.3 + §16.2.4 + §16.2.5 affordances against a real backend. Slice-review sweep landed 3 follow-up commits (`ce51567` backend correctness, `048eb48` DetailPanel arm/stale-selection, `13c8aca` dedup); pre-§16.2.6 sweep then closed ALL six queued sub-slices §16.2.5.t1-.t6 in 4 more commits (`6e53a39` t3+t5 DB-as-truth + inline-sidecar, `dbc737f` t4 SidecarJSON TypeDecorator, `8333867` t1 drag-reorder, `46f4197` t6+t2 shared actions + system-section abstraction). **Next**: §16.2.6 live preview endpoint + UI. |
+| Visual block editor      | **§16.2.2 SHIPPED** — read-only canvas at `/stations/[slug]/visualise`. `GET /api/stations/{slug}/sidecar` endpoint serves template + sidecar in one fetch; trivial-sidecar fallback for un-authored stations (Decision E — frontend never handles "no sidecar"). 7 Svelte components (`<EditorCanvas>`, `<Section>`, `<SectionHeader>`, `<ChipFlow>`, `<Chip>`, `<ViewModeToggle>`, `<DetailPanel>`) compose the canvas. View-mode prefs (labels / colour / macros) persist to localStorage. Chips are native `<button>`s (keyboard a11y); click opens a slide-in DetailPanel with full BlockSpec / macro spec. `<500-chip` sections start expanded; `>500` sections start collapsed with "Large station" hint. Discoverability via "🗺 Visualise template" link from `/stations/[slug]`. **§16.2.3 SHIPPED** — atomic slot editing: click a chip → DetailPanel edit form (parameter fields only; cursor_id as a select) → Save → `PATCH /api/stations/{slug}/blocks` (server-enforced parameter-only, optimistic-concurrency 409, parse_template revalidation) → refetch. "Export to disk" writes `stations/{slug}.json` (Decision A3, DB-as-truth). row_template edits warn they change every row. **§16.2.4 SHIPPED** — macro editing + block retyping + `allowlist_sources` per-block editor (closes §16.14.t7 c3 docs promise). Three new write paths: `PATCH /blocks/retype` (strategy+source swap with role validation via parse_template), `PATCH /macros/{macro_id}` (edit-once-applies-to-all fanout — server resolves macro_id → expanded block addresses via `engine.editor_metadata.resolve_macro_addresses`), plus extended PATCH /blocks accepting `allowlist_sources` for the 4 content-sampling strategies. New `<ChipMultiInput>` Svelte component for the chip-list editor. DetailPanel grew a collapsible "Change strategy / source" retype panel with D4 bidirectional role-filtered dropdowns; macros + atomics share the same form scaffolding (yellow fanout warning for macros). All-or-nothing macro transactions; new `_validate_no_overlapping_macros` drift rule. **§16.2.5 SHIPPED** — section composition + structural block edits. New `Station.sidecar` JSON column (D1 — DB-as-truth, disk file becomes export artifact) + Alembic backfill from on-disk `*.editor.json`. Six REST endpoints: POST/PATCH/DELETE /sections, PUT /sections/order, PATCH /blocks/move, PATCH /blocks/structure. D2 auto-`_unsorted` bin on non-empty section delete; D5 structural-edit index-shift contract (`shift_atomic_slot_indices` bumps every `slot_index ≥ N` in the same transaction). Frontend: SectionHeader rename/move/delete affordances + HTML5 drag-drop target; Chip drag source (atomic only — JSON-in-DataTransfer via shared `CHIP_DRAG_MIME` + `canDropOn` policy module); DetailPanel Move dropdown (D6 keyboard fallback) + Structural panel (size input + two-step Delete via `performance.now()` 3s arm window). First Playwright e2e click-through covers §16.2.3 + §16.2.4 + §16.2.5 affordances against a real backend. Slice-review sweep landed 3 follow-up commits (`ce51567` backend correctness, `048eb48` DetailPanel arm/stale-selection, `13c8aca` dedup); pre-§16.2.6 sweep then closed ALL six queued sub-slices §16.2.5.t1-.t6 in 4 more commits (`6e53a39` t3+t5 DB-as-truth + inline-sidecar, `dbc737f` t4 SidecarJSON TypeDecorator, `8333867` t1 drag-reorder, `46f4197` t6+t2 shared actions + system-section abstraction). **§16.2.6 SHIPPED** — live preview endpoint + UI + staged-edit + Discard. `POST /api/stations/{slug}/jobs/preview` (§16.11 job-id transport, in-memory, no persistence) + frontend toggle / `<TracePane>` / staging buffer / Save / Discard / 9-kind opLog applyEdit semantics mirroring backend / Retry/Drop partial-failure modal / toggle-off-mid-stage prompt / beforeunload prompt / DetailPanel ↔ TracePane mutual-exclusivity (D2(b)). Slice landed across c1 (backend), c2 (frontend skeleton), c3/c3b/c3c/c3d (chip + macro + section + block intercepts), c3d-follow-up (structuralBlockEdit with slot_index shifts), c3e c1/c2/c3 (UX polish), c3e c4 (docs closeout). All 9 staging kinds intercepted; the staging buffer is behaviorally complete. New `EditorCanvasStub.svelte` test harness closes the Svelte-4 component-event-via-DOM blocker (each handler intercept now has a 5-line test pinning "toggle ON + dispatch event K → opLog has the expected op"). Multiple deferred .tX rows queued for staged-edit recovery (.t1), transactional all-or-nothing Save (.t2), click-trace-row→jump-to-chip (.t3), cancellation-edge polish (.t4), PreviewRequest strict Pydantic config (.t5), request-body size limit (.t6), /jobs/generate excluded_track_pids alignment (.t7), week selector (.t8), edit-ops internal-type consistency (.t9), EditorCanvasStub lifecycle (.t10), page-level intercept-path integration tests (.t11). **Next**: §16.2.7 compare-against-saved diff view OR the next §16.x slice per the queued-order roadmap. |
 | Station detail page      | **§16.19 SHIPPED** — `/stations/[slug]` overview bundle (`GET /api/stations/{slug}/overview`): template summary, source pools (not-imported gap flagged red), persistent cursor positions, generation rollup + staleness hint (`stale_count`, `updated_at`-proxy; precise fix §16.19.t1). Non-fatal fetch; bounded aggregate queries. **§16.25 extension**: not-imported badge is a deep-link to `/sources?pool=…&role=…`; `<PoolImportPanel>` embedded below the overview, scoped to declared sources; panel-driven changes refresh the overview live. |
 | Pool-import UI           | **§16.25 SHIPPED** — `/sources` page (list + single/batch add + per-row Re-import/Delete) + per-station embed + deep-link badge. `POST /api/sources/upload` multipart endpoint (streaming + `mkstemp` + `finally` cleanup). File-upload primary, typed-path advanced. CLI manifest (`make import-weekly-pools`) kept as the power-user channel. **Closed §16.13 D1.** Watch-list: §16.25.t1 (mid-batch mode-switch UX), §16.25.t2 (upload cancel / AbortController). |
 | Trace versioning         | Deferred. See §16.4 (queued; not on the critical path post-Phase-B). |
@@ -6993,7 +6993,7 @@ Seven implementation slices, each independently shippable:
 | **§16.2.3** | Atomic slot editing | Click chip → edit form → save (parameter fields only; see locked design below). **Targeted `PATCH /api/stations/{slug}/blocks`** with optimistic `expected_updated_at`; DB-as-truth + on-demand disk export. NO drag-drop (reorder is §16.2.5), NO retyping (§16.2.4), NO structural edits (§16.2.5). | Medium — first write path; resolved via the locked design (decisions A–F). |
 | **§16.2.4** | Macro editing | **SHIPPED.** Edit-once-applies-to-all (PATCH /macros/{macro_id} fan-out via resolve_macro_addresses). **+ block retyping** (PATCH /blocks/retype with role-validated strategy+source swap) closes the §16.2.3 punt. **+ per-block `allowlist_sources` editor** via the new `<ChipMultiInput>` component — closes §16.14.t7 c3 docs promise. D4 role-aware bidirectional dropdowns. Macro palette sidebar PUNTED to §16.2.4.t1 (D5). | Medium. |
 | **§16.2.5** | Section composition | **SHIPPED.** Create / rename / reorder sections + auto-`_unsorted` bin on non-empty delete (D2). Drag atomic chips between sections (HTML5 + dropdown fallback per D6); macros stay pinned (move requires slot_index pinning on macros — punted indefinitely). **+ structural block edits** (`size` / add / remove) close the §16.2.3 punt — D5 index-shift contract bumps every `slot_index ≥ N` in the sidecar atomic refs in the same transaction. D1 sidecar-in-DB (`Station.sidecar` JSON column) + Alembic backfill. First Playwright e2e covers the §16.2.3 + §16.2.4 + §16.2.5 surface. | Medium. |
-| **§16.2.6** | Live preview endpoint + UI + staged-edit + Discard | **Design locked** (full entry below at §16.2.6). `POST /api/stations/{slug}/jobs/preview` (§16.11 job-id transport; in-memory; no persistence side-effects) + editor wires it to a debounced auto-refresh trace panel. **D1 opt-in via toggle** (default OFF preserves §16.2.5's immediate-per-block-save mental model). **D2 side panel** (right drawer, ~30% width, drag-resizable). **D3 inline `<TracePane>`** Svelte component (NOT iframe — cheaper cross-pane event dispatch for §16.2.6.t4's click-trace-row → jump-to-chip; no CSS-isolation problem to solve for a flat read-only row list; iframe would duplicate the Svelte runtime). **D4 polling unchanged at v1** (§16.11's 250ms pattern); adaptive/long-poll fast-follow lives in §16.11.t2 (its natural home) with a "within ~1 week of §16.2.6 c4" promotion clause. **D5 lost-on-tab-close at v1**; staged-edit recovery queued as §16.2.6.t1 (multi-tab + stale-state semantics need a separate design pass). **Implementation note:** `excluded_mix_ids` must be RECOMPUTED per request from the DB's current MixUsage (not cached at page-load) — if the user edits a mix block's `exclusion_window` value in the editor, the new window changes which MixUsage rows are in scope. Same for `previous_playlist` if the user is on a non-week-1 preview. The endpoint reads all rule-derived inputs fresh from the request body + DB; nothing is cached across edits within a session. **+ staged-edit + Discard (F2)** punted here from §16.2.3 — the in-memory edit-accumulation + Discard model lands with live preview, since preview inherently needs staging; §16.2.3 ships immediate per-block save. **Plan**: c1 backend preview endpoint + JobStore wire-up (reuses `generate_stream` — no new engine function), c2 frontend toggle + TracePane + staging buffer skeleton, c3 Save/Discard + Retry-vs-Drop partial-failure modal + preview-error banner + toggle-off prompt (folds §16.2.5.t12), c4 docs-only closeout. Adjacent migrations (§16.2.5.t11, .t19, .t21, .t22 c+d) land as their own commits between c3 and c4; .t22(b) stays latent (D3 chose inline DOM, no iframe → no masked-types dragleave activation). | Medium — new API surface; debounce + state-management UX. |
+| **§16.2.6** | Live preview endpoint + UI + staged-edit + Discard | **SHIPPED across c1 → c4 (full entry below at §16.2.6).** `POST /api/stations/{slug}/jobs/preview` (§16.11 job-id transport; in-memory; no persistence side-effects) + editor wires it to a debounced auto-refresh trace panel. **D1 opt-in via toggle** (default OFF preserves §16.2.5's immediate-per-block-save mental model). **D2 side panel** (right drawer, ~30% width, drag-resizable). **D3 inline `<TracePane>`** Svelte component (NOT iframe — cheaper cross-pane event dispatch for §16.2.6.t4's click-trace-row → jump-to-chip; no CSS-isolation problem to solve for a flat read-only row list; iframe would duplicate the Svelte runtime). **D4 polling unchanged at v1** (§16.11's 250ms pattern); adaptive/long-poll fast-follow lives in §16.11.t2 (its natural home) with a "within ~1 week of §16.2.6 c4" promotion clause. **D5 lost-on-tab-close at v1**; staged-edit recovery queued as §16.2.6.t1 (multi-tab + stale-state semantics need a separate design pass). **Implementation note:** `excluded_mix_ids` must be RECOMPUTED per request from the DB's current MixUsage (not cached at page-load) — if the user edits a mix block's `exclusion_window` value in the editor, the new window changes which MixUsage rows are in scope. Same for `previous_playlist` if the user is on a non-week-1 preview. The endpoint reads all rule-derived inputs fresh from the request body + DB; nothing is cached across edits within a session. **+ staged-edit + Discard (F2)** punted here from §16.2.3 — the in-memory edit-accumulation + Discard model lands with live preview, since preview inherently needs staging; §16.2.3 ships immediate per-block save. **Plan**: c1 backend preview endpoint + JobStore wire-up (reuses `generate_stream` — no new engine function), c2 frontend toggle + TracePane + staging buffer skeleton, c3 Save/Discard + Retry-vs-Drop partial-failure modal + preview-error banner + toggle-off prompt (folds §16.2.5.t12), c4 docs-only closeout. Adjacent migrations (§16.2.5.t11, .t19, .t21, .t22 c+d) land as their own commits between c3 and c4; .t22(b) stays latent (D3 chose inline DOM, no iframe → no masked-types dragleave activation). | Medium — new API surface; debounce + state-management UX. |
 | **§16.2.7** | Compare against saved | "Show what changed since save" button → slot-by-slot diff using `byte_equality.py` helpers. | Low — diff helpers exist; UI plumbing. |
 | **§16.2.8** | Fork action | "Fork this station" → duplicates JSON + sidecar. | Low — file copy + slug-rename UI. |
 
@@ -9206,13 +9206,73 @@ slices to keep each commit reviewable + reversible:
       but the Retry/Drop modal's "drop op N + continue" semantic
       may need new helpers nearby).
 
-- **c3e / polish — STARTING.** Retry/Drop partial-failure modal,
-  toggle-off-mid-stage prompt, `beforeunload` prompt, DetailPanel
-  ↔ TracePane mutual-exclusivity (D2(b)). UX layer; lands now that
-  the staging buffer is behaviorally complete across all 9 kinds.
-  Folds the 3 c3d-follow-up sweep follow-ups (F3/F6/F7 — see
-  c3d-follow-up bullet above) at organic touchpoints rather than
-  spawning their own tickets.
+- **c3e / polish — SHIPPED across 3 sub-slices (c3e c1 / c2 / c3),
+  each landed + reviewed.** UX layer over the behavioral staging
+  buffer; closes the 4 components decided in §16.2.6 design plus
+  the Retry/Drop partial-failure modal that turned out larger than
+  the other three combined.
+
+  - **c3e c1 (`4fccaeb` + reviews `bcbde5e`/`f01af0e`).** Staged-edit
+    loss guards: toggle-off-mid-stage `window.confirm()` prompt
+    (binary; the 3-button "Save / Discard / Cancel" modal stayed
+    deferred — see c3e/polish punts below) + `beforeunload`
+    listener firing `preventDefault()` + `returnValue = ''` when
+    `opLog.length > 0`. Review #1 batch A extracted
+    `_resetStagedState()` shared between Discard button +
+    toggle-off paths (G1 — pre-extract the toggle-off ONLY cleared
+    opLog, leaking stale `saveError`/`conflict` banners across the
+    OFF transition); batch B clarified the `hasStagedEdits`
+    derived-binding contract + spied on the `returnValue` setter
+    in the beforeunload test + dropped a dead mock setup line.
+  - **c3e c2 (`1647e3c` + review `7cf435a`).** D2(b) DetailPanel ↔
+    TracePane mutual-exclusivity. EditorCanvas emits a new
+    `detailOpen: { open: boolean }` event reactively from a
+    null-sentinel tracker (so chip-to-chip clicks dedup + initial
+    state is dispatched once at mount). The page hides TracePane
+    via `class:trace-col--hidden` + CSS `display: none` (NOT
+    `{#if}` unmount — preview job stays live in the background,
+    so closing DetailPanel shows the latest trace immediately
+    with no remount cost). Review #1 closed all 5 findings
+    (H1-H5) in one batch — dispatch dedup + initial-state
+    contract + livePreviewOn=false test coverage + preview-not-
+    canceled regression test.
+  - **c3e c3 (`9ee777f` + review `553f9dc`).** Retry/Drop partial-
+    failure modal — the largest c3e component. When
+    `handleStagedSave` stops on a non-conflict error, modal
+    surfaces with 3 actions: **Retry** (re-run handleStagedSave;
+    the failed op stayed at opLog[0] per replay semantics),
+    **Drop &amp; continue** (pop opLog[0], replay the rest;
+    cascade-failure re-opens the modal on the next op), and
+    **Cancel** (close modal, keep banner + opLog for fix-and-
+    retry-later). Modal a11y per review #1: ESC dismissal +
+    autofocus on primary action (Retry) + backdrop-click =
+    Cancel + stopPropagation guard so clicks INSIDE the dialog
+    don't bubble out. Conflict path unchanged — its own
+    "Reload latest" banner predates c3e and stays.
+
+  Folded items:
+  - **§16.2.5.t12 (multi-tab conflict UX)** is implicitly folded
+    here: the conflict banner + staged-edit + Discard model
+    provides the conflict-UX surface t12 wanted, just without the
+    "which fields would you overwrite" detail t12 had in mind
+    (deferred — turned out not load-bearing in the
+    single-operator hobbyist deployment that motivates the
+    project).
+  - **3 c3d-follow-up sweep findings (F3/F6/F7)** documented as
+    "fold at organic touchpoint" in the c3d-follow-up bullet
+    above. Status check at c4 closeout time: F3 (`_sectionDelete`
+    adopts `_ensureUnsortedSection`) NOT touched in c3e — staging-
+    mode tests don't exercise the Discard path against section
+    delete + structural add together. F6 (`makeFlatTemplate3`
+    rename) NOT touched. F7 (`_structuralBlockEdit` split) NOT
+    touched. All three remain optional cleanups; promote when
+    organic touchpoints arise.
+  - **2 c3e c1 review polish items (G5 + G7)** — `fireEvent.change`
+    test-mechanics ergonomics + a `pluralize` utility — were
+    explicitly deferred during c3e c1 review batching as
+    cosmetic. Promote when a third caller surfaces (G7) or
+    when the test cancels-path-asserts-exact-count assertion
+    actively bites (G5). Not worth dedicated .tX rows.
 
 All sub-slices test their replayOpLog dispatch via the pure
 `replayOpLog` function extracted in c3b review #1 batch C —
@@ -9220,10 +9280,12 @@ each new kind's dispatch case is unit-tested without rendering
 the page (Svelte 4 component-event-via-DOM blocker no longer in
 the path).
 
-**§16.2.6 c4 — docs + closeout.**
-DESIGN.md §16.2.6 marked SHIPPED + status snapshot bump.
-Cross-link from §16.2.7 (compare-against-saved) when that slice
-queues. **NO migration work folded** — c4 stays docs-only.
+**§16.2.6 c4 — docs + closeout (this commit).**
+DESIGN.md §16.2.6 marked SHIPPED + cross-cutting roadmap row
+flipped + §15-style "Visual block editor" status snapshot row
+extended with the §16.2.6 SHIPPED summary. Cross-link from
+§16.2.7 (compare-against-saved) when that slice queues. **NO
+migration work folded** — c4 stays docs-only.
 
 **Adjacent migrations land as their own sub-slice commits between
 c3 and c4** (each is independently green; bundling them into c4
