@@ -814,7 +814,7 @@ describe('watchJob', () => {
     ]);
     const sleep = vi.fn(async () => {});
     const snaps: JobSnapshot[] = [];
-    for await (const snap of watchJob('j-1', 500, fetch_, sleep)) {
+    for await (const snap of watchJob('j-1', 500, 1000, fetch_, sleep)) {
       snaps.push(snap);
     }
     expect(snaps.map((s) => [s.status, s.current])).toEqual([
@@ -823,9 +823,12 @@ describe('watchJob', () => {
       ['done', 100],
     ]);
     // Sleep called BETWEEN polls (2x, not before the first or after
-    // the last terminal poll).
+    // the last terminal poll). §16.11.t2: adaptive backoff doubles
+    // the interval each iteration, capped at maxIntervalMs. With
+    // initial=500 + max=1000, the schedule is 500 then 1000.
     expect(sleep).toHaveBeenCalledTimes(2);
-    expect(sleep).toHaveBeenCalledWith(500);
+    expect(sleep).toHaveBeenNthCalledWith(1, 500);
+    expect(sleep).toHaveBeenNthCalledWith(2, 1000);
   });
 
   it('stops cleanly when the job 404s mid-poll (yields nothing on 404)', async () => {
@@ -835,7 +838,7 @@ describe('watchJob', () => {
     ]);
     const sleep = vi.fn(async () => {});
     const snaps: JobSnapshot[] = [];
-    for await (const snap of watchJob('j-1', 500, fetch_, sleep)) {
+    for await (const snap of watchJob('j-1', 500, 1000, fetch_, sleep)) {
       snaps.push(snap);
     }
     // First snapshot was yielded; second poll 404'd → generator
@@ -855,7 +858,7 @@ describe('watchJob', () => {
     ]);
     const sleep = vi.fn(async () => {});
     const snaps: JobSnapshot[] = [];
-    for await (const snap of watchJob('j-1', 500, fetch_, sleep)) {
+    for await (const snap of watchJob('j-1', 500, 1000, fetch_, sleep)) {
       snaps.push(snap);
     }
     expect(snaps.length).toBe(1);
@@ -870,10 +873,58 @@ describe('watchJob', () => {
     ]);
     const sleep = vi.fn(async () => {});
     const snaps: JobSnapshot[] = [];
-    for await (const snap of watchJob('j-1', 500, fetch_, sleep)) {
+    for await (const snap of watchJob('j-1', 500, 1000, fetch_, sleep)) {
       snaps.push(snap);
     }
     expect(snaps[0].status).toBe('cancelled');
+  });
+
+  it('§16.11.t2: adaptive backoff — interval doubles each running poll, capped at maxIntervalMs', async () => {
+    // 5 running polls + 1 terminal: 4 sleeps between them.
+    // With initial=250 + max=1000, the doubling schedule is:
+    // 250 → 500 → 1000 → 1000 → 1000 (capped).
+    const { fetch_ } = makeSequencedSpy([
+      { body: fakeSnap({ status: 'running', current: 0 }) },
+      { body: fakeSnap({ status: 'running', current: 20 }) },
+      { body: fakeSnap({ status: 'running', current: 40 }) },
+      { body: fakeSnap({ status: 'running', current: 60 }) },
+      { body: fakeSnap({ status: 'running', current: 80 }) },
+      { body: fakeSnap({ status: 'done', current: 100,
+                         finished_at: '2026-05-27T10:00:05Z',
+                         result: { playlist_id: 7, trace_id: 't',
+                                   station: 'ts', week: 1, slot_count: 100 } }) },
+    ]);
+    const sleep = vi.fn(async () => {});
+    const snaps: JobSnapshot[] = [];
+    for await (const snap of watchJob('j-1', 250, 1000, fetch_, sleep)) {
+      snaps.push(snap);
+    }
+    expect(snaps).toHaveLength(6);
+    // 5 sleeps between 6 polls.
+    expect(sleep).toHaveBeenCalledTimes(5);
+    expect(sleep).toHaveBeenNthCalledWith(1, 250);
+    expect(sleep).toHaveBeenNthCalledWith(2, 500);
+    expect(sleep).toHaveBeenNthCalledWith(3, 1000);
+    expect(sleep).toHaveBeenNthCalledWith(4, 1000);
+    expect(sleep).toHaveBeenNthCalledWith(5, 1000);
+  });
+
+  it('§16.11.t2: initialIntervalMs > maxIntervalMs is clamped (defensive cap)', async () => {
+    // If a caller passes initial=2000 + max=500, clamp initial to 500
+    // — protects against silly inputs.
+    const { fetch_ } = makeSequencedSpy([
+      { body: fakeSnap({ status: 'running' }) },
+      { body: fakeSnap({ status: 'done',
+                         finished_at: '2026-05-27T10:00:05Z',
+                         result: { playlist_id: 7, trace_id: 't',
+                                   station: 'ts', week: 1, slot_count: 100 } }) },
+    ]);
+    const sleep = vi.fn(async () => {});
+    for await (const _ of watchJob('j-1', 2000, 500, fetch_, sleep)) {
+      // drain
+    }
+    expect(sleep).toHaveBeenCalledTimes(1);
+    expect(sleep).toHaveBeenCalledWith(500);
   });
 
   it('propagates non-404 fetch errors out of the generator', async () => {
@@ -883,7 +934,7 @@ describe('watchJob', () => {
     const sleep = vi.fn(async () => {});
     const err = await (async () => {
       try {
-        for await (const _ of watchJob('j-1', 500, fetch_, sleep)) {
+        for await (const _ of watchJob('j-1', 500, 1000, fetch_, sleep)) {
           // unreachable — pollJob raises before any yield
         }
       } catch (e) {

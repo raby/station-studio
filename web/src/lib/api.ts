@@ -604,28 +604,44 @@ export const cancelJob = async (
  *     if (state.status === 'error') showToast(state.error);
  *   }
  *
- * The 250ms median polling tax (Decision A1 punt) is the price of
- * the polling transport. If/when long-poll lands (§16.21+), this
- * helper's signature can stay; only its internal sleep goes away.
+ * **§16.11.t2 — adaptive backoff.** Starts at `initialIntervalMs`
+ * (250ms by default) and doubles after every "still running" poll up
+ * to `maxIntervalMs` (1000ms by default). The §16.2.6 live-preview
+ * driver fires ~6 polls per 1.5s preview today; under the prior
+ * fixed-500ms cadence, 5 quick edits cost ~30 polls per editing
+ * burst. With adaptive backoff the same burst settles to ~4 polls
+ * (250 + 500 + 1000 + ... < 1.5s for typical previews), and a long-
+ * running job (server side bug, complex template) settles to 1Hz
+ * instead of 4Hz — protocol-compatible, no server changes.
+ *
+ * The DESIGN punt notes long-poll (`GET /api/jobs/{id}?wait=2000`)
+ * is the next mitigation tier; .t2 picked adaptive backoff because
+ * (a) frontend-only — bounded blast radius, (b) typical preview
+ * finishes within the fast-poll window so backoff rarely engages,
+ * (c) long-poll requires JobStore primitive changes that .t2's
+ * sub-slice budget doesn't accommodate.
  *
  * `sleepFn` is injectable for tests so they don't actually sleep.
  */
 export async function* watchJob(
   jobId: string,
-  intervalMs = 500,
+  initialIntervalMs = 250,
+  maxIntervalMs = 1000,
   fetch_ = fetch,
   sleepFn: (ms: number) => Promise<void> = (ms) =>
     new Promise((r) => setTimeout(r, ms)),
 ): AsyncIterable<JobSnapshot> {
   // Loop until the job reaches a terminal status OR 404s. We poll
   // BEFORE sleeping on the first iteration so the caller sees fresh
-  // state immediately rather than waiting `intervalMs` for the first
-  // snapshot.
-  // Hard cap on iterations as a defensive safety net — at 500ms/poll
-  // 7200 iterations = 1h, far beyond any reasonable generation. If
-  // we ever blow past this it's a bug (engine stuck, never reaches
-  // a terminal state).
+  // state immediately rather than waiting `initialIntervalMs` for
+  // the first snapshot.
+  //
+  // Hard cap on iterations as a defensive safety net — at the worst-
+  // case 1000ms cap, 7200 iterations = 2h, far beyond any reasonable
+  // generation. If we ever blow past this it's a bug (engine stuck,
+  // never reaches a terminal state).
   let safety = 7200;
+  let currentIntervalMs = Math.min(initialIntervalMs, maxIntervalMs);
   while (safety-- > 0) {
     const snap = await pollJob(jobId, fetch_);
     if (snap === null) {
@@ -637,7 +653,12 @@ export async function* watchJob(
     }
     yield snap;
     if (snap.status !== 'running') return;
-    await sleepFn(intervalMs);
+    await sleepFn(currentIntervalMs);
+    // Adaptive backoff: double the interval, cap at maxIntervalMs.
+    // Doubling = ~3 polls to settle from 250ms to the 1000ms cap
+    // (250 → 500 → 1000), matching the DESIGN's "fast at first,
+    // settle when the job's clearly long-running" contract.
+    currentIntervalMs = Math.min(currentIntervalMs * 2, maxIntervalMs);
   }
   throw new Error(
     `watchJob(${jobId}) iteration limit exceeded — engine may be stuck`,
