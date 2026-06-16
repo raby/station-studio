@@ -134,6 +134,14 @@
   $: stagedTemplate = stagedView.template;
   $: stagedSidecar = stagedView.sidecar;
 
+  // §16.2.6 c3e c2 — D2(b) DetailPanel ↔ TracePane mutual-
+  // exclusivity. EditorCanvas dispatches `detailOpen: { open }` on
+  // every selection change; the page mirrors it locally so the
+  // template can conditionally render TracePane. When both want
+  // the right-side real estate, DetailPanel wins (selection is the
+  // operator's explicit intent; the trace is ambient).
+  let detailPanelOpen = false;
+
   // §16.2.6 c3e — "operator has unsaved staged edits" predicate.
   // Reactive to `opLog`, NOT to `livePreviewOn`. The reactive-to-opLog-
   // only contract matters for two reasons:
@@ -1096,10 +1104,17 @@
           on:sectionsReorder={handleSectionsReorder}
           on:blockMove={handleBlockMove}
           on:structuralEdit={handleStructuralEdit}
+          on:detailOpen={(e) => (detailPanelOpen = e.detail.open)}
         />
       </div>
-      {#if livePreviewOn}
-        <div class="trace-col">
+      <!-- §16.2.6 c3e c2 — D2(b) DetailPanel ↔ TracePane mutual-
+           exclusivity. TracePane hides while DetailPanel is open so
+           it doesn't compete for the right-side real estate. The
+           trace data + ongoing preview job keep running in the
+           background (no _cancelPreview on DetailPanel open) so the
+           operator gets a fresh trace as soon as they close. -->
+      {#if livePreviewOn && !detailPanelOpen}
+        <div class="trace-col" data-testid="trace-col">
           <TracePane
             trace={previewTrace}
             previewing={previewing}

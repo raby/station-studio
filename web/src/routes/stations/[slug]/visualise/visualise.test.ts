@@ -750,6 +750,32 @@ describe('visualise +page.svelte — §16.2.6 c3e c1 staged-edit loss guards', (
     expect(getStationSidecarMock).toHaveBeenCalledTimes(2);
   });
 
+  it('c3e c2 D2(b): TracePane visible when livePreviewOn + DetailPanel closed', async () => {
+    await mountAndAwaitStub();
+    expect(screen.getByTestId('trace-col')).toBeInTheDocument();
+  });
+
+  it('c3e c2 D2(b): detailOpen=true hides TracePane (DetailPanel claims the right-side real estate)', async () => {
+    await mountAndAwaitStub();
+    expect(screen.getByTestId('trace-col')).toBeInTheDocument();
+    await act(async () => {
+      fireEditorCanvasEvent('detailOpen', { open: true });
+    });
+    expect(screen.queryByTestId('trace-col')).toBeNull();
+  });
+
+  it('c3e c2 D2(b): detailOpen=false restores TracePane (close DetailPanel → trace reappears)', async () => {
+    await mountAndAwaitStub();
+    await act(async () => {
+      fireEditorCanvasEvent('detailOpen', { open: true });
+    });
+    expect(screen.queryByTestId('trace-col')).toBeNull();
+    await act(async () => {
+      fireEditorCanvasEvent('detailOpen', { open: false });
+    });
+    expect(screen.getByTestId('trace-col')).toBeInTheDocument();
+  });
+
   it('beforeunload with no staged edits: preventDefault NOT called (no warning)', async () => {
     await mountAndAwaitStub();
     const e = new Event('beforeunload', { cancelable: true }) as BeforeUnloadEvent;

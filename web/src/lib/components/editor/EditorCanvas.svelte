@@ -81,6 +81,12 @@
       targetIndex: number | null;
     };
     structuralEdit: { edit: StructuralBlockEdit };
+    // §16.2.6 c3e c2 — D2(b) DetailPanel ↔ TracePane mutual-
+    // exclusivity. EditorCanvas owns the `selected` state (and
+    // therefore knows when DetailPanel is open); the route listens
+    // for these events to hide its TracePane while DetailPanel
+    // claims the side-panel real estate.
+    detailOpen: { open: boolean };
   }>();
 
   // §16.2.2 c4 — view-mode prefs, hydrated from localStorage +
@@ -94,6 +100,12 @@
   // forward; we annotate the ref with its owning section here
   // (DetailPanel renders the section name).
   let selected: { ref: ExpandedRef; section: SidecarSection } | null = null;
+
+  // §16.2.6 c3e c2 — emit `detailOpen` whenever the selection
+  // state flips. Reactive `$:` so any future code path that sets
+  // `selected` (programmatic open from a query param, etc.) also
+  // emits; keeping the dispatch out of the handlers avoids drift.
+  $: dispatch('detailOpen', { open: selected !== null });
 
   function onSelect(e: CustomEvent<{ ref: ExpandedRef }>, section: SidecarSection) {
     selected = { ref: e.detail.ref, section };
