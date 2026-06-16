@@ -134,13 +134,18 @@
   $: stagedTemplate = stagedView.template;
   $: stagedSidecar = stagedView.sidecar;
 
-  // §16.2.6 c3e — "operator has unsaved staged edits" predicate. Used
-  // by the toggle-off-mid-stage prompt + the beforeunload listener
-  // below to guard against silent loss of queued ops. NOT derived
-  // from `livePreviewOn`: toggling OFF clears opLog explicitly, so
-  // we want the guard to fire on `opLog.length > 0` regardless of
-  // the current toggle state (the toggle-off path checks opLog
-  // BEFORE clearing it; beforeunload sees both situations).
+  // §16.2.6 c3e — "operator has unsaved staged edits" predicate.
+  // Reactive to `opLog`, NOT to `livePreviewOn`. The reactive-to-opLog-
+  // only contract matters for two reasons:
+  //
+  //   1. The toggle-off path reads this BEFORE clearing `opLog` via
+  //      `_resetStagedState()`, so the prompt actually fires on the
+  //      "still has staged edits" snapshot.
+  //   2. The beforeunload listener fires the warning ON RESIDUAL
+  //      `opLog` content even if some future code path leaves it
+  //      non-empty after a toggle OFF (c3e c1 routes through
+  //      `_resetStagedState` which clears it, but the predicate
+  //      shouldn't trust callers to do that — it's a safety net).
   $: hasStagedEdits = opLog.length > 0;
 
   $: slug = $page.params.slug ?? '';

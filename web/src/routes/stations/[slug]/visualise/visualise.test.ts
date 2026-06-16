@@ -675,7 +675,6 @@ describe('visualise +page.svelte — §16.2.6 c3e c1 staged-edit loss guards', (
 
   it('toggle OFF with no staged edits: no prompt, toggle flips silently', async () => {
     await mountAndAwaitStub();
-    confirmSpy.mockReturnValue(true);
     await act(async () => {
       screen.getByTestId('live-preview-checkbox').click();
     });
@@ -759,7 +758,7 @@ describe('visualise +page.svelte — §16.2.6 c3e c1 staged-edit loss guards', (
     expect(pd).not.toHaveBeenCalled();
   });
 
-  it('beforeunload with staged edits: preventDefault called (browser shows native prompt)', async () => {
+  it('beforeunload with staged edits: handler sets BOTH preventDefault (modern) AND returnValue (legacy cross-browser belt)', async () => {
     await mountAndAwaitStub();
     await act(async () => {
       fireEditorCanvasEvent('save', {
@@ -769,11 +768,24 @@ describe('visualise +page.svelte — §16.2.6 c3e c1 staged-edit loss guards', (
     });
     const e = new Event('beforeunload', { cancelable: true }) as BeforeUnloadEvent;
     const pd = vi.spyOn(e, 'preventDefault');
+    // c3e c1 review G4: pin BOTH signals.
+    // - `preventDefault` is the modern signal (covered by `pd` spy).
+    // - `e.returnValue = ''` is the legacy historical signal old
+    //   Safari + Firefox still need for the leave-site dialog.
+    //   jsdom maps generic Event's `returnValue` to the
+    //   !defaultPrevented legacy semantic — once `preventDefault()`
+    //   runs, jsdom sets returnValue to `false` (boolean), so
+    //   asserting `e.returnValue === ''` is unreliable. Spy on the
+    //   property SETTER instead so we pin that the handler tried
+    //   to write `''`, regardless of how jsdom stores it.
+    const returnValueSetter = vi.fn();
+    Object.defineProperty(e, 'returnValue', {
+      get: () => '',
+      set: returnValueSetter,
+      configurable: true,
+    });
     window.dispatchEvent(e);
-    // preventDefault is the modern signal that we want to block.
-    // jsdom doesn't surface the historical returnValue setter
-    // semantics reliably, but preventDefault is sufficient — both
-    // signals are set in the handler for cross-browser coverage.
     expect(pd).toHaveBeenCalled();
+    expect(returnValueSetter).toHaveBeenCalledWith('');
   });
 });
