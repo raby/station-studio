@@ -58,9 +58,12 @@ from api.schemas import (
     SectionCreateRequest,
     SectionRenameRequest,
     SectionsOrderRequest,
+    SidecarBatchErrorResponse,
+    SidecarBatchRequest,
     SidecarMutationResponse,
     TemplateExportResponse,
 )
+from fastapi.responses import JSONResponse
 from engine.editor_metadata import (
     EditorMetadataError,
     MacroResolutionError,
@@ -1410,3 +1413,385 @@ def export_template(
     # to cp1252.
     path.write_text(text, encoding="utf-8")
     return TemplateExportResponse(path=str(path), bytes=len(text.encode("utf-8")))
+
+
+# ============================================================
+# §16.2.6.t2 c1b: transactional batch endpoint
+# ============================================================
+
+def _apply_batch_edit(template: dict, sidecar: dict, env) -> dict:
+    """Apply one batch envelope in place. Mutates `template` /
+    `sidecar` as needed; raises HTTPException on failure with the
+    same shape the per-route endpoints use (so the operator-facing
+    error text is identical between single-PATCH + batch paths).
+    Returns the (potentially-new) sidecar reference because some
+    paths replace it (ensure_unsorted_section / shift_atomic_slot_indices
+    return new dicts; mirroring the per-route shape).
+
+    c1b implementation note: rather than duplicating each route's
+    apply logic, this dispatcher inlines the validation + mutation
+    steps from the existing routes. The existing 9 routes stay
+    unchanged for v1; DRY-ing them via shared helpers is queued as
+    a c1b-followup cleanup."""
+    kind = env.kind
+
+    if kind == "patchBlock":
+        block = _resolve_block_address(template, env.address)
+        strategy = block.get("strategy")
+        allowed = EDITABLE_FIELDS_BY_STRATEGY.get(strategy, frozenset())
+        rejected = sorted(set(env.fields) - allowed)
+        if rejected:
+            raise HTTPException(
+                400,
+                f"fields {rejected} are not editable for strategy '{strategy}'. "
+                f"Editable: {sorted(allowed) or '(none)'}.",
+            )
+        for key, value in env.fields.items():
+            if value is None:
+                block.pop(key, None)
+            else:
+                block[key] = value
+        return sidecar
+
+    if kind == "patchMacro":
+        try:
+            deduped = resolve_macro_addresses(sidecar, env.macro_id)
+        except MacroResolutionError as e:
+            raise HTTPException(400, f"{e}")
+        if not deduped:
+            raise HTTPException(
+                404, f"macro_id '{env.macro_id}' not found in sidecar.",
+            )
+        payload_keys = set(env.fields)
+        for addr_dict in deduped:
+            addr = BlockAddress(**addr_dict)
+            block = _resolve_block_address(template, addr)
+            strategy = block.get("strategy")
+            allowed = EDITABLE_FIELDS_BY_STRATEGY.get(strategy, frozenset())
+            rejected = sorted(payload_keys - allowed)
+            if rejected:
+                raise HTTPException(
+                    400,
+                    f"macro '{env.macro_id}': fields {rejected} are not editable "
+                    f"for strategy '{strategy}' (block at {addr_dict}). "
+                    f"Editable: {sorted(allowed) or '(none)'}.",
+                )
+            for key, value in env.fields.items():
+                if value is None:
+                    block.pop(key, None)
+                else:
+                    block[key] = value
+        # Mirror per-route: update sidecar's macros[].spec too.
+        for macro in sidecar.get("macros", []):
+            if macro.get("id") != env.macro_id:
+                continue
+            spec = macro.setdefault("spec", {})
+            for key, value in env.fields.items():
+                if value is None:
+                    spec.pop(key, None)
+                else:
+                    spec[key] = value
+        return sidecar
+
+    if kind == "renameSection":
+        if is_system_section(env.section_id):
+            raise HTTPException(400, f"can't rename the system `{env.section_id}` section.")
+        section = lookup_section(sidecar, env.section_id)
+        if section is None:
+            raise HTTPException(404, f"section '{env.section_id}' not found.")
+        if not env.name:
+            raise HTTPException(400, "section name must be a non-empty string.")
+        section["name"] = env.name
+        return sidecar
+
+    if kind == "sectionCreate":
+        if is_reserved_id_prefix(env.section_id):
+            raise HTTPException(
+                400,
+                "section id can't start with `_` (reserved for current + "
+                f"future system bins like `{UNSORTED_SECTION_ID}`).",
+            )
+        if not env.section_id:
+            raise HTTPException(400, "section id must be a non-empty string.")
+        if lookup_section(sidecar, env.section_id) is not None:
+            raise HTTPException(409, f"section id '{env.section_id}' already exists.")
+        sidecar.setdefault("sections", []).append({
+            "id": env.section_id,
+            "name": env.name or env.section_id,
+            "blocks": [],
+        })
+        sidecar.setdefault("layout_order", []).append(env.section_id)
+        return sidecar
+
+    if kind == "sectionDelete":
+        if is_system_section(env.section_id):
+            raise HTTPException(
+                400, f"can't delete the system `{env.section_id}` section.",
+            )
+        section = lookup_section(sidecar, env.section_id)
+        if section is None:
+            raise HTTPException(404, f"section '{env.section_id}' not found.")
+        has_blocks = bool(section.get("blocks"))
+        if has_blocks:
+            sidecar = ensure_unsorted_section(sidecar)
+            moved_section = lookup_section(sidecar, env.section_id)
+            bin_section = lookup_section(sidecar, UNSORTED_SECTION_ID)
+            bin_section["blocks"].extend(moved_section.get("blocks", []))
+        sidecar["sections"] = [
+            s for s in sidecar["sections"] if s.get("id") != env.section_id
+        ]
+        sidecar["layout_order"] = [
+            sid for sid in sidecar.get("layout_order", []) if sid != env.section_id
+        ]
+        return sidecar
+
+    if kind == "reorderSections":
+        current = {s.get("id") for s in sidecar.get("sections", [])}
+        proposed = set(env.layout_order)
+        if proposed != current:
+            added = sorted(proposed - current)
+            dropped = sorted(current - proposed)
+            raise HTTPException(
+                400,
+                f"layout_order must be a PERMUTATION of existing section ids. "
+                f"Added (unknown): {added}; dropped: {dropped}.",
+            )
+        if len(env.layout_order) != len(set(env.layout_order)):
+            raise HTTPException(400, "layout_order must not contain duplicate ids.")
+        # Pin _unsorted at the end (mirror reorder_sections route).
+        if UNSORTED_SECTION_ID in env.layout_order:
+            if env.layout_order[-1] != UNSORTED_SECTION_ID:
+                raise HTTPException(
+                    400,
+                    f"the `{UNSORTED_SECTION_ID}` bin must stay at the END of "
+                    "layout_order.",
+                )
+        sidecar["layout_order"] = list(env.layout_order)
+        return sidecar
+
+    if kind == "moveBlock":
+        if is_system_section(env.target_section_id):
+            raise HTTPException(
+                400,
+                f"can't manually move into the system `{env.target_section_id}` section.",
+            )
+        target = lookup_section(sidecar, env.target_section_id)
+        if target is None:
+            raise HTTPException(
+                404, f"target section '{env.target_section_id}' not found.",
+            )
+        addr = env.address
+        if addr.slot_index is None and addr.block_idx is None:
+            raise HTTPException(400, "address must set slot_index or block_idx.")
+        if addr.slot_index is not None and addr.block_idx is not None:
+            raise HTTPException(400, "address must set exactly one of slot_index / block_idx.")
+
+        def _matches(b: dict) -> bool:
+            if b.get("kind") != "atomic":
+                return False
+            if addr.slot_index is not None:
+                return b.get("slot_index") == addr.slot_index
+            return b.get("block_idx") == addr.block_idx
+
+        source: dict | None = None
+        moving_block: dict | None = None
+        for s in sidecar["sections"]:
+            for b in s.get("blocks", []):
+                if _matches(b):
+                    if source is not None:
+                        raise HTTPException(
+                            400,
+                            "address matches blocks in multiple sections (sidecar drift).",
+                        )
+                    source = s
+                    moving_block = b
+        if source is None or moving_block is None:
+            raise HTTPException(
+                404,
+                f"no atomic block matching address {addr.model_dump(exclude_none=True)} "
+                "found in any section.",
+            )
+        source["blocks"] = [b for b in source["blocks"] if b is not moving_block]
+        target_blocks = target.setdefault("blocks", [])
+        idx = env.target_index
+        if idx is None or idx >= len(target_blocks):
+            target_blocks.append(moving_block)
+        else:
+            if idx < 0:
+                raise HTTPException(400, "target_index must be >= 0.")
+            target_blocks.insert(idx, moving_block)
+        return sidecar
+
+    if kind == "retypeBlock":
+        STRUCTURAL_KEYS = {"strategy", "source", "size"}
+        smuggled = sorted(STRUCTURAL_KEYS & set(env.new_fields))
+        if smuggled:
+            raise HTTPException(
+                400,
+                f"new_fields cannot carry structural keys {smuggled}. "
+                "Use new_strategy / new_source for strategy + source changes; "
+                "`size` changes are §16.2.5 (structural edits).",
+            )
+        block = _resolve_block_address(template, env.address)
+        if env.new_strategy is not None:
+            if env.new_strategy not in SUPPORTED_STRATEGIES:
+                raise HTTPException(
+                    400,
+                    f"new_strategy '{env.new_strategy}' not supported. "
+                    f"Supported: {sorted(SUPPORTED_STRATEGIES)}.",
+                )
+            block["strategy"] = env.new_strategy
+        if env.new_source is not None:
+            known_sources = {s.get("name") for s in template.get("sources", [])}
+            if env.new_source not in known_sources:
+                raise HTTPException(
+                    400,
+                    f"new_source '{env.new_source}' not declared in template.sources[].",
+                )
+            block["source"] = env.new_source
+        for key, value in env.new_fields.items():
+            if value is None:
+                block.pop(key, None)
+            else:
+                block[key] = value
+        strategy = block.get("strategy")
+        allowed = EDITABLE_FIELDS_BY_STRATEGY.get(strategy, frozenset())
+        structural = {"strategy", "source", "size"}
+        for key in list(block.keys()):
+            if key in structural or key in allowed:
+                continue
+            block.pop(key, None)
+        return sidecar
+
+    if kind == "structuralBlockEdit":
+        layout = template.get("layout", {})
+        if "flat_slots" not in layout or not isinstance(layout["flat_slots"], list):
+            raise HTTPException(
+                400,
+                "structural edits to row_template stations aren't supported in §16.2.5.",
+            )
+        flat_slots = layout["flat_slots"]
+        edit = env.edit
+        idx = edit.slot_index
+        if edit.op == "size":
+            if not (0 <= idx < len(flat_slots)):
+                raise HTTPException(404, f"slot_index {idx} out of range.")
+            if edit.new_size is None or edit.new_size < 1:
+                raise HTTPException(400, "size edits require new_size >= 1.")
+            flat_slots[idx]["size"] = edit.new_size
+        elif edit.op == "add":
+            if not (0 <= idx <= len(flat_slots)):
+                raise HTTPException(
+                    404,
+                    f"slot_index {idx} out of range for insert (valid 0..{len(flat_slots)}).",
+                )
+            if edit.new_block is None:
+                raise HTTPException(400, "add edits require new_block.")
+            flat_slots.insert(idx, edit.new_block)
+            sidecar = shift_atomic_slot_indices(sidecar, threshold=idx, delta=1)
+            sidecar = ensure_unsorted_section(sidecar)
+            bin_section = lookup_section(sidecar, UNSORTED_SECTION_ID)
+            bin_section["blocks"].append({"kind": "atomic", "slot_index": idx})
+        elif edit.op == "remove":
+            if not (0 <= idx < len(flat_slots)):
+                raise HTTPException(404, f"slot_index {idx} out of range.")
+            touched_section_id: str | None = None
+            for s in sidecar.get("sections", []):
+                blocks = s.get("blocks")
+                if not blocks:
+                    continue
+                for i, b in enumerate(blocks):
+                    if b.get("kind") == "atomic" and b.get("slot_index") == idx:
+                        blocks.pop(i)
+                        touched_section_id = s.get("id")
+                        break
+                if touched_section_id is not None:
+                    break
+            if touched_section_id is not None:
+                touched = lookup_section(sidecar, touched_section_id)
+                if touched is not None:
+                    remaining = touched.get("blocks", [])
+                    has_atomic_after = any(b.get("kind") == "atomic" for b in remaining)
+                    orphan_macro_refs = sorted({
+                        b.get("ref") for b in remaining
+                        if b.get("kind") == "macro" and b.get("ref")
+                    })
+                    if not has_atomic_after and orphan_macro_refs:
+                        raise HTTPException(
+                            400,
+                            f"removing slot {idx} would orphan macros "
+                            f"{orphan_macro_refs} in section '{touched_section_id}'.",
+                        )
+            flat_slots.pop(idx)
+            sidecar = shift_atomic_slot_indices(sidecar, threshold=idx + 1, delta=-1)
+        return sidecar
+
+    raise HTTPException(500, f"unknown batch edit kind '{kind}'")
+
+
+@router.post(
+    "/api/stations/{slug}/sidecar/batch",
+    response_model=SidecarMutationResponse,
+    responses={400: {"model": SidecarBatchErrorResponse}},
+)
+def sidecar_batch(
+    slug: str,
+    payload: SidecarBatchRequest,
+    db: Session = Depends(get_db),
+    stations_dir: Path = Depends(get_stations_dir),
+):
+    """§16.2.6.t2 — transactional all-or-nothing batch edit.
+
+    Loops through `payload.edits`, dispatching each to
+    `_apply_batch_edit`. Any HTTPException mid-batch rolls back the
+    whole transaction + returns a SidecarBatchErrorResponse naming
+    the failing index (1-based) + kind + error. On success: ONE
+    `_finish_sidecar_mutation` commits all mutations atomically +
+    returns the new sidecar/template/updated_at.
+
+    Empty `edits` list returns 400 — a no-op batch shouldn't bump
+    `updated_at`. The frontend filters empty before posting; this
+    is a defensive guard.
+    """
+    if not payload.edits:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "failed_at_idx": 0,
+                "kind": "",
+                "error": "edits list must contain at least one edit.",
+            },
+        )
+
+    station, template, sidecar = _prepare_sidecar_mutation(
+        slug, db, stations_dir, payload.expected_updated_at,
+    )
+
+    for idx, env in enumerate(payload.edits, start=1):
+        try:
+            sidecar = _apply_batch_edit(template, sidecar, env)
+        except HTTPException as e:
+            db.rollback()
+            return JSONResponse(
+                status_code=e.status_code,
+                content={
+                    "failed_at_idx": idx,
+                    "kind": env.kind,
+                    "error": e.detail,
+                },
+            )
+
+    try:
+        parse_template(template)
+    except TemplateError as e:
+        db.rollback()
+        return JSONResponse(
+            status_code=400,
+            content={
+                "failed_at_idx": len(payload.edits),
+                "kind": "_finalize",
+                "error": f"batch produces an invalid template: {e}",
+            },
+        )
+
+    return _finish_sidecar_mutation(station, sidecar, db, template=template)
