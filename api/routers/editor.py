@@ -1186,6 +1186,16 @@ def _apply_section_delete(
         raise HTTPException(404, f"section '{section_id}' not found.")
     has_blocks = bool(section.get("blocks"))
     if has_blocks:
+        # c1 review #10 (transferred from the pre-DRY route): capture
+        # blocks AFTER ensure_unsorted_section's deep-copy + re-find,
+        # so the bin's blocks list holds the post-deepcopy block dicts.
+        # A pre-fix variant captured `blocks` from the pre-deepcopy
+        # section then extended the bin with ORIGINAL references — the
+        # bin worked by accident but mixed pre/post-deepcopy dicts in
+        # the same sidecar (latent aliasing hazard for any code that
+        # mutates the bin's blocks expecting them to be fresh). DON'T
+        # reorder this — capture `moved_section.blocks` AFTER the
+        # ensure call, never before.
         sidecar = ensure_unsorted_section(sidecar)
         moved_section = lookup_section(sidecar, section_id)
         bin_section = lookup_section(sidecar, UNSORTED_SECTION_ID)
@@ -1350,6 +1360,18 @@ def _apply_structural_block_edit(
     elif edit.op == "remove":
         if not (0 <= idx < len(flat_slots)):
             raise HTTPException(404, f"slot_index {idx} out of range.")
+        # c1 review #1 (transferred from the pre-DRY route): cascade-
+        # drop matching sidecar atomic refs before popping flat_slots.
+        # A pre-fix variant 400'd with a "move to _unsorted first" hint,
+        # but moving doesn't REMOVE the reference — just relocates it —
+        # so move-then-remove still 400'd and the operator was stuck
+        # (no in-UI "delete chip" path until §16.2.6's affordance
+        # lands). The cascade is safe because drift rule 8 caps atomic
+        # refs at one per slot_index across the whole sidecar; the
+        # outer break + the post-found break enforce single-pop. Then
+        # below: detect orphan-macro creation in the touched section
+        # so the operator sees a clear 400 instead of a downstream
+        # resolve_macro_addresses crash on the next mutation.
         touched_section_id: str | None = None
         for s in sidecar.get("sections", []):
             blocks = s.get("blocks")
@@ -1364,8 +1386,14 @@ def _apply_structural_block_edit(
                     touched_section_id = s.get("id")
                     break
             if touched_section_id is not None:
-                break
+                break  # drift rule 8: at most one match across sections
 
+        # Orphan-macro guard: if the cascade emptied the section of
+        # atomic anchors but left macros, those macros become
+        # unreachable (resolve_macro_addresses skips macro-only
+        # sections + section_start math can go negative on the next
+        # mutation). Reject so the operator restructures first; the
+        # error names the macros so they know what to move.
         if touched_section_id is not None:
             touched = lookup_section(sidecar, touched_section_id)
             if touched is not None:
