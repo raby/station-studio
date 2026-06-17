@@ -440,6 +440,51 @@ def test_t12_p7_compound_rollback_structural_add_then_failure_undoes_shift(seede
         assert "_unsorted" not in sec_ids
 
 
+def test_t12_p7_structural_add_alone_shifts_and_creates_unsorted(seeded):
+    """§16.2.6.t12 P7 positive-path companion (post-cycle U4 fix).
+
+    Inverse of the rollback test above: pin the structural-add's
+    EXPECTED side effects on the success path. Without this companion,
+    the rollback assertions ("still 3 slots", "morning at [0,1]",
+    "no _unsorted") would still pass if a future refactor turned
+    structuralAdd into a silent no-op — both no-op + rollback give
+    the same result. Pinning both directions makes the contract
+    bidirectional.
+    """
+    client, Session, _t = seeded
+    new_block = {
+        "source": "A", "strategy": "sequential",
+        "size": 1, "cursor_id": "C",
+    }
+    r = client.post(
+        "/api/stations/ts/sidecar/batch",
+        json={
+            "edits": [
+                {
+                    "kind": "structuralBlockEdit",
+                    "edit": {
+                        "op": "add", "slot_index": 0, "new_block": new_block,
+                    },
+                },
+            ],
+        },
+    )
+    assert r.status_code == 200, r.json()
+    # Verify ALL structural-add effects landed.
+    with Session() as db:
+        s = db.query(Station).filter(Station.slug == "ts").first()
+        # flat_slots grew to 4.
+        assert len(s.template["layout"]["flat_slots"]) == 4
+        # morning's atomic refs shifted from [0,1] to [1,2].
+        morning = next(sec for sec in s.sidecar["sections"] if sec["id"] == "morning")
+        assert [b["slot_index"] for b in morning["blocks"]] == [1, 2]
+        # _unsorted bin auto-created + carries the new slot_index=0.
+        sec_ids = [sec["id"] for sec in s.sidecar["sections"]]
+        assert "_unsorted" in sec_ids
+        unsorted = next(sec for sec in s.sidecar["sections"] if sec["id"] == "_unsorted")
+        assert [b["slot_index"] for b in unsorted["blocks"]] == [0]
+
+
 def test_dispatches_patch_macro_404_when_macro_missing(seeded):
     """patchMacro 404s when macro_id doesn't exist in sidecar.
 

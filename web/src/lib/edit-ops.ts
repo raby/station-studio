@@ -741,12 +741,14 @@ function _moveBlock(
   const rawSections = dict.sections;
   if (!Array.isArray(rawSections)) return sidecar;
   // §16.2.6.t9: narrow the sections array to `_SectionDict[]` ONCE
-  // here. The runtime shape check matches what each downstream
-  // access used to assert per-access via the `Record<string,
-  // unknown>` cast. After this point the loop reads `sec.blocks`,
-  // `sec.id`, `block.kind`, etc. directly without per-access
-  // widening — the dispatcher's earlier guard caught malformed
-  // shapes, so each section is well-formed by the typing invariants.
+  // here. `applyEdit` forwards `sidecar: unknown` straight in
+  // WITHOUT a shape-validation pass, so this `as` is type-level
+  // convenience, NOT a load-bearing runtime assertion. The actual
+  // safety net is the per-iteration runtime checks below
+  // (`!sec || typeof sec !== 'object'` and `!Array.isArray(blocks)`)
+  // which preserve the original defensive walk against legacy /
+  // malformed sidecars. Don't drop those checks thinking the
+  // narrowing protects you — it doesn't.
   const sections = rawSections as _SectionDict[];
 
   // c3d sweep S3: presence-only pre-check for the target section.

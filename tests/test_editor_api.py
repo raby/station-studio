@@ -65,36 +65,14 @@ def editor_api(tmp_path, monkeypatch):
     app.dependency_overrides.clear()
 
 
-def _minimal_template(slug: str = "ts") -> dict:
-    """Minimal flat_slots template with 3 atomic slots — same shape
-    used by the c1 jobs API tests. Deterministic + small."""
-    return {
-        "station": slug,
-        "name": "Test",
-        "cadence": "weekly",
-        "rng": "off",
-        "sources": [{"name": "A", "colour": "#abc", "role": "content"}],
-        "cursor": {"base_advance_per_week": 0, "cycle_weeks": 1},
-        "layout": {
-            "unit": "slot",
-            "unit_labels": [],
-            "row_start_offsets": [],
-            "cursors_init": {"C": 0},
-            "flat_slots": [
-                {"source": "A", "strategy": "sequential", "size": 1, "cursor_id": "C"}
-            ] * 3,
-        },
-    }
-
-
-def _seed_station(Session: sessionmaker, slug: str = "ts") -> dict:
-    """Insert a Station with the minimal template. Returns the template
-    for follow-up assertions."""
-    template = _minimal_template(slug)
-    with Session() as db:
-        db.add(Station(slug=slug, name="Test", template=template))
-        db.commit()
-    return template
+# §16.2.6.t12 P8 follow-up (post-cycle U1 fix): the real extraction.
+# Pre-fix this module held local `_minimal_template` + `_seed_station`
+# bodies and the new tests/_helpers.py was a parallel COPY — two
+# sources of truth. Alias-import the public names so every existing
+# call site (`_seed_station(Session, slug="...")`, `_minimal_template(...)`)
+# keeps working unchanged.
+from tests._helpers import minimal_template as _minimal_template
+from tests._helpers import seed_station as _seed_station
 
 
 # ---------- 404 ----------------------------------------------------------

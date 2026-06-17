@@ -1011,10 +1011,8 @@
     // leave opLog intact instead so the operator can re-evaluate.
     if (failedAtIdx > opLog.length) {
       showRetryModal = false;
-      saveError =
-        `Internal error: server reported failed edit ${failedAtIdx} but ` +
-        `the queue only has ${opLog.length} edit${opLog.length === 1 ? '' : 's'}. ` +
-        'Staged edits preserved; please Save again or Discard.';
+      const plural = opLog.length === 1 ? '' : 's';
+      saveError = `Internal error: server reported failed edit ${failedAtIdx} but the queue only has ${opLog.length} edit${plural}. Staged edits preserved; please Save again or Discard.`;
       failedAtIdx = 0;
       failedKind = '';
       return;

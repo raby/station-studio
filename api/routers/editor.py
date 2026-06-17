@@ -1430,10 +1430,14 @@ def _apply_batch_edit(template: dict, sidecar: dict, env) -> dict:
     it entirely (`ensure_unsorted_section` / `shift_atomic_slot_indices`
     return new deep-copied dicts; mirroring the per-route shape).
     Discarding the return value leaves atomic-shift mutations
-    silently dropped. A future "validate-only" mode that calls this
-    function and ignores the result would silently miss those
-    mutations — pin this contract via the return type + docstring,
-    not just the call site.
+    silently dropped. The §16.2.6.t13 DRY refactor (extracting 9
+    per-kind helpers shared between per-route endpoints + this
+    dispatcher) is the concrete regression vector: dropping the
+    return-value rebinding during that refactor would silently
+    strand atomic-shift mutations, and the existing rollback test
+    wouldn't catch it because it tests rollback (state stays at
+    original), not forward progression. Pin via return type +
+    docstring now so the t13 PR fails closed instead of green-with-bug.
 
     c1b implementation note: rather than duplicating each route's
     apply logic, this dispatcher inlines the validation + mutation
