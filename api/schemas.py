@@ -1,7 +1,7 @@
 """Pydantic request/response schemas."""
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, StrictInt
 
 
@@ -566,6 +566,113 @@ class BlockStructureRequest(BaseModel):
     """
     edit: StructuralBlockEdit
     expected_updated_at: str | None = None
+
+
+# §16.2.6.t2 c1 — transactional batch endpoint envelopes. One
+# envelope per Edit kind (mirrors the frontend `Edit` discriminated
+# union in `web/src/lib/edit-ops.ts`). The batch endpoint loops the
+# `edits` list inside a single transaction; any error rolls back
+# the whole batch.
+
+class _BatchPatchBlockEnv(BaseModel):
+    kind: Literal["patchBlock"]
+    address: BlockAddress
+    fields: dict[str, Any]
+
+
+class _BatchPatchMacroEnv(BaseModel):
+    kind: Literal["patchMacro"]
+    macro_id: str
+    fields: dict[str, Any]
+
+
+class _BatchRenameSectionEnv(BaseModel):
+    kind: Literal["renameSection"]
+    section_id: str = Field(..., alias="sectionId")
+    name: str
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class _BatchSectionCreateEnv(BaseModel):
+    kind: Literal["sectionCreate"]
+    section_id: str = Field(..., alias="sectionId")
+    name: str | None = None
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class _BatchSectionDeleteEnv(BaseModel):
+    kind: Literal["sectionDelete"]
+    section_id: str = Field(..., alias="sectionId")
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class _BatchReorderSectionsEnv(BaseModel):
+    kind: Literal["reorderSections"]
+    layout_order: list[str] = Field(..., alias="layoutOrder")
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class _BatchMoveBlockEnv(BaseModel):
+    kind: Literal["moveBlock"]
+    address: BlockAddress
+    target_section_id: str = Field(..., alias="targetSectionId")
+    target_index: int | None = Field(default=None, alias="targetIndex")
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class _BatchRetypeBlockEnv(BaseModel):
+    kind: Literal["retypeBlock"]
+    address: BlockAddress
+    new_strategy: str | None = Field(default=None, alias="newStrategy")
+    new_source: str | None = Field(default=None, alias="newSource")
+    new_fields: dict[str, Any] = Field(default_factory=dict, alias="newFields")
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class _BatchStructuralBlockEditEnv(BaseModel):
+    kind: Literal["structuralBlockEdit"]
+    edit: StructuralBlockEdit
+
+
+BatchEdit = Annotated[
+    (
+        _BatchPatchBlockEnv
+        | _BatchPatchMacroEnv
+        | _BatchRenameSectionEnv
+        | _BatchSectionCreateEnv
+        | _BatchSectionDeleteEnv
+        | _BatchReorderSectionsEnv
+        | _BatchMoveBlockEnv
+        | _BatchRetypeBlockEnv
+        | _BatchStructuralBlockEditEnv
+    ),
+    Field(discriminator="kind"),
+]
+
+
+class SidecarBatchRequest(BaseModel):
+    """POST /api/stations/{slug}/sidecar/batch body (§16.2.6.t2).
+
+    All edits apply inside a single DB transaction — any failure
+    rolls back the whole batch (operator picks Retry or Drop in the
+    UI; server stays consistent).
+
+    `expected_updated_at` is checked ONCE at the start (against the
+    station row); the inner ops do not re-check (the transaction
+    guarantees the row can't move under us).
+    """
+    edits: list[BatchEdit]
+    expected_updated_at: str | None = None
+
+
+class SidecarBatchErrorResponse(BaseModel):
+    """4xx body for the batch endpoint. `failed_at_idx` is 1-indexed
+    so the operator's "Save 5 edits" UI can say "edit 3 of 5 failed."
+    `kind` echoes the failing edit's discriminator so frontend can
+    surface op-specific hints without re-parsing the input."""
+    failed_at_idx: int
+    kind: str
+    error: str
 
 
 class SidecarMutationResponse(BaseModel):
