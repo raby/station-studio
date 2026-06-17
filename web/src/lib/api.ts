@@ -1317,14 +1317,15 @@ export { ApiError };
 // ---- §16.2.6.t2 c2 — transactional batch endpoint -------------------
 
 
-/** Batch edit envelope shape — one per Edit kind. Mirrors the
- *  backend's `BatchEdit` discriminated union (api/schemas.py).
- *  Use the frontend's existing `Edit` shape; the wire format is
- *  identical (the `address` field's `BlockAddress` and the
- *  `structuralBlockEdit.edit`'s `StructuralBlockEdit` are already
- *  wire-compatible with the backend). */
+// Re-export `Edit` for consumers of `applyBatch`. Wire format is
+// identical to the backend's `BatchEdit` discriminated union
+// (api/schemas.py) — the `address` field's `BlockAddress` + the
+// `structuralBlockEdit.edit`'s `StructuralBlockEdit` are already
+// wire-compatible. c2 originally introduced a `SidecarBatchEdit =
+// Edit` alias as a documentation marker; slice-review T9 removed
+// the alias since it added no type safety beyond `Edit` itself.
 import type { Edit } from './edit-ops';
-export type SidecarBatchEdit = Edit;
+export type { Edit } from './edit-ops';
 
 /** SidecarBatchErrorResponse shape (api/schemas.py).
  *  `failed_at_idx` is 1-indexed when a specific edit caused the
@@ -1359,17 +1360,29 @@ export class SidecarBatchFailure extends Error {
 /** POST /api/stations/{slug}/sidecar/batch — atomic all-or-nothing
  *  multi-edit. Returns SidecarMutationResponse on success (carries
  *  the updated sidecar + template + updated_at, matching every
- *  per-route mutation response). Throws SidecarBatchFailure on
- *  400/404/500 carrying the failed_at_idx + kind so the c2 Retry/Drop
- *  modal can decide what to highlight. Throws BlockPatchConflict on
- *  409 (matches existing per-route concurrency handling — c2's
- *  Save-replay path branches on this).
+ *  per-route mutation response). Throws:
+ *
+ *    - `SidecarBatchFailure` on 400 / 404 / 500. Carries
+ *      `failedAtIdx` (1-based when a specific edit; 0 sentinel for
+ *      composition / empty / internal errors) + `kind` so the c2
+ *      Retry/Drop modal can decide what to highlight.
+ *    - `BlockPatchConflict` on 409 (matches existing per-route
+ *      concurrency handling — c2's Save-replay path branches on
+ *      this).
+ *    - Slice-review T10 documented: a network failure (fetch
+ *      rejects before any response — DNS error, connection reset,
+ *      offline mode, etc.) propagates as the underlying `TypeError`
+ *      / `DOMException`. Callers must handle it as a generic
+ *      `Error` since there's no `failedAtIdx` or HTTP status to
+ *      surface. `handleStagedSave` in the visualise page does this
+ *      via the `err instanceof Error` fallback after the
+ *      `BlockPatchConflict` + `SidecarBatchFailure` checks.
  *
  *  Each `edit` is the frontend's `Edit` shape — wire-compatible
  *  with the backend's discriminated union. */
 export const applyBatch = async (
   slug: string,
-  edits: SidecarBatchEdit[],
+  edits: Edit[],
   expectedUpdatedAt: string | null,
   fetch_ = fetch,
 ): Promise<SidecarMutationResponse> => {
