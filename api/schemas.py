@@ -582,8 +582,9 @@ class _BatchPatchBlockEnv(BaseModel):
 
 class _BatchPatchMacroEnv(BaseModel):
     kind: Literal["patchMacro"]
-    macro_id: str
+    macro_id: str = Field(..., alias="macroId")
     fields: dict[str, Any]
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class _BatchRenameSectionEnv(BaseModel):
