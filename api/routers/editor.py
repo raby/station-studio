@@ -1726,13 +1726,30 @@ def _apply_batch_edit(template: dict, sidecar: dict, env) -> dict:
             sidecar = shift_atomic_slot_indices(sidecar, threshold=idx + 1, delta=-1)
         return sidecar
 
-    raise HTTPException(500, f"unknown batch edit kind '{kind}'")
+    # c1b review P5: Pydantic's discriminated union rejects unknown
+    # `kind` at parse time, so this branch is unreachable. Kept as a
+    # `typing.assert_never`-style exhaustiveness pin so the type
+    # checker flags a missing case when a 10th Edit kind is added
+    # to the union without extending the dispatcher.
+    from typing import assert_never
+    assert_never(kind)  # type: ignore[arg-type]
 
 
 @router.post(
     "/api/stations/{slug}/sidecar/batch",
     response_model=SidecarMutationResponse,
-    responses={400: {"model": SidecarBatchErrorResponse}},
+    responses={
+        # c1b review P1: declare all real status codes. 400 + 404
+        # carry the batch envelope; 409 stays on FastAPI's default
+        # `{"detail": "..."}` shape (matches the per-route
+        # `_check_optimistic_token` contract — c2's existing
+        # BlockPatchConflict handler reads it the same way).
+        400: {"model": SidecarBatchErrorResponse},
+        404: {"model": SidecarBatchErrorResponse},
+        409: {"description": "optimistic-concurrency conflict — station was modified since `expected_updated_at`"},
+        500: {"model": SidecarBatchErrorResponse,
+              "description": "internal error (P4 defensive envelope)"},
+    },
 )
 def sidecar_batch(
     slug: str,
@@ -1803,10 +1820,17 @@ def sidecar_batch(
         parse_template(template)
     except TemplateError as e:
         db.rollback()
+        # c1b review P3: `failed_at_idx: 0` (NOT len(edits)) for the
+        # _finalize failure. The breakage is a COMPOSITION effect —
+        # could be edit 3's cross-block change interacting with edit
+        # 5's role swap — so pointing at "edit N of N" misleads the
+        # operator. The 0 sentinel (matching the empty-edits + 500
+        # branches) consistently means "no specific edit; check the
+        # error text." UI special-cases on `kind === '_finalize'`.
         return JSONResponse(
             status_code=400,
             content={
-                "failed_at_idx": len(payload.edits),
+                "failed_at_idx": 0,
                 "kind": "_finalize",
                 "error": f"batch produces an invalid template: {e}",
             },
@@ -1819,7 +1843,7 @@ def sidecar_batch(
         return JSONResponse(
             status_code=500,
             content={
-                "failed_at_idx": len(payload.edits),
+                "failed_at_idx": 0,
                 "kind": "_finalize",
                 "error": f"internal error finalizing batch: {e.__class__.__name__}",
             },

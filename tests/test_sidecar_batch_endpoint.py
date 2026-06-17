@@ -207,6 +207,36 @@ def test_unknown_station_returns_404(editor_api):
     assert r.status_code == 404
 
 
+def test_p3_finalize_failure_uses_failed_at_idx_zero_sentinel(
+    seeded, monkeypatch,
+):
+    """c1b review P3: when parse_template at the END of the batch
+    fails, `failed_at_idx` is 0 (NOT len(edits)) — the breakage is
+    a composition effect across all edits; pointing at "edit N of N"
+    misleads the operator. UI branches on kind=='_finalize'."""
+    import api.routers.editor as editor_module
+    from engine.template import TemplateError
+
+    client, _Session, _t = seeded
+
+    def _boom_finalize(_template):
+        raise TemplateError("synthetic cross-edit composition failure")
+
+    monkeypatch.setattr(editor_module, "parse_template", _boom_finalize)
+    r = client.post(
+        "/api/stations/ts/sidecar/batch",
+        json={"edits": [
+            {"kind": "renameSection", "sectionId": "morning", "name": "AM"},
+            {"kind": "renameSection", "sectionId": "evening", "name": "PM"},
+        ]},
+    )
+    assert r.status_code == 400
+    body = r.json()
+    assert body["failed_at_idx"] == 0  # NOT len(edits); P3 sentinel.
+    assert body["kind"] == "_finalize"
+    assert "synthetic cross-edit" in body["error"]
+
+
 def test_p4_non_http_exception_returns_structured_500_envelope(
     seeded, monkeypatch,
 ):

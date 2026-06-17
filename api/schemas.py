@@ -690,10 +690,27 @@ class SidecarBatchRequest(BaseModel):
 
 
 class SidecarBatchErrorResponse(BaseModel):
-    """4xx body for the batch endpoint. `failed_at_idx` is 1-indexed
-    so the operator's "Save 5 edits" UI can say "edit 3 of 5 failed."
-    `kind` echoes the failing edit's discriminator so frontend can
-    surface op-specific hints without re-parsing the input."""
+    """4xx/5xx body for the batch endpoint.
+
+    `failed_at_idx` is 1-indexed when a SPECIFIC edit caused the
+    failure (1..len(edits)), so the operator's "Save 5 edits" UI
+    can say "edit 3 of 5 failed."
+
+    **`failed_at_idx: 0` sentinel (c1a review N2 + c1b review P3):**
+    means "no specific edit caused this" — three branches set it:
+      - empty edits list (400, kind="")
+      - _finalize parse_template failure (400, kind="_finalize") —
+        the breakage is a COMPOSITION effect across edits; pointing
+        at "edit 5 of 5" misleads since the cause is more subtle.
+      - _finalize internal error (500, kind="_finalize")
+    The c2 Retry/Drop modal special-cases on `kind` to decide
+    whether to highlight a specific opLog entry or just show the
+    error text verbatim.
+
+    `kind` echoes the failing edit's discriminator (or one of the
+    `_<kind>` sentinels) so frontend can surface op-specific hints
+    without re-parsing the input.
+    """
     failed_at_idx: int
     kind: str
     error: str
