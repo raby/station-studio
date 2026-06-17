@@ -205,3 +205,38 @@ def test_unknown_station_returns_404(editor_api):
         json={"edits": [{"kind": "renameSection", "sectionId": "x", "name": "Y"}]},
     )
     assert r.status_code == 404
+
+
+def test_p4_non_http_exception_returns_structured_500_envelope(
+    seeded, monkeypatch,
+):
+    """c1b review P4: a non-HTTPException from `_apply_batch_edit`
+    (KeyError/IndexError/etc. from malformed in-memory state) must
+    return the SidecarBatchErrorResponse envelope at status 500 +
+    explicitly rollback. Pre-fix the request would 500 with FastAPI's
+    default `{"detail": ...}` shape that the c2 Retry/Drop modal
+    wouldn't recognize."""
+    import api.routers.editor as editor_module
+
+    client, Session, _t = seeded
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("synthetic non-HTTP failure")
+
+    monkeypatch.setattr(editor_module, "_apply_batch_edit", _boom)
+    r = client.post(
+        "/api/stations/ts/sidecar/batch",
+        json={"edits": [
+            {"kind": "renameSection", "sectionId": "morning", "name": "AM"},
+        ]},
+    )
+    assert r.status_code == 500
+    body = r.json()
+    # Envelope shape preserved — c2 modal can branch on this.
+    assert body["failed_at_idx"] == 1
+    assert body["kind"] == "renameSection"
+    assert "internal error" in body["error"].lower()
+    # Rollback verified — original sidecar untouched.
+    with Session() as db:
+        s = db.query(Station).filter(Station.slug == "ts").first()
+        assert s.sidecar["sections"][0]["name"] == "Morning"

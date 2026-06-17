@@ -1780,6 +1780,24 @@ def sidecar_batch(
                     "error": e.detail,
                 },
             )
+        except Exception as e:
+            # c1b review P4: defensive catch-all so a KeyError /
+            # IndexError / TypeError from a malformed in-memory
+            # sidecar still returns the structured batch envelope
+            # (the c2 frontend's Retry/Drop modal recognizes the
+            # envelope shape; an unstructured 500 would slip past).
+            # Also guarantees `db.rollback()` runs — the implicit
+            # rollback via `get_db()`'s `finally: db.close()`
+            # works, but explicit is safer + clearer in logs.
+            db.rollback()
+            return JSONResponse(
+                status_code=500,
+                content={
+                    "failed_at_idx": idx,
+                    "kind": env.kind,
+                    "error": f"internal error applying edit: {e.__class__.__name__}",
+                },
+            )
 
     try:
         parse_template(template)
@@ -1791,6 +1809,19 @@ def sidecar_batch(
                 "failed_at_idx": len(payload.edits),
                 "kind": "_finalize",
                 "error": f"batch produces an invalid template: {e}",
+            },
+        )
+    except Exception as e:
+        # c1b review P4: same defensive catch-all for the final
+        # parse_template call. parse_template SHOULD only raise
+        # TemplateError, but defensive depth-of-coverage is cheap.
+        db.rollback()
+        return JSONResponse(
+            status_code=500,
+            content={
+                "failed_at_idx": len(payload.edits),
+                "kind": "_finalize",
+                "error": f"internal error finalizing batch: {e.__class__.__name__}",
             },
         )
 
