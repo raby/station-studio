@@ -698,6 +698,28 @@ function _reorderSections(
  *
  * Returns a new sidecar dict (PURE).
  */
+/** §16.2.6.t9 — typed local shape for the sidecar walk inside
+ *  `_moveBlock`. Pre-fix the function chained `Record<string,
+ *  unknown>` casts at every step (each section + block access
+ *  needed a cast). These local types mirror the runtime invariants
+ *  the function ALREADY checks (sec.id is a string, sec.blocks is
+ *  an array, etc.) so the walk type-checks naturally without
+ *  per-access widening. `_BlockDict` allows arbitrary extra fields
+ *  via the index signature — defensive against future block kinds
+ *  carrying new keys. */
+interface _BlockDict {
+  kind?: string;
+  slot_index?: number;
+  block_idx?: number;
+  [key: string]: unknown;
+}
+interface _SectionDict {
+  id: string;
+  name?: string;
+  blocks: _BlockDict[];
+  [key: string]: unknown;
+}
+
 function _moveBlock(
   sidecar: unknown,
   address: BlockAddress,
@@ -716,14 +738,19 @@ function _moveBlock(
   // c3d review #1 batch B finding #4: backend 400s on negative idx.
   if (targetIndex !== null && targetIndex < 0) return sidecar;
   const dict = sidecar as Record<string, unknown>;
-  const sections = dict.sections;
-  if (!Array.isArray(sections)) return sidecar;
+  const rawSections = dict.sections;
+  if (!Array.isArray(rawSections)) return sidecar;
+  // §16.2.6.t9: narrow the sections array to `_SectionDict[]` ONCE
+  // here. The runtime shape check matches what each downstream
+  // access used to assert per-access via the `Record<string,
+  // unknown>` cast. After this point the loop reads `sec.blocks`,
+  // `sec.id`, `block.kind`, etc. directly without per-access
+  // widening — the dispatcher's earlier guard caught malformed
+  // shapes, so each section is well-formed by the typing invariants.
+  const sections = rawSections as _SectionDict[];
 
-  // c3d sweep S3: presence-only pre-check for the target section —
-  // bail early if absent. Don't bind the find result; the
-  // reconstruction walk below re-finds it by id (cleaner than
-  // threading a stale reference through the map).
-  if (!sections.some((s) => s && typeof s === 'object' && (s as Record<string, unknown>).id === targetSectionId)) {
+  // c3d sweep S3: presence-only pre-check for the target section.
+  if (!sections.some((s) => s && typeof s === 'object' && s.id === targetSectionId)) {
     return sidecar;
   }
 
@@ -733,22 +760,18 @@ function _moveBlock(
   // detect + no-op a multi-match — Save would otherwise reject.
   let sourceSectionIdx = -1;
   let sourceBlockIdx = -1;
-  let movedBlock: Record<string, unknown> | null = null;
+  let movedBlock: _BlockDict | null = null;
   let matchCount = 0;
   for (let i = 0; i < sections.length; i++) {
     const sec = sections[i];
     if (!sec || typeof sec !== 'object') continue;
-    const blocks = (sec as Record<string, unknown>).blocks;
+    const blocks = sec.blocks;
     if (!Array.isArray(blocks)) continue;
     for (let j = 0; j < blocks.length; j++) {
-      const b = blocks[j];
-      if (!b || typeof b !== 'object') continue;
-      const block = b as Record<string, unknown>;
+      const block = blocks[j];
+      if (!block || typeof block !== 'object') continue;
       // c3d sweep S5: ATOMIC ONLY (mirrors backend
-      // _matches at editor.py:1173). Today's macro blocks don't
-      // carry slot_index / block_idx so the comparison below would
-      // naturally miss them; the explicit check future-proofs
-      // against new block kinds that DO carry one of those keys.
+      // _matches at editor.py:1173).
       if (block.kind !== 'atomic') continue;
       // address.slot_index matches block.slot_index (flat_slots);
       // address.block_idx matches block.block_idx (row_template).
@@ -771,17 +794,16 @@ function _moveBlock(
   // Reconstruct each section. For source: remove the block. For
   // target: insert. For same-section reorder, both happen on the
   // SAME section's blocks (handle via a single transform).
-  const sourceSection = sections[sourceSectionIdx] as Record<string, unknown>;
-  const sourceBlocks = sourceSection.blocks as unknown[];
+  const sourceSection = sections[sourceSectionIdx];
+  const sourceBlocks = sourceSection.blocks;
 
   // Identify whether source === target by id (not by index — the
   // walk gave us indices but the comparison is id-based).
-  const sourceSectionId = sourceSection.id as string;
+  const sourceSectionId = sourceSection.id;
   const isSameSection = sourceSectionId === targetSectionId;
 
-  const nextSections = sections.map((s, i) => {
-    if (!s || typeof s !== 'object') return s;
-    const sec = s as Record<string, unknown>;
+  const nextSections = sections.map((sec, i) => {
+    if (!sec || typeof sec !== 'object') return sec;
     if (isSameSection && i === sourceSectionIdx) {
       // Same-section reorder: remove + reinsert on this section's blocks.
       const withoutSource = [
@@ -811,7 +833,7 @@ function _moveBlock(
     }
     if (sec.id === targetSectionId) {
       // Cross-section move: insert into target at index.
-      const tb = Array.isArray(sec.blocks) ? (sec.blocks as unknown[]) : [];
+      const tb = Array.isArray(sec.blocks) ? sec.blocks : [];
       const insertAt =
         targetIndex === null
           ? tb.length
