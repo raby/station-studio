@@ -270,3 +270,101 @@ def test_p4_non_http_exception_returns_structured_500_envelope(
     with Session() as db:
         s = db.query(Station).filter(Station.slug == "ts").first()
         assert s.sidecar["sections"][0]["name"] == "Morning"
+
+
+# §16.2.6.t2 slice-review sweep T2: per-kind dispatch tests for the
+# 4 Edit kinds the c1b tests skipped (patchBlock, patchMacro,
+# retypeBlock, sectionDelete). Each exercises the dispatcher's
+# branch independently so a future inline-apply drift between the
+# dispatcher + per-route handler surfaces at the batch layer too.
+
+
+def test_dispatches_patch_block(seeded):
+    """patchBlock applies to template's flat_slots[idx] via the batch."""
+    client, _Session, _t = seeded
+    r = client.post(
+        "/api/stations/ts/sidecar/batch",
+        json={
+            "edits": [{
+                "kind": "patchBlock",
+                "address": {"slot_index": 0},
+                "fields": {"cursor_id": "C"},
+            }],
+        },
+    )
+    assert r.status_code == 200, r.json()
+    body = r.json()
+    # Cursor_id is in the allowlist for `sequential` strategy.
+    assert body["template"]["layout"]["flat_slots"][0]["cursor_id"] == "C"
+
+
+def test_dispatches_section_delete(seeded):
+    """sectionDelete moves blocks to _unsorted + removes the section."""
+    client, _Session, _t = seeded
+    r = client.post(
+        "/api/stations/ts/sidecar/batch",
+        json={
+            "edits": [{"kind": "sectionDelete", "sectionId": "morning"}],
+        },
+    )
+    assert r.status_code == 200, r.json()
+    body = r.json()
+    # morning gone; _unsorted carries its 2 atomic refs.
+    sec_ids = [s["id"] for s in body["sidecar"]["sections"]]
+    assert "morning" not in sec_ids
+    unsorted = next(s for s in body["sidecar"]["sections"] if s["id"] == "_unsorted")
+    assert len(unsorted["blocks"]) == 2
+
+
+def test_dispatches_retype_block(seeded):
+    """retypeBlock swaps strategy + filters fields by allowlist.
+
+    Retype sequential → weighted. cursor_id (sequential's field)
+    isn't in weighted's allowlist (`window`, `allowlist_sources`),
+    so it should drop. Used weighted (not pick) because pick is
+    only valid in row_template — flat_slots can't carry it."""
+    client, _Session, _t = seeded
+    r = client.post(
+        "/api/stations/ts/sidecar/batch",
+        json={
+            "edits": [{
+                "kind": "retypeBlock",
+                "address": {"slot_index": 0},
+                "newStrategy": "weighted",
+                "newSource": "A",
+                "newFields": {},
+            }],
+        },
+    )
+    assert r.status_code == 200, r.json()
+    body = r.json()
+    block = body["template"]["layout"]["flat_slots"][0]
+    assert block["strategy"] == "weighted"
+    # cursor_id (sequential's required field) dropped — weighted has
+    # no cursor_id in its allowlist.
+    assert "cursor_id" not in block
+
+
+def test_dispatches_patch_macro_404_when_macro_missing(seeded):
+    """patchMacro 404s when macro_id doesn't exist in sidecar.
+
+    The minimal seeded sidecar has macros: [], so any patchMacro
+    edit 404s. That's enough to exercise the dispatcher's macro
+    lookup branch — a full macro fixture would over-couple this
+    test to engine internals."""
+    client, _Session, _t = seeded
+    r = client.post(
+        "/api/stations/ts/sidecar/batch",
+        json={
+            "edits": [{
+                "kind": "patchMacro",
+                "macroId": "m1",
+                "fields": {"strategy": "window"},
+            }],
+        },
+    )
+    assert r.status_code == 404
+    body = r.json()
+    assert body["failed_at_idx"] == 1
+    assert body["kind"] == "patchMacro"
+    assert "m1" in body["error"]

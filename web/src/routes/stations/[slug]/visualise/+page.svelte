@@ -46,7 +46,7 @@
     parseEditorSidecarResponse,
     type ExpandedRef, type Sidecar, type StationTemplate,
   } from '$lib/editor';
-  import { applyEdits, replayOpLog, type Edit } from '$lib/edit-ops';
+  import { applyEdits, type Edit } from '$lib/edit-ops';
   import EditorCanvas from '$lib/components/editor/EditorCanvas.svelte';
   import TracePane from '$lib/components/editor/TracePane.svelte';
 

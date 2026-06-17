@@ -1137,6 +1137,83 @@ describe('visualise +page.svelte — §16.2.6 c3e c1 staged-edit loss guards', (
     expect(applyBatchMock.mock.calls.length).toBe(callCountAtFailure);
   });
 
+  it('§16.2.6.t2 slice-review T3: Drop honors SERVER-identified failedAtIdx > 1 (pops the right edit)', async () => {
+    // Pre-c2 the Drop always popped opLog[0]; c2 wired the
+    // server-identified index. Existing Drop test used failedAtIdx
+    // === 1 (which coincides with opLog[0]) — this test exercises
+    // failedAtIdx === 2 with a 3-edit batch so the c2 semantic is
+    // actually tested.
+    await mountAndAwaitStub();
+    // Queue 3 distinct edits.
+    await act(async () => {
+      fireEditorCanvasEvent('save', {
+        ref: { kind: 'atomic-ref', slot_index: 0 },
+        fields: { size: 5 },
+      });
+    });
+    await act(async () => {
+      fireEditorCanvasEvent('sectionRename', {
+        sectionId: 'all-slots',
+        name: 'Morning',
+      });
+    });
+    await act(async () => {
+      fireEditorCanvasEvent('save', {
+        ref: { kind: 'atomic-ref', slot_index: 2 },
+        fields: { size: 9 },
+      });
+    });
+    // Server says edit 2 (the renameSection) is the one that failed.
+    applyBatchMock.mockRejectedValueOnce(
+      new FakeSidecarBatchFailure(400, 2, 'renameSection', 'invalid name'),
+    );
+    await act(async () => {
+      screen.getByTestId('staged-save').click();
+    });
+    expect(screen.getByTestId('retry-modal')).toBeInTheDocument();
+    // Drop: should pop opLog[1] (the renameSection at index 2,
+    // 1-based), NOT opLog[0]. The subsequent applyBatch call should
+    // carry 2 edits — slot_index 0 patch + slot_index 2 patch.
+    await act(async () => {
+      screen.getByTestId('retry-modal-drop').click();
+    });
+    await waitFor(() => {
+      expect(screen.queryByTestId('staged-save')).toBeNull();
+    });
+    const lastCall = applyBatchMock.mock.calls.at(-1) as unknown[];
+    const lastEdits = lastCall?.[1] as Array<{ kind: string }> | undefined;
+    expect(lastEdits).toHaveLength(2);
+    // Both remaining edits are patchBlock (the renameSection was dropped).
+    expect(lastEdits?.[0].kind).toBe('patchBlock');
+    expect(lastEdits?.[1].kind).toBe('patchBlock');
+  });
+
+  it('§16.2.6.t2 slice-review T4: sentinel failedAtIdx === 0 hides the Drop button (_finalize composition path)', async () => {
+    // c2 added `{#if failedAtIdx > 0}` around the Drop button so
+    // composition failures + empty-batch + internal errors (all set
+    // failedAtIdx: 0) don't show a meaningless "drop the failed
+    // edit" affordance. This pin makes the branch load-bearing.
+    await mountAndAwaitStub();
+    await act(async () => {
+      fireEditorCanvasEvent('save', {
+        ref: { kind: 'atomic-ref', slot_index: 0 },
+        fields: { size: 5 },
+      });
+    });
+    applyBatchMock.mockRejectedValueOnce(
+      new FakeSidecarBatchFailure(400, 0, '_finalize',
+        'batch produces an invalid template: ...'),
+    );
+    await act(async () => {
+      screen.getByTestId('staged-save').click();
+    });
+    // Modal visible; Retry + Cancel buttons present; Drop button ABSENT.
+    expect(screen.getByTestId('retry-modal')).toBeInTheDocument();
+    expect(screen.getByTestId('retry-modal-retry')).toBeInTheDocument();
+    expect(screen.getByTestId('retry-modal-cancel')).toBeInTheDocument();
+    expect(screen.queryByTestId('retry-modal-drop')).toBeNull();
+  });
+
   it('§16.2.6.t1: intercepted edits persist to localStorage with the current updatedAt snapshot', async () => {
     getStationSidecarMock.mockResolvedValue({
       template: makeTemplate(),
