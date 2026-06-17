@@ -9398,6 +9398,117 @@ operators report navigating between trace + canvas feels disjointed.
 The §16.2.0 D4 follow-up note ("LATER (§16.2.6 or §16.2.7)") homes
 this here. (Was .t4.)
 
+**Design pass (entering implementation):** `TracePane` already
+dispatches `select { slotIndex }` (wired in c2 as a forward
+pointer, with keyboard a11y — Enter / Space activate the row). The
+parent page is the consumer; the visual editor's canvas + chip
+rendering already exists. What's missing is (a) the trace-slot →
+chip-ref mapping function, (b) chip identity in the DOM so the page
+can find + scroll the right chip, and (c) a brief visual confirm
+("the chip I just landed on is THIS one") so the operator's eye
+locks on instead of hunting through the canvas.
+
+**D1 — Trace-slot → ref mapping.** `TraceSlot` carries `(slot,
+row, block)`. For flat_slots stations: `slot.slot` IS the atomic
+ref's `slot_index`. For row_template stations: `(slot.row,
+slot.block)` is the atomic address — `slot.slot` is the globally-
+flattened numbering and shouldn't be used as a `slot_index`. The
+mapping helper detects layout form from `template.layout.flat_slots`
+vs `template.layout.row_template` and emits the matching
+`AtomicRef`. **Macro coverage:** when the resolved atomic address
+falls INSIDE a macro's expanded range (sidecar walk via the same
+expansion `<Section>` uses for chip rendering), the helper returns
+the macro's first MacroPlaceholder (`pick_in_macro=1`) instead —
+the canvas renders one grouped chip per macro, not per repeat
+instance, so the operator's eye lands on the right visual element.
+
+**D2 — Chip DOM identity via data attributes.** Add `data-ref-key`
+to every chip — a canonical string serialization of its ref
+(`atomic:slot=N`, `atomic:row=R:block=B`, `macro:ID:pick=K`). The
+page resolves trace-row → ref → key → `document.querySelector` to
+find the chip element. Alternative considered + rejected: a
+`Map<key, Element>` maintained by `<EditorCanvas>` + exposed via
+`getChipElement(ref)`. The map needs invalidation every chip
+re-render (Svelte's reactive re-renders are frequent — staged-edit
+flow alone fires several per Save); data attributes survive
+re-render unchanged + need no coordination. Cost: one
+`querySelector` per click — O(chip-count) selector match, ~2k for
+Rebirth Radio. Acceptable for an operator-triggered action.
+
+**D3 — Scroll behavior.** `element.scrollIntoView({ behavior:
+'smooth', block: 'nearest', inline: 'nearest' })`. `nearest` avoids
+scrolling when the chip is already in viewport; `smooth` honors
+`prefers-reduced-motion` via the browser's built-in respect (no
+manual check needed). The `<Section>` containing the chip MUST be
+expanded first — large-station auto-collapse (§16.2.2) would
+otherwise leave the chip in a `display:none` subtree where
+`scrollIntoView` snaps to the section header instead. The page's
+handler sets the section's `expanded=true` state BEFORE calling
+`scrollIntoView` (use a `tick()` await so Svelte renders the
+expanded section before the scroll runs).
+
+**D4 — Brief flash for visual confirm.** After scroll, add a
+`chip--jump-flash` class to the chip element for ~800ms then strip
+it. Animation: outline-color pulse using the chip's
+`--chip-color` variable (already CSS-var-driven for the source
+swatch) so the flash matches the chip's identity. Uses
+`@media (prefers-reduced-motion: reduce)` to swap the keyframe
+animation for a static-color hold during the same duration so
+motion-sensitive operators still see the cue. Race semantics: a
+SECOND trace-row click during the flash window restarts the timer
++ moves the class to the new chip — no flashed-class-leak.
+
+**D5 — DetailPanel: scroll-and-flash only; don't auto-open.** A
+trace-row click is "where is this slot?", not "I want to edit it."
+Auto-opening the DetailPanel would force-close TracePane (D2(b)
+mutual-exclusivity) — but the operator just clicked from
+TracePane, so dropping that pane is jarring. v1 ships
+scroll-and-flash; the operator clicks the chip themselves if they
+want to edit. **Punted:** auto-open as a §16.2.6.t3 follow-up if
+operators ask for it (would need a "stay-open" affordance on the
+TracePane to avoid the bouncing-pane regression).
+
+**D6 — Out-of-canvas refs (no match).** A trace row whose mapped
+ref doesn't exist in the sidecar (drift — slot exists in template
++ trace but no section references it; sits in the `_unsorted`
+bin or a system bin the operator collapsed). The lookup returns
+null; the handler is a defensive no-op + emits a console.warn
+naming the slot index. No visible error — silently failing to
+jump is less jarring than a banner for a rare drift case;
+`_unsorted` chips are already visible if expanded. Logged so a
+real bug (sidecar drift bug) surfaces in dev.
+
+**c1 / c2 split.** **c1** = pure-function `findChipRef(template,
+sidecar, traceSlot) → ExpandedRef | null` + the `refKey(ref) →
+string` serializer in `web/src/lib/editor.ts` (sibling to the
+existing `expandSection`). Vitest-unit-testable with no DOM —
+pins the 4 mapping cases (flat_slots atomic, row_template atomic,
+flat_slots-inside-macro, row_template-inside-macro) + the null
+case. **c2** = wire it up: add `data-ref-key={refKey(ref)}` to
+`<Chip>` (1-line change); add `handleTraceSelect` to `+page.svelte`
+(maps → expands section → scrolls → flashes); add the flash CSS
+class + `prefers-reduced-motion` variant. visualise.test.ts pins
+the integration end-to-end with jsdom (mock `scrollIntoView` —
+jsdom doesn't implement it; just assert it was called with the
+right options + the `chip--jump-flash` class lands on the right
+chip element).
+
+**Testing strategy.** No new helper-direct unit tests beyond
+findChipRef; the existing TracePane test pins the `select` event
+dispatch; visualise.test.ts pins the integration. If macros add
+edge-case complexity (e.g. a future schema change to MacroPlaceholder
+indexing), revisit in a sweep batch.
+
+**Punts not promoted:**
+- Auto-open DetailPanel after jump (D5 alternative). Promote on
+  operator feedback.
+- Bidirectional (chip-click → flash trace row). Symmetric UX would
+  be nicer but the use case is weaker — chip click already opens
+  DetailPanel which contains all the info the trace row would show.
+- `scrollIntoView({block: 'center'})` instead of `'nearest'`. May
+  feel more confirming for the eye; revisit if 'nearest' lands on
+  a barely-visible chip too often.
+
 **§16.2.6.t4** (small) — Cancellation-edge polish on
 `POLICY_CANCEL_EXISTING` supersede. §16.2.6 c1 review #1 finding
 #7. `test_preview_cancel_existing_supersedes_running_preview`
