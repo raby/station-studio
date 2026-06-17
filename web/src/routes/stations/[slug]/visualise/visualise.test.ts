@@ -1188,6 +1188,79 @@ describe('visualise +page.svelte — §16.2.6 c3e c1 staged-edit loss guards', (
     expect(lastEdits?.[1].kind).toBe('patchBlock');
   });
 
+  it('§16.2.6.t13 T7: applyBatch JSON body matches the backend wire contract (kind + camelCase keys)', async () => {
+    // End-to-end wire-shape pin. Pre-fix, both backend pytest +
+    // frontend vitest suites tested their own halves but no test
+    // captured the actual JSON.stringify payload the frontend posts.
+    // A future refactor renaming Edit.kind → Edit.type would silently
+    // break end-to-end while both unit suites stay green. Capture
+    // the applyBatch call args + assert each envelope has `kind` +
+    // the right camelCase keys for its kind (matching the c1a
+    // schema parse fixture).
+    await mountAndAwaitStub();
+    // Queue one of each interesting kind shape:
+    await act(async () => {
+      fireEditorCanvasEvent('save', {
+        ref: { kind: 'atomic-ref', slot_index: 0 },
+        fields: { size: 5 },
+      });
+    });
+    await act(async () => {
+      fireEditorCanvasEvent('sectionRename', {
+        sectionId: 'all-slots',
+        name: 'Morning',
+      });
+    });
+    await act(async () => {
+      screen.getByTestId('staged-save').click();
+    });
+    // Capture the body applyBatch was called with.
+    const lastCall = applyBatchMock.mock.calls.at(-1) as unknown[];
+    const editsArg = lastCall?.[1] as Array<Record<string, unknown>>;
+    expect(editsArg).toHaveLength(2);
+    // patchBlock envelope wire-shape:
+    expect(editsArg[0].kind).toBe('patchBlock');
+    expect(editsArg[0].address).toEqual({ slot_index: 0 });
+    expect(editsArg[0].fields).toEqual({ size: 5 });
+    // renameSection envelope wire-shape (camelCase `sectionId`):
+    expect(editsArg[1].kind).toBe('renameSection');
+    expect(editsArg[1].sectionId).toBe('all-slots');
+    expect(editsArg[1].name).toBe('Morning');
+  });
+
+  it('§16.2.6.t13 T8: server-returned out-of-bounds failedAtIdx surfaces banner + preserves opLog (no silent drop)', async () => {
+    // Pre-fix the defensive fallback dropped opLog[0] when the
+    // server's failedAtIdx exceeded the queue length (race window
+    // between request preparation + response arrival). Now: leave
+    // opLog intact + show an internal-error banner explaining the
+    // mismatch so the operator can re-Save or Discard.
+    await mountAndAwaitStub();
+    await act(async () => {
+      fireEditorCanvasEvent('save', {
+        ref: { kind: 'atomic-ref', slot_index: 0 },
+        fields: { size: 5 },
+      });
+    });
+    // Server returns failedAtIdx=5 but opLog only has 1 entry.
+    applyBatchMock.mockRejectedValueOnce(
+      new FakeSidecarBatchFailure(400, 5, 'patchBlock', 'out-of-bounds race'),
+    );
+    await act(async () => {
+      screen.getByTestId('staged-save').click();
+    });
+    expect(screen.getByTestId('retry-modal')).toBeInTheDocument();
+    await act(async () => {
+      screen.getByTestId('retry-modal-drop').click();
+    });
+    // Modal closed; opLog INTACT (NOT silently dropped opLog[0]);
+    // banner explains the internal error.
+    expect(screen.queryByTestId('retry-modal')).toBeNull();
+    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 1 edit/);
+    expect(screen.getByTestId('save-error')).toHaveTextContent(
+      /server reported failed edit 5/,
+    );
+  });
+
   it('§16.2.6.t2 slice-review T4: sentinel failedAtIdx === 0 hides the Drop button (_finalize composition path)', async () => {
     // c2 added `{#if failedAtIdx > 0}` around the Drop button so
     // composition failures + empty-batch + internal errors (all set

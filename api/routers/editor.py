@@ -1424,9 +1424,16 @@ def _apply_batch_edit(template: dict, sidecar: dict, env) -> dict:
     `sidecar` as needed; raises HTTPException on failure with the
     same shape the per-route endpoints use (so the operator-facing
     error text is identical between single-PATCH + batch paths).
-    Returns the (potentially-new) sidecar reference because some
-    paths replace it (ensure_unsorted_section / shift_atomic_slot_indices
-    return new dicts; mirroring the per-route shape).
+
+    **Return contract (§16.2.6.t12 P6 sharpening): callers MUST
+    rebind the returned sidecar reference** — some paths replace
+    it entirely (`ensure_unsorted_section` / `shift_atomic_slot_indices`
+    return new deep-copied dicts; mirroring the per-route shape).
+    Discarding the return value leaves atomic-shift mutations
+    silently dropped. A future "validate-only" mode that calls this
+    function and ignores the result would silently miss those
+    mutations — pin this contract via the return type + docstring,
+    not just the call site.
 
     c1b implementation note: rather than duplicating each route's
     apply logic, this dispatcher inlines the validation + mutation

@@ -18,8 +18,11 @@ from sqlalchemy.orm import sessionmaker
 
 from engine.models import Station
 
-# Reuse the editor_api fixture from the existing test module.
-from tests.test_editor_api import editor_api, _seed_station, _minimal_template
+# Reuse the editor_api fixture from the existing test module +
+# the public `seed_station` helper from the shared module
+# (§16.2.6.t12 P8 — moved out of test_editor_api's private surface).
+from tests.test_editor_api import editor_api
+from tests._helpers import seed_station as _seed_station, minimal_template as _minimal_template
 
 
 def _sidecar_for(template: dict) -> dict:
@@ -376,6 +379,65 @@ def test_dispatches_retype_block(seeded):
     # cursor_id (sequential's required field) dropped — weighted has
     # no cursor_id in its allowlist.
     assert "cursor_id" not in block
+
+
+def test_t12_p7_compound_rollback_structural_add_then_failure_undoes_shift(seeded):
+    """§16.2.6.t12 P7 — compound-rollback regression test.
+
+    Stages [structuralAdd(idx=0), renameSection(ghost)]:
+      - structuralAdd at idx=0 would: insert a new flat_slot at 0;
+        shift every existing atomic ref's slot_index by +1; ensure
+        `_unsorted` bin exists; append {kind:atomic, slot_index:0}
+        to that bin.
+      - renameSection on a non-existent section ghosts a 404 →
+        the batch rolls back the WHOLE transaction.
+
+    Post-rollback we must verify NOT JUST that the rename didn't
+    land (the simple test_mid_batch_failure_rolls_back_prior_mutations
+    covers that for rename-only batches), but that the structural
+    add's compounding effects ALSO unwound:
+      - morning still has blocks at slot_index 0/1 (NOT shifted).
+      - _unsorted bin doesn't exist.
+      - flat_slots length is still 3 (not 4).
+
+    The all-or-nothing transaction guarantees this implicitly, but
+    no prior test pinned the structural invariants after a roll-
+    back. The fundamental SQL transaction guarantee should hold
+    regardless of how many compounding effects a single edit has.
+    """
+    client, Session, _t = seeded
+    new_block = {
+        "source": "A", "strategy": "sequential",
+        "size": 1, "cursor_id": "C",
+    }
+    r = client.post(
+        "/api/stations/ts/sidecar/batch",
+        json={
+            "edits": [
+                {
+                    "kind": "structuralBlockEdit",
+                    "edit": {
+                        "op": "add", "slot_index": 0, "new_block": new_block,
+                    },
+                },
+                # Failing edit: ghost section.
+                {"kind": "renameSection", "sectionId": "ghost", "name": "X"},
+            ],
+        },
+    )
+    assert r.status_code == 404
+    # Verify ALL structural-add effects rolled back.
+    with Session() as db:
+        s = db.query(Station).filter(Station.slug == "ts").first()
+        # flat_slots length unchanged.
+        assert len(s.template["layout"]["flat_slots"]) == 3
+        # morning's atomic refs: slot_index 0 + 1 (NOT shifted to 1 + 2).
+        morning = next(sec for sec in s.sidecar["sections"] if sec["id"] == "morning")
+        assert [b["slot_index"] for b in morning["blocks"]] == [0, 1]
+        # _unsorted bin should NOT exist (would have been auto-created
+        # by structural add, but the rollback unwound it).
+        sec_ids = [sec["id"] for sec in s.sidecar["sections"]]
+        assert "_unsorted" not in sec_ids
 
 
 def test_dispatches_patch_macro_404_when_macro_missing(seeded):

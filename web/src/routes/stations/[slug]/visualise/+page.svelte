@@ -1003,8 +1003,24 @@
   // failure or empty); the modal hides Drop in that case, so this
   // function won't be called with the sentinel.
   async function handleDrop() {
+    // §16.2.6.t2 slice-review T8 (folded into t13): defend against
+    // a server-returned out-of-bounds failedAtIdx (race window —
+    // operator dropped an edit BETWEEN the request being prepared
+    // and the response arriving). Silently dropping opLog[0] in
+    // that case would remove the WRONG edit. Surface a banner +
+    // leave opLog intact instead so the operator can re-evaluate.
+    if (failedAtIdx > opLog.length) {
+      showRetryModal = false;
+      saveError =
+        `Internal error: server reported failed edit ${failedAtIdx} but ` +
+        `the queue only has ${opLog.length} edit${opLog.length === 1 ? '' : 's'}. ` +
+        'Staged edits preserved; please Save again or Discard.';
+      failedAtIdx = 0;
+      failedKind = '';
+      return;
+    }
     showRetryModal = false;
-    if (failedAtIdx > 0 && failedAtIdx <= opLog.length) {
+    if (failedAtIdx > 0) {
       opLog = [
         ...opLog.slice(0, failedAtIdx - 1),
         ...opLog.slice(failedAtIdx),
