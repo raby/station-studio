@@ -297,46 +297,24 @@ def patch_block(
     station = db.query(Station).filter(Station.slug == slug).first()
     if station is None:
         raise HTTPException(404, f"station '{slug}' not found")
-    # c1 review #9: route through the shared helpers (extracted in c1)
-    # so this endpoint, /blocks/retype, and /macros/{macro_id} stay in
-    # lockstep on optimistic-concurrency + address-resolution phrasing.
     _check_optimistic_token(station, payload.expected_updated_at)
 
     # Deep-copy so a mid-flight validation failure can't leave the
-    # ORM object holding a partially-mutated template.
+    # ORM object holding a partially-mutated template. patch_block
+    # doesn't touch sidecar — pass the current Station.sidecar through
+    # so the helper signature (which always takes sidecar) is happy;
+    # _apply_patch_block ignores it.
     template = copy.deepcopy(station.template)
+    _apply_patch_block(template, station.sidecar, payload.address, payload.fields)
+    # Helper mutated `block` in place inside `template`; re-resolve to
+    # return the post-mutation block in the response.
     block = _resolve_block_address(template, payload.address)
 
-    # Decision C: parameter-only. Any field outside the strategy's
-    # editable set (including strategy/source/size) is rejected.
-    strategy = block.get("strategy")
-    allowed = EDITABLE_FIELDS_BY_STRATEGY.get(strategy, frozenset())
-    rejected = sorted(set(payload.fields) - allowed)
-    if rejected:
-        raise HTTPException(
-            400,
-            f"fields {rejected} are not editable for strategy '{strategy}'. "
-            f"Editable: {sorted(allowed) or '(none)'}. "
-            f"(strategy/source go through PATCH /blocks/retype; "
-            f"size + structural edits are §16.2.5.)",
-        )
-
-    # Apply: null clears an optional key; otherwise set.
-    for key, value in payload.fields.items():
-        if value is None:
-            block.pop(key, None)
-        else:
-            block[key] = value
-
-    # Re-validate the WHOLE template (catches cross-block breakage +
-    # the engine's per-field validators, e.g. cursor_id ∈ cursors_init).
     try:
         parse_template(template)
     except TemplateError as e:
         raise HTTPException(400, f"edit produces an invalid template: {e}")
 
-    # Reassign (not in-place mutate) so SQLAlchemy marks the JSON
-    # column dirty → the `updated_at` onupdate fires.
     station.template = template
     db.commit()
     db.refresh(station)
@@ -496,65 +474,14 @@ def patch_block_retype(
         raise HTTPException(404, f"station '{slug}' not found")
     _check_optimistic_token(station, payload.expected_updated_at)
 
-    # c1 review #5: structural keys (strategy/source/size) must come
-    # via new_strategy/new_source/(structural-edits-§16.2.5), NOT
-    # smuggled through new_fields. Without this guard, an operator
-    # could clear `strategy` via `new_fields: {"strategy": null}` —
-    # step 3 would pop it, step 4 would drop everything except
-    # {strategy, source, size}, and parse_template would 400 with a
-    # confusing 'missing strategy' message. Reject up front instead.
-    STRUCTURAL_KEYS = {"strategy", "source", "size"}
-    smuggled = sorted(STRUCTURAL_KEYS & set(payload.new_fields))
-    if smuggled:
-        raise HTTPException(
-            400,
-            f"new_fields cannot carry structural keys {smuggled}. "
-            "Use new_strategy / new_source for strategy + source "
-            "changes; `size` changes are §16.2.5 (structural edits).",
-        )
-
     template = copy.deepcopy(station.template)
+    _apply_retype_block(
+        template, station.sidecar, payload.address,
+        payload.new_strategy, payload.new_source, payload.new_fields,
+    )
+    # Helper mutated `block` in place inside `template`; re-resolve
+    # to return the post-mutation block in the BlockRetypeResponse.
     block = _resolve_block_address(template, payload.address)
-
-    # 1. Apply new_strategy + 2. new_source on the in-place block
-    # (template was deep-copied so this doesn't poison the ORM
-    # state if validation later fails).
-    if payload.new_strategy is not None:
-        if payload.new_strategy not in SUPPORTED_STRATEGIES:
-            raise HTTPException(
-                400,
-                f"new_strategy '{payload.new_strategy}' not supported. "
-                f"Supported: {sorted(SUPPORTED_STRATEGIES)}.",
-            )
-        block["strategy"] = payload.new_strategy
-    if payload.new_source is not None:
-        known_sources = {s.get("name") for s in template.get("sources", [])}
-        if payload.new_source not in known_sources:
-            raise HTTPException(
-                400,
-                f"new_source '{payload.new_source}' not declared in "
-                "template.sources[]. Add it there first (with the "
-                "right role for the strategy) or pick an existing source.",
-            )
-        block["source"] = payload.new_source
-
-    # 3. Apply new_fields (null clears).
-    for key, value in payload.new_fields.items():
-        if value is None:
-            block.pop(key, None)
-        else:
-            block[key] = value
-
-    # 4. Drop keys not in the new strategy's editable set. parse_template
-    # would 400 on stale ones anyway (e.g. `genre` on a non-jingle/mix
-    # strategy); pre-dropping makes the retype's intent clear.
-    strategy = block.get("strategy")
-    allowed = EDITABLE_FIELDS_BY_STRATEGY.get(strategy, frozenset())
-    structural = {"strategy", "source", "size"}
-    for key in list(block.keys()):
-        if key in structural or key in allowed:
-            continue
-        block.pop(key, None)
 
     try:
         parse_template(template)
@@ -606,131 +533,44 @@ def patch_macro(
     # Mutation paths can't safely accept the trivial fallback unless
     # the sidecar is genuinely absent (no DB column AND no file);
     # a broken DB column or file is a 400 here (operator must fix
-    # before mutating). Unlike GET, we can't silently degrade —
-    # that'd lose the operator's macro grouping for this write.
-    #
-    # Slice-review sweep: deep-copy the loaded sidecar BEFORE the
-    # `for macro in sidecar.get("macros", [])` mutation loop below.
-    # When `Station.sidecar` is populated, `_resolve_sidecar` returns
-    # the ORM-attached dict by reference (case 1 —
-    # `return station.sidecar, None`). The macro-spec mutation loop's
-    # `spec.setdefault(...)` + `spec[key] = value` would then write
-    # to the live ORM attribute before drift validation runs in
-    # `_persist_sidecar`. The sibling §16.2.5 endpoints all route
-    # through `_prepare_sidecar_mutation` which deep-copies; patch_macro
-    # is the §16.2.4-era outlier. Mirror the same shape.
+    # before mutating). Deep-copy before the helper mutates: when
+    # Station.sidecar is populated, _resolve_sidecar returns it by
+    # reference, and the helper's `spec.setdefault(...) +
+    # spec[key] = value` would otherwise write to the live ORM
+    # attribute before drift validation runs in _persist_sidecar.
+    # The sibling §16.2.5 endpoints all route through
+    # _prepare_sidecar_mutation which deep-copies; patch_macro is
+    # the §16.2.4-era outlier — mirror the shape locally.
     sidecar = copy.deepcopy(
         _resolve_sidecar(station, template, stations_dir, strict=True)[0],
     )
 
-    # Resolve macro_id → unique engine-template addresses by walking
-    # the sidecar. See engine.editor_metadata.resolve_macro_addresses
-    # for the anchoring algorithm + cross-checks. c1 review #10 moved
-    # this primitive next to expand_section / lookup_macro so the
-    # planned §16.2.4-design `expand_section` slot-position extension
-    # has one home, not two.
-    try:
-        deduped = resolve_macro_addresses(sidecar, macro_id)
-    except MacroResolutionError as e:
-        # c1 review #2 + #3: negative-section_start and non-
-        # contiguous-section errors come from the engine helper as
-        # MacroResolutionError; translate to a 400 with the
-        # operator-readable message + a regeneration hint.
-        raise HTTPException(
-            400,
-            f"{e} Fix the sidecar's section layout or regenerate via "
-            "`python -m scripts.derive_sidecar`.",
-        )
-
-    if not deduped:
-        raise HTTPException(
-            404,
-            f"macro_id '{macro_id}' not found in the station's "
-            "sidecar. The macro either doesn't exist or the sidecar "
-            "is stale (regenerate via `python -m scripts.derive_sidecar` "
-            "if you've edited the template since).",
-        )
-
-    # Apply payload.fields to each addressed block. Parameter-only
-    # guard fires per block — if any block rejects, the whole
-    # transaction aborts (deep-copy isolation makes this clean).
-    # c1 review #1: route through _resolve_block_address so any
-    # sidecar→template drift (stale slot_index, layout-form mismatch)
-    # surfaces as the same 400/404 contract patch_block uses, not
-    # an uncaught IndexError/KeyError → 500.
-    # c1 review #11: hoist `set(payload.fields)` — it doesn't change
-    # across the loop, so recomputing N times for a wide macro is
-    # wasted work.
-    payload_keys = set(payload.fields)
-    blocks_touched = 0
-    for addr_dict in deduped:
-        addr = BlockAddress(**addr_dict)
-        block = _resolve_block_address(template, addr)
-
-        strategy = block.get("strategy")
-        allowed = EDITABLE_FIELDS_BY_STRATEGY.get(strategy, frozenset())
-        rejected = sorted(payload_keys - allowed)
-        if rejected:
-            raise HTTPException(
-                400,
-                f"macro '{macro_id}': fields {rejected} are not "
-                f"editable for strategy '{strategy}' (block at "
-                f"{addr_dict}). Editable: {sorted(allowed) or '(none)'}. "
-                "(Macro retyping is PATCH /blocks/retype per block; "
-                "structural edits are §16.2.5.)",
-            )
-        for key, value in payload.fields.items():
-            if value is None:
-                block.pop(key, None)
-            else:
-                block[key] = value
-        blocks_touched += 1
+    sidecar, blocks_touched = _apply_patch_macro(
+        template, sidecar, macro_id, payload.fields,
+    )
 
     try:
         parse_template(template)
     except TemplateError as e:
         raise HTTPException(400, f"macro edit produces an invalid template: {e}")
 
-    # §16.2.5 D1: update the sidecar's macros[].spec + write to DB
-    # (not disk — that's now the export artifact). Without this, the
-    # committed sidecar's spec drifts from the template after every
-    # macro edit — GET /sidecar would return a macro chip whose
-    # DetailPanel shows the OLD spec value while the underlying
-    # engine blocks have the new one.
-    #
-    # When the sidecar came from the trivial fallback (Station.sidecar
-    # IS NULL AND no on-disk file), there's nothing to write back —
-    # un-authored stations have no macros[] entries by definition, so
-    # the `for macro in ...` loop is a no-op + we skip the column
-    # update to avoid materializing the trivial sidecar in the DB
-    # (preserves the "NULL = un-authored" semantics).
-    spec_changed = False
-    for macro in sidecar.get("macros", []):
-        if macro.get("id") != macro_id:
-            continue
-        spec = macro.setdefault("spec", {})
-        for key, value in payload.fields.items():
-            if value is None:
-                spec.pop(key, None)
-            else:
-                spec[key] = value
-        spec_changed = True
-
-    # c1 review #3: route through _persist_sidecar so drift rules
-    # re-run on the post-edit sidecar (rule 10 — macro spec validity
-    # — could otherwise drift if a spec mutation introduced a now-
-    # invalid field). Mirrors the 6 §16.2.5 endpoints' shape;
-    # consistent revalidation across all write paths.
+    # Decide whether to persist the sidecar or just the template.
+    # Trivial-fallback handling: when Station.sidecar IS NULL AND no
+    # on-disk file, the helper's spec-update loop was a no-op (no
+    # macros[] entry to mutate). Writing the synthesised sidecar back
+    # would falsely flip Station.sidecar from NULL to a synthesised
+    # value + GET would prefer that over the legitimate template-
+    # driven trivial. Detect by checking whether sidecar.macros holds
+    # a matching entry — equivalent to the route's pre-DRY
+    # `spec_changed` flag, but computed from sidecar state instead of
+    # threaded out of the helper. The check is cheap (linear in
+    # macros[] length; Rebirth Radio: ~50 entries).
+    spec_changed = any(
+        m.get("id") == macro_id for m in sidecar.get("macros", [])
+    )
     if spec_changed:
-        # Slice-review sweep: deep-copy moved to the load step above,
-        # so `sidecar` here is already isolated from `Station.sidecar`.
         _persist_sidecar(station, sidecar, template=template)
     else:
-        # Trivial-fallback path (no macros[] entry to update) → just
-        # the template. We DON'T persist the synthesised sidecar:
-        # writing it would falsely flip Station.sidecar from NULL
-        # to a synthesised value + GET would prefer that over the
-        # legitimate template-driven trivial.
         station.template = template
     # c2 review #3 finding #1: route the commit through the
     # SidecarJSON-aware helper — translates StatementError(grammar
@@ -927,36 +767,10 @@ def create_section(
     starting with `_` (reserved for system bins) or duplicates of
     an existing section's id.
     """
-    station, _template, sidecar = _prepare_sidecar_mutation(
+    station, template, sidecar = _prepare_sidecar_mutation(
         slug, db, stations_dir, payload.expected_updated_at,
     )
-
-    # c1 review #3: at CREATE time, reject the prefix convention
-    # (forward-compat against operators claiming a future-system-bin
-    # name). Rename / delete / move guards use the narrower
-    # `is_system_section` (membership-only) so legacy hand-authored
-    # sidecars with `_archive` etc. remain operator-manageable.
-    if is_reserved_id_prefix(payload.id):
-        raise HTTPException(
-            400,
-            "section id can't start with `_` (reserved for current + "
-            f"future system bins like `{UNSORTED_SECTION_ID}`).",
-        )
-    if not payload.id:
-        raise HTTPException(400, "section id must be a non-empty string.")
-    if lookup_section(sidecar, payload.id) is not None:
-        raise HTTPException(
-            409,
-            f"section id '{payload.id}' already exists.",
-        )
-
-    sidecar.setdefault("sections", []).append({
-        "id": payload.id,
-        "name": payload.name or payload.id,
-        "blocks": [],
-    })
-    sidecar.setdefault("layout_order", []).append(payload.id)
-
+    sidecar = _apply_section_create(template, sidecar, payload.id, payload.name)
     return _finish_sidecar_mutation(station, sidecar, db)
 
 
@@ -973,22 +787,10 @@ def rename_section(
 ):
     """Rename a section's `name` (the user-visible label). Id stays
     immutable here. Rejected for the `_unsorted` bin (system-managed)."""
-    station, _template, sidecar = _prepare_sidecar_mutation(
+    station, template, sidecar = _prepare_sidecar_mutation(
         slug, db, stations_dir, payload.expected_updated_at,
     )
-
-    if is_system_section(section_id):
-        raise HTTPException(
-            400,
-            f"can't rename the system `{section_id}` section.",
-        )
-    section = lookup_section(sidecar, section_id)
-    if section is None:
-        raise HTTPException(404, f"section '{section_id}' not found.")
-    if not payload.name:
-        raise HTTPException(400, "section name must be a non-empty string.")
-    section["name"] = payload.name
-
+    sidecar = _apply_rename_section(template, sidecar, section_id, payload.name)
     return _finish_sidecar_mutation(station, sidecar, db)
 
 
@@ -1014,47 +816,15 @@ def delete_section(
     Rejected: deleting the `_unsorted` bin itself (it's system-
     managed; users empty it by moving blocks elsewhere).
     """
-    station, _template, sidecar = _prepare_sidecar_mutation(
+    station, template, sidecar = _prepare_sidecar_mutation(
         slug, db, stations_dir, expected_updated_at,
     )
-
-    if is_system_section(section_id):
-        raise HTTPException(
-            400,
-            f"can't delete the system `{section_id}` section "
-            "(it's auto-managed; move its blocks into other sections "
-            "to empty it).",
-        )
-    section = lookup_section(sidecar, section_id)
-    if section is None:
-        raise HTTPException(404, f"section '{section_id}' not found.")
-
-    # c1 review #10: capture the blocks AFTER ensure_unsorted_section's
-    # deep-copy + re-find, so the bin's blocks list holds the
-    # post-deepcopy block dicts (no aliasing with the pre-deepcopy
-    # section dicts). The prior implementation captured `blocks` from
-    # the pre-deepcopy section, then extended the bin with those
-    # ORIGINAL references — the bin worked by accident but mixed
-    # pre/post-deepcopy dicts in the same sidecar (a latent aliasing
-    # hazard for any code that mutates the bin's blocks expecting them
-    # to be fresh).
-    has_blocks = bool(section.get("blocks"))
-    if has_blocks:
-        sidecar = ensure_unsorted_section(sidecar)
-        # Re-find both sections in the deep-copied sidecar.
-        moved_section = lookup_section(sidecar, section_id)
-        bin_section = lookup_section(sidecar, UNSORTED_SECTION_ID)
-        # Move the post-deepcopy blocks (these dicts are NEW; no
-        # aliasing with the pre-deepcopy section's blocks).
-        bin_section["blocks"].extend(moved_section.get("blocks", []))
-
-    sidecar["sections"] = [
-        s for s in sidecar["sections"] if s.get("id") != section_id
-    ]
-    sidecar["layout_order"] = [
-        sid for sid in sidecar.get("layout_order", []) if sid != section_id
-    ]
-
+    # MUST-rebind sidecar — _apply_section_delete returns a new
+    # deep-copied dict when the deleted section has blocks (the
+    # ensure_unsorted_section deep-copy preserves the post-deepcopy /
+    # pre-deepcopy block-dict separation the c1 review #10 fix
+    # established).
+    sidecar = _apply_section_delete(template, sidecar, section_id)
     return _finish_sidecar_mutation(station, sidecar, db)
 
 
@@ -1070,39 +840,10 @@ def reorder_sections(
 ):
     """Replace `layout_order` with a permutation of the current
     section ids. add / drop ids → 400 (those are POST + DELETE)."""
-    station, _template, sidecar = _prepare_sidecar_mutation(
+    station, template, sidecar = _prepare_sidecar_mutation(
         slug, db, stations_dir, payload.expected_updated_at,
     )
-
-    current = {s.get("id") for s in sidecar.get("sections", [])}
-    proposed = set(payload.layout_order)
-    if proposed != current:
-        added = sorted(proposed - current)
-        dropped = sorted(current - proposed)
-        raise HTTPException(
-            400,
-            f"layout_order must be a PERMUTATION of existing section ids. "
-            f"Added (unknown): {added}; dropped: {dropped}.",
-        )
-    if len(payload.layout_order) != len(set(payload.layout_order)):
-        raise HTTPException(
-            400, "layout_order must not contain duplicate ids.",
-        )
-    # Slice-review sweep: pin `_unsorted` at the end. The bin's
-    # visual contract is "orphan landing zone" — putting it above
-    # user-authored sections breaks the canvas's progressive-
-    # disclosure flow. The SectionHeader hides up/down buttons on
-    # `_unsorted`, but a direct API client could PUT a layout_order
-    # that routes it elsewhere. Enforce server-side too.
-    if UNSORTED_SECTION_ID in payload.layout_order:
-        if payload.layout_order[-1] != UNSORTED_SECTION_ID:
-            raise HTTPException(
-                400,
-                f"the `{UNSORTED_SECTION_ID}` bin must stay at the END of "
-                f"layout_order (it's a system section, not user-orderable).",
-            )
-    sidecar["layout_order"] = list(payload.layout_order)
-
+    sidecar = _apply_reorder_sections(template, sidecar, payload.layout_order)
     return _finish_sidecar_mutation(station, sidecar, db)
 
 
@@ -1129,89 +870,13 @@ def move_block(
     matching atomic addressing — if multiple sections reference the
     same address (drift rule 8 catches that at load), 400.
     """
-    station, _template, sidecar = _prepare_sidecar_mutation(
+    station, template, sidecar = _prepare_sidecar_mutation(
         slug, db, stations_dir, payload.expected_updated_at,
     )
-
-    # Slice-review sweep: reject `_unsorted` as a target for manual
-    # moves. D2 reserves the bin for auto-rescue (non-empty section
-    # delete + structural add) — manual routing in would erode the
-    # bin's "these chips lost their section" semantic. The frontend's
-    # `canDropOn` predicate filters this client-side; mirror the
-    # check server-side so direct API consumers + future surfaces
-    # (keyboard shortcuts, batch ops, scripts) can't bypass it.
-    if is_system_section(payload.target_section_id):
-        raise HTTPException(
-            400,
-            f"can't manually move into the system `{payload.target_section_id}` "
-            "section. System bins are auto-filled by section delete + structural "
-            "add (D2). Move to a real section instead.",
-        )
-    target = lookup_section(sidecar, payload.target_section_id)
-    if target is None:
-        raise HTTPException(
-            404, f"target section '{payload.target_section_id}' not found.",
-        )
-
-    # c1 review #2: ATOMIC ONLY. Moving a macro between sections
-    # mis-aligns its slot range (resolve_macro_addresses derives
-    # positions from section context); the schema's docstring spells
-    # out the limitation. The matcher rejects macros explicitly so
-    # operators see a clear 400 rather than a silent 404 if the
-    # frontend forgets to send `address` (BlockAddress is required
-    # by the schema, but a future BlockMoveRequest extension might
-    # XOR with macro_id again — this guard catches that drift).
-    addr = payload.address
-    if addr.slot_index is None and addr.block_idx is None:
-        raise HTTPException(
-            400, "address must set slot_index or block_idx.",
-        )
-    if addr.slot_index is not None and addr.block_idx is not None:
-        raise HTTPException(
-            400,
-            "address must set exactly one of slot_index / block_idx.",
-        )
-
-    def _matches(b: dict) -> bool:
-        if b.get("kind") != "atomic":
-            return False
-        if addr.slot_index is not None:
-            return b.get("slot_index") == addr.slot_index
-        return b.get("block_idx") == addr.block_idx
-
-    source: dict | None = None
-    moving_block: dict | None = None
-    for s in sidecar["sections"]:
-        for b in s.get("blocks", []):
-            if _matches(b):
-                if source is not None:
-                    raise HTTPException(
-                        400,
-                        "address matches blocks in multiple sections "
-                        "(sidecar drift — re-derive).",
-                    )
-                source = s
-                moving_block = b
-    if source is None or moving_block is None:
-        raise HTTPException(
-            404,
-            f"no atomic block matching address "
-            f"{addr.model_dump(exclude_none=True)} found in any section. "
-            "(Macros aren't movable in §16.2.5 — see BlockMoveRequest "
-            "docstring; queued for §16.2.6 + a sidecar grammar update.)",
-        )
-
-    # Remove from source, insert into target.
-    source["blocks"] = [b for b in source["blocks"] if b is not moving_block]
-    target_blocks = target.setdefault("blocks", [])
-    idx = payload.target_index
-    if idx is None or idx >= len(target_blocks):
-        target_blocks.append(moving_block)
-    else:
-        if idx < 0:
-            raise HTTPException(400, "target_index must be >= 0.")
-        target_blocks.insert(idx, moving_block)
-
+    sidecar = _apply_move_block(
+        template, sidecar,
+        payload.address, payload.target_section_id, payload.target_index,
+    )
     return _finish_sidecar_mutation(station, sidecar, db)
 
 
@@ -1233,140 +898,10 @@ def structural_block_edit(
     station, template, sidecar = _prepare_sidecar_mutation(
         slug, db, stations_dir, payload.expected_updated_at,
     )
-    layout = template.get("layout", {})
-
-    if "flat_slots" not in layout or not isinstance(layout["flat_slots"], list):
-        raise HTTPException(
-            400,
-            "structural edits to row_template stations aren't supported in "
-            "§16.2.5 (D8 punt — block_idx-domain edits land in a future "
-            "slice). Convert the layout via the wizard-edit PUT first.",
-        )
-
-    flat_slots = layout["flat_slots"]
-    edit = payload.edit
-    idx = edit.slot_index
-
-    if edit.op == "size":
-        if not (0 <= idx < len(flat_slots)):
-            raise HTTPException(404, f"slot_index {idx} out of range.")
-        if edit.new_size is None or edit.new_size < 1:
-            raise HTTPException(
-                400, "size edits require new_size >= 1.",
-            )
-        flat_slots[idx]["size"] = edit.new_size
-        # No slot-count change → no sidecar shift required.
-
-    elif edit.op == "add":
-        if not (0 <= idx <= len(flat_slots)):
-            raise HTTPException(
-                404,
-                f"slot_index {idx} out of range for insert "
-                f"(valid 0..{len(flat_slots)} inclusive).",
-            )
-        if edit.new_block is None:
-            raise HTTPException(
-                400, "add edits require new_block.",
-            )
-        flat_slots.insert(idx, edit.new_block)
-        # Sidecar atomic refs at slot_index >= idx (BEFORE the insert)
-        # become slot_index + 1 (AFTER). Use the helper which deep-
-        # copies the sidecar; re-bind to the result.
-        sidecar = shift_atomic_slot_indices(sidecar, threshold=idx, delta=1)
-        # Auto-add the new block's atomic ref to `_unsorted` (D2
-        # philosophy: never leave a slot orphaned + give the operator
-        # a recoverable starting position). They move it to a real
-        # section via a follow-up PATCH /blocks/move call.
-        sidecar = ensure_unsorted_section(sidecar)
-        bin_section = lookup_section(sidecar, UNSORTED_SECTION_ID)
-        bin_section["blocks"].append(
-            {"kind": "atomic", "slot_index": idx},
-        )
-
-    elif edit.op == "remove":
-        if not (0 <= idx < len(flat_slots)):
-            raise HTTPException(404, f"slot_index {idx} out of range.")
-        # c1 review #1: cascade-drop matching sidecar atomic refs
-        # before popping flat_slots. The prior implementation 400'd
-        # with a "move to _unsorted first" hint, but moving doesn't
-        # REMOVE the reference — it just relocates it. The operator
-        # would be stuck (move-then-remove still 400s; there's no
-        # in-UI "delete chip" path until §16.2.6's chip-deletion
-        # affordance lands).
-        #
-        # The cascade is safe: a slot can have AT MOST one atomic
-        # reference (drift rule 8 catches duplicates at load time).
-        # So at most one block disappears from one section per
-        # call — observable + recoverable (operator can re-add via
-        # op="add" if it was a mistake; the new block lands in
-        # _unsorted).
-        #
-        # c1 review #9: single-pass cascade rather than per-section
-        # list-comprehension rebuild (which would re-allocate every
-        # section's blocks list even when no match). For Rebirth
-        # Radio's 2,196-chip sidecar the inner predicate evaluates
-        # exactly once per block — same asymptotics, ~3x fewer
-        # allocations in the common no-match-in-section case.
-        #
-        # Slice-review sweep: track which section the cascade touched
-        # so we can detect orphan-macro creation below. Drift rule 8
-        # caps matches at one — so once we find it, both loops exit.
-        touched_section_id: str | None = None
-        for s in sidecar.get("sections", []):
-            blocks = s.get("blocks")
-            if not blocks:
-                continue
-            for i, b in enumerate(blocks):
-                if (
-                    b.get("kind") == "atomic"
-                    and b.get("slot_index") == idx
-                ):
-                    blocks.pop(i)
-                    touched_section_id = s.get("id")
-                    break
-            if touched_section_id is not None:
-                break  # drift rule 8: at most one match across all sections
-
-        # Slice-review sweep: if the cascade emptied the section of
-        # atomic anchors but left macros, those macros become
-        # unreachable — `resolve_macro_addresses` silently skips macro-
-        # only sections (engine/editor_metadata.py:378 `continue`), and
-        # `_validate_no_overlapping_macros` can raise
-        # MacroResolutionError on the next mutation when section_start
-        # math goes negative. Reject the remove here so the operator
-        # can restructure first; auto-rescue to `_unsorted` doesn't
-        # help when `_unsorted` itself may lack an anchor. The error
-        # names the macros so the operator knows what to move.
-        if touched_section_id is not None:
-            touched = lookup_section(sidecar, touched_section_id)
-            if touched is not None:
-                remaining = touched.get("blocks", [])
-                has_atomic_after = any(
-                    b.get("kind") == "atomic" for b in remaining
-                )
-                orphan_macro_refs = sorted({
-                    b.get("ref") for b in remaining
-                    if b.get("kind") == "macro" and b.get("ref")
-                })
-                if not has_atomic_after and orphan_macro_refs:
-                    raise HTTPException(
-                        400,
-                        f"removing slot {idx} would orphan macros "
-                        f"{orphan_macro_refs} in section "
-                        f"'{touched_section_id}' (no atomic anchor would "
-                        f"remain — `resolve_macro_addresses` can't compute "
-                        f"positions for a macro-only section). Delete the "
-                        f"section first (DELETE /sections/{touched_section_id} "
-                        f"auto-moves blocks to `{UNSORTED_SECTION_ID}`), or "
-                        f"move the macros to a section with at least one "
-                        f"atomic anchor.",
-                    )
-
-        flat_slots.pop(idx)
-        # Sidecar atomic refs at slot_index > idx decrement by 1.
-        sidecar = shift_atomic_slot_indices(
-            sidecar, threshold=idx + 1, delta=-1,
-        )
+    # MUST-rebind sidecar — _apply_structural_block_edit returns a
+    # new dict on add/remove (shift_atomic_slot_indices +
+    # ensure_unsorted_section deep-copy).
+    sidecar = _apply_structural_block_edit(template, sidecar, payload.edit)
 
     # parse_template revalidates the WHOLE template (structural edits
     # could leave cursor refs dangling, role mismatches, etc.).
