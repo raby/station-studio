@@ -300,12 +300,9 @@ def patch_block(
     _check_optimistic_token(station, payload.expected_updated_at)
 
     # Deep-copy so a mid-flight validation failure can't leave the
-    # ORM object holding a partially-mutated template. patch_block
-    # doesn't touch sidecar — pass the current Station.sidecar through
-    # so the helper signature (which always takes sidecar) is happy;
-    # _apply_patch_block ignores it.
+    # ORM object holding a partially-mutated template.
     template = copy.deepcopy(station.template)
-    _apply_patch_block(template, station.sidecar, payload.address, payload.fields)
+    _apply_patch_block(template, payload.address, payload.fields)
     # Helper mutated `block` in place inside `template`; re-resolve to
     # return the post-mutation block in the response.
     block = _resolve_block_address(template, payload.address)
@@ -476,7 +473,7 @@ def patch_block_retype(
 
     template = copy.deepcopy(station.template)
     _apply_retype_block(
-        template, station.sidecar, payload.address,
+        template, payload.address,
         payload.new_strategy, payload.new_source, payload.new_fields,
     )
     # Helper mutated `block` in place inside `template`; re-resolve
@@ -960,6 +957,15 @@ def export_template(
 # positional, not envelope-typed, so non-batch callers don't need a
 # Pydantic envelope (D1).
 #
+# Signatures split into two groups by what they touch:
+#   * **template-only** (patch_block, retype_block) — take `template`
+#     + the per-kind args; mutate `template` in place; return None.
+#     The dispatcher passes its current sidecar reference through
+#     unchanged. Routes don't pass sidecar at all.
+#   * **sidecar-touching** (the other 7) — take `template, sidecar,
+#     …per-kind args`; mutate one or both; return the (possibly-new)
+#     sidecar dict.
+#
 # **MUST-rebind sidecar contract** (transferred verbatim from
 # §16.2.6.t12 P6's _apply_batch_edit docstring): helpers that call
 # `ensure_unsorted_section` / `shift_atomic_slot_indices` RETURN a
@@ -972,9 +978,15 @@ def export_template(
 
 
 def _apply_patch_block(
-    template: dict, sidecar: dict, address: BlockAddress, fields: dict[str, Any],
-) -> dict:
-    """§16.2.3 PATCH /blocks apply step. Mutates `template` in place."""
+    template: dict, address: BlockAddress, fields: dict[str, Any],
+) -> None:
+    """§16.2.3 PATCH /blocks apply step. Mutates `template` in place.
+
+    Template-only — no sidecar arg. The two sidecar-touching neighbours
+    (patchMacro / sectionDelete / structuralBlockEdit) take `sidecar`
+    because they mutate it; this one + retype_block don't, so we omit
+    the dead arg rather than pass it through. Callers (patch_block
+    route + batch dispatcher) drop the no-op argument."""
     block = _resolve_block_address(template, address)
     strategy = block.get("strategy")
     allowed = EDITABLE_FIELDS_BY_STRATEGY.get(strategy, frozenset())
@@ -992,18 +1004,18 @@ def _apply_patch_block(
             block.pop(key, None)
         else:
             block[key] = value
-    return sidecar
 
 
 def _apply_retype_block(
     template: dict,
-    sidecar: dict,
     address: BlockAddress,
     new_strategy: str | None,
     new_source: str | None,
     new_fields: dict[str, Any],
-) -> dict:
-    """§16.2.4 PATCH /blocks/retype apply step. Mutates `template` in place."""
+) -> None:
+    """§16.2.4 PATCH /blocks/retype apply step. Mutates `template` in place.
+
+    Template-only — no sidecar arg (same reasoning as patch_block)."""
     STRUCTURAL_KEYS = {"strategy", "source", "size"}
     smuggled = sorted(STRUCTURAL_KEYS & set(new_fields))
     if smuggled:
@@ -1044,7 +1056,6 @@ def _apply_retype_block(
         if key in structural or key in allowed:
             continue
         block.pop(key, None)
-    return sidecar
 
 
 def _apply_patch_macro(
@@ -1408,8 +1419,19 @@ def _apply_batch_edit(template: dict, sidecar: dict, env) -> dict:
     """
     kind = env.kind
 
+    # Template-only kinds: helpers mutate `template` in place, don't
+    # touch sidecar; dispatcher returns the unchanged sidecar reference.
     if kind == "patchBlock":
-        return _apply_patch_block(template, sidecar, env.address, env.fields)
+        _apply_patch_block(template, env.address, env.fields)
+        return sidecar
+    if kind == "retypeBlock":
+        _apply_retype_block(
+            template, env.address,
+            env.new_strategy, env.new_source, env.new_fields,
+        )
+        return sidecar
+
+    # Sidecar-touching kinds: helpers receive + return sidecar.
     if kind == "patchMacro":
         sidecar, _blocks_touched = _apply_patch_macro(
             template, sidecar, env.macro_id, env.fields,
@@ -1426,11 +1448,6 @@ def _apply_batch_edit(template: dict, sidecar: dict, env) -> dict:
     if kind == "moveBlock":
         return _apply_move_block(
             template, sidecar, env.address, env.target_section_id, env.target_index,
-        )
-    if kind == "retypeBlock":
-        return _apply_retype_block(
-            template, sidecar, env.address,
-            env.new_strategy, env.new_source, env.new_fields,
         )
     if kind == "structuralBlockEdit":
         return _apply_structural_block_edit(template, sidecar, env.edit)
