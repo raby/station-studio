@@ -559,10 +559,12 @@ class StructuralBlockEdit(BaseModel):
 class BlockStructureRequest(BaseModel):
     """PATCH /api/stations/{slug}/blocks/structure body (§16.2.5 D4).
 
-    Applies one structural edit. v1 ships single-edit semantics
-    (one op per request) — bulk edits would compound the
-    index-shift math (D5) + complicate optimistic concurrency.
-    Future slices may relax to a list[StructuralBlockEdit].
+    Applies one structural edit per request. Bulk structural edits
+    arrive via the §16.2.6.t2 batch endpoint (`SidecarBatchRequest`),
+    where a `structuralBlockEdit` envelope wraps each instance —
+    that route handles the index-shift compounding inside a single
+    transaction. This endpoint remains single-edit for callers that
+    don't need the batch envelope's overhead.
     """
     edit: StructuralBlockEdit
     expected_updated_at: str | None = None
@@ -597,6 +599,10 @@ class _BatchRenameSectionEnv(BaseModel):
 class _BatchSectionCreateEnv(BaseModel):
     kind: Literal["sectionCreate"]
     section_id: str = Field(..., alias="sectionId")
+    # `name` is optional — the existing POST /sections route auto-
+    # names un-named sections from `section_id` (humanise the slug).
+    # `_BatchRenameSectionEnv.name` stays required because rename
+    # without a target name is meaningless.
     name: str | None = None
     model_config = ConfigDict(populate_by_name=True)
 
@@ -626,6 +632,12 @@ class _BatchRetypeBlockEnv(BaseModel):
     address: BlockAddress
     new_strategy: str | None = Field(default=None, alias="newStrategy")
     new_source: str | None = Field(default=None, alias="newSource")
+    # `new_fields` defaults to an empty dict — the frontend always
+    # sends it (possibly empty) but defending against omission keeps
+    # the contract resilient. Contrasts with `_BatchPatchBlockEnv.fields`
+    # which is REQUIRED — a patch with no fields is a no-op there,
+    # so omission is a caller bug. Retype legitimately can change
+    # only strategy/source without touching parameter fields.
     new_fields: dict[str, Any] = Field(default_factory=dict, alias="newFields")
     model_config = ConfigDict(populate_by_name=True)
 
@@ -658,9 +670,20 @@ class SidecarBatchRequest(BaseModel):
     rolls back the whole batch (operator picks Retry or Drop in the
     UI; server stays consistent).
 
-    `expected_updated_at` is checked ONCE at the start (against the
-    station row); the inner ops do not re-check (the transaction
-    guarantees the row can't move under us).
+    **Optimistic-concurrency contract (c1a review N2 honesty edit):**
+    `expected_updated_at` is checked ONCE against the station row
+    at the start of the batch. Under default SQLAlchemy session
+    isolation (READ COMMITTED) the transaction does NOT prevent
+    concurrent writers from modifying `Station.updated_at` between
+    that initial SELECT and our final COMMIT — the window is wider
+    than the per-route ~10ms gap because the batch processes N
+    edits before committing. For the single-operator hobbyist
+    scope this matters far less than in multi-tenant deployments
+    (the project's target audience makes concurrent edits to the
+    same station unusual). c1b decides whether to tighten via
+    `SELECT FOR UPDATE` (row-lock during batch) or re-check
+    expected_updated_at right before commit — see the c1b
+    implementation notes.
     """
     edits: list[BatchEdit]
     expected_updated_at: str | None = None
