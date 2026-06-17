@@ -207,6 +207,39 @@ def test_unknown_station_returns_404(editor_api):
     assert r.status_code == 404
 
 
+def test_t6_single_edit_parse_template_failure_attributes_to_edit_1(
+    seeded, monkeypatch,
+):
+    """Slice-review T6 honesty: for a 1-edit batch, parse_template
+    failure IS attributable to edit 1 (no composition window).
+    failed_at_idx=1 + kind=<the edit's kind>, NOT the sentinel.
+    Multi-edit batches keep the _finalize sentinel (see
+    test_p3_finalize_failure_uses_failed_at_idx_zero_sentinel)."""
+    import api.routers.editor as editor_module
+    from engine.template import TemplateError
+
+    client, _Session, _t = seeded
+
+    def _boom_finalize(_template):
+        raise TemplateError("synthetic single-edit invalidation")
+
+    monkeypatch.setattr(editor_module, "parse_template", _boom_finalize)
+    r = client.post(
+        "/api/stations/ts/sidecar/batch",
+        json={"edits": [
+            {"kind": "renameSection", "sectionId": "morning", "name": "AM"},
+        ]},
+    )
+    assert r.status_code == 400
+    body = r.json()
+    assert body["failed_at_idx"] == 1
+    assert body["kind"] == "renameSection"
+    assert "synthetic single-edit" in body["error"]
+    # Message text reflects single-edit framing ("edit produces"
+    # NOT "batch produces").
+    assert body["error"].startswith("edit produces")
+
+
 def test_p3_finalize_failure_uses_failed_at_idx_zero_sentinel(
     seeded, monkeypatch,
 ):

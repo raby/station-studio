@@ -1827,6 +1827,22 @@ def sidecar_batch(
         # operator. The 0 sentinel (matching the empty-edits + 500
         # branches) consistently means "no specific edit; check the
         # error text." UI special-cases on `kind === '_finalize'`.
+        #
+        # Slice-review T6 honesty edit: for SINGLE-edit batches, the
+        # parse_template failure IS attributable to that one edit
+        # (there's no composition window to spread the blame over).
+        # Point at edit 1 + use the edit's own kind so the operator
+        # sees "edit 1 of 1 failed: ..." instead of the sentinel
+        # "Save failed: ..." which obscures the single-cause scenario.
+        if len(payload.edits) == 1:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "failed_at_idx": 1,
+                    "kind": payload.edits[0].kind,
+                    "error": f"edit produces an invalid template: {e}",
+                },
+            )
         return JSONResponse(
             status_code=400,
             content={
