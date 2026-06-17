@@ -21,6 +21,8 @@ import '@testing-library/jest-dom/vitest';
 const {
   getStationSidecarMock,
   patchBlockMock,
+  applyBatchMock,
+  FakeSidecarBatchFailure,
   startPreviewJobMock,
   watchJobMock,
   cancelJobMock,
@@ -34,6 +36,21 @@ const {
       super(message);
       this.name = 'ApiError';
       this.status = status;
+    }
+  }
+  // §16.2.6.t2 c2: hoisted SidecarBatchFailure class so tests can
+  // throw the same shape the page expects in `err instanceof
+  // SidecarBatchFailure` checks. Same hoist trick as FakeApiError.
+  class FakeSidecarBatchFailure extends Error {
+    status: number;
+    failedAtIdx: number;
+    kind: string;
+    constructor(status: number, failedAtIdx: number, kind: string, message: string) {
+      super(message);
+      this.name = 'SidecarBatchFailure';
+      this.status = status;
+      this.failedAtIdx = failedAtIdx;
+      this.kind = kind;
     }
   }
   let currentSlug: string | undefined = 'viz-test';
@@ -63,7 +80,28 @@ const {
     // integration test. Default no-op succeeds so a Save replay
     // through it doesn't 4xx.
     patchBlockMock: vi.fn(async () => undefined),
+    // §16.2.6.t2 c2: applyBatch's default success-path returns a
+    // SidecarMutationResponse-shaped object so Save tests that don't
+    // care about the request body don't trip the response-shape
+    // validation in the success branch. Tests that need to drive a
+    // failure use .mockRejectedValueOnce(new SidecarBatchFailure(...)).
+    applyBatchMock: vi.fn(async () => ({
+      sidecar: {
+        schema_version: 1,
+        sections: [],
+        macros: [],
+        layout_order: [],
+      },
+      template: {
+        station: 'ts',
+        name: 'Test',
+        sources: [],
+        layout: { unit: 'slot', unit_labels: [], row_start_offsets: [], flat_slots: [] },
+      },
+      updated_at: 'ts-after-save',
+    })),
     FakeApiError,
+    FakeSidecarBatchFailure,
     pageStore,
     setSlug,
   };
@@ -97,6 +135,13 @@ vi.mock('$lib/api', () => ({
   structuralBlockEdit: vi.fn(),
   ApiError: FakeApiError,
   BlockPatchConflict: class BlockPatchConflict extends FakeApiError {},
+  applyBatch: applyBatchMock,
+  // Mock surface for the SidecarBatchFailure class used by `err
+  // instanceof SidecarBatchFailure` in +page.svelte. Same hoist
+  // trick as FakeApiError — the test class lives in vi.hoisted so
+  // tests can `throw new FakeSidecarBatchFailure(...)` and the
+  // instanceof check passes (it's the same constructor reference).
+  SidecarBatchFailure: FakeSidecarBatchFailure,
 }));
 
 
@@ -840,7 +885,9 @@ describe('visualise +page.svelte — §16.2.6 c3e c1 staged-edit loss guards', (
     });
     expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 2 edits/);
     // First patch fails with a non-conflict error.
-    patchBlockMock.mockRejectedValueOnce(new Error('server rejected: bad size'));
+    applyBatchMock.mockRejectedValueOnce(
+      new FakeSidecarBatchFailure(400, 1, 'patchBlock', 'server rejected: bad size'),
+    );
     await act(async () => {
       screen.getByTestId('staged-save').click();
     });
@@ -858,7 +905,9 @@ describe('visualise +page.svelte — §16.2.6 c3e c1 staged-edit loss guards', (
         fields: { size: 5 },
       });
     });
-    patchBlockMock.mockRejectedValueOnce(new Error('transient failure'));
+    applyBatchMock.mockRejectedValueOnce(
+      new FakeSidecarBatchFailure(400, 1, 'patchBlock', 'transient failure'),
+    );
     await act(async () => {
       screen.getByTestId('staged-save').click();
     });
@@ -891,14 +940,16 @@ describe('visualise +page.svelte — §16.2.6 c3e c1 staged-edit loss guards', (
       });
     });
     // First patch (slot 0) fails.
-    patchBlockMock.mockRejectedValueOnce(new Error('server reject'));
+    applyBatchMock.mockRejectedValueOnce(
+      new FakeSidecarBatchFailure(400, 1, 'patchBlock', 'server reject'),
+    );
     await act(async () => {
       screen.getByTestId('staged-save').click();
     });
     expect(screen.getByTestId('retry-modal')).toBeInTheDocument();
-    const callCountBeforeDrop = patchBlockMock.mock.calls.length;
+    const callCountBeforeDrop = applyBatchMock.mock.calls.length;
     // Drop the failed op; replay the remaining 1 edit (slot 1)
-    // against patchBlock (this call succeeds — default mock).
+    // via applyBatch (this call succeeds — default mock).
     await act(async () => {
       screen.getByTestId('retry-modal-drop').click();
     });
@@ -907,8 +958,12 @@ describe('visualise +page.svelte — §16.2.6 c3e c1 staged-edit loss guards', (
       expect(screen.queryByTestId('staged-save')).toBeNull();
     });
     expect(screen.queryByTestId('retry-modal')).toBeNull();
-    // patchBlock got one more call (the slot 1 replay), not two.
-    expect(patchBlockMock.mock.calls.length).toBe(callCountBeforeDrop + 1);
+    // applyBatch got one more call (the slot 1 replay) with a
+    // 1-edit body — verifying we re-posted only the remaining edit.
+    expect(applyBatchMock.mock.calls.length).toBe(callCountBeforeDrop + 1);
+    const lastCall = applyBatchMock.mock.calls.at(-1) as unknown[];
+    const lastCallEdits = lastCall?.[1] as Array<{ kind: string }> | undefined;
+    expect(lastCallEdits).toHaveLength(1);
   });
 
   it('c3e c3 Cancel: closes modal but preserves opLog + saveError for fix-and-retry-later', async () => {
@@ -919,7 +974,9 @@ describe('visualise +page.svelte — §16.2.6 c3e c1 staged-edit loss guards', (
         fields: { size: 5 },
       });
     });
-    patchBlockMock.mockRejectedValueOnce(new Error('validation failed'));
+    applyBatchMock.mockRejectedValueOnce(
+      new FakeSidecarBatchFailure(400, 1, 'patchBlock', 'validation failed'),
+    );
     await act(async () => {
       screen.getByTestId('staged-save').click();
     });
@@ -941,9 +998,9 @@ describe('visualise +page.svelte — §16.2.6 c3e c1 staged-edit loss guards', (
       });
     });
     // Two consecutive failures, different error messages.
-    patchBlockMock
-      .mockRejectedValueOnce(new Error('first failure'))
-      .mockRejectedValueOnce(new Error('second failure'));
+    applyBatchMock
+      .mockRejectedValueOnce(new FakeSidecarBatchFailure(400, 1, 'patchBlock', 'first failure'))
+      .mockRejectedValueOnce(new FakeSidecarBatchFailure(400, 1, 'patchBlock', 'second failure'));
     await act(async () => {
       screen.getByTestId('staged-save').click();
     });
@@ -971,9 +1028,11 @@ describe('visualise +page.svelte — §16.2.6 c3e c1 staged-edit loss guards', (
         fields: { size: 7 },
       });
     });
-    patchBlockMock
-      .mockRejectedValueOnce(new Error('op0 failed'))
-      .mockRejectedValueOnce(new Error('op1 failed'));
+    applyBatchMock
+      // First batch: fails at edit 1 (op0). After Drop, opLog has
+      // just op1; the second batch fails at edit 1 (which is now op1).
+      .mockRejectedValueOnce(new FakeSidecarBatchFailure(400, 1, 'patchBlock', 'op0 failed'))
+      .mockRejectedValueOnce(new FakeSidecarBatchFailure(400, 1, 'patchBlock', 'op1 failed'));
     await act(async () => {
       screen.getByTestId('staged-save').click();
     });
@@ -996,7 +1055,9 @@ describe('visualise +page.svelte — §16.2.6 c3e c1 staged-edit loss guards', (
         fields: { size: 5 },
       });
     });
-    patchBlockMock.mockRejectedValueOnce(new Error('fail'));
+    applyBatchMock.mockRejectedValueOnce(
+      new FakeSidecarBatchFailure(400, 1, 'patchBlock', 'fail'),
+    );
     await act(async () => {
       screen.getByTestId('staged-save').click();
     });
@@ -1017,7 +1078,9 @@ describe('visualise +page.svelte — §16.2.6 c3e c1 staged-edit loss guards', (
         fields: { size: 5 },
       });
     });
-    patchBlockMock.mockRejectedValueOnce(new Error('fail'));
+    applyBatchMock.mockRejectedValueOnce(
+      new FakeSidecarBatchFailure(400, 1, 'patchBlock', 'fail'),
+    );
     await act(async () => {
       screen.getByTestId('staged-save').click();
     });
@@ -1036,7 +1099,9 @@ describe('visualise +page.svelte — §16.2.6 c3e c1 staged-edit loss guards', (
         fields: { size: 5 },
       });
     });
-    patchBlockMock.mockRejectedValueOnce(new Error('fail'));
+    applyBatchMock.mockRejectedValueOnce(
+      new FakeSidecarBatchFailure(400, 1, 'patchBlock', 'fail'),
+    );
     await act(async () => {
       screen.getByTestId('staged-save').click();
     });
@@ -1056,18 +1121,20 @@ describe('visualise +page.svelte — §16.2.6 c3e c1 staged-edit loss guards', (
         fields: { size: 5 },
       });
     });
-    patchBlockMock.mockRejectedValueOnce(new Error('reject'));
+    applyBatchMock.mockRejectedValueOnce(
+      new FakeSidecarBatchFailure(400, 1, 'patchBlock', 'reject'),
+    );
     await act(async () => {
       screen.getByTestId('staged-save').click();
     });
-    const callCountAtFailure = patchBlockMock.mock.calls.length;
+    const callCountAtFailure = applyBatchMock.mock.calls.length;
     await act(async () => {
       screen.getByTestId('retry-modal-drop').click();
     });
     expect(screen.queryByTestId('retry-modal')).toBeNull();
     expect(screen.queryByTestId('staged-save')).toBeNull();
-    // No additional patch call — opLog was empty after the drop.
-    expect(patchBlockMock.mock.calls.length).toBe(callCountAtFailure);
+    // No additional batch call — opLog was empty after the drop.
+    expect(applyBatchMock.mock.calls.length).toBe(callCountAtFailure);
   });
 
   it('§16.2.6.t1: intercepted edits persist to localStorage with the current updatedAt snapshot', async () => {

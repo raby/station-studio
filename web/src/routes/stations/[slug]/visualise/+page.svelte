@@ -20,6 +20,7 @@
   import { page } from '$app/stores';
   import {
     ApiError,
+    applyBatch,
     BlockPatchConflict,
     cancelJob,
     createSection,
@@ -34,6 +35,7 @@
     renameSection,
     reorderSections,
     retypeBlock,
+    SidecarBatchFailure,
     startPreviewJob,
     structuralBlockEdit,
     watchJob,
@@ -905,104 +907,116 @@
     );
   }
 
-  // §16.2.6 c3 — replay the opLog as sequential PATCHes. On the
-  // first failure, stop + surface the error inline. Remaining edits
-  // stay in opLog so a fix-and-retry sequence works. The Retry/Drop
-  // modal (with explicit "drop the un-attempted edits" semantics)
-  // lands in c3b.
+  // §16.2.6.t2 c2 — Save flow rewritten to use the transactional
+  // `applyBatch` endpoint (replaces the c3-era per-op PATCH loop
+  // via replayOpLog). All edits commit atomically; mid-batch failure
+  // rolls back the WHOLE batch server-side, so `opLog` stays intact
+  // for Retry / Drop. The c3e c3 modal still surfaces — semantics
+  // shift slightly:
+  //   - Retry: re-fire the whole opLog (no fix-and-retry mid-batch
+  //     to manage; server's all-or-nothing means either all land
+  //     or none did).
+  //   - Drop: pop opLog[failedAtIdx - 1] (the SERVER-identified
+  //     failed edit, 1-based) + re-fire. Sentinel `failedAtIdx === 0`
+  //     (empty edits, _finalize, internal) means no specific edit;
+  //     UI hides the Drop button in that case.
+  //   - Cancel: leave opLog + saveError; operator examines the
+  //     failed edit, fixes it inline, re-clicks Save.
+  let failedAtIdx = 0;  // 1-based when modal visible; 0 = sentinel.
+  let failedKind = '';
+
   async function handleStagedSave() {
     if (opLog.length === 0) return;
     saving = true;
     saveError = null;
     conflict = false;
     exportMsg = null;
-    // §16.2.6 c3b review #1 batch C: delegate the replay loop to
-    // the pure `replayOpLog` function in `$lib/edit-ops`. The
-    // function dispatches each op via the injected deps, refreshes
-    // updated_at between PATCHes, and returns a structured result
-    // we map into local UI state below. The dispatch + error
-    // routing is now testable without rendering the page.
+    failedAtIdx = 0;
+    failedKind = '';
     try {
-      const result = await replayOpLog(opLog, {
-        patchBlock: (address, fields) =>
-          patchBlock(slug, address, fields, updatedAt),
-        patchMacro: (macroId, fields) =>
-          patchMacro(slug, macroId, fields, updatedAt),
-        renameSection: (sectionId, name) =>
-          renameSection(slug, sectionId, name, updatedAt),
-        // §16.2.6 c3c — section-level structural kinds.
-        createSection: (sectionId, name) =>
-          createSection(slug, sectionId, name, updatedAt),
-        deleteSection: (sectionId) =>
-          deleteSection(slug, sectionId, updatedAt),
-        reorderSections: (layoutOrder) =>
-          reorderSections(slug, layoutOrder, updatedAt),
-        // §16.2.6 c3d — block-level structural kinds.
-        moveBlock: (address, targetSectionId, targetIndex) =>
-          moveBlock(slug, address, targetSectionId, targetIndex, updatedAt),
-        retypeBlock: (address, newStrategy, newSource, newFields) =>
-          retypeBlock(slug, address, newStrategy, newSource, newFields, updatedAt),
-        // §16.2.6 c3d-follow-up — structural block edit (size /
-        // add / remove with slot_index shifts). Closes the 9th
-        // staging intercept kind.
-        structuralBlockEdit: (edit) =>
-          structuralBlockEdit(slug, edit, updatedAt),
-        refreshUpdatedAt: loadSidecar,
-        isConflict: (err) => err instanceof BlockPatchConflict,
-      });
-      // Replay drained 0-or-more edits from the front of the queue;
-      // the result carries what's left so a fix-and-retry sequence
-      // works.
-      opLog = result.remaining;
-      _persistOpLog();
-      if (!result.success) {
-        if ('conflict' in result && result.conflict) {
+      let result;
+      try {
+        result = await applyBatch(slug, opLog, updatedAt);
+      } catch (err) {
+        if (err instanceof BlockPatchConflict) {
           conflict = true;
           return;
         }
-        // Non-conflict failure: surface "edit K of N: <message>".
-        // The 1-indexed count is what the operator sees in the
-        // staged-save button label ("Save 5 edits"), so it maps
-        // back unambiguously.
-        if ('error' in result) {
-          saveError =
-            `Save failed at staged edit ${result.failedAtIdx} of ${result.totalEdits}: ` +
-            result.error;
-          // §16.2.6 c3e c3 — surface the Retry/Drop modal so the
-          // operator gets actionable choices, not just a banner.
-          // Banner stays underneath so Cancel keeps the failure
-          // context visible.
+        if (err instanceof SidecarBatchFailure) {
+          // Server-identified failure. failedAtIdx 1-based when a
+          // specific edit caused it; 0 sentinel for composition
+          // failures (kind === '_finalize') + empty-edits.
+          failedAtIdx = err.failedAtIdx;
+          failedKind = err.kind;
+          if (err.failedAtIdx > 0) {
+            saveError =
+              `Save failed at staged edit ${err.failedAtIdx} of ${opLog.length}: ` +
+              err.message;
+          } else if (err.kind === '_finalize') {
+            saveError = `Save failed: ${err.message}`;
+          } else {
+            saveError = err.message;
+          }
           showRetryModal = true;
+          return;
         }
+        // Network / generic ApiError.
+        saveError = err instanceof Error ? err.message : String(err);
         return;
       }
-      // All edits applied. Trigger a preview refresh.
+      // Success — apply returned sidecar + template + clear opLog.
+      try {
+        const parsed = parseEditorSidecarResponse({
+          template: result.template,
+          sidecar: result.sidecar,
+          sidecar_error: null,
+          updated_at: result.updated_at,
+        });
+        template = parsed.template;
+        sidecar = parsed.sidecar;
+        updatedAt = parsed.updated_at;
+      } catch (err) {
+        // Backend response shape drift — fall through to a GET refetch.
+        saveError =
+          'Save landed but the response shape failed validation: ' +
+          (err instanceof Error ? err.message : String(err));
+        try { await loadSidecar(); } catch { /* preserve validation error */ }
+      }
+      opLog = [];
+      _persistOpLog();
+      sidecarError = null;
       _schedulePreview();
     } finally {
       saving = false;
     }
   }
 
-  // §16.2.6 c3e c3 — Retry: close the modal + re-run handleStagedSave.
-  // The failed op stayed at opLog[0] (replay's remaining-on-failure
-  // semantic), so retry replays the same head op against fresh
-  // updated_at (loadSidecar ran between attempts in the prior path).
+  // §16.2.6 c3e c3 — Retry: close modal + re-fire whole batch.
   async function handleRetry() {
     showRetryModal = false;
     await handleStagedSave();
   }
 
-  // §16.2.6 c3e c3 — Drop & continue: pop the failed op from opLog
-  // + re-run handleStagedSave on the rest. If the drop leaves an
-  // empty queue (failure was on the last op), just clear state.
+  // §16.2.6 c3e c3 — Drop & continue: pop the SERVER-identified
+  // failed edit (failedAtIdx 1-based) + re-fire on the rest.
+  // Sentinel `failedAtIdx === 0` means no specific edit (composition
+  // failure or empty); the modal hides Drop in that case, so this
+  // function won't be called with the sentinel.
   async function handleDrop() {
     showRetryModal = false;
-    opLog = opLog.slice(1);
+    if (failedAtIdx > 0 && failedAtIdx <= opLog.length) {
+      opLog = [
+        ...opLog.slice(0, failedAtIdx - 1),
+        ...opLog.slice(failedAtIdx),
+      ];
+    } else {
+      // Defensive fallback (shouldn't fire — UI hides Drop on sentinel).
+      opLog = opLog.slice(1);
+    }
     _persistOpLog();
-    // c3e c3 review J3: load-bearing in the empty-queue branch
-    // below — handleStagedSave never runs to clear it, so the
-    // operator would see a stale banner. Keep the explicit clear.
     saveError = null;
+    failedAtIdx = 0;
+    failedKind = '';
     if (opLog.length === 0) return;
     await handleStagedSave();
   }
@@ -1446,12 +1460,20 @@
               on:click={handleRetry}
               use:autofocus
             >Retry the failed edit</button>
-            <button
-              type="button"
-              data-testid="retry-modal-drop"
-              disabled={saving}
-              on:click={handleDrop}
-            >Drop &amp; continue</button>
+            <!-- §16.2.6.t2 c2: hide Drop on sentinel failedAtIdx === 0.
+                 Composition failures (kind === '_finalize') + empty
+                 batches don't point at a specific opLog entry, so
+                 there's no meaningful "drop the failed edit" action.
+                 Operator picks Retry or Cancel (and fixes the
+                 composition issue inline). -->
+            {#if failedAtIdx > 0}
+              <button
+                type="button"
+                data-testid="retry-modal-drop"
+                disabled={saving}
+                on:click={handleDrop}
+              >Drop &amp; continue</button>
+            {/if}
             <button
               type="button"
               data-testid="retry-modal-cancel"

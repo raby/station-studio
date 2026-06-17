@@ -1312,3 +1312,89 @@ export const startPreviewJob = async (
 
 
 export { ApiError };
+
+
+// ---- §16.2.6.t2 c2 — transactional batch endpoint -------------------
+
+
+/** Batch edit envelope shape — one per Edit kind. Mirrors the
+ *  backend's `BatchEdit` discriminated union (api/schemas.py).
+ *  Use the frontend's existing `Edit` shape; the wire format is
+ *  identical (the `address` field's `BlockAddress` and the
+ *  `structuralBlockEdit.edit`'s `StructuralBlockEdit` are already
+ *  wire-compatible with the backend). */
+import type { Edit } from './edit-ops';
+export type SidecarBatchEdit = Edit;
+
+/** SidecarBatchErrorResponse shape (api/schemas.py).
+ *  `failed_at_idx` is 1-indexed when a specific edit caused the
+ *  failure; `0` is the sentinel meaning "no specific edit" (empty
+ *  request, `_finalize` composition failure, or internal error).
+ *  `kind` echoes the failing edit's discriminator OR one of the
+ *  `_<name>` sentinels (currently `_finalize` + an empty string). */
+export interface SidecarBatchError {
+  failed_at_idx: number;
+  kind: string;
+  error: string;
+}
+
+/** Thrown by `applyBatch` on non-success status codes that carry the
+ *  `SidecarBatchErrorResponse` envelope (400, 404, 500). 409 keeps
+ *  the existing `BlockPatchConflict` shape (FastAPI's default 409
+ *  body) — c2's existing optimistic-concurrency handler reads it
+ *  unchanged. */
+export class SidecarBatchFailure extends Error {
+  status: number;
+  failedAtIdx: number;
+  kind: string;
+  constructor(status: number, body: SidecarBatchError) {
+    super(body.error);
+    this.name = 'SidecarBatchFailure';
+    this.status = status;
+    this.failedAtIdx = body.failed_at_idx;
+    this.kind = body.kind;
+  }
+}
+
+/** POST /api/stations/{slug}/sidecar/batch — atomic all-or-nothing
+ *  multi-edit. Returns SidecarMutationResponse on success (carries
+ *  the updated sidecar + template + updated_at, matching every
+ *  per-route mutation response). Throws SidecarBatchFailure on
+ *  400/404/500 carrying the failed_at_idx + kind so the c2 Retry/Drop
+ *  modal can decide what to highlight. Throws BlockPatchConflict on
+ *  409 (matches existing per-route concurrency handling — c2's
+ *  Save-replay path branches on this).
+ *
+ *  Each `edit` is the frontend's `Edit` shape — wire-compatible
+ *  with the backend's discriminated union. */
+export const applyBatch = async (
+  slug: string,
+  edits: SidecarBatchEdit[],
+  expectedUpdatedAt: string | null,
+  fetch_ = fetch,
+): Promise<SidecarMutationResponse> => {
+  const res = await fetch_(
+    `/api/stations/${encodeURIComponent(slug)}/sidecar/batch`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        edits,
+        expected_updated_at: expectedUpdatedAt,
+      }),
+    },
+  );
+  if (res.status === 409) await _handleConcurrencyConflict(res);
+  if (res.status >= 400) {
+    // 400 / 404 / 500 carry the SidecarBatchError envelope.
+    let body: SidecarBatchError;
+    try {
+      body = await res.json();
+    } catch {
+      // Defensive: if a future error path returns non-envelope shape.
+      throw new ApiError(res.status, `${res.status} batch failure (no envelope)`);
+    }
+    throw new SidecarBatchFailure(res.status, body);
+  }
+  return json<SidecarMutationResponse>(res);
+};
