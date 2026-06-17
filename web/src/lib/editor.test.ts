@@ -11,16 +11,19 @@ import {
   compatibleStrategies,
   editableFieldsForBlock,
   expandSection,
+  findChipRef,
   lookupEngineBlock,
   lookupMacro,
   parseEditorSidecarResponse,
   readViewMode,
+  refKey,
   sourceColour,
   validateEditableField,
   verboseStrategyLabel,
   writeViewMode,
   type EditableFieldSpec,
   type EngineBlock,
+  type ExpandedRef,
   type Sidecar,
   type SidecarMacro,
   type SidecarSection,
@@ -866,5 +869,230 @@ describe('validateEditableField — string_list', () => {
       type: 'string', required: true,
     };
     expect(validateEditableField(spec, ['Day'], undefined)).toMatch(/single value/);
+  });
+});
+
+
+// ---- §16.2.6.t3 c1 — refKey + findChipRef -------------------------------
+
+
+describe('refKey', () => {
+  it('serializes a flat_slots AtomicRef as atomic:slot=N', () => {
+    const ref: ExpandedRef = { kind: 'atomic-ref', slot_index: 7 };
+    expect(refKey(ref)).toBe('atomic:slot=7');
+  });
+
+  it('serializes a row_template AtomicRef as atomic:row=R:block=B', () => {
+    const ref: ExpandedRef = { kind: 'atomic-ref', row_idx: 2, block_idx: 5 };
+    expect(refKey(ref)).toBe('atomic:row=2:block=5');
+  });
+
+  it('serializes a MacroPlaceholder as macro:ID:pick=K', () => {
+    const ref: ExpandedRef = {
+      kind: 'macro-placeholder', macro_id: 'jingles', pick_in_macro: 3,
+    };
+    expect(refKey(ref)).toBe('macro:jingles:pick=3');
+  });
+
+  it('is round-trip distinguishable across atomic flat / atomic row / macro', () => {
+    // The query selector relies on keys being injective across the
+    // three ref kinds. A drift where a row+block atomic collided with
+    // a slot atomic (e.g. due to a sloppy formatter swap) would break
+    // chip-jump silently.
+    const keys = [
+      refKey({ kind: 'atomic-ref', slot_index: 0 }),
+      refKey({ kind: 'atomic-ref', row_idx: 0, block_idx: 0 }),
+      refKey({ kind: 'macro-placeholder', macro_id: 'm', pick_in_macro: 1 }),
+    ];
+    expect(new Set(keys).size).toBe(3);
+  });
+});
+
+
+describe('findChipRef', () => {
+  function flatTemplate(): StationTemplate {
+    return {
+      station: 'ts', name: 'Test',
+      sources: [{ name: 'A', role: 'content' }],
+      layout: {
+        unit: 'slot', unit_labels: [], row_start_offsets: [],
+        flat_slots: [
+          { source: 'A', strategy: 'sequential', size: 1, cursor_id: 'C' },
+          { source: 'A', strategy: 'sequential', size: 1, cursor_id: 'C' },
+          { source: 'A', strategy: 'sequential', size: 1, cursor_id: 'C' },
+          { source: 'A', strategy: 'sequential', size: 1, cursor_id: 'C' },
+          { source: 'A', strategy: 'sequential', size: 1, cursor_id: 'C' },
+        ],
+      },
+    };
+  }
+
+  function rowTemplate(): StationTemplate {
+    return {
+      station: 'rt', name: 'RowTest',
+      sources: [{ name: 'A', role: 'content' }],
+      layout: {
+        unit: 'slot', unit_labels: [], row_start_offsets: [0, 10],
+        row_template: [
+          { source: 'A', strategy: 'pick', size: 1 },
+          { source: 'A', strategy: 'pick', size: 1 },
+          { source: 'A', strategy: 'pick', size: 1 },
+        ],
+      },
+    };
+  }
+
+  it('case 1: flat_slots atomic — direct slot_index match', () => {
+    const sc: Sidecar = {
+      schema_version: 1,
+      sections: [{
+        id: 'morning', blocks: [
+          { kind: 'atomic', slot_index: 0 },
+          { kind: 'atomic', slot_index: 1 },
+          { kind: 'atomic', slot_index: 2 },
+        ],
+      }],
+      layout_order: ['morning'],
+    };
+    expect(findChipRef(flatTemplate(), sc, { slot: 1, row: 0, block: 1 }))
+      .toEqual({ kind: 'atomic-ref', slot_index: 1 });
+  });
+
+  it('case 2: row_template atomic — match (row_idx, block_idx)', () => {
+    const sc: Sidecar = {
+      schema_version: 1,
+      sections: [{
+        id: 'row', blocks: [
+          { kind: 'atomic', block_idx: 0 },
+          { kind: 'atomic', block_idx: 1 },
+          { kind: 'atomic', block_idx: 2 },
+        ],
+        repeat_with_offsets: [0, 10],
+      }],
+      layout_order: ['row'],
+    };
+    expect(findChipRef(rowTemplate(), sc, { slot: 11, row: 1, block: 2 }))
+      .toEqual({ kind: 'atomic-ref', row_idx: 1, block_idx: 2 });
+  });
+
+  it('case 3: flat_slots inside macro — returns the macro placeholder (pick=1)', () => {
+    // Section: atomic@0, macro(repeat=3)@[1,2,3], atomic@4.
+    // Target slot 2 → inside the macro.
+    const sc: Sidecar = {
+      schema_version: 1,
+      sections: [{
+        id: 'mixed', blocks: [
+          { kind: 'atomic', slot_index: 0 },
+          { kind: 'macro', ref: 'jingles' },
+          { kind: 'atomic', slot_index: 4 },
+        ],
+      }],
+      macros: [{
+        id: 'jingles', repeat: 3,
+        spec: { source: 'A', strategy: 'jingle', size: 1, genre: 'Day' },
+      }],
+      layout_order: ['mixed'],
+    };
+    expect(findChipRef(flatTemplate(), sc, { slot: 2, row: 0, block: 2 }))
+      .toEqual({ kind: 'macro-placeholder', macro_id: 'jingles', pick_in_macro: 1 });
+  });
+
+  it('case 3b: macro before first atomic — section_start computed from anchor', () => {
+    // Section: macro(repeat=2), atomic@2, atomic@3.
+    // section_start = 2 - 2 = 0. Macro spans slots [0,1].
+    // Target slot 1 → inside the macro.
+    const sc: Sidecar = {
+      schema_version: 1,
+      sections: [{
+        id: 'leading-macro', blocks: [
+          { kind: 'macro', ref: 'm' },
+          { kind: 'atomic', slot_index: 2 },
+          { kind: 'atomic', slot_index: 3 },
+        ],
+      }],
+      macros: [{
+        id: 'm', repeat: 2,
+        spec: { source: 'A', strategy: 'pick', size: 1 },
+      }],
+      layout_order: ['leading-macro'],
+    };
+    expect(findChipRef(flatTemplate(), sc, { slot: 1, row: 0, block: 1 }))
+      .toEqual({ kind: 'macro-placeholder', macro_id: 'm', pick_in_macro: 1 });
+  });
+
+  it('case 4: row_template inside macro — returns the macro placeholder', () => {
+    // Section blocks: atomic@block_idx=0, macro(repeat=2), atomic@3.
+    // Target block 1 → inside the macro span [1, 2].
+    const sc: Sidecar = {
+      schema_version: 1,
+      sections: [{
+        id: 'row-mixed', blocks: [
+          { kind: 'atomic', block_idx: 0 },
+          { kind: 'macro', ref: 'm' },
+          { kind: 'atomic', block_idx: 3 },
+        ],
+        repeat_with_offsets: [0],
+      }],
+      macros: [{
+        id: 'm', repeat: 2,
+        spec: { source: 'A', strategy: 'pick', size: 1 },
+      }],
+      layout_order: ['row-mixed'],
+    };
+    expect(findChipRef(rowTemplate(), sc, { slot: 2, row: 0, block: 2 }))
+      .toEqual({ kind: 'macro-placeholder', macro_id: 'm', pick_in_macro: 1 });
+  });
+
+  it('case 5: out-of-canvas slot — returns null (D6 drift fallback)', () => {
+    // Sidecar only has slot 0; trace asks for slot 4. No match.
+    const sc: Sidecar = {
+      schema_version: 1,
+      sections: [{
+        id: 'tiny', blocks: [{ kind: 'atomic', slot_index: 0 }],
+      }],
+      layout_order: ['tiny'],
+    };
+    expect(findChipRef(flatTemplate(), sc, { slot: 4, row: 0, block: 4 }))
+      .toBeNull();
+  });
+
+  it('case 6: section with no atomic anchor — skipped silently', () => {
+    // All-macro section can't anchor section_start; skip it. Target
+    // matches the next section's atomic.
+    const sc: Sidecar = {
+      schema_version: 1,
+      sections: [
+        { id: 'orphan', blocks: [{ kind: 'macro', ref: 'm' }] },
+        { id: 'real', blocks: [{ kind: 'atomic', slot_index: 2 }] },
+      ],
+      macros: [{
+        id: 'm', repeat: 1,
+        spec: { source: 'A', strategy: 'pick', size: 1 },
+      }],
+      layout_order: ['orphan', 'real'],
+    };
+    expect(findChipRef(flatTemplate(), sc, { slot: 2, row: 0, block: 2 }))
+      .toEqual({ kind: 'atomic-ref', slot_index: 2 });
+  });
+
+  it('case 7: negative section_start — skipped (would be MacroResolutionError on server)', () => {
+    // macro(repeat=5) before atomic@2 → section_start = 2 - 5 = -3.
+    // Engine would raise; lookup skips the section.
+    const sc: Sidecar = {
+      schema_version: 1,
+      sections: [{
+        id: 'drift', blocks: [
+          { kind: 'macro', ref: 'm' },
+          { kind: 'atomic', slot_index: 2 },
+        ],
+      }],
+      macros: [{
+        id: 'm', repeat: 5,
+        spec: { source: 'A', strategy: 'pick', size: 1 },
+      }],
+      layout_order: ['drift'],
+    };
+    expect(findChipRef(flatTemplate(), sc, { slot: 0, row: 0, block: 0 }))
+      .toBeNull();
   });
 });

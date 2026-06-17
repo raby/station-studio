@@ -929,3 +929,139 @@ export class EditorMetadataError extends Error {
     this.name = 'EditorMetadataError';
   }
 }
+
+
+// ---- §16.2.6.t3 click-trace-row → jump-to-chip helpers -----------------
+
+
+/**
+ * Canonical string serialization of an `ExpandedRef`. Used as the
+ * `data-ref-key` attribute on each chip so the page can find the
+ * right element via `document.querySelector('[data-ref-key="..."]')`
+ * given a `findChipRef` result.
+ *
+ *   atomic-ref (flat_slots): `atomic:slot=N`
+ *   atomic-ref (row_template): `atomic:row=R:block=B`
+ *   macro-placeholder: `macro:ID:pick=K`
+ *
+ * Stable across re-renders — depends only on the ref's identity
+ * fields, not on the surrounding sidecar / template state. Two
+ * chips with the same ref produce identical keys (won't happen for
+ * a validate_sidecar-passing sidecar — drift rule 8 caps atomic
+ * refs at one per slot_index across sections; macros are
+ * deduplicated within a section by `pick_in_macro`).
+ */
+export function refKey(ref: ExpandedRef): string {
+  if (ref.kind === 'atomic-ref') {
+    if (ref.slot_index !== undefined) {
+      return `atomic:slot=${ref.slot_index}`;
+    }
+    return `atomic:row=${ref.row_idx ?? ''}:block=${ref.block_idx ?? ''}`;
+  }
+  return `macro:${ref.macro_id}:pick=${ref.pick_in_macro}`;
+}
+
+
+/**
+ * Map a trace row to the chip that renders it. Returns null when no
+ * chip matches (drift, orphan macros, or row_template macros — see D6
+ * in the §16.2.6.t3 design pass).
+ *
+ * Layout-form-aware (D1):
+ *   - flat_slots: target position = `traceSlot.slot`.
+ *   - row_template: target position = `traceSlot.block`; the returned
+ *     `AtomicRef` carries `traceSlot.row` as its `row_idx`.
+ *
+ * Algorithm mirrors `engine.editor_metadata.resolve_macro_addresses`:
+ *   1. Pre-pass per section: find the first atomic-anchor block,
+ *      compute `section_start = anchor.pos - cumulative_width_before`
+ *      (each atomic = 1 width unit, each macro = `macro.repeat`).
+ *   2. Forward walk with a running `cursor = section_start`. Atomic
+ *      block: if `cursor === targetPos`, return the AtomicRef.
+ *      Macro block: if `targetPos ∈ [cursor, cursor + repeat)`,
+ *      return the macro's first MacroPlaceholder (`pick_in_macro=1`).
+ *
+ * Sections without an atomic anchor (all-macro) are skipped — same
+ * as the Python algorithm's "un-anchorable" handling. Sections whose
+ * `section_start` computes negative (leading macros wider than the
+ * first anchor's position — engine would raise MacroResolutionError)
+ * are also skipped, since the trace can't address such drift cleanly.
+ */
+export function findChipRef(
+  template: StationTemplate,
+  sidecar: Sidecar,
+  traceSlot: { slot: number; row: number; block: number },
+): ExpandedRef | null {
+  const isFlat = template.layout.flat_slots !== undefined;
+  const targetPos = isFlat ? traceSlot.slot : traceSlot.block;
+
+  const macrosById = new Map(
+    (sidecar.macros ?? []).map((m) => [m.id, m] as const),
+  );
+
+  function macroWidth(b: SidecarMacroBlock): number {
+    // Match engine's `_block_width`: a dangling macro ref defaults to
+    // width 1 (defensive — validate_sidecar would have caught a real
+    // dangling ref at API load). Keeps cursor arithmetic non-NaN.
+    return macrosById.get(b.ref)?.repeat ?? 1;
+  }
+
+  function atomicAnchorPos(b: SidecarAtomicBlock): number | undefined {
+    return isFlat ? b.slot_index : b.block_idx;
+  }
+
+  for (const section of sidecar.sections) {
+    // Pre-pass: anchor on the first atomic block whose layout form
+    // matches the station's. A flat_slots station's atomic refs use
+    // slot_index; row_template uses block_idx.
+    let firstAtomicIdx = -1;
+    for (let i = 0; i < section.blocks.length; i++) {
+      const b = section.blocks[i];
+      if (b.kind === 'atomic' && atomicAnchorPos(b) !== undefined) {
+        firstAtomicIdx = i;
+        break;
+      }
+    }
+    if (firstAtomicIdx === -1) continue; // all-macro section: un-anchorable.
+
+    let cumulativeBefore = 0;
+    for (let i = 0; i < firstAtomicIdx; i++) {
+      const b = section.blocks[i];
+      cumulativeBefore += b.kind === 'atomic' ? 1 : macroWidth(b);
+    }
+    const firstAtomic = section.blocks[firstAtomicIdx] as SidecarAtomicBlock;
+    const sectionStart = (atomicAnchorPos(firstAtomic) as number) - cumulativeBefore;
+    if (sectionStart < 0) continue; // drift — engine would raise; skip.
+
+    let cursor = sectionStart;
+    for (const block of section.blocks) {
+      if (block.kind === 'atomic') {
+        if (cursor === targetPos) {
+          return isFlat
+            ? { kind: 'atomic-ref', slot_index: cursor }
+            : { kind: 'atomic-ref', row_idx: traceSlot.row, block_idx: cursor };
+        }
+        cursor += 1;
+      } else {
+        const w = macroWidth(block);
+        if (targetPos >= cursor && targetPos < cursor + w) {
+          const macro = macrosById.get(block.ref);
+          if (macro !== undefined) {
+            return {
+              kind: 'macro-placeholder',
+              macro_id: macro.id,
+              pick_in_macro: 1,
+            };
+          }
+          // Dangling ref + target lands inside the (defensive
+          // width-1) macro span: there's no macro to point at, so
+          // fall through to "not found" semantics. Cursor still
+          // advances by the defensive width so the rest of the walk
+          // stays consistent.
+        }
+        cursor += w;
+      }
+    }
+  }
+  return null;
+}
