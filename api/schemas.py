@@ -107,7 +107,19 @@ class PreviewRequest(BaseModel):
     `template`/`sidecar` are dicts on the wire — same shape as the
     stored Station columns. The route layer parses/validates both
     before spawning the job.
+
+    §16.2.6.t5: `strict=True` rejects Pydantic's default type
+    coercion (e.g. `week="1"` string → int=1, `seed=true` → int=1).
+    Catches typos / drift at the wire BEFORE the engine sees them.
+    Today's fields (`week`, `seed`) wouldn't crash without strict —
+    int coercion is mostly safe — but a future field added to this
+    schema gets the same protection for free without per-field
+    `StrictInt` / `StrictStr` annotations. Same defense-in-depth
+    pattern as `RuleValueIn.value: StrictInt | list[str]` (§16.14.t10
+    review F1) which rejects bool→int at the schema layer.
     """
+    model_config = ConfigDict(strict=True)
+
     template: dict
     sidecar: dict
     week: int = Field(ge=1)

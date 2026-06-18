@@ -808,6 +808,31 @@ def test_preview_unknown_station_returns_404(jobs_api):
     assert r.status_code == 404
 
 
+def test_preview_strict_pydantic_rejects_coerced_int_at_the_wire(jobs_api):
+    """§16.2.6.t5 — PreviewRequest model_config = ConfigDict(strict=True).
+
+    Without strict, Pydantic v2 silently coerces JSON `"1"` (string)
+    into int=1, `true` (bool) into int=1, etc. Strict mode rejects
+    these as 422 validation errors BEFORE the engine sees them. Today
+    `week` + `seed` are the only int fields; the test pins
+    `week="1"` (string) is rejected. Same pattern protects any
+    future int field on this schema (forward-compat win — no per-
+    field StrictInt annotations needed).
+    """
+    client, Session, _store = jobs_api
+    _seed_station_with_pool(Session)
+    body = _preview_body()
+    body["week"] = "1"  # string instead of int → strict rejects.
+    r = client.post("/api/stations/ts/jobs/preview", json=body)
+    assert r.status_code == 422, r.json()
+    # Sanity: the same body with int week=1 is accepted (proves the
+    # 422 came from the strict-coercion check, not e.g. a different
+    # field's validator firing).
+    body["week"] = 1
+    r = client.post("/api/stations/ts/jobs/preview", json=body)
+    assert r.status_code == 201, r.json()
+
+
 # ---------- §16.2.6 c1 review #1 batch C: exclusion_window recompute ---
 
 
