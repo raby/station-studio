@@ -1969,18 +1969,24 @@ describe('visualise +page.svelte — §16.2.6.t11 intercept-path integration', (
     await act(async () => {});
   }
 
-  it('D2 — defensive guard: moveBlock target=_unsorted stages in opLog, applyEdits no-ops, save replays the bad op anyway', async () => {
+  it('D2 — defensive guard: moveBlock target=_unsorted stages in opLog + save replays the bad op verbatim', async () => {
     // The page's handleBlockMove intercept is dumb pass-through —
     // it copies the event payload into opLog without validating.
-    // applyEdits then runs _moveBlock which has the system-bin
-    // defensive guard (returns input sidecar unchanged). The
-    // staged-save count GROWS to 1 because the intercept didn't
-    // reject, but stagedSidecar stays original. When Save fires,
-    // the bad op is sent to the backend (which has the same guard
-    // server-side → 400). Pinning: (a) intercept didn't reject;
-    // (b) staged-save shows 1; (c) applyBatch was called with
-    // the moveBlock op verbatim; (d) server-side 400 surfaces the
-    // Retry/Drop modal.
+    // The staged-save count GROWS to 1 because the intercept didn't
+    // reject. When Save fires, the bad op is sent to the backend
+    // verbatim (which has the same guard server-side → 400).
+    //
+    // Pinning: (a) intercept didn't reject; (b) staged-save shows 1;
+    // (c) applyBatch was called with the moveBlock op carrying the
+    // _unsorted target; (d) server-side 400 surfaces the Retry/Drop
+    // modal; (e) opLog preserved for fix-and-retry.
+    //
+    // **Out of scope here**: that `applyEdits` no-ops the bad op in
+    // stagedSidecar — pinned at the unit layer (edit-ops.test.ts's
+    // _moveBlock system-bin guard tests). The page-internal
+    // stagedSidecar isn't inspected by this test (would need
+    // startPreviewJob arg capture + fake-timer setup for the
+    // debounce; design pass D1 rejected that route).
     await mountAndAwaitStub();
     await act(async () => {
       fireEditorCanvasEvent('blockMove', {
@@ -2049,6 +2055,11 @@ describe('visualise +page.svelte — §16.2.6.t11 intercept-path integration', (
       screen.getByTestId('staged-save').click();
     });
 
+    // §16.2.6.t2 contract: ONE batched call, not N per-op calls.
+    // A regression where Save called applyBatch once per op would
+    // leave .at(-1) carrying the right array but break the
+    // all-or-nothing transactional guarantee. Pin both halves.
+    expect(applyBatchMock).toHaveBeenCalledTimes(1);
     const lastCall = applyBatchMock.mock.calls.at(-1) as unknown[];
     const editsArg = lastCall?.[1] as Array<Record<string, unknown>>;
     expect(editsArg).toHaveLength(3);
@@ -2100,6 +2111,15 @@ describe('visualise +page.svelte — §16.2.6.t11 intercept-path integration', (
     // _resetStagedState that called applyBatch by accident
     // (e.g. trying to send an "empty" save) would flip this.
     expect(applyBatchMock).not.toHaveBeenCalled();
+    // Discard's _resetStagedState ALSO refetches the sidecar from
+    // the server (covers the "another session changed the station
+    // while these edits were staged" case — operator sees the
+    // conflict winner's content, not their stale base). A
+    // regression where _resetStagedState cleared opLog without
+    // refetching would leave the buttons hidden BUT the canvas
+    // showing stale state. Pin the refetch count: once on mount
+    // + once on Discard = 2.
+    expect(getStationSidecarMock).toHaveBeenCalledTimes(2);
   });
 
   it('mixed pure + guarded ops: 2 valid edits + 1 guard-rejected op all replay in stage order', async () => {
@@ -2147,6 +2167,7 @@ describe('visualise +page.svelte — §16.2.6.t11 intercept-path integration', (
     // no-op middle one. Server's batch dispatcher (with the
     // post-§16.2.6.t13 _apply_<kind> helpers) enforces the guard
     // at idx=2 and rolls back the whole batch.
+    expect(applyBatchMock).toHaveBeenCalledTimes(1);
     const lastCall = applyBatchMock.mock.calls.at(-1) as unknown[];
     const editsArg = lastCall?.[1] as Array<Record<string, unknown>>;
     expect(editsArg).toHaveLength(3);
