@@ -972,6 +972,16 @@ export function refKey(ref: ExpandedRef): string {
  * refs: match by `slot_index` (flat_slots) or `block_idx`
  * (row_template). For macros: match by `macro_id` ↔ `block.ref`.
  *
+ * §16.2.6.t3 slice-review R2 — defensive cross-form match for atomic
+ * refs. The XOR contract says an atomic ref carries EITHER slot_index
+ * OR block_idx, never both. For a drifted sidecar where a ref carries
+ * BOTH, this helper matches on EITHER axis (first hit wins): if the
+ * slot_index branch matches a block, return; otherwise try the
+ * block_idx branch. Lets the page's expand-fallback succeed even
+ * when the operator is mid-fixing a cross-form-drift sidecar. A
+ * validate_sidecar-passing sidecar can't trip this — both branches
+ * being meaningful at once requires XOR-broken input.
+ *
  * Returns the first matching section's id, or null if no section
  * holds the ref (orphan / drift — section was deleted, or operator
  * is mid-edit with a stale opLog). A validate_sidecar-passing
@@ -1036,6 +1046,24 @@ export function findSectionIdForRef(
  * `section_start` computes negative (leading macros wider than the
  * first anchor's position — engine would raise MacroResolutionError)
  * are also skipped, since the trace can't address such drift cleanly.
+ *
+ * §16.2.6.t3 slice-review R1 — drift-rule-1 contiguity assumption.
+ * The atomic-match returns `{slot_index: cursor}` (or `{block_idx:
+ * cursor}`) — the IMPLIED position from the section's running cursor,
+ * not the block's declared `slot_index` field. For a
+ * validate_sidecar-passing sidecar these are equal because drift rule
+ * 1 enforces section contiguity (Python's `resolve_macro_addresses`
+ * raises MacroResolutionError on `declared != pos`). For a drifted
+ * sidecar where atomics are non-contiguous (e.g. `[atomic@5, atomic@10]`
+ * with no intervening macros), the cursor would advance 5 → 6 but
+ * the next atomic's `slot_index=10`; this helper returns a
+ * cursor-implied address (6) that mismatches the chip's actual
+ * declared address (10). The page handler then querySelector-misses
+ * + falls through to the D6 silent-no-op + warn — visible failure
+ * in the dev console, not a wrong jump. Don't "fix" by using
+ * `block.slot_index` directly: the macro-coverage half of the walk
+ * REQUIRES the cursor (macros have no declared slot_index) — both
+ * arms must use the same source of truth.
  */
 export function findChipRef(
   template: StationTemplate,
