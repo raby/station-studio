@@ -6167,7 +6167,7 @@ direction — spec slice §16.2.0 is the next planned work.
 | Backup / restore         | Shipped (§14.18). `make backup` / `make restore date=...` with WAL-aware sqlite3 .backup + pre-restore safety copy. |
 | **§17 port roadmap**     | **Phase A + Phase B both complete. Phase A (§14.17–§14.21): pre-port unblocks. Phase B (§14.22–§14.41): port — byte-equality verified at depth against weekly + Classics. Phase C (production cutover): operational, not engineering — external validation in flight with the station owner. Next engineering direction: §16.0 OSS framing shift (shipped) + §16.2 visual block editor (the flagship hobbyist feature). |
 | **Product framing**      | **OSS for radio hobbyists (§16.0). MIT-licensed. README hobbyist-facing; CONTRIBUTING.md codifies slice pattern. Two example stations (Classics + Rebirth Radio) ship; hobbyist starter station queued (§16.7).** |
-| Visual block editor      | **§16.2.2 SHIPPED** — read-only canvas at `/stations/[slug]/visualise`. `GET /api/stations/{slug}/sidecar` endpoint serves template + sidecar in one fetch; trivial-sidecar fallback for un-authored stations (Decision E — frontend never handles "no sidecar"). 7 Svelte components (`<EditorCanvas>`, `<Section>`, `<SectionHeader>`, `<ChipFlow>`, `<Chip>`, `<ViewModeToggle>`, `<DetailPanel>`) compose the canvas. View-mode prefs (labels / colour / macros) persist to localStorage. Chips are native `<button>`s (keyboard a11y); click opens a slide-in DetailPanel with full BlockSpec / macro spec. `<500-chip` sections start expanded; `>500` sections start collapsed with "Large station" hint. Discoverability via "🗺 Visualise template" link from `/stations/[slug]`. **§16.2.3 SHIPPED** — atomic slot editing: click a chip → DetailPanel edit form (parameter fields only; cursor_id as a select) → Save → `PATCH /api/stations/{slug}/blocks` (server-enforced parameter-only, optimistic-concurrency 409, parse_template revalidation) → refetch. "Export to disk" writes `stations/{slug}.json` (Decision A3, DB-as-truth). row_template edits warn they change every row. **§16.2.4 SHIPPED** — macro editing + block retyping + `allowlist_sources` per-block editor (closes §16.14.t7 c3 docs promise). Three new write paths: `PATCH /blocks/retype` (strategy+source swap with role validation via parse_template), `PATCH /macros/{macro_id}` (edit-once-applies-to-all fanout — server resolves macro_id → expanded block addresses via `engine.editor_metadata.resolve_macro_addresses`), plus extended PATCH /blocks accepting `allowlist_sources` for the 4 content-sampling strategies. New `<ChipMultiInput>` Svelte component for the chip-list editor. DetailPanel grew a collapsible "Change strategy / source" retype panel with D4 bidirectional role-filtered dropdowns; macros + atomics share the same form scaffolding (yellow fanout warning for macros). All-or-nothing macro transactions; new `_validate_no_overlapping_macros` drift rule. **§16.2.5 SHIPPED** — section composition + structural block edits. New `Station.sidecar` JSON column (D1 — DB-as-truth, disk file becomes export artifact) + Alembic backfill from on-disk `*.editor.json`. Six REST endpoints: POST/PATCH/DELETE /sections, PUT /sections/order, PATCH /blocks/move, PATCH /blocks/structure. D2 auto-`_unsorted` bin on non-empty section delete; D5 structural-edit index-shift contract (`shift_atomic_slot_indices` bumps every `slot_index ≥ N` in the same transaction). Frontend: SectionHeader rename/move/delete affordances + HTML5 drag-drop target; Chip drag source (atomic only — JSON-in-DataTransfer via shared `CHIP_DRAG_MIME` + `canDropOn` policy module); DetailPanel Move dropdown (D6 keyboard fallback) + Structural panel (size input + two-step Delete via `performance.now()` 3s arm window). First Playwright e2e click-through covers §16.2.3 + §16.2.4 + §16.2.5 affordances against a real backend. Slice-review sweep landed 3 follow-up commits (`ce51567` backend correctness, `048eb48` DetailPanel arm/stale-selection, `13c8aca` dedup); pre-§16.2.6 sweep then closed ALL six queued sub-slices §16.2.5.t1-.t6 in 4 more commits (`6e53a39` t3+t5 DB-as-truth + inline-sidecar, `dbc737f` t4 SidecarJSON TypeDecorator, `8333867` t1 drag-reorder, `46f4197` t6+t2 shared actions + system-section abstraction). **§16.2.6 SHIPPED** — live preview endpoint + UI + staged-edit + Discard. `POST /api/stations/{slug}/jobs/preview` (§16.11 job-id transport, in-memory, no persistence) + frontend toggle / `<TracePane>` / staging buffer / Save / Discard / 9-kind opLog applyEdit semantics mirroring backend / Retry/Drop partial-failure modal / toggle-off-mid-stage prompt / beforeunload prompt / DetailPanel ↔ TracePane mutual-exclusivity (D2(b)). Slice landed across c1 (backend), c2 (frontend skeleton), c3/c3b/c3c/c3d (chip + macro + section + block intercepts), c3d-follow-up (structuralBlockEdit with slot_index shifts), c3e c1/c2/c3 (UX polish), c3e c4 (docs closeout). All 9 staging kinds intercepted; the staging buffer is behaviorally complete. New `EditorCanvasStub.svelte` test harness closes the Svelte-4 component-event-via-DOM blocker (each handler intercept now has a 5-line test pinning "toggle ON + dispatch event K → opLog has the expected op"). **Five .tX promotions shipped post-§16.2.6 c4:** `.t1` (staged-edit recovery via localStorage + cross-tab `storage` event sync follow-up), `.t2` (transactional all-or-nothing Save via `POST /sidecar/batch` + applyBatch frontend + Retry/Drop modal adapt), `.t9` (edit-ops `_moveBlock` internal-type consistency — `_BlockDict` / `_SectionDict` narrowing), `.t12` (c1b deferred polish: P6 docstring rebind-required contract + P7 compound-rollback regression test + P8 `tests/_helpers.py::seed_station` extraction), `.t13` (DRY refactor — 9 per-kind `_apply_<kind>` helpers shared between routes + batch dispatcher, **-465 LOC net** across c1 extraction + c2 route flip; T7 wire-shape contract test + T8 out-of-bounds handleDrop guard folded). Other deferred .tX rows still queued: click-trace-row→jump-to-chip (.t3), cancellation-edge polish (.t4), PreviewRequest strict Pydantic config (.t5), request-body size limit (.t6), /jobs/generate excluded_track_pids alignment (.t7), week selector (.t8), EditorCanvasStub lifecycle (.t10), page-level intercept-path integration tests (.t11). **Next**: §16.2.7 compare-against-saved diff view OR the next §16.x slice per the queued-order roadmap. |
+| Visual block editor      | **§16.2.2 SHIPPED** — read-only canvas at `/stations/[slug]/visualise`. `GET /api/stations/{slug}/sidecar` endpoint serves template + sidecar in one fetch; trivial-sidecar fallback for un-authored stations (Decision E — frontend never handles "no sidecar"). 7 Svelte components (`<EditorCanvas>`, `<Section>`, `<SectionHeader>`, `<ChipFlow>`, `<Chip>`, `<ViewModeToggle>`, `<DetailPanel>`) compose the canvas. View-mode prefs (labels / colour / macros) persist to localStorage. Chips are native `<button>`s (keyboard a11y); click opens a slide-in DetailPanel with full BlockSpec / macro spec. `<500-chip` sections start expanded; `>500` sections start collapsed with "Large station" hint. Discoverability via "🗺 Visualise template" link from `/stations/[slug]`. **§16.2.3 SHIPPED** — atomic slot editing: click a chip → DetailPanel edit form (parameter fields only; cursor_id as a select) → Save → `PATCH /api/stations/{slug}/blocks` (server-enforced parameter-only, optimistic-concurrency 409, parse_template revalidation) → refetch. "Export to disk" writes `stations/{slug}.json` (Decision A3, DB-as-truth). row_template edits warn they change every row. **§16.2.4 SHIPPED** — macro editing + block retyping + `allowlist_sources` per-block editor (closes §16.14.t7 c3 docs promise). Three new write paths: `PATCH /blocks/retype` (strategy+source swap with role validation via parse_template), `PATCH /macros/{macro_id}` (edit-once-applies-to-all fanout — server resolves macro_id → expanded block addresses via `engine.editor_metadata.resolve_macro_addresses`), plus extended PATCH /blocks accepting `allowlist_sources` for the 4 content-sampling strategies. New `<ChipMultiInput>` Svelte component for the chip-list editor. DetailPanel grew a collapsible "Change strategy / source" retype panel with D4 bidirectional role-filtered dropdowns; macros + atomics share the same form scaffolding (yellow fanout warning for macros). All-or-nothing macro transactions; new `_validate_no_overlapping_macros` drift rule. **§16.2.5 SHIPPED** — section composition + structural block edits. New `Station.sidecar` JSON column (D1 — DB-as-truth, disk file becomes export artifact) + Alembic backfill from on-disk `*.editor.json`. Six REST endpoints: POST/PATCH/DELETE /sections, PUT /sections/order, PATCH /blocks/move, PATCH /blocks/structure. D2 auto-`_unsorted` bin on non-empty section delete; D5 structural-edit index-shift contract (`shift_atomic_slot_indices` bumps every `slot_index ≥ N` in the same transaction). Frontend: SectionHeader rename/move/delete affordances + HTML5 drag-drop target; Chip drag source (atomic only — JSON-in-DataTransfer via shared `CHIP_DRAG_MIME` + `canDropOn` policy module); DetailPanel Move dropdown (D6 keyboard fallback) + Structural panel (size input + two-step Delete via `performance.now()` 3s arm window). First Playwright e2e click-through covers §16.2.3 + §16.2.4 + §16.2.5 affordances against a real backend. Slice-review sweep landed 3 follow-up commits (`ce51567` backend correctness, `048eb48` DetailPanel arm/stale-selection, `13c8aca` dedup); pre-§16.2.6 sweep then closed ALL six queued sub-slices §16.2.5.t1-.t6 in 4 more commits (`6e53a39` t3+t5 DB-as-truth + inline-sidecar, `dbc737f` t4 SidecarJSON TypeDecorator, `8333867` t1 drag-reorder, `46f4197` t6+t2 shared actions + system-section abstraction). **§16.2.6 SHIPPED** — live preview endpoint + UI + staged-edit + Discard. `POST /api/stations/{slug}/jobs/preview` (§16.11 job-id transport, in-memory, no persistence) + frontend toggle / `<TracePane>` / staging buffer / Save / Discard / 9-kind opLog applyEdit semantics mirroring backend / Retry/Drop partial-failure modal / toggle-off-mid-stage prompt / beforeunload prompt / DetailPanel ↔ TracePane mutual-exclusivity (D2(b)). Slice landed across c1 (backend), c2 (frontend skeleton), c3/c3b/c3c/c3d (chip + macro + section + block intercepts), c3d-follow-up (structuralBlockEdit with slot_index shifts), c3e c1/c2/c3 (UX polish), c3e c4 (docs closeout). All 9 staging kinds intercepted; the staging buffer is behaviorally complete. New `EditorCanvasStub.svelte` test harness closes the Svelte-4 component-event-via-DOM blocker (each handler intercept now has a 5-line test pinning "toggle ON + dispatch event K → opLog has the expected op"). **Six .tX promotions shipped post-§16.2.6 c4:** `.t1` (staged-edit recovery via localStorage + cross-tab `storage` event sync follow-up), `.t2` (transactional all-or-nothing Save via `POST /sidecar/batch` + applyBatch frontend + Retry/Drop modal adapt), `.t3` (click-trace-row → jump-to-chip cross-pane interaction — `findChipRef` mapping mirrors Python's `resolve_macro_addresses`, `data-ref-key` chip identity + scrollIntoView + 800ms `--chip-color` outline-pulse flash with reduced-motion variant; section-expand fallback guards against collapsing an already-expanded section), `.t9` (edit-ops `_moveBlock` internal-type consistency — `_BlockDict` / `_SectionDict` narrowing), `.t12` (c1b deferred polish: P6 docstring rebind-required contract + P7 compound-rollback regression test + P8 `tests/_helpers.py::seed_station` extraction), `.t13` (DRY refactor — 9 per-kind `_apply_<kind>` helpers shared between routes + batch dispatcher, **-465 LOC net** across c1 extraction + c2 route flip; T7 wire-shape contract test + T8 out-of-bounds handleDrop guard folded). Other deferred .tX rows still queued: cancellation-edge polish (.t4), PreviewRequest strict Pydantic config (.t5), request-body size limit (.t6), /jobs/generate excluded_track_pids alignment (.t7), week selector (.t8), EditorCanvasStub lifecycle (.t10), page-level intercept-path integration tests (.t11). **Next**: §16.2.7 compare-against-saved diff view OR the next §16.x slice per the queued-order roadmap. |
 | Station detail page      | **§16.19 SHIPPED** — `/stations/[slug]` overview bundle (`GET /api/stations/{slug}/overview`): template summary, source pools (not-imported gap flagged red), persistent cursor positions, generation rollup + staleness hint (`stale_count`, `updated_at`-proxy; precise fix §16.19.t1). Non-fatal fetch; bounded aggregate queries. **§16.25 extension**: not-imported badge is a deep-link to `/sources?pool=…&role=…`; `<PoolImportPanel>` embedded below the overview, scoped to declared sources; panel-driven changes refresh the overview live. |
 | Pool-import UI           | **§16.25 SHIPPED** — `/sources` page (list + single/batch add + per-row Re-import/Delete) + per-station embed + deep-link badge. `POST /api/sources/upload` multipart endpoint (streaming + `mkstemp` + `finally` cleanup). File-upload primary, typed-path advanced. CLI manifest (`make import-weekly-pools`) kept as the power-user channel. **Closed §16.13 D1.** Watch-list: §16.25.t1 (mid-batch mode-switch UX), §16.25.t2 (upload cancel / AbortController). |
 | Trace versioning         | Deferred. See §16.4 (queued; not on the critical path post-Phase-B). |
@@ -9391,123 +9391,114 @@ them via shared `_apply_<kind>` helpers is a c1b-followup cleanup
 contract going forward; the per-route endpoints stay as the
 non-batch convenience surface). (Was .t3.)
 
-**§16.2.6.t3** (small) — click-trace-row → jump-to-chip cross-pane
-interaction. Trace rows already render slot index + macro_id; the
-chip the slot belongs to is one event dispatch away. Promote when
-operators report navigating between trace + canvas feels disjointed.
-The §16.2.0 D4 follow-up note ("LATER (§16.2.6 or §16.2.7)") homes
-this here. (Was .t4.)
+**§16.2.6.t3** (small) — ✅ SHIPPED. Click-trace-row → jump-to-chip
+cross-pane interaction. Operators can now click a trace row and the
+canvas scrolls to the matching chip + flashes its outline. The
+§16.2.0 D4 follow-up note ("LATER (§16.2.6 or §16.2.7)") homes this
+here. (Was .t4.) Landed across 5 commits: design pass (`bdcac5c`)
+→ c1 (`cad559f`) → c2 (`f5b319f`) → slice-review batch 1 R3
+(`666a9ae`) → slice-review batch 2 R1+R2 (`b74194a`).
 
-**Design pass (entering implementation):** `TracePane` already
-dispatches `select { slotIndex }` (wired in c2 as a forward
-pointer, with keyboard a11y — Enter / Space activate the row). The
-parent page is the consumer; the visual editor's canvas + chip
-rendering already exists. What's missing is (a) the trace-slot →
-chip-ref mapping function, (b) chip identity in the DOM so the page
-can find + scroll the right chip, and (c) a brief visual confirm
-("the chip I just landed on is THIS one") so the operator's eye
-locks on instead of hunting through the canvas.
+**c1** (`cad559f`, +364 LOC, +11 unit tests) — pure-function
+`findChipRef(template, sidecar, traceSlot) → ExpandedRef | null` +
+`refKey(ref) → string` + `findSectionIdForRef(sidecar, ref) →
+string | null` in `web/src/lib/editor.ts`. findChipRef mirrors
+Python's `engine.editor_metadata.resolve_macro_addresses`: per
+section, find the first atomic anchor, compute
+`section_start = anchor.pos - cumulative_width_before_anchor`
+(atomic width=1, macro width=`macro.repeat`), then forward-walk
+with `cursor = section_start`; atomic match when `cursor ===
+targetPos`, macro match when `targetPos ∈ [cursor, cursor + repeat)`.
+Layout-form-aware: `template.layout.flat_slots` defined →
+`targetPos = traceSlot.slot`; row_template → `targetPos =
+traceSlot.block` (and returned AtomicRef carries `traceSlot.row` as
+row_idx). All-macro / negative-section_start sections skip
+silently. Unit tests pin 4 mapping cases + null + D6 drift +
+all-macro-section + negative-section_start.
 
-**D1 — Trace-slot → ref mapping.** `TraceSlot` carries `(slot,
-row, block)`. For flat_slots stations: `slot.slot` IS the atomic
-ref's `slot_index`. For row_template stations: `(slot.row,
-slot.block)` is the atomic address — `slot.slot` is the globally-
-flattened numbering and shouldn't be used as a `slot_index`. The
-mapping helper detects layout form from `template.layout.flat_slots`
-vs `template.layout.row_template` and emits the matching
-`AtomicRef`. **Macro coverage:** when the resolved atomic address
-falls INSIDE a macro's expanded range (sidecar walk via the same
-expansion `<Section>` uses for chip rendering), the helper returns
-the macro's first MacroPlaceholder (`pick_in_macro=1`) instead —
-the canvas renders one grouped chip per macro, not per repeat
-instance, so the operator's eye lands on the right visual element.
+**c2** (`f5b319f`, +400 LOC, +4 integration / chip tests) — wired
+end-to-end. `Chip.svelte` gets one new attribute
+`data-ref-key={refKey(ref)}`; pinned by a Chip.test case asserting
+all three serialization shapes inject distinct keys. `+page.svelte`
+gets `handleTraceSelect` (~70 LOC) that resolves
+trace-row → findChipRef → `document.querySelector('[data-ref-key=...]')`
+→ `scrollIntoView({behavior:'smooth', block:'nearest',
+inline:'nearest'})` → `.chip--jump-flash` class + 800ms strip
+timer. When the chip's section is collapsed, the handler walks to
+the section's `[data-testid="section-toggle"]` button + synthetic-
+clicks it, awaits `tick()`, re-queries. The flash CSS lives in the
+page's `<style>` as `:global(.chip.chip--jump-flash)` since the
+class is added by a querySelector reaching into Chip's scoped style
+context; uses the chip's existing `--chip-color` CSS variable so
+the flash matches the chip's identity; `@media (prefers-reduced-
+motion: reduce)` swaps the keyframe animation for a static-color
+hold over the same duration. Race semantics: a second trace-row
+click during the flash window strips the prior chip's class +
+cancels its strip timer + re-adds + re-arms (D4 — no class leak,
+no flash disappearing early on the new chip). onDestroy cleanup
+clears the in-flight timer + strips any dangling class so route
+navigation doesn't leave a wasted setTimeout callback queued.
+Integration tests: real TracePane → real onRowClick → page handler;
+3 cases (matching chip → scroll + flash; D6 fallback → console.warn,
+no scroll; D4 race → class moves correctly).
 
-**D2 — Chip DOM identity via data attributes.** Add `data-ref-key`
-to every chip — a canonical string serialization of its ref
-(`atomic:slot=N`, `atomic:row=R:block=B`, `macro:ID:pick=K`). The
-page resolves trace-row → ref → key → `document.querySelector` to
-find the chip element. Alternative considered + rejected: a
-`Map<key, Element>` maintained by `<EditorCanvas>` + exposed via
-`getChipElement(ref)`. The map needs invalidation every chip
-re-render (Svelte's reactive re-renders are frequent — staged-edit
-flow alone fires several per Save); data attributes survive
-re-render unchanged + need no coordination. Cost: one
-`querySelector` per click — O(chip-count) selector match, ~2k for
-Rebirth Radio. Acceptable for an operator-triggered action.
+**Slice-review batch 1 R3** (`666a9ae`, +84 LOC, +1 integration
+test) — handleTraceSelect's expand-fallback pre-fix assumed "chip
+missing from DOM" meant "section collapsed" and synthetic-clicked
+the toggle. But the chip can be missing for other reasons (future
+view-mode filter, hot-reload race, mid-render); clicking the
+toggle on an already-expanded section would COLLAPSE it. R3 guards
+by checking `[data-testid="section-body"]` (only renders when the
+Section is expanded): present → section IS expanded, don't toggle
+(would collapse), bail; absent → section is collapsed, proceed.
 
-**D3 — Scroll behavior.** `element.scrollIntoView({ behavior:
-'smooth', block: 'nearest', inline: 'nearest' })`. `nearest` avoids
-scrolling when the chip is already in viewport; `smooth` honors
-`prefers-reduced-motion` via the browser's built-in respect (no
-manual check needed). The `<Section>` containing the chip MUST be
-expanded first — large-station auto-collapse (§16.2.2) would
-otherwise leave the chip in a `display:none` subtree where
-`scrollIntoView` snaps to the section header instead. The page's
-handler sets the section's `expanded=true` state BEFORE calling
-`scrollIntoView` (use a `tick()` await so Svelte renders the
-expanded section before the scroll runs).
+**Slice-review batch 2 R1 + R2** (`b74194a`, +28 LOC docs only) —
+docstring polish capturing two contracts the code already honors
+but the docstrings didn't say. R1 — findChipRef relies on drift-
+rule-1 contiguity: returns `{slot_index: cursor}`, not
+`block.slot_index`; equal for valid sidecars (engine raises
+MacroResolutionError on `declared != pos`); drifted sidecars
+return a cursor-implied address → page handler querySelector-
+misses → D6 silent-no-op + warn. The note also explains why
+switching to `block.slot_index` wouldn't work (macros have no
+declared slot_index; both arms must use the same cursor). R2 —
+findSectionIdForRef does defensive cross-form match for XOR-broken
+atomic refs carrying both `slot_index` AND `block_idx` (first hit
+wins); lets the page's expand-fallback succeed when the operator
+is mid-fixing a cross-form-drift sidecar.
 
-**D4 — Brief flash for visual confirm.** After scroll, add a
-`chip--jump-flash` class to the chip element for ~800ms then strip
-it. Animation: outline-color pulse using the chip's
-`--chip-color` variable (already CSS-var-driven for the source
-swatch) so the flash matches the chip's identity. Uses
-`@media (prefers-reduced-motion: reduce)` to swap the keyframe
-animation for a static-color hold during the same duration so
-motion-sensitive operators still see the cue. Race semantics: a
-SECOND trace-row click during the flash window restarts the timer
-+ moves the class to the new chip — no flashed-class-leak.
+**Decisions honored:** D1 layout-form-aware mapping. D2 chip
+identity via `data-ref-key` (alternative: `Map<key, Element>`
+maintained by EditorCanvas — rejected because Svelte's reactive
+re-renders invalidate the map every staged-edit; data attributes
+survive re-render unchanged with no coordination). D3 scroll +
+section-expand contract with the await-tick() ordering. D4 flash
+visual + race + reduced-motion. D5 don't auto-open DetailPanel —
+the bouncing-pane regression (TracePane closes mid-click) outweighs
+the one-click-saved win. D6 silent-no-op + warn for drift.
 
-**D5 — DetailPanel: scroll-and-flash only; don't auto-open.** A
-trace-row click is "where is this slot?", not "I want to edit it."
-Auto-opening the DetailPanel would force-close TracePane (D2(b)
-mutual-exclusivity) — but the operator just clicked from
-TracePane, so dropping that pane is jarring. v1 ships
-scroll-and-flash; the operator clicks the chip themselves if they
-want to edit. **Punted:** auto-open as a §16.2.6.t3 follow-up if
-operators ask for it (would need a "stay-open" affordance on the
-TracePane to avoid the bouncing-pane regression).
-
-**D6 — Out-of-canvas refs (no match).** A trace row whose mapped
-ref doesn't exist in the sidecar (drift — slot exists in template
-+ trace but no section references it; sits in the `_unsorted`
-bin or a system bin the operator collapsed). The lookup returns
-null; the handler is a defensive no-op + emits a console.warn
-naming the slot index. No visible error — silently failing to
-jump is less jarring than a banner for a rare drift case;
-`_unsorted` chips are already visible if expanded. Logged so a
-real bug (sidecar drift bug) surfaces in dev.
-
-**c1 / c2 split.** **c1** = pure-function `findChipRef(template,
-sidecar, traceSlot) → ExpandedRef | null` + the `refKey(ref) →
-string` serializer in `web/src/lib/editor.ts` (sibling to the
-existing `expandSection`). Vitest-unit-testable with no DOM —
-pins the 4 mapping cases (flat_slots atomic, row_template atomic,
-flat_slots-inside-macro, row_template-inside-macro) + the null
-case. **c2** = wire it up: add `data-ref-key={refKey(ref)}` to
-`<Chip>` (1-line change); add `handleTraceSelect` to `+page.svelte`
-(maps → expands section → scrolls → flashes); add the flash CSS
-class + `prefers-reduced-motion` variant. visualise.test.ts pins
-the integration end-to-end with jsdom (mock `scrollIntoView` —
-jsdom doesn't implement it; just assert it was called with the
-right options + the `chip--jump-flash` class lands on the right
-chip element).
-
-**Testing strategy.** No new helper-direct unit tests beyond
-findChipRef; the existing TracePane test pins the `select` event
-dispatch; visualise.test.ts pins the integration. If macros add
-edge-case complexity (e.g. a future schema change to MacroPlaceholder
-indexing), revisit in a sweep batch.
-
-**Punts not promoted:**
+**Punts (NOT promoted with this slice):**
 - Auto-open DetailPanel after jump (D5 alternative). Promote on
-  operator feedback.
-- Bidirectional (chip-click → flash trace row). Symmetric UX would
+  operator feedback; would need a TracePane "stay-open" affordance
+  to defuse the D2(b) bouncing-pane regression.
+- Bidirectional chip-click → flash trace row. Symmetric UX would
   be nicer but the use case is weaker — chip click already opens
   DetailPanel which contains all the info the trace row would show.
 - `scrollIntoView({block: 'center'})` instead of `'nearest'`. May
   feel more confirming for the eye; revisit if 'nearest' lands on
-  a barely-visible chip too often.
+  a barely-visible chip too often in practice.
+- Macro-coverage support for row_template stations. Today the
+  algorithm handles row_template atomics + macros within them by
+  the same cursor walk; if a future schema change to
+  `MacroPlaceholder` indexing breaks the assumption, revisit.
+
+**Testing:** vitest 752/752 green throughout (was 736; +11 c1 unit
++ 1 Chip data-ref-key + 3 c2 integration + 1 R3 integration).
+svelte-check 0/0. pytest unchanged (backend untouched). The c1
+unit tests pin the algorithm exhaustively; c2 + R3 tests pin the
+DOM glue end-to-end (real TracePane component → real onRowClick
+→ page handler; synthesized chip + section DOM since the
+EditorCanvas stub doesn't render real chips/sections).
 
 **§16.2.6.t4** (small) — Cancellation-edge polish on
 `POLICY_CANCEL_EXISTING` supersede. §16.2.6 c1 review #1 finding
