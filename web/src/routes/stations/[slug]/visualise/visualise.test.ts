@@ -1916,3 +1916,245 @@ describe('visualise +page.svelte — §16.2.6.t3 click-trace-row → jump-to-chi
     document.body.removeChild(fakeChip);
   });
 });
+
+
+// §16.2.6.t11 — page-level intercept-path INTEGRATION tests. Closes
+// the gap §16.2.5.t18 sweep S7 originally surfaced: c3d describe
+// block pins "opLog grows by 1" per kind (shallow); c3e Retry/Drop
+// tests cover the save-failure flow end-to-end. THE MIDDLE LAYER —
+// `stagedView = applyEdits(originalSidecar, opLog)` reactive
+// derivation + the save-replay path's order/composition — has no
+// dedicated coverage. This describe block fills it via 4 tests
+// driven by the d3d EditorCanvas stub + applyBatchMock.mock.calls
+// (D1 inspection point chosen because applyBatch fires synchronously
+// on the Save click — no debounce races, no fake-timer setup).
+describe('visualise +page.svelte — §16.2.6.t11 intercept-path integration', () => {
+  beforeEach(() => {
+    getStationSidecarMock.mockReset();
+    patchBlockMock.mockReset();
+    // NOTE: don't mockReset applyBatchMock — its hoisted default
+    // returns a minimal SidecarMutationResponse shape that covers
+    // the happy-path multi-op test. Resetting would strip the
+    // implementation + each call would return undefined. Failure-
+    // path tests use mockRejectedValueOnce inline.
+    applyBatchMock.mockClear();
+    startPreviewJobMock.mockReset();
+    watchJobMock.mockReset();
+    cancelJobMock.mockReset();
+    startPreviewJobMock.mockResolvedValue({
+      job_id: 'pv-default', status: 'running',
+    });
+    cancelJobMock.mockResolvedValue(undefined);
+    setSlug('viz-test');
+    try { window.localStorage.clear(); } catch { /* */ }
+    window.localStorage.setItem('livePreview:viz-test', 'on');
+    getStationSidecarMock.mockResolvedValue({
+      template: makeTemplate(),
+      sidecar: makeSidecar(),
+      sidecar_error: null,
+    });
+    // Stub a successful preview reply so the preview side doesn't
+    // hang. The t11 tests pin the SAVE side (applyBatch.mock.calls);
+    // preview just needs to not error.
+    watchJobMock.mockReturnValue({
+      [Symbol.asyncIterator]() {
+        return { async next() { return { done: true, value: undefined }; } };
+      },
+    });
+  });
+
+  async function mountAndAwaitStub() {
+    render(Page);
+    await screen.findByTestId('editor-canvas');
+    await act(async () => {});
+  }
+
+  it('D2 — defensive guard: moveBlock target=_unsorted stages in opLog, applyEdits no-ops, save replays the bad op anyway', async () => {
+    // The page's handleBlockMove intercept is dumb pass-through —
+    // it copies the event payload into opLog without validating.
+    // applyEdits then runs _moveBlock which has the system-bin
+    // defensive guard (returns input sidecar unchanged). The
+    // staged-save count GROWS to 1 because the intercept didn't
+    // reject, but stagedSidecar stays original. When Save fires,
+    // the bad op is sent to the backend (which has the same guard
+    // server-side → 400). Pinning: (a) intercept didn't reject;
+    // (b) staged-save shows 1; (c) applyBatch was called with
+    // the moveBlock op verbatim; (d) server-side 400 surfaces the
+    // Retry/Drop modal.
+    await mountAndAwaitStub();
+    await act(async () => {
+      fireEditorCanvasEvent('blockMove', {
+        ref: { kind: 'atomic-ref', slot_index: 0 },
+        targetSectionId: '_unsorted',  // system bin — server rejects manual moves
+        targetIndex: 0,
+      });
+    });
+    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 1 edit/);
+
+    // Drive the save with a 400 response (server's _apply_move_block
+    // helper raises HTTPException(400) for system-section targets).
+    applyBatchMock.mockRejectedValueOnce(
+      new FakeSidecarBatchFailure(
+        400, 1, 'moveBlock',
+        "can't manually move into the system `_unsorted` section.",
+      ),
+    );
+    await act(async () => {
+      screen.getByTestId('staged-save').click();
+    });
+
+    // applyBatch received the bad op verbatim (intercept is dumb
+    // pass-through; the page didn't filter or transform).
+    const lastCall = applyBatchMock.mock.calls.at(-1) as unknown[];
+    const editsArg = lastCall?.[1] as Array<Record<string, unknown>>;
+    expect(editsArg).toHaveLength(1);
+    expect(editsArg[0].kind).toBe('moveBlock');
+    expect(editsArg[0].targetSectionId).toBe('_unsorted');
+
+    // Retry/Drop modal surfaced for the 400; opLog preserved so
+    // the operator can fix-and-retry. Staged-save still shows
+    // the op count.
+    expect(screen.getByTestId('retry-modal')).toBeInTheDocument();
+    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 1 edit/);
+  });
+
+  it('D3 — multi-op composition: 3 ops across 3 kinds replay through applyBatch in stage order', async () => {
+    // Stage [patchBlock, sectionRename, structuralBlockEdit]; click
+    // Save. applyBatch must receive a 3-element edits array with the
+    // kinds in stage order. Ordering matters because the backend
+    // dispatcher applies edits sequentially + later edits can
+    // observe earlier ones (a structural-add before a section-rename
+    // has different semantics than after).
+    await mountAndAwaitStub();
+    await act(async () => {
+      fireEditorCanvasEvent('save', {
+        ref: { kind: 'atomic-ref', slot_index: 0 },
+        fields: { size: 5 },
+      });
+    });
+    await act(async () => {
+      fireEditorCanvasEvent('sectionRename', {
+        sectionId: 'all-slots',
+        name: 'Morning',
+      });
+    });
+    await act(async () => {
+      fireEditorCanvasEvent('structuralEdit', {
+        edit: { op: 'size', slot_index: 0, new_size: 3 },
+      });
+    });
+    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 3 edits/);
+
+    await act(async () => {
+      screen.getByTestId('staged-save').click();
+    });
+
+    const lastCall = applyBatchMock.mock.calls.at(-1) as unknown[];
+    const editsArg = lastCall?.[1] as Array<Record<string, unknown>>;
+    expect(editsArg).toHaveLength(3);
+    // Order is preserved — stage-order maps to send-order one-to-one.
+    expect(editsArg[0].kind).toBe('patchBlock');
+    expect(editsArg[1].kind).toBe('renameSection');
+    expect(editsArg[2].kind).toBe('structuralBlockEdit');
+  });
+
+  it('D4 — Discard restores composed state: stage 2 ops, Discard, opLog cleared + staged-save UI gone', async () => {
+    // Pre-§16.2.6.t11 a regression in _resetStagedState that forgot
+    // to clear opLog (e.g. clearing only stagedSidecar) would slip
+    // past the c3 tests (which pin button visibility without
+    // multi-op staging). This pins the contract that Discard
+    // restores from ANY composed staged state, not just single-op.
+    await mountAndAwaitStub();
+    await act(async () => {
+      fireEditorCanvasEvent('save', {
+        ref: { kind: 'atomic-ref', slot_index: 0 },
+        fields: { size: 5 },
+      });
+    });
+    await act(async () => {
+      fireEditorCanvasEvent('sectionRename', {
+        sectionId: 'all-slots',
+        name: 'Morning',
+      });
+    });
+    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 2 edits/);
+
+    // Discard refetches the sidecar via loadSidecar; preload the
+    // next getStationSidecar response so the GET doesn't 404.
+    getStationSidecarMock.mockResolvedValueOnce({
+      template: makeTemplate(),
+      sidecar: makeSidecar(),
+      sidecar_error: null,
+    });
+
+    await act(async () => {
+      screen.getByTestId('staged-discard').click();
+    });
+
+    // opLog cleared → staged-save + staged-discard buttons hidden
+    // (the `{#if opLog.length > 0}` template guard).
+    expect(screen.queryByTestId('staged-save')).toBeNull();
+    expect(screen.queryByTestId('staged-discard')).toBeNull();
+    // applyBatch was NEVER called — Discard drops opLog before
+    // any backend interaction. Pre-fix regression vector: a
+    // _resetStagedState that called applyBatch by accident
+    // (e.g. trying to send an "empty" save) would flip this.
+    expect(applyBatchMock).not.toHaveBeenCalled();
+  });
+
+  it('mixed pure + guarded ops: 2 valid edits + 1 guard-rejected op all replay in stage order', async () => {
+    // Composition-with-no-op test: staging a guard-rejected op
+    // doesn't break the stagedView derivation for sibling ops.
+    // Stage [patchBlock(valid), moveBlock(target=_unsorted, guard-
+    // rejected), sectionRename(valid)]. applyEdits no-ops the
+    // middle op against stagedSidecar; applyBatch on Save still
+    // sends ALL 3 in order (the page is pass-through; the server
+    // is the contract enforcer).
+    await mountAndAwaitStub();
+    await act(async () => {
+      fireEditorCanvasEvent('save', {
+        ref: { kind: 'atomic-ref', slot_index: 0 },
+        fields: { size: 5 },
+      });
+    });
+    await act(async () => {
+      fireEditorCanvasEvent('blockMove', {
+        ref: { kind: 'atomic-ref', slot_index: 0 },
+        targetSectionId: '_unsorted',
+        targetIndex: 0,
+      });
+    });
+    await act(async () => {
+      fireEditorCanvasEvent('sectionRename', {
+        sectionId: 'all-slots',
+        name: 'Morning',
+      });
+    });
+    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 3 edits/);
+
+    // Server returns 400 at index 2 (the bad moveBlock).
+    applyBatchMock.mockRejectedValueOnce(
+      new FakeSidecarBatchFailure(
+        400, 2, 'moveBlock',
+        "can't manually move into the system `_unsorted` section.",
+      ),
+    );
+    await act(async () => {
+      screen.getByTestId('staged-save').click();
+    });
+
+    // All 3 ops were sent; the page didn't dedupe / filter the
+    // no-op middle one. Server's batch dispatcher (with the
+    // post-§16.2.6.t13 _apply_<kind> helpers) enforces the guard
+    // at idx=2 and rolls back the whole batch.
+    const lastCall = applyBatchMock.mock.calls.at(-1) as unknown[];
+    const editsArg = lastCall?.[1] as Array<Record<string, unknown>>;
+    expect(editsArg).toHaveLength(3);
+    expect(editsArg[0].kind).toBe('patchBlock');
+    expect(editsArg[1].kind).toBe('moveBlock');
+    expect(editsArg[2].kind).toBe('renameSection');
+
+    // Retry/Drop modal points at the bad op (failedAtIdx=2).
+    expect(screen.getByTestId('retry-modal')).toBeInTheDocument();
+  });
+});
