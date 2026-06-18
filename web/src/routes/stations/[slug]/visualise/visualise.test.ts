@@ -1845,6 +1845,53 @@ describe('visualise +page.svelte — §16.2.6.t3 click-trace-row → jump-to-chi
     warnSpy.mockRestore();
   });
 
+  it('R3 fix: when the chip is missing but its section is ALREADY expanded, do NOT click the toggle (would collapse the section)', async () => {
+    // Pre-fix: handler assumed "chip missing" == "section collapsed"
+    // and synthetic-clicked the section-toggle. If the chip was
+    // actually missing for an unrelated reason (e.g. a view-mode
+    // filter hiding it, or a re-render race), the toggle click
+    // would COLLAPSE the section the chip lives in — making the
+    // chip even more inaccessible. R3 guards by checking whether
+    // the section's data-testid="section-body" is rendered: if it
+    // is, the section IS expanded and the toggle would collapse it.
+    await mountWithTraceRows([0]);
+
+    // Synthesize an already-expanded section in the document — the
+    // EditorCanvas stub doesn't render Section components, so we
+    // build the section + body + toggle DOM by hand to mirror what
+    // a real Section.svelte renders when expanded. findSectionIdForRef
+    // will resolve slot=0 → section 'all-slots' (from makeSidecar);
+    // tag the synthesized section with that id so the lookup matches.
+    const sectionEl = document.createElement('section');
+    sectionEl.setAttribute('data-testid', 'section');
+    sectionEl.setAttribute('data-section-id', 'all-slots');
+    // Body present → section is already expanded.
+    const bodyEl = document.createElement('div');
+    bodyEl.setAttribute('data-testid', 'section-body');
+    sectionEl.appendChild(bodyEl);
+    // Toggle present too — but the guard should prevent clicking it.
+    const toggleEl = document.createElement('button');
+    toggleEl.setAttribute('data-testid', 'section-toggle');
+    const toggleClickSpy = vi.fn();
+    toggleEl.addEventListener('click', toggleClickSpy);
+    sectionEl.appendChild(toggleEl);
+    document.body.appendChild(sectionEl);
+    // NB: NO chip with data-ref-key='atomic:slot=0' is injected;
+    // the handler's first querySelector misses, triggers the
+    // expand-fallback path. The R3 guard should kick in.
+
+    await clickTraceRow(0);
+
+    // Toggle MUST NOT have been clicked — the section body is
+    // already rendered, so the section is expanded; toggling would
+    // collapse it. Pre-fix, toggleClickSpy was called once + the
+    // chip stayed missing on re-query (toggle collapsed instead of
+    // expanded).
+    expect(toggleClickSpy).not.toHaveBeenCalled();
+
+    document.body.removeChild(sectionEl);
+  });
+
   it('D4 race semantics — rapid second click keeps the class on the same chip + cancels any prior strip timer', async () => {
     // The flash timer is 800ms; the handler MUST cancel the prior
     // timer + re-arm on each call so the class never leaks from a

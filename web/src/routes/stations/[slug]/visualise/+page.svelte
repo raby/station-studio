@@ -433,21 +433,46 @@
     );
 
     if (chipEl === null) {
-      // Chip not in the DOM — its containing section is collapsed.
-      // Find the section + synthetic-click its toggle button (the
-      // documented user affordance for expand/collapse). Await tick
-      // so Svelte renders the expanded section before re-querying.
+      // Chip not in the DOM. The expected cause is that its
+      // containing section is COLLAPSED (§16.2.2 large-station
+      // auto-collapse). Find the section + synthetic-click its
+      // toggle (the documented user affordance for expand/collapse),
+      // await tick() so Svelte renders the expanded section, then
+      // re-query.
+      //
+      // §16.2.6.t3 slice-review R3: but "chip not in DOM" can ALSO
+      // mean "section is already expanded + chip is hidden for an
+      // unrelated reason" (a future view-mode filter, a hot-reload
+      // race, etc.). Synthetic-clicking the toggle in that case
+      // would COLLAPSE the section the chip lives in — making the
+      // chip even more inaccessible + leaving the operator with a
+      // closed section they had open. Guard by checking whether
+      // the section's body element is already rendered: if it is,
+      // the section IS expanded (toggle would collapse it) → bail
+      // instead of toggling.
       const sectionId = findSectionIdForRef(sidecar, ref);
       if (sectionId !== null) {
-        const toggleEl = document.querySelector<HTMLButtonElement>(
-          `[data-section-id="${CSS.escape(sectionId)}"] [data-testid="section-toggle"]`,
+        const sectionEl = document.querySelector<HTMLElement>(
+          `[data-section-id="${CSS.escape(sectionId)}"]`,
         );
-        if (toggleEl !== null) {
-          toggleEl.click();
-          await tick();
-          chipEl = document.querySelector<HTMLElement>(
-            `[data-ref-key="${CSS.escape(key)}"]`,
-          );
+        if (sectionEl !== null) {
+          const alreadyExpanded = sectionEl.querySelector(
+            '[data-testid="section-body"]',
+          ) !== null;
+          if (!alreadyExpanded) {
+            const toggleEl = sectionEl.querySelector<HTMLButtonElement>(
+              '[data-testid="section-toggle"]',
+            );
+            if (toggleEl !== null) {
+              toggleEl.click();
+              await tick();
+              chipEl = document.querySelector<HTMLElement>(
+                `[data-ref-key="${CSS.escape(key)}"]`,
+              );
+            }
+          }
+          // alreadyExpanded === true → don't toggle. chipEl stays
+          // null → falls through to the bail below.
         }
       }
     }
