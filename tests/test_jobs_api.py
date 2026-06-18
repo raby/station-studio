@@ -813,22 +813,39 @@ def test_preview_strict_pydantic_rejects_coerced_int_at_the_wire(jobs_api):
 
     Without strict, Pydantic v2 silently coerces JSON `"1"` (string)
     into int=1, `true` (bool) into int=1, etc. Strict mode rejects
-    these as 422 validation errors BEFORE the engine sees them. Today
-    `week` + `seed` are the only int fields; the test pins
-    `week="1"` (string) is rejected. Same pattern protects any
-    future int field on this schema (forward-compat win — no per-
-    field StrictInt annotations needed).
+    these as 422 validation errors BEFORE the engine sees them.
+
+    Pins BOTH coercion paths the schema docstring promises:
+      (a) string → int (e.g. `week="1"`)
+      (b) bool → int (e.g. `seed=true`) — the load-bearing case;
+          §16.14.t10 review F1 motivated the strict-typing pattern
+          specifically because bool→int=1 was silently bypassing
+          the engine's bool-rejection contract for rule values.
     """
     client, Session, _store = jobs_api
-    _seed_station_with_pool(Session)
     body = _preview_body()
-    body["week"] = "1"  # string instead of int → strict rejects.
+
+    # (a) string → int rejected. Short-circuits at Pydantic before
+    # any DB lookup, so the station doesn't need to exist yet.
+    body["week"] = "1"
     r = client.post("/api/stations/ts/jobs/preview", json=body)
     assert r.status_code == 422, r.json()
-    # Sanity: the same body with int week=1 is accepted (proves the
-    # 422 came from the strict-coercion check, not e.g. a different
-    # field's validator firing).
+
+    # (b) bool → int rejected. Pydantic v2's strict mode rejects
+    # bool for int fields even though `bool` is technically a
+    # subclass of `int` in Python — strict treats them as distinct
+    # at the schema boundary.
     body["week"] = 1
+    body["seed"] = True
+    r = client.post("/api/stations/ts/jobs/preview", json=body)
+    assert r.status_code == 422, r.json()
+
+    # Sanity: with both fields fixed + the station seeded, the
+    # request hits the route + spawns a preview job. Proves the
+    # 422s above came from strict-coercion checks, not e.g. a
+    # different field's validator firing.
+    _seed_station_with_pool(Session)
+    body["seed"] = 42
     r = client.post("/api/stations/ts/jobs/preview", json=body)
     assert r.status_code == 201, r.json()
 

@@ -120,8 +120,8 @@ class PreviewRequest(BaseModel):
     """
     model_config = ConfigDict(strict=True)
 
-    template: dict
-    sidecar: dict
+    template: dict[str, Any]
+    sidecar: dict[str, Any]
     week: int = Field(ge=1)
     seed: int | None = None
 
