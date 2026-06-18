@@ -24,6 +24,7 @@
     compactStrategyLabel,
     lookupEngineBlock,
     lookupMacro,
+    refKey,
     verboseStrategyLabel,
     type ExpandedRef,
     type Sidecar,
@@ -131,6 +132,7 @@
   data-testid="chip"
   data-chip-kind={data.kind}
   data-source={data.source}
+  data-ref-key={refKey(ref)}
   draggable={isDraggable}
   on:click={activate}
   on:dragstart={onDragStart}

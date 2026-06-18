@@ -76,6 +76,36 @@ describe('<Chip>', () => {
     expect(screen.queryByTestId('chip-count')).toBeNull();
   });
 
+  it('§16.2.6.t3: carries data-ref-key matching refKey(ref) for trace-jump lookup', () => {
+    // The page's handleTraceSelect resolves a trace row → ExpandedRef
+    // → refKey → document.querySelector('[data-ref-key=...]'). If the
+    // attribute drifts (renamed, dropped, formatter change) the jump
+    // silently no-ops. Pin the three shapes here.
+    const template = makeFlatTemplate();
+    const sidecar = makeSidecarWithMacro();
+    const atomicFlat: AtomicRef = { kind: 'atomic-ref', slot_index: 7 };
+    const { unmount } = render(Chip, { ref: atomicFlat, template, sidecar, viewMode: VM });
+    expect(screen.getByTestId('chip')).toHaveAttribute(
+      'data-ref-key', 'atomic:slot=7',
+    );
+    unmount();
+
+    const atomicRow: AtomicRef = { kind: 'atomic-ref', row_idx: 2, block_idx: 5 };
+    const { unmount: unmount2 } = render(Chip, { ref: atomicRow, template, sidecar, viewMode: VM });
+    expect(screen.getByTestId('chip')).toHaveAttribute(
+      'data-ref-key', 'atomic:row=2:block=5',
+    );
+    unmount2();
+
+    const macro: MacroPlaceholder = {
+      kind: 'macro-placeholder', macro_id: 'm1', pick_in_macro: 1,
+    };
+    render(Chip, { ref: macro, template, sidecar, viewMode: VM });
+    expect(screen.getByTestId('chip')).toHaveAttribute(
+      'data-ref-key', 'macro:m1:pick=1',
+    );
+  });
+
   it('uses the source colour declared on the template', () => {
     const template = makeFlatTemplate();
     const ref: AtomicRef = { kind: 'atomic-ref', slot_index: 0 };

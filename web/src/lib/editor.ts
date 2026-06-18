@@ -963,6 +963,56 @@ export function refKey(ref: ExpandedRef): string {
 
 
 /**
+ * Find the section id that contains a given `ExpandedRef`. Used by
+ * the page's `handleTraceSelect` to expand the section before
+ * scrolling to a chip whose section is currently collapsed (the chip
+ * wouldn't exist in the DOM yet).
+ *
+ * Linear scan over `sidecar.sections` × their `blocks`. For atomic
+ * refs: match by `slot_index` (flat_slots) or `block_idx`
+ * (row_template). For macros: match by `macro_id` ↔ `block.ref`.
+ *
+ * Returns the first matching section's id, or null if no section
+ * holds the ref (orphan / drift — section was deleted, or operator
+ * is mid-edit with a stale opLog). A validate_sidecar-passing
+ * sidecar guarantees at most one section per ref (drift rule 8 for
+ * atomics + drift rule 9 for macros). The page handler treats null
+ * the same as findChipRef returning null — silent no-op + warn.
+ */
+export function findSectionIdForRef(
+  sidecar: Sidecar,
+  ref: ExpandedRef,
+): string | null {
+  for (const section of sidecar.sections) {
+    for (const block of section.blocks) {
+      if (ref.kind === 'atomic-ref' && block.kind === 'atomic') {
+        if (
+          ref.slot_index !== undefined &&
+          block.slot_index === ref.slot_index
+        ) {
+          return section.id;
+        }
+        if (
+          ref.block_idx !== undefined &&
+          block.block_idx === ref.block_idx
+        ) {
+          return section.id;
+        }
+      }
+      if (
+        ref.kind === 'macro-placeholder' &&
+        block.kind === 'macro' &&
+        block.ref === ref.macro_id
+      ) {
+        return section.id;
+      }
+    }
+  }
+  return null;
+}
+
+
+/**
  * Map a trace row to the chip that renders it. Returns null when no
  * chip matches (drift, orphan macros, or row_template macros — see D6
  * in the §16.2.6.t3 design pass).

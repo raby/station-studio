@@ -16,7 +16,7 @@
    * design's "first-impression" treatment); c2 is reachable only by
    * direct URL or test.
    */
-  import { onDestroy, onMount } from 'svelte';
+  import { onDestroy, onMount, tick } from 'svelte';
   import { page } from '$app/stores';
   import {
     ApiError,
@@ -43,7 +43,10 @@
     type StructuralBlockEdit,
   } from '$lib/api';
   import {
+    findChipRef,
+    findSectionIdForRef,
     parseEditorSidecarResponse,
+    refKey,
     type ExpandedRef, type Sidecar, type StationTemplate,
   } from '$lib/editor';
   import { applyEdits, type Edit } from '$lib/edit-ops';
@@ -77,6 +80,16 @@
   let previewTrace: Trace | null = null;
   let previewing = false;
   let previewError: string | null = null;
+
+  // §16.2.6.t3 — click-trace-row → jump-to-chip state. `_jumpFlashEl`
+  // tracks the element currently wearing the .chip--jump-flash class
+  // so we can strip it on a rapid second click (D4 race semantics —
+  // the second click moves the flash to the new chip; the old chip
+  // doesn't leak the class). `_jumpFlashTimer` is the 800ms strip
+  // timer; rapid clicks cancel + reschedule it.
+  let _jumpFlashEl: HTMLElement | null = null;
+  let _jumpFlashTimer: ReturnType<typeof setTimeout> | null = null;
+  const JUMP_FLASH_MS = 800;
   // Debounce + cancel tracking. The 500ms idle window matches §16.2.0
   // D4's debounce target. `currentPreviewJobId` is the latest spawned
   // job — stored so onDestroy + a new debounce-fire can cancel it
@@ -380,6 +393,95 @@
     return msg;
   }
 
+  // §16.2.6.t3 — click-trace-row → jump-to-chip handler.
+  // TracePane dispatches `select { slotIndex }` on row click / Enter / Space.
+  // This handler resolves the row to a chip ref via findChipRef, locates
+  // the chip in the DOM via its data-ref-key, scrolls it into view, and
+  // flashes the chip's outline. D5: does NOT auto-open DetailPanel —
+  // a trace-click is "where is this slot?", not "edit this slot." The
+  // operator clicks the chip themselves to edit.
+  async function handleTraceSelect(e: CustomEvent<{ slotIndex: number }>) {
+    if (!previewTrace || !template || !sidecar) return;
+    // The TracePane dispatches whichever slot index appears in the
+    // row; for row_template stations this is the globally-flattened
+    // number, not slot.row + slot.block. We need the full TraceSlot
+    // to feed findChipRef the layout-form-aware mapping.
+    const traceSlot = previewTrace.slots.find(
+      (s) => s.slot === e.detail.slotIndex,
+    );
+    if (!traceSlot) {
+      // Trace state changed under us (Discard / new preview) between
+      // the click handler firing + this handler running. Defensive
+      // no-op; not worth a warn since it's expected on rapid edits.
+      return;
+    }
+    const ref = findChipRef(template, sidecar, traceSlot);
+    if (ref === null) {
+      // D6 — out-of-canvas / drift / orphan-macro case. Silent no-op
+      // for the operator; warn so a real drift bug surfaces in dev.
+      // eslint-disable-next-line no-console
+      console.warn(
+        `§16.2.6.t3 jump: no chip matches trace slot ${e.detail.slotIndex} ` +
+          `(row=${traceSlot.row} block=${traceSlot.block}).`,
+      );
+      return;
+    }
+
+    const key = refKey(ref);
+    let chipEl = document.querySelector<HTMLElement>(
+      `[data-ref-key="${CSS.escape(key)}"]`,
+    );
+
+    if (chipEl === null) {
+      // Chip not in the DOM — its containing section is collapsed.
+      // Find the section + synthetic-click its toggle button (the
+      // documented user affordance for expand/collapse). Await tick
+      // so Svelte renders the expanded section before re-querying.
+      const sectionId = findSectionIdForRef(sidecar, ref);
+      if (sectionId !== null) {
+        const toggleEl = document.querySelector<HTMLButtonElement>(
+          `[data-section-id="${CSS.escape(sectionId)}"] [data-testid="section-toggle"]`,
+        );
+        if (toggleEl !== null) {
+          toggleEl.click();
+          await tick();
+          chipEl = document.querySelector<HTMLElement>(
+            `[data-ref-key="${CSS.escape(key)}"]`,
+          );
+        }
+      }
+    }
+
+    if (chipEl === null) return; // expansion didn't surface the chip; bail.
+
+    chipEl.scrollIntoView({
+      behavior: 'smooth',
+      block: 'nearest',
+      inline: 'nearest',
+    });
+
+    // D4 race semantics: a second trace-row click during the flash
+    // window strips the class from the prior chip + moves it to the
+    // new one, then restarts the timer. The cleared timer + el track
+    // also matter for onDestroy hygiene (no dangling timer firing
+    // after the route navigates away).
+    if (_jumpFlashEl !== null && _jumpFlashEl !== chipEl) {
+      _jumpFlashEl.classList.remove('chip--jump-flash');
+    }
+    if (_jumpFlashTimer !== null) {
+      clearTimeout(_jumpFlashTimer);
+    }
+    chipEl.classList.add('chip--jump-flash');
+    _jumpFlashEl = chipEl;
+    _jumpFlashTimer = setTimeout(() => {
+      if (_jumpFlashEl !== null) {
+        _jumpFlashEl.classList.remove('chip--jump-flash');
+        _jumpFlashEl = null;
+      }
+      _jumpFlashTimer = null;
+    }, JUMP_FLASH_MS);
+  }
+
   // Cancel any pending or in-flight preview job. Called from
   // onDestroy + on toggle-off + before scheduling a new preview.
   // The previewGeneration bump invalidates any watchJob loop that
@@ -560,6 +662,19 @@
     if (_storageHandler) {
       window.removeEventListener('storage', _storageHandler);
       _storageHandler = null;
+    }
+    // §16.2.6.t3 — clear any in-flight chip-jump flash timer so it
+    // doesn't fire after the route navigates away (the chipEl
+    // reference would still be valid but stripping the class on a
+    // detached element is harmless; the wasted setTimeout callback
+    // is what we're preventing).
+    if (_jumpFlashTimer !== null) {
+      clearTimeout(_jumpFlashTimer);
+      _jumpFlashTimer = null;
+    }
+    if (_jumpFlashEl !== null) {
+      _jumpFlashEl.classList.remove('chip--jump-flash');
+      _jumpFlashEl = null;
     }
   });
 
@@ -1549,6 +1664,7 @@
             trace={previewTrace}
             previewing={previewing}
             errorMessage={previewError}
+            on:select={handleTraceSelect}
           />
         </div>
       {/if}
@@ -1776,5 +1892,41 @@
     background: #f4f4f4;
     padding: 0.1em 0.3em;
     border-radius: 3px;
+  }
+
+  /* §16.2.6.t3 — chip jump-flash. The class is added by
+     handleTraceSelect on the target chip element + auto-strips
+     after JUMP_FLASH_MS (800ms). `:global` because the class is
+     added to a <Chip>-rendered element from outside the chip's
+     scoped style context (the page's querySelector reaches into
+     the canvas's chip subtree). The outline pulses using the
+     chip's existing --chip-color CSS variable so the flash
+     matches the chip's identity. */
+  :global(.chip.chip--jump-flash) {
+    animation: chip-jump-flash 800ms ease-out;
+    /* Layer the outline above neighbours so the pulse isn't
+       clipped by adjacent chip outlines. */
+    position: relative;
+    z-index: 1;
+  }
+  @keyframes chip-jump-flash {
+    0% {
+      outline: 3px solid var(--chip-color, #2c7a7b);
+      outline-offset: 2px;
+    }
+    100% {
+      outline: 3px solid transparent;
+      outline-offset: 2px;
+    }
+  }
+  /* Reduced-motion variant: hold a static outline for the same
+     duration instead of animating. Motion-sensitive operators still
+     see the cue without the keyframe pulse. */
+  @media (prefers-reduced-motion: reduce) {
+    :global(.chip.chip--jump-flash) {
+      animation: none;
+      outline: 3px solid var(--chip-color, #2c7a7b);
+      outline-offset: 2px;
+    }
   }
 </style>

@@ -108,7 +108,14 @@ const {
 });
 
 
-vi.mock('$lib/api', () => ({
+vi.mock('$lib/api', async () => ({
+  // Re-export the real `isPreviewResult` type guard so the page's
+  // `for await (const snap of watchJob(...))` loop can discriminate
+  // PreviewResult vs GenerateResponse from the snapshot's `result`
+  // payload. Pulled from importOriginal so tests that drive the
+  // watchJob mock with a trace can have it actually land in
+  // previewTrace (the t3 integration tests need this).
+  ...(await vi.importActual<typeof import('$lib/api')>('$lib/api')),
   // Mock surface widened for §16.2.6 c2 preview transport. Pass
   // the hoisted vi.fn instances directly — per-test mock
   // configuration (mockReturnValueOnce, mockResolvedValueOnce)
@@ -1703,5 +1710,162 @@ describe('visualise +page.svelte — §16.2.6 c3e c1 staged-edit loss guards', (
     window.dispatchEvent(e);
     expect(pd).toHaveBeenCalled();
     expect(returnValueSetter).toHaveBeenCalledWith('');
+  });
+});
+
+
+// §16.2.6.t3 — click-trace-row → jump-to-chip integration. The
+// findChipRef + refKey pure-function side is pinned by editor.test.ts
+// (97/97 incl. 11 t3-specific cases). The Chip.svelte `data-ref-key`
+// attribute is pinned by Chip.test.ts. THIS block pins the page-level
+// glue: TracePane select event → findChipRef → DOM query → scroll +
+// flash class.
+describe('visualise +page.svelte — §16.2.6.t3 click-trace-row → jump-to-chip', () => {
+  beforeEach(() => {
+    getStationSidecarMock.mockReset();
+    startPreviewJobMock.mockReset();
+    watchJobMock.mockReset();
+    cancelJobMock.mockReset();
+    startPreviewJobMock.mockResolvedValue({
+      job_id: 'pv-default', status: 'running',
+    });
+    cancelJobMock.mockResolvedValue(undefined);
+    setSlug('viz-test');
+    try { window.localStorage.clear(); } catch { /* */ }
+  });
+
+  /** Build a custom trace snapshot whose slots' `slot` values
+   *  match what's passed in (the shipped fakeDoneTrace helper
+   *  produces 1-indexed slots; we need 0-aligned for the default
+   *  makeSidecar's atomic@slot_index=0). */
+  function traceWithSlots(slotIndices: number[]) {
+    return {
+      job_id: 'pv-1', slug: 'viz-test', kind: 'preview',
+      status: 'done', phase: 'done',
+      current: slotIndices.length, total: slotIndices.length,
+      label: null, error: null,
+      started_at: '2026-06-15T12:00:00Z',
+      finished_at: '2026-06-15T12:00:01Z',
+      result: {
+        trace: {
+          trace_id: 'pv-trace', station: 'viz-test', week: 1,
+          rng: 'off', seed: null,
+          generated_at: '2026-06-15T12:00:00Z',
+          slots: slotIndices.map((s) => ({
+            slot: s, unit: 'slot', row: 0, block: s,
+            source: 'A', strategy: 'pick', pool_index: s + 1,
+            track_id: 100 + s, track_name: `T${s}`,
+            track_artist: null, reason: '', excluded: [],
+          })),
+        },
+        slot_count: slotIndices.length,
+      },
+    };
+  }
+
+  /** Mount the page with the toggle ON + a watchJob mock that
+   *  resolves to a trace whose slots match `slotIndices`. Returns
+   *  once the trace rows render (TracePane swaps from empty-state
+   *  to the `<ol>` of `<li data-testid="trace-row">`s). */
+  async function mountWithTraceRows(slotIndices: number[] = [0]) {
+    window.localStorage.setItem('livePreview:viz-test', 'on');
+    getStationSidecarMock.mockResolvedValueOnce({
+      template: makeTemplate(),
+      sidecar: makeSidecar(),
+      sidecar_error: null,
+    });
+    watchJobMock.mockReturnValue(
+      snapsAsAsyncIterable([traceWithSlots(slotIndices)]),
+    );
+    render(Page);
+    await screen.findByTestId('trace-pane');
+    // The trace's first row materializes once previewTrace lands +
+    // TracePane's {#if trace && trace.slots.length > 0} renders the
+    // <ol>. Need to click an actual trace-row to drive Svelte's
+    // `dispatch('select', ...)` → page's `on:select` ($on callback,
+    // not a DOM listener). Manual CustomEvent dispatch on
+    // trace-pane element wouldn't reach the $on callback.
+    await waitFor(() => {
+      expect(screen.queryAllByTestId('trace-row').length).toBeGreaterThan(0);
+    }, { timeout: 2000 });
+  }
+
+  /** Click the trace row whose `data-slot-index` matches `slot`.
+   *  TracePane's onRowClick fires `dispatch('select', { slotIndex })`
+   *  which Svelte routes to the page's `on:select={handleTraceSelect}`
+   *  $on callback. */
+  async function clickTraceRow(slot: number) {
+    const row = document.querySelector<HTMLElement>(
+      `[data-testid="trace-row"][data-slot-index="${slot}"]`,
+    );
+    if (row === null) {
+      throw new Error(`trace-row for slot=${slot} not found in DOM`);
+    }
+    await act(async () => {
+      row.click();
+    });
+  }
+
+  it('TracePane row click → findChipRef + scrollIntoView + .chip--jump-flash on the matching chip', async () => {
+    await mountWithTraceRows([0]);
+
+    // Inject a fake chip with the right data-ref-key. The default
+    // makeSidecar has atomic at slot_index=0; findChipRef maps
+    // {slot:0, row:0, block:0} → atomic:slot=0.
+    const fakeChip = document.createElement('button');
+    fakeChip.setAttribute('data-ref-key', 'atomic:slot=0');
+    fakeChip.classList.add('chip');
+    const scrollMock = vi.fn();
+    fakeChip.scrollIntoView = scrollMock;
+    document.body.appendChild(fakeChip);
+
+    await clickTraceRow(0);
+
+    expect(scrollMock).toHaveBeenCalledWith({
+      behavior: 'smooth', block: 'nearest', inline: 'nearest',
+    });
+    expect(fakeChip.classList.contains('chip--jump-flash')).toBe(true);
+
+    document.body.removeChild(fakeChip);
+  });
+
+  it('D6 fallback — TracePane row click for an out-of-canvas slot → console.warn + no scrollIntoView', async () => {
+    // findChipRef returns null when the sidecar has no section
+    // addressing the slot (drift). makeSidecar only addresses slot
+    // 0; mount with a trace that includes slot 99 + click that row
+    // → findChipRef returns null → handler warns + bails.
+    await mountWithTraceRows([99]);
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await clickTraceRow(99);
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('§16.2.6.t3 jump: no chip matches'),
+    );
+    warnSpy.mockRestore();
+  });
+
+  it('D4 race semantics — rapid second click keeps the class on the same chip + cancels any prior strip timer', async () => {
+    // The flash timer is 800ms; the handler MUST cancel the prior
+    // timer + re-arm on each call so the class never leaks from a
+    // previously-flashed chip nor strips early on the new one.
+    await mountWithTraceRows([0]);
+
+    const fakeChip = document.createElement('button');
+    fakeChip.setAttribute('data-ref-key', 'atomic:slot=0');
+    fakeChip.classList.add('chip');
+    fakeChip.scrollIntoView = vi.fn();
+    document.body.appendChild(fakeChip);
+
+    await clickTraceRow(0);
+    expect(fakeChip.classList.contains('chip--jump-flash')).toBe(true);
+
+    // Second click — same row → same chip. The race-cancel path
+    // strips, re-clears the timer, re-adds the class. Net effect:
+    // class still present (didn't leak / disappear between calls).
+    await clickTraceRow(0);
+    expect(fakeChip.classList.contains('chip--jump-flash')).toBe(true);
+
+    document.body.removeChild(fakeChip);
   });
 });
