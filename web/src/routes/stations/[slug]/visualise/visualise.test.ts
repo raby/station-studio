@@ -2245,5 +2245,20 @@ describe('visualise +page.svelte — §16.2.6.t10 EditorCanvasStub lifecycle', (
     expect(() => fireEditorCanvasEvent('save', {
       ref: { kind: 'atomic-ref', slot_index: 0 }, fields: { size: 5 },
     })).toThrow(/stub not mounted/);
+
+    // Slice-review R1: the c3d sweep finding S6 bug scenario is
+    // SEQUENTIAL cycles (mount A → unmount A → mount B → fire
+    // against A's stale dispatcher). The single mount→unmount above
+    // pins one cycle; this second cycle pins the MULTI-cycle
+    // contract — that the cleanup doesn't break re-registration on
+    // the next mount. A regression where onDestroy ran once but
+    // then prevented future mounts (leaked subscription, global
+    // object becoming non-configurable, etc.) would slip past a
+    // single-cycle assertion.
+    const second = render(Page);
+    await screen.findByTestId('editor-canvas');
+    expect(typeof w.__editorCanvasStubDispatch).toBe('function');
+    second.unmount();
+    expect(w.__editorCanvasStubDispatch).toBeUndefined();
   });
 });
