@@ -2363,4 +2363,61 @@ describe('visualise +page.svelte — §16.2.6.t8 week selector', () => {
     // the same value).
     expect(window.localStorage.getItem('previewWeek:viz-test')).toBe('7');
   });
+
+  it('R1 — malformed `previewWeek:<slug>` stored value falls back to 1 (defensive parse)', async () => {
+    // A corrupted localStorage entry (browser plugin, multi-version
+    // migration, manual edit) shouldn't propagate NaN to the
+    // backend. readPreviewWeek's `!Number.isFinite(n) || n < 1`
+    // guard catches: non-numeric strings (NaN), negative numbers,
+    // zero, Infinity. All fall back to the default of 1.
+    //
+    // Pin: stored 'abc' must hydrate to 1, not NaN. A regression
+    // where the guard was dropped would surface as a 422 from the
+    // strict-typed PreviewRequest at the backend; client-side the
+    // input would render as 'NaN' and the POST would fail. This
+    // test catches the regression before the round-trip.
+    window.localStorage.setItem('previewWeek:viz-test', 'abc');
+
+    await _mountAndAwaitFirstPreview();
+    const firstCall = startPreviewJobMock.mock.calls.at(0) as unknown[];
+    expect(firstCall?.[3]).toBe(1);
+
+    const input = screen.getByTestId('trace-week-input') as HTMLInputElement;
+    expect(input.value).toBe('1');
+  });
+
+  it('R2 — typing 0 in the input snaps back to 1 + does NOT reschedule (clamp)', async () => {
+    // TracePane.onWeekChange clamps to >= 1 + reflects the corrected
+    // value back into the input. A regression where the clamp was
+    // dropped would let previewWeek = 0 propagate (caught at the
+    // backend by strict Pydantic, but the input would show 0 too —
+    // bad UX). Also pin: the clamp produces SAME value as current
+    // (1 → 1), so the dispatch is gated + no new POST fires.
+    await _mountAndAwaitFirstPreview();
+    const callsBeforeBadInput = startPreviewJobMock.mock.calls.length;
+
+    const input = screen.getByTestId('trace-week-input') as HTMLInputElement;
+    await act(async () => {
+      input.value = '0';
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+
+    // Input snapped back to 1 (the clamp's reflect-clamped-value
+    // behavior). Operator sees the corrected value immediately.
+    expect(input.value).toBe('1');
+
+    // No new POST fired — the clamped value (1) equals the current
+    // previewWeek (1), so onWeekChange's `if (next !== weekValue)`
+    // guard short-circuited the dispatch. Verifying after a small
+    // wait window — the debounce would have fired any pending
+    // reschedule by now.
+    await new Promise((r) => setTimeout(r, 800));
+    expect(startPreviewJobMock.mock.calls.length).toBe(callsBeforeBadInput);
+
+    // localStorage also unchanged (defensive: writePreviewWeek would
+    // have written '1' over the existing '1', no observable diff,
+    // but the dispatch-not-fired contract is what catches the
+    // regression class).
+    expect(window.localStorage.getItem('previewWeek:viz-test')).toBeNull();
+  });
 });
