@@ -940,12 +940,17 @@ def test_jobs_generate_loads_excluded_track_pids_and_passes_to_engine(jobs_api):
     `excluded_track_pids` into the `_EngineInputs` dataclass so the
     helper is the single source of truth for both job endpoints.
 
-    The minimal pin: monkey-patch `generate_stream` to capture its
-    kwargs + assert `excluded_track_pids` is present (as a
-    frozenset, possibly empty when no rule is configured). A
-    regression where the kwarg drops back out — e.g. someone
-    re-inlining the load + forgetting it in a closure refactor —
-    would fail this test.
+    Pin design (R1 fix): monkeypatch BOTH `generate_stream` (to
+    capture the kwargs flowing into the engine) AND
+    `load_excluded_track_pids` (to return a SENTINEL non-empty
+    frozenset). Without the sentinel, the seeded test station has
+    no `cross_pool_dedup_sources` rule → both endpoints would get
+    empty frozensets → the cross-endpoint equality assertion would
+    be vacuously satisfied. A regression where one endpoint
+    hardcoded `frozenset()` while the other actually loaded would
+    slip past. With the sentinel, both endpoints' kwargs[excluded_
+    track_pids] MUST equal the sentinel — pinning that the loaded
+    value flowed through both call sites.
 
     Both endpoints are exercised so the helper's single-source-of-
     truth contract gets BOTH call sites pinned in one test.
@@ -958,10 +963,19 @@ def test_jobs_generate_loads_excluded_track_pids_and_passes_to_engine(jobs_api):
         captured_kwargs.append(kwargs)
         yield from real_generate_stream(template, pools, **kwargs)
 
+    # R1: sentinel exclusion set — non-empty so the cross-endpoint
+    # equality assertion is non-vacuous. The pids are synthetic
+    # strings, never resolved against the pool; the generator
+    # treats them as opaque set members (excluded_track_pids is a
+    # filter against the Track.persistent_id column).
+    sentinel_pids = frozenset({"sentinel-pid-A", "sentinel-pid-B"})
+
     client, Session, _store = jobs_api
     _seed_station_with_pool(Session)
 
-    with patch.object(jobs_mod, "generate_stream", capturing_stream):
+    with patch.object(jobs_mod, "generate_stream", capturing_stream), \
+         patch.object(jobs_mod, "load_excluded_track_pids",
+                      return_value=sentinel_pids):
         # /jobs/generate path.
         r1 = client.post("/api/stations/ts/jobs/generate", json={"week": 1})
         assert r1.status_code == 201, r1.json()
@@ -983,19 +997,16 @@ def test_jobs_generate_loads_excluded_track_pids_and_passes_to_engine(jobs_api):
             f"{label} stream_factory must pass excluded_track_pids "
             f"(§16.2.6.t7 alignment). Got kwargs: {sorted(kwargs)}"
         )
-        assert isinstance(kwargs["excluded_track_pids"], frozenset), (
-            f"{label} excluded_track_pids must be a frozenset "
-            f"(load_excluded_track_pids contract); got "
-            f"{type(kwargs['excluded_track_pids']).__name__}"
+        # R1: STRICT identity against the sentinel — pre-fix this
+        # was just an isinstance(frozenset) check, which a
+        # hardcoded-frozenset() regression would still satisfy.
+        assert kwargs["excluded_track_pids"] == sentinel_pids, (
+            f"{label} stream_factory must pass the loaded "
+            f"excluded_track_pids (sentinel {sentinel_pids}); got "
+            f"{kwargs['excluded_track_pids']!r}. A regression where "
+            f"this endpoint hardcoded frozenset() or skipped the "
+            f"load would land here."
         )
-
-    # Sanity: both endpoints saw the SAME exclusion set — the helper
-    # is the single source of truth (no per-endpoint divergence).
-    assert captured_kwargs[0]["excluded_track_pids"] == \
-        captured_kwargs[1]["excluded_track_pids"], (
-        "/jobs/generate + /jobs/preview must see the same "
-        "excluded_track_pids since both load via _load_engine_inputs."
-    )
 
 
 # ---------- §16.2.6 c1 review #1 batch C: exclusion_window recompute ---
