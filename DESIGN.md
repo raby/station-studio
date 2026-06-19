@@ -9611,17 +9611,80 @@ parameter (c1 review #1 batch C's exclusion_window test exercises
 week=2 against MixUsage); only the FRONTEND chooses week=1
 unconditionally. For non-week-1 stations the operator sees a
 week-1 trace regardless of which week they were actually editing
-toward. Sub-decisions to resolve when promoting: where does the
-week control live (sidebar in the canvas? top-of-trace-pane?
-inferred from the URL via `?week=N`?), how is it persisted
-(localStorage like the toggle? per-station? or session-scoped?),
-and how does it interact with `previous_playlist` recompute (the
-backend already looks it up from `week - 1`, so the only frontend
-work is choosing which `N` to send). Promote when the first
-multi-week-aware station ships OR when an operator asks "why does
-my week 5 mix block preview produce the same exclusions as
-week 1?" — the answer requires fixing this. The §16.2.0 D4 cost
-table already assumed multi-week preview was on the menu.
+toward.
+
+**Design pass (entering implementation):**
+
+**D1 — Location: TracePane header.** Inline with the existing
+"Week N · M slots" status text. The control only matters when
+preview is on (TracePane is the surface that surfaces it), the
+operator's eye is already there to read the result, and it
+minimizes UI footprint — no new sidebar panel, no new top-of-
+canvas chrome. Alternative considered + rejected: URL query
+`?week=N`. Two costs: SvelteKit's `goto({replaceState:true})`
+churn on every tweak (operator typing a 2-digit week would push 2
+history-replace operations) + the URL would diverge from the
+canvas's stored state in multi-tab scenarios (closing a tab
+without saving the URL loses the choice). localStorage matches
+the existing toggle's persistence shape (D2) without these
+costs.
+
+**D2 — Persistence: localStorage per-station, key
+`previewWeek:<slug>`.** Mirrors `livePreview:<slug>` (§16.2.6 c2)
+and `stagedEdits:<slug>` (§16.2.6.t1) shapes. Default = 1 if not
+stored or invalid (NaN / out-of-range). Cross-tab `storage` event
+sync is OUT OF SCOPE for v1 — the staged-edits cross-tab
+follow-up in §16.2.6.t1 was justified because losing operator
+work would be jarring; a stale week in tab B is recoverable by
+typing one digit. If operators ask, fold into a follow-up batch.
+
+**D3 — Range: `min=1`, no enforced max.** Backend's
+`PreviewRequest.week: int = Field(ge=1)` (strict-typed post-
+§16.2.6.t5) handles validation server-side. Operators may want
+week 10, 50, 200 (multi-year stations); we don't know the upper
+bound ahead of time. The `<input type="number" min=1 step=1>`
+clamps to >= 1 client-side as a hint; the strict-Pydantic check
++ engine error is the authoritative reject path.
+
+**D4 — UX shape: native `<input type="number">`.** Operator types
+or arrow-clicks. On `change` (NOT `input`) → persist + reschedule
+preview. `change` fires on blur / Enter / arrow-button release —
+avoids reschedule-per-keystroke (which would cancel + restart a
+preview job every digit). The existing 500ms preview debounce
+already absorbs change events that fire quickly in succession; no
+extra debouncing needed at the input layer. A `<select>` of
+recent weeks was considered but rejected — there's no natural
+canonical list, and operators editing toward week 47 would still
+need a "custom" option that's just a number input again.
+
+**D5 — Scope boundaries.** OUT OF SCOPE for this slice: bulk
+multi-week comparison view (would be §16.2.7-territory diff view
+across weeks); per-section week overrides; week-aware chip
+flashing (§16.2.6.t3's jump-to-chip stays week-agnostic — it
+addresses chips by ref, not by trace position). IN SCOPE: read
++ write `previewWeek` per-station; control in TracePane header;
+`_schedulePreview` uses `previewWeek` instead of hardcoded `1`;
+test pins for hydration + change-reschedule.
+
+**Implementation surface:**
+- `web/src/routes/stations/[slug]/visualise/+page.svelte`:
+  add `previewWeek: number` state, `_previewWeekKey(slug)`,
+  `readPreviewWeek(slug) → number`, `writePreviewWeek(slug, n)`.
+  Initialize from localStorage in `setSlug` / `onMount`. Pass to
+  TracePane as `weekValue`. Handle `weekChange` event → persist +
+  reschedule.
+- `web/src/lib/components/editor/TracePane.svelte`: new
+  `weekValue: number = 1` prop, `weekChange: { week: number }`
+  dispatch. Render `<input type="number" min=1 step=1>` next to
+  the existing status text.
+- `visualise.test.ts`: 3 tests pinning (a) hydration default=1
+  when no localStorage entry, (b) hydration from existing
+  `previewWeek:slug=5` entry, (c) week-input change reschedules
+  preview with the new week argument.
+
+**Punts NOT promoted:** cross-tab `storage` event sync; URL
+`?week=N` parameter; per-section overrides. Folded as deferred
+slice-review fast-follows if operators surface need.
 
 **Folded for §16.2.6 c3: PreviewResult type guard pair.**
 c2 review #1 finding #12 noted the JobSnapshot.result widening to
