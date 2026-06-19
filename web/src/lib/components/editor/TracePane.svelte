@@ -37,19 +37,55 @@
    *  the (possibly stale) trace so the operator's frame of reference
    *  doesn't disappear when mid-typing an invalid edit. */
   export let errorMessage: string | null = null;
+  /** §16.2.6.t8 — currently selected preview week. Bound to the
+   *  number input in the header. The PARENT owns the value + the
+   *  persistence (D2 — localStorage per-station); this component
+   *  is a controlled input. Changes dispatch `weekChange`. */
+  export let weekValue: number = 1;
 
   const dispatch = createEventDispatcher<{
     select: { slotIndex: number };
+    weekChange: { week: number };
   }>();
 
   function onRowClick(slotIndex: number) {
     dispatch('select', { slotIndex });
+  }
+
+  function onWeekChange(e: Event) {
+    // D4 — `change` event (NOT `input`) so the dispatch fires once
+    // per blur/Enter/arrow-release, not per keystroke. The parent's
+    // 500ms preview debounce absorbs any trickle.
+    const target = e.currentTarget as HTMLInputElement;
+    const next = Math.max(1, Math.floor(Number(target.value) || 1));
+    if (next !== weekValue) {
+      dispatch('weekChange', { week: next });
+    }
+    // Reflect the clamped value back into the input so the operator
+    // sees the corrected number when they type e.g. 0 or empty.
+    target.value = String(next);
   }
 </script>
 
 <aside class="trace-pane" data-testid="trace-pane">
   <header class="trace-header">
     <span class="title">Trace</span>
+    <!-- §16.2.6.t8 week selector. D1: lives inline with the status
+         text so the operator's eye stays in one place. Controlled
+         input: value comes from the `weekValue` prop; change events
+         dispatch up to the parent which owns persistence + reschedule. -->
+    <label class="week-label">
+      Week
+      <input
+        type="number"
+        min="1"
+        step="1"
+        class="week-input"
+        data-testid="trace-week-input"
+        value={weekValue}
+        on:change={onWeekChange}
+      />
+    </label>
     {#if previewing}
       <span class="status previewing" data-testid="trace-status-previewing">
         Previewing…
@@ -144,6 +180,21 @@
   .title {
     font-weight: 600;
     font-size: 0.95rem;
+  }
+  .week-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    font-size: 0.8rem;
+    color: var(--text-muted, #666);
+  }
+  .week-input {
+    width: 3.5rem;
+    padding: 0.1rem 0.3rem;
+    font-size: 0.85rem;
+    border: 1px solid var(--border, #ccc);
+    border-radius: 3px;
+    font-variant-numeric: tabular-nums;
   }
   .status {
     font-size: 0.8rem;

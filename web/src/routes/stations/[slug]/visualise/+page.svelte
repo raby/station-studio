@@ -80,6 +80,13 @@
   let previewTrace: Trace | null = null;
   let previewing = false;
   let previewError: string | null = null;
+  // §16.2.6.t8 — operator-selected preview week. Default 1 mirrors
+  // the c2 hardcoded value; hydration from localStorage in setSlug
+  // overrides if a prior value was stored for this station. The
+  // backend's PreviewRequest.week strict-typed pin (§16.2.6.t5) is
+  // the authoritative bound; client-side min=1 in TracePane is a
+  // hint only.
+  let previewWeek = 1;
 
   // §16.2.6.t3 — click-trace-row → jump-to-chip state. `_jumpFlashEl`
   // tracks the element currently wearing the .chip--jump-flash class
@@ -210,6 +217,9 @@
     previewTrace = null;
     previewError = null;
     livePreviewOn = readLivePreview(slug);
+    // §16.2.6.t8: hydrate previewWeek per-station too. Default 1
+    // when no entry exists (mirrors c2's hardcoded behavior).
+    previewWeek = readPreviewWeek(slug);
     _lastHydratedSlug = slug;
   }
 
@@ -240,6 +250,38 @@
       // localStorage quota / privacy-mode block — non-fatal, toggle
       // state just doesn't persist across page reloads in those
       // sessions.
+    }
+  }
+
+  // §16.2.6.t8 — per-station preview week localStorage. Same shape +
+  // failure handling as livePreview. Read defaults to 1 on absent /
+  // unparseable / out-of-range stored value (D2: client-side fallback;
+  // backend's strict-typed PreviewRequest.week is the authoritative
+  // bound). NaN / negative / non-integer stored values reset to 1.
+  function _previewWeekKey(s: string): string {
+    return `previewWeek:${s}`;
+  }
+
+  function readPreviewWeek(s: string): number {
+    if (typeof window === 'undefined') return 1;
+    try {
+      const raw = window.localStorage.getItem(_previewWeekKey(s));
+      if (raw === null) return 1;
+      const n = Number(raw);
+      if (!Number.isFinite(n) || n < 1) return 1;
+      return Math.floor(n);
+    } catch {
+      return 1;
+    }
+  }
+
+  function writePreviewWeek(s: string, week: number): void {
+    if (typeof window === 'undefined') return;
+    try {
+      window.localStorage.setItem(_previewWeekKey(s), String(week));
+    } catch {
+      // localStorage quota / privacy-mode block — non-fatal, week
+      // just doesn't persist across page reloads in those sessions.
     }
   }
 
@@ -507,6 +549,20 @@
     }, JUMP_FLASH_MS);
   }
 
+  // §16.2.6.t8 — handle TracePane's `weekChange` event. Update the
+  // reactive `previewWeek` (which `_schedulePreview` reads), persist
+  // to per-station localStorage so reloads + next-mount hydrate the
+  // same value, and reschedule a preview against the new week. The
+  // reschedule path naturally cancels any in-flight preview from
+  // the old week.
+  function handleWeekChange(e: CustomEvent<{ week: number }>) {
+    const next = e.detail.week;
+    if (next === previewWeek) return;
+    previewWeek = next;
+    writePreviewWeek(slug, next);
+    _schedulePreview();
+  }
+
   // Cancel any pending or in-flight preview job. Called from
   // onDestroy + on toggle-off + before scheduling a new preview.
   // The previewGeneration bump invalidates any watchJob loop that
@@ -559,7 +615,7 @@
           slug,
           stagedTemplate as unknown as Record<string, unknown>,
           stagedSidecar as unknown as Record<string, unknown>,
-          1,
+          previewWeek,
         );
         // Review #1 fix #1: a supersede or onDestroy that fired
         // DURING the POST already bumped previewGeneration, but
@@ -1689,7 +1745,9 @@
             trace={previewTrace}
             previewing={previewing}
             errorMessage={previewError}
+            weekValue={previewWeek}
             on:select={handleTraceSelect}
+            on:weekChange={handleWeekChange}
           />
         </div>
       {/if}

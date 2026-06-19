@@ -2262,3 +2262,105 @@ describe('visualise +page.svelte — §16.2.6.t10 EditorCanvasStub lifecycle', (
     expect(w.__editorCanvasStubDispatch).toBeUndefined();
   });
 });
+
+
+// §16.2.6.t8 — week selector for live-preview. Pre-fix the page
+// hardcoded week=1 in startPreviewJob; non-week-1 stations saw
+// week-1 traces regardless. This describe block pins (a) hydration
+// default 1 when no localStorage entry, (b) hydration from existing
+// `previewWeek:<slug>` entry, (c) change event reschedules preview
+// with the new week + persists it to localStorage.
+describe('visualise +page.svelte — §16.2.6.t8 week selector', () => {
+  beforeEach(() => {
+    getStationSidecarMock.mockReset();
+    startPreviewJobMock.mockReset();
+    watchJobMock.mockReset();
+    cancelJobMock.mockReset();
+    startPreviewJobMock.mockResolvedValue({
+      job_id: 'pv-default', status: 'running',
+    });
+    cancelJobMock.mockResolvedValue(undefined);
+    setSlug('viz-test');
+    try { window.localStorage.clear(); } catch { /* */ }
+    // livePreview ON so TracePane mounts + the week input renders +
+    // _schedulePreview fires.
+    window.localStorage.setItem('livePreview:viz-test', 'on');
+    getStationSidecarMock.mockResolvedValue({
+      template: makeTemplate(),
+      sidecar: makeSidecar(),
+      sidecar_error: null,
+    });
+    watchJobMock.mockReturnValue({
+      [Symbol.asyncIterator]() {
+        return { async next() { return { done: true, value: undefined }; } };
+      },
+    });
+  });
+
+  async function _mountAndAwaitFirstPreview() {
+    render(Page);
+    await screen.findByTestId('editor-canvas');
+    // _schedulePreview is debounced 500ms; advance past it so the
+    // POST fires. Falling back to a real-timer wait via waitFor
+    // since the rest of the suite doesn't use fake timers (mixing
+    // would invalidate other tests' timing assumptions).
+    await waitFor(() => {
+      expect(startPreviewJobMock).toHaveBeenCalled();
+    }, { timeout: 2000 });
+  }
+
+  it('hydrates previewWeek=1 when no `previewWeek:<slug>` entry exists', async () => {
+    // localStorage has the livePreview entry but NOT previewWeek.
+    // Page should fall back to default = 1 + send week=1 to the
+    // first preview POST. Pins the c2 baseline behavior is preserved
+    // when no operator pref has been stored.
+    await _mountAndAwaitFirstPreview();
+    const firstCall = startPreviewJobMock.mock.calls.at(0) as unknown[];
+    // startPreviewJob signature: (slug, template, sidecar, week, seed?)
+    expect(firstCall?.[3]).toBe(1);
+
+    // Input also reflects 1 in the DOM.
+    const input = screen.getByTestId('trace-week-input') as HTMLInputElement;
+    expect(input.value).toBe('1');
+  });
+
+  it('hydrates previewWeek from `previewWeek:<slug>` localStorage entry', async () => {
+    // Pre-seed a non-default week. Page's setSlug reactive must
+    // pick it up + the first preview POST must use it.
+    window.localStorage.setItem('previewWeek:viz-test', '5');
+
+    await _mountAndAwaitFirstPreview();
+    const firstCall = startPreviewJobMock.mock.calls.at(0) as unknown[];
+    expect(firstCall?.[3]).toBe(5);
+
+    const input = screen.getByTestId('trace-week-input') as HTMLInputElement;
+    expect(input.value).toBe('5');
+  });
+
+  it('week input change reschedules preview with new week + persists to localStorage', async () => {
+    await _mountAndAwaitFirstPreview();
+    const initialCalls = startPreviewJobMock.mock.calls.length;
+    const firstBeforeChange = startPreviewJobMock.mock.calls.at(0) as unknown[];
+    expect(firstBeforeChange?.[3]).toBe(1);
+
+    // Operator changes the week from 1 → 7. The change event (NOT
+    // input event — D4) fires once per blur/Enter.
+    const input = screen.getByTestId('trace-week-input') as HTMLInputElement;
+    await act(async () => {
+      input.value = '7';
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+
+    // Reschedule happens debounced; wait for the next POST.
+    await waitFor(() => {
+      expect(startPreviewJobMock.mock.calls.length).toBeGreaterThan(initialCalls);
+    }, { timeout: 2000 });
+
+    const latest = startPreviewJobMock.mock.calls.at(-1) as unknown[];
+    expect(latest?.[3]).toBe(7);
+
+    // Persisted to localStorage (so reload + next-mount hydrate
+    // the same value).
+    expect(window.localStorage.getItem('previewWeek:viz-test')).toBe('7');
+  });
+});
