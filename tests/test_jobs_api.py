@@ -800,6 +800,81 @@ def test_preview_cancel_existing_supersedes_running_preview(jobs_api):
             f"after job_b started; got {status}"
         )
     # 404 is also acceptable — JobStore GC may have evicted by now.
+    # §16.2.6.t4: the explicit silent-evict-in-grace path is pinned
+    # by `test_preview_cancel_existing_silently_evicts_done_job_in_grace_window`
+    # below, so this branch's tolerance for either outcome no longer
+    # masks the regression class.
+
+
+def test_preview_cancel_existing_silently_evicts_done_job_in_grace_window(jobs_api):
+    """§16.2.6.t4 — POLICY_CANCEL_EXISTING silently evicts a DONE job
+    that's still inside its grace window. Complements the in-flight
+    cancellation test above.
+
+    The grace window's purpose: let the frontend's "final status" poll
+    (which fires once after the previous 'running' response) still
+    find the result. POLICY_CANCEL_EXISTING's "latest wins" semantics
+    override this — a new job for the same (slug, kind) silent-evicts
+    the old terminal job to make room. Review 🟡-2 pin in job_runner.py
+    (`_cancel_under_lock` docstring + supersede path): DON'T retroactively
+    flip a done job's status to 'cancelled' — just pop it; it really
+    did finish.
+
+    Without this test, a regression that skipped the silent-evict
+    step (e.g. only running `_cancel_under_lock` for running jobs +
+    forgetting the terminal-pop branch in `start()`) would leave the
+    grace-windowed job lingering, exhausting the per-(slug, kind)
+    slot until 60s elapsed. The existing supersede test above would
+    still pass (the running-supersede path stays exercised); only
+    the grace-window case would silently regress.
+
+    Determinism: no `slow_stream` patch needed because job_a fully
+    finishes (synchronously, via `_wait_for_status`) BEFORE job_b's
+    POST runs. Both jobs use the same 3-slot fixture which completes
+    in microseconds — no race.
+    """
+    client, Session, _store = jobs_api
+    _seed_station_with_pool(Session)
+
+    # Job A — runs fast (no slow_stream); fully done within a few ms.
+    r1 = client.post(
+        "/api/stations/ts/jobs/preview", json=_preview_body(seed=1),
+    )
+    assert r1.status_code == 201
+    job_a = r1.json()["job_id"]
+    done_a = _wait_for_status(client, job_a, "done")
+    assert done_a["status"] == "done"
+
+    # Sanity: job_a is still findable while in grace (the 60s window
+    # hasn't elapsed — GC won't reap yet).
+    r = client.get(f"/api/jobs/{job_a}")
+    assert r.status_code == 200
+    assert r.json()["status"] == "done"
+
+    # Job B — POLICY_CANCEL_EXISTING. The start() path finds job_a
+    # in `_ALL_STATUSES` lookup, sees status != RUNNING, falls into
+    # the silent-evict branch (line 351-353 in job_runner.py), pops
+    # job_a from `_jobs` WITHOUT touching its status.
+    r2 = client.post(
+        "/api/stations/ts/jobs/preview", json=_preview_body(seed=2),
+    )
+    assert r2.status_code == 201
+    job_b = r2.json()["job_id"]
+    assert job_a != job_b
+
+    # Post-supersede: job_a is silent-evicted → GET returns 404.
+    # A regression where start() forgot the terminal-pop branch
+    # would leave job_a in `_jobs` until the 60s grace elapsed,
+    # surfacing as a 200 here with status='done'.
+    r = client.get(f"/api/jobs/{job_a}")
+    assert r.status_code == 404, (
+        f"after job_b's POLICY_CANCEL_EXISTING start, job_a should be "
+        f"silent-evicted (404); got {r.status_code} with body {r.json()}"
+    )
+
+    # Job B runs to done normally.
+    final_b = _wait_for_status(client, job_b, "done")
+    assert final_b["result"]["slot_count"] == 3
 
 
 def test_preview_unknown_station_returns_404(jobs_api):
