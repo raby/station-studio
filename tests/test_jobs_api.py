@@ -925,6 +925,43 @@ def test_preview_strict_pydantic_rejects_coerced_int_at_the_wire(jobs_api):
     assert r.status_code == 201, r.json()
 
 
+def test_preview_request_rejects_huge_template_field(jobs_api):
+    """§16.2.6.t6 — PreviewRequest's per-field 5MB defensive cap
+    rejects accidentally-inflated dicts at the wire.
+
+    Not a DoS defense (Decision A1's solo-hobbyist scope doesn't
+    treat malicious requests as in-scope). Catches the ACCIDENTAL
+    inflation class: a recursive reference, a debug-field copy that
+    embeds the template inside itself, a regression where track-
+    level metadata leaks into the body. Real templates / sidecars
+    are ~50KB raw (Rebirth Radio); the 5MB cap is ~100x that.
+
+    Pin: post a body whose `template` field is just over the cap
+    (6MB filler). The validator fires + returns 422 with the field
+    name + the cap in MB called out, so the operator (or the
+    contributor whose regression inflated the body) sees what to
+    fix. Same shape would catch `sidecar` inflation since the
+    validator is shared across both fields.
+    """
+    client, Session, _store = jobs_api
+    _seed_station_with_pool(Session)
+
+    body = _preview_body()
+    # 6 MB filler — string is 1 byte per char in ASCII; just over
+    # the 5 MB cap. The dict's existing keys add a few hundred more
+    # bytes; total comfortably over 5 MB once json.dumps adds quote
+    # delimiters.
+    body["template"]["__t6_inflation__"] = "x" * (6 * 1024 * 1024)
+
+    r = client.post("/api/stations/ts/jobs/preview", json=body)
+    assert r.status_code == 422, r.json()
+    detail = str(r.json())
+    # The validator's message names the field + the cap so a future
+    # contributor finds the trail.
+    assert "template" in detail
+    assert "5MB defensive cap" in detail
+
+
 def test_jobs_generate_loads_excluded_track_pids_and_passes_to_engine(jobs_api):
     """§16.2.6.t7 — /jobs/generate now loads `excluded_track_pids`
     via the shared `_load_engine_inputs` helper + passes it to

@@ -1,8 +1,9 @@
 """Pydantic request/response schemas."""
 from __future__ import annotations
 
+import json
 from typing import Annotated, Any, Literal
-from pydantic import BaseModel, ConfigDict, Field, StrictInt
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator
 
 
 class MetaResponse(BaseModel):
@@ -92,6 +93,13 @@ class GenerateRequest(BaseModel):
     seed: int | None = None
 
 
+# §16.2.6.t6 — per-field defensive cap on PreviewRequest.template /
+# .sidecar. Module-level so the schema validator + tests share it.
+# 5 MB is ~100x Rebirth Radio's raw template; tune down if a regression
+# inflates the realistic max.
+_PREVIEW_FIELD_MAX_BYTES = 5 * 1024 * 1024
+
+
 class PreviewRequest(BaseModel):
     """Body for §16.2.6 live-preview endpoint — `POST /api/stations/
     {slug}/jobs/preview`.
@@ -124,6 +132,42 @@ class PreviewRequest(BaseModel):
     sidecar: dict[str, Any]
     week: int = Field(ge=1)
     seed: int | None = None
+
+    @field_validator("template", "sidecar")
+    @classmethod
+    def _reject_huge_dict(cls, v: dict[str, Any], info) -> dict[str, Any]:
+        """§16.2.6.t6 — defensive per-field size cap.
+
+        Not a DoS defense — Decision A1's solo-hobbyist scope doesn't
+        treat malicious requests as in-scope. This catches the
+        ACCIDENTAL inflation class: a recursive reference inside
+        template (rare but possible during edit flows), a debug-field
+        copy that embedded the whole template inside itself, or a
+        regression where the frontend somehow attached track-level
+        metadata to the template body. 5 MB is ~100x Rebirth Radio's
+        ~50 KB raw template — legitimate stations stay well below.
+
+        Re-serializing via json.dumps is wasteful (~5-50 ms for a
+        max-sized dict) but only fires on the validation path, and
+        the check itself is cheap-per-byte. The alternative —
+        Starlette middleware that reads Content-Length pre-parse —
+        was considered + rejected as overkill for the threat model
+        (CL is for the WHOLE body, not per-field; the bug class we
+        defend against is per-field inflation, not "send a 5GB
+        body").
+        """
+        size = len(json.dumps(v))
+        if size > _PREVIEW_FIELD_MAX_BYTES:
+            field = info.field_name
+            cap_mb = _PREVIEW_FIELD_MAX_BYTES // (1024 * 1024)
+            raise ValueError(
+                f"{field} exceeds the {cap_mb}MB defensive cap "
+                f"({size:,} bytes). Real templates / sidecars are far "
+                f"smaller; this likely indicates an accidental "
+                f"inflation (recursive ref, debug field, track-level "
+                f"metadata leaked into the body, etc.)."
+            )
+        return v
 
 
 class GenerateResponse(BaseModel):
