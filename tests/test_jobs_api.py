@@ -925,6 +925,79 @@ def test_preview_strict_pydantic_rejects_coerced_int_at_the_wire(jobs_api):
     assert r.status_code == 201, r.json()
 
 
+def test_jobs_generate_loads_excluded_track_pids_and_passes_to_engine(jobs_api):
+    """§16.2.6.t7 — /jobs/generate now loads `excluded_track_pids`
+    via the shared `_load_engine_inputs` helper + passes it to
+    `generate_stream`, matching the sync `/generate` endpoint + the
+    `/jobs/preview` endpoint.
+
+    Pre-fix the kwarg was OMITTED from /jobs/generate's stream_factory
+    closure — same template via sync /generate vs /jobs/generate
+    produced different playlists when `cross_pool_dedup_sources`
+    rules were configured (the async path silently skipped the
+    exclusion set). The c1 review #1 batch B noted this as a
+    pre-existing inconsistency; t7 closes it by promoting
+    `excluded_track_pids` into the `_EngineInputs` dataclass so the
+    helper is the single source of truth for both job endpoints.
+
+    The minimal pin: monkey-patch `generate_stream` to capture its
+    kwargs + assert `excluded_track_pids` is present (as a
+    frozenset, possibly empty when no rule is configured). A
+    regression where the kwarg drops back out — e.g. someone
+    re-inlining the load + forgetting it in a closure refactor —
+    would fail this test.
+
+    Both endpoints are exercised so the helper's single-source-of-
+    truth contract gets BOTH call sites pinned in one test.
+    """
+    from api.routers import jobs as jobs_mod
+    real_generate_stream = jobs_mod.generate_stream
+    captured_kwargs: list[dict] = []
+
+    def capturing_stream(template, pools, **kwargs):
+        captured_kwargs.append(kwargs)
+        yield from real_generate_stream(template, pools, **kwargs)
+
+    client, Session, _store = jobs_api
+    _seed_station_with_pool(Session)
+
+    with patch.object(jobs_mod, "generate_stream", capturing_stream):
+        # /jobs/generate path.
+        r1 = client.post("/api/stations/ts/jobs/generate", json={"week": 1})
+        assert r1.status_code == 201, r1.json()
+        _wait_for_status(client, r1.json()["job_id"], "done", timeout=10)
+
+        # /jobs/preview path (pin both call sites in one test).
+        r2 = client.post(
+            "/api/stations/ts/jobs/preview", json=_preview_body(seed=99),
+        )
+        assert r2.status_code == 201, r2.json()
+        _wait_for_status(client, r2.json()["job_id"], "done", timeout=10)
+
+    assert len(captured_kwargs) == 2, (
+        f"expected 2 generate_stream calls (one per endpoint); got "
+        f"{len(captured_kwargs)}"
+    )
+    for label, kwargs in zip(("/jobs/generate", "/jobs/preview"), captured_kwargs):
+        assert "excluded_track_pids" in kwargs, (
+            f"{label} stream_factory must pass excluded_track_pids "
+            f"(§16.2.6.t7 alignment). Got kwargs: {sorted(kwargs)}"
+        )
+        assert isinstance(kwargs["excluded_track_pids"], frozenset), (
+            f"{label} excluded_track_pids must be a frozenset "
+            f"(load_excluded_track_pids contract); got "
+            f"{type(kwargs['excluded_track_pids']).__name__}"
+        )
+
+    # Sanity: both endpoints saw the SAME exclusion set — the helper
+    # is the single source of truth (no per-endpoint divergence).
+    assert captured_kwargs[0]["excluded_track_pids"] == \
+        captured_kwargs[1]["excluded_track_pids"], (
+        "/jobs/generate + /jobs/preview must see the same "
+        "excluded_track_pids since both load via _load_engine_inputs."
+    )
+
+
 # ---------- §16.2.6 c1 review #1 batch C: exclusion_window recompute ---
 
 

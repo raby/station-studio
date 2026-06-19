@@ -123,17 +123,15 @@ def _iso_utc(ts: float | None) -> str | None:
 class _EngineInputs:
     """The engine kwargs both `/jobs/generate` and `/jobs/preview`
     need. §16.2.6 c1 review #1 finding #4 extracted from the
-    duplicated input-loading regions.
+    duplicated input-loading regions; §16.2.6.t7 promoted
+    `excluded_track_pids` into the dataclass after the
+    `/jobs/generate` alignment landed (closing the pre-existing
+    divergence flagged in c1 review #1 batch B).
 
     EXCLUDED on purpose:
       - `cursor_advance_step` / `cursor_reset_cycle` — only used by
         `advance_cursors` in /jobs/generate's `on_result`; preview
         never advances cursors so loading them is wasted.
-      - `excluded_track_pids` — the sync `/generate` endpoint loads
-        this (api/routers/generate.py); `/jobs/generate` doesn't
-        (pre-existing gap, separate from this review). Preview loads
-        it inline. Promote into the helper if/when the
-        `/jobs/generate` alignment lands as its own commit.
     """
     pools: dict[str, list[Any]]
     artist_dedup_window: int | None
@@ -141,6 +139,12 @@ class _EngineInputs:
     alias_map: dict[str, str]
     previous_playlist: list[Any] | None
     named_cursor_positions: dict[str, int] | None
+    # §16.2.6.t7: cross-pool dedup exclusion set. Loaded for both
+    # endpoints so /jobs/generate produces the same playlist as the
+    # sync /generate endpoint for the same template + rules. The
+    # /jobs/preview endpoint was already loading this inline (since
+    # c1); the helper now centralizes both load sites.
+    excluded_track_pids: frozenset[str]
 
 
 def _load_engine_inputs(
@@ -153,10 +157,11 @@ def _load_engine_inputs(
     7 individual locals so future per-station-rule additions land in
     one site.
 
-    Raises HTTPException(400) on `load_pools` ValueError — the
-    operator's edited template referenced a source pool that doesn't
-    exist server-side. Same surface area as both endpoints had
-    inline pre-extraction.
+    Raises HTTPException(400) on `load_pools` ValueError OR on
+    `load_excluded_track_pids` ValueError / TemplateError — the
+    operator's edited template / rules referenced a pool or
+    reference source that doesn't exist server-side. Same surface
+    area as both endpoints had inline pre-extraction.
     """
     try:
         pools = load_pools(db, template)
@@ -187,6 +192,18 @@ def _load_engine_inputs(
         named_cursor_positions = load_cursor_positions(
             db, station_id=station.id, template=template,
         )
+
+    # §16.2.6.t7: cross_pool_dedup_sources → frozenset of excluded
+    # Track.persistent_ids. ValueError / TemplateError translate to
+    # 400 with the operator-readable message (same shape sync
+    # /generate uses at generate.py:108-115).
+    try:
+        excluded_track_pids = load_excluded_track_pids(
+            db, station_id=station.id,
+        )
+    except (ValueError, TemplateError) as e:
+        raise HTTPException(400, str(e))
+
     return _EngineInputs(
         pools=pools,
         artist_dedup_window=artist_dedup_window,
@@ -194,6 +211,7 @@ def _load_engine_inputs(
         alias_map=alias_map,
         previous_playlist=previous_playlist,
         named_cursor_positions=named_cursor_positions,
+        excluded_track_pids=excluded_track_pids,
     )
 
 
@@ -314,6 +332,8 @@ def start_generate_job(
             previous_playlist=inputs.previous_playlist,
             weighted_window_default=inputs.artist_dedup_window,
             named_cursor_positions=inputs.named_cursor_positions,
+            # §16.2.6.t7: align with sync /generate + /jobs/preview.
+            excluded_track_pids=inputs.excluded_track_pids,
         )
 
     # on_result runs inside the worker thread. The request's `db` is
@@ -501,18 +521,10 @@ def start_preview_job(
 
     inputs = _load_engine_inputs(db, station, parsed_template, payload.week)
 
-    # §16.14.t5: cross-pool dedup exclusion set. Matches the sync
-    # /generate endpoint's input set. NOT in _EngineInputs because
-    # /jobs/generate doesn't load it (pre-existing inconsistency
-    # noted in the helper's docstring).
-    try:
-        excluded_track_pids = load_excluded_track_pids(
-            db, station_id=station.id,
-        )
-    except ValueError as e:
-        raise HTTPException(400, str(e))
-    except TemplateError as e:
-        raise HTTPException(400, str(e))
+    # §16.2.6.t7: `excluded_track_pids` moved INTO _EngineInputs
+    # (the helper now loads it for both endpoints). The pre-t7
+    # inline load + try/except here is gone — `inputs.excluded_track_pids`
+    # carries the same value the sync /generate endpoint loads.
 
     # Capture identity values that the worker closure needs.
     week = payload.week
@@ -528,7 +540,7 @@ def start_preview_job(
             previous_playlist=inputs.previous_playlist,
             weighted_window_default=inputs.artist_dedup_window,
             named_cursor_positions=inputs.named_cursor_positions,
-            excluded_track_pids=excluded_track_pids,
+            excluded_track_pids=inputs.excluded_track_pids,
         )
 
     def on_result(result: GenerationResult) -> dict[str, Any]:
