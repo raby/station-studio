@@ -26,11 +26,25 @@
    *   });
    *   expect(screen.getByTestId('staged-save')).toHaveTextContent('Save 1 edit');
    */
-  import { createEventDispatcher, onMount } from 'svelte';
+  import { createEventDispatcher, onDestroy, onMount } from 'svelte';
   const dispatch = createEventDispatcher();
   onMount(() => {
     // Expose to tests via the documented global.
     (window as unknown as Record<string, unknown>).__editorCanvasStubDispatch = dispatch;
+  });
+  onDestroy(() => {
+    // §16.2.6.t10 — clear the global so sequential tests don't share
+    // a stale reference. Without this, the c3d sweep finding S6
+    // scenario: test A's stub unmounts → global still points at A's
+    // (now-destroyed) dispatcher → test B's helper, racing before B's
+    // own mount completes, reads A's dispatcher and fires into a
+    // dead component (Svelte 4's createEventDispatcher closes over
+    // the component instance; the call no-ops silently and the
+    // expected event never lands). Latent today (every render(Page)
+    // re-mounts + overwrites before the helper runs), but activates
+    // the moment someone writes a test that needs an explicit
+    // "stub absent" assertion.
+    delete (window as unknown as Record<string, unknown>).__editorCanvasStubDispatch;
   });
 </script>
 

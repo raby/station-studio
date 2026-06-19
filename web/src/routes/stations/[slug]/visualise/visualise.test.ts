@@ -2179,3 +2179,71 @@ describe('visualise +page.svelte — §16.2.6.t11 intercept-path integration', (
     expect(screen.getByTestId('retry-modal')).toBeInTheDocument();
   });
 });
+
+
+// §16.2.6.t10 — EditorCanvasStub.svelte lifecycle hygiene. The stub
+// registers `window.__editorCanvasStubDispatch = dispatch` on mount
+// (so `fireEditorCanvasEvent` can call it from tests). Pre-fix it
+// never cleared the global on destroy — tests relied on each
+// `render(Page)` re-registering. That's fine for sequential tests
+// that always re-mount before firing, but the moment someone writes
+// a test that needs an explicit "stub absent" assertion (e.g.
+// testing the helper's throw-if-not-mounted error path at line
+// 178-181), the dangling reference would silently pass and the
+// expected error never fire. This describe block pins the contract.
+describe('visualise +page.svelte — §16.2.6.t10 EditorCanvasStub lifecycle', () => {
+  beforeEach(() => {
+    getStationSidecarMock.mockReset();
+    startPreviewJobMock.mockReset();
+    watchJobMock.mockReset();
+    cancelJobMock.mockReset();
+    startPreviewJobMock.mockResolvedValue({
+      job_id: 'pv-default', status: 'running',
+    });
+    cancelJobMock.mockResolvedValue(undefined);
+    setSlug('viz-test');
+    try { window.localStorage.clear(); } catch { /* */ }
+    getStationSidecarMock.mockResolvedValue({
+      template: makeTemplate(),
+      sidecar: makeSidecar(),
+      sidecar_error: null,
+    });
+    watchJobMock.mockReturnValue({
+      [Symbol.asyncIterator]() {
+        return { async next() { return { done: true, value: undefined }; } };
+      },
+    });
+    // Reset the global between tests so leftover state can't mask
+    // the cleanup contract.
+    delete (window as unknown as Record<string, unknown>).__editorCanvasStubDispatch;
+  });
+
+  it('onDestroy clears window.__editorCanvasStubDispatch (helper throws after unmount)', async () => {
+    const w = window as unknown as {
+      __editorCanvasStubDispatch?: unknown;
+    };
+
+    // Pre-mount: global is absent (defensive reset in beforeEach).
+    expect(w.__editorCanvasStubDispatch).toBeUndefined();
+
+    // Mount: the stub's onMount registers the global.
+    const { unmount } = render(Page);
+    await screen.findByTestId('editor-canvas');
+    expect(typeof w.__editorCanvasStubDispatch).toBe('function');
+
+    // Unmount: the stub's onDestroy MUST clear the global. Pre-fix
+    // it stayed registered (pointed at a destroyed component).
+    unmount();
+    expect(w.__editorCanvasStubDispatch).toBeUndefined();
+
+    // Helper now throws — the documented "stub not mounted" error
+    // path is reachable post-unmount. Pre-fix this expect would
+    // FAIL: the helper would call the dangling dispatcher (Svelte
+    // 4 createEventDispatcher closes over the now-destroyed
+    // component instance) and either no-op silently or crash with
+    // an unrelated error rather than the documented diagnostic.
+    expect(() => fireEditorCanvasEvent('save', {
+      ref: { kind: 'atomic-ref', slot_index: 0 }, fields: { size: 5 },
+    })).toThrow(/stub not mounted/);
+  });
+});
