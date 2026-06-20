@@ -7,6 +7,7 @@ import {
   availableCursorIds,
   chipColour,
   classifySlots,
+  summarizeClassifications,
   compactStrategyLabel,
   compatibleSources,
   compatibleStrategies,
@@ -1211,5 +1212,49 @@ describe('classifySlots', () => {
 
   it('both empty slots arrays → empty array', () => {
     expect(classifySlots(tr([]), tr([]))).toEqual([]);
+  });
+});
+
+
+// ---- §16.2.7.t4 — summarizeClassifications ----------------------------
+
+
+describe('summarizeClassifications', () => {
+  function classifications(kinds: Array<'unchanged' | 'changed' | 'added' | 'removed'>) {
+    return kinds.map((kind, index) => ({
+      index, kind,
+      savedTrackId: kind === 'added' ? null : index,
+      stagedTrackId: kind === 'removed' ? null : index,
+    }));
+  }
+
+  it('empty list → zero counts', () => {
+    expect(summarizeClassifications([]))
+      .toEqual({ changed: 0, added: 0, removed: 0 });
+  });
+
+  it('all unchanged → zero counts (UNCHANGED not surfaced)', () => {
+    expect(summarizeClassifications(classifications([
+      'unchanged', 'unchanged', 'unchanged',
+    ]))).toEqual({ changed: 0, added: 0, removed: 0 });
+  });
+
+  it('mixed kinds → per-kind counts (UNCHANGED ignored)', () => {
+    expect(summarizeClassifications(classifications([
+      'unchanged', 'changed', 'changed', 'added', 'removed',
+      'unchanged', 'changed',
+    ]))).toEqual({ changed: 3, added: 1, removed: 1 });
+  });
+
+  it('matches inlined-loop semantics across all-changed / all-added / all-removed', () => {
+    expect(summarizeClassifications(classifications([
+      'changed', 'changed', 'changed',
+    ]))).toEqual({ changed: 3, added: 0, removed: 0 });
+    expect(summarizeClassifications(classifications([
+      'added', 'added',
+    ]))).toEqual({ changed: 0, added: 2, removed: 0 });
+    expect(summarizeClassifications(classifications([
+      'removed', 'removed', 'removed', 'removed',
+    ]))).toEqual({ changed: 0, added: 0, removed: 4 });
   });
 });

@@ -43,10 +43,12 @@
     type StructuralBlockEdit,
   } from '$lib/api';
   import {
+    classifySlots,
     findChipRef,
     findSectionIdForRef,
     parseEditorSidecarResponse,
     refKey,
+    summarizeClassifications,
     type ExpandedRef, type Sidecar, type StationTemplate,
   } from '$lib/editor';
   import { applyEdits, type Edit } from '$lib/edit-ops';
@@ -122,6 +124,33 @@
   // (different slug / week / pre-Save baseline) get discarded
   // instead of polluting the cleared cache.
   let savedTraceGeneration = 0;
+
+  // §16.2.7.t4 — multi-week diff aggregator state. `compareNextN`
+  // is the number of ADDITIONAL weeks beyond `previewWeek` the
+  // operator wants to aggregate (D1: 0-5, default 0 = single-week
+  // mode = current behavior). `weekDiffSummary` caches the
+  // per-week aggregate counts (D3); populated by
+  // `_refreshMultiWeekDiff` firing N saved+staged preview pairs
+  // serially (D4). `multiWeekFetching` is a boolean for the
+  // "Computing N-week diff…" UI placeholder.
+  //
+  // Cache invalidations (D3):
+  //   - slug change       → setSlug clears
+  //   - previewWeek change → handleWeekChange clears + refires
+  //   - compareNextN change → setter clears + refires
+  //   - Save success      → handleStagedSave clears + refires
+  //   - showDiff OFF      → _applyShowDiffChange clears
+  //
+  // Generation gate (mirror of savedTraceGeneration) — separate
+  // counter so saved-trace invalidations don't cross-invalidate
+  // multi-week + vice versa.
+  type WeekSummary =
+    | { changed: number; added: number; removed: number }
+    | { error: string };
+  let compareNextN = 0;
+  let weekDiffSummary: Map<number, WeekSummary> = new Map();
+  let multiWeekFetching = false;
+  let multiWeekGeneration = 0;
 
   // §16.2.6.t3 — click-trace-row → jump-to-chip state. `_jumpFlashEl`
   // tracks the element currently wearing the .chip--jump-flash class
@@ -265,6 +294,13 @@
     savedTrace = null;
     savedTraceError = null;
     savedTraceGeneration += 1;
+    // §16.2.7.t4: hydrate compareNextN + clear the multi-week cache.
+    // Bump multiWeekGeneration so any in-flight _refreshMultiWeekDiff
+    // from the previous slug discards its result.
+    compareNextN = readCompareNextN(slug);
+    weekDiffSummary = new Map();
+    multiWeekFetching = false;
+    multiWeekGeneration += 1;
     _lastHydratedSlug = slug;
   }
 
@@ -353,6 +389,35 @@
       window.localStorage.setItem(_showDiffKey(s), on ? 'on' : 'off');
     } catch {
       // Same quota/privacy fallback as the helpers above.
+    }
+  }
+
+  // §16.2.7.t4 — `compareNextN` per-station persistence. Stored as
+  // the decimal string of the number. Defensive parse (Number.isFinite
+  // + clamp 0-COMPARE_NEXT_N_MAX) so a stale shape or hand-edited
+  // value can't crash the page. Mirrors readPreviewWeek + readShowDiff.
+  const COMPARE_NEXT_N_MAX = 5;
+  function _compareNextNKey(s: string): string {
+    return `compareNextN:${s}`;
+  }
+  function readCompareNextN(s: string): number {
+    if (typeof window === 'undefined') return 0;
+    try {
+      const raw = window.localStorage.getItem(_compareNextNKey(s));
+      if (raw === null) return 0;
+      const n = Number(raw);
+      if (!Number.isFinite(n) || n < 0) return 0;
+      return Math.min(COMPARE_NEXT_N_MAX, Math.floor(n));
+    } catch {
+      return 0;
+    }
+  }
+  function writeCompareNextN(s: string, n: number): void {
+    if (typeof window === 'undefined') return;
+    try {
+      window.localStorage.setItem(_compareNextNKey(s), String(n));
+    } catch {
+      // Same quota/privacy fallback.
     }
   }
 
@@ -650,7 +715,18 @@
     savedTrace = null;
     savedTraceError = null;
     savedTraceGeneration += 1;
+    // §16.2.7.t4: ALSO invalidate the multi-week summary — its weeks
+    // were [oldWeek..oldWeek+N]; new previewWeek shifts the range.
+    weekDiffSummary = new Map();
+    multiWeekFetching = false;
+    multiWeekGeneration += 1;
     await _refreshSavedTraceIfNeeded();
+    // Multi-week refresh runs after the single-week saved-trace
+    // refresh so the operator's primary view (single-week diff) is
+    // ready first. _refreshMultiWeekDiff is also async + fires its
+    // own previews serially, so we void it (no need to block
+    // _schedulePreview on the full range).
+    void _refreshMultiWeekDiff();
     _schedulePreview();
   }
 
@@ -674,15 +750,24 @@
     if (!next) {
       // Bump the generation (c1 review R1) so any in-flight refresh
       // from a previous toggle ON discards instead of populating the
-      // cache after we've cleared it.
+      // cache after we've cleared it. §16.2.7.t4: ALSO clear the
+      // multi-week summary + bump its generation — diff OFF tears
+      // down the whole compare-against-saved feature.
       savedTrace = null;
       savedTraceError = null;
       savedTraceGeneration += 1;
+      weekDiffSummary = new Map();
+      multiWeekFetching = false;
+      multiWeekGeneration += 1;
       return;
     }
     // Toggle ON: fire a fresh refresh. _refreshSavedTraceIfNeeded
     // captures the current generation at start; no need to bump.
+    // §16.2.7.t4: also fire the multi-week aggregator if compareNextN
+    // is non-zero (operator's prior setting persists across toggle
+    // OFF→ON cycles).
     void _refreshSavedTraceIfNeeded();
+    void _refreshMultiWeekDiff();
   }
 
   function handleShowDiffChange(e: CustomEvent<{ on: boolean }>) {
@@ -690,6 +775,36 @@
     if (next === showDiff) return;
     writeShowDiff(slug, next);
     _applyShowDiffChange(next);
+  }
+
+  // §16.2.7.t4 — compareNextN change handler dispatched from
+  // TracePane's "+next N weeks" input (c2). Clamps to [0, MAX],
+  // persists per-station, invalidates the multi-week cache, refires
+  // the aggregator. Mirrors the showDiff helper-split pattern so
+  // c2's cross-tab storage handler can call `_applyCompareNextNChange`
+  // directly without the localStorage write.
+  function _applyCompareNextNChange(next: number): void {
+    const clamped = Math.max(
+      0, Math.min(COMPARE_NEXT_N_MAX, Math.floor(Number(next) || 0)),
+    );
+    if (clamped === compareNextN) return;
+    compareNextN = clamped;
+    // Invalidate + reset the cache. multiWeekFetching cleared so the
+    // UI doesn't render a stale "Computing…" placeholder if the
+    // previous fetch was mid-flight.
+    weekDiffSummary = new Map();
+    multiWeekFetching = false;
+    multiWeekGeneration += 1;
+    if (clamped > 0) {
+      void _refreshMultiWeekDiff();
+    }
+  }
+
+  function handleCompareNextNChange(e: CustomEvent<{ n: number }>) {
+    const next = e.detail.n;
+    if (next === compareNextN) return;
+    writeCompareNextN(slug, next);
+    _applyCompareNextNChange(next);
   }
 
   // §16.2.7 c1 — fire a one-shot preview against the CURRENT saved
@@ -767,6 +882,86 @@
     // to clean up now that savedTracePending is gone. The generation
     // gate handles late-result discard at the assignment sites
     // above; no lock-like state needs releasing.
+  }
+
+  // §16.2.7.t4 — multi-week diff aggregator. Fires saved+staged
+  // preview pairs serially for weeks [previewWeek, previewWeek+1,
+  // ..., previewWeek+compareNextN]. Populates `weekDiffSummary`
+  // per week. Uses `multiWeekGeneration` (separate from
+  // `savedTraceGeneration` so the two refresh paths don't cross-
+  // invalidate each other) to gate against context changes mid-
+  // fetch. Per-week failures land in the summary as `{error: ...}`
+  // and don't abort the rest of the range (D5).
+  //
+  // Sequencing (D4): each week runs saved first, then staged, in
+  // strict order. Concurrent firing would race against
+  // POLICY_CANCEL_EXISTING server-side. The whole walk awaits its
+  // own progress so the operator's next state change (toggle off,
+  // week change, Save) can bump the generation + cause the next
+  // gate-check to discard the in-flight result cleanly.
+  async function _runOneWeekPreview(
+    week: number,
+    snapshot: { template: Record<string, unknown>; sidecar: Record<string, unknown> },
+  ): Promise<Trace | null> {
+    const start = await startPreviewJob(slug, snapshot.template, snapshot.sidecar, week);
+    for await (const snap of watchJob(start.job_id)) {
+      if (snap.status === 'done') {
+        const r = snap.result;
+        return isPreviewResult(r) ? r.trace : null;
+      }
+      if (snap.status === 'error') {
+        throw new Error(snap.error?.message ?? 'preview failed');
+      }
+      if (snap.status === 'cancelled') {
+        return null;
+      }
+    }
+    return null;
+  }
+
+  async function _refreshMultiWeekDiff(): Promise<void> {
+    if (!showDiff) return;
+    if (compareNextN <= 0) return;
+    if (!template || !sidecar || !stagedTemplate || !stagedSidecar) return;
+    const myGen = multiWeekGeneration;
+    multiWeekFetching = true;
+    const next: Map<number, WeekSummary> = new Map();
+    try {
+      const savedSnap = {
+        template: template as unknown as Record<string, unknown>,
+        sidecar: sidecar as unknown as Record<string, unknown>,
+      };
+      const stagedSnap = {
+        template: stagedTemplate as unknown as Record<string, unknown>,
+        sidecar: stagedSidecar as unknown as Record<string, unknown>,
+      };
+      for (let i = 0; i <= compareNextN; i++) {
+        if (myGen !== multiWeekGeneration) return;
+        const wk = previewWeek + i;
+        try {
+          const savedT = await _runOneWeekPreview(wk, savedSnap);
+          if (myGen !== multiWeekGeneration) return;
+          const stagedT = await _runOneWeekPreview(wk, stagedSnap);
+          if (myGen !== multiWeekGeneration) return;
+          const cls = classifySlots(savedT, stagedT);
+          next.set(wk, summarizeClassifications(cls));
+          // Commit incrementally so the UI sees progress without
+          // waiting for the whole range. Each iteration writes the
+          // entire `next` Map so Svelte's reactivity fires.
+          weekDiffSummary = new Map(next);
+        } catch (err) {
+          if (myGen !== multiWeekGeneration) return;
+          next.set(wk, {
+            error: err instanceof Error ? err.message : String(err),
+          });
+          weekDiffSummary = new Map(next);
+        }
+      }
+    } finally {
+      if (myGen === multiWeekGeneration) {
+        multiWeekFetching = false;
+      }
+    }
   }
 
   // Cancel any pending or in-flight preview job. Called from
@@ -1017,6 +1212,19 @@
       // storage event).
       if (e.key === _showDiffKey(slug)) {
         _applyShowDiffChange(e.newValue === 'on');
+        return;
+      }
+
+      // §16.2.7.t4 — cross-tab compareNextN sync. Mirrors the
+      // showDiff path: shared `_applyCompareNextNChange` helper
+      // owns the local-state + cache lifecycle so local + cross-tab
+      // paths can't drift. The newValue parse mirrors readCompareNextN
+      // (defensive against stale shapes — null/missing → 0).
+      if (e.key === _compareNextNKey(slug)) {
+        const raw = e.newValue;
+        const parsed = raw === null ? 0 : Number(raw);
+        const next = Number.isFinite(parsed) ? parsed : 0;
+        _applyCompareNextNChange(next);
         return;
       }
 
@@ -1410,7 +1618,13 @@
       savedTrace = null;
       savedTraceError = null;
       savedTraceGeneration += 1;
+      // §16.2.7.t4: invalidate the multi-week summary. Saved-state
+      // baseline just shifted; every week's diff needs to recompute.
+      weekDiffSummary = new Map();
+      multiWeekFetching = false;
+      multiWeekGeneration += 1;
       await _refreshSavedTraceIfNeeded();
+      void _refreshMultiWeekDiff();
       _schedulePreview();
     } finally {
       saving = false;
@@ -1979,9 +2193,14 @@
             showDiff={showDiff}
             savedTrace={savedTrace}
             savedTraceError={savedTraceError}
+            compareNextN={compareNextN}
+            weekDiffSummary={weekDiffSummary}
+            multiWeekFetching={multiWeekFetching}
+            compareNextNMax={COMPARE_NEXT_N_MAX}
             on:select={handleTraceSelect}
             on:weekChange={handleWeekChange}
             on:showDiffChange={handleShowDiffChange}
+            on:compareNextNChange={handleCompareNextNChange}
           />
         </div>
       {/if}

@@ -1206,6 +1206,34 @@ export interface SlotClassification {
  * meaningful when BOTH are non-null); this function just makes the
  * shape work either way without throwing.
  */
+/**
+ * §16.2.7.t4 — aggregate per-kind counts from a SlotClassification[].
+ * Shared between TracePane's single-week diff summary and
+ * `_refreshMultiWeekDiff`'s per-week aggregator. Extracted so the
+ * two paths can't drift on the count semantics.
+ *
+ * Returns an object with `changed` / `added` / `removed` counts.
+ * UNCHANGED entries are not counted (operator only wants to know
+ * about the deltas; "unchanged" is implicit in the rest).
+ */
+export interface ClassificationCounts {
+  changed: number;
+  added: number;
+  removed: number;
+}
+export function summarizeClassifications(
+  classifications: SlotClassification[],
+): ClassificationCounts {
+  let changed = 0, added = 0, removed = 0;
+  for (const c of classifications) {
+    if (c.kind === 'changed') changed++;
+    else if (c.kind === 'added') added++;
+    else if (c.kind === 'removed') removed++;
+  }
+  return { changed, added, removed };
+}
+
+
 export function classifySlots(
   saved: { slots: Array<{ track_id: number | null }> } | null,
   staged: { slots: Array<{ track_id: number | null }> } | null,

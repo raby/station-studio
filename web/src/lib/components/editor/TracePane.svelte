@@ -28,6 +28,7 @@
   import type { Trace, TraceSlot } from '$lib/api';
   import {
     classifySlots,
+    summarizeClassifications,
     type SlotClassification,
   } from '$lib/editor';
 
@@ -57,11 +58,29 @@
   export let showDiff: boolean = false;
   export let savedTrace: Trace | null = null;
   export let savedTraceError: string | null = null;
+  /** §16.2.7.t4 — multi-week diff aggregator props. PARENT owns the
+   *  range value + the per-week cache + the fetch loop; TracePane
+   *  renders. `compareNextN` is the number of ADDITIONAL weeks
+   *  beyond the focused `weekValue` to aggregate (0 = single-week
+   *  mode = no multi-week UI rendered). `weekDiffSummary` is the
+   *  per-week aggregate counts Map keyed by absolute week number;
+   *  entries may be `{ changed, added, removed }` for successful
+   *  fetches or `{ error: string }` for failed ones (D5).
+   *  `multiWeekFetching` drives the "Computing…" placeholder. */
+  export let compareNextN: number = 0;
+  export let weekDiffSummary: Map<number, {
+    changed: number; added: number; removed: number;
+  } | { error: string }> = new Map();
+  export let multiWeekFetching: boolean = false;
+  /** Max value the parent will accept (D1: defensive cap, default 5).
+   *  TracePane just renders the input's `max` attribute against this. */
+  export let compareNextNMax: number = 5;
 
   const dispatch = createEventDispatcher<{
     select: { slotIndex: number };
     weekChange: { week: number };
     showDiffChange: { on: boolean };
+    compareNextNChange: { n: number };
   }>();
 
   function onRowClick(slotIndex: number) {
@@ -87,6 +106,61 @@
     dispatch('showDiffChange', { on: target.checked });
   }
 
+  function onCompareNextNChange(e: Event) {
+    const target = e.currentTarget as HTMLInputElement;
+    // Defensive parse + clamp mirrors the page's
+    // _applyCompareNextNChange. The page is the authoritative
+    // clamper; this one keeps the input's displayed value sane on
+    // garbage input.
+    const raw = Number(target.value);
+    const next = Number.isFinite(raw)
+      ? Math.max(0, Math.min(compareNextNMax, Math.floor(raw)))
+      : 0;
+    if (next !== compareNextN) {
+      dispatch('compareNextNChange', { n: next });
+    }
+    target.value = String(next);
+  }
+
+  // §16.2.7.t4 — render-side helper for the per-week summary cells.
+  // Returns an array of `{week, label, kind}` items so the template
+  // renders the cells consistently. `label` is the rendered text;
+  // `kind` ('ok' | 'fetching' | 'error') drives the per-cell class.
+  $: multiWeekCells = (() => {
+    if (!showDiff || compareNextN <= 0) return [];
+    const cells: Array<{
+      week: number; label: string;
+      kind: 'ok' | 'fetching' | 'error';
+      title?: string;
+    }> = [];
+    for (let i = 0; i <= compareNextN; i++) {
+      const wk = weekValue + i;
+      const entry = weekDiffSummary.get(wk);
+      if (entry === undefined) {
+        cells.push({
+          week: wk,
+          label: multiWeekFetching ? '…' : '–',
+          kind: 'fetching',
+        });
+        continue;
+      }
+      if ('error' in entry) {
+        cells.push({
+          week: wk, label: '⚠', kind: 'error',
+          title: `Week ${wk} preview failed: ${entry.error}`,
+        });
+        continue;
+      }
+      const parts: string[] = [];
+      if (entry.changed) parts.push(`${entry.changed}c`);
+      if (entry.added) parts.push(`${entry.added}a`);
+      if (entry.removed) parts.push(`${entry.removed}r`);
+      const label = parts.length === 0 ? '·' : parts.join(' ');
+      cells.push({ week: wk, label, kind: 'ok' });
+    }
+    return cells;
+  })();
+
   // §16.2.7 c2 — derived diff state. Only meaningful when BOTH
   // traces are present (savedTrace cache populated AND staged trace
   // landed). Falls back gracefully when either is missing — the
@@ -99,17 +173,12 @@
 
   // Per-kind counts for the header summary (D4). Computed only when
   // diffReady so the iteration cost (O(slots)) doesn't fire on
-  // every render in non-diff mode.
-  $: diffCounts = (() => {
-    if (!diffReady) return { changed: 0, added: 0, removed: 0 };
-    let changed = 0, added = 0, removed = 0;
-    for (const c of classifications) {
-      if (c.kind === 'changed') changed++;
-      else if (c.kind === 'added') added++;
-      else if (c.kind === 'removed') removed++;
-    }
-    return { changed, added, removed };
-  })();
+  // every render in non-diff mode. Uses `summarizeClassifications`
+  // (extracted for §16.2.7.t4 so the multi-week aggregator shares
+  // the same kind-counting semantics).
+  $: diffCounts = diffReady
+    ? summarizeClassifications(classifications)
+    : { changed: 0, added: 0, removed: 0 };
 
   // Summary text: "N changed · M added · K removed" with zero-count
   // terms omitted (D4 — "zero-count terms omitted"). When all-zero
@@ -187,6 +256,26 @@
       />
       Diff
     </label>
+    <!-- §16.2.7.t4 (D1) — multi-week aggregate input. Only renders
+         when diff is on (no point asking for "+N more weeks" of a
+         feature that's off). Capped at compareNextNMax client-side
+         + server-side. -->
+    {#if showDiff}
+      <label class="compare-next-label">
+        +
+        <input
+          type="number"
+          min="0"
+          max={compareNextNMax}
+          step="1"
+          class="compare-next-input"
+          data-testid="trace-compare-next-n"
+          value={compareNextN}
+          on:change={onCompareNextNChange}
+        />
+        wks
+      </label>
+    {/if}
     {#if previewing}
       <span class="status previewing" data-testid="trace-status-previewing">
         Previewing…
@@ -216,6 +305,30 @@
          error; the next valid preview clears it. -->
     <div class="error-banner" data-testid="trace-error" role="status">
       {errorMessage}
+    </div>
+  {/if}
+
+  {#if showDiff && compareNextN > 0}
+    <!-- §16.2.7.t4 (D6) — multi-week summary row. Renders below the
+         single-week summary (which lives inline in the header). Cells
+         are read-only; clicking would be a natural quality-of-life
+         (jump focused week to that cell) — queued as a future
+         §16.2.7.t4-followup if operators ask. -->
+    <div class="multi-week-summary" data-testid="trace-multi-week">
+      <span class="multi-week-label">
+        Weeks {weekValue}-{weekValue + compareNextN}:
+      </span>
+      {#each multiWeekCells as cell (cell.week)}
+        <span
+          class="multi-week-cell multi-week-cell--{cell.kind}"
+          data-testid="trace-multi-week-cell"
+          data-week={cell.week}
+          data-kind={cell.kind}
+          title={cell.title ?? ''}
+        >
+          W{cell.week} {cell.label}
+        </span>
+      {/each}
     </div>
   {/if}
 
@@ -516,5 +629,55 @@
     .slots--diff .slot {
       transition: none;
     }
+  }
+
+  /* §16.2.7.t4 — multi-week aggregator UI. */
+  .compare-next-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.2rem;
+    font-size: 0.8rem;
+    color: var(--text-muted, #666);
+  }
+  .compare-next-input {
+    width: 2.5rem;
+    padding: 0.1rem 0.3rem;
+    font-size: 0.85rem;
+    border: 1px solid var(--border, #ccc);
+    border-radius: 3px;
+    font-variant-numeric: tabular-nums;
+  }
+  .multi-week-summary {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    padding: 0.4rem 0.75rem;
+    border-bottom: 1px solid var(--border, #ddd);
+    background: color-mix(in srgb, var(--bg-subtle, #fafafa) 50%, transparent);
+    font-size: 0.78rem;
+    font-variant-numeric: tabular-nums;
+    flex-shrink: 0;
+  }
+  .multi-week-label {
+    color: var(--text-muted, #666);
+    font-weight: 500;
+  }
+  .multi-week-cell {
+    padding: 0.1rem 0.35rem;
+    border-radius: 3px;
+    border: 1px solid transparent;
+  }
+  .multi-week-cell--ok {
+    color: var(--text-muted, #555);
+    background: color-mix(in srgb, var(--border, #ddd) 25%, transparent);
+  }
+  .multi-week-cell--fetching {
+    color: var(--text-muted, #888);
+    font-style: italic;
+  }
+  .multi-week-cell--error {
+    color: var(--diff-rem, #c0392b);
+    border-color: var(--diff-rem, #c0392b);
   }
 </style>

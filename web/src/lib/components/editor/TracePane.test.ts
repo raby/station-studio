@@ -346,3 +346,156 @@ describe('<TracePane> — §16.2.7 c2 diff mode', () => {
     }
   });
 });
+
+
+// §16.2.7.t4 — multi-week diff aggregator UI.
+describe('<TracePane> — §16.2.7.t4 multi-week summary', () => {
+  beforeEach(() => cleanup());
+
+  function tr(track_ids: Array<number>) {
+    const slots = track_ids.map((track_id, i) => ({
+      slot: i + 1, unit: 'slot', row: 1, block: i + 1,
+      source: 'A', strategy: 'sequential', pool_index: i + 1,
+      track_id, track_name: `T${track_id}`, track_artist: 'A',
+      reason: '', excluded: [],
+    }));
+    return {
+      trace_id: 'pv', station: 'ts', week: 1, rng: 'off', seed: null,
+      generated_at: '2026-06-15T00:00:00Z', slots,
+    } as Trace;
+  }
+
+  it('compareNextN=0 → input rendered but NO multi-week summary row', () => {
+    render(TracePane, {
+      trace: tr([1, 2]), savedTrace: tr([1, 2]),
+      showDiff: true, previewing: false, errorMessage: null,
+      weekValue: 1, savedTraceError: null,
+      compareNextN: 0,
+      weekDiffSummary: new Map(),
+      multiWeekFetching: false,
+      compareNextNMax: 5,
+    });
+    // The +N input is present (so the operator can opt in) but the
+    // summary row is absent at N=0.
+    expect(screen.getByTestId('trace-compare-next-n')).toBeInTheDocument();
+    expect(screen.queryByTestId('trace-multi-week')).toBeNull();
+  });
+
+  it('compareNextN=2 with cached summary: cells render with counts for weeks [w, w+1, w+2]', () => {
+    const summary = new Map<number, { changed: number; added: number; removed: number } | { error: string }>();
+    summary.set(3, { changed: 0, added: 0, removed: 0 });   // W3 ·
+    summary.set(4, { changed: 2, added: 1, removed: 0 });   // W4 2c 1a
+    summary.set(5, { changed: 0, added: 0, removed: 3 });   // W5 3r
+    render(TracePane, {
+      trace: tr([1, 2]), savedTrace: tr([1, 2]),
+      showDiff: true, previewing: false, errorMessage: null,
+      weekValue: 3, savedTraceError: null,
+      compareNextN: 2,
+      weekDiffSummary: summary,
+      multiWeekFetching: false,
+      compareNextNMax: 5,
+    });
+    const row = screen.getByTestId('trace-multi-week');
+    expect(row).toHaveTextContent('Weeks 3-5:');
+    const cells = screen.getAllByTestId('trace-multi-week-cell');
+    expect(cells).toHaveLength(3);
+    expect(cells[0]).toHaveAttribute('data-week', '3');
+    expect(cells[0]).toHaveAttribute('data-kind', 'ok');
+    expect(cells[0]).toHaveTextContent('W3 ·');
+    expect(cells[1]).toHaveAttribute('data-week', '4');
+    expect(cells[1]).toHaveTextContent('W4 2c 1a');
+    expect(cells[2]).toHaveAttribute('data-week', '5');
+    expect(cells[2]).toHaveTextContent('W5 3r');
+  });
+
+  it('compareNextN=1 while fetching: cells render "…" placeholders with fetching kind', () => {
+    render(TracePane, {
+      trace: tr([1]), savedTrace: tr([1]),
+      showDiff: true, previewing: false, errorMessage: null,
+      weekValue: 1, savedTraceError: null,
+      compareNextN: 1,
+      weekDiffSummary: new Map(),
+      multiWeekFetching: true,
+      compareNextNMax: 5,
+    });
+    const cells = screen.getAllByTestId('trace-multi-week-cell');
+    expect(cells).toHaveLength(2);
+    for (const cell of cells) {
+      expect(cell).toHaveAttribute('data-kind', 'fetching');
+      expect(cell).toHaveTextContent(/W\d+ …/);
+    }
+  });
+
+  it('per-week failure → cell renders as error with title tooltip carrying the error', () => {
+    const summary = new Map<number, { changed: number; added: number; removed: number } | { error: string }>();
+    summary.set(1, { changed: 0, added: 0, removed: 0 });
+    summary.set(2, { error: 'preview failed: pool empty' });
+    render(TracePane, {
+      trace: tr([1]), savedTrace: tr([1]),
+      showDiff: true, previewing: false, errorMessage: null,
+      weekValue: 1, savedTraceError: null,
+      compareNextN: 1,
+      weekDiffSummary: summary,
+      multiWeekFetching: false,
+      compareNextNMax: 5,
+    });
+    const cells = screen.getAllByTestId('trace-multi-week-cell');
+    expect(cells[1]).toHaveAttribute('data-kind', 'error');
+    expect(cells[1]).toHaveTextContent('W2 ⚠');
+    expect(cells[1].getAttribute('title')).toContain('preview failed: pool empty');
+  });
+
+  it('compareNextN input change dispatches compareNextNChange { n }', async () => {
+    const { component } = render(TracePane, {
+      trace: tr([1]), savedTrace: tr([1]),
+      showDiff: true, previewing: false, errorMessage: null,
+      weekValue: 1, savedTraceError: null,
+      compareNextN: 0,
+      weekDiffSummary: new Map(),
+      multiWeekFetching: false,
+      compareNextNMax: 5,
+    });
+    let dispatched: { n: number } | null = null;
+    component.$on('compareNextNChange', (e: CustomEvent<{ n: number }>) => {
+      dispatched = e.detail;
+    });
+    const input = screen.getByTestId('trace-compare-next-n') as HTMLInputElement;
+    input.value = '3';
+    await fireEvent.change(input);
+    expect(dispatched).toEqual({ n: 3 });
+  });
+
+  it('compareNextN input clamps to compareNextNMax on dispatch', async () => {
+    const { component } = render(TracePane, {
+      trace: tr([1]), savedTrace: tr([1]),
+      showDiff: true, previewing: false, errorMessage: null,
+      weekValue: 1, savedTraceError: null,
+      compareNextN: 0,
+      weekDiffSummary: new Map(),
+      multiWeekFetching: false,
+      compareNextNMax: 5,
+    });
+    let dispatched: { n: number } | null = null;
+    component.$on('compareNextNChange', (e: CustomEvent<{ n: number }>) => {
+      dispatched = e.detail;
+    });
+    const input = screen.getByTestId('trace-compare-next-n') as HTMLInputElement;
+    input.value = '99';
+    await fireEvent.change(input);
+    expect(dispatched).toEqual({ n: 5 });
+  });
+
+  it('compareNextN input is HIDDEN when showDiff=false', () => {
+    render(TracePane, {
+      trace: tr([1]), savedTrace: null,
+      showDiff: false, previewing: false, errorMessage: null,
+      weekValue: 1, savedTraceError: null,
+      compareNextN: 0,
+      weekDiffSummary: new Map(),
+      multiWeekFetching: false,
+      compareNextNMax: 5,
+    });
+    expect(screen.queryByTestId('trace-compare-next-n')).toBeNull();
+    expect(screen.queryByTestId('trace-multi-week')).toBeNull();
+  });
+});
