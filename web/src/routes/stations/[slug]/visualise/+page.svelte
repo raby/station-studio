@@ -105,6 +105,17 @@
   let savedTrace: Trace | null = null;
   let savedTracePending = false;
   let savedTraceError: string | null = null;
+  // §16.2.7 c1 review R1 — generation counter for the savedTrace
+  // refresh. Mirrors `previewGeneration` but kept SEPARATE so that
+  // _schedulePreview's bumps (which cancel the staged side) don't
+  // also invalidate an in-flight saved-trace fetch. Bumped at every
+  // savedTrace invalidation point (setSlug / handleWeekChange /
+  // handleStagedSave success / handleShowDiffChange OFF). The async
+  // fetch captures the current generation at start + checks before
+  // every state assignment — late results from a previous context
+  // (different slug / week / pre-Save baseline) get discarded
+  // instead of polluting the cleared cache.
+  let savedTraceGeneration = 0;
 
   // §16.2.6.t3 — click-trace-row → jump-to-chip state. `_jumpFlashEl`
   // tracks the element currently wearing the .chip--jump-flash class
@@ -240,11 +251,15 @@
     previewWeek = readPreviewWeek(slug);
     // §16.2.7 c1: hydrate showDiff per-station. Default OFF. Slug
     // change ALSO clears the savedTrace cache (D2 — different
-    // station means a different saved-state baseline).
+    // station means a different saved-state baseline). Bump the
+    // generation so any in-flight _refreshSavedTraceIfNeeded from
+    // the previous slug discards its result instead of assigning
+    // it to the new station's cache (review R1).
     showDiff = readShowDiff(slug);
     savedTrace = null;
     savedTracePending = false;
     savedTraceError = null;
+    savedTraceGeneration += 1;
     _lastHydratedSlug = slug;
   }
 
@@ -606,17 +621,22 @@
   // same value, and reschedule a preview against the new week. The
   // reschedule path naturally cancels any in-flight preview from
   // the old week.
-  function handleWeekChange(e: CustomEvent<{ week: number }>) {
+  async function handleWeekChange(e: CustomEvent<{ week: number }>) {
     const next = e.detail.week;
     if (next === previewWeek) return;
     previewWeek = next;
     writePreviewWeek(slug, next);
     // §16.2.7 c1 (D2 invalidation): the savedTrace cache was for the
-    // OLD week's baseline; new week needs a fresh fetch. Clear the
-    // cache; _schedulePreview's wake-up will rehydrate via
-    // _refreshSavedTraceIfNeeded if showDiff is still on.
+    // OLD week's baseline; new week needs a fresh fetch. Bump the
+    // generation so any in-flight refresh discards (R1). Then AWAIT
+    // the new refresh BEFORE scheduling the staged preview (R2 —
+    // otherwise POLICY_CANCEL_EXISTING supersedes the saved-trace
+    // job). When showDiff is OFF the refresh returns immediately, so
+    // the await is free.
     savedTrace = null;
     savedTraceError = null;
+    savedTraceGeneration += 1;
+    await _refreshSavedTraceIfNeeded();
     _schedulePreview();
   }
 
@@ -631,10 +651,18 @@
     showDiff = next;
     writeShowDiff(slug, next);
     if (!next) {
+      // Bump the generation (R1) so any in-flight refresh from a
+      // previous toggle ON discards instead of populating the cache
+      // after we've cleared it.
       savedTrace = null;
       savedTraceError = null;
+      savedTraceGeneration += 1;
       return;
     }
+    // Toggle ON path doesn't need to bump — _refreshSavedTraceIfNeeded
+    // captures the current generation at start. No other invalidation
+    // would fire concurrently with this user-initiated toggle (the
+    // operator just clicked it; no parallel slug/week/Save action).
     void _refreshSavedTraceIfNeeded();
   }
 
@@ -643,18 +671,28 @@
   // debounce (operator just opted in; freshness matters more than
   // amortizing the cost). Guards against duplicate fires via
   // `savedTracePending`. Errors land in `savedTraceError` (D6 — UI
-  // surfaces "Diff unavailable: ..." in c2). The saved trace's job
-  // CAN race with the staged-trace preview (both use KIND_PREVIEW;
-  // POLICY_CANCEL_EXISTING will supersede); the c2 wiring orders
-  // these so the staged side wins for the live operator-facing
-  // pane, then refires the saved one. For c1 the minimal fire-and-
-  // cache is enough — the slice-review pass will tighten orchestration
-  // alongside the c2 render flow.
+  // surfaces "Diff unavailable: ..." in c2).
+  //
+  // Review R1 — generation gate: every assignment to savedTrace /
+  // savedTraceError / savedTracePending checks `myGen` against the
+  // current `savedTraceGeneration`. If a context-change invalidation
+  // (slug / week / Save / toggle-off) bumped the generation since
+  // this call started, we discard the late result instead of
+  // polluting the cleared cache.
+  //
+  // Review R2 — orchestration with the staged-trace preview: the
+  // server's POLICY_CANCEL_EXISTING means starting a second
+  // KIND_PREVIEW supersedes the first. Callers that ALSO start a
+  // staged-trace preview (handleStagedSave, handleWeekChange) AWAIT
+  // this function before calling _schedulePreview — that way the
+  // saved-trace job runs to completion first; the staged-trace
+  // preview only starts after the cache is filled.
   async function _refreshSavedTraceIfNeeded(): Promise<void> {
     if (!showDiff) return;
     if (savedTrace !== null) return;
     if (savedTracePending) return;
     if (!template || !sidecar) return;
+    const myGen = savedTraceGeneration;
     savedTracePending = true;
     savedTraceError = null;
     try {
@@ -665,6 +703,7 @@
         previewWeek,
       );
       for await (const snap of watchJob(start.job_id)) {
+        if (myGen !== savedTraceGeneration) return;
         if (snap.status === 'done') {
           const r = snap.result;
           if (isPreviewResult(r)) {
@@ -677,18 +716,20 @@
           return;
         }
         if (snap.status === 'cancelled') {
-          // Staged-trace preview superseded us — the c2 orchestration
-          // will retry. Surface no error; leave savedTrace null so the
-          // next opportunity refires.
+          // Superseded server-side. The caller's await-then-schedule
+          // pattern (R2) prevents this in the normal flow; a manual
+          // cancel via cancelJob could still trip it. Leave savedTrace
+          // null so the next opportunity refires.
           return;
         }
       }
     } catch (err) {
+      if (myGen !== savedTraceGeneration) return;
       savedTraceError = _friendlyPreviewError(
         err instanceof Error ? err.message : String(err),
       );
     } finally {
-      savedTracePending = false;
+      if (myGen === savedTraceGeneration) savedTracePending = false;
     }
   }
 
@@ -1311,12 +1352,15 @@
       _persistOpLog();
       sidecarError = null;
       // §16.2.7 c1 (D2 invalidation): the saved state JUST changed
-      // (this Save just landed). Clear the cache; the next diff toggle
-      // ON or _refreshSavedTraceIfNeeded call will refetch against the
-      // new baseline.
+      // (this Save just landed). Bump the generation (R1) + AWAIT
+      // the new refresh BEFORE scheduling the staged preview (R2 —
+      // server's POLICY_CANCEL_EXISTING would otherwise supersede
+      // our saved-trace job when _schedulePreview's debounce fires).
+      // When showDiff is OFF the await is free.
       savedTrace = null;
       savedTraceError = null;
-      void _refreshSavedTraceIfNeeded();
+      savedTraceGeneration += 1;
+      await _refreshSavedTraceIfNeeded();
       _schedulePreview();
     } finally {
       saving = false;
