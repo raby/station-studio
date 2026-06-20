@@ -10228,8 +10228,21 @@ focused:
   per-week aggregation function. NO UI. **c2**: `<MultiWeekDiff>`
   component + TracePane integration + range input + integration
   tests + cross-tab `storage` sync extension.
-- **§16.2.7.t5** queued — per-section diff aggregates. **Design
-  pass (entering implementation):**
+- **§16.2.7.t5** ✅ SHIPPED (design pass `e9f9d6d` → impl + tests
+  `2cc9750` → review R1+R2 `ae0e0d0`) — per-section diff aggregates.
+  `aggregateBySection(classifications, savedTrace, stagedTrace,
+  template, savedSidecar, stagedSidecar) → Map<sectionId, counts>`
+  walks each classification + looks up its containing section via
+  findChipRef + findSectionIdForRef (the §16.2.6.t3 helpers).
+  REMOVED rows read SAVED-side; UNCHANGED/CHANGED/ADDED read
+  STAGED-side. TracePane renders a per-section summary row below
+  the existing diff summary — cells in stagedSidecar.layout_order
+  + deleted-in-staged sections at the tail (R1 fix; pre-fix
+  silently dropped REMOVED counts when the operator staged a
+  section-delete) + UNMAPPED bucket if non-zero. 14 new tests
+  (6 aggregator unit + 8 TracePane render including the R1
+  regression test). 816/816 vitest. **Design pass preserved
+  below.** — Original design pass:
 
   **The gap.** A staged structural edit (e.g. add a slot at index
   0) cascades the slot_index shift through every later slot —
