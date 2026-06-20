@@ -659,25 +659,37 @@
   // surface can land independently. Cache lifecycle (D2):
   //   - ON → fire saved-trace preview to populate cache.
   //   - OFF → clear cache + error; no more saved-trace work pending.
-  function handleShowDiffChange(e: CustomEvent<{ on: boolean }>) {
-    const next = e.detail.on;
+  // §16.2.7.t3 review R1 — shared local-state + cache-lifecycle
+  // helper. Owns the showDiff state transition + cache invalidation
+  // semantics. Both `handleShowDiffChange` (toggle click) and the
+  // storage event listener (cross-tab) call this to keep their
+  // behaviors in lockstep — pre-extraction the two paths each held
+  // their own copy of the OFF/ON cache logic, drifting was inevitable.
+  // Does NOT write to localStorage — the caller decides whether to
+  // persist (local toggle does; storage handler doesn't since the
+  // other tab already wrote).
+  function _applyShowDiffChange(next: boolean): void {
     if (next === showDiff) return;
     showDiff = next;
-    writeShowDiff(slug, next);
     if (!next) {
-      // Bump the generation (R1) so any in-flight refresh from a
-      // previous toggle ON discards instead of populating the cache
-      // after we've cleared it.
+      // Bump the generation (c1 review R1) so any in-flight refresh
+      // from a previous toggle ON discards instead of populating the
+      // cache after we've cleared it.
       savedTrace = null;
       savedTraceError = null;
       savedTraceGeneration += 1;
       return;
     }
-    // Toggle ON path doesn't need to bump — _refreshSavedTraceIfNeeded
-    // captures the current generation at start. No other invalidation
-    // would fire concurrently with this user-initiated toggle (the
-    // operator just clicked it; no parallel slug/week/Save action).
+    // Toggle ON: fire a fresh refresh. _refreshSavedTraceIfNeeded
+    // captures the current generation at start; no need to bump.
     void _refreshSavedTraceIfNeeded();
+  }
+
+  function handleShowDiffChange(e: CustomEvent<{ on: boolean }>) {
+    const next = e.detail.on;
+    if (next === showDiff) return;
+    writeShowDiff(slug, next);
+    _applyShowDiffChange(next);
   }
 
   // §16.2.7 c1 — fire a one-shot preview against the CURRENT saved
@@ -997,29 +1009,14 @@
 
       // §16.2.7.t3 — cross-tab showDiff toggle sync. If Tab A
       // toggles, Tab B receives the storage event + mirrors the
-      // change. Local state (showDiff, savedTrace, savedTraceError,
-      // savedTraceGeneration) updated to match. Same cache-lifecycle
-      // semantics as handleShowDiffChange — toggle OFF clears the
-      // cache + bumps generation (invalidates any in-flight refresh);
-      // toggle ON fires a fresh refresh against the new operator
-      // intent. No write to localStorage (the other tab already
-      // wrote; the writing tab doesn't receive its own storage
-      // event so there's no infinite loop, but we'd still re-write
-      // the same value redundantly — skip).
+      // change via the shared `_applyShowDiffChange` helper (review
+      // R1 — same cache-lifecycle semantics as handleShowDiffChange;
+      // any divergence between local + cross-tab paths would be a
+      // correctness bug). No localStorage write — the other tab
+      // already wrote (the writing tab doesn't receive its own
+      // storage event).
       if (e.key === _showDiffKey(slug)) {
-        const next = e.newValue === 'on';
-        if (next === showDiff) return;
-        showDiff = next;
-        if (!next) {
-          savedTrace = null;
-          savedTraceError = null;
-          savedTraceGeneration += 1;
-          return;
-        }
-        // Toggle ON: same path as handleShowDiffChange's ON branch.
-        // Fire fresh refresh; generation captured at start handles
-        // any race with concurrent local state changes.
-        void _refreshSavedTraceIfNeeded();
+        _applyShowDiffChange(e.newValue === 'on');
         return;
       }
 
