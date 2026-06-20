@@ -10126,7 +10126,96 @@ focused:
   localStorage write; storage handler calls directly (other tab
   already wrote). Defensive filters: e.storageArea === localStorage
   (sessionStorage events also fire), key match, no-op suppression.
-- **§16.2.7.t4** queued — multi-week diff view.
+- **§16.2.7.t4** queued — multi-week diff view. **Design pass
+  (entering implementation):**
+
+  **The gap.** Today's diff (D2 in the original design pass)
+  compares saved-vs-staged at ONE chosen `previewWeek`. An edit's
+  effects can be week-specific: a structural change might land in
+  one week but ripple differently in week 5 (different cursor
+  positions, different mix exclusion windows). Operator has no
+  way to see "is my edit safe across the next few weeks?" without
+  manually advancing `previewWeek` repeatedly.
+
+  **D1 — UI shape: "+next N weeks" input alongside the existing
+  week selector.** Single number input (0-5). Default 0 = single-
+  week mode (current behavior). N>0 = aggregate across weeks
+  `[previewWeek, previewWeek+1, ..., previewWeek+N]`. Capped at 5
+  to bound the preview-job blast radius (5×2 = 10 serial previews
+  in the worst case). Per-station persistence `compareNextN:<slug>`
+  localStorage (mirrors `previewWeek:<slug>`, `showDiff:<slug>`).
+  Cross-tab `storage` sync via the existing `_storageHandler`
+  (extended in this slice).
+
+  **D2 — Aggregation, not per-slot detail.** Out of scope: showing
+  N×2,196 slot rows when N=5 on Rebirth Radio. The per-slot diff
+  in the row list continues to display ONE week (the focused
+  `previewWeek`); the multi-week view surfaces only AGGREGATE
+  counts per week. Operator can switch focused week via the
+  existing input to inspect a different week's per-slot detail.
+
+  **D3 — Cache: per-week summary Map, separate from the single
+  `savedTrace`.** `weekDiffSummary: Map<weekNumber, { changed;
+  added; removed; error? }>`. Populated by a new
+  `_refreshMultiWeekDiff()` helper that fires saved+staged preview
+  pairs serially for each week in the range. Uses the same
+  generation-gate pattern as `_refreshSavedTraceIfNeeded` (a
+  separate `multiWeekGeneration` counter; checked before every
+  Map update). Cache invalidation triggers: slug change, focused
+  `previewWeek` change, range (N) change, Save success, toggle
+  OFF.
+
+  **D4 — Sequential preview firing.** Same constraint as D2 of
+  the original design pass: `POLICY_CANCEL_EXISTING` means
+  concurrent preview jobs supersede each other. Each week's
+  saved-preview + staged-preview MUST run sequentially. For N=5
+  that's 10 round-trips. Operator sees a "Computing N-week
+  diff…" status during the fetch; cancellation via toggle OFF
+  bumps the generation + discards in-flight results.
+
+  **D5 — Failure modes (extends D6 of the original).**
+  - Per-week preview failure: mark that week's summary entry
+    with `error: <message>`; continue aggregating the rest. The
+    summary table renders that row as "Week N: failed" with a
+    title-tooltip carrying the error. Doesn't abort the whole
+    multi-week fetch.
+  - Operator changes focused `previewWeek` mid-fetch: bumps the
+    multiWeekGeneration; in-flight previews discarded; new fetch
+    fires for the new focused-week+N range.
+  - Operator increases N from 3 to 5 mid-fetch: same generation
+    bump; refetches the full new range (we don't optimize the
+    overlap — N→N+2 case is rare; full refetch keeps the
+    invariant simple).
+
+  **D6 — UI rendering.** New `<MultiWeekDiff>` Svelte component
+  rendered inside TracePane's header area, BELOW the existing
+  single-week summary line. Renders ONLY when `showDiff &&
+  compareNextN > 0`. Layout:
+    "Weeks 1-3:  W1 0c·  W2 3c·  W3 5c 1a"
+  Per-week cell uses the same color hint accents (`--diff-warn`
+  for changed, `--diff-add` for added, `--diff-rem` for removed).
+  Zero-count terms omitted per cell. Failed weeks show "Wn ⚠"
+  with the error in a title tooltip. While fetching: "Computing
+  N-week diff…" placeholder.
+
+  **D7 — Out of scope (folded explicitly):**
+  - Per-week per-slot detail (N×2,196 row list — UX overload).
+  - Click a week summary to switch the focused `previewWeek` —
+    natural quality-of-life, queued as `§16.2.7.t4-followup` if
+    operators ask.
+  - Backward weeks (compare previous N rather than next N).
+  - Parallel preview firing (would need a backend `KIND_PREVIEW_*`
+    proliferation; not worth the churn for an operator-triggered
+    aggregation).
+  - Cache reuse across N transitions (e.g., N=3→5 keeps weeks 1-3
+    and fetches 4-5). Full refetch on N change.
+
+  **c1 / c2 split.** **c1**: state plumbing + `compareNextN`
+  per-station localStorage + `weekDiffSummary` Map + generation
+  counter + `_refreshMultiWeekDiff` helper + unit tests for the
+  per-week aggregation function. NO UI. **c2**: `<MultiWeekDiff>`
+  component + TracePane integration + range input + integration
+  tests + cross-tab `storage` sync extension.
 - **§16.2.7.t5** queued — per-section / per-block diff aggregates.
 - **§16.2.7.t6** queued — "revert this slot" affordance.
 - **§16.2.7.t7** queued — semantic structural diff (opLog-derived).
