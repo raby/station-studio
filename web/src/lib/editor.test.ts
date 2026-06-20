@@ -6,6 +6,7 @@ import {
   REFERENCE_SAMPLING_STRATEGIES,
   availableCursorIds,
   chipColour,
+  classifySlots,
   compactStrategyLabel,
   compatibleSources,
   compatibleStrategies,
@@ -27,6 +28,7 @@ import {
   type Sidecar,
   type SidecarMacro,
   type SidecarSection,
+  type SlotClassificationKind,
   type StationLayout,
   type StationTemplate,
 } from './editor';
@@ -1094,5 +1096,120 @@ describe('findChipRef', () => {
     };
     expect(findChipRef(flatTemplate(), sc, { slot: 0, row: 0, block: 0 }))
       .toBeNull();
+  });
+});
+
+
+// ---- §16.2.7 c1 — classifySlots (compare-against-saved) -----------------
+
+
+describe('classifySlots', () => {
+  // Helper: build a minimal trace-shaped object with just the
+  // track_id field the classifier reads.
+  function tr(track_ids: Array<number | null>) {
+    return { slots: track_ids.map((track_id) => ({ track_id })) };
+  }
+
+  it('identical traces → all slots unchanged', () => {
+    const a = tr([10, 20, 30]);
+    const b = tr([10, 20, 30]);
+    const result = classifySlots(a, b);
+    expect(result.length).toBe(3);
+    expect(result.every((r) => r.kind === 'unchanged')).toBe(true);
+    expect(result[1]).toEqual({
+      index: 1, kind: 'unchanged', savedTrackId: 20, stagedTrackId: 20,
+    });
+  });
+
+  it('one mid-slot changed → emits exactly one CHANGED + UNCHANGED neighbours', () => {
+    const saved = tr([10, 20, 30]);
+    const staged = tr([10, 99, 30]);
+    const result = classifySlots(saved, staged);
+    expect(result.map((r) => r.kind)).toEqual([
+      'unchanged', 'changed', 'unchanged',
+    ]);
+    expect(result[1]).toEqual({
+      index: 1, kind: 'changed', savedTrackId: 20, stagedTrackId: 99,
+    });
+  });
+
+  it('staged longer than saved → trailing slots are ADDED', () => {
+    const saved = tr([10, 20]);
+    const staged = tr([10, 20, 30, 40]);
+    const result = classifySlots(saved, staged);
+    expect(result.map((r) => r.kind)).toEqual([
+      'unchanged', 'unchanged', 'added', 'added',
+    ]);
+    // ADDED entries carry savedTrackId=null (saved has nothing there)
+    // + the stagedTrackId so the c2 renderer can show the new content.
+    expect(result[2]).toEqual({
+      index: 2, kind: 'added', savedTrackId: null, stagedTrackId: 30,
+    });
+  });
+
+  it('saved longer than staged → trailing slots are REMOVED', () => {
+    const saved = tr([10, 20, 30, 40]);
+    const staged = tr([10, 20]);
+    const result = classifySlots(saved, staged);
+    expect(result.map((r) => r.kind)).toEqual([
+      'unchanged', 'unchanged', 'removed', 'removed',
+    ]);
+    // REMOVED entries carry stagedTrackId=null + the savedTrackId
+    // so the c2 renderer shows what's about to disappear.
+    expect(result[3]).toEqual({
+      index: 3, kind: 'removed', savedTrackId: 40, stagedTrackId: null,
+    });
+  });
+
+  it('mixed: changed in middle + added at end + removed handling — discriminator is track_id', () => {
+    // Cover the full kind matrix in one walk: slot 0 same id;
+    // slot 1 different id (changed); slots 2-3 added (staged longer).
+    const saved = tr([1, 2]);
+    const staged = tr([1, 99, 3, 4]);
+    const kinds: SlotClassificationKind[] =
+      classifySlots(saved, staged).map((r) => r.kind);
+    expect(kinds).toEqual(['unchanged', 'changed', 'added', 'added']);
+  });
+
+  it('both track_ids null at same index → UNCHANGED (synthetic / dry-run trace contract)', () => {
+    // Engine reserves track_id null for synthetic / dry-run generations.
+    // Two synthetic traces with parallel nulls should classify as
+    // unchanged, not changed.
+    const saved = tr([null]);
+    const staged = tr([null]);
+    expect(classifySlots(saved, staged)).toEqual([
+      { index: 0, kind: 'unchanged', savedTrackId: null, stagedTrackId: null },
+    ]);
+  });
+
+  it('one null + one not null at same index → CHANGED (transition is observable)', () => {
+    // A real track replaced by a synthetic null (or vice versa)
+    // should surface as CHANGED so the operator notices the
+    // unexpected swap.
+    const saved = tr([10]);
+    const staged = tr([null]);
+    const result = classifySlots(saved, staged);
+    expect(result[0].kind).toBe('changed');
+  });
+
+  it('null saved trace → all staged slots classify as ADDED', () => {
+    // Defensive: saved trace hasn't been fetched yet (cache empty).
+    // The c2 renderer would normally hide the diff in this state,
+    // but classifySlots stays callable without throwing.
+    const result = classifySlots(null, tr([1, 2, 3]));
+    expect(result.map((r) => r.kind)).toEqual(['added', 'added', 'added']);
+  });
+
+  it('null staged trace → all saved slots classify as REMOVED', () => {
+    const result = classifySlots(tr([1, 2]), null);
+    expect(result.map((r) => r.kind)).toEqual(['removed', 'removed']);
+  });
+
+  it('both null → empty array', () => {
+    expect(classifySlots(null, null)).toEqual([]);
+  });
+
+  it('both empty slots arrays → empty array', () => {
+    expect(classifySlots(tr([]), tr([]))).toEqual([]);
   });
 });

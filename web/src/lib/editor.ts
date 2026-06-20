@@ -1143,3 +1143,86 @@ export function findChipRef(
   }
   return null;
 }
+
+
+// ---- §16.2.7 c1 — compare-against-saved slot classifier ---------------
+
+
+/**
+ * Per-slot classification when comparing a SAVED-state trace against
+ * a STAGED-state trace. One entry per slot index in the longer of the
+ * two trace.slots arrays.
+ *
+ * `unchanged` — both traces have the same track_id at this index.
+ * `changed`   — both have a slot here but the track_id differs.
+ * `added`     — staged has more slots than saved; this index only
+ *               exists in staged (structural-add edits, etc.).
+ * `removed`   — saved has more slots than staged; this index only
+ *               exists in saved (structural-remove edits).
+ */
+export type SlotClassificationKind =
+  | 'unchanged' | 'changed' | 'added' | 'removed';
+
+export interface SlotClassification {
+  /** 0-indexed slot position in the longer trace's slots[]. */
+  index: number;
+  kind: SlotClassificationKind;
+  /** track_id from the SAVED trace at this index, or null when this
+   *  index is past saved.slots.length (added case). For `unchanged` /
+   *  `changed` / `removed` this is the saved-side track id; for
+   *  `added` it's null since saved has nothing here. */
+  savedTrackId: number | null;
+  /** track_id from the STAGED trace at this index, or null when this
+   *  index is past staged.slots.length (removed case). */
+  stagedTrackId: number | null;
+}
+
+
+/**
+ * §16.2.7 D3 — per-slot classification via parallel index walk.
+ *
+ * Algorithm (per the design pass):
+ *   for i in [0, max(saved.length, staged.length)):
+ *     if i >= saved.length:   ADDED       (staged grew)
+ *     if i >= staged.length:  REMOVED     (staged shrunk)
+ *     if saved[i].track_id !== staged[i].track_id: CHANGED
+ *     otherwise: UNCHANGED
+ *
+ * Discriminator is `track_id` (the authoritative DB-row identifier),
+ * NOT `track_name` (two pool re-imports can produce identical names
+ * across distinct Track rows). Engine reserves `track_id: number | null`
+ * — synthetic/dry-run traces emit null; both-null is treated as
+ * `unchanged` (no observable difference), one-null one-not as
+ * `changed` (the operator should see the transition).
+ *
+ * Returns an array parallel to the longer trace's slot positions.
+ * For a single-week diff this is exactly the displayable row list;
+ * the c2 TracePane renderer iterates this directly.
+ *
+ * Defensive: a null trace (saved-trace fetch failed / staged not run
+ * yet) is treated as zero-length on its side. The non-null trace's
+ * slots all classify against the null side as added / removed
+ * accordingly. The c2 caller decides whether to show the diff (only
+ * meaningful when BOTH are non-null); this function just makes the
+ * shape work either way without throwing.
+ */
+export function classifySlots(
+  saved: { slots: Array<{ track_id: number | null }> } | null,
+  staged: { slots: Array<{ track_id: number | null }> } | null,
+): SlotClassification[] {
+  const savedSlots = saved?.slots ?? [];
+  const stagedSlots = staged?.slots ?? [];
+  const n = Math.max(savedSlots.length, stagedSlots.length);
+  const out: SlotClassification[] = [];
+  for (let i = 0; i < n; i++) {
+    const savedTrackId = i < savedSlots.length ? savedSlots[i].track_id : null;
+    const stagedTrackId = i < stagedSlots.length ? stagedSlots[i].track_id : null;
+    let kind: SlotClassificationKind;
+    if (i >= savedSlots.length) kind = 'added';
+    else if (i >= stagedSlots.length) kind = 'removed';
+    else if (savedTrackId !== stagedTrackId) kind = 'changed';
+    else kind = 'unchanged';
+    out.push({ index: i, kind, savedTrackId, stagedTrackId });
+  }
+  return out;
+}

@@ -88,6 +88,24 @@
   // hint only.
   let previewWeek = 1;
 
+  // §16.2.7 c1 — compare-against-saved diff state. `showDiff` is the
+  // operator's opt-in toggle (D1); `savedTrace` caches the SAVED-state
+  // preview so we don't re-fire it per edit (D2 — one preview per Save
+  // cycle, not per edit). `savedTracePending` blocks duplicate fires
+  // while a saved-trace fetch is in flight. `savedTraceError` surfaces
+  // a one-line "Diff unavailable: ..." in TracePane (D6) without
+  // blocking the staged-trace flow.
+  //
+  // Cache invalidations (per D2's "(c) chosen" path):
+  //   - slug change       → setSlug clears
+  //   - previewWeek change → handleTraceWeekChange clears
+  //   - Save success      → handleStagedSave clears post-_finish
+  //   - showDiff OFF      → toggle handler clears
+  let showDiff = false;
+  let savedTrace: Trace | null = null;
+  let savedTracePending = false;
+  let savedTraceError: string | null = null;
+
   // §16.2.6.t3 — click-trace-row → jump-to-chip state. `_jumpFlashEl`
   // tracks the element currently wearing the .chip--jump-flash class
   // so we can strip it on a rapid second click (D4 race semantics —
@@ -220,6 +238,13 @@
     // §16.2.6.t8: hydrate previewWeek per-station too. Default 1
     // when no entry exists (mirrors c2's hardcoded behavior).
     previewWeek = readPreviewWeek(slug);
+    // §16.2.7 c1: hydrate showDiff per-station. Default OFF. Slug
+    // change ALSO clears the savedTrace cache (D2 — different
+    // station means a different saved-state baseline).
+    showDiff = readShowDiff(slug);
+    savedTrace = null;
+    savedTracePending = false;
+    savedTraceError = null;
     _lastHydratedSlug = slug;
   }
 
@@ -282,6 +307,32 @@
     } catch {
       // localStorage quota / privacy-mode block — non-fatal, week
       // just doesn't persist across page reloads in those sessions.
+    }
+  }
+
+  // §16.2.7 c1 — `showDiff` per-station persistence. Same shape as
+  // _previewWeekKey / _livePreviewKey above (mirrors §16.2.6.t8 + c2
+  // localStorage conventions). Stored as "on"/"off" string; any other
+  // value reads as false (defensive against stale shapes).
+  function _showDiffKey(s: string): string {
+    return `showDiff:${s}`;
+  }
+
+  function readShowDiff(s: string): boolean {
+    if (typeof window === 'undefined') return false;
+    try {
+      return window.localStorage.getItem(_showDiffKey(s)) === 'on';
+    } catch {
+      return false;
+    }
+  }
+
+  function writeShowDiff(s: string, on: boolean): void {
+    if (typeof window === 'undefined') return;
+    try {
+      window.localStorage.setItem(_showDiffKey(s), on ? 'on' : 'off');
+    } catch {
+      // Same quota/privacy fallback as the helpers above.
     }
   }
 
@@ -560,7 +611,85 @@
     if (next === previewWeek) return;
     previewWeek = next;
     writePreviewWeek(slug, next);
+    // §16.2.7 c1 (D2 invalidation): the savedTrace cache was for the
+    // OLD week's baseline; new week needs a fresh fetch. Clear the
+    // cache; _schedulePreview's wake-up will rehydrate via
+    // _refreshSavedTraceIfNeeded if showDiff is still on.
+    savedTrace = null;
+    savedTraceError = null;
     _schedulePreview();
+  }
+
+  // §16.2.7 c1 — diff toggle handler. Per D1, this is dispatched from
+  // TracePane in c2; the c1 wiring + persistence lives here so the c2
+  // surface can land independently. Cache lifecycle (D2):
+  //   - ON → fire saved-trace preview to populate cache.
+  //   - OFF → clear cache + error; no more saved-trace work pending.
+  function handleShowDiffChange(e: CustomEvent<{ on: boolean }>) {
+    const next = e.detail.on;
+    if (next === showDiff) return;
+    showDiff = next;
+    writeShowDiff(slug, next);
+    if (!next) {
+      savedTrace = null;
+      savedTraceError = null;
+      return;
+    }
+    void _refreshSavedTraceIfNeeded();
+  }
+
+  // §16.2.7 c1 — fire a one-shot preview against the CURRENT saved
+  // state (template + sidecar), cache the result in `savedTrace`. No
+  // debounce (operator just opted in; freshness matters more than
+  // amortizing the cost). Guards against duplicate fires via
+  // `savedTracePending`. Errors land in `savedTraceError` (D6 — UI
+  // surfaces "Diff unavailable: ..." in c2). The saved trace's job
+  // CAN race with the staged-trace preview (both use KIND_PREVIEW;
+  // POLICY_CANCEL_EXISTING will supersede); the c2 wiring orders
+  // these so the staged side wins for the live operator-facing
+  // pane, then refires the saved one. For c1 the minimal fire-and-
+  // cache is enough — the slice-review pass will tighten orchestration
+  // alongside the c2 render flow.
+  async function _refreshSavedTraceIfNeeded(): Promise<void> {
+    if (!showDiff) return;
+    if (savedTrace !== null) return;
+    if (savedTracePending) return;
+    if (!template || !sidecar) return;
+    savedTracePending = true;
+    savedTraceError = null;
+    try {
+      const start = await startPreviewJob(
+        slug,
+        template as unknown as Record<string, unknown>,
+        sidecar as unknown as Record<string, unknown>,
+        previewWeek,
+      );
+      for await (const snap of watchJob(start.job_id)) {
+        if (snap.status === 'done') {
+          const r = snap.result;
+          if (isPreviewResult(r)) {
+            savedTrace = r.trace;
+          }
+          return;
+        }
+        if (snap.status === 'error') {
+          savedTraceError = _friendlyPreviewError(snap.error?.message);
+          return;
+        }
+        if (snap.status === 'cancelled') {
+          // Staged-trace preview superseded us — the c2 orchestration
+          // will retry. Surface no error; leave savedTrace null so the
+          // next opportunity refires.
+          return;
+        }
+      }
+    } catch (err) {
+      savedTraceError = _friendlyPreviewError(
+        err instanceof Error ? err.message : String(err),
+      );
+    } finally {
+      savedTracePending = false;
+    }
   }
 
   // Cancel any pending or in-flight preview job. Called from
@@ -1181,6 +1310,13 @@
       opLog = [];
       _persistOpLog();
       sidecarError = null;
+      // §16.2.7 c1 (D2 invalidation): the saved state JUST changed
+      // (this Save just landed). Clear the cache; the next diff toggle
+      // ON or _refreshSavedTraceIfNeeded call will refetch against the
+      // new baseline.
+      savedTrace = null;
+      savedTraceError = null;
+      void _refreshSavedTraceIfNeeded();
       _schedulePreview();
     } finally {
       saving = false;
