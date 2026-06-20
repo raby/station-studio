@@ -509,7 +509,7 @@
   // a trace-click is "where is this slot?", not "edit this slot." The
   // operator clicks the chip themselves to edit.
   async function handleTraceSelect(e: CustomEvent<{ slotIndex: number }>) {
-    if (!previewTrace || !template || !sidecar) return;
+    if (!previewTrace || !stagedTemplate || !stagedSidecar) return;
     // The TracePane dispatches whichever slot index appears in the
     // row; for row_template stations this is the globally-flattened
     // number, not slot.row + slot.block. We need the full TraceSlot
@@ -523,7 +523,14 @@
       // no-op; not worth a warn since it's expected on rapid edits.
       return;
     }
-    const ref = findChipRef(template, sidecar, traceSlot);
+    // §16.2.7 c2 review R1 — look up the chip in STAGED state, not
+    // saved. Pre-fix used `template, sidecar` (saved), which missed
+    // staged-only additions (structural-add chips that exist in the
+    // canvas DOM rendered from stagedSidecar but not in saved).
+    // Diff-mode ADDED rows are the most visible surface for this;
+    // pre-existing latent for any staged edit. The canvas renders
+    // stagedSidecar; findChipRef must use the same state pair.
+    const ref = findChipRef(stagedTemplate, stagedSidecar, traceSlot);
     if (ref === null) {
       // D6 — out-of-canvas / drift / orphan-macro case. Silent no-op
       // for the operator; warn so a real drift bug surfaces in dev.
@@ -558,7 +565,9 @@
       // the section's body element is already rendered: if it is,
       // the section IS expanded (toggle would collapse it) → bail
       // instead of toggling.
-      const sectionId = findSectionIdForRef(sidecar, ref);
+      // R1 follow-through: same state pair for the section lookup.
+      // The chip element rendered in the DOM is in the staged sidecar.
+      const sectionId = findSectionIdForRef(stagedSidecar, ref);
       if (sectionId !== null) {
         const sectionEl = document.querySelector<HTMLElement>(
           `[data-section-id="${CSS.escape(sectionId)}"]`,

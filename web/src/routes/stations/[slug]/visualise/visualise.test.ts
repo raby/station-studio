@@ -2421,3 +2421,131 @@ describe('visualise +page.svelte — §16.2.6.t8 week selector', () => {
     expect(window.localStorage.getItem('previewWeek:viz-test')).toBeNull();
   });
 });
+
+
+// §16.2.7 c2 review R2 — page-level integration for the diff toggle
+// flow. c1 covered classifier + state plumbing; c2 covered TracePane
+// render; this block pins the joint contract end-to-end: operator
+// toggles "Diff" ON → page fires startPreviewJob for the saved-state
+// preview → cache populates → on next render the diff classes apply.
+describe('visualise +page.svelte — §16.2.7 c2 diff toggle integration', () => {
+  beforeEach(() => {
+    getStationSidecarMock.mockReset();
+    patchBlockMock.mockReset();
+    applyBatchMock.mockClear();
+    startPreviewJobMock.mockReset();
+    watchJobMock.mockReset();
+    cancelJobMock.mockReset();
+    cancelJobMock.mockResolvedValue(undefined);
+    setSlug('viz-test');
+    try { window.localStorage.clear(); } catch { /* */ }
+    // Live preview ON so TracePane renders. Diff toggle starts OFF.
+    window.localStorage.setItem('livePreview:viz-test', 'on');
+    getStationSidecarMock.mockResolvedValue({
+      template: makeTemplate(),
+      sidecar: makeSidecar(),
+      sidecar_error: null,
+    });
+  });
+
+  it('toggling Diff ON dispatches showDiffChange → page calls startPreviewJob to populate savedTrace cache', async () => {
+    // Default startPreviewJob mock: resolves immediately so the
+    // watchJob iterator can drive the result.
+    startPreviewJobMock.mockResolvedValue({
+      job_id: 'pv-saved-1', status: 'running',
+    });
+    // watchJob yields done with a synthetic trace immediately.
+    let watchCalls = 0;
+    watchJobMock.mockImplementation(() => {
+      watchCalls += 1;
+      return {
+        [Symbol.asyncIterator]() {
+          return {
+            async next() {
+              return {
+                done: false,
+                value: {
+                  status: 'done',
+                  result: {
+                    trace: {
+                      trace_id: 'pv-saved',
+                      station: 'viz-test',
+                      week: 1,
+                      rng: 'off',
+                      seed: null,
+                      generated_at: '2026-06-15T00:00:00Z',
+                      slots: [
+                        { slot: 1, unit: 'slot', row: 1, block: 1,
+                          source: 'A', strategy: 'sequential',
+                          pool_index: 1, track_id: 100,
+                          track_name: 'T100', track_artist: 'A',
+                          reason: '', excluded: [] },
+                      ],
+                    },
+                  },
+                },
+              };
+            },
+            async return() { return { done: true, value: undefined }; },
+          };
+        },
+      };
+    });
+
+    render(Page);
+    await screen.findByTestId('editor-canvas');
+    await act(async () => {});
+
+    const callsBeforeToggle = startPreviewJobMock.mock.calls.length;
+    const toggle = screen.getByTestId('trace-show-diff') as HTMLInputElement;
+    expect(toggle.checked).toBe(false);
+
+    await act(async () => {
+      toggle.click();
+    });
+    await act(async () => {});
+
+    // After the toggle, the page fires startPreviewJob for the
+    // saved-state preview. Pre-R2 there was no test pinning this
+    // chain — a regression where handleShowDiffChange forgot to
+    // call _refreshSavedTraceIfNeeded would slip past the c1 +
+    // c2 unit tests.
+    expect(startPreviewJobMock.mock.calls.length).toBeGreaterThan(callsBeforeToggle);
+    expect(watchCalls).toBeGreaterThan(0);
+    // localStorage now persists the on-state per the c1
+    // writeShowDiff helper.
+    expect(window.localStorage.getItem('showDiff:viz-test')).toBe('on');
+  });
+
+  it('toggling Diff OFF clears the persisted state without firing another preview', async () => {
+    startPreviewJobMock.mockResolvedValue({
+      job_id: 'pv-saved-2', status: 'running',
+    });
+    watchJobMock.mockReturnValue({
+      [Symbol.asyncIterator]() {
+        return { async next() { return { done: true, value: undefined }; } };
+      },
+    });
+    // Pre-seed the toggle on so we start in the ON state.
+    window.localStorage.setItem('showDiff:viz-test', 'on');
+
+    render(Page);
+    await screen.findByTestId('editor-canvas');
+    await act(async () => {});
+
+    const toggle = screen.getByTestId('trace-show-diff') as HTMLInputElement;
+    expect(toggle.checked).toBe(true);
+
+    const callsBeforeOff = startPreviewJobMock.mock.calls.length;
+    await act(async () => {
+      toggle.click();
+    });
+    await act(async () => {});
+
+    // OFF transition writes "off" to localStorage + DOES NOT fire
+    // a new saved-trace preview (the cache is being CLEARED, not
+    // refreshed).
+    expect(window.localStorage.getItem('showDiff:viz-test')).toBe('off');
+    expect(startPreviewJobMock.mock.calls.length).toBe(callsBeforeOff);
+  });
+});
