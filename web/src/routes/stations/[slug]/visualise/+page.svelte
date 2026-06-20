@@ -993,8 +993,37 @@
       // WHATWG spec, sessionStorage writes also fire on this
       // listener; we only care about localStorage.
       if (e.storageArea !== window.localStorage) return;
-      if (e.key !== _stagedEditsKey(slug)) return;
       if (e.newValue === e.oldValue) return;
+
+      // §16.2.7.t3 — cross-tab showDiff toggle sync. If Tab A
+      // toggles, Tab B receives the storage event + mirrors the
+      // change. Local state (showDiff, savedTrace, savedTraceError,
+      // savedTraceGeneration) updated to match. Same cache-lifecycle
+      // semantics as handleShowDiffChange — toggle OFF clears the
+      // cache + bumps generation (invalidates any in-flight refresh);
+      // toggle ON fires a fresh refresh against the new operator
+      // intent. No write to localStorage (the other tab already
+      // wrote; the writing tab doesn't receive its own storage
+      // event so there's no infinite loop, but we'd still re-write
+      // the same value redundantly — skip).
+      if (e.key === _showDiffKey(slug)) {
+        const next = e.newValue === 'on';
+        if (next === showDiff) return;
+        showDiff = next;
+        if (!next) {
+          savedTrace = null;
+          savedTraceError = null;
+          savedTraceGeneration += 1;
+          return;
+        }
+        // Toggle ON: same path as handleShowDiffChange's ON branch.
+        // Fire fresh refresh; generation captured at start handles
+        // any race with concurrent local state changes.
+        void _refreshSavedTraceIfNeeded();
+        return;
+      }
+
+      if (e.key !== _stagedEditsKey(slug)) return;
       if (e.newValue === null) {
         // Other tab cleared the entry (Save, Discard, or
         // navigate-away). Drop our in-memory opLog to match.

@@ -2831,6 +2831,105 @@ describe('visualise +page.svelte — §16.2.7 c2 diff toggle integration', () =>
       .toBeGreaterThan(callsBeforeWeekChange);
   });
 
+  it('§16.2.7.t3 — cross-tab storage event: showDiff sync from another tab updates local state + fires refresh on ON, clears cache on OFF', async () => {
+    // The browser dispatches the `storage` event on OTHER tabs (not
+    // the writing tab). Pin the contract that the listener registered
+    // in onMount mirrors a remote showDiff toggle into this tab's
+    // state — same cache-lifecycle semantics as handleShowDiffChange.
+    type Deferred = { release: () => void };
+    const refreshes: Deferred[] = [];
+    startPreviewJobMock.mockImplementation(async () => ({
+      job_id: `pv-deferred-${refreshes.length}`, status: 'running',
+    }));
+    watchJobMock.mockImplementation(() => {
+      let releaseResolve: () => void = () => {};
+      const releasePromise = new Promise<void>((resolve) => {
+        releaseResolve = resolve;
+      });
+      refreshes.push({ release: releaseResolve });
+      return {
+        async *[Symbol.asyncIterator]() {
+          await releasePromise;
+          yield { status: 'done', result: null };
+        },
+      };
+    });
+
+    // Start with showDiff OFF.
+    render(Page);
+    await screen.findByTestId('editor-canvas');
+    await act(async () => {});
+    const toggle = screen.getByTestId('trace-show-diff') as HTMLInputElement;
+    expect(toggle.checked).toBe(false);
+
+    const callsBeforeRemoteOn = startPreviewJobMock.mock.calls.length;
+
+    // Simulate Tab A writing 'on' to localStorage + this tab
+    // receiving the storage event. Per the WHATWG spec the writing
+    // tab doesn't receive its own storage event, so the mock
+    // dispatches the event manually with the persisted value.
+    window.localStorage.setItem('showDiff:viz-test', 'on');
+    await act(async () => {
+      window.dispatchEvent(new StorageEvent('storage', {
+        key: 'showDiff:viz-test',
+        oldValue: 'off',
+        newValue: 'on',
+        storageArea: window.localStorage,
+      }));
+    });
+    await act(async () => {});
+
+    // Local toggle reflects the remote change + a saved-trace
+    // refresh fired.
+    expect(toggle.checked).toBe(true);
+    expect(startPreviewJobMock.mock.calls.length).toBeGreaterThan(callsBeforeRemoteOn);
+
+    // Now simulate the remote turning it OFF. Local state should
+    // mirror; cache should NOT refire on OFF.
+    const callsBeforeRemoteOff = startPreviewJobMock.mock.calls.length;
+    window.localStorage.setItem('showDiff:viz-test', 'off');
+    await act(async () => {
+      window.dispatchEvent(new StorageEvent('storage', {
+        key: 'showDiff:viz-test',
+        oldValue: 'on',
+        newValue: 'off',
+        storageArea: window.localStorage,
+      }));
+    });
+    await act(async () => {});
+
+    expect(toggle.checked).toBe(false);
+    // OFF path: no new preview fires (cache is being cleared, not
+    // refreshed).
+    expect(startPreviewJobMock.mock.calls.length).toBe(callsBeforeRemoteOff);
+
+    // Defensive: an irrelevant storage event for a DIFFERENT key
+    // doesn't perturb showDiff.
+    const callsBeforeIrrelevant = startPreviewJobMock.mock.calls.length;
+    await act(async () => {
+      window.dispatchEvent(new StorageEvent('storage', {
+        key: 'unrelated-key',
+        oldValue: 'a',
+        newValue: 'b',
+        storageArea: window.localStorage,
+      }));
+    });
+    expect(toggle.checked).toBe(false);
+    expect(startPreviewJobMock.mock.calls.length).toBe(callsBeforeIrrelevant);
+
+    // Defensive: a storage event from sessionStorage (e.storageArea
+    // !== window.localStorage) is filtered out.
+    await act(async () => {
+      window.dispatchEvent(new StorageEvent('storage', {
+        key: 'showDiff:viz-test',
+        oldValue: 'off',
+        newValue: 'on',
+        storageArea: window.sessionStorage,
+      }));
+    });
+    expect(toggle.checked).toBe(false);
+  });
+
   it('toggling Diff OFF clears the persisted state without firing another preview', async () => {
     startPreviewJobMock.mockResolvedValue({
       job_id: 'pv-saved-2', status: 'running',
