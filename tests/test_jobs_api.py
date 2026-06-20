@@ -33,6 +33,7 @@ from sqlalchemy.orm import sessionmaker
 from api.deps import get_db, get_session_factory
 from api.job_runner import JobStore, get_job_store
 from api.main import app
+from api.schemas import _PREVIEW_FIELD_MAX_BYTES
 from engine.database import make_engine, make_sessionmaker
 from engine.editor_metadata import synthesize_trivial_sidecar
 from engine.generator import GenerationResult, ProgressEvent, generate_stream
@@ -925,41 +926,49 @@ def test_preview_strict_pydantic_rejects_coerced_int_at_the_wire(jobs_api):
     assert r.status_code == 201, r.json()
 
 
-def test_preview_request_rejects_huge_template_field(jobs_api):
-    """§16.2.6.t6 — PreviewRequest's per-field 5MB defensive cap
-    rejects accidentally-inflated dicts at the wire.
+@pytest.mark.parametrize("field_to_inflate", ["template", "sidecar"])
+def test_preview_request_rejects_huge_field(jobs_api, field_to_inflate):
+    """§16.2.6.t6 — PreviewRequest's per-field defensive cap rejects
+    accidentally-inflated dicts at the wire.
 
     Not a DoS defense (Decision A1's solo-hobbyist scope doesn't
     treat malicious requests as in-scope). Catches the ACCIDENTAL
     inflation class: a recursive reference, a debug-field copy that
     embeds the template inside itself, a regression where track-
     level metadata leaks into the body. Real templates / sidecars
-    are ~50KB raw (Rebirth Radio); the 5MB cap is ~100x that.
+    are ~50KB raw (Rebirth Radio); the cap is ~100x that.
 
-    Pin: post a body whose `template` field is just over the cap
-    (6MB filler). The validator fires + returns 422 with the field
-    name + the cap in MB called out, so the operator (or the
-    contributor whose regression inflated the body) sees what to
-    fix. Same shape would catch `sidecar` inflation since the
-    validator is shared across both fields.
+    R1 fix — parametrized over BOTH `template` and `sidecar` so the
+    `@field_validator("template", "sidecar")` registration is
+    symmetric in coverage. Pre-fix only `template` was tested;
+    a regression dropping `"sidecar"` from the decorator (typo,
+    sloppy refactor) would have slipped past.
+
+    R2 fix — cap + over-cap filler computed from
+    `_PREVIEW_FIELD_MAX_BYTES` so a future tune (down to 2 MB
+    after a real-world regression, up to 10 MB after a fixture
+    audit) doesn't break the test. Assertion's MB string is
+    likewise computed from the constant.
     """
     client, Session, _store = jobs_api
     _seed_station_with_pool(Session)
 
+    over_cap = _PREVIEW_FIELD_MAX_BYTES + (1024 * 1024)  # cap + 1 MB
+    cap_mb = _PREVIEW_FIELD_MAX_BYTES // (1024 * 1024)
+
     body = _preview_body()
-    # 6 MB filler — string is 1 byte per char in ASCII; just over
-    # the 5 MB cap. The dict's existing keys add a few hundred more
-    # bytes; total comfortably over 5 MB once json.dumps adds quote
-    # delimiters.
-    body["template"]["__t6_inflation__"] = "x" * (6 * 1024 * 1024)
+    # Filler string in ASCII = 1 byte per char; the dict's existing
+    # keys add a few hundred more bytes; total comfortably over the
+    # cap once json.dumps adds quote delimiters.
+    body[field_to_inflate]["__t6_inflation__"] = "x" * over_cap
 
     r = client.post("/api/stations/ts/jobs/preview", json=body)
     assert r.status_code == 422, r.json()
     detail = str(r.json())
     # The validator's message names the field + the cap so a future
     # contributor finds the trail.
-    assert "template" in detail
-    assert "5MB defensive cap" in detail
+    assert field_to_inflate in detail
+    assert f"{cap_mb}MB defensive cap" in detail
 
 
 def test_jobs_generate_loads_excluded_track_pids_and_passes_to_engine(jobs_api):

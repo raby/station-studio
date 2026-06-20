@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 from typing import Annotated, Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator
+from pydantic_core.core_schema import ValidationInfo
 
 
 class MetaResponse(BaseModel):
@@ -135,7 +136,9 @@ class PreviewRequest(BaseModel):
 
     @field_validator("template", "sidecar")
     @classmethod
-    def _reject_huge_dict(cls, v: dict[str, Any], info) -> dict[str, Any]:
+    def _reject_huge_dict(
+        cls, v: dict[str, Any], info: ValidationInfo,
+    ) -> dict[str, Any]:
         """§16.2.6.t6 — defensive per-field size cap.
 
         Not a DoS defense — Decision A1's solo-hobbyist scope doesn't
