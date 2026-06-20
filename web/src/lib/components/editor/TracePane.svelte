@@ -472,20 +472,26 @@
     border-left: 3px solid transparent;
     transition: background 80ms ease-out, border-color 80ms ease-out;
   }
-  .slot--changed {
-    border-left-color: var(--diff-warn, #b08c00) !important;
+  /* §16.2.7.t2 — per-kind diff classes use COMPOUND selectors to
+     match the parent's specificity (0,2,0). Pre-fix the per-kind
+     rules were single-class (0,1,0) which lost to the parent rule's
+     `border-left: transparent` shorthand → fixed via !important.
+     With matching specificity the cascade order alone determines
+     the winner; !important removed. Cleaner cascade. */
+  .slots--diff .slot--changed {
+    border-left-color: var(--diff-warn, #b08c00);
     background: color-mix(in srgb, var(--diff-warn, #b08c00) 6%, transparent);
   }
-  .slot--added {
-    border-left-color: var(--diff-add, #2c7a2c) !important;
+  .slots--diff .slot--added {
+    border-left-color: var(--diff-add, #2c7a2c);
     background: color-mix(in srgb, var(--diff-add, #2c7a2c) 6%, transparent);
   }
-  .slot--removed {
-    border-left-color: var(--diff-rem, #c0392b) !important;
+  .slots--diff .slot--removed {
+    border-left-color: var(--diff-rem, #c0392b);
     background: color-mix(in srgb, var(--diff-rem, #c0392b) 6%, transparent);
   }
-  .slot--removed .name,
-  .slot--removed .artist {
+  .slots--diff .slot--removed .name,
+  .slots--diff .slot--removed .artist {
     text-decoration: line-through;
     color: var(--text-muted, #888);
   }

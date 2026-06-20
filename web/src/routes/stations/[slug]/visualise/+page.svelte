@@ -91,10 +91,9 @@
   // §16.2.7 c1 — compare-against-saved diff state. `showDiff` is the
   // operator's opt-in toggle (D1); `savedTrace` caches the SAVED-state
   // preview so we don't re-fire it per edit (D2 — one preview per Save
-  // cycle, not per edit). `savedTracePending` blocks duplicate fires
-  // while a saved-trace fetch is in flight. `savedTraceError` surfaces
-  // a one-line "Diff unavailable: ..." in TracePane (D6) without
-  // blocking the staged-trace flow.
+  // cycle, not per edit). `savedTraceError` surfaces a one-line
+  // "Diff unavailable: ..." in TracePane (D6) without blocking the
+  // staged-trace flow.
   //
   // Cache invalidations (per D2's "(c) chosen" path):
   //   - slug change       → setSlug clears
@@ -103,8 +102,15 @@
   //   - showDiff OFF      → toggle handler clears
   let showDiff = false;
   let savedTrace: Trace | null = null;
-  let savedTracePending = false;
   let savedTraceError: string | null = null;
+  // §16.2.7.t1 review F2 fix — savedTracePending removed. The pending
+  // guard (`if (savedTracePending) return;`) raced with generation
+  // bumps from handleStagedSave + handleWeekChange — a new refresh
+  // triggered by Save/week change while an OLD invalidated refresh was
+  // still in flight would short-circuit, leaving the cache empty
+  // forever. The generation gate + server-side POLICY_CANCEL_EXISTING
+  // together make concurrent refreshes safe (old job gets cancelled,
+  // new job's done lands), so the guard wasn't load-bearing.
   // §16.2.7 c1 review R1 — generation counter for the savedTrace
   // refresh. Mirrors `previewGeneration` but kept SEPARATE so that
   // _schedulePreview's bumps (which cancel the staged side) don't
@@ -257,7 +263,6 @@
     // it to the new station's cache (review R1).
     showDiff = readShowDiff(slug);
     savedTrace = null;
-    savedTracePending = false;
     savedTraceError = null;
     savedTraceGeneration += 1;
     _lastHydratedSlug = slug;
@@ -678,16 +683,19 @@
   // §16.2.7 c1 — fire a one-shot preview against the CURRENT saved
   // state (template + sidecar), cache the result in `savedTrace`. No
   // debounce (operator just opted in; freshness matters more than
-  // amortizing the cost). Guards against duplicate fires via
-  // `savedTracePending`. Errors land in `savedTraceError` (D6 — UI
-  // surfaces "Diff unavailable: ..." in c2).
+  // amortizing the cost). Errors land in `savedTraceError` (D6 — UI
+  // surfaces "Diff unavailable: ..." in c2). Concurrent refreshes
+  // are SAFE — the generation gate ensures only the latest
+  // generation's result lands, and the server's POLICY_CANCEL_EXISTING
+  // cancels superseded jobs so the wasted-work window is microseconds
+  // (§16.2.7.t1 review F1).
   //
   // Review R1 — generation gate: every assignment to savedTrace /
-  // savedTraceError / savedTracePending checks `myGen` against the
-  // current `savedTraceGeneration`. If a context-change invalidation
-  // (slug / week / Save / toggle-off) bumped the generation since
-  // this call started, we discard the late result instead of
-  // polluting the cleared cache.
+  // savedTraceError checks `myGen` against the current
+  // `savedTraceGeneration`. If a context-change invalidation (slug /
+  // week / Save / toggle-off) bumped the generation since this call
+  // started, we discard the late result instead of polluting the
+  // cleared cache.
   //
   // Review R2 — orchestration with the staged-trace preview: the
   // server's POLICY_CANCEL_EXISTING means starting a second
@@ -699,10 +707,15 @@
   async function _refreshSavedTraceIfNeeded(): Promise<void> {
     if (!showDiff) return;
     if (savedTrace !== null) return;
-    if (savedTracePending) return;
     if (!template || !sidecar) return;
+    // §16.2.7.t1 review F1 fix — no pending guard. The generation gate
+    // (myGen vs savedTraceGeneration) handles correctness for late
+    // results; the server's POLICY_CANCEL_EXISTING cancels superseded
+    // jobs so the wasted-work window between concurrent refreshes is
+    // microseconds. Pre-fix the pending guard short-circuited new
+    // refreshes triggered by Save / week-change while an OLD
+    // invalidated refresh was in flight — cache stuck empty forever.
     const myGen = savedTraceGeneration;
-    savedTracePending = true;
     savedTraceError = null;
     try {
       const start = await startPreviewJob(
@@ -737,19 +750,11 @@
       savedTraceError = _friendlyPreviewError(
         err instanceof Error ? err.message : String(err),
       );
-    } finally {
-      // §16.2.7.t1 fix: ALWAYS clear pending on completion, even if
-      // the generation gate discarded the result. Pre-fix the
-      // conditional clear (only when myGen matched) left pending=true
-      // after a gate-fired discard — the next refresh's
-      // `if (savedTracePending) return;` guard would short-circuit
-      // it, leaving the cache empty until the operator triggered
-      // another invalidation. The guard against concurrent starts
-      // lives at the top (savedTracePending check); pending is
-      // genuinely free once THIS call's iterator finishes, regardless
-      // of whether the result was assigned.
-      savedTracePending = false;
     }
+    // §16.2.7.t1 review F2 fix — `finally` block removed; nothing
+    // to clean up now that savedTracePending is gone. The generation
+    // gate handles late-result discard at the assignment sites
+    // above; no lock-like state needs releasing.
   }
 
   // Cancel any pending or in-flight preview job. Called from

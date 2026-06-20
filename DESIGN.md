@@ -10103,21 +10103,37 @@ focused:
   Punt to `§16.2.7.t7` if it surfaces.
 
 **§16.2.7.tX queue (post-implementation):**
-- **§16.2.7.t1** ✅ SHIPPED — generation-gate regression test (WS1
-  from the whole-slice review). Surfaced + fixed a latent c1 R1
-  bug along the way: the `finally` block's conditional clear of
-  `savedTracePending` left the flag stuck `true` after a
-  gate-fired discard, blocking subsequent refreshes. Now
-  unconditional.
-- **§16.2.7.t2** queued — CSS specificity cleanup (WS3): replace
-  `!important` on `.slot--changed/added/removed` with
-  `.slots--diff .slot--changed` etc.
+- **§16.2.7.t1** ✅ SHIPPED (`b94d69c`) — generation-gate regression
+  test (WS1 from the whole-slice review). Surfaced + fixed a latent
+  c1 R1 bug: the `finally` block's conditional clear of
+  `savedTracePending` left the flag stuck `true` after a gate-fired
+  discard.
+- **§16.2.7.t2** ✅ SHIPPED — CSS specificity cleanup: per-kind diff
+  selectors now `.slots--diff .slot--changed` etc. (0,2,0 specificity
+  matching the parent rule); `!important` removed.
+- **§16.2.7.t8** ✅ SHIPPED — regression test for Save during
+  in-flight saved-trace refresh. Pinned the .t1 review F1 invariant:
+  concurrent refreshes via the await path don't deadlock.
+- **§16.2.7.t9** ✅ SHIPPED — regression test for week change during
+  in-flight saved-trace refresh. Same invariant via
+  `handleWeekChange`'s await path.
 - **§16.2.7.t3** queued — cross-tab `storage` event sync for the
   `showDiff` toggle.
 - **§16.2.7.t4** queued — multi-week diff view.
 - **§16.2.7.t5** queued — per-section / per-block diff aggregates.
 - **§16.2.7.t6** queued — "revert this slot" affordance.
 - **§16.2.7.t7** queued — semantic structural diff (opLog-derived).
+
+**§16.2.7.t1 review F1+F2 fix (folded into the .t8/.t9 commit):**
+the `savedTracePending` guard was load-bearing for the WRONG
+reason — it blocked NEW refreshes while an OLD invalidated one was
+still in flight. After Save / week change, the new refresh
+short-circuited; cache stuck empty. Fix: dropped the guard
+entirely. Concurrent refreshes are now allowed; the generation
+gate + server's `POLICY_CANCEL_EXISTING` make correctness
+trivially safe (old job cancelled server-side; old iterator
+discards via gate; new iterator's `done` lands). `savedTracePending`
+state removed; `finally` block removed (nothing to release).
 
 **D6 — Failure modes.** Three new things can go wrong:
 

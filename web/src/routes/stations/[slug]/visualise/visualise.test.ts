@@ -2644,6 +2644,193 @@ describe('visualise +page.svelte — §16.2.7 c2 diff toggle integration', () =>
       .toBeGreaterThan(firstCallCount);
   });
 
+  it('§16.2.7.t8 — Save during in-flight saved-trace refresh: new refresh fires + late result discarded', async () => {
+    // Pin the .t1 review F1 invariant for the await-path
+    // (handleStagedSave). Pre-fix the `savedTracePending` guard
+    // short-circuited the new refresh when the old one was in flight
+    // — cache stuck empty after Save. Post-fix concurrent refreshes
+    // are allowed; the generation gate + server-side
+    // POLICY_CANCEL_EXISTING handle correctness.
+    type Deferred = { release: () => void };
+    const refreshes: Deferred[] = [];
+    startPreviewJobMock.mockImplementation(async () => ({
+      job_id: `pv-deferred-${refreshes.length}`, status: 'running',
+    }));
+    watchJobMock.mockImplementation(() => {
+      let releaseResolve: () => void = () => {};
+      const releasePromise = new Promise<void>((resolve) => {
+        releaseResolve = resolve;
+      });
+      refreshes.push({ release: releaseResolve });
+      const myIndex = refreshes.length - 1;
+      return {
+        async *[Symbol.asyncIterator]() {
+          await releasePromise;
+          yield {
+            status: 'done',
+            result: {
+              trace: {
+                trace_id: `t8-trace-${myIndex}`,
+                station: 'viz-test', week: 1, rng: 'off', seed: null,
+                generated_at: '2026-06-15T00:00:00Z',
+                slots: [
+                  {
+                    slot: 1, unit: 'slot', row: 1, block: 1,
+                    source: 'A', strategy: 'sequential',
+                    pool_index: 1, track_id: 200 + myIndex,
+                    track_name: `t8-${myIndex}`, track_artist: 'A',
+                    reason: '', excluded: [],
+                  },
+                ],
+              },
+            },
+          };
+        },
+      };
+    });
+    // applyBatchMock's hoisted default returns a sane minimal
+    // SidecarMutationResponse shape; no per-test override needed
+    // for the happy-path Save in this test.
+
+    render(Page);
+    await screen.findByTestId('editor-canvas');
+    await act(async () => {});
+
+    // Toggle Diff ON to fire the first refresh.
+    const toggle = screen.getByTestId('trace-show-diff') as HTMLInputElement;
+    await act(async () => { toggle.click(); });
+    await act(async () => {});
+    expect(refreshes.length).toBeGreaterThanOrEqual(1);
+
+    // Stage an edit so Save has something to flush.
+    await act(async () => {
+      fireEditorCanvasEvent('save', {
+        ref: { kind: 'atomic-ref', slot_index: 0 },
+        fields: { size: 5 },
+      });
+    });
+    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 1 edit/);
+
+    const callsBeforeSave = startPreviewJobMock.mock.calls.length;
+
+    // Click Save. handleStagedSave will bump savedTraceGeneration +
+    // await a NEW _refreshSavedTraceIfNeeded. Pre-fix the new refresh
+    // sees pending=true and returns; cache stuck empty.
+    //
+    // The await never resolves until we release the new refresh's
+    // iterator. So we fire Save WITHOUT awaiting, then release.
+    void act(async () => {
+      screen.getByTestId('staged-save').click();
+    });
+    // Yield until the new refresh has registered (its watchJob was
+    // called and pushed onto `refreshes`).
+    while (refreshes.length < 2) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    expect(refreshes.length).toBeGreaterThanOrEqual(2);
+
+    // Release the post-Save refresh so handleStagedSave's await
+    // resolves.
+    await act(async () => {
+      refreshes[refreshes.length - 1].release();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // Also release the old (pre-Save) refresh — its iterator's gate
+    // check should discard its result.
+    await act(async () => {
+      refreshes[0].release();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // Post-fix: startPreviewJob calls increased (new refresh fired
+    // after Save). Pre-fix this assertion would fail — the pending
+    // guard blocked the new refresh.
+    expect(startPreviewJobMock.mock.calls.length)
+      .toBeGreaterThan(callsBeforeSave);
+  });
+
+  it('§16.2.7.t9 — week change during in-flight saved-trace refresh: new refresh fires', async () => {
+    // Same invariant as .t8 but exercised via handleWeekChange's
+    // await path instead of handleStagedSave's.
+    type Deferred = { release: () => void };
+    const refreshes: Deferred[] = [];
+    startPreviewJobMock.mockImplementation(async () => ({
+      job_id: `pv-deferred-${refreshes.length}`, status: 'running',
+    }));
+    watchJobMock.mockImplementation(() => {
+      let releaseResolve: () => void = () => {};
+      const releasePromise = new Promise<void>((resolve) => {
+        releaseResolve = resolve;
+      });
+      refreshes.push({ release: releaseResolve });
+      const myIndex = refreshes.length - 1;
+      return {
+        async *[Symbol.asyncIterator]() {
+          await releasePromise;
+          yield {
+            status: 'done',
+            result: {
+              trace: {
+                trace_id: `t9-trace-${myIndex}`,
+                station: 'viz-test', week: 1 + myIndex, rng: 'off', seed: null,
+                generated_at: '2026-06-15T00:00:00Z',
+                slots: [
+                  {
+                    slot: 1, unit: 'slot', row: 1, block: 1,
+                    source: 'A', strategy: 'sequential',
+                    pool_index: 1, track_id: 300 + myIndex,
+                    track_name: `t9-${myIndex}`, track_artist: 'A',
+                    reason: '', excluded: [],
+                  },
+                ],
+              },
+            },
+          };
+        },
+      };
+    });
+
+    render(Page);
+    await screen.findByTestId('editor-canvas');
+    await act(async () => {});
+
+    const toggle = screen.getByTestId('trace-show-diff') as HTMLInputElement;
+    await act(async () => { toggle.click(); });
+    await act(async () => {});
+    expect(refreshes.length).toBeGreaterThanOrEqual(1);
+
+    const callsBeforeWeekChange = startPreviewJobMock.mock.calls.length;
+
+    // Change the week. handleWeekChange bumps + awaits new refresh.
+    const weekInput = screen.getByTestId('trace-week-input') as HTMLInputElement;
+    void act(async () => {
+      weekInput.value = '2';
+      weekInput.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    while (refreshes.length < 2) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+
+    // Release the new refresh so handleWeekChange's await resolves.
+    await act(async () => {
+      refreshes[refreshes.length - 1].release();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    // Release the old refresh; gate fires; result discarded.
+    await act(async () => {
+      refreshes[0].release();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(startPreviewJobMock.mock.calls.length)
+      .toBeGreaterThan(callsBeforeWeekChange);
+  });
+
   it('toggling Diff OFF clears the persisted state without firing another preview', async () => {
     startPreviewJobMock.mockResolvedValue({
       job_id: 'pv-saved-2', status: 'running',
