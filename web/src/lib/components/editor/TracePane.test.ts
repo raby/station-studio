@@ -649,6 +649,44 @@ describe('<TracePane> — §16.2.7.t5 per-section summary', () => {
     expect(screen.queryByTestId('trace-section-summary')).toBeNull();
   });
 
+  it('R1 fix: section deleted in staged renders REMOVED counts at the tail (before UNMAPPED)', () => {
+    // Saved has morning + evening (slot_index 0-2 and 3-5); staged
+    // removed morning entirely. Aggregator buckets REMOVED-slot
+    // lookups under their SAVED-side section id ('morning'). Pre-fix
+    // the renderer iterated only stagedSidecar.layout_order +
+    // dropped the morning entry. R1 fix: render aggregate entries
+    // NOT in staged.layout_order at the tail (before UNMAPPED) so
+    // the operator sees "morning ... r" cells for sections their
+    // edit is about to delete.
+    //
+    // To trigger a REMOVED classification that maps to morning we
+    // need savedTrace longer than stagedTrace + the REMOVED indices'
+    // saved-side slot.slot value to fall inside morning's slot range
+    // (0-2). Saved=2 slots, staged=1 slot → classifications
+    // [UNCHANGED, REMOVED]. REMOVED's index=1 → savedTrace.slots[1]
+    // .slot=1 → morning (slot_index 1 is morning).
+    const savedSc = sidecar();
+    const stagedSc: Sidecar = {
+      ...sidecar(),
+      sections: [sidecar().sections[1]],  // evening only
+      layout_order: ['evening'],
+    };
+    const savedTrace = tr([1, 2]);   // 2 slots
+    const stagedTrace = tr([1]);     // 1 slot — last one REMOVED
+    renderProps({
+      savedSidecar: savedSc, stagedSidecar: stagedSc,
+      savedTrace, trace: stagedTrace,
+    });
+    const cells = screen.getAllByTestId('trace-section-summary-cell');
+    // Morning cell present + carries the SAVED-side name (staged
+    // no longer has the section, so the renderer fell back to
+    // savedSidecar for the name lookup).
+    const morningCell = cells.find((c) => c.getAttribute('data-section-id') === 'morning');
+    expect(morningCell).toBeTruthy();
+    expect(morningCell!.textContent).toContain('Morning');
+    expect(morningCell!.textContent).toContain('1r');
+  });
+
   it('template/sidecar null → NO per-section row', () => {
     renderProps({
       template: null,

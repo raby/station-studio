@@ -172,14 +172,34 @@
       sectionId: string; name: string; label: string;
     }>;
     const out: Array<{ sectionId: string; name: string; label: string }> = [];
+    const seenIds = new Set<string>();
     const order = stagedSidecar?.layout_order ?? [];
     for (const sectionId of order) {
+      seenIds.add(sectionId);
       const counts = sectionAggregate.get(sectionId);
       if (counts === undefined) continue;
       const label = _sectionCellLabel(counts);
       if (label === '') continue;  // all-zero → skip
       out.push({
         sectionId, name: _sectionLabel(sectionId, stagedSidecar), label,
+      });
+    }
+    // §16.2.7.t5 review R1 — render aggregate entries for sections
+    // NOT in stagedSidecar.layout_order. The deleted-in-staged
+    // scenario: saved had 'morning', staged removed it; the
+    // aggregator buckets REMOVED rows under saved-side section id;
+    // iterating only staged.layout_order would silently drop those
+    // counts. Render them at the tail (before UNMAPPED) using the
+    // SAVED sidecar's section name (since staged no longer has the
+    // section at all). UNMAPPED is excluded here — it's rendered
+    // below as the final tail cell.
+    for (const [sectionId, counts] of sectionAggregate.entries()) {
+      if (seenIds.has(sectionId)) continue;
+      if (sectionId === UNMAPPED_BUCKET_KEY) continue;
+      const label = _sectionCellLabel(counts);
+      if (label === '') continue;
+      out.push({
+        sectionId, name: _sectionLabel(sectionId, savedSidecar), label,
       });
     }
     // Unmapped bucket at the tail.
