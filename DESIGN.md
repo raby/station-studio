@@ -10228,7 +10228,75 @@ focused:
   per-week aggregation function. NO UI. **c2**: `<MultiWeekDiff>`
   component + TracePane integration + range input + integration
   tests + cross-tab `storage` sync extension.
-- **§16.2.7.t5** queued — per-section / per-block diff aggregates.
+- **§16.2.7.t5** queued — per-section diff aggregates. **Design
+  pass (entering implementation):**
+
+  **The gap.** A staged structural edit (e.g. add a slot at index
+  0) cascades the slot_index shift through every later slot —
+  Rebirth Radio's 2,196 chips → ~2,195 CHANGED rows in the diff
+  list. The TracePane wall-of-yellow swamps the actual operator
+  intent ("I added one slot to morning"). Operator needs an
+  aggregate signal that says "Section morning: 1 added · Section
+  evening: 47 changed (cascade) · _unsorted: 1 added" so they can
+  judge impact distribution + navigate to the affected sections.
+
+  **D1 — UI: per-section summary row below the existing diff
+  summary.** No new toggle — renders automatically when diff is
+  on AND at least one section has a non-zero count. Cells render
+  per section in `sidecar.layout_order` (operator's expected
+  ordering); sections with all-zero counts are hidden (avoid
+  noise). Each cell uses the section name (fallback to id).
+
+  **D2 — Computation: walk classifications + lookup section per
+  slot.** New `aggregateBySection(classifications, savedTrace,
+  stagedTrace, template, savedSidecar, stagedSidecar) → Map<
+  sectionId, {changed, added, removed}>` helper in `lib/editor`.
+  For each classification:
+    - Pick which trace to read for the slot context — REMOVED
+      rows read SAVED-side; UNCHANGED/CHANGED/ADDED read
+      STAGED-side (matches the row-render side from c2's
+      pickDisplaySlot).
+    - Build a TraceSlot from `trace.slots[classification.index]`.
+    - Pass through `findChipRef` (the §16.2.6.t3 helper) + then
+      `findSectionIdForRef` on the matching sidecar. Both already
+      handle null defensively + the row_template vs flat_slots
+      asymmetry.
+    - Bucket: sectionId from lookup; fallback `(unmapped)` if no
+      section contains the ref (defensive — drift case).
+    - Increment the kind count.
+
+  **D3 — Rendering: same cell shape as multi-week (§16.2.7.t4).**
+  "Sect morning 1a · evening 47c · _unsorted 1a". Cells skip
+  zero-count terms per kind. Sections render in `layout_order`;
+  unmapped bucket renders last. Same accent variables — no per-
+  cell color (it's a SECTION accent, not a kind accent; mixing
+  kinds within one cell defeats simple coloring).
+
+  **D4 — Out of scope (folded):**
+  - Per-BLOCK aggregates within a section (1 chip = 1 macro spans
+    N atomics — block-level counting needs separate plumbing).
+    Could land as `§16.2.7.tX` if operators ask.
+  - Click section name → scroll canvas to that section (would
+    re-use §16.2.6.t3's chip-jump machinery against the section
+    body element). Queued as follow-up.
+  - Sort by impact size (descending changed count). Order by
+    `layout_order` for v1 — matches the operator's mental map.
+  - Multi-week per-section aggregates (would multiply N×M cells).
+    Folded into §16.2.7.t4-followup if surfaced.
+
+  **D5 — Failure modes:**
+  - findChipRef returns null (drift / orphan macro): bucket as
+    `(unmapped)`. The `(unmapped)` cell renders only when non-
+    zero so most stations never see it.
+  - savedSidecar OR stagedSidecar null: aggregator returns empty
+    Map. Render skips. No UI noise.
+
+  **c1 / c2 split.** c1: `aggregateBySection` pure function in
+  editor.ts + unit tests (4-5 cases: same-section changes,
+  cross-section changes, unmapped, all-zero, multi-section).
+  c2: TracePane render + page wiring (pass 4 new props through:
+  staged sidecar/template + saved sidecar, plus the computed
+  Map). Integration test in TracePane.test.ts.
 - **§16.2.7.t6** queued — "revert this slot" affordance.
 - **§16.2.7.t7** queued — semantic structural diff (opLog-derived).
 
