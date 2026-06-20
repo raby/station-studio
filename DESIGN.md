@@ -10117,8 +10117,15 @@ focused:
 - **§16.2.7.t9** ✅ SHIPPED — regression test for week change during
   in-flight saved-trace refresh. Same invariant via
   `handleWeekChange`'s await path.
-- **§16.2.7.t3** queued — cross-tab `storage` event sync for the
-  `showDiff` toggle.
+- **§16.2.7.t3** ✅ SHIPPED (`de7ac4a` + review R1 `143653e`) —
+  cross-tab `storage` event sync for the `showDiff` toggle. Mirrors
+  the §16.2.6.t1-follow-up pattern for staged-edits. Other tab's
+  toggle change arrives via browser `storage` event; shared
+  `_applyShowDiffChange(next)` helper (review R1) owns the local-
+  state-update + cache-lifecycle; local toggle wraps it with the
+  localStorage write; storage handler calls directly (other tab
+  already wrote). Defensive filters: e.storageArea === localStorage
+  (sessionStorage events also fire), key match, no-op suppression.
 - **§16.2.7.t4** queued — multi-week diff view.
 - **§16.2.7.t5** queued — per-section / per-block diff aggregates.
 - **§16.2.7.t6** queued — "revert this slot" affordance.
