@@ -6996,7 +6996,7 @@ Seven implementation slices, each independently shippable:
 | **§16.2.4** | Macro editing | **SHIPPED.** Edit-once-applies-to-all (PATCH /macros/{macro_id} fan-out via resolve_macro_addresses). **+ block retyping** (PATCH /blocks/retype with role-validated strategy+source swap) closes the §16.2.3 punt. **+ per-block `allowlist_sources` editor** via the new `<ChipMultiInput>` component — closes §16.14.t7 c3 docs promise. D4 role-aware bidirectional dropdowns. Macro palette sidebar PUNTED to §16.2.4.t1 (D5). | Medium. |
 | **§16.2.5** | Section composition | **SHIPPED.** Create / rename / reorder sections + auto-`_unsorted` bin on non-empty delete (D2). Drag atomic chips between sections (HTML5 + dropdown fallback per D6); macros stay pinned (move requires slot_index pinning on macros — punted indefinitely). **+ structural block edits** (`size` / add / remove) close the §16.2.3 punt — D5 index-shift contract bumps every `slot_index ≥ N` in the sidecar atomic refs in the same transaction. D1 sidecar-in-DB (`Station.sidecar` JSON column) + Alembic backfill. First Playwright e2e covers the §16.2.3 + §16.2.4 + §16.2.5 surface. | Medium. |
 | **§16.2.6** | Live preview endpoint + UI + staged-edit + Discard | **SHIPPED across c1 → c4 (full entry below at §16.2.6).** `POST /api/stations/{slug}/jobs/preview` (§16.11 job-id transport; in-memory; no persistence side-effects) + editor wires it to a debounced auto-refresh trace panel. **D1 opt-in via toggle** (default OFF preserves §16.2.5's immediate-per-block-save mental model). **D2 side panel** (right drawer, ~30% width, drag-resizable). **D3 inline `<TracePane>`** Svelte component (NOT iframe — cheaper cross-pane event dispatch for §16.2.6.t4's click-trace-row → jump-to-chip; no CSS-isolation problem to solve for a flat read-only row list; iframe would duplicate the Svelte runtime). **D4 polling unchanged at v1** (§16.11's 250ms pattern); adaptive/long-poll fast-follow lives in §16.11.t2 (its natural home) with a "within ~1 week of §16.2.6 c4" promotion clause. **D5 lost-on-tab-close at v1**; staged-edit recovery queued as §16.2.6.t1 (multi-tab + stale-state semantics need a separate design pass). **Implementation note:** `excluded_mix_ids` must be RECOMPUTED per request from the DB's current MixUsage (not cached at page-load) — if the user edits a mix block's `exclusion_window` value in the editor, the new window changes which MixUsage rows are in scope. Same for `previous_playlist` if the user is on a non-week-1 preview. The endpoint reads all rule-derived inputs fresh from the request body + DB; nothing is cached across edits within a session. **+ staged-edit + Discard (F2)** punted here from §16.2.3 — the in-memory edit-accumulation + Discard model lands with live preview, since preview inherently needs staging; §16.2.3 ships immediate per-block save. **Plan**: c1 backend preview endpoint + JobStore wire-up (reuses `generate_stream` — no new engine function), c2 frontend toggle + TracePane + staging buffer skeleton, c3 Save/Discard + Retry-vs-Drop partial-failure modal + preview-error banner + toggle-off prompt (folds §16.2.5.t12), c4 docs-only closeout. Adjacent migrations (§16.2.5.t11, .t19, .t21, .t22 c+d) land as their own commits between c3 and c4; .t22(b) stays latent (D3 chose inline DOM, no iframe → no masked-types dragleave activation). | Medium — new API surface; debounce + state-management UX. |
-| **§16.2.7** | Compare against saved | "Show what changed since save" toggle → slot-by-slot diff between SAVED-state preview + STAGED-state preview. Operator opts in; surfaces per-slot CHANGED / ADDED / REMOVED in the existing TracePane via class-based row styling + header summary. **See full design pass below at "§16.2.7 design pass".** | Low — no backend changes (reuses preview endpoint twice); frontend cache + diff render + sequential firing to dodge POLICY_CANCEL_EXISTING supersession. |
+| **§16.2.7** | Compare against saved | **SHIPPED across design pass (`d34753f`) → c1 plumbing + tests (`926b724`) → c1 review fixes (`92896d6`) → c2 TracePane render + tests (`2c9e096`) → c2 review fixes (`20a65a7`).** "Show what changed since save" toggle in TracePane header — opt-in checkbox + `showDiff:<slug>` localStorage persistence. Saved-trace cache fired once per Save cycle (D2 (c) — invalidated on slug / week / Save / toggle-off; generation-gated against late-arriving results from a previous context per c1 review R1; sequential await before `_schedulePreview` to dodge `POLICY_CANCEL_EXISTING` supersession per c1 review R2). Diff visualization: per-slot CHANGED (yellow border + "was: <name>" subtext) / ADDED (green border + "+ added" marker) / REMOVED (red border + strikethrough, renders SAVED-side content) / UNCHANGED (no decoration); accent colors via `--diff-warn` / `--diff-add` / `--diff-rem` CSS variables for the §16.5 a11y pass. Header summary: "N changed · M added · K removed" (zero-count terms omitted; "No changes since save" when all-zero). Saved-trace failure surfaces "Diff unavailable: <error>" banner without blocking the staged-trace flow (D6). c2 review R1 surfaced + fixed a pre-existing handleTraceSelect bug where ADDED-row chips couldn't be located (used SAVED state for `findChipRef`; chip lives in staged). **See full implementation notes below at "§16.2.7 design pass" + the slice-review fix notes.** | Low — no backend changes (reuses preview endpoint twice); 26 unit / integration tests added (11 classifySlots + 15 TracePane diff render + 2 page-level toggle integration). 785/785 vitest green throughout. |
 | **§16.2.8** | Fork action | "Fork this station" → duplicates JSON + sidecar. | Low — file copy + slug-rename UI. |
 
 Total: 8 slices. Estimated 17-28 commits across them with the
@@ -9918,7 +9918,50 @@ two affordances, two consequences-of-blast-radius.
 - The header nuke button needs at least 16px of spacing from the
   page heading — easy to misclick if it's flush against the title.
 
-### 16.2.7 Compare against saved — design pass
+### 16.2.7 Compare against saved — what shipped
+
+**Status.** ✅ SHIPPED across 5 commits: design pass `d34753f` →
+c1 plumbing + classifier + 11 unit tests `926b724` → c1 review
+fixes (R1 generation gate + R2 ordered orchestration + R3 missing
+refire on week change) `92896d6` → c2 TracePane render + 15
+integration tests `2c9e096` → c2 review fixes (R1 staged-state
+chip lookup + R2 page-level toggle integration) `20a65a7`. 785/785
+vitest + 0/0 svelte-check throughout. Backend untouched.
+
+**Key implementation deltas vs the design pass below:**
+
+- **Generation gate (c1 review R1):** the cache-invalidation
+  decisions in D2 didn't address late-arriving results from a
+  previous context. A separate `savedTraceGeneration` counter (NOT
+  shared with `previewGeneration` so `_schedulePreview` bumps don't
+  cross-invalidate) is bumped at every invalidation point;
+  `_refreshSavedTraceIfNeeded` captures the generation at start +
+  checks before every assignment. Late results from a previous
+  slug / week / pre-Save baseline get discarded rather than
+  polluting the cleared cache.
+
+- **Ordered orchestration (c1 review R2):** the original
+  `void _refreshSavedTraceIfNeeded()` pattern in handleStagedSave +
+  handleWeekChange let `POLICY_CANCEL_EXISTING` supersede the
+  saved-trace job 500 ms later when `_schedulePreview`'s debounce
+  fired. Fix: `await _refreshSavedTraceIfNeeded()` BEFORE
+  `_schedulePreview()`. When showDiff is OFF the refresh returns
+  immediately, so the await is free.
+
+- **handleTraceSelect state pair (c2 review R1):** pre-existing
+  §16.2.6.t3 bug — `findChipRef` + `findSectionIdForRef` used
+  SAVED-state `template` / `sidecar`, missing staged-only chips
+  (structural-add). Latent until diff mode made ADDED rows
+  clickable. Fix: use STAGED state pair (`stagedTemplate` /
+  `stagedSidecar`) — the canvas DOM is rendered from staged, so
+  the lookup must match.
+
+- **Punts not promoted with this slice** (D5): cross-tab `storage`
+  sync, multi-week diff, per-section aggregates, "revert this slot"
+  affordance, semantic structural diff (opLog-derived). Each gets
+  a future `§16.2.7.tX` slot if operators surface need.
+
+### 16.2.7 Compare against saved — original design pass
 
 **The hole.** §16.2.6 ships live preview against the STAGED state.
 The operator queues edits, the trace pane shows what the playlist
