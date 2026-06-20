@@ -2961,4 +2961,142 @@ describe('visualise +page.svelte — §16.2.7 c2 diff toggle integration', () =>
     expect(window.localStorage.getItem('showDiff:viz-test')).toBe('off');
     expect(startPreviewJobMock.mock.calls.length).toBe(callsBeforeOff);
   });
+
+  it('§16.2.7.t4 R2 — _refreshMultiWeekDiff: populates weekDiffSummary for each week with classified counts', async () => {
+    // Mock startPreviewJob + watchJob to return PREDICTABLE per-week
+    // traces so the aggregator's loop output is verifiable.
+    // Week 1: saved + staged identical → 0 changed/added/removed.
+    // Week 2: staged has different track_id at index 1 → 1 changed.
+    // Each preview call returns a distinct trace via a counter.
+    type TraceShape = {
+      slots: Array<{
+        slot: number; unit: string; row: number; block: number;
+        source: string; strategy: string; pool_index: number;
+        track_id: number; track_name: string; track_artist: string;
+        reason: string; excluded: never[];
+      }>;
+      trace_id: string; station: string; week: number;
+      rng: string; seed: null; generated_at: string;
+    };
+    let callIndex = 0;
+    const tracesByCall: TraceShape[] = [
+      // Week 1 saved + staged: identical (single slot, track_id=100)
+      { slots: [{ slot: 1, unit: 'slot', row: 1, block: 1, source: 'A', strategy: 'sequential', pool_index: 1, track_id: 100, track_name: 'T100', track_artist: 'A', reason: '', excluded: [] }],
+        trace_id: 'w1-saved', station: 'viz-test', week: 1, rng: 'off', seed: null, generated_at: '2026-06-15T00:00:00Z' },
+      { slots: [{ slot: 1, unit: 'slot', row: 1, block: 1, source: 'A', strategy: 'sequential', pool_index: 1, track_id: 100, track_name: 'T100', track_artist: 'A', reason: '', excluded: [] }],
+        trace_id: 'w1-staged', station: 'viz-test', week: 1, rng: 'off', seed: null, generated_at: '2026-06-15T00:00:00Z' },
+      // Week 2 saved: track_id=200; staged: track_id=999 → CHANGED.
+      { slots: [{ slot: 1, unit: 'slot', row: 1, block: 1, source: 'A', strategy: 'sequential', pool_index: 1, track_id: 200, track_name: 'T200', track_artist: 'A', reason: '', excluded: [] }],
+        trace_id: 'w2-saved', station: 'viz-test', week: 2, rng: 'off', seed: null, generated_at: '2026-06-15T00:00:00Z' },
+      { slots: [{ slot: 1, unit: 'slot', row: 1, block: 1, source: 'A', strategy: 'sequential', pool_index: 1, track_id: 999, track_name: 'T999', track_artist: 'A', reason: '', excluded: [] }],
+        trace_id: 'w2-staged', station: 'viz-test', week: 2, rng: 'off', seed: null, generated_at: '2026-06-15T00:00:00Z' },
+    ];
+    startPreviewJobMock.mockImplementation(async () => ({
+      job_id: `pv-${callIndex}`, status: 'running',
+    }));
+    watchJobMock.mockImplementation(() => {
+      const myCall = callIndex++;
+      return {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            status: 'done',
+            result: { trace: tracesByCall[myCall] ?? tracesByCall[0] },
+          };
+        },
+      };
+    });
+
+    // Pre-seed showDiff ON + compareNextN=1 so the multi-week
+    // aggregator fires for weeks [1, 2].
+    window.localStorage.setItem('showDiff:viz-test', 'on');
+    window.localStorage.setItem('compareNextN:viz-test', '1');
+
+    render(Page);
+    await screen.findByTestId('editor-canvas');
+    await act(async () => {});
+
+    // Toggle ON via click — this triggers _refreshSavedTraceIfNeeded
+    // AND _refreshMultiWeekDiff (in _applyShowDiffChange).
+    // showDiff was pre-seeded; click would toggle OFF. Toggle twice
+    // to land back at ON with the aggregator firing.
+    const toggle = screen.getByTestId('trace-show-diff') as HTMLInputElement;
+    await act(async () => { toggle.click(); });  // OFF
+    await act(async () => { toggle.click(); });  // ON → fires aggregator
+    // Yield enough microtasks for the serial preview chain to
+    // complete. The mock resolves immediately so 2 weeks × 2 calls
+    // = 4 await tick equivalents.
+    for (let i = 0; i < 20; i++) await act(async () => {});
+
+    // weekDiffSummary should now have entries for weeks 1 + 2 with
+    // the right counts. We can't read the page's internal state
+    // directly, but we CAN read it via the TracePane's rendered cells
+    // — the test-id contract is part of c2.
+    const cells = screen.getAllByTestId('trace-multi-week-cell');
+    expect(cells.length).toBeGreaterThanOrEqual(2);
+    // Week 1: saved + staged identical → '·' (no deltas).
+    const week1Cell = cells.find((c) => c.getAttribute('data-week') === '1');
+    expect(week1Cell).toBeTruthy();
+    expect(week1Cell!.getAttribute('data-kind')).toBe('ok');
+    // Week 2: 1 changed → 'W2 1c'.
+    const week2Cell = cells.find((c) => c.getAttribute('data-week') === '2');
+    expect(week2Cell).toBeTruthy();
+    expect(week2Cell!.getAttribute('data-kind')).toBe('ok');
+    expect(week2Cell!.textContent).toContain('1c');
+  });
+
+  it('§16.2.7.t4 R3 — cross-tab storage event: compareNextN sync from another tab updates local state', async () => {
+    // Mirror the t3 cross-tab sync test for the compareNextN path.
+    watchJobMock.mockReturnValue({
+      [Symbol.asyncIterator]() {
+        return { async next() { return { done: true, value: undefined }; } };
+      },
+    });
+    startPreviewJobMock.mockResolvedValue({ job_id: 'pv-x', status: 'running' });
+    window.localStorage.setItem('showDiff:viz-test', 'on');
+    render(Page);
+    await screen.findByTestId('editor-canvas');
+    await act(async () => {});
+
+    // The +N input starts at 0 (no compareNextN pre-seed).
+    const input = screen.getByTestId('trace-compare-next-n') as HTMLInputElement;
+    expect(input.value).toBe('0');
+
+    // Simulate another tab writing compareNextN=3 + dispatching
+    // storage event.
+    window.localStorage.setItem('compareNextN:viz-test', '3');
+    await act(async () => {
+      window.dispatchEvent(new StorageEvent('storage', {
+        key: 'compareNextN:viz-test',
+        oldValue: '0',
+        newValue: '3',
+        storageArea: window.localStorage,
+      }));
+    });
+    await act(async () => {});
+
+    // Local input reflects the remote change.
+    expect((screen.getByTestId('trace-compare-next-n') as HTMLInputElement).value).toBe('3');
+    // Multi-week summary row appears (compareNextN > 0).
+    expect(screen.queryByTestId('trace-multi-week')).toBeInTheDocument();
+
+    // Defensive: irrelevant key ignored.
+    await act(async () => {
+      window.dispatchEvent(new StorageEvent('storage', {
+        key: 'unrelated', oldValue: 'a', newValue: 'b',
+        storageArea: window.localStorage,
+      }));
+    });
+    expect((screen.getByTestId('trace-compare-next-n') as HTMLInputElement).value).toBe('3');
+
+    // Defensive: invalid value (NaN) clamps to 0.
+    await act(async () => {
+      window.dispatchEvent(new StorageEvent('storage', {
+        key: 'compareNextN:viz-test',
+        oldValue: '3', newValue: 'not-a-number',
+        storageArea: window.localStorage,
+      }));
+    });
+    await act(async () => {});
+    expect((screen.getByTestId('trace-compare-next-n') as HTMLInputElement).value).toBe('0');
+  });
 });

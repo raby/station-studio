@@ -913,7 +913,16 @@
         throw new Error(snap.error?.message ?? 'preview failed');
       }
       if (snap.status === 'cancelled') {
-        return null;
+        // §16.2.7.t4 review R1 — throw instead of returning null.
+        // Pre-fix the null return caused classifySlots(null, staged)
+        // to classify every staged slot as ADDED (the classifier's
+        // null-defensive contract treats null as zero-length). That
+        // produced wildly wrong summary counts when the server's
+        // POLICY_CANCEL_EXISTING superseded our preview (e.g. when
+        // _schedulePreview's debounced staged preview fires mid-
+        // aggregator). Throw → outer try/catch records {error} for
+        // that week → UI shows ⚠ instead of misleading counts.
+        throw new Error('preview superseded (cancelled server-side)');
       }
     }
     return null;
