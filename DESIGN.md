@@ -10126,8 +10126,20 @@ focused:
   localStorage write; storage handler calls directly (other tab
   already wrote). Defensive filters: e.storageArea === localStorage
   (sessionStorage events also fire), key match, no-op suppression.
-- **§16.2.7.t4** queued — multi-week diff view. **Design pass
-  (entering implementation):**
+- **§16.2.7.t4** ✅ SHIPPED (design pass `2851637` → impl + tests
+  `9b41c8b` → review R1+R2+R3 `d69eb95`) — multi-week diff
+  aggregator. "+N wks" input (0-5) alongside the existing week
+  selector; per-station `compareNextN:<slug>` localStorage
+  (cross-tab synced); aggregated per-week summary row under
+  TracePane header. R1 fixed a real correctness bug: pre-fix
+  `_runOneWeekPreview` returned null on server-side cancellation,
+  letting classifySlots's null-defensive branch generate wildly
+  wrong "all added" counts when `_schedulePreview`'s debounce raced
+  the aggregator. Now throws → outer try/catch records `{error}`
+  → UI shows ⚠ with cancellation message in tooltip. R2 added
+  integration test for the aggregator loop (per-week mock-trace
+  fixture). R3 added cross-tab sync regression test. **Design pass
+  (preserved below for context):**
 
   **The gap.** Today's diff (D2 in the original design pass)
   compares saved-vs-staged at ONE chosen `previewWeek`. An edit's
