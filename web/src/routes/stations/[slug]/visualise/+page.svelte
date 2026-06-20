@@ -1926,8 +1926,12 @@
             previewing={previewing}
             errorMessage={previewError}
             weekValue={previewWeek}
+            showDiff={showDiff}
+            savedTrace={savedTrace}
+            savedTraceError={savedTraceError}
             on:select={handleTraceSelect}
             on:weekChange={handleWeekChange}
+            on:showDiffChange={handleShowDiffChange}
           />
         </div>
       {/if}
