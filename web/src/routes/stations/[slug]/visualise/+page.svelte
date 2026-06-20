@@ -2206,6 +2206,9 @@
             weekDiffSummary={weekDiffSummary}
             multiWeekFetching={multiWeekFetching}
             compareNextNMax={COMPARE_NEXT_N_MAX}
+            template={template}
+            savedSidecar={sidecar}
+            stagedSidecar={stagedSidecar}
             on:select={handleTraceSelect}
             on:weekChange={handleWeekChange}
             on:showDiffChange={handleShowDiffChange}

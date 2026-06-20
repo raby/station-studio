@@ -3,6 +3,7 @@ import { render, screen, cleanup, fireEvent } from '@testing-library/svelte';
 import '@testing-library/jest-dom/vitest';
 import TracePane from './TracePane.svelte';
 import type { Trace } from '$lib/api';
+import type { Sidecar, StationTemplate } from '$lib/editor';
 
 
 function makeTrace(slotCount: number = 3): Trace {
@@ -497,5 +498,163 @@ describe('<TracePane> — §16.2.7.t4 multi-week summary', () => {
     });
     expect(screen.queryByTestId('trace-compare-next-n')).toBeNull();
     expect(screen.queryByTestId('trace-multi-week')).toBeNull();
+  });
+});
+
+
+// §16.2.7.t5 — per-section diff aggregate row.
+describe('<TracePane> — §16.2.7.t5 per-section summary', () => {
+  beforeEach(() => cleanup());
+
+  // Helper: build a flat-slots template + sidecar with 2 sections
+  // covering disjoint slot ranges (morning slots 0,1,2 / evening
+  // slots 3,4,5). Used to drive aggregateBySection through render.
+  function template(): StationTemplate {
+    return {
+      station: 'ts', name: 'T',
+      sources: [{ name: 'A', role: 'content' }],
+      layout: {
+        unit: 'slot', unit_labels: [], row_start_offsets: [],
+        flat_slots: Array.from({ length: 6 }, () =>
+          ({ source: 'A', strategy: 'sequential' as const, size: 1, cursor_id: 'C' })),
+      },
+    };
+  }
+  function sidecar(): Sidecar {
+    return {
+      schema_version: 1,
+      sections: [
+        { id: 'morning', name: 'Morning', blocks: [
+          { kind: 'atomic' as const, slot_index: 0 },
+          { kind: 'atomic' as const, slot_index: 1 },
+          { kind: 'atomic' as const, slot_index: 2 },
+        ]},
+        { id: 'evening', name: 'Evening', blocks: [
+          { kind: 'atomic' as const, slot_index: 3 },
+          { kind: 'atomic' as const, slot_index: 4 },
+          { kind: 'atomic' as const, slot_index: 5 },
+        ]},
+      ],
+      macros: [],
+      layout_order: ['morning', 'evening'],
+    };
+  }
+  function tr(track_ids: Array<number>): Trace {
+    const slots = track_ids.map((track_id, i) => ({
+      slot: i, unit: 'slot', row: 1, block: i,
+      source: 'A', strategy: 'sequential', pool_index: i,
+      track_id, track_name: `T${track_id}`, track_artist: 'A',
+      reason: '', excluded: [],
+    }));
+    return {
+      trace_id: 'pv', station: 'ts', week: 1, rng: 'off',
+      seed: null, generated_at: '2026-06-15T00:00:00Z', slots,
+    };
+  }
+
+  function renderProps(overrides: Record<string, unknown> = {}) {
+    return render(TracePane, {
+      trace: tr([1, 2, 3, 4, 5, 6]),
+      savedTrace: tr([1, 2, 3, 4, 5, 6]),
+      showDiff: true,
+      previewing: false,
+      errorMessage: null,
+      weekValue: 1,
+      savedTraceError: null,
+      compareNextN: 0,
+      weekDiffSummary: new Map(),
+      multiWeekFetching: false,
+      compareNextNMax: 5,
+      template: template(),
+      savedSidecar: sidecar(),
+      stagedSidecar: sidecar(),
+      ...overrides,
+    });
+  }
+
+  it('matching traces → NO per-section row (all-zero counts filtered)', () => {
+    renderProps();
+    expect(screen.queryByTestId('trace-section-summary')).toBeNull();
+  });
+
+  it('one slot CHANGED in morning → row shows ONLY morning (evening filtered)', () => {
+    renderProps({
+      savedTrace: tr([1, 2, 3, 4, 5, 6]),
+      trace: tr([1, 99, 3, 4, 5, 6]),  // index 1 (morning) changed
+    });
+    const row = screen.getByTestId('trace-section-summary');
+    expect(row).toBeInTheDocument();
+    const cells = screen.getAllByTestId('trace-section-summary-cell');
+    expect(cells).toHaveLength(1);
+    expect(cells[0]).toHaveAttribute('data-section-id', 'morning');
+    expect(cells[0]).toHaveTextContent('Morning 1c');
+  });
+
+  it('cross-section: CHANGED in both morning + evening → 2 cells in layout_order', () => {
+    renderProps({
+      savedTrace: tr([1, 2, 3, 4, 5, 6]),
+      trace: tr([1, 99, 3, 4, 99, 6]),  // index 1 (morning) + index 4 (evening)
+    });
+    const cells = screen.getAllByTestId('trace-section-summary-cell');
+    expect(cells).toHaveLength(2);
+    expect(cells[0]).toHaveAttribute('data-section-id', 'morning');
+    expect(cells[1]).toHaveAttribute('data-section-id', 'evening');
+    expect(cells[0]).toHaveTextContent('Morning 1c');
+    expect(cells[1]).toHaveTextContent('Evening 1c');
+  });
+
+  it('uses section name from sidecar, not id', () => {
+    const sc = sidecar();
+    sc.sections[0].name = 'Sunrise Block';
+    renderProps({
+      savedSidecar: sc, stagedSidecar: sc,
+      savedTrace: tr([1, 2, 3, 4, 5, 6]),
+      trace: tr([1, 99, 3, 4, 5, 6]),
+    });
+    const cells = screen.getAllByTestId('trace-section-summary-cell');
+    expect(cells[0]).toHaveTextContent('Sunrise Block 1c');
+  });
+
+  it('unmapped slot → "(unmapped)" cell appended at the end', () => {
+    // Sidecar only covers morning (slots 0-2); a CHANGED at slot 4
+    // (no section contains it) falls to UNMAPPED.
+    const morningOnly = {
+      ...sidecar(),
+      sections: [{
+        id: 'morning', name: 'Morning', blocks: [
+          { kind: 'atomic' as const, slot_index: 0 },
+          { kind: 'atomic' as const, slot_index: 1 },
+          { kind: 'atomic' as const, slot_index: 2 },
+        ],
+      }],
+      layout_order: ['morning'],
+    };
+    renderProps({
+      savedSidecar: morningOnly, stagedSidecar: morningOnly,
+      savedTrace: tr([1, 2, 3, 4, 5, 6]),
+      trace: tr([1, 2, 3, 4, 99, 6]),  // index 4 changed (unmapped)
+    });
+    const cells = screen.getAllByTestId('trace-section-summary-cell');
+    expect(cells.length).toBe(1);
+    expect(cells[0]).toHaveAttribute('data-section-id', '(unmapped)');
+    expect(cells[0]).toHaveTextContent('(unmapped) 1c');
+  });
+
+  it('showDiff=false → NO per-section row even with diffs', () => {
+    renderProps({
+      showDiff: false,
+      savedTrace: tr([1, 2, 3, 4, 5, 6]),
+      trace: tr([1, 99, 3, 4, 99, 6]),
+    });
+    expect(screen.queryByTestId('trace-section-summary')).toBeNull();
+  });
+
+  it('template/sidecar null → NO per-section row', () => {
+    renderProps({
+      template: null,
+      savedTrace: tr([1, 2, 3, 4, 5, 6]),
+      trace: tr([1, 99, 3, 4, 5, 6]),
+    });
+    expect(screen.queryByTestId('trace-section-summary')).toBeNull();
   });
 });

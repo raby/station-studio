@@ -4,6 +4,8 @@ import {
   DEFAULT_VIEW_MODE,
   EditorMetadataError,
   REFERENCE_SAMPLING_STRATEGIES,
+  UNMAPPED_BUCKET_KEY,
+  aggregateBySection,
   availableCursorIds,
   chipColour,
   classifySlots,
@@ -1256,5 +1258,170 @@ describe('summarizeClassifications', () => {
     expect(summarizeClassifications(classifications([
       'removed', 'removed', 'removed', 'removed',
     ]))).toEqual({ changed: 0, added: 0, removed: 4 });
+  });
+});
+
+
+// ---- §16.2.7.t5 — aggregateBySection ---------------------------------
+
+
+describe('aggregateBySection', () => {
+  // Helpers: build a flat_slots station template + sidecar with N
+  // sections covering disjoint slot ranges. Used to drive the
+  // aggregator through findChipRef + findSectionIdForRef.
+  function flatTemplate(slotCount: number): StationTemplate {
+    return {
+      station: 'ts', name: 'Test',
+      sources: [{ name: 'A', role: 'content' }],
+      layout: {
+        unit: 'slot', unit_labels: [], row_start_offsets: [],
+        flat_slots: Array.from({ length: slotCount }, () =>
+          ({ source: 'A', strategy: 'sequential', size: 1, cursor_id: 'C' })),
+      },
+    };
+  }
+  // Two sections: morning = slots [0,1,2], evening = slots [3,4,5].
+  function twoSectionSidecar(): Sidecar {
+    return {
+      schema_version: 1,
+      sections: [
+        { id: 'morning', name: 'Morning', blocks: [
+          { kind: 'atomic', slot_index: 0 },
+          { kind: 'atomic', slot_index: 1 },
+          { kind: 'atomic', slot_index: 2 },
+        ]},
+        { id: 'evening', name: 'Evening', blocks: [
+          { kind: 'atomic', slot_index: 3 },
+          { kind: 'atomic', slot_index: 4 },
+          { kind: 'atomic', slot_index: 5 },
+        ]},
+      ],
+      macros: [],
+      layout_order: ['morning', 'evening'],
+    };
+  }
+  // Build a trace with the given track_ids; row/block always 1.
+  function tr(track_ids: Array<number>) {
+    return {
+      slots: track_ids.map((track_id, i) => ({
+        slot: i, row: 1, block: i, track_id,
+      })),
+    };
+  }
+  // Build classifications from a kind list (matching the indexes).
+  function cls(kinds: Array<'unchanged' | 'changed' | 'added' | 'removed'>) {
+    return kinds.map((kind, index) => ({
+      index, kind,
+      savedTrackId: kind === 'added' ? null : index,
+      stagedTrackId: kind === 'removed' ? null : index,
+    }));
+  }
+
+  it('all-same-section CHANGED → bucketed under that one section', () => {
+    const template = flatTemplate(6);
+    const sidecar = twoSectionSidecar();
+    // Only slot 1 (in morning) changed.
+    const classifications = cls(['unchanged', 'changed', 'unchanged',
+                                 'unchanged', 'unchanged', 'unchanged']);
+    const trace = tr([10, 20, 30, 40, 50, 60]);
+    const result = aggregateBySection(
+      classifications, trace, trace, template, sidecar, sidecar,
+    );
+    expect(result.get('morning'))
+      .toEqual({ changed: 1, added: 0, removed: 0 });
+    // evening WAS touched by unchanged slots (no-op counts), but
+    // counts stay zero.
+    expect(result.get('evening'))
+      .toEqual({ changed: 0, added: 0, removed: 0 });
+  });
+
+  it('cross-section: CHANGED in morning + CHANGED in evening → buckets separately', () => {
+    const template = flatTemplate(6);
+    const sidecar = twoSectionSidecar();
+    const classifications = cls(['unchanged', 'changed', 'unchanged',
+                                 'changed', 'changed', 'unchanged']);
+    const trace = tr([10, 20, 30, 40, 50, 60]);
+    const result = aggregateBySection(
+      classifications, trace, trace, template, sidecar, sidecar,
+    );
+    expect(result.get('morning'))
+      .toEqual({ changed: 1, added: 0, removed: 0 });
+    expect(result.get('evening'))
+      .toEqual({ changed: 2, added: 0, removed: 0 });
+  });
+
+  it('ADDED reads from STAGED side; REMOVED reads from SAVED side', () => {
+    const template = flatTemplate(6);
+    const sidecar = twoSectionSidecar();
+    // Index 0 = ADDED (saved side has nothing; staged side puts it
+    // in morning). Index 5 = REMOVED (staged side gone; saved side
+    // had it in evening).
+    const classifications = cls(['added', 'unchanged', 'unchanged',
+                                 'unchanged', 'unchanged', 'removed']);
+    const trace = tr([10, 20, 30, 40, 50, 60]);
+    const result = aggregateBySection(
+      classifications, trace, trace, template, sidecar, sidecar,
+    );
+    expect(result.get('morning'))
+      .toEqual({ changed: 0, added: 1, removed: 0 });
+    expect(result.get('evening'))
+      .toEqual({ changed: 0, added: 0, removed: 1 });
+  });
+
+  it('out-of-canvas slot → UNMAPPED bucket', () => {
+    const template = flatTemplate(6);
+    // Sidecar only has morning (slots 0,1,2); evening absent.
+    const sidecar: Sidecar = {
+      schema_version: 1,
+      sections: [{ id: 'morning', name: 'Morning', blocks: [
+        { kind: 'atomic', slot_index: 0 },
+        { kind: 'atomic', slot_index: 1 },
+        { kind: 'atomic', slot_index: 2 },
+      ]}],
+      macros: [], layout_order: ['morning'],
+    };
+    // Slot 4 changed → no section contains slot 4 → UNMAPPED.
+    const classifications = cls(['unchanged', 'unchanged', 'unchanged',
+                                 'unchanged', 'changed', 'unchanged']);
+    const trace = tr([10, 20, 30, 40, 50, 60]);
+    const result = aggregateBySection(
+      classifications, trace, trace, template, sidecar, sidecar,
+    );
+    expect(result.get('morning'))
+      .toEqual({ changed: 0, added: 0, removed: 0 });
+    expect(result.get(UNMAPPED_BUCKET_KEY))
+      .toEqual({ changed: 1, added: 0, removed: 0 });
+  });
+
+  it('null sidecar / null template → empty Map (no aggregation possible)', () => {
+    const template = flatTemplate(3);
+    const sidecar = twoSectionSidecar();
+    const classifications = cls(['changed', 'changed', 'changed']);
+    const trace = tr([1, 2, 3]);
+    expect(aggregateBySection(classifications, trace, trace, null, sidecar, sidecar).size).toBe(0);
+    // Null sidecar on the STAGED side (non-removed kinds read staged) →
+    // all classifications fall to UNMAPPED.
+    const result = aggregateBySection(classifications, trace, trace, template, sidecar, null);
+    expect(result.size).toBe(1);
+    expect(result.get(UNMAPPED_BUCKET_KEY))
+      .toEqual({ changed: 3, added: 0, removed: 0 });
+  });
+
+  it('all-unchanged → all sections present with zero counts (renderer filters)', () => {
+    const template = flatTemplate(6);
+    const sidecar = twoSectionSidecar();
+    const classifications = cls(['unchanged', 'unchanged', 'unchanged',
+                                 'unchanged', 'unchanged', 'unchanged']);
+    const trace = tr([1, 2, 3, 4, 5, 6]);
+    const result = aggregateBySection(
+      classifications, trace, trace, template, sidecar, sidecar,
+    );
+    // Both sections touched + present in the map with all-zero
+    // counts. The renderer decides whether to display zero-only
+    // buckets.
+    expect(result.get('morning'))
+      .toEqual({ changed: 0, added: 0, removed: 0 });
+    expect(result.get('evening'))
+      .toEqual({ changed: 0, added: 0, removed: 0 });
   });
 });

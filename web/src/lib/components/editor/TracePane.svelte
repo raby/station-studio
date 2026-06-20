@@ -27,9 +27,14 @@
   import { createEventDispatcher } from 'svelte';
   import type { Trace, TraceSlot } from '$lib/api';
   import {
+    aggregateBySection,
     classifySlots,
     summarizeClassifications,
+    UNMAPPED_BUCKET_KEY,
+    type ClassificationCounts,
+    type Sidecar,
     type SlotClassification,
+    type StationTemplate,
   } from '$lib/editor';
 
   /** Latest successful preview trace. null when no preview has run yet
@@ -75,6 +80,14 @@
   /** Max value the parent will accept (D1: defensive cap, default 5).
    *  TracePane just renders the input's `max` attribute against this. */
   export let compareNextNMax: number = 5;
+  /** §16.2.7.t5 — per-section diff aggregates inputs. PARENT owns
+   *  the saved/staged template + sidecar; TracePane computes the
+   *  per-section bucket map via aggregateBySection + renders a
+   *  summary row. Null when not available (cache pending /
+   *  un-authored station) — the row simply doesn't render. */
+  export let template: StationTemplate | null = null;
+  export let savedSidecar: Sidecar | null = null;
+  export let stagedSidecar: Sidecar | null = null;
 
   const dispatch = createEventDispatcher<{
     select: { slotIndex: number };
@@ -121,6 +134,68 @@
     }
     target.value = String(next);
   }
+
+  // §16.2.7.t5 — per-section aggregate, derived reactively from the
+  // existing diff inputs. Only computes when diff is ready (otherwise
+  // returns empty Map). The renderer below iterates the staged
+  // sidecar's layout_order for stable ordering + appends UNMAPPED at
+  // the tail (if non-zero) so unmapped slots are visible without
+  // disrupting the operator's mental ordering of sections.
+  $: sectionAggregate = diffReady
+    ? aggregateBySection(
+        classifications,
+        savedTrace,
+        trace,
+        template,
+        savedSidecar,
+        stagedSidecar,
+      )
+    : new Map<string, ClassificationCounts>();
+
+  // Render data: per-section cells ordered by stagedSidecar's
+  // layout_order, then UNMAPPED if non-zero. Sections with all-zero
+  // counts are hidden — operator only sees the rippled sections.
+  function _sectionLabel(sectionId: string, sidecar: Sidecar | null): string {
+    if (sectionId === UNMAPPED_BUCKET_KEY) return '(unmapped)';
+    const section = sidecar?.sections.find((s) => s.id === sectionId);
+    return section?.name ?? sectionId;
+  }
+  function _sectionCellLabel(counts: ClassificationCounts): string {
+    const parts: string[] = [];
+    if (counts.changed) parts.push(`${counts.changed}c`);
+    if (counts.added) parts.push(`${counts.added}a`);
+    if (counts.removed) parts.push(`${counts.removed}r`);
+    return parts.join(' ');
+  }
+  $: sectionCells = (() => {
+    if (sectionAggregate.size === 0) return [] as Array<{
+      sectionId: string; name: string; label: string;
+    }>;
+    const out: Array<{ sectionId: string; name: string; label: string }> = [];
+    const order = stagedSidecar?.layout_order ?? [];
+    for (const sectionId of order) {
+      const counts = sectionAggregate.get(sectionId);
+      if (counts === undefined) continue;
+      const label = _sectionCellLabel(counts);
+      if (label === '') continue;  // all-zero → skip
+      out.push({
+        sectionId, name: _sectionLabel(sectionId, stagedSidecar), label,
+      });
+    }
+    // Unmapped bucket at the tail.
+    const unmapped = sectionAggregate.get(UNMAPPED_BUCKET_KEY);
+    if (unmapped !== undefined) {
+      const label = _sectionCellLabel(unmapped);
+      if (label !== '') {
+        out.push({
+          sectionId: UNMAPPED_BUCKET_KEY,
+          name: '(unmapped)',
+          label,
+        });
+      }
+    }
+    return out;
+  })();
 
   // §16.2.7.t4 — render-side helper for the per-week summary cells.
   // Returns an array of `{week, label, kind}` items so the template
@@ -327,6 +402,25 @@
           title={cell.title ?? ''}
         >
           W{cell.week} {cell.label}
+        </span>
+      {/each}
+    </div>
+  {/if}
+
+  {#if diffReady && sectionCells.length > 0}
+    <!-- §16.2.7.t5 — per-section diff aggregate row. Renders only
+         when diff is on AND at least one section has a non-zero
+         count (sectionCells filters all-zero). Mirrors the multi-
+         week summary shape — cell-per-bucket inline list. -->
+    <div class="section-summary" data-testid="trace-section-summary">
+      <span class="section-summary-label">Sect:</span>
+      {#each sectionCells as cell (cell.sectionId)}
+        <span
+          class="section-summary-cell"
+          data-testid="trace-section-summary-cell"
+          data-section-id={cell.sectionId}
+        >
+          {cell.name} {cell.label}
         </span>
       {/each}
     </div>
@@ -679,5 +773,31 @@
   .multi-week-cell--error {
     color: var(--diff-rem, #c0392b);
     border-color: var(--diff-rem, #c0392b);
+  }
+
+  /* §16.2.7.t5 — per-section summary row. Same shape as multi-week
+     but per-cell color stays neutral (mixing kind accents within a
+     section cell would over-color). */
+  .section-summary {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    padding: 0.4rem 0.75rem;
+    border-bottom: 1px solid var(--border, #ddd);
+    background: color-mix(in srgb, var(--bg-subtle, #fafafa) 50%, transparent);
+    font-size: 0.78rem;
+    font-variant-numeric: tabular-nums;
+    flex-shrink: 0;
+  }
+  .section-summary-label {
+    color: var(--text-muted, #666);
+    font-weight: 500;
+  }
+  .section-summary-cell {
+    padding: 0.1rem 0.35rem;
+    border-radius: 3px;
+    background: color-mix(in srgb, var(--border, #ddd) 25%, transparent);
+    color: var(--text-muted, #555);
   }
 </style>

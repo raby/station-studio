@@ -1254,3 +1254,95 @@ export function classifySlots(
   }
   return out;
 }
+
+
+// ---- §16.2.7.t5 — per-section diff aggregates ------------------------
+
+
+/**
+ * §16.2.7.t5 — bucket per-slot classifications by their containing
+ * section. The TracePane renders a row like
+ *   "Sect morning 1a · evening 47c · _unsorted 1a"
+ * so the operator can see WHICH sections an edit ripples through
+ * (e.g. a structural-add at index 0 cascades changed-counts across
+ * every later section; the per-section view makes the distribution
+ * legible vs the wall-of-yellow per-slot list).
+ *
+ * For each classification:
+ *   - UNCHANGED / CHANGED / ADDED → read slot context from STAGED
+ *     trace + look up section in STAGED sidecar (matches the row-
+ *     render side from c2's pickDisplaySlot).
+ *   - REMOVED → read slot context from SAVED trace + look up
+ *     section in SAVED sidecar (operator sees what's about to
+ *     disappear; bucket it under its CURRENT-saved home).
+ *   - Look up section via findChipRef + findSectionIdForRef (the
+ *     §16.2.6.t3 helpers — already handle row_template vs
+ *     flat_slots + macro-coverage).
+ *   - Bucket: sectionId from lookup. If null (drift / no section
+ *     contains the ref / out-of-canvas): the special UNMAPPED
+ *     bucket key. The TracePane renders unmapped only when non-
+ *     zero so most stations never see it.
+ *
+ * Returns a Map keyed by section id (or UNMAPPED_BUCKET_KEY).
+ * Sections with all-zero counts are STILL included in the map but
+ * the renderer filters them out — keeping them in the Map lets the
+ * caller distinguish "section exists, no changes" from "section
+ * not seen in the walk."
+ */
+export const UNMAPPED_BUCKET_KEY = '(unmapped)';
+
+export function aggregateBySection(
+  classifications: SlotClassification[],
+  savedTrace: { slots: Array<{ slot: number; row: number; block: number }> } | null,
+  stagedTrace: { slots: Array<{ slot: number; row: number; block: number }> } | null,
+  template: StationTemplate | null,
+  savedSidecar: Sidecar | null,
+  stagedSidecar: Sidecar | null,
+): Map<string, ClassificationCounts> {
+  const out = new Map<string, ClassificationCounts>();
+  if (template === null) return out;
+
+  function bump(sectionId: string, kind: SlotClassificationKind): void {
+    let entry = out.get(sectionId);
+    if (entry === undefined) {
+      entry = { changed: 0, added: 0, removed: 0 };
+      out.set(sectionId, entry);
+    }
+    if (kind === 'changed') entry.changed++;
+    else if (kind === 'added') entry.added++;
+    else if (kind === 'removed') entry.removed++;
+    // UNCHANGED contributes a zero-count touch (so the section is
+    // present in the map even with no actual diff). The caller
+    // decides whether to render zero-only buckets.
+  }
+
+  for (const cls of classifications) {
+    const traceForCls = cls.kind === 'removed' ? savedTrace : stagedTrace;
+    const sidecarForCls = cls.kind === 'removed' ? savedSidecar : stagedSidecar;
+    if (traceForCls === null || sidecarForCls === null) {
+      // Side not available (cache pending, or this kind requires a
+      // side that hasn't loaded). Bucket as unmapped to keep the
+      // total count consistent with the classifications input.
+      bump(UNMAPPED_BUCKET_KEY, cls.kind);
+      continue;
+    }
+    const slot = traceForCls.slots[cls.index];
+    if (slot === undefined) {
+      bump(UNMAPPED_BUCKET_KEY, cls.kind);
+      continue;
+    }
+    const ref = findChipRef(template, sidecarForCls, slot);
+    if (ref === null) {
+      bump(UNMAPPED_BUCKET_KEY, cls.kind);
+      continue;
+    }
+    const sectionId = findSectionIdForRef(sidecarForCls, ref);
+    if (sectionId === null) {
+      bump(UNMAPPED_BUCKET_KEY, cls.kind);
+      continue;
+    }
+    bump(sectionId, cls.kind);
+  }
+
+  return out;
+}
