@@ -2517,6 +2517,133 @@ describe('visualise +page.svelte — §16.2.7 c2 diff toggle integration', () =>
     expect(window.localStorage.getItem('showDiff:viz-test')).toBe('on');
   });
 
+  it('§16.2.7.t1 — generation gate: late saved-trace result after toggle-OFF invalidation does NOT pollute the cache', async () => {
+    // Pin the c1 review R1 invariant. The `savedTraceGeneration`
+    // counter is bumped at every cache-invalidation point. The async
+    // `_refreshSavedTraceIfNeeded` captures the generation at start
+    // + checks before every state assignment. Late results from a
+    // previous context get discarded instead of polluting the
+    // cleared cache.
+    //
+    // Setup: a deferred watchJob iterator that BLOCKS until the test
+    // releases it. We start the saved-trace refresh, toggle OFF
+    // (bumps generation + clears cache; sync — doesn't await the
+    // in-flight refresh), then release the FIRST refresh's result.
+    // Pre-fix this would have assigned savedTrace = (late trace).
+    // Post-fix the generation gate fires + the assignment is
+    // discarded.
+    //
+    // Verification surface: after toggle OFF → release → toggle ON
+    // → release fresh result, the startPreviewJob call count went
+    // up by 2 (one per toggle ON). If the gate had failed to
+    // discard, the second toggle ON would have skipped firing
+    // (savedTrace !== null in the guard would have short-circuited).
+    type DeferredRefresh = { release: () => void };
+    const refreshes: DeferredRefresh[] = [];
+
+    startPreviewJobMock.mockImplementation(async () => ({
+      job_id: `pv-deferred-${refreshes.length}`,
+      status: 'running',
+    }));
+
+    watchJobMock.mockImplementation(() => {
+      let releaseResolve: () => void = () => {};
+      const releasePromise = new Promise<void>((resolve) => {
+        releaseResolve = resolve;
+      });
+      refreshes.push({ release: releaseResolve });
+      const myIndex = refreshes.length - 1;
+      return {
+        async *[Symbol.asyncIterator]() {
+          await releasePromise;
+          yield {
+            status: 'done',
+            result: {
+              trace: {
+                trace_id: `late-trace-${myIndex}`,
+                station: 'viz-test',
+                week: 1,
+                rng: 'off',
+                seed: null,
+                generated_at: '2026-06-15T00:00:00Z',
+                slots: [
+                  {
+                    slot: 1, unit: 'slot', row: 1, block: 1,
+                    source: 'A', strategy: 'sequential',
+                    pool_index: 1, track_id: 100 + myIndex,
+                    track_name: `late-trace-${myIndex}`,
+                    track_artist: 'A', reason: '', excluded: [],
+                  },
+                ],
+              },
+            },
+          };
+        },
+      };
+    });
+
+    // setSlug hydration doesn't fire the saved-trace refresh on
+    // mount — only user actions (toggle ON, week change, Save
+    // success) do. Click the toggle to set showDiff ON + fire the
+    // first refresh.
+    render(Page);
+    await screen.findByTestId('editor-canvas');
+    await act(async () => {});
+
+    const toggle = screen.getByTestId('trace-show-diff') as HTMLInputElement;
+    await act(async () => {
+      toggle.click();
+    });
+    await act(async () => {});
+
+    // First refresh fired; iterator blocked on `await releasePromise`.
+    expect(refreshes.length).toBeGreaterThanOrEqual(1);
+    const firstCallCount = startPreviewJobMock.mock.calls.length;
+    const firstDeferred = refreshes[0];
+
+    // Toggle OFF: sync handler, bumps savedTraceGeneration +
+    // clears the cache. Does NOT await any in-flight refresh.
+    await act(async () => {
+      toggle.click();
+    });
+    expect(window.localStorage.getItem('showDiff:viz-test')).toBe('off');
+
+    // Release the FIRST refresh's deferred result. The watchJob
+    // iterator advances past `await releasePromise`, yields `done`,
+    // and the for-await loop in _refreshSavedTraceIfNeeded checks
+    // the generation. POST-FIX: myGen captured BEFORE the toggle
+    // OFF bump; current savedTraceGeneration is HIGHER; the gate
+    // fires + returns without assigning savedTrace. PRE-FIX:
+    // savedTrace would get assigned with late-trace-0.
+    await act(async () => {
+      firstDeferred.release();
+      // Yield to let the iterator step + the page handler complete.
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // Toggle back ON. A FRESH _refreshSavedTraceIfNeeded fires
+    // (because the cache was correctly cleared on toggle OFF +
+    // not polluted by the late result). This proves the gate
+    // worked: if the late result had assigned savedTrace, the
+    // guard `if (savedTrace !== null) return;` in
+    // _refreshSavedTraceIfNeeded would have short-circuited this
+    // second toggle ON → no new startPreviewJob call.
+    await act(async () => {
+      toggle.click();
+    });
+    await act(async () => {});
+
+    expect(window.localStorage.getItem('showDiff:viz-test')).toBe('on');
+    // PRE-fix the second toggle ON's refresh would have been
+    // skipped by the `savedTrace !== null` guard (cache polluted).
+    // POST-fix the cache was correctly cleared + the second toggle
+    // ON fires a fresh refresh. We observe via increased
+    // startPreviewJob call count.
+    expect(startPreviewJobMock.mock.calls.length)
+      .toBeGreaterThan(firstCallCount);
+  });
+
   it('toggling Diff OFF clears the persisted state without firing another preview', async () => {
     startPreviewJobMock.mockResolvedValue({
       job_id: 'pv-saved-2', status: 'running',

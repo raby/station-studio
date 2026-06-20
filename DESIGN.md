@@ -10091,16 +10091,33 @@ focused:
 - **Per-section / per-block diff aggregates.** Today's diff
   is per-slot. A future "Section morning: 3 changed" summary
   would need sidecar walk + per-section attribution — non-
-  trivial. Punted to a future `§16.2.7.t1` if operators ask.
+  trivial. Punted to a future `§16.2.7.t5` if operators ask.
 - **"Revert this slot" affordance.** Click a CHANGED row to
   revert the staged edits that affected it. Requires
   edit-cause attribution (which opLog entries affected slot N).
-  Significant — punt to `§16.2.7.t2`.
+  Significant — punt to `§16.2.7.t6`.
 - **Semantic structural diff.** "You renamed section X" rather
   than dozens of slot rows changing in tooltip. Today's diff
   shows the OUTPUT delta; an INPUT-edit diff would render the
   opLog itself (which the staged-save count already hints at).
-  Punt to `§16.2.7.t3` if it surfaces.
+  Punt to `§16.2.7.t7` if it surfaces.
+
+**§16.2.7.tX queue (post-implementation):**
+- **§16.2.7.t1** ✅ SHIPPED — generation-gate regression test (WS1
+  from the whole-slice review). Surfaced + fixed a latent c1 R1
+  bug along the way: the `finally` block's conditional clear of
+  `savedTracePending` left the flag stuck `true` after a
+  gate-fired discard, blocking subsequent refreshes. Now
+  unconditional.
+- **§16.2.7.t2** queued — CSS specificity cleanup (WS3): replace
+  `!important` on `.slot--changed/added/removed` with
+  `.slots--diff .slot--changed` etc.
+- **§16.2.7.t3** queued — cross-tab `storage` event sync for the
+  `showDiff` toggle.
+- **§16.2.7.t4** queued — multi-week diff view.
+- **§16.2.7.t5** queued — per-section / per-block diff aggregates.
+- **§16.2.7.t6** queued — "revert this slot" affordance.
+- **§16.2.7.t7** queued — semantic structural diff (opLog-derived).
 
 **D6 — Failure modes.** Three new things can go wrong:
 

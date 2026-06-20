@@ -738,7 +738,17 @@
         err instanceof Error ? err.message : String(err),
       );
     } finally {
-      if (myGen === savedTraceGeneration) savedTracePending = false;
+      // §16.2.7.t1 fix: ALWAYS clear pending on completion, even if
+      // the generation gate discarded the result. Pre-fix the
+      // conditional clear (only when myGen matched) left pending=true
+      // after a gate-fired discard — the next refresh's
+      // `if (savedTracePending) return;` guard would short-circuit
+      // it, leaving the cache empty until the operator triggered
+      // another invalidation. The guard against concurrent starts
+      // lives at the top (savedTracePending check); pending is
+      // genuinely free once THIS call's iterator finishes, regardless
+      // of whether the result was assigned.
+      savedTracePending = false;
     }
   }
 
