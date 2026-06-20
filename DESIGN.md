@@ -6996,7 +6996,7 @@ Seven implementation slices, each independently shippable:
 | **§16.2.4** | Macro editing | **SHIPPED.** Edit-once-applies-to-all (PATCH /macros/{macro_id} fan-out via resolve_macro_addresses). **+ block retyping** (PATCH /blocks/retype with role-validated strategy+source swap) closes the §16.2.3 punt. **+ per-block `allowlist_sources` editor** via the new `<ChipMultiInput>` component — closes §16.14.t7 c3 docs promise. D4 role-aware bidirectional dropdowns. Macro palette sidebar PUNTED to §16.2.4.t1 (D5). | Medium. |
 | **§16.2.5** | Section composition | **SHIPPED.** Create / rename / reorder sections + auto-`_unsorted` bin on non-empty delete (D2). Drag atomic chips between sections (HTML5 + dropdown fallback per D6); macros stay pinned (move requires slot_index pinning on macros — punted indefinitely). **+ structural block edits** (`size` / add / remove) close the §16.2.3 punt — D5 index-shift contract bumps every `slot_index ≥ N` in the sidecar atomic refs in the same transaction. D1 sidecar-in-DB (`Station.sidecar` JSON column) + Alembic backfill. First Playwright e2e covers the §16.2.3 + §16.2.4 + §16.2.5 surface. | Medium. |
 | **§16.2.6** | Live preview endpoint + UI + staged-edit + Discard | **SHIPPED across c1 → c4 (full entry below at §16.2.6).** `POST /api/stations/{slug}/jobs/preview` (§16.11 job-id transport; in-memory; no persistence side-effects) + editor wires it to a debounced auto-refresh trace panel. **D1 opt-in via toggle** (default OFF preserves §16.2.5's immediate-per-block-save mental model). **D2 side panel** (right drawer, ~30% width, drag-resizable). **D3 inline `<TracePane>`** Svelte component (NOT iframe — cheaper cross-pane event dispatch for §16.2.6.t4's click-trace-row → jump-to-chip; no CSS-isolation problem to solve for a flat read-only row list; iframe would duplicate the Svelte runtime). **D4 polling unchanged at v1** (§16.11's 250ms pattern); adaptive/long-poll fast-follow lives in §16.11.t2 (its natural home) with a "within ~1 week of §16.2.6 c4" promotion clause. **D5 lost-on-tab-close at v1**; staged-edit recovery queued as §16.2.6.t1 (multi-tab + stale-state semantics need a separate design pass). **Implementation note:** `excluded_mix_ids` must be RECOMPUTED per request from the DB's current MixUsage (not cached at page-load) — if the user edits a mix block's `exclusion_window` value in the editor, the new window changes which MixUsage rows are in scope. Same for `previous_playlist` if the user is on a non-week-1 preview. The endpoint reads all rule-derived inputs fresh from the request body + DB; nothing is cached across edits within a session. **+ staged-edit + Discard (F2)** punted here from §16.2.3 — the in-memory edit-accumulation + Discard model lands with live preview, since preview inherently needs staging; §16.2.3 ships immediate per-block save. **Plan**: c1 backend preview endpoint + JobStore wire-up (reuses `generate_stream` — no new engine function), c2 frontend toggle + TracePane + staging buffer skeleton, c3 Save/Discard + Retry-vs-Drop partial-failure modal + preview-error banner + toggle-off prompt (folds §16.2.5.t12), c4 docs-only closeout. Adjacent migrations (§16.2.5.t11, .t19, .t21, .t22 c+d) land as their own commits between c3 and c4; .t22(b) stays latent (D3 chose inline DOM, no iframe → no masked-types dragleave activation). | Medium — new API surface; debounce + state-management UX. |
-| **§16.2.7** | Compare against saved | "Show what changed since save" button → slot-by-slot diff using `byte_equality.py` helpers. | Low — diff helpers exist; UI plumbing. |
+| **§16.2.7** | Compare against saved | "Show what changed since save" toggle → slot-by-slot diff between SAVED-state preview + STAGED-state preview. Operator opts in; surfaces per-slot CHANGED / ADDED / REMOVED in the existing TracePane via class-based row styling + header summary. **See full design pass below at "§16.2.7 design pass".** | Low — no backend changes (reuses preview endpoint twice); frontend cache + diff render + sequential firing to dodge POLICY_CANCEL_EXISTING supersession. |
 | **§16.2.8** | Fork action | "Fork this station" → duplicates JSON + sidecar. | Low — file copy + slug-rename UI. |
 
 Total: 8 slices. Estimated 17-28 commits across them with the
@@ -9917,6 +9917,208 @@ two affordances, two consequences-of-blast-radius.
   it'll already render the 404 from `getPlaylist`. Leave alone.
 - The header nuke button needs at least 16px of spacing from the
   page heading — easy to misclick if it's flush against the title.
+
+### 16.2.7 Compare against saved — design pass
+
+**The hole.** §16.2.6 ships live preview against the STAGED state.
+The operator queues edits, the trace pane shows what the playlist
+WILL look like after Save. But there's no view into what's
+DIFFERENT — to see "slot 47 was track X, now it'll be track Y"
+the operator has to remember the old trace mentally. For
+multi-edit batches (especially structural changes that ripple
+across many slots via `slot_index` shifts), that mental
+bookkeeping doesn't scale. §16.2.7 closes the gap with a
+side-by-side comparison: SAVED-state trace vs STAGED-state trace,
+slot-by-slot.
+
+The brief at §16's planned-slices table calls this "slot-by-slot
+diff using `byte_equality.py` helpers". The actual implementation
+diverges from that hint:
+- `byte_equality.py` is the port-verification harness — its diff
+  helpers (`find_first_divergence`, `render_divergence_context`)
+  emit a single failure message for a CI assertion, not a UI
+  rendering.
+- The comparison §16.2.7 needs is the live two-trace side-by-side
+  diff in the editor TracePane — much simpler than the harness:
+  walk both `slots[]` arrays in parallel, classify each index as
+  CHANGED / ADDED / REMOVED / UNCHANGED, render.
+
+So §16.2.7 ships a focused frontend feature: opt-in toggle, two
+preview jobs (sequential, not parallel — see D2), client-side
+diff computation, class-based row styling. No new backend surface;
+no `byte_equality.py` import.
+
+**D1 — Trigger: opt-in toggle in TracePane header.** New `Show
+diff` checkbox sits next to the §16.2.6.t8 week input. Default
+OFF — opt-in mirrors the live-preview toggle's "respect §16.2.5's
+immediate-mental-model" framing. Per-station persistence via
+`showDiff:<slug>` localStorage key (same shape as
+`livePreview:<slug>`, `previewWeek:<slug>`, `stagedEdits:<slug>`).
+Cross-tab `storage` sync OUT OF SCOPE (stale toggle in tab B is
+one click recoverable; staged edits aren't — that's the bar from
+§16.2.6.t1).
+
+**D2 — Architecture: sequential preview firing, not parallel.**
+The naive design fires two previews simultaneously: one against
+saved template+sidecar, one against staged. Doesn't work —
+`POLICY_CANCEL_EXISTING` (§16.2.6 D6) means the second supersedes
+the first; only one trace returns. Three alternatives considered:
+
+- **(a) Different job kinds** (`KIND_PREVIEW` + `KIND_PREVIEW_SAVED`).
+  Allows parallel firing without supersession. Cost: backend
+  changes (new kind constant + plumbing through routes + tests),
+  and 2x preview cost per edit when diff is on. **Rejected** —
+  too expensive for a minor UX feature.
+- **(b) Fire sequentially: staged first, then saved.** Same kind,
+  no supersession because the second fires AFTER the first
+  completes. Cost: 2x latency per edit when diff is on. Still
+  too expensive — the saved-state trace doesn't change per
+  edit (the saved template/sidecar is constant until next Save),
+  so re-running it per edit is pure waste.
+- **(c) Cache the saved-trace; fire it ONCE per Save cycle.**
+  Saved template+sidecar are immutable between Save events.
+  Fire saved-trace preview ONCE when the diff toggle turns on
+  (or when the saved state changes via Save or week change),
+  CACHE the result, reuse across all subsequent edits' diff
+  computations. Cost: one extra preview per Save cycle (not
+  per edit). **WINNER** — minimal overhead, exact correctness.
+
+**D2 chosen:** option (c). State invalidations:
+- Slug change → clear cache (different station).
+- `previewWeek` change → clear cache (saved trace was for the
+  old week's baseline).
+- Save success → clear cache (saved state changed; re-fire).
+- Diff toggle OFF → clear cache (no need to hold a stale
+  trace; small memory release).
+
+**D3 — Comparison contract: parallel index walk, classify each
+slot.** Given `savedTrace.slots: TraceSlot[]` and
+`stagedTrace.slots: TraceSlot[]`:
+
+```ts
+for i in [0, max(saved.length, staged.length)):
+  if i >= saved.length:   classify(i) = ADDED      // staged has more
+  if i >= staged.length:  classify(i) = REMOVED    // saved has more
+  if saved[i].track_id !== staged[i].track_id: classify(i) = CHANGED
+  otherwise:              classify(i) = UNCHANGED
+```
+
+The discriminator is `track_id` (`number | null` per engine
+trace), NOT `track_name` or `pool_index` — `track_id` is the
+authoritative DB-row identifier; `track_name` can be identical
+across re-imports (two pool files with the same track name
+import as separate Track rows with different ids). Falsy
+short-circuit on `null` (both null = unchanged; one null one
+not = changed) — handles synthetic / dry-run cases the engine
+explicitly reserves.
+
+**D4 — Visual: class-based row styling.** TracePane rows
+already render in `.slot` divs. Diff-on mode adds one of four
+new classes per row:
+
+- `.slot--unchanged` — no decoration; same render as today.
+- `.slot--changed` — yellow left-border accent (`--diff-warn`),
+  inline "was: <saved.track_name>" subtext under the row.
+  Color via CSS variable so the §16.5 a11y pass can tune
+  contrast without re-touching this component.
+- `.slot--added` — green left-border (`--diff-add`), inline
+  "+ added" marker. For the case where structural-add ops
+  staged but un-saved have grown the slot count.
+- `.slot--removed` — red left-border (`--diff-rem`),
+  strikethrough text. The row renders SAVED's content (since
+  staged has nothing at this index); operator sees what
+  WILL DISAPPEAR.
+
+TracePane header gets a summary line when diff is on:
+"N changed · M added · K removed" (zero-count terms omitted).
+Existing "Week N · S slots" status text stays — diff summary is
+adjacent, not replacement (operator needs both).
+
+Reduced-motion check (`@media (prefers-reduced-motion: reduce)`)
+swaps any transition animations for instant class changes — same
+pattern §16.2.6.t3's flash uses.
+
+**D5 — Out of scope.** Folded explicitly so the slice stays
+focused:
+
+- **Multi-week diff** (compare across weeks 1-5). The diff
+  computes against ONE chosen `previewWeek`. Multi-week is a
+  natural §16.18-territory follow-up tied to saved-trace
+  virtualization.
+- **Per-section / per-block diff aggregates.** Today's diff
+  is per-slot. A future "Section morning: 3 changed" summary
+  would need sidecar walk + per-section attribution — non-
+  trivial. Punted to a future `§16.2.7.t1` if operators ask.
+- **"Revert this slot" affordance.** Click a CHANGED row to
+  revert the staged edits that affected it. Requires
+  edit-cause attribution (which opLog entries affected slot N).
+  Significant — punt to `§16.2.7.t2`.
+- **Semantic structural diff.** "You renamed section X" rather
+  than dozens of slot rows changing in tooltip. Today's diff
+  shows the OUTPUT delta; an INPUT-edit diff would render the
+  opLog itself (which the staged-save count already hints at).
+  Punt to `§16.2.7.t3` if it surfaces.
+
+**D6 — Failure modes.** Three new things can go wrong:
+
+- **Saved-trace preview fails** (server error, validation
+  reject). Surface in TracePane header as "Diff unavailable:
+  <error>"; operator can retry by toggling off+on. Don't
+  block the staged-trace flow (which is still useful on its
+  own).
+- **Saved + staged trace lengths radically diverge** (e.g.,
+  saved has 47 slots, staged has 2). The classify loop still
+  runs but the visual is dominated by REMOVED rows. Acceptable
+  — operator sees what's happening. No special handling.
+- **Cache stale across multi-tab edits.** Tab A saves; tab B
+  is showing diff against the pre-Save baseline. Tab B's cached
+  savedTrace is now wrong (the DB-as-truth has changed). The
+  `storage`-event cross-tab sync that §16.2.6.t1 ships for
+  staged-edits would catch this, BUT D1 explicitly punts that
+  for showDiff. Acceptable v1 — operator's next edit in tab B
+  refires the staged trace, but the savedTrace cache stays
+  stale until they manually refresh or save in tab B too.
+  Note in the entry; promote to follow-up if real-world
+  multi-tab pain emerges.
+
+**c1 / c2 / c3 split:**
+
+- **c1: state plumbing + diff helper + tests.** Add
+  `savedTrace`, `showDiff`, `_showDiffKey(slug)`,
+  `readShowDiff(slug)`, `writeShowDiff(slug, on)`,
+  `_classifySlots(saved, staged): SlotClassification[]`. Wire
+  toggle → cache lifecycle. Vitest unit tests on
+  `_classifySlots` (4 cases: identical, changed-midway,
+  staged-longer, saved-longer).
+- **c2: TracePane diff rendering.** Pass `savedTrace` +
+  `diffOn` to TracePane. Implement row class injection +
+  header summary + CSS variables + reduced-motion variant.
+  Integration test: render with two traces, assert the right
+  classes land on the right rows + the summary header
+  matches.
+- **c3: docs closeout.** Mark §16.2.7 SHIPPED in the planned-
+  slices table + this design section. Update §15 status
+  snapshot if applicable.
+
+**Testing.** Unit tests at the classifier level (cheap, no DOM).
+Integration test at the TracePane level (mocks the two traces;
+asserts row classes + summary). End-to-end (real backend) NOT
+required for v1 — the §16.2.6 e2e already exercises the
+underlying preview endpoint; diff is purely client-side over
+two already-tested outputs.
+
+**Performance.** Saved-trace cache: one Trace dict (~50 KB for
+Rebirth Radio's 2,196 slots). Classify: O(max(saved, staged))
+once per render. Negligible vs the preview job itself.
+
+**Punts NOT promoted with this slice:**
+
+- Cross-tab `storage` sync for `showDiff` toggle.
+- Per-section / per-block diff aggregates.
+- "Revert this slot" affordance.
+- Semantic structural diff (opLog-derived rather than trace-
+  derived).
+- Multi-week diff.
 
 ### 16.4 Trace versioning (D8 from §16.1)
 
