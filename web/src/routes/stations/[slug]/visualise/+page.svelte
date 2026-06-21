@@ -40,8 +40,25 @@
     structuralBlockEdit,
     watchJob,
     type BlockAddress,
+    type BlockPatchResponse,
+    type BlockRetypeResponse,
+    type MacroPatchResponse,
+    type SidecarMutationResponse,
     type StructuralBlockEdit,
   } from '$lib/api';
+
+  // §16.2.5.t11 — `withSaveLifecycle`'s `doPatch` callback may resolve
+  // to any of the four mutation-endpoint response shapes. Previously
+  // typed as `Promise<unknown>`; tightening to this union lets
+  // `_isSidecarMutationResponse` narrow at the type level (it's a true
+  // discriminator — only SidecarMutationResponse carries `sidecar`).
+  // The runtime guard remains load-bearing because some §16.2.3 /
+  // §16.2.4 routes fall through to the GET-refetch branch.
+  type SaveResponse =
+    | SidecarMutationResponse
+    | BlockPatchResponse
+    | BlockRetypeResponse
+    | MacroPatchResponse;
   import {
     classifySlots,
     findChipRef,
@@ -1226,12 +1243,33 @@
     }
   });
 
+  // §16.2.5.t11 — single point of truth for "we have a fresh
+  // server-validated sidecar+template, mirror it into local state".
+  // Both `loadSidecar()` (GET path) and `withSaveLifecycle`'s
+  // inline-apply branch (§16.2.5.t5 PATCH path that ships a typed
+  // SidecarMutationResponse) route through here so a future contributor
+  // adding a 5th canvas field (e.g. macro_warnings) only updates ONE
+  // assignment site instead of two.
+  function _applySidecarState(s: {
+    template: StationTemplate;
+    sidecar: Sidecar;
+    updatedAt: string | null;
+    sidecarError: string | null;
+  }): void {
+    template = s.template;
+    sidecar = s.sidecar;
+    updatedAt = s.updatedAt;
+    sidecarError = s.sidecarError;
+  }
+
   async function loadSidecar() {
     const r = await getStationSidecar(slug);
-    template = r.template;
-    sidecar = r.sidecar;
-    sidecarError = r.sidecar_error;
-    updatedAt = r.updated_at;
+    _applySidecarState({
+      template: r.template,
+      sidecar: r.sidecar,
+      updatedAt: r.updated_at,
+      sidecarError: r.sidecar_error,
+    });
   }
 
   onMount(async () => {
@@ -1441,9 +1479,15 @@
    *  returns the shape but with a null/wrong-type sidecar value,"
    *  not just "the server doesn't return a sidecar field at all."
    *  Cost of the deeper check: 3 lines vs 1. */
+  // §16.2.5.t11 — TS discriminator on the `SaveResponse` union.
+  // SidecarMutationResponse is the only variant with `sidecar`, so the
+  // `'sidecar' in r` check narrows at compile time. Runtime checks
+  // (typeof, null-guard, array-guard on the field value) stay as
+  // belt-and-suspenders defense against a backend drift that smuggles
+  // a malformed payload past the typed contract.
   function _isSidecarMutationResponse(
-    r: unknown,
-  ): r is { sidecar: Sidecar; template: Record<string, unknown>; updated_at: string | null } {
+    r: SaveResponse,
+  ): r is SidecarMutationResponse {
     if (r === null || typeof r !== 'object') return false;
     if (!('sidecar' in r)) return false;
     const s = (r as { sidecar: unknown }).sidecar;
@@ -1451,13 +1495,13 @@
   }
 
   async function withSaveLifecycle(
-    doPatch: () => Promise<unknown>,
+    doPatch: () => Promise<SaveResponse>,
     refetchVerbPrefix: string,
   ): Promise<void> {
     saveError = null;
     conflict = false;
     exportMsg = null;
-    let result: unknown;
+    let result: SaveResponse;
     try {
       result = await doPatch();
     } catch (err) {
@@ -1498,9 +1542,18 @@
           sidecar_error: null,
           updated_at: result.updated_at,
         });
-        template = parsed.template;
-        sidecar = parsed.sidecar;
-        updatedAt = parsed.updated_at;
+        // §16.2.5.t11 — route through `_applySidecarState` so this
+        // PATCH branch and `loadSidecar()` (GET path) share the same
+        // field-assignment site. Slice-review c1-rescue #1: a
+        // successful PATCH means the server-validated sidecar is back
+        // in sync — clear any stale warning a prior GET set
+        // (`loadSidecar()` would have done the same).
+        _applySidecarState({
+          template: parsed.template,
+          sidecar: parsed.sidecar,
+          updatedAt: parsed.updated_at,
+          sidecarError: null,
+        });
       } catch (err) {
         // Validation failed → backend drift. Fall through to the
         // GET refetch so the operator at least sees the canvas
@@ -1515,11 +1568,6 @@
         }
         return;
       }
-      // Slice-review c1-rescue #1: a successful PATCH means the
-      // server-validated sidecar is back in sync. Clear any stale
-      // warning from a prior GET that landed with sidecar_error
-      // populated — `loadSidecar()` would have done the same.
-      sidecarError = null;
       // §16.2.6 c2: schedule a debounced preview against the new
       // in-memory state. _schedulePreview is a no-op when
       // livePreviewOn is false, so toggle OFF behavior is unchanged.

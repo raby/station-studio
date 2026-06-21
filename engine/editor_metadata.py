@@ -217,13 +217,21 @@ def validate_sidecar_semantics(sidecar: dict, station_template: dict) -> None:
     grammar walk is now the TypeDecorator's responsibility at bind
     time (one walk per mutation, not two).
 
-    Assumes `sidecar` has already passed `validate_sidecar_grammar`
-    OR is structurally well-formed by construction (Pydantic-
-    validated route input + a deep-copy of an already-stored
-    Station.sidecar are both safe). If you got the sidecar from an
-    untrusted source — disk, third-party tool — call
-    `validate_sidecar` instead (composes both passes in the
-    structural-first order that gives clean error messages).
+    **REQUIRES** `sidecar` has already passed
+    `validate_sidecar_grammar` OR is structurally well-formed by
+    construction. Safe sources:
+      * `_persist_sidecar` after the TypeDecorator's bind-time
+        grammar gate (§16.2.5.t4) — the normal route path.
+      * A deep-copy of an already-stored `Station.sidecar` value
+        (the column type re-validated on its last bind).
+    Calling with a structurally-invalid sidecar may raise
+    `KeyError` on `sidecar["sections"]` / `["layout_order"]`,
+    `TypeError` if `sections` isn't a list, or surface a confusing
+    drift-rule error against malformed inputs the grammar would
+    have caught cleanly. If you got the sidecar from an untrusted
+    source — disk JSON, third-party tool, ad-hoc dict — call
+    `validate_sidecar` instead (composes XOR + grammar + semantics
+    in the order that produces the cleanest error message).
 
     Call order (drift-rule numbering per §16.2.0):
 
