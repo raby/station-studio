@@ -253,6 +253,34 @@ def test_fork_station_invalid_new_slug_returns_422(api):
     assert r.status_code == 422
 
 
+def test_fork_station_handles_null_sidecar(api):
+    """§16.2.8 review R1 — fork should work cleanly when the source
+    station has no committed sidecar (Station.sidecar IS NULL — the
+    typical un-authored case post-wizard). The conditional in the
+    fork route (`copy.deepcopy(src.sidecar) if src.sidecar is not
+    None else None`) needs an explicit pin so a regression where it
+    drops the None-guard + raises NoneType would surface here.
+    """
+    client, Session = api
+    client.post("/api/stations", json=_wizard_payload("alpha", "Alpha FM"))
+    # Confirm source has no sidecar (wizard never sets one).
+    from engine.models import Station
+    with Session() as db:
+        src = db.query(Station).filter(Station.slug == "alpha").first()
+        assert src.sidecar is None
+
+    r = client.post("/api/stations/alpha/fork", json={
+        "new_slug": "alpha-fork", "new_name": "Alpha FM (fork)",
+    })
+    assert r.status_code == 201, r.json()
+
+    # New station also has sidecar=None — the deepcopy(None) path
+    # didn't materialize an empty dict.
+    with Session() as db:
+        new = db.query(Station).filter(Station.slug == "alpha-fork").first()
+        assert new.sidecar is None
+
+
 def test_fork_station_deep_copies_template_and_sidecar(api):
     """Mutating the forked station's template / sidecar must not
     perturb the source's JSON blobs (ORM-attribute aliasing pitfall
