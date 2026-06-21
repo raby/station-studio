@@ -1470,6 +1470,16 @@ function _isSidecarLike(value: unknown): boolean {
  * disabled "Revert" button on cascade-CHANGED rows; this attribution
  * function returns an empty array for them.
  *
+ * §16.2.7.t6 review R1: ROW_TEMPLATE STATIONS ARE NOT SUPPORTED in
+ * v1. Row_template ops target `block_idx` (not `slot_index`); this
+ * function only matches slot_index. Operator on a row_template
+ * station sees ALL revert buttons disabled (attribution always
+ * empty for block_idx-targeted ops). Accepted limitation per the
+ * existing D5 punt scope (cascade + macro + multi-slot already
+ * punted; row_template implicitly so). Future `§16.2.7.tX` could
+ * extend attribution to block_idx with a parallel second-arg or a
+ * tagged union.
+ *
  * Pure function — no DOM, no state. Vitest-testable end to end.
  */
 export function attributeOpsToSlot(
