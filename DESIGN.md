@@ -6997,7 +6997,7 @@ Seven implementation slices, each independently shippable:
 | **§16.2.5** | Section composition | **SHIPPED.** Create / rename / reorder sections + auto-`_unsorted` bin on non-empty delete (D2). Drag atomic chips between sections (HTML5 + dropdown fallback per D6); macros stay pinned (move requires slot_index pinning on macros — punted indefinitely). **+ structural block edits** (`size` / add / remove) close the §16.2.3 punt — D5 index-shift contract bumps every `slot_index ≥ N` in the sidecar atomic refs in the same transaction. D1 sidecar-in-DB (`Station.sidecar` JSON column) + Alembic backfill. First Playwright e2e covers the §16.2.3 + §16.2.4 + §16.2.5 surface. | Medium. |
 | **§16.2.6** | Live preview endpoint + UI + staged-edit + Discard | **SHIPPED across c1 → c4 (full entry below at §16.2.6).** `POST /api/stations/{slug}/jobs/preview` (§16.11 job-id transport; in-memory; no persistence side-effects) + editor wires it to a debounced auto-refresh trace panel. **D1 opt-in via toggle** (default OFF preserves §16.2.5's immediate-per-block-save mental model). **D2 side panel** (right drawer, ~30% width, drag-resizable). **D3 inline `<TracePane>`** Svelte component (NOT iframe — cheaper cross-pane event dispatch for §16.2.6.t4's click-trace-row → jump-to-chip; no CSS-isolation problem to solve for a flat read-only row list; iframe would duplicate the Svelte runtime). **D4 polling unchanged at v1** (§16.11's 250ms pattern); adaptive/long-poll fast-follow lives in §16.11.t2 (its natural home) with a "within ~1 week of §16.2.6 c4" promotion clause. **D5 lost-on-tab-close at v1**; staged-edit recovery queued as §16.2.6.t1 (multi-tab + stale-state semantics need a separate design pass). **Implementation note:** `excluded_mix_ids` must be RECOMPUTED per request from the DB's current MixUsage (not cached at page-load) — if the user edits a mix block's `exclusion_window` value in the editor, the new window changes which MixUsage rows are in scope. Same for `previous_playlist` if the user is on a non-week-1 preview. The endpoint reads all rule-derived inputs fresh from the request body + DB; nothing is cached across edits within a session. **+ staged-edit + Discard (F2)** punted here from §16.2.3 — the in-memory edit-accumulation + Discard model lands with live preview, since preview inherently needs staging; §16.2.3 ships immediate per-block save. **Plan**: c1 backend preview endpoint + JobStore wire-up (reuses `generate_stream` — no new engine function), c2 frontend toggle + TracePane + staging buffer skeleton, c3 Save/Discard + Retry-vs-Drop partial-failure modal + preview-error banner + toggle-off prompt (folds §16.2.5.t12), c4 docs-only closeout. Adjacent migrations (§16.2.5.t11, .t19, .t21, .t22 c+d) land as their own commits between c3 and c4; .t22(b) stays latent (D3 chose inline DOM, no iframe → no masked-types dragleave activation). | Medium — new API surface; debounce + state-management UX. |
 | **§16.2.7** | Compare against saved | **SHIPPED across design pass (`d34753f`) → c1 plumbing + tests (`926b724`) → c1 review fixes (`92896d6`) → c2 TracePane render + tests (`2c9e096`) → c2 review fixes (`20a65a7`).** "Show what changed since save" toggle in TracePane header — opt-in checkbox + `showDiff:<slug>` localStorage persistence. Saved-trace cache fired once per Save cycle (D2 (c) — invalidated on slug / week / Save / toggle-off; generation-gated against late-arriving results from a previous context per c1 review R1; sequential await before `_schedulePreview` to dodge `POLICY_CANCEL_EXISTING` supersession per c1 review R2). Diff visualization: per-slot CHANGED (yellow border + "was: <name>" subtext) / ADDED (green border + "+ added" marker) / REMOVED (red border + strikethrough, renders SAVED-side content) / UNCHANGED (no decoration); accent colors via `--diff-warn` / `--diff-add` / `--diff-rem` CSS variables for the §16.5 a11y pass. Header summary: "N changed · M added · K removed" (zero-count terms omitted; "No changes since save" when all-zero). Saved-trace failure surfaces "Diff unavailable: <error>" banner without blocking the staged-trace flow (D6). c2 review R1 surfaced + fixed a pre-existing handleTraceSelect bug where ADDED-row chips couldn't be located (used SAVED state for `findChipRef`; chip lives in staged). **See full implementation notes below at "§16.2.7 design pass" + the slice-review fix notes.** | Low — no backend changes (reuses preview endpoint twice); 26 unit / integration tests added (11 classifySlots + 15 TracePane diff render + 2 page-level toggle integration). 785/785 vitest green throughout. |
-| **§16.2.8** | Fork action | "Fork this station" → duplicates JSON + sidecar. | Low — file copy + slug-rename UI. |
+| **§16.2.8** | Fork action | "Fork this station" → duplicates JSON + sidecar with operator-chosen new slug + name. **See full design pass below at "§16.2.8 design pass".** | Low — single backend endpoint + Fork button on station detail page. |
 
 Total: 8 slices. Estimated 17-28 commits across them with the
 established mid-slice review pattern. Earliest user-visible value
@@ -10503,6 +10503,97 @@ once per render. Negligible vs the preview job itself.
 - Semantic structural diff (opLog-derived rather than trace-
   derived).
 - Multi-week diff.
+
+### 16.2.8 Fork action — design pass
+
+**The gap.** Once §16.2.2-§16.2.7 land, the operator has a
+visualiser, an editor, a live preview, and a diff view — but no
+way to clone a station as the starting point for a variant.
+Common authoring pattern: "Rebirth Radio Morning" works; the
+operator wants to make a Rebirth Radio Evening that starts from
+the same structure + diverges. Today they'd export the template
+JSON manually, edit slug+name, POST to the create endpoint —
+fiddly. Fork closes this gap with a one-action affordance.
+
+**D1 — Backend endpoint: `POST /api/stations/{slug}/fork`.**
+Body `{new_slug: string, new_name: string}`. Validates:
+  - Source 404 if `slug` doesn't exist.
+  - 409 if `new_slug` already exists.
+  - 400 if `new_slug` fails slug-shape validation (matches the
+    create-station rules from §14.7).
+Copies `template` (deep) + `sidecar` (deep, may be null) into a
+new Station row with the chosen `new_slug` + `new_name`.
+`created_at` stamps fresh; `id` is auto-generated. Returns the
+new StationOut (201).
+
+Explicitly NOT copied:
+  - Generated playlists (each playlist belongs to its source
+    station; forking is "clone the template + structure", not
+    "clone the history").
+  - Rule rows (per-station Rule table from §14.29) — punt to a
+    follow-up `§16.2.8.tX` if operators want to clone rules too;
+    the typical fork-then-tweak pattern lets the new station
+    accumulate its own rule set fresh.
+  - Cursor state (each station's `CursorState` rows are
+    generation-derived; forking doesn't replay generation).
+  - Source playlists (shared globally; fork-time doesn't need
+    to touch them).
+
+**D2 — Frontend UI: Fork button on the station detail page**
+(`/stations/[slug]/+page.svelte`). Renders below the existing
+action buttons (Visualise template, Generate, Delete). Click
+opens an inline form (NOT a separate route — operator stays in
+context):
+  - "New slug" input — defaults to `<source-slug>-fork` (so the
+    operator can submit immediately for a quick clone or edit
+    the suffix).
+  - "New name" input — defaults to `<source-name> (fork)`.
+  - Submit button: "Fork station" → POSTs → navigates to the new
+    station's detail page on 201.
+  - Cancel button: hides the form, no side effects.
+  - 409 / 400 errors render inline next to the offending field.
+
+**D3 — Slug-shape validation:** the backend's create-station path
+already rejects invalid slugs (whitespace, slashes, etc.). The
+fork endpoint reuses the same validator. The frontend mirrors a
+client-side pattern check (`[a-z0-9-]+`) for instant feedback;
+the server is the authority on rejects.
+
+**D4 — Post-fork navigation: SvelteKit `goto('/stations/<new-slug>')`.**
+Operator lands on the new station's detail page; the Visualise
+link points at the new station's editor. The old (source)
+station is unchanged.
+
+**D5 — Out of scope (folded):**
+  - Copying playlists / rules / cursor state (D1 punt; future
+    `.tX` if operators ask).
+  - Fork from the visualiser route (right pane, etc.) — single
+    affordance on the detail page suffices for v1.
+  - Bulk fork ("fork all stations matching prefix").
+  - Branch-aware naming hints ("Morning-v2", "Morning-Evening").
+  - Audit log of forks.
+  - Fork between deployments (export/import a station JSON
+    across servers) — separate slice if it surfaces.
+
+**D6 — Failure modes:**
+  - Source 404: HTTPException(404). UI shows banner.
+  - new_slug 409: inline error on slug field.
+  - new_slug invalid shape: 400 with field-specific message.
+  - DB write failure: rollback + 500. UI shows generic error
+    banner.
+  - Network failure mid-POST: SvelteKit fetch throws; UI shows
+    "Fork failed: <message>" + form stays open so operator can
+    retry.
+
+**c1 / c2 / c3 split.**
+  - **c1**: backend endpoint + StationFork schema + 4-5 pytest
+    cases (happy path, source 404, slug 409, invalid slug,
+    sidecar copy verified).
+  - **c2**: frontend Fork button + form + post-success
+    navigation + 3-4 vitest tests (button toggles form,
+    successful fork navigates, 409 error renders inline, cancel
+    hides form).
+  - **c3**: docs closeout marking SHIPPED.
 
 ### 16.4 Trace versioning (D8 from §16.1)
 
