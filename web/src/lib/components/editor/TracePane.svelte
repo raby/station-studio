@@ -88,13 +88,31 @@
   export let template: StationTemplate | null = null;
   export let savedSidecar: Sidecar | null = null;
   export let stagedSidecar: Sidecar | null = null;
+  /** §16.2.7.t6 — set of slot indices that have a DIRECT op
+   *  attributable in the opLog. The PARENT owns the opLog +
+   *  computes this via `attributeOpsToSlot`. TracePane uses it to
+   *  enable/disable the per-row Revert button. Slots NOT in this
+   *  set (cascade-CHANGED, e.g. shifted by an earlier structural
+   *  edit) show a disabled button with a tooltip explaining the
+   *  cause. */
+  export let revertableSlots: Set<number> = new Set();
 
   const dispatch = createEventDispatcher<{
     select: { slotIndex: number };
     weekChange: { week: number };
     showDiffChange: { on: boolean };
     compareNextNChange: { n: number };
+    revertSlot: { slotIndex: number };
   }>();
+
+  function onRevertClick(e: Event, slotIndex: number): void {
+    // D1 — stop propagation so the parent <li>'s click-to-jump
+    // doesn't also fire. The button is inside the row's grid;
+    // without stopPropagation a click would dispatch BOTH
+    // revertSlot AND select.
+    e.stopPropagation();
+    dispatch('revertSlot', { slotIndex });
+  }
 
   function onRowClick(slotIndex: number) {
     dispatch('select', { slotIndex });
@@ -501,6 +519,29 @@
                 was: {wasName}
               </span>
             {/if}
+            <!-- §16.2.7.t6 (D1) — Revert button. Hidden on
+                 UNCHANGED rows (nothing to revert). Disabled when
+                 no opLog op directly attributable to this slot
+                 (cascade case — operator must revert the cause
+                 instead). Click stops propagation so the row's
+                 select-to-jump doesn't also fire. -->
+            {#if cls.kind !== 'unchanged'}
+              {@const revertable = revertableSlots.has(slot.slot)}
+              <button
+                type="button"
+                class="diff-revert"
+                class:diff-revert--disabled={!revertable}
+                data-testid="trace-row-revert"
+                data-revert-enabled={revertable ? 'true' : 'false'}
+                disabled={!revertable}
+                title={revertable
+                  ? 'Revert the staged edit affecting this slot'
+                  : 'No direct edit to revert (this row changed due to a structural edit elsewhere — revert that instead).'}
+                on:click={(e) => onRevertClick(e, slot.slot)}
+              >
+                Revert
+              </button>
+            {/if}
           </li>
         {/if}
       {/each}
@@ -630,6 +671,13 @@
     font-size: 0.8rem;
     cursor: pointer;
     border-bottom: 1px solid color-mix(in srgb, var(--border, #ddd) 50%, transparent);
+  }
+  /* §16.2.7.t6 — diff rows get an extra trailing column for the
+     Revert button. Width sized to fit the button + a small gap;
+     UNCHANGED rows in diff mode keep the trailing column reserved
+     (placeholder) so the grid alignment matches across kinds. */
+  .slots--diff .slot {
+    grid-template-columns: 2.5rem 4rem 4rem 1fr 1fr auto;
   }
   .slot:hover {
     background: var(--bg-hover, #f0f0f0);
@@ -819,5 +867,46 @@
     border-radius: 3px;
     background: color-mix(in srgb, var(--border, #ddd) 25%, transparent);
     color: var(--text-muted, #555);
+  }
+
+  /* §16.2.7.t6 — per-row Revert button. Lives inside the .slot
+     grid as a 6th-column overflow (grid-column: -1 / span 1 puts
+     it at the end). Color via the row's parent class (.slot--*)
+     so it picks up the kind accent. Disabled state grays out +
+     not-allowed cursor. */
+  .diff-revert {
+    grid-column: -2 / -1;
+    align-self: center;
+    padding: 0.1rem 0.4rem;
+    border: 1px solid currentColor;
+    border-radius: 3px;
+    background: transparent;
+    font-size: 0.7rem;
+    font-family: inherit;
+    cursor: pointer;
+    line-height: 1.2;
+  }
+  .slot--changed .diff-revert {
+    color: var(--diff-warn, #b08c00);
+  }
+  .slot--added .diff-revert {
+    color: var(--diff-add, #2c7a2c);
+  }
+  .slot--removed .diff-revert {
+    color: var(--diff-rem, #c0392b);
+  }
+  .diff-revert:hover:not(:disabled) {
+    background: color-mix(in srgb, currentColor 10%, transparent);
+  }
+  .diff-revert:focus-visible {
+    outline: 2px solid currentColor;
+    outline-offset: 1px;
+  }
+  .diff-revert--disabled,
+  .diff-revert:disabled {
+    color: var(--text-muted, #888) !important;
+    border-color: var(--text-muted, #888);
+    cursor: not-allowed;
+    opacity: 0.6;
   }
 </style>

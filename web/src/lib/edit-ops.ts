@@ -1446,3 +1446,51 @@ function _isSidecarLike(value: unknown): boolean {
   // sidecar dict" — tighten so the name matches the check.
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
+
+
+// ---- §16.2.7.t6 — direct-attribution helper for "revert this slot" ----
+
+
+/**
+ * §16.2.7.t6 — return the indices into `opLog` whose direct target
+ * is `slotIndex`. DIRECT matches only:
+ *
+ *   - patchBlock: `op.address.slot_index === slotIndex`.
+ *   - retypeBlock: `op.address.slot_index === slotIndex`.
+ *   - moveBlock: `op.address.slot_index === slotIndex` (the SOURCE
+ *     slot; target attribution is order-dependent and out of scope).
+ *   - structuralBlockEdit: `op.edit.slot_index === slotIndex`.
+ *   - other kinds (sectionCreate/Delete/Rename/Reorder, patchMacro):
+ *     never match.
+ *
+ * CASCADE cases are EXPLICITLY out of scope (D5 of the design pass).
+ * A structural-add at slot=0 shifts every later slot's content — the
+ * actionable edit for "revert the change to slot 47" is the
+ * structural-add, not slot 47 itself. The page handler shows a
+ * disabled "Revert" button on cascade-CHANGED rows; this attribution
+ * function returns an empty array for them.
+ *
+ * Pure function — no DOM, no state. Vitest-testable end to end.
+ */
+export function attributeOpsToSlot(
+  opLog: Edit[], slotIndex: number,
+): number[] {
+  const out: number[] = [];
+  for (let i = 0; i < opLog.length; i++) {
+    const op = opLog[i];
+    if (
+      (op.kind === 'patchBlock' || op.kind === 'retypeBlock' ||
+       op.kind === 'moveBlock') &&
+      op.address.slot_index === slotIndex
+    ) {
+      out.push(i);
+      continue;
+    }
+    if (op.kind === 'structuralBlockEdit' &&
+        op.edit.slot_index === slotIndex) {
+      out.push(i);
+      continue;
+    }
+  }
+  return out;
+}

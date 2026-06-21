@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  applyEdit, applyEdits, replayOpLog,
+  applyEdit, applyEdits, attributeOpsToSlot, replayOpLog,
   type BlockAddress, type Edit, type ReplayDeps,
 } from './edit-ops';
 import type { StationTemplate } from './editor';
@@ -1694,5 +1694,100 @@ describe('replayOpLog — §16.2.6 c3b review #1 batch C', () => {
     // patchBlock succeeded → refresh fired once.
     // patchMacro failed → refresh NOT fired again.
     expect(refreshCount).toBe(1);
+  });
+});
+
+
+// ---- §16.2.7.t6 — attributeOpsToSlot -----------------------------------
+
+
+describe('attributeOpsToSlot', () => {
+  function patchBlockOp(slotIndex: number): Edit {
+    return {
+      kind: 'patchBlock',
+      address: { slot_index: slotIndex } as BlockAddress,
+      fields: { size: 5 },
+    };
+  }
+  function retypeBlockOp(slotIndex: number): Edit {
+    return {
+      kind: 'retypeBlock',
+      address: { slot_index: slotIndex } as BlockAddress,
+      newStrategy: 'window',
+      newSource: null,
+      newFields: {},
+    };
+  }
+  function moveBlockOp(slotIndex: number): Edit {
+    return {
+      kind: 'moveBlock',
+      address: { slot_index: slotIndex } as BlockAddress,
+      targetSectionId: 'evening',
+      targetIndex: 0,
+    };
+  }
+  function structuralOp(slotIndex: number, op: 'size' | 'add' | 'remove' = 'size'): Edit {
+    return {
+      kind: 'structuralBlockEdit',
+      edit: { op, slot_index: slotIndex, new_size: 3 },
+    };
+  }
+
+  it('patchBlock targeting slot N → that op index in result', () => {
+    const log: Edit[] = [patchBlockOp(5)];
+    expect(attributeOpsToSlot(log, 5)).toEqual([0]);
+    expect(attributeOpsToSlot(log, 6)).toEqual([]);
+  });
+
+  it('retypeBlock + moveBlock + structuralBlockEdit all attributable by slot_index', () => {
+    const log: Edit[] = [
+      retypeBlockOp(3),
+      moveBlockOp(3),
+      structuralOp(3, 'size'),
+    ];
+    expect(attributeOpsToSlot(log, 3)).toEqual([0, 1, 2]);
+  });
+
+  it('multiple ops targeting the same slot → multiple indices returned', () => {
+    const log: Edit[] = [
+      patchBlockOp(2),  // 0
+      patchBlockOp(7),  // 1 — irrelevant
+      patchBlockOp(2),  // 2
+      retypeBlockOp(2), // 3
+    ];
+    expect(attributeOpsToSlot(log, 2)).toEqual([0, 2, 3]);
+  });
+
+  it('cascade case (structural-add at slot=0 + later patchBlock at slot=5) NOT attributed to slot 5', () => {
+    // Per D5 — cascade attribution is out of scope. The
+    // structural-add at slot=0 shifts every later slot by +1,
+    // but attributeOpsToSlot returns only DIRECT matches.
+    // For slot=5: the patchBlock(slot=5) IS a direct match;
+    // the structural-add(slot=0) is NOT. Operator's intent for
+    // "revert slot 5" is just the patchBlock, not the structural.
+    const log: Edit[] = [
+      structuralOp(0, 'add'),  // cascade source
+      patchBlockOp(5),         // direct
+    ];
+    expect(attributeOpsToSlot(log, 5)).toEqual([1]);
+    // For slot=0: only the structural matches directly.
+    expect(attributeOpsToSlot(log, 0)).toEqual([0]);
+  });
+
+  it('other kinds (patchMacro / section* / reorder) never match', () => {
+    const log: Edit[] = [
+      { kind: 'patchMacro', macroId: 'm1', fields: { size: 2 } },
+      { kind: 'sectionCreate', sectionId: 's1', name: 'S1' },
+      { kind: 'sectionDelete', sectionId: 's1' },
+      { kind: 'renameSection', sectionId: 's1', name: 'X' },
+      { kind: 'reorderSections', layoutOrder: ['s1', 's2'] },
+    ];
+    expect(attributeOpsToSlot(log, 0)).toEqual([]);
+    expect(attributeOpsToSlot(log, 99)).toEqual([]);
+  });
+
+  it('empty opLog → empty result for any slot', () => {
+    expect(attributeOpsToSlot([], 0)).toEqual([]);
+    expect(attributeOpsToSlot([], 999)).toEqual([]);
   });
 });

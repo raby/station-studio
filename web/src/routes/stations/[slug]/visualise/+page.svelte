@@ -51,7 +51,7 @@
     summarizeClassifications,
     type ExpandedRef, type Sidecar, type StationTemplate,
   } from '$lib/editor';
-  import { applyEdits, type Edit } from '$lib/edit-ops';
+  import { applyEdits, attributeOpsToSlot, type Edit } from '$lib/edit-ops';
   import EditorCanvas from '$lib/components/editor/EditorCanvas.svelte';
   import TracePane from '$lib/components/editor/TracePane.svelte';
 
@@ -205,6 +205,29 @@
   // fix-and-retry sequence works.
   let opLog: Edit[] = [];
   let saving = false;
+
+  // §16.2.7.t6 — derived set of slot indices that have at least one
+  // DIRECT op in the opLog. Used by TracePane to enable/disable the
+  // per-row Revert button. Cheap: O(opLog), recomputed reactively
+  // whenever opLog changes. Slots NOT in this set are cascade-only
+  // (an earlier structural edit shifted them but no op directly
+  // targets them); revert affordance is disabled for them with a
+  // tooltip per D1.
+  $: revertableSlots = (() => {
+    const out = new Set<number>();
+    for (const op of opLog) {
+      if (
+        (op.kind === 'patchBlock' || op.kind === 'retypeBlock' ||
+         op.kind === 'moveBlock') &&
+        op.address.slot_index !== undefined
+      ) {
+        out.add(op.address.slot_index);
+      } else if (op.kind === 'structuralBlockEdit') {
+        out.add(op.edit.slot_index);
+      }
+    }
+    return out;
+  })();
 
   // Derived: when toggle ON + opLog non-empty, stagedTemplate +
   // stagedSidecar reflect (base + applyEdits). Otherwise they're
@@ -775,6 +798,38 @@
     if (next === showDiff) return;
     writeShowDiff(slug, next);
     _applyShowDiffChange(next);
+  }
+
+  // §16.2.7.t6 — per-row Revert. Receives a slot index from
+  // TracePane; calls attributeOpsToSlot to find the matching opLog
+  // entries, splices them (highest index first to avoid shifting),
+  // persists, and reschedules the staged preview. Saved-trace cache
+  // is NOT invalidated — the saved baseline is unchanged (DB state);
+  // only the staged side regressed. Empty attribution = defensive
+  // no-op + console.warn (TracePane should have disabled the
+  // button, but state drift is possible).
+  function handleRevertSlot(e: CustomEvent<{ slotIndex: number }>): void {
+    const slotIndex = e.detail.slotIndex;
+    const indices = attributeOpsToSlot(opLog, slotIndex);
+    if (indices.length === 0) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `§16.2.7.t6 revertSlot: no direct attribution for slot ${slotIndex} ` +
+          '(opLog has no patchBlock/retypeBlock/moveBlock/structuralBlockEdit ' +
+          'targeting it). The button should have been disabled — this is a ' +
+          'defensive no-op against state drift.',
+      );
+      return;
+    }
+    // Splice highest first so earlier-index removals don't shift
+    // the later-index entries.
+    const next = opLog.slice();
+    for (let i = indices.length - 1; i >= 0; i--) {
+      next.splice(indices[i], 1);
+    }
+    opLog = next;
+    _persistOpLog();
+    _schedulePreview();
   }
 
   // §16.2.7.t4 — compareNextN change handler dispatched from
@@ -2209,10 +2264,12 @@
             template={template}
             savedSidecar={sidecar}
             stagedSidecar={stagedSidecar}
+            revertableSlots={revertableSlots}
             on:select={handleTraceSelect}
             on:weekChange={handleWeekChange}
             on:showDiffChange={handleShowDiffChange}
             on:compareNextNChange={handleCompareNextNChange}
+            on:revertSlot={handleRevertSlot}
           />
         </div>
       {/if}

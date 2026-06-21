@@ -696,3 +696,112 @@ describe('<TracePane> — §16.2.7.t5 per-section summary', () => {
     expect(screen.queryByTestId('trace-section-summary')).toBeNull();
   });
 });
+
+
+// §16.2.7.t6 — per-row Revert button.
+describe('<TracePane> — §16.2.7.t6 revert button', () => {
+  beforeEach(() => cleanup());
+
+  function tr(track_ids: Array<number>): Trace {
+    const slots = track_ids.map((track_id, i) => ({
+      slot: i, unit: 'slot', row: 1, block: i,
+      source: 'A', strategy: 'sequential', pool_index: i,
+      track_id, track_name: `T${track_id}`, track_artist: 'A',
+      reason: '', excluded: [],
+    }));
+    return {
+      trace_id: 'pv', station: 'ts', week: 1, rng: 'off',
+      seed: null, generated_at: '2026-06-15T00:00:00Z', slots,
+    };
+  }
+
+  it('UNCHANGED rows have NO revert button (nothing to revert)', () => {
+    render(TracePane, {
+      trace: tr([1, 2, 3]),
+      savedTrace: tr([1, 2, 3]),
+      showDiff: true,
+      previewing: false,
+      errorMessage: null,
+      weekValue: 1,
+      savedTraceError: null,
+      revertableSlots: new Set<number>(),
+    });
+    expect(screen.queryAllByTestId('trace-row-revert')).toHaveLength(0);
+  });
+
+  it('CHANGED row with revertable slot → enabled Revert button', () => {
+    render(TracePane, {
+      trace: tr([1, 99, 3]),  // index 1 (slot=1) changed
+      savedTrace: tr([1, 2, 3]),
+      showDiff: true,
+      previewing: false,
+      errorMessage: null,
+      weekValue: 1,
+      savedTraceError: null,
+      revertableSlots: new Set([1]),  // slot 1 has direct attribution
+    });
+    const buttons = screen.getAllByTestId('trace-row-revert');
+    expect(buttons).toHaveLength(1);
+    expect(buttons[0]).toHaveAttribute('data-revert-enabled', 'true');
+    expect((buttons[0] as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('CHANGED row with NON-revertable slot → disabled Revert button with cascade tooltip', () => {
+    render(TracePane, {
+      trace: tr([1, 99, 3]),
+      savedTrace: tr([1, 2, 3]),
+      showDiff: true,
+      previewing: false,
+      errorMessage: null,
+      weekValue: 1,
+      savedTraceError: null,
+      revertableSlots: new Set<number>(),  // empty — cascade only
+    });
+    const button = screen.getByTestId('trace-row-revert') as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    expect(button.getAttribute('title') ?? '').toMatch(/structural edit/);
+  });
+
+  it('click on Revert button dispatches revertSlot { slotIndex } + stops propagation (no select)', async () => {
+    const { component } = render(TracePane, {
+      trace: tr([1, 99, 3]),
+      savedTrace: tr([1, 2, 3]),
+      showDiff: true,
+      previewing: false,
+      errorMessage: null,
+      weekValue: 1,
+      savedTraceError: null,
+      revertableSlots: new Set([1]),
+    });
+    let revertedSlot: number | null = null;
+    let selectedSlot: number | null = null;
+    component.$on('revertSlot', (e: CustomEvent<{ slotIndex: number }>) => {
+      revertedSlot = e.detail.slotIndex;
+    });
+    component.$on('select', (e: CustomEvent<{ slotIndex: number }>) => {
+      selectedSlot = e.detail.slotIndex;
+    });
+    await fireEvent.click(screen.getByTestId('trace-row-revert'));
+    expect(revertedSlot).toBe(1);
+    // stopPropagation: the select event must NOT have fired even
+    // though the button is inside the row's <li>.
+    expect(selectedSlot).toBeNull();
+  });
+
+  it('ADDED + REMOVED rows also get a Revert button (one per non-UNCHANGED row)', () => {
+    // saved=[1,2,3,4] staged=[1,2,3,4,5] → index 4 ADDED.
+    render(TracePane, {
+      trace: tr([1, 2, 3, 4, 5]),
+      savedTrace: tr([1, 2, 3, 4]),
+      showDiff: true,
+      previewing: false,
+      errorMessage: null,
+      weekValue: 1,
+      savedTraceError: null,
+      revertableSlots: new Set([4]),
+    });
+    const buttons = screen.getAllByTestId('trace-row-revert');
+    expect(buttons).toHaveLength(1);
+    expect(buttons[0].closest('li')?.getAttribute('data-diff-kind')).toBe('added');
+  });
+});
