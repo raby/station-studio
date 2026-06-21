@@ -807,3 +807,33 @@ def test_finding_6_parse_sidecar_wraps_json_decode_error(tmp_path):
     bad.write_text("{this is not valid JSON")
     with pytest.raises(EditorMetadataError, match="JSON malformed"):
         parse_sidecar(bad, _flat_station(3))
+
+
+# ---------- §16.2.5.t14 — EditorMetadataError base contract -------------
+
+
+def test_editor_metadata_error_subclasses_value_error():
+    """§16.2.5.t14: `EditorMetadataError` is a `ValueError`, NOT an
+    `AssertionError`. Pinning the base catches a future inadvertent
+    revert — the rationale is that the error crosses the SQL bind
+    boundary (§16.2.5.t4), so an infrastructure-level
+    `except AssertionError:` (FastAPI middleware, Alembic event hooks,
+    pytest's assertion-rewriting) would silently swallow validation
+    failures as 'something is structurally wrong with this assertion'
+    rather than 'data validation failure.' `ValueError` is the
+    convention for 'bad data.'"""
+    assert issubclass(EditorMetadataError, ValueError)
+    assert not issubclass(EditorMetadataError, AssertionError)
+
+
+def test_editor_metadata_error_caught_by_value_error():
+    """Catching `ValueError` catches `EditorMetadataError` —
+    confirms the base swap holds the standard contract for callers
+    that handle 'bad data' generically."""
+    try:
+        raise EditorMetadataError("test")
+    except ValueError as exc:
+        assert isinstance(exc, EditorMetadataError)
+        assert str(exc) == "test"
+    else:
+        pytest.fail("EditorMetadataError should be caught by `except ValueError`")

@@ -7,18 +7,21 @@ needed for the `SidecarJSON` column type, not the 1.5K-LOC
 `editor_metadata` module that owns the cross-document drift rules.
 
 What lives here:
-  * `EditorMetadataError` — the validation-failure exception.
+  * `EditorMetadataError` — the validation-failure exception (base
+    `ValueError`; see §16.2.5.t14 for the AssertionError → ValueError
+    promotion).
   * Allowlist + required-key constants for the sidecar grammar.
-  * `_validate_grammar` + sub-validators (structural checks only;
-    no cross-document references — those stay in
-    `editor_metadata.validate_sidecar_semantics`).
-  * `validate_sidecar_grammar` — public alias.
+  * `validate_sidecar_grammar` — the structural-check entry point
+    + its three private sub-validators (`_validate_section_grammar`,
+    `_validate_block_grammar`, `_validate_macro_grammar`). Single-
+    document — no cross-document references; those stay in
+    `editor_metadata.validate_sidecar_semantics`.
   * `SidecarJSON` — SQLAlchemy `TypeDecorator` over
-    `JSON(none_as_null=True)` that runs `_validate_grammar` on every
-    ORM bind. `engine/models.py` imports this directly to avoid the
-    `models → editor_metadata` reverse import that previously
-    risked a circular-import landmine if any drift rule needed
-    `Station` access.
+    `JSON(none_as_null=True)` that runs `validate_sidecar_grammar`
+    on every ORM bind. `engine/models.py` imports this directly to
+    avoid the `models → editor_metadata` reverse import that
+    previously risked a circular-import landmine if any drift rule
+    needed `Station` access.
 
 What does NOT live here:
   * `parse_sidecar`, `validate_sidecar`, `validate_sidecar_semantics`
@@ -61,14 +64,21 @@ MACRO_BLOCK_KEYS = {"kind", "ref"}
 # ---------- error type ---------------------------------------------------
 
 
-class EditorMetadataError(AssertionError):
+class EditorMetadataError(ValueError):
     """Raised when sidecar validation or drift detection fails (§16.2.1).
 
-    Subclasses AssertionError so test contexts can use
-    `pytest.raises(AssertionError, ...)` patterns; production
-    callers should catch the specific class explicitly to
-    distinguish editor-side errors from engine-side TemplateError
-    or PriorSeedError.
+    §16.2.5.t14: base changed from `AssertionError` → `ValueError`.
+    The original rationale was "test contexts can use
+    `pytest.raises(AssertionError, ...)`" — but no test in the suite
+    actually relied on that (every editor_metadata test uses
+    `pytest.raises(EditorMetadataError)` directly). After §16.2.5.t4
+    the error crosses the SQL bind boundary on every commit; the
+    `AssertionError` base risked infrastructure-level
+    `except AssertionError:` clauses (FastAPI middleware, Alembic
+    event hooks, defensive pytest assertion-rewriting) consuming
+    validation failures as "something is structurally wrong with
+    this assertion" rather than "data validation failure."
+    `ValueError` is the convention for "bad data."
     """
 
 
@@ -88,19 +98,10 @@ def validate_sidecar_grammar(sidecar: dict) -> None:
     shape validation when the caller doesn't have a template handy
     yet.
 
-    Public alias of the internal `_validate_grammar`. Kept as a thin
-    forwarder so external callers route through a stable name (the
-    internal one moved between two private helpers earlier in
-    §16.2.5; the public name is the contract).
+    §16.2.5.t14: canonical public name. The prior `_validate_grammar`
+    private alias was folded — every former indirection routed
+    through here anyway.
     """
-    _validate_grammar(sidecar)
-
-
-# ---------- internal grammar walk ---------------------------------------
-
-
-def _validate_grammar(sidecar: dict) -> None:
-    """Structural checks: types + allowlist + required keys."""
     if not isinstance(sidecar, dict):
         raise EditorMetadataError(
             f"sidecar must be a JSON object, got {type(sidecar).__name__}"
@@ -395,12 +396,7 @@ class SidecarJSON(TypeDecorator):
     def process_bind_param(self, value, dialect):
         if value is None:
             return None
-        # Calls the internal `_validate_grammar` directly (skipping
-        # the public `validate_sidecar_grammar` alias) to keep the
-        # per-flush bind path one indirection shorter. Both names
-        # resolve to the same function; external callers use the
-        # public name for discoverability.
-        _validate_grammar(value)
+        validate_sidecar_grammar(value)
         return value
 
     # c2 review #3 finding #4: NO `process_result_value` override.

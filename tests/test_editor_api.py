@@ -1489,8 +1489,8 @@ def test_sidecar_json_typedecorator_blocks_invalid_writes(editor_api):
 
 def test_sidecar_json_typedecorator_passes_null_through(editor_api):
     """§16.2.5.t4: NULL is a legitimate value (un-authored stations) —
-    must not run through the validator (`_validate_grammar` raises on
-    non-dict)."""
+    must not run through the validator (`validate_sidecar_grammar`
+    raises on non-dict)."""
     client, Session, _dir = editor_api
     template = _minimal_template("typed-null")
     with Session() as db:

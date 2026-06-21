@@ -45,7 +45,7 @@ class Station(Base):
     # with stations/{slug}.json for the template).
     #
     # §16.2.5.t4 — `SidecarJSON` is a `TypeDecorator` over `JSON` that
-    # runs `_validate_grammar` on every ORM-attribute bind so
+    # runs `validate_sidecar_grammar` on every ORM-attribute bind so
     # the shape check fires whether the write comes through
     # `_persist_sidecar`, a test fixture, or a future endpoint that
     # forgets the shared helper. NULL passes through; reads stay
