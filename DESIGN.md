@@ -10310,7 +10310,57 @@ focused:
   c2: TracePane render + page wiring (pass 4 new props through:
   staged sidecar/template + saved sidecar, plus the computed
   Map). Integration test in TracePane.test.ts.
-- **§16.2.7.t6** queued — "revert this slot" affordance.
+- **§16.2.7.t6** queued — "revert this slot" affordance. **Design
+  pass (entering implementation):**
+
+  **The gap.** Diff mode surfaces per-slot changes; operator can
+  see "Slot 47 changed" but the only undo affordance is Discard —
+  which throws away the entire opLog. For an opLog with 10
+  unrelated edits + 1 unwanted change, the operator's options
+  are: edit the chip back manually OR Discard then re-stage. A
+  per-row revert affordance closes the gap.
+
+  **D1 — Per-row button on diff-flagged rows.** Small "Revert"
+  button in the row's right-most slot of the grid. Hidden on
+  UNCHANGED rows. Click fires `revertSlot { slotIndex }`; click
+  stops propagation so the row's existing select-to-jump doesn't
+  also fire. Disabled state when no opLog entry directly
+  attributable to the slot.
+
+  **D2 — Direct attribution only.** Pure function
+  `attributeOpsToSlot(opLog, slotIndex) → number[]` returns
+  opLog indices whose `slot_index` matches:
+    - patchBlock if `op.address.slot_index === slotIndex`
+    - retypeBlock if `op.address.slot_index === slotIndex`
+    - moveBlock if `op.address.slot_index === slotIndex`
+    - structuralBlockEdit if `op.edit.slot_index === slotIndex`
+    - other kinds: no match
+  Cascade cases (structural-add at slot_index=0 shifts every
+  later slot) EXPLICITLY out of scope — the actionable edit is
+  the structural-add, not its downstream rows.
+
+  **D3 — Page handler `handleRevertSlot`:** attribute → splice
+  (highest index first to avoid index-shift) → `_persistOpLog`
+  → bump `savedTraceGeneration` + `void
+  _refreshSavedTraceIfNeeded` + `_schedulePreview`. Empty
+  attribution = defensive no-op + console.warn.
+
+  **D4 — Visual.** Button uses the row's kind accent
+  (`--diff-warn` / `--diff-add` / `--diff-rem`). Disabled state:
+  gray + `cursor: not-allowed` + title tooltip "no direct edit
+  to revert; this row changed due to a structural edit
+  elsewhere".
+
+  **D5 — Out of scope:** cascade attribution, macro attribution,
+  multi-slot revert, undo-of-revert, confirmation prompt.
+
+  **D6 — Failure modes:** empty attribution → disabled. Reverted
+  structural-add leaving later patchBlock targeting now-invalid
+  slot → server validation 400 + Retry/Drop modal (§16.2.6.t2).
+
+  **c1 / c2 split.** c1: `attributeOpsToSlot` in `edit-ops.ts` +
+  6 unit tests. c2: TracePane revert button + page handler +
+  `revertableSlots: Set<number>` derivation + integration tests.
 - **§16.2.7.t7** queued — semantic structural diff (opLog-derived).
 
 **§16.2.7.t1 review F1+F2 fix (folded into the .t8/.t9 commit):**
