@@ -10310,7 +10310,19 @@ focused:
   c2: TracePane render + page wiring (pass 4 new props through:
   staged sidecar/template + saved sidecar, plus the computed
   Map). Integration test in TracePane.test.ts.
-- **§16.2.7.t6** queued — "revert this slot" affordance. **Design
+- **§16.2.7.t6** ✅ SHIPPED (design `68c3694` → impl + tests
+  `32fd77d` → review R1+R2 `7d74e33`) — per-row Revert button on
+  diff-flagged rows. `attributeOpsToSlot` returns indices of opLog
+  entries directly targeting a slot (patchBlock/retypeBlock/move-
+  Block by slot_index, structuralBlockEdit by edit.slot_index).
+  TracePane renders the button with kind-accent color + disabled
+  state with cascade tooltip when not revertable. Page handler
+  splices the matching ops + reschedules preview. 11 new tests
+  (6 attribution + 5 TracePane render); R1 docstring note for
+  the row_template limitation (block_idx-targeted ops not
+  attributable; deferred); R2 lower-altitude page wiring smoke
+  test. 828/828 vitest. **Design pass preserved below.** —
+  Original design pass:
   pass (entering implementation):**
 
   **The gap.** Diff mode surfaces per-slot changes; operator can
