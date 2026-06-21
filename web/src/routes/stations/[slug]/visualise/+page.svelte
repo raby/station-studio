@@ -70,6 +70,7 @@
   } from '$lib/editor';
   import { applyEdits, attributeOpsToSlot, type Edit } from '$lib/edit-ops';
   import EditorCanvas from '$lib/components/editor/EditorCanvas.svelte';
+  import MacroPalette from '$lib/components/editor/MacroPalette.svelte';
   import TracePane from '$lib/components/editor/TracePane.svelte';
 
   let template: StationTemplate | null = null;
@@ -96,6 +97,12 @@
   // and the DetailPanel ↔ TracePane mutual-exclusivity (D2(b)).
   // c2 ships the scheduler skeleton + visualisation only.
   let livePreviewOn = false;
+  // §16.2.4.t1 — macro palette drawer state. Persists per-station to
+  // localStorage so a returning operator picks up where they left off.
+  // Independent of livePreviewOn — the palette is a browse affordance,
+  // not tied to preview. When OPEN, the right-side column renders even
+  // if livePreviewOn is false (palette occupies it solo).
+  let paletteOpen = false;
   let previewTrace: Trace | null = null;
   let previewing = false;
   let previewError: string | null = null;
@@ -321,6 +328,8 @@
     previewTrace = null;
     previewError = null;
     livePreviewOn = readLivePreview(slug);
+    // §16.2.4.t1 — hydrate macro-palette open-state per-station.
+    paletteOpen = readMacroPalette(slug);
     // §16.2.6.t8: hydrate previewWeek per-station too. Default 1
     // when no entry exists (mirrors c2's hardcoded behavior).
     previewWeek = readPreviewWeek(slug);
@@ -371,6 +380,32 @@
       // localStorage quota / privacy-mode block — non-fatal, toggle
       // state just doesn't persist across page reloads in those
       // sessions.
+    }
+  }
+
+  // §16.2.4.t1 — per-station macro-palette-open localStorage. Mirrors
+  // the livePreview key shape so an operator's per-station UI mode
+  // persists across reloads. Failure-tolerant for the same reasons as
+  // readLivePreview / writeLivePreview.
+  function _macroPaletteKey(s: string): string {
+    return `macroPalette:${s}`;
+  }
+
+  function readMacroPalette(s: string): boolean {
+    if (typeof window === 'undefined') return false;
+    try {
+      return window.localStorage.getItem(_macroPaletteKey(s)) === 'on';
+    } catch {
+      return false;
+    }
+  }
+
+  function writeMacroPalette(s: string, on: boolean): void {
+    if (typeof window === 'undefined') return;
+    try {
+      window.localStorage.setItem(_macroPaletteKey(s), on ? 'on' : 'off');
+    } catch {
+      // localStorage quota / privacy-mode block — non-fatal.
     }
   }
 
@@ -719,6 +754,95 @@
     // new one, then restarts the timer. The cleared timer + el track
     // also matter for onDestroy hygiene (no dangling timer firing
     // after the route navigates away).
+    if (_jumpFlashEl !== null && _jumpFlashEl !== chipEl) {
+      _jumpFlashEl.classList.remove('chip--jump-flash');
+    }
+    if (_jumpFlashTimer !== null) {
+      clearTimeout(_jumpFlashTimer);
+    }
+    chipEl.classList.add('chip--jump-flash');
+    _jumpFlashEl = chipEl;
+    _jumpFlashTimer = setTimeout(() => {
+      if (_jumpFlashEl !== null) {
+        _jumpFlashEl.classList.remove('chip--jump-flash');
+        _jumpFlashEl = null;
+      }
+      _jumpFlashTimer = null;
+    }, JUMP_FLASH_MS);
+  }
+
+  // §16.2.4.t1 — toggle the macro palette drawer + persist.
+  function toggleMacroPalette() {
+    paletteOpen = !paletteOpen;
+    writeMacroPalette(slug, paletteOpen);
+  }
+
+  // §16.2.4.t1 — handle MacroPalette's `select { macroId }` event.
+  // Find the FIRST occurrence of that macro on the canvas
+  // (pick_in_macro=1 — guaranteed unique within the sidecar by
+  // validate_sidecar's drift rules), then run the same scroll +
+  // expand-section + flash pipeline as handleTraceSelect. Edit-from-
+  // sidebar is deliberately NOT wired (locked at design pass) — the
+  // operator clicks the chip on the canvas to edit, same as the
+  // existing macro-edit flow. A future slice can add an explicit
+  // 'edit' affordance here when operators report the extra hop.
+  async function handleMacroPaletteSelect(
+    e: CustomEvent<{ macroId: string }>,
+  ) {
+    const macroId = e.detail.macroId;
+    // The macro chip's data-ref-key is `macro:<id>:pick=1` for the
+    // first repeat instance. refKey owns the serialization contract;
+    // mirror it here rather than importing a one-off helper.
+    const key = `macro:${macroId}:pick=1`;
+    let chipEl = document.querySelector<HTMLElement>(
+      `[data-ref-key="${CSS.escape(key)}"]`,
+    );
+
+    if (chipEl === null) {
+      // Section containing the macro may be collapsed. Find it by
+      // scanning the sidecar for the first section that references
+      // the macro, then synthetic-click its toggle (same pattern as
+      // handleTraceSelect's collapsed-section recovery). Use staged
+      // sidecar when present so the chip lookup matches what's
+      // actually rendered.
+      const sc = stagedSidecar ?? sidecar;
+      if (sc === null) return;
+      const containingSection = sc.sections.find((s) =>
+        s.blocks.some((b) => b.kind === 'macro' && b.ref === macroId),
+      );
+      if (containingSection === undefined) return;
+      const sectionEl = document.querySelector<HTMLElement>(
+        `[data-section-id="${CSS.escape(containingSection.id)}"]`,
+      );
+      if (sectionEl !== null) {
+        const alreadyExpanded = sectionEl.querySelector(
+          '[data-testid="section-body"]',
+        ) !== null;
+        if (!alreadyExpanded) {
+          const toggleEl = sectionEl.querySelector<HTMLButtonElement>(
+            '[data-testid="section-toggle"]',
+          );
+          if (toggleEl !== null) {
+            toggleEl.click();
+            await tick();
+            chipEl = document.querySelector<HTMLElement>(
+              `[data-ref-key="${CSS.escape(key)}"]`,
+            );
+          }
+        }
+      }
+    }
+
+    if (chipEl === null) return;
+
+    chipEl.scrollIntoView({
+      behavior: 'smooth',
+      block: 'nearest',
+      inline: 'nearest',
+    });
+    // Reuse the shared flash-class lifecycle (same race semantics as
+    // handleTraceSelect — second click moves the flash; onDestroy
+    // tears down the timer).
     if (_jumpFlashEl !== null && _jumpFlashEl !== chipEl) {
       _jumpFlashEl.classList.remove('chip--jump-flash');
     }
@@ -1368,6 +1492,10 @@
     // here; the operator's first edit triggers _schedulePreview if
     // the toggle is ON.
     livePreviewOn = readLivePreview(slug);
+    // §16.2.4.t1 — hydrate the macro palette open-state too. The
+    // palette is browse-only (no scheduler / side effects) so this
+    // is purely a UI hydration.
+    paletteOpen = readMacroPalette(slug);
     try {
       // §16.2.2.t1 — getStationSidecar validates the response shape
       // before return. Both ApiError (network/4xx) and
@@ -2144,6 +2272,19 @@
         />
         Live preview
       </label>
+      <!-- §16.2.4.t1 — macro palette toggle. Opens the browseable
+           macro list as a drawer above the trace pane area. Per-
+           station persistence (mirrors Live preview's localStorage
+           pattern). -->
+      <button
+        type="button"
+        class="palette-toggle"
+        data-testid="macro-palette-toggle"
+        aria-pressed={paletteOpen}
+        on:click={toggleMacroPalette}
+      >
+        {paletteOpen ? 'Hide macros' : 'Show macros'}
+      </button>
       <!-- §16.2.6 c3 — Save / Discard controls for staged edits.
            Visible only when toggle ON + opLog has at least one
            edit (no Save target otherwise). The button labels
@@ -2264,7 +2405,7 @@
     -->
     <div
       class="editor-region"
-      class:has-trace={livePreviewOn}
+      class:has-trace={livePreviewOn || paletteOpen}
       data-testid="editor-region"
     >
       <div class="canvas-col">
@@ -2293,35 +2434,46 @@
            — TracePane reactively re-renders as `previewTrace`
            updates even while hidden, so closing DetailPanel shows
            the latest trace with no remount cost. -->
-      {#if livePreviewOn}
+      {#if livePreviewOn || paletteOpen}
         <div
           class="trace-col"
           class:trace-col--hidden={detailPanelOpen}
           data-testid="trace-col"
         >
-          <TracePane
-            trace={previewTrace}
-            previewing={previewing}
-            errorMessage={previewError}
-            weekValue={previewWeek}
-            showDiff={showDiff}
-            savedTrace={savedTrace}
-            savedTraceError={savedTraceError}
-            compareNextN={compareNextN}
-            weekDiffSummary={weekDiffSummary}
-            multiWeekFetching={multiWeekFetching}
-            compareNextNMax={COMPARE_NEXT_N_MAX}
-            template={template}
-            savedSidecar={sidecar}
-            stagedSidecar={stagedSidecar}
-            revertableSlots={revertableSlots}
-            opLog={opLog}
-            on:select={handleTraceSelect}
-            on:weekChange={handleWeekChange}
-            on:showDiffChange={handleShowDiffChange}
-            on:compareNextNChange={handleCompareNextNChange}
-            on:revertSlot={handleRevertSlot}
-          />
+          <!-- §16.2.4.t1 — macro palette sits ABOVE the trace pane in
+               the right column. Independent of livePreviewOn — the
+               column auto-renders when either feature is active. -->
+          {#if paletteOpen}
+            <MacroPalette
+              sidecar={stagedSidecar ?? sidecar}
+              on:select={handleMacroPaletteSelect}
+            />
+          {/if}
+          {#if livePreviewOn}
+            <TracePane
+              trace={previewTrace}
+              previewing={previewing}
+              errorMessage={previewError}
+              weekValue={previewWeek}
+              showDiff={showDiff}
+              savedTrace={savedTrace}
+              savedTraceError={savedTraceError}
+              compareNextN={compareNextN}
+              weekDiffSummary={weekDiffSummary}
+              multiWeekFetching={multiWeekFetching}
+              compareNextNMax={COMPARE_NEXT_N_MAX}
+              template={template}
+              savedSidecar={sidecar}
+              stagedSidecar={stagedSidecar}
+              revertableSlots={revertableSlots}
+              opLog={opLog}
+              on:select={handleTraceSelect}
+              on:weekChange={handleWeekChange}
+              on:showDiffChange={handleShowDiffChange}
+              on:compareNextNChange={handleCompareNextNChange}
+              on:revertSlot={handleRevertSlot}
+            />
+          {/if}
         </div>
       {/if}
     </div>
@@ -2364,6 +2516,13 @@
     border-radius: 4px;
     overflow: hidden;
     border: 1px solid var(--border, #ddd);
+    /* §16.2.4.t1 — column now hosts BOTH the macro palette (when
+       open) AND the trace pane. Flex column with a small gap so the
+       two visually separate; single-child case (palette OR trace
+       alone) is unaffected — flex falls back to natural block flow. */
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
   }
   .trace-col--hidden {
     /* §16.2.6 c3e c2 review H4: hide via display:none instead of
@@ -2437,6 +2596,24 @@
   .live-preview-toggle input[type='checkbox'] {
     margin: 0;
     cursor: pointer;
+  }
+  /* §16.2.4.t1 — macro palette toggle button. Mirrors the
+     `.live-preview-toggle` font + size so the two toolbar
+     affordances visually balance. aria-pressed handles the
+     active-state semantics; CSS just dims the inactive state. */
+  .palette-toggle {
+    padding: 0.4rem 0.8rem;
+    background: transparent;
+    border: 1px solid var(--color-panel-border, #ccc);
+    border-radius: 4px;
+    cursor: pointer;
+    font: inherit;
+    font-size: 0.85rem;
+    color: var(--text, #222);
+  }
+  .palette-toggle[aria-pressed='true'] {
+    background: var(--color-row-hover, #eef);
+    border-color: var(--color-focus, #3b82f6);
   }
   /* §16.2.6 c3 — staged-edit Save / Discard controls. */
   .staged-save {

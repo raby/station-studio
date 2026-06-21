@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/svelte';
+import { render, screen, waitFor, within } from '@testing-library/svelte';
 import '@testing-library/jest-dom/vitest';
 
 /**
@@ -3170,5 +3170,147 @@ describe('visualise +page.svelte — §16.2.7.t6 revertableSlots wiring', () => 
     });
     await act(async () => {});
     expect(screen.queryByTestId('staged-save')).toBeNull();
+  });
+});
+
+
+describe('visualise +page.svelte — §16.2.4.t1 macro palette', () => {
+  beforeEach(() => {
+    getStationSidecarMock.mockReset();
+    setSlug('viz-test');
+    try { window.localStorage.clear(); } catch { /* */ }
+  });
+
+  function _sidecarWithMacros() {
+    return {
+      schema_version: 1,
+      sections: [
+        {
+          id: 'main',
+          name: 'Main',
+          blocks: [
+            { kind: 'atomic', slot_index: 0 },
+            { kind: 'macro', ref: 'mp-1' },
+          ],
+        },
+      ],
+      macros: [
+        {
+          id: 'mp-1',
+          name: 'Jingles',
+          repeat: 2,
+          spec: { source: 'A', strategy: 'jingle', size: 1, genre: 'G' },
+        },
+      ],
+      layout_order: ['main'],
+    };
+  }
+
+  it('renders the toggle button + drawer is hidden by default', async () => {
+    getStationSidecarMock.mockResolvedValueOnce({
+      template: makeTemplate(),
+      sidecar: _sidecarWithMacros(),
+      sidecar_error: null,
+    });
+    render(Page);
+    await screen.findByTestId('editor-canvas');
+
+    const toggle = screen.getByTestId('macro-palette-toggle');
+    expect(toggle).toHaveAttribute('aria-pressed', 'false');
+    expect(toggle.textContent).toMatch(/Show macros/);
+    expect(screen.queryByTestId('macro-palette')).toBeNull();
+  });
+
+  it('reveals the palette drawer on toggle click + populates from sidecar', async () => {
+    getStationSidecarMock.mockResolvedValueOnce({
+      template: makeTemplate(),
+      sidecar: _sidecarWithMacros(),
+      sidecar_error: null,
+    });
+    render(Page);
+    await screen.findByTestId('editor-canvas');
+
+    await act(async () => {
+      screen.getByTestId('macro-palette-toggle').click();
+    });
+
+    const palette = screen.getByTestId('macro-palette');
+    expect(palette).toBeInTheDocument();
+    const rows = within(palette).getAllByTestId('macro-palette-row');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toHaveAttribute('data-macro-id', 'mp-1');
+    expect(screen.getByTestId('macro-palette-toggle')).toHaveAttribute(
+      'aria-pressed', 'true',
+    );
+    expect(screen.getByTestId('macro-palette-toggle').textContent).toMatch(
+      /Hide macros/,
+    );
+  });
+
+  it('persists the toggle state to localStorage on click', async () => {
+    getStationSidecarMock.mockResolvedValueOnce({
+      template: makeTemplate(),
+      sidecar: _sidecarWithMacros(),
+      sidecar_error: null,
+    });
+    render(Page);
+    await screen.findByTestId('editor-canvas');
+
+    await act(async () => {
+      screen.getByTestId('macro-palette-toggle').click();
+    });
+    expect(window.localStorage.getItem('macroPalette:viz-test')).toBe('on');
+
+    await act(async () => {
+      screen.getByTestId('macro-palette-toggle').click();
+    });
+    expect(window.localStorage.getItem('macroPalette:viz-test')).toBe('off');
+  });
+
+  it('hydrates the palette open-state from localStorage on mount', async () => {
+    window.localStorage.setItem('macroPalette:viz-test', 'on');
+    getStationSidecarMock.mockResolvedValueOnce({
+      template: makeTemplate(),
+      sidecar: _sidecarWithMacros(),
+      sidecar_error: null,
+    });
+    render(Page);
+    await screen.findByTestId('editor-canvas');
+    // Drawer present without any user interaction.
+    expect(screen.getByTestId('macro-palette')).toBeInTheDocument();
+    expect(screen.getByTestId('macro-palette-toggle')).toHaveAttribute(
+      'aria-pressed', 'true',
+    );
+  });
+
+  it('opens the right-side column even when livePreviewOn is OFF', async () => {
+    window.localStorage.setItem('macroPalette:viz-test', 'on');
+    // Notice: NO `livePreview:viz-test = on` — palette alone drives
+    // the right-column render.
+    getStationSidecarMock.mockResolvedValueOnce({
+      template: makeTemplate(),
+      sidecar: _sidecarWithMacros(),
+      sidecar_error: null,
+    });
+    render(Page);
+    await screen.findByTestId('editor-canvas');
+    expect(screen.getByTestId('trace-col')).toBeInTheDocument();
+    // TracePane not rendered (livePreviewOn=false); palette is the
+    // sole occupant of the column.
+    expect(screen.getByTestId('macro-palette')).toBeInTheDocument();
+  });
+
+  it('shows the empty-state row when the sidecar has no macros', async () => {
+    window.localStorage.setItem('macroPalette:viz-test', 'on');
+    getStationSidecarMock.mockResolvedValueOnce({
+      template: makeTemplate(),
+      sidecar: makeSidecar(),  // no macros
+      sidecar_error: null,
+    });
+    render(Page);
+    await screen.findByTestId('editor-canvas');
+    expect(screen.getByTestId('macro-palette-empty').textContent).toMatch(
+      /No macros yet/,
+    );
   });
 });
