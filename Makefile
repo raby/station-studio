@@ -379,7 +379,30 @@ restore:
 # `dev-backend` / `dev-frontend` are also exposed as standalone
 # targets so the user can run one without the other (e.g. testing a
 # backend change against a previously-built frontend).
-dev:
+# `dev-migrate-check` — warn loudly when an existing dev DB is behind
+# the latest alembic head. The lifespan's `Base.metadata.create_all`
+# adds missing TABLES but NOT missing COLUMNS on existing tables (the
+# §16.2.5.t7 verification surfaced this: pulling .t7 + running
+# `make dev` against the existing dev DB 500'd until `make migrate`
+# ran). Non-blocking — an operator may be intentionally on a stale DB
+# for a repro; the warning just makes the "ah, that's why" obvious.
+# Silent for: fresh DBs (file absent — create_all bootstraps to latest
+# schema) AND DBs already at head.
+dev-migrate-check:
+	@if [ -f station_studio.db ]; then \
+	  CUR=$$($(ALEMBIC) current 2>/dev/null | awk '/\(head\)/{ print "head"; exit } /^[a-f0-9]+/{ print $$1; exit }'); \
+	  HEAD=$$($(ALEMBIC) heads 2>/dev/null | awk '/^[a-f0-9]+/{ print $$1; exit }'); \
+	  if [ -n "$$CUR" ] && [ -n "$$HEAD" ] && [ "$$CUR" != "head" ] && [ "$$CUR" != "$$HEAD" ]; then \
+	    echo ""; \
+	    echo "  ⚠️  dev DB is behind the latest migration:"; \
+	    echo "       current = $$CUR"; \
+	    echo "       head    = $$HEAD"; \
+	    echo "     run \`make migrate\` first to avoid 500s on the affected columns."; \
+	    echo ""; \
+	  fi; \
+	fi
+
+dev: dev-migrate-check
 	@echo "Starting backend (:8001) and frontend (:5173)…"
 	@echo "Ctrl-C to stop both."
 	@trap 'kill 0' EXIT INT TERM; \
@@ -387,7 +410,7 @@ dev:
 	  (cd web && npm run dev 2>&1 | sed -u 's/^/[frontend] /') & \
 	  wait
 
-dev-backend:
+dev-backend: dev-migrate-check
 	$(PY) run.py
 
 dev-frontend:
