@@ -18,6 +18,7 @@ from api.schemas import (
     PlaylistSummary,
     PoolStatus,
     StationCreate,
+    StationForkRequest,
     StationOut,
     StationOverview,
     StationSummary,
@@ -279,6 +280,56 @@ def create_station(payload: StationCreate, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(s)
     return s
+
+
+@router.post("/{slug}/fork", response_model=StationOut, status_code=201)
+def fork_station(
+    slug: str, payload: StationForkRequest, db: Session = Depends(get_db),
+):
+    """§16.2.8 — clone a station's template + sidecar under a new
+    slug + name.
+
+    Source 404 if `slug` doesn't exist; 409 if `new_slug` already
+    exists. Slug-shape rejects are handled by Pydantic at the wire
+    (422 — matches the create-station path).
+
+    Explicitly NOT copied (per the design D1 punts):
+      - Generated Playlists / PlaylistEntry rows (each belongs to
+        the source station; forking is "clone structure", not
+        "clone history").
+      - per-station Rule rows (§14.29). Operator's typical "fork
+        and tweak" pattern lets the new station accumulate its
+        own rule set fresh; cloning rules can be a follow-up
+        `§16.2.8.tX` if asked.
+      - CursorState (regeneration-derived).
+      - SourcePlaylist + entries (shared globally; nothing to
+        copy at fork time).
+
+    The new Station's `template` + `sidecar` are deep-copied so
+    later mutations to either don't perturb the source. `created_at`
+    stamps fresh.
+    """
+    src = db.query(Station).filter(Station.slug == slug).first()
+    if src is None:
+        raise HTTPException(404, f"station '{slug}' not found")
+
+    if db.query(Station).filter(Station.slug == payload.new_slug).first():
+        raise HTTPException(409, f"station '{payload.new_slug}' already exists")
+
+    import copy
+    new_station = Station(
+        slug=payload.new_slug,
+        name=payload.new_name,
+        # Deep-copy so the new station's mutations don't reach back
+        # into the source's JSON blobs (SQLAlchemy ORM-attribute
+        # sharing would otherwise alias the dicts).
+        template=copy.deepcopy(src.template),
+        sidecar=copy.deepcopy(src.sidecar) if src.sidecar is not None else None,
+    )
+    db.add(new_station)
+    db.commit()
+    db.refresh(new_station)
+    return new_station
 
 
 @router.get("/{slug}/playlists", response_model=list[PlaylistSummary])

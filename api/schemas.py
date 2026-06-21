@@ -29,6 +29,18 @@ class StationCreate(BaseModel):
     template: dict[str, Any]
 
 
+class StationForkRequest(BaseModel):
+    """§16.2.8 — body for `POST /api/stations/{slug}/fork`.
+
+    `new_slug` reuses the same shape validation as StationCreate.slug
+    (lowercase alphanumeric + hyphens; must start with [a-z0-9]).
+    `new_name` is operator-supplied (the frontend defaults to
+    `<source-name> (fork)`).
+    """
+    new_slug: str = Field(pattern=r"^[a-z0-9][a-z0-9-]*$")
+    new_name: str
+
+
 class StationOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

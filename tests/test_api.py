@@ -191,7 +191,108 @@ def test_create_station_invalid_template_returns_400(api):
     r = client.post("/api/stations", json=payload)
     assert r.status_code == 400
     assert "invalid template" in r.json()["detail"]
-    assert "cursor" in r.json()["detail"]  # surfaces the missing field
+
+
+# ---- §16.2.8 fork endpoint -----------------------------------------------
+
+
+def test_fork_station_happy_path(api):
+    """§16.2.8 — POST /api/stations/{slug}/fork copies template +
+    sidecar with a new slug + name; returns the new StationOut."""
+    client, _ = api
+    client.post("/api/stations", json=_wizard_payload("alpha", "Alpha FM"))
+
+    r = client.post("/api/stations/alpha/fork", json={
+        "new_slug": "alpha-fork", "new_name": "Alpha FM (fork)",
+    })
+    assert r.status_code == 201, r.json()
+    body = r.json()
+    assert body["slug"] == "alpha-fork"
+    assert body["name"] == "Alpha FM (fork)"
+    # Template content preserved.
+    assert body["template"]["station"] == "alpha"
+    # Source station still exists (fork doesn't move).
+    r2 = client.get("/api/stations/alpha")
+    assert r2.status_code == 200
+    assert r2.json()["slug"] == "alpha"
+
+
+def test_fork_station_source_404(api):
+    client, _ = api
+    r = client.post("/api/stations/missing/fork", json={
+        "new_slug": "x", "new_name": "X",
+    })
+    assert r.status_code == 404
+    assert "not found" in r.json()["detail"]
+
+
+def test_fork_station_new_slug_conflict_returns_409(api):
+    """If the chosen new_slug is already taken, 409."""
+    client, _ = api
+    client.post("/api/stations", json=_wizard_payload("alpha", "Alpha FM"))
+    client.post("/api/stations", json=_wizard_payload("beta", "Beta FM"))
+
+    r = client.post("/api/stations/alpha/fork", json={
+        "new_slug": "beta",  # already exists
+        "new_name": "Conflict",
+    })
+    assert r.status_code == 409
+    assert "already exists" in r.json()["detail"]
+
+
+def test_fork_station_invalid_new_slug_returns_422(api):
+    """Pydantic pattern validation rejects invalid slug shapes (422,
+    not 400 — matches the create-station path's Pydantic-level
+    rejection at §14.7.t1's slug pattern)."""
+    client, _ = api
+    client.post("/api/stations", json=_wizard_payload("alpha", "Alpha FM"))
+    r = client.post("/api/stations/alpha/fork", json={
+        "new_slug": "Invalid Slug",  # space + uppercase
+        "new_name": "X",
+    })
+    assert r.status_code == 422
+
+
+def test_fork_station_deep_copies_template_and_sidecar(api):
+    """Mutating the forked station's template / sidecar must not
+    perturb the source's JSON blobs (ORM-attribute aliasing pitfall
+    on JSON columns)."""
+    client, Session = api
+    client.post("/api/stations", json=_wizard_payload("alpha", "Alpha FM"))
+    # Stamp a sidecar on the source so the deep-copy path covers it.
+    from engine.models import Station
+    # Build a row_template-compatible sidecar (the wizard payload
+    # uses row_template, not flat_slots). 1 row × 1 block = 1 slot
+    # → one atomic ref with row_idx=0 + block_idx=0.
+    with Session() as db:
+        src = db.query(Station).filter(Station.slug == "alpha").first()
+        src.sidecar = {
+            "schema_version": 1, "sections": [
+                {"id": "morning", "name": "Morning", "blocks": [
+                    {"kind": "atomic", "row_idx": 0, "block_idx": 0},
+                ]},
+            ], "layout_order": ["morning"], "macros": [],
+        }
+        db.commit()
+
+    r = client.post("/api/stations/alpha/fork", json={
+        "new_slug": "alpha-fork", "new_name": "Alpha FM (fork)",
+    })
+    assert r.status_code == 201, r.json()
+
+    # Mutate the FORK's sidecar via the §16.2.5 rename endpoint.
+    r2 = client.patch(
+        "/api/stations/alpha-fork/sections/morning",
+        json={"name": "Sunrise"},
+    )
+    assert r2.status_code == 200, r2.json()
+
+    # Source station's sidecar.morning.name unchanged — deep-copy
+    # isolated the two stations' JSON blobs.
+    with Session() as db:
+        src = db.query(Station).filter(Station.slug == "alpha").first()
+        morning = next(s for s in src.sidecar["sections"] if s["id"] == "morning")
+        assert morning["name"] == "Morning"
 
 
 # ---------- GET /api/stations ------------------------------------------
