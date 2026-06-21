@@ -22,7 +22,10 @@ from sqlalchemy import (
 from sqlalchemy.orm import relationship
 
 from engine.database import Base
-from engine.editor_metadata import SidecarJSON
+# §16.2.5.t13 — `SidecarJSON` lives in the leaf `engine.sidecar_types`
+# module so this file (loaded by every ORM consumer) doesn't pull in
+# the 1.5K-LOC `engine.editor_metadata` and its full drift-rule graph.
+from engine.sidecar_types import SidecarJSON
 
 
 class Station(Base):
@@ -50,12 +53,11 @@ class Station(Base):
     # The underlying SQL column type stays `JSON` — no schema migration
     # needed.
     #
-    # NOT covered: alembic data migrations that construct an ad-hoc
-    # `sa.table('station', sa.column('sidecar', sa.JSON()))` reference
-    # (the §16.2.5 migration `e695658879de` does this on purpose to
-    # avoid importing engine code from the migration). Those writes
-    # bypass the validator by design + the runtime read path degrades
-    # via `_resolve_sidecar(strict=False)` warning banner.
+    # NOT covered: any future alembic data migration that constructs
+    # an ad-hoc `sa.table('station', sa.column('sidecar', sa.JSON()))`
+    # to avoid importing engine code. Those writes bypass the
+    # validator by design + the runtime read path degrades via
+    # `_resolve_sidecar(strict=False)` warning banner.
     #
     # c2 review #3 finding #2: dropped the conditional
     # `SidecarJSON if SidecarJSON is not None else JSON` fallback. The

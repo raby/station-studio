@@ -48,38 +48,42 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+# §16.2.5.t13 — grammar constants + error type + grammar walk +
+# `validate_sidecar_grammar` public alias + `SidecarJSON`
+# TypeDecorator moved to `engine.sidecar_types` (leaf module so
+# `engine/models.py` doesn't pull in this 1.5K-LOC file). Re-exported
+# here so existing call sites (api routers, tests, scripts) keep
+# importing them from `engine.editor_metadata` without churn.
+from engine.sidecar_types import (
+    ALLOWED_MACRO_KEYS,
+    ALLOWED_SECTION_KEYS,
+    ALLOWED_TOP_LEVEL,
+    ATOMIC_FLAT_KEYS,
+    ATOMIC_ROW_KEYS,
+    EditorMetadataError,
+    MACRO_BLOCK_KEYS,
+    REQUIRED_MACRO_KEYS,
+    REQUIRED_SECTION_KEYS,
+    REQUIRED_TOP_LEVEL,
+    SidecarJSON,
+    validate_sidecar_grammar,
+)
 
-# ---------- grammar allowlists ------------------------------------------
-
-ALLOWED_TOP_LEVEL = {
-    "schema_version", "sections", "macros", "layout_order", "_comment",
-}
-REQUIRED_TOP_LEVEL = {"schema_version", "sections", "layout_order"}
-
-ALLOWED_SECTION_KEYS = {"id", "name", "blocks", "repeat_with_offsets"}
-REQUIRED_SECTION_KEYS = {"id", "blocks"}
-
-ALLOWED_MACRO_KEYS = {"id", "name", "spec", "repeat"}
-REQUIRED_MACRO_KEYS = {"id", "spec", "repeat"}
-
-# Atomic block: discriminated by which addressing fields are present.
-ATOMIC_FLAT_KEYS = {"kind", "slot_index"}
-ATOMIC_ROW_KEYS = {"kind", "row_idx", "block_idx"}
-MACRO_BLOCK_KEYS = {"kind", "ref"}
-
-
-# ---------- error type ---------------------------------------------------
-
-
-class EditorMetadataError(AssertionError):
-    """Raised when sidecar validation or drift detection fails (§16.2.1).
-
-    Subclasses AssertionError so test contexts can use
-    `pytest.raises(AssertionError, ...)` patterns; production
-    callers should catch the specific class explicitly to
-    distinguish editor-side errors from engine-side TemplateError
-    or PriorSeedError.
-    """
+__all__ = (
+    # Re-exported from engine.sidecar_types
+    "ALLOWED_MACRO_KEYS", "ALLOWED_SECTION_KEYS", "ALLOWED_TOP_LEVEL",
+    "ATOMIC_FLAT_KEYS", "ATOMIC_ROW_KEYS", "EditorMetadataError",
+    "MACRO_BLOCK_KEYS", "REQUIRED_MACRO_KEYS", "REQUIRED_SECTION_KEYS",
+    "REQUIRED_TOP_LEVEL", "SidecarJSON", "validate_sidecar_grammar",
+    # Native to this module
+    "AtomicRef", "MacroPlaceholder", "MacroResolutionError",
+    "SYSTEM_SECTION_IDS", "derive_sidecar", "ensure_unsorted_section",
+    "expand_section", "is_reserved_id_prefix", "is_system_section",
+    "lookup_macro", "lookup_section", "parse_sidecar",
+    "resolve_macro_addresses", "shift_atomic_slot_indices",
+    "synthesize_trivial_sidecar", "validate_sidecar",
+    "validate_sidecar_semantics",
+)
 
 
 # ---------- public dataclass return shapes ------------------------------
@@ -204,26 +208,6 @@ def _check_template_xor_invariant(station_template: dict) -> None:
             "populated; the engine's XOR invariant is violated. Fix "
             "the station JSON before validating its sidecar."
         )
-
-
-def validate_sidecar_grammar(sidecar: dict) -> None:
-    """Structural checks: types + allowlist + required keys.
-
-    §16.2.5.t15 split: grammar is the only check needed at the SQL
-    bind boundary (`SidecarJSON.process_bind_param`). Semantic checks
-    need the template + don't run during ORM commit.
-
-    Single-document — does not require a station_template. Suitable
-    for the TypeDecorator's bind-time gate AND for cheap top-level-
-    shape validation when the caller doesn't have a template handy
-    yet.
-
-    Public alias of the internal `_validate_grammar`. Kept as a thin
-    forwarder so external callers route through a stable name (the
-    internal one moved between two private helpers earlier in
-    §16.2.5; the public name is the contract).
-    """
-    _validate_grammar(sidecar)
 
 
 def validate_sidecar_semantics(sidecar: dict, station_template: dict) -> None:
@@ -570,103 +554,9 @@ def is_system_section(section_id: str) -> bool:
     return section_id in SYSTEM_SECTION_IDS
 
 
-# §16.2.5.t4: SQLAlchemy TypeDecorator wrapping the JSON column.
-#
-# Goal: validate the sidecar's GRAMMAR at the SQL bind boundary so any
-# code path that writes to `Station.sidecar` — fixtures, scripts,
-# future endpoints that forget to route through `_persist_sidecar` —
-# gets the same shape check the runtime mutation path runs. Reads stay
-# pass-through (no per-access perf cost; lenient `_resolve_sidecar`
-# already handles legacy/broken data).
-#
-# What's enforced: REQUIRED_TOP_LEVEL keys (`sections`,
-# `layout_order`, `schema_version` — note: `macros` is OPTIONAL +
-# defaults to `[]`), schema_version == 1, no unknown
-# top-level keys, sections/macros are lists, blocks have valid `kind`,
-# atomic refs have slot_index OR (row_idx + block_idx). Cross-document
-# checks (atomic_bounds against `station.template`'s flat_slots length,
-# macro_refs reachability, layout_order ↔ sections id parity) STAY
-# OUT — they need the template, which the TypeDecorator doesn't have
-# access to at bind time; route layer's `validate_sidecar_semantics`
-# covers them (§16.2.5.t15 split the prior monolithic `validate_sidecar`
-# so route mutations only walk grammar once, here, at bind time).
-#
-# Why this is the right altitude: a future grammar bump (e.g. §16.2.6
-# macro-pinning fields) only needs to update `_validate_grammar` here;
-# every write path automatically picks up the new shape check. Prior
-# to this, the lenient `_resolve_sidecar(strict=False)` branch was
-# the silent normal path for any drift between Python's grammar +
-# the DB's stored shape.
-
-
-# §16.2.5.t15 re-introduced `validate_sidecar_grammar` as a stable
-# public name now that there IS an external caller (the split
-# `validate_sidecar` wrapper at line 257 composes it with
-# `validate_sidecar_semantics`; future external callers — fixtures,
-# scripts, drift detectors — route through the public name).
-# SidecarJSON's bind processor still calls `_validate_grammar`
-# directly to keep the bind path one indirection shorter; both names
-# resolve to the same internal function. The prior c2 review #3
-# finding #11 rationale ('1-line alias with no external callers')
-# no longer holds.
-
-
-# c2 review #3 finding #2: dropped the `try / except ImportError`
-# fallback. SQLAlchemy is a hard requirement (every consumer of this
-# module's `SidecarJSON` already needs SQLAlchemy installed via
-# engine/models.py). The fallback silently downgraded to plain JSON
-# with no log + no warning if any future ImportError reached this
-# block — exactly the opposite of defense in depth. Fail loud at
-# import time instead. The CLI `scripts/derive_sidecar` doesn't
-# import SidecarJSON, so its standalone path is unaffected.
-from sqlalchemy.types import TypeDecorator
-from sqlalchemy import JSON as _SaJSON
-
-
-class SidecarJSON(TypeDecorator):
-    """SQLAlchemy column type wrapping `JSON(none_as_null=True)` that
-    runs `validate_sidecar_grammar` on every ORM-attribute bind. See
-    DESIGN.md §16.2.5.t4 for the rationale; the docstring here pins
-    the coverage contract.
-
-    **Coverage:** writes via the ORM Station attribute
-    (`station.sidecar = ...; db.commit()` — fixtures, endpoints,
-    scripts using the ORM).
-
-    **Bypass (intentional):** alembic data migrations that construct
-    an ad-hoc `sa.table('station', sa.column('sidecar', sa.JSON()))`
-    bypass the validator by design — the runtime read path degrades
-    via `_resolve_sidecar(strict=False)` warning banner. See
-    migrations/versions/e695658879de for the pattern.
-
-    **Reads:** pass-through (no `process_result_value` override —
-    SQLAlchemy's impl-chain handles JSON deserialisation, lenient
-    `_resolve_sidecar(strict=False)` handles legacy/broken data).
-
-    `none_as_null=True` is on the impl so Python None binds to SQL
-    NULL (not the JSON 'null' string literal). Critical for
-    `populate_db_sidecars`'s `Station.sidecar.is_(None)` filter.
-    """
-    impl = _SaJSON(none_as_null=True)
-    cache_ok = True
-
-    def process_bind_param(self, value, dialect):
-        if value is None:
-            return None
-        # Calls the internal `_validate_grammar` directly (skipping
-        # the public `validate_sidecar_grammar` alias re-introduced
-        # in §16.2.5.t15) to keep the per-flush bind path one
-        # indirection shorter. Both names resolve to the same
-        # function; external callers use the public name for
-        # discoverability.
-        _validate_grammar(value)
-        return value
-
-    # c2 review #3 finding #4: NO `process_result_value` override.
-    # Defining a pass-through method flips SQLAlchemy's
-    # `_has_result_processor` to True and forces every read through
-    # a no-op closure. Letting the base class handle it (no override)
-    # makes reads route through the impl's JSON deserialiser directly.
+# §16.2.5.t13: `SidecarJSON` TypeDecorator + grammar walk moved to
+# `engine.sidecar_types` (leaf module). Re-exported at the top of this
+# file for backward-compat with existing call sites.
 
 
 def lookup_section(sidecar: dict, section_id: str) -> dict | None:
@@ -825,263 +715,7 @@ def expand_section(section: dict, sidecar: dict) -> list:
     return out
 
 
-# ---------- internal validators (drift rules) ---------------------------
-
-
-def _validate_grammar(sidecar: dict) -> None:
-    """Structural checks: types + allowlist + required keys."""
-    if not isinstance(sidecar, dict):
-        raise EditorMetadataError(
-            f"sidecar must be a JSON object, got {type(sidecar).__name__}"
-        )
-    missing = REQUIRED_TOP_LEVEL - set(sidecar.keys())
-    if missing:
-        raise EditorMetadataError(
-            f"sidecar missing required keys: {sorted(missing)}. "
-            f"Required: {sorted(REQUIRED_TOP_LEVEL)}."
-        )
-    unknown = set(sidecar.keys()) - ALLOWED_TOP_LEVEL
-    if unknown:
-        raise EditorMetadataError(
-            f"sidecar has unknown top-level keys: {sorted(unknown)}. "
-            f"Allowed: {sorted(ALLOWED_TOP_LEVEL)}."
-        )
-    if sidecar.get("schema_version") != 1:
-        raise EditorMetadataError(
-            f"sidecar schema_version={sidecar.get('schema_version')!r}; "
-            f"expected 1 (§16.2.0)."
-        )
-
-    sections = sidecar["sections"]
-    if not isinstance(sections, list):
-        raise EditorMetadataError(
-            f"'sections' must be a list, got {type(sections).__name__}"
-        )
-    # Mid-slice review finding 2: reject empty sections. A sidecar
-    # with zero sections renders an empty editor view; if the user
-    # wants "no sections" they shouldn't ship a sidecar at all
-    # (synthesize_trivial_sidecar handles the no-sidecar case).
-    if not sections:
-        raise EditorMetadataError(
-            "'sections' must contain at least one section. An empty "
-            "sidecar has nothing to render; remove the sidecar file "
-            "(the editor falls back to a synthesized 'All slots' view) "
-            "or add at least one section."
-        )
-    seen_section_ids: set[str] = set()
-    for i, sec in enumerate(sections):
-        _validate_section_grammar(sec, i)
-        if sec["id"] in seen_section_ids:
-            raise EditorMetadataError(
-                f"sections[{i}]: duplicate id {sec['id']!r}; "
-                f"section ids must be unique within the sidecar."
-            )
-        seen_section_ids.add(sec["id"])
-
-    macros = sidecar.get("macros", [])
-    if not isinstance(macros, list):
-        raise EditorMetadataError(
-            f"'macros' must be a list, got {type(macros).__name__}"
-        )
-    seen_macro_ids: set[str] = set()
-    for i, m in enumerate(macros):
-        _validate_macro_grammar(m, i)
-        if m["id"] in seen_macro_ids:
-            raise EditorMetadataError(
-                f"macros[{i}]: duplicate id {m['id']!r}; "
-                f"macro ids must be unique within the sidecar."
-            )
-        seen_macro_ids.add(m["id"])
-
-    layout_order = sidecar["layout_order"]
-    if not isinstance(layout_order, list):
-        raise EditorMetadataError(
-            f"'layout_order' must be a list, got {type(layout_order).__name__}"
-        )
-    for i, sid in enumerate(layout_order):
-        if not isinstance(sid, str):
-            raise EditorMetadataError(
-                f"layout_order[{i}] must be a string, got {type(sid).__name__}"
-            )
-
-
-def _validate_section_grammar(sec: dict, i: int) -> None:
-    if not isinstance(sec, dict):
-        raise EditorMetadataError(
-            f"sections[{i}] must be an object, got {type(sec).__name__}"
-        )
-    missing = REQUIRED_SECTION_KEYS - set(sec.keys())
-    if missing:
-        raise EditorMetadataError(
-            f"sections[{i}] missing required keys: {sorted(missing)}."
-        )
-    unknown = set(sec.keys()) - ALLOWED_SECTION_KEYS
-    if unknown:
-        raise EditorMetadataError(
-            f"sections[{i}] has unknown keys: {sorted(unknown)}. "
-            f"Allowed: {sorted(ALLOWED_SECTION_KEYS)}."
-        )
-    if not isinstance(sec["id"], str) or not sec["id"]:
-        raise EditorMetadataError(
-            f"sections[{i}].id must be a non-empty string."
-        )
-    if not isinstance(sec["blocks"], list):
-        raise EditorMetadataError(
-            f"sections[{i}].blocks must be a list."
-        )
-    if "name" in sec and not isinstance(sec["name"], str):
-        raise EditorMetadataError(
-            f"sections[{i}].name must be a string when present."
-        )
-    if "repeat_with_offsets" in sec:
-        rwo = sec["repeat_with_offsets"]
-        if not isinstance(rwo, list):
-            raise EditorMetadataError(
-                f"sections[{i}].repeat_with_offsets must be a list."
-            )
-        for j, v in enumerate(rwo):
-            if not isinstance(v, int):
-                raise EditorMetadataError(
-                    f"sections[{i}].repeat_with_offsets[{j}] must be int, "
-                    f"got {type(v).__name__}"
-                )
-
-    # Validate each block in the section.
-    has_rwo = "repeat_with_offsets" in sec
-    for j, b in enumerate(sec["blocks"]):
-        _validate_block_grammar(b, i, j)
-        if has_rwo:
-            # Mid-slice review finding 4: macros inside a
-            # repeat_with_offsets section have ambiguous semantics
-            # (does the macro repeat per-row or globally?). v1
-            # rejects them; §16.2.4 may relax if a real need emerges.
-            if b.get("kind") == "macro":
-                raise EditorMetadataError(
-                    f"sections[{i}].blocks[{j}]: macro blocks aren't "
-                    f"allowed inside a section with repeat_with_offsets. "
-                    f"The semantic (does the macro repeat per-row or "
-                    f"globally?) isn't settled in v1 — restructure to "
-                    f"either drop repeat_with_offsets OR move the macro "
-                    f"into a separate section."
-                )
-            # Mid-slice review finding 1: atomic blocks' `row_idx`
-            # field is OVERRIDDEN by the iteration index when the
-            # section uses repeat_with_offsets. The block's authored
-            # row_idx is template-only; require it to be 0 so the
-            # contract is explicit + the user doesn't silently lose
-            # an authored value.
-            if b.get("kind") == "atomic" and b.get("row_idx") not in (None, 0):
-                raise EditorMetadataError(
-                    f"sections[{i}].blocks[{j}]: atomic blocks inside a "
-                    f"repeat_with_offsets section must use row_idx=0 "
-                    f"(the iteration index overrides it). Got row_idx="
-                    f"{b['row_idx']}; the value would be silently lost."
-                )
-
-
-def _validate_block_grammar(b: dict, section_idx: int, block_idx: int) -> None:
-    if not isinstance(b, dict):
-        raise EditorMetadataError(
-            f"sections[{section_idx}].blocks[{block_idx}] must be an object."
-        )
-    kind = b.get("kind")
-    if kind not in {"atomic", "macro"}:
-        raise EditorMetadataError(
-            f"sections[{section_idx}].blocks[{block_idx}].kind must be "
-            f"'atomic' or 'macro'; got {kind!r}."
-        )
-    if kind == "macro":
-        unknown = set(b.keys()) - MACRO_BLOCK_KEYS
-        if unknown:
-            raise EditorMetadataError(
-                f"sections[{section_idx}].blocks[{block_idx}] (macro): "
-                f"unknown keys {sorted(unknown)}. "
-                f"Allowed: {sorted(MACRO_BLOCK_KEYS)}."
-            )
-        if "ref" not in b:
-            raise EditorMetadataError(
-                f"sections[{section_idx}].blocks[{block_idx}] (macro): "
-                f"missing 'ref'."
-            )
-        if not isinstance(b["ref"], str) or not b["ref"]:
-            raise EditorMetadataError(
-                f"sections[{section_idx}].blocks[{block_idx}] (macro): "
-                f"'ref' must be a non-empty string."
-            )
-        return
-
-    # atomic block — exactly one addressing form
-    keys = set(b.keys())
-    is_flat = "slot_index" in keys
-    is_row = "row_idx" in keys or "block_idx" in keys
-    if is_flat and is_row:
-        raise EditorMetadataError(
-            f"sections[{section_idx}].blocks[{block_idx}] (atomic): "
-            f"both slot_index AND row_idx/block_idx present; pick one."
-        )
-    if not is_flat and not is_row:
-        raise EditorMetadataError(
-            f"sections[{section_idx}].blocks[{block_idx}] (atomic): "
-            f"missing addressing — need either 'slot_index' OR "
-            f"'row_idx'+'block_idx'."
-        )
-    if is_flat:
-        if keys != ATOMIC_FLAT_KEYS:
-            raise EditorMetadataError(
-                f"sections[{section_idx}].blocks[{block_idx}] (atomic flat): "
-                f"unexpected keys {sorted(keys - ATOMIC_FLAT_KEYS)}. "
-                f"Required: {sorted(ATOMIC_FLAT_KEYS)}."
-            )
-        if not isinstance(b["slot_index"], int):
-            raise EditorMetadataError(
-                f"sections[{section_idx}].blocks[{block_idx}].slot_index "
-                f"must be int, got {type(b['slot_index']).__name__}"
-            )
-    else:
-        if keys != ATOMIC_ROW_KEYS:
-            raise EditorMetadataError(
-                f"sections[{section_idx}].blocks[{block_idx}] (atomic row): "
-                f"unexpected keys {sorted(keys - ATOMIC_ROW_KEYS)}. "
-                f"Required: {sorted(ATOMIC_ROW_KEYS)}."
-            )
-        if "row_idx" not in b or "block_idx" not in b:
-            raise EditorMetadataError(
-                f"sections[{section_idx}].blocks[{block_idx}] (atomic row): "
-                f"both row_idx AND block_idx required."
-            )
-        if not isinstance(b["row_idx"], int) or not isinstance(b["block_idx"], int):
-            raise EditorMetadataError(
-                f"sections[{section_idx}].blocks[{block_idx}] (atomic row): "
-                f"row_idx and block_idx must both be int."
-            )
-
-
-def _validate_macro_grammar(m: dict, i: int) -> None:
-    if not isinstance(m, dict):
-        raise EditorMetadataError(
-            f"macros[{i}] must be an object, got {type(m).__name__}"
-        )
-    missing = REQUIRED_MACRO_KEYS - set(m.keys())
-    if missing:
-        raise EditorMetadataError(
-            f"macros[{i}] missing required keys: {sorted(missing)}."
-        )
-    unknown = set(m.keys()) - ALLOWED_MACRO_KEYS
-    if unknown:
-        raise EditorMetadataError(
-            f"macros[{i}] has unknown keys: {sorted(unknown)}. "
-            f"Allowed: {sorted(ALLOWED_MACRO_KEYS)}."
-        )
-    if not isinstance(m["id"], str) or not m["id"]:
-        raise EditorMetadataError(f"macros[{i}].id must be a non-empty string.")
-    if not isinstance(m["spec"], dict):
-        raise EditorMetadataError(f"macros[{i}].spec must be an object.")
-    if not isinstance(m["repeat"], int) or m["repeat"] < 1:
-        raise EditorMetadataError(
-            f"macros[{i}].repeat must be a positive int (>= 1); "
-            f"got {m['repeat']!r}."
-        )
-
+# ---------- internal drift-rule validators ----------------------------
 
 def _layout_form(station_template: dict) -> str:
     """Return 'flat_slots' or 'row_template' based on the station's layout."""
