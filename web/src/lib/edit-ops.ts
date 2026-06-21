@@ -1504,3 +1504,96 @@ export function attributeOpsToSlot(
   }
   return out;
 }
+
+
+// ---- §16.2.7.t7 — semantic structural diff (describeOp) ---------------
+
+
+/**
+ * §16.2.7.t7 — render one Edit op as a human-readable sentence.
+ *
+ * Used by TracePane's "Edits" panel to surface staged structural
+ * intent that doesn't show up in track-id-based trace diff:
+ * sectionRename, sectionCreate, reorderSections, and the like
+ * don't change any track id, so the existing per-slot diff
+ * reports "No changes since save" even when the operator clearly
+ * did something.
+ *
+ * Defensive: missing address.slot_index renders "(no address)" so
+ * the line stays informative.
+ */
+export function describeOp(op: Edit): string {
+  switch (op.kind) {
+    case 'patchBlock': {
+      const slot = op.address.slot_index;
+      const fields = _formatFields(op.fields);
+      const target = slot === undefined ? '(no address)' : `slot ${slot}`;
+      return `Patched ${target}: ${fields || '(no fields)'}`;
+    }
+    case 'patchMacro': {
+      const fields = _formatFields(op.fields);
+      return `Patched macro '${op.macroId}': ${fields || '(no fields)'}`;
+    }
+    case 'renameSection':
+      return `Renamed section '${op.sectionId}' to '${op.name ?? '(blank)'}'`;
+    case 'sectionCreate': {
+      const named = op.name ? ` ('${op.name}')` : '';
+      return `Created section '${op.sectionId}'${named}`;
+    }
+    case 'sectionDelete':
+      return `Deleted section '${op.sectionId}'`;
+    case 'reorderSections':
+      return `Reordered sections to: ${op.layoutOrder.join(', ')}`;
+    case 'moveBlock': {
+      const slot = op.address.slot_index;
+      const target = slot === undefined ? '(no address)' : `slot ${slot}`;
+      const pos = op.targetIndex === null
+        ? 'appended'
+        : `at position ${op.targetIndex}`;
+      return `Moved ${target} to section '${op.targetSectionId}' ${pos}`;
+    }
+    case 'retypeBlock': {
+      const slot = op.address.slot_index;
+      const target = slot === undefined ? '(no address)' : `slot ${slot}`;
+      const parts: string[] = [];
+      if (op.newStrategy !== null) {
+        parts.push(`strategy '${op.newStrategy}'`);
+      }
+      if (op.newSource !== null) {
+        parts.push(`source '${op.newSource}'`);
+      }
+      const tail = parts.length === 0 ? '(no change)' : parts.join(' / ');
+      return `Retyped ${target} to ${tail}`;
+    }
+    case 'structuralBlockEdit': {
+      const slot = op.edit.slot_index;
+      if (op.edit.op === 'size') {
+        return `Resized slot ${slot} to size ${op.edit.new_size ?? '?'}`;
+      }
+      if (op.edit.op === 'add') {
+        return `Inserted slot at position ${slot}`;
+      }
+      if (op.edit.op === 'remove') {
+        return `Removed slot at position ${slot}`;
+      }
+      return `Structural edit at slot ${slot}`;
+    }
+  }
+}
+
+
+/**
+ * Format a field-bag as `key=value · key2=value2`. Used by
+ * patchBlock + patchMacro describers. Null values render as
+ * `key=null` so the operator sees explicit clears. Arrays render
+ * as a bracketed comma list.
+ */
+function _formatFields(fields: Record<string, unknown>): string {
+  const entries = Object.entries(fields);
+  if (entries.length === 0) return '';
+  return entries.map(([k, v]) => {
+    if (v === null) return `${k}=null`;
+    if (Array.isArray(v)) return `${k}=[${v.join(',')}]`;
+    return `${k}=${v}`;
+  }).join(' · ');
+}

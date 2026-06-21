@@ -36,6 +36,7 @@
     type SlotClassification,
     type StationTemplate,
   } from '$lib/editor';
+  import { describeOp, type Edit } from '$lib/edit-ops';
 
   /** Latest successful preview trace. null when no preview has run yet
    *  or when Discard cleared it. */
@@ -96,6 +97,11 @@
    *  edit) show a disabled button with a tooltip explaining the
    *  cause. */
   export let revertableSlots: Set<number> = new Set();
+  /** §16.2.7.t7 — the operator's staged opLog. PARENT passes a
+   *  read-only reference; TracePane just renders each entry via
+   *  `describeOp` as a numbered line in the "Edits" panel. Panel
+   *  shows only when showDiff is on AND opLog non-empty. */
+  export let opLog: Edit[] = [];
 
   const dispatch = createEventDispatcher<{
     select: { slotIndex: number };
@@ -472,6 +478,25 @@
          post-Save invalidation refires too). -->
     <div class="diff-error-banner" data-testid="trace-diff-error" role="status">
       Diff unavailable: {savedTraceError}
+    </div>
+  {/if}
+
+  {#if showDiff && opLog.length > 0}
+    <!-- §16.2.7.t7 (D1) — Edits panel. Surfaces structural intent
+         (renames, reorders, create/delete) that doesn't show up
+         in track_id-based slot diff. Numbered list, scrollable so
+         50-op opLogs don't take over. Renders ONLY when showDiff is
+         on AND opLog non-empty per D1; same gating as the per-week
+         + per-section summary rows. -->
+    <div class="edits-panel" data-testid="trace-edits-panel">
+      <div class="edits-panel-label">Edits ({opLog.length}):</div>
+      <ol class="edits-panel-list" data-testid="trace-edits-list">
+        {#each opLog as op, i (i)}
+          <li class="edits-panel-row" data-testid="trace-edits-row">
+            {describeOp(op)}
+          </li>
+        {/each}
+      </ol>
     </div>
   {/if}
 
@@ -908,5 +933,35 @@
     border-color: var(--text-muted, #888);
     cursor: not-allowed;
     opacity: 0.6;
+  }
+
+  /* §16.2.7.t7 — Edits panel. Scrollable list capped at 25vh so
+     50-op opLogs don't take over. Renders below the per-section
+     summary. */
+  .edits-panel {
+    display: flex;
+    flex-direction: column;
+    padding: 0.4rem 0.75rem;
+    border-bottom: 1px solid var(--border, #ddd);
+    background: color-mix(in srgb, var(--bg-subtle, #fafafa) 60%, transparent);
+    font-size: 0.78rem;
+    flex-shrink: 0;
+    max-height: 25vh;
+    overflow-y: auto;
+  }
+  .edits-panel-label {
+    color: var(--text-muted, #666);
+    font-weight: 500;
+    margin-bottom: 0.2rem;
+  }
+  .edits-panel-list {
+    list-style: decimal inside;
+    padding: 0;
+    margin: 0;
+  }
+  .edits-panel-row {
+    padding: 0.1rem 0;
+    color: var(--text-muted, #444);
+    line-height: 1.4;
   }
 </style>

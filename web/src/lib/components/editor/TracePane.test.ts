@@ -805,3 +805,104 @@ describe('<TracePane> — §16.2.7.t6 revert button', () => {
     expect(buttons[0].closest('li')?.getAttribute('data-diff-kind')).toBe('added');
   });
 });
+
+
+// §16.2.7.t7 — Edits panel.
+describe('<TracePane> — §16.2.7.t7 edits panel (semantic diff)', () => {
+  beforeEach(() => cleanup());
+
+  function tr(track_ids: Array<number>): Trace {
+    const slots = track_ids.map((track_id, i) => ({
+      slot: i, unit: 'slot', row: 1, block: i,
+      source: 'A', strategy: 'sequential', pool_index: i,
+      track_id, track_name: `T${track_id}`, track_artist: 'A',
+      reason: '', excluded: [],
+    }));
+    return {
+      trace_id: 'pv', station: 'ts', week: 1, rng: 'off',
+      seed: null, generated_at: '2026-06-15T00:00:00Z', slots,
+    };
+  }
+
+  it('renders nothing when showDiff is OFF (even with non-empty opLog)', () => {
+    render(TracePane, {
+      trace: tr([1, 2, 3]),
+      savedTrace: tr([1, 2, 3]),
+      showDiff: false,
+      previewing: false,
+      errorMessage: null,
+      weekValue: 1,
+      savedTraceError: null,
+      opLog: [{
+        kind: 'renameSection', sectionId: 'morning', name: 'AM',
+      }],
+    });
+    expect(screen.queryByTestId('trace-edits-panel')).toBeNull();
+  });
+
+  it('renders nothing when opLog is empty (even with showDiff on)', () => {
+    render(TracePane, {
+      trace: tr([1, 2, 3]),
+      savedTrace: tr([1, 2, 3]),
+      showDiff: true,
+      previewing: false,
+      errorMessage: null,
+      weekValue: 1,
+      savedTraceError: null,
+      opLog: [],
+    });
+    expect(screen.queryByTestId('trace-edits-panel')).toBeNull();
+  });
+
+  it('shows one numbered row per op with describeOp rendering', () => {
+    render(TracePane, {
+      trace: tr([1, 2, 3]),
+      savedTrace: tr([1, 2, 3]),
+      showDiff: true,
+      previewing: false,
+      errorMessage: null,
+      weekValue: 1,
+      savedTraceError: null,
+      opLog: [
+        { kind: 'renameSection', sectionId: 'morning', name: 'AM' },
+        {
+          kind: 'patchBlock',
+          address: { slot_index: 0 },
+          fields: { size: 5 },
+        },
+        { kind: 'sectionDelete', sectionId: 'evening' },
+      ],
+    });
+    const panel = screen.getByTestId('trace-edits-panel');
+    expect(panel).toBeInTheDocument();
+    expect(panel.textContent).toContain('Edits (3):');
+    const rows = screen.getAllByTestId('trace-edits-row');
+    expect(rows).toHaveLength(3);
+    expect(rows[0].textContent).toContain("Renamed section 'morning' to 'AM'");
+    expect(rows[1].textContent).toContain('Patched slot 0: size=5');
+    expect(rows[2].textContent).toContain("Deleted section 'evening'");
+  });
+
+  it('surfaces structural edits invisible to trace diff (operator clearly did something)', () => {
+    // Reorder doesn't change track_ids → trace would say "No
+    // changes since save". The Edits panel makes the intent visible.
+    render(TracePane, {
+      trace: tr([1, 2, 3]),
+      savedTrace: tr([1, 2, 3]),
+      showDiff: true,
+      previewing: false,
+      errorMessage: null,
+      weekValue: 1,
+      savedTraceError: null,
+      opLog: [{
+        kind: 'reorderSections',
+        layoutOrder: ['evening', 'morning'],
+      }],
+    });
+    const rows = screen.getAllByTestId('trace-edits-row');
+    expect(rows).toHaveLength(1);
+    expect(rows[0].textContent).toContain(
+      'Reordered sections to: evening, morning',
+    );
+  });
+});

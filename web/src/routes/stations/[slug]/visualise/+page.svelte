@@ -2265,6 +2265,7 @@
             savedSidecar={sidecar}
             stagedSidecar={stagedSidecar}
             revertableSlots={revertableSlots}
+            opLog={opLog}
             on:select={handleTraceSelect}
             on:weekChange={handleWeekChange}
             on:showDiffChange={handleShowDiffChange}

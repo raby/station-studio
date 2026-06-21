@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  applyEdit, applyEdits, attributeOpsToSlot, replayOpLog,
+  applyEdit, applyEdits, attributeOpsToSlot, describeOp, replayOpLog,
   type BlockAddress, type Edit, type ReplayDeps,
 } from './edit-ops';
 import type { StationTemplate } from './editor';
@@ -1789,5 +1789,140 @@ describe('attributeOpsToSlot', () => {
   it('empty opLog → empty result for any slot', () => {
     expect(attributeOpsToSlot([], 0)).toEqual([]);
     expect(attributeOpsToSlot([], 999)).toEqual([]);
+  });
+});
+
+
+// ---- §16.2.7.t7 — describeOp -------------------------------------------
+
+
+describe('describeOp', () => {
+  it('patchBlock with slot_index + fields', () => {
+    const op: Edit = {
+      kind: 'patchBlock',
+      address: { slot_index: 5 } as BlockAddress,
+      fields: { size: 10, cursor_id: 'C' },
+    };
+    expect(describeOp(op)).toBe('Patched slot 5: size=10 · cursor_id=C');
+  });
+
+  it('patchBlock with null field renders explicit clear', () => {
+    const op: Edit = {
+      kind: 'patchBlock',
+      address: { slot_index: 0 } as BlockAddress,
+      fields: { genre: null },
+    };
+    expect(describeOp(op)).toBe('Patched slot 0: genre=null');
+  });
+
+  it('patchBlock with array field renders bracketed list', () => {
+    const op: Edit = {
+      kind: 'patchBlock',
+      address: { slot_index: 2 } as BlockAddress,
+      fields: { allowlist_sources: ['rock', 'jazz'] },
+    };
+    expect(describeOp(op)).toBe('Patched slot 2: allowlist_sources=[rock,jazz]');
+  });
+
+  it('patchBlock without slot_index (drift) renders defensive "(no address)"', () => {
+    const op: Edit = {
+      kind: 'patchBlock',
+      address: {} as BlockAddress,
+      fields: { size: 1 },
+    };
+    expect(describeOp(op)).toBe('Patched (no address): size=1');
+  });
+
+  it('patchMacro', () => {
+    const op: Edit = {
+      kind: 'patchMacro',
+      macroId: 'jingles',
+      fields: { repeat: 3 },
+    };
+    expect(describeOp(op)).toBe("Patched macro 'jingles': repeat=3");
+  });
+
+  it('renameSection', () => {
+    const op: Edit = {
+      kind: 'renameSection',
+      sectionId: 'morning',
+      name: 'AM',
+    };
+    expect(describeOp(op)).toBe("Renamed section 'morning' to 'AM'");
+  });
+
+  it('sectionCreate with + without name', () => {
+    expect(describeOp({
+      kind: 'sectionCreate', sectionId: 'evening', name: 'PM',
+    })).toBe("Created section 'evening' ('PM')");
+    expect(describeOp({
+      kind: 'sectionCreate', sectionId: 'unnamed', name: null,
+    })).toBe("Created section 'unnamed'");
+  });
+
+  it('sectionDelete', () => {
+    expect(describeOp({
+      kind: 'sectionDelete', sectionId: 'morning',
+    })).toBe("Deleted section 'morning'");
+  });
+
+  it('reorderSections', () => {
+    expect(describeOp({
+      kind: 'reorderSections',
+      layoutOrder: ['morning', 'evening', '_unsorted'],
+    })).toBe('Reordered sections to: morning, evening, _unsorted');
+  });
+
+  it('moveBlock with targetIndex + with null (appended)', () => {
+    expect(describeOp({
+      kind: 'moveBlock',
+      address: { slot_index: 3 } as BlockAddress,
+      targetSectionId: 'evening',
+      targetIndex: 0,
+    })).toBe("Moved slot 3 to section 'evening' at position 0");
+    expect(describeOp({
+      kind: 'moveBlock',
+      address: { slot_index: 3 } as BlockAddress,
+      targetSectionId: 'evening',
+      targetIndex: null,
+    })).toBe("Moved slot 3 to section 'evening' appended");
+  });
+
+  it('retypeBlock with strategy + source / strategy only / source only / neither', () => {
+    expect(describeOp({
+      kind: 'retypeBlock',
+      address: { slot_index: 7 } as BlockAddress,
+      newStrategy: 'window', newSource: 'rock', newFields: {},
+    })).toBe("Retyped slot 7 to strategy 'window' / source 'rock'");
+    expect(describeOp({
+      kind: 'retypeBlock',
+      address: { slot_index: 7 } as BlockAddress,
+      newStrategy: 'window', newSource: null, newFields: {},
+    })).toBe("Retyped slot 7 to strategy 'window'");
+    expect(describeOp({
+      kind: 'retypeBlock',
+      address: { slot_index: 7 } as BlockAddress,
+      newStrategy: null, newSource: 'rock', newFields: {},
+    })).toBe("Retyped slot 7 to source 'rock'");
+    expect(describeOp({
+      kind: 'retypeBlock',
+      address: { slot_index: 7 } as BlockAddress,
+      newStrategy: null, newSource: null, newFields: {},
+    })).toBe('Retyped slot 7 to (no change)');
+  });
+
+  it('structuralBlockEdit — size / add / remove', () => {
+    expect(describeOp({
+      kind: 'structuralBlockEdit',
+      edit: { op: 'size', slot_index: 0, new_size: 4 },
+    })).toBe('Resized slot 0 to size 4');
+    expect(describeOp({
+      kind: 'structuralBlockEdit',
+      edit: { op: 'add', slot_index: 5 },
+    })).toBe('Inserted slot at position 5');
+    expect(describeOp({
+      kind: 'structuralBlockEdit',
+      edit: { op: 'remove', slot_index: 5 },
+    })).toBe('Removed slot at position 5');
   });
 });
