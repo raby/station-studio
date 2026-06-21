@@ -10373,8 +10373,21 @@ focused:
   **c1 / c2 split.** c1: `attributeOpsToSlot` in `edit-ops.ts` +
   6 unit tests. c2: TracePane revert button + page handler +
   `revertableSlots: Set<number>` derivation + integration tests.
-- **§16.2.7.t7** queued — semantic structural diff (opLog-derived).
-  **Design pass (entering implementation):**
+- **§16.2.7.t7** ✅ SHIPPED (design `73abec6` → impl + tests
+  `7713ca8` → review R1 `07a77bd`) — `describeOp(op) → string`
+  helper in `lib/edit-ops.ts` renders each Edit kind as a
+  human-readable sentence ("Patched slot 5: size=10",
+  "Renamed section 'morning' to 'AM'", "Reordered sections
+  to: evening, morning"). TracePane shows an "Edits" panel
+  below the per-section row when showDiff is on AND opLog
+  non-empty; numbered scrollable list (max-height 25vh).
+  Surfaces structural intent (renames, reorders, create/delete)
+  invisible to the track-id-based trace diff. R1 fix added
+  `default: { const _exhaustive: never = op; ... }` exhaustive
+  pin so future Edit-kind additions fail compile until
+  describeOp covers them. 16 new tests (12 c1 unit + 4 c2
+  integration). 844/844 vitest. **Design pass preserved below.** —
+  Original design pass:
 
   **The gap.** Trace-based diff compares track ids; structural
   edits like sectionRename produce no track id changes → trace
