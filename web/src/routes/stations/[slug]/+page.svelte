@@ -12,6 +12,7 @@
     JobStartConflict,
     deletePlaylist,
     deleteStation,
+    forkStation,
     ApiError,
   } from '$lib/api';
   import type {
@@ -47,6 +48,52 @@
   // can be in flight at a time and the message location is consistent.
   let deleting = false;
   let deleteError: string | null = null;
+
+  // §16.2.8 — fork state. forkOpen toggles the inline form. The
+  // form's defaults are derived from the source station; operator
+  // can edit before submitting.
+  let forkOpen = false;
+  let forkNewSlug = '';
+  let forkNewName = '';
+  let forking = false;
+  let forkError: string | null = null;
+
+  function openForkForm(): void {
+    if (!station) return;
+    forkNewSlug = `${station.slug}-fork`;
+    forkNewName = `${station.name} (fork)`;
+    forkError = null;
+    forkOpen = true;
+  }
+
+  function closeForkForm(): void {
+    forkOpen = false;
+    forkError = null;
+  }
+
+  async function submitFork(): Promise<void> {
+    if (!station) return;
+    forking = true;
+    forkError = null;
+    try {
+      const next = await forkStation(station.slug, {
+        new_slug: forkNewSlug.trim(),
+        new_name: forkNewName.trim(),
+      });
+      // Land on the new station's detail page. SvelteKit goto's
+      // client-side nav re-runs the page load (re-fetches getStation
+      // for the new slug); previous mounts unmount cleanly.
+      await goto(`/stations/${encodeURIComponent(next.slug)}`);
+    } catch (e) {
+      if (e instanceof ApiError) {
+        forkError = e.message;
+      } else {
+        forkError = e instanceof Error ? e.message : String(e);
+      }
+    } finally {
+      forking = false;
+    }
+  }
 
   // SvelteKit guarantees `slug` is present because this route only matches
   // when the param exists, but the param type is `string | undefined`.
@@ -379,6 +426,18 @@
         >
           Edit station →
         </a>
+        <!-- §16.2.8 — Fork affordance. Click toggles an inline form
+             instead of routing to a separate page (keeps operator in
+             context). Defaults to slug+'-fork' / name+' (fork)'. -->
+        <button
+          type="button"
+          class="fork"
+          data-testid="fork-station"
+          disabled={forking || generating}
+          on:click={openForkForm}
+        >
+          Fork station →
+        </button>
         <button
           type="button"
           class="nuke"
@@ -389,6 +448,61 @@
           Delete station →
         </button>
       </div>
+      {#if forkOpen}
+        <!-- §16.2.8 — inline fork form. Slug + name inputs default
+             to source-derived values; operator submits or cancels.
+             409 / 422 errors render in the same banner slot. -->
+        <form
+          class="fork-form"
+          data-testid="fork-form"
+          on:submit|preventDefault={submitFork}
+        >
+          <label>
+            New slug
+            <input
+              type="text"
+              data-testid="fork-new-slug"
+              bind:value={forkNewSlug}
+              required
+              pattern="^[a-z0-9][a-z0-9-]*$"
+              disabled={forking}
+            />
+          </label>
+          <label>
+            New name
+            <input
+              type="text"
+              data-testid="fork-new-name"
+              bind:value={forkNewName}
+              required
+              disabled={forking}
+            />
+          </label>
+          {#if forkError}
+            <div class="fork-error" data-testid="fork-error" role="status">
+              {forkError}
+            </div>
+          {/if}
+          <div class="fork-actions">
+            <button
+              type="submit"
+              data-testid="fork-submit"
+              disabled={forking || !forkNewSlug.trim() || !forkNewName.trim()}
+            >
+              {forking ? 'Forking…' : 'Fork station'}
+            </button>
+            <button
+              type="button"
+              class="ghost"
+              data-testid="fork-cancel"
+              disabled={forking}
+              on:click={closeForkForm}
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
+      {/if}
     </header>
 
     {#if overview}
@@ -755,6 +869,58 @@
   .nuke:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+  }
+  /* §16.2.8 — Fork button + inline form. Same shell as .nuke
+     visually but neutral color (no destructive accent). */
+  .fork {
+    padding: 0.5rem 1rem;
+    background: white;
+    color: var(--text, #333);
+    border: 1px solid var(--border, #ccc);
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    white-space: nowrap;
+  }
+  .fork:hover:not(:disabled) {
+    background: var(--bg-hover, #f0f0f0);
+  }
+  .fork:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .fork-form {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin-top: 0.75rem;
+    padding: 0.75rem;
+    border: 1px solid var(--border, #ccc);
+    border-radius: 4px;
+    background: var(--bg-subtle, #fafafa);
+    max-width: 28rem;
+  }
+  .fork-form label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    font-size: 0.85rem;
+  }
+  .fork-form input {
+    padding: 0.3rem 0.5rem;
+    font-size: 0.9rem;
+    border: 1px solid var(--border, #ccc);
+    border-radius: 3px;
+  }
+  .fork-error {
+    color: var(--error, #c0392b);
+    font-size: 0.85rem;
+    padding: 0.3rem 0;
+  }
+  .fork-actions {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 0.25rem;
   }
   h2 {
     margin-top: 2rem;

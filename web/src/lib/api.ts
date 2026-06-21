@@ -266,6 +266,29 @@ export const deleteStation = (slug: string, fetch_ = fetch): Promise<void> =>
     (r) => noContent(r),
   );
 
+
+/**
+ * §16.2.8 — fork a station (clone template + sidecar under a new
+ * slug + name). Caller must supply both new_slug + new_name. On
+ * success, server returns the new station; caller typically
+ * navigates to `/stations/${new_slug}`.
+ *
+ * Errors:
+ *   - 404 if the source slug doesn't exist.
+ *   - 409 if `new_slug` is already taken.
+ *   - 422 if `new_slug` fails Pydantic pattern validation.
+ */
+export const forkStation = (
+  slug: string,
+  body: { new_slug: string; new_name: string },
+  fetch_ = fetch,
+): Promise<Station> =>
+  fetch_(`/api/stations/${encodeURIComponent(slug)}/fork`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }).then((r) => json<Station>(r));
+
 export interface DiskExportResponse {
   /** Absolute path the iTunes XML was written to. */
   path: string;

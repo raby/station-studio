@@ -14,6 +14,7 @@ const {
   cancelJobMock,
   deletePlaylistMock,
   deleteStationMock,
+  forkStationMock,
   gotoMock,
   panelListSourcesMock,
   panelUploadSourceMock,
@@ -63,6 +64,7 @@ const {
     cancelJobMock: vi.fn(),
     deletePlaylistMock: vi.fn(),
     deleteStationMock: vi.fn(),
+    forkStationMock: vi.fn(),
     panelListSourcesMock: vi.fn(),
     panelUploadSourceMock: vi.fn(),
     panelImportByPathMock: vi.fn(),
@@ -91,6 +93,7 @@ vi.mock('$lib/api', () => ({
   cancelJob: (...args: unknown[]) => cancelJobMock(...args),
   deletePlaylist: (...args: unknown[]) => deletePlaylistMock(...args),
   deleteStation: (...args: unknown[]) => deleteStationMock(...args),
+  forkStation: (...args: unknown[]) => forkStationMock(...args),
   ApiError: FakeApiError,
   JobStartConflict: FakeJobStartConflict,
   // §16.2.6 c3 review #1 batch C: the page migrated from the
@@ -1004,5 +1007,86 @@ describe('station detail — §16.19 overview', () => {
     // Core page still renders (the Playlists heading is always present).
     await screen.findByText('Classics');
     expect(screen.queryByTestId('overview')).toBeNull();
+  });
+});
+
+
+// §16.2.8 — Fork action.
+describe('station detail +page.svelte — §16.2.8 fork action', () => {
+  beforeEach(() => {
+    getStationMock.mockReset();
+    getStationPlaylistsMock.mockReset();
+    getStationOverviewMock.mockReset();
+    startGenerateJobMock.mockReset();
+    watchJobMock.mockReset();
+    cancelJobMock.mockReset();
+    deletePlaylistMock.mockReset();
+    deleteStationMock.mockReset();
+    forkStationMock.mockReset();
+    gotoMock.mockReset();
+    confirmDialogMock.mockReset();
+    confirmDialogMock.mockResolvedValue(true);
+    setSlug('cls');
+    getStationMock.mockResolvedValue({
+      id: 1, slug: 'cls', name: 'Classics', template: { station: 'cls' },
+    });
+    getStationPlaylistsMock.mockResolvedValue([]);
+    getStationOverviewMock.mockRejectedValue(new FakeApiError(500, 'overview unused in this block'));
+  });
+
+  it('Fork button is present + opens the inline form on click; form defaults derive from the source', async () => {
+    render(Page);
+    await screen.findByText('Classics');
+
+    const forkBtn = screen.getByTestId('fork-station');
+    expect(forkBtn).toBeInTheDocument();
+    // Form not rendered until clicked.
+    expect(screen.queryByTestId('fork-form')).toBeNull();
+
+    await act(async () => { await fireEvent.click(forkBtn); });
+
+    expect(screen.getByTestId('fork-form')).toBeInTheDocument();
+    expect((screen.getByTestId('fork-new-slug') as HTMLInputElement).value).toBe('cls-fork');
+    expect((screen.getByTestId('fork-new-name') as HTMLInputElement).value).toBe('Classics (fork)');
+  });
+
+  it('Cancel hides the form without firing forkStation', async () => {
+    render(Page);
+    await screen.findByText('Classics');
+    await act(async () => { await fireEvent.click(screen.getByTestId('fork-station')); });
+    expect(screen.getByTestId('fork-form')).toBeInTheDocument();
+
+    await act(async () => { await fireEvent.click(screen.getByTestId('fork-cancel')); });
+    expect(screen.queryByTestId('fork-form')).toBeNull();
+    expect(forkStationMock).not.toHaveBeenCalled();
+  });
+
+  it('Submit calls forkStation + navigates to the new station on success', async () => {
+    forkStationMock.mockResolvedValue({
+      id: 2, slug: 'cls-fork', name: 'Classics (fork)', template: { station: 'cls' },
+    });
+    render(Page);
+    await screen.findByText('Classics');
+    await act(async () => { await fireEvent.click(screen.getByTestId('fork-station')); });
+
+    await act(async () => { await fireEvent.click(screen.getByTestId('fork-submit')); });
+
+    expect(forkStationMock).toHaveBeenCalledWith('cls', {
+      new_slug: 'cls-fork', new_name: 'Classics (fork)',
+    });
+    expect(gotoMock).toHaveBeenCalledWith('/stations/cls-fork');
+  });
+
+  it('Surfaces ApiError (e.g. 409) inline in the fork-error banner; form stays open', async () => {
+    forkStationMock.mockRejectedValue(new FakeApiError(409, "station 'cls-fork' already exists"));
+    render(Page);
+    await screen.findByText('Classics');
+    await act(async () => { await fireEvent.click(screen.getByTestId('fork-station')); });
+    await act(async () => { await fireEvent.click(screen.getByTestId('fork-submit')); });
+
+    expect(screen.getByTestId('fork-error')).toHaveTextContent('already exists');
+    // Form stays open so operator can edit the slug + retry.
+    expect(screen.getByTestId('fork-form')).toBeInTheDocument();
+    expect(gotoMock).not.toHaveBeenCalled();
   });
 });
