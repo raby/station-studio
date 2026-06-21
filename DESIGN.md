@@ -10598,6 +10598,104 @@ station is unchanged.
 
 ### 16.4 Trace versioning (D8 from §16.1)
 
+**Status: design pass locked 2026-06-21. Ready for c1 (backend)
+next session.** The paper sketch below has been hardened into a
+specific implementation plan; the v1 decisions sit at the top, the
+original sketch + stay-out-of-scope items follow as historical
+context.
+
+**v1 locked decisions** (from the design-pass turn):
+
+| Q | Choice | Rationale |
+|---|---|---|
+| Schema shape | NEW `PlaylistVersion` table; **drop `PlaylistTrace` entirely** | Cleanest end-state at the cost of largest blast radius (~27 hits in `api/`/`engine/`/`scripts/`/`migrations/` + ~15 in `tests/`/`web/`). |
+| Viewer scope | Picker only | Diff deferred to **§16.4.t1** as a genuinely interesting standalone slice. Picker alone closes the regen-destroys-old-trace hole. |
+| Disk export | Always pins to latest | Matches Classics's OneDrive flow — iTunes box wants THE current week, not N versions. Version history lives in the DB. |
+| Retention | Keep all versions forever | Single-user; ~600 KB per version × 5 regens × 52 weeks ≈ 150 MB per station, well within SQLite comfort. Cap can be added later if it becomes a real cost. |
+| PlaylistEntry | Stays latest-only (sub-decision, not asked) | `TraceSlot` already carries `track_id` / `track_name` / `track_artist` / `source` / `strategy` / `reason` (see `engine/trace.py:36`); the viewer renders historical versions directly from `slots` JSON without a PlaylistEntry join. PlaylistEntry rewrites on every regen to mirror LATEST. Historical-export (e.g. "re-export version 2 to XML") is not in v1 — resolves via `slots` if/when asked. |
+
+**Schema (new table)**:
+
+```sql
+CREATE TABLE playlist_version (
+    id INTEGER PRIMARY KEY,
+    playlist_id INTEGER NOT NULL REFERENCES playlist(id) ON DELETE CASCADE,
+    version_no INTEGER NOT NULL,
+    trace_id TEXT NOT NULL UNIQUE,
+    station_slug TEXT NOT NULL,
+    week INTEGER NOT NULL,
+    rng TEXT NOT NULL,
+    seed INTEGER NULL,
+    generated_at TEXT NOT NULL,  -- ISO8601
+    slots JSON NOT NULL,
+    UNIQUE(playlist_id, version_no)
+);
+CREATE INDEX ix_playlist_version_playlist_id ON playlist_version(playlist_id);
+```
+
+`Playlist.trace_id` keeps its column — flips on regen to point at
+the new current version's trace_id. Backward-compatible with the
+existing `PlaylistOut.trace_id` wire field.
+
+**Migration** (`<rev>_add_playlist_versions_16_4.py`):
+
+1. `create_table('playlist_version', ...)`.
+2. Backfill via raw SQL: `INSERT INTO playlist_version SELECT
+   playlist_id, 1, trace_id, station_slug, week, rng, seed,
+   generated_at, slots FROM playlist_trace`.
+3. `drop_table('playlist_trace')`.
+
+Symmetric downgrade reconstructs `playlist_trace` from `MAX
+(version_no)` per playlist.
+
+**Code changes**:
+
+- `engine/models.py` — delete `PlaylistTrace`; add `PlaylistVersion`;
+  `Playlist.trace` becomes `versions = relationship('PlaylistVersion',
+  uselist=True, order_by='version_no', cascade='all, delete-orphan')`;
+  add `Playlist.current_version()` helper that returns the max-
+  version row.
+- `engine/persistence.py:209` (`save_playlist`) — if Playlist exists
+  for (station, week), append new `PlaylistVersion(version_no =
+  max + 1)` + set `Playlist.trace_id = new_version.trace_id` +
+  rewrite PlaylistEntry rows (latest only). If absent, create
+  Playlist + version_no=1.
+- `api/routers/generate.py`:
+  - `get_trace(playlist_id, v: int | None = None)`: defaults to
+    current version when `v` omitted.
+  - new `GET /api/playlists/{id}/versions` → list of
+    `{version_no, trace_id, generated_at, seed}` for the picker.
+- `scripts/backfill_slot_types.py` — `pl.trace` → `pl.current_version()`.
+- All test sites (~15) updated to read via `pl.current_version()`
+  or query `PlaylistVersion` directly.
+- Frontend trace viewer (`web/src/routes/playlists/[id]/+page.svelte`):
+  picker dropdown above the trace; URL grows `?v=N`; default = latest.
+- §16.1 confirm dialog copy update: "Trace `…` will be deleted" →
+  "Saved as version N+1; the current trace will still be available."
+
+**Slice shape (2 sessions, 3 commits)**:
+
+- **c1 (backend)** — migration + model + `save_playlist` + API +
+  pytest. Frontend untouched; existing trace viewer keeps working
+  (showing latest only). Backend test sweep mostly mechanical.
+- **c2 (frontend)** — version picker + `?v=N` URL + confirm dialog
+  copy + vitest + Playwright.
+- **c3 (closeout)** — DESIGN.md SHIPPED writeup + memory note.
+
+**Stay-out-of-scope** (folded from below):
+
+| Item | Trigger to revisit |
+|---|---|
+| Diff view (compare?from=N&to=M) | Becomes §16.4.t1 |
+| Branching versions / tags | Linear history is enough |
+| Rollback button (mutate current → prior) | Add if asked; surprisingly subtle |
+| Cross-station diff | Way out of scope |
+| Versioned disk filenames `{week:03d}-v{N}.xml` | Capped at "always latest" per decision table |
+| Historical-version export to XML | Out of v1 (resolves via slots JSON if asked) |
+| Retention cap | Add if growth becomes real (estimate: ~150 MB per station) |
+
+---
+
 **The hole.** Today, when §16.1's regenerate flow fires, the prior
 `PlaylistTrace` row is hard-deleted via the cascade on the
 `Playlist` row's replacement. The old `trace_id` is unrecoverable —
