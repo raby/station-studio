@@ -10374,6 +10374,50 @@ focused:
   6 unit tests. c2: TracePane revert button + page handler +
   `revertableSlots: Set<number>` derivation + integration tests.
 - **§16.2.7.t7** queued — semantic structural diff (opLog-derived).
+  **Design pass (entering implementation):**
+
+  **The gap.** Trace-based diff compares track ids; structural
+  edits like sectionRename produce no track id changes → trace
+  diff shows "No changes since save" while the operator clearly
+  did something. Operator can't see "you renamed section morning"
+  without scrolling the canvas.
+
+  **D1 — UI: "Edits" panel in TracePane** between the per-section
+  summary row + slot list. Renders ONLY when showDiff is on AND
+  opLog non-empty. Numbered list (1-based for cross-reference).
+
+  **D2 — Translation: `describeOp(op) → string`** pure function
+  in `lib/edit-ops`. One sentence per Edit kind:
+    - patchBlock → "Patched slot N: <fields>"
+    - patchMacro → "Patched macro '<id>': <fields>"
+    - renameSection → "Renamed section '<id>' to '<name>'"
+    - sectionCreate → "Created section '<id>'" (+ name if present)
+    - sectionDelete → "Deleted section '<id>'"
+    - reorderSections → "Reordered sections to: <list>"
+    - moveBlock → "Moved slot N to section '<target>' at
+      position M" (or "appended" if targetIndex is null)
+    - retypeBlock → "Retyped slot N to strategy '<s>' / source
+      '<src>'" (omit unchanged sides)
+    - structuralBlockEdit.size → "Resized slot N to size M"
+    - structuralBlockEdit.add → "Inserted slot at position N"
+    - structuralBlockEdit.remove → "Removed slot at position N"
+
+  **D3 — Layout: scrollable.** `max-height: 25vh` + `overflow-y:
+  auto` so 50-op opLogs don't take over. No per-kind color; the
+  kind label carries the discrimination.
+
+  **D4 — No click-to-scroll affordance in v1.** Requires per-kind
+  chip lookup logic. Punt.
+
+  **D5 — Out of scope:** click-to-scroll, collapse-runs, kind
+  icons/badges, editable descriptions, customizable templates.
+
+  **D6 — Failure modes:** unknown kind → fallback "(unrecognized
+  edit)"; missing fields → defensive render like "Patched slot
+  (no address)".
+
+  **c1 / c2 split.** c1: `describeOp` helper in `lib/edit-ops.ts`
+  + 11 unit tests. c2: TracePane "Edits" panel + integration tests.
 
 **§16.2.7.t1 review F1+F2 fix (folded into the .t8/.t9 commit):**
 the `savedTracePending` guard was load-bearing for the WRONG
