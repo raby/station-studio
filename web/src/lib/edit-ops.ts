@@ -1578,6 +1578,18 @@ export function describeOp(op: Edit): string {
       }
       return `Structural edit at slot ${slot}`;
     }
+    default: {
+      // §16.2.7.t7 review R1 — exhaustiveness pin. If a future Edit
+      // kind is added to the union without updating this switch, the
+      // `_exhaustive: never` line fails to compile (the new kind
+      // widens `op` to something other than `never`). Mirrors the
+      // `assert_never(kind)` pattern at api/routers/editor.py's
+      // `_apply_batch_edit` dispatcher (§16.2.6.t13). The runtime
+      // fallback message is the failsafe if state somehow gets
+      // corrupted.
+      const _exhaustive: never = op;
+      return `(unrecognized edit kind: ${(_exhaustive as Edit).kind})`;
+    }
   }
 }
 
