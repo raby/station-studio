@@ -19,20 +19,16 @@
  * derived sidecar/template recomputed gives Save what it needs
  * without double-bookkeeping.
  *
- * **c3 MVP scope: patchBlock only**
+ * **All 9 edit kinds intercepted (post-§16.2.6 c3d-followup).**
  *
- * Only `patchBlock` (the chip-edit Save path) is intercepted in c3.
- * The other 8 edit kinds (patchMacro, renameSection, sectionCreate,
- * sectionDelete, reorderSections, moveBlock, retypeBlock,
- * structuralEdit) still fall through to immediate PATCH even when
- * the toggle is ON — c3b extends applyEdit + the page handlers to
- * cover them. The same opLog data structure carries them; only the
- * applyEdit dispatch + handler interception is added per kind.
- *
- * Documented as a c3 limitation in the page; the deferred kinds
- * still produce correct end results (immediate-PATCH path is the
- * §16.2.5 baseline) — they just don't appear in the trace pane's
- * staged preview until c3b lands.
+ * The full set — patchBlock, patchMacro, renameSection, sectionCreate,
+ * sectionDelete, reorderSections, moveBlock, retypeBlock, and
+ * structuralBlockEdit — flows through opLog when the live-preview
+ * toggle is ON. applyEdit dispatches each kind to its pure-function
+ * applier; the page's intercept handlers stage the op for the
+ * staged-trace preview + the transactional Save (§16.2.6.t2).
+ * Original c3 → c3b → c3c → c3d → c3d-followup landed the kinds in
+ * waves; the staging buffer is now behaviorally complete.
  */
 import type { BlockAddress } from './api';
 import { isReservedIdPrefix, isSystemSection } from './drag-drop';

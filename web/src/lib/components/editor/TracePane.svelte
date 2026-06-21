@@ -12,13 +12,13 @@
    *   - STAGED + ok — flat trace.slots list
    *   - empty (initial / Discard) — empty-state nudge
    *
-   * Per the design's §16.2.6.t3 forward-pointer the click-trace-row →
-   * jump-to-chip interaction lands in a future sub-slice. c2 just
-   * renders the rows inline (no `<TraceRow>` sub-component — the row
-   * markup is short enough that an extra component would add wiring
-   * without payoff). The parent dispatches a `select` event on row
-   * click (or Enter/Space keyboard activation) so c3 / .t3 can wire
-   * the jump-to-chip handler later without component changes.
+   * §16.2.6.t3 SHIPPED the click-trace-row → jump-to-chip interaction.
+   * Row click (or Enter/Space keyboard activation) dispatches a
+   * `select` event that the parent's `handleTraceSelect` consumes —
+   * the handler maps the trace slot to a chip ref via `findChipRef`,
+   * scrolls the chip into view, and flashes its outline. Row markup
+   * stays inline (no `<TraceRow>` sub-component — the row is short
+   * enough that the extra wiring wouldn't pay off).
    *
    * NO virtualisation at v1 — Rebirth Radio's 2,196 rows × ~30px row
    * height render fine in modern browsers; §16.18 (saved-trace

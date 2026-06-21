@@ -455,11 +455,13 @@
   //   - **Shape**: `{ opLog, updatedAtSnapshot }` — the snapshot is
   //     the `updated_at` token at stage-time. Reused on recovery to
   //     detect "the station changed under me" drift.
-  //   - **Multi-tab**: v1 — last-write-wins via natural localStorage
-  //     write semantics. No `storage` event listener; the solo-
-  //     operator scenario the project targets rarely has two tabs
-  //     open on the same station. Cross-tab live sync deferred as
-  //     §16.2.6.t1-follow-up.
+  //   - **Multi-tab**: cross-tab live sync SHIPPED in the
+  //     §16.2.6.t1-follow-up (`45894b8`). A `storage` event listener
+  //     (registered in onMount, removed in onDestroy) mirrors
+  //     `stagedEdits:<slug>` writes between tabs; last-write-wins,
+  //     but the loser SEES the change rather than shadowing it
+  //     with stale state until reload. §16.2.7.t3 extended the
+  //     same listener to also sync the `showDiff:<slug>` toggle.
   //   - **Recovery UX**: silent if `updatedAtSnapshot === updatedAt`
   //     (the staged edits apply against the same base they were
   //     authored against). Otherwise window.confirm: cancel to
