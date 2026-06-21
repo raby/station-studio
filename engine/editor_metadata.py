@@ -48,12 +48,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-# §16.2.5.t13 — grammar constants + error type + grammar walk +
-# `validate_sidecar_grammar` public alias + `SidecarJSON`
-# TypeDecorator moved to `engine.sidecar_types` (leaf module so
-# `engine/models.py` doesn't pull in this 1.5K-LOC file). Re-exported
-# here so existing call sites (api routers, tests, scripts) keep
-# importing them from `engine.editor_metadata` without churn.
+# §16.2.5.t13 — grammar constants + error type + `validate_sidecar_grammar`
+# (the structural-check entry point) + `SidecarJSON` TypeDecorator moved
+# to `engine.sidecar_types` (leaf module so `engine/models.py` doesn't
+# pull in this 1.5K-LOC file). Re-exported here so existing call sites
+# (api routers, tests, scripts) keep importing them from
+# `engine.editor_metadata` without churn.
 from engine.sidecar_types import (
     ALLOWED_MACRO_KEYS,
     ALLOWED_SECTION_KEYS,
