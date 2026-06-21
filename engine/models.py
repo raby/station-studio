@@ -66,6 +66,18 @@ class Station(Base):
     # SQLAlchemy install) — no log, no warning, validation gone. Fail
     # loud at import time instead.
     sidecar = Column(SidecarJSON, nullable=True)
+    # §16.2.5.t7 — persisted error reason for the broken-disk-sidecar
+    # banner UX. Set by `populate_db_sidecars` when an on-disk
+    # `.editor.json` fails parse/validation and the column had to fall
+    # back to `derive_sidecar(template)`. Cleared on a successful
+    # disk-load (so the operator's "fix the file + restart" recipe
+    # naturally removes the stale banner). Read by `_resolve_sidecar`'s
+    # GET path and surfaced in `EditorSidecarResponse.sidecar_error`.
+    #
+    # Plain `Text` (not `SidecarJSON`) — it's a free-form operator-
+    # readable string, not a structured sidecar payload. No TypeDecorator
+    # validation needed.
+    sidecar_error = Column(Text, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(
         DateTime,

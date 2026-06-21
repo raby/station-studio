@@ -13,19 +13,21 @@ Decision E from DESIGN.md §16.2.2:
         frontend ALWAYS gets a valid sidecar dict to render against
         (server synthesizes a trivial one as the floor).
 
-Sidecar-resolution algorithm:
+Sidecar-resolution algorithm (post-§16.2.5.t7+t9):
 
   1. Look up the station by slug. 404 if missing.
-  2. Look for `stations/{slug}.editor.json`:
-     a. Absent → synthesize_trivial_sidecar(template). sidecar_error
-        is null (this is the design-intended path for un-authored
-        stations, not an error).
-     b. Present + parse_sidecar succeeds → return that sidecar.
-        sidecar_error is null.
-     c. Present + parse_sidecar raises EditorMetadataError → fall
-        back to synthesize_trivial_sidecar(template) + populate
-        sidecar_error with the error message. The frontend renders
-        a warning banner; the user can keep working.
+  2. Look at `Station.sidecar` (the persisted runtime source-of-truth,
+     populated by the lifespan `populate_db_sidecars`):
+     a. Non-NULL + revalidates → return that sidecar.
+        `sidecar_error` is whatever the column persists (NULL on the
+        happy path; a "disk file at X failed: ..." string when
+        populate_db_sidecars fell back from a broken disk file —
+        §16.2.5.t7).
+     b. Non-NULL + revalidation fails → synthesize_trivial fallback
+        with the live validation error as `sidecar_error`.
+     c. NULL → synthesize_trivial fallback (un-authored station,
+        or recovery-recipe in progress). `sidecar_error` mirrors
+        the column.
 
 Separate router (api/routers/editor.py) so sidecar concerns don't
 crowd stations.py (which handles the Station ORM CRUD). §16.2.3+
@@ -73,7 +75,6 @@ from engine.editor_metadata import (
     is_reserved_id_prefix,
     is_system_section,
     lookup_section,
-    parse_sidecar,
     resolve_macro_addresses,
     shift_atomic_slot_indices,
     synthesize_trivial_sidecar,
@@ -140,7 +141,6 @@ EDITABLE_FIELDS_BY_STRATEGY: dict[str, frozenset[str]] = {
 def get_station_sidecar(
     slug: str,
     db: Session = Depends(get_db),
-    stations_dir: Path = Depends(get_stations_dir),
 ):
     """Return the station's template + the editor sidecar.
 
@@ -153,9 +153,7 @@ def get_station_sidecar(
         raise HTTPException(404, f"station '{slug}' not found")
 
     template: dict = station.template  # JSON column → dict
-    sidecar, error_message = _resolve_sidecar(
-        station, template, stations_dir, strict=False,
-    )
+    sidecar, error_message = _resolve_sidecar(station, template, strict=False)
     return EditorSidecarResponse(
         template=template,
         sidecar=sidecar,
@@ -167,11 +165,23 @@ def get_station_sidecar(
 def _resolve_sidecar(
     station: Station,
     template: dict,
-    stations_dir: Path,
     *,
     strict: bool,
 ) -> tuple[dict, str | None]:
-    """Layered DB→file→trivial sidecar resolution (§16.2.5 D1).
+    """Two-tier DB→trivial sidecar resolution (§16.2.5 D1 + §16.2.5.t9).
+
+    Pre-§16.2.5.t9 had three tiers (DB → on-disk file → trivial). The
+    Case 2 disk branch was structurally dead in production — the
+    lifespan `populate_db_sidecars` writes the DB column on every
+    boot, so by the first request `Station.sidecar` is non-NULL on
+    any station with a disk file. The disk-file fallback was only
+    reachable via test fixtures with `STATION_STUDIO_SKIP_AUTO_SEED=1`.
+
+    §16.2.5.t7 replaces the in-route disk-failure banner with a
+    persisted `Station.sidecar_error` column. `populate_db_sidecars`
+    writes the failure reason when the on-disk file is broken (the
+    DB column still holds a derive_sidecar fallback); the GET path
+    just reads the column.
 
     c1 review #7 + slice-review sweep: single entry point for both
     GET (lenient) + mutation (strict) callers. Earlier `_load_sidecar`
@@ -188,12 +198,11 @@ def _resolve_sidecar(
       operator's macro/section grouping for this transaction; the
       operator has to fix the source before mutating.
 
-    Order (regardless of strictness):
-      1. `Station.sidecar` JSON column — the new source-of-truth.
-      2. On-disk file `stations/{slug}.editor.json` — legacy + the
-         "drop a file in stations/ and reload" authoring workflow.
-      3. Trivial synthesised sidecar — the floor for un-authored
-         stations (NULL column + no disk file).
+    Order:
+      1. `Station.sidecar` JSON column — the source-of-truth.
+      2. Trivial synthesised sidecar — the floor for un-authored
+         stations (NULL column) AND the lenient fallback when the
+         column's content fails re-validation.
 
     Returns `(sidecar_dict, error_message_or_None)`. The mutation
     callers ignore the second tuple element since they never see
@@ -213,7 +222,7 @@ def _resolve_sidecar(
             raise HTTPException(
                 400,
                 f"{source} for '{slug}' failed validation — fix or "
-                f"clear it to fall back to disk/trivial "
+                f"clear it to fall back to trivial "
                 f"({cls_prefix}{err}).",
             )
         logger.warning(
@@ -241,24 +250,21 @@ def _resolve_sidecar(
     if station.sidecar is not None:
         try:
             validate_sidecar(station.sidecar, template)
-            return station.sidecar, None
+            # §16.2.5.t7 — surface a persisted error from
+            # populate_db_sidecars's broken-disk fallback.
+            return station.sidecar, station.sidecar_error
         except EditorMetadataError as e:
             return _broken("Station.sidecar (DB)", e)
         except Exception as e:  # noqa: BLE001
             return _unexpected("Station.sidecar (DB)", e)
 
-    # Case (2): on-disk file.
-    sidecar_path = stations_dir / f"{slug}.editor.json"
-    if sidecar_path.is_file():
-        try:
-            return parse_sidecar(sidecar_path, template), None
-        except EditorMetadataError as e:
-            return _broken(f"sidecar file at {sidecar_path}", e)
-        except Exception as e:  # noqa: BLE001
-            return _unexpected(f"sidecar file at {sidecar_path}", e)
-
-    # Case (3): trivial floor.
-    return synthesize_trivial_sidecar(template), None
+    # Case (2): trivial floor. §16.2.5.t7 — surface a persisted
+    # error from populate_db_sidecars (e.g. broken disk file +
+    # derive_sidecar ALSO failed → column stayed NULL but the
+    # error reason was logged; today we don't write to sidecar_error
+    # on that path, so this stays None — keeps the door open for a
+    # future change that DOES persist the derive-failure reason).
+    return synthesize_trivial_sidecar(template), station.sidecar_error
 
 
 @router.patch(
@@ -539,7 +545,7 @@ def patch_macro(
     # _prepare_sidecar_mutation which deep-copies; patch_macro is
     # the §16.2.4-era outlier — mirror the shape locally.
     sidecar = copy.deepcopy(
-        _resolve_sidecar(station, template, stations_dir, strict=True)[0],
+        _resolve_sidecar(station, template, strict=True)[0],
     )
 
     sidecar, blocks_touched = _apply_patch_macro(
@@ -652,6 +658,11 @@ def _persist_sidecar(
     if template is not None:
         station.template = template
     station.sidecar = sidecar
+    # §16.2.5.t7+t9 — a successful mutation supersedes whatever the
+    # column carried; clear any stale broken-disk error so the banner
+    # contract doesn't stick after the operator has fixed the data via
+    # the editor.
+    station.sidecar_error = None
 
 
 # Slice-review sweep: the router-local `_find_section` was renamed +
@@ -687,7 +698,7 @@ def _prepare_sidecar_mutation(
     _check_optimistic_token(station, expected_updated_at)
     template = copy.deepcopy(station.template)
     sidecar = copy.deepcopy(
-        _resolve_sidecar(station, template, stations_dir, strict=True)[0],
+        _resolve_sidecar(station, template, strict=True)[0],
     )
     return station, template, sidecar
 

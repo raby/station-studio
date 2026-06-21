@@ -28,6 +28,20 @@ from api.main import app
 from engine.editor_metadata import EditorMetadataError
 from engine.database import make_engine, make_sessionmaker
 from engine.models import Base, Station
+from engine.seeding import populate_db_sidecars
+
+
+def _populate(Session: sessionmaker, stations_dir: Path) -> None:
+    """§16.2.5.t7+t9 test bridge — mirror what the lifespan
+    `populate_db_sidecars` does in production. Pre-.t9, the GET
+    endpoint's Case 2 disk-fallback path picked up `.editor.json`
+    files written by tests directly. Post-.t9 the file is only seen
+    by `populate_db_sidecars`, which writes the parsed content (or
+    the derive_sidecar fallback) into the DB column. Tests that
+    seed `Station(template=..., no sidecar)` + write a disk file
+    must now call this helper before hitting the endpoint."""
+    with Session() as db:
+        populate_db_sidecars(db, stations_dir)
 
 
 @pytest.fixture
@@ -152,6 +166,7 @@ def test_present_valid_sidecar_returns_as_is(editor_api):
     (stations_dir / "authored.editor.json").write_text(
         json.dumps(sidecar, indent=2),
     )
+    _populate(Session, stations_dir)
 
     r = client.get("/api/stations/authored/sidecar")
     assert r.status_code == 200, r.json()
@@ -171,16 +186,21 @@ def test_malformed_json_sidecar_falls_back_with_error_message(editor_api):
     client, Session, stations_dir = editor_api
     _seed_station(Session, slug="badjson")
     (stations_dir / "badjson.editor.json").write_text("{not valid json,")
+    _populate(Session, stations_dir)
 
     r = client.get("/api/stations/badjson/sidecar")
     assert r.status_code == 200
     body = r.json()
-    # Trivial fallback — 3 atomic slots in one section.
-    assert len(body["sidecar"]["sections"]) == 1
-    assert body["sidecar"]["sections"][0]["id"] == "all-slots"
-    # Error message populated.
+    # §16.2.5.t7+t9 — populate fell back to derive_sidecar(template),
+    # not synthesize_trivial. The exact derived shape depends on the
+    # template (3-slot identical flat_slots → one auto-named section);
+    # what matters is the OPERATOR'S BROKEN content was discarded, NOT
+    # served. The sidecar_error banner explains why.
+    assert body["sidecar"]["sections"] != []
+    # Error message populated from `Station.sidecar_error` (persisted
+    # by populate_db_sidecars).
     assert body["sidecar_error"] is not None
-    assert "malformed" in body["sidecar_error"].lower()
+    assert "malformed" in body["sidecar_error"].lower() or "JSON" in body["sidecar_error"]
 
 
 def test_drift_invalid_sidecar_falls_back_with_error_message(editor_api):
@@ -203,12 +223,19 @@ def test_drift_invalid_sidecar_falls_back_with_error_message(editor_api):
         "layout_order": ["s1"],
     }
     (stations_dir / "drift.editor.json").write_text(json.dumps(bad))
+    _populate(Session, stations_dir)
 
     r = client.get("/api/stations/drift/sidecar")
     assert r.status_code == 200
     body = r.json()
-    # Trivial fallback.
-    assert body["sidecar"]["sections"][0]["id"] == "all-slots"
+    # §16.2.5.t7+t9 — populate fell back to derive_sidecar(template);
+    # the operator's broken slot_index=99 reference is NOT served.
+    sections = body["sidecar"]["sections"]
+    assert sections, "fallback sidecar should have at least one section"
+    for s in sections:
+        for b in s.get("blocks", []):
+            assert b.get("slot_index") != 99, \
+                "broken slot_index=99 reference should not survive the fallback"
     # Drift-rule message — the exact text comes from the parser; we
     # don't pin the wording, just that the error is populated.
     assert body["sidecar_error"] is not None
@@ -234,37 +261,43 @@ def test_response_carries_both_template_and_sidecar_in_one_request(editor_api):
 
 
 def test_non_editor_metadata_exception_falls_back_to_trivial(editor_api, monkeypatch):
-    """c1 review 🟡-1 regression guard: any exception from sidecar
-    loading — not just EditorMetadataError — must fall back to the
-    trivial sidecar with `sidecar_error` populated. Decision E
-    promises the frontend ALWAYS gets a valid sidecar; a 500 here
-    would break that contract.
+    """c1 review 🟡-1 regression guard, rewritten for §16.2.5.t7+t9.
 
-    Simulate by patching parse_sidecar to raise an unrelated
-    exception class (the runner's broad-catch should kick in). Two
-    known triggers in production: OSError from a file read racing
-    the is_file() check, and KeyError from validate_sidecar reading
-    a corrupted template — same end state for the caller, same
-    test target."""
+    Decision E promises the frontend ALWAYS gets a valid sidecar +
+    surfaces an actionable error message when the operator's content
+    failed to load. Pre-.t9 the broad exception catch lived in the GET
+    handler's Case 2; post-.t9 it lives in
+    `populate_db_sidecars`'s `(EditorMetadataError, OSError)` tuple —
+    OSError covers transient read failures (permission flap, broken
+    symlink, FS race) the same way the prior GET path did. The error
+    is persisted to `Station.sidecar_error`; GET reads it from the
+    column.
+
+    Simulate the path by patching the lazy `parse_sidecar` import the
+    seeding helper resolves at call time."""
     client, Session, stations_dir = editor_api
     _seed_station(Session, slug="oops")
-    # Create the file so the endpoint doesn't take the
-    # "absent → trivial" path before reaching parse_sidecar.
+    # Create the file so populate doesn't take the "absent → derive"
+    # path before reaching parse_sidecar.
     (stations_dir / "oops.editor.json").write_text("{}")
 
-    import api.routers.editor as editor_mod
+    import engine.editor_metadata as em
 
     def boom(*args, **kwargs):
         raise OSError("simulated read failure")
 
-    monkeypatch.setattr(editor_mod, "parse_sidecar", boom)
+    monkeypatch.setattr(em, "parse_sidecar", boom)
+    _populate(Session, stations_dir)
 
     r = client.get("/api/stations/oops/sidecar")
     # Still 200 — Decision E contract.
     assert r.status_code == 200, r.json()
     body = r.json()
-    # Trivial fallback present.
-    assert body["sidecar"]["sections"][0]["id"] == "all-slots"
+    # Trivial fallback present (populate fell back to derive_sidecar;
+    # the derived shape for a 3-slot flat_slots template is one
+    # "all-slots" section — mirrors `synthesize_trivial_sidecar`'s
+    # default but written into the DB column by populate).
+    assert len(body["sidecar"]["sections"]) == 1
     # Error message carries class name + original text so the
     # operator can triage from the response.
     assert body["sidecar_error"] is not None
@@ -915,6 +948,14 @@ def _macro_station(
     (stations_dir / f"{slug}.editor.json").write_text(
         json.dumps(sidecar, indent=2),
     )
+    # §16.2.5.t7+t9 — production-parity: the lifespan
+    # `populate_db_sidecars` writes the disk sidecar into the DB
+    # column on boot, then `_resolve_sidecar` reads from the column.
+    # Mirror that here so the test setup matches production semantics
+    # post-.t9 (the in-route disk-fallback Case 2 was dropped).
+    from engine.seeding import populate_db_sidecars
+    with Session() as db:
+        populate_db_sidecars(db, stations_dir)
     return template, sidecar
 
 
@@ -984,24 +1025,15 @@ def test_macro_edit_unknown_station_404(editor_api):
     assert r.status_code == 404
 
 
-def test_macro_edit_broken_sidecar_400(editor_api):
-    """A malformed sidecar (JSON syntax error) on the macro PATCH
-    path is a HARD 400 — unlike GET /sidecar which falls back to a
-    trivial sidecar with a warning, mutation against a broken
-    sidecar is unsafe (we'd lose the operator's macro grouping
-    silently). The operator must fix the sidecar first."""
-    client, Session, stations_dir = editor_api
-    # Seed station + WRITE broken sidecar.
-    template = _minimal_template("brk")
-    with Session() as db:
-        db.add(Station(slug="brk", name="Brk", template=template))
-        db.commit()
-    (stations_dir / "brk.editor.json").write_text("{not valid json,")
-    r = client.patch("/api/stations/brk/macros/jingle-1", json={
-        "fields": {"genre": "X"},
-    })
-    assert r.status_code == 400
-    assert "sidecar" in r.json()["detail"] and "broken" in r.json()["detail"]
+# §16.2.5.t9 removed `test_macro_edit_broken_sidecar_400`. Pre-.t9 the
+# in-route disk-fallback would 400 when an operator-authored disk file
+# failed parse. Post-.t9, the lifespan `populate_db_sidecars` derives a
+# fresh sidecar from the template when the disk file is broken + persists
+# the failure reason in `Station.sidecar_error`. Mutations against the
+# derived sidecar succeed (no macros present → the original macro PATCH
+# 404s on macro_id lookup, surfaced by `test_macro_edit_trivial_sidecar_
+# falls_through_to_404`). The operator sees the broken-disk reason via
+# the GET banner contract instead of a mutation 400.
 
 
 def test_macro_edit_trivial_sidecar_falls_through_to_404(editor_api):
@@ -1096,6 +1128,7 @@ def test_macro_edit_row_template_macro_dedupes_block_idx(editor_api):
     (stations_dir / f"{slug}.editor.json").write_text(
         json.dumps(sidecar, indent=2),
     )
+    _populate(Session, stations_dir)
     r = client.patch(f"/api/stations/{slug}/macros/jingle-shared", json={
         "fields": {"genre": "Loud"},
         "expected_updated_at": _token(client, slug),
@@ -1135,134 +1168,18 @@ def test_retype_new_fields_rejects_structural_keys(editor_api):
         assert "structural keys" in r.json()["detail"]
 
 
-def test_macro_edit_negative_section_start_400(editor_api):
-    """c1 review #3: a sidecar where leading macros' total width
-    exceeds the first atomic anchor's slot_index gives a NEGATIVE
-    section_start. Without the guard, the emit loop hands Python
-    negative slot_indices → silent mutation from the END of the
-    layout. Must 400 with an operator-readable message instead."""
-    client, Session, stations_dir = editor_api
-    slug = "neg"
-    template = {
-        "station": slug, "name": "Neg", "cadence": "weekly", "rng": "off",
-        "sources": [{"name": "A", "colour": "#abc", "role": "content"}],
-        "cursor": {"base_advance_per_week": 0, "cycle_weeks": 1},
-        "layout": {
-            "unit": "slot", "unit_labels": [], "row_start_offsets": [],
-            "cursors_init": {},
-            "flat_slots": [
-                {"source": "A", "strategy": "jingle", "size": 1, "genre": "G"}
-                for _ in range(6)
-            ],
-        },
-    }
-    # macro(repeat=5) BEFORE the anchor at slot_index=1 → cumulative=5,
-    # anchor_pos=1, section_start = 1 - 5 = -4. Guard must fire.
-    sidecar = {
-        "schema_version": 1,
-        "sections": [{
-            "id": "weird",
-            "name": "Weird",
-            "blocks": [
-                {"kind": "macro", "ref": "jingle-1"},
-                {"kind": "atomic", "slot_index": 1},
-                {"kind": "atomic", "slot_index": 0},
-                {"kind": "atomic", "slot_index": 2},
-                {"kind": "atomic", "slot_index": 3},
-                {"kind": "atomic", "slot_index": 4},
-                {"kind": "atomic", "slot_index": 5},
-            ],
-        }],
-        "macros": [{
-            "id": "jingle-1", "name": "5 × jingle", "repeat": 5,
-            "spec": {"source": "A", "strategy": "jingle",
-                     "size": 1, "genre": "G"},
-        }],
-        "layout_order": ["weird"],
-    }
-    with Session() as db:
-        db.add(Station(slug=slug, name="Neg", template=template))
-        db.commit()
-    (stations_dir / f"{slug}.editor.json").write_text(
-        json.dumps(sidecar, indent=2),
-    )
-    r = client.patch(f"/api/stations/{slug}/macros/jingle-1", json={
-        "fields": {"genre": "X"},
-        "expected_updated_at": _token(client, slug),
-    })
-    assert r.status_code == 400
-    # c1 review #12: caught at sidecar load time now via the
-    # _validate_no_overlapping_macros validator → "sidecar broken"
-    # wrapping; "unresolvable" comes from the engine's
-    # MacroResolutionError underneath.
-    detail = r.json()["detail"].lower()
-    assert "unresolvable" in detail and ("validation" in detail or "broken" in detail)
-
-
-def test_macro_edit_non_contiguous_section_400(editor_api):
-    """c1 review #2: a section whose atomic blocks are non-contiguous
-    (gap between atomic@0 and atomic@5 not filled by the macro's
-    repeat count) produces wrong macro→slot mappings silently. The
-    drift validator's orphan check is skipped when macros exist, so
-    the macro endpoint must cross-check atomic positions itself."""
-    client, Session, stations_dir = editor_api
-    slug = "gap"
-    template = {
-        "station": slug, "name": "Gap", "cadence": "weekly", "rng": "off",
-        "sources": [{"name": "A", "colour": "#abc", "role": "content"}],
-        "cursor": {"base_advance_per_week": 0, "cycle_weeks": 1},
-        "layout": {
-            "unit": "slot", "unit_labels": [], "row_start_offsets": [],
-            "cursors_init": {},
-            "flat_slots": [
-                {"source": "A", "strategy": "jingle", "size": 1, "genre": "G"}
-                for _ in range(6)
-            ],
-        },
-    }
-    # atomic@0, macro(repeat=2), atomic@5 → walker expects atomic@3
-    # after macro(2), but sidecar declares atomic@5 → 400.
-    sidecar = {
-        "schema_version": 1,
-        "sections": [{
-            "id": "main", "name": "Main",
-            "blocks": [
-                {"kind": "atomic", "slot_index": 0},
-                {"kind": "macro", "ref": "jingle-1"},
-                {"kind": "atomic", "slot_index": 5},
-                {"kind": "atomic", "slot_index": 1},
-                {"kind": "atomic", "slot_index": 2},
-                {"kind": "atomic", "slot_index": 3},
-                {"kind": "atomic", "slot_index": 4},
-            ],
-        }],
-        "macros": [{
-            "id": "jingle-1", "name": "2 × jingle", "repeat": 2,
-            "spec": {"source": "A", "strategy": "jingle",
-                     "size": 1, "genre": "G"},
-        }],
-        "layout_order": ["main"],
-    }
-    with Session() as db:
-        db.add(Station(slug=slug, name="Gap", template=template))
-        db.commit()
-    (stations_dir / f"{slug}.editor.json").write_text(
-        json.dumps(sidecar, indent=2),
-    )
-    r = client.patch(f"/api/stations/{slug}/macros/jingle-1", json={
-        "fields": {"genre": "X"},
-        "expected_updated_at": _token(client, slug),
-    })
-    assert r.status_code == 400
-    # c1 review #12: parse_sidecar's new _validate_no_overlapping_macros
-    # rule catches macro-resolution failures at LOAD time now, so a
-    # non-contiguous sidecar surfaces as "sidecar broken" before the
-    # patch_macro endpoint even reaches its own resolve_macro_addresses
-    # call. The underlying detail message includes "unresolvable" from
-    # the engine's MacroResolutionError, but the wrapping phrasing is
-    # "sidecar...broken" + a fix-or-delete hint.
-    detail = r.json()["detail"].lower()
-    assert "unresolvable" in detail and ("validation" in detail or "broken" in detail)
+# §16.2.5.t9 removed the API-layer broken-sidecar 400 tests
+# (`test_macro_edit_negative_section_start_400`,
+# `test_macro_edit_non_contiguous_section_400`). Pre-.t9, the in-route
+# disk-fallback path surfaced parse-time drift-rule violations as 400
+# at mutation time. Post-.t9, `populate_db_sidecars` catches them at
+# boot, falls back to `derive_sidecar(template)`, and persists the
+# error message in `Station.sidecar_error`. The mutation endpoint then
+# operates on the derived sidecar (which has no operator-authored
+# `jingle-1` macro), so the same input now surfaces as 404 on macro
+# lookup. The drift-rule coverage moved to the engine layer
+# (`tests/test_editor_metadata.py`) — the API-layer tests would just
+# be re-asserting the populate-fallback behavior covered elsewhere.
 
 
 def test_macro_edit_layout_form_mismatch_via_helper(editor_api):
@@ -1356,11 +1273,12 @@ def test_get_sidecar_prefers_db_column_over_disk_file(editor_api):
     assert body["sidecar_error"] is None
 
 
-def test_get_sidecar_falls_back_to_disk_when_db_column_null(editor_api):
-    """§16.2.5 D1: when Station.sidecar IS NULL (legacy + un-authored
-    stations), the on-disk file is the next preferred source. This is
-    the pre-§16.2.5 behaviour and must keep working — operators who
-    drop a sidecar file in stations/ during authoring still see it."""
+def test_get_sidecar_disk_loaded_via_populate_then_served_from_db_column(editor_api):
+    """§16.2.5 D1 + §16.2.5.t9: the operator's authoring workflow is
+    "drop a file in stations/ + restart". The lifespan
+    `populate_db_sidecars` reads the disk file into the DB column on
+    boot; subsequent GETs serve from the column. This test mirrors the
+    boot path manually + verifies the round-trip."""
     client, Session, stations_dir = editor_api
     template = _minimal_template("disk-only")
     file_sidecar = {
@@ -1383,10 +1301,56 @@ def test_get_sidecar_falls_back_to_disk_when_db_column_null(editor_api):
     (stations_dir / "disk-only.editor.json").write_text(
         json.dumps(file_sidecar, indent=2),
     )
+    _populate(Session, stations_dir)
+
+    # Column now carries the authored sidecar; GET reads from column.
+    with Session() as db:
+        row = db.query(Station).filter(Station.slug == "disk-only").first()
+        assert row.sidecar == file_sidecar
+        assert row.sidecar_error is None
 
     r = client.get("/api/stations/disk-only/sidecar")
     body = r.json()
     assert body["sidecar"]["sections"][0]["id"] == "disk"
+    assert body["sidecar_error"] is None
+
+
+def test_successful_mutation_clears_stale_sidecar_error(editor_api):
+    """§16.2.5.t7+t9 R1: when populate captures a broken-disk error +
+    persists it to `Station.sidecar_error`, a subsequent successful
+    mutation must clear the column — the operator just authored a
+    valid edit via the editor; the banner contract shouldn't stick."""
+    client, Session, stations_dir = editor_api
+    _seed_station(Session, slug="stale-banner")
+    # Disk file is broken JSON → populate falls back to derive +
+    # writes the error to the column.
+    (stations_dir / "stale-banner.editor.json").write_text("{not valid json,")
+    _populate(Session, stations_dir)
+
+    with Session() as db:
+        row = db.query(Station).filter(Station.slug == "stale-banner").first()
+        assert row.sidecar_error is not None  # populate captured the failure
+
+    # Drive a successful mutation — rename the derived section.
+    # First read the derived sidecar so we have a valid section id.
+    body = client.get("/api/stations/stale-banner/sidecar").json()
+    section_id = body["sidecar"]["sections"][0]["id"]
+    r = client.patch(
+        f"/api/stations/stale-banner/sections/{section_id}",
+        json={
+            "name": "Renamed",
+            "expected_updated_at": body["updated_at"],
+        },
+    )
+    assert r.status_code == 200, r.json()
+
+    # Banner contract: error cleared, future GETs surface no warning.
+    with Session() as db:
+        row = db.query(Station).filter(Station.slug == "stale-banner").first()
+        assert row.sidecar_error is None
+    body = client.get("/api/stations/stale-banner/sidecar").json()
+    assert body["sidecar_error"] is None
+
 
 
 def test_get_sidecar_db_broken_falls_back_with_error(editor_api):
@@ -1540,28 +1504,15 @@ def test_commit_helper_translates_typedecorator_statementerror_to_400(editor_api
         assert db.query(Station).filter_by(slug="commit-helper").first() is None
 
 
-def test_macro_edit_writes_to_db_column_when_starting_from_disk(editor_api):
-    """§16.2.5 D1 migration path: a station with a DISK sidecar (DB
-    column NULL) gets the column POPULATED on the first macro edit.
-    Future reads come from the DB column without touching the file."""
-    client, Session, stations_dir = editor_api
-    _macro_station(Session, stations_dir, "migrate")
-    # Sanity: column starts NULL.
-    with Session() as db:
-        row = db.query(Station).filter(Station.slug == "migrate").first()
-        assert row.sidecar is None
-
-    r = client.patch("/api/stations/migrate/macros/jingle-1", json={
-        "fields": {"genre": "Loud"},
-        "expected_updated_at": _token(client, "migrate"),
-    })
-    assert r.status_code == 200, r.json()
-
-    # Column now populated with the post-edit sidecar.
-    with Session() as db:
-        row = db.query(Station).filter(Station.slug == "migrate").first()
-        assert row.sidecar is not None
-        assert row.sidecar["macros"][0]["spec"]["genre"] == "Loud"
+# §16.2.5.t9 removed `test_macro_edit_writes_to_db_column_when_starting_from_disk`.
+# Pre-.t9 a station could start a session with DB column NULL + disk file
+# present; the first mutation would lazily promote the disk content to the
+# column. Post-.t9 the lifespan `populate_db_sidecars` does the promotion
+# at boot, so by the time any mutation arrives `Station.sidecar` is
+# non-NULL. The lazy-promotion path is gone — mutations always operate on
+# the column directly. Boot-time population is covered by
+# `tests/test_starter_station.py` and the new
+# `test_get_sidecar_disk_loaded_via_populate_then_served_from_db_column`.
 
 
 def test_macro_edit_against_trivial_sidecar_leaves_db_column_null(editor_api):

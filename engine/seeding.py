@@ -347,6 +347,16 @@ def populate_db_sidecars(db, stations_dir: Path) -> int:
 
     Disk is the EXPORT artifact; DB column is runtime truth. Recovery
     recipe + rationale: DESIGN.md §16.2.5.t3 + stations/README.md.
+
+    §16.2.5.t7: also writes `Station.sidecar_error` — populated when
+    an on-disk `.editor.json` exists but fails parse/validation (so
+    the GET path's banner contract can surface the broken-file
+    reason), cleared when the disk-load succeeds. An absent file
+    leaves `sidecar_error` at None (no operator-authored content was
+    lost, no banner needed). Recovery: operator fixes the disk file,
+    runs `UPDATE station SET sidecar = NULL`, restarts — the next
+    populate either succeeds (clears the error) or re-writes a
+    fresh error.
     """
     # Lazy imports — keep engine.seeding light when nobody calls
     # the helper (matches auto_derive_missing_sidecars's pattern).
@@ -362,6 +372,10 @@ def populate_db_sidecars(db, stations_dir: Path) -> int:
         slug = station.slug
         sidecar_path = stations_dir / f"{slug}.editor.json"
         sidecar: dict | None = None
+        # §16.2.5.t7 — only populated when an operator-authored disk
+        # file existed but failed parse/validation. Stays None for
+        # un-authored stations (no file → derived → no banner).
+        sidecar_error: str | None = None
         # Prefer the on-disk file if present (operator-committed
         # sidecar with hand-edited section names) — falls through
         # to derive_sidecar(template) when the file is absent or
@@ -389,17 +403,26 @@ def populate_db_sidecars(db, stations_dir: Path) -> int:
                     "then restart.",
                     slug, sidecar_path, type(e).__name__, e,
                 )
+                # §16.2.5.t7 — capture for `Station.sidecar_error`
+                # so the GET banner contract surfaces the reason.
+                # Format matches the prior in-route `_resolve_sidecar`
+                # Case 2 string for banner-text continuity.
+                sidecar_error = (
+                    f"sidecar file at {sidecar_path} failed validation: "
+                    f"{type(e).__name__}: {e}"
+                )
         if sidecar is None:
             try:
                 sidecar = derive_sidecar(station.template)
             except (
                 KeyError, ValueError, TemplateError,
                 # c1 review #3 finding #1: derive_sidecar raises
-                # EditorMetadataError (AssertionError subclass) for
-                # row_template stations + heuristic-bug paths.
-                # Pre-fix, an uncaught EditorMetadataError aborted
-                # the whole loop + rolled back ALL prior in-memory
-                # assignments via the SessionLocal __exit__ close.
+                # EditorMetadataError (now a ValueError subclass —
+                # §16.2.5.t14) for row_template stations + heuristic-
+                # bug paths. Pre-fix, an uncaught EditorMetadataError
+                # aborted the whole loop + rolled back ALL prior
+                # in-memory assignments via the SessionLocal __exit__
+                # close.
                 EditorMetadataError,
             ) as e:
                 logger.warning(
@@ -412,6 +435,9 @@ def populate_db_sidecars(db, stations_dir: Path) -> int:
                 )
                 continue
         station.sidecar = sidecar
+        # §16.2.5.t7 — set unconditionally so a successful disk-load
+        # CLEARS a stale error from a prior broken-file boot.
+        station.sidecar_error = sidecar_error
         # c1 review #3 finding #3: per-station commit. Pre-fix the
         # commit was after the loop, so ANY uncaught mid-loop
         # exception (e.g. the EditorMetadataError gap above) rolled
