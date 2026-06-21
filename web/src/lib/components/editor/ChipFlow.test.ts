@@ -1,7 +1,10 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/svelte';
+import { tick } from 'svelte';
 import '@testing-library/jest-dom/vitest';
 import ChipFlow from './ChipFlow.svelte';
+import { makeDragEvent } from './__tests__/drag-fixture';
+import { CHIP_DRAG_MIME } from '$lib/drag-drop';
 import {
   DEFAULT_VIEW_MODE,
   type Sidecar,
@@ -146,6 +149,76 @@ describe('<ChipFlow>', () => {
     for (const badge of screen.getAllByTestId('chip-count')) {
       expect(badge).toHaveTextContent('×3');
     }
+  });
+
+  describe('§16.2.5.t22 drag-target lifecycle hardening', () => {
+    function _setupDroppableFlow(): HTMLElement {
+      const template = makeFlatTemplate();
+      const sidecar: Sidecar = {
+        schema_version: 1, sections: [], macros: [], layout_order: [],
+      };
+      const section: SidecarSection = {
+        id: 's', name: 'S',
+        blocks: [
+          { kind: 'atomic', slot_index: 0 },
+          { kind: 'atomic', slot_index: 1 },
+          { kind: 'atomic', slot_index: 2 },
+        ],
+      };
+      render(ChipFlow, { section, template, sidecar, viewMode: VM });
+      return screen.getByTestId('chip-flow');
+    }
+
+    async function _flushFrame(): Promise<void> {
+      // jsdom's requestAnimationFrame is timer-backed; one
+      // setTimeout(0) is enough to fire the next-tick rAF callback,
+      // and `tick()` flushes Svelte's reactive update to the DOM
+      // attribute that mirrors `dropIndicatorAt`.
+      await new Promise((r) => setTimeout(r, 16));
+      await tick();
+    }
+
+    it('(b) dragleave cleanup runs even when dataTransfer.types is blanked', async () => {
+      // Browsers (Firefox / Safari) blank `dataTransfer.types` on
+      // dragleave across some boundaries. Pre-.t22 the
+      // `_hasChipPayload` gate returned early on those events,
+      // leaving the indicator pinned. Verify cleanup runs anyway.
+      const flow = _setupDroppableFlow();
+
+      // Prime the drag state: dragover with the chip MIME sets
+      // pending + schedules a rAF that writes dropIndicatorAt.
+      // The chip rects in jsdom are 0×0 so the cursor (clientX=0)
+      // falls AFTER every midpoint → indicator lands at
+      // rendered.length (= 3), serialised as the string "3".
+      flow.dispatchEvent(makeDragEvent('dragover', CHIP_DRAG_MIME, '{}'));
+      await _flushFrame();
+      expect(flow.dataset.dropAt).toBe('3');
+
+      // Dragleave WITHOUT the chip MIME (simulates the masked-types
+      // case). Pre-fix this would return at the gate without
+      // cleanup. Post-fix the cleanup runs unconditionally and the
+      // attribute disappears (null → no attribute → undefined).
+      flow.dispatchEvent(new Event('dragleave', { bubbles: true }));
+      await _flushFrame();
+      expect(flow.dataset.dropAt).toBeUndefined();
+    });
+
+    it('(c) cross-section dragend (window-level) clears stale indicator', async () => {
+      // ESC-cancel of a drag whose source lives in another section
+      // never fires `dragend` on this ChipFlow (the event targets
+      // the source's container). Pre-.t22 the indicator pinned
+      // until the next drag cycle moved through this container.
+      // Post-.t22 the window-level listener tears it down.
+      const flow = _setupDroppableFlow();
+
+      flow.dispatchEvent(makeDragEvent('dragover', CHIP_DRAG_MIME, '{}'));
+      await _flushFrame();
+      expect(flow.dataset.dropAt).toBe('3');
+
+      window.dispatchEvent(new Event('dragend'));
+      await _flushFrame();
+      expect(flow.dataset.dropAt).toBeUndefined();
+    });
   });
 
   it('renders the empty flow without crashing on an empty section', () => {

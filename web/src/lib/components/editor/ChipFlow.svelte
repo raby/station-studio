@@ -153,6 +153,28 @@
     window.removeEventListener('resize', _invalidateRectCache);
   }
 
+  // §16.2.5.t22 (c) — window-level dragend listener catches the
+  // ESC-cancel-of-foreign-drag case. ChipFlow's `on:dragend` only
+  // fires when the drag SOURCE is a descendant; if the source lives
+  // in another section but the cursor was hovering this ChipFlow at
+  // ESC-time, this listener tears down the indicator + rect cache.
+  // Idempotent — fires for every window dragend (including unrelated
+  // drags) but `_resetDragState` is a sequence of nullish assignments
+  // + listener detaches that are safe to run on already-clean state.
+  // Lifetime scoped to drag-cycle via the same attach/detach pattern
+  // as scroll/resize.
+  let dragEndListenerAttached = false;
+  function _attachDragEndListener() {
+    if (dragEndListenerAttached) return;
+    dragEndListenerAttached = true;
+    window.addEventListener('dragend', _resetDragState);
+  }
+  function _detachDragEndListener() {
+    if (!dragEndListenerAttached) return;
+    dragEndListenerAttached = false;
+    window.removeEventListener('dragend', _resetDragState);
+  }
+
   function _ensureRects(container: HTMLElement): DOMRect[] {
     if (cachedChipRects !== null) return cachedChipRects;
     const chips = container.querySelectorAll('[data-testid="chip"]');
@@ -162,6 +184,10 @@
     }
     cachedChipRects = rects;
     _attachScrollListeners();
+    // §16.2.5.t22 (c) — register the cross-section dragend safety net
+    // at the same lifecycle point as scroll/resize. Detached by
+    // `_resetDragState` (dragleave / dragend / drop / destroy).
+    _attachDragEndListener();
     return rects;
   }
 
@@ -186,12 +212,14 @@
 
   // Common cleanup invoked by dragleave (real container-leave),
   // dragend, drop, and destroy. Combines pending-rAF cancel + rect-
-  // cache invalidation + scroll-listener teardown + indicator clear
-  // into one site so the lifecycle invariants stay together.
+  // cache invalidation + scroll-listener teardown + window-dragend
+  // teardown + indicator clear into one site so the lifecycle
+  // invariants stay together.
   function _resetDragState() {
     _cancelPendingFrame();
     _invalidateRectCache();
     _detachScrollListeners();
+    _detachDragEndListener();
     dropIndicatorAt = null;
   }
 
@@ -236,12 +264,30 @@
     });
   }
   function onDragLeave(e: DragEvent) {
-    if (!_hasChipPayload(e)) return;
+    // §16.2.5.t22 (b) — DO NOT gate cleanup on `_hasChipPayload`.
+    // Firefox / Safari blank `dataTransfer.types` during dragleave
+    // across some boundaries (cross-origin iframes, plugin overlays).
+    // With the gate, our cleanup never runs on those events — the
+    // 2px indicator pins, in-flight rAF fires post-leave, the rect
+    // cache leaks. `_resetDragState` is idempotent (sequence of
+    // nullish assignments + listener detaches that are safe on
+    // already-clean state), so calling it for non-chip drags is
+    // a no-op rather than a correctness risk.
+    //
     // Only clear when leaving the container, not when transitioning
     // between child chips. The relatedTarget check distinguishes.
     const container = e.currentTarget as HTMLElement;
     const next = e.relatedTarget as Node | null;
-    if (next && container.contains(next)) return;
+    if (next && container.contains(next)) {
+      // §16.2.5.t22 (a) — child-transition path. The early return
+      // skips `_resetDragState` (the drag is still inside us), but
+      // the in-flight rAF still holds the PRE-transition clientX.
+      // Refreshing `pending.clientX` here lets the next rAF tick
+      // read the current cursor — eliminates the one-frame indicator
+      // jitter when the cursor crosses chip boundaries quickly.
+      if (pending !== null) pending.clientX = e.clientX;
+      return;
+    }
     _resetDragState();
   }
 
