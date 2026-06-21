@@ -315,6 +315,65 @@ class JobErrorBody(BaseModel):
 # §16.2.2 c1 — visual block editor (read-only canvas)
 
 
+class TemplateSourceOut(BaseModel):
+    """One entry in a template's `sources[]`.
+
+    §16.2.5.t8 — strict shape for the wire response. `name` and `role`
+    are load-bearing (engine + frontend both branch on them); `colour`
+    is render-only + several legacy reference-pool entries omit it, so
+    it stays optional. `extra="allow"` preserves any operator-authored
+    fields (e.g. itunes_library_path) without schema churn.
+    """
+    name: str
+    role: Literal["content", "reference"]
+    colour: str | None = None
+    model_config = ConfigDict(strict=True, extra="allow")
+
+
+class TemplateOut(BaseModel):
+    """Strict wire shape for `Station.template` (§16.2.5.t8).
+
+    Mirrors the input JSON the operator commits + the engine parses
+    (`engine.template.parse_template`). Required fields match what
+    every shipped template carries today + the TS `StationTemplate`
+    interface's minimum-viable set used by `parseEditorSidecarResponse`
+    in `web/src/lib/editor.ts`.
+
+    `cursor` and `layout` stay opaque (`dict[str, Any]`): the rich
+    grammar (XOR flat_slots/row_template, per-BlockSpec required-fields
+    matrix, cursor-source consistency) lives in
+    `engine.template.parse_template` — the authoritative validator
+    that runs on every PATCH + every boot. A discriminated-union
+    Pydantic model would duplicate that grammar for marginal wire
+    benefit; the v1 contract is that the outer envelope is strict
+    enough to catch partial-template responses, and the inner shape
+    relies on the engine's pre-validation invariant.
+
+    `extra="allow"` keeps the wire forward-compatible — a future
+    `rules: dict` extension, an operator-authored `_comment` field, or
+    template-level metadata flow through without breaking existing
+    deployments.
+
+    `strict=True` blocks Pydantic's coercion path: a wire `cadence: 1`
+    or `name: null` is rejected at the response boundary instead of
+    silently round-tripping. The TS narrower
+    `parseEditorSidecarResponse` stays as defense-in-depth.
+    """
+    station: str
+    name: str
+    cadence: str
+    rng: str
+    sources: list[TemplateSourceOut]
+    cursor: dict[str, Any]
+    layout: dict[str, Any]
+    # `rules` + any other operator-authored fields ride through via
+    # `extra="allow"`. Declaring them as `dict | None = None` would
+    # force them into the output even on templates that don't have
+    # them (Pydantic serializes declared optionals as null), breaking
+    # byte-for-byte round-trip tests against the source dict.
+    model_config = ConfigDict(strict=True, extra="allow")
+
+
 class EditorSidecarResponse(BaseModel):
     """200 body for `GET /api/stations/{slug}/sidecar`. Per DESIGN.md
     §16.2.2 Decision E: the frontend NEVER handles "no sidecar" —
@@ -323,8 +382,9 @@ class EditorSidecarResponse(BaseModel):
     is absent OR malformed.
 
     Fields:
-      * `template` — the station's parsed-from-DB template dict.
-        Same shape `StationOut.template` carries.
+      * `template` — the station's parsed-from-DB template, typed as
+        `TemplateOut` (§16.2.5.t8). Strict envelope catches partial-
+        template drift at the response boundary.
       * `sidecar` — either the committed `stations/{slug}.editor.json`
         content (after `validate_sidecar` passes) OR the result of
         `synthesize_trivial_sidecar(template)`. Always non-null +
@@ -336,14 +396,13 @@ class EditorSidecarResponse(BaseModel):
         banner so the hobbyist can keep working while they figure out
         what broke their sidecar.
 
-    `template` and `sidecar` are typed as `dict` for v1: the grammar
-    is validated at the `engine.editor_metadata` layer; Pydantic isn't
-    a second validation surface (and the structural variation —
-    flat_slots vs row_template, optional macros, etc. — would need a
-    discriminated-union model that buys little over the existing
-    engine-side parser).
+    `sidecar` stays `dict[str, Any]` — the engine-side grammar
+    (validate_sidecar) is the authoritative validator and the
+    structural variation (flat_slots vs row_template, optional macros)
+    would need a discriminated-union model that buys little over the
+    existing parser.
     """
-    template: dict[str, Any]
+    template: TemplateOut
     sidecar: dict[str, Any]
     sidecar_error: str | None = None
     # §16.2.3 — the station's `updated_at` at load time. The editor
@@ -813,9 +872,11 @@ class SidecarMutationResponse(BaseModel):
     use their own response models. Slice-review c1-rescue #4
     corrected this docstring; an earlier version misled future
     contributors into thinking macro edits used SidecarMutationResponse.
+
+    §16.2.5.t8 — `template` is typed `TemplateOut` (strict envelope).
     """
     sidecar: dict[str, Any]
-    template: dict[str, Any]
+    template: TemplateOut
     updated_at: str | None = None
 
 
