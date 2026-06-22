@@ -853,6 +853,45 @@ def test_diff_same_version_400(api):
     assert "same version" in resp.json()["detail"]
 
 
+def test_diff_handles_slot_count_mismatch_across_versions(api):
+    """Defensive case: the operator edited the template between
+    regens, so v1 + v2 have different slot counts. The endpoint
+    must walk both slot lists by slot-number (not zip-by-index)
+    and mark mismatched slots as changed, with `null` on the
+    missing side."""
+    client, Session = api
+    _seed_station_and_pool(Session, slug="shape", pool_tracks=3)
+    r1 = client.post("/api/stations/shape/generate", json={"week": 1})
+    r2 = client.post("/api/stations/shape/generate", json={"week": 1})
+    pl_id = r2.json()["playlist_id"]
+
+    # Hand-mutate version 2's slots to drop slot 1 (simulates a
+    # template that shrunk between regens). Routes through the ORM
+    # so the JSON column write is consistent with the model's
+    # SQLAlchemy bindings.
+    with Session() as db:
+        v2 = (
+            db.query(PlaylistVersion)
+            .filter_by(playlist_id=pl_id, version_no=2)
+            .one()
+        )
+        # Trace slot dicts carry `slot: int` (1-indexed). Drop the
+        # one with slot=1.
+        v2.slots = [s for s in v2.slots if s.get("slot") != 1]
+        db.commit()
+
+    body = client.get(f"/api/playlists/{pl_id}/diff?from=1&to=2").json()
+    # The slot=1 row should be present with `to: null` and changed=true.
+    row1 = next(r for r in body["slots"] if r["slot"] == 1)
+    assert row1["changed"] is True
+    assert row1["from"] is not None  # v1 has it
+    assert row1["to"] is None  # v2 dropped it
+    # Summary still tallies: changed includes this missing-slot case.
+    s = body["summary"]
+    assert s["changed"] >= 1
+    assert s["total_slots"] == len(body["slots"])
+
+
 def test_diff_missing_required_query_params_422(api):
     """`from` and `to` are required query params; FastAPI's
     validation returns 422 when either is missing (no hand-rolled

@@ -10628,15 +10628,18 @@ opportunistically when a real ask surfaces.
    `stations/{slug}.json` + reseeding OR direct DB write. Visual
    editor (§16.2) edits BLOCK fields, not station-level. Closes the
    workflow loop.
-3. **§16.4.t1 side-by-side trace diff** — `/playlists/[id]/compare?
-   from=N&to=M` page showing per-slot track / source / pool-index
-   changes between two versions of the same playlist. Trigger:
-   operator asks "did my re-import actually change anything for
-   week 5?" The most interesting standalone bit of the §16.4
-   vision; deliberately deferred to keep v1 small. Natural twin to
-   §16.23 (week-vs-week) and §16.2.7's compare-against-saved
-   (staged-vs-saved) — three diff surfaces share the same mental
-   model.
+3. ~~**§16.4.t1 side-by-side trace diff**~~ — ✅ SHIPPED
+   2026-06-22 (commit 07c8169). `/playlists/[id]/compare?from=N&to=M`
+   page renders side-by-side per-slot diff; backend
+   `GET /api/playlists/{id}/diff?from=N&to=M` pre-computes the
+   predicate (changed on any source / strategy / pool_index /
+   track_id mismatch). Default-derives `from = current-1, to =
+   current`. Hide-unchanged-by-default with "Show unchanged (N)"
+   toggle. Browser-verified at Classics scale (2,772 of 3,010
+   slots changed between two regens of week 1). Completes the
+   diff-surfaces trio: version-vs-version (this) + week-vs-week
+   (§16.23, still queued) + staged-vs-saved (§16.2.7, shipped
+   earlier).
 4. **§16.17 excluded-candidates display** — trace viewer surfaces
    "why didn't track X get picked" for weighted/mix strategies. The
    debug surface for the most-asked author question.

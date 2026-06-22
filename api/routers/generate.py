@@ -503,8 +503,12 @@ def get_trace_diff(
             "row": keyrow.get("row"),
             "block": keyrow.get("block"),
             "changed": changed,
-            "from": _slot_projection(s_from) if s_from else None,
-            "to": _slot_projection(s_to) if s_to else None,
+            # Explicit `is not None` over truthiness — an empty
+            # TraceSlot dict is unreachable in production but the
+            # precise check survives a future refactor that might
+            # introduce a defensible empty-dict case.
+            "from": _slot_projection(s_from) if s_from is not None else None,
+            "to": _slot_projection(s_to) if s_to is not None else None,
         })
 
     total = len(rows)
