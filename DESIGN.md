@@ -10608,8 +10608,10 @@ opportunistically when a real ask surfaces.
 
 **Tier 1 — operator workflow gaps (real paper cuts)**:
 
-1. **§16.4 trace versioning v1** — design locked (see below). Closes
-   the regenerate-destroys-old-trace hole. Next implementable slice.
+1. ~~**§16.4 trace versioning v1**~~ — ✅ SHIPPED 2026-06-22.
+   Closes the regenerate-destroys-old-trace hole. §16.4.t1
+   side-by-side diff between versions is the natural follow-up;
+   queued if the operator asks.
 2. **§16.7 edit mode for stations** — in-UI template editing for
    station-level fields (cadence, RNG, source names, row/layout
    shape). Today: create-only via wizard; edit means hand-editing
@@ -10676,11 +10678,99 @@ opportunistically when a real ask surfaces.
 
 ### 16.4 Trace versioning (D8 from §16.1)
 
-**Status: design pass locked 2026-06-21. Ready for c1 (backend)
-next session.** The paper sketch below has been hardened into a
-specific implementation plan; the v1 decisions sit at the top, the
-original sketch + stay-out-of-scope items follow as historical
-context.
+**Status: ✅ SHIPPED 2026-06-22 across c1 (8888dd6) + c1 review
+(4136ac9) + c2 (f957ad5).** Browser-verified end to end against the
+dev DB: regen of week 1 produced v2 + preserved v1; picker switched
+between them via `?v=N`; single-version playlists hide the picker;
+the §16.1 confirm dialog reflects the new non-destructive semantics.
+The v1 decisions + as-shipped behaviour are documented below; the
+original paper sketch + stay-out-of-scope items follow as
+historical context.
+
+**What shipped:**
+
+Backend (c1):
+* Migration `18b360df9e02_add_playlist_version_table_16_4` —
+  create `playlist_version` (id PK, FK to playlist ON DELETE
+  CASCADE, UNIQUE trace_id, UNIQUE (playlist_id, version_no),
+  index on playlist_id) + backfill every existing playlist_trace
+  row as version_no=1 + drop playlist_trace. Symmetric downgrade
+  rebuilds playlist_trace from MAX(version_no) (history beyond v1
+  acceptably lost on downgrade — recovery escape hatch).
+* `engine/models.py`: PlaylistTrace removed, replaced by
+  `PlaylistVersion`; `Playlist.versions` relationship (uselist,
+  order_by version_no, cascade); `Playlist.current_version()`
+  helper with a perf note about the lazy-load.
+* `engine/persistence.py save_playlist`: existing Playlist for
+  (station, week) is REUSED (same pk; external pointers stay
+  valid) + entries + MixUsage are cleared + rewritten +
+  `PlaylistVersion(version_no = max + 1)` is APPENDED + the
+  denormalized `Playlist.trace_id` flips to the new version's id.
+  `Playlist.seed` also flips (semantic shift documented).
+* `api/routers/generate.py`:
+  - `GET /api/playlists/{id}/trace?v=N` selects a specific
+    version; omit `v` → current. ?v=N out-of-range returns 404
+    naming the AVAILABLE range so the operator can correct the URL.
+  - `GET /api/playlists/{id}/versions` lists every version
+    (oldest first, slots omitted) for the picker dropdown. Returns
+    404 only when the playlist itself doesn't exist; a zero-
+    versions Playlist returns `current_v: 0, versions: []`.
+
+c1 review fixes (R1-R3):
+* `synchronize_session=False` rationale comment on the MixUsage
+  bulk-delete in save_playlist.
+* Docstring note on the `Playlist.seed` semantic shift.
+* Perf note on `Playlist.current_version()`'s lazy-load.
+
+Frontend (c2):
+* `web/src/lib/api.ts`: `getTrace(id, version, fetch_)` accepts
+  `version: number | null | undefined`; appends `?v=N` when set.
+  New `getVersions(id)` client + `VersionSummary` /
+  `VersionsResponse` types.
+* `web/src/routes/playlists/[id]/+page.svelte`: picker dropdown
+  visible only when versions.length > 1; latest option carries
+  the "(current)" suffix; `?v=N` reactive watcher fires loadAll
+  on URL change; defensive parse rejects non-positive / non-
+  integer `?v` values. `selectedVersionNo` cross-references the
+  trace's actual `trace_id` against the versions list so the
+  picker labels the live render. `getVersions` failure is
+  non-fatal (picker hidden); inline-CSS rule mirrors the existing
+  week-nav strip.
+* `web/src/routes/stations/[slug]/+page.svelte`: §16.1 confirm
+  dialog copy flipped from "Replace … will be deleted" to
+  "Regenerate … will be saved as a prior version. The new
+  generation becomes the current version." Per-row regen button
+  tooltip mirrors the new semantics.
+
+Testing: backend pytest 1267/1267 + 1 skip (+7 §16.4 tests covering
+default-latest GET, ?v=N selects, ?v=99 404+range, /versions
+oldest-first + no slots, unknown-playlist 404, save_playlist pk
+reuse, entries cleared + 3 versions persisted). Frontend vitest
+872/872 (+7 picker tests + 2 getTrace signature update + 1
+getVersions wire test). svelte-check 0/0.
+
+Migration verified end-to-end via a sqlite round-trip script:
+upgrade-creates-table → seed-playlist-trace → upgrade-backfills →
+downgrade-restores-latest. Dev DB hand-finished (lifespan
+create_all had pre-created playlist_version) + stamped to head;
+5 historical Classics traces backfilled as version_no=1.
+
+**Out of scope (still queued):**
+
+* §16.4.t1 — side-by-side diff between versions
+  (`/playlists/[id]/compare?from=N&to=M`). Genuinely interesting
+  standalone slice; deferred to keep v1 small.
+* Historical-version export to XML (current export endpoint pins
+  to the playlist's current version — resolves via slots JSON if
+  a future use case demands re-exporting v2 to disk).
+* Retention cap. Today: keep all versions forever. Add a per-
+  playlist or per-station cap if growth becomes a real cost.
+
+---
+
+The paper sketch + the original "Triggers to pick this up" /
+"Stay-out-of-scope candidates" sections that pre-dated the design
+pass remain below for archival reference.
 
 **v1 locked decisions** (from the design-pass turn):
 
