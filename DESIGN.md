@@ -10687,6 +10687,36 @@ opportunistically when a real ask surfaces.
   becomes a real cost. Heuristic: ~150 MB per Classics-sized station
   at 5 regens × 52 weeks; the cap matters only if storage pressure
   surfaces.
+* **§16.4.t4 rollback button** — "make v1 the current again"
+  affordance on a historical version in the picker. Trigger: the
+  operator regenerates, doesn't like the result, wants to restore.
+  UX decision pending: rolling back v3→v1 either (a) DELETES v3
+  (loses the unwanted history but the unwanted history is the
+  whole point of versioning), (b) APPENDS a new v4 with v1's
+  content (preserves history; current=v4 = v1 content; clean), or
+  (c) SHIFTS the current-pointer to v1 (need an explicit
+  `current_version_no` column on Playlist; v3 stays addressable
+  but isn't current). (b) is the recommended default at promotion
+  time — preserves the audit trail without needing a new column.
+  Marked "surprisingly subtle" in the original design pass; that
+  warning still stands.
+* **§16.4.t5 version labels / tags** — operator-applied string
+  tags on a `PlaylistVersion` (`"sent-to-iTunes"`, `"jon-approved"`,
+  `"weekend-mix"`). Linear history still enforced; tags are
+  annotations, not branches. Trigger: operator says "I want to
+  remember which version I sent to iTunes last week without
+  scrolling the picker by date". Schema: `tags: JSON | None` on
+  PlaylistVersion (or a side `playlist_version_tag` table for many-
+  to-many). Picker dropdown grows a tag suffix on labelled rows.
+* **§16.4.t6 versioned disk filenames** — opt-in
+  `{week:03d}-v{N}.xml` filename pattern, complementing the default
+  current-only `{week:03d}.xml`. Trigger: operator says
+  "OneDrive's overwriting my v2 file when I export v3, and I want
+  to keep both on disk". UI: a checkbox on the disk-export button,
+  or a separate "Export this version" button on the picker row.
+  Today's export endpoint already takes a playlist_id; the
+  versioned variant takes (playlist_id, version_no) and writes
+  the suffixed filename.
 
 **Retired**: §16.22 (trace viewer SSR migration) — replaced by
 §16.13's static-adapter choice; the premise no longer holds.
@@ -10881,17 +10911,24 @@ Symmetric downgrade reconstructs `playlist_trace` from `MAX
   copy + vitest + Playwright.
 - **c3 (closeout)** — DESIGN.md SHIPPED writeup + memory note.
 
-**Stay-out-of-scope** (folded from below):
+**Queued follow-ups** (promoted into the §16.x roadmap ordering
+block above):
 
-| Item | Trigger to revisit |
+| Item | Slot |
 |---|---|
-| Diff view (compare?from=N&to=M) | Becomes §16.4.t1 |
-| Branching versions / tags | Linear history is enough |
-| Rollback button (mutate current → prior) | Add if asked; surprisingly subtle |
-| Cross-station diff | Way out of scope |
-| Versioned disk filenames `{week:03d}-v{N}.xml` | Capped at "always latest" per decision table |
-| Historical-version export to XML | Out of v1 (resolves via slots JSON if asked) |
-| Retention cap | Add if growth becomes real (estimate: ~150 MB per station) |
+| Diff view (compare?from=N&to=M) | **§16.4.t1** (Tier 1 #3) |
+| Historical-version export to XML | **§16.4.t2** (trigger-gated) |
+| Per-playlist retention cap | **§16.4.t3** (trigger-gated) |
+| Rollback button (mutate current → prior) | **§16.4.t4** (trigger-gated; UX decision pending — see roadmap entry for the (a)/(b)/(c) options) |
+| Version labels / tags | **§16.4.t5** (trigger-gated; linear history preserved, tags are annotations only) |
+| Versioned disk filenames `{week:03d}-v{N}.xml` | **§16.4.t6** (trigger-gated; opt-in checkbox on the disk-export button) |
+
+**Genuinely rejected** (won't ship without strong evidence —
+distinct from the trigger-gated set above):
+
+| Item | Why |
+|---|---|
+| Cross-station diff | Way out of scope; the diff surfaces we have (version-vs-version, week-vs-week, staged-vs-saved) cover authoring within a single station |
 
 ---
 
