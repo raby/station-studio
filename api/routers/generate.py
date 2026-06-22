@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -345,4 +345,185 @@ def get_versions(playlist_id: int, db: Session = Depends(get_db)):
             }
             for r in rows
         ],
+    }
+
+
+# Fields compared per slot when classifying a diff row as "changed".
+# Positional fields (slot/unit/row/block) NEVER vary across versions of
+# the same playlist (same template, same week) — they're the row key.
+# `track_id` is the load-bearing change signal (which track ended up
+# here). `source` + `strategy` shift only when the operator edited the
+# template between regens — captured here so a template-shift surfaces
+# in the diff even when the picked track happens to match. `pool_index`
+# moving without track_id moving is unusual (would require the source
+# pool to have been re-imported with reordered entries) but operator-
+# interesting when it happens — captured too.
+_DIFF_SLOT_FIELDS_COMPARED = (
+    "source", "strategy", "pool_index", "track_id",
+)
+
+
+def _slot_projection(slot: dict) -> dict:
+    """Pluck the visible columns for the diff response from a TraceSlot
+    dict. Mirrors the trace viewer's table columns + the positional row
+    key so the frontend doesn't need to re-look-anything-up."""
+    return {
+        "slot": slot.get("slot"),
+        "unit": slot.get("unit"),
+        "row": slot.get("row"),
+        "block": slot.get("block"),
+        "source": slot.get("source"),
+        "strategy": slot.get("strategy"),
+        "pool_index": slot.get("pool_index"),
+        "track_id": slot.get("track_id"),
+        "track_name": slot.get("track_name"),
+        "track_artist": slot.get("track_artist"),
+        "reason": slot.get("reason"),
+    }
+
+
+@router.get("/api/playlists/{playlist_id}/diff")
+def get_trace_diff(
+    playlist_id: int,
+    from_: int = Query(..., alias="from", ge=1),
+    to: int = Query(..., ge=1),
+    db: Session = Depends(get_db),
+):
+    """Compare two PlaylistVersions of the same playlist (§16.4.t1).
+
+    Returns every slot with both sides + a `changed` flag the frontend
+    uses to render diff highlighting. The "changed" predicate fires on
+    any difference in source / strategy / pool_index / track_id —
+    positional row keys (slot/unit/row/block) are constant across
+    versions by construction, so they're not part of the predicate.
+
+    Wire shape:
+
+        {
+          "playlist_id": ...,
+          "from": {"version_no": N, "trace_id": "...", "generated_at": "..."},
+          "to":   {"version_no": M, "trace_id": "...", "generated_at": "..."},
+          "summary": {"total_slots": N, "changed": X, "unchanged": Y},
+          "slots": [
+            {
+              "slot": 1, "unit": "Mon", "row": 1, "block": 1,
+              "changed": true,
+              "from": {projection},
+              "to":   {projection},
+            },
+            ...
+          ],
+        }
+
+    The slot list is ALWAYS the full trace (not filtered to changed
+    rows) so the frontend's "Show all" toggle is purely a render-time
+    state flip — no second round-trip. Wire payload at Classics scale
+    (3010 slots × ~200 bytes × 2 sides ≈ 1.2 MB raw, ~80 KB gzipped)
+    is acceptable for a single-user tool; if growth becomes real, a
+    `?changed_only=true` filter is a one-line addition.
+
+    Errors:
+      * 404 — playlist not found.
+      * 404 — `from` or `to` references a version_no that doesn't exist
+        for this playlist (message names the available range).
+      * 400 — `from == to` (the diff would be all-unchanged; the
+        operator probably meant /trace?v=N).
+    """
+    if not db.query(Playlist.id).filter_by(id=playlist_id).first():
+        raise HTTPException(404, f"playlist {playlist_id} not found")
+    if from_ == to:
+        raise HTTPException(
+            400,
+            f"from ({from_}) and to ({to}) are the same version — "
+            f"use /trace?v={from_} for a single-version view.",
+        )
+
+    versions = (
+        db.query(PlaylistVersion)
+        .filter_by(playlist_id=playlist_id)
+        .order_by(PlaylistVersion.version_no)
+        .all()
+    )
+    by_no = {v.version_no: v for v in versions}
+    available = sorted(by_no.keys())
+
+    def _resolve(label: str, n: int) -> PlaylistVersion:
+        v = by_no.get(n)
+        if v is None:
+            if not available:
+                raise HTTPException(
+                    404, f"playlist {playlist_id} has no versions",
+                )
+            raise HTTPException(
+                404,
+                f"version {n} ({label}) not found for playlist "
+                f"{playlist_id} (available: "
+                f"{available[0]}..{available[-1]}).",
+            )
+        return v
+
+    src = _resolve("from", from_)
+    dst = _resolve("to", to)
+
+    src_slots = src.slots or []
+    dst_slots = dst.slots or []
+    # Walk by slot number — the row key. zip-by-index breaks if the two
+    # versions somehow have different slot counts (different templates
+    # at the time of generation); index by slot number for robustness.
+    src_by_slot = {s.get("slot"): s for s in src_slots}
+    dst_by_slot = {s.get("slot"): s for s in dst_slots}
+    all_slot_nums = sorted(set(src_by_slot.keys()) | set(dst_by_slot.keys()))
+
+    rows: list[dict] = []
+    changed_count = 0
+    for slot_num in all_slot_nums:
+        s_from = src_by_slot.get(slot_num)
+        s_to = dst_by_slot.get(slot_num)
+        # If either side is missing (mismatched slot counts across
+        # versions), treat as changed. Real-world this means the
+        # template changed between the two generations — rare but
+        # worth surfacing.
+        if s_from is None or s_to is None:
+            changed = True
+        else:
+            changed = any(
+                s_from.get(k) != s_to.get(k)
+                for k in _DIFF_SLOT_FIELDS_COMPARED
+            )
+        if changed:
+            changed_count += 1
+        # Row key from whichever side has the slot. Both sides usually
+        # do; pick `s_to` first so the "to" version's positional
+        # metadata wins on mismatch (the operator's "current" mental
+        # frame).
+        keyrow = s_to or s_from
+        rows.append({
+            "slot": keyrow.get("slot"),
+            "unit": keyrow.get("unit"),
+            "row": keyrow.get("row"),
+            "block": keyrow.get("block"),
+            "changed": changed,
+            "from": _slot_projection(s_from) if s_from else None,
+            "to": _slot_projection(s_to) if s_to else None,
+        })
+
+    total = len(rows)
+    return {
+        "playlist_id": playlist_id,
+        "from": {
+            "version_no": src.version_no,
+            "trace_id": src.trace_id,
+            "generated_at": src.generated_at,
+        },
+        "to": {
+            "version_no": dst.version_no,
+            "trace_id": dst.trace_id,
+            "generated_at": dst.generated_at,
+        },
+        "summary": {
+            "total_slots": total,
+            "changed": changed_count,
+            "unchanged": total - changed_count,
+        },
+        "slots": rows,
     }

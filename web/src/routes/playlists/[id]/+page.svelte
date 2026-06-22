@@ -485,6 +485,19 @@
         <span class="version-meta" data-testid="version-meta">
           {versions.length} version{versions.length === 1 ? '' : 's'}
         </span>
+        <!--
+          §16.4.t1 — only renders alongside the picker (i.e. when
+          multiple versions exist). Defaults from/to to the
+          (current-1, current) pair via the compare page's
+          derivation; the operator can then pivot from there.
+        -->
+        <a
+          href="/playlists/{id}/compare"
+          class="compare-link"
+          data-testid="compare-link"
+        >
+          Compare versions →
+        </a>
       </div>
     {/if}
 
@@ -802,6 +815,18 @@
   }
   .version-meta {
     color: #888;
+  }
+  /* §16.4.t1 — Compare-versions affordance. Inline link styling
+     mirrors the existing "view →" cells in the playlists table on
+     the station page. */
+  .compare-link {
+    margin-left: auto;
+    color: #2c3e50;
+    text-decoration: none;
+    font-weight: 500;
+  }
+  .compare-link:hover {
+    text-decoration: underline;
   }
 
   .actions {

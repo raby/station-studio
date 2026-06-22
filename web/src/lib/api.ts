@@ -236,6 +236,67 @@ export const getVersions = (
     json<VersionsResponse>(r),
   );
 
+/**
+ * One side of a `/diff` row — the slot's projection from a single
+ * version's TraceSlot. Mirrors the trace viewer's visible columns.
+ */
+export interface TraceDiffSide {
+  slot: number;
+  unit: string;
+  row: number;
+  block: number;
+  source: string | null;
+  strategy: string | null;
+  pool_index: number | null;
+  track_id: number | null;
+  track_name: string | null;
+  track_artist: string | null;
+  reason: string | null;
+}
+
+/**
+ * One row in a `/diff` response: the slot's positional row key + both
+ * sides' projections + a `changed` flag the server computes per the
+ * §16.4.t1 predicate (source / strategy / pool_index / track_id).
+ *
+ * `from` / `to` are nullable for the rare case where the two
+ * versions have different slot counts (operator edited the template
+ * between regens); the missing side renders as "—" in the table.
+ */
+export interface TraceDiffRow {
+  slot: number;
+  unit: string;
+  row: number;
+  block: number;
+  changed: boolean;
+  from: TraceDiffSide | null;
+  to: TraceDiffSide | null;
+}
+
+export interface TraceDiffResponse {
+  playlist_id: number;
+  from: { version_no: number; trace_id: string; generated_at: string };
+  to: { version_no: number; trace_id: string; generated_at: string };
+  summary: { total_slots: number; changed: number; unchanged: number };
+  slots: TraceDiffRow[];
+}
+
+/**
+ * §16.4.t1 — compare two PlaylistVersions of the same playlist. The
+ * backend pre-computes the diff so the wire payload + the frontend
+ * stay simple; the response carries the full slot list + per-row
+ * `changed` flag so a "show all" UI toggle is render-only.
+ */
+export const getTraceDiff = (
+  id: number,
+  from: number,
+  to: number,
+  fetch_ = fetch,
+): Promise<TraceDiffResponse> =>
+  fetch_(`/api/playlists/${id}/diff?from=${from}&to=${to}`).then((r) =>
+    json<TraceDiffResponse>(r),
+  );
+
 export interface StationCreatePayload {
   slug: string;
   name: string;

@@ -150,6 +150,25 @@ describe('api client', () => {
     });
   });
 
+  describe('§16.4.t1 getTraceDiff', () => {
+    it('builds the /diff?from=N&to=M URL', async () => {
+      const spy = makeSpy({
+        body: {
+          playlist_id: 7,
+          from: { version_no: 1, trace_id: 'a', generated_at: 'x' },
+          to: { version_no: 3, trace_id: 'b', generated_at: 'y' },
+          summary: { total_slots: 0, changed: 0, unchanged: 0 },
+          slots: [],
+        },
+      });
+      const { getTraceDiff } = await import('./api');
+      const result = await getTraceDiff(7, 1, 3, spy.fetch_);
+      expect(spy.calls[0].input).toBe('/api/playlists/7/diff?from=1&to=3');
+      expect(result.from.version_no).toBe(1);
+      expect(result.to.version_no).toBe(3);
+    });
+  });
+
   describe('createStation', () => {
     it('POSTs JSON to /api/stations with the payload serialised', async () => {
       const payload = { slug: 's', name: 'S', template: { x: 1 } };
