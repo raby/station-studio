@@ -22,10 +22,13 @@ const {
   getTraceMock,
   getStationMock,
   getStationPlaylistsMock,
+  getVersionsMock,
   exportPlaylistToDiskMock,
+  gotoMock,
   FakeApiError,
   pageStore,
   setId,
+  setSearch,
 } = vi.hoisted(() => {
   class FakeApiError extends Error {
     status: number;
@@ -35,29 +38,44 @@ const {
       this.status = status;
     }
   }
-  // Page store carrying the route param (`id`). Tests swap via setId().
+  // Page store carrying the route param (`id`) AND the URL (so
+  // §16.4's `$page.url.searchParams.get('v')` resolves). Tests swap
+  // via setId() / setSearch().
   let currentId: string | undefined = '1';
-  const subscribers = new Set<(v: { params: { id: string | undefined } }) => void>();
+  let currentSearch = '';
+  interface PageValue {
+    params: { id: string | undefined };
+    url: URL;
+  }
+  const buildValue = (): PageValue => ({
+    params: { id: currentId },
+    url: new URL(`http://localhost/playlists/${currentId ?? ''}${currentSearch}`),
+  });
+  const subscribers = new Set<(v: PageValue) => void>();
   const pageStore = {
-    subscribe(fn: (v: { params: { id: string | undefined } }) => void) {
+    subscribe(fn: (v: PageValue) => void) {
       subscribers.add(fn);
-      fn({ params: { id: currentId } });
+      fn(buildValue());
       return () => subscribers.delete(fn);
     },
   };
-  const setId = (s: string | undefined) => {
-    currentId = s;
-    for (const fn of subscribers) fn({ params: { id: currentId } });
+  const notify = () => {
+    for (const fn of subscribers) fn(buildValue());
   };
+  const setId = (s: string | undefined) => { currentId = s; notify(); };
+  const setSearch = (s: string) => { currentSearch = s; notify(); };
   return {
     getPlaylistMock: vi.fn(),
     getTraceMock: vi.fn(),
     getStationMock: vi.fn(),
     getStationPlaylistsMock: vi.fn(),
+    getVersionsMock: vi.fn(),
     exportPlaylistToDiskMock: vi.fn(),
+    gotoMock: vi.fn(),
     FakeApiError,
     pageStore,
     setId,
+    setSearch,
   };
 });
 
@@ -66,12 +84,17 @@ vi.mock('$lib/api', () => ({
   getTrace: (...args: unknown[]) => getTraceMock(...args),
   getStation: (...args: unknown[]) => getStationMock(...args),
   getStationPlaylists: (...args: unknown[]) => getStationPlaylistsMock(...args),
+  getVersions: (...args: unknown[]) => getVersionsMock(...args),
   exportPlaylistToDisk: (...args: unknown[]) => exportPlaylistToDiskMock(...args),
   ApiError: FakeApiError,
 }));
 
 vi.mock('$app/stores', () => ({
   page: pageStore,
+}));
+
+vi.mock('$app/navigation', () => ({
+  goto: (...args: unknown[]) => gotoMock(...args),
 }));
 
 import Page from './+page.svelte';
@@ -174,8 +197,20 @@ describe('trace viewer +page.svelte — render branches', () => {
     // tests that don't seed the mock would resolve `undefined`, causing
     // the page's `stationPlaylists.length` reactive to crash.
     getStationPlaylistsMock.mockResolvedValue([]);
+    // §16.4 — default single-version response. Picker tests override
+    // with `mockResolvedValueOnce` for multi-version fixtures.
+    getVersionsMock.mockReset();
+    getVersionsMock.mockResolvedValue({
+      playlist_id: 1, current_v: 1,
+      versions: [{
+        version_no: 1, trace_id: 'abc12345-trace-id',
+        generated_at: '2026-05-04T12:00:00Z', seed: null,
+      }],
+    });
+    gotoMock.mockReset();
     exportPlaylistToDiskMock.mockReset();
     setId('1');
+    setSearch('');
   });
 
   it('renders "Invalid playlist ID" when the route param isn\'t numeric', async () => {
@@ -372,8 +407,18 @@ describe('trace viewer — §16.6 disk-export wiring', () => {
     // tests that don't seed the mock would resolve `undefined`, causing
     // the page's `stationPlaylists.length` reactive to crash.
     getStationPlaylistsMock.mockResolvedValue([]);
+    getVersionsMock.mockReset();
+    getVersionsMock.mockResolvedValue({
+      playlist_id: 1, current_v: 1,
+      versions: [{
+        version_no: 1, trace_id: 'abc12345-trace-id',
+        generated_at: '2026-05-04T12:00:00Z', seed: null,
+      }],
+    });
+    gotoMock.mockReset();
     exportPlaylistToDiskMock.mockReset();
     setId('1');
+    setSearch('');
   });
 
   const seedAllResolved = () => {
@@ -676,8 +721,20 @@ describe('trace viewer — §14.23 excluded-candidates disclosure', () => {
     getStationMock.mockReset();
     getStationPlaylistsMock.mockReset();
     getStationPlaylistsMock.mockResolvedValue([]);
+    // §16.4 — default single-version response; multi-version picker
+    // tests override via mockResolvedValueOnce.
+    getVersionsMock.mockReset();
+    getVersionsMock.mockResolvedValue({
+      playlist_id: 1, current_v: 1,
+      versions: [{
+        version_no: 1, trace_id: 'abc12345-trace-id',
+        generated_at: '2026-05-04T12:00:00Z', seed: null,
+      }],
+    });
+    gotoMock.mockReset();
     exportPlaylistToDiskMock.mockReset();
     setId('1');
+    setSearch('');
   });
 
   /**
@@ -778,8 +835,20 @@ describe('trace viewer — §16.17 expand-all rejections', () => {
     getStationMock.mockReset();
     getStationPlaylistsMock.mockReset();
     getStationPlaylistsMock.mockResolvedValue([]);
+    // §16.4 — default single-version response; multi-version picker
+    // tests override via mockResolvedValueOnce.
+    getVersionsMock.mockReset();
+    getVersionsMock.mockResolvedValue({
+      playlist_id: 1, current_v: 1,
+      versions: [{
+        version_no: 1, trace_id: 'abc12345-trace-id',
+        generated_at: '2026-05-04T12:00:00Z', seed: null,
+      }],
+    });
+    gotoMock.mockReset();
     exportPlaylistToDiskMock.mockReset();
     setId('1');
+    setSearch('');
   });
 
   /** Two slots with rejections so "all" is meaningful. */
@@ -1010,5 +1079,143 @@ describe('trace viewer — §16.9 multi-week prev/next nav', () => {
       'href',
       '/playlists/30',
     );
+  });
+});
+
+
+// ---- §16.4 trace versioning picker ----------------------------------------
+
+describe('trace viewer — §16.4 version picker', () => {
+  beforeEach(() => {
+    getPlaylistMock.mockReset();
+    getTraceMock.mockReset();
+    getStationMock.mockReset();
+    getStationPlaylistsMock.mockReset();
+    getStationPlaylistsMock.mockResolvedValue([]);
+    getVersionsMock.mockReset();
+    gotoMock.mockReset();
+    exportPlaylistToDiskMock.mockReset();
+    setId('7');
+    setSearch('');
+  });
+
+  /** Multi-version fixture: 3 generations of the same playlist. */
+  const multiVersion = () => ({
+    playlist_id: 7,
+    current_v: 3,
+    versions: [
+      {
+        version_no: 1, trace_id: 'trace-v1',
+        generated_at: '2026-05-01T12:00:00Z', seed: 100,
+      },
+      {
+        version_no: 2, trace_id: 'trace-v2',
+        generated_at: '2026-05-02T12:00:00Z', seed: 200,
+      },
+      {
+        version_no: 3, trace_id: 'trace-v3',
+        generated_at: '2026-05-03T12:00:00Z', seed: 300,
+      },
+    ],
+  });
+
+  function seedMultiVersion(traceIdOverride?: string) {
+    // Default: trace returns v3 (the current). Overrides let tests
+    // simulate `?v=2` resolving to the v2 trace.
+    getTraceMock.mockResolvedValueOnce(
+      stubTrace({ trace_id: traceIdOverride ?? 'trace-v3' }),
+    );
+    getPlaylistMock.mockResolvedValueOnce(stubPlaylist());
+    getStationMock.mockResolvedValueOnce(stubStation());
+    getVersionsMock.mockResolvedValueOnce(multiVersion());
+  }
+
+  it('hides the picker for a single-version playlist', async () => {
+    getTraceMock.mockResolvedValueOnce(stubTrace());
+    getPlaylistMock.mockResolvedValueOnce(stubPlaylist());
+    getStationMock.mockResolvedValueOnce(stubStation());
+    getVersionsMock.mockResolvedValueOnce({
+      playlist_id: 7, current_v: 1,
+      versions: [{
+        version_no: 1, trace_id: 'abc12345-trace-id',
+        generated_at: '2026-05-04T12:00:00Z', seed: null,
+      }],
+    });
+    render(Page);
+    await screen.findByText('Track Mon-1');
+    expect(screen.queryByTestId('version-picker')).toBeNull();
+  });
+
+  it('renders the picker with one option per version (oldest first)', async () => {
+    seedMultiVersion();
+    render(Page);
+    await screen.findByText('Track Mon-1');
+    expect(screen.getByTestId('version-picker')).toBeInTheDocument();
+    const select = screen.getByTestId('version-select') as HTMLSelectElement;
+    const options = Array.from(select.querySelectorAll('option'));
+    expect(options.map((o) => o.getAttribute('data-version'))).toEqual(
+      ['1', '2', '3'],
+    );
+    // Latest gets "(current)" suffix.
+    expect(options[2].textContent).toContain('(current)');
+    expect(options[0].textContent).not.toContain('(current)');
+  });
+
+  it('reports the version count in the meta line', async () => {
+    seedMultiVersion();
+    render(Page);
+    await screen.findByText('Track Mon-1');
+    expect(screen.getByTestId('version-meta').textContent).toContain(
+      '3 versions',
+    );
+  });
+
+  it('hydrates the selected option from ?v=N on initial load', async () => {
+    setSearch('?v=2');
+    // The mocked trace endpoint returns v2's trace.
+    seedMultiVersion('trace-v2');
+    render(Page);
+    await screen.findByText('Track Mon-1');
+    const select = screen.getByTestId('version-select') as HTMLSelectElement;
+    expect(select.value).toBe('2');
+    // The fetch path passed v=2 through.
+    const firstCallArgs = getTraceMock.mock.calls[0];
+    expect(firstCallArgs[0]).toBe(7);
+    expect(firstCallArgs[1]).toBe(2);
+  });
+
+  it('default load (no ?v) sends version=null and selects current', async () => {
+    seedMultiVersion();
+    render(Page);
+    await screen.findByText('Track Mon-1');
+    const select = screen.getByTestId('version-select') as HTMLSelectElement;
+    expect(select.value).toBe('3'); // matches trace-v3
+    expect(getTraceMock.mock.calls[0][1]).toBeNull();
+  });
+
+  it('change event calls goto(?v=N)', async () => {
+    seedMultiVersion();
+    render(Page);
+    await screen.findByText('Track Mon-1');
+    const select = screen.getByTestId('version-select') as HTMLSelectElement;
+    await act(async () => {
+      select.value = '1';
+      await fireEvent.change(select);
+    });
+    expect(gotoMock).toHaveBeenCalledTimes(1);
+    const arg = gotoMock.mock.calls[0][0] as string;
+    expect(arg).toContain('v=1');
+    // Pathname preserved.
+    expect(arg).toContain('/playlists/7');
+  });
+
+  it('ignores non-positive or non-integer ?v values', async () => {
+    // ?v=0 (out-of-range) + ?v=abc (non-integer) both fall back to
+    // current (null) so the picker doesn't address a bogus version.
+    setSearch('?v=abc');
+    seedMultiVersion();
+    render(Page);
+    await screen.findByText('Track Mon-1');
+    expect(getTraceMock.mock.calls[0][1]).toBeNull();
   });
 });

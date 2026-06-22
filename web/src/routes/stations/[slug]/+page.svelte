@@ -182,12 +182,18 @@
       ? playlists.find((p) => p.week === week)
       : undefined;
     if (existing) {
+      // §16.4 — regeneration is no longer destructive. The prior
+      // trace is preserved as a versioned row; the new generation
+      // becomes the current version. Copy reflects the actual
+      // semantics so the operator doesn't think they're about to
+      // lose history.
       const ok = await confirmDialog({
-        title: `Replace week ${week}?`,
+        title: `Regenerate week ${week}?`,
         body:
-          `The current trace ${existing.trace_id.slice(0, 8)}… will be deleted. ` +
-          `(Trace history across regenerations is on the roadmap — for now this is permanent.)`,
-        confirmLabel: 'Replace',
+          `The current trace ${existing.trace_id.slice(0, 8)}… will be saved as a prior version. ` +
+          `The new generation becomes the current version. You can switch between versions ` +
+          `from the trace viewer.`,
+        confirmLabel: 'Regenerate',
         danger: true,
       });
       if (!ok) return;
@@ -286,11 +292,14 @@
   }
 
   async function regenRow(p: PlaylistSummary) {
+    // §16.4 — per-row regen mirrors the generate flow above: the
+    // prior trace is preserved as a prior version, not deleted.
     const ok = await confirmDialog({
       title: `Regenerate week ${p.week}?`,
       body:
-        `The current trace ${p.trace_id.slice(0, 8)}… will be deleted. ` +
-        `(Trace history across regenerations is on the roadmap — for now this is permanent.)`,
+        `The current trace ${p.trace_id.slice(0, 8)}… will be saved as a prior version. ` +
+        `The new generation becomes the current version. You can switch between versions ` +
+        `from the trace viewer.`,
       confirmLabel: 'Regenerate',
       danger: true,
     });
@@ -735,7 +744,7 @@
                   data-testid="regen-row-{p.week}"
                   disabled={generating || deleting}
                   on:click={() => regenRow(p)}
-                  title="Regenerate this week — replaces the current trace"
+                  title="Regenerate this week — prior trace is saved as a version"
                 >
                   ↻ regen
                 </button>

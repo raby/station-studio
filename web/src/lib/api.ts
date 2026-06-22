@@ -179,8 +179,62 @@ export const getStationPlaylists = (
 export const getPlaylist = (id: number, fetch_ = fetch): Promise<Playlist> =>
   fetch_(`/api/playlists/${id}`).then((r) => json<Playlist>(r));
 
-export const getTrace = (id: number, fetch_ = fetch): Promise<Trace> =>
-  fetch_(`/api/playlists/${id}/trace`).then((r) => json<Trace>(r));
+/**
+ * Fetch a playlist's trace. §16.4 — `version` selects a specific
+ * `PlaylistVersion`; omitting it (or passing null/undefined) returns
+ * the CURRENT version. The wire shape (`trace_id`, `station`,
+ * `week`, `rng`, `seed`, `generated_at`, `slots`) is unchanged from
+ * pre-§16.4 — adding fields would be a separate slice.
+ */
+export const getTrace = (
+  id: number,
+  version: number | null | undefined = undefined,
+  fetch_ = fetch,
+): Promise<Trace> => {
+  const url =
+    version != null
+      ? `/api/playlists/${id}/trace?v=${version}`
+      : `/api/playlists/${id}/trace`;
+  return fetch_(url).then((r) => json<Trace>(r));
+};
+
+/**
+ * One entry in the version-picker dropdown. Mirrors the
+ * `GET /api/playlists/{id}/versions` per-row shape.
+ *
+ * `slots` is INTENTIONALLY OMITTED on the wire (§16.4: keeps the
+ * listing payload small — full trace fetched separately via
+ * `getTrace(id, version_no)`).
+ */
+export interface VersionSummary {
+  version_no: number;
+  trace_id: string;
+  generated_at: string;
+  seed: number | null;
+}
+
+export interface VersionsResponse {
+  playlist_id: number;
+  current_v: number;
+  versions: VersionSummary[];
+}
+
+/**
+ * List every `PlaylistVersion` for the playlist (oldest first).
+ * Feeds the trace viewer's version-picker dropdown.
+ *
+ * Returns `current_v: 0, versions: []` for a freshly-inserted
+ * Playlist that hasn't reached its first generation yet; the
+ * caller renders that as "no versions" rather than treating it
+ * as an error.
+ */
+export const getVersions = (
+  id: number,
+  fetch_ = fetch,
+): Promise<VersionsResponse> =>
+  fetch_(`/api/playlists/${id}/versions`).then((r) =>
+    json<VersionsResponse>(r),
+  );
 
 export interface StationCreatePayload {
   slug: string;

@@ -453,8 +453,11 @@ describe('station detail — §16.1 generate panel', () => {
     await fireEvent.input(weekInput, { target: { value: '1' } });
     await fireEvent.click(screen.getByTestId('advanced-submit'));
 
+    // §16.4 — confirm title changed from "Replace" to "Regenerate"
+    // since the prior trace is now PRESERVED as a prior version
+    // (not deleted). Match the new copy.
     expect(confirmDialogMock).toHaveBeenCalledWith(
-      expect.objectContaining({ title: expect.stringMatching(/replace week 1/i) }),
+      expect.objectContaining({ title: expect.stringMatching(/regenerate week 1/i) }),
     );
     expect(startGenerateJobMock).not.toHaveBeenCalled();
   });

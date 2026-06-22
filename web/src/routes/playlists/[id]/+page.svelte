@@ -4,11 +4,15 @@
     getTrace,
     getStation,
     getStationPlaylists,
+    getVersions,
     exportPlaylistToDisk,
     ApiError,
   } from '$lib/api';
-  import type { Playlist, PlaylistSummary, Trace, TraceSlot, Station } from '$lib/api';
+  import type {
+    Playlist, PlaylistSummary, Trace, TraceSlot, Station, VersionSummary,
+  } from '$lib/api';
   import { page } from '$app/stores';
+  import { goto } from '$app/navigation';
 
   let trace: Trace | null = null;
   let playlist: Playlist | null = null;
@@ -30,6 +34,22 @@
   let strategyFilter = '';
 
   $: id = Number($page.params.id);
+
+  // §16.4 — version-picker state. `requestedVersion` parses the
+  // `?v=N` URL search-param; null means "no explicit selection →
+  // serve the current version". `versions` is the dropdown's data
+  // source (oldest first, slots-free per `getVersions`).
+  // `currentV` is the server-reported max (used so the picker
+  // labels the latest correctly even before a fresh /versions
+  // round-trip completes).
+  $: requestedVersion = (() => {
+    const raw = $page.url.searchParams.get('v');
+    if (raw == null) return null;
+    const n = Number(raw);
+    return Number.isInteger(n) && n > 0 ? n : null;
+  })();
+  let versions: VersionSummary[] = [];
+  let currentV = 0;
 
   // Guard against non-numeric route params (e.g. /playlists/abc).
   // Number('abc') === NaN — catch it before the fetch so the error is
@@ -119,7 +139,7 @@
    * stale invocation can't overwrite state that a newer invocation has
    * already updated.
    */
-  async function loadAll(playlistId: number) {
+  async function loadAll(playlistId: number, version: number | null) {
     if (isNaN(playlistId)) return;
     const myGen = ++loadGeneration;
 
@@ -136,21 +156,29 @@
     try {
       // getTrace must come first — its `station` field is the slug we
       // need for the next three fetches. Once we have it, the playlist /
-      // station / playlist-list fetches are independent and parallelise
-      // (review N2). Buffer all results in locals; swap to component
-      // state at the end so reloads don't flash a half-state where the
-      // header is week 4 but the rows are still week 3.
-      const t = await getTrace(playlistId);
+      // station / playlist-list / versions fetches are independent and
+      // parallelise (review N2). Buffer all results in locals; swap to
+      // component state at the end so reloads don't flash a half-state
+      // where the header is week 4 but the rows are still week 3.
+      //
+      // §16.4 — `version` selects a specific PlaylistVersion via
+      // `?v=N`; null falls back to current. The trace's `trace_id`
+      // tells us which version we got, so the picker can show the
+      // right selection even without a separate /versions race.
+      const t = await getTrace(playlistId, version);
       if (myGen !== loadGeneration) return;
 
-      // The playlist list is non-essential — if the endpoint flakes,
-      // still render the trace; the nav strip just won't appear (S2).
-      // .catch inside the Promise.all so a flaky list endpoint doesn't
-      // poison the others.
-      const [p, s, list] = await Promise.all([
+      // §16.4 — versions list feeds the picker dropdown. Failure is
+      // non-fatal (matches stationPlaylists pattern): the dropdown
+      // just won't render. .catch inside Promise.all so a flaky
+      // /versions endpoint doesn't poison the others.
+      const [p, s, list, vlist] = await Promise.all([
         getPlaylist(playlistId),
         getStation(t.station),
         getStationPlaylists(t.station).catch(() => [] as PlaylistSummary[]),
+        getVersions(playlistId).catch(
+          () => ({ playlist_id: playlistId, current_v: 0, versions: [] }),
+        ),
       ]);
       if (myGen !== loadGeneration) return;
 
@@ -163,6 +191,8 @@
       playlist = p;
       station = s;
       stationPlaylists = list;
+      versions = vlist.versions;
+      currentV = vlist.current_v;
       sourceColours = Object.fromEntries(sources.map((src) => [src.name, src.colour]));
       rowGroups = groupByRow(t.slots);
     } catch (e) {
@@ -173,11 +203,45 @@
     }
   }
 
-  // Reactive: re-fetch whenever the route param changes. Fires once on
-  // initial mount AND on every subsequent navigation between sibling
-  // playlists. The `void` annotation is just to acknowledge the dropped
-  // promise — errors land in `error` via loadAll's catch.
-  $: if (!isNaN(id)) void loadAll(id);
+  // Reactive: re-fetch whenever the route param OR the ?v=N
+  // search-param changes. Fires once on initial mount AND on every
+  // subsequent navigation between sibling playlists OR version
+  // switches. The `void` annotation is just to acknowledge the
+  // dropped promise — errors land in `error` via loadAll's catch.
+  $: if (!isNaN(id)) void loadAll(id, requestedVersion);
+
+  /**
+   * §16.4 — version-picker change handler. Updates the URL via
+   * `goto(?v=N)`; the reactive watcher above re-fires loadAll with
+   * the new version. URL is the source of truth so permalinks +
+   * back-button work; component state follows.
+   */
+  function onVersionChange(event: Event) {
+    const target = event.currentTarget as HTMLSelectElement;
+    const next = Number(target.value);
+    if (!Number.isInteger(next) || next < 1) return;
+    const url = new URL($page.url);
+    url.searchParams.set('v', String(next));
+    void goto(url.toString().replace(url.origin, ''), {
+      keepFocus: true,
+      noScroll: true,
+      replaceState: false,
+    });
+  }
+
+  // §16.4 — the version actually rendered. Trace's `trace_id` is the
+  // authoritative answer (the server picked it); we cross-reference
+  // it against the versions list to label the picker selection. Pre-
+  // /versions-arrival (race), fall back to the URL's requested value
+  // OR currentV so the dropdown isn't blank.
+  $: selectedVersionNo = (() => {
+    if (trace && versions.length > 0) {
+      const match = versions.find((v) => v.trace_id === trace!.trace_id);
+      if (match) return match.version_no;
+    }
+    if (requestedVersion != null) return requestedVersion;
+    return currentV;
+  })();
 
   // ---- prev / next sibling derivation (DESIGN.md §16.9 D2) ---------------
   // Sort the station's playlists by week, find current's index, derive
@@ -385,6 +449,43 @@
           </span>
         {/if}
       </nav>
+    {/if}
+
+    <!--
+      §16.4 trace versioning v1 — picker dropdown.
+
+      Renders only when the playlist has >1 version (single-version
+      playlists don't need a chooser; the trace IS that version).
+      Selecting an entry calls `goto(?v=N)`; the reactive
+      `requestedVersion` derivation drives loadAll, which calls
+      getTrace(id, N). URL is the source of truth so permalinks +
+      back-button work without extra plumbing.
+
+      The "current" label on the latest row mirrors the server's
+      `current_v` so the operator knows which version is the one
+      iTunes will export.
+    -->
+    {#if versions.length > 1}
+      <div class="version-picker" data-testid="version-picker">
+        <label for="version-select">Version</label>
+        <select
+          id="version-select"
+          data-testid="version-select"
+          value={selectedVersionNo}
+          on:change={onVersionChange}
+        >
+          {#each versions as v (v.version_no)}
+            <option value={v.version_no} data-version={v.version_no}>
+              v{v.version_no}{v.version_no === currentV ? ' (current)' : ''}
+              · {fmtDate(v.generated_at)}
+              {v.seed !== null ? ` · seed ${v.seed}` : ''}
+            </option>
+          {/each}
+        </select>
+        <span class="version-meta" data-testid="version-meta">
+          {versions.length} version{versions.length === 1 ? '' : 's'}
+        </span>
+      </div>
     {/if}
 
     <dl class="meta">
@@ -676,6 +777,31 @@
     color: #999;
     background: #fafafa;
     cursor: not-allowed;
+  }
+
+  /* §16.4 trace-version picker. Inline label + select + count
+     summary; sits between the week-nav strip and the meta dl. */
+  .version-picker {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin: 0.4rem 0 1rem;
+    font-size: 0.85rem;
+  }
+  .version-picker label {
+    color: #666;
+  }
+  .version-picker select {
+    padding: 0.25rem 0.5rem;
+    border: 1px solid #ccc;
+    border-radius: 3px;
+    background: white;
+    font: inherit;
+    font-size: 0.85rem;
+    font-variant-numeric: tabular-nums;
+  }
+  .version-meta {
+    color: #888;
   }
 
   .actions {

@@ -125,9 +125,28 @@ describe('api client', () => {
       await getPlaylist(42, spyPlaylist.fetch_);
       expect(spyPlaylist.calls[0].input).toBe('/api/playlists/42');
 
+      // §16.4 — getTrace now accepts (id, version, fetch_).
+      // No version → no ?v= on the URL (server returns current).
       const spyTrace = makeSpy({ body: { trace_id: 'abc' } });
-      await getTrace(42, spyTrace.fetch_);
+      await getTrace(42, null, spyTrace.fetch_);
       expect(spyTrace.calls[0].input).toBe('/api/playlists/42/trace');
+
+      // With version → ?v=N appended.
+      const spyTraceV = makeSpy({ body: { trace_id: 'def' } });
+      await getTrace(42, 3, spyTraceV.fetch_);
+      expect(spyTraceV.calls[0].input).toBe('/api/playlists/42/trace?v=3');
+    });
+  });
+
+  describe('§16.4 getVersions', () => {
+    it('builds the /api/playlists/{id}/versions URL', async () => {
+      const spy = makeSpy({
+        body: { playlist_id: 7, current_v: 2, versions: [] },
+      });
+      const { getVersions } = await import('./api');
+      const result = await getVersions(7, spy.fetch_);
+      expect(spy.calls[0].input).toBe('/api/playlists/7/versions');
+      expect(result.current_v).toBe(2);
     });
   });
 
