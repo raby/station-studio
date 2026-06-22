@@ -10619,22 +10619,30 @@ opportunistically when a real ask surfaces.
 **Tier 1 — operator workflow gaps (real paper cuts)**:
 
 1. ~~**§16.4 trace versioning v1**~~ — ✅ SHIPPED 2026-06-22.
-   Closes the regenerate-destroys-old-trace hole. §16.4.t1
-   side-by-side diff between versions is the natural follow-up;
-   queued if the operator asks.
+   Closes the regenerate-destroys-old-trace hole. Spawned three
+   queued sub-slices (§16.4.t1 / .t2 / .t3 — see "Queued
+   sub-slices from §16.4" below).
 2. **§16.7 edit mode for stations** — in-UI template editing for
    station-level fields (cadence, RNG, source names, row/layout
    shape). Today: create-only via wizard; edit means hand-editing
    `stations/{slug}.json` + reseeding OR direct DB write. Visual
    editor (§16.2) edits BLOCK fields, not station-level. Closes the
    workflow loop.
-3. **§16.17 excluded-candidates display** — trace viewer surfaces
+3. **§16.4.t1 side-by-side trace diff** — `/playlists/[id]/compare?
+   from=N&to=M` page showing per-slot track / source / pool-index
+   changes between two versions of the same playlist. Trigger:
+   operator asks "did my re-import actually change anything for
+   week 5?" The most interesting standalone bit of the §16.4
+   vision; deliberately deferred to keep v1 small. Natural twin to
+   §16.23 (week-vs-week) and §16.2.7's compare-against-saved
+   (staged-vs-saved) — three diff surfaces share the same mental
+   model.
+4. **§16.17 excluded-candidates display** — trace viewer surfaces
    "why didn't track X get picked" for weighted/mix strategies. The
    debug surface for the most-asked author question.
-4. **§16.23 week-vs-week trace diff** — compare slot N across
-   consecutive weeks. Natural twin to §16.4 (version-vs-version) +
-   §16.2.7's compare-against-saved (staged-vs-saved). Three diff
-   surfaces become the same mental model.
+5. **§16.23 week-vs-week trace diff** — compare slot N across
+   consecutive weeks. Natural twin to §16.4.t1 (version-vs-version)
+   + §16.2.7's compare-against-saved (staged-vs-saved).
 
 **Tier 2 — trace viewer scope**:
 
@@ -10666,6 +10674,19 @@ opportunistically when a real ask surfaces.
     enough product is built to justify it.
 13. **§16.13.t1 PyPI publish** — promote when a stranger asks for
     clone-free install.
+
+**Trigger-gated (waiting on signal — see §16.4 status block)**:
+
+* **§16.4.t2 historical-version XML export** — re-export an OLD
+  PlaylistVersion to disk (today the export pins to current).
+  Trigger: real "I want to send v2 to my iTunes box" ask. Resolves
+  via slots JSON + a track lookup; not in v1 because there was no
+  signal it'd be needed.
+* **§16.4.t3 per-playlist retention cap** — bounded version
+  history (e.g. keep latest N, prune on insert). Trigger: growth
+  becomes a real cost. Heuristic: ~150 MB per Classics-sized station
+  at 5 regens × 52 weeks; the cap matters only if storage pressure
+  surfaces.
 
 **Retired**: §16.22 (trace viewer SSR migration) — replaced by
 §16.13's static-adapter choice; the premise no longer holds.
