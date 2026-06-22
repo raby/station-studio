@@ -221,6 +221,15 @@ class Playlist(Base):
         freshly-constructed Playlists (the runtime shape always has
         ≥1 version post-`save_playlist`, but legacy DB rows in the
         wild during migration could in theory have none).
+
+        **Perf note:** triggers a lazy load of `versions` (the full
+        list, ordered by version_no) on first access. Acceptable
+        today (Classics's regen rate is hand-driven; even hundreds of
+        versions per playlist load in milliseconds). If retention
+        ever drives N to thousands and call sites multiply, replace
+        with a per-call `session.query(PlaylistVersion).filter_by(
+        playlist_id=...).order_by(version_no.desc()).first()` to
+        avoid the full-list materialization.
         """
         return self.versions[-1] if self.versions else None
 

@@ -211,6 +211,14 @@ def save_playlist(
         # delete keeps the order deterministic.
         for e in list(playlist.entries):
             db.delete(e)
+        # `synchronize_session=False`: skips the in-session-object
+        # invalidation pass that the default ('auto') would run.
+        # Playlist has no `mix_usages` relationship + the immediate
+        # `db.flush()` below + the per-station session lifetime mean
+        # there are no stale MixUsage references to invalidate. The
+        # skip is a perf win for stations with thousands of mix
+        # blocks (Classics ships zero today; future stations could
+        # have hundreds per week).
         db.query(MixUsage).filter_by(playlist_id=playlist.id).delete(
             synchronize_session=False,
         )
@@ -218,6 +226,12 @@ def save_playlist(
         # Bump `trace_id` to point at the new version (the
         # denormalized pointer column for fast PlaylistOut serves).
         playlist.trace_id = result.trace.trace_id
+        # §16.4 semantic shift: `Playlist.seed` now ALSO flips on
+        # regen to mirror the current version's seed. Pre-§16.4 the
+        # column was set once at row creation + never updated; now
+        # it tracks the latest version so `PlaylistOut` reflects
+        # current state (PlaylistVersion.seed carries the per-
+        # version history independently).
         playlist.seed = result.trace.seed
         next_version_no = (
             max((v.version_no for v in playlist.versions), default=0) + 1
