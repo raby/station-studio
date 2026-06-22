@@ -2,7 +2,10 @@
 
 Generalised from weekly/app/models.py. Key differences:
   * Playlist + PlaylistEntry are station-scoped.
-  * PlaylistTrace table holds the persisted trace keyed by trace_id.
+  * PlaylistVersion table (§16.4) holds multi-row trace history per
+    Playlist; `Playlist.trace_id` denormalizes the current version's
+    trace_id as a fast read shortcut. Pre-§16.4 this was the
+    single-row `PlaylistTrace`.
   * Station template JSON lives on the Station row.
   * MixUsage shipped in §14.25 (cross-week mix dedup, station-scoped via
     playlist_id rather than weekly's weekly_playlist_id).
@@ -177,7 +180,12 @@ class Playlist(Base):
     week = Column(Integer, nullable=False)
     generated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     seed = Column(Integer, nullable=True)
-    trace_id = Column(Text, nullable=False)  # UUID; links to PlaylistTrace
+    # §16.4 — pointer to the CURRENT version's `trace_id`. Pre-§16.4
+    # this was the single trace's id; post-§16.4 it's a denormalized
+    # shortcut so `PlaylistOut.trace_id` (and any caller that doesn't
+    # care about history) doesn't need a join. `save_playlist` flips
+    # this on every regen to point at the new max-version row.
+    trace_id = Column(Text, nullable=False)
 
     station = relationship("Station", back_populates="playlists")
     entries = relationship(
@@ -186,20 +194,35 @@ class Playlist(Base):
         cascade="all, delete-orphan",
         order_by="PlaylistEntry.position",
     )
-    # ORM-level cascade for the trace mirrors the Station→Playlist setup:
-    # the FK already has ondelete=CASCADE, but ORM cascade is belt-and-
-    # braces against any future Session created without the
-    # PRAGMA foreign_keys=ON event listener. one-to-one => uselist=False.
-    trace = relationship(
-        "PlaylistTrace",
+    # §16.4 — multi-row trace history. ORM cascade mirrors the
+    # Station→Playlist setup (the FK already has ondelete=CASCADE,
+    # but ORM cascade is belt-and-braces against any future Session
+    # created without the PRAGMA foreign_keys=ON event listener).
+    # `uselist=True, order_by="PlaylistVersion.version_no"` so
+    # `playlist.versions` iterates oldest → newest; `current_version()`
+    # below returns the max.
+    versions = relationship(
+        "PlaylistVersion",
         back_populates="playlist",
         cascade="all, delete-orphan",
-        uselist=False,
+        order_by="PlaylistVersion.version_no",
     )
 
     __table_args__ = (
         UniqueConstraint("station_id", "week"),
     )
+
+    def current_version(self) -> "PlaylistVersion | None":
+        """Return the latest `PlaylistVersion` row, or None if no
+        version has been written yet.
+
+        §16.4 — single helper so callers don't sprinkle `versions[-1]`
+        across the codebase. Returns None defensively for un-flushed /
+        freshly-constructed Playlists (the runtime shape always has
+        ≥1 version post-`save_playlist`, but legacy DB rows in the
+        wild during migration could in theory have none).
+        """
+        return self.versions[-1] if self.versions else None
 
 
 class PlaylistEntry(Base):
@@ -219,7 +242,7 @@ class PlaylistEntry(Base):
     # §14.31 — per-entry strategy tag (window/pick/sequential/jingle/mix/
     # weighted/prev_ref). Denormalises the trace's slot.strategy onto the
     # entry so queries like "show me all mix entries from week 12" don't
-    # need a JOIN with playlist_trace.slots JSON. Nullable so existing
+    # need a JOIN with playlist_version.slots JSON. Nullable so existing
     # rows (pre-§14.31 playlists) remain valid pre-backfill; new rows
     # always populate via save_playlist. Run scripts/backfill_slot_types.py
     # to populate historical entries from their persisted traces.
@@ -233,15 +256,37 @@ class PlaylistEntry(Base):
     )
 
 
-class PlaylistTrace(Base):
-    """Persisted per-slot trace keyed by trace_id."""
-    __tablename__ = "playlist_trace"
+class PlaylistVersion(Base):
+    """One generated trace for a Playlist (§16.4 trace versioning v1).
 
-    trace_id = Column(Text, primary_key=True)
+    Replaces the prior single-row `PlaylistTrace`. Each regenerate
+    appends a new row with `version_no = max + 1`; the prior version
+    stays addressable for the trace viewer's history picker.
+
+    Identity:
+      * `id` — synthetic PK (was `trace_id` PK on PlaylistTrace —
+        switched to a normal autoincrement integer so the
+        `(playlist_id, version_no)` natural key can carry the unique
+        constraint cleanly).
+      * `trace_id` — still UNIQUE (the engine generates a fresh UUID
+        per generation; external callers identify a specific trace by
+        this id).
+      * `(playlist_id, version_no)` — UNIQUE; the natural key.
+
+    `Playlist.trace_id` points at the CURRENT version's `trace_id`
+    as a denormalized shortcut; `save_playlist` updates it in lockstep.
+    """
+    __tablename__ = "playlist_version"
+
+    id = Column(Integer, primary_key=True)
     playlist_id = Column(
         Integer, ForeignKey("playlist.id", ondelete="CASCADE"),
         nullable=False, index=True,
     )
+    # 1-indexed. version_no=1 is the first generation; subsequent
+    # regenerations append version_no=2, 3, ...
+    version_no = Column(Integer, nullable=False)
+    trace_id = Column(Text, nullable=False, unique=True)
     station_slug = Column(Text, nullable=False)
     week = Column(Integer, nullable=False)
     rng = Column(Text, nullable=False)
@@ -249,7 +294,14 @@ class PlaylistTrace(Base):
     generated_at = Column(Text, nullable=False)  # ISO8601
     slots = Column(JSON, nullable=False)         # list[TraceSlot as dict]
 
-    playlist = relationship("Playlist", back_populates="trace")
+    playlist = relationship("Playlist", back_populates="versions")
+
+    __table_args__ = (
+        UniqueConstraint(
+            "playlist_id", "version_no",
+            name="uq_playlist_version_playlist_id_version_no",
+        ),
+    )
 
 
 class Config(Base):

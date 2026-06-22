@@ -8,7 +8,7 @@ from fastapi.responses import Response
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from engine.models import Station, Playlist, PlaylistTrace
+from engine.models import Station, Playlist, PlaylistVersion
 from engine.persistence import (
     advance_cursors, load_alias_map, load_cursor_positions,
     load_excluded_mix_ids, load_excluded_track_pids, load_pools,
@@ -247,10 +247,53 @@ def delete_playlist(playlist_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/api/playlists/{playlist_id}/trace")
-def get_trace(playlist_id: int, db: Session = Depends(get_db)):
-    t = db.query(PlaylistTrace).filter_by(playlist_id=playlist_id).first()
-    if not t:
-        raise HTTPException(404, f"trace for playlist {playlist_id} not found")
+def get_trace(
+    playlist_id: int,
+    v: int | None = None,
+    db: Session = Depends(get_db),
+):
+    """Return a specific version of the playlist's trace.
+
+    §16.4 — multi-version semantics. `?v=N` selects version N
+    explicitly; omitting `v` returns the CURRENT (max) version. The
+    wire shape is unchanged from pre-§16.4 (`trace_id`, `station`,
+    `week`, `rng`, `seed`, `generated_at`, `slots`) — adding a field
+    would be a separate slice (the `/versions` endpoint below is the
+    explicit history-listing surface).
+
+    Errors:
+      * 404 — playlist has no PlaylistVersion rows (fresh row pre-
+        generate, or a partial-write recovery scenario).
+      * 404 — `?v=N` references a version_no that doesn't exist for
+        this playlist. Message names both the requested and the
+        available range so the operator can correct the URL.
+    """
+    # Filter on (playlist_id, version_no) when v is set; else fall
+    # back to the latest. Single ORM query in both branches.
+    q = db.query(PlaylistVersion).filter_by(playlist_id=playlist_id)
+    if v is not None:
+        t = q.filter_by(version_no=v).first()
+        if t is None:
+            # Surface what IS available so the operator can fix the
+            # URL without needing a separate /versions round-trip.
+            available = sorted(
+                row.version_no for row in q.all()
+            )
+            if not available:
+                raise HTTPException(
+                    404, f"trace for playlist {playlist_id} not found",
+                )
+            raise HTTPException(
+                404,
+                f"version {v} not found for playlist {playlist_id} "
+                f"(available: {available[0]}..{available[-1]}).",
+            )
+    else:
+        t = q.order_by(PlaylistVersion.version_no.desc()).first()
+        if t is None:
+            raise HTTPException(
+                404, f"trace for playlist {playlist_id} not found",
+            )
     return {
         "trace_id": t.trace_id,
         "station": t.station_slug,
@@ -259,4 +302,47 @@ def get_trace(playlist_id: int, db: Session = Depends(get_db)):
         "seed": t.seed,
         "generated_at": t.generated_at,
         "slots": t.slots,
+    }
+
+
+@router.get("/api/playlists/{playlist_id}/versions")
+def get_versions(playlist_id: int, db: Session = Depends(get_db)):
+    """List every PlaylistVersion for the playlist (oldest first).
+
+    §16.4 — feeds the trace viewer's version-picker dropdown. Returns
+    enough per-row data for the picker labels + permalinks (`?v=N`)
+    without forcing N round-trips through `/trace?v=N` just to render
+    the dropdown.
+
+    Slots JSON is INTENTIONALLY OMITTED here (~600 KB per version for
+    Classics; multiplied by the version count, the listing payload
+    would dominate over per-version trace fetches). Callers wanting
+    the full trace go through `/trace?v=N`.
+
+    Returns 404 only when the playlist itself doesn't exist; a
+    playlist with zero versions returns `{playlist_id, current_v: 0,
+    versions: []}` — defensive shape for a freshly-inserted row that
+    hasn't reached its first generation yet.
+    """
+    if not db.query(Playlist.id).filter_by(id=playlist_id).first():
+        raise HTTPException(404, f"playlist {playlist_id} not found")
+
+    rows = (
+        db.query(PlaylistVersion)
+        .filter_by(playlist_id=playlist_id)
+        .order_by(PlaylistVersion.version_no)
+        .all()
+    )
+    return {
+        "playlist_id": playlist_id,
+        "current_v": rows[-1].version_no if rows else 0,
+        "versions": [
+            {
+                "version_no": r.version_no,
+                "trace_id": r.trace_id,
+                "generated_at": r.generated_at,
+                "seed": r.seed,
+            }
+            for r in rows
+        ],
     }

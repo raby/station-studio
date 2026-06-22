@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from engine.artist_match import build_alias_map
 from engine.models import (
-    ArtistAlias, CursorState, MixUsage, Playlist, PlaylistEntry, PlaylistTrace,
+    ArtistAlias, CursorState, MixUsage, Playlist, PlaylistEntry, PlaylistVersion,
     SourcePlaylist, SourcePlaylistEntry, Station, Track,
 )
 from engine.rules import get_rule_list_value
@@ -162,11 +162,29 @@ def save_playlist(
     *,
     template: Template | None = None,
 ) -> Playlist:
-    """Persist a generation result as a Playlist + entries + trace.
+    """Persist a generation result as a Playlist + entries + version.
 
-    Replaces any existing playlist for this (station, week) pair — the
-    replace logic is intentionally inside the helper so both the API
-    endpoint and the bootstrap script see the same behaviour.
+    §16.4 — multi-version semantics: if a Playlist for (station, week)
+    already exists, this APPENDS a new `PlaylistVersion` (version_no =
+    max + 1), rewrites the entry rows, and flips
+    `Playlist.trace_id` to the new version's id. Pre-§16.4, the
+    existing Playlist was deleted (cascade-killing entries + trace)
+    and recreated — destructive in a way that lost trace history.
+
+    Append semantics:
+      * Playlist row itself is REUSED — keeps the same `id` so
+        external pointers (PlaylistEntry.playlist_id, MixUsage.
+        playlist_id) stay valid across regenerations.
+      * Entries are CLEARED + rewritten (latest-only — TraceSlot
+        already carries every field the trace viewer needs for
+        historical rendering, so PlaylistEntry mirrors the current
+        playable order). See `Playlist.current_version()` + the
+        per-version `slots` JSON for historical reads.
+      * MixUsage rows are CLEARED + rewritten (same rationale —
+        Track-level exclusion windows operate on the current
+        version's content; historical mix-decision detail lives in
+        the per-version `slots` JSON).
+      * PlaylistVersion row is APPENDED — the trace history grows.
 
     The optional `template` argument enables §14.25 MixUsage recording:
     for every slot whose block uses `strategy='mix'`, one MixUsage row is
@@ -176,22 +194,44 @@ def save_playlist(
     MixUsage is not recorded (Classics has no mix blocks, so no data is
     lost).
 
-    Returns the newly created Playlist (flushed but NOT committed).
+    Returns the (possibly-reused) Playlist (flushed but NOT committed).
     The caller is responsible for calling db.commit().
     """
-    existing = db.query(Playlist).filter_by(station_id=station.id, week=week).first()
-    if existing:
-        db.delete(existing)
+    existing = db.query(Playlist).filter_by(
+        station_id=station.id, week=week,
+    ).first()
+    if existing is not None:
+        # §16.4 — REUSE the Playlist row. Clear the latest-only
+        # children (entries + mix_usage) so the regen can repopulate
+        # them; PlaylistVersion is APPENDED (history preserved).
+        playlist = existing
+        # Manual delete via the relationship attribute — assigning
+        # `playlist.entries = []` would defer to flush, and the
+        # add-loop below would race the deferred delete. Direct query
+        # delete keeps the order deterministic.
+        for e in list(playlist.entries):
+            db.delete(e)
+        db.query(MixUsage).filter_by(playlist_id=playlist.id).delete(
+            synchronize_session=False,
+        )
         db.flush()
-
-    playlist = Playlist(
-        station_id=station.id,
-        week=week,
-        seed=result.trace.seed,
-        trace_id=result.trace.trace_id,
-    )
-    db.add(playlist)
-    db.flush()
+        # Bump `trace_id` to point at the new version (the
+        # denormalized pointer column for fast PlaylistOut serves).
+        playlist.trace_id = result.trace.trace_id
+        playlist.seed = result.trace.seed
+        next_version_no = (
+            max((v.version_no for v in playlist.versions), default=0) + 1
+        )
+    else:
+        playlist = Playlist(
+            station_id=station.id,
+            week=week,
+            seed=result.trace.seed,
+            trace_id=result.trace.trace_id,
+        )
+        db.add(playlist)
+        db.flush()
+        next_version_no = 1
 
     for i, (track, slot) in enumerate(zip(result.picks, result.trace.slots), start=1):
         # §14.31: slot_type denormalises the trace's strategy onto the
@@ -206,9 +246,10 @@ def save_playlist(
             source_name=slot.source,
             slot_type=slot.strategy,
         ))
-    db.add(PlaylistTrace(
-        trace_id=result.trace.trace_id,
+    db.add(PlaylistVersion(
         playlist_id=playlist.id,
+        version_no=next_version_no,
+        trace_id=result.trace.trace_id,
         station_slug=station.slug,
         week=week,
         rng=result.trace.rng,

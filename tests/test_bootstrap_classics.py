@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 
 from engine.database import make_engine, make_sessionmaker
 from engine.generator import generate
-from engine.models import Base, Playlist, PlaylistEntry, PlaylistTrace, Station, SourcePlaylist
+from engine.models import Base, Playlist, PlaylistEntry, PlaylistVersion, Station, SourcePlaylist
 from engine.template import parse_template
 from scripts.bootstrap_classics import bootstrap, CLASSICS_JSON
 
@@ -97,9 +97,10 @@ def test_full_bootstrap_seeds_imports_generates(db, from_dir_full):
     assert pl.station.slug == "rebirth-classics"
     assert db.query(PlaylistEntry).filter_by(playlist_id=pl.id).count() == 3010
 
-    # And the trace was persisted
-    trace = db.query(PlaylistTrace).filter_by(trace_id=result.trace_id).one()
+    # And the trace was persisted (§16.4 — as version_no=1)
+    trace = db.query(PlaylistVersion).filter_by(trace_id=result.trace_id).one()
     assert trace.week == 1
+    assert trace.version_no == 1
     assert len(trace.slots) == 3010
 
 

@@ -28,7 +28,7 @@ from api.deps import get_db
 from api.main import app
 from engine.database import make_engine, make_sessionmaker
 from engine.models import (
-    Base, Config, CursorState, Playlist, PlaylistEntry, PlaylistTrace,
+    Base, Config, CursorState, Playlist, PlaylistEntry, PlaylistVersion,
     SourcePlaylist, SourcePlaylistEntry, Station, Track,
 )
 
@@ -144,9 +144,10 @@ def _seed_station_with_playlist(
                 playlist_id=pl.id, track_id=t.id, position=i, source_name="A",
             ))
         if with_trace:
-            db.add(PlaylistTrace(
-                trace_id=pl.trace_id,
+            db.add(PlaylistVersion(
                 playlist_id=pl.id,
+                version_no=1,
+                trace_id=pl.trace_id,
                 station_slug=slug,
                 week=week,
                 rng="off",
@@ -672,6 +673,126 @@ def test_get_playlist_and_trace_for_seeded(api):
     assert len(t["slots"]) == 1
 
 
+# ---------- §16.4 trace versioning -------------------------------------
+
+
+def test_get_trace_returns_latest_version_by_default(api):
+    """§16.4 — `GET /trace` (no ?v) returns the CURRENT version
+    (max version_no) for that playlist."""
+    client, Session = api
+    _seed_station_and_pool(Session, slug="ver", pool_tracks=3)
+    client.post("/api/stations/ver/generate", json={"week": 1})
+    r2 = client.post("/api/stations/ver/generate", json={"week": 1})
+    expected_trace_id = r2.json()["trace_id"]
+    pl_id = r2.json()["playlist_id"]
+
+    body = client.get(f"/api/playlists/{pl_id}/trace").json()
+    # Default selects max(version_no) → second generation.
+    assert body["trace_id"] == expected_trace_id
+
+
+def test_get_trace_v_param_selects_specific_version(api):
+    """§16.4 — `?v=N` selects version N explicitly."""
+    client, Session = api
+    _seed_station_and_pool(Session, slug="vselect", pool_tracks=3)
+    r1 = client.post("/api/stations/vselect/generate", json={"week": 1})
+    v1_trace = r1.json()["trace_id"]
+    r2 = client.post("/api/stations/vselect/generate", json={"week": 1})
+    v2_trace = r2.json()["trace_id"]
+    pl_id = r2.json()["playlist_id"]
+
+    # v=1 returns the original trace.
+    body = client.get(f"/api/playlists/{pl_id}/trace?v=1").json()
+    assert body["trace_id"] == v1_trace
+    # v=2 returns the regenerated trace.
+    body = client.get(f"/api/playlists/{pl_id}/trace?v=2").json()
+    assert body["trace_id"] == v2_trace
+
+
+def test_get_trace_v_param_out_of_range_404_lists_available(api):
+    """§16.4 — `?v=N` with an unknown N returns 404 + names the
+    available range so the operator can correct the URL."""
+    client, Session = api
+    _seed_station_and_pool(Session, slug="vrange", pool_tracks=3)
+    r = client.post("/api/stations/vrange/generate", json={"week": 1})
+    pl_id = r.json()["playlist_id"]
+
+    resp = client.get(f"/api/playlists/{pl_id}/trace?v=99")
+    assert resp.status_code == 404
+    detail = resp.json()["detail"]
+    assert "version 99 not found" in detail
+    # Available range surfaced.
+    assert "1..1" in detail
+
+
+def test_get_versions_returns_oldest_first_without_slots(api):
+    """§16.4 — `/versions` lists every version in order; slots JSON
+    is INTENTIONALLY OMITTED from the listing payload."""
+    client, Session = api
+    _seed_station_and_pool(Session, slug="vlist", pool_tracks=3)
+    r1 = client.post("/api/stations/vlist/generate", json={"week": 1})
+    t1 = r1.json()["trace_id"]
+    r2 = client.post("/api/stations/vlist/generate", json={"week": 1})
+    t2 = r2.json()["trace_id"]
+    pl_id = r2.json()["playlist_id"]
+
+    body = client.get(f"/api/playlists/{pl_id}/versions").json()
+    assert body["playlist_id"] == pl_id
+    assert body["current_v"] == 2
+    versions = body["versions"]
+    assert len(versions) == 2
+    assert [v["version_no"] for v in versions] == [1, 2]
+    assert [v["trace_id"] for v in versions] == [t1, t2]
+    # No `slots` field on per-version rows (palette would be too heavy).
+    for v in versions:
+        assert "slots" not in v
+
+
+def test_get_versions_unknown_playlist_404(api):
+    client, _ = api
+    r = client.get("/api/playlists/9999/versions")
+    assert r.status_code == 404
+    assert "playlist 9999 not found" in r.json()["detail"]
+
+
+def test_save_playlist_reuses_playlist_id_across_regenerations(api):
+    """§16.4 — the Playlist row is REUSED across regenerations
+    (same primary key). External references that store `playlist_id`
+    (MixUsage, PlaylistEntry FK, future audit tables) stay valid."""
+    client, Session = api
+    _seed_station_and_pool(Session, slug="reuse", pool_tracks=3)
+    r1 = client.post("/api/stations/reuse/generate", json={"week": 1})
+    first_id = r1.json()["playlist_id"]
+    r2 = client.post("/api/stations/reuse/generate", json={"week": 1})
+    second_id = r2.json()["playlist_id"]
+    assert first_id == second_id
+
+
+def test_save_playlist_clears_entries_on_regenerate(api):
+    """§16.4 — PlaylistEntry stays latest-only; the regenerate
+    rewrites entries from scratch so the playable order matches the
+    current version. Historical entries live in PlaylistVersion.slots.
+
+    The default template generates 1 slot; what matters is that the
+    entry count after a regen equals the entry count after the FIRST
+    generation — never doubled."""
+    client, Session = api
+    _seed_station_and_pool(Session, slug="entries", pool_tracks=3)
+    r1 = client.post("/api/stations/entries/generate", json={"week": 1})
+    first_slot_count = r1.json()["slot_count"]
+    client.post("/api/stations/entries/generate", json={"week": 1})
+    r3 = client.post("/api/stations/entries/generate", json={"week": 1})
+    pl_id = r3.json()["playlist_id"]
+
+    with Session() as db:
+        entries = db.query(PlaylistEntry).filter_by(playlist_id=pl_id).all()
+        # Same row count after N regens — NOT N × slot_count.
+        assert len(entries) == first_slot_count
+        # Three versions persisted (history grows; entries don't).
+        versions = db.query(PlaylistVersion).filter_by(playlist_id=pl_id).all()
+        assert len(versions) == 3
+
+
 # ---------- GET /api/playlists/{id}/export -----------------------------
 
 
@@ -850,9 +971,10 @@ def test_generate_happy_path_writes_playlist_entries_and_trace(api):
         entries = db.query(PlaylistEntry).filter_by(playlist_id=pl.id).all()
         assert len(entries) == 1
         assert entries[0].source_name == "A"
-        tr = db.query(PlaylistTrace).filter_by(playlist_id=pl.id).first()
+        tr = db.query(PlaylistVersion).filter_by(playlist_id=pl.id).first()
         assert tr is not None
         assert tr.rng == "off"
+        assert tr.version_no == 1  # §16.4: first generation
         assert len(tr.slots) == 1
 
 
@@ -928,24 +1050,46 @@ def test_generate_strategy_failure_returns_400(api):
         assert "generation failed" in r.json()["detail"]
 
 
-def test_generate_same_week_replaces_previous(api):
+def test_generate_same_week_appends_version(api):
+    """§16.4 — regenerating the same (station, week) APPENDS a new
+    PlaylistVersion instead of replacing the prior trace. The
+    Playlist row itself is REUSED (same id); `Playlist.trace_id`
+    flips to the new version's id as a denormalized pointer.
+    Pre-§16.4 this test was named `_replaces_previous`."""
     client, Session = api
     _seed_station_and_pool(Session, slug="twice", pool_tracks=3)
     r1 = client.post("/api/stations/twice/generate", json={"week": 1})
     assert r1.status_code == 201
     trace1 = r1.json()["trace_id"]
+    with Session() as db:
+        pl = db.query(Playlist).filter_by(week=1).one()
+        first_pl_id = pl.id
+
     r2 = client.post("/api/stations/twice/generate", json={"week": 1})
     assert r2.status_code == 201
     trace2 = r2.json()["trace_id"]
-    # Each generation mints a fresh trace_id; regenerating must produce a new
-    # one. (SQLite may reuse the previous playlist's primary key after DELETE,
-    # so we don't compare IDs — the "one playlist per week" invariant below
-    # is the real guarantee.)
+    # Each generation mints a fresh trace_id.
     assert trace1 != trace2
+
     with Session() as db:
-        remaining = db.query(Playlist).filter_by(week=1).all()
-        assert len(remaining) == 1
-        assert remaining[0].trace_id == trace2
+        # Still one Playlist row per week.
+        pls = db.query(Playlist).filter_by(week=1).all()
+        assert len(pls) == 1
+        pl = pls[0]
+        # Row REUSED — same id as before (pre-§16.4 the row was
+        # deleted + recreated, breaking external pointers).
+        assert pl.id == first_pl_id
+        # Denormalized pointer flipped to the new version.
+        assert pl.trace_id == trace2
+        # Both versions persisted; version_no monotonically increases.
+        versions = (
+            db.query(PlaylistVersion)
+            .filter_by(playlist_id=pl.id)
+            .order_by(PlaylistVersion.version_no)
+            .all()
+        )
+        assert [v.version_no for v in versions] == [1, 2]
+        assert [v.trace_id for v in versions] == [trace1, trace2]
 
 
 def test_generate_seed_is_threaded_through_to_trace(api):
@@ -1291,7 +1435,7 @@ def test_delete_playlist_cascades_entries_and_trace(api):
 
     with Session() as db:
         assert db.query(PlaylistEntry).filter_by(playlist_id=pid).count() == 0
-        assert db.query(PlaylistTrace).filter_by(playlist_id=pid).first() is None
+        assert db.query(PlaylistVersion).filter_by(playlist_id=pid).first() is None
 
 
 def test_delete_playlist_leaves_station_intact(api):
@@ -1333,8 +1477,10 @@ def test_delete_station_cascades_playlists_entries_traces(api):
         pl2 = Playlist(station_id=st.id, week=2, trace_id="trace-full-2")
         db.add(pl2)
         db.flush()
-        db.add(PlaylistTrace(
-            trace_id="trace-full-2", playlist_id=pl2.id,
+        db.add(PlaylistVersion(
+            playlist_id=pl2.id,
+            version_no=1,
+            trace_id="trace-full-2",
             station_slug="full", week=2, rng="off", seed=None,
             generated_at=datetime.now(timezone.utc).isoformat(),
             slots=[],
@@ -1348,8 +1494,8 @@ def test_delete_station_cascades_playlists_entries_traces(api):
     with Session() as db:
         assert db.query(Playlist).filter(Playlist.id.in_([pid1, pid2])).count() == 0
         assert db.query(PlaylistEntry).filter_by(playlist_id=pid1).count() == 0
-        assert db.query(PlaylistTrace).filter(
-            PlaylistTrace.playlist_id.in_([pid1, pid2])
+        assert db.query(PlaylistVersion).filter(
+            PlaylistVersion.playlist_id.in_([pid1, pid2])
         ).count() == 0
 
 

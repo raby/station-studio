@@ -1,10 +1,11 @@
 """Backfill PlaylistEntry.slot_type for playlists generated before §14.31.
 
 The §14.31 column is nullable so existing rows remained valid post-
-migration. This script walks every PlaylistTrace, looks up its slots'
-strategy values by position, and writes them into the matching
-PlaylistEntry rows. Idempotent: rows whose slot_type is already
-populated are skipped.
+migration. This script walks every Playlist's CURRENT version
+(§16.4 — was PlaylistTrace pre-§16.4), looks up its slots' strategy
+values by position, and writes them into the matching PlaylistEntry
+rows. Idempotent: rows whose slot_type is already populated are
+skipped.
 
 Usage
 -----
@@ -32,7 +33,7 @@ import sys
 from sqlalchemy.orm import joinedload
 
 from engine.database import make_engine, make_sessionmaker
-from engine.models import Playlist, PlaylistEntry, PlaylistTrace, Station
+from engine.models import Playlist, PlaylistEntry, PlaylistVersion, Station
 
 
 logger = logging.getLogger(__name__)
@@ -52,7 +53,7 @@ def backfill(
     with session_factory() as db:
         q = (
             db.query(Playlist)
-            .options(joinedload(Playlist.entries), joinedload(Playlist.trace))
+            .options(joinedload(Playlist.entries), joinedload(Playlist.versions))
         )
         if station_slug is not None:
             station = db.query(Station).filter(Station.slug == station_slug).first()
@@ -64,7 +65,11 @@ def backfill(
         playlists_touched = 0
         rows_updated = 0
         for pl in q.all():
-            trace: PlaylistTrace | None = pl.trace
+            # §16.4 — read from the CURRENT version (latest). Historical
+            # versions don't drive PlaylistEntry.slot_type (the entries
+            # row mirrors the playable LATEST state by design — see
+            # `save_playlist` docstring).
+            trace: PlaylistVersion | None = pl.current_version()
             if trace is None or not trace.slots:
                 logger.warning(
                     "playlist %d (station %d, week %d): no trace; skipping",

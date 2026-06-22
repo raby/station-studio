@@ -5,7 +5,7 @@ Covers:
 - The column is nullable (pre-§14.31 rows remain valid)
 - API GET /api/playlists/{id} returns slot_type per entry
 - Pydantic schema PlaylistEntryOut handles null + populated values
-- Backfill script: populates null slot_types from PlaylistTrace;
+- Backfill script: populates null slot_types from PlaylistVersion (§16.4);
   idempotent re-runs; dry-run reports without writing; station filter
 """
 from __future__ import annotations
@@ -19,7 +19,7 @@ from api.main import app
 from engine.database import make_engine, make_sessionmaker
 from engine.generator import generate
 from engine.models import (
-    Base, Playlist, PlaylistEntry, PlaylistTrace,
+    Base, Playlist, PlaylistEntry, PlaylistVersion,
     SourcePlaylist, SourcePlaylistEntry, Station, Track,
 )
 from engine.persistence import load_pools, save_playlist
@@ -223,7 +223,7 @@ def _seed_legacy_playlist_with_trace(
     slot_strategies: list[str] | None = None,
 ) -> tuple[int, int]:
     """Insert a Playlist + entries (slot_type null) + a matching
-    PlaylistTrace whose slots carry the supplied strategies. Returns
+    PlaylistVersion whose slots carry the supplied strategies. Returns
     (station_id, playlist_id)."""
     slot_strategies = slot_strategies or ["window", "window", "pick"]
     with Session() as db:
@@ -259,9 +259,10 @@ def _seed_legacy_playlist_with_trace(
                 "track_id": tr.id, "track_name": tr.name, "track_artist": None,
                 "reason": "seeded",
             })
-        db.add(PlaylistTrace(
-            trace_id=pl.trace_id,
+        db.add(PlaylistVersion(
             playlist_id=pl.id,
+            version_no=1,
+            trace_id=pl.trace_id,
             station_slug=slug,
             week=week,
             rng="off",
@@ -416,9 +417,10 @@ def test_backfill_corrupted_trace_slot_skips_without_crashing(session_factory, c
         db.add(PlaylistEntry(
             playlist_id=pl.id, track_id=tr.id, position=1, source_name="A",
         ))
-        db.add(PlaylistTrace(
-            trace_id="bad-trace",
+        db.add(PlaylistVersion(
             playlist_id=pl.id,
+            version_no=1,
+            trace_id="bad-trace",
             station_slug="corrupt",
             week=1,
             rng="off",
