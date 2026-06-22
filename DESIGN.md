@@ -353,7 +353,11 @@ class Trace:
     slots: list[TraceSlot]
 ```
 
-The trace is stored as JSON alongside the playlist (in a `playlist_trace` table keyed by `trace_id`).
+The trace is stored as JSON alongside the playlist. §16.4 split this
+into a multi-row `playlist_version` table keyed on
+`(playlist_id, version_no)` with UNIQUE `trace_id` — every regenerate
+appends a new version instead of replacing. `Playlist.trace_id`
+denormalizes the current version's `trace_id` for fast reads.
 
 ---
 
@@ -2037,11 +2041,15 @@ off it.
   from the data-fill migration if possible. Schema first,
   then a data migration that uses `op.execute` or the
   ORM session via `op.get_bind()`.
-- **The §16.4 trace-versioning slice will produce the first
-  real revision.** Expect a `playlist_trace` table change
-  (move `slots` JSON to a new `playlist_trace_version` table
-  with a version_no column). Will exercise SQLite batch mode
-  in earnest.
+- ~~**The §16.4 trace-versioning slice will produce the first
+  real revision.**~~ **Did, in migration `18b360df9e02`** (2026-06-22):
+  created `playlist_version` (id PK + `(playlist_id, version_no)`
+  UNIQUE), backfilled `playlist_trace` rows as version_no=1, dropped
+  `playlist_trace`. Exercised SQLite batch mode for the index-create
+  + drop steps; symmetric downgrade rebuilds `playlist_trace` from
+  MAX(version_no). The non-trivial bit: raw `op.execute` for the
+  cross-table backfill (avoiding the ORM mid-migration so the
+  in-flight model registry can't conflict with the partial schema).
 - **Tests don't run migrations.** `tests/conftest.py` calls
   `Base.metadata.create_all` directly. If a future migration
   depends on data ordering or specific column defaults that
@@ -4126,8 +4134,9 @@ slot.strategy. Future filter UI can use either source equivalently.
 
 **Backfill (`scripts/backfill_slot_types.py` + Makefile target):**
 
-`make backfill-slot-types` walks every PlaylistTrace, populates
-`PlaylistEntry.slot_type` from the trace's slots by position, and
+`make backfill-slot-types` walks every Playlist's CURRENT
+PlaylistVersion (§16.4 — was PlaylistTrace pre-§16.4), populates
+`PlaylistEntry.slot_type` from the version's slots by position, and
 commits. Idempotent: entries that already have slot_type are skipped.
 `--dry-run` reports without writing; `--station <slug>` filters to
 one station's playlists.
@@ -6497,12 +6506,13 @@ several user intents that need different UX.
 
 **Decision deliberately deferred.**
 
-- **D8. Trace history / versioning** — see §16.4. Today, regenerating
-  drops the prior `PlaylistTrace` row. Recovering "what did week 5
-  look like before I re-imported the source XMLs?" requires a schema
-  change and a viewer that surfaces multiple traces per week. That's
-  its own slice; calling it out here so the regen confirm dialog can
-  be honest about what it's destroying.
+- ~~**D8. Trace history / versioning** — see §16.4.~~ **✅ SHIPPED
+  §16.4 (2026-06-22).** Pre-§16.4, regenerating dropped the prior
+  `PlaylistTrace` row. Post-§16.4, regen APPENDS a new
+  `PlaylistVersion` (version_no = max + 1) and the trace viewer
+  carries a picker dropdown. The §16.1 confirm-dialog copy was
+  updated in the §16.4 c2 commit to reflect the new
+  non-destructive semantics.
 
 **Scope — three commits.**
 

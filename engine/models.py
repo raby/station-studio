@@ -14,7 +14,8 @@ Generalised from weekly/app/models.py. Key differences:
   * Rule shipped in §14.29 (per-station config overrides; weekly's
     equivalent is global — station-studio is multi-station).
   * PlaylistEntry.slot_type added in §14.31 (denormalised strategy tag;
-    nullable for pre-§14.31 rows, backfillable from PlaylistTrace.slots).
+    nullable for pre-§14.31 rows, backfillable from the current
+    PlaylistVersion's slots JSON via `scripts/backfill_slot_types.py`).
 """
 from __future__ import annotations
 
