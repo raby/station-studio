@@ -10619,42 +10619,30 @@ opportunistically when a real ask surfaces.
 **Tier 1 — operator workflow gaps (real paper cuts)**:
 
 1. ~~**§16.4 trace versioning v1**~~ — ✅ SHIPPED 2026-06-22.
-   Closes the regenerate-destroys-old-trace hole. Spawned three
-   queued sub-slices (§16.4.t1 / .t2 / .t3 — see "Queued
-   sub-slices from §16.4" below).
-2. **§16.7 edit mode for stations** — in-UI template editing for
-   station-level fields (cadence, RNG, source names, row/layout
-   shape). Today: create-only via wizard; edit means hand-editing
-   `stations/{slug}.json` + reseeding OR direct DB write. Visual
-   editor (§16.2) edits BLOCK fields, not station-level. Closes the
-   workflow loop.
-3. ~~**§16.4.t1 side-by-side trace diff**~~ — ✅ SHIPPED
-   2026-06-22 (commit 07c8169). `/playlists/[id]/compare?from=N&to=M`
-   page renders side-by-side per-slot diff; backend
-   `GET /api/playlists/{id}/diff?from=N&to=M` pre-computes the
-   predicate (changed on any source / strategy / pool_index /
-   track_id mismatch). Default-derives `from = current-1, to =
-   current`. Hide-unchanged-by-default with "Show unchanged (N)"
-   toggle. Browser-verified at Classics scale (2,772 of 3,010
-   slots changed between two regens of week 1). Completes the
-   diff-surfaces trio: version-vs-version (this) + week-vs-week
-   (§16.23, still queued) + staged-vs-saved (§16.2.7, shipped
-   earlier).
-4. **§16.17 excluded-candidates display** — trace viewer surfaces
-   "why didn't track X get picked" for weighted/mix strategies. The
-   debug surface for the most-asked author question.
+2. ~~**§16.7 edit mode for stations**~~ — ✅ SHIPPED earlier (see
+   §14.13). `<StationForm>` + `<LayoutFieldset>` extracted;
+   `/stations/[slug]/edit` route + JSON preview + diff + reset.
+3. ~~**§16.4.t1 side-by-side trace diff**~~ — ✅ SHIPPED 2026-06-22
+   (commit 07c8169). Completes the diff-surfaces trio:
+   version-vs-version + staged-vs-saved (§16.2.7) + week-vs-week
+   (still queued).
+4. ~~**§16.17 excluded-candidates display**~~ — ✅ Core shipped at
+   §14.23; §16.17 added the "Why not these? (N)" relabel +
+   expand-all/collapse-all + per-trace summary.
 5. **§16.23 week-vs-week trace diff** — compare slot N across
-   consecutive weeks. Natural twin to §16.4.t1 (version-vs-version)
-   + §16.2.7's compare-against-saved (staged-vs-saved).
+   consecutive weeks. The remaining diff surface — the trio
+   becomes complete (version-vs-version §16.4.t1 +
+   staged-vs-saved §16.2.7 + week-vs-week, this). **Next
+   implementable Tier 1 slice.**
 
 **Tier 2 — trace viewer scope**:
 
-5. **§16.8 trace viewer search/filter** — find track / source /
-   strategy in a 2,200-row trace. Cheap.
-6. **§16.9 multi-week prev/next nav** — arrows to jump between
-   adjacent weeks without going back through the playlists table.
-   Small.
-7. **§16.18 trace viewer virtualisation** — perf at 2,200 rows.
+6. ~~**§16.8 trace viewer search/filter**~~ — ✅ SHIPPED (trace
+   viewer carries search-by-track/artist + source/strategy
+   filter dropdowns + filter counter).
+7. ~~**§16.9 multi-week prev/next nav**~~ — ✅ SHIPPED (prev/next
+   nav strip between sibling weeks in the trace viewer header).
+8. **§16.18 trace viewer virtualisation** — perf at 2,200 rows.
    Currently renders fine but scroll lags. Land before any future
    station crosses ~3,000 slots.
 
