@@ -957,6 +957,92 @@ def test_export_xml_returns_bytes_and_disposition(api):
     assert b"//Apple Computer//DTD PLIST 1.0//EN" in r.content
 
 
+# ---------- §16.4.t2 historical-version export -------------------------
+
+
+def test_export_xml_with_v_query_selects_historical_version(api):
+    """§16.4.t2 — `?v=N` on the download endpoint reads from
+    PlaylistVersion.slots (not PlaylistEntry) + the Content-
+    Disposition filename gets a `-v{N}` suffix."""
+    client, Session = api
+    _seed_station_and_pool(Session, slug="hx", pool_tracks=3)
+    r1 = client.post("/api/stations/hx/generate", json={"week": 1})
+    client.post("/api/stations/hx/generate", json={"week": 1})
+    pl_id = r1.json()["playlist_id"]
+
+    # v1 export uses the historical-version path + suffixed filename.
+    r = client.get(f"/api/playlists/{pl_id}/export?v=1")
+    assert r.status_code == 200
+    assert "filename=\"hx-001-v1.xml\"" in r.headers["content-disposition"]
+    # No-v export keeps the legacy filename.
+    r = client.get(f"/api/playlists/{pl_id}/export")
+    assert "filename=\"hx-001.xml\"" in r.headers["content-disposition"]
+
+
+def test_export_xml_with_unknown_v_404(api):
+    client, Session = api
+    _seed_station_and_pool(Session, slug="hx404", pool_tracks=3)
+    r = client.post("/api/stations/hx404/generate", json={"week": 1})
+    pl_id = r.json()["playlist_id"]
+    resp = client.get(f"/api/playlists/{pl_id}/export?v=99")
+    assert resp.status_code == 404
+
+
+def test_export_to_disk_with_v_writes_suffixed_filename(api, tmp_path, monkeypatch):
+    """§16.4.t2 — disk export of a historical version writes to
+    `{slug}/{week:03d}-v{N}.xml`. SAFETY-CRITICAL: without the
+    suffix this would clobber the current's `{week:03d}.xml`."""
+    client, Session = api
+    _seed_station_and_pool(Session, slug="dx", pool_tracks=3)
+    # Direct the configured output dir at tmp_path.
+    with Session() as db:
+        db.add(Config(key="playlist_output_dir", value=str(tmp_path)))
+        db.commit()
+    client.post("/api/stations/dx/generate", json={"week": 1})
+    r2 = client.post("/api/stations/dx/generate", json={"week": 1})
+    pl_id = r2.json()["playlist_id"]
+
+    # Default disk export → unsuffixed filename.
+    body = client.post(f"/api/playlists/{pl_id}/export-to-disk").json()
+    assert body["path"].endswith("dx/001.xml")
+    # Historical disk export → suffixed filename. Must NOT match the
+    # default path (the safety-critical anti-clobber invariant).
+    body_v1 = client.post(f"/api/playlists/{pl_id}/export-to-disk?v=1").json()
+    assert body_v1["path"].endswith("dx/001-v1.xml")
+    assert body_v1["path"] != body["path"]
+
+
+def test_export_xml_historical_with_deleted_track_404(api):
+    """§16.4.t2 — slot references a track_id that's since been
+    deleted (defensive — historical-version export reads track ids
+    from slots JSON, which isn't FK-enforced post-creation).
+    Surfaces as 404 with a clear operator message rather than a
+    500-cascade through the exporter."""
+    client, Session = api
+    _seed_station_and_pool(Session, slug="dt", pool_tracks=3)
+    r = client.post("/api/stations/dt/generate", json={"week": 1})
+    pl_id = r.json()["playlist_id"]
+
+    # Delete one of the tracks referenced by v1's slots. Use the
+    # ORM so the FK cascade nukes the matching PlaylistEntry too —
+    # PlaylistVersion.slots is a JSON column (not FK-tracked) and
+    # retains the now-dangling track_id.
+    with Session() as db:
+        v1 = (
+            db.query(PlaylistVersion)
+            .filter_by(playlist_id=pl_id, version_no=1)
+            .one()
+        )
+        first_tid = v1.slots[0]["track_id"]
+        track = db.query(Track).filter_by(id=first_tid).one()
+        db.delete(track)
+        db.commit()
+
+    resp = client.get(f"/api/playlists/{pl_id}/export?v=1")
+    assert resp.status_code == 404
+    assert "deleted" in resp.json()["detail"]
+
+
 def test_export_missing_playlist_404(api):
     client, _ = api
     r = client.get("/api/playlists/999/export")

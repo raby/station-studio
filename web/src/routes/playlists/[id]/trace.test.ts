@@ -436,7 +436,8 @@ describe('trace viewer — §16.6 disk-export wiring', () => {
     render(Page);
 
     await fireEvent.click(await screen.findByTestId('export-to-disk'));
-    expect(exportPlaylistToDiskMock).toHaveBeenCalledWith(7);
+    // §16.4.t2 — call signature is now (id, version). null = current.
+    expect(exportPlaylistToDiskMock).toHaveBeenCalledWith(7, null);
 
     // Status line shows the path and a KB figure derived from bytes.
     // 868990 / 1024 ≈ 849 → "849 KB".
@@ -1217,5 +1218,77 @@ describe('trace viewer — §16.4 version picker', () => {
     render(Page);
     await screen.findByText('Track Mon-1');
     expect(getTraceMock.mock.calls[0][1]).toBeNull();
+  });
+});
+
+
+// ---- §16.4.t2 historical-version export wiring ----------------------------
+
+describe('trace viewer — §16.4.t2 historical-version export', () => {
+  beforeEach(() => {
+    getPlaylistMock.mockReset();
+    getTraceMock.mockReset();
+    getStationMock.mockReset();
+    getStationPlaylistsMock.mockReset();
+    getStationPlaylistsMock.mockResolvedValue([]);
+    getVersionsMock.mockReset();
+    gotoMock.mockReset();
+    exportPlaylistToDiskMock.mockReset();
+    setId('7');
+    setSearch('');
+  });
+
+  function seedMulti(traceIdOverride?: string) {
+    getTraceMock.mockResolvedValueOnce(
+      stubTrace({ trace_id: traceIdOverride ?? 'trace-v3' }),
+    );
+    getPlaylistMock.mockResolvedValueOnce(stubPlaylist());
+    getStationMock.mockResolvedValueOnce(stubStation());
+    getVersionsMock.mockResolvedValueOnce({
+      playlist_id: 7,
+      current_v: 3,
+      versions: [
+        { version_no: 1, trace_id: 'trace-v1', generated_at: 'a', seed: 100 },
+        { version_no: 2, trace_id: 'trace-v2', generated_at: 'b', seed: 200 },
+        { version_no: 3, trace_id: 'trace-v3', generated_at: 'c', seed: 300 },
+      ],
+    });
+  }
+
+  it('current version: download anchor has no ?v= + button passes null', async () => {
+    seedMulti();
+    render(Page);
+    await screen.findByText('Track Mon-1');
+    expect(
+      (screen.getByTestId('download-xml') as HTMLAnchorElement).getAttribute('href'),
+    ).toBe('/api/playlists/7/export');
+    // Verify the disk-export click would pass null.
+    exportPlaylistToDiskMock.mockResolvedValueOnce({ path: '/x', bytes: 100 });
+    await act(async () => {
+      (screen.getByTestId('export-to-disk') as HTMLButtonElement).click();
+    });
+    expect(exportPlaylistToDiskMock).toHaveBeenCalledWith(7, null);
+  });
+
+  it('historical version: download anchor + disk button pass the version', async () => {
+    setSearch('?v=1');
+    seedMulti('trace-v1');
+    render(Page);
+    await screen.findByText('Track Mon-1');
+    expect(
+      (screen.getByTestId('download-xml') as HTMLAnchorElement).getAttribute('href'),
+    ).toBe('/api/playlists/7/export?v=1');
+    // Label gets the suffix.
+    expect(
+      screen.getByTestId('download-xml').textContent,
+    ).toMatch(/Download iTunes XML \(v1\)/);
+
+    exportPlaylistToDiskMock.mockResolvedValueOnce({
+      path: '/abs/out/cls/001-v1.xml', bytes: 100,
+    });
+    await act(async () => {
+      (screen.getByTestId('export-to-disk') as HTMLButtonElement).click();
+    });
+    expect(exportPlaylistToDiskMock).toHaveBeenCalledWith(7, 1);
   });
 });

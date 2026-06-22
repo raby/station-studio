@@ -193,16 +193,27 @@ def get_playlist(playlist_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/api/playlists/{playlist_id}/export")
-def export(playlist_id: int, db: Session = Depends(get_db)):
-    """Export a generated playlist as iTunes XML."""
+def export(
+    playlist_id: int,
+    v: int | None = Query(None, ge=1),
+    db: Session = Depends(get_db),
+):
+    """Export a generated playlist as iTunes XML.
+
+    §16.4.t2 — `?v=N` opt-in selects a HISTORICAL PlaylistVersion;
+    omit `v` to export the current version (pre-§16.4.t2 behavior).
+    The download filename gets a `-v{N}` suffix when set so the
+    operator's browser saves it distinctly from the current export.
+    """
     p = db.query(Playlist).filter_by(id=playlist_id).first()
     if not p:
         raise HTTPException(404, f"playlist {playlist_id} not found")
     try:
-        xml_bytes = export_playlist(db, playlist_id)
+        xml_bytes = export_playlist(db, playlist_id, version_no=v)
     except ValueError as e:
         raise HTTPException(404, str(e))
-    filename = f"{p.station.slug}-{p.week:03d}.xml"
+    suffix = f"-v{v}" if v is not None else ""
+    filename = f"{p.station.slug}-{p.week:03d}{suffix}.xml"
     return Response(
         content=xml_bytes,
         media_type="application/xml",
@@ -211,19 +222,34 @@ def export(playlist_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/api/playlists/{playlist_id}/export-to-disk")
-def export_to_disk(playlist_id: int, db: Session = Depends(get_db)):
+def export_to_disk(
+    playlist_id: int,
+    v: int | None = Query(None, ge=1),
+    db: Session = Depends(get_db),
+):
     """Export a generated playlist to the configured on-disk output directory.
 
-    Destination: {playlist_output_dir}/{station-slug}/{week:03d}.xml.
-    Directory comes from Config key 'playlist_output_dir' (absolute path
-    recommended); falls back to 'out/' relative to the process CWD.
-    Overwrites silently if the file already exists.
+    §16.4.t2 — `?v=N` opt-in writes a historical version to a
+    versioned filename:
+
+      * Default (no `v`): `{playlist_output_dir}/{station-slug}/
+        {week:03d}.xml`. Overwrites silently — mirrors regen
+        semantics.
+      * `?v=N`: `{playlist_output_dir}/{station-slug}/
+        {week:03d}-v{N}.xml`. The version suffix is safety-critical:
+        without it, exporting v2 would silently clobber the
+        current's `{week:03d}.xml`, sending the wrong content to
+        the operator's OneDrive / iTunes box.
+
+    Directory comes from Config key 'playlist_output_dir' (absolute
+    path recommended); falls back to 'out/' relative to the process
+    CWD.
     """
     p = db.query(Playlist).filter_by(id=playlist_id).first()
     if not p:
         raise HTTPException(404, f"playlist {playlist_id} not found")
     try:
-        path = export_playlist_to_disk(db, playlist_id)
+        path = export_playlist_to_disk(db, playlist_id, version_no=v)
     except ValueError as e:
         raise HTTPException(404, str(e))
     return {"path": str(path), "bytes": path.stat().st_size}

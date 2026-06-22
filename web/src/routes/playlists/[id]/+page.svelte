@@ -355,13 +355,23 @@
    * disk-write is non-destructive in the §16.3 sense (overwrites only
    * its own file at a predictable path).
    */
+  // §16.4.t2 — when the operator is viewing a historical version
+  // (`?v=N`, N ≠ currentV), the export buttons target THAT version.
+  // Returns the version_no to send to the export endpoints, or null
+  // for the current-version path (which keeps the default filename).
+  $: exportVersion = (() => {
+    if (!versions || versions.length === 0) return null;
+    if (selectedVersionNo === currentV) return null;
+    return selectedVersionNo;
+  })();
+
   async function exportToDisk() {
     if (!playlist) return;
     diskExporting = true;
     diskExportStatus = null;
     diskExportError = null;
     try {
-      const r = await exportPlaylistToDisk(playlist.id);
+      const r = await exportPlaylistToDisk(playlist.id, exportVersion);
       diskExportStatus = `Wrote to ${r.path} (${formatBytes(r.bytes)})`;
     } catch (e) {
       diskExportError = e instanceof ApiError ? e.message : String(e);
@@ -527,8 +537,21 @@
     </dl>
 
     <div class="actions">
-      <a href="/api/playlists/{playlist.id}/export" class="button">
-        Download iTunes XML
+      <!--
+        §16.4.t2 — when viewing a historical version, the download
+        anchor carries `?v=N` so the server exports THAT version +
+        the Content-Disposition filename gets a `-v{N}` suffix. The
+        anchor's `data-testid` stays stable; the href is the only
+        thing that flexes.
+      -->
+      <a
+        href={exportVersion != null
+          ? `/api/playlists/${playlist.id}/export?v=${exportVersion}`
+          : `/api/playlists/${playlist.id}/export`}
+        class="button"
+        data-testid="download-xml"
+      >
+        Download iTunes XML{exportVersion != null ? ` (v${exportVersion})` : ''}
       </a>
       <button
         type="button"

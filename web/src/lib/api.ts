@@ -417,14 +417,25 @@ export interface DiskExportResponse {
  * only the file at `{playlist_output_dir}/{slug}/{week:03d}.xml`. The browser-
  * download counterpart is `/api/playlists/{id}/export` (a plain `<a href>`
  * per §14.5).
+ *
+ * §16.4.t2 — `version` opt-in writes a HISTORICAL PlaylistVersion to a
+ * versioned filename (`{week:03d}-v{N}.xml`), preventing it from
+ * clobbering the current's default-filename file on disk. Omit / null
+ * for current-version export (pre-§16.4.t2 behavior).
  */
 export const exportPlaylistToDisk = (
   id: number,
+  version: number | null | undefined = undefined,
   fetch_ = fetch,
-): Promise<DiskExportResponse> =>
-  fetch_(`/api/playlists/${id}/export-to-disk`, { method: 'POST' }).then((r) =>
+): Promise<DiskExportResponse> => {
+  const url =
+    version != null
+      ? `/api/playlists/${id}/export-to-disk?v=${version}`
+      : `/api/playlists/${id}/export-to-disk`;
+  return fetch_(url, { method: 'POST' }).then((r) =>
     json<DiskExportResponse>(r),
   );
+};
 
 /**
  * Canonical option lists for template-shaped UI dropdowns. Sourced from

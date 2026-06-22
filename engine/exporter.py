@@ -20,7 +20,9 @@ from pathlib import Path
 
 from sqlalchemy.orm import Session
 
-from engine.models import Playlist, PlaylistEntry, Track, Config, Station
+from engine.models import (
+    Playlist, PlaylistEntry, PlaylistVersion, Track, Config, Station,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -228,22 +230,86 @@ def _itunes_format_xml(xml_bytes: bytes) -> bytes:
 # ---------- public API ----------------------------------------------------
 
 
-def export_playlist(db: Session, playlist_id: int) -> bytes:
+def export_playlist(
+    db: Session,
+    playlist_id: int,
+    *,
+    version_no: int | None = None,
+) -> bytes:
     """Export a generated Playlist as iTunes XML bytes.
 
-    Raises ValueError if the playlist doesn't exist.
+    §16.4.t2 — `version_no` opt-in selects a HISTORICAL
+    PlaylistVersion (default None = current, reads from PlaylistEntry
+    as pre-§16.4.t2). The historical path reads track ids from
+    `PlaylistVersion.slots` and resolves each to a Track via FK
+    lookup. The current-version path stays on PlaylistEntry — same
+    bytes, lower SQL surface (no per-slot Track query) for the hot
+    path.
+
+    Raises ValueError if:
+      * the playlist doesn't exist
+      * the requested version_no doesn't exist for this playlist
+      * a slot references a track_id that's since been deleted
+        (historical path only — the current path can't hit this
+        since PlaylistEntry FKs are CASCADE-enforced)
     """
     p = db.query(Playlist).filter(Playlist.id == playlist_id).first()
     if p is None:
         raise ValueError(f"Playlist {playlist_id} not found")
 
     station = p.station
-    entries = (
-        db.query(PlaylistEntry)
-        .filter(PlaylistEntry.playlist_id == p.id)
-        .order_by(PlaylistEntry.position)
-        .all()
-    )
+
+    # Build the (track, slot_meta) iteration source. Current path reads
+    # PlaylistEntry; historical path reads PlaylistVersion.slots +
+    # resolves track_id → Track.
+    iter_entries: list[tuple[Track, int]] = []  # (track, position)
+    if version_no is None:
+        for entry in (
+            db.query(PlaylistEntry)
+            .filter(PlaylistEntry.playlist_id == p.id)
+            .order_by(PlaylistEntry.position)
+            .all()
+        ):
+            iter_entries.append((entry.track, entry.position))
+    else:
+        version = (
+            db.query(PlaylistVersion)
+            .filter_by(playlist_id=p.id, version_no=version_no)
+            .first()
+        )
+        if version is None:
+            raise ValueError(
+                f"Playlist {playlist_id} has no version_no={version_no}"
+            )
+        # Resolve track_ids in bulk to amortise the N+1 risk on a
+        # 3000-slot trace. Order the result by slot position so the
+        # exported XML carries the same play order as the trace.
+        track_ids_in_order: list[int | None] = [
+            s.get("track_id") for s in (version.slots or [])
+        ]
+        unique_ids = {tid for tid in track_ids_in_order if tid is not None}
+        tracks_by_id = {
+            t.id: t
+            for t in db.query(Track).filter(Track.id.in_(unique_ids)).all()
+        } if unique_ids else {}
+        for pos, tid in enumerate(track_ids_in_order, start=1):
+            if tid is None:
+                # Dry-run / un-resolved slot — shouldn't appear in
+                # production traces but defensible if a future
+                # generator path emits one.
+                raise ValueError(
+                    f"Playlist {playlist_id} v{version_no} slot at "
+                    f"position {pos}: track_id is null; cannot export."
+                )
+            track = tracks_by_id.get(tid)
+            if track is None:
+                raise ValueError(
+                    f"Playlist {playlist_id} v{version_no} slot at "
+                    f"position {pos}: track {tid} has been deleted; "
+                    f"export of this historical version is no longer "
+                    f"possible.",
+                )
+            iter_entries.append((track, pos))
 
     # Library metadata: read from Config, fall back to defaults.
     lib_pid_row = db.query(Config).filter(Config.key == "library_persistent_id").first()
@@ -257,8 +323,7 @@ def export_playlist(db: Session, playlist_id: int) -> bytes:
     pid_to_id: dict[str, int] = {}
     next_synthetic_id = _SYNTHETIC_TRACK_ID_START
 
-    for entry in entries:
-        track = entry.track
+    for track, _position in iter_entries:
         if track.persistent_id not in pid_to_id:
             if track.itunes_track_id is not None:
                 itunes_id = track.itunes_track_id
@@ -309,31 +374,51 @@ def _resolve_output_dir(db: Session) -> Path:
     return Path(raw).expanduser().resolve()
 
 
-def export_playlist_to_disk(db: Session, playlist_id: int) -> Path:
+def export_playlist_to_disk(
+    db: Session,
+    playlist_id: int,
+    *,
+    version_no: int | None = None,
+) -> Path:
     """Export a playlist as iTunes XML and write it to disk.
 
-    Layout: {output_dir}/{station_slug}/{week:03d}.xml. Creates parent
-    directories as needed. Overwrites silently — re-exporting the same week
-    is idempotent and mirrors how the underlying playlist is regenerated.
+    Layout:
+      * `version_no is None` (default — current version): `{output_dir}/
+        {station_slug}/{week:03d}.xml`. Overwrites silently — re-exporting
+        the same week is idempotent and mirrors how the underlying playlist
+        is regenerated.
+      * `version_no` set (§16.4.t2 historical export): `{output_dir}/
+        {station_slug}/{week:03d}-v{N}.xml`. The version suffix is
+        SAFETY-CRITICAL — without it, exporting v2 would silently
+        clobber the current v3's `{week:03d}.xml`, sending the wrong
+        content to the operator's OneDrive / iTunes box.
 
-    Returns the absolute path written.
+    Creates parent directories as needed. Returns the absolute path written.
     """
     p = db.query(Playlist).filter(Playlist.id == playlist_id).first()
     if p is None:
         raise ValueError(f"Playlist {playlist_id} not found")
 
-    xml_bytes = export_playlist(db, playlist_id)
+    xml_bytes = export_playlist(db, playlist_id, version_no=version_no)
 
     out_dir = _resolve_output_dir(db)
     station_dir = out_dir / p.station.slug
     station_dir.mkdir(parents=True, exist_ok=True)
-    target = station_dir / f"{p.week:03d}.xml"
+    filename = (
+        f"{p.week:03d}.xml" if version_no is None
+        else f"{p.week:03d}-v{version_no}.xml"
+    )
+    target = station_dir / filename
 
     existed = target.exists()
     target.write_bytes(xml_bytes)
 
     logger.info(
-        "Wrote playlist %d to %s (%s, %d bytes)",
-        playlist_id, target, "overwrote" if existed else "created", len(xml_bytes),
+        "Wrote playlist %d%s to %s (%s, %d bytes)",
+        playlist_id,
+        f" v{version_no}" if version_no is not None else "",
+        target,
+        "overwrote" if existed else "created",
+        len(xml_bytes),
     )
     return target

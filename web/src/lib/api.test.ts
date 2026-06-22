@@ -309,12 +309,21 @@ describe('api client', () => {
       const { fetch_, calls } = makeSpy({
         body: { path: '/abs/out/cls/001.xml', bytes: 868990 },
       });
-      const r = await exportPlaylistToDisk(42, fetch_);
+      // §16.4.t2 signature change: (id, version, fetch_).
+      const r = await exportPlaylistToDisk(42, null, fetch_);
 
       expect(calls[0].input).toBe('/api/playlists/42/export-to-disk');
       expect(calls[0].init?.method).toBe('POST');
       expect(r.path).toBe('/abs/out/cls/001.xml');
       expect(r.bytes).toBe(868990);
+    });
+
+    it('§16.4.t2 — historical-version export appends ?v=N', async () => {
+      const { fetch_, calls } = makeSpy({
+        body: { path: '/abs/out/cls/001-v3.xml', bytes: 870000 },
+      });
+      await exportPlaylistToDisk(42, 3, fetch_);
+      expect(calls[0].input).toBe('/api/playlists/42/export-to-disk?v=3');
     });
 
     it('raises ApiError on 404 when the playlist id is unknown', async () => {
@@ -326,7 +335,7 @@ describe('api client', () => {
         statusText: 'Not Found',
         text: 'playlist 999 not found',
       });
-      const err = await exportPlaylistToDisk(999, fetch_).catch((e) => e);
+      const err = await exportPlaylistToDisk(999, null, fetch_).catch((e) => e);
       expect(err).toBeInstanceOf(ApiError);
       expect(err.status).toBe(404);
       expect(err.message).toContain('playlist 999 not found');
@@ -341,7 +350,7 @@ describe('api client', () => {
         statusText: 'Internal Server Error',
         text: 'permission denied: /readonly/cls/001.xml',
       });
-      const err = await exportPlaylistToDisk(42, fetch_).catch((e) => e);
+      const err = await exportPlaylistToDisk(42, null, fetch_).catch((e) => e);
       expect(err).toBeInstanceOf(ApiError);
       expect(err.status).toBe(500);
       expect(err.message).toContain('permission denied');
