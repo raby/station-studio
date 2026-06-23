@@ -73,6 +73,7 @@ def test_list_rules_returns_all_defaults_when_no_overrides(api):
         "cursor_advance_step",
         "cursor_reset_cycle",
         "mix_exclusion_weeks",
+        "version_retention_cap",  # §16.4.t3
     ]
     # All defaults; no overrides.
     for rule in body["rules"]:

@@ -12,7 +12,7 @@ from engine.models import (
     ArtistAlias, CursorState, MixUsage, Playlist, PlaylistEntry, PlaylistVersion,
     SourcePlaylist, SourcePlaylistEntry, Station, Track,
 )
-from engine.rules import get_rule_list_value
+from engine.rules import get_rule_list_value, get_rule_value
 from engine.template import Template, TemplateError
 
 
@@ -272,10 +272,53 @@ def save_playlist(
         slots=[s.to_dict() for s in result.trace.slots],
     ))
 
+    # §16.4.t3 — prune old versions if the station's
+    # `version_retention_cap` rule is set to a positive integer.
+    # Default (0) = no cap. Pruning runs atomic with the regen so
+    # the cap never lags an extra version. The current version is
+    # ALWAYS preserved (we just appended it as the max version_no);
+    # only older history is removed.
+    _prune_old_versions(db, station=station, playlist_id=playlist.id)
+
     if template is not None:
         _save_mix_usages(db, playlist_id=playlist.id, template=template, result=result)
 
     return playlist
+
+
+def _prune_old_versions(db: Session, *, station: Station, playlist_id: int) -> None:
+    """§16.4.t3 retention cap. Reads the station's
+    `version_retention_cap` int rule; cap=0 (default) is a no-op.
+    Otherwise, counts the playlist's versions and deletes the
+    OLDEST (count - cap) rows so exactly `cap` remain.
+
+    Safe to call after the new version is appended — the new max-
+    version row is part of `count` and is among the rows we keep
+    (we sort ascending and delete the head).
+    """
+    cap = get_rule_value(db, station_id=station.id, key="version_retention_cap")
+    if cap <= 0:
+        return
+    # Explicit flush: the new PlaylistVersion was just added but not
+    # yet committed. Pruning needs to count the FULL post-append set
+    # (including the just-added row). Autoflush normally handles this
+    # on query, but the bulk-delete below uses `synchronize_session=
+    # False` which can bypass the autoflush guarantee in some
+    # SQLAlchemy versions; calling flush() makes the contract explicit.
+    db.flush()
+    existing = (
+        db.query(PlaylistVersion.id)
+        .filter_by(playlist_id=playlist_id)
+        .order_by(PlaylistVersion.version_no)
+        .all()
+    )
+    if len(existing) <= cap:
+        return
+    to_delete_count = len(existing) - cap
+    to_delete_ids = [row.id for row in existing[:to_delete_count]]
+    db.query(PlaylistVersion).filter(
+        PlaylistVersion.id.in_(to_delete_ids),
+    ).delete(synchronize_session=False)
 
 
 def _save_mix_usages(db: Session, *, playlist_id: int, template: Template, result) -> None:

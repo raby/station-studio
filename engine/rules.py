@@ -115,6 +115,27 @@ RULE_DEFAULTS: dict[str, RuleDefault] = {
         ),
         max_value=None,
     ),
+    # §16.4.t3 — per-playlist PlaylistVersion retention cap.
+    # The default `0` means "no cap, keep all" — matches the original
+    # §16.4 retention decision. When set to a positive integer, the
+    # save_playlist regen flow prunes the OLDEST versions so that at
+    # most `cap` rows remain per playlist after the new version is
+    # appended. The current version (max version_no) is NEVER pruned;
+    # only history beyond the cap is removed. Operator-set per
+    # station via the existing Rules UI.
+    "version_retention_cap": RuleDefault(
+        value=0,
+        description=(
+            "Maximum number of PlaylistVersion rows kept per playlist "
+            "(§16.4.t3). 0 = no cap, keep all history (default — "
+            "single-user / SQLite handles thousands of versions easily). "
+            "When >0, the oldest versions are pruned on regenerate so "
+            "at most N remain. The current version is always kept; "
+            "only history beyond the cap is removed. Mirror per-station "
+            "policy if storage pressure ever surfaces."
+        ),
+        max_value=1000,
+    ),
 }
 
 

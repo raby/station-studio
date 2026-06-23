@@ -943,6 +943,76 @@ def test_save_playlist_clears_entries_on_regenerate(api):
         assert len(versions) == 3
 
 
+# ---------- §16.4.t3 retention cap ------------------------------------
+
+
+def test_retention_cap_default_is_zero_keeps_all_versions(api):
+    """§16.4.t3 — `version_retention_cap` defaults to 0 = no cap.
+    Five regens leave all five PlaylistVersion rows in place."""
+    client, Session = api
+    _, sid = _seed_station_and_pool(Session, slug="nocap", pool_tracks=3)
+    pl_id = None
+    for _ in range(5):
+        r = client.post("/api/stations/nocap/generate", json={"week": 1})
+        pl_id = r.json()["playlist_id"]
+    with Session() as db:
+        versions = db.query(PlaylistVersion).filter_by(playlist_id=pl_id).all()
+        assert len(versions) == 5
+
+
+def test_retention_cap_prunes_oldest_versions_on_regenerate(api):
+    """§16.4.t3 — when `version_retention_cap=3` and 5 regens have
+    happened, only the latest 3 versions remain. Pruning keeps the
+    CURRENT version (max version_no) intact + deletes the oldest
+    head of the list."""
+    from engine.models import Rule
+    client, Session = api
+    _, sid = _seed_station_and_pool(Session, slug="capped", pool_tracks=3)
+    # Set the cap on the station via direct ORM write (mirrors what
+    # the Rules UI would do via POST /api/stations/{slug}/rules).
+    with Session() as db:
+        db.add(Rule(station_id=sid, key="version_retention_cap", value="3"))
+        db.commit()
+
+    pl_id = None
+    for _ in range(5):
+        r = client.post("/api/stations/capped/generate", json={"week": 1})
+        pl_id = r.json()["playlist_id"]
+
+    with Session() as db:
+        versions = (
+            db.query(PlaylistVersion)
+            .filter_by(playlist_id=pl_id)
+            .order_by(PlaylistVersion.version_no)
+            .all()
+        )
+        # Only the latest 3 (v3, v4, v5) remain.
+        assert [v.version_no for v in versions] == [3, 4, 5]
+        # Current pointer still references v5 (max).
+        pl = db.query(Playlist).filter_by(id=pl_id).one()
+        assert pl.trace_id == versions[-1].trace_id
+
+
+def test_retention_cap_no_prune_when_count_equals_cap(api):
+    """Cap = N + exactly N versions = no-op. The prune query should
+    short-circuit before any DELETE runs."""
+    from engine.models import Rule
+    client, Session = api
+    _, sid = _seed_station_and_pool(Session, slug="equal", pool_tracks=3)
+    with Session() as db:
+        db.add(Rule(station_id=sid, key="version_retention_cap", value="3"))
+        db.commit()
+
+    pl_id = None
+    for _ in range(3):
+        r = client.post("/api/stations/equal/generate", json={"week": 1})
+        pl_id = r.json()["playlist_id"]
+
+    with Session() as db:
+        versions = db.query(PlaylistVersion).filter_by(playlist_id=pl_id).all()
+        assert len(versions) == 3
+
+
 # ---------- GET /api/playlists/{id}/export -----------------------------
 
 

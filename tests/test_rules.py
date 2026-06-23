@@ -45,14 +45,14 @@ def _seed_station(Session: sessionmaker, slug: str = "rb") -> int:
 
 
 def test_rule_defaults_registry_has_expected_keys():
-    """All four weekly-equivalent rules ship in the registry, even
-    though cursor_advance_step and cursor_reset_cycle aren't wired
-    into the engine yet (carried for forward compat)."""
+    """The four weekly-equivalent rules + the §16.4.t3 retention cap
+    ship in the registry."""
     assert set(RULE_DEFAULTS) == {
         "artist_dedup_window",
         "mix_exclusion_weeks",
         "cursor_advance_step",
         "cursor_reset_cycle",
+        "version_retention_cap",  # §16.4.t3
     }
 
 
