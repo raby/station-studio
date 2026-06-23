@@ -993,6 +993,136 @@ def test_retention_cap_prunes_oldest_versions_on_regenerate(api):
         assert pl.trace_id == versions[-1].trace_id
 
 
+# ---------- §16.4.t5 version tags ------------------------------------
+
+
+def test_versions_response_includes_empty_tags_by_default(api):
+    """§16.4.t5 — fresh versions have `tags: []` in the listing."""
+    client, Session = api
+    _seed_station_and_pool(Session, slug="tg", pool_tracks=3)
+    r = client.post("/api/stations/tg/generate", json={"week": 1})
+    pl_id = r.json()["playlist_id"]
+
+    body = client.get(f"/api/playlists/{pl_id}/versions").json()
+    assert all(v["tags"] == [] for v in body["versions"])
+
+
+def test_patch_tags_replaces_list_and_returns_normalized(api):
+    """§16.4.t5 — PATCH replaces the tag list wholesale. Server
+    normalizes (trim, dedupe, validate) + returns the canonical form."""
+    client, Session = api
+    _seed_station_and_pool(Session, slug="ptag", pool_tracks=3)
+    r = client.post("/api/stations/ptag/generate", json={"week": 1})
+    pl_id = r.json()["playlist_id"]
+
+    # Send raw + extras to exercise normalization.
+    resp = client.patch(
+        f"/api/playlists/{pl_id}/versions/1/tags",
+        json={"tags": ["  jon-approved  ", "sent-to-iTunes", "jon-approved"]},
+    )
+    assert resp.status_code == 200, resp.json()
+    body = resp.json()
+    assert body["tags"] == ["jon-approved", "sent-to-iTunes"]  # trimmed + deduped
+
+    # GET reflects the persisted list.
+    versions = client.get(f"/api/playlists/{pl_id}/versions").json()["versions"]
+    assert versions[0]["tags"] == ["jon-approved", "sent-to-iTunes"]
+
+
+def test_patch_tags_clear_via_empty_list(api):
+    """Sending an empty list clears all tags (no separate DELETE
+    endpoint needed)."""
+    client, Session = api
+    _seed_station_and_pool(Session, slug="ctag", pool_tracks=3)
+    r = client.post("/api/stations/ctag/generate", json={"week": 1})
+    pl_id = r.json()["playlist_id"]
+
+    client.patch(
+        f"/api/playlists/{pl_id}/versions/1/tags",
+        json={"tags": ["temp"]},
+    )
+    resp = client.patch(
+        f"/api/playlists/{pl_id}/versions/1/tags",
+        json={"tags": []},
+    )
+    assert resp.json()["tags"] == []
+
+
+def test_patch_tags_unknown_version_404(api):
+    client, Session = api
+    _seed_station_and_pool(Session, slug="utag", pool_tracks=3)
+    r = client.post("/api/stations/utag/generate", json={"week": 1})
+    pl_id = r.json()["playlist_id"]
+    resp = client.patch(
+        f"/api/playlists/{pl_id}/versions/99/tags",
+        json={"tags": ["x"]},
+    )
+    assert resp.status_code == 404
+    assert "version 99" in resp.json()["detail"]
+
+
+def test_patch_tags_unknown_playlist_404(api):
+    client, _ = api
+    r = client.patch(
+        "/api/playlists/9999/versions/1/tags",
+        json={"tags": ["x"]},
+    )
+    assert r.status_code == 404
+
+
+def test_patch_tags_rejects_comma_in_tag(api):
+    """Commas conflict with the chip-input's separator semantics."""
+    client, Session = api
+    _seed_station_and_pool(Session, slug="cmtag", pool_tracks=3)
+    r = client.post("/api/stations/cmtag/generate", json={"week": 1})
+    pl_id = r.json()["playlist_id"]
+    resp = client.patch(
+        f"/api/playlists/{pl_id}/versions/1/tags",
+        json={"tags": ["foo,bar"]},
+    )
+    assert resp.status_code == 422
+    assert "comma" in resp.json()["detail"]
+
+
+def test_patch_tags_rejects_overlong_tag(api):
+    client, Session = api
+    _seed_station_and_pool(Session, slug="lotag", pool_tracks=3)
+    r = client.post("/api/stations/lotag/generate", json={"week": 1})
+    pl_id = r.json()["playlist_id"]
+    resp = client.patch(
+        f"/api/playlists/{pl_id}/versions/1/tags",
+        json={"tags": ["x" * 41]},
+    )
+    assert resp.status_code == 422
+    assert "40-char cap" in resp.json()["detail"]
+
+
+def test_patch_tags_rejects_more_than_ten(api):
+    client, Session = api
+    _seed_station_and_pool(Session, slug="mxtag", pool_tracks=3)
+    r = client.post("/api/stations/mxtag/generate", json={"week": 1})
+    pl_id = r.json()["playlist_id"]
+    resp = client.patch(
+        f"/api/playlists/{pl_id}/versions/1/tags",
+        json={"tags": [f"tag-{i}" for i in range(11)]},
+    )
+    assert resp.status_code == 422
+    assert "cap is 10" in resp.json()["detail"]
+
+
+def test_patch_tags_rejects_empty_string(api):
+    client, Session = api
+    _seed_station_and_pool(Session, slug="etag", pool_tracks=3)
+    r = client.post("/api/stations/etag/generate", json={"week": 1})
+    pl_id = r.json()["playlist_id"]
+    resp = client.patch(
+        f"/api/playlists/{pl_id}/versions/1/tags",
+        json={"tags": ["   "]},
+    )
+    assert resp.status_code == 422
+    assert "empty tags" in resp.json()["detail"]
+
+
 # ---------- §16.4.t4 rollback ----------------------------------------
 
 

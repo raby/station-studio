@@ -906,3 +906,16 @@ class JobStatusResponse(BaseModel):
     error: JobErrorBody | None = None
     started_at: str  # ISO 8601 UTC
     finished_at: str | None = None
+
+
+# §16.4.t5 — version tags wire shape
+
+
+class VersionTagsRequest(BaseModel):
+    """Body for `PATCH /api/playlists/{id}/versions/{version_no}/tags`.
+
+    Replaces the version's tag list wholesale. Server-side validation
+    (max 10 tags, 1-40 chars each, no commas, dedupe + trim) lives in
+    the route handler so the rules are visible at the wire boundary.
+    """
+    tags: list[str]

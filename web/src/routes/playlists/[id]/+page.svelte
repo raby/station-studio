@@ -7,6 +7,7 @@
     getVersions,
     exportPlaylistToDisk,
     rollbackPlaylist,
+    setVersionTags,
     ApiError,
   } from '$lib/api';
   import type {
@@ -14,6 +15,7 @@
   } from '$lib/api';
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
+  import ChipMultiInput from '$lib/components/editor/ChipMultiInput.svelte';
 
   let trace: Trace | null = null;
   let playlist: Playlist | null = null;
@@ -251,6 +253,43 @@
     versions.length > 1
     && selectedVersionNo !== currentV
     && selectedVersionNo > 0;
+
+  // §16.4.t5 — tags for the selected version. Pulled from the
+  // versions list (single source of truth); the PATCH path mutates
+  // BOTH the server + the local list so the picker labels stay in
+  // sync without an extra getVersions() round-trip.
+  $: selectedVersion = versions.find((v) => v.version_no === selectedVersionNo);
+  // Defensive `?? []` — `tags` is a §16.4.t5 addition to
+  // VersionSummary; legacy fixtures (and any pre-§16.4.t5 cached
+  // response a stale tab might receive) won't carry the field.
+  $: selectedTags = selectedVersion?.tags ?? [];
+  let tagsSaving = false;
+  let tagsError: string | null = null;
+
+  async function handleTagsChange(event: CustomEvent<string[]>) {
+    if (!playlist || !selectedVersion) return;
+    // ChipMultiInput dispatches the full new array as event.detail.
+    const next = event.detail;
+    tagsSaving = true;
+    tagsError = null;
+    try {
+      const updated = await setVersionTags(
+        playlist.id, selectedVersion.version_no, next,
+      );
+      // Adopt the server's canonical form (trim + dedupe) by patching
+      // the versions list in place. Avoids a fresh getVersions
+      // round-trip + keeps the picker labels reactive immediately.
+      versions = versions.map((v) =>
+        v.version_no === updated.version_no
+          ? { ...v, tags: updated.tags }
+          : v,
+      );
+    } catch (e) {
+      tagsError = e instanceof ApiError ? e.message : String(e);
+    } finally {
+      tagsSaving = false;
+    }
+  }
 
   /**
    * §16.4.t4 — roll back to the selected version. POSTs to
@@ -535,6 +574,7 @@
               v{v.version_no}{v.version_no === currentV ? ' (current)' : ''}
               · {fmtDate(v.generated_at)}
               {v.seed !== null ? ` · seed ${v.seed}` : ''}
+              {(v.tags ?? []).length > 0 ? ` · [${(v.tags ?? []).join(', ')}]` : ''}
             </option>
           {/each}
         </select>
@@ -575,6 +615,32 @@
       {#if rollbackError}
         <p class="rollback-error" data-testid="rollback-error">
           {rollbackError}
+        </p>
+      {/if}
+      <!--
+        §16.4.t5 — inline tag editor for the SELECTED version. Reuses
+        the §16.2.4 `<ChipMultiInput>` component. Tags PATCH on every
+        change; the response's normalized list is patched back into
+        the local `versions` array so the picker labels stay in sync
+        without an extra getVersions() round-trip.
+      -->
+      <div class="version-tags" data-testid="version-tags">
+        <!-- `<span>` not `<label>`: ChipMultiInput owns its own
+             `<label for=...>` internally; this is a header for the
+             group, not an HTML form-label. -->
+        <span class="tags-label">Tags (v{selectedVersionNo})</span>
+        <ChipMultiInput
+          values={selectedTags}
+          testIdPrefix="version-tag"
+          inputLabel="Add a tag"
+          placeholder="e.g. sent-to-iTunes"
+          disabled={tagsSaving}
+          on:change={handleTagsChange}
+        />
+      </div>
+      {#if tagsError}
+        <p class="tags-error" data-testid="tags-error">
+          {tagsError}
         </p>
       {/if}
     {/if}
@@ -940,6 +1006,28 @@
     cursor: not-allowed;
   }
   .rollback-error {
+    margin: 0.25rem 0 1rem;
+    padding: 0.4rem 0.6rem;
+    border: 1px solid #ffcdd2;
+    background: #ffebee;
+    color: #b71c1c;
+    border-radius: 3px;
+    font-size: 0.85rem;
+  }
+  /* §16.4.t5 — tag editor row. Inline label + ChipMultiInput
+     directly below the picker strip. */
+  .version-tags {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin: 0.5rem 0 1rem;
+    font-size: 0.85rem;
+  }
+  .tags-label {
+    color: #555;
+    flex-shrink: 0;
+  }
+  .tags-error {
     margin: 0.25rem 0 1rem;
     padding: 0.4rem 0.6rem;
     border: 1px solid #ffcdd2;

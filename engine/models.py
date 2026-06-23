@@ -303,6 +303,13 @@ class PlaylistVersion(Base):
     seed = Column(Integer, nullable=True)
     generated_at = Column(Text, nullable=False)  # ISO8601
     slots = Column(JSON, nullable=False)         # list[TraceSlot as dict]
+    # §16.4.t5 — operator-applied annotation tags (e.g.
+    # "sent-to-iTunes", "jon-approved"). Linear history is preserved;
+    # tags are pure annotations, not branches. Validated at the
+    # PATCH endpoint (max 10 tags, 1-40 chars each, no commas).
+    # `default=list` provides an empty list for newly-constructed
+    # rows; the migration backfills existing rows via server_default.
+    tags = Column(JSON, nullable=False, default=list)
 
     playlist = relationship("Playlist", back_populates="versions")
 

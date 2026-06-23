@@ -20,7 +20,10 @@ from engine.template import parse_template, TemplateError
 from engine.generator import generate
 from engine.exporter import export_playlist, export_playlist_to_disk
 from api.deps import get_db
-from api.schemas import GenerateRequest, GenerateResponse, PlaylistOut, PlaylistEntryOut, TrackOut
+from api.schemas import (
+    GenerateRequest, GenerateResponse, PlaylistOut, PlaylistEntryOut,
+    TrackOut, VersionTagsRequest,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -369,9 +372,106 @@ def get_versions(playlist_id: int, db: Session = Depends(get_db)):
                 "trace_id": r.trace_id,
                 "generated_at": r.generated_at,
                 "seed": r.seed,
+                # §16.4.t5 — operator-applied annotations. Always a
+                # list (DB column is NOT NULL DEFAULT []).
+                "tags": r.tags,
             }
             for r in rows
         ],
+    }
+
+
+# §16.4.t5 — tag validation constants. Shared between the PATCH
+# handler + any future surface that constructs tag lists.
+_MAX_TAGS_PER_VERSION = 10
+_MAX_TAG_LENGTH = 40
+
+
+def _normalize_tags(raw: list[str]) -> list[str]:
+    """Trim, dedupe (case-sensitive — operator-typed strings),
+    reject empties / commas / over-length. Returns the canonical
+    list to persist."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for raw_tag in raw:
+        if not isinstance(raw_tag, str):
+            raise HTTPException(
+                422, f"tag must be a string; got {type(raw_tag).__name__}",
+            )
+        tag = raw_tag.strip()
+        if not tag:
+            raise HTTPException(
+                422, "empty tags aren't allowed (trim before send)",
+            )
+        if "," in tag:
+            raise HTTPException(
+                422,
+                f"tag {raw_tag!r} contains a comma; tag chip-input "
+                f"uses comma as a separator. Pick a different name.",
+            )
+        if len(tag) > _MAX_TAG_LENGTH:
+            raise HTTPException(
+                422,
+                f"tag {tag!r} exceeds the {_MAX_TAG_LENGTH}-char cap "
+                f"({len(tag)} chars).",
+            )
+        if tag in seen:
+            continue
+        seen.add(tag)
+        out.append(tag)
+    if len(out) > _MAX_TAGS_PER_VERSION:
+        raise HTTPException(
+            422,
+            f"too many tags ({len(out)}); cap is {_MAX_TAGS_PER_VERSION} "
+            f"per version. Pick a more focused subset.",
+        )
+    return out
+
+
+@router.patch("/api/playlists/{playlist_id}/versions/{version_no}/tags")
+def patch_version_tags(
+    playlist_id: int,
+    version_no: int,
+    payload: VersionTagsRequest,
+    db: Session = Depends(get_db),
+):
+    """§16.4.t5 — replace a PlaylistVersion's tag list.
+
+    Body: `{"tags": ["sent-to-iTunes", "jon-approved"]}`.
+
+    Validation: max 10 tags per version, 1-40 chars each, no commas,
+    duplicates dropped (case-sensitive), trim+empty-reject. Returns
+    the normalized list back so the client can adopt the server's
+    canonical form (operator typed `  foo  ` → stored as `foo`).
+
+    Errors:
+      * 404 — playlist or version not found.
+      * 422 — malformed tags (see _normalize_tags).
+    """
+    if not db.query(Playlist.id).filter_by(id=playlist_id).first():
+        raise HTTPException(404, f"playlist {playlist_id} not found")
+    version = (
+        db.query(PlaylistVersion)
+        .filter_by(playlist_id=playlist_id, version_no=version_no)
+        .first()
+    )
+    if version is None:
+        raise HTTPException(
+            404,
+            f"version {version_no} not found for playlist {playlist_id}",
+        )
+
+    normalized = _normalize_tags(payload.tags)
+    version.tags = normalized
+    db.commit()
+    db.refresh(version)
+    return {
+        "playlist_id": playlist_id,
+        "version_no": version.version_no,
+        "trace_id": version.trace_id,
+        "generated_at": version.generated_at,
+        "seed": version.seed,
+        "tags": version.tags,
     }
 
 

@@ -211,6 +211,12 @@ export interface VersionSummary {
   trace_id: string;
   generated_at: string;
   seed: number | null;
+  /**
+   * §16.4.t5 — operator-applied annotation tags. Always an array
+   * (server populates as `[]` for un-tagged versions; migration
+   * backfills existing rows).
+   */
+  tags: string[];
 }
 
 export interface VersionsResponse {
@@ -280,6 +286,35 @@ export interface TraceDiffResponse {
   summary: { total_slots: number; changed: number; unchanged: number };
   slots: TraceDiffRow[];
 }
+
+/**
+ * Returned by `setVersionTags` — the updated version row including
+ * the normalized tag list. The frontend adopts the server's canonical
+ * form (operator typed `  foo  ` → stored as `foo`).
+ */
+export interface VersionWithTags extends VersionSummary {
+  playlist_id: number;
+}
+
+/**
+ * §16.4.t5 — replace a PlaylistVersion's tag list. Server normalizes
+ * (trim + dedupe + validation: max 10 tags, 1-40 chars, no commas)
+ * and returns the canonical form.
+ */
+export const setVersionTags = (
+  id: number,
+  versionNo: number,
+  tags: string[],
+  fetch_ = fetch,
+): Promise<VersionWithTags> =>
+  fetch_(
+    `/api/playlists/${id}/versions/${versionNo}/tags`,
+    {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ tags }),
+    },
+  ).then((r) => json<VersionWithTags>(r));
 
 /**
  * Returned by `rollbackPlaylist` — metadata for the new max-version
