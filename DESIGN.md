@@ -10705,15 +10705,22 @@ opportunistically when a real ask surfaces.
   backend comment to clarify the comma rejection is defense-in-
   depth for non-UI callers (ChipMultiInput rejects commas at
   input time too).
-* **§16.4.t6 versioned disk filenames** — opt-in
-  `{week:03d}-v{N}.xml` filename pattern, complementing the default
-  current-only `{week:03d}.xml`. Trigger: operator says
-  "OneDrive's overwriting my v2 file when I export v3, and I want
-  to keep both on disk". UI: a checkbox on the disk-export button,
-  or a separate "Export this version" button on the picker row.
-  Today's export endpoint already takes a playlist_id; the
-  versioned variant takes (playlist_id, version_no) and writes
-  the suffixed filename.
+* ~~**§16.4.t6 versioned disk filenames**~~ — **✅ SHIPPED 2026-06-23
+  (de9c831).** Opt-in `{week:03d}-v{N}.xml` for the current-version
+  disk-export path; .t2's historical-version suffix behavior
+  unchanged. **What shipped:** `?versioned=true` query param on POST
+  `/export-to-disk`; backend `export_playlist_to_disk(*,
+  version_no, versioned_filename)` looks up the current version_no
+  when archiving + uses it in the suffix; raises ValueError when the
+  playlist has no versions yet. Frontend: per-station `archiveDiskExports:
+  <slug>` localStorage-persisted checkbox below the disk-export
+  button, hint shows the concrete would-be filename ("003-v2.xml
+  instead of 003.xml") so the operator's decision is concrete.
+  **Filename matrix:** default → `{week:03d}.xml`; versioned alone →
+  `{week:03d}-v{current}.xml`; v=N (versioned ignored) →
+  `{week:03d}-v{N}.xml`. **Verified end-to-end:** /playlists/1 + box
+  checked + Export → wrote `001-v3.xml` alongside existing `001.xml`
+  + `001-v1.xml`, no clobber.
 
 **Retired**: §16.22 (trace viewer SSR migration) — replaced by
 §16.13's static-adapter choice; the premise no longer holds.
