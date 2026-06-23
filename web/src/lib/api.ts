@@ -487,15 +487,25 @@ export interface DiskExportResponse {
  * versioned filename (`{week:03d}-v{N}.xml`), preventing it from
  * clobbering the current's default-filename file on disk. Omit / null
  * for current-version export (pre-§16.4.t2 behavior).
+ *
+ * §16.4.t6 — `versioned=true` (current-version path; ignored when
+ * `version` is set since the filename's already suffixed) opts in
+ * to archival: current export uses `{week:03d}-v{current}.xml`, so
+ * each regen accumulates its own file rather than overwriting.
  */
 export const exportPlaylistToDisk = (
   id: number,
   version: number | null | undefined = undefined,
+  versioned: boolean = false,
   fetch_ = fetch,
 ): Promise<DiskExportResponse> => {
+  const qs = new URLSearchParams();
+  if (version != null) qs.set('v', String(version));
+  if (versioned) qs.set('versioned', 'true');
+  const tail = qs.toString();
   const url =
-    version != null
-      ? `/api/playlists/${id}/export-to-disk?v=${version}`
+    tail.length > 0
+      ? `/api/playlists/${id}/export-to-disk?${tail}`
       : `/api/playlists/${id}/export-to-disk`;
   return fetch_(url, { method: 'POST' }).then((r) =>
     json<DiskExportResponse>(r),

@@ -450,13 +450,74 @@
     return selectedVersionNo;
   })();
 
+  /**
+   * §16.4.t6 — archival opt-in. Persisted per-station so an operator
+   * who flips it on for Classics doesn't have to re-flip it on the
+   * next session. When ON + the operator exports a CURRENT version,
+   * the API gets `?versioned=true` → filename gets the current
+   * version_no suffix → each regen accumulates one file rather than
+   * overwriting.
+   *
+   * Identity key: derived from `trace.station` (which is the
+   * station slug — populated after the trace fetch resolves; null
+   * before then). Until the slug arrives, the checkbox stays in
+   * its session-default OFF state.
+   */
+  let archiveDiskExports = false;
+
+  function _archiveDiskExportsKey(slug: string): string {
+    return `archiveDiskExports:${slug}`;
+  }
+
+  function readArchiveDiskExports(slug: string): boolean {
+    if (typeof window === 'undefined') return false;
+    try {
+      return window.localStorage.getItem(_archiveDiskExportsKey(slug)) === 'on';
+    } catch {
+      return false;
+    }
+  }
+
+  function writeArchiveDiskExports(slug: string, on: boolean): void {
+    if (typeof window === 'undefined') return;
+    try {
+      window.localStorage.setItem(
+        _archiveDiskExportsKey(slug), on ? 'on' : 'off',
+      );
+    } catch {
+      // Quota / privacy-mode block — checkbox state just doesn't
+      // persist for the rest of the session.
+    }
+  }
+
+  // Hydrate the checkbox once the slug is available (i.e. once
+  // `trace.station` resolves). Reactive on `trace?.station` rather
+  // than `playlist?.id` because the page's "loading transitions
+  // between sibling weeks" pattern can keep `playlist` stale during
+  // the swap; trace.station IS the slug.
+  $: if (trace?.station) {
+    archiveDiskExports = readArchiveDiskExports(trace.station);
+  }
+
+  function toggleArchiveDiskExports(event: Event) {
+    if (!trace?.station) return;
+    archiveDiskExports = (event.currentTarget as HTMLInputElement).checked;
+    writeArchiveDiskExports(trace.station, archiveDiskExports);
+  }
+
   async function exportToDisk() {
     if (!playlist) return;
     diskExporting = true;
     diskExportStatus = null;
     diskExportError = null;
     try {
-      const r = await exportPlaylistToDisk(playlist.id, exportVersion);
+      // §16.4.t6 — pass `archiveDiskExports` as the `versioned` flag.
+      // The backend ignores it when `version` is set (historical
+      // path's filename is already suffixed); the flag is meaningful
+      // only on the current-version path.
+      const r = await exportPlaylistToDisk(
+        playlist.id, exportVersion, archiveDiskExports,
+      );
       diskExportStatus = `Wrote to ${r.path} (${formatBytes(r.bytes)})`;
     } catch (e) {
       diskExportError = e instanceof ApiError ? e.message : String(e);
@@ -697,6 +758,29 @@
         {diskExporting ? 'Writing…' : 'Export to disk'}
       </button>
     </div>
+    <!--
+      §16.4.t6 archival opt-in. Renders only when there's >=1
+      version on the playlist (no versions = no v-suffix to derive
+      anyway). Per-station localStorage; flipping it on for one
+      station doesn't affect others. The label tells the operator
+      what the filename will look like so the decision is concrete.
+    -->
+    {#if versions.length > 0}
+      <label class="archive-toggle" data-testid="archive-disk-exports-label">
+        <input
+          type="checkbox"
+          data-testid="archive-disk-exports"
+          checked={archiveDiskExports}
+          on:change={toggleArchiveDiskExports}
+          disabled={diskExporting}
+        />
+        Archive every version to disk
+        <span class="hint-inline">
+          ({trace?.week ? String(trace.week).padStart(3, '0') : '###'}-v{currentV || '?'}.xml
+          instead of {trace?.week ? String(trace.week).padStart(3, '0') : '###'}.xml)
+        </span>
+      </label>
+    {/if}
     {#if diskExportStatus}
       <p class="disk-status success" data-testid="disk-export-status">
         {diskExportStatus}
@@ -1078,6 +1162,27 @@
     background: #ffebee;
     color: #b71c1c;
     border: 1px solid #ffcdd2;
+  }
+  /* §16.4.t6 — archive-every-version checkbox. Inline with the
+     hint text so the operator sees what filename they'll get
+     before they click Export. */
+  .archive-toggle {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin: 0 0 1rem;
+    font-size: 0.85rem;
+    color: #555;
+    cursor: pointer;
+  }
+  .archive-toggle input[type='checkbox'] {
+    margin: 0;
+    cursor: pointer;
+  }
+  .archive-toggle .hint-inline {
+    color: #888;
+    font-family: ui-monospace, monospace;
+    font-size: 0.8rem;
   }
   h2 {
     margin-top: 2rem;

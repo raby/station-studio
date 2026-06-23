@@ -379,19 +379,32 @@ def export_playlist_to_disk(
     playlist_id: int,
     *,
     version_no: int | None = None,
+    versioned_filename: bool = False,
 ) -> Path:
     """Export a playlist as iTunes XML and write it to disk.
 
-    Layout:
-      * `version_no is None` (default — current version): `{output_dir}/
+    Filename matrix:
+
+      * `version_no=None, versioned_filename=False` (default): `{output_dir}/
         {station_slug}/{week:03d}.xml`. Overwrites silently — re-exporting
         the same week is idempotent and mirrors how the underlying playlist
-        is regenerated.
-      * `version_no` set (§16.4.t2 historical export): `{output_dir}/
+        is regenerated. Pre-§16.4.t6 behavior.
+      * `version_no=None, versioned_filename=True` (§16.4.t6 archival
+        opt-in): `{output_dir}/{station_slug}/{week:03d}-v{current}.xml`.
+        Current playlist exported with the current's version_no in the
+        filename — each regen accumulates its own file rather than
+        overwriting. Operator's OneDrive folder grows linearly.
+      * `version_no=N` (§16.4.t2 historical export): `{output_dir}/
         {station_slug}/{week:03d}-v{N}.xml`. The version suffix is
         SAFETY-CRITICAL — without it, exporting v2 would silently
         clobber the current v3's `{week:03d}.xml`, sending the wrong
-        content to the operator's OneDrive / iTunes box.
+        content to the operator's OneDrive / iTunes box. The
+        `versioned_filename` flag is redundant on this path (already
+        suffixed); behavior unchanged whether the flag is true or false.
+
+    Raises ValueError if the playlist doesn't exist or (with
+    `versioned_filename=True` + `version_no=None`) if no
+    PlaylistVersion rows exist yet for this playlist.
 
     Creates parent directories as needed. Returns the absolute path written.
     """
@@ -401,12 +414,31 @@ def export_playlist_to_disk(
 
     xml_bytes = export_playlist(db, playlist_id, version_no=version_no)
 
+    # §16.4.t6 — resolve the version_no for the filename when the
+    # operator opted in but didn't pass an explicit `v`. Read the
+    # current version's number from PlaylistVersion (the same
+    # source-of-truth used by /versions).
+    effective_version_no = version_no
+    if version_no is None and versioned_filename:
+        current = (
+            db.query(PlaylistVersion)
+            .filter_by(playlist_id=playlist_id)
+            .order_by(PlaylistVersion.version_no.desc())
+            .first()
+        )
+        if current is None:
+            raise ValueError(
+                f"Playlist {playlist_id} has no versions; cannot "
+                f"determine the suffix for versioned-filename export.",
+            )
+        effective_version_no = current.version_no
+
     out_dir = _resolve_output_dir(db)
     station_dir = out_dir / p.station.slug
     station_dir.mkdir(parents=True, exist_ok=True)
     filename = (
-        f"{p.week:03d}.xml" if version_no is None
-        else f"{p.week:03d}-v{version_no}.xml"
+        f"{p.week:03d}.xml" if effective_version_no is None
+        else f"{p.week:03d}-v{effective_version_no}.xml"
     )
     target = station_dir / filename
 
@@ -416,7 +448,7 @@ def export_playlist_to_disk(
     logger.info(
         "Wrote playlist %d%s to %s (%s, %d bytes)",
         playlist_id,
-        f" v{version_no}" if version_no is not None else "",
+        f" v{effective_version_no}" if effective_version_no is not None else "",
         target,
         "overwrote" if existed else "created",
         len(xml_bytes),

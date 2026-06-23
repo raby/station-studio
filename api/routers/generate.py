@@ -229,21 +229,27 @@ def export(
 def export_to_disk(
     playlist_id: int,
     v: int | None = Query(None, ge=1),
+    versioned: bool = Query(False),
     db: Session = Depends(get_db),
 ):
     """Export a generated playlist to the configured on-disk output directory.
 
-    §16.4.t2 — `?v=N` opt-in writes a historical version to a
-    versioned filename:
+    Filename matrix (combinations of `v` + `versioned`):
 
-      * Default (no `v`): `{playlist_output_dir}/{station-slug}/
-        {week:03d}.xml`. Overwrites silently — mirrors regen
-        semantics.
-      * `?v=N`: `{playlist_output_dir}/{station-slug}/
-        {week:03d}-v{N}.xml`. The version suffix is safety-critical:
-        without it, exporting v2 would silently clobber the
-        current's `{week:03d}.xml`, sending the wrong content to
-        the operator's OneDrive / iTunes box.
+      * Default (no `v`, `versioned=false`): `{playlist_output_dir}/
+        {station-slug}/{week:03d}.xml`. Overwrites silently —
+        mirrors regen semantics.
+      * `?versioned=true` (§16.4.t6 archival opt-in, current export):
+        `{playlist_output_dir}/{station-slug}/{week:03d}-v{current}.xml`.
+        Operator opts into accumulating one file per regen rather
+        than overwriting.
+      * `?v=N` (§16.4.t2 historical export — `versioned` ignored
+        since the filename is already suffixed):
+        `{playlist_output_dir}/{station-slug}/{week:03d}-v{N}.xml`.
+        The version suffix is safety-critical: without it, exporting
+        v2 would silently clobber the current's `{week:03d}.xml`,
+        sending the wrong content to the operator's OneDrive /
+        iTunes box.
 
     Directory comes from Config key 'playlist_output_dir' (absolute
     path recommended); falls back to 'out/' relative to the process
@@ -253,7 +259,9 @@ def export_to_disk(
     if not p:
         raise HTTPException(404, f"playlist {playlist_id} not found")
     try:
-        path = export_playlist_to_disk(db, playlist_id, version_no=v)
+        path = export_playlist_to_disk(
+            db, playlist_id, version_no=v, versioned_filename=versioned,
+        )
     except ValueError as e:
         raise HTTPException(404, str(e))
     return {"path": str(path), "bytes": path.stat().st_size}

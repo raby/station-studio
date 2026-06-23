@@ -1352,6 +1352,58 @@ def test_export_to_disk_with_v_writes_suffixed_filename(api, tmp_path, monkeypat
     assert body_v1["path"] != body["path"]
 
 
+def test_export_to_disk_versioned_current_uses_current_version_suffix(
+    api, tmp_path,
+):
+    """§16.4.t6 — `?versioned=true` (no `v`) writes the CURRENT
+    playlist with the current's version_no in the filename. Operator
+    opts in to accumulate one file per regen rather than overwriting."""
+    client, Session = api
+    _seed_station_and_pool(Session, slug="arc", pool_tracks=3)
+    with Session() as db:
+        db.add(Config(key="playlist_output_dir", value=str(tmp_path)))
+        db.commit()
+    client.post("/api/stations/arc/generate", json={"week": 1})
+    r2 = client.post("/api/stations/arc/generate", json={"week": 1})
+    pl_id = r2.json()["playlist_id"]
+    # current_v should be 2 after the second generation.
+
+    # Default path: unsuffixed filename.
+    body_default = client.post(
+        f"/api/playlists/{pl_id}/export-to-disk",
+    ).json()
+    assert body_default["path"].endswith("arc/001.xml")
+
+    # versioned=true: filename gets the current's version_no suffix.
+    body_v = client.post(
+        f"/api/playlists/{pl_id}/export-to-disk?versioned=true",
+    ).json()
+    assert body_v["path"].endswith("arc/001-v2.xml")
+    # Both files coexist on disk — the archival invariant.
+    assert body_default["path"] != body_v["path"]
+
+
+def test_export_to_disk_versioned_with_v_no_op(api, tmp_path):
+    """§16.4.t6 — `?versioned=true` is a no-op when `v` is set
+    (filename already suffixed via .t2's safety constraint).
+    Behavior identical to `?v=N` alone."""
+    client, Session = api
+    _seed_station_and_pool(Session, slug="np", pool_tracks=3)
+    with Session() as db:
+        db.add(Config(key="playlist_output_dir", value=str(tmp_path)))
+        db.commit()
+    client.post("/api/stations/np/generate", json={"week": 1})
+    r2 = client.post("/api/stations/np/generate", json={"week": 1})
+    pl_id = r2.json()["playlist_id"]
+
+    a = client.post(f"/api/playlists/{pl_id}/export-to-disk?v=1").json()
+    b = client.post(
+        f"/api/playlists/{pl_id}/export-to-disk?v=1&versioned=true",
+    ).json()
+    assert a["path"] == b["path"]
+    assert a["path"].endswith("np/001-v1.xml")
+
+
 def test_export_xml_historical_with_deleted_track_404(api):
     """§16.4.t2 — slot references a track_id that's since been
     deleted (defensive — historical-version export reads track ids

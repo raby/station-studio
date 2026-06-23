@@ -437,7 +437,9 @@ describe('trace viewer — §16.6 disk-export wiring', () => {
 
     await fireEvent.click(await screen.findByTestId('export-to-disk'));
     // §16.4.t2 — call signature is now (id, version). null = current.
-    expect(exportPlaylistToDiskMock).toHaveBeenCalledWith(7, null);
+    // §16.4.t6 signature: (id, version, versioned). archiveDiskExports defaults
+// off; current-version path passes (7, null, false).
+expect(exportPlaylistToDiskMock).toHaveBeenCalledWith(7, null, false);
 
     // Status line shows the path and a KB figure derived from bytes.
     // 868990 / 1024 ≈ 849 → "849 KB".
@@ -1267,7 +1269,9 @@ describe('trace viewer — §16.4.t2 historical-version export', () => {
     await act(async () => {
       (screen.getByTestId('export-to-disk') as HTMLButtonElement).click();
     });
-    expect(exportPlaylistToDiskMock).toHaveBeenCalledWith(7, null);
+    // §16.4.t6 signature: (id, version, versioned). archiveDiskExports defaults
+// off; current-version path passes (7, null, false).
+expect(exportPlaylistToDiskMock).toHaveBeenCalledWith(7, null, false);
   });
 
   it('historical version: download anchor + disk button pass the version', async () => {
@@ -1289,6 +1293,116 @@ describe('trace viewer — §16.4.t2 historical-version export', () => {
     await act(async () => {
       (screen.getByTestId('export-to-disk') as HTMLButtonElement).click();
     });
-    expect(exportPlaylistToDiskMock).toHaveBeenCalledWith(7, 1);
+    expect(exportPlaylistToDiskMock).toHaveBeenCalledWith(7, 1, false);
+  });
+});
+
+
+// ---- §16.4.t6 archive-every-version disk-export -------------------------
+
+describe('trace viewer — §16.4.t6 archive disk exports', () => {
+  beforeEach(() => {
+    getPlaylistMock.mockReset();
+    getTraceMock.mockReset();
+    getStationMock.mockReset();
+    getStationPlaylistsMock.mockReset();
+    getStationPlaylistsMock.mockResolvedValue([]);
+    getVersionsMock.mockReset();
+    gotoMock.mockReset();
+    exportPlaylistToDiskMock.mockReset();
+    setId('7');
+    setSearch('');
+    try { window.localStorage.clear(); } catch { /* */ }
+  });
+
+  function seedMulti() {
+    getTraceMock.mockResolvedValueOnce(stubTrace({ trace_id: 'trace-v2' }));
+    getPlaylistMock.mockResolvedValueOnce(stubPlaylist());
+    getStationMock.mockResolvedValueOnce(stubStation());
+    getVersionsMock.mockResolvedValueOnce({
+      playlist_id: 7,
+      current_v: 2,
+      versions: [
+        { version_no: 1, trace_id: 'trace-v1', generated_at: 'a', seed: 100, tags: [] },
+        { version_no: 2, trace_id: 'trace-v2', generated_at: 'b', seed: 200, tags: [] },
+      ],
+    });
+  }
+
+  it('checkbox renders + defaults OFF + reflects current_v in the hint', async () => {
+    seedMulti();
+    render(Page);
+    await screen.findByText('Track Mon-1');
+    const cb = screen.getByTestId('archive-disk-exports') as HTMLInputElement;
+    expect(cb.checked).toBe(false);
+    // The inline hint shows the would-be filename.
+    expect(
+      screen.getByTestId('archive-disk-exports-label').textContent,
+    ).toMatch(/003-v2\.xml/);
+  });
+
+  it('hydrates from per-station localStorage on mount', async () => {
+    window.localStorage.setItem('archiveDiskExports:cls', 'on');
+    seedMulti();
+    render(Page);
+    await screen.findByText('Track Mon-1');
+    const cb = screen.getByTestId('archive-disk-exports') as HTMLInputElement;
+    expect(cb.checked).toBe(true);
+  });
+
+  it('toggling persists the new value to localStorage', async () => {
+    seedMulti();
+    render(Page);
+    await screen.findByText('Track Mon-1');
+    const cb = screen.getByTestId('archive-disk-exports') as HTMLInputElement;
+    await act(async () => {
+      cb.checked = true;
+      await fireEvent.change(cb);
+    });
+    expect(window.localStorage.getItem('archiveDiskExports:cls')).toBe('on');
+    await act(async () => {
+      cb.checked = false;
+      await fireEvent.change(cb);
+    });
+    expect(window.localStorage.getItem('archiveDiskExports:cls')).toBe('off');
+  });
+
+  it('when ON + current version: passes (id, null, true) to the API', async () => {
+    window.localStorage.setItem('archiveDiskExports:cls', 'on');
+    seedMulti();
+    render(Page);
+    await screen.findByText('Track Mon-1');
+    exportPlaylistToDiskMock.mockResolvedValueOnce({
+      path: '/abs/out/cls/003-v2.xml', bytes: 100,
+    });
+    await act(async () => {
+      (screen.getByTestId('export-to-disk') as HTMLButtonElement).click();
+    });
+    expect(exportPlaylistToDiskMock).toHaveBeenCalledWith(7, null, true);
+  });
+
+  it('when ON + historical version: still passes (id, version, true) — server ignores flag', async () => {
+    window.localStorage.setItem('archiveDiskExports:cls', 'on');
+    setSearch('?v=1');
+    getTraceMock.mockResolvedValueOnce(stubTrace({ trace_id: 'trace-v1' }));
+    getPlaylistMock.mockResolvedValueOnce(stubPlaylist());
+    getStationMock.mockResolvedValueOnce(stubStation());
+    getVersionsMock.mockResolvedValueOnce({
+      playlist_id: 7,
+      current_v: 2,
+      versions: [
+        { version_no: 1, trace_id: 'trace-v1', generated_at: 'a', seed: 100, tags: [] },
+        { version_no: 2, trace_id: 'trace-v2', generated_at: 'b', seed: 200, tags: [] },
+      ],
+    });
+    render(Page);
+    await screen.findByText('Track Mon-1');
+    exportPlaylistToDiskMock.mockResolvedValueOnce({
+      path: '/abs/out/cls/003-v1.xml', bytes: 100,
+    });
+    await act(async () => {
+      (screen.getByTestId('export-to-disk') as HTMLButtonElement).click();
+    });
+    expect(exportPlaylistToDiskMock).toHaveBeenCalledWith(7, 1, true);
   });
 });

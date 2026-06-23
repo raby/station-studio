@@ -310,7 +310,8 @@ describe('api client', () => {
         body: { path: '/abs/out/cls/001.xml', bytes: 868990 },
       });
       // §16.4.t2 signature change: (id, version, fetch_).
-      const r = await exportPlaylistToDisk(42, null, fetch_);
+      // §16.4.t6 signature change: (id, version, versioned, fetch_).
+      const r = await exportPlaylistToDisk(42, null, false, fetch_);
 
       expect(calls[0].input).toBe('/api/playlists/42/export-to-disk');
       expect(calls[0].init?.method).toBe('POST');
@@ -322,8 +323,28 @@ describe('api client', () => {
       const { fetch_, calls } = makeSpy({
         body: { path: '/abs/out/cls/001-v3.xml', bytes: 870000 },
       });
-      await exportPlaylistToDisk(42, 3, fetch_);
+      await exportPlaylistToDisk(42, 3, false, fetch_);
       expect(calls[0].input).toBe('/api/playlists/42/export-to-disk?v=3');
+    });
+
+    it('§16.4.t6 — versioned=true alone (current) appends ?versioned=true', async () => {
+      const { fetch_, calls } = makeSpy({
+        body: { path: '/abs/out/cls/001-v2.xml', bytes: 870000 },
+      });
+      await exportPlaylistToDisk(42, null, true, fetch_);
+      expect(calls[0].input).toBe(
+        '/api/playlists/42/export-to-disk?versioned=true',
+      );
+    });
+
+    it('§16.4.t6 — version + versioned: both query params present', async () => {
+      const { fetch_, calls } = makeSpy({
+        body: { path: '/abs/out/cls/001-v3.xml', bytes: 870000 },
+      });
+      await exportPlaylistToDisk(42, 3, true, fetch_);
+      expect(calls[0].input).toBe(
+        '/api/playlists/42/export-to-disk?v=3&versioned=true',
+      );
     });
 
     it('raises ApiError on 404 when the playlist id is unknown', async () => {
@@ -335,7 +356,7 @@ describe('api client', () => {
         statusText: 'Not Found',
         text: 'playlist 999 not found',
       });
-      const err = await exportPlaylistToDisk(999, null, fetch_).catch((e) => e);
+      const err = await exportPlaylistToDisk(999, null, false, fetch_).catch((e) => e);
       expect(err).toBeInstanceOf(ApiError);
       expect(err.status).toBe(404);
       expect(err.message).toContain('playlist 999 not found');
@@ -350,7 +371,7 @@ describe('api client', () => {
         statusText: 'Internal Server Error',
         text: 'permission denied: /readonly/cls/001.xml',
       });
-      const err = await exportPlaylistToDisk(42, null, fetch_).catch((e) => e);
+      const err = await exportPlaylistToDisk(42, null, false, fetch_).catch((e) => e);
       expect(err).toBeInstanceOf(ApiError);
       expect(err.status).toBe(500);
       expect(err.message).toContain('permission denied');
