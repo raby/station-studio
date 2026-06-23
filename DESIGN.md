@@ -10691,14 +10691,20 @@ opportunistically when a real ask surfaces.
   time — preserves the audit trail without needing a new column.
   Marked "surprisingly subtle" in the original design pass; that
   warning still stands.
-* **§16.4.t5 version labels / tags** — operator-applied string
-  tags on a `PlaylistVersion` (`"sent-to-iTunes"`, `"jon-approved"`,
-  `"weekend-mix"`). Linear history still enforced; tags are
-  annotations, not branches. Trigger: operator says "I want to
-  remember which version I sent to iTunes last week without
-  scrolling the picker by date". Schema: `tags: JSON | None` on
-  PlaylistVersion (or a side `playlist_version_tag` table for many-
-  to-many). Picker dropdown grows a tag suffix on labelled rows.
+* ~~**§16.4.t5 version labels / tags**~~ — **✅ SHIPPED 2026-06-23
+  (260c812).** Operator-applied string annotations on a
+  `PlaylistVersion`. Linear history preserved; tags are annotations,
+  not branches. **What shipped:** `tags JSON NOT NULL DEFAULT '[]'`
+  column on `playlist_version` (migration `be9b9713c5a4`); `PATCH
+  /api/playlists/{id}/versions/{version_no}/tags` route with
+  server-side normalization (trim + dedupe; cap at 10 tags × 40
+  chars each; reject commas — defense-in-depth, UI rejects too);
+  `setVersionTags` client + frontend inline tag editor reusing
+  §16.2.4's `<ChipMultiInput>`; picker dropdown grows a `[tag1,
+  tag2]` suffix on labelled rows. **Review R1 fix:** reworded
+  backend comment to clarify the comma rejection is defense-in-
+  depth for non-UI callers (ChipMultiInput rejects commas at
+  input time too).
 * **§16.4.t6 versioned disk filenames** — opt-in
   `{week:03d}-v{N}.xml` filename pattern, complementing the default
   current-only `{week:03d}.xml`. Trigger: operator says

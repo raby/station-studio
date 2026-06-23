@@ -404,10 +404,16 @@ def _normalize_tags(raw: list[str]) -> list[str]:
                 422, "empty tags aren't allowed (trim before send)",
             )
         if "," in tag:
+            # Defense-in-depth: ChipMultiInput already rejects commas
+            # at input time (`Names can't contain commas.` inline
+            # error). The server check handles non-UI callers — CLI
+            # scripts, future batch endpoints, direct API clients —
+            # that could submit an array with embedded commas. Same
+            # rationale as ListRuleRow's comma guard upstream.
             raise HTTPException(
                 422,
-                f"tag {raw_tag!r} contains a comma; tag chip-input "
-                f"uses comma as a separator. Pick a different name.",
+                f"tag {raw_tag!r} contains a comma; commas are "
+                f"reserved (UI rejects them too). Pick a different name.",
             )
         if len(tag) > _MAX_TAG_LENGTH:
             raise HTTPException(
