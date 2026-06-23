@@ -993,6 +993,146 @@ def test_retention_cap_prunes_oldest_versions_on_regenerate(api):
         assert pl.trace_id == versions[-1].trace_id
 
 
+# ---------- §16.4.t4 rollback ----------------------------------------
+
+
+def test_rollback_creates_new_version_with_source_content(api):
+    """§16.4.t4 — POST /rollback?to=N appends a new max-version row
+    with v=N's slots / rng / seed. Trace_id is fresh; generated_at
+    is now; Playlist.trace_id flips to point at the new row."""
+    client, Session = api
+    _seed_station_and_pool(Session, slug="rb", pool_tracks=3)
+    r1 = client.post("/api/stations/rb/generate", json={"week": 1})
+    client.post("/api/stations/rb/generate", json={"week": 1})
+    pl_id = r1.json()["playlist_id"]
+
+    # Capture v1's content for comparison.
+    with Session() as db:
+        v1 = (
+            db.query(PlaylistVersion)
+            .filter_by(playlist_id=pl_id, version_no=1)
+            .one()
+        )
+        v1_trace_id = v1.trace_id
+        v1_slots = list(v1.slots)
+        v1_seed = v1.seed
+
+    resp = client.post(f"/api/playlists/{pl_id}/rollback?to=1")
+    assert resp.status_code == 200, resp.json()
+    body = resp.json()
+    # The new version's metadata.
+    assert body["playlist_id"] == pl_id
+    assert body["version_no"] == 3  # max=2 + 1
+    assert body["trace_id"] != v1_trace_id  # fresh UUID
+    assert body["seed"] == v1_seed  # source seed preserved
+
+    # All three versions persist.
+    with Session() as db:
+        versions = (
+            db.query(PlaylistVersion)
+            .filter_by(playlist_id=pl_id)
+            .order_by(PlaylistVersion.version_no)
+            .all()
+        )
+        assert [v.version_no for v in versions] == [1, 2, 3]
+        # v3's content matches v1's slots.
+        assert versions[2].slots == v1_slots
+        # Playlist.trace_id is the new pointer.
+        pl = db.query(Playlist).filter_by(id=pl_id).one()
+        assert pl.trace_id == body["trace_id"]
+
+
+def test_rollback_rewrites_playlist_entries(api):
+    """§16.4.t4 — PlaylistEntry rows are rewritten to match the
+    rolled-back version's slots. Entry count stays the same (the
+    template hasn't changed)."""
+    client, Session = api
+    _seed_station_and_pool(Session, slug="rbe", pool_tracks=3)
+    r1 = client.post("/api/stations/rbe/generate", json={"week": 1})
+    client.post("/api/stations/rbe/generate", json={"week": 1})
+    pl_id = r1.json()["playlist_id"]
+
+    with Session() as db:
+        v1 = (
+            db.query(PlaylistVersion)
+            .filter_by(playlist_id=pl_id, version_no=1)
+            .one()
+        )
+        expected_track_ids = [s["track_id"] for s in v1.slots]
+
+    client.post(f"/api/playlists/{pl_id}/rollback?to=1")
+
+    with Session() as db:
+        entries = (
+            db.query(PlaylistEntry)
+            .filter_by(playlist_id=pl_id)
+            .order_by(PlaylistEntry.position)
+            .all()
+        )
+        # Same row count as a single generation (latest-only contract).
+        assert len(entries) == len(expected_track_ids)
+        # Tracks match v1's slot order.
+        assert [e.track_id for e in entries] == expected_track_ids
+
+
+def test_rollback_unknown_playlist_404(api):
+    client, _ = api
+    r = client.post("/api/playlists/9999/rollback?to=1")
+    assert r.status_code == 404
+    assert "9999" in r.json()["detail"]
+
+
+def test_rollback_unknown_version_404_lists_available(api):
+    client, Session = api
+    _seed_station_and_pool(Session, slug="rbnv", pool_tracks=3)
+    r = client.post("/api/stations/rbnv/generate", json={"week": 1})
+    pl_id = r.json()["playlist_id"]
+
+    resp = client.post(f"/api/playlists/{pl_id}/rollback?to=99")
+    assert resp.status_code == 404
+    assert "1..1" in resp.json()["detail"]
+
+
+def test_rollback_to_current_400(api):
+    """Rolling back to the current version is a no-op + masks
+    operator intent (probably meant a different version). 400."""
+    client, Session = api
+    _seed_station_and_pool(Session, slug="rbcur", pool_tracks=3)
+    r1 = client.post("/api/stations/rbcur/generate", json={"week": 1})
+    r2 = client.post("/api/stations/rbcur/generate", json={"week": 1})
+    pl_id = r2.json()["playlist_id"]
+
+    resp = client.post(f"/api/playlists/{pl_id}/rollback?to=2")
+    assert resp.status_code == 400
+    assert "already current" in resp.json()["detail"]
+
+
+def test_rollback_deleted_track_400(api):
+    """§16.4.t4 — slot references a track that's been deleted since
+    the source version was written. Surfaces as 400 with a clear
+    message rather than silently rolling back to incomplete content."""
+    client, Session = api
+    _seed_station_and_pool(Session, slug="rbdt", pool_tracks=3)
+    r = client.post("/api/stations/rbdt/generate", json={"week": 1})
+    client.post("/api/stations/rbdt/generate", json={"week": 1})
+    pl_id = r.json()["playlist_id"]
+
+    with Session() as db:
+        v1 = (
+            db.query(PlaylistVersion)
+            .filter_by(playlist_id=pl_id, version_no=1)
+            .one()
+        )
+        first_tid = v1.slots[0]["track_id"]
+        track = db.query(Track).filter_by(id=first_tid).one()
+        db.delete(track)
+        db.commit()
+
+    resp = client.post(f"/api/playlists/{pl_id}/rollback?to=1")
+    assert resp.status_code == 400
+    assert "deleted" in resp.json()["detail"]
+
+
 def test_retention_cap_no_prune_when_count_equals_cap(api):
     """Cap = N + exactly N versions = no-op. The prune query should
     short-circuit before any DELETE runs."""

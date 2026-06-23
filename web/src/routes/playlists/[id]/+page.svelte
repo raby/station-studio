@@ -6,6 +6,7 @@
     getStationPlaylists,
     getVersions,
     exportPlaylistToDisk,
+    rollbackPlaylist,
     ApiError,
   } from '$lib/api';
   import type {
@@ -242,6 +243,51 @@
     if (requestedVersion != null) return requestedVersion;
     return currentV;
   })();
+
+  // §16.4.t4 — show rollback affordance only when viewing a non-
+  // current version. Rolling back to current would be a no-op
+  // (backend 400s); hiding the button is the obvious UI guard.
+  $: canRollback =
+    versions.length > 1
+    && selectedVersionNo !== currentV
+    && selectedVersionNo > 0;
+
+  /**
+   * §16.4.t4 — roll back to the selected version. POSTs to
+   * /rollback?to=N + on success: refetches versions + navigates to
+   * the new current (clears ?v=N so the picker lands on the new
+   * max). Confirm dialog explains the non-destructive semantics so
+   * the operator doesn't fear losing the current.
+   */
+  let rollingBack = false;
+  let rollbackError: string | null = null;
+  async function handleRollback() {
+    if (!canRollback || !playlist) return;
+    const targetVersion = selectedVersionNo;
+    const ok = window.confirm(
+      `Roll back to v${targetVersion}?\n\n` +
+        `A new current version will be created with v${targetVersion}'s ` +
+        `content. The existing current (v${currentV}) stays in history ` +
+        `as a prior version — nothing is deleted.`,
+    );
+    if (!ok) return;
+    rollingBack = true;
+    rollbackError = null;
+    try {
+      await rollbackPlaylist(playlist.id, targetVersion);
+      // Land on the new current by clearing ?v= from the URL; the
+      // reactive watcher refetches.
+      const url = new URL($page.url);
+      url.searchParams.delete('v');
+      await goto(url.toString().replace(url.origin, ''), {
+        keepFocus: true, noScroll: true,
+      });
+    } catch (e) {
+      rollbackError = e instanceof ApiError ? e.message : String(e);
+    } finally {
+      rollingBack = false;
+    }
+  }
 
   // ---- prev / next sibling derivation (DESIGN.md §16.9 D2) ---------------
   // Sort the station's playlists by week, find current's index, derive
@@ -508,7 +554,29 @@
         >
           Compare versions →
         </a>
+        <!--
+          §16.4.t4 — rollback affordance. Hidden when viewing the
+          current version (rolling back to current = no-op).
+          Non-destructive — creates a new max-version row with the
+          target's content; current stays as a prior version.
+        -->
+        {#if canRollback}
+          <button
+            type="button"
+            class="rollback-btn"
+            data-testid="rollback-btn"
+            disabled={rollingBack}
+            on:click={handleRollback}
+          >
+            {rollingBack ? 'Rolling back…' : `↶ Roll back to v${selectedVersionNo}`}
+          </button>
+        {/if}
       </div>
+      {#if rollbackError}
+        <p class="rollback-error" data-testid="rollback-error">
+          {rollbackError}
+        </p>
+      {/if}
     {/if}
 
     <dl class="meta">
@@ -850,6 +918,35 @@
   }
   .compare-link:hover {
     text-decoration: underline;
+  }
+  /* §16.4.t4 — rollback button. Compact + clearly an action (not
+     destructive — confirm dialog explains the non-destructive
+     semantics). */
+  .rollback-btn {
+    padding: 0.25rem 0.6rem;
+    background: white;
+    border: 1px solid #c0392b;
+    color: #c0392b;
+    border-radius: 3px;
+    cursor: pointer;
+    font: inherit;
+    font-size: 0.85rem;
+  }
+  .rollback-btn:hover:not(:disabled) {
+    background: #fdf3f1;
+  }
+  .rollback-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+  .rollback-error {
+    margin: 0.25rem 0 1rem;
+    padding: 0.4rem 0.6rem;
+    border: 1px solid #ffcdd2;
+    background: #ffebee;
+    color: #b71c1c;
+    border-radius: 3px;
+    font-size: 0.85rem;
   }
 
   .actions {

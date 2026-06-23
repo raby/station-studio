@@ -1694,3 +1694,23 @@ describe('isGenerateResult / isPreviewResult', () => {
     expect(isGenerateResult(previewResult) && isPreviewResult(previewResult)).toBe(false);
   });
 });
+
+describe('§16.4.t4 rollbackPlaylist', () => {
+  it('POSTs to /rollback?to=N and returns the new version metadata', async () => {
+    const spy = makeSpy({
+      body: {
+        playlist_id: 7,
+        version_no: 5,
+        trace_id: 'fresh-uuid',
+        generated_at: '2026-06-22T12:00:00Z',
+        seed: 42,
+      },
+    });
+    const { rollbackPlaylist } = await import('./api');
+    const r = await rollbackPlaylist(7, 2, spy.fetch_);
+    expect(spy.calls[0].input).toBe('/api/playlists/7/rollback?to=2');
+    expect(spy.calls[0].init?.method).toBe('POST');
+    expect(r.version_no).toBe(5);
+    expect(r.trace_id).toBe('fresh-uuid');
+  });
+});

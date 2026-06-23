@@ -12,7 +12,8 @@ from engine.models import Station, Playlist, PlaylistVersion
 from engine.persistence import (
     advance_cursors, load_alias_map, load_cursor_positions,
     load_excluded_mix_ids, load_excluded_track_pids, load_pools,
-    load_previous_playlist, max_mix_exclusion_window, save_playlist,
+    load_previous_playlist, max_mix_exclusion_window, rollback_playlist,
+    RollbackError, save_playlist,
 )
 from engine.rules import get_rule_value
 from engine.template import parse_template, TemplateError
@@ -556,4 +557,51 @@ def get_trace_diff(
             "unchanged": total - changed_count,
         },
         "slots": rows,
+    }
+
+
+@router.post("/api/playlists/{playlist_id}/rollback")
+def rollback(
+    playlist_id: int,
+    to: int = Query(..., ge=1),
+    db: Session = Depends(get_db),
+):
+    """§16.4.t4 — restore a prior PlaylistVersion as the new current.
+
+    APPENDS a new max-version row with the target's content (option
+    'b' from the original §16.4 paper sketch — preserves audit trail
+    without needing a new column on Playlist). The Playlist row +
+    foreign-key pointers stay valid; PlaylistEntry rows are rewritten
+    from the target's slots; `Playlist.trace_id` flips to the new
+    version's trace_id.
+
+    Errors:
+      * 404 — playlist not found.
+      * 404 — `to` references a version_no that doesn't exist
+        (message names the available range).
+      * 400 — `to` is already the current version (no-op).
+      * 400 — a slot's track has since been deleted (the rolled-back
+        content can't be physically replayed).
+
+    Returns the new version's metadata (the new current).
+    """
+    try:
+        new_version = rollback_playlist(
+            db, playlist_id, to_version=to,
+        )
+    except RollbackError as e:
+        # 404 for "not found" cases, 400 for "already current" /
+        # "deleted track". Disambiguate by the message prefix —
+        # rollback_playlist's error texts are stable.
+        msg = str(e)
+        if "not found" in msg or "no version_no" in msg or "no versions" in msg:
+            raise HTTPException(404, msg)
+        raise HTTPException(400, msg)
+    db.commit()
+    return {
+        "playlist_id": playlist_id,
+        "version_no": new_version.version_no,
+        "trace_id": new_version.trace_id,
+        "generated_at": new_version.generated_at,
+        "seed": new_version.seed,
     }

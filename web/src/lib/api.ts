@@ -282,6 +282,36 @@ export interface TraceDiffResponse {
 }
 
 /**
+ * Returned by `rollbackPlaylist` — metadata for the new max-version
+ * row appended on rollback. Frontend uses this to refetch versions
+ * + navigate to the new current.
+ */
+export interface RollbackResponse {
+  playlist_id: number;
+  version_no: number;
+  trace_id: string;
+  generated_at: string;
+  seed: number | null;
+}
+
+/**
+ * §16.4.t4 — roll back to a prior PlaylistVersion. APPENDS a new
+ * max-version row with the target's slots / seed / rng. Operator's
+ * mental model: "make v=N the new current"; backend implementation
+ * preserves audit trail (the prior current stays as a regular
+ * version).
+ */
+export const rollbackPlaylist = (
+  id: number,
+  toVersion: number,
+  fetch_ = fetch,
+): Promise<RollbackResponse> =>
+  fetch_(
+    `/api/playlists/${id}/rollback?to=${toVersion}`,
+    { method: 'POST' },
+  ).then((r) => json<RollbackResponse>(r));
+
+/**
  * §16.4.t1 — compare two PlaylistVersions of the same playlist. The
  * backend pre-computes the diff so the wire payload + the frontend
  * stay simple; the response carries the full slot list + per-row

@@ -5,6 +5,9 @@ between api/routers/generate.py and scripts/bootstrap_classics.py.
 """
 from __future__ import annotations
 
+import uuid
+from datetime import datetime, timezone
+
 from sqlalchemy.orm import Session, joinedload
 
 from engine.artist_match import build_alias_map
@@ -319,6 +322,177 @@ def _prune_old_versions(db: Session, *, station: Station, playlist_id: int) -> N
     db.query(PlaylistVersion).filter(
         PlaylistVersion.id.in_(to_delete_ids),
     ).delete(synchronize_session=False)
+
+
+class RollbackError(ValueError):
+    """Raised when a rollback can't proceed (unknown version, target
+    already current, deleted referenced track). The API layer
+    translates these to 4xx HTTPExceptions."""
+
+
+def rollback_playlist(
+    db: Session,
+    playlist_id: int,
+    *,
+    to_version: int,
+) -> PlaylistVersion:
+    """§16.4.t4 — restore a prior PlaylistVersion as the new current
+    by APPENDING a new max-version row with the target's content.
+
+    Design choice (option 'b' from the original §16.4 paper sketch):
+    rather than mutating the current-pointer (option c, requires a
+    new column on Playlist) or deleting the unwanted history (option
+    a, loses audit trail), rollback CREATES a fresh PlaylistVersion
+    whose slots / rng / seed match `to_version`'s. version_no = max
+    + 1; trace_id = new UUID (this IS a new generation, even though
+    the content is copied). `generated_at` = now (the rollback
+    happened now).
+
+    Side effects (mirrors save_playlist's reuse-and-rewrite shape):
+      * PlaylistEntry rows are cleared + rewritten from the source
+        version's slots — entries stay latest-only.
+      * Playlist.trace_id is flipped to point at the new max version
+        (denormalized pointer).
+      * Playlist.seed is updated to the source version's seed.
+      * §16.4.t3 retention cap is applied after the append (the new
+        version counts toward the cap; oldest may be pruned).
+
+    Not-touched (documented limitation):
+      * MixUsage rows are NOT rewritten — rebuilding them requires
+        the template, which isn't preserved per-PlaylistVersion. The
+        next regenerate recomputes MixUsage normally; only the brief
+        window between rollback + next regen has stale mix-exclusion
+        history. Affects stations with mix-strategy blocks (not
+        Classics).
+
+    Raises:
+      * `RollbackError` if the playlist doesn't exist, the requested
+        version doesn't exist, the requested version is already
+        current, or a slot's track has since been deleted (the
+        rolled-back content can't be physically replayed).
+
+    Returns the new PlaylistVersion (flushed, NOT committed). Caller
+    runs db.commit().
+    """
+    playlist = db.query(Playlist).filter_by(id=playlist_id).first()
+    if playlist is None:
+        raise RollbackError(f"Playlist {playlist_id} not found")
+
+    source = (
+        db.query(PlaylistVersion)
+        .filter_by(playlist_id=playlist_id, version_no=to_version)
+        .first()
+    )
+    if source is None:
+        # Surface the available range so the operator can correct
+        # the call without a separate /versions round-trip.
+        available = sorted(
+            v.version_no for v in (
+                db.query(PlaylistVersion.version_no)
+                .filter_by(playlist_id=playlist_id)
+                .all()
+            )
+        )
+        if not available:
+            raise RollbackError(
+                f"Playlist {playlist_id} has no versions to roll back to"
+            )
+        raise RollbackError(
+            f"Playlist {playlist_id} has no version_no={to_version} "
+            f"(available: {available[0]}..{available[-1]})"
+        )
+
+    max_version_no = (
+        max(v.version_no for v in playlist.versions) if playlist.versions else 0
+    )
+    if to_version == max_version_no:
+        raise RollbackError(
+            f"Playlist {playlist_id} v{to_version} is already current; "
+            f"rollback would be a no-op."
+        )
+
+    # Resolve track ids in bulk — same pattern as the §16.4.t2
+    # historical-export path. Deleted tracks make the rollback
+    # physically impossible.
+    src_slots = source.slots or []
+    track_ids_in_order: list[int | None] = [
+        s.get("track_id") for s in src_slots
+    ]
+    unique_ids = {tid for tid in track_ids_in_order if tid is not None}
+    tracks_by_id = {
+        t.id: t
+        for t in db.query(Track).filter(Track.id.in_(unique_ids)).all()
+    } if unique_ids else {}
+    for pos, tid in enumerate(track_ids_in_order, start=1):
+        if tid is None:
+            raise RollbackError(
+                f"Playlist {playlist_id} v{to_version} slot at position "
+                f"{pos}: track_id is null; cannot roll back to this version."
+            )
+        if tid not in tracks_by_id:
+            raise RollbackError(
+                f"Playlist {playlist_id} v{to_version} slot at position "
+                f"{pos}: track {tid} has been deleted; cannot roll back."
+            )
+
+    # Clear latest-only children (mirrors save_playlist).
+    for e in list(playlist.entries):
+        db.delete(e)
+    db.query(MixUsage).filter_by(playlist_id=playlist.id).delete(
+        synchronize_session=False,
+    )
+    db.flush()
+
+    # Append new PlaylistVersion with source's content.
+    new_trace_id = str(uuid.uuid4())
+    new_generated_at = datetime.now(timezone.utc).isoformat()
+    next_version_no = max_version_no + 1
+    db.add(PlaylistVersion(
+        playlist_id=playlist.id,
+        version_no=next_version_no,
+        trace_id=new_trace_id,
+        station_slug=source.station_slug,
+        week=source.week,
+        rng=source.rng,
+        seed=source.seed,
+        generated_at=new_generated_at,
+        # Deep-copy via list-comprehension over the slot dicts. The
+        # source row stays addressable (rollback is non-destructive);
+        # mutating it via shared references would silently corrupt
+        # history.
+        slots=[dict(s) for s in src_slots],
+    ))
+
+    # Rewrite PlaylistEntry rows from the slots — latest-only.
+    for pos, tid in enumerate(track_ids_in_order, start=1):
+        # `tid` already validated above; the guard's there for type
+        # narrowing.
+        if tid is None:
+            continue
+        slot = src_slots[pos - 1]
+        db.add(PlaylistEntry(
+            playlist_id=playlist.id,
+            track_id=tid,
+            position=pos,
+            source_name=slot.get("source"),
+            slot_type=slot.get("strategy"),
+        ))
+
+    # Flip denormalized pointers.
+    playlist.trace_id = new_trace_id
+    playlist.seed = source.seed
+
+    # Apply retention cap — the new version counts toward it.
+    _prune_old_versions(
+        db, station=playlist.station, playlist_id=playlist.id,
+    )
+
+    db.flush()
+    return (
+        db.query(PlaylistVersion)
+        .filter_by(playlist_id=playlist.id, version_no=next_version_no)
+        .one()
+    )
 
 
 def _save_mix_usages(db: Session, *, playlist_id: int, template: Template, result) -> None:
