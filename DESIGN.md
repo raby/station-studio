@@ -10645,9 +10645,15 @@ opportunistically when a real ask surfaces.
    filter dropdowns + filter counter).
 7. ~~**§16.9 multi-week prev/next nav**~~ — ✅ SHIPPED (prev/next
    nav strip between sibling weeks in the trace viewer header).
-8. **§16.18 trace viewer virtualisation** — perf at 2,200 rows.
-   Currently renders fine but scroll lags. Land before any future
-   station crosses ~3,000 slots.
+8. ~~**§16.18 trace viewer virtualisation**~~ — ✅ SHIPPED 2026-06-24
+   (commit 94dc0c0). 5-line CSS change: `content-visibility: auto`
+   + `contain-intrinsic-size: auto 10000px` on each row-group
+   `<section>`. Browser handles layout-skipping natively. All
+   interactions (filter / collapse / excluded-candidates /
+   chip-flash / scroll) preserved; a11y BETTER than hand-rolled
+   (rows stay in DOM). Mega-group case (one group of 10K+ rows)
+   would need per-row virtualisation — queued as §16.18.t1 if a
+   real ask appears.
 
 **Tier 3 — polish + maintenance**:
 
@@ -13868,23 +13874,64 @@ edit-test loop.
 
 ### 16.18 Trace viewer virtualisation
 
-**Why this matters.** Classics generates **3,010 slots per week**.
-The current trace viewer renders all 3,010 DOM rows on first paint.
-First-paint delay + scroll lag are real on production data. §14.5's
-punt table flagged this with "noticeable scroll lag" as the
-trigger; with the visual editor (§16.2) likely to make this page a
-high-traffic destination, the trigger fires.
+**Status: ✅ SHIPPED 2026-06-24 (commit 94dc0c0).** The brief
+originally sketched a 3-4 commit slice (library + integration +
+a11y + smoke test); the as-shipped solution is a 5-line CSS change.
+Browser-managed virtualisation via `content-visibility: auto` +
+`contain-intrinsic-size: auto 10000px` on each row-group
+`<section>` lets the browser skip layout + paint for off-screen
+groups while keeping all rows in the DOM.
 
-**Shape.** Virtualised list (svelte-virtual-list or
-@tanstack/svelte-virtual) on the slots table. Preserves the
-existing row-grouping (collapsible day headers) — virtualise WITHIN
-each group, keep group headers always in DOM.
+**Design pivot from the brief's sketch.** Initially locked
+"hand-rolled per-row virtualisation (~80 LOC)" at design pass. The
+content-visibility approach is strictly better for the trace-viewer's
+structure:
 
-**Effort.** Small-medium (~3-4 commits: virtualisation library +
-integration + a11y verification + smoke test).
+* All interactions stay intact without any JS changes — rows
+  remain in the DOM, just visually skipped. Filter (§16.8) /
+  collapse-group / excluded-candidates disclosure (§14.23 + §16.17
+  expand-all) / chip-flash / scroll-to-row all work unchanged.
+* A11y is BETTER, not the "open design call" the brief flagged.
+  Assistive tech sees the full table (no rows ever swap in/out
+  under it); Ctrl+F / tab traversal / anchor links all behave
+  natively.
+* Variable-height path is FREE — once a row's excluded-candidates
+  panel opens, the browser handles the row-by-row rendering within
+  the realized group.
+* No new dep + no test surface for a hand-rolled virtualiser.
 
-**Open design call.** Virtualisation can interact poorly with
-keyboard nav + screen readers; §16.5 (a11y pass) cares about this.
+The hand-rolled approach would have been ~80 LOC + tests + the
+edge cases the brief calls out (a11y, keyboard nav, scroll race).
+content-visibility hands all of that to the browser.
+
+**Trade-off vs hand-rolled per-row.** content-visibility makes
+each row-group atomic on intersect — the WHOLE group is realized
+when any part scrolls into view. Classics's 7 × 430 layout (~10300px
+per group at ~24px per row) fits this trade cleanly: only 1-2 groups
+are visible at a time. A future station with ONE mega-group of
+10K+ rows would defeat this approach; per-row virtualisation
+inside that mega-group becomes **§16.18.t1** if such a station
+ever ships.
+
+**Browser support.** Chrome/Edge 85+ (2020), Firefox 125+ (April
+2024), Safari 18+ (Sept 2024). Older browsers fall back to today's
+no-virtualisation behavior — degraded perf, not broken UX.
+
+**Tuning.** `contain-intrinsic-size: auto 10000px` carries an
+`auto` keyword (browser LEARNS the actual height per-element after
+first realize + remembers it) plus a 10000px fallback seed used
+before the learn. The seed matches Classics's biggest day-group
+(~430 × ~24px ≈ 10300px) so under-estimation jiggle on first
+realize is minimal. A future station shape that diverges
+significantly from this could expose the seed via a CSS custom
+property — YAGNI today.
+
+**Browser-verified** at `/playlists/1` (Classics week 1, 3010
+slots across 7 day-groups): computed `content-visibility: auto` +
+`contain-intrinsic-size: auto 10000px`; all 7 sections rendered;
+3010 rows in DOM (browser lazy-laid-out); filter "Kim Wilde" →
+"Showing 7 of 3,010"; collapse/expand toggles correctly;
+scroll-to-bottom realizes the last group; 0 console errors.
 Better to do §16.18 BEFORE §16.5 so the a11y pass audits the
 virtualised layout.
 
