@@ -288,6 +288,48 @@ export interface TraceDiffResponse {
 }
 
 /**
+ * §16.23 — wire shape for `GET /api/stations/{slug}/diff?from=N&to=M`.
+ * Mirrors `TraceDiffResponse` (same per-slot fields, same `changed`
+ * flag, same summary) with `from`/`to` carrying `{week,
+ * playlist_id, version_no, trace_id, generated_at}` — the frontend
+ * uses `week` for labels and `playlist_id` for permalinks back to
+ * the trace viewer. Always compares CURRENT versions of each week
+ * (per the design-pass decision; opt-in `?from_v=N&to_v=M` would
+ * be a future extension).
+ */
+export interface WeekDiffSide {
+  week: number;
+  playlist_id: number;
+  version_no: number;
+  trace_id: string;
+  generated_at: string;
+}
+
+export interface WeekDiffResponse {
+  station: string;
+  from: WeekDiffSide;
+  to: WeekDiffSide;
+  summary: { total_slots: number; changed: number; unchanged: number };
+  slots: TraceDiffRow[];
+}
+
+/**
+ * §16.23 — compare two weeks' CURRENT-version traces side by side
+ * for the given station. Returns the same per-slot diff shape as
+ * §16.4.t1 (`getTraceDiff`) so the diff-table render can stay
+ * symmetric across the two surfaces.
+ */
+export const getStationWeekDiff = (
+  slug: string,
+  fromWeek: number,
+  toWeek: number,
+  fetch_ = fetch,
+): Promise<WeekDiffResponse> =>
+  fetch_(
+    `/api/stations/${encodeURIComponent(slug)}/diff?from=${fromWeek}&to=${toWeek}`,
+  ).then((r) => json<WeekDiffResponse>(r));
+
+/**
  * Returned by `setVersionTags` — the updated version row including
  * the normalized tag list. The frontend adopts the server's canonical
  * form (operator typed `  foo  ` → stored as `foo`).

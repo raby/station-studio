@@ -19,6 +19,7 @@ from engine.rules import get_rule_value
 from engine.template import parse_template, TemplateError
 from engine.generator import generate
 from engine.exporter import export_playlist, export_playlist_to_disk
+from engine.trace_diff import compute_trace_diff
 from api.deps import get_db
 from api.schemas import (
     GenerateRequest, GenerateResponse, PlaylistOut, PlaylistEntryOut,
@@ -489,38 +490,9 @@ def patch_version_tags(
     }
 
 
-# Fields compared per slot when classifying a diff row as "changed".
-# Positional fields (slot/unit/row/block) NEVER vary across versions of
-# the same playlist (same template, same week) — they're the row key.
-# `track_id` is the load-bearing change signal (which track ended up
-# here). `source` + `strategy` shift only when the operator edited the
-# template between regens — captured here so a template-shift surfaces
-# in the diff even when the picked track happens to match. `pool_index`
-# moving without track_id moving is unusual (would require the source
-# pool to have been re-imported with reordered entries) but operator-
-# interesting when it happens — captured too.
-_DIFF_SLOT_FIELDS_COMPARED = (
-    "source", "strategy", "pool_index", "track_id",
-)
-
-
-def _slot_projection(slot: dict) -> dict:
-    """Pluck the visible columns for the diff response from a TraceSlot
-    dict. Mirrors the trace viewer's table columns + the positional row
-    key so the frontend doesn't need to re-look-anything-up."""
-    return {
-        "slot": slot.get("slot"),
-        "unit": slot.get("unit"),
-        "row": slot.get("row"),
-        "block": slot.get("block"),
-        "source": slot.get("source"),
-        "strategy": slot.get("strategy"),
-        "pool_index": slot.get("pool_index"),
-        "track_id": slot.get("track_id"),
-        "track_name": slot.get("track_name"),
-        "track_artist": slot.get("track_artist"),
-        "reason": slot.get("reason"),
-    }
+# §16.23 c1: diff helpers extracted to `engine/trace_diff.py` so this
+# router + the §16.23 station diff route (`api/routers/stations.py`)
+# share one walker + one slot-projection definition.
 
 
 @router.get("/api/playlists/{playlist_id}/diff")
@@ -606,53 +578,7 @@ def get_trace_diff(
     src = _resolve("from", from_)
     dst = _resolve("to", to)
 
-    src_slots = src.slots or []
-    dst_slots = dst.slots or []
-    # Walk by slot number — the row key. zip-by-index breaks if the two
-    # versions somehow have different slot counts (different templates
-    # at the time of generation); index by slot number for robustness.
-    src_by_slot = {s.get("slot"): s for s in src_slots}
-    dst_by_slot = {s.get("slot"): s for s in dst_slots}
-    all_slot_nums = sorted(set(src_by_slot.keys()) | set(dst_by_slot.keys()))
-
-    rows: list[dict] = []
-    changed_count = 0
-    for slot_num in all_slot_nums:
-        s_from = src_by_slot.get(slot_num)
-        s_to = dst_by_slot.get(slot_num)
-        # If either side is missing (mismatched slot counts across
-        # versions), treat as changed. Real-world this means the
-        # template changed between the two generations — rare but
-        # worth surfacing.
-        if s_from is None or s_to is None:
-            changed = True
-        else:
-            changed = any(
-                s_from.get(k) != s_to.get(k)
-                for k in _DIFF_SLOT_FIELDS_COMPARED
-            )
-        if changed:
-            changed_count += 1
-        # Row key from whichever side has the slot. Both sides usually
-        # do; pick `s_to` first so the "to" version's positional
-        # metadata wins on mismatch (the operator's "current" mental
-        # frame).
-        keyrow = s_to or s_from
-        rows.append({
-            "slot": keyrow.get("slot"),
-            "unit": keyrow.get("unit"),
-            "row": keyrow.get("row"),
-            "block": keyrow.get("block"),
-            "changed": changed,
-            # Explicit `is not None` over truthiness — an empty
-            # TraceSlot dict is unreachable in production but the
-            # precise check survives a future refactor that might
-            # introduce a defensible empty-dict case.
-            "from": _slot_projection(s_from) if s_from is not None else None,
-            "to": _slot_projection(s_to) if s_to is not None else None,
-        })
-
-    total = len(rows)
+    rows, summary = compute_trace_diff(src.slots or [], dst.slots or [])
     return {
         "playlist_id": playlist_id,
         "from": {
@@ -665,11 +591,7 @@ def get_trace_diff(
             "trace_id": dst.trace_id,
             "generated_at": dst.generated_at,
         },
-        "summary": {
-            "total_slots": total,
-            "changed": changed_count,
-            "unchanged": total - changed_count,
-        },
+        "summary": summary,
         "slots": rows,
     }
 

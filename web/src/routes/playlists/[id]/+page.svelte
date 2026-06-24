@@ -604,6 +604,24 @@
             (last week) →
           </span>
         {/if}
+        <!--
+          §16.23 — "Diff with prev week" link. Only renders when a
+          prev sibling exists (no prev → nothing to compare). Targets
+          `/stations/[slug]/diff?from=<prev>&to=<current>`, mirroring
+          the operator's "what changed in this week vs the prior?"
+          framing. The week-diff page is station-scoped (not
+          playlist-scoped), so the href routes there rather than
+          back to /playlists/.
+        -->
+        {#if siblings.prev && trace}
+          <a
+            href="/stations/{trace.station}/diff?from={siblings.prev.week}&to={trace.week}"
+            class="week-nav-link diff-link"
+            data-testid="week-diff-link"
+          >
+            ⇆ diff with prev week
+          </a>
+        {/if}
       </nav>
     {/if}
 

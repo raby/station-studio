@@ -905,6 +905,95 @@ def test_diff_missing_required_query_params_422(api):
     assert resp.status_code == 422
 
 
+# ---------- §16.23 week-vs-week trace diff ---------------------------
+
+
+def test_station_week_diff_happy_path(api):
+    """§16.23 — `GET /api/stations/{slug}/diff?from=N&to=M` returns
+    a per-slot diff between two weeks' CURRENT versions. Wire shape
+    mirrors §16.4.t1 with `from`/`to` labelled by week instead of
+    version_no."""
+    client, Session = api
+    _seed_station_and_pool(Session, slug="wd", pool_tracks=3)
+    client.post("/api/stations/wd/generate", json={"week": 1})
+    client.post("/api/stations/wd/generate", json={"week": 2})
+
+    body = client.get("/api/stations/wd/diff?from=1&to=2").json()
+    assert body["station"] == "wd"
+    assert body["from"]["week"] == 1
+    assert body["to"]["week"] == 2
+    # Per-side metadata includes playlist_id + version_no + trace_id +
+    # generated_at so the frontend can permalink to the trace viewer.
+    assert "playlist_id" in body["from"]
+    assert "version_no" in body["from"]
+    assert "trace_id" in body["from"]
+    assert "generated_at" in body["from"]
+    # Summary tallies match the row count.
+    s = body["summary"]
+    assert s["total_slots"] == len(body["slots"])
+    assert s["changed"] + s["unchanged"] == s["total_slots"]
+    # Each slot row has both sides + the changed flag.
+    for row in body["slots"]:
+        assert "from" in row and "to" in row
+        assert isinstance(row["changed"], bool)
+
+
+def test_station_week_diff_uses_current_version_for_each_side(api):
+    """§16.23 — regenerating one of the weeks (creating v2) must flip
+    that side's `version_no` in the response. The diff endpoint
+    ALWAYS reads `max(version_no)` per side; never an older one."""
+    client, Session = api
+    _seed_station_and_pool(Session, slug="wv", pool_tracks=3)
+    client.post("/api/stations/wv/generate", json={"week": 1})
+    client.post("/api/stations/wv/generate", json={"week": 2})
+    # Bump week-2 to v2.
+    client.post("/api/stations/wv/generate", json={"week": 2})
+
+    body = client.get("/api/stations/wv/diff?from=1&to=2").json()
+    assert body["from"]["version_no"] == 1
+    assert body["to"]["version_no"] == 2
+
+
+def test_station_week_diff_unknown_station_404(api):
+    client, _ = api
+    r = client.get("/api/stations/ghost/diff?from=1&to=2")
+    assert r.status_code == 404
+    assert "station 'ghost' not found" in r.json()["detail"]
+
+
+def test_station_week_diff_unknown_week_404_names_available_range(api):
+    client, Session = api
+    _seed_station_and_pool(Session, slug="wr", pool_tracks=3)
+    client.post("/api/stations/wr/generate", json={"week": 1})
+
+    resp = client.get("/api/stations/wr/diff?from=1&to=99")
+    assert resp.status_code == 404
+    detail = resp.json()["detail"]
+    assert "week 99" in detail
+    assert "1..1" in detail
+
+
+def test_station_week_diff_same_week_400(api):
+    """from == to is a degenerate diff (all-unchanged); 400 nudges
+    the operator to /trace for a single-week view."""
+    client, Session = api
+    _seed_station_and_pool(Session, slug="ws", pool_tracks=3)
+    client.post("/api/stations/ws/generate", json={"week": 1})
+
+    resp = client.get("/api/stations/ws/diff?from=1&to=1")
+    assert resp.status_code == 400
+    assert "same week" in resp.json()["detail"]
+
+
+def test_station_week_diff_missing_required_params_422(api):
+    client, Session = api
+    _seed_station_and_pool(Session, slug="wm", pool_tracks=3)
+    client.post("/api/stations/wm/generate", json={"week": 1})
+
+    resp = client.get("/api/stations/wm/diff?from=1")
+    assert resp.status_code == 422
+
+
 def test_save_playlist_reuses_playlist_id_across_regenerations(api):
     """§16.4 — the Playlist row is REUSED across regenerations
     (same primary key). External references that store `playlist_id`

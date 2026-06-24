@@ -4,13 +4,15 @@ from __future__ import annotations
 import logging
 from collections import Counter
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from engine.models import (
-    Station, Playlist, PlaylistEntry, SourcePlaylist, SourcePlaylistEntry, CursorState,
+    Station, Playlist, PlaylistEntry, PlaylistVersion,
+    SourcePlaylist, SourcePlaylistEntry, CursorState,
 )
 from engine.template import parse_template, TemplateError
+from engine.trace_diff import compute_trace_diff
 from api.deps import get_db
 from api.schemas import (
     CursorPosition,
@@ -393,3 +395,115 @@ def update_station(slug: str, payload: StationCreate, db: Session = Depends(get_
     db.commit()
     db.refresh(s)
     return s
+
+
+@router.get("/{slug}/diff")
+def get_station_week_diff(
+    slug: str,
+    from_: int = Query(..., alias="from", ge=1),
+    to: int = Query(..., ge=1),
+    db: Session = Depends(get_db),
+):
+    """§16.23 — compare two weeks' CURRENT versions side-by-side.
+
+    Completes the diff-surfaces trio:
+      * version-vs-version (§16.4.t1, `/api/playlists/{id}/diff`)
+      * staged-vs-saved (§16.2.7, in the visual editor)
+      * week-vs-week (THIS) — same station, two different weeks
+
+    Always reads the CURRENT PlaylistVersion (max version_no) for
+    each week (the design-pass decision). Future surfaces can extend
+    via opt-in `?from_v=N&to_v=M` if a real ask appears.
+
+    Wire shape mirrors §16.4.t1 — same per-slot from/to projection,
+    same `changed` flag, same summary — with `from`/`to` carrying
+    `{week, playlist_id, trace_id, generated_at, version_no}` rather
+    than `{version_no, trace_id, generated_at}`. Frontend reuses the
+    same diff-table component.
+
+    Errors:
+      * 404 — station not found.
+      * 404 — either week has no playlist for this station (message
+        names which side + the available range when there are any).
+      * 400 — `from == to` (degenerate; redirect operator to /trace).
+    """
+    station = db.query(Station).filter(Station.slug == slug).first()
+    if station is None:
+        raise HTTPException(404, f"station '{slug}' not found")
+    if from_ == to:
+        raise HTTPException(
+            400,
+            f"from ({from_}) and to ({to}) are the same week — "
+            f"use the trace viewer for a single-week view.",
+        )
+
+    # Pull every playlist for this station (cheap — typically <100 rows
+    # per station) so the not-found path can name the available range.
+    playlists = (
+        db.query(Playlist)
+        .filter_by(station_id=station.id)
+        .order_by(Playlist.week)
+        .all()
+    )
+    by_week = {p.week: p for p in playlists}
+    available = sorted(by_week.keys())
+
+    def _resolve_week(label: str, w: int) -> Playlist:
+        pl = by_week.get(w)
+        if pl is None:
+            if not available:
+                raise HTTPException(
+                    404,
+                    f"station '{slug}' has no playlists; cannot diff weeks",
+                )
+            raise HTTPException(
+                404,
+                f"no playlist for week {w} ({label}) in station '{slug}' "
+                f"(available weeks: {available[0]}..{available[-1]}).",
+            )
+        return pl
+
+    src_pl = _resolve_week("from", from_)
+    dst_pl = _resolve_week("to", to)
+
+    # Read the CURRENT PlaylistVersion for each side (max version_no).
+    # Fail loud if a playlist row exists but has zero versions — that's
+    # a "partial-write recovery" / freshly-inserted-row state, not the
+    # operator's intent.
+    def _current_version(pl: Playlist, label: str) -> PlaylistVersion:
+        v = (
+            db.query(PlaylistVersion)
+            .filter_by(playlist_id=pl.id)
+            .order_by(PlaylistVersion.version_no.desc())
+            .first()
+        )
+        if v is None:
+            raise HTTPException(
+                404,
+                f"week {pl.week} ({label}) playlist has no versions yet",
+            )
+        return v
+
+    src_v = _current_version(src_pl, "from")
+    dst_v = _current_version(dst_pl, "to")
+
+    rows, summary = compute_trace_diff(src_v.slots or [], dst_v.slots or [])
+    return {
+        "station": slug,
+        "from": {
+            "week": src_pl.week,
+            "playlist_id": src_pl.id,
+            "version_no": src_v.version_no,
+            "trace_id": src_v.trace_id,
+            "generated_at": src_v.generated_at,
+        },
+        "to": {
+            "week": dst_pl.week,
+            "playlist_id": dst_pl.id,
+            "version_no": dst_v.version_no,
+            "trace_id": dst_v.trace_id,
+            "generated_at": dst_v.generated_at,
+        },
+        "summary": summary,
+        "slots": rows,
+    }
