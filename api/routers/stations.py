@@ -470,6 +470,14 @@ def get_station_week_diff(
     # Fail loud if a playlist row exists but has zero versions — that's
     # a "partial-write recovery" / freshly-inserted-row state, not the
     # operator's intent.
+    #
+    # NOT using `Playlist.current_version()` — that helper triggers a
+    # lazy-load of the FULL versions list per the docstring perf note
+    # (acceptable for Classics-scale single-station reads, but the
+    # diff endpoint reads two playlists' worth of versions on every
+    # call). The direct `.order_by(version_no.desc()).first()` query
+    # below is a single-row fetch per side; lower SQL surface for the
+    # diff route's hot path.
     def _current_version(pl: Playlist, label: str) -> PlaylistVersion:
         v = (
             db.query(PlaylistVersion)

@@ -10629,11 +10629,14 @@ opportunistically when a real ask surfaces.
 4. ~~**§16.17 excluded-candidates display**~~ — ✅ Core shipped at
    §14.23; §16.17 added the "Why not these? (N)" relabel +
    expand-all/collapse-all + per-trace summary.
-5. **§16.23 week-vs-week trace diff** — compare slot N across
-   consecutive weeks. The remaining diff surface — the trio
-   becomes complete (version-vs-version §16.4.t1 +
-   staged-vs-saved §16.2.7 + week-vs-week, this). **Next
-   implementable Tier 1 slice.**
+5. ~~**§16.23 week-vs-week trace diff**~~ — ✅ SHIPPED 2026-06-24
+   (commit e4d21ad + R1/R2/R3 review fixes). Completes the
+   diff-surfaces trio. `GET /api/stations/{slug}/diff?from=N&to=M`
+   + `/stations/[slug]/diff` page; "⇆ diff with prev week" link in
+   the trace viewer's week-nav strip. `engine/trace_diff.py` leaf
+   module (`compute_trace_diff` + `slot_projection` +
+   `DIFF_SLOT_FIELDS_COMPARED`) shared with §16.4.t1's
+   `/api/playlists/{id}/diff` — one walker, two routes.
 
 **Tier 2 — trace viewer scope**:
 
@@ -14109,26 +14112,106 @@ can't do.
 
 ### 16.23 Week-vs-week trace diff
 
-**Why this matters.** §14.5's punt: "show what changed from week
-N-1 — central once there are real-world edits." Once users start
-editing templates + comparing what shifted, week-diff is the
-natural visual answer.
+**Status: ✅ SHIPPED 2026-06-24 (commit e4d21ad).** Completes the
+diff-surfaces trio alongside §16.4.t1 (version-vs-version) and
+§16.2.7 (staged-vs-saved). Operators now have three views of
+"what changed" with consistent picker UX + diff-table render.
 
-**Shape.** A `/playlists/[id]/diff/[other-id]` view that shows
-slot-by-slot what differs between two playlists (same station,
-different weeks, or same week different runs). Diff structure:
-position N → expected A vs actual B + reason.
+**What shipped:**
 
-Reuses §14.37's byte-equality diagnostic harness
-(`tests/byte_equality.py:assert_chain_equal`) at the engine level
-for the comparison logic; new SvelteKit page wraps it.
+* `engine/trace_diff.py` — new leaf module with `compute_trace_diff
+  (src_slots, dst_slots) → (rows, summary)`, `slot_projection
+  (slot)`, and the `DIFF_SLOT_FIELDS_COMPARED` predicate tuple.
+  Pure helpers, no SQLAlchemy. §16.4.t1's `/api/playlists/{id}/diff`
+  route refactored to use this helper (-73 LOC inline; same wire
+  shape; all 7 .t1 tests unchanged).
+* `GET /api/stations/{slug}/diff?from=<week>&to=<week>` —
+  per-slot diff between two weeks' CURRENT versions (max
+  version_no per side; explicit per-side version picking is a
+  future extension, see "Out of scope" below). Per-side metadata
+  carries `{week, playlist_id, version_no, trace_id,
+  generated_at}` so the frontend can permalink + surface
+  version_no per side.
+* `/stations/[slug]/diff?from=<week>&to=<week>` SvelteKit page.
+  URL is the source of truth (mirrors §16.4.t1's compare page).
+  Default derivation: from = N-1, to = N where N is the latest
+  generated week. Mirrors the §16.4.t1 picker + table render so
+  operators get one visual idiom across the diff trio.
+* "⇆ diff with prev week" link in the trace-viewer's week-nav
+  strip — only renders when a prev sibling exists.
 
-**Effort.** Small-medium (~4-5 commits: API endpoint, page, UI
-component, e2e test).
+**Decisions locked at design pass:**
 
-**Trigger.** Wait for the use case ("I tweaked the template; what
-changed in the output?"). The editor (§16.2) makes this question
-natural; ship the diff alongside.
+* URL: `/stations/[slug]/diff?from=<week>&to=<week>` (station-
+  scoped + week-numbered — operator mental model is the week, not
+  the playlist primary key).
+* Default `from`/`to`: from = N-1, to = N where N = latest week
+  (mirrors §16.4.t1's "what changed most recently?" pattern).
+* Diff predicate: identical to §16.4.t1 — `source` / `strategy` /
+  `pool_index` / `track_id` (positional `slot`/`unit`/`row`/`block`
+  fields never vary by construction).
+* Version selection: CURRENT version per side. Opt-in per-side
+  version picking (`?from_v=N&to_v=M`) is documented as a future
+  extension if a real ask appears.
+
+**Slice-review fixes (folded in):**
+
+* R1 — surface `version_no` in the column headers (`week 002 (from, v1)`)
+  so a rolled-back or regenerated week's version is visible at a glance.
+  Without this the operator couldn't tell why a "current vs current" diff
+  surfaced differences after a rollback.
+* R2 — documented the per-side `playlist_id` / `trace_id` wire fields
+  (currently unused by v1's page) as forward-looking permalink + debug
+  affordances.
+* R3 — comment on `stations.py:_current_version` explaining why we don't
+  use `Playlist.current_version()` (the helper triggers a lazy-load of
+  the full versions list per its docstring perf note; the direct
+  `.order_by(version_no.desc()).first()` is a single-row fetch — lower
+  SQL surface for the diff route's hot path).
+
+**Testing:**
+
+* 6 backend pytest cases (`tests/test_api.py::test_station_week_diff_*`):
+  happy path with current-version-per-side check, current-of-each
+  invariant after regen, station 404, week 404 with available range,
+  same-week 400, missing-params 422.
+* 4 page-integration tests (`web/src/routes/stations/[slug]/diff/diff.test.ts`):
+  picker + diff table hides unchanged by default; "Show unchanged"
+  toggle reveals all; <2-playlists inline error; ApiError surface.
+
+Browser-verified against the dev DB: `/stations/rebirth-classics/diff`
+auto-defaulted to `?from=4&to=5` with 3,010 of 3,010 slots changed
+(rng=off; different cursor positions per week → every slot picks
+differently — truthful for this fixture). "Diff with prev week" link
+from the trace viewer at `/playlists/3` navigated to `?from=2&to=3`
+cleanly. 0 console errors.
+
+Totals: pytest 1304/1304 + 1 skip; vitest 897/897; svelte-check 0/0.
+
+**Out of scope (queued):**
+
+* Per-side version picking (`?from_v=N&to_v=M` opt-in) — promote when
+  an operator asks "I want to compare last week's v2 with this week's
+  v1" (a power-user case).
+* "Open in trace viewer →" permalink per side in the page header. The
+  data is already on the wire (`playlist_id`); page just doesn't surface
+  the link yet. Add when the bounce-to-trace pattern becomes friction.
+
+**Original paper-sketch from §14.5 era** (preserved for historical
+context — the as-shipped design pivoted from `/playlists/[id]/diff/
+[other-id]` to a station-scoped URL):
+
+A `/playlists/[id]/diff/[other-id]` view that shows slot-by-slot
+what differs between two playlists (same station, different weeks,
+or same week different runs). Diff structure: position N → expected
+A vs actual B + reason.
+
+The reuse-`tests/byte_equality.py:assert_chain_equal` direction was
+explored at design-pass time but rejected: the byte-equality harness
+operates on FULL trace JSON parity, while §16.23's frontend needs
+per-slot field-level diff (changed flag + projected metadata per side)
+that's a different shape. The new `engine/trace_diff.py` covers both
+this slice + §16.4.t1's version-vs-version surface.
 
 ---
 

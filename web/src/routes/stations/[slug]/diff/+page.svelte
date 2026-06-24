@@ -237,11 +237,18 @@
           <tr>
             <th rowspan="2">#</th>
             <th rowspan="2">Unit · Row</th>
+            <!--
+              §16.23 R1 — surface version_no so a rolled-back or
+              regenerated week is visible. Otherwise the operator
+              can't tell why a "same week" diff shows differences:
+              they could be looking at v3 of week 3 against v1 of
+              week 2 without realizing a regen happened.
+            -->
             <th colspan="4" class="side from">
-              week {String(diff.from.week).padStart(3, '0')} (from)
+              week {String(diff.from.week).padStart(3, '0')} (from, v{diff.from.version_no})
             </th>
             <th colspan="4" class="side to">
-              week {String(diff.to.week).padStart(3, '0')} (to)
+              week {String(diff.to.week).padStart(3, '0')} (to, v{diff.to.version_no})
             </th>
           </tr>
           <tr>

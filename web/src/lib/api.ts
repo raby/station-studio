@@ -291,11 +291,22 @@ export interface TraceDiffResponse {
  * §16.23 — wire shape for `GET /api/stations/{slug}/diff?from=N&to=M`.
  * Mirrors `TraceDiffResponse` (same per-slot fields, same `changed`
  * flag, same summary) with `from`/`to` carrying `{week,
- * playlist_id, version_no, trace_id, generated_at}` — the frontend
- * uses `week` for labels and `playlist_id` for permalinks back to
- * the trace viewer. Always compares CURRENT versions of each week
- * (per the design-pass decision; opt-in `?from_v=N&to_v=M` would
- * be a future extension).
+ * playlist_id, version_no, trace_id, generated_at}`. Always
+ * compares CURRENT versions of each week (per the design-pass
+ * decision; opt-in `?from_v=N&to_v=M` would be a future extension).
+ *
+ * Field usage in the v1 page:
+ * * `week` — header / column labels.
+ * * `version_no` — column-header suffix `(v{N})` so a regen /
+ *   rollback is visible at a glance.
+ * * `generated_at` — picker-option labels.
+ * * `trace_id` — currently unused on the wire; kept for parity
+ *   with `TraceDiffResponse` (and for a future "Show trace id"
+ *   debug affordance).
+ * * `playlist_id` — currently unused; reserved for a future
+ *   "Open in trace viewer →" permalink per side (the page knows
+ *   the week + station, but the playlist's primary key is more
+ *   stable for direct links to `/playlists/{id}`).
  */
 export interface WeekDiffSide {
   week: number;
