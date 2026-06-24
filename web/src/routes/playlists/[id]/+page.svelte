@@ -1217,6 +1217,37 @@
     border-radius: 4px;
     margin-bottom: 0.75rem;
     overflow: hidden;
+    /*
+      §16.18 — browser-managed virtualisation. `content-visibility:
+      auto` tells the browser to skip layout + paint for off-screen
+      row-groups; `contain-intrinsic-size: auto 10000px` is the
+      height hint the browser uses to reserve space before the
+      group is realized (otherwise scroll-position would jump as
+      groups materialise). The `auto` keyword tells the browser to
+      LEARN the actual height after first realize + remember it;
+      10000px is the FALLBACK seed used before the learn (Classics's
+      biggest day is ~430 rows × ~24px ≈ 10300px, so the seed is on
+      the same order — under-estimation would cause one paint cycle
+      of jiggle on first realize, over-estimation would make the
+      scroll bar feel stretched).
+
+      All interactions stay intact: rows remain in the DOM, click /
+      filter / collapse / excluded-candidates / chip-flash / jump-
+      to-row all work as before. Assistive tech reads the full
+      table. The perf win comes from the browser short-circuiting
+      layout for groups outside the viewport.
+
+      Browser support: Chrome/Edge 85+, Firefox 125+ (April 2024),
+      Safari 18+ (Sept 2024). Older browsers fall back to today's
+      no-virtualisation behavior — degraded perf, not broken UX.
+
+      §16.18.t1 (queued): if a future station ships ONE mega-group
+      of 10K+ rows, per-row virtualisation would be needed inside
+      that single group. Classics's 7 × 430 layout fits this
+      approach cleanly.
+    */
+    content-visibility: auto;
+    contain-intrinsic-size: auto 10000px;
   }
   section.row header {
     display: flex;
