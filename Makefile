@@ -313,12 +313,15 @@ backfill-slot-types:
 # network).
 HOST ?= http://localhost:8001
 
+# `-fsS` so curl exits non-zero on HTTP errors AND connection refusals
+# (without it, a down server returns empty stdout and the json.tool
+# pipe emits a misleading "Expecting value" parse error).
 prune-exports:
-	@curl -sS -X POST '$(HOST)/api/playlists/export/prune' \
+	@curl -fsS -X POST '$(HOST)/api/playlists/export/prune' \
 		| $(PY) -m json.tool
 
 prune-exports-confirm:
-	@curl -sS -X POST '$(HOST)/api/playlists/export/prune?confirm=true' \
+	@curl -fsS -X POST '$(HOST)/api/playlists/export/prune?confirm=true' \
 		| $(PY) -m json.tool
 
 # Backup / restore for the SQLite DB (DESIGN.md §14.18 / §17 #9).

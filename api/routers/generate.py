@@ -300,15 +300,20 @@ def prune_exports(
     Idempotent: a second call with confirm=true after a successful
     prune returns `{scanned: ..., orphans: [], deleted: 0}`.
 
-    The reason strings name the failed lookup key so the operator
-    can decide whether to recreate the missing DB row (rare) or
-    accept the deletion. Files outside the configured output dir
-    (e.g. via symlink) are skipped even with confirm=true — the
-    helper canonicalizes every delete target before unlink.
+    Symlink-traversal escapes from the configured output dir are
+    skipped even with confirm=true (canonicalize-then-relative_to
+    check). This does NOT protect against an operator who
+    *configured* `playlist_output_dir` to point at a sensitive
+    location — see the helper docstring for the trust boundary.
     """
-    return prune_export_directory(
-        db, confirm=confirm, station_slug=station,
-    )
+    try:
+        return prune_export_directory(
+            db, confirm=confirm, station_slug=station,
+        )
+    except ValueError as e:
+        # Unknown station slug — surfaces operator typos that would
+        # otherwise look like "directory is clean".
+        raise HTTPException(404, str(e))
 
 
 @router.delete("/api/playlists/{playlist_id}", status_code=204)

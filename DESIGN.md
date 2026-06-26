@@ -10662,8 +10662,21 @@ opportunistically when a real ask surfaces.
    sweep, shallow per file.
 9. **§16.20 mobile / narrow-viewport CSS pass** — editor + trace
    viewer are desktop-only today.
-10. **§16.16 disk-export prune endpoint** — clean up orphaned
-    `out/` files after deletes/forks.
+10. ~~**§16.16 disk-export prune endpoint**~~ — ✅ SHIPPED 2026-06-26
+    (commit 4a2b6a5 + review-fix commit). `POST
+    /api/playlists/export/prune` walks the configured output dir,
+    classifies `.xml` files into 5 orphan reasons (unknown slug,
+    unexpected filename, no Playlist row, no PlaylistVersion row,
+    stray-at-output-root), and reports them. Dry-run by default;
+    `?confirm=true` deletes after canonicalize + TOCTOU re-lstat
+    + relative_to(out_dir). `?station=<slug>` scopes (404 on
+    unknown). Response splits `orphans` (still on disk) from
+    `skipped` (could-not-delete). `make prune-exports` /
+    `prune-exports-confirm` wrap the route. 14 tests pin
+    dry-run/confirm + station-scope (delete and dry-run) +
+    unknown-slug 404 + symlink-escape rejection + Playlist-before-
+    Version reason priority + top-level stray + 4-digit week
+    regex contract.
 11. **§16.21 mutation testing + perf benchmarks** — invest in
     test-suite quality once the workflow stack is feature-complete.
 
@@ -13828,6 +13841,38 @@ prune-exports` convenience target).
 
 **Triggered by.** User report of `out/` clutter — or simply
 opportunistic when between other slices.
+
+**SHIPPED 2026-06-26** (commit 4a2b6a5 + review-fix commit). One
+commit for the endpoint + Makefile targets, one review-fix sweep.
+What landed:
+
+* `engine/exporter.prune_export_directory(db, *, confirm, station_slug)`
+  walks `_resolve_output_dir(db)`, classifies `.xml` files in 5
+  reasons (unknown slug, unexpected filename, no Playlist row, no
+  PlaylistVersion row, stray-at-output-root), and returns
+  `{scanned, orphans, deleted, skipped}`. `selectinload` collapses
+  the Station → Playlist → Version walk to 3 queries.
+* Regex `^(\d{3,})(?:-v(\d+))?\.xml$` accepts >=3 digits in lockstep
+  with the writer's `{week:03d}` minimum-pad contract — `1000.xml`
+  is NOT misclassified.
+* Reason-priority: a versioned file whose parent Playlist row is
+  gone reports "no Playlist" not "no PlaylistVersion" (broader
+  miss wins).
+* Safety: scan-time symlink filter on BOTH the all-stations and
+  station-scope branches; canonicalize + `relative_to(out_dir)`
+  before unlink; TOCTOU re-lstat immediately before unlink. The
+  endpoint trusts the operator's `playlist_output_dir` Config
+  setting — the canonicalize check protects against escapes from a
+  benign dir, not a maliciously configured one.
+* `POST /api/playlists/export/prune?confirm=&station=` with
+  HTTPException 404 on unknown station slug (catches operator
+  typos).
+* `make prune-exports` + `make prune-exports-confirm` use
+  `curl -fsS` so a down server fails loud instead of feeding empty
+  bytes to `json.tool`.
+* 14 backend tests pin every branch: dry-run, confirm, station-scope
+  (both delete and dry-run), 404, symlink-escape rejection,
+  reason-priority, top-level stray, regex 4-digit width.
 
 ---
 

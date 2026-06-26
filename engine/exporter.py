@@ -18,7 +18,7 @@ from datetime import datetime
 from io import BytesIO
 from pathlib import Path
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from engine.models import (
     Playlist, PlaylistEntry, PlaylistVersion, Track, Config, Station,
@@ -470,13 +470,14 @@ def export_playlist_to_disk(
 # UNDER the configured output dir before deletion. Symlinks are
 # skipped entirely (avoids a symlink pointing outside the dir).
 
-import re
-
 # `001.xml` (week-only) OR `001-v3.xml` (week + version) — both
 # patterns produced by `export_playlist_to_disk`. The version suffix
 # is §16.4.t2 (historical export) + §16.4.t6 (opt-in current archive).
+# The week group is `\d{3,}` (not `\d{3}`) because `f'{week:03d}'`
+# pads to a *minimum* of 3 digits — week=1000 writes `1000.xml`, so
+# the reader must accept >=3 digits to stay in lockstep.
 _PRUNE_FILENAME_RE = re.compile(
-    r"^(?P<week>\d{3})(?:-v(?P<version>\d+))?\.xml$",
+    r"^(?P<week>\d{3,})(?:-v(?P<version>\d+))?\.xml$",
 )
 
 
@@ -493,58 +494,71 @@ def prune_export_directory(
         {
           "scanned": int,
           "orphans": [{"path": str, "reason": str}, ...],
-          "deleted": int,  # 0 unless confirm=True
+          "deleted": int,                                # 0 unless confirm=True
+          "skipped": [{"path": str, "reason": str}],     # not unlinked
         }
 
     Args:
       * `confirm=True` actually deletes the orphans. Default
         (False) is dry-run.
       * `station_slug` restricts the scan to a single station's
-        subdirectory. Default scans all stations.
+        subdirectory. Default scans all stations. Raises
+        `ValueError` if the slug does not match any Station (catches
+        operator typos that would otherwise look like "nothing to
+        prune").
 
-    Orphan classification:
+    Orphan classification (checked in priority order so the most
+    specific reason wins):
 
-    * `{slug}/{week:03d}.xml` — orphaned when no `Playlist` row exists
-      for (Station.slug=slug, week=week).
-    * `{slug}/{week:03d}-v{N}.xml` — orphaned when no `PlaylistVersion`
-      exists for (slug, week, version_no=N). Note: the file is
-      orphaned even if the Playlist row exists but that specific
-      version doesn't (regen + retention cap could prune older
-      versions; the disk file outlives the DB row).
     * Subdir slugs that don't match any Station — every file under
       them is orphaned.
     * Unexpected filenames (not matching the `001.xml` /
       `001-v3.xml` patterns) — orphaned (the operator dropped a
       stray file we can't classify).
+    * `{slug}/{week:03d}.xml` — orphaned when no `Playlist` row exists
+      for (Station.slug=slug, week=week).
+    * `{slug}/{week:03d}-v{N}.xml` — first checks whether the parent
+      Playlist row exists; if not, the reason is "no Playlist for
+      (slug, week)" rather than the more specific version-miss. If
+      Playlist exists but the version_no doesn't, reason is "no
+      PlaylistVersion ..." (regen + retention cap can prune older
+      versions; the disk file outlives the DB row).
+    * Stray `.xml` files at the output-dir root (not inside any slug
+      subdir) — orphaned with reason "outside any slug subdir".
 
     Safety:
 
-    * Symlinks are skipped (could point outside the output dir).
+    * Symlinks are skipped at every level (top-level subdirs AND
+      inside subdirs).
     * Every delete target is canonicalized + verified to be under
-      `_resolve_output_dir`. A path that resolves outside the dir
-      is reported as an orphan-class "outside-output-dir" but is
-      NOT deleted even with confirm=True.
+      `_resolve_output_dir`, then `lstat`'d immediately before
+      unlink to defeat TOCTOU symlink-swap attempts.
+
+    Caveat: the canonicalization only protects against escapes from
+    a benign output dir — if `playlist_output_dir` itself is set to a
+    sensitive location (e.g. `~`), prune treats unknown subdirs there
+    as orphans. The endpoint trusts the operator's Config setting.
 
     Idempotent: re-running with confirm=True after a successful
     prune finds no orphans (deleted files are gone; remaining files
     have valid DB matches).
     """
-    from engine.models import Station
-
     out_dir = _resolve_output_dir(db)
 
-    # Build the DB-side lookup tables once. For typical Classics
-    # (5-52 playlists × 1-N versions each) this is a tiny working set.
-    # Build station-slug → Station map; restrict to one slug if asked.
-    stations_q = db.query(Station)
+    # Build the DB-side lookup tables once. selectinload collapses
+    # the Station → Playlist → PlaylistVersion walk into 3 queries
+    # instead of 1 + N + N*M; cheap insurance for >20 stations.
+    stations_q = db.query(Station).options(
+        selectinload(Station.playlists).selectinload(Playlist.versions),
+    )
     if station_slug is not None:
         stations_q = stations_q.filter(Station.slug == station_slug)
     stations = stations_q.all()
-    stations_by_slug = {s.slug: s for s in stations}
+    if station_slug is not None and not stations:
+        raise ValueError(f"unknown station slug '{station_slug}'")
+    known_slugs = {s.slug for s in stations}
 
-    # (slug, week) pairs that have a Playlist row.
     valid_week_keys: set[tuple[str, int]] = set()
-    # (slug, week, version_no) triples with a PlaylistVersion row.
     valid_version_keys: set[tuple[str, int, int]] = set()
     for s in stations:
         for p in s.playlists:
@@ -553,25 +567,58 @@ def prune_export_directory(
                 valid_version_keys.add((s.slug, p.week, v.version_no))
 
     orphans: list[dict] = []
+    skipped: list[dict] = []
     scanned = 0
 
     if not out_dir.is_dir():
-        # No output dir means nothing to prune. Idempotent zero.
-        return {"scanned": 0, "orphans": [], "deleted": 0}
+        return {"scanned": 0, "orphans": [], "deleted": 0, "skipped": []}
 
-    # Walk each slug-subdir. If station_slug is set, restrict to that
-    # subdir; else iterate every immediate child of the output dir.
+    # Walk each slug-subdir. If station_slug is set, restrict to
+    # that subdir (still filter symlinks — the all-stations branch's
+    # symlink guard must apply here too); else iterate every
+    # immediate child of the output dir.
     if station_slug is not None:
-        subdirs = [out_dir / station_slug] if (out_dir / station_slug).is_dir() else []
+        candidate = out_dir / station_slug
+        subdirs = (
+            [candidate]
+            if candidate.is_dir() and not candidate.is_symlink()
+            else []
+        )
     else:
-        subdirs = [p for p in out_dir.iterdir() if p.is_dir() and not p.is_symlink()]
+        try:
+            subdirs = [
+                p for p in out_dir.iterdir()
+                if p.is_dir() and not p.is_symlink()
+            ]
+        except OSError as e:
+            logger.warning("prune: cannot list %s: %s", out_dir, e)
+            return {"scanned": 0, "orphans": [], "deleted": 0, "skipped": []}
+
+        # Also catch stray .xml files dropped directly at the
+        # output-dir root (no slug subdir). They never match the
+        # writer's layout, so they're orphans by definition.
+        try:
+            for entry in out_dir.iterdir():
+                if entry.is_file() and not entry.is_symlink():
+                    scanned += 1
+                    orphans.append({
+                        "path": str(entry),
+                        "reason": "outside any slug subdir",
+                    })
+        except OSError as e:
+            logger.warning("prune: cannot list %s: %s", out_dir, e)
 
     for subdir in subdirs:
         subdir_slug = subdir.name
-        is_known_station = subdir_slug in stations_by_slug
-        for entry in subdir.iterdir():
-            # Skip non-files (subdirs, sockets) + symlinks (could
-            # point outside the output dir; defense in depth).
+        is_known_station = subdir_slug in known_slugs
+        try:
+            entries = list(subdir.iterdir())
+        except OSError as e:
+            logger.warning("prune: cannot list %s: %s", subdir, e)
+            continue
+        for entry in entries:
+            # Skip non-files (subdirs, sockets) + symlinks (defense
+            # in depth; resolve()+relative_to is the unlink-time check).
             if not entry.is_file() or entry.is_symlink():
                 continue
             scanned += 1
@@ -590,19 +637,20 @@ def prune_export_directory(
                 continue
             week = int(match.group("week"))
             v_str = match.group("version")
-            if v_str is None:
-                # Default-filename export → key off (slug, week).
-                if (subdir_slug, week) not in valid_week_keys:
-                    orphans.append({
-                        "path": str(entry),
-                        "reason": (
-                            f"no Playlist for (slug={subdir_slug!r}, "
-                            f"week={week})"
-                        ),
-                    })
-            else:
-                # Versioned-filename export → key off
-                # (slug, week, version_no).
+            # Check the broader (slug, week) miss first: a versioned
+            # file whose Playlist row is gone should report "no
+            # Playlist" not "no PlaylistVersion" — the parent miss
+            # is the real diagnosis.
+            if (subdir_slug, week) not in valid_week_keys:
+                orphans.append({
+                    "path": str(entry),
+                    "reason": (
+                        f"no Playlist for (slug={subdir_slug!r}, "
+                        f"week={week})"
+                    ),
+                })
+                continue
+            if v_str is not None:
                 version_no = int(v_str)
                 if (subdir_slug, week, version_no) not in valid_version_keys:
                     orphans.append({
@@ -615,6 +663,7 @@ def prune_export_directory(
 
     deleted = 0
     if confirm:
+        remaining: list[dict] = []
         for orph in orphans:
             target = Path(orph["path"])
             # Canonicalize + verify the target is under the configured
@@ -628,13 +677,42 @@ def prune_export_directory(
                 logger.warning(
                     "prune: skipping %s (resolves outside %s)", target, out_dir,
                 )
-                orph["reason"] = f"{orph['reason']} (skipped: outside output_dir)"
+                skipped.append({
+                    "path": orph["path"],
+                    "reason": f"{orph['reason']} (skipped: outside output_dir)",
+                })
                 continue
+            # TOCTOU guard: re-lstat the ORIGINAL path immediately
+            # before unlink. A concurrent process could swap a plain
+            # file for a symlink between scan and delete; if so we
+            # bail rather than follow the symlink to its target.
             try:
-                resolved.unlink()
+                if target.is_symlink():
+                    skipped.append({
+                        "path": orph["path"],
+                        "reason": (
+                            f"{orph['reason']} (skipped: "
+                            f"became symlink after scan)"
+                        ),
+                    })
+                    continue
+                target.unlink()
                 deleted += 1
             except OSError as e:
-                logger.warning("prune: unlink failed for %s: %s", resolved, e)
-                orph["reason"] = f"{orph['reason']} (skipped: {e})"
+                logger.warning("prune: unlink failed for %s: %s", target, e)
+                skipped.append({
+                    "path": orph["path"],
+                    "reason": f"{orph['reason']} (skipped: {e})",
+                })
+        # Strip successfully-deleted entries from `orphans` so the
+        # response shows what was found vs what's still on disk.
+        skipped_paths = {s["path"] for s in skipped}
+        remaining = [o for o in orphans if o["path"] in skipped_paths]
+        orphans = remaining
 
-    return {"scanned": scanned, "orphans": orphans, "deleted": deleted}
+    return {
+        "scanned": scanned,
+        "orphans": orphans,
+        "deleted": deleted,
+        "skipped": skipped,
+    }

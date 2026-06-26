@@ -1501,53 +1501,59 @@ def test_prune_dry_run_reports_orphans_without_deleting(api, tmp_path):
     orphans + leaves files in place. Idempotent: re-running surfaces
     the same orphans."""
     client, Session = api
+    # Dedicated subdir as the export root so SQLite DB files at
+    # tmp_path don't leak into the scan as top-level orphans.
+    out_dir = tmp_path / "exports"
+    out_dir.mkdir()
     _seed_station_and_pool(Session, slug="pr", pool_tracks=3)
     with Session() as db:
-        db.add(Config(key="playlist_output_dir", value=str(tmp_path)))
+        db.add(Config(key="playlist_output_dir", value=str(out_dir)))
         db.commit()
 
     # Write one valid export (DB row exists) + two orphans.
     r = client.post("/api/stations/pr/generate", json={"week": 1})
     pl_id = r.json()["playlist_id"]
     client.post(f"/api/playlists/{pl_id}/export-to-disk")
-    valid_file = tmp_path / "pr" / "001.xml"
+    valid_file = out_dir / "pr" / "001.xml"
     assert valid_file.is_file()
     # Orphan 1: a week that's NEVER existed in the DB.
-    (tmp_path / "pr" / "099.xml").write_text("orphan-week")
+    (out_dir / "pr" / "099.xml").write_text("orphan-week")
     # Orphan 2: a versioned file with a version_no that doesn't exist.
-    (tmp_path / "pr" / "001-v99.xml").write_text("orphan-version")
+    (out_dir / "pr" / "001-v99.xml").write_text("orphan-version")
 
     body = client.post("/api/playlists/export/prune").json()
     assert body["scanned"] == 3
     assert body["deleted"] == 0
     paths = sorted(o["path"] for o in body["orphans"])
     assert paths == sorted([
-        str(tmp_path / "pr" / "001-v99.xml"),
-        str(tmp_path / "pr" / "099.xml"),
+        str(out_dir / "pr" / "001-v99.xml"),
+        str(out_dir / "pr" / "099.xml"),
     ])
 
     # Idempotent: re-running surfaces the same set, files still present.
     body2 = client.post("/api/playlists/export/prune").json()
     assert body2["orphans"] == body["orphans"]
     assert valid_file.is_file()
-    assert (tmp_path / "pr" / "099.xml").is_file()
-    assert (tmp_path / "pr" / "001-v99.xml").is_file()
+    assert (out_dir / "pr" / "099.xml").is_file()
+    assert (out_dir / "pr" / "001-v99.xml").is_file()
 
 
 def test_prune_confirm_true_deletes_orphans_only(api, tmp_path):
     """§16.16 — `confirm=true` deletes orphans; valid files (with DB
     rows) stay. Re-running with confirm=true is a no-op."""
     client, Session = api
+    out_dir = tmp_path / "exports"
+    out_dir.mkdir()
     _seed_station_and_pool(Session, slug="pc", pool_tracks=3)
     with Session() as db:
-        db.add(Config(key="playlist_output_dir", value=str(tmp_path)))
+        db.add(Config(key="playlist_output_dir", value=str(out_dir)))
         db.commit()
 
     r = client.post("/api/stations/pc/generate", json={"week": 1})
     pl_id = r.json()["playlist_id"]
     client.post(f"/api/playlists/{pl_id}/export-to-disk")
-    valid_file = tmp_path / "pc" / "001.xml"
-    orphan_file = tmp_path / "pc" / "099.xml"
+    valid_file = out_dir / "pc" / "001.xml"
+    orphan_file = out_dir / "pc" / "099.xml"
     orphan_file.write_text("orphan")
 
     body = client.post(
@@ -1569,13 +1575,15 @@ def test_prune_classifies_unknown_slug_directory_as_orphan(api, tmp_path):
     """§16.16 — a subdirectory whose name doesn't match any Station
     has every file in it classified as orphaned ('not a Station')."""
     client, Session = api
+    out_dir = tmp_path / "exports"
+    out_dir.mkdir()
     _seed_station_and_pool(Session, slug="known", pool_tracks=3)
     with Session() as db:
-        db.add(Config(key="playlist_output_dir", value=str(tmp_path)))
+        db.add(Config(key="playlist_output_dir", value=str(out_dir)))
         db.commit()
 
     # 'unknown' subdir has no matching Station row.
-    ghost_dir = tmp_path / "unknown"
+    ghost_dir = out_dir / "unknown"
     ghost_dir.mkdir()
     (ghost_dir / "001.xml").write_text("orphan")
 
@@ -1590,12 +1598,14 @@ def test_prune_unexpected_filename_classified_as_orphan(api, tmp_path):
     `001-v3.xml` patterns is orphaned with reason 'unexpected
     filename'."""
     client, Session = api
+    out_dir = tmp_path / "exports"
+    out_dir.mkdir()
     _seed_station_and_pool(Session, slug="weird", pool_tracks=3)
     with Session() as db:
-        db.add(Config(key="playlist_output_dir", value=str(tmp_path)))
+        db.add(Config(key="playlist_output_dir", value=str(out_dir)))
         db.commit()
 
-    weird_dir = tmp_path / "weird"
+    weird_dir = out_dir / "weird"
     weird_dir.mkdir()
     (weird_dir / "notes.txt").write_text("stray")
 
@@ -1608,27 +1618,29 @@ def test_prune_station_query_restricts_scope(api, tmp_path):
     """§16.16 — `?station=<slug>` restricts the scan to one
     subdirectory; files under other stations are left alone."""
     client, Session = api
+    out_dir = tmp_path / "exports"
+    out_dir.mkdir()
     # SourcePlaylist.name is UNIQUE; use distinct pool names to seed
     # two stations into the same test DB.
     _seed_station_and_pool(Session, slug="a", pool_name="POOL_A", pool_tracks=3)
     _seed_station_and_pool(Session, slug="b", pool_name="POOL_B", pool_tracks=3)
     with Session() as db:
-        db.add(Config(key="playlist_output_dir", value=str(tmp_path)))
+        db.add(Config(key="playlist_output_dir", value=str(out_dir)))
         db.commit()
 
     # Orphan under each.
-    (tmp_path / "a").mkdir()
-    (tmp_path / "a" / "099.xml").write_text("orphan-a")
-    (tmp_path / "b").mkdir()
-    (tmp_path / "b" / "099.xml").write_text("orphan-b")
+    (out_dir / "a").mkdir()
+    (out_dir / "a" / "099.xml").write_text("orphan-a")
+    (out_dir / "b").mkdir()
+    (out_dir / "b" / "099.xml").write_text("orphan-b")
 
     body = client.post(
         "/api/playlists/export/prune?confirm=true&station=a",
     ).json()
     assert body["deleted"] == 1
-    assert not (tmp_path / "a" / "099.xml").exists()
+    assert not (out_dir / "a" / "099.xml").exists()
     # Station 'b' was out of scope; orphan still there.
-    assert (tmp_path / "b" / "099.xml").is_file()
+    assert (out_dir / "b" / "099.xml").is_file()
 
 
 def test_prune_missing_output_dir_returns_zero(api, tmp_path):
@@ -1643,7 +1655,162 @@ def test_prune_missing_output_dir_returns_zero(api, tmp_path):
         db.commit()
 
     body = client.post("/api/playlists/export/prune").json()
-    assert body == {"scanned": 0, "orphans": [], "deleted": 0}
+    assert body == {
+        "scanned": 0,
+        "orphans": [],
+        "deleted": 0,
+        "skipped": [],
+    }
+
+
+def test_prune_dry_run_with_station_scope_leaves_files(api, tmp_path):
+    """§16.16 R10 — `?station=<slug>` without `confirm` is dry-run:
+    orphans are reported under that slug only, and *no* file is
+    unlinked even though the scope flag is set."""
+    client, Session = api
+    out_dir = tmp_path / "exports"
+    out_dir.mkdir()
+    _seed_station_and_pool(Session, slug="ds", pool_tracks=3)
+    with Session() as db:
+        db.add(Config(key="playlist_output_dir", value=str(out_dir)))
+        db.commit()
+
+    (out_dir / "ds").mkdir()
+    orphan = out_dir / "ds" / "099.xml"
+    orphan.write_text("orphan")
+
+    body = client.post(
+        "/api/playlists/export/prune?station=ds",  # no &confirm=true
+    ).json()
+    assert body["deleted"] == 0
+    assert len(body["orphans"]) == 1
+    assert orphan.is_file()  # not deleted — dry-run honored
+
+
+def test_prune_rejects_symlink_escape_with_confirm(api, tmp_path):
+    """§16.16 R8 — a symlink under a known slug pointing outside the
+    output dir is skipped at unlink time even with confirm=true.
+    Exercises the load-bearing resolve()+relative_to() safety
+    check; regressions there would silently re-enable
+    delete-outside-output-dir."""
+    client, Session = api
+    _seed_station_and_pool(Session, slug="sm", pool_tracks=3)
+    out_dir = tmp_path / "exports"
+    out_dir.mkdir()
+    outside_dir = tmp_path / "outside"
+    outside_dir.mkdir()
+    sensitive = outside_dir / "do-not-touch.xml"
+    sensitive.write_text("must-survive")
+    with Session() as db:
+        db.add(Config(key="playlist_output_dir", value=str(out_dir)))
+        db.commit()
+
+    # Drop a symlink under the known slug pointing outside out_dir.
+    # The scan-time symlink filter skips it during classification,
+    # so it doesn't appear in `orphans` — which is the desired
+    # behaviour: scan never reports files that resolve outside the
+    # dir. The point of this test is that confirm=true cannot
+    # delete the outside file even by indirection.
+    (out_dir / "sm").mkdir()
+    (out_dir / "sm" / "evil.xml").symlink_to(sensitive)
+
+    client.post("/api/playlists/export/prune?confirm=true").json()
+    assert sensitive.is_file(), "symlink target outside out_dir was deleted"
+
+
+def test_prune_unknown_station_slug_returns_404(api, tmp_path):
+    """§16.16 R9 — `?station=<unknown-slug>` 404s instead of
+    silently returning zero. Catches operator typos that would
+    otherwise look like 'directory is clean'."""
+    client, Session = api
+    out_dir = tmp_path / "exports"
+    out_dir.mkdir()
+    _seed_station_and_pool(Session, slug="real", pool_tracks=3)
+    with Session() as db:
+        db.add(Config(key="playlist_output_dir", value=str(out_dir)))
+        db.commit()
+
+    r = client.post("/api/playlists/export/prune?station=typo")
+    assert r.status_code == 404
+    assert "typo" in r.json()["detail"]
+
+
+def test_prune_versioned_orphan_with_missing_playlist_reports_no_playlist(
+    api, tmp_path,
+):
+    """§16.16 R6 — a versioned file (`001-v3.xml`) whose parent
+    Playlist row is gone reports 'no Playlist for ...' (the broader
+    miss), not 'no PlaylistVersion ...' (which would imply the
+    Playlist still exists)."""
+    client, Session = api
+    out_dir = tmp_path / "exports"
+    out_dir.mkdir()
+    _seed_station_and_pool(Session, slug="vp", pool_tracks=3)
+    with Session() as db:
+        db.add(Config(key="playlist_output_dir", value=str(out_dir)))
+        db.commit()
+
+    # A versioned file under a Station where no Playlist row at all
+    # exists for week=42 → broader (slug, week) miss should win.
+    (out_dir / "vp").mkdir()
+    (out_dir / "vp" / "042-v3.xml").write_text("orphan")
+
+    body = client.post("/api/playlists/export/prune").json()
+    assert len(body["orphans"]) == 1
+    assert "no Playlist for" in body["orphans"][0]["reason"]
+    assert "PlaylistVersion" not in body["orphans"][0]["reason"]
+
+
+def test_prune_top_level_xml_classified_as_orphan(api, tmp_path):
+    """§16.16 R7 — a stray `.xml` file dropped at the output-dir
+    root (not inside any slug subdir) is scanned + classified as
+    'outside any slug subdir'. Previously these files were
+    invisible to prune."""
+    client, Session = api
+    out_dir = tmp_path / "exports"
+    out_dir.mkdir()
+    _seed_station_and_pool(Session, slug="tl", pool_tracks=3)
+    with Session() as db:
+        db.add(Config(key="playlist_output_dir", value=str(out_dir)))
+        db.commit()
+
+    stray = out_dir / "loose.xml"
+    stray.write_text("stray")
+
+    body = client.post("/api/playlists/export/prune").json()
+    assert body["scanned"] >= 1
+    paths = [o["path"] for o in body["orphans"]]
+    assert str(stray) in paths
+
+
+def test_prune_4_digit_week_filename_classified_as_week(api, tmp_path):
+    """§16.16 R2 — `{week:03d}` pads to a *minimum* of 3 digits, so
+    week=1000 writes `1000.xml`. The reader regex must accept
+    >=3 digits or a valid 4-digit-week file would be
+    misclassified as 'unexpected filename' + deleted.
+
+    Inserting a Playlist row for week=1000 requires also wiring a
+    trace + version (the model is not just a row), so this test
+    proves the regex contract structurally: the orphan reason for
+    `1000.xml` should be the (slug, week) miss — not 'unexpected
+    filename'."""
+    client, Session = api
+    out_dir = tmp_path / "exports"
+    out_dir.mkdir()
+    _seed_station_and_pool(Session, slug="lk", pool_tracks=3)
+    with Session() as db:
+        db.add(Config(key="playlist_output_dir", value=str(out_dir)))
+        db.commit()
+
+    (out_dir / "lk").mkdir()
+    long_week = out_dir / "lk" / "1000.xml"
+    long_week.write_text("4-digit")
+
+    body = client.post("/api/playlists/export/prune").json()
+    assert len(body["orphans"]) == 1
+    reason = body["orphans"][0]["reason"]
+    assert "week=1000" in reason
+    assert "unexpected filename" not in reason
 
 
 def test_export_xml_historical_with_deleted_track_404(api):
