@@ -11172,6 +11172,43 @@ the trail of previous "later" notes converges in one place:
   panel → c5 closeout. Each commit gets its own inline review
   pass per the established cadence.
 
+**Mid-slice deferred punts (raised in inline review, deliberately
+not fixed in this slice — promote when the trigger fires).**
+
+* **§16.5.t1 OpenAPI 400-envelope schema.** c0 review R9. The
+  `POST /api/stations` + `PUT /api/stations/{slug}` 400 path
+  returns `{detail, errors: [{field, message}]}` but the route
+  decorator only declares `response_model=StationOut` (the 201
+  success shape). `/openapi.json` therefore documents the 400 as
+  the FastAPI default `{detail: str}` HTTPException shape —
+  externally-generated typed clients see a contract that lies.
+  Fix: add `responses={400: {"model": TemplateErrorResponse}}` to
+  the decorator + a `TemplateErrorResponse` Pydantic schema in
+  `api/schemas.py` mirroring the c0 envelope. **Promote when:** a
+  consumer outside the existing hand-written `web/src/lib/api.ts`
+  starts reading the OpenAPI schema (CLI client, second
+  frontend, third-party integrator). The single-frontend
+  project that exists today consumes the envelope via raw text
+  parsing, which is unaffected.
+
+* **§16.5.t2 `<StatusBanner>` sibling of `<ErrorBanner>`.** c2
+  review R2. After c2, the trace viewer's disk-export pair lost
+  visual symmetry: success still renders as a bespoke `<p
+  class="disk-status success">` with green colourway, failure
+  uses `<ErrorBanner>` with the red banner colourway. DESIGN.md
+  §16.6 D3 called for a "single status node mirroring the
+  §16.1 generate-error pattern" — c2 only completed half. Fix:
+  extract `<StatusBanner>` matching `<ErrorBanner>`'s ARIA
+  shape (`role="status"` + `aria-live="polite"`, with a
+  success colourway prop), migrate the disk-export success
+  path + any sibling success/info renders. The c1
+  `<ErrorBanner>` props are stable enough that StatusBanner
+  can copy them mechanically. **Promote when:** any new
+  success/info inline render lands in c3/c4 and would
+  otherwise reintroduce a third bespoke `<p class="X">`
+  style, OR when the next a11y polish sweep notices the
+  visual mismatch and wants a fix in one place.
+
 **What this earns us.**
 
 - Consistent error/loading/success patterns across pages (instead
