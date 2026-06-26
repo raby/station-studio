@@ -303,6 +303,24 @@ refresh-stateful-starter-pools:
 backfill-slot-types:
 	$(PY) -m scripts.backfill_slot_types $(ARGS)
 
+# §16.16 — disk-export prune helper. Walks the configured output dir
+# and reports orphaned `.xml` files (no matching Playlist /
+# PlaylistVersion row). Default is DRY-RUN — `prune-exports` reports
+# what would be deleted. `prune-exports-confirm` actually deletes.
+#
+# Defaults assume the dev server is running locally on port 8001;
+# override with `HOST=...` if needed (e.g. inside a docker compose
+# network).
+HOST ?= http://localhost:8001
+
+prune-exports:
+	@curl -sS -X POST '$(HOST)/api/playlists/export/prune' \
+		| $(PY) -m json.tool
+
+prune-exports-confirm:
+	@curl -sS -X POST '$(HOST)/api/playlists/export/prune?confirm=true' \
+		| $(PY) -m json.tool
+
 # Backup / restore for the SQLite DB (DESIGN.md §14.18 / §17 #9).
 #
 # Why bother on a single-user tool: one accidental DELETE

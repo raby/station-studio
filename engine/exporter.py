@@ -454,3 +454,187 @@ def export_playlist_to_disk(
         len(xml_bytes),
     )
     return target
+
+
+# §16.16 — disk-export prune helper.
+#
+# `out/{slug}/{week:03d}.xml` and `out/{slug}/{week:03d}-v{N}.xml`
+# accumulate over time as playlists are deleted (cascades drop the DB
+# rows but the on-disk XML files are untouched — they're operator-
+# managed once written). Fork doesn't clean up either. This helper
+# scans the configured output dir, classifies every `.xml` file as
+# "valid" (DB row exists) or "orphaned" (no DB row matches), and
+# (when `confirm=True`) deletes the orphaned ones.
+#
+# Defense-in-depth: every candidate path is resolved + verified to be
+# UNDER the configured output dir before deletion. Symlinks are
+# skipped entirely (avoids a symlink pointing outside the dir).
+
+import re
+
+# `001.xml` (week-only) OR `001-v3.xml` (week + version) — both
+# patterns produced by `export_playlist_to_disk`. The version suffix
+# is §16.4.t2 (historical export) + §16.4.t6 (opt-in current archive).
+_PRUNE_FILENAME_RE = re.compile(
+    r"^(?P<week>\d{3})(?:-v(?P<version>\d+))?\.xml$",
+)
+
+
+def prune_export_directory(
+    db: Session,
+    *,
+    confirm: bool = False,
+    station_slug: str | None = None,
+) -> dict:
+    """Scan the configured output dir for orphaned export files.
+
+    Returns a dict shaped:
+
+        {
+          "scanned": int,
+          "orphans": [{"path": str, "reason": str}, ...],
+          "deleted": int,  # 0 unless confirm=True
+        }
+
+    Args:
+      * `confirm=True` actually deletes the orphans. Default
+        (False) is dry-run.
+      * `station_slug` restricts the scan to a single station's
+        subdirectory. Default scans all stations.
+
+    Orphan classification:
+
+    * `{slug}/{week:03d}.xml` — orphaned when no `Playlist` row exists
+      for (Station.slug=slug, week=week).
+    * `{slug}/{week:03d}-v{N}.xml` — orphaned when no `PlaylistVersion`
+      exists for (slug, week, version_no=N). Note: the file is
+      orphaned even if the Playlist row exists but that specific
+      version doesn't (regen + retention cap could prune older
+      versions; the disk file outlives the DB row).
+    * Subdir slugs that don't match any Station — every file under
+      them is orphaned.
+    * Unexpected filenames (not matching the `001.xml` /
+      `001-v3.xml` patterns) — orphaned (the operator dropped a
+      stray file we can't classify).
+
+    Safety:
+
+    * Symlinks are skipped (could point outside the output dir).
+    * Every delete target is canonicalized + verified to be under
+      `_resolve_output_dir`. A path that resolves outside the dir
+      is reported as an orphan-class "outside-output-dir" but is
+      NOT deleted even with confirm=True.
+
+    Idempotent: re-running with confirm=True after a successful
+    prune finds no orphans (deleted files are gone; remaining files
+    have valid DB matches).
+    """
+    from engine.models import Station
+
+    out_dir = _resolve_output_dir(db)
+
+    # Build the DB-side lookup tables once. For typical Classics
+    # (5-52 playlists × 1-N versions each) this is a tiny working set.
+    # Build station-slug → Station map; restrict to one slug if asked.
+    stations_q = db.query(Station)
+    if station_slug is not None:
+        stations_q = stations_q.filter(Station.slug == station_slug)
+    stations = stations_q.all()
+    stations_by_slug = {s.slug: s for s in stations}
+
+    # (slug, week) pairs that have a Playlist row.
+    valid_week_keys: set[tuple[str, int]] = set()
+    # (slug, week, version_no) triples with a PlaylistVersion row.
+    valid_version_keys: set[tuple[str, int, int]] = set()
+    for s in stations:
+        for p in s.playlists:
+            valid_week_keys.add((s.slug, p.week))
+            for v in p.versions:
+                valid_version_keys.add((s.slug, p.week, v.version_no))
+
+    orphans: list[dict] = []
+    scanned = 0
+
+    if not out_dir.is_dir():
+        # No output dir means nothing to prune. Idempotent zero.
+        return {"scanned": 0, "orphans": [], "deleted": 0}
+
+    # Walk each slug-subdir. If station_slug is set, restrict to that
+    # subdir; else iterate every immediate child of the output dir.
+    if station_slug is not None:
+        subdirs = [out_dir / station_slug] if (out_dir / station_slug).is_dir() else []
+    else:
+        subdirs = [p for p in out_dir.iterdir() if p.is_dir() and not p.is_symlink()]
+
+    for subdir in subdirs:
+        subdir_slug = subdir.name
+        is_known_station = subdir_slug in stations_by_slug
+        for entry in subdir.iterdir():
+            # Skip non-files (subdirs, sockets) + symlinks (could
+            # point outside the output dir; defense in depth).
+            if not entry.is_file() or entry.is_symlink():
+                continue
+            scanned += 1
+            if not is_known_station:
+                orphans.append({
+                    "path": str(entry),
+                    "reason": f"slug '{subdir_slug}' is not a Station",
+                })
+                continue
+            match = _PRUNE_FILENAME_RE.match(entry.name)
+            if match is None:
+                orphans.append({
+                    "path": str(entry),
+                    "reason": f"unexpected filename '{entry.name}'",
+                })
+                continue
+            week = int(match.group("week"))
+            v_str = match.group("version")
+            if v_str is None:
+                # Default-filename export → key off (slug, week).
+                if (subdir_slug, week) not in valid_week_keys:
+                    orphans.append({
+                        "path": str(entry),
+                        "reason": (
+                            f"no Playlist for (slug={subdir_slug!r}, "
+                            f"week={week})"
+                        ),
+                    })
+            else:
+                # Versioned-filename export → key off
+                # (slug, week, version_no).
+                version_no = int(v_str)
+                if (subdir_slug, week, version_no) not in valid_version_keys:
+                    orphans.append({
+                        "path": str(entry),
+                        "reason": (
+                            f"no PlaylistVersion for (slug={subdir_slug!r}, "
+                            f"week={week}, version_no={version_no})"
+                        ),
+                    })
+
+    deleted = 0
+    if confirm:
+        for orph in orphans:
+            target = Path(orph["path"])
+            # Canonicalize + verify the target is under the configured
+            # output dir. Without this, a symlink-traversal trick or a
+            # crafted `playlist_output_dir` could make us delete files
+            # outside the intended dir.
+            try:
+                resolved = target.resolve()
+                resolved.relative_to(out_dir)
+            except (OSError, ValueError):
+                logger.warning(
+                    "prune: skipping %s (resolves outside %s)", target, out_dir,
+                )
+                orph["reason"] = f"{orph['reason']} (skipped: outside output_dir)"
+                continue
+            try:
+                resolved.unlink()
+                deleted += 1
+            except OSError as e:
+                logger.warning("prune: unlink failed for %s: %s", resolved, e)
+                orph["reason"] = f"{orph['reason']} (skipped: {e})"
+
+    return {"scanned": scanned, "orphans": orphans, "deleted": deleted}

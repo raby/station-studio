@@ -1493,6 +1493,159 @@ def test_export_to_disk_versioned_with_v_no_op(api, tmp_path):
     assert a["path"].endswith("np/001-v1.xml")
 
 
+# ---------- §16.16 disk-export prune ------------------------------------
+
+
+def test_prune_dry_run_reports_orphans_without_deleting(api, tmp_path):
+    """§16.16 — default `POST /export/prune` (no `confirm`) reports
+    orphans + leaves files in place. Idempotent: re-running surfaces
+    the same orphans."""
+    client, Session = api
+    _seed_station_and_pool(Session, slug="pr", pool_tracks=3)
+    with Session() as db:
+        db.add(Config(key="playlist_output_dir", value=str(tmp_path)))
+        db.commit()
+
+    # Write one valid export (DB row exists) + two orphans.
+    r = client.post("/api/stations/pr/generate", json={"week": 1})
+    pl_id = r.json()["playlist_id"]
+    client.post(f"/api/playlists/{pl_id}/export-to-disk")
+    valid_file = tmp_path / "pr" / "001.xml"
+    assert valid_file.is_file()
+    # Orphan 1: a week that's NEVER existed in the DB.
+    (tmp_path / "pr" / "099.xml").write_text("orphan-week")
+    # Orphan 2: a versioned file with a version_no that doesn't exist.
+    (tmp_path / "pr" / "001-v99.xml").write_text("orphan-version")
+
+    body = client.post("/api/playlists/export/prune").json()
+    assert body["scanned"] == 3
+    assert body["deleted"] == 0
+    paths = sorted(o["path"] for o in body["orphans"])
+    assert paths == sorted([
+        str(tmp_path / "pr" / "001-v99.xml"),
+        str(tmp_path / "pr" / "099.xml"),
+    ])
+
+    # Idempotent: re-running surfaces the same set, files still present.
+    body2 = client.post("/api/playlists/export/prune").json()
+    assert body2["orphans"] == body["orphans"]
+    assert valid_file.is_file()
+    assert (tmp_path / "pr" / "099.xml").is_file()
+    assert (tmp_path / "pr" / "001-v99.xml").is_file()
+
+
+def test_prune_confirm_true_deletes_orphans_only(api, tmp_path):
+    """§16.16 — `confirm=true` deletes orphans; valid files (with DB
+    rows) stay. Re-running with confirm=true is a no-op."""
+    client, Session = api
+    _seed_station_and_pool(Session, slug="pc", pool_tracks=3)
+    with Session() as db:
+        db.add(Config(key="playlist_output_dir", value=str(tmp_path)))
+        db.commit()
+
+    r = client.post("/api/stations/pc/generate", json={"week": 1})
+    pl_id = r.json()["playlist_id"]
+    client.post(f"/api/playlists/{pl_id}/export-to-disk")
+    valid_file = tmp_path / "pc" / "001.xml"
+    orphan_file = tmp_path / "pc" / "099.xml"
+    orphan_file.write_text("orphan")
+
+    body = client.post(
+        "/api/playlists/export/prune?confirm=true",
+    ).json()
+    assert body["deleted"] == 1
+    assert valid_file.is_file()
+    assert not orphan_file.exists()
+
+    # Idempotent second run.
+    body2 = client.post(
+        "/api/playlists/export/prune?confirm=true",
+    ).json()
+    assert body2["orphans"] == []
+    assert body2["deleted"] == 0
+
+
+def test_prune_classifies_unknown_slug_directory_as_orphan(api, tmp_path):
+    """§16.16 — a subdirectory whose name doesn't match any Station
+    has every file in it classified as orphaned ('not a Station')."""
+    client, Session = api
+    _seed_station_and_pool(Session, slug="known", pool_tracks=3)
+    with Session() as db:
+        db.add(Config(key="playlist_output_dir", value=str(tmp_path)))
+        db.commit()
+
+    # 'unknown' subdir has no matching Station row.
+    ghost_dir = tmp_path / "unknown"
+    ghost_dir.mkdir()
+    (ghost_dir / "001.xml").write_text("orphan")
+
+    body = client.post("/api/playlists/export/prune").json()
+    assert body["scanned"] == 1
+    assert len(body["orphans"]) == 1
+    assert "not a Station" in body["orphans"][0]["reason"]
+
+
+def test_prune_unexpected_filename_classified_as_orphan(api, tmp_path):
+    """§16.16 — a file whose name doesn't match the `001.xml` /
+    `001-v3.xml` patterns is orphaned with reason 'unexpected
+    filename'."""
+    client, Session = api
+    _seed_station_and_pool(Session, slug="weird", pool_tracks=3)
+    with Session() as db:
+        db.add(Config(key="playlist_output_dir", value=str(tmp_path)))
+        db.commit()
+
+    weird_dir = tmp_path / "weird"
+    weird_dir.mkdir()
+    (weird_dir / "notes.txt").write_text("stray")
+
+    body = client.post("/api/playlists/export/prune").json()
+    assert body["scanned"] == 1
+    assert "unexpected filename" in body["orphans"][0]["reason"]
+
+
+def test_prune_station_query_restricts_scope(api, tmp_path):
+    """§16.16 — `?station=<slug>` restricts the scan to one
+    subdirectory; files under other stations are left alone."""
+    client, Session = api
+    # SourcePlaylist.name is UNIQUE; use distinct pool names to seed
+    # two stations into the same test DB.
+    _seed_station_and_pool(Session, slug="a", pool_name="POOL_A", pool_tracks=3)
+    _seed_station_and_pool(Session, slug="b", pool_name="POOL_B", pool_tracks=3)
+    with Session() as db:
+        db.add(Config(key="playlist_output_dir", value=str(tmp_path)))
+        db.commit()
+
+    # Orphan under each.
+    (tmp_path / "a").mkdir()
+    (tmp_path / "a" / "099.xml").write_text("orphan-a")
+    (tmp_path / "b").mkdir()
+    (tmp_path / "b" / "099.xml").write_text("orphan-b")
+
+    body = client.post(
+        "/api/playlists/export/prune?confirm=true&station=a",
+    ).json()
+    assert body["deleted"] == 1
+    assert not (tmp_path / "a" / "099.xml").exists()
+    # Station 'b' was out of scope; orphan still there.
+    assert (tmp_path / "b" / "099.xml").is_file()
+
+
+def test_prune_missing_output_dir_returns_zero(api, tmp_path):
+    """§16.16 — pruning a non-existent output dir is a no-op
+    (return `{scanned: 0, orphans: [], deleted: 0}`). Mirrors the
+    "no files to clean" idempotent case."""
+    client, Session = api
+    # Point the config at a path that doesn't exist.
+    missing = tmp_path / "does-not-exist"
+    with Session() as db:
+        db.add(Config(key="playlist_output_dir", value=str(missing)))
+        db.commit()
+
+    body = client.post("/api/playlists/export/prune").json()
+    assert body == {"scanned": 0, "orphans": [], "deleted": 0}
+
+
 def test_export_xml_historical_with_deleted_track_404(api):
     """§16.4.t2 — slot references a track_id that's since been
     deleted (defensive — historical-version export reads track ids

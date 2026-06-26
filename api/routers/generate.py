@@ -18,7 +18,9 @@ from engine.persistence import (
 from engine.rules import get_rule_value
 from engine.template import parse_template, TemplateError
 from engine.generator import generate
-from engine.exporter import export_playlist, export_playlist_to_disk
+from engine.exporter import (
+    export_playlist, export_playlist_to_disk, prune_export_directory,
+)
 from engine.trace_diff import compute_trace_diff
 from api.deps import get_db
 from api.schemas import (
@@ -266,6 +268,47 @@ def export_to_disk(
     except ValueError as e:
         raise HTTPException(404, str(e))
     return {"path": str(path), "bytes": path.stat().st_size}
+
+
+@router.post("/api/playlists/export/prune")
+def prune_exports(
+    confirm: bool = Query(False),
+    station: str | None = Query(None),
+    db: Session = Depends(get_db),
+):
+    """§16.16 — find + (optionally) delete orphaned disk-export files.
+
+    Scans the configured `playlist_output_dir` for `.xml` files and
+    classifies each against the `Playlist` / `PlaylistVersion` tables.
+    Orphan = no DB row matches the file's (slug, week[, version_no])
+    key.
+
+    Query params:
+      * `confirm=true` — actually delete the orphans (otherwise
+        dry-run; the default).
+      * `station=<slug>` — restrict the scan to a single station's
+        subdirectory.
+
+    Response shape:
+
+        {
+          "scanned":  int,         # files inspected
+          "orphans":  [{"path": str, "reason": str}, ...],
+          "deleted":  int,         # 0 unless confirm=true
+        }
+
+    Idempotent: a second call with confirm=true after a successful
+    prune returns `{scanned: ..., orphans: [], deleted: 0}`.
+
+    The reason strings name the failed lookup key so the operator
+    can decide whether to recreate the missing DB row (rare) or
+    accept the deletion. Files outside the configured output dir
+    (e.g. via symlink) are skipped even with confirm=true — the
+    helper canonicalizes every delete target before unlink.
+    """
+    return prune_export_directory(
+        db, confirm=confirm, station_slug=station,
+    )
 
 
 @router.delete("/api/playlists/{playlist_id}", status_code=204)
