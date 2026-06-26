@@ -11135,12 +11135,32 @@ the trail of previous "later" notes converges in one place:
 **Decisions locked 2026-06-26 (slice start).**
 
 * **D1 — Backend prereq, structured errors.** Take path (1) above:
-  `parse_template` returns a list of `{field, message}` errors;
-  `POST /api/stations` (and wizard validation pre-submit) returns
-  `{errors: [...]}` on 400. Cleaner outcome justifies the blast
-  radius — the wizard is the only known a11y screen-reader pain
-  point that needs structured input, and patching it later means
-  going back through every wizard test.
+  `parse_template` raise sites tag the wizard-relevant field on
+  `TemplateError`; `POST /api/stations` (and the edit-route PUT)
+  returns `{detail, errors: [{field, message}]}` on 400.
+  `detail` stays a plain string for backward compat. Cleaner
+  outcome justifies the blast radius — the wizard is the only
+  known a11y screen-reader pain point that needs structured
+  input, and patching it later means going back through every
+  wizard test.
+  * **List-shaped envelope, length-1 today.** The `errors` array
+    is shaped for future multi-error collection (a c0+ slice that
+    refactors `parse_template` to collect-then-return). Today
+    `parse_template` is fail-fast — the array is always length-1.
+    The shape is deliberate so collect-all can ship without a
+    wire-shape break.
+  * **Tagged-by-default leaves in c0**: `rng`, `sources` (dupes),
+    `cursor.base_advance_per_week`, `cursor.cycle_weeks`,
+    `cursor.persist`. These are the wizard form's direct inputs
+    plus persist (tagged for convention even though the wizard
+    doesn't render it yet).
+  * **Punted to c3+ (deliberate)**: per-source indexed paths like
+    `sources[i].colour` / `sources[i].role` — `_parse_source`
+    doesn't know its index in the parent loop, so tagging needs
+    a threading refactor. Layout/grammar errors stay untagged
+    too (deep cross-field checks that don't map 1:1 to a form
+    input). c3 falls back to the banner for these and is
+    explicitly out-of-scope for inline per-field association.
 * **D2 — Tooling: install + CI gate.** `@axe-core/playwright`
   added to existing e2e specs; violations fail CI. Earns the
   ~35% automated catch rate going forward without needing a

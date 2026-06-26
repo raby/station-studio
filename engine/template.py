@@ -104,6 +104,12 @@ class TemplateError(ValueError):
     `aria-describedby` the offending input. Untagged errors stay in
     the catch-all banner (most raise sites in this module are deep
     cross-field checks that don't map to a single form input).
+
+    Caveat: `field` is set on the INSTANCE but not threaded through
+    `args` — best-effort only at the original raise site. Pickling or
+    cross-thread re-raise (e.g. through a worker pool) may lose it.
+    No current code path crosses that boundary; if/when one does,
+    override __reduce__ to carry field with the args tuple.
     """
 
     def __init__(self, message: str, *, field: str | None = None):
@@ -683,7 +689,8 @@ def _parse_cursor(raw: dict) -> CursorSpec:
     persist = raw.get("persist", False)
     if not isinstance(persist, bool):
         raise TemplateError(
-            f"cursor.persist must be a boolean, got {persist!r}"
+            f"cursor.persist must be a boolean, got {persist!r}",
+            field="cursor.persist",
         )
     return CursorSpec(
         base_advance_per_week=int(raw["base_advance_per_week"]),

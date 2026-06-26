@@ -191,15 +191,15 @@ def test_create_station_invalid_template_returns_400(api):
     del payload["template"]["cursor"]  # required field
     r = client.post("/api/stations", json=payload)
     assert r.status_code == 400
-    assert "invalid template" in r.json()["detail"]
+    body = r.json()
+    assert "invalid template" in body["detail"]
     # §16.5 c0 — structured-error envelope alongside the backward-
     # compat `detail` blob. Untagged raise sites (missing-key check
     # here) carry `field: null` — wizard renders these in the
     # banner only.
-    body = r.json()
-    assert body["errors"] == [
-        {"field": None, "message": body["errors"][0]["message"]},
-    ]
+    assert len(body["errors"]) == 1
+    assert body["errors"][0]["field"] is None
+    assert "missing keys" in body["errors"][0]["message"]
 
 
 def test_create_station_invalid_rng_tags_field(api):
@@ -213,10 +213,8 @@ def test_create_station_invalid_rng_tags_field(api):
     r = client.post("/api/stations", json=payload)
     assert r.status_code == 400
     body = r.json()
-    assert body["errors"] == [{
-        "field": "rng",
-        "message": body["errors"][0]["message"],
-    }]
+    assert len(body["errors"]) == 1
+    assert body["errors"][0]["field"] == "rng"
     assert "rng must be one of" in body["errors"][0]["message"]
 
 
@@ -230,7 +228,9 @@ def test_create_station_invalid_cursor_tags_field(api):
     r = client.post("/api/stations", json=payload)
     assert r.status_code == 400
     body = r.json()
+    assert len(body["errors"]) == 1
     assert body["errors"][0]["field"] == "cursor.base_advance_per_week"
+    assert "must be >= 0" in body["errors"][0]["message"]
 
 
 def test_create_station_duplicate_sources_tags_field(api):
@@ -244,7 +244,30 @@ def test_create_station_duplicate_sources_tags_field(api):
     r = client.post("/api/stations", json=payload)
     assert r.status_code == 400
     body = r.json()
+    assert len(body["errors"]) == 1
     assert body["errors"][0]["field"] == "sources"
+    assert "duplicate source names" in body["errors"][0]["message"]
+
+
+def test_update_station_invalid_template_returns_structured_400(api):
+    """§16.5 c0 R2 — PUT /api/stations/{slug} mirrors the POST
+    structured-error envelope (same helper, both surfaces tested).
+    Regression guard against a future cleanup that only reverts the
+    PUT branch."""
+    client, _ = api
+    # First create a valid station so the PUT has something to edit.
+    create = client.post("/api/stations", json=_wizard_payload("upd"))
+    assert create.status_code == 201
+
+    bad = _wizard_payload("upd")
+    bad["template"]["rng"] = "lava-lamp"
+    r = client.put("/api/stations/upd", json=bad)
+    assert r.status_code == 400
+    body = r.json()
+    assert "invalid template" in body["detail"]
+    assert len(body["errors"]) == 1
+    assert body["errors"][0]["field"] == "rng"
+    assert "rng must be one of" in body["errors"][0]["message"]
 
 
 # ---- §16.2.8 fork endpoint -----------------------------------------------
