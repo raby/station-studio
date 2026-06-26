@@ -59,5 +59,19 @@ describe('ErrorBanner', () => {
     expect(banner!.textContent).toContain('Warning:');
     expect(banner!.textContent).not.toContain('Notice:');
   });
+
+  it('custom testId overrides the default for selector compat', () => {
+    // §16.5 c2 — routes migrating from `<p data-testid="rollback-error">`
+    // pass their existing id so e2e/vitest queries keep working.
+    const { container } = render(ErrorBanner, {
+      props: { message: 'Custom', testId: 'rollback-error' },
+    });
+    expect(
+      container.querySelector('[data-testid="rollback-error"]'),
+    ).not.toBeNull();
+    expect(
+      container.querySelector('[data-testid="error-banner"]'),
+    ).toBeNull();
+  });
 });
 

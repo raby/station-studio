@@ -1,7 +1,22 @@
 import { test, expect } from '@playwright/test';
 import { createStation, importTinyPool, generate, API } from './fixtures';
+import { assertNoA11yViolations } from './a11y';
 
 test.describe('trace viewer', () => {
+  test('§16.5 c2 — trace viewer passes axe-core WCAG audit', async ({
+    page,
+    request,
+  }) => {
+    await importTinyPool(request, 'A');
+    await createStation(request, 'trv-a11y', 'Trace View A11y');
+    const { playlist_id } = await generate(request, 'trv-a11y', 1);
+    await page.goto(`/playlists/${playlist_id}`);
+    await expect(
+      page.getByRole('heading', { name: 'Your working' }),
+    ).toBeVisible();
+    await assertNoA11yViolations(page);
+  });
+
   test('renders slot rows and a Download iTunes XML link', async ({
     page,
     request,

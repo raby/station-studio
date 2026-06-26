@@ -16,6 +16,7 @@
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
   import ChipMultiInput from '$lib/components/editor/ChipMultiInput.svelte';
+  import ErrorBanner from '$lib/components/ErrorBanner.svelte';
 
   let trace: Trace | null = null;
   let playlist: Playlist | null = null;
@@ -691,11 +692,17 @@
           </button>
         {/if}
       </div>
-      {#if rollbackError}
-        <p class="rollback-error" data-testid="rollback-error">
-          {rollbackError}
-        </p>
-      {/if}
+      <!-- §16.5 c2 — ErrorBanner gives the rollback failure
+           message an aria-live region + a consistent visual
+           treatment with every other error in the app. The
+           `testId` keeps the existing `rollback-error`
+           data-testid live for any external selector. -->
+      <ErrorBanner
+        message={rollbackError}
+        severity="assertive"
+        prefix="Rollback failed"
+        testId="rollback-error"
+      />
       <!--
         §16.4.t5 — inline tag editor for the SELECTED version. Reuses
         the §16.2.4 `<ChipMultiInput>` component. Tags PATCH on every
@@ -717,11 +724,14 @@
           on:change={handleTagsChange}
         />
       </div>
-      {#if tagsError}
-        <p class="tags-error" data-testid="tags-error">
-          {tagsError}
-        </p>
-      {/if}
+      <!-- §16.5 c2 — tag-save errors via ErrorBanner. Polite
+           severity (the operator can retry; the page isn't broken). -->
+      <ErrorBanner
+        message={tagsError}
+        severity="polite"
+        prefix="Tags"
+        testId="tags-error"
+      />
     {/if}
 
     <dl class="meta">
@@ -804,11 +814,16 @@
         {diskExportStatus}
       </p>
     {/if}
-    {#if diskExportError}
-      <p class="disk-status error" data-testid="disk-export-error">
-        {diskExportError}
-      </p>
-    {/if}
+    <!-- §16.5 c2 — disk-export failures via ErrorBanner. Polite
+         severity matches the §16.6 D3 "inline status, not toast"
+         decision; assertive would interrupt the screen reader on
+         every failure, which is overkill for a retry-able write. -->
+    <ErrorBanner
+      message={diskExportError}
+      severity="polite"
+      prefix="Disk export"
+      testId="disk-export-error"
+    />
 
     <h2>Your working</h2>
     <p class="hint">Each row below is one unit of the layout (a day for Classics). Click a row header to collapse it.</p>
@@ -820,21 +835,36 @@
       thousands separator (D10). Clear button only renders when at least
       one filter is active.
     -->
+    <!--
+      §16.5 c2 — placeholder text is sighted-only and isn't a
+      WCAG-valid label; each control gets `aria-label` so screen
+      readers announce "Search track or artist", "Filter by source",
+      etc instead of the bare role + value.
+    -->
     <div class="filters" data-testid="filter-bar">
       <input
         type="text"
         placeholder="Search track or artist…"
+        aria-label="Search track or artist"
         data-testid="filter-search"
         autocomplete="off"
         bind:value={searchQuery}
       />
-      <select data-testid="filter-source" bind:value={sourceFilter}>
+      <select
+        data-testid="filter-source"
+        aria-label="Filter by source"
+        bind:value={sourceFilter}
+      >
         <option value="">All sources</option>
         {#each sourceOptions as opt}
           <option value={opt}>{opt}</option>
         {/each}
       </select>
-      <select data-testid="filter-strategy" bind:value={strategyFilter}>
+      <select
+        data-testid="filter-strategy"
+        aria-label="Filter by strategy"
+        bind:value={strategyFilter}
+      >
         <option value="">All strategies</option>
         {#each strategyOptions as opt}
           <option value={opt}>{opt}</option>
@@ -886,11 +916,19 @@
     -->
     {#each filteredRowGroups as g (g.row)}
       <section class="row" class:collapsed={collapsed[g.row]}>
+        <!--
+          §16.5 c2 — `aria-expanded` announces the collapse state
+          to screen readers (the visible caret is sighted-only);
+          `aria-controls` ties the header to the table it toggles
+          so AT can offer "go to controlled region" jumps.
+        -->
         <header
           on:click={() => toggleRow(g.row)}
           on:keydown={(e) => (e.key === 'Enter' || e.key === ' ') && toggleRow(g.row)}
           role="button"
           tabindex="0"
+          aria-expanded={!collapsed[g.row]}
+          aria-controls={`row-${g.row}-table`}
         >
           <span class="caret">{collapsed[g.row] ? '▸' : '▾'}</span>
           <span class="unit-label">{g.unit}</span>
@@ -898,7 +936,7 @@
         </header>
 
         {#if !collapsed[g.row]}
-          <table>
+          <table id={`row-${g.row}-table`}>
             <thead>
               <tr>
                 <th>#</th>
@@ -1107,15 +1145,7 @@
     opacity: 0.6;
     cursor: not-allowed;
   }
-  .rollback-error {
-    margin: 0.25rem 0 1rem;
-    padding: 0.4rem 0.6rem;
-    border: 1px solid #ffcdd2;
-    background: #ffebee;
-    color: #b71c1c;
-    border-radius: 3px;
-    font-size: 0.85rem;
-  }
+  /* §16.5 c2 — `.rollback-error` styling moved to ErrorBanner. */
   /* §16.4.t5 — tag editor row. Inline label + ChipMultiInput
      directly below the picker strip. */
   .version-tags {
@@ -1129,15 +1159,7 @@
     color: #555;
     flex-shrink: 0;
   }
-  .tags-error {
-    margin: 0.25rem 0 1rem;
-    padding: 0.4rem 0.6rem;
-    border: 1px solid #ffcdd2;
-    background: #ffebee;
-    color: #b71c1c;
-    border-radius: 3px;
-    font-size: 0.85rem;
-  }
+  /* §16.5 c2 — `.tags-error` styling moved to ErrorBanner. */
 
   .actions {
     margin: 1rem 0 0.5rem;
@@ -1176,11 +1198,7 @@
     color: #1b5e20;
     border: 1px solid #c8e6c9;
   }
-  .disk-status.error {
-    background: #ffebee;
-    color: #b71c1c;
-    border: 1px solid #ffcdd2;
-  }
+  /* §16.5 c2 — `.disk-status.error` styling moved to ErrorBanner. */
   /* §16.4.t6 — archive-every-version checkbox. Inline with the
      hint text so the operator sees what filename they'll get
      before they click Export. */

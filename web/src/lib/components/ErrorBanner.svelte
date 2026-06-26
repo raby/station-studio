@@ -37,6 +37,12 @@
   export let message: string | null = null;
   export let severity: 'polite' | 'assertive' = 'polite';
   export let prefix: string | null = null;
+  /** Optional override for the `data-testid` on the rendered
+   *  banner. Defaults to 'error-banner'; existing routes that
+   *  already pin a more specific id (e.g. 'rollback-error',
+   *  'disk-export-error') pass it here so their e2e/vitest
+   *  selectors keep working post-migration. */
+  export let testId: string = 'error-banner';
 
   $: resolvedPrefix = prefix ?? (severity === 'assertive' ? 'Error' : 'Notice');
   $: role = severity === 'assertive' ? 'alert' : 'status';
@@ -48,7 +54,7 @@
     class:assertive={severity === 'assertive'}
     {role}
     aria-live={severity}
-    data-testid="error-banner"
+    data-testid={testId}
   >
     <strong>{resolvedPrefix}:</strong> {message}
   </div>
