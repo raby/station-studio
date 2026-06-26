@@ -4,9 +4,9 @@
    *
    * Centralises the three different inline-error stylings used
    * across the app (raw `<p class="error">`, `<details>`-nested,
-   * <data-testid> sprinkled). One `role="alert"` + aria-live
-   * region is announced to screen readers; `severity` controls
-   * the announcement urgency.
+   * `<data-testid>` sprinkled). One live region is announced to
+   * screen readers; `severity` controls both the role (status vs
+   * alert) and the announcement urgency.
    *
    * Renders nothing when `message` is null/empty so the live
    * region only fires when the announcement matters.
@@ -17,8 +17,18 @@
    *   - `severity` — 'polite' (default; queued) for recoverable
    *     errors. 'assertive' interrupts the screen reader and is
    *     for hard failures that need immediate attention.
-   *   - `prefix` — optional label (e.g. 'Error', 'Warning') read
-   *     before the message; defaults to 'Error'.
+   *   - `prefix` — optional label read before the message;
+   *     defaults from severity ('Notice' for polite, 'Error' for
+   *     assertive) so a polite informational banner doesn't read
+   *     aloud as "Error: ...". Override explicitly when neither
+   *     fits ("Warning", "Saved", ...).
+   *
+   * §16.5 c1-review R2 — `role="status"` + `aria-live="polite"`
+   * for non-urgent announcements; `role="alert"` + `aria-live=
+   * "assertive"` for urgent. Mixing `role="alert"` with
+   * `aria-live="polite"` is contradictory ARIA (alert implies
+   * assertive); browsers + AT pairs resolve the conflict
+   * differently. Picking the matched pair removes the ambiguity.
    *
    * Untagged §16.5 c0 backend errors (the `errors[*]` with
    * `field: null`) land here; tagged-field errors render inline
@@ -26,17 +36,21 @@
    */
   export let message: string | null = null;
   export let severity: 'polite' | 'assertive' = 'polite';
-  export let prefix: string = 'Error';
+  export let prefix: string | null = null;
+
+  $: resolvedPrefix = prefix ?? (severity === 'assertive' ? 'Error' : 'Notice');
+  $: role = severity === 'assertive' ? 'alert' : 'status';
 </script>
 
 {#if message}
   <div
     class="error-banner"
-    role="alert"
+    class:assertive={severity === 'assertive'}
+    {role}
     aria-live={severity}
     data-testid="error-banner"
   >
-    <strong>{prefix}:</strong> {message}
+    <strong>{resolvedPrefix}:</strong> {message}
   </div>
 {/if}
 

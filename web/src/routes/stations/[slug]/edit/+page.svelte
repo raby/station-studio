@@ -66,7 +66,7 @@
   <title>Edit {station?.name ?? slug} — Station Studio</title>
 </svelte:head>
 
-<main id="main-content">
+<main id="main-content" tabindex="-1">
   <p class="crumbs">
     <a href="/">stations</a> ›
     <a href="/stations/{slug}">{station?.name ?? slug}</a> ›

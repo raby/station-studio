@@ -29,7 +29,7 @@ const FAILING_IMPACTS = new Set(['serious', 'critical']);
 
 export async function assertNoA11yViolations(
   page: Page,
-  opts: { include?: string; exclude?: string[] } = {},
+  opts: { include?: string[]; exclude?: string[] } = {},
 ): Promise<void> {
   let builder = new AxeBuilder({ page }).withTags([
     'wcag2a',
@@ -37,7 +37,13 @@ export async function assertNoA11yViolations(
     'wcag21a',
     'wcag21aa',
   ]);
-  if (opts.include) builder = builder.include(opts.include);
+  // §16.5 c1-review R6 — include + exclude share shape (string[])
+  // so callers can scope to multiple regions without dropping
+  // selectors silently (the prior single-string include forced
+  // callers to either chain twice or lose coverage).
+  if (opts.include?.length) {
+    for (const sel of opts.include) builder = builder.include(sel);
+  }
   if (opts.exclude?.length) {
     for (const sel of opts.exclude) builder = builder.exclude(sel);
   }
@@ -45,12 +51,19 @@ export async function assertNoA11yViolations(
   const failing = results.violations.filter(
     (v) => v.impact && FAILING_IMPACTS.has(v.impact),
   );
-  // Always log the full list (including non-failing) so a future
-  // PR widening FAILING_IMPACTS knows what was tolerated.
-  if (results.violations.length) {
+  // §16.5 c1-review R5 — log only when a failing-impact finding
+  // is present. Earlier impl logged on ANY violation, which would
+  // drown CI in 'minor: region missing landmark' chatter as c2/c3/c4
+  // add per-route audits. Keeping a single-line summary on passing
+  // runs surfaces "the audit ran" without the violation noise.
+  if (failing.length) {
     console.log(
-      `[axe] ${results.violations.length} violation(s) on ${page.url()}:`,
+      `[axe] ${failing.length} failing violation(s) on ${page.url()}:`,
       results.violations.map((v) => `${v.impact}: ${v.id} — ${v.help}`),
+    );
+  } else if (results.violations.length) {
+    console.log(
+      `[axe] ${page.url()}: 0 failing, ${results.violations.length} minor/moderate (not gated)`,
     );
   }
   expect(

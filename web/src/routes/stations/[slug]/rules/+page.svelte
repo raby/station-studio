@@ -17,7 +17,7 @@
   <title>Rules — {slug} — Station Studio</title>
 </svelte:head>
 
-<main id="main-content">
+<main id="main-content" tabindex="-1">
   <p class="crumbs">
     <a href="/stations/{encodeURIComponent(slug)}">← {slug}</a>
   </p>

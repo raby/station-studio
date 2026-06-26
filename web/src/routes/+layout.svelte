@@ -42,22 +42,42 @@
     position: absolute;
     text-decoration: none;
     top: -3rem;
-    transition: top 0.15s ease-out;
     z-index: 10000;
   }
-  .skip-link:focus {
+  /* `:focus-visible` keeps the reveal keyboard-only (the link
+     is only reachable by keyboard anyway) and folds it into
+     the same focus-ring contract as every other element. */
+  .skip-link:focus-visible {
     outline: 3px solid #fff;
     outline-offset: 2px;
     top: 0.5rem;
   }
+  /* §16.5 c1-review R4 — honour `prefers-reduced-motion`. The
+     §16.5 DESIGN brief calls reduced-motion out-of-scope, so any
+     animation we add must be opt-in via the no-preference media
+     query rather than retroactively gated later. */
+  @media (prefers-reduced-motion: no-preference) {
+    .skip-link {
+      transition: top 0.15s ease-out;
+    }
+  }
 
-  /* §16.5 c1 — global focus-visible ring. :focus-visible fires
-     only when the user navigates via keyboard (not pointer
-     click), so this doesn't add noise to mouse interactions but
-     gives keyboard users a clear focus indicator across every
-     element. High contrast (4.5:1) hits WCAG AA. */
+  /* Global high-contrast focus ring. :focus-visible fires only
+     when the user navigates via keyboard (not pointer click), so
+     it doesn't add noise to mouse interactions while giving
+     keyboard users a clear indicator across every element.
+     Contrast #0066cc on white = 5.0:1, AA-passing for non-text. */
   :global(*:focus-visible) {
     outline: 3px solid #0066cc;
     outline-offset: 2px;
+  }
+  /* §16.5 c1-review R1 — skip-link target `<main id="main-content">`
+     gets `tabindex="-1"` so activation moves keyboard focus ONTO
+     <main>, not just the scroll position (WCAG 2.4.1 'Bypass
+     Blocks'). The synthetic focus shouldn't draw the big blue
+     ring around the whole content region, so suppress :focus on
+     [tabindex="-1"] main. */
+  :global(main[tabindex="-1"]:focus) {
+    outline: none;
   }
 </style>

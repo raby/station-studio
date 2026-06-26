@@ -548,7 +548,7 @@
   </title>
 </svelte:head>
 
-<main id="main-content">
+<main id="main-content" tabindex="-1">
   {#if trace}
     <p class="crumbs">
       <a href="/">stations</a> ›
