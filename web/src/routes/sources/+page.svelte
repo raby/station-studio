@@ -41,7 +41,7 @@
   <title>Sources — Station Studio</title>
 </svelte:head>
 
-<main>
+<main id="main-content">
   <p class="back"><a href="/">← Stations</a></p>
   <h1>Source pools</h1>
   <p class="sub">

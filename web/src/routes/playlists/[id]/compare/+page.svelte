@@ -152,7 +152,7 @@
   </title>
 </svelte:head>
 
-<main>
+<main id="main-content">
   <p class="crumbs">
     <a href="/">stations</a> ›
     <a href="/playlists/{id}">playlist {id}</a> ›

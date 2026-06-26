@@ -384,7 +384,7 @@
   <title>{station?.name ?? slug} — Station Studio</title>
 </svelte:head>
 
-<main>
+<main id="main-content">
   <p class="crumbs"><a href="/">← stations</a></p>
 
   {#if loading}

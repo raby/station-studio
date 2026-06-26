@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { createStation } from './fixtures';
+import { assertNoA11yViolations } from './a11y';
 
 test.describe('landing page', () => {
   test('shows the heading and the + new station button', async ({ page }) => {
@@ -20,5 +21,18 @@ test.describe('landing page', () => {
     const link = page.getByRole('link', { name: 'Landing A' });
     await expect(link).toBeVisible();
     await expect(link).toHaveAttribute('href', '/stations/landing-a');
+  });
+
+  test('§16.5 c1 — landing page passes axe-core WCAG audit', async ({ page }) => {
+    // Smoke test for the §16.5 c1 a11y CI gate. The landing page is
+    // the cheapest surface to wire first: stable copy, no data
+    // fetches required, exercises the shared +layout chrome
+    // (skip-link, focus ring, <main id="main-content">).
+    // Subsequent slices (c2/c3/c4) add per-surface audits.
+    await page.goto('/');
+    await expect(
+      page.getByRole('heading', { name: 'Station Studio' }),
+    ).toBeVisible();
+    await assertNoA11yViolations(page);
   });
 });

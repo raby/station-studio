@@ -548,7 +548,7 @@
   </title>
 </svelte:head>
 
-<main>
+<main id="main-content">
   {#if trace}
     <p class="crumbs">
       <a href="/">stations</a> ›

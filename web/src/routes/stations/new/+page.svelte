@@ -53,7 +53,7 @@
   <title>New station — Station Studio</title>
 </svelte:head>
 
-<main>
+<main id="main-content">
   <p class="crumbs"><a href="/">← stations</a></p>
   <h1>New station</h1>
   <p class="sub">

@@ -48,7 +48,7 @@
   <title>Station Studio</title>
 </svelte:head>
 
-<main>
+<main id="main-content">
   <h1>Station Studio</h1>
   <p class="sub">
     Playlist-generator authoring tool. See <code>DESIGN.md</code> for the full spec.

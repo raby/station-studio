@@ -12,6 +12,7 @@
     "test:e2e": "playwright test"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.12.1",
     "@playwright/test": "^1.59.1",
     "@sveltejs/adapter-static": "^3.0.10",
     "@sveltejs/kit": "^2.5.0",

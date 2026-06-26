@@ -2218,7 +2218,7 @@
      `showRetryModal` so this is a no-op when no modal is open. -->
 <svelte:window on:keydown={handleModalKeydown} />
 
-<main>
+<main id="main-content">
   <p class="crumbs">
     <a href="/stations/{encodeURIComponent(slug)}">← {slug}</a>
   </p>
