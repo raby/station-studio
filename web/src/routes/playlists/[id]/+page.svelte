@@ -725,11 +725,14 @@
         />
       </div>
       <!-- §16.5 c2 — tag-save errors via ErrorBanner. Polite
-           severity (the operator can retry; the page isn't broken). -->
+           severity (the operator can retry; the page isn't broken).
+           c2-review R3 — `prefix="Tag save failed"` (not "Tags")
+           so the polite announce parses as a failure, not as a
+           label echo of the sibling `.tags-label`. -->
       <ErrorBanner
         message={tagsError}
         severity="polite"
-        prefix="Tags"
+        prefix="Tag save failed"
         testId="tags-error"
       />
     {/if}
@@ -922,9 +925,29 @@
           `aria-controls` ties the header to the table it toggles
           so AT can offer "go to controlled region" jumps.
         -->
+        <!--
+          §16.5 c2-review R4 — Space on a fake-button `<header
+          role="button">` scrolls the viewport unless the keydown
+          handler calls preventDefault(). Pre-c2 this was a
+          minor sighted-keyboard nit; post-c2 the new
+          `aria-expanded` makes the toggle a load-bearing SR
+          interaction, so the scroll jolt would confound the
+          announce. Block both Enter + Space defaults.
+          c2-review R8 — `aria-controls` references
+          `row-${g.row}-table` even when the row is collapsed
+          and the table is unmounted. ARIA spec permits the
+          dangling IDREF; keeping it preserves the SR
+          'jump-to-controlled-region' affordance. Don't drop it
+          when collapsed.
+        -->
         <header
           on:click={() => toggleRow(g.row)}
-          on:keydown={(e) => (e.key === 'Enter' || e.key === ' ') && toggleRow(g.row)}
+          on:keydown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              toggleRow(g.row);
+            }
+          }}
           role="button"
           tabindex="0"
           aria-expanded={!collapsed[g.row]}
@@ -1145,7 +1168,6 @@
     opacity: 0.6;
     cursor: not-allowed;
   }
-  /* §16.5 c2 — `.rollback-error` styling moved to ErrorBanner. */
   /* §16.4.t5 — tag editor row. Inline label + ChipMultiInput
      directly below the picker strip. */
   .version-tags {
@@ -1159,7 +1181,6 @@
     color: #555;
     flex-shrink: 0;
   }
-  /* §16.5 c2 — `.tags-error` styling moved to ErrorBanner. */
 
   .actions {
     margin: 1rem 0 0.5rem;
@@ -1198,7 +1219,6 @@
     color: #1b5e20;
     border: 1px solid #c8e6c9;
   }
-  /* §16.5 c2 — `.disk-status.error` styling moved to ErrorBanner. */
   /* §16.4.t6 — archive-every-version checkbox. Inline with the
      hint text so the operator sees what filename they'll get
      before they click Export. */

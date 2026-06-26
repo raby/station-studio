@@ -41,7 +41,13 @@
    *  banner. Defaults to 'error-banner'; existing routes that
    *  already pin a more specific id (e.g. 'rollback-error',
    *  'disk-export-error') pass it here so their e2e/vitest
-   *  selectors keep working post-migration. */
+   *  selectors keep working post-migration.
+   *
+   *  **When rendering more than one banner on the same page,
+   *  always pass a unique `testId`.** Two unset defaults
+   *  produce duplicate `data-testid="error-banner"` elements;
+   *  vitest's `getByTestId` throws and Playwright's silently
+   *  returns the first match. */
   export let testId: string = 'error-banner';
 
   $: resolvedPrefix = prefix ?? (severity === 'assertive' ? 'Error' : 'Notice');
@@ -61,15 +67,22 @@
 {/if}
 
 <style>
+  /* §16.5 c2-review R1 — sized to match the pre-migration inline
+     error rules (`.rollback-error`, `.tags-error`, `.disk-status
+     .error`) so migrating routes don't punch a visibly larger
+     box than the `<p class="error">` they replace. Sighted
+     users perceive the migration as no-change; SR users get
+     the new aria-live region. */
   .error-banner {
     background: #fee;
-    border: 1px solid #c00;
-    border-radius: 4px;
-    color: #800;
-    margin: 0.75rem 0;
-    padding: 0.5rem 0.75rem;
+    border: 1px solid #ffcdd2;
+    border-radius: 3px;
+    color: #b71c1c;
+    font-size: 0.85rem;
+    margin: 0.25rem 0 1rem;
+    padding: 0.4rem 0.6rem;
   }
   .error-banner strong {
-    color: #800;
+    color: #b71c1c;
   }
 </style>

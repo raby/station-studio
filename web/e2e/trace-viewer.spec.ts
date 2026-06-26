@@ -3,7 +3,7 @@ import { createStation, importTinyPool, generate, API } from './fixtures';
 import { assertNoA11yViolations } from './a11y';
 
 test.describe('trace viewer', () => {
-  test('§16.5 c2 — trace viewer passes axe-core WCAG audit', async ({
+  test('§16.5 c2 — trace viewer passes axe-core WCAG audit (expanded + collapsed)', async ({
     page,
     request,
   }) => {
@@ -14,6 +14,17 @@ test.describe('trace viewer', () => {
     await expect(
       page.getByRole('heading', { name: 'Your working' }),
     ).toBeVisible();
+    // First pass: every row expanded — exercises aria-expanded=true,
+    // aria-controls pointing at a rendered <table id>, filter inputs
+    // with aria-labels.
+    await assertNoA11yViolations(page);
+
+    // §16.5 c2-review R7 — second pass after toggling a row collapsed.
+    // The aria-controls IDREF now points at an unmounted element
+    // (ARIA-spec-allowed dangling reference); axe shouldn't flag it,
+    // but the assertion locks the contract so a future regression
+    // (e.g. someone changing the IDREF format) fails CI.
+    await page.locator('section.row > header[role="button"]').first().click();
     await assertNoA11yViolations(page);
   });
 
