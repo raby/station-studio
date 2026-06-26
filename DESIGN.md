@@ -11132,6 +11132,26 @@ the trail of previous "later" notes converges in one place:
   Decide when starting based on whether axe / manual testing
   flags it as a real friction point. Probably (2) is right for v1.
 
+**Decisions locked 2026-06-26 (slice start).**
+
+* **D1 — Backend prereq, structured errors.** Take path (1) above:
+  `parse_template` returns a list of `{field, message}` errors;
+  `POST /api/stations` (and wizard validation pre-submit) returns
+  `{errors: [...]}` on 400. Cleaner outcome justifies the blast
+  radius — the wizard is the only known a11y screen-reader pain
+  point that needs structured input, and patching it later means
+  going back through every wizard test.
+* **D2 — Tooling: install + CI gate.** `@axe-core/playwright`
+  added to existing e2e specs; violations fail CI. Earns the
+  ~35% automated catch rate going forward without needing a
+  manual pass on every future PR.
+* **D3 — Per-surface batching.** c0 backend structured errors →
+  c1 shared scaffolding (`+layout.svelte`, skip-link,
+  `<ErrorBanner>`, focus-visible, axe wiring) → c2 trace viewer
+  → c3 wizard (consumes c0) → c4 station detail + generate
+  panel → c5 closeout. Each commit gets its own inline review
+  pass per the established cadence.
+
 **What this earns us.**
 
 - Consistent error/loading/success patterns across pages (instead

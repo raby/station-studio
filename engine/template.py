@@ -95,7 +95,20 @@ _COLOUR_RE = re.compile(r"^#[0-9a-fA-F]{3}([0-9a-fA-F]{3}([0-9a-fA-F]{2})?)?$")
 
 
 class TemplateError(ValueError):
-    """Raised when a template fails validation."""
+    """Raised when a template fails validation.
+
+    §16.5 c0 — optional `field` kwarg tags the wizard form field this
+    error belongs to (e.g. 'rng', 'cursor.base_advance_per_week'). The
+    /api/stations route surfaces tagged errors as a structured
+    `{errors: [{field, message}]}` payload so the wizard can
+    `aria-describedby` the offending input. Untagged errors stay in
+    the catch-all banner (most raise sites in this module are deep
+    cross-field checks that don't map to a single form input).
+    """
+
+    def __init__(self, message: str, *, field: str | None = None):
+        super().__init__(message)
+        self.field = field
 
 
 @dataclass
@@ -368,12 +381,15 @@ def parse_template(raw: dict) -> Template:
 
     rng = raw["rng"]
     if rng not in SUPPORTED_RNG:
-        raise TemplateError(f"rng must be one of {SUPPORTED_RNG}, got {rng!r}")
+        raise TemplateError(
+            f"rng must be one of {SUPPORTED_RNG}, got {rng!r}",
+            field="rng",
+        )
 
     sources = [_parse_source(s) for s in raw["sources"]]
     names = [s.name for s in sources]
     if len(names) != len(set(names)):
-        raise TemplateError("duplicate source names")
+        raise TemplateError("duplicate source names", field="sources")
 
     cursor = _parse_cursor(raw["cursor"])
     layout = _parse_layout(raw["layout"], known_sources=set(names))
@@ -652,12 +668,18 @@ def _parse_cursor(raw: dict) -> CursorSpec:
         optional={"persist"},  # §14.30 — opt-in stateful named cursors
     )
     if raw["base_advance_per_week"] < 0:
-        raise TemplateError("cursor.base_advance_per_week must be >= 0")
+        raise TemplateError(
+            "cursor.base_advance_per_week must be >= 0",
+            field="cursor.base_advance_per_week",
+        )
     # cycle_weeks=0 is valid post-§14.22 — means "no cycle wrap, position
     # grows until the pool underflows" (Weekly-style). cycle_weeks>=1 keeps
     # the Classics behaviour (wrap every N weeks).
     if raw["cycle_weeks"] < 0:
-        raise TemplateError("cursor.cycle_weeks must be >= 0 (0 = no cycle)")
+        raise TemplateError(
+            "cursor.cycle_weeks must be >= 0 (0 = no cycle)",
+            field="cursor.cycle_weeks",
+        )
     persist = raw.get("persist", False)
     if not isinstance(persist, bool):
         raise TemplateError(

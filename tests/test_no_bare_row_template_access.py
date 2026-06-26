@@ -63,7 +63,7 @@ ALLOWED_SITES: set[tuple[str, int]] = {
     # XOR is exploited correctly here; one branch contributes 0).
     # (Line moved 204 → 221 in §16.14.t9 c1 when the rules: block
     # added 2 dataclass fields + a top-level import block.)
-    ("engine/template.py", 311),  # bumped from 301 in §16.14.t7 c1-review F2 (CONTENT_SAMPLING_STRATEGIES opt-in set + docstring expansion)
+    ("engine/template.py", 324),  # bumped from 301 in §16.14.t7 c1-review F2 (CONTENT_SAMPLING_STRATEGIES opt-in set + docstring expansion); 311 → 324 in §16.5 c0 when TemplateError gained a docstring + `field:` kwarg in __init__
     # §14.32: _iterate_slots — engine's slot-dispatch loop; the
     # `else` branch after `if layout.flat_slots:` is the row_template
     # dispatch and CORRECTLY reads row_template only.

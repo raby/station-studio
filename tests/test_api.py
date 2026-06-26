@@ -192,6 +192,59 @@ def test_create_station_invalid_template_returns_400(api):
     r = client.post("/api/stations", json=payload)
     assert r.status_code == 400
     assert "invalid template" in r.json()["detail"]
+    # §16.5 c0 — structured-error envelope alongside the backward-
+    # compat `detail` blob. Untagged raise sites (missing-key check
+    # here) carry `field: null` — wizard renders these in the
+    # banner only.
+    body = r.json()
+    assert body["errors"] == [
+        {"field": None, "message": body["errors"][0]["message"]},
+    ]
+
+
+def test_create_station_invalid_rng_tags_field(api):
+    """§16.5 c0 — `rng` is a tagged raise site; the error carries
+    `field: 'rng'` so the wizard can `aria-describedby` the rng
+    select. Pins the backend→frontend contract for the per-field
+    a11y wiring landing in c3."""
+    client, _ = api
+    payload = _wizard_payload("rngfail")
+    payload["template"]["rng"] = "lava-lamp"  # unsupported value
+    r = client.post("/api/stations", json=payload)
+    assert r.status_code == 400
+    body = r.json()
+    assert body["errors"] == [{
+        "field": "rng",
+        "message": body["errors"][0]["message"],
+    }]
+    assert "rng must be one of" in body["errors"][0]["message"]
+
+
+def test_create_station_invalid_cursor_tags_field(api):
+    """§16.5 c0 — cursor.base_advance_per_week + cursor.cycle_weeks
+    are tagged. Negative base_advance_per_week trips the dedicated
+    raise site."""
+    client, _ = api
+    payload = _wizard_payload("curse")
+    payload["template"]["cursor"]["base_advance_per_week"] = -1
+    r = client.post("/api/stations", json=payload)
+    assert r.status_code == 400
+    body = r.json()
+    assert body["errors"][0]["field"] == "cursor.base_advance_per_week"
+
+
+def test_create_station_duplicate_sources_tags_field(api):
+    """§16.5 c0 — duplicate source names is tagged `sources`."""
+    client, _ = api
+    payload = _wizard_payload("dupe")
+    payload["template"]["sources"] = [
+        {"name": "A", "colour": "#111", "role": "content"},
+        {"name": "A", "colour": "#222", "role": "content"},
+    ]
+    r = client.post("/api/stations", json=payload)
+    assert r.status_code == 400
+    body = r.json()
+    assert body["errors"][0]["field"] == "sources"
 
 
 # ---- §16.2.8 fork endpoint -----------------------------------------------

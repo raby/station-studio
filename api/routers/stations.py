@@ -5,6 +5,7 @@ import logging
 from collections import Counter
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from engine.models import (
@@ -272,7 +273,19 @@ def create_station(payload: StationCreate, db: Session = Depends(get_db)):
     try:
         parse_template(payload.template)  # validate
     except TemplateError as e:
-        raise HTTPException(400, f"invalid template: {e}")
+        # §16.5 c0 — structured-error payload. `detail` stays a
+        # string for backward compat (existing tests + non-wizard
+        # callers) and carries the human-readable banner copy;
+        # `errors[*].field` is the per-input tag the wizard uses
+        # for `aria-describedby` association. Untagged errors
+        # carry `field: null` and render in the banner only.
+        return JSONResponse(
+            status_code=400,
+            content={
+                "detail": f"invalid template: {e}",
+                "errors": [{"field": e.field, "message": str(e)}],
+            },
+        )
 
     if db.query(Station).filter(Station.slug == payload.slug).first():
         raise HTTPException(409, f"station '{payload.slug}' already exists")
@@ -389,7 +402,15 @@ def update_station(slug: str, payload: StationCreate, db: Session = Depends(get_
     try:
         parse_template(payload.template)
     except TemplateError as e:
-        raise HTTPException(400, f"invalid template: {e}")
+        # §16.5 c0 — same structured-error payload as create_station;
+        # the edit form is the other wizard surface.
+        return JSONResponse(
+            status_code=400,
+            content={
+                "detail": f"invalid template: {e}",
+                "errors": [{"field": e.field, "message": str(e)}],
+            },
+        )
     s.name = payload.name
     s.template = payload.template
     db.commit()
