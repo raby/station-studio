@@ -14381,6 +14381,49 @@ patterns; mobile pass touches layout breakpoints. Different
 concerns, can sequence either way. If they land together, the
 slice is medium.
 
+**Decisions locked 2026-06-27 (slice start, post-§16.5).**
+
+* **D1 — Single 640px breakpoint.** No intermediate tablet
+  tier; below 640px stack/cardify, above keep the current
+  desktop layout. The codebase has zero width-based media
+  queries today, so the breakpoint can be introduced as a
+  `--mobile-breakpoint: 40rem` CSS variable in `+layout.svelte`
+  and consumed per-page via `@media (max-width: 40rem)`.
+* **D2 — Visualise editor renders a "wider screen required"
+  notice below 640px.** The drag-drop block editor is
+  fundamentally desktop-only (2000+ line layout); the operator
+  hitting it on a phone hears "this needs a wider screen" with
+  a back-link to the station detail page. Punted: read-only
+  mobile view tracked as `§16.20.t1` if a user asks. The notice
+  ships as a small reusable `<NarrowScreenNotice>` component so
+  any future desktop-only surface (e.g. the trace viewer's
+  excluded-candidates expansion) can reuse it.
+* **D3 — 3-commit batching.** c1 shared utilities
+  (`<NarrowScreenNotice>` component + `--mobile-breakpoint`
+  variable in `+layout.svelte` + axe-smoke verifying narrow
+  viewport doesn't regress a11y); c2 page sweep across the 7
+  remaining routes (landing, wizard, edit, station detail,
+  trace viewer, compare, diff, sources, rules — wizard +
+  edit + rules + sources get single-column form treatment;
+  trace viewer + station detail + landing get table-to-card
+  conversion; compare + diff already use cards); c3 SHIPPED
+  closeout. Each commit gets an inline review per the cadence.
+
+**In-scope surface inventory (locked at design pass):**
+
+| Route | Treatment |
+|---|---|
+| `/` (landing) | Stations list table → cards below 640px |
+| `/stations/new` | Wizard form → single column |
+| `/stations/[slug]` | Playlists table → cards; overview cards already stack OK |
+| `/stations/[slug]/edit` | Reuses `<StationForm>` from /new → single column |
+| `/stations/[slug]/rules` | Rules forms → single column |
+| `/stations/[slug]/diff` | Already card-based; just verify breakpoint |
+| `/stations/[slug]/visualise` | `<NarrowScreenNotice>` instead of the editor |
+| `/playlists/[id]` | Slots table → stacked card-per-slot; filters stack vertically |
+| `/playlists/[id]/compare` | Already card-based; just verify breakpoint |
+| `/sources` | Sources list → cards below 640px |
+
 ---
 
 ### 16.21 Test follow-ups — mutation testing + perf benchmarks
