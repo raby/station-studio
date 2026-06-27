@@ -11191,6 +11191,32 @@ not fixed in this slice — promote when the trigger fires).**
   project that exists today consumes the envelope via raw text
   parsing, which is unaffected.
 
+* **§16.5.t3 preSubmit→fieldErrors propagation.** c3 verification
+  pass. `StationForm.preSubmitProblem` catches the most common
+  wizard problems (empty source name, missing slug, sources
+  without a content role, layout/row mismatches) before any
+  fetch fires — good for instant feedback, but the returned
+  string lands in the form-level `error` banner only. The c3
+  per-field `aria-describedby` association built around
+  backend `fieldErrors[*]` therefore never fires for client-
+  detectable issues; the only paths that exercise it are
+  validation rules the backend has but `preSubmitProblem`
+  doesn't (today: `rng` value not in `SUPPORTED_RNG`,
+  `cursor.base_advance_per_week<0`, `cursor.cycle_weeks<0`,
+  the duplicate-source check). For sighted users this is
+  invisible — they see the banner copy and tab to the right
+  input — but for screen-reader users, the focus-shift hint
+  is lost. **Fix:** extend `preSubmitProblem` to return a
+  `{field?, message}[]` shape (or wrap-and-tag the existing
+  string-returners), then merge the result into `fieldErrors`
+  before the backend round-trip. The fields the function
+  currently tests are stable (slug, name, sources[i].name,
+  row_template[i].source, cursor.cycle_weeks): each can be
+  tagged 1:1 with the same paths c0 uses. **Promote when:** a
+  screen-reader user reports wizard validation as confusing,
+  OR when an automated a11y audit walks the form and flags
+  the loose-error-association as a violation.
+
 * **§16.5.t2 `<StatusBanner>` sibling of `<ErrorBanner>`.** c2
   review R2. After c2, the trace viewer's disk-export pair lost
   visual symmetry: success still renders as a bespoke `<p
