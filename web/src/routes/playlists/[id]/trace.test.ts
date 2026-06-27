@@ -427,7 +427,7 @@ describe('trace viewer — §16.6 disk-export wiring', () => {
     getStationMock.mockResolvedValueOnce(stubStation());
   };
 
-  it('clicking "Export to disk" POSTs and renders the path + size on success', async () => {
+  it('clicking "Export to disk" POSTs and renders "Wrote: <path> (<size>)" on success', async () => {
     seedAllResolved();
     exportPlaylistToDiskMock.mockResolvedValueOnce({
       path: '/abs/out/cls/003.xml',
@@ -441,11 +441,23 @@ describe('trace viewer — §16.6 disk-export wiring', () => {
 // off; current-version path passes (7, null, false).
 expect(exportPlaylistToDiskMock).toHaveBeenCalledWith(7, null, false);
 
-    // Status line shows the path and a KB figure derived from bytes.
-    // 868990 / 1024 ≈ 849 → "849 KB".
+    // §16.5.t2 c1-review R1+R3 — banner reads
+    // "Wrote: /abs/out/cls/003.xml (849 KB)". 868990 / 1024 ≈ 849.
     const status = await screen.findByTestId('disk-export-status');
     expect(status).toHaveTextContent(/\/abs\/out\/cls\/003\.xml/);
     expect(status).toHaveTextContent(/849.*KB/);
+    // R3 — assert the "Wrote:" prefix is present (the §16.5.t2
+    // migration's headline copy change; previously only the path
+    // + KB regex was checked, which would pass even if the prefix
+    // were dropped to the 'Success:' default).
+    expect(status.textContent?.trim()).toMatch(/^Wrote: /);
+    // R1 — guard against the "Wrote: Wrote to ..." double-prefix
+    // bug caught in live verification. If a refactor restores
+    // `diskExportStatus = \`Wrote to ${path}\`` in +page.svelte
+    // and forgets to drop the `prefix="Wrote"` prop, the rendered
+    // banner reads "Wrote: Wrote to /abs/..." — the path regex
+    // still passes, but the SR + visual UX is broken.
+    expect(status.textContent).not.toMatch(/Wrote:\s*Wrote/);
   });
 
   it('renders sub-KB sizes as raw bytes (S1 from §16.6 review)', async () => {

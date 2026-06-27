@@ -40,6 +40,20 @@ describe('StatusBanner', () => {
     expect(banner!.textContent).toContain('Wrote to /tmp/out.xml');
   });
 
+  it("explicit prefix={null} falls back to the 'Success' default", () => {
+    // §16.5.t2 c1-review R2 — pins the null-prefix branch
+    // independently of the prop default. A refactor that changed
+    // the default to 'Success' or undefined would silently break
+    // callers passing `prefix={someNullable}` if this test
+    // weren't here.
+    const { container } = render(StatusBanner, {
+      props: { message: 'Done', prefix: null },
+    });
+    const banner = container.querySelector('[data-testid="status-banner"]');
+    expect(banner!.textContent).toContain('Success:');
+    expect(banner!.textContent).toContain('Done');
+  });
+
   it('explicit prefix overrides the default', () => {
     const { container } = render(StatusBanner, {
       props: { message: '/abs/out.xml (12 KB)', prefix: 'Wrote' },

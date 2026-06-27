@@ -11156,13 +11156,14 @@ c5 closeout) plus 5 review-fix sweeps (R-batches per commit).
   generic).
 
 **Punts (post-slice, awaiting trigger):** §16.5.t1
-(OpenAPI 400-envelope schema), §16.5.t2 (`<StatusBanner>`
-sibling for success/info), §16.5.t3 (preSubmit→fieldErrors
-propagation), §16.5.t4 (ErrorBanner color tokens for dark-mode
-prep), §16.5.t5 (role + aria-live duplication audit), §16.5.t6
-(action-column header convention — verb-headers vs Actions
-colspan), §16.5.t7 (manual VoiceOver pass on cancel→retry
-generate path).
+(OpenAPI 400-envelope schema), ~~§16.5.t2~~ ✅ SHIPPED
+2026-06-27 (`<StatusBanner>` sibling + disk-export-status
+migration), §16.5.t3 (preSubmit→fieldErrors propagation),
+§16.5.t4 (Banner color tokens for dark-mode prep + shared
+compact-mode rule), §16.5.t5 (role + aria-live duplication
+audit), §16.5.t6 (action-column header convention —
+verb-headers vs Actions colspan), §16.5.t7 (manual VoiceOver
+pass on cancel→retry generate path).
 
 ---
 
@@ -11304,18 +11305,23 @@ not fixed in this slice — promote when the trigger fires).**
   project that exists today consumes the envelope via raw text
   parsing, which is unaffected.
 
-* **§16.5.t4 ErrorBanner colour tokens for dark-mode prep.** c4
-  review R4. ErrorBanner.svelte hard-codes `#fee / #ffcdd2 /
-  #b71c1c` for the banner background, border, and text. The
-  pre-c4 `.fork-error` rule used `var(--error, #c0392b)` — the
-  codebase's only consumer of `--error`. c4 retired it as part
-  of the ErrorBanner migration, removing the seed for a theme
-  system before one existed. **Fix:** wrap ErrorBanner's
-  colours in `var(--banner-error-bg, #fee)` / `var(--banner-
-  error-fg, #b71c1c)` / etc, plus matching tokens for success
-  (once `<StatusBanner>` from §16.5.t2 lands). **Promote when:**
-  a dark-mode theme slice gets queued, OR an external user
-  requests high-contrast support.
+* **§16.5.t4 Banner colour tokens for dark-mode prep + shared
+  compact-mode rule.** c4 review R4 + §16.5.t2 c1-review R4.
+  ErrorBanner.svelte hard-codes `#fee / #ffcdd2 / #b71c1c`;
+  StatusBanner.svelte hard-codes `#e8f5e9 / #c8e6c9 / #1b5e20`.
+  Both also duplicate the `.compact` rule byte-for-byte (strip
+  background/border/border-radius/margin/padding). The pre-
+  §16.5 codebase had `var(--error, #c0392b)` as its only seed
+  for a theme system; both migrations retired it without a
+  replacement. **Fix:** (a) wrap colours in
+  `var(--banner-error-{bg,border,fg}, ...)` /
+  `var(--banner-success-{bg,border,fg}, ...)`, (b) extract the
+  duplicated `.compact` block into a shared `:global(.banner-
+  compact)` rule (or a CSS module both components import). A
+  future third sibling (warning, info) would triple the
+  duplication without this. **Promote when:** a dark-mode
+  theme slice gets queued, OR an external user requests
+  high-contrast support, OR a third banner sibling lands.
 
 * **§16.5.t5 role + aria-live duplication audit.** c4 review R6
   (also surfaced in c1 review of ErrorBanner). Per ARIA 1.2,
@@ -11399,23 +11405,29 @@ not fixed in this slice — promote when the trigger fires).**
   OR when an automated a11y audit walks the form and flags
   the loose-error-association as a violation.
 
-* **§16.5.t2 `<StatusBanner>` sibling of `<ErrorBanner>`.** c2
-  review R2. After c2, the trace viewer's disk-export pair lost
-  visual symmetry: success still renders as a bespoke `<p
-  class="disk-status success">` with green colourway, failure
-  uses `<ErrorBanner>` with the red banner colourway. DESIGN.md
-  §16.6 D3 called for a "single status node mirroring the
-  §16.1 generate-error pattern" — c2 only completed half. Fix:
-  extract `<StatusBanner>` matching `<ErrorBanner>`'s ARIA
-  shape (`role="status"` + `aria-live="polite"`, with a
-  success colourway prop), migrate the disk-export success
-  path + any sibling success/info renders. The c1
-  `<ErrorBanner>` props are stable enough that StatusBanner
-  can copy them mechanically. **Promote when:** any new
-  success/info inline render lands in c3/c4 and would
-  otherwise reintroduce a third bespoke `<p class="X">`
-  style, OR when the next a11y polish sweep notices the
-  visual mismatch and wants a fix in one place.
+* ~~**§16.5.t2 `<StatusBanner>` sibling of `<ErrorBanner>`.**~~
+  ✅ SHIPPED 2026-06-27 (commit + review-fix sweep). New
+  `<StatusBanner>` mirrors `<ErrorBanner>`'s API: same
+  `message` / `prefix` / `testId` / `compact` props, always
+  `role="status"` + `aria-live="polite"` (no assertive variant
+  — a successful completion never warrants interrupting SR
+  speech per the §16.5 c5 severity policy). Empty-string
+  `prefix` suppresses the label entirely. The
+  `/playlists/[id]` disk-export success path migrates from
+  `<p class="disk-status success">` to `<StatusBanner
+  prefix="Wrote">`; dead `.disk-status` CSS pruned. The
+  pre-existing `diskExportStatus = "Wrote to ..."` setter
+  becomes `diskExportStatus = "<path> (<size>)"` so the
+  rendered banner is "Wrote: /abs/... (849 KB)" not "Wrote:
+  Wrote to /abs/... (849 KB)". 8 StatusBanner.test.ts cases
+  pin null/empty/role/aria-live/prefix-default/prefix-null/
+  prefix-empty/testId/compact contracts. Review surfaced 4
+  findings: R1 missing double-prefix regression test (fixed
+  in trace.test.ts with explicit `^Wrote: /` + `not Wrote:\\s*
+  Wrote` assertions), R2 missing null-prefix branch test
+  (fixed in StatusBanner.test.ts), R3 stale trace-test
+  assertion description (fixed), R4 CSS duplication of
+  `.compact` rule (folded into §16.5.t4 dark-mode prep).
 
 **What this earns us.**
 
