@@ -17,6 +17,7 @@
   import { goto } from '$app/navigation';
   import ChipMultiInput from '$lib/components/editor/ChipMultiInput.svelte';
   import ErrorBanner from '$lib/components/ErrorBanner.svelte';
+  import StatusBanner from '$lib/components/StatusBanner.svelte';
 
   let trace: Trace | null = null;
   let playlist: Playlist | null = null;
@@ -519,7 +520,12 @@
       const r = await exportPlaylistToDisk(
         playlist.id, exportVersion, archiveDiskExports,
       );
-      diskExportStatus = `Wrote to ${r.path} (${formatBytes(r.bytes)})`;
+      // §16.5.t2 — the "Wrote" verb now lives in StatusBanner's
+      // `prefix` prop so the rendered banner reads "Wrote:
+      // /abs/.../001.xml (849 KB)". Setting "Wrote to ..." here
+      // would render "Wrote: Wrote to ..." (caught in live
+      // verification).
+      diskExportStatus = `${r.path} (${formatBytes(r.bytes)})`;
     } catch (e) {
       diskExportError = e instanceof ApiError ? e.message : String(e);
     } finally {
@@ -817,10 +823,17 @@
         </span>
       </label>
     {/if}
+    <!-- §16.5.t2 — disk-export success via StatusBanner. The
+         sibling component matches ErrorBanner's ARIA shape
+         (role=status + aria-live=polite) so success + failure
+         on the same surface read consistently. testId
+         preserves the existing e2e/vitest selector. -->
     {#if diskExportStatus}
-      <p class="disk-status success" data-testid="disk-export-status">
-        {diskExportStatus}
-      </p>
+      <StatusBanner
+        message={diskExportStatus}
+        prefix="Wrote"
+        testId="disk-export-status"
+      />
     {/if}
     <!-- §16.5 c2 — disk-export failures via ErrorBanner. Polite
          severity matches the §16.6 D3 "inline status, not toast"
@@ -1211,19 +1224,8 @@
     opacity: 0.5;
     cursor: not-allowed;
   }
-  .disk-status {
-    margin: 0 0 1.5rem;
-    padding: 0.4rem 0.6rem;
-    border-radius: 4px;
-    font-size: 0.85rem;
-    font-family: ui-monospace, monospace;
-    word-break: break-all;
-  }
-  .disk-status.success {
-    background: #e8f5e9;
-    color: #1b5e20;
-    border: 1px solid #c8e6c9;
-  }
+  /* §16.5.t2 — `.disk-status` retired; success styling now lives
+     in StatusBanner, error styling in ErrorBanner. */
   /* §16.4.t6 — archive-every-version checkbox. Inline with the
      hint text so the operator sees what filename they'll get
      before they click Export. */
