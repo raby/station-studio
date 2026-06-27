@@ -112,9 +112,24 @@
    *  envelope (`errors[*].field`). Drives `aria-invalid` +
    *  `aria-describedby` on the tagged inputs so screen readers
    *  hear the error inline when focus lands on the offending
-   *  field, instead of only via the banner. Reset on every
-   *  submit attempt. */
+   *  field. Reset on every submit attempt + cleared per-field on
+   *  user input (review R1 — without the per-field clear, the
+   *  input stays aria-invalid="true" even after the user
+   *  picks a valid value, and SR announces "invalid" on every
+   *  refocus). */
   let fieldErrors: Record<string, string> = {};
+
+  /** §16.5 c3-review R1 — drop a single key from fieldErrors when
+   *  the corresponding input is edited. Svelte's mutate-then-
+   *  reassign trick (no spread; new object identity isn't
+   *  required because `fieldErrors[key]` reads are reactive on
+   *  the key access). */
+  function clearFieldError(key: string): void {
+    if (fieldErrors[key] !== undefined) {
+      delete fieldErrors[key];
+      fieldErrors = fieldErrors;
+    }
+  }
 
   // ---- list ops ---------------------------------------------------------
 
@@ -164,10 +179,35 @@
           if (item.field) next[item.field] = item.message;
         }
         fieldErrors = next;
-        // Prefer the human-readable detail blob over the raw text
-        // when the structured envelope is present; the banner copy
-        // stays a single line.
-        error = e.body.detail;
+        // §16.5 c3-review R3 — fall back to e.message when detail
+        // is an empty string. isTemplateErrorBody accepts ''; we
+        // don't want the banner to silently disappear on a real 400.
+        // §16.5 c3-review R7 — warn (dev-only) when fieldErrors
+        // landed on a key the form has no input for. Catches drift
+        // between the backend's tagged-field inventory and the
+        // wizard's rendered inputs (today: `cursor.persist` is
+        // tagged but the wizard doesn't render it; future tagged
+        // fields would silently fail to surface inline). The
+        // observable a11y behaviour stays the same — the banner
+        // still carries the message via `detail` — but devs see
+        // the orphan in the console.
+        if (e.body.detail) error = e.body.detail;
+        if (typeof console !== 'undefined') {
+          const knownFields = new Set([
+            'slug', 'name', 'rng',
+            'cursor.base_advance_per_week', 'cursor.cycle_weeks',
+            'sources',
+          ]);
+          for (const key of Object.keys(next)) {
+            if (!knownFields.has(key)) {
+              console.warn(
+                `[StationForm] backend tagged field '${key}' but the wizard ` +
+                `has no input for it; per-field aria association is dropped. ` +
+                `Add the input to the form OR drop the tag in engine/template.py.`,
+              );
+            }
+          }
+        }
       }
     } finally {
       submitting = false;
@@ -281,6 +321,32 @@
       `aria-describedby` pointer resolves. `aria-invalid` flips to
       "true" when an inline error landed for that field; screen
       readers announce "invalid" alongside the label.
+
+      §16.5 c3-review R6 — `aria-required` uses `undefined` (not
+      `false`) in edit mode so the attribute drops off the rendered
+      <input> entirely; an explicit "not required, read-only" on
+      the slug is verbose noise for SR users.
+
+      §16.5 c3-review R11 — cadence + rng selects get
+      aria-required="true" too so the Identity fieldset reads
+      uniformly to SR users ("Slug, required" → "Display name,
+      required" → "Cadence, required" → "RNG, required"). Both
+      <select>s have defaults so the requirement is trivially
+      satisfied at render; the attribute is for consistency, not
+      enforcement.
+
+      §16.5 c3-review R12 — slug + name inline error scaffolding
+      is forward-staging for §16.5.t3 (preSubmit → fieldErrors
+      propagation). engine/template.py doesn't tag field='slug'
+      or 'name' today, so these <p id="X-error"> blocks are
+      unreachable from the c0 envelope; the wiring stays hot
+      pending .t3.
+
+      §16.5 c3-review R1 — `on:input` / `on:change` calls
+      `clearFieldError(key)` so aria-invalid drops back to false
+      as soon as the user starts fixing the offending field
+      (otherwise the input would stay flagged invalid forever
+      after the first submit until the next submit fires).
     -->
     <label>
       <span>Slug</span>
@@ -290,9 +356,10 @@
         autocomplete="off"
         readonly={mode === 'edit'}
         class:readonly={mode === 'edit'}
-        aria-required={mode === 'create'}
+        aria-required={mode === 'create' ? true : undefined}
         aria-invalid={!!fieldErrors['slug']}
         aria-describedby="slug-hint{fieldErrors['slug'] ? ' slug-error' : ''}"
+        on:input={() => clearFieldError('slug')}
       />
       {#if mode === 'edit'}
         <small id="slug-hint">
@@ -319,6 +386,7 @@
         aria-required="true"
         aria-invalid={!!fieldErrors['name']}
         aria-describedby={fieldErrors['name'] ? 'name-error' : undefined}
+        on:input={() => clearFieldError('name')}
       />
       {#if fieldErrors['name']}
         <p class="field-error" id="name-error" data-testid="name-error">
@@ -329,7 +397,7 @@
 
     <label>
       <span>Cadence</span>
-      <select bind:value={cadence}>
+      <select bind:value={cadence} aria-required="true">
         {#each meta.cadences as c}
           <option value={c}>{c}</option>
         {/each}
@@ -340,8 +408,10 @@
       <span>RNG</span>
       <select
         bind:value={rng}
+        aria-required="true"
         aria-invalid={!!fieldErrors['rng']}
         aria-describedby="rng-hint{fieldErrors['rng'] ? ' rng-error' : ''}"
+        on:change={() => clearFieldError('rng')}
       >
         {#each meta.rng as r}
           <option value={r}>{r}</option>
@@ -432,6 +502,7 @@
         aria-describedby={fieldErrors['cursor.base_advance_per_week']
           ? 'cursor-base-error'
           : undefined}
+        on:input={() => clearFieldError('cursor.base_advance_per_week')}
       />
       {#if fieldErrors['cursor.base_advance_per_week']}
         <p
@@ -454,6 +525,7 @@
         aria-describedby={fieldErrors['cursor.cycle_weeks']
           ? 'cursor-cycle-error'
           : undefined}
+        on:input={() => clearFieldError('cursor.cycle_weeks')}
       />
       {#if fieldErrors['cursor.cycle_weeks']}
         <p

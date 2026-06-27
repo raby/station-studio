@@ -160,7 +160,22 @@ export interface TemplateErrorBody {
 export function isTemplateErrorBody(b: unknown): b is TemplateErrorBody {
   if (typeof b !== 'object' || b === null) return false;
   const o = b as Record<string, unknown>;
-  return Array.isArray(o.errors) && typeof o.detail === 'string';
+  if (typeof o.detail !== 'string' || !Array.isArray(o.errors)) return false;
+  // §16.5 c3-review R2 — per-item shape check too. A future
+  // backend bug (or a logging middleware that strips message
+  // keys) could emit {errors:[{field:'rng'}]} which would pass
+  // the envelope-only check and write `fieldErrors['rng'] =
+  // undefined` — flipping aria-invalid="true" on an empty
+  // inline error. Reject the envelope here instead and the
+  // caller falls back to the text banner with the raw message.
+  return o.errors.every(
+    (e) =>
+      e !== null &&
+      typeof e === 'object' &&
+      (typeof (e as { field?: unknown }).field === 'string' ||
+        (e as { field?: unknown }).field === null) &&
+      typeof (e as { message?: unknown }).message === 'string',
+  );
 }
 
 /** Parse the response body once on the non-OK path, preferring JSON
@@ -175,8 +190,21 @@ async function readErrorBody(res: Response): Promise<{ text: string; body?: unkn
   if (ct.includes('application/json') && raw) {
     try {
       return { text: raw, body: JSON.parse(raw) };
-    } catch {
-      // Malformed JSON despite the header — fall through to text-only.
+    } catch (parseErr) {
+      // §16.5 c3-review R9 — observability. Earlier impl silently
+      // swallowed the parse error; if the backend ever ships a
+      // malformed envelope (truncated write, encoding bug, proxy
+      // mangling), per-field aria-describedby silently degrades to
+      // the text fallback with no signal. The warn surfaces the
+      // drift in browser devtools so the regression is noticed.
+      if (typeof console !== 'undefined') {
+        console.warn(
+          '[api] response declared content-type=application/json but body ' +
+            'failed JSON.parse; falling back to text-only ApiError:',
+          parseErr,
+          raw,
+        );
+      }
     }
   }
   return { text: raw };
@@ -914,8 +942,18 @@ export const cancelJob = async (
   });
   if (res.status === 404) return; // already gone — caller's intent met.
   if (!res.ok) {
-    const body = await res.text();
-    throw new ApiError(res.status, `${res.status} ${res.statusText}: ${body}`);
+    // §16.5 c3-review R5 — route through readErrorBody so any
+    // future structured-error envelope (Content-Type: application/
+    // json) propagates into ApiError.body. Without this, the c0
+    // contract is consistency-broken on this one hand-rolled
+    // catch site; downstream callers that introspect e.body
+    // following the c3 pattern would silently degrade here.
+    const { text, body } = await readErrorBody(res);
+    throw new ApiError(
+      res.status,
+      `${res.status} ${res.statusText}: ${text}`,
+      body,
+    );
   }
 };
 

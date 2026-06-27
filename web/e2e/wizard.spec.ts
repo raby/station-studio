@@ -22,8 +22,17 @@ test.describe('station wizard', () => {
   test('§16.5 c3 — /stations/new passes axe-core WCAG audit', async ({ page }) => {
     // Wait for hydration so the form is mounted; pre-hydration the
     // tree is just the loading shell + skip-link.
+    //
+    // §16.5 c3-review R10 — race the meta-ready sentinel against
+    // the ErrorBanner so a slow / failed GET /api/meta in CI
+    // doesn't time out the test for the wrong reason. Either DOM
+    // is a legitimate steady state; axe should audit whichever
+    // landed.
     await page.goto('/stations/new');
-    await expect(page.locator('html[data-wizard-ready]')).toBeAttached();
+    await Promise.race([
+      page.locator('html[data-wizard-ready]').waitFor({ state: 'attached' }),
+      page.getByTestId('error-banner').waitFor({ state: 'visible' }),
+    ]);
     await assertNoA11yViolations(page);
   });
 

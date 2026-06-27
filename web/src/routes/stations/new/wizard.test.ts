@@ -47,12 +47,21 @@ vi.mock('$lib/api', () => ({
   createStation: (...args: unknown[]) => createStationMock(...args),
   getMeta: (...args: unknown[]) => getMetaMock(...args),
   ApiError: FakeApiError,
-  // §16.5 c3 — minimal type guard mirroring the real impl so the
-  // wizard's `e.body` introspection branch fires in tests.
+  // §16.5 c3 — type guard mirroring the real impl. Updated post-
+  // c3-review R2 to also enforce per-item {field, message} shape
+  // so the mocked behaviour matches what production sees.
   isTemplateErrorBody: (b: unknown): boolean => {
     if (typeof b !== 'object' || b === null) return false;
     const o = b as Record<string, unknown>;
-    return Array.isArray(o.errors) && typeof o.detail === 'string';
+    if (typeof o.detail !== 'string' || !Array.isArray(o.errors)) return false;
+    return o.errors.every(
+      (e: unknown) =>
+        e !== null &&
+        typeof e === 'object' &&
+        (typeof (e as { field?: unknown }).field === 'string' ||
+          (e as { field?: unknown }).field === null) &&
+        typeof (e as { message?: unknown }).message === 'string',
+    );
   },
 }));
 vi.mock('$lib/meta', () => ({
@@ -260,6 +269,66 @@ describe('station wizard (new +page.svelte)', () => {
     const banner = await screen.findByTestId('station-form-error');
     expect(banner.textContent).toMatch(/rng must be one of/i);
     expect(gotoMock).not.toHaveBeenCalled();
+  });
+
+  it('§16.5 c3-review R1 — aria-invalid clears when the user edits the tagged input', async () => {
+    // The submit-tag path flipped rng to aria-invalid="true". On
+    // the very next `change` event from the rng <select>,
+    // clearFieldError('rng') drops the key from fieldErrors so
+    // aria-invalid reverts to false and the inline error <p>
+    // disappears WITHOUT requiring another submit. Without the
+    // per-field clear, the input stayed flagged invalid forever;
+    // SR would announce "invalid" on every refocus.
+    createStationMock.mockRejectedValueOnce(
+      new FakeApiError(
+        400,
+        '400 Bad Request: invalid template',
+        {
+          detail: 'invalid template: rng must be one of [off, on]',
+          errors: [{ field: 'rng', message: 'rng must be one of [off, on]' }],
+        },
+      ),
+    );
+
+    render(Page);
+    await fireEvent.input(
+      await screen.findByPlaceholderText('rebirth-classics'),
+      { target: { value: 'ok' } },
+    );
+    await fireEvent.input(screen.getByPlaceholderText('Rebirth Classics'), {
+      target: { value: 'OK' },
+    });
+    await fireEvent.input(screen.getByPlaceholderText('RG_RADIO'), {
+      target: { value: 'A' },
+    });
+    await fireEvent.input(
+      screen.getByPlaceholderText('Mon, Tue, Wed, Thu, Fri, Sat, Sun'),
+      { target: { value: 'Mon' } },
+    );
+    await fireEvent.input(
+      screen.getByPlaceholderText('0, 10, 20, 30, 40, 50, 50'),
+      { target: { value: '0' } },
+    );
+    const blockSource = screen.getByTestId('block-source') as HTMLSelectElement;
+    await fireEvent.change(blockSource, { target: { value: 'A' } });
+
+    await fireEvent.click(screen.getByRole('button', { name: /create station/i }));
+
+    // Confirm we hit the tagged state first.
+    await screen.findByTestId('rng-error');
+    const rngSelect = screen
+      .getByText('RNG')
+      .parentElement!
+      .querySelector('select')!;
+    expect(rngSelect.getAttribute('aria-invalid')).toBe('true');
+
+    // Now simulate the user picking a valid rng. clearFieldError
+    // fires on the `change` event and drops the rng key from
+    // fieldErrors — the inline error <p> unmounts and aria-invalid
+    // reverts.
+    await fireEvent.change(rngSelect, { target: { value: 'on' } });
+    expect(screen.queryByTestId('rng-error')).not.toBeInTheDocument();
+    expect(rngSelect.getAttribute('aria-invalid')).toBe('false');
   });
 
   it('renders the JSON preview disclosure in create mode (N4 anti-regression)', async () => {
