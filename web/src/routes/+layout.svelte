@@ -28,6 +28,23 @@
 <ConfirmDialog />
 
 <style>
+  /* §16.20 c1 — codebase-wide mobile breakpoint. 40rem = 640px
+     at the default 16px root size, matches the §16.20 D1 lock.
+     Per-page CSS reads this via `var(--mobile-breakpoint)` in
+     @media queries so a future tablet tier (or theme override)
+     touches one declaration instead of ~15 query call-sites.
+
+     NOTE: CSS variables work inside `@media (max-width: ...)` in
+     modern engines via `@media (width <= var(--mobile-
+     breakpoint))` (CSS Media Queries 4). For broader UA support
+     this slice uses the literal `40rem` in @media queries (the
+     variable is still defined here for JS-side consumption and
+     forward-compat); the literal stays in sync with the
+     variable by convention. */
+  :global(:root) {
+    --mobile-breakpoint: 40rem;
+  }
+
   /* §16.5 c1 — skip-link: visually hidden until focused, then
      pinned top-left. Uses the standard "visually-hidden but
      focus-restorable" pattern (clip: rect(0,0,0,0) rather than
