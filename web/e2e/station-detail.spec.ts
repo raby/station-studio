@@ -20,11 +20,18 @@ test.describe('station detail page', () => {
     page,
     request,
   }) => {
-    // Audit the populated-table path so the c4 visually-hidden
-    // <th> labels are in scope. The empty-state path covers a
-    // different DOM and could regress separately; cover the
-    // playlists-table presence since that's where the §14.5
-    // gap-list entries live.
+    // §16.5 c4-review R7 — narrow scope:
+    //   - In scope: header crumbs, station-header actions block,
+    //     §16.19 overview-cards skeleton, generate panel
+    //     (collapsed by default), playlists-table with one row
+    //     including the c4 visually-hidden <th>s, and the
+    //     ErrorBanner regions when errors fire.
+    //   - NOT in scope: the §14.5 gap-list (only renders with
+    //     enough generated weeks to compute a gap pattern; this
+    //     test only generates week=1 so the gap section is
+    //     degenerate). When promoting to multi-week audit, also
+    //     generate weeks 2-3 with a known gap so axe walks that
+    //     subtree too.
     await importTinyPool(request, 'A');
     await createStation(request, 'det-a11y', 'Det A11y');
     await generate(request, 'det-a11y', 1);

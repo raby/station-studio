@@ -235,11 +235,7 @@
     font-size: 0.78rem;
     margin: 0;
   }
-  .visually-hidden {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip: rect(0 0 0 0);
-  }
+  /* §16.5 c4-review R5 — local `.visually-hidden` removed in favour
+     of the global utility in +layout.svelte (which adds the
+     clip-path fallback + matches the rest of the codebase). */
 </style>

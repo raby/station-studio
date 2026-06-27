@@ -501,13 +501,23 @@
           <!-- §16.5 c4 — fork-error already had role=status (the
                pre-§16.5 form). Migrating to ErrorBanner for
                consistency with the other inline errors in this
-               page; polite severity matches the prior contract. -->
-          <ErrorBanner
-            message={forkError}
-            severity="polite"
-            prefix="Fork"
-            testId="fork-error"
-          />
+               page; polite severity matches the prior contract.
+
+               §16.5 c4-review R1+R2 — `compact` mode drops the
+               bordered banner so the inline form layout
+               doesn't grow ~50px on every retry; `prefix=""`
+               suppresses the "Fork:" label because the
+               operator is already inside the fork form and
+               doesn't need the framing context read aloud. -->
+          {#if forkError}
+            <ErrorBanner
+              message={forkError}
+              severity="polite"
+              prefix=""
+              compact
+              testId="fork-error"
+            />
+          {/if}
           <div class="fork-actions">
             <button
               type="submit"
@@ -724,13 +734,21 @@
            severity per the §16.5 severity policy: this is the
            recoverable "regen failed, try again" path; assertive
            would interrupt SR speech on every retry. testId
-           preserves existing e2e selectors. -->
-      <ErrorBanner
-        message={generateError}
-        severity="polite"
-        prefix="Generate"
-        testId="generate-error"
-      />
+           preserves existing e2e selectors.
+
+           §16.5 c4-review R10 — re-add the {#if} guard so the
+           call-site visual-grep contract ('banner shown iff
+           generateError truthy') stays local. ErrorBanner's
+           internal {#if message} would also suppress render —
+           the guard is for reader-locality, not correctness. -->
+      {#if generateError}
+        <ErrorBanner
+          message={generateError}
+          severity="polite"
+          prefix="Generate"
+          testId="generate-error"
+        />
+      {/if}
     </section>
 
     {#if playlists.length === 0}
@@ -796,13 +814,19 @@
         </tbody>
       </table>
       <!-- §16.5 c4 — delete failure via ErrorBanner. Polite —
-           the row delete is recoverable (the row is still there). -->
-      <ErrorBanner
-        message={deleteError}
-        severity="polite"
-        prefix="Delete"
-        testId="delete-error"
-      />
+           the row delete is recoverable (the row is still there).
+           §16.5 c4-review R8 — `compact` keeps the bordered box
+           from overweighting a per-row failure; R10 — re-add the
+           {#if} guard for call-site visibility-grep. -->
+      {#if deleteError}
+        <ErrorBanner
+          message={deleteError}
+          severity="polite"
+          prefix="Delete"
+          compact
+          testId="delete-error"
+        />
+      {/if}
     {/if}
   {/if}
 </main>

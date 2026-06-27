@@ -11191,6 +11191,75 @@ not fixed in this slice — promote when the trigger fires).**
   project that exists today consumes the envelope via raw text
   parsing, which is unaffected.
 
+* **§16.5.t4 ErrorBanner colour tokens for dark-mode prep.** c4
+  review R4. ErrorBanner.svelte hard-codes `#fee / #ffcdd2 /
+  #b71c1c` for the banner background, border, and text. The
+  pre-c4 `.fork-error` rule used `var(--error, #c0392b)` — the
+  codebase's only consumer of `--error`. c4 retired it as part
+  of the ErrorBanner migration, removing the seed for a theme
+  system before one existed. **Fix:** wrap ErrorBanner's
+  colours in `var(--banner-error-bg, #fee)` / `var(--banner-
+  error-fg, #b71c1c)` / etc, plus matching tokens for success
+  (once `<StatusBanner>` from §16.5.t2 lands). **Promote when:**
+  a dark-mode theme slice gets queued, OR an external user
+  requests high-contrast support.
+
+* **§16.5.t5 role + aria-live duplication audit.** c4 review R6
+  (also surfaced in c1 review of ErrorBanner). Per ARIA 1.2,
+  `role="alert"` has an implicit `aria-live="assertive"` and
+  `role="status"` implies `aria-live="polite"`. ErrorBanner
+  sets BOTH the role and the matching aria-live attribute
+  explicitly. Modern NVDA + Firefox collapse to one
+  announcement, but JAWS 2021+ and some VoiceOver + Safari
+  configs have been observed double-announcing on duplicated
+  live-region attributes. The c1 review chose to set both for
+  cross-browser robustness; a future a11y pass should run real
+  AT against the codebase and decide whether to drop one. **Fix
+  candidates:** (a) drop `aria-live` and rely on the role
+  implication only, (b) drop `role` and rely on `aria-live`
+  only, or (c) keep both with a documented "we tested both
+  forms, prefer this" rationale. **Promote when:** a real SR
+  user reports duplicated announcements, OR the next
+  cross-browser AT pass lands.
+
+* **§16.5.t6 action-column header convention — verb-headers vs
+  Actions colspan.** c4 review R9. The §16.1 N3 fix gave each
+  empty action `<th>` its own visually-hidden label ("View" /
+  "Regenerate" / "Delete"). SR table-navigation announces the
+  column header for every cell, so users hear "View column,
+  view → / Regenerate column, regen / Delete column, ✕ delete"
+  for every playlist row — accurate but verbose. The more
+  conventional WCAG technique is a single `<th colspan="3"
+  scope="colgroup">Actions</th>` with the per-row buttons
+  grouped under it. Both forms are WCAG-conformant; the c4
+  choice gives finer-grained labels at the cost of repeated
+  read-aloud. **Fix:** pick a codebase convention after a
+  VoiceOver / NVDA pass with a real SR user; promote either to
+  every action-column table (today: stations-list, playlists-
+  table, version picker). **Promote when:** an SR user has
+  preferences, OR axe / a WCAG audit flags one form.
+
+* **§16.5.t7 manual VoiceOver pass on cancel→retry generate
+  path.** c4 review R11. The /stations/[slug] generate section
+  renders `<ProgressIndicator>` and the new polite-severity
+  generate-error `<ErrorBanner>` as siblings. When a job fails
+  mid-poll: progress stops → generateError populates → progress
+  may also surface its internal `progress-error` span. Two
+  polite live-region updates fire in close succession from
+  sibling elements. NVDA + Chrome queue and read sequentially;
+  VoiceOver may collapse. The c4 commit claims polite severity
+  "avoids interrupting SR speech on every retry", but a paired
+  progress-error + generate-error announcement could read as
+  "Generate: ... Generate: ..." depending on AT timing. The
+  vitest layer doesn't simulate the live-region timing
+  contract. **Fix:** manual VoiceOver pass against a forced
+  generate failure (e.g. bad seed, missing pool); confirm
+  whether one announcement subsumes the other or they
+  double-fire. Tune the polite vs assertive severity per
+  observation. **Promote when:** the c5 closeout block lands
+  (good moment for a manual SR sweep), OR an SR user reports
+  confusing retry announcements.
+
 * **§16.5.t3 preSubmit→fieldErrors propagation.** c3 verification
   pass. `StationForm.preSubmitProblem` catches the most common
   wizard problems (empty source name, missing slug, sources

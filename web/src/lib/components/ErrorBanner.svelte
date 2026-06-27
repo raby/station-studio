@@ -36,6 +36,10 @@
    */
   export let message: string | null = null;
   export let severity: 'polite' | 'assertive' = 'polite';
+  /** Pass the empty string to suppress the prefix entirely (e.g.
+   *  inline-form errors where the surrounding context already
+   *  tells the operator what action failed). Passing null falls
+   *  back to the severity-derived default. */
   export let prefix: string | null = null;
   /** Optional override for the `data-testid` on the rendered
    *  banner. Defaults to 'error-banner'; existing routes that
@@ -49,8 +53,19 @@
    *  vitest's `getByTestId` throws and Playwright's silently
    *  returns the first match. */
   export let testId: string = 'error-banner';
+  /** §16.5 c4-review R1 — compact mode drops the bordered-box
+   *  background/border/margin in favour of a single inline-text
+   *  line. Use inside tight forms where the bordered banner is
+   *  visually too heavy (e.g. the §16.5 c4 fork-error sat
+   *  inside a `.fork-form` flex column with `gap: 0.5rem`; the
+   *  default banner's `margin: 1rem` bottom doubled that gap
+   *  and pushed the submit/cancel buttons down on every retry). */
+  export let compact: boolean = false;
 
-  $: resolvedPrefix = prefix ?? (severity === 'assertive' ? 'Error' : 'Notice');
+  $: resolvedPrefix =
+    prefix === ''
+      ? null
+      : prefix ?? (severity === 'assertive' ? 'Error' : 'Notice');
   $: role = severity === 'assertive' ? 'alert' : 'status';
 </script>
 
@@ -58,11 +73,12 @@
   <div
     class="error-banner"
     class:assertive={severity === 'assertive'}
+    class:compact
     {role}
     aria-live={severity}
     data-testid={testId}
   >
-    <strong>{resolvedPrefix}:</strong> {message}
+    {#if resolvedPrefix}<strong>{resolvedPrefix}:</strong> {/if}{message}
   </div>
 {/if}
 
@@ -84,5 +100,17 @@
   }
   .error-banner strong {
     color: #b71c1c;
+  }
+
+  /* §16.5 c4-review R1 — compact mode strips the bordered box
+     and lets the message sit inline at the prior `.fork-error`
+     weight (color + small font, no margin). The aria-live region
+     stays — only the visual chrome changes. */
+  .error-banner.compact {
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+    margin: 0.25rem 0;
+    padding: 0;
   }
 </style>

@@ -86,10 +86,19 @@
      the standard clip+1px-box pattern so the node stays in the
      a11y tree (announced by SR) while taking zero visual space.
      Distinct from the skip-link's "hidden-until-focused" pattern:
-     this one never appears. */
+     this one never appears.
+
+     §16.5 c4-review R3 — `clip: rect(0,0,0,0)` is deprecated in
+     CSS Masking 1; pair with `clip-path: inset(50%)` as a
+     defensive fallback. Some UA contexts (transformed ancestors,
+     certain Safari WKWebView versions) silently drop the
+     deprecated `clip`, which would reveal a 1px artifact at the
+     top-left of the host element. clip-path keeps the element
+     hidden across modern engines too. */
   :global(.visually-hidden) {
     border: 0;
     clip: rect(0, 0, 0, 0);
+    clip-path: inset(50%);
     height: 1px;
     margin: -1px;
     overflow: hidden;
