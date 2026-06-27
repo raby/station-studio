@@ -16,10 +16,11 @@
 -->
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { ApiError } from '$lib/api';
+  import { ApiError, isTemplateErrorBody } from '$lib/api';
   import type { Meta } from '$lib/api';
   import { templateDiff, isClean } from '$lib/templateDiff';
   import LayoutFieldset from './LayoutFieldset.svelte';
+  import ErrorBanner from './ErrorBanner.svelte';
   import {
     defaults,
     unpack,
@@ -107,6 +108,13 @@
 
   let submitting = false;
   let error: string | null = null;
+  /** §16.5 c3 — per-field error map sourced from the c0 backend
+   *  envelope (`errors[*].field`). Drives `aria-invalid` +
+   *  `aria-describedby` on the tagged inputs so screen readers
+   *  hear the error inline when focus lands on the offending
+   *  field, instead of only via the banner. Reset on every
+   *  submit attempt. */
+  let fieldErrors: Record<string, string> = {};
 
   // ---- list ops ---------------------------------------------------------
 
@@ -132,6 +140,7 @@
 
   async function handleSubmit() {
     error = null;
+    fieldErrors = {};
     const state = currentFormState();
     const p = preSubmitProblem(state);
     if (p) {
@@ -144,6 +153,22 @@
       await onSubmit({ slug: slug.trim(), name: name.trim(), template });
     } catch (e) {
       error = e instanceof ApiError ? e.message : String(e);
+      // §16.5 c3 — when the API returns the c0 structured envelope,
+      // populate `fieldErrors` so tagged inputs get aria-describedby
+      // associations. Untagged errors (field: null) stay in the
+      // banner only — matches the c0 D1 contract that deep grammar
+      // failures don't map 1:1 to a form input.
+      if (e instanceof ApiError && isTemplateErrorBody(e.body)) {
+        const next: Record<string, string> = {};
+        for (const item of e.body.errors) {
+          if (item.field) next[item.field] = item.message;
+        }
+        fieldErrors = next;
+        // Prefer the human-readable detail blob over the raw text
+        // when the structured envelope is present; the banner copy
+        // stays a single line.
+        error = e.body.detail;
+      }
     } finally {
       submitting = false;
     }
@@ -232,15 +257,31 @@
   rules transitively (CSS doesn't care about Svelte's component tree).
 -->
 <div class="station-form">
-  {#if error}
-    <p class="error">{error}</p>
-  {/if}
+  <!-- §16.5 c3 — ErrorBanner replaces the bespoke <p class="error">.
+       Assertive severity matches the §16.6 D3 spec for form
+       failures (the operator's submit failed; they need to know
+       now, not on next focus shift). testId preserves the
+       wizard.spec.ts selector. -->
+  <ErrorBanner
+    message={error}
+    severity="assertive"
+    prefix="Form"
+    testId="station-form-error"
+  />
 
   <form on:submit|preventDefault={handleSubmit}>
     <!-- ---- identity ----------------------------------------------- -->
   <fieldset>
     <legend>Identity</legend>
 
+    <!--
+      §16.5 c3 — Identity inputs get `aria-required`, `aria-invalid`,
+      and `aria-describedby` when c0 tagged a field. The hint /
+      error `<p>`s are rendered with stable IDs so the
+      `aria-describedby` pointer resolves. `aria-invalid` flips to
+      "true" when an inline error landed for that field; screen
+      readers announce "invalid" alongside the label.
+    -->
     <label>
       <span>Slug</span>
       <input
@@ -249,21 +290,41 @@
         autocomplete="off"
         readonly={mode === 'edit'}
         class:readonly={mode === 'edit'}
+        aria-required={mode === 'create'}
+        aria-invalid={!!fieldErrors['slug']}
+        aria-describedby="slug-hint{fieldErrors['slug'] ? ' slug-error' : ''}"
       />
       {#if mode === 'edit'}
-        <small>
+        <small id="slug-hint">
           Slug is immutable — create a new station to use a different one.
           (It's embedded in iTunes Persistent IDs and disk paths; changing it
           would either break your iTunes library or require coordinated migration.)
         </small>
       {:else}
-        <small>lowercase, digits, dashes. Used in URLs and filenames.</small>
+        <small id="slug-hint">lowercase, digits, dashes. Used in URLs and filenames.</small>
+      {/if}
+      {#if fieldErrors['slug']}
+        <p class="field-error" id="slug-error" data-testid="slug-error">
+          {fieldErrors['slug']}
+        </p>
       {/if}
     </label>
 
     <label>
       <span>Display name</span>
-      <input bind:value={name} placeholder="Rebirth Classics" autocomplete="off" />
+      <input
+        bind:value={name}
+        placeholder="Rebirth Classics"
+        autocomplete="off"
+        aria-required="true"
+        aria-invalid={!!fieldErrors['name']}
+        aria-describedby={fieldErrors['name'] ? 'name-error' : undefined}
+      />
+      {#if fieldErrors['name']}
+        <p class="field-error" id="name-error" data-testid="name-error">
+          {fieldErrors['name']}
+        </p>
+      {/if}
     </label>
 
     <label>
@@ -277,12 +338,21 @@
 
     <label>
       <span>RNG</span>
-      <select bind:value={rng}>
+      <select
+        bind:value={rng}
+        aria-invalid={!!fieldErrors['rng']}
+        aria-describedby="rng-hint{fieldErrors['rng'] ? ' rng-error' : ''}"
+      >
         {#each meta.rng as r}
           <option value={r}>{r}</option>
         {/each}
       </select>
-      <small>'off' = deterministic; 'on' = seeded random picks.</small>
+      <small id="rng-hint">'off' = deterministic; 'on' = seeded random picks.</small>
+      {#if fieldErrors['rng']}
+        <p class="field-error" id="rng-error" data-testid="rng-error">
+          {fieldErrors['rng']}
+        </p>
+      {/if}
     </label>
 
     {#if rng === 'on'}
@@ -294,13 +364,28 @@
   </fieldset>
 
   <!-- ---- sources ----------------------------------------------- -->
-  <fieldset>
+  <!-- §16.5 c3 — `aria-invalid` isn't valid on role=group (implicit
+       on <fieldset>); the inline <p id="sources-error"> below the
+       legend carries the announcement via aria-live on the
+       form-level ErrorBanner. -->
+  <fieldset
+    aria-describedby="sources-hint{fieldErrors['sources'] ? ' sources-error' : ''}"
+  >
     <legend>Sources</legend>
-    <p class="hint">
+    <p class="hint" id="sources-hint">
       Imported iTunes-XML pools this station draws from. 'content' pools feed
       layout blocks; 'reference' pools are available to the engine but
       aren't placed directly (e.g. the dedup <code>RG_MASTER</code> in Classics).
     </p>
+    {#if fieldErrors['sources']}
+      <!-- §16.5 c3 — c0 tags fieldset-level errors (duplicate
+           source names) with `field=sources`. Rendered above the
+           table so the operator sees which legend the message
+           refers to. -->
+      <p class="field-error" id="sources-error" data-testid="sources-error">
+        {fieldErrors['sources']}
+      </p>
+    {/if}
 
     <table class="list">
       <thead>
@@ -338,11 +423,47 @@
     </p>
     <label>
       <span>base_advance_per_week</span>
-      <input type="number" bind:value={baseAdvancePerWeek} min="0" />
+      <input
+        type="number"
+        bind:value={baseAdvancePerWeek}
+        min="0"
+        aria-required="true"
+        aria-invalid={!!fieldErrors['cursor.base_advance_per_week']}
+        aria-describedby={fieldErrors['cursor.base_advance_per_week']
+          ? 'cursor-base-error'
+          : undefined}
+      />
+      {#if fieldErrors['cursor.base_advance_per_week']}
+        <p
+          class="field-error"
+          id="cursor-base-error"
+          data-testid="cursor-base-error"
+        >
+          {fieldErrors['cursor.base_advance_per_week']}
+        </p>
+      {/if}
     </label>
     <label>
       <span>cycle_weeks</span>
-      <input type="number" bind:value={cycleWeeks} min="1" />
+      <input
+        type="number"
+        bind:value={cycleWeeks}
+        min="1"
+        aria-required="true"
+        aria-invalid={!!fieldErrors['cursor.cycle_weeks']}
+        aria-describedby={fieldErrors['cursor.cycle_weeks']
+          ? 'cursor-cycle-error'
+          : undefined}
+      />
+      {#if fieldErrors['cursor.cycle_weeks']}
+        <p
+          class="field-error"
+          id="cursor-cycle-error"
+          data-testid="cursor-cycle-error"
+        >
+          {fieldErrors['cursor.cycle_weeks']}
+        </p>
+      {/if}
     </label>
   </fieldset>
 
@@ -453,12 +574,19 @@
   .ghost-link { color: #666; text-decoration: none; font-size: 0.9rem; }
   .ghost-link:hover { text-decoration: underline; }
 
-  .error {
-    color: crimson;
+  /* §16.5 c3 — `.error` retired; banner-style copy now lives in
+     ErrorBanner. `.field-error` is the inline per-field message
+     attached via aria-describedby — sized smaller than the banner
+     because it sits next to a single input, not above the whole
+     form. */
+  .field-error {
+    color: #b71c1c;
     background: #fff5f5;
-    border: 1px solid #fed7d7;
-    padding: 0.5rem 0.75rem;
-    border-radius: 4px;
+    border-left: 3px solid #b71c1c;
+    padding: 0.25rem 0.5rem;
+    margin: 0.25rem 0 0;
+    font-size: 0.85rem;
+    border-radius: 2px;
   }
 
   /* ---- disclosures (JSON preview + diff) ---------------------------- */

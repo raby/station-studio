@@ -133,17 +133,63 @@ export interface Trace {
 
 class ApiError extends Error {
   status: number;
-  constructor(status: number, message: string) {
+  /** §16.5 c3 — optional parsed JSON body. When the server returns
+   *  `Content-Type: application/json` on a non-OK response (e.g. the
+   *  §16.5 c0 structured-error envelope `{detail, errors:[...]}`),
+   *  the `json` helper populates this so callers can surface
+   *  per-field error association via `aria-describedby`. Stays
+   *  undefined for plain-text / HTML error bodies — callers MUST
+   *  feature-detect before reading. */
+  body?: unknown;
+  constructor(status: number, message: string, body?: unknown) {
     super(message);
     this.status = status;
+    this.body = body;
     this.name = 'ApiError';
   }
 }
 
+/** §16.5 c3 — shape of the c0 backend structured-error envelope.
+ *  Exported so wizard / edit-form callers can narrow `ApiError.body`
+ *  to a typed shape before reading `errors[*].field`. */
+export interface TemplateErrorBody {
+  detail: string;
+  errors: { field: string | null; message: string }[];
+}
+
+export function isTemplateErrorBody(b: unknown): b is TemplateErrorBody {
+  if (typeof b !== 'object' || b === null) return false;
+  const o = b as Record<string, unknown>;
+  return Array.isArray(o.errors) && typeof o.detail === 'string';
+}
+
+/** Parse the response body once on the non-OK path, preferring JSON
+ *  but degrading to text. Returns text-form for the Error message
+ *  and structured-form for ApiError.body when the response declares
+ *  `application/json`. `res.headers` is optional-chained so test
+ *  doubles that fake `Response` without a `headers` property still
+ *  fall through to text-only (matches prior behaviour). */
+async function readErrorBody(res: Response): Promise<{ text: string; body?: unknown }> {
+  const raw = await res.text();
+  const ct = res.headers?.get?.('content-type') ?? '';
+  if (ct.includes('application/json') && raw) {
+    try {
+      return { text: raw, body: JSON.parse(raw) };
+    } catch {
+      // Malformed JSON despite the header — fall through to text-only.
+    }
+  }
+  return { text: raw };
+}
+
 async function json<T>(res: Response): Promise<T> {
   if (!res.ok) {
-    const body = await res.text();
-    throw new ApiError(res.status, `${res.status} ${res.statusText}: ${body}`);
+    const { text, body } = await readErrorBody(res);
+    throw new ApiError(
+      res.status,
+      `${res.status} ${res.statusText}: ${text}`,
+      body,
+    );
   }
   return (await res.json()) as T;
 }
@@ -155,8 +201,12 @@ async function json<T>(res: Response): Promise<T> {
  */
 async function noContent(res: Response): Promise<void> {
   if (!res.ok) {
-    const body = await res.text();
-    throw new ApiError(res.status, `${res.status} ${res.statusText}: ${body}`);
+    const { text, body } = await readErrorBody(res);
+    throw new ApiError(
+      res.status,
+      `${res.status} ${res.statusText}: ${text}`,
+      body,
+    );
   }
 }
 

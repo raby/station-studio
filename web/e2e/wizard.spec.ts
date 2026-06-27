@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { assertNoA11yViolations } from './a11y';
 
 /**
  * Wizard specs focus on the happy path — the full UI → API flow.
@@ -16,6 +17,14 @@ test.describe('station wizard', () => {
       await expect(page.getByRole('group', { name: legend })).toBeVisible();
     }
     await expect(page.getByRole('button', { name: 'Create station' })).toBeVisible();
+  });
+
+  test('§16.5 c3 — /stations/new passes axe-core WCAG audit', async ({ page }) => {
+    // Wait for hydration so the form is mounted; pre-hydration the
+    // tree is just the loading shell + skip-link.
+    await page.goto('/stations/new');
+    await expect(page.locator('html[data-wizard-ready]')).toBeAttached();
+    await assertNoA11yViolations(page);
   });
 
   test('happy path: fill + submit creates station and lands on detail', async ({

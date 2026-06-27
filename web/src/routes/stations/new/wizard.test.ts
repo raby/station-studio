@@ -12,10 +12,12 @@ import '@testing-library/jest-dom/vitest';
 const { gotoMock, createStationMock, getMetaMock, loadMetaMock, FakeApiError } = vi.hoisted(() => {
   class FakeApiError extends Error {
     status: number;
-    constructor(status: number, message: string) {
+    body?: unknown;
+    constructor(status: number, message: string, body?: unknown) {
       super(message);
       this.name = 'ApiError';
       this.status = status;
+      this.body = body;
     }
   }
   // Standard meta fixture mirroring `GET /api/meta` (DESIGN.md §14.19).
@@ -45,6 +47,13 @@ vi.mock('$lib/api', () => ({
   createStation: (...args: unknown[]) => createStationMock(...args),
   getMeta: (...args: unknown[]) => getMetaMock(...args),
   ApiError: FakeApiError,
+  // §16.5 c3 — minimal type guard mirroring the real impl so the
+  // wizard's `e.body` introspection branch fires in tests.
+  isTemplateErrorBody: (b: unknown): boolean => {
+    if (typeof b !== 'object' || b === null) return false;
+    const o = b as Record<string, unknown>;
+    return Array.isArray(o.errors) && typeof o.detail === 'string';
+  },
 }));
 vi.mock('$lib/meta', () => ({
   loadMeta: (...args: unknown[]) => loadMetaMock(...args),
@@ -182,6 +191,74 @@ describe('station wizard (new +page.svelte)', () => {
     await fireEvent.click(screen.getByRole('button', { name: /create station/i }));
 
     expect(await screen.findByText(/invalid template: bad/i)).toBeInTheDocument();
+    expect(gotoMock).not.toHaveBeenCalled();
+  });
+
+  it('§16.5 c3 — c0 structured error tags rng field with aria-describedby', async () => {
+    // The c0 backend envelope `{detail, errors: [{field, message}]}`
+    // gets parsed by the wizard catch block; tagged fields render
+    // an inline <p id="X-error"> and the input picks up
+    // `aria-invalid="true"` + `aria-describedby="X-error"`. Pins
+    // the backend→frontend contract for screen-reader error
+    // association.
+    createStationMock.mockRejectedValueOnce(
+      new FakeApiError(
+        400,
+        '400 Bad Request: invalid template',
+        {
+          detail: 'invalid template: rng must be one of [off, on]',
+          errors: [{ field: 'rng', message: 'rng must be one of [off, on]' }],
+        },
+      ),
+    );
+
+    render(Page);
+    await fireEvent.input(
+      await screen.findByPlaceholderText('rebirth-classics'),
+      { target: { value: 'ok' } },
+    );
+    await fireEvent.input(screen.getByPlaceholderText('Rebirth Classics'), {
+      target: { value: 'OK' },
+    });
+    await fireEvent.input(screen.getByPlaceholderText('RG_RADIO'), {
+      target: { value: 'A' },
+    });
+    await fireEvent.input(
+      screen.getByPlaceholderText('Mon, Tue, Wed, Thu, Fri, Sat, Sun'),
+      { target: { value: 'Mon' } },
+    );
+    await fireEvent.input(
+      screen.getByPlaceholderText('0, 10, 20, 30, 40, 50, 50'),
+      { target: { value: '0' } },
+    );
+    const blockSource = screen.getByTestId('block-source') as HTMLSelectElement;
+    await fireEvent.change(blockSource, { target: { value: 'A' } });
+
+    await fireEvent.click(screen.getByRole('button', { name: /create station/i }));
+
+    // Inline per-field error renders with the tagged message + a
+    // stable id matching the input's aria-describedby.
+    const rngError = await screen.findByTestId('rng-error');
+    expect(rngError).toHaveAttribute('id', 'rng-error');
+    expect(rngError.textContent).toMatch(/rng must be one of/);
+
+    // The rng <select> is now flagged invalid and points at the
+    // inline error via aria-describedby. The hint id stays in the
+    // describedby list so the screen reader still gets the
+    // "'off' = deterministic" context.
+    const rngSelect = screen
+      .getByText('RNG')
+      .parentElement!
+      .querySelector('select')!;
+    expect(rngSelect.getAttribute('aria-invalid')).toBe('true');
+    expect(rngSelect.getAttribute('aria-describedby')).toBe('rng-hint rng-error');
+
+    // Banner copy comes from the structured `detail` (cleaner
+    // human-readable form than the raw error text). Pin to the
+    // banner via its testId — the inline rng-error also carries
+    // the same substring, so a bare findByText would be ambiguous.
+    const banner = await screen.findByTestId('station-form-error');
+    expect(banner.textContent).toMatch(/rng must be one of/i);
     expect(gotoMock).not.toHaveBeenCalled();
   });
 

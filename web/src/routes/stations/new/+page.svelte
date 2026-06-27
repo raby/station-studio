@@ -19,6 +19,7 @@
   import type { Meta } from '$lib/api';
   import { loadMeta } from '$lib/meta';
   import StationForm from '$lib/components/StationForm.svelte';
+  import ErrorBanner from '$lib/components/ErrorBanner.svelte';
 
   // Meta loads once, shared with the edit route via the lib/meta cache
   // (DESIGN.md §14.19). Fetch in onMount; render the form only after the
@@ -61,8 +62,15 @@
     Validation runs server-side against <code>engine.template.parse_template</code>.
   </p>
 
+  <!-- §16.5 c3 — meta-fetch failure via ErrorBanner. Assertive
+       because the form can't render without meta — the operator
+       hit a hard wall, not a recoverable validation miss. -->
   {#if metaError}
-    <p class="error">Could not load meta: {metaError}</p>
+    <ErrorBanner
+      message={`Could not load meta: ${metaError}`}
+      severity="assertive"
+      prefix="Wizard"
+    />
   {:else if meta}
     <StationForm mode="create" {meta} onSubmit={handleCreate} />
   {:else}
@@ -95,5 +103,6 @@
     border-radius: 3px;
     font-size: 0.85em;
   }
-  .error { color: crimson; }
+  /* §16.5 c3 — `.error` retired; meta-load failure now renders via
+     <ErrorBanner> which owns its own styling. */
 </style>
