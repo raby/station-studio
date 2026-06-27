@@ -8,8 +8,24 @@
    * screen readers; `severity` controls both the role (status vs
    * alert) and the announcement urgency.
    *
-   * Renders nothing when `message` is null/empty so the live
-   * region only fires when the announcement matters.
+   * §16.5 c5 closeout — severity policy across the codebase:
+   *
+   *   - `assertive` is reserved for page-level hard stops where
+   *     the route cannot render its primary content (load
+   *     failures like `getStation()` 404, meta endpoint
+   *     unreachable, fatal hydration error). The SR-speech
+   *     interrupt is justified because the operator can't act
+   *     on anything else until they resolve it.
+   *   - `polite` covers EVERY recoverable inline error: form
+   *     submission validation failures, save/regen/delete/fork
+   *     errors, rollback failures, disk-export failures. The
+   *     operator can read the message in their own time and
+   *     retry; interrupting SR speech on every retry is
+   *     overkill.
+   *
+   * When in doubt: polite. Assertive is a sledgehammer; a
+   * misuse erodes the SR-user's trust that the announcement
+   * matters.
    *
    * Props:
    *   - `message` — the human-readable error string, or null to

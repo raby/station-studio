@@ -696,10 +696,15 @@
            message an aria-live region + a consistent visual
            treatment with every other error in the app. The
            `testId` keeps the existing `rollback-error`
-           data-testid live for any external selector. -->
+           data-testid live for any external selector.
+           §16.5 c5 closeout — downgraded to polite per the
+           codebase severity policy: rollback failure is
+           recoverable (try again, the prior version still
+           exists), so it queues politely rather than
+           interrupting SR speech. -->
       <ErrorBanner
         message={rollbackError}
-        severity="assertive"
+        severity="polite"
         prefix="Rollback failed"
         testId="rollback-error"
       />

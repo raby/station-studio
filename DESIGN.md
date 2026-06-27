@@ -6329,7 +6329,7 @@ Inserted into the strategic sequence based on §16.0 audit:
 | §14.42 Classics cycle wrap (weeks 17-32) | tiny (1 commit) | Phase B tail; locks Classics cursor-cycle wrap edge, symmetric with §14.41's mix-slide lock for weekly. |
 | §14.38b Multi-prior import support | small (2-3 commits) | Phase B tail; no demand today. |
 | §16.4 Trace versioning | medium | Deferred. Not on critical path post-Phase-B. |
-| §16.5 A11y pass (sub-items enumerated below) | medium | Single sweep after §16.2 + the rest ship. |
+| ~~§16.5 A11y pass~~ | **SHIPPED 2026-06-27** | 6 commits (c0-c5) + 5 review-fix sweeps. Drained the §14.5 / §14.7 / §14.9 / §16.1 N3 punts. See "### 16.5 Accessibility pass" SHIPPED block. |
 | §16.23 Week-vs-week trace diff | small-medium | Waits for use case ("what changed from last week?"). |
 
 **Reading the tables:**
@@ -10657,9 +10657,20 @@ opportunistically when a real ask surfaces.
 
 **Tier 3 — polish + maintenance**:
 
-8. **§16.5 accessibility pass** — drains every per-slice a11y punt
-   across the editor + trace viewer + station/playlist routes. Wide
-   sweep, shallow per file.
+8. ~~**§16.5 accessibility pass**~~ — ✅ SHIPPED 2026-06-27 across
+   6 commits (c0 backend structured-error prereq + c1 shared
+   scaffolding + axe CI gate + c2 trace viewer + c3 wizard +
+   per-field association + c4 station detail + c5 closeout) plus
+   5 review-fix sweeps. Codebase-wide severity policy (assertive
+   = page hard-stop only; polite = recoverable retry) codified
+   in `ErrorBanner.svelte`. New surfaces: skip-link, focus-visible
+   ring, `<main id="main-content">` landmark, `<ErrorBanner>` /
+   `.visually-hidden` utility, `aria-required` / `aria-invalid` /
+   `aria-describedby` wiring on the wizard, structured-error
+   envelope on POST/PUT `/api/stations`, axe-core/playwright CI
+   gate (3 route smokes; serious + critical fail CI). 7 punts
+   (§16.5.t1-t7) captured inline for promote-when-trigger-fires.
+   See "### 16.5 Accessibility pass" for the full SHIPPED block.
 9. **§16.20 mobile / narrow-viewport CSS pass** — editor + trace
    viewer are desktop-only today.
 10. ~~**§16.16 disk-export prune endpoint**~~ — ✅ SHIPPED 2026-06-26
@@ -11056,6 +11067,108 @@ plate when we get here):
   navigation; don't try to preserve.
 
 ### 16.5 Accessibility pass
+
+**✅ SHIPPED 2026-06-27** across 6 commits (c0 backend prereq, c1
+shared scaffolding + axe CI gate, c2 trace viewer, c3 wizard +
+per-field error association, c4 station detail + generate panel,
+c5 closeout) plus 5 review-fix sweeps (R-batches per commit).
+
+**What landed:**
+
+* **Backend structured errors (c0):** `TemplateError(message, *,
+  field=None)` carries an optional field tag; `parse_template`
+  tags 4 leaves (`rng`, `sources`, `cursor.base_advance_per_week`,
+  `cursor.cycle_weeks`). `POST /api/stations` and `PUT
+  /api/stations/{slug}` 400-paths return `{detail: str, errors:
+  [{field, message}]}` via JSONResponse — `detail` stays a
+  string for backward compat, `errors[]` is the new wizard-
+  consumable per-field surface.
+* **Shared scaffolding (c1):** `+layout.svelte` owns a global
+  skip-link (focus-revealed top-left), a global `:focus-visible`
+  ring (3px #0066cc, AA contrast), and the `.visually-hidden`
+  utility (clip + clip-path + 1px-box). `<main id="main-content"
+  tabindex="-1">` on every route's `<main>` so the skip-link
+  resolves AND moves focus (not just scroll). New
+  `<ErrorBanner>` component centralises 3 previously-bespoke
+  inline-error styles with `role=alert + aria-live=assertive`
+  / `role=status + aria-live=polite` per `severity` prop;
+  `prefix=""` suppresses framing label; `compact` flag drops
+  bordered box for tight forms.
+* **Axe CI gate (c1):** `@axe-core/playwright` wired into
+  `e2e/a11y.ts` with `assertNoA11yViolations(page, {include?,
+  exclude?})`. WCAG 2.0 + 2.1 A/AA tags; `serious` + `critical`
+  impacts fail CI; `minor`/`moderate` log without gating.
+  Smokes added to landing, wizard, station-detail.
+* **Trace viewer a11y (c2):** Row-header `<header role=button>`
+  gets `aria-expanded={!collapsed}` + `aria-controls`; filter
+  inputs/selects get `aria-label`s; rollback / tag-save /
+  disk-export inline errors migrate to ErrorBanner.
+* **Wizard a11y (c3):** Identity + cursor inputs carry
+  `aria-required` / `aria-invalid` / `aria-describedby`. Catch
+  block introspects `ApiError.body` via the new
+  `isTemplateErrorBody` type guard (per-item shape check),
+  populates `fieldErrors`, renders inline `<p
+  id="X-error">` companions. `clearFieldError(key)` on input
+  drops aria-invalid back to false as soon as the user edits
+  the offending field. ApiError gains optional `body` populated
+  by `json` / `noContent` / `cancelJob` via `readErrorBody`.
+* **Station detail a11y (c4):** Load failure, generate, delete,
+  fork errors migrate to ErrorBanner. Empty action `<th></th>`
+  columns gain `<span class="visually-hidden">View/Regenerate/
+  Delete</span>` (closes §16.1 N3).
+
+**Codebase-wide severity policy (locked in c5 closeout):**
+
+* `assertive` is reserved for page-level hard stops where the
+  route cannot render its primary content (`getStation()` 404,
+  meta endpoint unreachable, fatal hydration error). The SR-
+  speech interrupt is justified because the operator can't act
+  on anything else until they resolve it. Today's two
+  call-sites: `/stations/new` meta-load failure,
+  `/stations/[slug]` station-load failure.
+* `polite` covers every recoverable inline error: form-submit
+  validation, save/regen/delete/fork failures, rollback
+  failures, disk-export failures, tag-save failures. The
+  operator reads in their own time and retries; interrupting
+  SR speech on every retry is overkill.
+* **When in doubt: polite.** Misuse of assertive erodes the
+  SR-user's trust that the announcement matters. Codified in
+  `ErrorBanner.svelte`'s top-of-component comment.
+
+  c5 downgraded two previously-assertive sites to polite per
+  this policy: StationForm submit-error, and the rollback-error
+  in `/playlists/[id]`.
+
+**What this earned us:**
+
+* Consistent ARIA across every shipped route (single skip-link,
+  single focus ring, single banner component).
+* `@axe-core/playwright` gates every future PR — landing /
+  wizard / station-detail smokes catch the common regressions
+  (missing labels, color-contrast, landmark drift). 35%
+  automated catch-rate; the remaining 65% needs a manual
+  VoiceOver / NVDA pass that's queued as §16.5.t7.
+* The §14.x punt tables stop accumulating "a11y" rows — new
+  code is held to the ErrorBanner + ARIA conventions from day
+  one.
+* The c0 backend structured-error surface is reusable for any
+  future form (the per-field aria-describedby contract is
+  generic).
+
+**Punts (post-slice, awaiting trigger):** §16.5.t1
+(OpenAPI 400-envelope schema), §16.5.t2 (`<StatusBanner>`
+sibling for success/info), §16.5.t3 (preSubmit→fieldErrors
+propagation), §16.5.t4 (ErrorBanner color tokens for dark-mode
+prep), §16.5.t5 (role + aria-live duplication audit), §16.5.t6
+(action-column header convention — verb-headers vs Actions
+colspan), §16.5.t7 (manual VoiceOver pass on cancel→retry
+generate path).
+
+---
+
+**Original design pass + locked decisions (preserved as the
+brief the implementation was built against; status block above
+captures what shipped):**
 
 **Why this one matters but not yet.** Every shipped slice has noted
 a11y gaps in its own §14.x punt list — §14.5 (trace viewer: ARIA on

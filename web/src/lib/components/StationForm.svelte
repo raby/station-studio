@@ -298,13 +298,16 @@
 -->
 <div class="station-form">
   <!-- §16.5 c3 — ErrorBanner replaces the bespoke <p class="error">.
-       Assertive severity matches the §16.6 D3 spec for form
-       failures (the operator's submit failed; they need to know
-       now, not on next focus shift). testId preserves the
-       wizard.spec.ts selector. -->
+       §16.5 c5 closeout — `severity="polite"` per the codebase
+       policy: form-submit failure is recoverable (the operator
+       fixes the inputs + resubmits), so it queues politely
+       instead of interrupting SR speech. Assertive is reserved
+       for page-level load failures where the route can't render
+       its primary content. testId preserves the wizard.spec.ts
+       selector. -->
   <ErrorBanner
     message={error}
-    severity="assertive"
+    severity="polite"
     prefix="Form"
     testId="station-form-error"
   />
