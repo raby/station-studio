@@ -20,6 +20,7 @@
   } from '$lib/api';
   import ProgressIndicator from '$lib/components/ProgressIndicator.svelte';
   import PoolImportPanel from '$lib/components/sources/PoolImportPanel.svelte';
+  import ErrorBanner from '$lib/components/ErrorBanner.svelte';
   import { confirmDialog } from '$lib/confirm';
   import { page } from '$app/stores';
 
@@ -390,7 +391,17 @@
   {#if loading}
     <p>Loading…</p>
   {:else if error}
-    <p class="error">{error}</p>
+    <!-- §16.5 c4 — load failure via ErrorBanner. Assertive
+         severity: the page can't render anything else without
+         station data, so the operator hit a hard wall. Per the
+         c2/c3/c4 codebase convention (see DESIGN.md §16.5
+         severity policy): assertive = "can't proceed", polite =
+         "recoverable, try again". -->
+    <ErrorBanner
+      message={error}
+      severity="assertive"
+      prefix="Could not load station"
+    />
   {:else if station}
     <header class="station-header">
       <div>
@@ -487,11 +498,16 @@
               disabled={forking}
             />
           </label>
-          {#if forkError}
-            <div class="fork-error" data-testid="fork-error" role="status">
-              {forkError}
-            </div>
-          {/if}
+          <!-- §16.5 c4 — fork-error already had role=status (the
+               pre-§16.5 form). Migrating to ErrorBanner for
+               consistency with the other inline errors in this
+               page; polite severity matches the prior contract. -->
+          <ErrorBanner
+            message={forkError}
+            severity="polite"
+            prefix="Fork"
+            testId="fork-error"
+          />
           <div class="fork-actions">
             <button
               type="submit"
@@ -704,9 +720,17 @@
         <ProgressIndicator job={currentJob} on:cancel={handleCancel} />
       {/if}
 
-      {#if generateError}
-        <p class="error" data-testid="generate-error">{generateError}</p>
-      {/if}
+      <!-- §16.5 c4 — generate failure via ErrorBanner. Polite
+           severity per the §16.5 severity policy: this is the
+           recoverable "regen failed, try again" path; assertive
+           would interrupt SR speech on every retry. testId
+           preserves existing e2e selectors. -->
+      <ErrorBanner
+        message={generateError}
+        severity="polite"
+        prefix="Generate"
+        testId="generate-error"
+      />
     </section>
 
     {#if playlists.length === 0}
@@ -719,14 +743,20 @@
            table + §16.25 PoolImportPanel embed (both also use <table>). -->
       <table data-testid="playlists-table">
         <thead>
+          <!-- §16.5 c4 — visually-hidden labels for the three
+               action columns (view, regen, delete). Empty <th>s
+               read aloud as "blank" in SR-table-navigation mode;
+               named columns give the screen reader something to
+               announce as the user tabs through cells. The
+               .visually-hidden utility lives in +layout.svelte. -->
           <tr>
             <th>Week</th>
             <th>Slots</th>
             <th>Generated</th>
             <th>Trace</th>
-            <th></th>
-            <th></th>
-            <th></th>
+            <th><span class="visually-hidden">View</span></th>
+            <th><span class="visually-hidden">Regenerate</span></th>
+            <th><span class="visually-hidden">Delete</span></th>
           </tr>
         </thead>
         <tbody>
@@ -765,9 +795,14 @@
           {/each}
         </tbody>
       </table>
-      {#if deleteError}
-        <p class="error" data-testid="delete-error">{deleteError}</p>
-      {/if}
+      <!-- §16.5 c4 — delete failure via ErrorBanner. Polite —
+           the row delete is recoverable (the row is still there). -->
+      <ErrorBanner
+        message={deleteError}
+        severity="polite"
+        prefix="Delete"
+        testId="delete-error"
+      />
     {/if}
   {/if}
 </main>
@@ -921,11 +956,7 @@
     border: 1px solid var(--border, #ccc);
     border-radius: 3px;
   }
-  .fork-error {
-    color: var(--error, #c0392b);
-    font-size: 0.85rem;
-    padding: 0.3rem 0;
-  }
+  /* §16.5 c4 — `.fork-error` retired; styling now via ErrorBanner. */
   .fork-actions {
     display: flex;
     gap: 0.5rem;
@@ -1167,10 +1198,7 @@
   .link-btn:disabled {
     color: #999;
   }
-  .error {
-    color: crimson;
-    margin-top: 0.5rem;
-  }
+  /* §16.5 c4 — `.error` retired; styling now via ErrorBanner. */
   .hint {
     color: #666;
     font-size: 0.9rem;

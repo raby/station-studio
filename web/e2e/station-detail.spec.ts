@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { createStation, importTinyPool, generate } from './fixtures';
+import { assertNoA11yViolations } from './a11y';
 
 test.describe('station detail page', () => {
   test('shows the empty-state CTA when the station is fresh', async ({
@@ -13,6 +14,23 @@ test.describe('station detail page', () => {
     // CTA. The hint sentence is still there, just rephrased.
     await expect(page.getByTestId('generate-empty-cta')).toBeVisible();
     await expect(page.getByText(/none generated yet/i)).toBeVisible();
+  });
+
+  test('§16.5 c4 — /stations/[slug] passes axe-core WCAG audit', async ({
+    page,
+    request,
+  }) => {
+    // Audit the populated-table path so the c4 visually-hidden
+    // <th> labels are in scope. The empty-state path covers a
+    // different DOM and could regress separately; cover the
+    // playlists-table presence since that's where the §14.5
+    // gap-list entries live.
+    await importTinyPool(request, 'A');
+    await createStation(request, 'det-a11y', 'Det A11y');
+    await generate(request, 'det-a11y', 1);
+    await page.goto('/stations/det-a11y');
+    await expect(page.getByTestId('playlists-table')).toBeVisible();
+    await assertNoA11yViolations(page);
   });
 
   test('lists generated playlists in a table with week, slots, trace', async ({

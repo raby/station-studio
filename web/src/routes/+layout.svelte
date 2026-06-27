@@ -80,4 +80,22 @@
   :global(main[tabindex="-1"]:focus) {
     outline: none;
   }
+
+  /* §16.5 c4 — visually-hidden utility for SR-only labels
+     (e.g. empty action-column <th>s, icon-button context). Uses
+     the standard clip+1px-box pattern so the node stays in the
+     a11y tree (announced by SR) while taking zero visual space.
+     Distinct from the skip-link's "hidden-until-focused" pattern:
+     this one never appears. */
+  :global(.visually-hidden) {
+    border: 0;
+    clip: rect(0, 0, 0, 0);
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    padding: 0;
+    position: absolute;
+    white-space: nowrap;
+    width: 1px;
+  }
 </style>
