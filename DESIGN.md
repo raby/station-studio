@@ -14129,6 +14129,41 @@ its UI shape. Lands once the major slices are stable.
 **Effort.** Medium (~5-8 commits: mkdocs.yml + site structure +
 content extraction + GH Pages CI workflow + branded styling).
 
+**Decisions locked 2026-06-28 (slice start, post-§16.20).**
+
+* **D1 — Hosting: GitHub Pages.** Free, version-controlled, fits
+  the OSS posture. CI builds the site from `docs/` on every push
+  to main and pushes to the `gh-pages` branch. Custom-domain
+  hook reserved for later via a `CNAME` file if needed.
+* **D2 — Scope: all 3 tracks (Tutorial + Reference +
+  Architecture)** in one slice. Tutorial is a single "your
+  first station in 10 minutes" walkthrough; Reference covers
+  template grammar + strategy reference + auto-rendered API +
+  auto-rendered CLI; Architecture extracts ~6 curated DESIGN.md
+  §14.x entries (the load-bearing ones future contributors need)
+  with a "Read DESIGN.md for the full archive" disclaimer.
+* **D3 — Reference is auto-generated.** API ref renders
+  `/openapi.json` at build time via `mkdocs-render-swagger-plugin`
+  (or `neoteroi-mkdocs`'s OpenAPI plugin if the swagger plugin
+  doesn't fit). CLI ref embeds `station-studio --help` output
+  via a small `scripts/dump_cli_help.py` invoked from CI
+  pre-build. Keeps the docs in lockstep with the code; drift is
+  a CI failure, not a silent staleness.
+
+**Commit plan (7 commits + reviews):**
+
+| c# | What |
+|---|---|
+| c1 | MkDocs scaffold (`docs/mkdocs.yml` + `docs/index.md` + Material theme + `make docs-serve` / `docs-build` Makefile targets + GH Pages CI workflow) |
+| c2 | Tutorial track — "your first station in 10 minutes" walkthrough |
+| c3 | Reference: template grammar + strategy reference (hand-written from existing `stations/README.md` + `engine/template.py` docstrings) |
+| c4 | Reference: API auto-render via `/openapi.json` |
+| c5 | Reference: CLI auto-render via `station-studio --help` dump |
+| c6 | Architecture: curated §14.x extracts (6-8 entries) + cross-links to DESIGN.md |
+| c7 | Branded styling + nav polish + 404 + favicon + SHIPPED closeout |
+
+Each commit gets its own inline review per the cadence.
+
 ---
 
 ### 16.16 Disk-export prune endpoint
