@@ -14,8 +14,10 @@ sampling strategies, REST API, and CLI commands.
   `window`, `sequential`, `jingle`, `archive_ref`, `prev_ref`)
   with required fields, semantics, and a "when to use" line
   for each.
-- :material-api: **API** — auto-rendered from `/openapi.json`.
-  *(Landing in §16.15 c4.)*
+- :material-api: **[API](api.md)** — auto-rendered Swagger UI
+  from the FastAPI app's `app.openapi()` schema. Always in
+  lockstep with the running code; CI regenerates the JSON
+  before every docs build.
 - :material-console: **CLI** — auto-rendered from
   `station-studio --help`. *(Landing in §16.15 c5.)*
 

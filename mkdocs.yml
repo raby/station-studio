@@ -43,6 +43,13 @@ theme:
   icon:
     repo: fontawesome/brands/github
 
+plugins:
+  - search
+  # §16.15 c4 — render Swagger UI inline from the openapi.json
+  # dumped by `make docs-openapi`. Plugin reads files referenced
+  # by the `!!swagger filename!!` directive in markdown.
+  - render_swagger
+
 markdown_extensions:
   # Material's "must-have" set: admonitions for callouts, fenced
   # code blocks with syntax highlighting, footnotes, tables.
@@ -89,5 +96,6 @@ nav:
       - reference/index.md
       - Template grammar: reference/template-grammar.md
       - Strategies: reference/strategies.md
+      - API: reference/api.md
   - Architecture:
       - architecture/index.md

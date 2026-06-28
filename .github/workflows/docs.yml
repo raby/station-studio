@@ -68,10 +68,17 @@ jobs:
         # mkdocs-material bump publishes a near-empty / "Page not
         # found" site. Cheap byte-count + content sniff catches
         # blank-template regressions before they hit Pages.
+        # §16.15 c4 — also verify the API reference rendered
+        # (swagger-ui-dist script present + the dumped openapi
+        # has paths in it).
         run: |
           test -f site/index.html
           [ "$(wc -c < site/index.html)" -gt 5000 ]
           grep -q 'Station Studio' site/index.html
+          test -f site/reference/api/index.html
+          grep -q 'swagger-ui-dist' site/reference/api/index.html
+          test -f docs/reference/openapi.json
+          [ "$(wc -c < docs/reference/openapi.json)" -gt 1000 ]
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

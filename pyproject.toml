@@ -71,6 +71,10 @@ dev = [
     # the 9.5.x line; Material has historically renamed theme
     # features within minor releases.
     "mkdocs-material>=9.5,<9.6",
+    # §16.15 c4 — Swagger UI renderer for the API reference
+    # page. Reads docs/reference/openapi.json (build artifact
+    # from `make docs-openapi`).
+    "mkdocs-render-swagger-plugin>=0.1,<1",
 ]
 
 # The headline shipped artifact: `station-studio <subcommand>` runs

@@ -16,7 +16,7 @@
         refresh-port-fixture refresh-port-everything refresh-classics-fixture \
         generate-user-playlists \
         derive-sidecar \
-        docs-serve docs-build
+        docs-serve docs-build docs-openapi
 
 PY := .venv/bin/python
 ALEMBIC := .venv/bin/alembic
@@ -678,8 +678,16 @@ derive-sidecar:
 # `strict: true` in mkdocs.yml fails the build on broken internal
 # links / missing nav entries so drift between code and docs
 # surfaces locally + in CI before the published site goes stale.
-docs-serve:
+# §16.15 c4 — regenerate docs/reference/openapi.json from the
+# FastAPI app's app.openapi() schema. The file is a build artifact
+# (gitignored) consumed by `mkdocs-render-swagger-plugin` to embed
+# Swagger UI in the API reference page. CI runs this before
+# `docs-build`; locally, `docs-build` chains it automatically.
+docs-openapi:
+	$(PY) -m scripts.dump_openapi
+
+docs-serve: docs-openapi
 	$(PY) -m mkdocs serve
 
-docs-build:
+docs-build: docs-openapi
 	$(PY) -m mkdocs build --strict

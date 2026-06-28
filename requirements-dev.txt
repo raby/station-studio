@@ -12,3 +12,8 @@ coverage>=7.0
 # features) requires a manual review instead of silently
 # landing on a push-to-main deploy.
 mkdocs-material>=9.5,<9.6
+# §16.15 c4 — Swagger UI renderer for the auto-generated API
+# reference page. Reads docs/reference/openapi.json (produced
+# by `make docs-openapi` from the FastAPI app's app.openapi()
+# at build time) and embeds Swagger UI inline.
+mkdocs-render-swagger-plugin>=0.1,<1
