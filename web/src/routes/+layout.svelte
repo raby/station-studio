@@ -30,17 +30,20 @@
 <style>
   /* §16.20 c1 — codebase-wide mobile breakpoint. 40rem = 640px
      at the default 16px root size, matches the §16.20 D1 lock.
-     Per-page CSS reads this via `var(--mobile-breakpoint)` in
-     @media queries so a future tablet tier (or theme override)
-     touches one declaration instead of ~15 query call-sites.
 
-     NOTE: CSS variables work inside `@media (max-width: ...)` in
-     modern engines via `@media (width <= var(--mobile-
-     breakpoint))` (CSS Media Queries 4). For broader UA support
-     this slice uses the literal `40rem` in @media queries (the
-     variable is still defined here for JS-side consumption and
-     forward-compat); the literal stays in sync with the
-     variable by convention. */
+     **Honest caveat (c1-review R5):** the variable is purely
+     for JS-side consumption today — `window.matchMedia(\`(max-
+     width: ${getComputedStyle(document.documentElement)
+     .getPropertyValue('--mobile-breakpoint')})\`)` and similar.
+     CSS `@media (max-width: ...)` queries CANNOT consume CSS
+     variables in browsers we target; CSS Media Queries 4's
+     `@media (width <= var(--mobile-breakpoint))` syntax exists
+     but UA support is partial. So per-page CSS @media queries
+     hard-code the literal `40rem`. Changing the variable below
+     ONLY updates JS-side consumers; CSS @media literals must
+     be updated in lockstep. If/when CSS-MQ4 support is
+     universal, drop the literals in favour of the variable and
+     this comment can shrink. */
   :global(:root) {
     --mobile-breakpoint: 40rem;
   }

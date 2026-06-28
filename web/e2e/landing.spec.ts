@@ -20,6 +20,28 @@ test.describe('landing page', () => {
     await assertNoA11yViolations(page);
   });
 
+  test('§16.20 c1 — landing page passes axe-core audit at mobile (375px) viewport', async ({
+    page,
+  }) => {
+    // §16.20 c1-review R1 — the c1 scope (DESIGN.md §16.20 D3)
+    // promised an axe smoke verifying the narrow viewport
+    // doesn't regress a11y. The desktop smoke above only audits
+    // at the default Playwright viewport (1280x720). Resizing to
+    // 375x812 (Playwright's iPhone-X preset) before the audit
+    // exercises the @media (max-width: 40rem) branch — even
+    // pre-c2 where no per-page responsive rules exist yet, this
+    // pins that the shared --mobile-breakpoint variable + the
+    // (currently unmounted) NarrowScreenNotice don't introduce a
+    // narrow-viewport-only regression. c2's page sweep extends
+    // the coverage to each migrated route.
+    await page.setViewportSize({ width: 375, height: 812 });
+    await page.goto('/');
+    await expect(
+      page.getByRole('heading', { name: 'Station Studio' }),
+    ).toBeVisible();
+    await assertNoA11yViolations(page);
+  });
+
   test('shows the heading and the + new station button', async ({ page }) => {
     // Note: this used to also assert the empty-state hint ("No stations
     // yet" / "Bootstrap Rebirth Classics"), but that copy is only visible

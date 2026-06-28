@@ -32,7 +32,10 @@ describe('NarrowScreenNotice', () => {
     // pins the landmark name contract.
     expect(notice!.tagName).toBe('SECTION');
     expect(notice!.textContent).toContain('wider screen');
-    expect(notice!.textContent).toContain('drag-and-drop');
+    // §16.20 c1-review R2 — default body is now generic
+    // ('desktop-only', not visualise-specific). Callers with
+    // surface-specific copy pass an explicit body.
+    expect(notice!.textContent).toContain('desktop-only');
     const link = notice!.querySelector('.back-link');
     expect(link).toHaveAttribute('href', '/back');
     expect(link!.textContent).toContain('Back');
@@ -85,20 +88,63 @@ describe('NarrowScreenNotice', () => {
     ).toBeNull();
   });
 
-  it('each render generates a fresh heading id so multiple notices on one page do not collide', () => {
+  it('two notices mounted simultaneously have distinct aria-labelledby ids', () => {
+    // §16.20 c1-review R3 — the original test used cleanup()
+    // between renders, which only proved per-mount id
+    // regeneration. The docstring claim is stronger: 'multiple
+    // notices on one page do not collide'. Mount two in the
+    // same container (no cleanup) and assert the ids differ —
+    // this catches a regression where headingId became
+    // module-level / shared.
     const { container } = render(NarrowScreenNotice, {
-      props: { backHref: '/a' },
+      props: { backHref: '/a', testId: 'first-notice' },
     });
-    const id1 = container
-      .querySelector('[data-testid="narrow-screen-notice"]')!
-      .getAttribute('aria-labelledby');
-    cleanup();
-    const { container: c2 } = render(NarrowScreenNotice, {
-      props: { backHref: '/b' },
+    // Mount the second instance into the same JSDOM document
+    // (testing-library renders into document.body by default;
+    // back-to-back renders share the body unless cleanup runs).
+    render(NarrowScreenNotice, {
+      props: { backHref: '/b', testId: 'second-notice' },
     });
-    const id2 = c2
-      .querySelector('[data-testid="narrow-screen-notice"]')!
+    const id1 = document
+      .querySelector('[data-testid="first-notice"]')!
       .getAttribute('aria-labelledby');
+    const id2 = document
+      .querySelector('[data-testid="second-notice"]')!
+      .getAttribute('aria-labelledby');
+    expect(id1).toBeTruthy();
+    expect(id2).toBeTruthy();
     expect(id1).not.toBe(id2);
+    // Both ids must resolve to their own heading — collision
+    // would cause one section to point at the wrong heading.
+    expect(document.getElementById(id1!)).not.toBeNull();
+    expect(document.getElementById(id2!)).not.toBeNull();
+  });
+
+  it('headingLevel prop controls the rendered heading tag (default h2)', () => {
+    // §16.20 c1-review R6 — pin the new prop's contract.
+    const { container } = render(NarrowScreenNotice, {
+      props: { backHref: '/back' },
+    });
+    expect(
+      container.querySelector(
+        '[data-testid="narrow-screen-notice"] h2',
+      ),
+    ).not.toBeNull();
+  });
+
+  it('explicit headingLevel renders the matching tag', () => {
+    const { container } = render(NarrowScreenNotice, {
+      props: { backHref: '/back', headingLevel: 1 },
+    });
+    expect(
+      container.querySelector(
+        '[data-testid="narrow-screen-notice"] h1',
+      ),
+    ).not.toBeNull();
+    expect(
+      container.querySelector(
+        '[data-testid="narrow-screen-notice"] h2',
+      ),
+    ).toBeNull();
   });
 });
