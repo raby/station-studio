@@ -72,24 +72,35 @@ shows:
 
 - **Template summary** — 168 slots / week, 2 strategies (`weighted`
   for content, `jingle` every 8 slots)
-- **Source pools** — `STARTER_CONTENT` (50 tracks) and
-  `STARTER_JINGLES` (5 tracks), both auto-imported on first boot
-- **Cursor state** — empty until you generate
+- **Source pools** — three auto-imported on first boot:
+  `STARTER_CONTENT` (50 tracks, role: content),
+  `STARTER_JINGLES` (5 jingle tracks, role: content), and
+  `REFERENCE_ARCHIVE` (role: reference — declared on the
+  template but not placed by any layout block in the Starter;
+  it's there as the third pool you can reach for if you fork).
 
-!!! note "Starter is intentionally small"
+!!! note "Starter is intentionally small + stateless"
     Smallest, most approachable shape — one slot per hour for a
-    week. Perfect for "how does the slot+strategy model work?"
-    before you fork anything bigger.
+    week. Stateless cursors (`persist: false`), so each week
+    generates from pool position 0. Perfect for "how does the
+    slot+strategy model work?" before you fork anything bigger
+    or move on to the Stateful Starter for cross-week cursor
+    state.
 
 ## 3. Generate week 1 (~10 sec)
 
-Click the big **Generate week 1** button. The engine runs in the
-background (you'll see a progress indicator); on completion the
-page reloads with the new playlist row in the table:
+Click the big **Generate week 1 →** button. The engine runs in
+the background (you'll see a progress indicator); on completion
+the page reloads with the new playlist as the first row of a
+table:
 
-| Week | Slots | Generated | Trace | | | |
-|---|---|---|---|---|---|---|
-| 001 | 168 | just now | `b3c8…` | [view →](#) | ↻ regen | ✕ delete |
+| Week | Slots | Generated | Trace | (actions) |
+|---|---|---|---|---|
+| 001 | 168 | just now | `b3c8…` | view → / ↻ regen / ✕ delete |
+
+(The three rightmost columns are unlabelled in the UI — the
+buttons carry their own meaning. The headers exist for screen
+readers via `visually-hidden` labels.)
 
 Click **view →**.
 
@@ -112,8 +123,12 @@ Try this:
    count badge shows "Showing N of 168".
 2. **Filter by source** — pick `STARTER_JINGLES` from the dropdown.
    You should see exactly 21 jingle slots (every 8th: 0, 8, 16…).
-3. **Click any slot's chip** — wait, that's a §16.2 visual-editor
-   feature for a future tutorial. Just admire the layout for now.
+3. **Click "🗺 Visualise template"** in the station header (or
+   navigate to `/stations/starter/visualise`) — the chips on
+   THAT page open a DetailPanel with full block / macro
+   information. Trace-viewer chips here are display-only
+   spans; the visualise canvas is where chip-click editing
+   lives.
 
 The "Why not these? (N)" toggle on each row (when there are
 rejections) shows the engine's reasoning for the picks it
@@ -124,41 +139,62 @@ artist-dedup / recent-use constraints.
 
 Click **Export to disk** in the trace viewer's actions strip. The
 engine writes the iTunes XML to the configured output directory
-(`~/.station-studio/out/starter/001.xml` by default) and reports
-back the path + byte count:
+and reports back the path + byte count in a status banner that
+looks roughly like:
 
-> **Wrote:** `~/.station-studio/out/starter/001.xml` (12 KB)
+> **Wrote:** `/abs/path/out/starter/001.xml` (12 KB)
 
-If you sync `~/.station-studio/out/` to a Dropbox / OneDrive
-folder shared with your iTunes box, every generation lands in
-your library automatically. The same flow drives the Rebirth
-Radio production loop (2,196 slots/week, Mon-Sun, mixed
-strategies).
+The actual path is the **literal string** in that banner — read
+from there, don't infer. The default output dir is `out/`
+(relative to the process working directory: where you ran
+`station-studio serve` from). To set an absolute path that
+survives restarts, write a `Config` row with key
+`playlist_output_dir`:
 
-## 6. Generate week 2 (~10 sec)
+```sql
+-- one-time, against ~/.station-studio/station_studio.db
+INSERT INTO config(key, value) VALUES
+  ('playlist_output_dir', '/Users/you/Dropbox/itunes-sync');
+```
 
-Back on the station detail page, click **Generate week 2**.
+If you sync that directory to a Dropbox / OneDrive folder shared
+with your iTunes box, every generation lands in your library
+automatically. The same flow drives the Rebirth Radio production
+loop (2,196 slots/week, Mon-Sun, mixed strategies).
 
-Cursor state from week 1 carries forward — open `STARTER_CONTENT`
-in the trace viewer's filter and you'll see the engine resumes
-where it left off rather than restarting at pool position 0. This
-is the "shuffle, but smarter" promise: weeks chain.
+## 6. Regenerate + version-pick (~30 sec)
 
-Try **regenerating** week 1 (the ↻ button). The trace updates;
-the old version is preserved (§16.4 trace versioning) and you can
-switch between them via the picker dropdown at the top of the
-trace viewer.
+Back on the station detail page, click the **↻ regen** button
+on the week-001 row. The engine re-runs against the same
+template; on completion the page reloads. Visit the trace
+viewer again — at the top you'll now see a **version picker**
+dropdown showing `v2 (current)` and `v1`.
+
+This is §16.4 trace versioning in action: the prior trace
+isn't deleted, it's preserved as a version you can switch
+back to. Pick `v1` to see the previous picks; pick `v2` to
+return to the current. Each version has its own slot table,
+seed, generated-at timestamp, and trace-id.
+
+!!! note "Why isn't this 'Generate week 2'?"
+    The Starter Station is stateless (cursors set
+    `persist: false`), so week 2 looks identical to week 1
+    aside from RNG variance — there's nothing to demonstrate
+    by stepping forward. The **Stateful Starter** is built for
+    that demo: 336 slots/week with a persistent cursor that
+    advances 24 positions per week, cycling every 14 weeks.
+    Open it from the sidebar after this tutorial finishes.
 
 ## What you just did
 
 | Step | Took | What landed |
 |---|---|---|
-| Install + boot | ~2 min | UI + API + auto-seeded starter station + 2 pools |
-| Look at template | ~1 min | Read 168-slot shape, 2 strategies, 2 sources |
+| Install + boot | ~2 min | UI + API + 4 auto-seeded stations (Starter / Stateful Starter / Rebirth Classics / Rebirth Radio) + 4 auto-imported pools |
+| Look at template | ~1 min | Read 168-slot shape, 2 strategies, 3 declared sources |
 | Generate w1 | ~10 sec | 168 picks via `weighted` + `jingle` strategies |
 | Trace viewer | ~3 min | Per-pick attribution + filter + rejection reasoning |
 | Disk export | ~30 sec | iTunes XML on disk, ready for Dropbox sync |
-| Generate w2 | ~10 sec | Cursor state persistence demonstrated |
+| Regenerate + version pick | ~30 sec | §16.4 trace versioning: prior trace preserved, switchable via dropdown |
 
 Total: well under 10 minutes if you skip the trace deep-dive.
 
@@ -167,11 +203,11 @@ Total: well under 10 minutes if you skip the trace deep-dive.
 <div class="grid cards" markdown>
 
 - :material-school: **Stateful Starter** — your second station,
-  with persistent cursors. Open
-  [stations/stateful-starter.json](https://github.com/raby/station-studio/blob/main/stations/stateful-starter.json)
-  in your editor + read the template; then click it in the UI to
-  see what the engine does with `sequential` + `prev_ref`
-  strategies.
+  with persistent cursors. Click **Stateful Starter** in the
+  sidebar to see what the engine does with `sequential` +
+  `prev_ref` strategies across multiple weeks. Template lives
+  on disk at `stations/stateful-starter.json` if you want to
+  read it side-by-side with the trace.
 - :material-book-open-variant: **[Reference](../reference/index.md)** —
   template grammar, all 8 strategies, the REST API surface, CLI
   commands.
@@ -179,10 +215,11 @@ Total: well under 10 minutes if you skip the trace deep-dive.
   the design notes future contributors need: how cursor advance
   works, how the trace records picks, how the visual editor's
   sidecar grammar maps to the template.
-- :material-fork: **Fork a starter** — click **Fork station** on
-  the Starter Station detail page to copy its template under a new
-  slug; tweak the JSON via the wizard or via your editor (the
-  station file lives under `stations/<slug>.json`).
+- :material-source-fork: **Fork a starter** — back on the
+  Starter Station detail page, click **Fork station** in the
+  header to copy its template under a new slug; tweak via the
+  wizard at `/stations/<new-slug>/edit` or by editing
+  `stations/<new-slug>.json` directly.
 
 </div>
 
