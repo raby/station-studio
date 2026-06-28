@@ -87,5 +87,7 @@ nav:
       - tutorial/index.md
   - Reference:
       - reference/index.md
+      - Template grammar: reference/template-grammar.md
+      - Strategies: reference/strategies.md
   - Architecture:
       - architecture/index.md
