@@ -1,0 +1,76 @@
+# §16.15 c1 — MkDocs scaffold. Material theme; content lives in
+# `docs/`; build output goes to `site/` (gitignored).
+#
+# Local workflow: `make docs-serve` (auto-reload at http://127.0.0.1:8000)
+# Build: `make docs-build`
+# Publish: GitHub Actions (.github/workflows/docs.yml) on push to main.
+
+site_name: Station Studio
+site_description: Generative iTunes XML playlists with a visual block editor.
+site_author: Raby Whyte
+site_url: https://raby.github.io/station-studio/
+
+repo_url: https://github.com/raby/station-studio
+repo_name: raby/station-studio
+edit_uri: edit/main/docs/
+
+# Strict mode fails the build on broken internal links, missing
+# nav entries, etc. Catches drift between mkdocs.yml and the
+# files in docs/ before GH Pages goes stale.
+strict: true
+
+theme:
+  name: material
+  language: en
+  features:
+    # Navigation: top-level tabs + collapsible section nav.
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - navigation.indexes
+    # Content: code-block tooling, copy button, anchor links.
+    - content.code.copy
+    - content.code.annotate
+    - toc.follow
+    - search.suggest
+    - search.highlight
+  palette:
+    # Single light palette for c1 — c7 adds the dark-mode toggle
+    # alongside the brand polish.
+    - scheme: default
+      primary: indigo
+      accent: deep purple
+  icon:
+    repo: fontawesome/brands/github
+
+markdown_extensions:
+  # Material's "must-have" set: admonitions for callouts, fenced
+  # code blocks with syntax highlighting, footnotes, tables.
+  - admonition
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.superfences
+  - pymdownx.snippets
+  - pymdownx.tabbed:
+      alternate_style: true
+  - footnotes
+  - tables
+  - toc:
+      permalink: true
+
+# Nav structure is locked at c1 (Home + Tutorial + Reference +
+# Architecture top tabs); content fills in across c2-c6 via the
+# referenced markdown files. Stubs in docs/tutorial.md /
+# docs/reference/index.md / docs/architecture/index.md keep
+# `strict: true` happy until each track ships.
+nav:
+  - Home: index.md
+  - Tutorial: tutorial.md
+  - Reference:
+      - reference/index.md
+  - Architecture:
+      - architecture/index.md

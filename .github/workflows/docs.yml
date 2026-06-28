@@ -1,0 +1,73 @@
+# §16.15 c1 — Publish the MkDocs site to GitHub Pages.
+#
+# Runs on every push to main. Builds in strict mode (broken
+# internal links / nav drift fail the run) and pushes the rendered
+# `site/` directory to the `gh-pages` branch using the official
+# `actions/deploy-pages` flow.
+#
+# Pre-req (one-time): enable Pages for this repo with source set
+# to "GitHub Actions" (Settings → Pages → Build and deployment →
+# Source = GitHub Actions). The action below assumes that mode;
+# the legacy "Deploy from branch" mode would also work but the
+# Actions mode is what configure-pages targets natively.
+name: docs
+
+on:
+  push:
+    branches: [main]
+  # Manual re-run hook for cases where Pages broke without a
+  # corresponding code change (e.g. a runner image bump).
+  workflow_dispatch:
+
+# Required by actions/deploy-pages — only one in-flight deploy at
+# a time per environment. Newer pushes cancel older ones to avoid
+# stale builds clobbering newer content.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+permissions:
+  # `pages: write` + `id-token: write` are the standard pair the
+  # deploy-pages action needs to publish without a PAT.
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  build:
+    name: build mkdocs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+      - name: install mkdocs-material
+        # Pulling the full dev-deps surface is heavier than the docs
+        # build strictly needs, but matches the deps-parity contract
+        # (the runtime+dev install path the rest of CI exercises).
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install -U pip
+          .venv/bin/pip install -r requirements-dev.txt
+      - name: mkdocs build (strict)
+        run: make docs-build
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site/
+
+  deploy:
+    name: deploy to github pages
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

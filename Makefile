@@ -665,3 +665,20 @@ derive-sidecar:
 	fi
 	@OUT=$$(echo "$(STATION)" | sed 's/\.json$$/.editor.json/'); \
 	  $(PY) -m scripts.derive_sidecar --station "$(STATION)" --out "$$OUT"
+
+# §16.15 c1 — docs site (MkDocs-Material). Source lives in `docs/`;
+# build output goes to `site/` (gitignored). Published to GH Pages
+# from main via .github/workflows/docs.yml.
+#
+# Local workflow:
+#   make docs-serve   # auto-reload at http://127.0.0.1:8000
+#   make docs-build   # one-shot build into site/
+#
+# `strict: true` in mkdocs.yml fails the build on broken internal
+# links / missing nav entries so drift between code and docs
+# surfaces locally + in CI before the published site goes stale.
+docs-serve:
+	$(PY) -m mkdocs serve
+
+docs-build:
+	$(PY) -m mkdocs build --strict

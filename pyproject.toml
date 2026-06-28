@@ -65,6 +65,10 @@ dev = [
     "pytest>=8.0",
     "httpx>=0.27",
     "coverage>=7.0",
+    # §16.15 c1 — docs site build dep. Mirrored in
+    # requirements-dev.txt; check_deps_parity.py enforces both
+    # surfaces stay in sync.
+    "mkdocs-material>=9.5,<10",
 ]
 
 # The headline shipped artifact: `station-studio <subcommand>` runs

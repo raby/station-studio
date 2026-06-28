@@ -4,3 +4,7 @@ httpx>=0.27
 # `coverage` powers `make test-backend`'s --fail-under gate. Pinned so CI
 # matches local — was previously installed transitively (luck).
 coverage>=7.0
+# §16.15 c1 — MkDocs + Material theme for the docs site.
+# Build via `make docs-build`; serve locally via `make docs-serve`.
+# GH Pages publish wired in .github/workflows/docs.yml.
+mkdocs-material>=9.5,<10

@@ -43,3 +43,8 @@ web/coverage/
 # Database backups (DESIGN.md §14.18). User-data; never repo content.
 backups/
 .claude/
+
+# §16.15 c1 — MkDocs build output. Source lives in docs/; the
+# rendered HTML/CSS/JS lands in site/ and is published to GH Pages
+# via the docs workflow, never committed to main.
+site/
