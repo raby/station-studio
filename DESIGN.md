@@ -6279,7 +6279,7 @@ Inserted into the strategic sequence based on §16.0 audit:
 |---|---|---|
 | §16.16 Disk-export prune endpoint | small (~2 commits) | Demand: user reports `out/` clutter. Code path partly designed in §14.3. |
 | §16.18 Trace viewer virtualisation | small-medium | Felt pain: Classics's 3,010-row scroll lag becomes annoying. |
-| §16.20 Mobile / narrow-viewport CSS pass | small-medium | First user tries on a phone, surfaces the overflow. |
+| ~~§16.20 Mobile / narrow-viewport CSS pass~~ | **SHIPPED 2026-06-28** | 3 commits + 2 review-fix sweeps. 40rem breakpoint, NarrowScreenNotice for the visualise editor, StationForm + playlists table cards. 4 follow-up `.tN` punts captured inline. |
 | §16.21 Test follow-ups (mutation + perf) | medium | When refactor confidence demands stronger regression coverage. |
 | §16.22 Trace viewer SSR migration | small | Flash-of-empty-shell becomes annoying or SEO matters. |
 | **§16.11.t1** Pre-materialise pools as dataclasses for the async path | small (~1 commit) | A future engine strategy lazily reads an ORM `Track` relationship → `DetachedInstanceError` only in `/jobs/generate`, not `/generate`. Documented at `start_generate_job`'s `load_pools` call. Promote when it bites. |
@@ -10671,8 +10671,18 @@ opportunistically when a real ask surfaces.
    gate (3 route smokes; serious + critical fail CI). 7 punts
    (§16.5.t1-t7) captured inline for promote-when-trigger-fires.
    See "### 16.5 Accessibility pass" for the full SHIPPED block.
-9. **§16.20 mobile / narrow-viewport CSS pass** — editor + trace
-   viewer are desktop-only today.
+9. ~~**§16.20 mobile / narrow-viewport CSS pass**~~ — ✅ SHIPPED
+   2026-06-28 across 3 commits + 2 review-fix sweeps. Single
+   40rem breakpoint; visualise editor gets `<NarrowScreenNotice>`
+   below the breakpoint (drag-drop is desktop-only); StationForm
+   stacks labels + rotates the sources table to cards; station
+   detail playlists table rotates to cards; station-header
+   stacks vertically. 3 narrow-viewport axe smokes wired in CI
+   (landing, wizard, station detail). 4 follow-up `.tN` punts
+   captured inline (read-only mobile editor view, onMount
+   early-return guard, screenshot-diff coverage, media-aware
+   CSS mixin). See "### 16.20 Mobile / narrow-viewport CSS
+   pass" for the full SHIPPED block.
 10. ~~**§16.16 disk-export prune endpoint**~~ — ✅ SHIPPED 2026-06-26
     (commit 4a2b6a5 + review-fix commit). `POST
     /api/playlists/export/prune` walks the configured output dir,
@@ -14354,7 +14364,54 @@ edits" hint ships in the generations card, gated on `stale_count`
 
 ### 16.20 Mobile / narrow-viewport CSS pass
 
-**Why this matters.** Today the trace viewer + stations list +
+**✅ SHIPPED 2026-06-28** across 3 commits (c1 shared
+scaffolding + 6-finding review-fix sweep, c2 page sweep + 8-
+finding review-fix sweep, c3 closeout).
+
+**What landed:**
+
+* **Shared scaffolding (c1):** `--mobile-breakpoint: 40rem`
+  CSS variable on `:root` (JS-side consumption only; per-page
+  @media queries hard-code the literal `40rem` because CSS-MQ4
+  `@media (max-width: var(--...))` lacks broad UA support).
+  New `<NarrowScreenNotice>` component with configurable
+  `headingLevel` (1-6), `compact` flag, prop-overridable copy.
+  Reusable for any future desktop-only surface — visualise
+  editor is today's only consumer.
+* **Page sweep (c2):**
+  * `/stations/[slug]/visualise` — wraps the 2200-line desktop
+    tree in `<div class="visualise-desktop">`; below 40rem the
+    wrapper is `display:none` and `<NarrowScreenNotice
+    headingLevel={1}>` renders instead (back-link to the
+    station detail page).
+  * `<StationForm>` (used by `/stations/new` +
+    `/stations/[slug]/edit`) — labels stack above inputs, the
+    sources table rotates to cards via `display: block` + `td::
+    before { content: attr(data-label) }`, color picker stays
+    intrinsically sized.
+  * `/stations/[slug]` — playlists table rotates to cards
+    (Week / Slots / Generated / Trace labelled per row),
+    action cells (View / Regen / Delete) carry an explicit
+    `action-cell` class for clarity. Station header +
+    header-actions stack vertically.
+* **CI gate:** 3 narrow-viewport axe smokes (landing, wizard,
+  station detail) — Playwright resizes to 375x812 before
+  running `assertNoA11yViolations`.
+
+**Out of scope (deferred to `.tN` punts):** `/sources`
+PoolImportPanel grid, `/stations/[slug]/rules` RulesPanel
+(flex-wrap handles it well enough), `/playlists/[id]` slots
+table (3010 rows would explode the DOM if cardified —
+horizontal scroll is the right answer there).
+
+**Punts (post-slice, awaiting trigger):**
+- §16.20.t1 — read-only mobile view of the visualise editor
+- §16.20.t2 — editor onMount early-return guard on phones
+- §16.20.t3 — visual-regression coverage for responsive CSS
+- §16.20.t4 — media-aware CSS mixin for thead-only-when-narrow
+  visually-hidden
+
+**Why this mattered.** Today the trace viewer + stations list +
 wizard all overflow horizontally on small screens (~640px). For an
 OSS hobbyist product, "tried it on my phone" is a real first-
 impression vector.
