@@ -131,3 +131,78 @@
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+/* ---- §16.20 c2: mobile / narrow-viewport overrides ----------------
+   Below the 40rem breakpoint the form stacks: label-span above
+   input, hint indent drops, min-widths relax so a 375px viewport
+   (iPhone SE / Galaxy Fold inner) doesn't overflow horizontally.
+   The list-table (sources rows) stays a table because each row
+   has 3 narrow cells + 1 button that fit even at 320px. */
+@media (max-width: 40rem) {
+  .station-form label > span {
+    display: block;
+    min-width: 0;
+    margin-bottom: 0.25rem;
+  }
+  .station-form label small {
+    margin-left: 0;
+  }
+  .station-form input:not([type]),
+  .station-form input[type='number'],
+  .station-form select {
+    min-width: 0;
+    width: 100%;
+    box-sizing: border-box;
+  }
+  /* Sources table: rotate to vertical cards. Each <tr> becomes a
+     stacked block; <td> labels are derived from a `data-label`
+     attribute the markup passes (see StationForm.svelte) so SR
+     users + sighted users see the column meaning per row. */
+  .station-form table.list,
+  .station-form table.list thead,
+  .station-form table.list tbody,
+  .station-form table.list tr,
+  .station-form table.list th,
+  .station-form table.list td {
+    display: block;
+  }
+  .station-form table.list thead {
+    /* Use the same visually-hidden pattern as the rest of the app
+       (clip + clip-path + 1px box) so SR users still get the
+       column-header announcements during card navigation. */
+    border: 0;
+    clip: rect(0, 0, 0, 0);
+    clip-path: inset(50%);
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    padding: 0;
+    position: absolute;
+    white-space: nowrap;
+    width: 1px;
+  }
+  .station-form table.list tr {
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    margin-bottom: 0.5rem;
+    padding: 0.5rem;
+  }
+  .station-form table.list td {
+    border-bottom: none;
+    padding: 0.25rem 0;
+    text-align: left;
+  }
+  .station-form table.list td::before {
+    content: attr(data-label);
+    display: block;
+    font-size: 0.75rem;
+    color: #666;
+    font-weight: 600;
+    margin-bottom: 0.15rem;
+    text-transform: uppercase;
+  }
+  .station-form table.list td:last-child {
+    width: auto;
+    text-align: left;
+  }
+}

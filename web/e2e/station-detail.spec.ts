@@ -40,6 +40,24 @@ test.describe('station detail page', () => {
     await assertNoA11yViolations(page);
   });
 
+  test('§16.20 c2 — /stations/[slug] passes axe-core audit at 375px viewport', async ({
+    page,
+    request,
+  }) => {
+    // §16.20 c2 — playlists table rotates to cards below 40rem
+    // via `data-label::before` pseudo-elements; the action-cells
+    // stack as inline buttons at the bottom of each card. Audit
+    // verifies the responsive overrides don't regress label
+    // associations on the table-to-card transformation.
+    await page.setViewportSize({ width: 375, height: 812 });
+    await importTinyPool(request, 'A');
+    await createStation(request, 'det-mobile', 'Det Mobile');
+    await generate(request, 'det-mobile', 1);
+    await page.goto('/stations/det-mobile');
+    await expect(page.getByTestId('playlists-table')).toBeVisible();
+    await assertNoA11yViolations(page);
+  });
+
   test('lists generated playlists in a table with week, slots, trace', async ({
     page,
     request,

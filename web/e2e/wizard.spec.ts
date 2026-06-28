@@ -36,6 +36,23 @@ test.describe('station wizard', () => {
     await assertNoA11yViolations(page);
   });
 
+  test('§16.20 c2 — /stations/new passes axe-core audit at 375px viewport', async ({
+    page,
+  }) => {
+    // §16.20 c2 — wizard form stacks to single column below 40rem
+    // via _form-shared.css overrides; the sources table rotates
+    // to cards with data-label::before pseudo-elements. Audit
+    // verifies the responsive overrides don't regress label
+    // associations / focus order / contrast on a narrow viewport.
+    await page.setViewportSize({ width: 375, height: 812 });
+    await page.goto('/stations/new');
+    await Promise.race([
+      page.locator('html[data-wizard-ready]').waitFor({ state: 'attached' }),
+      page.getByTestId('error-banner').waitFor({ state: 'visible' }),
+    ]);
+    await assertNoA11yViolations(page);
+  });
+
   test('happy path: fill + submit creates station and lands on detail', async ({
     page,
     request,

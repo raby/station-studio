@@ -465,11 +465,16 @@
         <tr><th>Name</th><th>Colour</th><th>Role</th><th></th></tr>
       </thead>
       <tbody>
+        <!-- §16.20 c2 — `data-label` attrs feed the
+             `@media (max-width: 40rem)` rule in _form-shared.css:
+             each <td> renders its label via `::before { content:
+             attr(data-label) }` when the table rotates to cards
+             at narrow widths. -->
         {#each sources as s, i}
           <tr>
-            <td><input bind:value={s.name} placeholder="RG_RADIO" autocomplete="off" /></td>
-            <td><input type="color" bind:value={s.colour} /></td>
-            <td>
+            <td data-label="Name"><input bind:value={s.name} placeholder="RG_RADIO" autocomplete="off" /></td>
+            <td data-label="Colour"><input type="color" bind:value={s.colour} /></td>
+            <td data-label="Role">
               <select bind:value={s.role}>
                 {#each meta.roles as r}
                   <option value={r}>{r}</option>

@@ -72,6 +72,7 @@
   import EditorCanvas from '$lib/components/editor/EditorCanvas.svelte';
   import MacroPalette from '$lib/components/editor/MacroPalette.svelte';
   import TracePane from '$lib/components/editor/TracePane.svelte';
+  import NarrowScreenNotice from '$lib/components/NarrowScreenNotice.svelte';
 
   let template: StationTemplate | null = null;
   let sidecar: Sidecar | null = null;
@@ -2219,6 +2220,31 @@
 <svelte:window on:keydown={handleModalKeydown} />
 
 <main id="main-content" tabindex="-1">
+  <!--
+    §16.20 c2 — narrow-viewport gate. The visual block editor
+    (canvas + chip drag-drop + DetailPanel + TracePane) is
+    fundamentally a desktop affordance: drag targets are too
+    small for touch, chip flows wrap unpredictably below 40rem,
+    and the TracePane needs the side-by-side layout. Below
+    40rem the editor's <div class="visualise-desktop"> is
+    hidden via CSS and the operator sees this notice with a
+    back-link to the station detail page. Above 40rem the
+    notice is hidden and the editor renders normally.
+
+    Cost acknowledged in §16.20 c1: the editor's onMount still
+    runs below 40rem (mount cost paid for invisible content);
+    if a phone-user profile shows it matters, an
+    early-return guard at the top of onMount is the fix.
+  -->
+  <NarrowScreenNotice
+    backHref="/stations/{encodeURIComponent(slug)}"
+    backLabel="← Back to {slug}"
+    heading="Visual editor needs a wider screen"
+    body="The drag-and-drop block editor is built for desktop layouts and doesn't translate to phone-width viewports. Open this page on a screen 640px wide or larger to edit; the station detail page works at any size."
+    testId="visualise-narrow-notice"
+  />
+
+  <div class="visualise-desktop">
   <p class="crumbs">
     <a href="/stations/{encodeURIComponent(slug)}">← {slug}</a>
   </p>
@@ -2478,9 +2504,26 @@
       {/if}
     </div>
   {/if}
+  </div><!-- /.visualise-desktop -->
 </main>
 
 <style>
+  /* §16.20 c2 — hide the desktop editor below the mobile
+     breakpoint (NarrowScreenNotice handles that range). The
+     CSS-only gate avoids any JS branching in this 2500-line
+     file; the editor still mounts on phones (acknowledged
+     mount-cost in c1) but it's invisible until viewport
+     grows past 40rem. Above 40rem the notice is hidden by
+     its own internal rule and the editor renders. */
+  .visualise-desktop {
+    display: block;
+  }
+  @media (max-width: 40rem) {
+    .visualise-desktop {
+      display: none;
+    }
+  }
+
   main {
     font-family: system-ui, sans-serif;
     max-width: 900px;

@@ -759,7 +759,7 @@
     {:else}
       <!-- data-testid set so e2e can disambiguate from §16.19 pools
            table + §16.25 PoolImportPanel embed (both also use <table>). -->
-      <table data-testid="playlists-table">
+      <table data-testid="playlists-table" class="playlists-table">
         <thead>
           <!-- §16.5 c4 — visually-hidden labels for the three
                action columns (view, regen, delete). Empty <th>s
@@ -778,12 +778,17 @@
           </tr>
         </thead>
         <tbody>
+          <!-- §16.20 c2 — `data-label` attrs feed the
+               narrow-viewport `td::before { content: attr(data-label) }`
+               rule. The action-column cells (View/Regen/Delete)
+               don't carry a label because their buttons already
+               read the action; doubling would be noisy. -->
           {#each playlists as p}
             <tr>
-              <td class="num">{String(p.week).padStart(3, '0')}</td>
-              <td class="num">{p.entry_count}</td>
-              <td>{fmtDate(p.generated_at)}</td>
-              <td class="mono">{p.trace_id.slice(0, 8)}…</td>
+              <td class="num" data-label="Week">{String(p.week).padStart(3, '0')}</td>
+              <td class="num" data-label="Slots">{p.entry_count}</td>
+              <td data-label="Generated">{fmtDate(p.generated_at)}</td>
+              <td class="mono" data-label="Trace">{p.trace_id.slice(0, 8)}…</td>
               <td><a href="/playlists/{p.id}">view →</a></td>
               <td>
                 <button
@@ -1231,5 +1236,72 @@
     background: #f4f4f4;
     padding: 0.1em 0.3em;
     border-radius: 3px;
+  }
+
+  /* ---- §16.20 c2: mobile / narrow-viewport ---------------------- */
+  /* Below 40rem the playlists table rotates to cards. Each <tr>
+     becomes a stacked block with the column meaning surfaced via
+     the data-label ::before pseudo-element. View / Regen / Delete
+     buttons stack at the bottom of each card with a thin separator. */
+  @media (max-width: 40rem) {
+    .playlists-table,
+    .playlists-table thead,
+    .playlists-table tbody,
+    .playlists-table tr,
+    .playlists-table th,
+    .playlists-table td {
+      display: block;
+    }
+    .playlists-table thead {
+      /* Visually-hidden but stays in the a11y tree (same pattern as
+         the global `.visually-hidden` utility in +layout.svelte). */
+      border: 0;
+      clip: rect(0, 0, 0, 0);
+      clip-path: inset(50%);
+      height: 1px;
+      margin: -1px;
+      overflow: hidden;
+      padding: 0;
+      position: absolute;
+      white-space: nowrap;
+      width: 1px;
+    }
+    .playlists-table tr {
+      border: 1px solid #e4e4e4;
+      border-radius: 4px;
+      margin-bottom: 0.75rem;
+      padding: 0.6rem;
+    }
+    .playlists-table td {
+      padding: 0.2rem 0;
+      text-align: left;
+    }
+    .playlists-table td[data-label]::before {
+      content: attr(data-label);
+      display: inline-block;
+      min-width: 5rem;
+      font-size: 0.75rem;
+      color: #666;
+      font-weight: 600;
+      text-transform: uppercase;
+      margin-right: 0.5rem;
+    }
+    /* Action cells (View / Regen / Delete) — no data-label, but
+       stack inline so the three buttons share a row at the bottom. */
+    .playlists-table td:not([data-label]) {
+      display: inline-block;
+      margin-right: 0.75rem;
+      margin-top: 0.4rem;
+    }
+  }
+
+  /* ---- §16.20 c2: filter bar wraps + station-header stacks ------ */
+  @media (max-width: 40rem) {
+    .station-header,
+    .header-actions {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 0.5rem;
+    }
   }
 </style>
