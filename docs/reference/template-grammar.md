@@ -40,8 +40,8 @@ it via `POST/PUT /api/stations`; the visual editor renders it at
 | Field    | Required | Constraints |
 |---       |---       |---|
 | `name`   | yes      | Pool name; matches the `SourcePlaylist.name` you imported. Unique within `sources[]`. |
-| `colour` | yes      | CSS hex (`#RRGGBB`). Drives the chip palette in the trace viewer + visual editor. |
-| `role`   | yes      | `"content"` (placeable by layout blocks) or `"reference"` (only usable by `archive_ref` / `prev_ref` / `cross_pool_dedup_sources`). |
+| `colour` | yes      | CSS hex — `#RGB`, `#RRGGBB`, or `#RRGGBBAA`. Drives the chip palette in the trace viewer + visual editor. |
+| `role`   | yes      | `"content"` (placeable by `weighted` / `window` / `pick` / `sequential` / `jingle` / `mix` / `prev_ref` blocks — `prev_ref` reads cross-week from the same *content* pool, not from a reference pool) or `"reference"` (consumed by `archive_ref` blocks, `allowlist_sources` arrays, and the `cross_pool_dedup_sources` station rule). |
 
 ## CursorSpec
 
@@ -49,21 +49,37 @@ it via `POST/PUT /api/stations`; the visual editor renders it at
 {
   "base_advance_per_week": 60,
   "cycle_weeks": 16,
-  "persist": true,
-  "cursors_init": { "MORNING_1": 0, "EVENING_1": 1500 }
+  "persist": true
 }
 ```
 
 | Field                    | Required | Constraints |
 |---                       |---       |---|
-| `base_advance_per_week`  | yes      | Integer ≥ 0. The amount each persistent cursor advances per generated week (unless overridden by `cursor_advance_step` rule). |
+| `base_advance_per_week`  | yes      | Integer ≥ 0. Per-week stateless cursor offset (and the fallback for stateful cursors when `cursor_advance_step` isn't set). |
 | `cycle_weeks`            | yes      | Integer ≥ 0. The wrap period; `0` means "no wrap, position grows until pool underflow" (Weekly-style). |
-| `persist`                | no       | Bool, default `false`. Opt-in to **stateful** cursors — when `true`, named cursors (those referenced by `sequential` blocks via `cursors_init`) keep their position across weeks in the `cursor_state` table. Stateless stations regenerate from position 0 every week. |
-| `cursors_init`           | no       | Map of cursor-id → initial 0-indexed position. Required for `sequential` blocks; their `cursor_id` field must reference a key here. |
+| `persist`                | no       | Bool, default `false`. Opt-in to **stateful** cursors — when `true`, named cursors (those referenced by `sequential` blocks via `layout.cursors_init`) keep their position across weeks in the `cursor_state` table. Stateless stations recompute each week as `cursors_init[id] + week × base_advance_per_week`. |
+
+!!! note "cursors_init lives under `layout`, not `cursor`"
+    Per-cursor starting positions are part of the layout, not
+    the cursor block — see [LayoutSpec](#layoutspec). The
+    `sequential` strategy's `cursor_id` field references a key
+    in `layout.cursors_init` (parser raises if the cross-check
+    fails).
 
 ## LayoutSpec
 
-Two flavours; pick one. Both produce the same slot output.
+Two mutually-exclusive flavours; pick one. They produce
+**different trace shapes** — `row_template` records each
+slot's `(row, unit)` (so a 7×24 station has rows 1-7 with
+unit labels `Mon`...`Sun`); `flat_slots` records every slot
+as `row=1, unit=""`. Downstream tools that filter the trace by
+unit/row will see different data depending on which form the
+station uses; the slot-count math is also different (rows ×
+row_template-size vs. literal slot list length).
+
+Both layouts may also define `cursors_init` — the map of
+named-cursor IDs → initial 0-indexed positions consumed by
+`sequential` blocks. Required if any block uses a `cursor_id`.
 
 ### `row_template` (programmatic)
 
@@ -146,8 +162,11 @@ Wizard-tagged fields (errors map to a specific input):
 - `sources` (e.g. duplicate names)
 - `cursor.base_advance_per_week`
 - `cursor.cycle_weeks`
+- `cursor.persist` (boolean type-check raise)
 
 Deep cross-field errors (e.g. layout mismatches, unknown
 strategies, block→source role mismatches) stay in the
 catch-all error banner — they don't map 1:1 to a wizard
-input. See `engine/template.py` for the full raise-site list.
+input. `engine/template.py` is the source-of-truth for the
+full raise-site list; grep for `field=` to see which fields
+get the per-field association.

@@ -35,46 +35,67 @@ no signal.
 
 ## `weighted`
 
-Weighted random pick. Each track's pick probability is
-proportional to its weight (read from the iTunes XML
-`Play Count` or a per-pool override). With `window: N`, the
-sampler picks from the next `N`-track window starting at the
-cursor — turning weighted into "weighted within a sliding
-window" (useful for limiting how far from the cursor the
-engine can reach).
+Tier-fallback weighted pick from the full pool. Probability is
+**not** a per-track weight in the database; the sampler
+computes weights at sampling time from `remaining²` (remaining =
+artist's pool count − their cycle-used count) so under-represented
+artists are favoured. Three tiers: artist-dedup → relaxed-dedup
+→ unconstrained — each tier widens the candidate set if the
+previous tier produced no eligible picks.
+
+`window: N` controls the **artist-dedup sliding window** — the
+last `N` picks whose artist must not match this pick's artist.
+Default is `10`. Smaller = looser dedup; `0` disables the
+artist constraint entirely.
 
 ```json
 {
   "source": "STARTER_CONTENT", "strategy": "weighted", "size": 23,
-  "window": 50
+  "window": 8
 }
 ```
 
 **When to use.** The default content strategy. Most stations'
-biggest blocks are `weighted`.
+biggest blocks are `weighted`. Tune `window` per-block when a
+mix of long + short blocks share a pool: long blocks tolerate a
+bigger artist-dedup window, short interstitials may need a
+smaller one.
 
 ## `window`
 
-Pick within a sliding window starting at the cursor. The window
-size is implicit from `size` — `size: 8` reads 8 candidates from
-the cursor onwards. Pure positional, no RNG.
+Deterministic consecutive read: returns `size` tracks in pool
+order starting at the block's cursor position. No RNG, no
+candidate selection — `size: 8` returns exactly the 8
+consecutive pool entries from the cursor onwards.
 
 ```json
 { "source": "STARTER_CONTENT", "strategy": "window", "size": 8 }
 ```
 
-**When to use.** Programmatic blocks where you want
-deterministic forward walks. Rarely used compared to
-`sequential`.
+**When to use.** Block-sized chunks of a curated pool that
+should preserve original ordering (e.g. an album side, a
+sequenced segment). Differs from `sequential` in that `window`
+uses the per-row positional offset, not a named cursor.
 
 ## `sequential`
 
-Walk a **named** cursor through the source pool. Each pick
-advances the cursor by 1; the cursor's starting position comes
-from `layout.cursors_init[cursor_id]`. If
-`cursor.persist: true`, the cursor's end-of-week position is
-saved in the `cursor_state` table and resumed next week — the
-basis for "weeks chain" semantics.
+Walk a **named** cursor through the source pool. Three advance
+steps to keep straight:
+
+* **Within a block** — consecutive picks read consecutive
+  positions (within-block step = 1).
+* **Across blocks within one generation** — the cursor advances
+  by `block.size` so the next block reading the same cursor
+  picks up immediately after this block.
+* **Across weeks** — when `cursor.persist: true`, named cursors
+  resume from their end-of-week position in the `cursor_state`
+  table and advance by `cursor_advance_step` (a per-station
+  rule, default `120`); when `persist: false` the cursor is
+  recomputed each week as
+  `cursors_init[cursor_id] + week × base_advance_per_week`.
+
+The cursor's starting position for week 1 is
+`layout.cursors_init[cursor_id]`.
 
 ```json
 {
@@ -92,9 +113,12 @@ Stateful Starter is built around this). Pairs with
 
 ## `jingle`
 
-Pick from a single-genre subset of the source pool. Most
-stations declare a separate `_JINGLES` pool to keep the genre
-filter cheap; you can also filter a content pool by genre.
+Pick from a single-genre subset of the source pool. The genre
+filter runs **per pick** against the full pool (not at
+pool-load time — the pool itself is shared whole with any
+other block reading the same source). Most stations declare a
+separate `_JINGLES` pool to keep the genre filter cheap; you
+can also filter a content pool by genre.
 
 ```json
 {
@@ -103,8 +127,10 @@ filter cheap; you can also filter a content pool by genre.
 }
 ```
 
-**Required.** `genre` — non-empty string. Tracks without the
-matching genre are skipped at pool-load time.
+**Required.** `genre` — non-empty string. Pool tracks whose
+genre doesn't match are excluded from candidates for this
+block, but remain visible to other blocks reading the same
+pool.
 
 **When to use.** Jingles, station idents, sweepers,
 weather/news drops — any short content with a stable cadence.
@@ -135,10 +161,18 @@ genre-themed stations.
 ## `prev_ref`
 
 Read the previous week's slot at a fixed position. Pure
-cross-week reference — does NOT advance any cursor. If the
-prior week is missing (e.g. first generated week), falls back
-to picking from `fallback_genre` if provided; otherwise the
-slot is empty.
+cross-week reference — does NOT advance any cursor.
+**Source role: `content`** (the source is the same pool the
+prior week's slot was placed into; the *playlist* being
+referenced is cross-week, not the pool).
+
+If the mirror attempt fails (no prior week, or the position
+wasn't in the prior playlist), the generator falls back via
+the **`mix` strategy** when `fallback_genre` is provided —
+which is why `fallback_genre` exists as an option — and via
+**`weighted`** on the same source when no fallback is
+specified. There is no "empty slot" outcome; every position
+gets a track one way or another.
 
 ```json
 {
@@ -198,7 +232,10 @@ pool already.
 
 - `engine/template.py` — `_require_strategy_field` calls + the
   `SUPPORTED_STRATEGIES` set
-- `engine/sampling/` — per-strategy generator implementations
+- `engine/strategies/` — per-strategy generator implementations
+  (one module per strategy: `weighted.py`, `window.py`, etc.)
+- `engine/generator.py` — block dispatch, cursor advance,
+  prev_ref fallback routing into mix / weighted
 - `stations/README.md` — pattern recipes + worked examples
   (deeper jingle composition, archive_ref position tables,
   cross-pool dedup, etc.)
