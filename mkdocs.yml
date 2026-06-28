@@ -61,6 +61,20 @@ markdown_extensions:
   - tables
   - toc:
       permalink: true
+  # §16.15 c1-review R1 — `attr_list` powers Material's
+  # `:material-...:` icon shortcodes + the `markdown` HTML
+  # attribute used by `<div class="grid cards" markdown>`;
+  # `md_in_html` lets Python-Markdown descend INTO that div
+  # so the inner bullet list is parsed as markdown. Without
+  # both, the homepage grid-cards block renders as literal
+  # `:material-rocket-launch: **[Tutorial](tutorial.md)** —`
+  # text (verified in the committed site/index.html on the
+  # initial scaffold build).
+  - attr_list
+  - md_in_html
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
 
 # Nav structure is locked at c1 (Home + Tutorial + Reference +
 # Architecture top tabs); content fills in across c2-c6 via the
@@ -69,7 +83,8 @@ markdown_extensions:
 # `strict: true` happy until each track ships.
 nav:
   - Home: index.md
-  - Tutorial: tutorial.md
+  - Tutorial:
+      - tutorial/index.md
   - Reference:
       - reference/index.md
   - Architecture:

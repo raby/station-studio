@@ -25,7 +25,7 @@ tool behind [Rebirth Radio](https://github.com/raby/rebirth-radio)'s
 
 <div class="grid cards" markdown>
 
-- :material-rocket-launch: **[Tutorial](tutorial.md)** —
+- :material-rocket-launch: **[Tutorial](tutorial/index.md)** —
   your first station in 10 minutes
 - :material-book-open-variant: **[Reference](reference/index.md)** —
   template grammar, strategy reference, API, CLI

@@ -15,7 +15,8 @@
         import-station import-weekly-pools refresh-rebirth-radio \
         refresh-port-fixture refresh-port-everything refresh-classics-fixture \
         generate-user-playlists \
-        derive-sidecar
+        derive-sidecar \
+        docs-serve docs-build
 
 PY := .venv/bin/python
 ALEMBIC := .venv/bin/alembic

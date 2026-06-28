@@ -26,21 +26,28 @@ concurrency:
   group: pages
   cancel-in-progress: true
 
+# §16.15 c1-review R2 — workflow-level perms stay at the minimum
+# (`contents: read`); the elevated `pages: write` + `id-token:
+# write` pair scopes to the deploy job only. The build job does
+# checkout + pip install + mkdocs build — a compromised dep
+# during that run should NOT inherit pages-write or OIDC-mint
+# capability. Matches the per-job scoping pattern in publish.yml.
 permissions:
-  # `pages: write` + `id-token: write` are the standard pair the
-  # deploy-pages action needs to publish without a PAT.
   contents: read
-  pages: write
-  id-token: write
 
 jobs:
   build:
     name: build mkdocs
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
+          # §16.15 c1-review R4 — matches publish.yml + ci.yml
+          # (3.12 = Dockerfile runtime base). If ci.yml bumps to a
+          # newer Python, bump this too in lockstep.
           python-version: '3.12'
           cache: 'pip'
           cache-dependency-path: |
@@ -56,6 +63,15 @@ jobs:
           .venv/bin/pip install -r requirements-dev.txt
       - name: mkdocs build (strict)
         run: make docs-build
+      - name: smoke-check build artifact
+        # §16.15 c1-review R10 — fail loud if a future
+        # mkdocs-material bump publishes a near-empty / "Page not
+        # found" site. Cheap byte-count + content sniff catches
+        # blank-template regressions before they hit Pages.
+        run: |
+          test -f site/index.html
+          [ "$(wc -c < site/index.html)" -gt 5000 ]
+          grep -q 'Station Studio' site/index.html
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
@@ -65,6 +81,10 @@ jobs:
     name: deploy to github pages
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      # Elevated perms scoped to the deploy job only.
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

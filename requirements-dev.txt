@@ -7,4 +7,8 @@ coverage>=7.0
 # §16.15 c1 — MkDocs + Material theme for the docs site.
 # Build via `make docs-build`; serve locally via `make docs-serve`.
 # GH Pages publish wired in .github/workflows/docs.yml.
-mkdocs-material>=9.5,<10
+# §16.15 c1-review R5 — tightened from <10 to <9.6 so a minor
+# bump (which Material has historically used to rename theme
+# features) requires a manual review instead of silently
+# landing on a push-to-main deploy.
+mkdocs-material>=9.5,<9.6

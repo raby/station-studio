@@ -67,8 +67,10 @@ dev = [
     "coverage>=7.0",
     # §16.15 c1 — docs site build dep. Mirrored in
     # requirements-dev.txt; check_deps_parity.py enforces both
-    # surfaces stay in sync.
-    "mkdocs-material>=9.5,<10",
+    # surfaces stay in sync. §16.15 c1-review R5 — pinned to
+    # the 9.5.x line; Material has historically renamed theme
+    # features within minor releases.
+    "mkdocs-material>=9.5,<9.6",
 ]
 
 # The headline shipped artifact: `station-studio <subcommand>` runs
