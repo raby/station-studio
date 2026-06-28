@@ -2236,10 +2236,19 @@
     if a phone-user profile shows it matters, an
     early-return guard at the top of onMount is the fix.
   -->
+  <!-- §16.20 c2-review R8 — `headingLevel={1}` keeps the page
+       outline valid at narrow viewports: the desktop tree's
+       <h1>Visualise template</h1> sits inside the display:none
+       wrapper below 40rem, so without this override the page
+       would have only an h2 visible (axe `page-has-heading-one`
+       violation + a heading-order skip from nothing to h2). At
+       desktop widths the notice itself is display:none so the
+       h1 it would emit has no effect. -->
   <NarrowScreenNotice
     backHref="/stations/{encodeURIComponent(slug)}"
     backLabel="← Back to {slug}"
     heading="Visual editor needs a wider screen"
+    headingLevel={1}
     body="The drag-and-drop block editor is built for desktop layouts and doesn't translate to phone-width viewports. Open this page on a screen 640px wide or larger to edit; the station detail page works at any size."
     testId="visualise-narrow-notice"
   />

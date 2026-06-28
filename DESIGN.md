@@ -14424,6 +14424,52 @@ slice is medium.
 | `/playlists/[id]/compare` | Already card-based; just verify breakpoint |
 | `/sources` | Sources list → cards below 640px |
 
+**Punts (post-slice, awaiting trigger):**
+
+* **§16.20.t1 read-only mobile view of the visualise editor.**
+  Today below 40rem the operator sees `<NarrowScreenNotice>`
+  with a back-link only. A future read-only mode could render
+  the chip-list at narrow widths (no drag, no edit, no
+  DetailPanel) so a phone user can at least inspect the
+  template structure. **Promote when:** a phone user reports
+  needing to view the template structure away from a desktop.
+
+* **§16.20.t2 editor onMount early-return guard.** The
+  visualise editor's onMount still runs on phones below 40rem
+  (sidecar fetch, canvas generation, scroll/keyboard listeners
+  ~ 200-500ms cost) even though the desktop tree is
+  `display: none`. Add `if (window.matchMedia('(max-width:
+  40rem)').matches) return;` at the top of onMount + a
+  resize-listener that triggers the deferred mount when the
+  viewport grows past the breakpoint. **Promote when:** a
+  phone-user profile shows the mount cost matters, OR
+  battery-drain reports surface.
+
+* **§16.20.t3 visual-regression coverage for responsive CSS.**
+  c1+c2 verified the responsive sweep via playwright axe
+  smokes at 375px — axe is structural and catches missing
+  labels / contrast / landmark drift, but it CANNOT catch
+  visual regressions like "card padding wrong", "buttons
+  overlap", "color picker stretched comically wide" (the
+  c2-review R2 finding axe missed entirely). Worth a
+  screenshot-diff layer (Playwright's `toHaveScreenshot`
+  baseline) at the 375px viewport for the 3 c2-migrated
+  surfaces. **Promote when:** a visual regression actually
+  ships unnoticed, OR the codebase adopts a wider
+  screenshot-test pattern.
+
+* **§16.20.t4 media-aware CSS mixin for `<thead>`-only-when-
+  narrow visually-hidden.** c2 had to duplicate the
+  clip+clip-path+1px-box pattern inline in two `@media (max-
+  width: 40rem)` blocks (`_form-shared.css` + `/stations/
+  [slug]/+page.svelte`) because the global `.visually-hidden`
+  utility always applies — incompatible with "visually-hidden
+  only at narrow widths". A future PostCSS / Sass mixin (or
+  CSS-MQ4 `@media` + `@container` when UA support arrives)
+  would let one declaration emit the right cascade. **Promote
+  when:** a third table-to-card migration lands and the
+  duplication hits 3 places.
+
 ---
 
 ### 16.21 Test follow-ups — mutation testing + perf benchmarks

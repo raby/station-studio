@@ -147,6 +147,13 @@
   .station-form label small {
     margin-left: 0;
   }
+  /* §16.20 c2-review R2 — `input[type=color]` deliberately
+     excluded from the width:100% rule below. Native color
+     pickers have an intrinsic ~40-50px size on most browsers;
+     stretching to the full card width (~327px on iPhone SE)
+     renders a comically wide swatch. The rest of the input
+     types (text, number, select) benefit from full width on
+     mobile where labels stack above. */
   .station-form input:not([type]),
   .station-form input[type='number'],
   .station-form select {
@@ -157,7 +164,18 @@
   /* Sources table: rotate to vertical cards. Each <tr> becomes a
      stacked block; <td> labels are derived from a `data-label`
      attribute the markup passes (see StationForm.svelte) so SR
-     users + sighted users see the column meaning per row. */
+     users + sighted users see the column meaning per row.
+
+     §16.20 c2-review R1 (false alarm) — the global
+     `.visually-hidden` utility from `+layout.svelte` always
+     applies; the thead here needs to be visually-hidden ONLY
+     below 40rem (and normal-flow above). So the clip pattern
+     stays duplicated inline within this @media block; the
+     `.playlists-table thead` rule in /stations/[slug]/+page.svelte
+     duplicates it for the same reason. Consolidation would
+     require a media-aware CSS mixin (PostCSS / Sass) — out of
+     scope for §16.20, queued as §16.20.tN if it becomes
+     painful with more table-to-card migrations. */
   .station-form table.list,
   .station-form table.list thead,
   .station-form table.list tbody,
@@ -167,9 +185,10 @@
     display: block;
   }
   .station-form table.list thead {
-    /* Use the same visually-hidden pattern as the rest of the app
-       (clip + clip-path + 1px box) so SR users still get the
-       column-header announcements during card navigation. */
+    /* Clip + clip-path + 1px box — same pattern as
+       `.visually-hidden` in +layout.svelte, but applied only
+       within the narrow-viewport @media (see comment above on
+       why a global class can't be used here). */
     border: 0;
     clip: rect(0, 0, 0, 0);
     clip-path: inset(50%);

@@ -789,8 +789,15 @@
               <td class="num" data-label="Slots">{p.entry_count}</td>
               <td data-label="Generated">{fmtDate(p.generated_at)}</td>
               <td class="mono" data-label="Trace">{p.trace_id.slice(0, 8)}…</td>
-              <td><a href="/playlists/{p.id}">view →</a></td>
-              <td>
+              <!-- §16.20 c2-review R3 — `class="action-cell"`
+                   replaces the `td:not([data-label])` selector
+                   from c2. The negation was too permissive: a
+                   future column added without data-label would
+                   silently pick up the inline-block button-row
+                   styling. A whitelist class makes the intent
+                   explicit and protects against the drift. -->
+              <td class="action-cell"><a href="/playlists/{p.id}">view →</a></td>
+              <td class="action-cell">
                 <button
                   type="button"
                   class="link-btn"
@@ -802,7 +809,7 @@
                   ↻ regen
                 </button>
               </td>
-              <td>
+              <td class="action-cell">
                 <button
                   type="button"
                   class="link-btn"
@@ -1286,9 +1293,12 @@
       text-transform: uppercase;
       margin-right: 0.5rem;
     }
-    /* Action cells (View / Regen / Delete) — no data-label, but
-       stack inline so the three buttons share a row at the bottom. */
-    .playlists-table td:not([data-label]) {
+    /* Action cells (View / Regen / Delete) — `action-cell`
+       whitelist (c2-review R3) instead of `td:not([data-label])`
+       so a future label-less column doesn't accidentally pick
+       up the button-row styling. Stacks inline so the three
+       cells share a row at the bottom of each card. */
+    .playlists-table td.action-cell {
       display: inline-block;
       margin-right: 0.75rem;
       margin-top: 0.4rem;
