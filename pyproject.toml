@@ -73,8 +73,10 @@ dev = [
     "mkdocs-material>=9.5,<9.6",
     # §16.15 c4 — Swagger UI renderer for the API reference
     # page. Reads docs/reference/openapi.json (build artifact
-    # from `make docs-openapi`).
-    "mkdocs-render-swagger-plugin>=0.1,<1",
+    # from `make docs-openapi`). §16.15 c4-review R8 — pinned
+    # to the 0.1.x line; pre-1.0 packages can break at any
+    # minor bump.
+    "mkdocs-render-swagger-plugin>=0.1,<0.2",
 ]
 
 # The headline shipped artifact: `station-studio <subcommand>` runs

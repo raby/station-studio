@@ -686,8 +686,20 @@ derive-sidecar:
 docs-openapi:
 	$(PY) -m scripts.dump_openapi
 
+# §16.15 c4-review R5 — `docs-openapi` runs ONCE at serve start.
+# mkdocs serve auto-reloads on docs/ markdown changes but does
+# NOT re-run scripts/dump_openapi.py when api/ source changes.
+# If you edit a router during a live `make docs-serve`, ctrl-c
+# + restart to refresh the Swagger UI page.
 docs-serve: docs-openapi
 	$(PY) -m mkdocs serve
 
+# §16.15 c4-review R2 — guard against mkdocs-render-swagger-plugin's
+# silent "SWAGGER ERROR: File openapi.json not found" inline render.
+# The plugin does NOT raise on a missing file; `mkdocs build --strict`
+# would otherwise publish a visibly broken API page. The docs-openapi
+# prereq + this explicit existence check are belt + braces.
 docs-build: docs-openapi
+	@test -f docs/reference/openapi.json || \
+		(echo "docs-build: docs/reference/openapi.json missing — run 'make docs-openapi' first" && exit 1)
 	$(PY) -m mkdocs build --strict

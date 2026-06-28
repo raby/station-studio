@@ -44,6 +44,10 @@ theme:
     repo: fontawesome/brands/github
 
 plugins:
+  # §16.15 c4-review R9 — once `plugins:` is declared, MkDocs
+  # stops implicitly enabling search. KEEP `search` first in
+  # this list; a rebase that drops it will silently disable
+  # the site search bar (no MkDocs warning).
   - search
   # §16.15 c4 — render Swagger UI inline from the openapi.json
   # dumped by `make docs-openapi`. Plugin reads files referenced

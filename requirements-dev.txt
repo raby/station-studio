@@ -16,4 +16,8 @@ mkdocs-material>=9.5,<9.6
 # reference page. Reads docs/reference/openapi.json (produced
 # by `make docs-openapi` from the FastAPI app's app.openapi()
 # at build time) and embeds Swagger UI inline.
-mkdocs-render-swagger-plugin>=0.1,<1
+# §16.15 c4-review R8 — pinned to the 0.1.x line; pre-1.0
+# packages can have breaking changes at any minor bump per
+# semver. Matches the §16.15 c1-review R5 philosophy applied
+# to mkdocs-material's pin.
+mkdocs-render-swagger-plugin>=0.1,<0.2
