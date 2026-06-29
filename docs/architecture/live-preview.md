@@ -26,8 +26,8 @@ TracePane render      ──  the preview trace renders next to the
 
 ## Why a job-id, not a sync response
 
-`engine.generate.generate()` for a Rebirth-Classics-sized template
-(2,196 slots) takes ~1.5s on a warm cache. A sync POST would block
+`engine.generator.generate()` for a Rebirth-Classics-sized template
+takes seconds, not milliseconds. A sync POST would block
 the editor's UI thread + leave no way to cancel a stale preview
 when the user keeps editing. Job-id transport:
 

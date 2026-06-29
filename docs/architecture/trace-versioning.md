@@ -30,10 +30,12 @@ history don't pay a join.
 
 1. Reuse the same `Playlist` row (same PK — external pointers
    stay valid).
-2. Clear + rewrite `PlaylistEntry` rows (latest-only; the trace
-   slots JSON has the historical detail).
-3. Clear + rewrite per-station `MixUsage` bookkeeping.
-4. **Append** a new `PlaylistVersion(version_no = max + 1)`.
+2. Clear existing `PlaylistEntry` rows + `MixUsage` rows.
+3. **Append** a new `PlaylistVersion(version_no = max + 1)`.
+4. Write the new `PlaylistEntry` rows (latest playable order)
+   + new `MixUsage` rows (bookkeeping for §14.25 mix exclusion);
+   both reference the same Playlist PK and run after the
+   version append.
 5. Flip `Playlist.trace_id` to point at the new version's id.
 
 The trace viewer's `?v=N` URL parameter selects any historical

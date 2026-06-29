@@ -109,6 +109,16 @@ jobs:
           test -f site/architecture/live-preview/index.html
           test -f site/architecture/test-pyramid/index.html
           test -f site/architecture/migration-policy/index.html
+          # §16.15 c6-review R5 — guard against the duplicate-H1
+          # bug class. Every published page should have exactly
+          # ONE <h1> (axe-core's `page-has-heading-one` rule
+          # fails on 0 or >1). Loop every site/**/index.html and
+          # assert the count matches.
+          for f in $(find site -name index.html); do
+            n=$(grep -c '<h1' "$f" || true)
+            test "$n" -eq 1 || \
+              (echo "$f has $n <h1> tags (expected exactly 1)" && exit 1)
+          done
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

@@ -1,7 +1,5 @@
 # Architecture
 
-# Architecture
-
 Curated notes for contributors. Each page covers one
 load-bearing design decision in 100-300 words + a cross-link
 back to the canonical [DESIGN.md][design] archive (which has

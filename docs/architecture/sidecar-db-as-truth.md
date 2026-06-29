@@ -32,8 +32,10 @@ sidecar = NULL WHERE slug = 'foo'` + restart triggers the
 
 ## Grammar drift detection
 
-`engine.editor_metadata.validate_sidecar_grammar()` enforces the
-shape contract; `_resolve_sidecar(strict=False)` is the lenient
+`engine.sidecar_types.validate_sidecar_grammar()` enforces the
+shape contract (extracted from `engine.editor_metadata` in
+§16.2.5.t13 — `editor_metadata` still owns `derive_sidecar` +
+`parse_sidecar`); `_resolve_sidecar(strict=False)` is the lenient
 runtime path that tolerates legacy/grandfathered data + surfaces a
 warning banner via the `sidecar_error` API field.
 
