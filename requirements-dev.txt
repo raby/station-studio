@@ -4,6 +4,15 @@ httpx>=0.27
 # `coverage` powers `make test-backend`'s --fail-under gate. Pinned so CI
 # matches local — was previously installed transitively (luck).
 coverage>=7.0
+# §16.26 — `build` is what `make wheel` shells out to (`python -m
+# build`). Listed here (not requirements.txt) because the
+# wheel-build path is a dev/release activity, not a runtime
+# dependency. ci.yml's install-smoke-wheel job + publish.yml's
+# build job both depend on `pip install -r requirements-dev.txt`
+# resolving `build` — without it, `make wheel` fails with "No
+# module named build" (the failure §16.26 caught after fixing
+# the upstream coverage gate).
+build>=1.0
 # §16.15 c1 — MkDocs + Material theme for the docs site.
 # Build via `make docs-build`; serve locally via `make docs-serve`.
 # GH Pages publish wired in .github/workflows/docs.yml.
