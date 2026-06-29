@@ -30,30 +30,23 @@ import sys
 import textwrap
 from pathlib import Path
 
-# §16.15 c4-review R1 — neutralise api.deps' module-load
-# side effects (DB creation) by pointing at in-memory SQLite
-# BEFORE the CLI import below transitively imports api/.
-os.environ.setdefault("STATION_STUDIO_DB_URL", "sqlite:///:memory:")
-os.environ.setdefault("STATION_STUDIO_SKIP_AUTO_SEED", "1")
+# §16.15 c5-review R1+R5 — defensive env override against a
+# future regression where cli.py adopts eager imports of
+# anything under api/ or engine.database. Today station_studio.cli
+# imports lazily inside subcommand bodies — so this isn't
+# addressing a present bomb — but HARD-OVERRIDE (not setdefault)
+# so a contributor's exported `STATION_STUDIO_DB_URL` (e.g. a
+# production path inherited from their shell for an unrelated
+# task) can't sneak past this guard and let a docs build write
+# to the real database the next time someone refactors cli.py.
+os.environ["STATION_STUDIO_DB_URL"] = "sqlite:///:memory:"
+os.environ["STATION_STUDIO_SKIP_AUTO_SEED"] = "1"
 
 from click.testing import CliRunner  # noqa: E402
 from station_studio.cli import main as cli_main  # noqa: E402
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _OUT_PATH = _REPO_ROOT / "docs" / "reference" / "cli.md"
-
-# Subcommands to dump --help for, in the order they should appear
-# on the page. Mirrors the Click group's registration order in
-# station_studio/cli.py (top → bottom: serve, import, seed,
-# generate, export, backup). The top-level `--help` lands first.
-_SUBCOMMANDS: tuple[str, ...] = (
-    "serve",
-    "import",
-    "seed",
-    "generate",
-    "export",
-    "backup",
-)
 
 
 _RUNNER = CliRunner()
@@ -69,9 +62,22 @@ def _invoke(args: list[str]) -> str:
     override needed."""
     result = _RUNNER.invoke(cli_main, args, prog_name="station-studio")
     if result.exit_code != 0:
+        # §16.15 c5-review R3+R6 — surface BOTH the captured
+        # stdout AND the exception the runner caught
+        # (CliRunner stores it on result.exception when
+        # catch_exceptions is True, the default). Without the
+        # exception object a future regression that raises at
+        # dispatch time shows up as `exited 1: ''` in CI logs
+        # with no hint at the root cause. Multi-line format
+        # so CI logs stay readable instead of one wall of
+        # \n-escaped repr.
         raise RuntimeError(
             f"CLI invocation 'station-studio {' '.join(args)}' "
-            f"exited {result.exit_code}: {result.output!r}",
+            f"exited {result.exit_code}\n"
+            f"--- captured output ---\n"
+            f"{result.output}\n"
+            f"--- exception ---\n"
+            f"{result.exception!r}",
         )
     return result.output
 
@@ -94,8 +100,14 @@ def main() -> int:
     # Group-level --help first.
     sections.append(_fence("station-studio --help", _invoke(["--help"])))
 
-    # Each subcommand's --help next.
-    for cmd in _SUBCOMMANDS:
+    # §16.15 c5-review R2 — discover subcommands from the Click
+    # group itself rather than a hard-coded tuple. Click preserves
+    # registration order in the .commands dict (Python 3.7+), so
+    # iteration order matches cli.py's @cli.command sequence.
+    # Self-discovering: any new subcommand added to cli.py
+    # automatically shows up in the rendered docs.
+    subcommands = list(cli_main.commands.keys())
+    for cmd in subcommands:
         sections.append(
             _fence(f"station-studio {cmd} --help", _invoke([cmd, "--help"]))
         )
@@ -118,7 +130,7 @@ def main() -> int:
     _OUT_PATH.write_text(header + "\n".join(sections), encoding="utf-8")
     print(
         f"dump_cli_help: wrote {_OUT_PATH} "
-        f"(1 group + {len(_SUBCOMMANDS)} subcommands)",
+        f"(1 group + {len(subcommands)} subcommands)",
     )
     return 0
 
