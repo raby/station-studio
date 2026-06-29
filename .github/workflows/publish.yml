@@ -89,6 +89,17 @@ jobs:
       name: testpypi
       url: https://test.pypi.org/project/station-studio/
     permissions:
+      # §v1.5.0-release: `contents: read` is REQUIRED in addition to
+      # `id-token: write`. When a job declares an explicit
+      # `permissions:` block AND scopes to an `environment:`,
+      # GITHUB_TOKEN is filtered to ONLY what's listed here — the
+      # repo's default workflow permissions don't apply. Without
+      # this, actions/checkout@v4 fails with "Repository not
+      # found" because the token has zero contents access. The
+      # previous workflow split didn't hit this because the
+      # `build` job (with checkout) had no environment scoping and
+      # so inherited default permissions; the merged job now does.
+      contents: read
       id-token: write  # required for trusted publishing OIDC handshake
     steps:
       - uses: actions/checkout@v4
