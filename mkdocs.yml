@@ -104,3 +104,9 @@ nav:
       - CLI: reference/cli.md
   - Architecture:
       - architecture/index.md
+      - Engine pipeline: architecture/engine-pipeline.md
+      - Trace versioning: architecture/trace-versioning.md
+      - Sidecar + DB-as-truth: architecture/sidecar-db-as-truth.md
+      - Live preview: architecture/live-preview.md
+      - Test pyramid: architecture/test-pyramid.md
+      - Migration policy: architecture/migration-policy.md

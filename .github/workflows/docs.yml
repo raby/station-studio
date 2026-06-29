@@ -98,6 +98,17 @@ jobs:
           n_cli_sections=$(grep -c 'id="station-studio' site/reference/cli/index.html)
           test "$n_cli_sections" -ge 7 || \
             (echo "CLI page has only $n_cli_sections sections (expected >=7)" && exit 1)
+          # §16.15 c6 — Architecture track: 6 curated pages
+          # under docs/architecture/ all build. The smoke check
+          # asserts each page's index.html exists (mkdocs
+          # publishes them as <slug>/index.html).
+          test -f site/architecture/index.html
+          test -f site/architecture/engine-pipeline/index.html
+          test -f site/architecture/trace-versioning/index.html
+          test -f site/architecture/sidecar-db-as-truth/index.html
+          test -f site/architecture/live-preview/index.html
+          test -f site/architecture/test-pyramid/index.html
+          test -f site/architecture/migration-policy/index.html
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
