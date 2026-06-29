@@ -15435,6 +15435,38 @@ landing green; resuming the release requires retag against the
 * Fixing the Node 20 deprecation warning on actions/checkout@v4
   et al. Annotation noise, not a failure.
 * The image-smoke job's main-only gating. Working as intended.
+* Enabling GitHub Pages (`docs.yml` deploy is still red). The
+  Pages source setting is a one-time repo-level UI toggle that
+  can't land via code. Listed as the only remaining red gate
+  awaiting a manual action; CI itself is green.
+
+**SHIPPED 2026-06-29.** Four commits closed this slice:
+
+* `§16.26: lower vitest coverage gates to current floor + ratchet policy`
+  — set thresholds at exact actuals (lines 84 / stmts 75 /
+  branches 65 / functions 80) with the written ratchet-up rule.
+* `§16.26 followup: add 'build' to requirements-dev.txt` —
+  install-smoke-wheel unmasked by the prior commit failed with
+  "No module named build". Added build>=1.0 + cross-listed in
+  pyproject.toml's [dev] for the parity guard.
+* `§16.26: mirror build dep in pyproject.toml [dev]` — fixed
+  the parity drift the previous commit introduced.
+* `§16.26: fix all 10 e2e regressions — axe + label + stale tests`
+  — 7 color-contrast (via `--text-muted: #595959` in :root + a
+  sweep replacing literal #888/#999/#aaa), 2 unlabeled form
+  control violations on the wizard's source + block tables
+  (per-row aria-label including row index), 3 stale assertions
+  (rule count after §16.4.t3, override-badge selector scoping,
+  non-existent /template URL).
+
+Verified: CI run 28392411248 green across backend, frontend
+unit, e2e, install-smoke-wheel, install-smoke-image. First
+green CI on main since approximately §16.16.
+
+**Cadence rule now in effect.** Every closeout commit from
+this point forward gates on `gh run watch --exit-status`
+returning green before SHIPPED can be written. Memory:
+`feedback_ci_green_gate.md`.
 
 ---
 
