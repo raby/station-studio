@@ -215,23 +215,30 @@ jobs:
           python-version: '3.12'
 
       - name: pip install from test.pypi (with PyPI primary for deps)
-        # §v1.5.0-release-blocker: was `--index-url=test.pypi` +
-        # `--extra-index-url=pypi`. That made test.pypi PRIMARY for
-        # every package lookup — including transitive deps. test.pypi
-        # is full of squatted / malformed legacy packages (the
-        # specific failure was a `FileNotFoundError: DESCRIPTION.txt`
-        # during sdist build of some dep pip picked from test.pypi
-        # over real PyPI). Inverted: real PyPI is now primary,
-        # test.pypi is the fallback ONLY for station-studio itself
-        # (because v1.5.0 doesn't exist on real PyPI yet — that's
-        # literally what this workflow is about to publish).
+        # §v1.5.0-release-blocker: two-step install. The previous
+        # one-step `pip install --index-url=test.pypi
+        # --extra-index-url=pypi` (and the inverted variant) both
+        # hit `FileNotFoundError: DESCRIPTION.txt` during sdist
+        # build of a transitive dep pip picked from test.pypi.
+        # test.pypi is full of squatted / malformed legacy
+        # packages and any --extra-index-url-style search lets
+        # them sneak in.
         #
-        # Tag-version pin via TAG_VERSION env. Without the pin, pip
-        # would happily install an OLDER station-studio if real PyPI
-        # has one (it won't for the v1.5.0 first-publish, but the
-        # principle holds for every subsequent release where real
-        # PyPI has the previous version and we want to smoke the
-        # NEW one only).
+        # The clean separation:
+        #   1. `pip download --no-deps --index-url=test.pypi` ONLY
+        #      fetches the station-studio wheel. No dep resolution,
+        #      so test.pypi can't poison the dep graph.
+        #   2. `pip install --index-url=pypi <local wheel>` installs
+        #      that wheel + resolves deps from REAL PyPI only.
+        #
+        # This is what the publish-pypi job already does for the
+        # real-PyPI upload artifact transport — we're just applying
+        # the same two-step pattern to the smoke-install path so
+        # broken test.pypi sdists can't break our release.
+        #
+        # Tag-version pin via TAG_VERSION ensures we install the
+        # EXACTLY-just-published bits, not any older version that
+        # might sit on real PyPI (a concern for releases past v1.5.0).
         #
         # Wait-loop: test.pypi indexes new uploads asynchronously
         # (~30-60s typical). Retry up to 12 × 10s before giving up
@@ -240,21 +247,31 @@ jobs:
           set -e
           TAG_VERSION="${GITHUB_REF#refs/tags/v}"
           python -m venv /tmp/smoke
+          mkdir -p /tmp/ss-dist
           for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
-            if /tmp/smoke/bin/pip install \
+            if /tmp/smoke/bin/pip download \
               --quiet \
-              --index-url https://pypi.org/simple/ \
-              --extra-index-url https://test.pypi.org/simple/ \
+              --no-deps \
+              --index-url https://test.pypi.org/simple/ \
+              --dest /tmp/ss-dist \
               "station-studio==${TAG_VERSION}"; then
-              echo "Install succeeded on attempt $i"
+              echo "Download succeeded on attempt $i"
               break
             fi
             if [ "$i" = "12" ]; then
-              echo "ERROR: pip install never succeeded after 2 minutes — test.pypi index lag or broken artifact." >&2
+              echo "ERROR: pip download never succeeded after 2 minutes — test.pypi index lag or broken artifact." >&2
               exit 1
             fi
             sleep 10
           done
+          # Local wheel install with deps from real PyPI only. The
+          # local file path bypasses any index lookup for
+          # station-studio itself; --index-url scopes dep resolution
+          # to clean upstream packages.
+          /tmp/smoke/bin/pip install \
+            --quiet \
+            --index-url https://pypi.org/simple/ \
+            /tmp/ss-dist/*.whl
 
       - name: dispatch smoke
         # §16.13 slice-review 🟢-2: grep all six subcommands in the
