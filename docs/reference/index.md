@@ -18,8 +18,10 @@ sampling strategies, REST API, and CLI commands.
   from the FastAPI app's `app.openapi()` schema. Always in
   lockstep with the running code; CI regenerates the JSON
   before every docs build.
-- :material-console: **CLI** — auto-rendered from
-  `station-studio --help`. *(Landing in §16.15 c5.)*
+- :material-console: **[CLI](cli.md)** — auto-rendered from
+  `station-studio --help`. Group help + every subcommand
+  (serve / import / seed / generate / export / backup) in
+  one page; regenerated on every docs build.
 
 </div>
 

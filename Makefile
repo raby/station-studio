@@ -16,7 +16,7 @@
         refresh-port-fixture refresh-port-everything refresh-classics-fixture \
         generate-user-playlists \
         derive-sidecar \
-        docs-serve docs-build docs-openapi
+        docs-serve docs-build docs-openapi docs-cli
 
 PY := .venv/bin/python
 ALEMBIC := .venv/bin/alembic
@@ -686,12 +686,19 @@ derive-sidecar:
 docs-openapi:
 	$(PY) -m scripts.dump_openapi
 
+# §16.15 c5 — regenerate docs/reference/cli.md from the
+# `station-studio` Click CLI's --help output. Build artifact
+# (gitignored), regenerated on every docs build via the
+# `docs-build` prereq chain.
+docs-cli:
+	$(PY) -m scripts.dump_cli_help
+
 # §16.15 c4-review R5 — `docs-openapi` runs ONCE at serve start.
 # mkdocs serve auto-reloads on docs/ markdown changes but does
 # NOT re-run scripts/dump_openapi.py when api/ source changes.
 # If you edit a router during a live `make docs-serve`, ctrl-c
 # + restart to refresh the Swagger UI page.
-docs-serve: docs-openapi
+docs-serve: docs-openapi docs-cli
 	$(PY) -m mkdocs serve
 
 # §16.15 c4-review R2 — guard against mkdocs-render-swagger-plugin's
@@ -699,7 +706,11 @@ docs-serve: docs-openapi
 # The plugin does NOT raise on a missing file; `mkdocs build --strict`
 # would otherwise publish a visibly broken API page. The docs-openapi
 # prereq + this explicit existence check are belt + braces.
-docs-build: docs-openapi
+# §16.15 c5 — also assert the dumped CLI markdown exists; strict
+# mode would otherwise pass with the page missing from nav.
+docs-build: docs-openapi docs-cli
 	@test -f docs/reference/openapi.json || \
 		(echo "docs-build: docs/reference/openapi.json missing — run 'make docs-openapi' first" && exit 1)
+	@test -f docs/reference/cli.md || \
+		(echo "docs-build: docs/reference/cli.md missing — run 'make docs-cli' first" && exit 1)
 	$(PY) -m mkdocs build --strict

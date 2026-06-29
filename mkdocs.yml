@@ -101,5 +101,6 @@ nav:
       - Template grammar: reference/template-grammar.md
       - Strategies: reference/strategies.md
       - API: reference/api.md
+      - CLI: reference/cli.md
   - Architecture:
       - architecture/index.md

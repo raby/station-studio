@@ -85,6 +85,11 @@ jobs:
           grep -q 'SwaggerUIBundle' site/reference/api/index.html
           test -f docs/reference/openapi.json
           grep -q '"paths"' docs/reference/openapi.json
+          # §16.15 c5 — CLI reference rendered + all 7 invocations
+          # (group + 6 subcommands) made it through.
+          test -f site/reference/cli/index.html
+          grep -q 'station-studio serve' site/reference/cli/index.html
+          grep -q 'station-studio backup' site/reference/cli/index.html
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
