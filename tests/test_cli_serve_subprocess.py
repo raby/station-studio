@@ -142,15 +142,28 @@ def test_serve_real_uvicorn_binds_and_serves_api_stations(
             # response should be a non-empty JSON array.
             assert body.startswith(b"["), body[:80]
 
-        # Step 3: SPA root also serves text/html (closes the c2
-        # static-mount path — same gate the make smoke targets check).
-        with urllib.request.urlopen(
-            f"http://127.0.0.1:{port}/", timeout=5.0
-        ) as resp:
-            assert resp.status == 200
-            assert resp.headers["Content-Type"].startswith("text/html"), (
-                resp.headers["Content-Type"]
-            )
+        # Step 3: SPA root also serves text/html — but ONLY when a
+        # static build is available. On a fresh CI checkout
+        # `web/build/` doesn't exist (gitignored; only `make wheel`
+        # populates it), and the bundled `station_studio/_bundled/web/`
+        # isn't there either pre-pip-install. api/main.py's
+        # `_resolve_static_dir()` returns None in that case + the
+        # SPA mount doesn't attach, so `GET /` falls through to the
+        # JSON service-identity blob (deliberate; see api/main.py
+        # lines 197-205). The `make wheel-smoke` / `make image-smoke`
+        # CI smoke targets DO build the SPA first and catch SPA
+        # mount regressions in their own job. This test's purpose
+        # is "uvicorn binds + /api/stations works" — the SPA check
+        # is opportunistic.
+        from api.main import STATIC_DIR  # noqa: PLC0415 — gated import
+        if STATIC_DIR is not None:
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{port}/", timeout=5.0
+            ) as resp:
+                assert resp.status == 200
+                assert resp.headers["Content-Type"].startswith("text/html"), (
+                    resp.headers["Content-Type"]
+                )
 
         # App-home was actually created — proves bootstrap ran in
         # the subprocess + the env override stuck.

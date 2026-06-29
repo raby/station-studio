@@ -52,8 +52,14 @@ jobs:
         # §14.33 review fix: catches template syntax errors + cross-file
         # type drift that vitest doesn't see (vitest tests against the
         # compiled output). Threshold: error — warnings don't block.
+        # §v1.5.0-release CI fix — `npm run check` runs
+        # `svelte-kit sync && svelte-check` (per web/package.json).
+        # Without `svelte-kit sync`, the auto-generated
+        # `.svelte-kit/tsconfig.json` doesn't exist; svelte-check
+        # then cascades 221 errors from "$lib/* not resolved"
+        # because tsconfig.json extends that missing file.
         working-directory: web
-        run: npx svelte-check --threshold error
+        run: npm run check
       - name: vitest
         run: make test-frontend-unit
 
@@ -120,7 +126,15 @@ jobs:
           node-version: '22'
           cache: 'npm'
           cache-dependency-path: web/package-lock.json
-      - name: install build deps
+      - name: install web deps (npm)
+        # §v1.5.0-release CI fix — `make wheel` runs `cd web && npm
+        # run build` which needs `node_modules/.bin/vite`. Without an
+        # explicit `npm ci`, the install-smoke-wheel job fails with
+        # `sh: 1: vite: not found` because setup-node only fetches
+        # Node + caches npm — it doesn't install packages.
+        working-directory: web
+        run: npm ci
+      - name: install build deps (python)
         # `make wheel` shells out to `$(PY) -m build`; .venv ships
         # `build` because it's listed in requirements-dev.txt.
         run: |

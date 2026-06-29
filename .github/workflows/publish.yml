@@ -129,6 +129,16 @@ jobs:
       - name: pre-flight migration parity
         run: make migration-parity
 
+      - name: install web deps (npm)
+        # §v1.5.0-release CI fix — `make wheel` runs `cd web && npm
+        # run build` which needs `node_modules/.bin/vite`. setup-node
+        # above only fetches Node + caches npm; it does NOT install
+        # packages. Without this step, `make wheel` fails with
+        # `sh: 1: vite: not found`. The ci.yml install-smoke-wheel
+        # job had the same gap.
+        working-directory: web
+        run: npm ci
+
       - name: make wheel (web + python)
         # Re-uses the same `make wheel` target dev/CI/release all
         # share. ONE build path — if the wheel ships broken to PyPI,
