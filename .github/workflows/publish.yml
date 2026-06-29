@@ -214,25 +214,38 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: pip install from test.pypi (with PyPI fallback for deps)
-        # `--extra-index-url https://pypi.org/simple/` is REQUIRED:
-        # test.pypi has station-studio but not its deps (fastapi,
-        # uvicorn, etc — those live on real PyPI). Without the
-        # fallback, pip fails with "no matching distribution for
-        # fastapi" the moment it tries to resolve dependencies.
+      - name: pip install from test.pypi (with PyPI primary for deps)
+        # §v1.5.0-release-blocker: was `--index-url=test.pypi` +
+        # `--extra-index-url=pypi`. That made test.pypi PRIMARY for
+        # every package lookup — including transitive deps. test.pypi
+        # is full of squatted / malformed legacy packages (the
+        # specific failure was a `FileNotFoundError: DESCRIPTION.txt`
+        # during sdist build of some dep pip picked from test.pypi
+        # over real PyPI). Inverted: real PyPI is now primary,
+        # test.pypi is the fallback ONLY for station-studio itself
+        # (because v1.5.0 doesn't exist on real PyPI yet — that's
+        # literally what this workflow is about to publish).
+        #
+        # Tag-version pin via TAG_VERSION env. Without the pin, pip
+        # would happily install an OLDER station-studio if real PyPI
+        # has one (it won't for the v1.5.0 first-publish, but the
+        # principle holds for every subsequent release where real
+        # PyPI has the previous version and we want to smoke the
+        # NEW one only).
         #
         # Wait-loop: test.pypi indexes new uploads asynchronously
         # (~30-60s typical). Retry up to 12 × 10s before giving up
         # so the smoke doesn't race the index.
         run: |
           set -e
+          TAG_VERSION="${GITHUB_REF#refs/tags/v}"
           python -m venv /tmp/smoke
           for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
             if /tmp/smoke/bin/pip install \
               --quiet \
-              --index-url https://test.pypi.org/simple/ \
-              --extra-index-url https://pypi.org/simple/ \
-              station-studio; then
+              --index-url https://pypi.org/simple/ \
+              --extra-index-url https://test.pypi.org/simple/ \
+              "station-studio==${TAG_VERSION}"; then
               echo "Install succeeded on attempt $i"
               break
             fi
