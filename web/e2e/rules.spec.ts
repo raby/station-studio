@@ -35,15 +35,21 @@ test.describe('§16.10 rules editor', () => {
     await createStation(request, 'rules11-list', 'Rules11 List');
     await page.goto('/stations/rules11-list/rules');
     const rows = page.getByTestId('rule-row');
-    // §16.14.t10: 4 int rules + 1 list rule (cross_pool_dedup_sources).
-    await expect(rows).toHaveCount(5);
+    // §16.14.t10 + §16.4.t3 + §16.26: 5 int rules + 1 list rule.
+    // The int rules are artist_dedup_window, mix_exclusion_weeks,
+    // cursor_advance_step, cursor_reset_cycle, version_retention_cap
+    // (the last added in §16.4.t3). The list rule is
+    // cross_pool_dedup_sources. If you add or remove a rule in
+    // engine/rules.py's RULE_DEFAULTS or RULE_LIST_DEFAULTS,
+    // bump these counts in lockstep.
+    await expect(rows).toHaveCount(6);
     // All unset → every row shows the default badge, none overridden.
-    await expect(page.getByTestId('default-badge')).toHaveCount(5);
+    await expect(page.getByTestId('default-badge')).toHaveCount(6);
     await expect(page.getByTestId('override-badge')).toHaveCount(0);
     // §16.14.t11: list row now renders the chip editor (replacing
     // the t10 placeholder); int rows still have their inputs.
     await expect(page.getByTestId('list-rule-row')).toHaveCount(1);
-    await expect(page.getByTestId('rule-input')).toHaveCount(4);
+    await expect(page.getByTestId('rule-input')).toHaveCount(5);
   });
 
   // §16.14.t11 — chip editor round-trip
@@ -57,6 +63,14 @@ test.describe('§16.10 rules editor', () => {
 
     const listRow = page.getByTestId('list-rule-row');
     await expect(listRow).toBeVisible();
+    // §16.26 — the badge (override-badge / default-badge) lives in
+    // the PARENT <li data-testid="rule-row">, not inside the
+    // ListRuleRow component's data-testid="list-rule-row" div. The
+    // structure is `<li data-testid="rule-row">{badge}<ListRuleRow
+    // data-testid="list-rule-row" /></li>`, so badge + list-rule-row
+    // are siblings. Scope the badge lookup to the parent rule-row
+    // that contains the list-rule-row.
+    const ruleRow = page.getByTestId('rule-row').filter({ has: listRow });
 
     // Type a free-form pool name + Enter → chip lands in staged
     // state (the backend hasn't been called yet).
@@ -67,7 +81,7 @@ test.describe('§16.10 rules editor', () => {
 
     // Save → PUT, badge flips to overridden.
     await listRow.getByTestId('list-rule-save').click();
-    await expect(listRow.getByTestId('override-badge')).toBeVisible();
+    await expect(ruleRow.getByTestId('override-badge')).toBeVisible();
 
     // Verify via the API.
     const r = await request.get(`${API}/api/stations/rules11-chip/rules`);
@@ -77,8 +91,9 @@ test.describe('§16.10 rules editor', () => {
     expect(saved.is_override).toBe(true);
 
     // Reset → DELETE the row, badge flips back, chips clear.
+    // §16.26 — same parent-row scoping as above for the badge.
     await listRow.getByTestId('list-rule-reset').click();
-    await expect(listRow.getByTestId('default-badge')).toBeVisible();
+    await expect(ruleRow.getByTestId('default-badge')).toBeVisible();
     await expect(listRow.getByTestId('list-rule-chip')).toHaveCount(0);
     const r2 = await request.get(`${API}/api/stations/rules11-chip/rules`);
     const body2 = await r2.json();

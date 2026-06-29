@@ -306,7 +306,7 @@
     margin: 0 0 0.5rem;
   }
   .header-meta {
-    color: #888;
+    color: var(--text-muted);
     font-variant-numeric: tabular-nums;
     font-weight: 400;
     font-size: 0.85em;
@@ -394,7 +394,7 @@
   }
   /* Unchanged rows dim when "Show all" is on. */
   tr.row-unchanged {
-    color: #888;
+    color: var(--text-muted);
   }
   tr.row-unchanged > td {
     background: transparent;
@@ -408,10 +408,10 @@
     font-size: 0.8rem;
   }
   .muted {
-    color: #888;
+    color: var(--text-muted);
   }
   .missing {
-    color: #999;
+    color: var(--text-muted);
     font-style: italic;
     text-align: center;
   }

@@ -1082,7 +1082,7 @@
     margin: 0;
   }
   .week {
-    color: #888;
+    color: var(--text-muted);
     font-variant-numeric: tabular-nums;
     font-weight: 400;
   }
@@ -1125,7 +1125,7 @@
     background: #e8e8e8;
   }
   .week-nav-link.disabled {
-    color: #999;
+    color: var(--text-muted);
     background: #fafafa;
     cursor: not-allowed;
   }
@@ -1152,7 +1152,7 @@
     font-variant-numeric: tabular-nums;
   }
   .version-meta {
-    color: #888;
+    color: var(--text-muted);
   }
   /* §16.4.t1 — Compare-versions affordance. Inline link styling
      mirrors the existing "view →" cells in the playlists table on
@@ -1243,7 +1243,7 @@
     cursor: pointer;
   }
   .archive-toggle .hint-inline {
-    color: #888;
+    color: var(--text-muted);
     font-family: ui-monospace, monospace;
     font-size: 0.8rem;
   }
@@ -1308,14 +1308,14 @@
   }
   .caret {
     font-size: 0.8rem;
-    color: #888;
+    color: var(--text-muted);
     width: 1em;
   }
   .unit-label {
     font-weight: 600;
   }
   .row-meta {
-    color: #888;
+    color: var(--text-muted);
     font-size: 0.85rem;
   }
 
@@ -1341,7 +1341,7 @@
     font-variant-numeric: tabular-nums;
   }
   .muted {
-    color: #888;
+    color: var(--text-muted);
   }
 
   .chip {
@@ -1424,7 +1424,7 @@
     background: transparent;
     border: 1px solid #d8d8d8;
     border-radius: 3px;
-    color: #888;
+    color: var(--text-muted);
     font: inherit;
     font-size: 0.75rem;
     cursor: pointer;

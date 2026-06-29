@@ -287,7 +287,7 @@
     font-weight: 500;
   }
   .slug {
-    color: #888;
+    color: var(--text-muted);
     font-family: ui-monospace, monospace;
     font-size: 0.85rem;
   }
@@ -307,11 +307,11 @@
     color: #666;
   }
   .last-gen.muted {
-    color: #aaa;
+    color: var(--text-muted);
     font-style: italic;
   }
   .empty-filtered {
-    color: #888;
+    color: var(--text-muted);
     font-style: italic;
   }
   .error {

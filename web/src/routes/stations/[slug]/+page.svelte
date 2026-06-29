@@ -865,7 +865,7 @@
     margin: 0;
   }
   .slug {
-    color: #888;
+    color: var(--text-muted);
     font-family: ui-monospace, monospace;
     margin-top: 0.1rem;
   }
@@ -1036,7 +1036,7 @@
     font-size: 0.85rem;
   }
   .card dt {
-    color: #888;
+    color: var(--text-muted);
   }
   .card dd {
     margin: 0;
@@ -1061,7 +1061,7 @@
     font-family: ui-monospace, monospace;
   }
   .hint-inline {
-    color: #aaa;
+    color: var(--text-muted);
     font-size: 0.75rem;
   }
   .pool-list,
@@ -1083,7 +1083,7 @@
     font-weight: 500;
   }
   .pool-role {
-    color: #888;
+    color: var(--text-muted);
     font-size: 0.78rem;
   }
   .pool-count {
@@ -1232,7 +1232,7 @@
     text-decoration: underline;
   }
   .link-btn:disabled {
-    color: #999;
+    color: var(--text-muted);
   }
   /* §16.5 c4 — `.error` retired; styling now via ErrorBanner. */
   .hint {

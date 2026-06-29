@@ -53,7 +53,7 @@
 }
 .station-form label small {
   display: block;
-  color: #888;
+  color: var(--text-muted);
   font-size: 0.8rem;
   margin-top: 0.15rem;
   margin-left: 12rem;
@@ -79,7 +79,7 @@
    understands why typing is rejected (see §16.7 D3). */
 .station-form input.readonly {
   background: #f4f4f4;
-  color: #888;
+  color: var(--text-muted);
   cursor: not-allowed;
 }
 

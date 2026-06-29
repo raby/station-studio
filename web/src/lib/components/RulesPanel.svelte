@@ -284,7 +284,7 @@
   }
   .badge.default {
     background: #f4f4f4;
-    color: #888;
+    color: var(--text-muted);
     border: 1px solid #ddd;
   }
   .rule-desc {
@@ -306,7 +306,7 @@
     font-variant-numeric: tabular-nums;
   }
   .rule-default-hint {
-    color: #999;
+    color: var(--text-muted);
     font-size: 0.8rem;
   }
   .save {

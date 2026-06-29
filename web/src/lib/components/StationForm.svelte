@@ -472,10 +472,20 @@
              at narrow widths. -->
         {#each sources as s, i}
           <tr>
-            <td data-label="Name"><input bind:value={s.name} placeholder="RG_RADIO" autocomplete="off" /></td>
-            <td data-label="Colour"><input type="color" bind:value={s.colour} /></td>
+            <!-- §16.26 — aria-label per input/select. The visual <th>s
+                 above + `data-label` on the <td>s only handle visual
+                 column naming (the latter via `::before { content:
+                 attr(data-label) }` in the responsive card layout).
+                 Neither is a programmatic label, so axe's `label` and
+                 `select-name` rules fired. The aria-label includes the
+                 row index so a screen reader can disambiguate when
+                 multiple source rows are present. -->
+            <td data-label="Name"><input bind:value={s.name} placeholder="RG_RADIO" autocomplete="off"
+                aria-label="Source {i + 1} name" /></td>
+            <td data-label="Colour"><input type="color" bind:value={s.colour}
+                aria-label="Source {i + 1} colour" /></td>
             <td data-label="Role">
-              <select bind:value={s.role}>
+              <select bind:value={s.role} aria-label="Source {i + 1} role">
                 {#each meta.roles as r}
                   <option value={r}>{r}</option>
                 {/each}
@@ -483,7 +493,8 @@
             </td>
             <td>
               <button type="button" class="ghost" on:click={() => removeSource(i)}
-                      disabled={sources.length === 1}>remove</button>
+                      disabled={sources.length === 1}
+                      aria-label="Remove source {i + 1}">remove</button>
             </td>
           </tr>
         {/each}
@@ -696,7 +707,7 @@
     letter-spacing: 0.04em;
   }
   .disclosure-body h4:first-child { margin-top: 0; }
-  .disclosure-body .unchanged { color: #888; font-style: italic; margin: 0 0 0.5rem; }
+  .disclosure-body .unchanged { color: var(--text-muted); font-style: italic; margin: 0 0 0.5rem; }
 
   .json {
     margin: 0;
@@ -758,7 +769,7 @@
   }
   .clean-pill {
     background: #f4f4f4;
-    color: #888;
+    color: var(--text-muted);
     border: 1px solid #e4e4e4;
   }
 </style>

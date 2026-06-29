@@ -386,7 +386,7 @@
   }
   .empty {
     font-size: 0.85rem;
-    color: #888;
+    color: var(--text-muted);
     margin: 0;
   }
   .add-row {
@@ -450,11 +450,11 @@
     cursor: not-allowed;
   }
   .suggestion-meta {
-    color: #999;
+    color: var(--text-muted);
     font-size: 0.78rem;
   }
   .hint {
-    color: #888;
+    color: var(--text-muted);
     font-size: 0.78rem;
     font-style: italic;
     margin: 0;
@@ -495,7 +495,7 @@
   /* §16.14.t11 c1 review F1: hint named near the Clear-override
    * button so the operator sees the registry-vs-template trap. */
   .reset-hint {
-    color: #888;
+    color: var(--text-muted);
     font-size: 0.78rem;
     font-style: italic;
     margin: 0;

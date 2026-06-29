@@ -135,8 +135,13 @@
     <tbody>
       {#each rowTemplate as b, i}
         <tr>
+          <!-- §16.26 — aria-label per input/select. Same pattern as
+               <StationForm>'s sources table: the column <th>s above
+               are visual labels, not programmatic, so axe's `label`
+               and `select-name` rules fire. -->
           <td>
-            <select bind:value={b.source} data-testid="block-source">
+            <select bind:value={b.source} data-testid="block-source"
+                    aria-label="Block {i + 1} source">
               <option value="" disabled>— pick a source —</option>
               {#each contentSourceNames as sname}
                 <option value={sname}>{sname}</option>
@@ -144,16 +149,18 @@
             </select>
           </td>
           <td>
-            <select bind:value={b.strategy}>
+            <select bind:value={b.strategy} aria-label="Block {i + 1} strategy">
               {#each strategies as s}
                 <option value={s}>{s}</option>
               {/each}
             </select>
           </td>
-          <td><input type="number" bind:value={b.size} min="1" /></td>
+          <td><input type="number" bind:value={b.size} min="1"
+                     aria-label="Block {i + 1} size" /></td>
           <td>
             <button type="button" class="ghost" on:click={() => removeBlock(i)}
-                    disabled={rowTemplate.length === 1}>remove</button>
+                    disabled={rowTemplate.length === 1}
+                    aria-label="Remove block {i + 1}">remove</button>
           </td>
         </tr>
       {/each}

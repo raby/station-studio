@@ -100,9 +100,14 @@ test.describe('§16.2.5 e2e — section + structural happy paths', () => {
     // assertion. Hit the GET endpoint directly + assert the new
     // size is in the persisted template. `expect.poll` retries
     // until the refetch settles or the timeout fires.
+    // §16.26 — was `/template`; that endpoint doesn't exist on the
+    // API surface (StationOut at GET /api/stations/{slug} carries
+    // the full template blob). The previous URL returned 404 so the
+    // poll resolved to null on every attempt and the matcher errored
+    // before the matcher's `toContain` semantics could even apply.
     await expect.poll(
       async () => {
-        const r = await request.get(`${API}/api/stations/e2e-525/template`);
+        const r = await request.get(`${API}/api/stations/e2e-525`);
         if (r.status() !== 200) return null;
         const body = await r.json();
         const slots = body?.template?.layout?.flat_slots ?? [];

@@ -2750,7 +2750,7 @@
     margin: 0;
   }
   .slug {
-    color: #888;
+    color: var(--text-muted);
     font-family: ui-monospace, monospace;
     margin-top: 0.1rem;
   }

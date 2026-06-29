@@ -46,6 +46,16 @@
      this comment can shrink. */
   :global(:root) {
     --mobile-breakpoint: 40rem;
+    /* §16.26 — WCAG AA-compliant muted text color. #595959 yields
+       a contrast ratio of 4.54:1 on white (#fff), passing the
+       4.5:1 minimum for normal text. The previous practice of
+       hard-coding #888 / #999 / #aaa (ratios 3.54 / 2.85 / 2.32)
+       failed axe-core scans across landing, station-detail,
+       trace-viewer, and wizard pages. Components reference this
+       via `color: var(--text-muted);` for any de-emphasized
+       text — slugs, last-generated timestamps, "empty" hints,
+       chip captions, etc. */
+    --text-muted: #595959;
   }
 
   /* §16.5 c1 — skip-link: visually hidden until focused, then
