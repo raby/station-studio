@@ -12939,7 +12939,15 @@ migration + wheel + docker + docs).
 
 **Watch-list (queued follow-ups from pre-c1 review).**
 
-* ~~**§16.13.t1 — PyPI publish.**~~ **SHIPPED.** `.github/workflows/publish.yml`
+* ~~**§16.13.t1 — PyPI publish.**~~ **SHIPPED — pipeline + first
+  release.** v1.5.0 is the first version cut (2026-06-28):
+  `pyproject.toml` + `station_studio/__init__.py` bumped from
+  0.1.0 to 1.5.0 in lockstep, CHANGELOG.md added covering the
+  full feature set across the 8 major slices since 0.1.0
+  (engine + visual editor + trace versioning + a11y +
+  mobile + prune + virtualisation + docs site + install).
+  The pipeline itself:
+  `.github/workflows/publish.yml`
   wires the publish pipeline: tag-triggered (`v*`) or manual
   `workflow_dispatch`. Four jobs gated in sequence —
   **build** (`make wheel` reuses the dev path; tag↔pyproject

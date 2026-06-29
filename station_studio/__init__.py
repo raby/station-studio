@@ -6,4 +6,4 @@ routers) and `engine` (the playlist generator). `station_studio.cli`
 orchestrates both behind the `station-studio` console script.
 """
 
-__version__ = "0.1.0"
+__version__ = "1.5.0"
