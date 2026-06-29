@@ -119,6 +119,12 @@ jobs:
             test "$n" -eq 1 || \
               (echo "$f has $n <h1> tags (expected exactly 1)" && exit 1)
           done
+          # §16.15 c7 — branded styling: dark-mode palette toggle
+          # + custom 404 + Material radio-tower logo. Smoke
+          # checks for each.
+          test -f site/404.html
+          grep -q 'Switch to dark mode' site/index.html
+          grep -q 'Switch to light mode' site/index.html
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

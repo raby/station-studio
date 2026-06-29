@@ -6263,7 +6263,7 @@ Master order at a glance. Detailed briefs follow below.
 | 6 | §16.25 Pool-import UI | **SHIPPED** | The §16.13 D1 gate-unblocker. `/sources` page + per-station embed + deep-link badge; six commits, multiple mid-slice review passes. |
 | 7 | ~~§16.13 Install story (pip / docker)~~ | ✅ shipped | **SHIPPED** (c1-c6, six commits). Wheel + docker channels both live + release-blocker-gated. Closed D1/D2/D3; retires §16.22 SSR premise. Watch-list (t1-t9) tracks deferred follow-ups; PyPI publish (t1) is the natural next slice if a stranger asks for clone-free install. |
 | 7 | ~~§16.14 + §16.14.t1 + §16.14.t3 + §16.14.t4 + §16.14.t5 + §16.14.t6 + §16.14.t7 + §16.14.t8 + §16.14.t9 + §16.14.t10 + §16.14.t11 Hobbyist starter stations~~ | ✅ shipped | **SHIPPED** (§16.14: 3 + 3 review-fix; §16.14.t1: design + 3 + 3 review-fix + sweep; §16.14.t3: design + 2 + 1 review-fix; §16.14.t4: docs slice; §16.14.t5: design + 3 + 2 review-fix; §16.14.t6: design + 2 + 1 review-fix; §16.14.t7: design + 3 + 2 review-fix; §16.14.t8: design + 2 + 1 review-fix; §16.14.t9: design + 3 + 2 review-fix; §16.14.t10: design + 2 + 1 review-fix; §16.14.t11: design + 2 + 1 review-fix). Two bundled stations + the full rule loop closed: template-declared default → seed_station only-set-if-absent → API CRUD (both int + list rules) → `<RulesPanel>` UI with int rows + `<ListRuleRow>` chip editor. Reference-role pools' engine integration is fully bidirectional + positional: t5/t8 (exclude), t7 (allowlist), t6 (positional via `archive_ref`). **§16.14 closes entirely** — every originally-queued sub-slice ships. |
-| 8 | §16.15 Docs site (MkDocs-Material) | medium | After enough product is built to justify a doc site. |
+| 8 | ~~§16.15 Docs site (MkDocs-Material)~~ | **SHIPPED 2026-06-28** | 7 commits + 6 review-fix sweeps. MkDocs-Material at `raby.github.io/station-studio/`; Tutorial + Reference (grammar + strategies + auto-rendered API + auto-rendered CLI) + Architecture (6 curated §14.x extracts) + dark-mode toggle + custom 404. Full SHIPPED block at `### 16.15 Docs site`. |
 
 Inserted into the strategic sequence based on §16.0 audit:
 
@@ -10703,9 +10703,16 @@ opportunistically when a real ask surfaces.
 
 **Tier 4 — adoption (less urgent post-§16.13)**:
 
-12. **§16.15 docs site (MkDocs-Material)** — consolidate README +
-    DESIGN.md narrative into a browsable docs site. Wait until
-    enough product is built to justify it.
+12. ~~**§16.15 docs site (MkDocs-Material)**~~ — ✅ SHIPPED
+    2026-06-28 across 7 commits + 6 review-fix sweeps. Live at
+    `https://raby.github.io/station-studio/`. Tutorial track +
+    Reference (template grammar + strategies + auto-rendered
+    API + auto-rendered CLI) + Architecture (6 curated §14.x
+    extracts) + custom 404 + dark-mode toggle. CI smoke gates
+    every push to main against drift (Swagger constructor name
+    + openapi.json paths block + CLI section count + H1
+    uniqueness per page). See "### 16.15 Docs site" for the
+    full SHIPPED block.
 13. **§16.13.t1 PyPI publish** — promote when a stranger asks for
     clone-free install.
 
@@ -14109,6 +14116,75 @@ sweep, matching the §16.13.t1-t9 cadence).
 ---
 
 ### 16.15 Docs site — MkDocs-Material consolidation
+
+**✅ SHIPPED 2026-06-28** across 7 commits (c1 scaffold + c2
+tutorial + c3 grammar/strategies + c4 OpenAPI auto-render +
+c5 CLI --help auto-render + c6 architecture extracts + c7
+polish/closeout) plus 6 review-fix sweeps (one per commit).
+Live at `https://raby.github.io/station-studio/`; CI publishes
+on every push to main via `.github/workflows/docs.yml`.
+
+**What landed:**
+
+* **Scaffold (c1):** MkDocs Material theme, `strict: true`,
+  `--mobile-breakpoint` aware. `make docs-serve` /
+  `docs-build`; GH Pages workflow with permissions scoped to
+  the deploy job only (review R2).
+* **Tutorial (c2):** Single "your first station in 10 minutes"
+  walkthrough — install → bootstrap → import pool → generate
+  → view trace → export. Real command output.
+* **Reference / template grammar + strategies (c3):**
+  Hand-written from `stations/README.md` + `engine/template.py`
+  docstrings + the strategy modules. All 8 strategies
+  (window / pick / sequential / jingle / mix / weighted /
+  prev_ref / archive_ref) with role + parameter tables.
+* **Reference / API (c4):** `scripts/dump_openapi.py` imports
+  `api.main:app` with `STATION_STUDIO_DB_URL=sqlite:///:memory:`
+  + `STATION_STUDIO_SKIP_AUTO_SEED=1` (HARD-set, not setdefault
+  — c5-review R1) to neutralise `api.deps`' module-load
+  `create_all` side effect. Output read by
+  `mkdocs-render-swagger-plugin` to embed Swagger UI inline.
+  Drift between docs + code impossible by construction.
+* **Reference / CLI (c5):** `scripts/dump_cli_help.py` uses
+  Click's `CliRunner.invoke(prog_name="station-studio")` to
+  capture `--help` for the group + every subcommand. Self-
+  discovering via `cli_main.commands.keys()` so new
+  subcommands auto-render without a script edit.
+* **Architecture (c6):** 6 curated extracts (engine-pipeline,
+  trace-versioning, sidecar-db-as-truth, live-preview,
+  test-pyramid, migration-policy) — each ~100-300 words with
+  a cross-link back to DESIGN.md. Positioned as a curated
+  entry point, not a wholesale republish. c6-review caught
+  11 factual errors (wrong module paths, fabricated `hook`
+  strategy, missing `prev_ref`, duplicate H1) — all fixed
+  inline.
+* **Polish (c7):** Light + dark palette toggle (honours
+  `prefers-color-scheme` on cold load + persists per-visitor
+  via localStorage); Material `radio-tower` icon as the
+  branded logo (no binary asset to ship); custom 404 with a
+  grid of recovery-link cards; per-page H1-count smoke
+  guard ensures every published page has exactly 1 `<h1>`.
+
+**CI smoke checks (cumulative across c1-c7):**
+
+* `site/index.html` exists + contains `Station Studio` +
+  is >5KB
+* `site/reference/api/index.html` contains `SwaggerUIBundle`
+  (the plugin's hard-coded constructor name; stable across
+  CDN URL changes)
+* `docs/reference/openapi.json` has a `"paths"` block
+* `site/reference/cli/index.html` has >=7 `id="station-studio`
+  H2 headers (group + 6 subcommands)
+* `site/architecture/{6 pages}/index.html` all exist
+* `site/404.html` exists
+* Dark + light palette toggles render their `aria-label`s
+* Every `site/**/index.html` has exactly 1 `<h1>` tag
+
+**Punts (post-slice):** None. All planned scope landed.
+
+---
+
+**Original brief (preserved for context):**
 
 **Why this matters.** After §16.2 + §16.13 + §16.14 ship, the
 project has enough surface that README is too small and DESIGN.md

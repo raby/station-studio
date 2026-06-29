@@ -35,13 +35,32 @@ theme:
     - search.suggest
     - search.highlight
   palette:
-    # Single light palette for c1 — c7 adds the dark-mode toggle
-    # alongside the brand polish.
-    - scheme: default
+    # §16.15 c7 — light + dark palette toggle. Material renders a
+    # sun/moon button in the header; choice persists per-visitor
+    # via localStorage. Honours `prefers-color-scheme` on first
+    # visit via the `media:` query (default browser preference
+    # picks the matching scheme on cold load).
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
       primary: indigo
       accent: deep purple
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: deep purple
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
   icon:
     repo: fontawesome/brands/github
+    # §16.15 c7 — branded logo. Material includes the radio-tower
+    # icon out of the box; no binary asset to ship. The icon
+    # renders in the header next to the site_name. Favicon
+    # defaults to Material's own (sufficient for v1).
+    logo: material/radio-tower
 
 plugins:
   # §16.15 c4-review R9 — once `plugins:` is declared, MkDocs
