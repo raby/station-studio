@@ -7,15 +7,19 @@
 #
 # Three jobs, gated in sequence:
 #
-#   1. build           — `make wheel` (npm + python build), upload dist/
-#   2. publish-testpypi → smoke-testpypi
-#                      — push to test.pypi.org, then pipx-install from
-#                        there and curl-smoke the serve endpoint to
-#                        confirm a real installable artifact, not just
-#                        "the upload succeeded."
+#   1. build-and-publish-testpypi
+#                      — `make wheel` (npm + python build) + push to
+#                        test.pypi.org in ONE job. No artifact upload
+#                        between jobs — see §v1.5.0-release-blocker note
+#                        below.
+#   2. smoke-testpypi  — pipx-install from test.pypi and curl-smoke the
+#                        serve endpoint. Confirms a real installable
+#                        artifact, not just "the upload succeeded."
 #   3. publish-pypi    — only on tag push (not workflow_dispatch), only
-#                        after the test-pypi smoke is green. The actual
-#                        public release.
+#                        after the test-pypi smoke is green. Re-downloads
+#                        the wheel FROM test.pypi (NOT from local
+#                        artifact storage) so the bits pushed to real
+#                        PyPI are byte-identical to what got smoke-tested.
 #
 # Auth: TRUSTED PUBLISHING (PEP 740 / OIDC). No long-lived API tokens.
 # This requires a one-time setup on each side:
@@ -28,6 +32,22 @@
 # trust is configured, the publish steps fail with "no trusted
 # publisher" — which is the correct failure mode for an
 # unauthenticated push.
+#
+# §v1.5.0-release-blocker: artifact-upload removed.
+# The previous structure had build → upload-artifact → publish-testpypi
+# (download-artifact) → publish-pypi (download-artifact). That
+# round-tripped the wheel through GitHub Actions artifact storage,
+# which is on an account-wide quota. The v1.5.0 release got blocked
+# at upload-artifact when the quota hit zero ("artifact storage
+# quota has been hit") even though this repo only had ~128KB of
+# its own artifacts. The fix: build + push to test.pypi happen in
+# one job (no upload), and publish-pypi re-downloads from
+# test.pypi. The test.pypi → real-pypi hand-off is now the
+# authoritative transport for the bits — which is arguably a
+# better property than the previous setup, since the artifact
+# that gets published to real PyPI is verifiably the SAME one
+# that smoke-tested via pip install. The 7-day artifact retention
+# we lost is replaced by test.pypi's own retention.
 
 name: Publish to PyPI
 
@@ -55,9 +75,21 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build:
-    name: build wheel (web + python)
+  build-and-publish-testpypi:
+    name: build wheel + publish to test.pypi.org
     runs-on: ubuntu-latest
+    # §v1.5.0-release-blocker: merged the previous `build` +
+    # `publish-testpypi` jobs to drop the upload-artifact step
+    # (account-wide GH Actions storage quota was blocking releases).
+    # Both halves of this job need the same `dist/` directory, so
+    # the merger is just dropping the artifact round-trip. Environment
+    # scopes the OIDC trust. test.pypi.org's "pending publisher"
+    # must match owner/repo/workflow/environment.
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/project/station-studio/
+    permissions:
+      id-token: write  # required for trusted publishing OIDC handshake
     steps:
       - uses: actions/checkout@v4
 
@@ -146,31 +178,7 @@ jobs:
         # locally first. See CONTRIBUTING.md release section.
         run: make wheel
 
-      - name: upload dist artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: dist
-          path: dist/*.whl
-          retention-days: 7
-          if-no-files-found: error
-
-  publish-testpypi:
-    name: publish to test.pypi.org
-    needs: build
-    runs-on: ubuntu-latest
-    # Environment scopes the OIDC trust. test.pypi.org's "pending
-    # publisher" must match owner/repo/workflow/environment.
-    environment:
-      name: testpypi
-      url: https://test.pypi.org/project/station-studio/
-    permissions:
-      id-token: write  # required for trusted publishing OIDC handshake
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: dist
-          path: dist/
-      - name: publish
+      - name: publish to test.pypi.org
         # t1-review 🟢-3: SHA-pinned per GitHub's security guidance
         # for third-party actions. The trailing comment carries the
         # human-readable version so Dependabot / Renovate (or a
@@ -189,7 +197,7 @@ jobs:
 
   smoke-testpypi:
     name: smoke test.pypi install
-    needs: publish-testpypi
+    needs: build-and-publish-testpypi
     runs-on: ubuntu-latest
     steps:
       - uses: actions/setup-python@v5
@@ -286,11 +294,45 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/setup-python@v5
         with:
-          name: dist
-          path: dist/
-      - name: publish
+          python-version: '3.12'
+
+      - name: download wheel from test.pypi.org
+        # §v1.5.0-release-blocker: was `actions/download-artifact@v4`
+        # but the artifact upload step got removed (account-wide
+        # quota exhaustion). The wheel is now re-fetched from
+        # test.pypi where the previous job published it. This has
+        # a NICE property the artifact-storage transport didn't:
+        # the bits that get pushed to real PyPI here are
+        # verifiably the SAME bits that pip-installed cleanly in
+        # smoke-testpypi above — there's no possibility of artifact
+        # vs. test.pypi divergence.
+        #
+        # `pip download` quirks worth knowing:
+        #   --no-deps: don't pull fastapi/uvicorn/etc, just the wheel.
+        #   --index-url: pin to test.pypi only (no PyPI fallback,
+        #                because real PyPI may not have this version
+        #                yet — that's literally what we're about to
+        #                fix). Different from the smoke-testpypi
+        #                install which DOES need PyPI fallback for
+        #                deps.
+        #   --no-binary :all: would force sdist — we don't want
+        #                that. Default behavior pulls the .whl.
+        #   `station-studio==${VERSION}`: pin to the exact tagged
+        #                version so a stale test.pypi cached index
+        #                can't sneak through an older release.
+        run: |
+          TAG_VERSION="${GITHUB_REF#refs/tags/v}"
+          mkdir -p dist
+          python -m pip download \
+            --no-deps \
+            --index-url https://test.pypi.org/simple/ \
+            --dest dist/ \
+            "station-studio==${TAG_VERSION}"
+          ls -la dist/
+
+      - name: publish to pypi.org
         # t1-review 🟢-3: SHA-pinned (see test.pypi publish step
         # above for update procedure).
         uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b  # release/v1
