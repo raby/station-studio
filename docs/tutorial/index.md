@@ -16,9 +16,51 @@ iTunes XML.
 
 ## 1. Install (~2 min)
 
-Pick the channel that matches what you've already got. All three
+Pick the channel that matches what you've already got. All four
 ship the same UI + API + bundled example stations; the difference
 is the wrapper.
+
+=== "PyPI (easiest)"
+
+    Two commands, no clone. Needs Python 3.12+
+    (`python --version` to check).
+
+    ```bash
+    pip install station-studio
+    station-studio serve
+    ```
+
+    !!! warning "macOS: `command not found` after install?"
+
+        If `station-studio serve` prints `command not found`, pip
+        installed the CLI to a directory that isn't on your `PATH`.
+        This is common on macOS when Python was installed via the
+        [python.org](https://www.python.org/) installer — the
+        pip install prints a warning line like *"The script
+        station-studio is installed in '/Library/Frameworks/…/bin'
+        which is not on PATH."*
+
+        Two ways to unblock:
+
+        **Use the module invocation** (no PATH tinkering, works
+        immediately):
+
+        ```bash
+        python3 -m station_studio.cli serve
+        ```
+
+        **Or add the bin directory to your PATH** — copy the
+        `/Library/Frameworks/…/bin` path from the pip warning,
+        then append this to `~/.zshrc` (or `~/.bash_profile` on
+        older macOS):
+
+        ```bash
+        export PATH="/Library/Frameworks/Python.framework/Versions/3.13/bin:$PATH"
+        ```
+
+        Open a new terminal and `station-studio serve` will work.
+        The same trick works for `pipx` or Homebrew Python if their
+        bin dir isn't already on PATH.
 
 === "Docker"
 
@@ -33,10 +75,12 @@ is the wrapper.
 
     First run takes ~2 min to build; later runs reuse the image.
 
-=== "Pip wheel"
+=== "Pip wheel from source"
 
-    Single-process app on `localhost`. Builds the SvelteKit static
-    bundle into the wheel; you don't need Node at runtime.
+    Single-process app on `localhost`, built from a local clone.
+    Use this over the PyPI channel if you want to try an
+    unreleased commit. Builds the SvelteKit static bundle into
+    the wheel; you don't need Node at runtime.
 
     ```bash
     git clone https://github.com/raby/station-studio.git
