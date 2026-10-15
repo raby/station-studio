@@ -19,11 +19,13 @@ from contextlib import contextmanager
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
-from station_player import __version__
+from station_player import __version__, radio
 from station_player.config import ConfigStore
-from station_player.library import Library
+from station_player.desktop import Desktop
+from station_player.library import Library, _short_hash
+from station_player.tags import MAX_ART_BYTES, TagCache, folder_cover, image_type, read_art
 
 logger = logging.getLogger(__name__)
 
@@ -151,14 +153,24 @@ class PlayerApp:
     rebuild can never replace a newer library with a stale one.
     """
 
-    def __init__(self, store: ConfigStore) -> None:
+    def __init__(self, store: ConfigStore, scan: bool = True, desktop: Desktop | None = None) -> None:
         self.store = store
         self.library = Library()
+        self.desktop = desktop or Desktop()
+        self.tag_cache = TagCache(store.home / "tag-cache.json")
         self._lock = threading.RLock()
         self._scan_lock = threading.Lock()  # one disk scan at a time
         self._generation = 0
         self._installed = -1
-        self._rebuild()
+        self._titles: dict[str, str | None] = {}  # station url -> song
+        if scan:
+            self._rebuild()
+
+    def scan_in_background(self) -> threading.Thread:
+        """First scan without blocking startup; the UI shows progress."""
+        worker = threading.Thread(target=self._rebuild, name="library-scan", daemon=True)
+        worker.start()
+        return worker
 
     def _rebuild(self) -> None:
         # Requests that pile up behind a running scan share its result:
@@ -171,7 +183,10 @@ class PlayerApp:
                     return
                 cfg = copy.deepcopy(self.store.config)
             lib = Library()
-            lib.load(cfg.playlist_sources, cfg.music_folders, cfg.path_remaps)
+            try:
+                lib.load(cfg.playlist_sources, cfg.music_folders, cfg.path_remaps, self.tag_cache)
+            finally:
+                self.tag_cache.save()
             with self._lock:
                 if generation == self._generation:
                     self.library = lib
@@ -186,13 +201,56 @@ class PlayerApp:
         with self._lock:
             lib = self.library
             config = copy.deepcopy(self.store.config.to_json())
+            scanning = self._installed != self._generation
+        stations = [{**s, "id": station_id(s["url"])} for s in config["stations"]]
         return {
             "version": __version__,
             "playlists": lib.playlist_summaries(),
-            "stations": config["stations"],
+            "stations": stations,
             "config": config,
             "errors": self.store.warnings + list(lib.errors),
+            "scanning": scanning,
+            "desktop": self.desktop.status(),
         }
+
+    # ---- radio -----------------------------------------------------------
+
+    def station_url(self, sid: str) -> str | None:
+        with self._lock:
+            for s in self.store.config.stations:
+                if station_id(s["url"]) == sid:
+                    return s["url"]
+        return None
+
+    def set_title(self, url: str, title: str | None) -> None:
+        with self._lock:
+            self._titles[url] = title
+
+    def title(self, url: str) -> str | None:
+        with self._lock:
+            return self._titles.get(url)
+
+    # ---- artwork -----------------------------------------------------------
+
+    def artwork(self, track_id: str) -> tuple[bytes, str] | None:
+        """A track's embedded picture, else a cover image in its folder."""
+        track = self.library.tracks.get(track_id)
+        if track is None or track.path is None:
+            return None
+        found = read_art(track.path)
+        if found:
+            return found
+        cover = folder_cover(track.path)
+        if cover is None:
+            return None
+        try:
+            if cover.stat().st_size > MAX_ART_BYTES:
+                return None
+            data = cover.read_bytes()
+        except OSError:
+            return None
+        mime = image_type(data)
+        return (data, mime) if mime else None
 
     @contextmanager
     def _change(self, rescan: bool = True):
@@ -258,6 +316,10 @@ class PlayerApp:
     def remove_station(self, url: str) -> None:
         with self._change(rescan=False) as cfg:
             cfg.stations[:] = [s for s in cfg.stations if s.get("url") != url]
+
+
+def station_id(url: str) -> str:
+    return _short_hash("station", url)
 
 
 def _source_list(cfg, kind: str) -> list[str]:
@@ -339,7 +401,60 @@ def make_handler(app: PlayerApp):
                 return self._send_json(detail)
             if path.startswith("/audio/"):
                 return self._serve_audio(path.rsplit("/", 1)[1], head_only)
+            if path.startswith("/art/"):
+                return self._serve_art(path.rsplit("/", 1)[1], head_only)
+            if path.startswith("/radio/"):
+                return self._serve_radio(path.rsplit("/", 1)[1], head_only)
+            if path == "/api/nowplaying":
+                sid = parse_qs(urlparse(self.path).query).get("station", [""])[0]
+                url = app.station_url(sid)
+                if url is None:
+                    return self._error(HTTPStatus.NOT_FOUND, "No such station")
+                return self._send_json({"title": app.title(url)})
             return self._serve_static(path, head_only)
+
+        def _serve_art(self, track_id: str, head_only: bool):
+            found = app.artwork(track_id)
+            if found is None:
+                return self._error(HTTPStatus.NOT_FOUND, "No artwork")
+            data, mime = found
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", mime)
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "private, max-age=3600")
+            self.end_headers()
+            if not head_only:
+                self.wfile.write(data)
+
+        def _serve_radio(self, sid: str, head_only: bool):
+            """Relay a station, keeping the song titles it sends."""
+            url = app.station_url(sid)
+            if url is None:
+                return self._error(HTTPStatus.NOT_FOUND, "No such station")
+            if head_only:
+                return self._error(HTTPStatus.METHOD_NOT_ALLOWED, "Use GET")
+            try:
+                stream = radio.open_stream(url, user_agent=f"StationPlayer/{__version__}")
+            except radio.StreamError as exc:
+                logger.info("Radio relay for %s failed: %s", url, exc)
+                return self._error(HTTPStatus.BAD_GATEWAY, "Couldn't connect to this station")
+            try:
+                ctype = stream.content_type
+                if ctype is None:
+                    return self._error(HTTPStatus.BAD_GATEWAY, "This station isn't a plain audio stream")
+                app.set_title(url, None)
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", ctype)
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                # A paused tab stops reading; don't hold the station forever.
+                self.connection.settimeout(radio.READ_SECONDS)
+                for chunk in radio.relay(stream, lambda t: app.set_title(url, t)):
+                    self.wfile.write(chunk)
+            except OSError:
+                pass  # the listener or the station went away
+            finally:
+                stream.close()
 
         def _serve_static(self, path: str, head_only: bool):
             name = "index.html" if path in ("/", "") else path.lstrip("/")
@@ -430,6 +545,18 @@ def make_handler(app: PlayerApp):
                     app.add_station(str(data.get("name", "")), str(data.get("url", "")))
                 elif path == "/api/stations/remove":
                     app.remove_station(str(data.get("url", "")))
+                elif path == "/api/desktop":
+                    try:
+                        if "shortcut" in data:
+                            app.desktop.set_shortcut(bool(data["shortcut"]))
+                        if "login" in data:
+                            app.desktop.set_login(bool(data["login"]))
+                    except OSError as exc:
+                        return self._error(HTTPStatus.INTERNAL_SERVER_ERROR, f"Couldn't change shortcuts: {exc}")
+                elif path == "/api/quit":
+                    self._send_json({"ok": True})
+                    threading.Thread(target=self.server.shutdown, daemon=True).start()
+                    return
                 else:
                     return self._error(HTTPStatus.NOT_FOUND, "Not found")
             except (ValueError, TypeError) as exc:

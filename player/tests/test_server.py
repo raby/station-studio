@@ -1,4 +1,6 @@
 import http.client
+import shutil
+from pathlib import Path
 import json
 import socket
 import threading
@@ -309,16 +311,17 @@ def test_stale_rebuild_does_not_replace_newer_library(running, monkeypatch):
     real_load = srv.Library.load
     calls = []
 
-    def load(self, sources, folders, remaps):
+    def load(self, sources, folders, *rest):
         calls.append(list(folders))
         if len(calls) == 1:  # the first (older) rebuild is slow
             gate.wait(5)
-        return real_load(self, sources, folders, remaps)
+        return real_load(self, sources, folders, *rest)
 
     monkeypatch.setattr(srv.Library, "load", load)
     slow = threading.Thread(target=app.rescan)
     slow.start()
-    while not calls:
+    deadline = time.monotonic() + 5
+    while not calls and time.monotonic() < deadline:
         pass
     app.add_source("music", str(tmp / "newer"))  # newer change finishes first
     gate.set()
@@ -406,7 +409,8 @@ def test_piled_up_rescans_share_one_scan(running, monkeypatch):
     threads = [threading.Thread(target=app.rescan) for _ in range(5)]
     for t in threads:
         t.start()
-    while not calls:
+    deadline = time.monotonic() + 5
+    while not calls and time.monotonic() < deadline:
         time.sleep(0.01)
     time.sleep(0.2)  # let the others queue up behind the first scan
     gate.set()
@@ -427,3 +431,138 @@ def test_dropped_connections_are_not_errors(running, monkeypatch):
     monkeypatch.setattr(BaseHTTPRequestHandler, "handle", aborted)
     h = handler_cls.__new__(handler_cls)
     handler_cls.handle(h)  # must not raise
+
+
+# ---- 0.2.0: tags, artwork, shortcuts, quit, background scan ----------------------
+
+FIXTURES = Path(__file__).parent / "fixtures"
+
+
+def test_folder_tracks_use_file_tags_and_cache_them(tmp_path):
+    music = tmp_path / "Music" / "Album Dir"
+    music.mkdir(parents=True)
+    shutil.copy(FIXTURES / "tagged.flac", music / "01 - Name From File.flac")
+    write_wav(music / "02 - Plain Artist - Plain Song.wav")
+    store = ConfigStore()
+    store.config.music_folders = [str(tmp_path / "Music")]
+    app = PlayerApp(store)
+    pl = next(p for p in app.library.playlist_summaries() if p["kind"] == "folder")
+    tracks = app.library.playlist_detail(pl["id"])["tracks"]
+    tagged, plain = tracks
+    assert (tagged["name"], tagged["artist"], tagged["album"], tagged["genre"]) == \
+        ("Tëst Title", "The Artist", "An Album", "Dub")
+    assert 950 <= tagged["duration_ms"] <= 1100
+    # No tags: the file name and folder fill in, as before.
+    assert (plain["name"], plain["artist"], plain["album"]) == ("Plain Song", "Plain Artist", "Album Dir")
+    assert plain["duration_ms"] == 1000
+    assert (tmp_path / "player-home" / "tag-cache.json").exists()
+
+
+def test_artwork_endpoint(running):
+    app, port, song, tmp = running
+    sid = next(iter(app.library.tracks))
+    # No embedded art and no cover file yet.
+    assert request(port, "GET", f"/art/{sid}")[0].status == 404
+    cover = tmp / "music" / "Cover.JPG"
+    cover.write_bytes(b"\xff\xd8\xff\xe0" + b"\x00" * 100)
+    resp, body = request(port, "GET", f"/art/{sid}")
+    assert resp.status == 200 and resp.getheader("Content-Type") == "image/jpeg"
+    assert body == cover.read_bytes()
+    # A "cover" that isn't really an image is never served.
+    cover.write_bytes(b"<script>alert(1)</script>")
+    assert request(port, "GET", f"/art/{sid}")[0].status == 404
+    assert request(port, "GET", "/art/not-a-track")[0].status == 404
+
+
+def test_embedded_artwork_wins(tmp_path):
+    music = tmp_path / "m"
+    music.mkdir()
+    shutil.copy(FIXTURES / "tagged-id3v24.mp3", music / "a.mp3")
+    (music / "cover.jpg").write_bytes(b"\xff\xd8\xff" + b"\x00" * 10)
+    store = ConfigStore()
+    store.config.music_folders = [str(music)]
+    app = PlayerApp(store)
+    data, mime = app.artwork(next(iter(app.library.tracks)))
+    assert mime == "image/png"
+
+
+class FakeDesktop:
+    def __init__(self, fail=False):
+        self.calls, self.fail = [], fail
+
+    def status(self):
+        return {"supported": True, "platform": "linux", "shortcut": ("shortcut", True) in self.calls,
+                "login": ("login", True) in self.calls}
+
+    def set_shortcut(self, on):
+        if self.fail:
+            raise OSError("no permission")
+        self.calls.append(("shortcut", on))
+
+    def set_login(self, on):
+        self.calls.append(("login", on))
+
+
+def serve(app):
+    server = make_server(app, port=0)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server, server.server_address[1]
+
+
+def test_desktop_endpoint(tmp_path):
+    fake = FakeDesktop()
+    server, port = serve(PlayerApp(ConfigStore(), desktop=fake))
+    try:
+        resp, body = request(port, "POST", "/api/desktop", {"shortcut": True},
+                             headers={"X-Station-Player": "1"})
+        assert resp.status == 200 and json.loads(body)["desktop"]["shortcut"] is True
+        request(port, "POST", "/api/desktop", {"login": True}, headers={"X-Station-Player": "1"})
+        assert fake.calls == [("shortcut", True), ("login", True)]
+        # Without the API header another website can't flip these.
+        assert request(port, "POST", "/api/desktop", {"login": False})[0].status == 403
+        fake.fail = True
+        resp, body = request(port, "POST", "/api/desktop", {"shortcut": False},
+                             headers={"X-Station-Player": "1"})
+        assert resp.status == 500 and "no permission" in json.loads(body)["error"]
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_quit_stops_the_server(tmp_path):
+    server = make_server(PlayerApp(ConfigStore()), port=0)
+    port = server.server_address[1]
+    loop = threading.Thread(target=server.serve_forever, daemon=True)
+    loop.start()
+    try:
+        assert request(port, "POST", "/api/quit", {})[0].status == 403  # header required
+        assert loop.is_alive()
+        resp, _ = request(port, "POST", "/api/quit", {}, headers={"X-Station-Player": "1"})
+        assert resp.status == 200
+        loop.join(5)
+        assert not loop.is_alive()  # serve_forever returned, so main() exits
+    finally:
+        server.server_close()
+
+
+def test_background_scan_reports_progress(tmp_path, monkeypatch):
+    from station_player import server as srv
+    write_wav(tmp_path / "m" / "a.wav")
+    store = ConfigStore()
+    store.config.music_folders = [str(tmp_path / "m")]
+    gate = threading.Event()
+    real_load = srv.Library.load
+
+    def slow(self, *a):
+        gate.wait(5)
+        return real_load(self, *a)
+
+    monkeypatch.setattr(srv.Library, "load", slow)
+    app = PlayerApp(store, scan=False)
+    assert app.state()["scanning"] is True
+    worker = app.scan_in_background()
+    assert app.state()["scanning"] is True
+    gate.set()
+    worker.join(5)
+    state = app.state()
+    assert state["scanning"] is False and state["playlists"]
