@@ -20,13 +20,23 @@ the UI. It needs nothing beyond Python 3.11+ and listens only on
 
 ## Install and run
 
+You need Python 3.11 or newer and [pipx](https://pipx.pypa.io)
+(macOS: `brew install pipx`; Windows: `py -m pip install --user pipx`,
+then `py -m pipx ensurepath`). No checkout of this repo is needed.
+
+Install the latest release (the exact command is on each
+[Station Player release](https://github.com/raby/station-studio/releases)):
+
 ```bash
-# from a station-studio checkout
-pipx install ./player          # or: pip install ./player
+pipx install https://github.com/raby/station-studio/releases/download/player-v0.1.0/station_player-0.1.0-py3-none-any.whl
 station-player
 ```
 
-or, without installing:
+Once it's on PyPI, this shorter form works too: `pipx install station-player`.
+Upgrade later with `pipx upgrade station-player` (PyPI) or by running
+`pipx install --force` with a newer release's link.
+
+From a checkout, for development:
 
 ```bash
 cd player
@@ -87,6 +97,15 @@ generates carry each track's file location through to this player.
 cd player
 python -m pytest
 ```
+
+### Releasing
+
+Bump `version` in `player/pyproject.toml` and merge to main, then run
+**Actions → Publish Station Player → Run workflow**. It tests, builds,
+smoke-installs the wheel and creates a `player-v<version>` GitHub
+release with the files attached. Tick *Also publish to PyPI* to upload
+the same files to pypi.org (one-time setup is described at the top of
+`.github/workflows/publish-player.yml`).
 
 The server is `station_player/server.py` (standard library
 `http.server`), the library reader is `station_player/library.py`, and
