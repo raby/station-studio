@@ -166,6 +166,8 @@ exclude = [
     "/from_user",
     "/backups",
     "/out",
+    # Station Player ships as its own package (player/pyproject.toml).
+    "/player",
 ]
 
 # §16.13 slice-review 🟡-4 / t3: register the `slow` marker so the
@@ -174,6 +176,9 @@ exclude = [
 # include slow tests (the gate is the default behavior, not opt-in);
 # use `pytest -m 'not slow'` to skip on bandwidth-constrained CI shards.
 [tool.pytest.ini_options]
+# `player/` is a separate app with its own tests (see player/README.md);
+# keep the backend gate scoped to station-studio's own suite.
+testpaths = ["tests"]
 markers = [
     "slow: subprocess / uvicorn / network tests that add ~5s+ to a run",
 ]

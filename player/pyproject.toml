@@ -1,0 +1,33 @@
+# Station Player — a separate app from station-studio that plays its
+# exported iTunes XML playlists, local music folders and radio streams.
+# Standard library only at runtime, so `pipx install ./player` is the
+# whole install.
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "station-player"
+version = "0.1.0"
+description = "Local music and radio player for station-studio playlists"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+authors = [
+    { name = "Raby Whyte", email = "rabywhyte@gmail.com" },
+]
+keywords = ["music", "player", "radio", "itunes", "playlist"]
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+station-player = "station_player.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["station_player"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
