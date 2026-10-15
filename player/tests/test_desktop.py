@@ -108,8 +108,10 @@ def fake_osacompile(calls):
             (out / "Contents/MacOS").mkdir(parents=True)
             (out / "Contents/Resources").mkdir(parents=True)
             (out / "Contents/MacOS/applet").write_text("stub")
+            (out / "Contents/Resources/Assets.car").write_text("script icon")
             with (out / "Contents/Info.plist").open("wb") as fh:
-                plistlib.dump({"CFBundleExecutable": "applet", "CFBundleIconFile": "applet"}, fh)
+                plistlib.dump({"CFBundleExecutable": "applet", "CFBundleIconFile": "applet",
+                               "CFBundleIconName": "applet"}, fh)
         return subprocess.CompletedProcess(cmd, 0, "", "")
     return run
 
@@ -127,7 +129,13 @@ def test_mac_app_is_an_applet_that_takes_open_with_files(tmp_path):
     script = calls[1]
     assert "on open theFiles" in script and "quoted form of POSIX path of f" in script
     assert "'/opt/My Tools/venv/bin/python' -P -m station_player --app" in script
+    # The player's icon, not the script icon newer macOS takes from Assets.car.
     assert (bundle / "Contents/Resources/applet.icns").exists()
+    assert not (bundle / "Contents/Resources/Assets.car").exists() and "CFBundleIconName" not in info
+    # station-player://start starts it without a window.
+    assert info["CFBundleURLTypes"][0]["CFBundleURLSchemes"] == ["station-player"]
+    assert "on open location theURL" in script
+    assert "station_player --app --no-browser >/dev/null" in script.split("on open location")[1]
     assert calls[2][:3] == ["codesign", "--force", "--sign"]
     assert calls[3][0].endswith("lsregister")
     assert not list((tmp_path / "Applications").glob(".*"))  # nothing left behind
@@ -144,6 +152,9 @@ def test_old_shortcuts_are_brought_up_to_date(tmp_path, monkeypatch):
     assert d.refresh() is False  # no shortcut: nothing to do
     d.set_shortcut(True)
     assert d.refresh() is False  # already current
+    monkeypatch.setattr(dt, "MAC_SHORTCUT_REVISION", 99)  # same version, app gained something
+    assert d.refresh() is True
+    assert d.refresh() is False
     monkeypatch.setattr(dt, "__version__", "99.0")
     assert d.refresh() is True
     linux = make("linux", tmp_path / "l")
@@ -232,6 +243,13 @@ def test_windows_shortcuts_and_run_key(tmp_path):
     assert keys.values[(r"Software\Classes\StationPlayer.AudioFile\shell\open", "FriendlyAppName")] == APP_NAME
     assert keys.values[(r"Software\Classes\.mp3\OpenWithProgids", "StationPlayer.AudioFile")] == ""
     assert not any(k[0] == r"Software\Classes\.mp3" for k in keys.values)
+    # station-player://start starts it without a window.
+    assert keys.values[(r"Software\Classes\station-player", "URL Protocol")] == ""
+    assert keys.values[(r"Software\Classes\station-player\shell\open\command", "")].endswith(
+        "pythonw.exe -P -m station_player --app --no-browser")
+    assert d.refresh() is False
+    del keys.values[(r"Software\Classes\station-player\shell\open\command", "")]  # made by 0.4.0
+    assert d.refresh() is True and d.refresh() is False
 
     d.set_login(True)
     assert reg.values[APP_NAME].endswith("pythonw.exe -P -m station_player --app --no-browser")

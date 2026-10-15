@@ -531,3 +531,29 @@ def test_install_as_an_app(page):
     manifest = page.evaluate("async () => (await fetch('/manifest.webmanifest')).json()")
     assert manifest["name"] == "Station Player" and manifest["display"] == "standalone"
     assert {i["sizes"] for i in manifest["icons"]} == {"192x192", "512x512"}
+
+
+def test_window_opened_while_the_player_is_off_starts_it_and_waits(browser, tmp_path):
+    store = ConfigStore(tmp_path / "home")
+    server = make_server(PlayerApp(store), port=0)
+    port = server.server_address[1]
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    ctx = browser.new_context()
+    try:
+        pg = ctx.new_page()
+        pg.goto(f"http://127.0.0.1:{port}/")
+        pg.evaluate("navigator.serviceWorker.ready.then(() => true)")
+        server.shutdown()
+        server.server_close()
+        # Opened from the Dock with the player off: a page that starts it.
+        pg.goto(f"http://127.0.0.1:{port}/", wait_until="commit")
+        sync_api.expect(pg.locator("#offline-status")).to_contain_text("Starting Station Player")
+        # The player comes back on the same address: the window opens it.
+        server = make_server(PlayerApp(store), port=port)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        pg.wait_for_selector(".sidebar", timeout=10000)
+        assert pg.url == f"http://127.0.0.1:{port}/"
+    finally:
+        ctx.close()
+        server.shutdown()
+        server.server_close()

@@ -253,3 +253,9 @@ a.btn { text-decoration: none; display: inline-block; }
 .range-row { display: flex; align-items: center; gap: 10px; max-width: 420px; }
 .range-row input { flex: 1; }
 .range-row output { min-width: 56px; font-variant-numeric: tabular-nums; }
+
+/* The page shown when the player isn't running (offline.html). */
+body.offline { display: grid; place-items: center; min-height: 100vh; margin: 0; }
+.offline-box { text-align: center; max-width: 32em; padding: 24px; }
+.offline-box h1 { font-size: 22px; margin: 12px 0 4px; }
+.offline-box p { color: var(--muted); }

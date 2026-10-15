@@ -33,6 +33,11 @@ from station_player import __version__
 APP_NAME = "Station Player"
 APP_ID = "io.github.raby.station-player"
 PROG_ID = "StationPlayer.AudioFile"
+# station-player://start starts the player without opening a window: the
+# installed app's window asks for it when it opens with the player off.
+URL_SCHEME = "station-player"
+# Bumped when the Mac app gains something, so existing ones are rebuilt.
+MAC_SHORTCUT_REVISION = 2
 # What "Open With" offers Station Player for.
 LINUX_MIME_TYPES = ("audio/mpeg", "audio/mp4", "audio/x-m4a", "audio/aac", "audio/flac", "audio/x-flac",
                     "audio/ogg", "audio/opus", "audio/wav", "audio/x-wav", "audio/aiff", "audio/x-aiff",
@@ -150,13 +155,16 @@ class Desktop:
                     info = plistlib.load(fh)
             except (OSError, plistlib.InvalidFileException, ValueError):
                 return False
-            if info.get("CFBundleIdentifier") != APP_ID or info.get("CFBundleShortVersionString") == __version__:
+            if info.get("CFBundleIdentifier") != APP_ID or (
+                    info.get("CFBundleShortVersionString") == __version__
+                    and info.get("StationPlayerShortcutRevision") == MAC_SHORTCUT_REVISION):
                 return False
         elif self.platform == "linux":
             if self._linux_menu_entry().read_text(encoding="utf-8") == self._linux_entry_text(background=False):
                 return False
         else:
-            if self._cls().get(rf"Software\Classes\{PROG_ID}\shell\open\command", "") is not None:
+            if self._cls().get(rf"Software\Classes\{PROG_ID}\shell\open\command", "") is not None \
+                    and self._cls().get(rf"Software\Classes\{URL_SCHEME}\shell\open\command", "") is not None:
                 return False
             self._windows_open_with(True)
             return True
@@ -330,6 +338,8 @@ class Desktop:
         """Build the app as an AppleScript applet, which macOS hands the
         files chosen with Open With. False when osacompile isn't there."""
         quoted = cmd.replace("\\", "\\\\").replace('"', '\\"')
+        # station-player://start: start without a window (the one asking
+        # is the window). The link's text is never used.
         script = (
             "on run\n"
             f'\tdo shell script "{quoted} >/dev/null 2>&1 &"\n'
@@ -341,6 +351,9 @@ class Desktop:
             "\tend repeat\n"
             f'\tdo shell script "{quoted}" & args & " >/dev/null 2>&1 &"\n'
             "end open\n"
+            "on open location theURL\n"
+            f'\tdo shell script "{quoted} --no-browser >/dev/null 2>&1 &"\n'
+            "end open location\n"
         )
         # Built beside the old app, then swapped in; the name must end in
         # .app for osacompile to make an applet.
@@ -362,7 +375,14 @@ class Desktop:
             return False
         with info_path.open("rb") as fh:
             info = plistlib.load(fh)
+        # Newer macOS takes the icon from Assets.car (osacompile's script
+        # icon) over CFBundleIconFile: drop it so the player's icon shows.
+        if (staging / "Contents" / "Resources" / "Assets.car").exists():
+            (staging / "Contents" / "Resources" / "Assets.car").unlink()
+        info.pop("CFBundleIconName", None)
         info.update({
+            "StationPlayerShortcutRevision": MAC_SHORTCUT_REVISION,
+            "CFBundleURLTypes": [{"CFBundleURLName": APP_ID, "CFBundleURLSchemes": [URL_SCHEME]}],
             "CFBundleName": APP_NAME,
             "CFBundleDisplayName": APP_NAME,
             "CFBundleIdentifier": APP_ID,
@@ -471,8 +491,11 @@ class Desktop:
         user; it never becomes the default app)."""
         reg = self._cls()
         base = rf"Software\Classes\{PROG_ID}"
+        scheme = rf"Software\Classes\{URL_SCHEME}"
         if not on:
             reg.delete_tree(base)
+            if reg.get(scheme, "StationPlayer") is not None:  # only ever ours
+                reg.delete_tree(scheme)
             for ext in WINDOWS_EXTENSIONS:
                 reg.delete(rf"Software\Classes\{ext}\OpenWithProgids", PROG_ID)
             return
@@ -483,6 +506,12 @@ class Desktop:
         reg.set(base + r"\shell\open\command", "", subprocess.list2cmdline(cmd) + ' "%1"')
         for ext in WINDOWS_EXTENSIONS:
             reg.set(rf"Software\Classes\{ext}\OpenWithProgids", PROG_ID, "")
+        # station-player://start, without a window (see URL_SCHEME).
+        reg.set(scheme, "", f"URL:{APP_NAME}")
+        reg.set(scheme, "URL Protocol", "")
+        reg.set(scheme, "StationPlayer", "1")
+        reg.set(scheme + r"\DefaultIcon", "", str(ICON_DIR / "icon.ico"))
+        reg.set(scheme + r"\shell\open\command", "", subprocess.list2cmdline(launch_command(True, "windows", self.python)))
 
 
 class _RunKey:

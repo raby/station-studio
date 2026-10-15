@@ -74,6 +74,10 @@ That window still counts as one of the browser's: in the Dock and
 Alt-Tab it shows as Chrome (or Edge, or Brave). **Install Station Player
 as an app** under Sources & settings › App gives it its own name and icon
 there, and Station Player opens that way from then on.
+Keep it in the Dock or taskbar if you like: opened from there while the
+player isn't running, it starts the player and opens once it's up (the
+browser asks once whether to let it open Station Player; tick "Always
+allow"). On Linux, start the player from its menu entry instead.
 
 When started from a shortcut there's no terminal, so messages go to
 `~/.station-player/station-player.log`.

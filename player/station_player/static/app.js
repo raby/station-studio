@@ -2144,6 +2144,11 @@ addEventListener("beforeinstallprompt", (e) => {
   installPrompt = e;
   if (S.view.type === "settings") renderView();
 });
+// Opened from the Dock or taskbar while the player isn't running, the
+// window shows a page that starts it (sw.js, offline.html).
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("/sw.js").catch(() => {});
+}
 addEventListener("appinstalled", () => {
   installPrompt = null;
   announce("Station Player is installed as an app");
