@@ -172,6 +172,7 @@ class Library:
         # filename (lowercased) -> paths, from scanned music folders; used
         # to find tracks whose iTunes Location points somewhere else.
         self._by_filename: dict[str, list[Path]] = {}
+        self._search_text: dict[str, str] = {}  # track id -> what search looks in
 
     # ---- loading --------------------------------------------------------
 
@@ -186,6 +187,7 @@ class Library:
         self.playlists.clear()
         self.errors.clear()
         self._by_filename.clear()
+        self._search_text.clear()
         remaps = remaps or []
 
         folder_files: list[tuple[Path, list[Path]]] = []
@@ -400,7 +402,9 @@ class Library:
         seen: set = set()
         total = 0
         for t in self.tracks.values():
-            hay = name_key(" ".join(v for v in (t.name, t.artist, t.album, t.genre) if v))
+            hay = self._search_text.get(t.id)
+            if hay is None:
+                hay = self._search_text[t.id] = name_key(" ".join(v for v in (t.name, t.artist, t.album, t.genre) if v))
             if not all(w in hay for w in words):
                 continue
             key = str(t.path) if t.path else (t.name, t.artist, t.album)

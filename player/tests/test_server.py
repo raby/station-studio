@@ -628,7 +628,8 @@ def test_search_tracks_and_loudness_endpoints(running):
     assert json.loads(request(port, "GET", f"/api/loudness/{tid}")[1]) == {"lufs": None, "peak": None, "source": None}
     assert request(port, "POST", "/api/loudness", {"id": tid, "lufs": -11.234, "peak": 0.9}, H)[0].status == 200
     assert json.loads(request(port, "GET", f"/api/loudness/{tid}")[1]) == {"lufs": -11.23, "peak": 0.9, "source": "measured"}
-    for bad in ({"lufs": "loud"}, {"lufs": 50}, {"lufs": -10, "peak": -1}, {"lufs": True}, {"lufs": float("nan")}):
+    for bad in ({"lufs": "loud"}, {"lufs": 50}, {"lufs": -10, "peak": -1}, {"lufs": True}, {"lufs": float("nan")},
+                {"lufs": 10 ** 400}, {"lufs": -10, "peak": 10 ** 400}):
         assert request(port, "POST", "/api/loudness", {"id": tid, **bad}, H)[0].status == 400, bad
     assert request(port, "POST", "/api/loudness", {"id": "nope", "lufs": -10}, H)[0].status == 404
     assert request(port, "GET", "/api/loudness/nope")[0].status == 404

@@ -233,7 +233,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # Serve straight away; the library fills in as the scan finishes.
     app.scan_in_background(on_done=report_scan)
-    app.check_for_update()
+    app.keep_checking_for_updates()
     print(f"Station Player {__version__} on {url}  (Ctrl+C or Quit in the app to stop)")
     print(f"Settings: {store.path}")
     if args.app:

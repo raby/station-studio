@@ -3,6 +3,7 @@ playback, the queue, resuming, library search, volume levelling and the
 new-version notice. Skipped when Playwright isn't installed."""
 import json
 import math
+import os
 import struct
 import threading
 import wave
@@ -10,7 +11,12 @@ from pathlib import Path
 
 import pytest
 
-sync_api = pytest.importorskip("playwright.sync_api")
+# CI sets this so a broken browser install fails instead of skipping.
+REQUIRED = os.environ.get("STATION_PLAYER_REQUIRE_BROWSER") == "1"
+if REQUIRED:
+    import playwright.sync_api as sync_api
+else:
+    sync_api = pytest.importorskip("playwright.sync_api")
 
 from station_player.config import ConfigStore  # noqa: E402
 from station_player.server import PlayerApp, make_server  # noqa: E402
@@ -37,6 +43,8 @@ def browser():
         try:
             b = p.chromium.launch(args=["--autoplay-policy=no-user-gesture-required"])
         except Exception as exc:  # no browser downloaded
+            if REQUIRED:
+                raise
             pytest.skip(f"Chromium not available: {exc}")
         yield b
         b.close()
@@ -218,3 +226,48 @@ def test_new_version_notice(page, player):
     page.reload()
     page.wait_for_selector("#view tbody tr")
     assert note.is_hidden()  # dismissed for this version
+
+
+def test_seeking_back_near_the_end_doesnt_start_the_next_track_early(page):
+    page.locator("#view tbody tr").nth(1).dblclick()  # "Two", 3 s
+    page.wait_for_function("() => handoffTimer !== null", timeout=10000, polling=5)
+    page.evaluate("audio.currentTime = 0.5")
+    page.wait_for_timeout(400)
+    assert page.evaluate("current().name") == "Two"
+    assert page.evaluate("decks.filter(d => !d.paused).length") == 1
+    page.wait_for_function("() => current().name === 'Three'", timeout=10000)
+    page.wait_for_timeout(400)
+    assert page.evaluate("decks.filter(d => !d.paused).length") == 1
+
+
+def test_track_changes_leave_keyboard_focus_alone(page):
+    page.locator("#view tbody tr").nth(0).dblclick()
+    nav = page.locator("#nav-folders .nav-item").first
+    nav.focus()
+    page.wait_for_function("() => current() && current().name === 'Two'", timeout=10000)
+    assert page.evaluate("document.activeElement === document.querySelector('#nav-folders .nav-item')")
+
+
+def test_add_to_queue_while_on_the_radio_plays_that_track(page):
+    rows = page.locator("#view tbody tr")
+    rows.nth(0).dblclick()
+    rows.nth(2).focus()
+    page.keyboard.press("q")  # "Three" queued
+    page.evaluate("playStation(S.lib.stations[0], { autoplay: false })")
+    rows.nth(3).focus()
+    page.keyboard.press("q")
+    page.wait_for_function("() => S.mode === 'track' && current().name === 'Quiet'")
+    assert page.evaluate("S.upNext.map(t => t.name)") == ["Three"]
+
+
+def test_reordering_the_queue_keeps_focus(page):
+    rows = page.locator("#view tbody tr")
+    rows.nth(0).dblclick()
+    for i in (2, 3):
+        rows.nth(i).focus()
+        page.keyboard.press("q")
+    page.locator(".nav-item[data-view=upnext]").click()
+    page.locator("button[aria-label='Move Quiet up']").focus()
+    page.keyboard.press("Enter")
+    assert page.evaluate("S.upNext.map(t => t.name)") == ["Quiet", "Three"]
+    assert page.evaluate("document.activeElement.getAttribute('aria-label')") == "Move Quiet down"

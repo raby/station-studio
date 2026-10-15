@@ -15,6 +15,7 @@ import re
 import socket
 import sys
 import threading
+import time
 import urllib.error
 import urllib.request
 from contextlib import contextmanager
@@ -162,6 +163,7 @@ class PlayerApp:
         self.tag_cache = TagCache(store.home / "tag-cache.json")
         self.loudness_store = loudness.LoudnessStore(store.home / "loudness.json")
         self.latest_version: str | None = None
+        self._update_lock = threading.Lock()
         self._lock = threading.RLock()
         self._scan_lock = threading.Lock()  # one disk scan at a time
         self._generation = 0
@@ -238,11 +240,25 @@ class PlayerApp:
 
         def work():
             kwargs = {"fetch": fetch} if fetch else {}
-            self.latest_version = updates.latest_version(self.store.home / "update-check.json", **kwargs)
+            with self._update_lock:  # one check at a time
+                self.latest_version = updates.latest_version(self.store.home / "update-check.json", **kwargs)
 
         worker = threading.Thread(target=work, name="update-check", daemon=True)
         worker.start()
         return worker
+
+    def keep_checking_for_updates(self) -> threading.Thread:
+        """Check now and then daily: it may run at login for weeks."""
+        def loop():
+            while True:
+                worker = self.check_for_update()
+                if worker:
+                    worker.join()
+                time.sleep(updates.CHECK_EVERY)
+
+        thread = threading.Thread(target=loop, name="update-checks", daemon=True)
+        thread.start()
+        return thread
 
     def set_check_updates(self, on: bool) -> None:
         with self._change(rescan=False) as cfg:

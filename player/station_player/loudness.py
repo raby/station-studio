@@ -30,19 +30,29 @@ def from_tags(gain_db: float | None, peak: float | None) -> dict | None:
     return {"lufs": round(REPLAYGAIN_REFERENCE - gain_db, 2), "peak": peak, "source": "tags"}
 
 
+def _finite(value, name: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{name} must be a number")
+    try:
+        value = float(value)
+    except OverflowError:
+        raise ValueError(f"{name} out of range") from None
+    if not math.isfinite(value):
+        raise ValueError(f"{name} must be a number")
+    return value
+
+
 def valid(lufs, peak) -> tuple[float, float | None]:
     """Check a measurement sent by the browser; raises ValueError."""
-    if isinstance(lufs, bool) or not isinstance(lufs, (int, float)) or not math.isfinite(lufs):
-        raise ValueError("lufs must be a number")
+    lufs = _finite(lufs, "lufs")
     if not _MIN_LUFS <= lufs <= _MAX_LUFS:
         raise ValueError("lufs out of range")
     if peak is not None:
-        if isinstance(peak, bool) or not isinstance(peak, (int, float)) or not math.isfinite(peak):
-            raise ValueError("peak must be a number")
+        peak = _finite(peak, "peak")
         if not 0 < peak <= 16:
             raise ValueError("peak out of range")
-        peak = round(float(peak), 6)
-    return round(float(lufs), 2), peak
+        peak = round(peak, 6)
+    return round(lufs, 2), peak
 
 
 class LoudnessStore:

@@ -346,8 +346,8 @@ def test_replaygain_from_id3_txxx(tmp_path):
 
 
 def test_itunes_sound_check_from_id3_comment(tmp_path):
-    # 2000 = 10^(3/10) * 1000, so -3 dB; peaks 0x7FFF and 0x4000.
-    norm = " 000007D0 000003E8 00000000 00000000 00000000 00000000 00000000 00007FFF 00004000 00000000"
+    # 2000 = 10^(3/10) * 1000, so -3 dB; peaks (7th and 8th) 0x7FFF and 0x4000.
+    norm = " 000007D0 000003E8 00001388 00000BB8 00024CA8 00024CA8 00007FFF 00004000 00024CA8 00024CA8"
     comm = b"\x00eng" + b"iTunNORM\x00" + norm.encode()
     tags = read_tags(write(tmp_path, id3(frame("COMM", comm, major=3), major=3)))
     assert tags.gain_db == pytest.approx(-3.01, abs=0.01)
@@ -398,6 +398,18 @@ def test_replaygain_and_sound_check_from_mp4_freeform_atoms(tmp_path):
 
     tags = read_tags(write(tmp_path, m4a(freeform("replaygain_track_gain", "-9.00 dB")), "a.m4a"))
     assert tags.gain_db == -9.0
-    norm = " 000003E8 000003E8 0 0 0 0 0 00004000 00004000 0"
+    norm = " 000003E8 000003E8 0 0 0 0 00004000 00004000 0 0"
     tags = read_tags(write(tmp_path, m4a(freeform("iTunNORM", norm)), "b.m4a"))
     assert (tags.gain_db, tags.peak) == (0.0, 0.5)
+
+
+def test_gain_number_formats_and_overlong_sound_check(tmp_path):
+    from station_player.tags import _number
+    assert _number("-6,48 dB") == -6.48
+    assert _number("+.5 dB") == 0.5
+    assert _number("1.5e-1") == 0.15
+    assert _number("1e999") is None
+    # A garbled Sound Check value is ignored, and the other tags survive it.
+    comm = b"\x00eng" + b"iTunNORM\x00" + b"F" * 400 + b" 1"
+    tags = read_tags(write(tmp_path, id3(frame("TIT2", text("Kept")) + frame("COMM", comm))))
+    assert (tags.title, tags.gain_db) == ("Kept", None)

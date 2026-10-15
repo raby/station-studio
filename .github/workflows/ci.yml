@@ -50,6 +50,8 @@ jobs:
           python -m playwright install --with-deps chromium
       - name: pytest
         working-directory: player
+        env:
+          STATION_PLAYER_REQUIRE_BROWSER: '1'
         run: python -m pytest -q
 
   frontend-unit:

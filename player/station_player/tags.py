@@ -166,10 +166,14 @@ def _number(text: str | None) -> float | None:
     """"-6.48 dB" -> -6.48; None for anything that isn't a sane number."""
     if not text:
         return None
-    m = re.match(r"\s*([-+]?\d+(?:\.\d+)?)", text)
+    # Some writers use a decimal comma ("-6,48 dB").
+    m = re.match(r"\s*([-+]?(?:\d+(?:[.,]\d*)?|[.,]\d+)(?:[eE][-+]?\d{1,3})?)", text)
     if not m:
         return None
-    value = float(m.group(1))
+    try:
+        value = float(m.group(1).replace(",", "."))
+    except (ValueError, OverflowError):
+        return None
     return value if math.isfinite(value) else None
 
 
@@ -184,17 +188,20 @@ def _set_gain(tags: Tags, gain: float | None, peak: float | None = None) -> None
 def _soundcheck(text: str | None) -> tuple[float, float | None] | None:
     """iTunes Sound Check ("iTunNORM"): ten hex numbers. The first two are
     the left and right adjustment (1000 = 0 dB, as 10^(-dB/10) * 1000),
-    the 8th and 9th the peaks in 16-bit sample units."""
+    the 7th and 8th the left and right peaks in 16-bit sample units."""
     if not text:
         return None
+    tokens = text.split()
+    if any(len(v) > 8 for v in tokens):  # each value is a 32-bit number
+        return None
     try:
-        values = [int(v, 16) for v in text.split()]
+        values = [int(v, 16) for v in tokens]
     except ValueError:
         return None
     if len(values) < 2 or max(values[0], values[1]) <= 0:
         return None
     gain = -10 * math.log10(max(values[0], values[1]) / 1000)
-    peak = max(values[7], values[8]) / 32768 if len(values) >= 9 and max(values[7], values[8]) else None
+    peak = max(values[6], values[7]) / 32768 if len(values) >= 8 and max(values[6], values[7]) else None
     return gain, peak
 
 
@@ -984,7 +991,7 @@ class TagCache:
     or changed files are opened on later scans. Stored as JSON beside the
     settings; a missing or damaged cache just means a slower scan."""
 
-    VERSION = 2  # 2: gain_db and peak
+    VERSION = 3  # 2: gain_db and peak; 3: Sound Check peaks read from the right fields
 
     def __init__(self, path: Path | None) -> None:
         self.path = path

@@ -53,21 +53,23 @@ function announce(text) {
   setTimeout(() => { region.textContent = text; }, 50);
 }
 
-async function api(path, body) {
+// `quiet` is for background calls, which shouldn't show "Updating library…".
+async function api(path, body, { quiet = false } = {}) {
   const opts = body === undefined ? {} : {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-Station-Player": "1" },
     body: JSON.stringify(body),
   };
   // Settings changes rescan the library, which can take a while.
-  if (body !== undefined) setBusy(1);
+  const busy = body !== undefined && !quiet;
+  if (busy) setBusy(1);
   try {
     const res = await fetch(path, opts);
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
     return data;
   } finally {
-    if (body !== undefined) setBusy(-1);
+    if (busy) setBusy(-1);
   }
 }
 
@@ -464,8 +466,12 @@ function upNextView() {
     line(track),
     el("button", {
       type: "button", class: "btn small", "aria-label": `Move ${track.name} up`, disabled: i === 0 || null,
-      onclick: () => { moveQueued(i, -1); },
+      onclick: () => moveQueued(i, -1),
     }, "↑"),
+    el("button", {
+      type: "button", class: "btn small", "aria-label": `Move ${track.name} down`, disabled: i === S.upNext.length - 1 || null,
+      onclick: () => moveQueued(i, 1),
+    }, "↓"),
     el("button", {
       type: "button", class: "btn small", "aria-label": `Remove ${track.name} from the queue`,
       onclick: () => { S.upNext.splice(i, 1); queueChanged(); announce(`Removed ${track.name}`); },
@@ -496,21 +502,23 @@ function moveQueued(i, dir) {
   if (j < 0 || j >= S.upNext.length) return;
   [S.upNext[i], S.upNext[j]] = [S.upNext[j], S.upNext[i]];
   queueChanged();
-  const again = document.querySelectorAll("#view .upnext ul li")[j];
-  if (again) again.querySelector("button").focus();
+  announce(`${S.upNext[j].name} moved ${dir < 0 ? "up" : "down"}`);
 }
 
 // After the queue or the playing track changes: redraw what shows it,
 // line up the next track and remember where we are.
 function queueChanged() {
-  renderNav();
+  $("#upnext-count").textContent = S.upNext.length || "";
   if (S.view.type === "upnext") {
     const active = document.activeElement;
     const inView = active && $("#view").contains(active);
     const label = inView && active.getAttribute("aria-label");
     renderView();
     if (inView) {
-      const again = label && [...document.querySelectorAll("#view button")].find((b) => b.getAttribute("aria-label") === label);
+      let again = label && [...document.querySelectorAll("#view button")].find((b) => b.getAttribute("aria-label") === label);
+      // "Move up" on what is now the first item is disabled: use the
+      // next button along on the same item.
+      if (again && again.disabled) again = [...again.parentElement.querySelectorAll("button")].find((b) => !b.disabled);
       if (again) again.focus();
       else focusHeading();
     }
@@ -741,8 +749,11 @@ function settingsView() {
 const LEVEL_TARGET = -16;            // LUFS every track is brought to
 const MAX_BOOST_DB = 9;
 const MAX_CUT_DB = -15;
-const MEASURE_MAX_MS = 20 * 60 * 1000; // longer files need tags to be levelled
-const MEASURE_MAX_BYTES = 150e6;
+const HEADROOM = 0.89;                // about -1 dB below full scale
+// Browsers decode a whole file into memory to measure it, so only songs
+// of ordinary length are measured; longer files need tags to be levelled.
+const MEASURE_MAX_MS = 12 * 60 * 1000;
+const MEASURE_MAX_BYTES = 60e6;
 const L = {
   on: store("level") === "1",
   ctx: null,
@@ -810,9 +821,12 @@ function levelGain(trackId) {
   if (!l || typeof l.lufs !== "number") return 1;
   const db = Math.max(MAX_CUT_DB, Math.min(MAX_BOOST_DB, LEVEL_TARGET - l.lufs));
   const gain = 10 ** (db / 20);
-  // A quiet track is only raised as far as its loudest peak allows.
-  if (gain > 1 && l.peak && gain * l.peak > 1) return Math.max(1, 1 / l.peak);
-  return gain;
+  if (gain <= 1) return gain;
+  // A quiet track is only raised as far as its loudest peak allows (with
+  // a little headroom: peaks measured at a low sample rate read low).
+  // Without a known peak it is raised by 1 dB at most.
+  const ceiling = l.peak ? Math.max(1, HEADROOM / l.peak) : 10 ** (1 / 20);
+  return Math.min(gain, ceiling);
 }
 
 function setDeckGain(i, trackId, smooth) {
@@ -836,9 +850,11 @@ function lookupLoudness(track) {
       const found = await api(`/api/loudness/${track.id}`);
       if (typeof found.lufs === "number") {
         loudnessKnown(track.id, found);
-      } else if (!track.duration_ms || track.duration_ms <= MEASURE_MAX_MS) {
+      } else if (track.duration_ms && track.duration_ms <= MEASURE_MAX_MS) {
         L.measureQueue.push(track);
         runMeasurements();
+      } else {
+        L.known.set(track.id, null);  // can't be measured: plays as it is
       }
     } catch { /* levelling is best effort */ } finally {
       L.pending.delete(track.id);
@@ -864,9 +880,13 @@ async function runMeasurements() {
         const result = await measureTrack(track);
         if (result) {
           loudnessKnown(track.id, result);
-          api("/api/loudness", { id: track.id, lufs: result.lufs, peak: result.peak }).catch(() => {});
+          api("/api/loudness", { id: track.id, lufs: result.lufs, peak: result.peak }, { quiet: true }).catch(() => {});
+        } else {
+          L.known.set(track.id, null);  // silent or too short: don't try again
         }
-      } catch { /* undecodable: plays unlevelled */ }
+      } catch {
+        L.known.set(track.id, null);  // undecodable: plays unlevelled
+      }
     }
   } finally {
     L.measuring = false;
@@ -988,7 +1008,9 @@ function playPlaylist(pl, startIndex) {
 function queueTrack(track, pl, where) {
   if (!track.available) return;
   const copy = { ...track, _index: pl.tracks.indexOf(track), _source: pl.id };
-  if (where === "next") S.upNext.unshift(copy);
+  // With nothing from the library playing, the chosen track starts now
+  // (ahead of anything left in the queue).
+  if (where === "next" || S.mode !== "track") S.upNext.unshift(copy);
   else S.upNext.push(copy);
   if (S.mode !== "track") {
     S.queue = [];
@@ -1064,6 +1086,7 @@ function step(dir, opts = {}) {
 }
 
 function stopAtEnd() {
+  cancelHandoff();
   audio.pause();
   S.pos = -1;
   S.extra = null;
@@ -1090,6 +1113,7 @@ function stopRadio() {
 // Start `track` on a deck: the other deck when it already holds the
 // track (lined up by preloadNext), else this one.
 function loadTrack(track, { startAt = 0, autoplay = true } = {}) {
+  cancelHandoff();
   stopRadio();
   const pre = otherDeck();
   if (pre.dataset.trackId === track.id && !pre.error) deckIdx = 1 - deckIdx;
@@ -1128,7 +1152,8 @@ function preloadNext() {
   if (!pre.paused && pre.dataset.trackId) return;  // still finishing the last track
   if (!current()) { unload(pre); return; }
   const m = nextMove(1);
-  if (m.stop) { unload(pre); return; }
+  // Repeat-one restarts this deck when the track ends.
+  if (m.stop || m.same) { unload(pre); return; }
   lookupLoudness(m.track);
   if (pre.dataset.trackId === m.track.id && !pre.error) return;
   pre.src = `/audio/${m.track.id}`;
@@ -1157,19 +1182,31 @@ function watchForEnd() {
   const deck = audio;
   handoffTimer = setTimeout(() => {
     handoffTimer = null;
-    if (deck === audio && !deck.paused) handoff();
+    // A seek, pause or track change since means it isn't time yet (the
+    // watcher sets a new timer when it is).
+    const stillEnding = deck.duration - deck.currentTime <= START_LATENCY + 0.03;
+    if (deck === audio && !deck.paused && stillEnding) handoff();
   }, Math.max(0, (left - START_LATENCY) * 1000));
 }
 setInterval(watchForEnd, 50);
+
+function cancelHandoff() {
+  clearTimeout(handoffTimer);
+  handoffTimer = null;
+}
 
 function handoff() {
   const m = nextIsReady();
   if (!m) return;
   const pre = otherDeck();
   applyMove(m);
+  const old = audio;
   deckIdx = 1 - deckIdx;
   audio = pre;
   if (audio.currentTime) audio.currentTime = 0;
+  // The old deck plays out its last few milliseconds, then stops for
+  // sure, even if its duration was misjudged.
+  setTimeout(() => { if (old !== audio && !old.paused) { old.pause(); preloadNext(); } }, 250);
   setDeckGain(deckIdx, m.track.id, false);
   audio.play().catch(() => {});
   updateNow();
@@ -1182,6 +1219,7 @@ function handoff() {
 // the station's own URL instead (no song titles then).
 function playStation(st, { via = "relay", autoplay = true } = {}) {
   const sameStation = S.mode === "radio" && S.station && S.station.url === st.url;
+  cancelHandoff();
   S.mode = "radio";
   S.station = st;
   S.pos = -1;
@@ -1241,8 +1279,13 @@ function togglePlay() {
     else ensureGraph();
     audio.play().catch(() => {});
   } else {
-    audio.pause();
+    pauseAll();
   }
+}
+
+// Pausing also stops a deck still playing out the end of the last track.
+function pauseAll() {
+  for (const d of [...decks, radioEl]) if (!d.paused) d.pause();
 }
 
 function previous() {
@@ -1352,7 +1395,7 @@ async function restoreSession() {
   const wanted = [...new Set([...q.ids, ...queued.map((u) => u[0]), ...(extra ? [extra[0]] : [])])];
   if (!wanted.length) return;
   let found;
-  try { found = (await api("/api/tracks", { ids: wanted })).tracks; } catch { return; }
+  try { found = (await api("/api/tracks", { ids: wanted }, { quiet: true })).tracks; } catch { return; }
   if (S.mode !== "idle") return;  // the user started something meanwhile
   const byId = new Map(found.map((t) => [t.id, t]));
   // Tracks gone from the library since are dropped from the queue.
@@ -1362,10 +1405,19 @@ async function restoreSession() {
     if (byId.has(id)) { newIndex[i] = queue.length; queue.push({ ...byId.get(id), _index: i, _source: q.source }); }
   });
   const order = q.order.filter((i) => newIndex[i] !== undefined).map((i) => newIndex[i]);
-  const oldPlaying = Number.isInteger(p.pos) && p.pos >= 0 ? q.ids[q.order[p.pos]] : null;
   S.queue = queue;
   S.order = order.length === queue.length ? order : [...queue.keys()];
-  S.pos = oldPlaying ? S.order.findIndex((i) => S.queue[i].id === oldPlaying) : -1;
+  // The same place in the order; if that track has gone, the next one
+  // still there, from its start.
+  S.pos = -1;
+  let time = Number(p.time) || 0;
+  if (Number.isInteger(p.pos) && p.pos >= 0) {
+    for (let k = p.pos; k < q.order.length && S.pos < 0; k++) {
+      const ni = newIndex[q.order[k]];
+      if (ni !== undefined) S.pos = S.order.indexOf(ni);
+      if (S.pos < 0 || k > p.pos) time = 0;
+    }
+  }
   S.queueSource = q.source;
   S.queueLabel = typeof q.label === "string" ? q.label : "";
   S.upNext = queued.filter((u) => byId.has(u[0])).map(([id, source, index]) => ({ ...byId.get(id), _index: index, _source: source }));
@@ -1378,7 +1430,7 @@ async function restoreSession() {
     return;
   }
   S.mode = "track";
-  loadTrack(t, { startAt: Number(p.time) || 0, autoplay: false });
+  loadTrack(t, { startAt: S.extra ? Number(p.time) || 0 : time, autoplay: false });
 }
 
 // ---------- wiring ------------------------------------------------------
@@ -1452,7 +1504,8 @@ for (const ev of ["play", "pause", "playing"]) {
     syncRadioCards();
   });
 }
-onAudio("pause", () => saveSession());
+onAudio("pause", () => { cancelHandoff(); saveSession(); });
+onAudio("seeking", cancelHandoff);
 onAudio("playing", () => { if (S.mode === "radio") pollTitle(); });
 addEventListener("pagehide", () => saveSession());
 
@@ -1569,7 +1622,7 @@ document.addEventListener("keydown", (e) => {
 if ("mediaSession" in navigator) {
   const ms = navigator.mediaSession;
   ms.setActionHandler("play", togglePlay);
-  ms.setActionHandler("pause", () => audio.pause());
+  ms.setActionHandler("pause", pauseAll);
   ms.setActionHandler("nexttrack", () => step(1, { userInitiated: true }));
   ms.setActionHandler("previoustrack", previous);
 }
