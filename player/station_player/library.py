@@ -48,6 +48,9 @@ class Track:
     genre: str | None = None
     duration_ms: int | None = None
     path: Path | None = None  # resolved local file, None when missing
+    # Where an iTunes XML said the file was (before any path rewrite), so a
+    # missing track can be looked for later. Not sent to the page.
+    location: Path | None = None
 
     @property
     def available(self) -> bool:
@@ -115,22 +118,32 @@ def apply_remaps(path: Path, remaps: list[dict]) -> Path:
     """Rewrite a path prefix, e.g. a Mac library path onto a PC drive.
 
     Matches whole folder names, ignoring case and Unicode composition, so
-    "c:/users/rob/music" rewrites "C:/Users/Rob/Music/..." too.
+    "c:/users/rob/music" rewrites "C:/Users/Rob/Music/..." too. When
+    several match, the most specific (longest) wins, so a narrower rule
+    added later can fix part of an older one.
     """
     parts = path.as_posix().split("/")
+    best: tuple[int, str] | None = None
     for remap in remaps:
         src = str(remap.get("from", "")).replace("\\", "/").rstrip("/")
         dst = str(remap.get("to", "")).replace("\\", "/").rstrip("/")
         if not src:
             continue
         src_parts = src.split("/")
-        head = parts[:len(src_parts)]
-        if len(head) == len(src_parts) and all(
-            name_key(a) == name_key(b) for a, b in zip(head, src_parts)
-        ):
-            rest = parts[len(src_parts):]
-            return Path("/".join([dst, *rest]) if rest else dst)
-    return path
+        if best is not None and len(src_parts) <= best[0]:
+            continue
+        if path_has_prefix(parts, src_parts):
+            best = (len(src_parts), dst)
+    if best is None:
+        return path
+    rest = parts[best[0]:]
+    return Path("/".join([best[1], *rest]) if rest else best[1])
+
+
+def path_has_prefix(parts: list[str], prefix: list[str]) -> bool:
+    """Whether path parts start with `prefix`, compared like `name_key`."""
+    return len(parts) >= len(prefix) and all(
+        name_key(a) == name_key(b) for a, b in zip(parts, prefix))
 
 
 def title_from_filename(path: Path) -> tuple[str, str | None]:
@@ -179,6 +192,7 @@ class Library:
         self._by_filename: dict[str, list[Path]] = {}
         self._search_text: dict[str, str] = {}  # track id -> what search looks in
         self._by_path: dict[str, Track] | None = None
+        self._missing: int | None = None
 
     # ---- loading --------------------------------------------------------
 
@@ -188,13 +202,18 @@ class Library:
         music_folders: list[str],
         remaps: list[dict] | None = None,
         tag_cache: TagCache | None = None,
+        names: dict[str, dict] | None = None,
     ) -> None:
+        """`names` gives some files a title and artist of their own (by
+        path): radio recordings, labelled in the Recordings page."""
+        self._names = names or {}
         self.tracks.clear()
         self.playlists.clear()
         self.errors.clear()
         self._by_filename.clear()
         self._search_text.clear()
         self._by_path = None
+        self._missing = None
         remaps = remaps or []
 
         folder_files: list[tuple[Path, list[Path]]] = []
@@ -235,17 +254,18 @@ class Library:
         for folder, files in folder_files:
             self._add_folder_playlist(folder, files, tag_cache)
 
-    def _resolve(self, raw: dict, remaps: list[dict]) -> Path | None:
+    def _resolve(self, raw: dict, remaps: list[dict]) -> tuple[Path | None, Path | None]:
+        """(the local file or None, where the XML said it was)."""
         loc = raw.get("Location")
-        candidate = location_to_path(loc) if isinstance(loc, str) else None
+        original = location_to_path(loc) if isinstance(loc, str) else None
         # Only audio is ever playable: a crafted XML pointing at, say,
         # ~/.ssh/id_rsa or an .html file must not make it servable.
-        if candidate is not None and candidate.suffix.lower() in AUDIO_EXTENSIONS:
-            candidate = apply_remaps(candidate, remaps)
-            if candidate.is_file():
-                return candidate
-            return self._find_moved(candidate)
-        return None
+        if original is None or original.suffix.lower() not in AUDIO_EXTENSIONS:
+            return None, None
+        candidate = apply_remaps(original, remaps)
+        if candidate.is_file():
+            return candidate, original
+        return self._find_moved(candidate), original
 
     def _find_moved(self, original: Path) -> Path | None:
         """Find a moved file by name, refusing to guess between namesakes.
@@ -299,7 +319,7 @@ class Library:
         for key, raw in data["Tracks"].items():
             if not isinstance(raw, dict):
                 continue
-            path = self._resolve(raw, remaps)
+            path, original = self._resolve(raw, remaps)
             pid = _text(raw.get("Persistent ID")) or f"{xml}:{key}"
             tid = _short_hash("itunes", pid, str(path or ""))
             duration = raw.get("Total Time")
@@ -311,6 +331,7 @@ class Library:
                 genre=_text(raw.get("Genre")),
                 duration_ms=duration if isinstance(duration, int) and not isinstance(duration, bool) else None,
                 path=path,
+                location=original,
             ))
             track_id = raw.get("Track ID")
             if isinstance(track_id, int):
@@ -368,10 +389,11 @@ class Library:
                 tags = tag_cache.get(f) if tag_cache is not None else read_tags(f)
                 title, artist = title_from_filename(f)
                 album = f.parent.name if f.parent != folder else None
+                own = getattr(self, "_names", {}).get(str(f), {})
                 self.tracks[tid] = Track(
                     id=tid,
-                    name=tags.title or title,
-                    artist=tags.artist or artist,
+                    name=own.get("name") or tags.title or title,
+                    artist=own.get("artist") or tags.artist or artist,
                     album=tags.album or album,
                     genre=tags.genre,
                     duration_ms=tags.duration_ms,
@@ -428,6 +450,17 @@ class Library:
                     index.setdefault(str(t.path), t)
             self._by_path = index
         return self._by_path.get(path)
+
+    def missing_count(self) -> int:
+        """How many songs can't be found: a song listed in several
+        playlists or weekly exports counts once. Entries with no file at
+        all (cloud-only songs, streams) aren't counted: there's nothing
+        to look for."""
+        if self._missing is None:
+            self._missing = len({
+                str(t.location) for t in self.tracks.values() if not t.available and t.location
+            })
+        return self._missing
 
     def tracks_json(self, ids: list[str]) -> list[dict]:
         """The tracks still in the library, in the order asked for."""
