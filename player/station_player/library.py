@@ -15,6 +15,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
+from station_player.tags import TagCache, read_tags
+
 logger = logging.getLogger(__name__)
 
 AUDIO_EXTENSIONS = frozenset({
@@ -178,6 +180,7 @@ class Library:
         playlist_sources: list[str],
         music_folders: list[str],
         remaps: list[dict] | None = None,
+        tag_cache: TagCache | None = None,
     ) -> None:
         self.tracks.clear()
         self.playlists.clear()
@@ -221,7 +224,7 @@ class Library:
                 self.errors.append(f"Playlist source not found: {src}")
 
         for folder, files in folder_files:
-            self._add_folder_playlist(folder, files)
+            self._add_folder_playlist(folder, files, tag_cache)
 
     def _resolve(self, raw: dict, remaps: list[dict]) -> Path | None:
         loc = raw.get("Location")
@@ -342,7 +345,7 @@ class Library:
             playlists.append(pl)
         return tracks, playlists
 
-    def _add_folder_playlist(self, folder: Path, files: list[Path]) -> None:
+    def _add_folder_playlist(self, folder: Path, files: list[Path], tag_cache: TagCache | None) -> None:
         pl = Playlist(
             id=_short_hash("folder", str(folder)),
             name=folder.name or str(folder),
@@ -352,9 +355,19 @@ class Library:
         for f in files:
             tid = _short_hash("file", str(f))
             if tid not in self.tracks:
+                # The file's own tags win; its name and folder fill gaps.
+                tags = tag_cache.get(f) if tag_cache is not None else read_tags(f)
                 title, artist = title_from_filename(f)
                 album = f.parent.name if f.parent != folder else None
-                self.tracks[tid] = Track(id=tid, name=title, artist=artist, album=album, path=f)
+                self.tracks[tid] = Track(
+                    id=tid,
+                    name=tags.title or title,
+                    artist=tags.artist or artist,
+                    album=tags.album or album,
+                    genre=tags.genre,
+                    duration_ms=tags.duration_ms,
+                    path=f,
+                )
             pl.track_ids.append(tid)
         self.playlists[pl.id] = pl
 

@@ -12,7 +12,12 @@ It plays three kinds of thing:
 - **Music folders**: any folder of audio files (mp3, m4a/aac, flac, wav,
   ogg/opus, aiff). Each folder shows up as its own playlist.
 - **Internet radio**: any stream URL, including `.pls` and `.m3u` links.
-  Rebirth Radio is set up out of the box.
+  Rebirth Radio is set up out of the box. When a station sends the name
+  of the song it's playing, Station Player shows it.
+
+Song details and cover art come from the files themselves (mp3, m4a,
+flac, ogg / opus, wav, aiff), or from a `cover.jpg` / `folder.jpg` in
+the album's folder.
 
 It runs as a small local server on your computer with a browser window as
 the UI. It needs nothing beyond Python 3.11+ and listens only on
@@ -24,17 +29,32 @@ You need Python 3.11 or newer and [pipx](https://pipx.pypa.io)
 (macOS: `brew install pipx`; Windows: `py -m pip install --user pipx`,
 then `py -m pipx ensurepath`). No checkout of this repo is needed.
 
-Install the latest release (the exact command is on each
-[Station Player release](https://github.com/raby/station-studio/releases)):
-
 ```bash
-pipx install https://github.com/raby/station-studio/releases/download/player-v0.1.0/station_player-0.1.0-py3-none-any.whl
+pipx install station-player
 station-player
 ```
 
-Once it's on PyPI, this shorter form works too: `pipx install station-player`.
-Upgrade later with `pipx upgrade station-player` (PyPI) or by running
-`pipx install --force` with a newer release's link.
+Upgrade later with `pipx upgrade station-player`. Each
+[Station Player release](https://github.com/raby/station-studio/releases)
+also has the wheel attached, for installing without PyPI.
+
+### Open it like a normal app
+
+In **Sources & settings › App**, turn on the shortcut and Station
+Player appears in the Start menu and on the desktop (Windows), in
+Applications, Launchpad and Spotlight (macOS), or in the apps menu
+(Linux). Opening it starts the player in the background and opens its
+window; opening it again while it runs just brings the window back.
+Use **Quit Station Player** in the sidebar to stop it.
+
+*Start when I log in* starts it quietly in the background at login, so
+the shortcut opens instantly. The same switches exist on the command
+line: `station-player --add-shortcut`, `--start-at-login` and
+`--remove-shortcuts`. Turn them off (or run `--remove-shortcuts`)
+before `pipx uninstall station-player`.
+
+When started from a shortcut there's no terminal, so messages go to
+`~/.station-player/station-player.log`.
 
 From a checkout, for development:
 
@@ -70,7 +90,9 @@ Only audio files (mp3, m4a/aac, flac, wav, ogg/opus, aiff, webm) are
 ever played or served, whatever a playlist file points at.
 
 Settings live in `~/.station-player/config.json` (override the folder
-with `$STATION_PLAYER_HOME`).
+with `$STATION_PLAYER_HOME`). Song details read from your files are
+cached beside them in `tag-cache.json`, so only new or changed files are
+read again on later scans.
 
 ## Playing
 
@@ -83,6 +105,9 @@ with `$STATION_PLAYER_HOME`).
   support.
 - Pausing a radio station and pressing play again reconnects to the live
   broadcast instead of resuming from where it stopped.
+- Radio plays through Station Player itself, which is how it can read
+  the song titles stations send (the browser can't). If a station can't
+  be relayed that way, it plays directly, just without song titles.
 
 ## A note on Station Studio's example stations
 
@@ -108,5 +133,7 @@ the same files to pypi.org (one-time setup is described at the top of
 `.github/workflows/publish-player.yml`).
 
 The server is `station_player/server.py` (standard library
-`http.server`), the library reader is `station_player/library.py`, and
-the UI is plain HTML / CSS / JS in `station_player/static/`.
+`http.server`), the library reader is `station_player/library.py`, file
+tags and art are read by `station_player/tags.py`, the radio relay is
+`station_player/radio.py`, shortcuts are `station_player/desktop.py`,
+and the UI is plain HTML / CSS / JS in `station_player/static/`.

@@ -87,6 +87,9 @@ const S = {
   queueSource: null,     // playlist id the queue came from
   mode: "idle",          // "idle" | "track" | "radio"
   station: null,
+  radioSrc: null,        // relay through the player, or the URL itself
+  radioTitle: null,      // song the station says is playing
+  reconnects: [],        // times the radio dropped and was reconnected
   shuffle: store("shuffle") === "1",
   repeat: store("repeat") || "off", // off | all | one
 };
@@ -330,6 +333,7 @@ function radioView() {
     const isLive = () => S.mode === "radio" && S.station && S.station.url === st.url;
     return el("div", { class: "card", "data-url": st.url },
       el("div", { class: "name" }, st.name),
+      el("div", { class: "song", hidden: true }),
       el("div", { class: "url" }, st.url),
       el("div", { class: "row" },
         el("button", {
@@ -362,6 +366,9 @@ function syncRadioCards() {
     const live = S.mode === "radio" && S.station && S.station.url === card.dataset.url;
     card.classList.toggle("live", Boolean(live));
     card.querySelector(".listen").textContent = live && !audio.paused ? "❚❚ Pause" : "▶ Listen";
+    const song = card.querySelector(".song");
+    song.textContent = live && S.radioTitle ? `Now playing: ${S.radioTitle}` : "";
+    song.hidden = !song.textContent;
   }
 }
 
@@ -396,6 +403,44 @@ function pathForm(kind, placeholder) {
   };
   return el("div", {}, el("form", { class: "form-row", onsubmit: submit }, input,
     el("button", { class: "btn" }, "Add")), msg);
+}
+
+// Shortcuts and start-at-login, worded for the computer it runs on.
+function appSection() {
+  const d = S.lib.desktop;
+  if (!d || !d.supported) return null;
+  const where = {
+    windows: "Add Station Player to the Start menu and the desktop",
+    mac: "Add Station Player to your Applications folder (find it in Launchpad and Spotlight)",
+    linux: "Add Station Player to your apps menu and the desktop",
+  }[d.platform];
+  const names = { shortcut: "Shortcut", login: "Start at login" };
+  const toggle = (key, label) => el("label", { class: "check" },
+    el("input", {
+      type: "checkbox", checked: d[key] || null, "data-key": key,
+      onchange: async (e) => {
+        const on = e.target.checked;
+        try {
+          await loadState(await api("/api/desktop", { [key]: on }));
+          announce(`${names[key]} turned ${on ? "on" : "off"}`);
+        } catch (err) {
+          renderErrors(err.message);
+        }
+        // Redraw from what the server reports (unticking a failed change)
+        // and keep the keyboard on the same switch.
+        renderView();
+        const again = document.querySelector(`#view input[data-key="${key}"]`);
+        if (again) again.focus();
+      },
+    }),
+    el("span", {}, label));
+  return el("section", {},
+    el("h2", {}, "App"),
+    el("p", { class: "help" },
+      "Open Station Player like any other app, without a terminal. Turn these off before uninstalling."),
+    el("div", { class: "checks" },
+      toggle("shortcut", where),
+      toggle("login", "Start Station Player in the background when I log in")));
 }
 
 function settingsView() {
@@ -448,6 +493,8 @@ function settingsView() {
       form: el("div", {}, el("form", { class: "form-row", onsubmit: addRemap }, from, to,
         el("button", { class: "btn" }, "Add")), remapMsg),
     }),
+    appSection(),
+    el("p", { class: "help version" }, `Station Player ${S.lib.version || ""}`),
   );
 }
 
@@ -515,15 +562,50 @@ function loadTrack(track) {
   markPlaying();
 }
 
-function playStation(st) {
+// Radio plays through the player's relay, which reads the song titles
+// stations send. If the relay can't handle a station, the browser plays
+// the station's own URL instead (no song titles then).
+function playStation(st, { via = "relay" } = {}) {
+  const sameStation = S.mode === "radio" && S.station && S.station.url === st.url;
   S.mode = "radio";
   S.station = st;
   S.pos = -1;
-  audio.src = st.url;
+  S.radioSrc = via === "relay" && st.id ? `/radio/${st.id}` : st.url;
+  if (!sameStation || S.radioSrc === st.url) S.radioTitle = null;
+  audio.src = S.radioSrc;
   audio.play().catch(() => {});
   updateNow();
   markPlaying();
   syncRadioCards();
+  pollTitle();
+}
+
+let titleTimer = null;
+let titleToken = 0;
+
+async function pollTitle() {
+  clearTimeout(titleTimer);
+  const token = ++titleToken;
+  if (S.mode !== "radio" || !S.radioSrc.startsWith("/radio/")) {
+    setRadioTitle(null);
+    return;
+  }
+  try {
+    const data = await api(`/api/nowplaying?station=${S.station.id}`);
+    if (token === titleToken && S.mode === "radio") setRadioTitle(data.title || null);
+  } catch { /* keep the last title */ }
+  // Paused radio isn't playing anything; polling restarts on "play".
+  if (token === titleToken && !audio.paused) titleTimer = setTimeout(pollTitle, 5000);
+}
+
+function setRadioTitle(title) {
+  if (title === S.radioTitle) return;
+  S.radioTitle = title;
+  if (S.mode === "radio") {
+    updateNow();
+    syncRadioCards();
+    if (title && !audio.paused) announce(`Now playing: ${title}`);
+  }
 }
 
 function togglePlay() {
@@ -533,7 +615,7 @@ function togglePlay() {
   }
   if (audio.paused) {
     // A paused live stream has fallen behind; reconnect to go live again.
-    if (S.mode === "radio") audio.src = S.station.url;
+    if (S.mode === "radio") audio.src = S.radioSrc;
     audio.play().catch(() => {});
   } else {
     audio.pause();
@@ -546,14 +628,27 @@ function previous() {
   else step(-1, { userInitiated: true });
 }
 
+function setArt(src) {
+  const img = $("#now-art");
+  if (!src) {
+    img.hidden = true;
+    img.removeAttribute("src");
+    return;
+  }
+  if (img.getAttribute("src") !== src) {
+    img.hidden = true;  // shown once it loads; most tracks may have none
+    img.src = src;
+  }
+}
+
 function updateNow() {
   const title = $("#now-title");
   const sub = $("#now-sub");
   const t = current();
   if (S.mode === "radio") {
     title.replaceChildren(el("span", { class: "live-badge" }, "LIVE"), S.station.name);
-    sub.textContent = "Internet radio";
-    document.title = `${S.station.name} · Station Player`;
+    sub.textContent = S.radioTitle || "Internet radio";
+    document.title = `${S.radioTitle || S.station.name} · Station Player`;
   } else if (S.mode === "track" && t) {
     title.textContent = t.name;
     sub.textContent = [t.artist, t._playlist].filter(Boolean).join(" · ");
@@ -565,11 +660,14 @@ function updateNow() {
   }
   $("#seek").disabled = S.mode !== "track";
   if (S.mode !== "track") $("#seek").value = 0;
+  const art = S.mode === "track" && t ? `/art/${t.id}` : null;
+  setArt(art);
   if (!("mediaSession" in navigator)) return;
   if (S.mode === "idle") { navigator.mediaSession.metadata = null; return; }
+  const artwork = art ? [{ src: new URL(art, location.href).href }] : [];
   navigator.mediaSession.metadata = new MediaMetadata(S.mode === "radio"
-    ? { title: S.station.name, artist: "Live radio" }
-    : { title: t.name, artist: t.artist || "", album: t.album || t._playlist || "" });
+    ? { title: S.radioTitle || S.station.name, artist: S.radioTitle ? S.station.name : "Live radio" }
+    : { title: t.name, artist: t.artist || "", album: t.album || t._playlist || "", artwork });
 }
 
 function syncButtons() {
@@ -602,13 +700,31 @@ audio.addEventListener("timeupdate", () => {
     $("#seek").setAttribute("aria-valuetext", `${fmtTime(audio.currentTime)} of ${fmtTime(audio.duration)}`);
   }
 });
-audio.addEventListener("ended", () => step(1));
+// A station that drops the connection is reconnected, a few times a
+// minute at most, so a dead station doesn't loop forever.
+function reconnectRadio() {
+  const now = Date.now();
+  S.reconnects = S.reconnects.filter((t) => now - t < 60000);
+  if (S.reconnects.length >= 3) return false;
+  S.reconnects.push(now);
+  playStation(S.station, { via: S.radioSrc === S.station.url ? "direct" : "relay" });
+  return true;
+}
+
+audio.addEventListener("ended", () => {
+  if (S.mode !== "radio") return step(1);
+  if (!reconnectRadio()) $("#now-sub").textContent = "Lost the connection to this station";
+});
 audio.addEventListener("error", () => {
   if (S.mode === "track") {
     const t = current();
     if (t) t.available = false;
     step(1, { afterError: true });
   } else if (S.mode === "radio") {
+    if (S.radioSrc !== S.station.url) {
+      playStation(S.station, { via: "direct" });  // relay failed: try the station itself
+      return;
+    }
     audio.pause();
     $("#now-sub").textContent = "Couldn't connect to this stream";
   }
@@ -619,6 +735,30 @@ for (const ev of ["play", "pause", "playing"]) {
     syncRadioCards();
   });
 }
+audio.addEventListener("playing", () => { if (S.mode === "radio") pollTitle(); });
+
+$("#now-art").addEventListener("load", (e) => { e.target.hidden = false; });
+$("#now-art").addEventListener("error", (e) => { e.target.hidden = true; });
+
+async function quitApp() {
+  if (!confirm("Quit Station Player? Music and radio will stop.")) return;
+  audio.pause();
+  try {
+    await api("/api/quit", {});
+  } catch (err) {
+    renderErrors(err.message);
+    return;
+  }
+  clearTimeout(titleTimer);
+  titleToken++;  // a poll already in flight must not schedule another
+  const heading = el("h1", { tabindex: "-1" }, "Station Player has stopped");
+  document.body.replaceChildren(el("main", { class: "stopped" },
+    heading,
+    el("p", {}, "You can close this tab. To start it again, open Station Player from its shortcut, or run station-player.")));
+  document.title = "Station Player (stopped)";
+  heading.focus();
+}
+$("#btn-quit").addEventListener("click", quitApp);
 
 const seek = $("#seek");
 seek.addEventListener("input", () => {
@@ -683,10 +823,33 @@ if ("mediaSession" in navigator) {
   updateNow();
   try {
     await loadState();
+    // The first scan runs in the background; wait for it before
+    // choosing which playlist to show.
+    if (S.lib.scanning) {
+      $("#view").replaceChildren(el("div", { class: "empty" }, "Reading your music library…"));
+      setBusy(1);
+      const started = Date.now();
+      try {
+        while (S.lib.scanning && Date.now() - started < 10 * 60 * 1000) {
+          await new Promise((r) => setTimeout(r, 700));
+          await loadState();
+        }
+      } finally {
+        setBusy(-1);
+      }
+      if (S.lib.scanning) {
+        renderErrors("Reading your music library is taking a long time. Playlists appear in the sidebar as soon as it finishes.");
+        const wait = setInterval(async () => {
+          try { await loadState(); } catch { return; }
+          if (!S.lib.scanning) clearInterval(wait);
+        }, 3000);
+      }
+    }
   } catch (err) {
     $("#view").replaceChildren(el("div", { class: "errors" }, `Can't reach the player server: ${err.message}`));
     return;
   }
+  if (showToken > 0) return;  // the user already opened something while it scanned
   let view = null;
   try { view = JSON.parse(store("view") || "null"); } catch { view = null; }
   const known = view && (view.type !== "playlist" || S.lib.playlists.some((p) => p.id === view.id));
