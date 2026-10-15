@@ -79,15 +79,37 @@ def test_snap_browsers_are_skipped():
 
 
 def test_an_installed_app_opens_as_that_app(tmp_path):
-    profile = tmp_path / "window"
-    assert window.installed_app_id(profile) is None
-    (profile / "Default/Web Applications/Manifest Resources/ndclgahegldohknijikipmikgfefalhe").mkdir(parents=True)
-    app_id = window.installed_app_id(profile)
-    assert app_id == "ndclgahegldohknijikipmikgfefalhe"
+    import plistlib
+    profile = tmp_path / "home" / ".station-player" / "window"
+    home = tmp_path / "home"
+    assert window.installed_app_id(profile, home, "darwin") is None
+    shims = home / "Applications" / "Chrome Apps.localized"
+    # Apps the browser put in that profile itself, or another profile's
+    # Station Player, are never taken for it.
+    for name, url, data in (("Google Chat", "https://chat.google.com/", str(profile)),
+                            ("Station Player", window.DEFAULT_URL, "/elsewhere"),
+                            ("Station Player 2", window.DEFAULT_URL, str(profile))):
+        contents = shims / f"{name}.app" / "Contents"
+        contents.mkdir(parents=True)
+        with (contents / "Info.plist").open("wb") as fh:
+            plistlib.dump({"CrAppModeShortcutID": ("x" if "Chat" in name else "y" if data == "/elsewhere" else "ours") * 1,
+                           "CrAppModeShortcutURL": url, "CrAppModeUserDataDir": data}, fh)
+    app_id = window.installed_app_id(profile, home, "darwin")
+    assert app_id == "ours"
     cmd = window.window_command("/b", window.DEFAULT_URL, profile, app_id)
-    assert f"--app-id={app_id}" in cmd and not any(a.startswith("--app=") for a in cmd)
+    assert "--app-id=ours" in cmd and not any(a.startswith("--app=") for a in cmd)
     # On another port the installed app (which opens the usual one) isn't used.
     assert "--app=http://127.0.0.1:9000/" in window.window_command("/b", "http://127.0.0.1:9000/", profile, app_id)
-    ran = []
-    window.open_ui(window.DEFAULT_URL, tmp_path, exe="/b", run=ran.append)
-    assert f"--app-id={app_id}" in ran[0]
+
+
+def test_installed_app_on_linux(tmp_path):
+    profile = tmp_path / ".station-player" / "window"
+    apps = tmp_path / ".local/share/applications"
+    apps.mkdir(parents=True)
+    app_id = "ndclgahegldohknijikipmikgfefalhe"
+    (apps / "chrome-other-Default.desktop").write_text(
+        f"[Desktop Entry]\nName=Gmail\nExec=chrome --user-data-dir={profile} --app-id={'a' * 32}\n")
+    assert window.installed_app_id(profile, tmp_path, "linux") is None
+    (apps / f"chrome-{app_id}-Default.desktop").write_text(
+        f"[Desktop Entry]\nName=Station Player\nExec=/opt/chrome --user-data-dir={profile} --profile-directory=Default --app-id={app_id}\n")
+    assert window.installed_app_id(profile, tmp_path, "linux") == app_id

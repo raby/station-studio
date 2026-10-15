@@ -14,6 +14,8 @@ taskbar. From then on it's opened that way (`--app-id`).
 from __future__ import annotations
 
 import os
+import plistlib
+import re
 import shutil
 import subprocess
 import sys
@@ -69,17 +71,39 @@ def browser_name(exe: str | None) -> str | None:
 DEFAULT_URL = "http://127.0.0.1:8765/"
 
 
-def installed_app_id(profile: Path) -> str | None:
-    """The id of Station Player installed as an app in its own browser
-    profile (the only app ever installed there), or None."""
-    root = profile / "Default" / "Web Applications" / "Manifest Resources"
-    try:
-        found = [p for p in root.iterdir() if p.is_dir() and len(p.name) == 32 and p.name.isalpha()]
-    except OSError:
+def installed_app_id(profile: Path, home: Path | None = None, platform: str | None = None) -> str | None:
+    """The id of Station Player installed as an app from its own window,
+    or None. Found from the shortcut the browser makes for it (which names
+    its id, address and profile), so another app installed in that
+    profile (browsers add some of their own) is never mistaken for it."""
+    home = home or Path.home()
+    platform = platform or sys.platform
+    profile_text = str(profile)
+    if platform == "darwin":
+        # ~/Applications/Chrome Apps.localized/Station Player.app (or Edge Apps…)
+        for info_path in home.glob("Applications/*.localized/*.app/Contents/Info.plist"):
+            try:
+                with info_path.open("rb") as fh:
+                    info = plistlib.load(fh)
+            except (OSError, plistlib.InvalidFileException, ValueError):
+                continue
+            app_id = info.get("CrAppModeShortcutID")
+            url = str(info.get("CrAppModeShortcutURL", ""))
+            data_dir = str(info.get("CrAppModeUserDataDir", ""))
+            if app_id and url.startswith(DEFAULT_URL) and profile_text in data_dir:
+                return str(app_id)
         return None
-    if not found:
-        return None
-    return max(found, key=lambda p: p.stat().st_mtime).name
+    if platform.startswith("linux"):
+        for entry in (home / ".local" / "share" / "applications").glob("*.desktop"):
+            try:
+                text = entry.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            found = re.search(r"--app-id=([a-p]{32})", text)
+            if found and f"--user-data-dir={profile_text}" in text.replace('"', "") \
+                    and re.search(r"^Name=Station Player$", text, re.M):
+                return found.group(1)
+    return None
 
 
 def window_command(exe: str, url: str, profile: Path, app_id: str | None = None) -> list[str]:
