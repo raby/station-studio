@@ -219,3 +219,43 @@ button:focus-visible, input:focus-visible, .nav-item:focus-visible {
 .upnext .muted { color: var(--muted); }
 .upnext ol.coming { margin: 0; padding-left: 22px; }
 .upnext ol.coming li { padding: 3px 0; }
+
+/* ---- my playlists, recording, crossfade ---- */
+.nav-head { display: flex; align-items: center; justify-content: space-between; margin: 16px 0 6px; }
+.nav-head h2 { margin: 0 8px; }
+.nav-add {
+  background: none; border: 0; border-radius: 6px; cursor: pointer; color: var(--muted);
+  width: 26px; height: 22px; font-size: 16px; line-height: 1;
+}
+.nav-add:hover { background: var(--row-hover); color: var(--text); }
+.head-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+a.btn { text-decoration: none; display: inline-block; }
+.tracks tbody tr[draggable="true"] { cursor: grab; }
+.tracks tbody tr.drop-before td { box-shadow: inset 0 2px 0 var(--accent); }
+.tracks tbody tr.drop-after td { box-shadow: inset 0 -2px 0 var(--accent); }
+.tracks tbody tr.dragging { opacity: .45; }
+.track-menu hr { border: 0; border-top: 1px solid var(--border); margin: 4px 2px; }
+.track-menu .menu-label { color: var(--muted); font-size: 12px; padding: 4px 10px 2px; }
+.rec-status {
+  margin: 6px 8px 0; font-size: 12px; color: var(--danger); display: flex; flex-direction: column; gap: 2px;
+}
+.rec-status button { background: none; border: 0; padding: 0; cursor: pointer; color: inherit; text-align: left; }
+.rec-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--danger); margin-right: 6px; }
+.card.recording { border-color: var(--danger); }
+.card .rec { font-size: 12px; color: var(--danger); }
+.card .rec.error { color: var(--danger); }
+.card .rec.saved { color: var(--muted); word-break: break-all; }
+.card .rec { display: flex; align-items: center; gap: 8px; }
+.card .rec-text { flex: 1; min-width: 0; }
+.card .rec-play { flex: none; color: var(--text); }
+.card .row { flex-wrap: wrap; }
+.card .row .btn { white-space: nowrap; }
+.range-row { display: flex; align-items: center; gap: 10px; max-width: 420px; }
+.range-row input { flex: 1; }
+.range-row output { min-width: 56px; font-variant-numeric: tabular-nums; }
+
+/* The page shown when the player isn't running (offline.html). */
+body.offline { display: grid; place-items: center; min-height: 100vh; margin: 0; }
+.offline-box { text-align: center; max-width: 32em; padding: 24px; }
+.offline-box h1 { font-size: 22px; margin: 12px 0 4px; }
+.offline-box p { color: var(--muted); }

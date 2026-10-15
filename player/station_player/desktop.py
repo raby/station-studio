@@ -11,6 +11,12 @@ Windows: Start menu and desktop shortcuts (.lnk, written by PowerShell)
 macOS:   ~/Applications/Station Player.app and a per-user LaunchAgent.
 Linux:   a .desktop entry in the apps menu (and on the desktop), and one
          in ~/.config/autostart.
+
+The shortcut also puts Station Player in the file manager's "Open With"
+list for audio files (never as the default app): an AppleScript applet
+on macOS (only an app that handles the "open" event receives the files),
+the .desktop entry's MimeType on Linux, and per-user registry entries on
+Windows.
 """
 from __future__ import annotations
 
@@ -26,6 +32,19 @@ from station_player import __version__
 
 APP_NAME = "Station Player"
 APP_ID = "io.github.raby.station-player"
+PROG_ID = "StationPlayer.AudioFile"
+# station-player://start starts the player without opening a window: the
+# installed app's window asks for it when it opens with the player off.
+URL_SCHEME = "station-player"
+# Bumped when the Mac app gains something, so existing ones are rebuilt.
+MAC_SHORTCUT_REVISION = 2
+# What "Open With" offers Station Player for.
+LINUX_MIME_TYPES = ("audio/mpeg", "audio/mp4", "audio/x-m4a", "audio/aac", "audio/flac", "audio/x-flac",
+                    "audio/ogg", "audio/opus", "audio/wav", "audio/x-wav", "audio/aiff", "audio/x-aiff",
+                    "audio/webm")
+WINDOWS_EXTENSIONS = (".mp3", ".m4a", ".aac", ".flac", ".ogg", ".oga", ".opus", ".wav", ".aif", ".aiff", ".webm")
+LSREGISTER = ("/System/Library/Frameworks/CoreServices.framework/Frameworks/"
+              "LaunchServices.framework/Support/lsregister")
 ICON_DIR = Path(__file__).parent / "static"
 _CREATE_NO_WINDOW = 0x08000000
 
@@ -89,13 +108,14 @@ class Desktop:
 
     def __init__(self, platform: str | None = None, home: Path | None = None,
                  env: dict | None = None, python: str | None = None,
-                 run=None, registry=None, folders: dict | None = None) -> None:
+                 run=None, registry=None, folders: dict | None = None, classes=None) -> None:
         self.platform = platform or current_platform()
         self.home = home or Path.home()
         self.env = os.environ if env is None else env
         self.python = python
         self._run = run or subprocess.run
         self._registry = registry
+        self._classes = classes
         self._folders = folders
 
     # ---- what the UI shows ---------------------------------------------------
@@ -123,6 +143,33 @@ class Desktop:
     def set_login(self, on: bool) -> None:
         self._require_support()
         getattr(self, f"_{self.platform}_login")(on)
+
+    def refresh(self) -> bool:
+        """Rewrite a shortcut made by an older version (so it gains what's
+        new, like Open With). True when it rewrote one."""
+        if not self.supported or not self._shortcut_exists():
+            return False
+        if self.platform == "mac":
+            try:
+                with (self._mac_bundle() / "Contents" / "Info.plist").open("rb") as fh:
+                    info = plistlib.load(fh)
+            except (OSError, plistlib.InvalidFileException, ValueError):
+                return False
+            if info.get("CFBundleIdentifier") != APP_ID or (
+                    info.get("CFBundleShortVersionString") == __version__
+                    and info.get("StationPlayerShortcutRevision") == MAC_SHORTCUT_REVISION):
+                return False
+        elif self.platform == "linux":
+            if self._linux_menu_entry().read_text(encoding="utf-8") == self._linux_entry_text(background=False):
+                return False
+        else:
+            if self._cls().get(rf"Software\Classes\{PROG_ID}\shell\open\command", "") is not None \
+                    and self._cls().get(rf"Software\Classes\{URL_SCHEME}\shell\open\command", "") is not None:
+                return False
+            self._windows_open_with(True)
+            return True
+        self.set_shortcut(True)
+        return True
 
     def remove_all(self) -> None:
         self.set_shortcut(False)
@@ -188,6 +235,8 @@ class Desktop:
 
     def _linux_entry_text(self, background: bool) -> str:
         cmd = launch_command(background, "linux", self.python)
+        # %F: the files chosen with Open With (none when started normally).
+        exec_line = _desktop_exec(cmd) if background else f"{_desktop_exec(cmd)} %F"
         lines = [
             "[Desktop Entry]",
             "Type=Application",
@@ -195,7 +244,7 @@ class Desktop:
             f"Name={APP_NAME}",
             "GenericName=Music Player",
             "Comment=Play Station Studio playlists, music folders and internet radio",
-            f"Exec={_desktop_exec(cmd)}",
+            f"Exec={exec_line}",
             f"Icon={self._linux_icon()}",
             "Terminal=false",
             "Categories=AudioVideo;Audio;Player;",
@@ -203,6 +252,8 @@ class Desktop:
         ]
         if background:
             lines.append("X-GNOME-Autostart-enabled=true")
+        else:
+            lines.append("MimeType=" + ";".join(LINUX_MIME_TYPES) + ";")
         return "\n".join(lines) + "\n"
 
     def _linux_shortcut(self, on: bool) -> None:
@@ -254,10 +305,14 @@ class Desktop:
             if ours:
                 shutil.rmtree(bundle)
             return
+        cmd = " ".join(shlex.quote(a) for a in launch_command(False, "mac", self.python))
+        if self._mac_applet(bundle, cmd):
+            return
+        # No osacompile: a plain bundle that opens the player (but can't
+        # receive files from Open With).
         contents = bundle / "Contents"
         (contents / "MacOS").mkdir(parents=True, exist_ok=True)
         (contents / "Resources").mkdir(parents=True, exist_ok=True)
-        cmd = " ".join(shlex.quote(a) for a in launch_command(False, "mac", self.python))
         script = contents / "MacOS" / "station-player"
         script.write_text(f'#!/bin/sh\nexec {cmd} "$@"\n', encoding="utf-8")
         script.chmod(0o755)
@@ -278,6 +333,88 @@ class Desktop:
         }
         with (contents / "Info.plist").open("wb") as fh:
             plistlib.dump(info, fh)
+
+    def _mac_applet(self, bundle: Path, cmd: str) -> bool:
+        """Build the app as an AppleScript applet, which macOS hands the
+        files chosen with Open With. False when osacompile isn't there."""
+        quoted = cmd.replace("\\", "\\\\").replace('"', '\\"')
+        # station-player://start: start without a window (the one asking
+        # is the window). The link's text is never used.
+        script = (
+            "on run\n"
+            f'\tdo shell script "{quoted} >/dev/null 2>&1 &"\n'
+            "end run\n"
+            "on open theFiles\n"
+            '\tset args to ""\n'
+            "\trepeat with f in theFiles\n"
+            '\t\tset args to args & " " & quoted form of POSIX path of f\n'
+            "\tend repeat\n"
+            f'\tdo shell script "{quoted}" & args & " >/dev/null 2>&1 &"\n'
+            "end open\n"
+            "on open location theURL\n"
+            f'\tdo shell script "{quoted} --no-browser >/dev/null 2>&1 &"\n'
+            "end open location\n"
+        )
+        # Built beside the old app, then swapped in; the name must end in
+        # .app for osacompile to make an applet.
+        staging = bundle.with_name(f".{bundle.stem} (updating).app")
+        source = bundle.with_name(".station-player-applet.applescript")
+        shutil.rmtree(staging, ignore_errors=True)
+        staging.parent.mkdir(parents=True, exist_ok=True)
+        source.write_text(script, encoding="utf-8")
+        try:
+            result = self._run(["osacompile", "-o", str(staging), str(source)],
+                               capture_output=True, text=True)
+        except OSError:
+            return False
+        finally:
+            source.unlink(missing_ok=True)
+        info_path = staging / "Contents" / "Info.plist"
+        if result.returncode != 0 or not info_path.exists():
+            shutil.rmtree(staging, ignore_errors=True)
+            return False
+        with info_path.open("rb") as fh:
+            info = plistlib.load(fh)
+        # Newer macOS takes the icon from Assets.car (osacompile's script
+        # icon) over CFBundleIconFile: drop it so the player's icon shows.
+        if (staging / "Contents" / "Resources" / "Assets.car").exists():
+            (staging / "Contents" / "Resources" / "Assets.car").unlink()
+        info.pop("CFBundleIconName", None)
+        info.update({
+            "StationPlayerShortcutRevision": MAC_SHORTCUT_REVISION,
+            "CFBundleURLTypes": [{"CFBundleURLName": APP_ID, "CFBundleURLSchemes": [URL_SCHEME]}],
+            "CFBundleName": APP_NAME,
+            "CFBundleDisplayName": APP_NAME,
+            "CFBundleIdentifier": APP_ID,
+            "CFBundleShortVersionString": __version__,
+            "CFBundleVersion": __version__,
+            "LSUIElement": True,  # the applet only starts the player: no Dock icon
+            "CFBundleDocumentTypes": [{
+                "CFBundleTypeName": "Audio",
+                "CFBundleTypeRole": "Viewer",
+                "LSHandlerRank": "Alternate",  # offered, never made the default
+                "LSItemContentTypes": ["public.audio"],
+            }],
+        })
+        with info_path.open("wb") as fh:
+            plistlib.dump(info, fh)
+        icon = ICON_DIR / "icon.icns"
+        if icon.exists():
+            shutil.copyfile(icon, staging / "Contents" / "Resources" / f"{info.get('CFBundleIconFile', 'applet')}.icns")
+        # Editing the bundle breaks osacompile's signature; sign it again
+        # (ad hoc, as osacompile does) so macOS will run it.
+        try:
+            self._run(["codesign", "--force", "--sign", "-", str(staging)], capture_output=True, text=True)
+        except OSError:
+            pass
+        if bundle.exists():
+            shutil.rmtree(bundle)
+        staging.rename(bundle)
+        try:  # tell Finder about the new Open With entry straight away
+            self._run([LSREGISTER, "-f", str(bundle)], capture_output=True, text=True)
+        except OSError:
+            pass
+        return True
 
     def _mac_login(self, on: bool) -> None:
         agent = self._mac_agent()
@@ -312,7 +449,9 @@ class Desktop:
         if not on:
             for link in links:
                 link.unlink(missing_ok=True)
+            self._windows_open_with(False)
             return
+        self._windows_open_with(True)
         cmd = launch_command(False, "windows", self.python)
         script = (
             "$s = (New-Object -ComObject WScript.Shell).CreateShortcut($env:SP_LINK); "
@@ -344,6 +483,36 @@ class Desktop:
     def _reg(self):
         return self._registry or _RunKey()
 
+    def _cls(self):
+        return self._classes or _UserKeys()
+
+    def _windows_open_with(self, on: bool) -> None:
+        """Station Player in Explorer's "Open with" for audio files (per
+        user; it never becomes the default app)."""
+        reg = self._cls()
+        base = rf"Software\Classes\{PROG_ID}"
+        scheme = rf"Software\Classes\{URL_SCHEME}"
+        if not on:
+            reg.delete_tree(base)
+            if reg.get(scheme, "StationPlayer") is not None:  # only ever ours
+                reg.delete_tree(scheme)
+            for ext in WINDOWS_EXTENSIONS:
+                reg.delete(rf"Software\Classes\{ext}\OpenWithProgids", PROG_ID)
+            return
+        cmd = launch_command(False, "windows", self.python)
+        reg.set(base, "", "Audio file")
+        reg.set(base + r"\DefaultIcon", "", str(ICON_DIR / "icon.ico"))
+        reg.set(base + r"\shell\open", "FriendlyAppName", APP_NAME)
+        reg.set(base + r"\shell\open\command", "", subprocess.list2cmdline(cmd) + ' "%1"')
+        for ext in WINDOWS_EXTENSIONS:
+            reg.set(rf"Software\Classes\{ext}\OpenWithProgids", PROG_ID, "")
+        # station-player://start, without a window (see URL_SCHEME).
+        reg.set(scheme, "", f"URL:{APP_NAME}")
+        reg.set(scheme, "URL Protocol", "")
+        reg.set(scheme, "StationPlayer", "1")
+        reg.set(scheme + r"\DefaultIcon", "", str(ICON_DIR / "icon.ico"))
+        reg.set(scheme + r"\shell\open\command", "", subprocess.list2cmdline(launch_command(True, "windows", self.python)))
+
 
 class _RunKey:
     """HKCU\\...\\CurrentVersion\\Run, the per-user list of login programs."""
@@ -368,5 +537,44 @@ class _RunKey:
         try:
             with winreg.OpenKey(winreg.HKEY_CURRENT_USER, self.PATH, 0, winreg.KEY_SET_VALUE) as key:
                 winreg.DeleteValue(key, name)
+        except FileNotFoundError:
+            pass
+
+
+class _UserKeys:
+    """Values anywhere under HKEY_CURRENT_USER."""
+
+    def get(self, path: str, name: str) -> str | None:
+        import winreg
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, path) as key:
+                return winreg.QueryValueEx(key, name)[0]
+        except FileNotFoundError:
+            return None
+
+    def set(self, path: str, name: str, value: str) -> None:
+        import winreg
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, path) as key:
+            winreg.SetValueEx(key, name, 0, winreg.REG_SZ, value)
+
+    def delete(self, path: str, name: str) -> None:
+        import winreg
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, path, 0, winreg.KEY_SET_VALUE) as key:
+                winreg.DeleteValue(key, name)
+        except FileNotFoundError:
+            pass
+
+    def delete_tree(self, path: str) -> None:
+        import winreg
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, path, 0, winreg.KEY_ALL_ACCESS) as key:
+                while True:
+                    try:
+                        child = winreg.EnumKey(key, 0)
+                    except OSError:
+                        break
+                    self.delete_tree(rf"{path}\{child}")
+            winreg.DeleteKey(winreg.HKEY_CURRENT_USER, path)
         except FileNotFoundError:
             pass

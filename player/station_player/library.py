@@ -6,6 +6,8 @@ there, so the player never becomes a general file server.
 """
 from __future__ import annotations
 
+import copy
+
 import hashlib
 import logging
 import plistlib
@@ -162,6 +164,9 @@ def _text(value) -> str | None:
     return None
 
 
+OPENED_ID = "opened"
+
+
 class Library:
     """In-memory index of everything playable. Rebuilt by `load()`."""
 
@@ -173,6 +178,7 @@ class Library:
         # to find tracks whose iTunes Location points somewhere else.
         self._by_filename: dict[str, list[Path]] = {}
         self._search_text: dict[str, str] = {}  # track id -> what search looks in
+        self._by_path: dict[str, Track] | None = None
 
     # ---- loading --------------------------------------------------------
 
@@ -188,6 +194,7 @@ class Library:
         self.errors.clear()
         self._by_filename.clear()
         self._search_text.clear()
+        self._by_path = None
         remaps = remaps or []
 
         folder_files: list[tuple[Path, list[Path]]] = []
@@ -373,6 +380,29 @@ class Library:
             pl.track_ids.append(tid)
         self.playlists[pl.id] = pl
 
+    def with_opened(self, files: list[Path], tag_cache: TagCache | None = None) -> "Library":
+        """A copy that also has the files opened with Station Player (from
+        Finder / Explorer's Open With) as the playlist "Opened files". A
+        copy, so requests reading this library meanwhile aren't disturbed."""
+        new = copy.copy(self)
+        new.tracks = dict(self.tracks)
+        new.playlists = {k: v for k, v in self.playlists.items() if k != OPENED_ID}
+        new._search_text = dict(self._search_text)
+        new._by_path = None
+        if not files:
+            return new
+        pl = Playlist(id=OPENED_ID, name="Opened files", kind="folder", source="")
+        for f in files:
+            tid = _short_hash("file", str(f))
+            if tid not in new.tracks:
+                tags = tag_cache.get(f) if tag_cache is not None else read_tags(f)
+                title, artist = title_from_filename(f)
+                new.tracks[tid] = Track(id=tid, name=tags.title or title, artist=tags.artist or artist,
+                                        album=tags.album, genre=tags.genre, duration_ms=tags.duration_ms, path=f)
+            pl.track_ids.append(tid)
+        new.playlists[OPENED_ID] = pl
+        return new
+
     # ---- queries --------------------------------------------------------
 
     def playlist_summaries(self) -> list[dict]:
@@ -386,6 +416,18 @@ class Library:
         out = pl.summary(self.tracks)
         out["tracks"] = [self.tracks[t].to_json() for t in pl.track_ids]
         return out
+
+    def by_path(self, path: str | None) -> Track | None:
+        """The library's track for a file, if it has one."""
+        if not path:
+            return None
+        if self._by_path is None:
+            index: dict[str, Track] = {}
+            for t in self.tracks.values():
+                if t.path is not None:
+                    index.setdefault(str(t.path), t)
+            self._by_path = index
+        return self._by_path.get(path)
 
     def tracks_json(self, ids: list[str]) -> list[dict]:
         """The tracks still in the library, in the order asked for."""

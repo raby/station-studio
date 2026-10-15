@@ -8,13 +8,14 @@ import logging.handlers
 import os
 import subprocess
 import sys
+import threading
 import time
 import urllib.request
-import webbrowser
 from pathlib import Path
 
 from station_player import __version__
 from station_player.config import ConfigStore, get_home
+from station_player.window import open_ui
 from station_player.desktop import Desktop
 from station_player.library import AUDIO_EXTENSIONS
 from station_player.server import API_HEADER, PlayerApp, make_server
@@ -43,8 +44,10 @@ def _classify(raw: str) -> list[tuple[str, str]] | str:
     if not p.exists():
         return "not found"
     if p.is_file():
+        if p.suffix.lower() in AUDIO_EXTENSIONS:
+            return [("open", str(p))]  # play it now (Open With)
         if p.suffix.lower() != ".xml":
-            return "pass an iTunes .xml file or a folder"
+            return "pass an audio file, an iTunes .xml file or a folder"
         return [("playlist", str(p))]
     try:
         has_xml, has_audio = _folder_contents(p)
@@ -72,10 +75,26 @@ def _running_instance(url: str) -> bool:
         return False
 
 
+def _send_open(url: str, files: list[str]) -> bool:
+    """Ask the running copy to play files. True when a player window is
+    open to play them (so no new one is needed)."""
+    req = urllib.request.Request(
+        url + "api/open", data=json.dumps({"paths": files}).encode(),
+        headers={"Content-Type": "application/json", API_HEADER: "1"}, method="POST")
+    try:
+        with _local.open(req, timeout=30) as resp:
+            return bool(json.load(resp).get("page_open"))
+    except Exception as exc:
+        print(f"Could not open {', '.join(files)}: {exc}", file=sys.stderr)
+        return True  # nothing to show
+
+
 def _send_sources(url: str, sources: list[tuple[str, str]]) -> None:
     """Hand sources to the copy that's already running, so its settings
     (which it will save again) include them."""
     for kind, path in sources:
+        if kind == "open":
+            continue
         req = urllib.request.Request(
             url + "api/sources", data=json.dumps({"kind": kind, "path": path}).encode(),
             headers={"Content-Type": "application/json", API_HEADER: "1"}, method="POST")
@@ -120,6 +139,14 @@ def _wait_for_instance(url: str, seconds: float) -> bool:
     return False
 
 
+def _refresh_shortcut(app) -> None:
+    try:
+        if app.desktop.refresh():
+            logging.info("Updated the Station Player shortcut")
+    except OSError as exc:
+        logging.warning("Could not update the shortcut: %s", exc)
+
+
 def _log_to_file() -> None:
     """Shortcuts start Station Player with no console, so keep a log."""
     home = get_home()
@@ -131,6 +158,11 @@ def _log_to_file() -> None:
         return
     handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
     logging.basicConfig(level=logging.INFO, handlers=[handler], force=True)
+
+
+def _show(url: str, store: ConfigStore | None = None) -> None:
+    store = store or ConfigStore()
+    open_ui(url, store.home, own_window=store.config.own_window)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -183,25 +215,34 @@ def main(argv: list[str] | None = None) -> int:
         else:
             sources.extend(result)
 
+    opened = [path for kind, path in sources if kind == "open"]
     url = f"http://127.0.0.1:{args.port}/"
-    if _running_instance(url):
+
+    def hand_over(store: ConfigStore | None = None) -> int:
         # Clicking the shortcut again (or starting from a terminal while
-        # it runs at login) just brings up the copy that's running.
+        # it runs at login) just brings up the copy that's running; files
+        # from Open With play in its window, if one is open.
         _send_sources(url, sources)
-        print(f"Station Player is already running on {url}")
-        if not args.no_browser:
-            webbrowser.open(url)
+        window_open = _send_open(url, opened) if opened else False
+        if not args.no_browser and not window_open:
+            _show(url, store)
         return 0
+
+    if _running_instance(url):
+        print(f"Station Player is already running on {url}")
+        return hand_over()
 
     if args.app and not args.no_browser and _detach_needed():
         if not _start_detached(args.port, args.sources, url):
             return 1
-        webbrowser.open(url)
+        _show(url)
         return 0
 
     store = ConfigStore()
     added = False
     for kind, path in sources:
+        if kind == "open":
+            continue
         target = store.config.playlist_sources if kind == "playlist" else store.config.music_folders
         if path not in target:
             target.append(path)
@@ -212,6 +253,8 @@ def main(argv: list[str] | None = None) -> int:
         except OSError as exc:
             print(f"Could not save settings to {store.path}: {exc}", file=sys.stderr)
     app = PlayerApp(store, scan=False)
+    if opened:
+        app.open_files(opened)  # played as soon as the window opens
 
     try:
         server = make_server(app, port=args.port)
@@ -219,9 +262,7 @@ def main(argv: list[str] | None = None) -> int:
         # Two clicks at once, or a click while the login copy starts:
         # the other copy won the port, so show that one.
         if args.app and _wait_for_instance(url, 5):
-            if not args.no_browser:
-                webbrowser.open(url)
-            return 0
+            return hand_over(store)
         print(f"Could not listen on port {args.port}: {exc}", file=sys.stderr)
         logging.error("Could not listen on port %s: %s", args.port, exc)
         return 1
@@ -234,17 +275,20 @@ def main(argv: list[str] | None = None) -> int:
     # Serve straight away; the library fills in as the scan finishes.
     app.scan_in_background(on_done=report_scan)
     app.keep_checking_for_updates()
+    # A shortcut made by an older version is brought up to date (for Open With).
+    threading.Thread(target=_refresh_shortcut, args=(app,), daemon=True).start()
     print(f"Station Player {__version__} on {url}  (Ctrl+C or Quit in the app to stop)")
     print(f"Settings: {store.path}")
     if args.app:
         logging.info("Station Player %s started on %s", __version__, url)
     if not args.no_browser:
-        webbrowser.open(url)
+        _show(url, store)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
+        app.recorder.stop_all()
         server.server_close()
     return 0
 

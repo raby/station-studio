@@ -1,6 +1,7 @@
 import plistlib
 import shlex
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -24,7 +25,8 @@ def test_linux_shortcut_menu_desktop_and_login(tmp_path):
     d.set_shortcut(True)
     menu = tmp_path / ".local/share/applications/station-player.desktop"
     text = menu.read_text()
-    assert 'Exec="/opt/My Tools/venv/bin/python" -P -m station_player --app\n' in text
+    assert 'Exec="/opt/My Tools/venv/bin/python" -P -m station_player --app %F\n' in text
+    assert "MimeType=audio/mpeg;" in text  # offered in Open With for audio
     assert "Terminal=false" in text and f"Name={APP_NAME}" in text
     on_desktop = tmp_path / "Desktop" / "station-player.desktop"
     assert on_desktop.read_text() == text
@@ -32,7 +34,7 @@ def test_linux_shortcut_menu_desktop_and_login(tmp_path):
 
     d.set_login(True)
     auto = tmp_path / ".config/autostart/station-player.desktop"
-    assert "--app --no-browser" in auto.read_text()
+    assert "--app --no-browser\n" in auto.read_text() and "MimeType" not in auto.read_text()
     assert d.status()["shortcut"] and d.status()["login"]
 
     icon = tmp_path / ".local/share/icons/station-player.png"
@@ -96,6 +98,73 @@ def test_mac_app_bundle_and_login_agent(tmp_path):
     assert d.status() == {"supported": True, "platform": "mac", "shortcut": False, "login": False}
 
 
+def fake_osacompile(calls):
+    """Stands in for macOS's osacompile, codesign and lsregister."""
+    def run(cmd, **kw):
+        calls.append(cmd)
+        if cmd[0] == "osacompile":
+            out = Path(cmd[2])
+            calls.append(Path(cmd[3]).read_text())
+            (out / "Contents/MacOS").mkdir(parents=True)
+            (out / "Contents/Resources").mkdir(parents=True)
+            (out / "Contents/MacOS/applet").write_text("stub")
+            (out / "Contents/Resources/Assets.car").write_text("script icon")
+            with (out / "Contents/Info.plist").open("wb") as fh:
+                plistlib.dump({"CFBundleExecutable": "applet", "CFBundleIconFile": "applet",
+                               "CFBundleIconName": "applet"}, fh)
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+    return run
+
+
+def test_mac_app_is_an_applet_that_takes_open_with_files(tmp_path):
+    calls = []
+    d = make("mac", tmp_path, run=fake_osacompile(calls))
+    d.set_shortcut(True)
+    bundle = tmp_path / "Applications" / f"{APP_NAME}.app"
+    with (bundle / "Contents/Info.plist").open("rb") as fh:
+        info = plistlib.load(fh)
+    assert info["CFBundleIdentifier"] == APP_ID and info["CFBundleExecutable"] == "applet"
+    [doc] = info["CFBundleDocumentTypes"]
+    assert doc["LSItemContentTypes"] == ["public.audio"] and doc["LSHandlerRank"] == "Alternate"
+    script = calls[1]
+    assert "on open theFiles" in script and "quoted form of POSIX path of f" in script
+    assert "'/opt/My Tools/venv/bin/python' -P -m station_player --app" in script
+    # The player's icon, not the script icon newer macOS takes from Assets.car.
+    assert (bundle / "Contents/Resources/applet.icns").exists()
+    assert not (bundle / "Contents/Resources/Assets.car").exists() and "CFBundleIconName" not in info
+    # station-player://start starts it without a window.
+    assert info["CFBundleURLTypes"][0]["CFBundleURLSchemes"] == ["station-player"]
+    assert "on open location theURL" in script
+    assert "station_player --app --no-browser >/dev/null" in script.split("on open location")[1]
+    assert calls[2][:3] == ["codesign", "--force", "--sign"]
+    assert calls[3][0].endswith("lsregister")
+    assert not list((tmp_path / "Applications").glob(".*"))  # nothing left behind
+    # Made again (an upgrade), it replaces the old app.
+    d.set_shortcut(True)
+    assert bundle.exists()
+    d.set_shortcut(False)
+    assert not bundle.exists()
+
+
+def test_old_shortcuts_are_brought_up_to_date(tmp_path, monkeypatch):
+    calls = []
+    d = make("mac", tmp_path, run=fake_osacompile(calls))
+    assert d.refresh() is False  # no shortcut: nothing to do
+    d.set_shortcut(True)
+    assert d.refresh() is False  # already current
+    monkeypatch.setattr(dt, "MAC_SHORTCUT_REVISION", 99)  # same version, app gained something
+    assert d.refresh() is True
+    assert d.refresh() is False
+    monkeypatch.setattr(dt, "__version__", "99.0")
+    assert d.refresh() is True
+    linux = make("linux", tmp_path / "l")
+    linux.set_shortcut(True)
+    assert linux.refresh() is False
+    entry = tmp_path / "l/.local/share/applications/station-player.desktop"
+    entry.write_text(entry.read_text().replace(" %F", ""))  # made by 0.3
+    assert linux.refresh() is True and " %F" in entry.read_text()
+
+
 def test_mac_never_deletes_an_app_it_did_not_make(tmp_path):
     bundle = tmp_path / "Applications" / f"{APP_NAME}.app" / "Contents"
     bundle.mkdir(parents=True)
@@ -121,6 +190,24 @@ class FakeRegistry:
         self.values.pop(name, None)
 
 
+class FakeKeys:
+    def __init__(self):
+        self.values = {}
+
+    def get(self, path, name):
+        return self.values.get((path, name))
+
+    def set(self, path, name, value):
+        self.values[(path, name)] = value
+
+    def delete(self, path, name):
+        self.values.pop((path, name), None)
+
+    def delete_tree(self, path):
+        for key in [k for k in self.values if k[0] == path or k[0].startswith(path + "\\")]:
+            del self.values[key]
+
+
 def test_windows_shortcuts_and_run_key(tmp_path):
     runs = []
 
@@ -136,8 +223,9 @@ def test_windows_shortcuts_and_run_key(tmp_path):
     exe.parent.mkdir(parents=True)
     exe.touch()
     (exe.parent / "pythonw.exe").touch()
+    keys = FakeKeys()
     d = Desktop(platform="windows", home=tmp_path, env={"PATH": "x"}, python=str(exe),
-                run=run, registry=reg, folders=folders)
+                run=run, registry=reg, folders=folders, classes=keys)
 
     d.set_shortcut(True)
     assert [r[1]["SP_LINK"] for r in runs] == [
@@ -149,12 +237,26 @@ def test_windows_shortcuts_and_run_key(tmp_path):
     assert env["SP_LINK"] not in cmd[-1]  # paths never pasted into the script
     assert kw["creationflags"] == dt._CREATE_NO_WINDOW
 
+    # Open With for audio files, never the default.
+    command = keys.values[(r"Software\Classes\StationPlayer.AudioFile\shell\open\command", "")]
+    assert command.endswith('pythonw.exe -P -m station_player --app "%1"')
+    assert keys.values[(r"Software\Classes\StationPlayer.AudioFile\shell\open", "FriendlyAppName")] == APP_NAME
+    assert keys.values[(r"Software\Classes\.mp3\OpenWithProgids", "StationPlayer.AudioFile")] == ""
+    assert not any(k[0] == r"Software\Classes\.mp3" for k in keys.values)
+    # station-player://start starts it without a window.
+    assert keys.values[(r"Software\Classes\station-player", "URL Protocol")] == ""
+    assert keys.values[(r"Software\Classes\station-player\shell\open\command", "")].endswith(
+        "pythonw.exe -P -m station_player --app --no-browser")
+    assert d.refresh() is False
+    del keys.values[(r"Software\Classes\station-player\shell\open\command", "")]  # made by 0.4.0
+    assert d.refresh() is True and d.refresh() is False
+
     d.set_login(True)
     assert reg.values[APP_NAME].endswith("pythonw.exe -P -m station_player --app --no-browser")
     assert d.status() == {"supported": True, "platform": "windows", "shortcut": True, "login": True}
 
     d.remove_all()
-    assert not list(folders["programs"].glob("*.lnk")) and reg.values == {}
+    assert not list(folders["programs"].glob("*.lnk")) and reg.values == {} and keys.values == {}
 
 
 def test_windows_powershell_failure_is_reported(tmp_path):
@@ -162,7 +264,7 @@ def test_windows_powershell_failure_is_reported(tmp_path):
         return subprocess.CompletedProcess(cmd, 1, "", "COM error")
 
     d = Desktop(platform="windows", home=tmp_path, env={}, python=PY, run=run,
-                registry=FakeRegistry(), folders={"programs": tmp_path, "desktop": tmp_path})
+                registry=FakeRegistry(), folders={"programs": tmp_path, "desktop": tmp_path}, classes=FakeKeys())
     with pytest.raises(OSError, match="COM error"):
         d.set_shortcut(True)
 

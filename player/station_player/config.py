@@ -52,6 +52,8 @@ class Config:
     stations: list[dict] = field(default_factory=lambda: [dict(s) for s in DEFAULT_STATIONS])
     # ask PyPI once a day whether a newer Station Player is out
     check_updates: bool = True
+    # open in an app window of its own (Chrome/Edge/Brave) rather than a tab
+    own_window: bool = True
 
     def to_json(self) -> dict:
         return asdict(self)
@@ -83,6 +85,8 @@ def config_from_json(data: dict) -> Config:
         cfg.stations = _pairs(data.get("stations"), ("name", "url"))
     if isinstance(data.get("check_updates"), bool):
         cfg.check_updates = data["check_updates"]
+    if isinstance(data.get("own_window"), bool):
+        cfg.own_window = data["own_window"]
     return cfg
 
 

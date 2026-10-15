@@ -75,7 +75,7 @@ def test_cli_hands_sources_to_a_running_copy_instead_of_saving(tmp_path, monkeyp
     sent, opened = [], []
     monkeypatch.setattr(cli, "_running_instance", lambda url: True)
     monkeypatch.setattr(cli, "_send_sources", lambda url, sources: sent.extend(sources))
-    monkeypatch.setattr(cli.webbrowser, "open", opened.append)
+    monkeypatch.setattr(cli, "open_ui", lambda url, home, own_window=True: opened.append(url))
     monkeypatch.setattr(cli, "make_server", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no second server")))
     assert cli.main([str(music)]) == 0
     assert sent == [("music", str(music.resolve()))]
@@ -154,7 +154,7 @@ def test_mac_style_launch_detaches_and_reuses_the_running_copy(tmp_path, monkeyp
     url = f"http://127.0.0.1:{port}/"
     opened = []
     monkeypatch.setattr(cli, "_detach_needed", lambda: True)
-    monkeypatch.setattr(cli.webbrowser, "open", opened.append)
+    monkeypatch.setattr(cli, "open_ui", lambda url, home, own_window=True: opened.append(url))
     monkeypatch.setenv("PYTHONPATH", str(Path(cli.__file__).resolve().parents[1]))
     try:
         assert cli.main(["--app", "--port", str(port)]) == 0
@@ -180,7 +180,7 @@ def test_app_mode_shows_the_copy_that_won_a_startup_race(monkeypatch):
     opened = []
     monkeypatch.setattr(cli, "_running_instance", lambda url: next(answers))
     monkeypatch.setattr(cli.time, "sleep", lambda s: None)
-    monkeypatch.setattr(cli.webbrowser, "open", opened.append)
+    monkeypatch.setattr(cli, "open_ui", lambda url, home, own_window=True: opened.append(url))
     monkeypatch.setattr(cli, "make_server", lambda app, port: (_ for _ in ()).throw(OSError("in use")))
     assert cli.main(["--app"]) == 0
     assert opened == ["http://127.0.0.1:8765/"]
@@ -209,3 +209,41 @@ def test_scan_problems_are_reported_once_the_scan_finishes(tmp_path, monkeypatch
     (home / "config.json").write_text(json.dumps({"music_folders": [str(store_missing)]}))
     assert cli.main(["--no-browser"]) == 0
     assert "Music folder not found" in capsys.readouterr().out
+
+
+def test_audio_files_are_opened_not_added(tmp_path):
+    from conftest import write_wav
+    song = write_wav(tmp_path / "a song.wav")
+    assert cli._classify(str(song)) == [("open", str(song.resolve()))]
+    (tmp_path / "notes.txt").write_text("x")
+    assert "audio file" in cli._classify(str(tmp_path / "notes.txt"))
+
+
+def test_open_with_plays_in_the_running_copy(tmp_path, monkeypatch):
+    song = write_wav(tmp_path / "song.wav")
+    sent, shown = [], []
+    monkeypatch.setattr(cli, "_running_instance", lambda url: True)
+    monkeypatch.setattr(cli, "open_ui", lambda url, home, own_window=True: shown.append(url))
+    window = {"open": True}
+    monkeypatch.setattr(cli, "_send_open", lambda url, files: (sent.append(files), window["open"])[1])
+    assert cli.main(["--app", str(song)]) == 0
+    assert sent == [[str(song.resolve())]] and shown == []  # its window plays it
+    window["open"] = False
+    assert cli.main(["--app", str(song)]) == 0
+    assert shown == ["http://127.0.0.1:8765/"]  # no window open: open one
+
+
+def test_send_open_against_a_real_server(tmp_path):
+    import threading
+    from station_player.config import ConfigStore
+    from station_player.server import PlayerApp, make_server
+    app = PlayerApp(ConfigStore())
+    server = make_server(app, port=0)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        song = write_wav(tmp_path / "song.wav")
+        assert cli._send_open(f"http://127.0.0.1:{server.server_address[1]}/", [str(song)]) is False
+        assert app.open_request["seq"] == 1
+    finally:
+        server.shutdown()
+        server.server_close()
