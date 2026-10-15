@@ -1060,15 +1060,15 @@ function syncRadioCards() {
 // ---------- recording ---------------------------------------------------
 
 const recordingOf = (url) => (S.lib.recordings || []).find((r) => r.url === url);
-const activeRecordings = () => (S.lib.recordings || []).filter((r) => !r.done);
+const isRunning = (r) => Boolean(r && !r.done && !r.stopping);
+const activeRecordings = () => (S.lib.recordings || []).filter(isRunning);
 
 function fmtBytes(n) {
   return n >= 1e9 ? `${(n / 1e9).toFixed(1)} GB` : `${(n / 1e6).toFixed(1)} MB`;
 }
 
 async function toggleRecording(st) {
-  const rec = recordingOf(st.url);
-  const on = !(rec && !rec.done);
+  const on = !isRunning(recordingOf(st.url));
   recToken++;  // a poll in flight mustn't undo this
   try {
     await loadState(await api("/api/record", { station: st.id, on }, { quiet: true }));
@@ -1112,7 +1112,7 @@ function syncRecordings() {
   box.hidden = active.length === 0;
   for (const card of document.querySelectorAll("#view .card[data-url]")) {
     const r = recordingOf(card.dataset.url);
-    const running = Boolean(r && !r.done);
+    const running = isRunning(r);
     card.classList.toggle("recording", running);
     const btn = card.querySelector(".rec-btn");
     const label = running ? "Stop recording" : "Record";
@@ -1124,6 +1124,8 @@ function syncRecordings() {
     play.hidden = true;
     if (running) {
       text.textContent = `● Recording · ${fmtTime(r.seconds)} · ${fmtBytes(r.bytes)}`;
+    } else if (r && r.stopping) {
+      text.textContent = "Stopping…";
     } else if (r && r.error) {
       text.textContent = `Recording stopped: ${r.error}`;
       line.classList.add("error");
@@ -1142,7 +1144,7 @@ function syncRecordings() {
     line.hidden = !text.textContent;
   }
   clearTimeout(recTimer);
-  if (active.length) recTimer = setTimeout(pollRecordings, 1000);
+  if (active.length || (S.lib.recordings || []).some((r) => r.stopping)) recTimer = setTimeout(pollRecordings, 1000);
 }
 
 // Play a finished recording: its folder joins the music folders (once),

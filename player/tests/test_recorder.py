@@ -236,3 +236,25 @@ def test_play_recording_only_takes_files_from_the_recordings_folder(tmp_path):
     for bad in (str(outside), str(tmp_path / "rec" / ".." / "elsewhere.wav"), "", str(tmp_path / "rec" / "nope.wav")):
         with pytest.raises(ValueError):
             app.play_recording(bad)
+
+
+def test_stopping_while_still_connecting_shows_as_stopped(tmp_path):
+    # A station slow to answer: Stop returns at once and the recording
+    # reads as stopping (not running), so Record works again straight away.
+    gate = threading.Event()
+
+    def slow_open(url, user_agent=None):
+        gate.wait(10)
+        raise radio.StreamError("timed out")
+    rec = Recorder(tmp_path, opener=slow_open)
+    rec.start("http://x/s", "Slow FM")
+    started = time.monotonic()
+    rec.stop("http://x/s")
+    assert time.monotonic() - started < 2
+    status = rec.status()[0]
+    assert status["stopping"] and not status["done"]
+    gate.set()
+    deadline = time.monotonic() + 5
+    while not rec.status()[0]["done"] and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert rec.status()[0]["done"] and not rec.status()[0]["stopping"]

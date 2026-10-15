@@ -835,7 +835,7 @@ class PlayerApp:
             alarm_source = (cfg.alarm or {}).get("source") or {}
             wakes = alarm_source.get("kind") == "station" and alarm_source.get("id") == station_id(url)
             if resolved is not None and resolved != url:
-                if any(r["url"] == url and not r["done"] for r in self.recorder.status()):
+                if any(r["url"] == url and not r["done"] and not r.get("stopping") for r in self.recorder.status()):
                     raise ValueError("Stop recording this station before changing its link")
                 if any(s.get("url") == resolved for s in cfg.stations):
                     raise ValueError("That stream is already one of your stations")

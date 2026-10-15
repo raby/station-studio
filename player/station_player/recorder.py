@@ -71,6 +71,9 @@ class Recording:
             "url": self.url, "name": self.name, "file": str(self.file) if self.file else None,
             "seconds": int((self.ended or time.time()) - self.started), "bytes": self.bytes,
             "error": self.error, "done": self.done,
+            # Asked to stop but not finished yet (still connecting to a slow
+            # station, say): shown as stopped, so it can be started again.
+            "stopping": self.stopping and not self.done,
         }
 
     def stop(self) -> None:
@@ -209,7 +212,9 @@ class Recorder:
             rec = self._recordings.get(url)
         if rec is not None:
             rec.stop()
-            rec.thread.join(5)
+            # A moment for the file to be finished; a recording still
+            # connecting to a slow station ends on its own soon after.
+            rec.thread.join(1)
 
     def stop_all(self) -> None:
         with self._lock:
