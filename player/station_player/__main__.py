@@ -26,16 +26,29 @@ def main(argv: list[str] | None = None) -> int:
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     store = ConfigStore()
-    app = PlayerApp(store)
-
+    added = False
     for raw in args.sources:
         p = Path(raw).expanduser().resolve()
-        # A folder holding audio is a music folder; XMLs are playlists.
-        is_music = p.is_dir() and not any(p.glob("*.xml"))
+        if not p.exists():
+            print(f"Skipped {raw}: not found", file=sys.stderr)
+            continue
+        # XML files, and folders holding XML at any depth (station-studio
+        # writes exports/<station>/<week>.xml), are playlists; any other
+        # folder is a music folder.
+        if p.is_file() and p.suffix.lower() != ".xml":
+            print(f"Skipped {raw}: pass an iTunes .xml file or a folder", file=sys.stderr)
+            continue
+        is_playlist = p.is_file() or next(p.rglob("*.xml"), None) is not None
+        target = store.config.playlist_sources if is_playlist else store.config.music_folders
+        if str(p) not in target:
+            target.append(str(p))
+            added = True
+    if added:
         try:
-            app.add_source("music" if is_music else "playlist", str(p))
-        except ValueError as exc:
-            print(f"Skipped {raw}: {exc}", file=sys.stderr)
+            store.save()
+        except OSError as exc:
+            print(f"Could not save settings to {store.path}: {exc}", file=sys.stderr)
+    app = PlayerApp(store)  # scans once, with every source in place
 
     try:
         server = make_server(app, port=args.port)

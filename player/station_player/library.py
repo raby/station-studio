@@ -133,9 +133,9 @@ class Library:
         self.tracks: dict[str, Track] = {}
         self.playlists: dict[str, Playlist] = {}
         self.errors: list[str] = []
-        # filename (lowercased) -> path, from scanned music folders; used
+        # filename (lowercased) -> paths, from scanned music folders; used
         # to find tracks whose iTunes Location points somewhere else.
-        self._by_filename: dict[str, Path] = {}
+        self._by_filename: dict[str, list[Path]] = {}
 
     # ---- loading --------------------------------------------------------
 
@@ -160,7 +160,7 @@ class Library:
             files = scan_audio_files(folder)
             folder_files.append((folder, files))
             for f in files:
-                self._by_filename.setdefault(f.name.lower(), f)
+                self._by_filename.setdefault(f.name.lower(), []).append(f)
 
         for raw in playlist_sources:
             src = Path(raw).expanduser()
@@ -183,9 +183,28 @@ class Library:
             candidate = apply_remaps(candidate, remaps)
             if candidate.is_file():
                 return candidate
-            found = self._by_filename.get(candidate.name.lower())
-            if found:
-                return found
+            return self._find_moved(candidate)
+        return None
+
+    def _find_moved(self, original: Path) -> Path | None:
+        """Find a moved file by name, refusing to guess between namesakes.
+
+        "01 Intro.mp3" exists on many albums, so a bare name match is only
+        trusted when it is unique; otherwise the parent folders (album,
+        then artist) must match too.
+        """
+        matches = self._by_filename.get(original.name.lower(), [])
+        for depth in range(0, 3):
+            if depth:
+                want = [p.name.lower() for p in original.parents[:depth]]
+                matches = [
+                    m for m in matches
+                    if [p.name.lower() for p in m.parents[:depth]] == want
+                ]
+            if len(matches) == 1:
+                return matches[0]
+            if not matches:
+                return None
         return None
 
     def _load_itunes_xml(self, xml: Path, remaps: list[dict], quiet: bool = False) -> None:

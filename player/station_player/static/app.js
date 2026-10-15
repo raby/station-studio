@@ -138,40 +138,54 @@ function matches(t, q) {
 }
 
 function playlistView(pl) {
-  const q = S.filter.toLowerCase();
-  const rows = [];
-  pl.tracks.forEach((t, i) => {
-    if (!matches(t, q)) return;
-    const playing = S.mode === "track" && S.queueSource === pl.id && current() && current()._index === i;
-    rows.push(el("tr", {
-      class: [playing && "playing", !t.available && "missing"].filter(Boolean).join(" "),
-      ondblclick: () => playPlaylist(pl, i),
-      title: t.available ? "Double-click to play" : "The audio file for this track wasn't found",
+  // Rows are built once per view. Filtering hides rows and track changes
+  // move the "playing" class, so a 10k-track library stays responsive.
+  const rows = pl.tracks.map((t, i) => el("tr", {
+    "data-index": i,
+    class: t.available ? null : "missing",
+    title: t.available ? "Double-click to play" : "The audio file for this track wasn't found",
+  },
+    el("td", { class: "num" }, i + 1),
+    el("td", { class: "title" }, t.name),
+    el("td", { class: "artist" }, t.artist || ""),
+    el("td", { class: "album" }, t.album || ""),
+    el("td", { class: "dur" }, t.duration_ms ? fmtTime(t.duration_ms / 1000) : ""),
+  ));
+  const tbody = el("tbody", {
+    ondblclick: (e) => {
+      const tr = e.target.closest("tr[data-index]");
+      if (tr) playPlaylist(pl, Number(tr.dataset.index));
     },
-      el("td", { class: "num" }, i + 1),
-      el("td", { class: "title" }, t.name),
-      el("td", { class: "artist" }, t.artist || ""),
-      el("td", { class: "album" }, t.album || ""),
-      el("td", { class: "dur" }, t.duration_ms ? fmtTime(t.duration_ms / 1000) : ""),
-    ));
-  });
+  }, rows);
+  const empty = el("div", { class: "empty" }, pl.count ? "No tracks match." : "This playlist is empty.");
+  const table = el("table", { class: "tracks" },
+    el("thead", {}, el("tr", {},
+      el("th", { class: "num" }, "#"), el("th", { class: "title" }, "Title"),
+      el("th", { class: "artist" }, "Artist"), el("th", { class: "album" }, "Album"),
+      el("th", { class: "dur" }, "Time"))),
+    tbody);
+
+  const applyFilter = () => {
+    const q = S.filter.toLowerCase();
+    let shown = 0;
+    pl.tracks.forEach((t, i) => {
+      const hit = matches(t, q);
+      rows[i].hidden = !hit;
+      if (hit) shown++;
+    });
+    table.hidden = shown === 0;
+    empty.hidden = shown !== 0;
+  };
 
   const playable = pl.tracks.filter((t) => t.available).length;
   const meta = `${pl.count} tracks` + (pl.missing ? ` · ${pl.missing} missing` : "");
   const search = el("input", {
     type: "search", class: "search", placeholder: "Filter tracks", value: S.filter,
     "aria-label": "Filter tracks",
-    oninput: (e) => {
-      S.filter = e.target.value;
-      const pos = e.target.selectionStart;
-      renderView();
-      const again = $("#view .search");
-      again.focus();
-      again.setSelectionRange(pos, pos);
-    },
+    oninput: (e) => { S.filter = e.target.value; applyFilter(); },
   });
 
-  return el("div", {},
+  const view = el("div", {},
     el("div", { class: "view-head" },
       el("div", {}, el("h1", {}, pl.name), el("div", { class: "meta" }, meta)),
       el("div", { class: "spacer" }),
@@ -186,15 +200,21 @@ function playlistView(pl) {
           "None of these tracks were found on disk. Add the folder your music lives in under Sources & settings, ",
           "or add a path rewrite if the playlist was made on another computer.")
       : null,
-    rows.length
-      ? el("table", { class: "tracks" },
-          el("thead", {}, el("tr", {},
-            el("th", { class: "num" }, "#"), el("th", { class: "title" }, "Title"),
-            el("th", { class: "artist" }, "Artist"), el("th", { class: "album" }, "Album"),
-            el("th", { class: "dur" }, "Time"))),
-          el("tbody", {}, rows))
-      : el("div", { class: "empty" }, pl.count ? "No tracks match." : "This playlist is empty."),
+    table,
+    empty,
   );
+  applyFilter();
+  queueMicrotask(markPlaying);
+  return view;
+}
+
+// Highlight the playing row in the visible playlist, if it's the queue's.
+function markPlaying() {
+  for (const tr of document.querySelectorAll("#view tr.playing")) tr.classList.remove("playing");
+  const t = current();
+  if (S.mode !== "track" || !t || S.view.type !== "playlist" || S.queueSource !== S.view.id) return;
+  const tr = document.querySelector(`#view tr[data-index="${t._index}"]`);
+  if (tr) tr.classList.add("playing");
 }
 
 // ---------- radio view --------------------------------------------------
@@ -211,7 +231,7 @@ function radioView() {
     } catch (err) { msg.textContent = err.message; }
   };
 
-  const cards = S.lib.stations.map((st, i) => {
+  const cards = S.lib.stations.map((st) => {
     const live = S.mode === "radio" && S.station && S.station.url === st.url;
     return el("div", { class: "card" + (live ? " live" : "") },
       el("div", { class: "name" }, st.name),
@@ -225,7 +245,7 @@ function radioView() {
           type: "button", class: "btn",
           onclick: async () => {
             if (!confirm(`Remove ${st.name}?`)) return;
-            await loadState(await api("/api/stations/remove", { index: i }));
+            await loadState(await api("/api/stations/remove", { url: st.url }));
             renderView();
           },
         }, "Remove")));
@@ -313,7 +333,11 @@ function settingsView() {
       title: "Path rewrites",
       help: "When a playlist was made on another computer, rewrite the start of each track's path so it points at your copy of the music.",
       items: (cfg.path_remaps || []).map((r) => `${r.from}  →  ${r.to}`),
-      onRemove: async (i) => { await loadState(await api("/api/remaps/remove", { index: i })); renderView(); },
+      onRemove: async (i) => {
+        const r = cfg.path_remaps[i];
+        await loadState(await api("/api/remaps/remove", { from: r.from, to: r.to }));
+        renderView();
+      },
       form: el("div", {}, el("form", { class: "form-row", onsubmit: addRemap }, from, to,
         el("button", { class: "btn" }, "Add")), remapMsg),
     }),
@@ -347,11 +371,13 @@ function playPlaylist(pl, startIndex) {
 }
 
 // Move through the queue, skipping tracks whose file is missing.
-function step(dir, { userInitiated = false } = {}) {
+// `afterError` moves on from a track that failed to load, even when
+// repeat-one is on (replaying a broken file would stall playback).
+function step(dir, { userInitiated = false, afterError = false } = {}) {
   if (S.mode !== "track" || !S.queue.length) return;
-  if (S.repeat === "one" && !userInitiated && S.pos >= 0) {
+  if (S.repeat === "one" && !userInitiated && !afterError && S.pos >= 0) {
     audio.currentTime = 0;
-    audio.play();
+    audio.play().catch(() => {});
     return;
   }
   const n = S.order.length;
@@ -372,14 +398,14 @@ function stopAtEnd() {
   S.pos = -1;
   S.mode = "idle";
   updateNow();
-  renderView();
+  markPlaying();
 }
 
 function loadTrack(track) {
   audio.src = `/audio/${track.id}`;
   audio.play().catch(() => {});
   updateNow();
-  if (S.view.type === "playlist") renderView();
+  markPlaying();
 }
 
 function playStation(st) {
@@ -389,6 +415,7 @@ function playStation(st) {
   audio.src = st.url;
   audio.play().catch(() => {});
   updateNow();
+  markPlaying();
   if (S.view.type === "radio") renderView();
 }
 
@@ -469,7 +496,7 @@ audio.addEventListener("error", () => {
   if (S.mode === "track") {
     const t = current();
     if (t) t.available = false;
-    step(1);
+    step(1, { afterError: true });
   } else if (S.mode === "radio") {
     audio.pause();
     $("#now-sub").textContent = "Couldn't connect to this stream";

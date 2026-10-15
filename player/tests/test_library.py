@@ -128,3 +128,17 @@ def test_reads_bundled_station_studio_starter_pool():
     [pl] = lib.playlist_summaries()
     assert pl["count"] == 50
     assert pl["missing"] == 50  # the starter pool is synthetic: no audio files
+
+
+def test_moved_file_namesakes_are_disambiguated_by_folder_or_left_missing(tmp_path):
+    a = write_wav(tmp_path / "lib" / "Album A" / "01 Intro.wav")
+    write_wav(tmp_path / "lib" / "Album B" / "01 Intro.wav")
+    xml = write_itunes_xml(tmp_path / "p.xml", [
+        _track(1, "A intro", "file:///old/Album%20A/01%20Intro.wav"),
+        _track(2, "Unknown intro", "file:///old/Album%20C/01%20Intro.wav"),
+    ], [{"Name": "P", "Playlist Items": [{"Track ID": 1}, {"Track ID": 2}]}])
+    lib = Library()
+    lib.load([str(xml)], [str(tmp_path / "lib")])
+    paths = {t.name: t.path for t in lib.tracks.values() if t.name.endswith("intro")}
+    assert paths["A intro"] == a
+    assert paths["Unknown intro"] is None

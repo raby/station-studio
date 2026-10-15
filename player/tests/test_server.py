@@ -1,5 +1,6 @@
 import http.client
 import json
+import socket
 import threading
 
 import pytest
@@ -126,7 +127,8 @@ def test_add_and_remove_sources_and_stations_persist(running):
     assert saved["music_folders"] == [str(tmp / "folder")]
     assert saved["stations"][1]["url"] == "https://test.example/live"
 
-    request(port, "POST", "/api/stations/remove", {"index": 0}, h)
+    request(port, "POST", "/api/stations/remove",
+            {"url": "https://sh.uk.audio-stream.com/proxy/adgerdes?mp=/stream"}, h)
     request(port, "POST", "/api/sources/remove", {"kind": "music", "path": str(tmp / "folder")}, h)
     resp, data = request(port, "POST", "/api/remaps", {"from": "/a", "to": "/b"}, h)
     state = json.loads(data)
@@ -140,3 +142,73 @@ def test_first_run_picks_up_station_studio_exports(tmp_path):
     exports.mkdir(parents=True)
     store = ConfigStore()
     assert store.config.playlist_sources == [str(exports)]
+
+
+def test_remove_remap_by_identity(running):
+    _, port, _, _ = running
+    h = {"X-Station-Player": "1"}
+    request(port, "POST", "/api/remaps", {"from": "/a", "to": "/b"}, h)
+    request(port, "POST", "/api/remaps", {"from": "/c", "to": "/d"}, h)
+    resp, data = request(port, "POST", "/api/remaps/remove", {"from": "/c", "to": "/d"}, h)
+    assert json.loads(data)["config"]["path_remaps"] == [{"from": "/a", "to": "/b"}]
+
+
+def test_head_requests_send_no_body(running):
+    _, port, _, _ = running
+    for path in ("/api/state", "/api/playlists/nope", "/"):
+        with socket.create_connection(("127.0.0.1", port), timeout=5) as sock:
+            sock.sendall(f"HEAD {path} HTTP/1.0\r\nHost: 127.0.0.1\r\n\r\n".encode())
+            raw = b""
+            while chunk := sock.recv(65536):
+                raw += chunk
+        head, _, body = raw.partition(b"\r\n\r\n")
+        assert b"Content-Length" in head
+        assert body == b"", path
+
+
+def test_negative_content_length_is_rejected(running):
+    _, port, _, _ = running
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+    conn.putrequest("POST", "/api/rescan")
+    conn.putheader("X-Station-Player", "1")
+    conn.putheader("Content-Length", "-1")
+    conn.endheaders()
+    resp = conn.getresponse()
+    assert resp.status == 400
+    conn.close()
+
+
+def test_failed_save_rolls_back_and_reports(running, monkeypatch):
+    app, port, _, tmp = running
+    before = json.loads(json.dumps(app.store.config.to_json()))
+
+    def boom():
+        raise PermissionError("read-only")
+
+    monkeypatch.setattr(app.store, "save", boom)
+    resp, data = request(port, "POST", "/api/remaps", {"from": "/x", "to": "/y"},
+                         {"X-Station-Player": "1"})
+    assert resp.status == 500 and "read-only" in json.loads(data)["error"]
+    assert app.store.config.to_json() == before
+
+
+def test_concurrent_changes_end_with_the_latest_settings(running):
+    app, port, _, tmp = running
+    h = {"X-Station-Player": "1"}
+    folders = []
+    for i in range(6):
+        folder = tmp / f"f{i}"
+        write_wav(folder / "a.wav")
+        folders.append(str(folder))
+
+    def add(path):
+        request(port, "POST", "/api/sources", {"kind": "music", "path": path}, h)
+
+    threads = [threading.Thread(target=add, args=(f,)) for f in folders]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert sorted(app.store.config.music_folders) == sorted(folders)
+    names = {p["name"] for p in app.library.playlist_summaries() if p["kind"] == "folder"}
+    assert names == {f"f{i}" for i in range(6)}

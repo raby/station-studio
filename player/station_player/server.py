@@ -8,12 +8,14 @@ a CORS preflight this server never approves.
 """
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import mimetypes
 import re
 import threading
 import urllib.request
+from contextlib import contextmanager
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -90,88 +92,108 @@ def _fetch_text(url: str) -> str:
 
 
 class PlayerApp:
-    """Shared state for request handlers."""
+    """Shared state for request handlers.
+
+    One re-entrant lock serialises every change: mutate the config, save
+    it, rebuild the library. Without it, a slow rescan finishing after a
+    fast one would install a library built from stale settings. A
+    failed save rolls the in-memory config back so memory and disk agree.
+    """
 
     def __init__(self, store: ConfigStore) -> None:
         self.store = store
         self.library = Library()
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self.rescan()
 
     def rescan(self) -> None:
-        cfg = self.store.config
-        lib = Library()
-        lib.load(cfg.playlist_sources, cfg.music_folders, cfg.path_remaps)
         with self._lock:
+            cfg = self.store.config
+            lib = Library()
+            lib.load(cfg.playlist_sources, cfg.music_folders, cfg.path_remaps)
             self.library = lib
 
     def state(self) -> dict:
-        lib = self.library
+        with self._lock:
+            lib = self.library
+            config = copy.deepcopy(self.store.config.to_json())
         return {
             "version": __version__,
             "playlists": lib.playlist_summaries(),
-            "stations": self.store.config.stations,
-            "config": self.store.config.to_json(),
-            "errors": lib.errors,
+            "stations": config["stations"],
+            "config": config,
+            "errors": list(lib.errors),
         }
 
-    # ---- mutations (all persist + rescan where needed) ----------------
+    @contextmanager
+    def _change(self, rescan: bool = True):
+        """Apply a config change atomically: save it, then rebuild."""
+        with self._lock:
+            snapshot = copy.deepcopy(self.store.config)
+            try:
+                yield self.store.config
+                self.store.save()
+            except BaseException:
+                self.store.config = snapshot
+                raise
+            if rescan:
+                self.rescan()
+
+    # ---- mutations ------------------------------------------------------
 
     def add_source(self, kind: str, path: str) -> None:
-        target = self._list_for(kind)
-        clean = str(Path(path.strip()).expanduser())
         if not path.strip():
             raise ValueError("Path is empty")
+        clean = str(Path(path.strip()).expanduser())
         if not Path(clean).exists():
             raise ValueError(f"Not found: {clean}")
-        if clean not in target:
-            target.append(clean)
-        self.store.save()
-        self.rescan()
+        with self._change() as cfg:
+            target = _source_list(cfg, kind)
+            if clean not in target:
+                target.append(clean)
 
     def remove_source(self, kind: str, path: str) -> None:
-        target = self._list_for(kind)
-        if path in target:
-            target.remove(path)
-        self.store.save()
-        self.rescan()
-
-    def _list_for(self, kind: str) -> list[str]:
-        cfg = self.store.config
-        if kind == "playlist":
-            return cfg.playlist_sources
-        if kind == "music":
-            return cfg.music_folders
-        raise ValueError(f"Unknown source kind: {kind}")
+        with self._change() as cfg:
+            target = _source_list(cfg, kind)
+            if path in target:
+                target.remove(path)
 
     def add_remap(self, src: str, dst: str) -> None:
         if not src.strip() or not dst.strip():
             raise ValueError("Both 'from' and 'to' are needed")
-        self.store.config.path_remaps.append({"from": src.strip(), "to": dst.strip()})
-        self.store.save()
-        self.rescan()
+        remap = {"from": src.strip(), "to": dst.strip()}
+        with self._change() as cfg:
+            if remap not in cfg.path_remaps:
+                cfg.path_remaps.append(remap)
 
-    def remove_remap(self, index: int) -> None:
-        remaps = self.store.config.path_remaps
-        if 0 <= index < len(remaps):
-            remaps.pop(index)
-        self.store.save()
-        self.rescan()
+    def remove_remap(self, src: str, dst: str) -> None:
+        with self._change() as cfg:
+            cfg.path_remaps[:] = [
+                r for r in cfg.path_remaps if not (r.get("from") == src and r.get("to") == dst)
+            ]
 
     def add_station(self, name: str, url: str) -> dict:
         url = url.strip()
         if not url.startswith(("http://", "https://")):
             raise ValueError("Stream URL must start with http:// or https://")
+        # Network fetch for .pls/.m3u happens outside the lock.
         station = {"name": name.strip() or url, "url": resolve_stream_url(url)}
-        self.store.config.stations.append(station)
-        self.store.save()
+        with self._change(rescan=False) as cfg:
+            if all(s.get("url") != station["url"] for s in cfg.stations):
+                cfg.stations.append(station)
         return station
 
-    def remove_station(self, index: int) -> None:
-        stations = self.store.config.stations
-        if 0 <= index < len(stations):
-            stations.pop(index)
-        self.store.save()
+    def remove_station(self, url: str) -> None:
+        with self._change(rescan=False) as cfg:
+            cfg.stations[:] = [s for s in cfg.stations if s.get("url") != url]
+
+
+def _source_list(cfg, kind: str) -> list[str]:
+    if kind == "playlist":
+        return cfg.playlist_sources
+    if kind == "music":
+        return cfg.music_folders
+    raise ValueError(f"Unknown source kind: {kind}")
 
 
 def make_handler(app: PlayerApp):
@@ -197,15 +219,16 @@ def make_handler(app: PlayerApp):
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
-            self.wfile.write(body)
+            if self.command != "HEAD":
+                self.wfile.write(body)
 
         def _error(self, status, message):
             self._send_json({"error": message}, status)
 
         def _read_json(self) -> dict:
             length = int(self.headers.get("Content-Length") or 0)
-            if length > 1_000_000:
-                raise ValueError("Request too large")
+            if length < 0 or length > 1_000_000:
+                raise ValueError("Bad Content-Length")
             raw = self.rfile.read(length) if length else b"{}"
             data = json.loads(raw or b"{}")
             if not isinstance(data, dict):
@@ -313,15 +336,18 @@ def make_handler(app: PlayerApp):
                 elif path == "/api/remaps":
                     app.add_remap(str(data.get("from", "")), str(data.get("to", "")))
                 elif path == "/api/remaps/remove":
-                    app.remove_remap(int(data.get("index", -1)))
+                    app.remove_remap(str(data.get("from", "")), str(data.get("to", "")))
                 elif path == "/api/stations":
                     app.add_station(str(data.get("name", "")), str(data.get("url", "")))
                 elif path == "/api/stations/remove":
-                    app.remove_station(int(data.get("index", -1)))
+                    app.remove_station(str(data.get("url", "")))
                 else:
                     return self._error(HTTPStatus.NOT_FOUND, "Not found")
             except (ValueError, TypeError) as exc:
                 return self._error(HTTPStatus.BAD_REQUEST, str(exc))
+            except OSError as exc:
+                logger.warning("Could not save settings: %s", exc)
+                return self._error(HTTPStatus.INTERNAL_SERVER_ERROR, f"Could not save settings: {exc}")
             return self._send_json(app.state())
 
     return Handler
