@@ -28,6 +28,15 @@ def icy_body(titles: list[str | None], audio: bytes = b"A") -> bytes:
     return out + audio * 10
 
 
+def chunked(body: bytes, size: int) -> bytes:
+    """HTTP chunked encoding; odd chunk sizes split the metadata blocks."""
+    out = b""
+    for i in range(0, len(body), size):
+        part = body[i:i + size]
+        out += f"{len(part):x};ext=1\r\n".encode() + part + b"\r\n"
+    return out + b"0\r\n\r\n"
+
+
 class FakeStation:
     """A tiny SHOUTcast/Icecast lookalike. `routes` maps a path to raw
     response bytes (status line, headers and body)."""
@@ -86,7 +95,8 @@ def station():
         "/loop": b"HTTP/1.1 302 Found\r\nLocation: /loop\r\n\r\n",
         "/file": b"HTTP/1.1 302 Found\r\nLocation: file:///etc/passwd\r\n\r\n",
         "/html": b"HTTP/1.0 200 OK\r\nContent-Type: text/html\r\n\r\n<html>",
-        "/chunked": b"HTTP/1.1 200 OK\r\nContent-Type: audio/mpeg\r\nTransfer-Encoding: chunked\r\n\r\n",
+        "/chunked": b"HTTP/1.1 200 OK\r\nContent-Type: audio/mpeg\r\nTransfer-Encoding: chunked\r\n"
+                    b"icy-metaint: 64\r\n\r\n" + chunked(icy_body(titles), 50),
         "/garbage": b"SSH-2.0-OpenSSH\r\n\r\n",
     })
     yield st
@@ -121,13 +131,30 @@ def test_old_servers_with_bare_newlines(station):
     assert drain(stream)[1] == ["Artist One - Song One", "Artist Two - Song Two"]
 
 
+def test_chunked_streams_are_de_chunked(station):
+    # Centova Cast's Shoutcast front end sends chunked audio (Rebirth Radio).
+    stream = radio.open_stream(station.url + "/chunked")
+    audio, titles = drain(stream)
+    assert audio == b"A" * (METAINT * 3 + 10)
+    assert titles == ["Artist One - Song One", "Artist Two - Song Two"]
+
+
+def test_cut_off_chunked_stream_ends_cleanly():
+    body = chunked(icy_body(["Song"]), 30)
+    st = FakeStation({"/": b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nicy-metaint: 64\r\n\r\n"
+                      + body[:45] + b"zz\r\n"})
+    audio, titles = drain(radio.open_stream(st.url + "/"))
+    assert audio == b"A" * 30  # the first chunk; the station hung up during the next
+    st.close()
+
+
 def test_stream_without_metadata_passes_through(station):
     stream = radio.open_stream(station.url + "/plain")
     assert stream.metaint == 0
     assert drain(stream) == (b"O" * 500, [])
 
 
-@pytest.mark.parametrize("path", ["/loop", "/file", "/chunked", "/garbage", "/nope"])
+@pytest.mark.parametrize("path", ["/loop", "/file", "/garbage", "/nope"])
 def test_bad_streams_are_refused(station, path):
     with pytest.raises(radio.StreamError):
         radio.open_stream(station.url + path)
@@ -266,3 +293,10 @@ def test_other_websites_cannot_use_the_relay_or_media(player):
     conn.request("GET", "/api/state", headers={"Host": f"127.0.0.1:{port}", "Sec-Fetch-Site": "same-origin"})
     assert conn.getresponse().status == 200
     conn.close()
+
+
+def test_garbled_chunk_header_ends_the_stream():
+    st = FakeStation({"/": b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"
+                      b"4\r\nAAAA\r\nnot-hex\r\nBBBB"})
+    assert drain(radio.open_stream(st.url + "/")) == (b"AAAA", [])
+    st.close()

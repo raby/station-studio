@@ -94,6 +94,60 @@ class _Body:
             out += chunk
         return out
 
+    def readline(self, limit: int = 1024) -> bytes:
+        """One line, "\\n" included; raises StreamError past `limit`."""
+        while b"\n" not in self._pending:
+            if len(self._pending) > limit:
+                raise StreamError("line too long")
+            data = self._sock.recv(4096)
+            if not data:
+                break
+            self._pending += data
+        end = self._pending.find(b"\n") + 1 or len(self._pending)
+        line, self._pending = self._pending[:end], self._pending[end:]
+        return line
+
+
+class _ChunkedBody(_Body):
+    """A body sent with "Transfer-Encoding: chunked" (some Shoutcast
+    front ends, such as Centova Cast's, always use it), de-chunked so
+    the ICY metadata can be found in the audio."""
+
+    def __init__(self, raw: _Body) -> None:
+        self._raw = raw
+        self._left = 0      # bytes still to come in the current chunk
+        self._done = False
+
+    def read1(self, n: int) -> bytes:
+        if self._done:
+            return b""
+        try:
+            if not self._left and not self._next_chunk():
+                return b""
+            data = self._raw.read1(min(n, self._left))
+            if not data:
+                self._done = True
+                return b""
+            self._left -= len(data)
+            if not self._left:
+                self._raw.readline()  # the CRLF after each chunk's data
+            return data
+        except StreamError:
+            self._done = True
+            return b""
+
+    def _next_chunk(self) -> bool:
+        line = self._raw.readline().split(b";", 1)[0].strip()
+        try:
+            size = int(line, 16)
+        except ValueError:
+            size = 0  # a broken or cut-off chunk header ends the stream
+        if size <= 0:
+            self._done = True
+            return False
+        self._left = size
+        return True
+
 
 @dataclass
 class Stream:
@@ -141,8 +195,7 @@ def open_stream(url: str, user_agent: str = "StationPlayer", timeout: float = CO
             stream.close()
             raise StreamError(f"station answered {stream.status}")
         if "chunked" in stream.headers.get("transfer-encoding", "").lower():
-            stream.close()
-            raise StreamError("chunked streams are not relayed")
+            stream.body = _ChunkedBody(stream.body)
         stream.sock.settimeout(READ_SECONDS)
         return stream
     raise StreamError("too many redirects")
