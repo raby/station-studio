@@ -263,8 +263,10 @@ class PlayerApp:
         if sys.platform == "win32":
             os.startfile(folder)  # type: ignore[attr-defined]
         else:
-            subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", str(folder)],
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            proc = subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", str(folder)],
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            if hasattr(proc, "wait"):
+                threading.Thread(target=proc.wait, daemon=True).start()  # no zombie left behind
 
     # ---- my playlists ---------------------------------------------------------
 
@@ -327,10 +329,7 @@ class PlayerApp:
         self.my_playlists.add(pid, self._entries(ids))
 
     def set_playlist_tracks(self, pid: str, ids) -> None:
-        current = self.my_playlists.get(pid)
-        if current is None:
-            raise LookupError("No such playlist")
-        self.my_playlists.set_entries(pid, self._entries(ids, current["entries"]))
+        self.my_playlists.update_entries(pid, lambda current: self._entries(ids, current))
 
     def m3u(self, pid: str) -> tuple[str, str] | None:
         """(name, text) of any playlist as an M3U file."""
@@ -830,7 +829,11 @@ def make_handler(app: PlayerApp):
                     except LookupError:
                         return self._error(HTTPStatus.NOT_FOUND, "No such station")
                 elif path == "/api/recordings/open":
-                    app.open_recordings_folder()
+                    try:
+                        app.open_recordings_folder()
+                    except OSError as exc:
+                        return self._error(HTTPStatus.INTERNAL_SERVER_ERROR,
+                                           f"Couldn't open the recordings folder ({app.recorder.folder}): {exc}")
                 elif path == "/api/quit":
                     self._send_json({"ok": True})
                     app.recorder.stop_all()  # close recordings cleanly

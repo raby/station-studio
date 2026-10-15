@@ -59,3 +59,20 @@ def test_falls_back_to_a_tab(tmp_path, monkeypatch):
     monkeypatch.setattr(window, "find_browser", lambda: None)
     assert window.open_ui("http://z/", Path(tmp_path)) == "tab"
     assert tabs == ["http://x/", "http://y/", "http://z/"]
+
+
+def test_a_browser_that_quits_at_once_falls_back_to_a_tab(tmp_path, monkeypatch):
+    import subprocess
+    import sys
+    tabs = []
+    monkeypatch.setattr(window.webbrowser, "open", tabs.append)
+    failing = lambda cmd: subprocess.Popen([sys.executable, "-c", "raise SystemExit(1)"])  # noqa: E731
+    assert window.open_ui("http://x/", tmp_path, exe="/b", run=failing) == "tab"
+    handed_over = lambda cmd: subprocess.Popen([sys.executable, "-c", "pass"])  # noqa: E731
+    assert window.open_ui("http://y/", tmp_path, exe="/b", run=handed_over) == "window"
+    assert tabs == ["http://x/"]
+
+
+def test_snap_browsers_are_skipped():
+    which = {"chromium": "/snap/bin/chromium", "brave": "/usr/bin/brave"}.get
+    assert window.find_browser("linux", {}, which=which) == "/usr/bin/brave"

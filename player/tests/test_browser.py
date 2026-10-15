@@ -461,3 +461,14 @@ def test_own_window_setting(page, player):
     box.uncheck()
     page.wait_for_function("() => S.lib.config.own_window === false")
     assert app.store.config.own_window is False
+
+
+def test_saving_the_queue_with_repeat_all_lists_each_track_once(page):
+    answer_prompts(page, "Loop")
+    page.locator("#btn-repeat").click()  # repeat all
+    page.locator("#view tbody tr").nth(2).dblclick()
+    page.wait_for_function("() => current() && current().name === 'Three'")
+    page.locator(".nav-item[data-view=upnext]").click()
+    page.locator("#view button", has_text="Save as a playlist").click()
+    page.wait_for_selector("#view h1:has-text('Loop')")
+    assert row_names(page) == ["Three", "Quiet", "One", "Two"]

@@ -492,7 +492,7 @@ async function newPlaylist(ids = [], suggested = "") {
   try {
     const res = await api("/api/my-playlists", { name, ids }, { quiet: true });
     await loadState(res);
-    announce(ids.length ? `Saved ${ids.length} tracks as ${name.trim()}` : `Made the playlist ${name.trim()}`);
+    announce(ids.length ? `Saved ${ids.length} track${ids.length === 1 ? "" : "s"} as ${name.trim()}` : `Made the playlist ${name.trim()}`);
     return res.created;
   } catch (err) {
     renderErrors(err.message);
@@ -509,22 +509,30 @@ async function addToPlaylist(pid, ids, what) {
     renderErrors(err.message);
     return;
   }
-  if (S.view.type === "playlist" && S.view.id === pid) await refreshDetail();
+  await refreshDetail(undefined, pid);
 }
 
-// Save a new order (or fewer tracks) for one of my playlists.
+// Save a new order (or fewer tracks) for one of my playlists. Each edit
+// is worked out from the list on screen, so further edits wait until the
+// list has been shown again.
+let savingPlaylist = false;
 async function setPlaylistTracks(pid, ids, focusIndex, message) {
+  savingPlaylist = true;
   try {
     await loadState(await api(`/api/my-playlists/${pid}/set`, { ids }, { quiet: true }));
     announce(message);
   } catch (err) {
     renderErrors(err.message);
   }
-  await refreshDetail(focusIndex);
+  try {
+    await refreshDetail(focusIndex, pid);
+  } finally {
+    savingPlaylist = false;
+  }
 }
 
 function moveInPlaylist(pl, from, to) {
-  if (to < 0 || to >= pl.tracks.length || from === to) return;
+  if (savingPlaylist || to < 0 || to >= pl.tracks.length || from === to) return;
   const ids = pl.tracks.map((t) => t.id);
   const [moved] = ids.splice(from, 1);
   ids.splice(to, 0, moved);
@@ -532,6 +540,7 @@ function moveInPlaylist(pl, from, to) {
 }
 
 function removeFromPlaylist(pl, index) {
+  if (savingPlaylist) return;
   const ids = pl.tracks.map((t) => t.id);
   ids.splice(index, 1);
   setPlaylistTracks(pl.id, ids, Math.min(index, ids.length - 1), `Removed ${pl.tracks[index].name} from ${pl.name}`);
@@ -546,7 +555,7 @@ async function renamePlaylist(pl) {
     renderErrors(err.message);
     return;
   }
-  await refreshDetail();
+  await refreshDetail(undefined, pl.id);
   focusHeading();
   announce(`Renamed to ${name.trim()}`);
 }
@@ -565,22 +574,24 @@ async function deletePlaylist(pl) {
   focusHeading();
 }
 
-// Fetch the playlist on show again after a change, keeping the scroll
-// position and (optionally) focusing a row.
-async function refreshDetail(focusIndex) {
-  if (S.view.type !== "playlist") return;
+// Fetch playlist `pid` again after a change, if it's still the one on
+// show, keeping the scroll position and (optionally) focusing a row.
+async function refreshDetail(focusIndex, pid) {
+  if (S.view.type !== "playlist" || S.view.id !== pid) return;
   const token = ++showToken;
   let detail = null;
   try { detail = await api(`/api/playlists/${S.view.id}`); } catch { detail = null; }
-  if (token !== showToken) return;
+  if (token !== showToken || S.view.id !== pid) return;
   if (!detail) { show({ type: "settings" }); return; }
   const top = $("#main").scrollTop;
   S.detail = detail;
   renderView();
   $("#main").scrollTop = top;
-  if (focusIndex === undefined || focusIndex < 0) return;
-  const tr = $(`#view tr[data-index="${focusIndex}"]`);
-  if (!tr || tr.hidden) return;
+  if (focusIndex === undefined) return;
+  // That row, else the nearest one showing, else the heading.
+  const rows = [...document.querySelectorAll("#view tbody tr")].filter((r) => !r.hidden);
+  const tr = rows.find((r) => Number(r.dataset.index) >= focusIndex) || rows[rows.length - 1];
+  if (!tr) { focusHeading(); return; }
   for (const r of document.querySelectorAll("#view tbody tr")) r.tabIndex = -1;
   tr.tabIndex = 0;
   tr.focus();
@@ -620,10 +631,7 @@ function openTrackMenu(track, pl, anchor, returnTo, at) {
       el("div", { class: "menu-label", "aria-hidden": "true" }, "Add to playlist"),
       ...myPlaylists().filter((p) => p.id !== pl.id).map((p) =>
         item(p.name, () => addToPlaylist(p.id, [track.id], track.name))),
-      item("New playlist…", async () => {
-        const pid = await newPlaylist([track.id]);
-        if (pid) announce(`${track.name} is in the new playlist`);
-      }));
+      item("New playlist…", () => newPlaylist([track.id])));
     place();
   };
   const items = [];
@@ -673,6 +681,7 @@ function comingFromQueue(limit) {
       if (S.repeat !== "all") break;
       pos = 0;
     }
+    if (pos === S.pos) break;  // round to the playing track again (repeat all)
     const t = S.queue[S.order[pos]];
     if (t.available) out.push(t);
   }
@@ -777,7 +786,7 @@ function radioView() {
     return el("div", { class: "card", "data-url": st.url },
       el("div", { class: "name" }, st.name),
       el("div", { class: "song", hidden: true }),
-      el("div", { class: "rec", role: "status", hidden: true }),
+      el("div", { class: "rec", hidden: true }),
       el("div", { class: "url" }, st.url),
       el("div", { class: "row" },
         el("button", {
@@ -840,6 +849,7 @@ function fmtBytes(n) {
 async function toggleRecording(st) {
   const rec = recordingOf(st.url);
   const on = !(rec && !rec.done);
+  recToken++;  // a poll in flight mustn't undo this
   try {
     await loadState(await api("/api/record", { station: st.id, on }, { quiet: true }));
   } catch (err) {
@@ -853,14 +863,32 @@ async function toggleRecording(st) {
 const baseName = (path) => path.split(/[\\/]/).pop();
 
 // Show recordings on the station cards and in the sidebar, and keep
-// checking on them while any is running.
+// checking on them while any is running. The ticking time is updated in
+// place (not announced); starting, stopping and failing are announced.
 let recTimer = null;
+let recToken = 0;
+const recWasRunning = new Set();
 function syncRecordings() {
-  const active = activeRecordings();
   const box = $("#rec-status");
-  box.replaceChildren(...active.map((r) => el("button", {
-    type: "button", onclick: () => show({ type: "radio" }), title: "Go to Radio",
-  }, el("span", { class: "rec-dot", "aria-hidden": "true" }), `Recording ${r.name} · ${fmtTime(r.seconds)}`)));
+  if (!box) return;  // the player has quit
+  const active = activeRecordings();
+  for (const r of S.lib.recordings || []) {
+    if (r.done && recWasRunning.has(r.url) && r.error) announce(`Recording ${r.name} stopped: ${r.error}`);
+  }
+  recWasRunning.clear();
+  for (const r of active) recWasRunning.add(r.url);
+  const buttons = new Map([...box.children].map((b) => [b.dataset.url, b]));
+  const same = active.length === buttons.size && active.every((r) => buttons.has(r.url));
+  // Rebuilt only when the recordings change, so a focused button keeps focus.
+  if (!same) {
+    box.replaceChildren(...active.map((r) => el("button", {
+      type: "button", "data-url": r.url, onclick: () => show({ type: "radio" }), title: "Go to Radio",
+    }, el("span", { class: "rec-dot", "aria-hidden": "true" }), `Recording ${r.name}`,
+    el("span", { "aria-hidden": "true" }, ""))));
+  }
+  for (const r of active) {
+    box.querySelector(`button[data-url="${CSS.escape(r.url)}"]`).lastChild.textContent = ` · ${fmtTime(r.seconds)}`;
+  }
   box.hidden = active.length === 0;
   for (const card of document.querySelectorAll("#view .card[data-url]")) {
     const r = recordingOf(card.dataset.url);
@@ -868,7 +896,6 @@ function syncRecordings() {
     card.classList.toggle("recording", running);
     const btn = card.querySelector(".rec-btn");
     btn.textContent = running ? "■ Stop recording" : "● Record";
-    btn.setAttribute("aria-pressed", String(running));
     const line = card.querySelector(".rec");
     line.className = "rec";
     if (running) {
@@ -889,11 +916,13 @@ function syncRecordings() {
 }
 
 async function pollRecordings() {
+  const token = ++recToken;
   try {
     const data = await api("/api/recordings");
+    if (token !== recToken) return;  // a newer answer (a button press) came first
     S.lib.recordings = data.recordings;
   } catch { /* try again next time */ }
-  syncRecordings();
+  if (token === recToken) syncRecordings();
 }
 
 // ---------- settings view -----------------------------------------------
@@ -1710,6 +1739,7 @@ function togglePlay() {
 
 // Pausing also stops a deck still playing out the end of the last track.
 function pauseAll() {
+  endFade();
   for (const d of [...decks, radioEl]) if (!d.paused) d.pause();
 }
 
@@ -1903,6 +1933,8 @@ for (const d of decks) {
   d.addEventListener("ended", () => { if (d !== audio) preloadNext(); });
   d.addEventListener("error", () => {
     if (d === audio || !d.dataset.trackId) return;
+    // The last track failing as it fades out: just let it go.
+    if (X.timer !== null && d === decks[X.from]) { endFade(); return; }
     // The lined-up track can't be played: skip it when its turn comes.
     for (const t of [...S.queue, ...S.upNext]) if (t.id === d.dataset.trackId) t.available = false;
     unload(d);

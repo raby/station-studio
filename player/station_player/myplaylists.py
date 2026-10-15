@@ -12,6 +12,7 @@ import json
 import logging
 import secrets
 import threading
+import time
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -44,6 +45,7 @@ class PlaylistStore:
         self._lock = threading.RLock()
         self._playlists: list[dict] = []
         self.warning: str | None = None
+        self.read_only = False
         if path is None or not path.exists():
             return
         try:
@@ -52,12 +54,16 @@ class PlaylistStore:
                 raise ValueError("not a playlists file")
         except (OSError, ValueError) as exc:
             # Never overwrite someone's playlists with an empty list.
-            backup = path.with_name(f"{path.stem}.broken{path.suffix}")
+            backup = path.with_name(f"{path.stem}.broken-{int(time.time())}{path.suffix}")
             try:
                 path.replace(backup)
+                self.warning = f"Your playlists file couldn't be read ({exc}); it was moved to {backup}"
             except OSError:
-                pass
-            self.warning = f"Your playlists file couldn't be read ({exc}); it was moved to {backup}"
+                # It may only be locked for now (a backup or sync program):
+                # leave it alone rather than save over it.
+                self.read_only = True
+                self.warning = (f"Your playlists file couldn't be read ({exc}). Restart Station Player "
+                                "to try again; until then changes to My playlists can't be saved.")
             logger.warning(self.warning)
             return
         for raw in data["playlists"]:
@@ -130,13 +136,20 @@ class PlaylistStore:
         self._change(append)
 
     def set_entries(self, pid: str, entries: list[dict]) -> None:
+        self.update_entries(pid, lambda current: entries)
+
+    def update_entries(self, pid: str, fn) -> None:
+        """Replace a playlist's entries with fn(current entries), as one change."""
         def replace():
-            self._find(pid)["entries"] = entries[:MAX_ENTRIES]
+            p = self._find(pid)
+            p["entries"] = fn(list(p["entries"]))[:MAX_ENTRIES]
         self._change(replace)
 
     def _save(self) -> None:
         if self.path is None:
             return
+        if self.read_only:
+            raise OSError("your playlists file couldn't be read, so it isn't being changed")
         payload = {"version": self.VERSION, "playlists": self._playlists}
         self.path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.path.with_suffix(".tmp")

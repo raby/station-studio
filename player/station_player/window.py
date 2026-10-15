@@ -45,7 +45,8 @@ def find_browser(platform: str | None = None, env=None, exists=None, which=None)
         return None
     for name in _LINUX_NAMES:
         found = which(name)
-        if found:
+        # Snap browsers can't use a profile in the hidden ~/.station-player.
+        if found and not os.path.realpath(found).startswith("/snap/") and not found.startswith("/snap/"):
             return found
     return None
 
@@ -77,18 +78,31 @@ def open_ui(url: str, home: Path, own_window: bool = True, exe: str | None = Non
     if own_window and exe:
         cmd = window_command(exe, url, home / "window")
         try:
-            (run or _spawn)(cmd)
-            return "window"
+            proc = (run or _spawn)(cmd)
+            if not _failed(proc):
+                return "window"
         except OSError:
             pass
     webbrowser.open(url)
     return "tab"
 
 
-def _spawn(cmd: list[str]) -> None:
+def _failed(proc, wait: float = 1.5) -> bool:
+    """Whether the browser gave up straight away (a bad profile folder, say).
+    One already running hands the window over and exits cleanly."""
+    if proc is None or not hasattr(proc, "wait"):
+        return False
+    try:
+        proc.wait(wait)
+    except subprocess.TimeoutExpired:
+        return False
+    return proc.returncode != 0
+
+
+def _spawn(cmd: list[str]) -> subprocess.Popen:
     kwargs: dict = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
     if sys.platform.startswith("win"):
         kwargs["creationflags"] = 0x00000008 | 0x00000200  # DETACHED_PROCESS | NEW_PROCESS_GROUP
     else:
         kwargs["start_new_session"] = True
-    subprocess.Popen(cmd, **kwargs)
+    return subprocess.Popen(cmd, **kwargs)

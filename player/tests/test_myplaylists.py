@@ -143,9 +143,24 @@ def test_broken_playlist_file_is_kept_aside(tmp_path):
     path.write_text("{not json")
     store = PlaylistStore(path)
     assert store.all() == [] and "couldn't be read" in store.warning
-    assert (tmp_path / "my-playlists.broken.json").read_text() == "{not json"
+    [backup] = tmp_path.glob("my-playlists.broken-*.json")
+    assert backup.read_text() == "{not json"
     store.create("New", [])
     assert len(json.loads(path.read_text())["playlists"]) == 1
+
+
+def test_a_file_that_cant_be_read_or_moved_is_never_saved_over(tmp_path, monkeypatch):
+    path = tmp_path / "my-playlists.json"
+    path.write_text('{"version": 1, "playlists": []}')
+    monkeypatch.setattr(type(path), "read_text", lambda self, **k: (_ for _ in ()).throw(PermissionError("locked")))
+    monkeypatch.setattr(type(path), "replace", lambda self, target: (_ for _ in ()).throw(PermissionError("locked")))
+    store = PlaylistStore(path)
+    monkeypatch.undo()
+    assert store.read_only and "can't be saved" in store.warning
+    with pytest.raises(OSError):
+        store.create("New", [])
+    assert path.read_text() == '{"version": 1, "playlists": []}'
+    assert store.all() == []
 
 
 def test_failed_save_changes_nothing(tmp_path, monkeypatch):

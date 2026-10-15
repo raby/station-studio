@@ -189,3 +189,30 @@ def test_record_endpoints(tmp_path, monkeypatch):
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_playlist_links_are_not_recorded(tmp_path):
+    rec = Recorder(tmp_path, opener=Opener(FakeStream(b"#EXTM3U\n", ctype="audio/x-mpegurl")))
+    rec.start("http://radio/x", "HLS FM")
+    wait_until(lambda: only(rec)["done"])
+    assert "isn't a plain audio stream" in only(rec)["error"]
+
+
+def test_a_station_that_keeps_hanging_up_is_given_up_on(tmp_path):
+    opener = Opener(*[FakeStream(b"bit") for _ in range(20)])
+    rec = Recorder(tmp_path, opener=opener)
+    rec.start("http://radio/x", "Flaky FM")
+    wait_until(lambda: only(rec)["done"])
+    assert "kept dropping" in only(rec)["error"]
+    assert opener.calls == recorder.RETRIES + 1
+
+
+def test_record_again_while_the_last_one_is_still_stopping(tmp_path):
+    rec = Recorder(tmp_path, opener=Opener(FakeStream(b"a", live=True), FakeStream(b"b", live=True)))
+    rec.start("http://radio/x", "Test FM")
+    wait_until(lambda: only(rec)["bytes"] > 0)
+    first = rec._recordings["http://radio/x"]
+    first._stop.set()  # stopping, but the thread hasn't finished yet
+    rec.start("http://radio/x", "Test FM")
+    assert rec._recordings["http://radio/x"] is not first
+    rec.stop_all()

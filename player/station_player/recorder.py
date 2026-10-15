@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import re
+import socket
 import threading
 import time
 from datetime import datetime
@@ -23,6 +24,11 @@ logger = logging.getLogger(__name__)
 MAX_HOURS = 12          # a forgotten recording stops itself
 RETRIES = 5             # reconnects in a row before giving up
 RETRY_SECONDS = 3
+STEADY_SECONDS = 30     # a connection that lasts this long resets the retries
+
+# Playlist links rather than audio: recording them would save the link text.
+_NOT_AUDIO = ("audio/x-mpegurl", "audio/mpegurl", "application/vnd.apple.mpegurl",
+              "audio/x-scpls", "audio/scpls")
 
 _EXTENSIONS = {
     "audio/mpeg": "mp3", "audio/mp3": "mp3", "audio/aac": "aac", "audio/aacp": "aac",
@@ -48,6 +54,7 @@ class Recording:
         self.name = name
         self.folder = folder
         self.started = time.time()
+        self.ended: float | None = None
         self.file: Path | None = None
         self.bytes = 0
         self.error: str | None = None
@@ -62,7 +69,7 @@ class Recording:
     def status(self) -> dict:
         return {
             "url": self.url, "name": self.name, "file": str(self.file) if self.file else None,
-            "seconds": int(time.time() - self.started), "bytes": self.bytes,
+            "seconds": int((self.ended or time.time()) - self.started), "bytes": self.bytes,
             "error": self.error, "done": self.done,
         }
 
@@ -71,7 +78,19 @@ class Recording:
         with self._lock:
             stream = self._stream
         if stream is not None:
-            stream.close()  # wakes the read so the thread notices at once
+            # Wake a read that's waiting on the station (closing alone
+            # doesn't), so the thread notices at once.
+            sock = getattr(stream, "sock", None)
+            if sock is not None:
+                try:
+                    sock.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+            stream.close()
+
+    @property
+    def stopping(self) -> bool:
+        return self._stop.is_set()
 
     def _create_file(self, ext: str):
         self.folder.mkdir(parents=True, exist_ok=True)
@@ -99,6 +118,7 @@ class Recording:
                         return
                     self._stop.wait(RETRY_SECONDS)
                     continue
+                connected = time.time()
                 with self._lock:
                     self._stream = stream
                 if self._stop.is_set():
@@ -107,7 +127,7 @@ class Recording:
                 try:
                     if out is None:
                         ctype = stream.content_type
-                        if ctype is None:
+                        if ctype is None or ctype in _NOT_AUDIO:
                             self.error = "This station isn't a plain audio stream, so it can't be recorded"
                             return
                         try:
@@ -136,17 +156,19 @@ class Recording:
                             self.error = f"Couldn't save the recording: {exc}"
                             return
                         self.bytes += len(chunk)
-                        failures = 0
                         if self._stop.is_set() or time.time() >= deadline:
                             break
-                except OSError:
+                except (OSError, ValueError):
                     pass  # the connection dropped (or was closed to stop)
                 finally:
                     stream.close()
                     with self._lock:
                         self._stream = None
                 if not self._stop.is_set():
-                    failures += 1  # the station hung up: reconnect
+                    # The station hung up: reconnect. Only a connection that
+                    # lasted a while counts as working again, so a station
+                    # that keeps hanging up straight away is given up on.
+                    failures = 1 if time.time() - connected >= STEADY_SECONDS else failures + 1
                     if failures > RETRIES:
                         self.error = "The station kept dropping the connection"
                         return
@@ -161,6 +183,7 @@ class Recording:
                         fh.close()
                     except OSError:
                         pass
+            self.ended = time.time()
             self.done = True
 
 
@@ -175,7 +198,7 @@ class Recorder:
     def start(self, url: str, name: str) -> None:
         with self._lock:
             current = self._recordings.get(url)
-            if current is not None and not current.done:
+            if current is not None and not current.done and not current.stopping:
                 return  # already recording
             rec = Recording(url, name, self.folder, self._open, self._agent)
             self._recordings[url] = rec
