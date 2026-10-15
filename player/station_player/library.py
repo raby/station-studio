@@ -448,11 +448,12 @@ class Library:
 
     def missing_count(self) -> int:
         """How many songs can't be found: a song listed in several
-        playlists or weekly exports counts once."""
+        playlists or weekly exports counts once. Entries with no file at
+        all (cloud-only songs, streams) aren't counted: there's nothing
+        to look for."""
         if self._missing is None:
             self._missing = len({
-                str(t.location) if t.location else t.id
-                for t in self.tracks.values() if not t.available
+                str(t.location) for t in self.tracks.values() if not t.available and t.location
             })
         return self._missing
 

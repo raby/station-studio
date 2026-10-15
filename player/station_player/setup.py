@@ -50,9 +50,13 @@ def _applescript(kind: str, front: bool) -> str:
                   'default location (path to music folder)')
     # Asked of the frontmost app (the browser), the window opens in front
     # of it rather than behind, as osascript's own would.
+    # AppleScript gives up on an answer after two minutes by default:
+    # someone may take longer to find their folder.
     if front:
-        return f"tell application (path to frontmost application as text) to POSIX path of ({choose})"
-    return f"POSIX path of ({choose})"
+        return ("with timeout of 86400 seconds\n"
+                f"tell application (path to frontmost application as text) to POSIX path of ({choose})\n"
+                "end timeout")
+    return f"with timeout of 86400 seconds\nPOSIX path of ({choose})\nend timeout"
 
 
 _POWERSHELL = r"""
@@ -136,6 +140,8 @@ class Picker:
                 return self._result(result.stdout)
             if "-128" in (result.stderr or ""):  # "User canceled."
                 return {"cancelled": True}
+            if "-1712" in (result.stderr or ""):  # timed out: the window may still be open
+                break
         raise PickerFailed(f"The folder window couldn't open: {(result.stderr or '').strip()}")
 
     def _windows(self, kind: str) -> dict:
@@ -235,6 +241,15 @@ def _inside(path: str, sources: list[str]) -> bool:
     return False
 
 
+def _is(check) -> bool:
+    """A path check that treats "not allowed to look" (macOS privacy
+    settings, a network drive that dropped) as "not there"."""
+    try:
+        return check()
+    except OSError:
+        return False
+
+
 def suggestions(config: Config, home: Path | None = None, exports: Path | None = None,
                 max_files: int = COUNT_FILES, seconds: float = COUNT_SECONDS) -> list[dict]:
     """Likely music and playlists on this computer, for the set-up screen."""
@@ -250,7 +265,7 @@ def suggestions(config: Config, home: Path | None = None, exports: Path | None =
         out.append({"kind": kind, "path": clean, "label": label, "detail": detail,
                     "added": _inside(clean, configured)})
 
-    if exports.is_dir():
+    if _is(exports.is_dir):
         try:
             n = sum(1 for _ in exports.glob("*.xml"))
         except OSError:
@@ -260,7 +275,7 @@ def suggestions(config: Config, home: Path | None = None, exports: Path | None =
         add("playlist", exports, "Station Studio", detail)
 
     music = home / "Music"
-    if music.is_dir():
+    if _is(music.is_dir):
         n, cut = count_songs(music, max_files, seconds)
         if n:
             add("music", music, "Music folder", _songs(n, cut))
@@ -272,7 +287,7 @@ def suggestions(config: Config, home: Path | None = None, exports: Path | None =
         except OSError:
             pass
     for xml in xmls:
-        if xml.is_file() and is_itunes_xml(xml):
+        if _is(xml.is_file) and is_itunes_xml(xml):
             add("playlist", xml, xml.name, "iTunes library export")
     return out
 

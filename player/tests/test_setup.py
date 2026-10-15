@@ -359,7 +359,7 @@ def test_library_keeps_the_original_location(tmp_path):
     assert by_name["A"].location == Path("/Users/rob/Music/A/a.mp3") and by_name["A"].path is None
     assert by_name["B"].location is None  # not audio: never looked for
     assert "location" not in by_name["A"].to_json()
-    assert lib.missing_count() == 2
+    assert lib.missing_count() == 1  # B has no file to look for
 
 
 def test_find_remap_strips_the_shared_end(tmp_path):
@@ -621,3 +621,55 @@ def test_move_station(stations):
     assert request(port, "POST", "/api/stations/move", {"url": "http://b.example/2", "to": "1"}, H)[0].status == 400
     assert request(port, "POST", "/api/stations/move", {"url": "http://x/", "to": 1}, H)[0].status == 404
     assert [s["name"] for s in json.loads(app.store.path.read_text())["stations"]] == ["B", "A", "C"]
+
+
+def test_locate_keeps_no_rewrite_that_finds_nothing(running, tmp_path):
+    app, port, _ = running
+    write_wav(tmp_path / "pick" / "Backup" / "Music" / "iTunes Media" / "A" / "a.wav")
+    write_itunes_xml(tmp_path / "exports" / "001.xml",
+                     [{"Track ID": 1, "Name": "a", "Location": Path("/Users/rob/Music/iTunes Media/A/a.wav").as_uri()}],
+                     [{"Name": "W", "Playlist Items": [{"Track ID": 1}]}])
+    # A more specific rule already covers these tracks, and still wins.
+    old = [{"from": "/Users/rob/Music/iTunes Media", "to": "/media/old"}]
+    app.store.config.path_remaps = list(old)
+    request(port, "POST", "/api/sources", {"kind": "playlist", "path": str(tmp_path / "exports")}, H)
+    body = request(port, "POST", "/api/locate", {"folder": str(tmp_path / "pick")}, H)[1]
+    assert body["found"] == 0 and body["remap"] is None
+    assert body["config"]["path_remaps"] == old
+
+
+def test_sources_survive_a_folder_that_cant_be_looked_at(running, monkeypatch):
+    app, port, _ = running
+    import station_player.server as server
+    real = Path.exists
+
+    def exists(self, *a, **k):
+        if "nas" in str(self):
+            raise OSError(112, "Host is down")
+        return real(self, *a, **k)
+    app.store.config.music_folders = ["/mnt/nas/Music"]
+    monkeypatch.setattr(server.Path, "exists", exists)
+    state = request(port, "GET", "/api/state")[1]
+    assert state["sources"][0]["exists"] is False
+
+
+def test_a_station_being_recorded_keeps_its_link(running):
+    app, port, _ = running
+    url = app.store.config.stations[0]["url"] if app.store.config.stations else None
+    if url is None:
+        app.store.config.stations = [{"name": "X", "url": "http://127.0.0.1:9/x"}]
+        url = "http://127.0.0.1:9/x"
+
+    class Busy:
+        folder = Path("/tmp")
+
+        def status(self):
+            return [{"url": url, "done": False}]
+    app.recorder = Busy()
+    import station_player.server as server
+    server.resolve_stream_url, real = (lambda u: u), server.resolve_stream_url
+    try:
+        resp, body = request(port, "POST", "/api/stations/update", {"url": url, "new_url": "http://127.0.0.1:9/y"}, H)
+    finally:
+        server.resolve_stream_url = real
+    assert resp.status == 400 and "recording" in body["error"]

@@ -772,3 +772,4 @@ def test_edit_test_and_move_stations(page, player):
     sync_api.expect(page.get_by_role("button", name="Move Renamed FM up")).to_be_focused()
     page.keyboard.press("Escape")
     sync_api.expect(page.locator("form.edit")).to_have_count(0)
+    sync_api.expect(page.get_by_role("button", name="Edit Renamed FM")).to_be_focused()

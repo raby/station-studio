@@ -386,6 +386,9 @@ input[type="range"]:disabled { cursor: default; opacity: .5; }
   .tracks th { top: -18px; }
   .welcome .hero h1 { font-size: 28px; }
   .toasts { left: 16px; right: 16px; bottom: 180px; align-items: stretch; }
+  .source { flex-wrap: wrap; }
+  .source .info { flex-basis: calc(100% - 56px); }
+  .source .actions { flex-basis: 100%; justify-content: flex-start; padding-left: 56px; }
 }
 .settings section.add-station { margin-top: 28px; }
 

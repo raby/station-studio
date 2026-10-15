@@ -299,13 +299,23 @@ class PlayerApp:
         remap = setup.find_remap(before.values(), root)
         if remap is not None:
             key = name_key(remap["from"])
+            with self._lock:
+                old_remaps = copy.deepcopy(self.store.config.path_remaps)
             with self._change() as cfg:
                 # A newer answer for the same old folder replaces the old one.
                 cfg.path_remaps[:] = [r for r in cfg.path_remaps
                                       if name_key(r["from"].replace("\\", "/").rstrip("/")) != key] + [remap]
         lib = self.library
         now = {str(t.location) for t in lib.tracks.values() if t.available and t.location is not None}
-        return {"found": len(before.keys() & now), "missing": lib.missing_count(), "remap": remap}
+        found = len(before.keys() & now)
+        if remap is not None and not found:
+            # Another, more specific rewrite still wins for these tracks:
+            # this one would do nothing, so it isn't kept.
+            with self._change() as cfg:
+                cfg.path_remaps[:] = old_remaps
+            lib = self.library
+            remap = None
+        return {"found": found, "missing": lib.missing_count(), "remap": remap}
 
     def test_station(self, url: str) -> dict:
         return setup.check_station(url, resolve_stream_url, user_agent=f"StationPlayer/{__version__}")
@@ -825,6 +835,8 @@ class PlayerApp:
             alarm_source = (cfg.alarm or {}).get("source") or {}
             wakes = alarm_source.get("kind") == "station" and alarm_source.get("id") == station_id(url)
             if resolved is not None and resolved != url:
+                if any(r["url"] == url and not r["done"] for r in self.recorder.status()):
+                    raise ValueError("Stop recording this station before changing its link")
                 if any(s.get("url") == resolved for s in cfg.stations):
                     raise ValueError("That stream is already one of your stations")
                 station["url"] = resolved
@@ -854,6 +866,15 @@ def _skipped(local: datetime) -> bool:
         return False
 
 
+def _exists(path: Path) -> bool:
+    """Whether `path` is there; a drive that has dropped, or a folder the
+    system won't let us look in, counts as not there."""
+    try:
+        return path.exists()
+    except OSError:
+        return False
+
+
 def _source_summaries(lib: Library, config: dict) -> list[dict]:
     """Each configured source with what the library found in it."""
     out = []
@@ -868,7 +889,7 @@ def _source_summaries(lib: Library, config: dict) -> list[dict]:
             tracks = set()
             for p in pls:
                 tracks.update(p.track_ids)
-            out.append({"kind": kind, "path": raw, "name": path.name or raw, "exists": path.exists(),
+            out.append({"kind": kind, "path": raw, "name": path.name or raw, "exists": _exists(path),
                         "tracks": len(tracks), "playlists": len(pls)})
     return out
 

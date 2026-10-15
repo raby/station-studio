@@ -320,6 +320,7 @@ async function show(view) {
   // click must not replace the playlist the user has since opened.
   const token = ++showToken;
   S.view = view;
+  editingStation = null;
   renderErrors();
   if (view.type !== "search") store("view", JSON.stringify(view));
   if (view.type === "playlist" || view.type === "search") {
@@ -529,7 +530,7 @@ function playlistView(pl) {
         onclick: () => playPlaylist(pl, S.shuffle ? null : 0),
       }, ...iconLabel("play", "Play")),
     ),
-    !pl.search && pl.missing && pl.kind !== "folder" ? missingBanner(pl.missing === pl.count
+    !pl.search && pl.missing && S.lib.missing && pl.kind !== "folder" ? missingBanner(pl.missing === pl.count
       ? "None of these tracks were found on this computer"
       : `${pl.missing} of these tracks weren't found on this computer`) : null,
     table,
@@ -914,7 +915,8 @@ function stationCard(st, i, count) {
   const name = el("input", { value: st.name, "aria-label": "Station name", required: true });
   const url = el("input", { value: st.url, "aria-label": "Stream URL", required: true });
   const result = el("div", { class: "test-result", role: "status", hidden: true });
-  const close = () => { editingStation = null; renderView(); };
+  const editButton = () => `#view .card[data-url="${CSS.escape(st.url)}"] .card-top button`;
+  const close = () => { editingStation = null; renderView(); refocus(editButton()); };
   const save = async (e) => {
     e.preventDefault();
     const body = { url: st.url };
@@ -925,6 +927,8 @@ function stationCard(st, i, count) {
       await loadState(await api("/api/stations/update", body, { quiet: true }));
       editingStation = null;
       renderView();
+      const moved = (S.lib.stations || []).find((x) => x.name === name.value.trim());
+      refocus(moved ? `#view .card[data-url="${CSS.escape(moved.url)}"] .card-top button` : null);
       toast(`Saved ${name.value.trim()}`);
     } catch (err) {
       result.className = "test-result bad";
@@ -1202,6 +1206,7 @@ async function addSource(kind, path) {
     toast(err.message, { error: true });
     return false;
   }
+  for (const s of suggestions || []) if (s.kind === kind && samePath(s.path, path)) s.added = true;
   renderView();
   const src = (S.lib.sources || []).find((s) => s.kind === kind && s.path === path) ||
     (S.lib.sources || []).find((s) => s.kind === kind && samePath(s.path, path));
@@ -1211,9 +1216,17 @@ async function addSource(kind, path) {
 
 const samePath = (a, b) => a.replace(/[\\/]+$/, "") === b.replace(/[\\/]+$/, "");
 
-async function pickAndAdd(kind, pick) {
+// After the page is redrawn, put focus back where it was (by selector).
+function refocus(selector) {
+  const target = selector && document.querySelector(selector);
+  if (target) target.focus();
+  else focusHeading();
+}
+
+async function pickAndAdd(kind, pick, from) {
   const path = await pickPath(pick);
   if (path) await addSource(kind, path);
+  refocus(from);
 }
 
 function sourceStat(src) {
@@ -1228,7 +1241,10 @@ function sourceCard(src) {
   const relocate = async () => {
     const path = await pickPath(folder || !/\.xml$/i.test(src.path) ? "folder" : "file");
     if (!path) return;
-    if (await addSource(src.kind, path)) {
+    if (!(await addSource(src.kind, path))) return;
+    // Chose the same place (its drive is back): nothing to swap.
+    const both = (S.lib.sources || []).filter((s) => s.kind === src.kind && (s.path === src.path || samePath(s.path, path)));
+    if (both.length > 1 && !samePath(path, src.path)) {
       await act("/api/sources/remove", { kind: src.kind, path: src.path }, `Now using ${baseName(path)}`);
     }
   };
@@ -1255,12 +1271,12 @@ function addTiles() {
   return el("div", {},
     el("div", { class: "add-tiles" },
       tile("folder", "Add a music folder", "A folder of songs, such as your Music folder. It shows under Folders.",
-        () => pickAndAdd("music", "folder"), "add-folder"),
+        () => pickAndAdd("music", "folder", "#add-folder"), "add-folder"),
       tile("list", "Add iTunes or station-studio playlists", "An exported library (.xml). Station Player picks up its playlists.",
-        () => pickAndAdd("playlist", "file"), "add-playlists")),
+        () => pickAndAdd("playlist", "file", "#add-playlists"), "add-playlists")),
     el("p", { class: "help" },
       "Station-studio saves a new export every week? ",
-      el("button", { type: "button", class: "btn small", onclick: () => pickAndAdd("playlist", "folder") }, "Choose its exports folder"),
+      el("button", { type: "button", class: "btn small", id: "add-exports", onclick: () => pickAndAdd("playlist", "folder", "#add-exports") }, "Choose its exports folder"),
       " and every new one appears by itself."),
     typedPaths());
 }
@@ -1296,25 +1312,25 @@ function pathForm(kind, placeholder) {
 let suggestions = null;
 const justAdded = new Set();  // suggestions added on this visit stay listed, ticked
 let suggestionsToken = 0;
+let suggestionsVisit = -1;
 function suggestionList(onAdded) {
-  const box = el("div", { class: "suggestions", "aria-live": "polite" });
+  const box = el("div", { class: "suggestions" });
   const draw = () => {
     const list = (suggestions || []).filter((s) => !s.added || justAdded.has(s.path));
-    box.replaceChildren(...list.map((s) => el("div", { class: s.added ? "suggestion added" : "suggestion" },
+    box.replaceChildren(...list.map((s) => el("div", { class: s.added ? "suggestion added" : "suggestion", "data-path": s.path },
       el("div", { class: "glyph" }, icon(s.kind === "music" ? "folder" : "list")),
       el("div", { class: "info" },
         el("div", { class: "name" }, s.label || baseName(s.path)),
         s.detail ? el("div", { class: "detail" }, s.detail) : null,
         el("div", { class: "path", title: s.path }, s.path)),
-      s.added ? el("span", { class: "added-mark" }, icon("check"), "Added")
+      s.added ? el("span", { class: "added-mark", tabindex: "-1" }, icon("check"), "Added")
         : el("button", {
             type: "button", class: "btn small primary", "aria-label": `Add ${s.label || s.path}`,
             onclick: async () => {
               justAdded.add(s.path);
               if (await addSource(s.kind, s.path)) {
-                s.added = true;
-                draw();
                 if (onAdded) onAdded();
+                refocus(`#view .suggestion[data-path="${CSS.escape(s.path)}"] .added-mark`);
               } else {
                 justAdded.delete(s.path);
               }
@@ -1324,6 +1340,12 @@ function suggestionList(onAdded) {
     const section = box.closest("[data-suggestions]");
     if (section) section.hidden = list.length === 0;
   };
+  // Looked for once each time the page is opened, not on every redraw.
+  if (suggestionsVisit === showToken && suggestions) {
+    queueMicrotask(draw);
+    return box;
+  }
+  suggestionsVisit = showToken;
   const token = ++suggestionsToken;
   api("/api/suggestions").then((res) => {
     if (token !== suggestionsToken) return;
@@ -1357,6 +1379,7 @@ async function locateMissing() {
   await loadState(res);
   if (S.view.type === "playlist" && S.view.id) await refreshDetail(undefined, S.view.id);
   else renderView();
+  refocus("#view .banner button");
   if (res.found) toast(`Found ${plural(res.found, "track")}${res.missing ? `. ${plural(res.missing, "track")} still missing.` : ""}`);
   else toast("None of the missing tracks are in that folder", { error: true });
 }
