@@ -1,0 +1,135 @@
+# Station Player release workflow (player/ is its own package).
+#
+# Run it from the Actions tab ("Publish Station Player" → Run workflow)
+# on main. It tests the player, builds the wheel + sdist, installs the
+# wheel into a clean venv and smoke-tests the server, then creates a
+# GitHub release `player-v<version>` with both files attached. Users can
+# then install without the repo:
+#
+#   pipx install https://github.com/raby/station-studio/releases/download/player-v0.1.0/station_player-0.1.0-py3-none-any.whl
+#
+# Tick "Also publish to PyPI" to push the same files to pypi.org so
+# `pipx install station-player` works. That uses trusted publishing and
+# needs a one-time setup on pypi.org (Account → Publishing → add a
+# pending publisher): project station-player, owner raby, repo
+# station-studio, workflow publish-player.yml, environment pypi-player.
+#
+# Tags are `player-v*`, never `v*`, so this can't trigger station-studio's
+# own publish.yml. Bump player/pyproject.toml's version before each
+# release; the run refuses to overwrite an existing release.
+
+name: Publish Station Player
+
+on:
+  workflow_dispatch:
+    inputs:
+      pypi:
+        description: Also publish to PyPI (needs the one-time trusted-publisher setup)
+        type: boolean
+        default: false
+
+concurrency:
+  group: publish-player
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: test, build, smoke, GitHub release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # create the release + tag
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: read version
+        id: version
+        run: |
+          VERSION=$(python -c 'import tomllib; print(tomllib.load(open("player/pyproject.toml","rb"))["project"]["version"])')
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if gh release view "player-v$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "ERROR: release player-v$VERSION already exists. Bump player/pyproject.toml's version first." >&2
+            exit 1
+          fi
+
+      - name: tests
+        working-directory: player
+        run: |
+          python -m pip install pytest build
+          python -m pytest -q
+
+      - name: build wheel + sdist
+        run: python -m build player --outdir dist
+
+      - name: smoke-install the wheel in a clean venv
+        run: |
+          set -e
+          python -m venv /tmp/smoke
+          /tmp/smoke/bin/pip install --quiet dist/*.whl
+          /tmp/smoke/bin/station-player --version
+          export STATION_PLAYER_HOME=/tmp/smoke-home
+          /tmp/smoke/bin/station-player --no-browser --port 8765 > /tmp/smoke/serve.log 2>&1 &
+          PID=$!
+          trap "kill $PID 2>/dev/null || true" EXIT
+          for i in $(seq 1 15); do
+            curl -sf http://127.0.0.1:8765/api/state >/dev/null && break
+            sleep 1
+          done
+          curl -sS -o /dev/null -w '%{http_code} %{content_type}\n' http://127.0.0.1:8765/ | grep -q '^200 text/html'
+          curl -sS -o /dev/null -w '%{http_code} %{content_type}\n' http://127.0.0.1:8765/app.js | grep -q '^200 text/javascript'
+          curl -sS -o /dev/null -w '%{http_code} %{content_type}\n' http://127.0.0.1:8765/api/state | grep -q '^200 application/json'
+          echo "smoke OK"
+
+      - name: create GitHub release
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          WHEEL=$(basename dist/*.whl)
+          cat > notes.md <<NOTES
+          Station Player $VERSION: plays station-studio's exported playlists, local music folders and internet radio.
+
+          **Install** (needs Python 3.11+ and [pipx](https://pipx.pypa.io)):
+
+          \`\`\`
+          pipx install https://github.com/$GITHUB_REPOSITORY/releases/download/player-v$VERSION/$WHEEL
+          station-player
+          \`\`\`
+
+          See [player/README.md](https://github.com/$GITHUB_REPOSITORY/blob/player-v$VERSION/player/README.md) for setup.
+          NOTES
+          gh release create "player-v$VERSION" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "Station Player $VERSION" \
+            --notes-file notes.md
+
+  pypi:
+    name: publish to pypi.org
+    if: inputs.pypi
+    needs: release
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi-player
+      url: https://pypi.org/project/station-player/
+    permissions:
+      contents: read
+      id-token: write  # trusted publishing
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: download the released files
+        # The exact files attached to the GitHub release, so PyPI gets
+        # byte-identical bits to what was smoke-tested.
+        run: |
+          gh release download "player-v${{ needs.release.outputs.version }}" \
+            --repo "$GITHUB_REPOSITORY" --dir dist
+          ls -la dist
+
+      - name: publish
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b  # release/v1

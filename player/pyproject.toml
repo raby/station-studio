@@ -12,7 +12,7 @@ name = "station-player"
 version = "0.1.0"
 description = "Local music and radio player for station-studio playlists"
 readme = "README.md"
-license = { text = "MIT" }
+license = { file = "LICENSE" }
 requires-python = ">=3.11"
 authors = [
     { name = "Raby Whyte", email = "rabywhyte@gmail.com" },
