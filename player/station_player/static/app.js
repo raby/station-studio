@@ -1093,6 +1093,153 @@ function playbackSection() {
       })));
 }
 
+const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+async function saveSetting(body, message) {
+  try {
+    await loadState(await api("/api/settings", body, { quiet: true }));
+    announce(message);
+    return true;
+  } catch (err) {
+    renderErrors(err.message);
+    return false;
+  }
+}
+
+// When an alarm next goes off, as a Date (local time), or null.
+function nextAlarm(a, now = new Date()) {
+  if (!a || !a.on) return null;
+  const [h, m] = a.time.split(":").map(Number);
+  for (let i = 0; i < 8; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() + i, h, m);
+    if (d > now && a.days.includes((d.getDay() + 6) % 7)) return d;  // Monday = 0
+  }
+  return null;
+}
+
+let alarmSavedAt = 0;  // so the redrawn section can say it was saved
+
+// A wake-up alarm: a playlist or station at a time, on chosen days.
+function alarmSection() {
+  const a = S.lib.config.alarm || { on: false, time: "07:00", days: [0, 1, 2, 3, 4], source: null };
+  const time = el("input", { type: "time", id: "alarm-time", value: a.time, required: true });
+  const days = DAY_NAMES.map((name, i) => el("input", { type: "checkbox", value: i, checked: a.days.includes(i) || null }));
+  const source = el("select", { id: "alarm-source" },
+    el("optgroup", { label: "Playlists" },
+      ...S.lib.playlists.map((p) => el("option", { value: `playlist:${p.id}` }, p.name))),
+    el("optgroup", { label: "Radio" },
+      ...(S.lib.stations || []).map((st) => el("option", { value: `station:${st.id}` }, st.name))));
+  if (a.source) source.value = `${a.source.kind}:${a.source.id}`;
+  const on = el("input", { type: "checkbox", id: "alarm-on", checked: a.on || null });
+  const msg = el("div", { class: "form-msg", role: "status" });
+  const next = nextAlarm(S.lib.config.alarm);
+  const when = next && next.toLocaleString([], { weekday: "long", day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" });
+  const saved = Date.now() - alarmSavedAt < 5000 ? "Saved. " : "";
+  const summary = el("p", { class: "alarm-next", id: "alarm-next", role: "status" },
+    S.lib.config.alarm ? (next ? `${saved}Next alarm: ${when}, playing ${S.lib.config.alarm.source.name || "your choice"}.` : `${saved}The alarm is off.`) : "");
+  const save = async (e) => {
+    e.preventDefault();
+    const chosen = days.filter((d) => d.checked).map((d) => Number(d.value));
+    if (!chosen.length) { msg.textContent = "Choose at least one day"; return; }
+    if (!source.value) { msg.textContent = "Choose something to play"; return; }
+    const [kind, ...rest] = source.value.split(":");
+    const id = rest.join(":");
+    const name = source.selectedOptions[0] ? source.selectedOptions[0].textContent : "";
+    const alarm = { on: on.checked, time: time.value, days: chosen, source: { kind, id, name } };
+    if (await saveSetting({ alarm }, on.checked ? `Alarm set for ${time.value}` : "Alarm saved, and off")) {
+      alarmSavedAt = Date.now();
+      renderView();
+      const again = $("#alarm-on");
+      if (again) again.focus();
+    }
+  };
+  return el("section", {},
+    el("h2", {}, "Alarm"),
+    el("p", { class: "help" },
+      "Wake up to a playlist or a station. It fades in over a minute. ",
+      "Station Player has to be running at the time (turn on Start at login under App, below) and the computer awake: it can't wake a sleeping computer."),
+    el("form", { onsubmit: save },
+      el("label", { class: "check" }, on, el("span", {}, "Alarm on")),
+      el("div", { class: "fields" },
+        el("label", { class: "field" }, "Time", time),
+        el("label", { class: "field" }, "Play", source),
+        el("fieldset", { class: "days" }, el("legend", {}, "Days"),
+          ...days.map((d, i) => el("label", {}, d, DAY_NAMES[i])))),
+      el("button", { class: "btn" }, "Save alarm")),
+    summary,
+    msg);
+}
+
+function isoDate(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+// The play log: what played and when, as a spreadsheet for music returns.
+function playLogSection() {
+  const now = new Date();
+  // Last month, the usual reporting period.
+  const from = el("input", { type: "date", id: "log-from", value: isoDate(new Date(now.getFullYear(), now.getMonth() - 1, 1)) });
+  const to = el("input", { type: "date", id: "log-to", value: isoDate(new Date(now.getFullYear(), now.getMonth(), 0)) });
+  const link = el("a", { class: "btn", id: "log-download", download: "" }, "Download play log (CSV)");
+  const update = () => { link.href = `/api/playlog.csv?from=${from.value}&to=${to.value}`; };
+  from.addEventListener("change", update);
+  to.addEventListener("change", update);
+  update();
+  return el("section", {},
+    el("h2", {}, "Play log"),
+    el("p", { class: "help" },
+      "A record of every track played, for PRS for Music and PPL returns: date and time, title, artist, album, ",
+      "composer, label and ISRC (from the file's tags) and how long it played. Plays under 30 seconds and radio aren't included. ",
+      "It stays on this computer."),
+    el("div", { class: "checks" },
+      checkbox("play_log", "Keep a log of the tracks I play", S.lib.config.play_log !== false,
+        (on) => saveSetting({ play_log: on }, `Play log turned ${on ? "on" : "off"}`))),
+    el("div", { class: "fields" },
+      el("label", { class: "field" }, "From", from),
+      el("label", { class: "field" }, "To", to),
+      link));
+}
+
+// The phone remote: a link (and QR code) for a phone on the same Wi-Fi.
+function remoteSection() {
+  const r = S.lib.remote || {};
+  const box = [];
+  if (r.on && r.url) {
+    box.push(el("div", { class: "remote-box" },
+      el("img", { src: `/api/remote/qr.svg?${encodeURIComponent(r.url.slice(-8))}`, alt: "QR code for the phone remote link" }),
+      el("div", {},
+        el("p", {}, "Scan this with your phone's camera, or open:"),
+        el("p", { class: "remote-link" }, r.url),
+        el("button", {
+          type: "button", class: "btn", id: "btn-new-link",
+          onclick: async () => {
+            try {
+              await loadState(await api("/api/remote/new-link", {}, { quiet: true }));
+              renderView();
+              announce("New link made; the old one no longer works");
+              const again = $("#btn-new-link");
+              if (again) again.focus();
+            } catch (err) { renderErrors(err.message); }
+          },
+        }, "Make a new link"),
+        el("p", { class: "help" }, "The old link stops working."))));
+  } else if (r.on && r.error) {
+    box.push(el("p", { class: "errors" }, r.error));
+  } else if (r.on) {
+    box.push(el("p", { class: "help" }, "This computer doesn't seem to be on a network right now."));
+  }
+  return el("section", {},
+    el("h2", {}, "Phone remote"),
+    el("p", { class: "help" },
+      "Play, pause, skip, change the volume and choose what plays from a phone on the same Wi-Fi. ",
+      "The music still plays here. Anyone with the link can use it while they're on your network, so keep it to people you trust. ",
+      "Your computer may ask whether to allow incoming connections: allow them."),
+    el("div", { class: "checks" },
+      checkbox("remote", "Turn on the phone remote", Boolean(r.on),
+        (on) => saveSetting({ remote: on }, `Phone remote turned ${on ? "on" : "off"}`))),
+    ...box);
+}
+
 function settingsView() {
   const cfg = S.lib.config;
   const removeSource = (kind, list) => (i) => act("/api/sources/remove", { kind, path: list[i] }, "Removed");
@@ -1144,6 +1291,9 @@ function settingsView() {
         el("button", { class: "btn" }, "Add")), remapMsg),
     }),
     playbackSection(),
+    alarmSection(),
+    playLogSection(),
+    remoteSection(),
     appSection(),
     el("p", { class: "help version" }, `Station Player ${S.lib.version || ""}`),
   );
@@ -1583,6 +1733,7 @@ const START_LATENCY = 0.012;
 let handoffTimer = null;
 
 function nextIsReady() {
+  if (SLEEP.track) return null;  // the sleep timer stops at the end of this one
   const pre = otherDeck();
   const m = nextMove(1);
   if (m.stop || pre.dataset.trackId !== m.track.id || pre.error || pre.readyState < 3) return null;
@@ -1697,7 +1848,7 @@ function endFade() {
 }
 
 function applyFade() {
-  const v = Number(volume.value);
+  const v = playVolume();
   decks.forEach((d, i) => {
     if (L.master) setDeckGain(i, d.dataset.trackId, 0.03);
     else d.volume = v * fadeMul[i];
@@ -1713,6 +1864,7 @@ function setCrossfade(secs) {
 // stations send. If the relay can't handle a station, the browser plays
 // the station's own URL instead (no song titles then).
 function playStation(st, { via = "relay", autoplay = true } = {}) {
+  if (SLEEP.track) setSleep(0);  // "after this track" doesn't apply to a station
   const sameStation = S.mode === "radio" && S.station && S.station.url === st.url;
   cancelHandoff();
   endFade();
@@ -1966,6 +2118,15 @@ function reconnectRadio() {
 }
 
 onAudio("ended", () => {
+  if (S.mode !== "radio" && SLEEP.track) {
+    // Sleep at the end of the track: line up the next one, paused.
+    const m = nextMove(1);
+    setSleep(0);
+    announce("Sleep timer: stopped at the end of the track");
+    if (m.stop) return stopAtEnd();
+    if (!m.same) applyMove(m);
+    return loadTrack(current(), { autoplay: false });
+  }
   if (S.mode !== "radio") return step(1);
   if (!reconnectRadio()) $("#now-sub").textContent = "Lost the connection to this station";
 });
@@ -2050,8 +2211,12 @@ seek.addEventListener("change", () => {
 // gains and the slider sets the master gain.
 const volume = $("#volume");
 volume.value = store("volume") ?? 0.8;
+// The sleep timer fades the volume down at its end, the alarm up at its
+// start; each has its own share, so one can't undo the other.
+const volMul = { sleep: 1, alarm: 1 };
+const playVolume = () => Number(volume.value) * volMul.sleep * volMul.alarm;
 function applyVolume() {
-  const v = Number(volume.value);
+  const v = playVolume();
   decks.forEach((d, i) => { d.volume = L.master ? 1 : v * fadeMul[i]; });
   radioEl.volume = v;
   if (L.master) L.master.gain.value = v;
@@ -2159,10 +2324,16 @@ addEventListener("appinstalled", () => {
 
 // Files chosen with "Open With" in Finder / Explorer reach the server; the
 // page checks for them and plays the first. Each request plays once, in
-// whichever window gets to it first.
+// whichever window gets to it first. The alarm going off, and commands
+// from the phone remote, arrive the same way.
 async function checkInbox({ fresh = 0 } = {}) {
-  let req;
-  try { req = (await api("/api/inbox")).open; } catch { return; }
+  let box;
+  try { box = await api("/api/inbox"); } catch { return; }
+  for (const c of box.commands || []) {
+    try { await runCommand(c); } catch { /* a playlist that's gone, say */ }
+  }
+  await alarmGoesOff(box.alarm, fresh);
+  const req = box.open;
   if (!req || String(req.seq) === store("opened-seq")) return;
   if (fresh && req.age > fresh) { store("opened-seq", String(req.seq)); return; }
   store("opened-seq", String(req.seq));
@@ -2172,6 +2343,185 @@ async function checkInbox({ fresh = 0 } = {}) {
   const i = S.detail.tracks.findIndex((t) => t.id === req.track);
   if (i >= 0) playPlaylist(S.detail, i);
 }
+
+async function playSource(kind, id) {
+  if (kind === "station") {
+    const st = (S.lib.stations || []).find((x) => x.id === id);
+    if (st) playStation(st);
+    return Boolean(st);
+  }
+  await show({ type: "playlist", id });
+  if (S.view.id !== id || !S.detail || !S.detail.tracks.length) return false;
+  playPlaylist(S.detail, S.shuffle ? null : 0);
+  return true;
+}
+
+// ---------- the play log ------------------------------------------------------
+
+// Tracks played are logged on the computer (for PRS / PPL returns): how
+// long each was listened to is counted here, four times a second, and sent
+// when the next one starts or the window closes.
+const meter = { id: null, started: 0, secs: 0, last: 0, lastPos: 0 };
+function flushMeter() {
+  if (meter.id && meter.secs >= 1 && S.lib && S.lib.config.play_log !== false) {
+    fetch("/api/played", {
+      method: "POST", keepalive: true,
+      headers: { "Content-Type": "application/json", "X-Station-Player": "1" },
+      body: JSON.stringify({ id: meter.id, started: meter.started, seconds: Math.round(meter.secs) }),
+    }).catch(() => {});
+  }
+  meter.id = null;
+}
+setInterval(() => {
+  const now = Date.now();
+  const t = S.mode === "track" ? current() : null;
+  if (t && !audio.paused) {
+    const again = meter.id === t.id && audio.currentTime < 3 && audio.currentTime + 2 < meter.lastPos;
+    if (meter.id !== t.id || again) {
+      flushMeter();
+      Object.assign(meter, { id: t.id, started: now, secs: 0 });
+    } else {
+      meter.secs += Math.min(1, (now - meter.last) / 1000);
+    }
+    meter.lastPos = audio.currentTime;
+  } else if (meter.id && (!t || t.id !== meter.id)) {
+    flushMeter();
+  }
+  meter.last = now;
+}, 250);
+addEventListener("pagehide", () => {
+  flushMeter();
+  // Tell the player this window has gone, so the alarm or the phone remote
+  // opens a new one rather than waiting for it.
+  fetch("/api/page-closed", {
+    method: "POST", keepalive: true,
+    headers: { "Content-Type": "application/json", "X-Station-Player": "1" }, body: "{}",
+  }).catch(() => {});
+});
+
+// ---------- sleep timer ---------------------------------------------------
+
+// Stop after a number of minutes (fading out over the last 20 seconds),
+// or at the end of the track playing.
+const SLEEP = { at: 0, track: false, timer: null };
+const SLEEP_FADE = 20;
+function setSleep(minutes) {
+  clearInterval(SLEEP.timer);
+  Object.assign(SLEEP, { at: 0, track: false, timer: null });
+  if (minutes === "track") SLEEP.track = S.mode !== "radio";  // a station has no end
+  else if (Number(minutes) > 0) {
+    SLEEP.at = Date.now() + Number(minutes) * 60000;
+    SLEEP.timer = setInterval(sleepTick, 250);
+  }
+  if (volMul.sleep !== 1) { volMul.sleep = 1; applyVolume(); }
+  if (SLEEP.track) preloadNext();
+  syncSleep();
+}
+function sleepLeft() {
+  return SLEEP.track ? "track" : SLEEP.at ? Math.max(0, Math.round((SLEEP.at - Date.now()) / 1000)) : 0;
+}
+function sleepTick() {
+  const left = (SLEEP.at - Date.now()) / 1000;
+  if (left <= 0) {
+    pauseAll();
+    setSleep(0);
+    announce("Sleep timer: playback stopped");
+    return;
+  }
+  const mul = Math.min(1, left / SLEEP_FADE);
+  if (mul !== volMul.sleep) { volMul.sleep = mul; applyVolume(); }
+  syncSleep();
+}
+function syncSleep() {
+  const sel = $("#sleep");
+  const left = sleepLeft();
+  const value = left === "track" ? "track" : left ? "on" : "";
+  let on = sel.querySelector('option[value="on"]');
+  if (left && left !== "track") {
+    if (!on) { on = el("option", { value: "on" }); sel.prepend(on); }
+    const m = Math.ceil(left / 60);
+    on.textContent = `Sleep in ${m} min`;
+  } else if (on) {
+    on.remove();
+  }
+  sel.value = value;
+  sel.classList.toggle("on", Boolean(left));
+}
+$("#sleep").addEventListener("change", (e) => {
+  const v = e.target.value;
+  if (v === "on") return;
+  setSleep(v === "track" ? "track" : Number(v));
+  announce(v === "track" ? "Sleep at the end of this track" : Number(v) ? `Sleep in ${v} minutes` : "Sleep timer off");
+});
+
+// ---------- alarm ------------------------------------------------------------
+
+// The server sets the alarm off at its time (opening a window if none is
+// open); the page plays it, fading in over a minute.
+const ALARM = { timer: null };
+const ALARM_FADE = 60;
+async function alarmGoesOff(req, fresh) {
+  if (!req || String(req.seq) === store("alarm-seq")) return;
+  store("alarm-seq", String(req.seq));  // unique across restarts of the player
+  if (req.age > (fresh ? 120 : 300)) return;  // long past: the computer was asleep
+  try { await loadState(); } catch { return; }
+  setSleep(0);
+  clearInterval(ALARM.timer);
+  volMul.alarm = 0.02;
+  applyVolume();
+  const played = await playSource(req.source.kind, req.source.id).catch(() => false);
+  if (!played) {
+    volMul.alarm = 1;
+    applyVolume();
+    renderErrors(`The alarm couldn't play ${req.source.name || "its playlist"}: it isn't in the library any more.`);
+    return;
+  }
+  announce(`Alarm: playing ${req.source.name || ""}`);
+  const start = Date.now();
+  ALARM.timer = setInterval(() => {
+    volMul.alarm = Math.min(1, 0.02 + (Date.now() - start) / 1000 / ALARM_FADE);
+    applyVolume();
+    if (volMul.alarm >= 1) { clearInterval(ALARM.timer); ALARM.timer = null; }
+  }, 250);
+}
+
+// ---------- phone remote ------------------------------------------------------
+
+// The phone's commands, picked up by checkInbox.
+async function runCommand(c) {
+  if (c.cmd === "toggle") togglePlay();
+  else if (c.cmd === "next") step(1, { userInitiated: true });
+  else if (c.cmd === "prev") previous();
+  else if (c.cmd === "volume") {
+    volume.value = c.value;
+    applyVolume();
+    store("volume", volume.value);
+  } else if (c.cmd === "playlist" || c.cmd === "station") await playSource(c.cmd, c.id);
+  else if (c.cmd === "sleep") setSleep(c.minutes);
+  syncButtons();
+  reportStatus();
+}
+
+// While the remote is on, the page tells the server what's playing.
+let lastReport = "";
+function reportStatus() {
+  if (!S.lib || !S.lib.config.remote) return;
+  const t = S.mode === "track" ? current() : null;
+  const status = {
+    mode: S.mode, playing: !audio.paused, volume: Number(volume.value), sleep_left: sleepLeft(),
+    title: S.mode === "radio" ? (S.radioTitle || "") : t ? t.name : "",
+    artist: t ? (t.artist || "") : "", album: t ? (t.album || "") : "",
+    station: S.mode === "radio" && S.station ? S.station.name : "",
+    track: t ? t.id : "", queue: t ? (S.queueLabel || "") : "",
+    position: S.mode === "track" ? Math.round(audio.currentTime || 0) : 0,
+    duration: S.mode === "track" && isFinite(audio.duration) ? Math.round(audio.duration) : 0,
+  };
+  const text = JSON.stringify(status);
+  if (text === lastReport) return;
+  lastReport = text;
+  api("/api/remote/status", status, { quiet: true }).catch(() => { lastReport = ""; });
+}
+setInterval(reportStatus, 1000);
 
 // ---------- boot --------------------------------------------------------
 
@@ -2216,5 +2566,5 @@ async function checkInbox({ fresh = 0 } = {}) {
   // A file opened just now (which may be why this window opened) plays;
   // an old request doesn't replay when the player is reopened later.
   await checkInbox({ fresh: 30 });
-  setInterval(() => { if ($("#view")) checkInbox(); }, 1500);
+  setInterval(() => { if ($("#view")) checkInbox(); }, 1000);
 })();

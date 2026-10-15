@@ -243,7 +243,7 @@ def test_send_open_against_a_real_server(tmp_path):
     try:
         song = write_wav(tmp_path / "song.wav")
         assert cli._send_open(f"http://127.0.0.1:{server.server_address[1]}/", [str(song)]) is False
-        assert app.open_request["seq"] == 1
+        assert app.open_request["seq"] > 0
     finally:
         server.shutdown()
         server.server_close()

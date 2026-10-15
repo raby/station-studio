@@ -174,6 +174,38 @@ read again on later scans.
   the song titles stations send (the browser can't). If a station can't
   be relayed that way, it plays directly, just without song titles.
 
+- **Sleep timer**: the menu beside the volume stops playback after 15
+  minutes to an hour and a half (fading out over the last 20 seconds),
+  or at the end of the track playing.
+- **Alarm** (Sources & settings › Alarm): wake up to a playlist or a
+  station at a set time on chosen days, fading in over a minute.
+  Station Player has to be running then (turn on *Start at login*) and
+  the computer awake; if no player window is open, one opens.
+
+## Play log (PRS / PPL returns)
+
+Station Player keeps a log of every track played, in
+`~/.station-player/play-log.jsonl`. **Download play log** (Sources &
+settings › Play log) saves the plays between two dates as a CSV
+spreadsheet with the date and time, title, artist, album, composer,
+label and ISRC, the track's length and how long it played, ready to
+copy into a PRS for Music or PPL music return. Composer, label and ISRC
+come from the files' tags (ID3 `TCOM`, `TPUB`, `TSRC`; the `COMPOSER`,
+`LABEL` / `ORGANIZATION` and `ISRC` fields elsewhere). Plays under 30
+seconds (skips) and radio stations aren't included. Turn the log off
+there too.
+
+## Phone remote
+
+Turn on **Phone remote** (Sources & settings) and scan the QR code with
+a phone on the same Wi-Fi: it shows what's playing and has play/pause,
+next, previous, volume, the sleep timer, and your playlists and
+stations. The sound still plays on the computer. It's a separate small
+server on port 8766, reachable only through the secret link; **Make a
+new link** stops the old one working. The first time, your computer may
+ask whether to let Station Player (or Python) accept incoming
+connections: allow it, or the phone can't connect.
+
 ## New versions
 
 Once a day Station Player asks pypi.org for the newest version number

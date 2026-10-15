@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta name="theme-color" content="#121417">
+  <title>Station Player remote</title>
+  <link rel="stylesheet" href="remote.css">
+</head>
+<body>
+  <main>
+    <p id="offline" class="note" role="status" hidden></p>
+    <section class="now" aria-label="Now playing">
+      <img id="art" alt="" hidden>
+      <h1 id="title">Nothing playing</h1>
+      <p id="sub" class="sub"></p>
+    </section>
+    <div class="buttons">
+      <button type="button" id="prev" aria-label="Previous">⏮</button>
+      <button type="button" id="toggle" class="play" aria-label="Play">▶</button>
+      <button type="button" id="next" aria-label="Next">⏭</button>
+    </div>
+    <label class="row">Volume <input type="range" id="volume" min="0" max="1" step="0.05"></label>
+    <label class="row">Sleep
+      <select id="sleep">
+        <option value="0">Off</option>
+        <option value="15">In 15 minutes</option>
+        <option value="30">In 30 minutes</option>
+        <option value="60">In 1 hour</option>
+        <option value="90">In 1½ hours</option>
+        <option value="track">After this track</option>
+      </select>
+    </label>
+    <h2>Radio</h2>
+    <ul id="stations" class="list"></ul>
+    <h2>Playlists</h2>
+    <ul id="playlists" class="list"></ul>
+  </main>
+  <script src="remote.js"></script>
+</body>
+</html>

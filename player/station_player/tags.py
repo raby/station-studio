@@ -65,6 +65,10 @@ class Tags:
     # from ReplayGain, R128 (Opus) or iTunes Sound Check tags.
     gain_db: float | None = None
     peak: float | None = None
+    # For music reporting (PRS / PPL returns from the play log).
+    composer: str | None = None
+    label: str | None = None
+    isrc: str | None = None
 
 
 class _Done(Exception):
@@ -217,6 +221,11 @@ def _gain_fields(fields: dict[str, str], tags: Tags) -> None:
         if sc:
             gain, peak = sc[0], peak if peak is not None else sc[1]
     _set_gain(tags, gain, peak)
+    # Named fields for the reporting details (Vorbis comments, ID3 TXXX,
+    # MP4 '----' items).
+    _set(tags, "composer", fields.get("COMPOSER"))
+    _set(tags, "label", fields.get("LABEL") or fields.get("ORGANIZATION") or fields.get("PUBLISHER"))
+    _set(tags, "isrc", fields.get("ISRC"))
 
 
 def _genre_name(raw: str) -> str:
@@ -273,6 +282,9 @@ _ID3_TEXT = {
     "TPE2": "albumartist", "TP2": "albumartist",
     "TALB": "album", "TAL": "album",
     "TCON": "genre", "TCO": "genre",
+    "TCOM": "composer", "TCM": "composer",
+    "TPUB": "label", "TPB": "label",
+    "TSRC": "isrc", "TRC": "isrc",
 }
 _ID3_ART = ("APIC", "PIC")
 _ID3_USER = ("TXXX", "TXX", "COMM", "COM")  # ReplayGain and Sound Check live here
@@ -785,7 +797,7 @@ def _ogg_last_granule(fh: BinaryIO, serial: int) -> int | None:
 
 _MP4_TEXT = {
     b"\xa9nam": "title", b"\xa9ART": "artist", b"aART": "albumartist",
-    b"\xa9alb": "album", b"\xa9gen": "genre",
+    b"\xa9alb": "album", b"\xa9gen": "genre", b"\xa9wrt": "composer",
 }
 
 

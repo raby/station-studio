@@ -413,3 +413,29 @@ def test_gain_number_formats_and_overlong_sound_check(tmp_path):
     comm = b"\x00eng" + b"iTunNORM\x00" + b"F" * 400 + b" 1"
     tags = read_tags(write(tmp_path, id3(frame("TIT2", text("Kept")) + frame("COMM", comm))))
     assert (tags.title, tags.gain_db) == ("Kept", None)
+
+
+def test_reporting_details_for_the_play_log(tmp_path):
+    # ID3 frames, and the same details as TXXX fields.
+    body = (frame("TCOM", text("A. Writer")) + frame("TPUB", text("Some Label"))
+            + frame("TSRC", text("GBABC2400001")))
+    tags = read_tags(write(tmp_path, id3(body)))
+    assert (tags.composer, tags.label, tags.isrc) == ("A. Writer", "Some Label", "GBABC2400001")
+    body = frame("TXXX", txxx("LABEL", "TX Label")) + frame("TXXX", txxx("ISRC", "USXYZ0000001"))
+    tags = read_tags(write(tmp_path, id3(body), "t.mp3"))
+    assert (tags.label, tags.isrc) == ("TX Label", "USXYZ0000001")
+    # Vorbis comments (FLAC, Ogg).
+    block = vorbis_comment("COMPOSER=C", "ORGANIZATION=Org", "ISRC=FRABC0000002")
+    flac = b"fLaC" + bytes([0x84]) + len(block).to_bytes(3, "big") + block
+    tags = read_tags(write(tmp_path, flac, "x.flac"))
+    assert (tags.composer, tags.label, tags.isrc) == ("C", "Org", "FRABC0000002")
+    # MP4: the composer item and iTunes '----' fields.
+    def freeform(name: str, value: str) -> bytes:
+        return atom(b"----", atom(b"mean", b"\x00" * 4 + b"com.apple.iTunes")
+                    + atom(b"name", b"\x00" * 4 + name.encode())
+                    + atom(b"data", b"\x00\x00\x00\x01" + b"\x00" * 4 + value.encode()))
+    wrt = atom(b"\xa9wrt", atom(b"data", b"\x00\x00\x00\x01" + b"\x00" * 4 + b"M Writer"))
+    ilst = atom(b"ilst", wrt + freeform("ISRC", "DEABC0000003") + freeform("LABEL", "M Label"))
+    m4a = atom(b"ftyp", b"M4A " + b"\x00" * 4) + atom(b"moov", atom(b"udta", atom(b"meta", b"\x00" * 4 + ilst)))
+    tags = read_tags(write(tmp_path, m4a, "a.m4a"))
+    assert (tags.composer, tags.label, tags.isrc) == ("M Writer", "M Label", "DEABC0000003")

@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import threading
 import time
 from dataclasses import asdict, dataclass, field
@@ -54,6 +55,15 @@ class Config:
     check_updates: bool = True
     # open in an app window of its own (Chrome/Edge/Brave) rather than a tab
     own_window: bool = True
+    # keep a log of the tracks played, for music reporting (PRS / PPL)
+    play_log: bool = True
+    # wake-up alarm: {"on", "time": "HH:MM", "days": [0-6, Monday = 0],
+    # "source": {"kind": "playlist" | "station", "id", "name"}}
+    alarm: dict | None = None
+    # control the player from a phone on the same network (see remote.py)
+    remote: bool = False
+    remote_token: str = ""
+    remote_port: int = 8766
 
     def to_json(self) -> dict:
         return asdict(self)
@@ -74,6 +84,28 @@ def _pairs(value, keys: tuple[str, str]) -> list[dict]:
     ]
 
 
+def clean_alarm(value) -> dict | None:
+    """A valid alarm setting, or None. Raises ValueError for a bad one."""
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError("alarm must be an object")
+    when = value.get("time")
+    if not isinstance(when, str) or not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", when):
+        raise ValueError("alarm time must be HH:MM")
+    days = value.get("days")
+    if not isinstance(days, list) or not days or not all(isinstance(d, int) and 0 <= d <= 6 for d in days):
+        raise ValueError("alarm days must be a list of 0 (Monday) to 6 (Sunday)")
+    source = value.get("source")
+    if not (isinstance(source, dict) and source.get("kind") in ("playlist", "station")
+            and isinstance(source.get("id"), str) and source["id"]):
+        raise ValueError("alarm needs a playlist or station to play")
+    name = source.get("name")
+    return {"on": bool(value.get("on")), "time": when, "days": sorted(set(days)),
+            "source": {"kind": source["kind"], "id": source["id"][:100],
+                       "name": name[:200] if isinstance(name, str) else ""}}
+
+
 def config_from_json(data: dict) -> Config:
     """Build a Config from parsed JSON, dropping anything malformed."""
     cfg = Config(
@@ -85,8 +117,19 @@ def config_from_json(data: dict) -> Config:
         cfg.stations = _pairs(data.get("stations"), ("name", "url"))
     if isinstance(data.get("check_updates"), bool):
         cfg.check_updates = data["check_updates"]
-    if isinstance(data.get("own_window"), bool):
-        cfg.own_window = data["own_window"]
+    for key in ("own_window", "play_log", "remote"):
+        if isinstance(data.get(key), bool):
+            setattr(cfg, key, data[key])
+    try:
+        cfg.alarm = clean_alarm(data.get("alarm"))
+    except ValueError:
+        pass
+    token = data.get("remote_token")
+    if isinstance(token, str) and re.fullmatch(r"[A-Za-z0-9_-]{16,64}", token):
+        cfg.remote_token = token
+    port = data.get("remote_port")
+    if isinstance(port, int) and not isinstance(port, bool) and 1024 <= port <= 65535:
+        cfg.remote_port = port
     return cfg
 
 
