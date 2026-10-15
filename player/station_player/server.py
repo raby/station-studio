@@ -11,9 +11,9 @@ from __future__ import annotations
 import copy
 import json
 import logging
-import mimetypes
 import re
 import threading
+import urllib.error
 import urllib.request
 from contextlib import contextmanager
 from http import HTTPStatus
@@ -31,16 +31,33 @@ STATIC_DIR = Path(__file__).parent / "static"
 API_HEADER = "X-Station-Player"
 _ALLOWED_HOSTS = {"127.0.0.1", "localhost", "::1"}
 _RANGE_RE = re.compile(r"^bytes=(\d*)-(\d*)$")
-_EXTRA_TYPES = {
-    ".m4a": "audio/mp4", ".aac": "audio/aac", ".flac": "audio/flac",
-    ".opus": "audio/ogg", ".oga": "audio/ogg", ".ogg": "audio/ogg",
-    ".wav": "audio/wav", ".aif": "audio/aiff", ".aiff": "audio/aiff",
-    ".webm": "audio/webm", ".mp3": "audio/mpeg",
+# Fixed tables rather than `mimetypes`, which on Windows reads (sometimes
+# wrong) registry mappings. Audio is only ever served with an audio type.
+AUDIO_TYPES = {
+    ".m4a": "audio/mp4", ".mp4": "audio/mp4", ".aac": "audio/aac",
+    ".flac": "audio/flac", ".opus": "audio/ogg", ".oga": "audio/ogg",
+    ".ogg": "audio/ogg", ".wav": "audio/wav", ".aif": "audio/aiff",
+    ".aiff": "audio/aiff", ".webm": "audio/webm", ".mp3": "audio/mpeg",
 }
+_STATIC_TYPES = {
+    ".html": "text/html; charset=utf-8",
+    ".js": "text/javascript; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".svg": "image/svg+xml",
+    ".png": "image/png",
+    ".ico": "image/x-icon",
+}
+# The UI only talks to this server; audio may come from radio stations.
+_CSP = (
+    "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
+    "media-src 'self' http: https:; connect-src 'self'; object-src 'none'; "
+    "base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+)
+_STREAM_FETCH_SECONDS = 10
 
 
-def content_type(path: Path) -> str:
-    return _EXTRA_TYPES.get(path.suffix.lower()) or mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+def content_type(path: Path) -> str | None:
+    return AUDIO_TYPES.get(path.suffix.lower())
 
 
 def parse_range(header: str, size: int) -> tuple[int, int] | None:
@@ -70,27 +87,57 @@ def parse_range(header: str, size: int) -> tuple[int, int] | None:
 
 
 def resolve_stream_url(url: str, fetch=None) -> str:
-    """Turn a .pls / .m3u playlist URL into the stream URL inside it."""
+    """Turn a .pls / .m3u playlist URL into the stream URL inside it.
+
+    Raises ValueError when a playlist link can't be read or holds no
+    stream, rather than saving a station that can never play.
+    """
     path = urlparse(url).path.lower()
     if not path.endswith((".pls", ".m3u")):
         return url
     fetch = fetch or _fetch_text
     try:
         body = fetch(url)
-    except Exception:
-        return url
+    except Exception as exc:
+        raise ValueError(f"Couldn't read that playlist link: {exc}") from None
     for line in body.splitlines():
         line = line.strip()
         if line.lower().startswith("file") and "=" in line:
             line = line.split("=", 1)[1].strip()
         if line.startswith(("http://", "https://")):
             return line
-    return url
+    raise ValueError("That playlist link doesn't contain a stream URL")
 
 
-def _fetch_text(url: str) -> str:
-    with urllib.request.urlopen(url, timeout=8) as resp:
-        return resp.read(64 * 1024).decode("utf-8", "replace")
+class _HttpOnlyRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if urlparse(newurl).scheme not in ("http", "https"):
+            raise urllib.error.URLError(f"refusing redirect to {newurl}")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+_opener = urllib.request.build_opener(_HttpOnlyRedirects)
+
+
+def _fetch_text(url: str, deadline: float = _STREAM_FETCH_SECONDS) -> str:
+    """Fetch up to 64 KB, giving up after `deadline` seconds overall
+    (urllib's own timeout is per socket read, so a slow-drip server
+    could otherwise hold a request thread indefinitely)."""
+    result: dict = {}
+
+    def work():
+        try:
+            with _opener.open(url, timeout=deadline) as resp:
+                result["body"] = resp.read(64 * 1024).decode("utf-8", "replace")
+        except Exception as exc:
+            result["error"] = exc
+
+    worker = threading.Thread(target=work, daemon=True)
+    worker.start()
+    worker.join(deadline)
+    if "body" in result:
+        return result["body"]
+    raise result.get("error") or TimeoutError("timed out")
 
 
 class PlayerApp:
@@ -108,18 +155,27 @@ class PlayerApp:
         self.store = store
         self.library = Library()
         self._lock = threading.RLock()
+        self._scan_lock = threading.Lock()  # one disk scan at a time
         self._generation = 0
+        self._installed = -1
         self._rebuild()
 
     def _rebuild(self) -> None:
-        with self._lock:
-            generation = self._generation
-            cfg = copy.deepcopy(self.store.config)
-        lib = Library()
-        lib.load(cfg.playlist_sources, cfg.music_folders, cfg.path_remaps)
-        with self._lock:
-            if generation == self._generation:
-                self.library = lib
+        # Requests that pile up behind a running scan share its result:
+        # whoever gets the scan lock next scans the newest settings, and
+        # the rest find that generation already installed and return.
+        with self._scan_lock:
+            with self._lock:
+                generation = self._generation
+                if generation == self._installed:
+                    return
+                cfg = copy.deepcopy(self.store.config)
+            lib = Library()
+            lib.load(cfg.playlist_sources, cfg.music_folders, cfg.path_remaps)
+            with self._lock:
+                if generation == self._generation:
+                    self.library = lib
+                    self._installed = generation
 
     def rescan(self) -> None:
         with self._lock:
@@ -216,6 +272,20 @@ def make_handler(app: PlayerApp):
     class Handler(BaseHTTPRequestHandler):
         server_version = f"StationPlayer/{__version__}"
 
+        def handle(self):
+            # Browsers drop audio connections whenever they seek or skip.
+            # That surfaces as BrokenPipe/ConnectionReset on macOS and
+            # Linux and ConnectionAborted on Windows; none is an error.
+            try:
+                super().handle()
+            except ConnectionError:
+                pass
+
+        def end_headers(self):
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Referrer-Policy", "no-referrer")
+            super().end_headers()
+
         def log_message(self, fmt, *args):  # quieter than stderr-per-request
             logger.debug("%s - %s", self.address_string(), fmt % args)
 
@@ -276,12 +346,14 @@ def make_handler(app: PlayerApp):
             target = (STATIC_DIR / name).resolve()
             if not target.is_relative_to(STATIC_DIR.resolve()) or not target.is_file():
                 return self._error(HTTPStatus.NOT_FOUND, "Not found")
+            ctype = _STATIC_TYPES.get(target.suffix.lower())
+            if ctype is None:
+                return self._error(HTTPStatus.NOT_FOUND, "Not found")
             body = target.read_bytes()
             self.send_response(HTTPStatus.OK)
-            ctype = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
-            if ctype.startswith("text/") or ctype.endswith("javascript"):
-                ctype += "; charset=utf-8"
             self.send_header("Content-Type", ctype)
+            if target.suffix.lower() == ".html":
+                self.send_header("Content-Security-Policy", _CSP)
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-cache")
             self.end_headers()
@@ -290,7 +362,8 @@ def make_handler(app: PlayerApp):
 
         def _serve_audio(self, track_id: str, head_only: bool):
             track = app.library.tracks.get(track_id)
-            if track is None or track.path is None:
+            ctype = content_type(track.path) if track and track.path else None
+            if ctype is None:  # unknown id, missing file, or not audio
                 return self._error(HTTPStatus.NOT_FOUND, "Track not available")
             try:
                 size = track.path.stat().st_size
@@ -312,7 +385,7 @@ def make_handler(app: PlayerApp):
                     status = HTTPStatus.PARTIAL_CONTENT
             length = end - start + 1
             self.send_response(status)
-            self.send_header("Content-Type", content_type(track.path))
+            self.send_header("Content-Type", ctype)
             self.send_header("Accept-Ranges", "bytes")
             self.send_header("Content-Length", str(length))
             if status == HTTPStatus.PARTIAL_CONTENT:
@@ -330,7 +403,7 @@ def make_handler(app: PlayerApp):
                             break
                         self.wfile.write(chunk)
                         remaining -= len(chunk)
-            except (BrokenPipeError, ConnectionResetError):
+            except ConnectionError:
                 pass  # the browser seeks by dropping the connection
 
         # ---- POST -------------------------------------------------------

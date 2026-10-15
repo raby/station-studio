@@ -10,6 +10,7 @@ import hashlib
 import logging
 import plistlib
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import unquote, urlparse
@@ -22,7 +23,16 @@ AUDIO_EXTENSIONS = frozenset({
 })
 
 # Leading track numbers in filenames: "01 ", "01 - ", "1. ", "A2 - ".
-_TRACK_NO_RE = re.compile(r"^\s*(?:[A-Da-d]?\d{1,3})\s*(?:[-.)_]\s*|\s+)")
+# A bare number followed only by a space is stripped just when it has a
+# leading zero, so "99 Luftballons" and "7 Seconds" keep their titles.
+_TRACK_NO_RE = re.compile(r"^\s*(?:[A-Da-d]?\d{1,3}\s*[-.)_]\s*|0\d{1,2}\s+)")
+
+
+def name_key(name: str) -> str:
+    """Compare file and folder names the way people expect: ignoring case
+    (Windows and macOS do) and Unicode composition (macOS writes "é" as
+    two code points, most other systems as one)."""
+    return unicodedata.normalize("NFC", name).casefold()
 
 
 @dataclass
@@ -98,13 +108,24 @@ def location_to_path(location: str) -> Path | None:
 
 
 def apply_remaps(path: Path, remaps: list[dict]) -> Path:
-    """Rewrite a path prefix, e.g. a Mac library path onto a PC drive."""
-    as_text = path.as_posix()
+    """Rewrite a path prefix, e.g. a Mac library path onto a PC drive.
+
+    Matches whole folder names, ignoring case and Unicode composition, so
+    "c:/users/rob/music" rewrites "C:/Users/Rob/Music/..." too.
+    """
+    parts = path.as_posix().split("/")
     for remap in remaps:
         src = str(remap.get("from", "")).replace("\\", "/").rstrip("/")
         dst = str(remap.get("to", "")).replace("\\", "/").rstrip("/")
-        if src and (as_text == src or as_text.startswith(src + "/")):
-            return Path(dst + as_text[len(src):])
+        if not src:
+            continue
+        src_parts = src.split("/")
+        head = parts[:len(src_parts)]
+        if len(head) == len(src_parts) and all(
+            name_key(a) == name_key(b) for a, b in zip(head, src_parts)
+        ):
+            rest = parts[len(src_parts):]
+            return Path("/".join([dst, *rest]) if rest else dst)
     return path
 
 
@@ -182,7 +203,7 @@ class Library:
                 if key in indexed:
                     continue
                 indexed.add(key)
-                self._by_filename.setdefault(f.name.lower(), []).append(f)
+                self._by_filename.setdefault(name_key(f.name), []).append(f)
 
         for raw in playlist_sources:
             src = Path(raw).expanduser()
@@ -205,7 +226,9 @@ class Library:
     def _resolve(self, raw: dict, remaps: list[dict]) -> Path | None:
         loc = raw.get("Location")
         candidate = location_to_path(loc) if isinstance(loc, str) else None
-        if candidate is not None:
+        # Only audio is ever playable: a crafted XML pointing at, say,
+        # ~/.ssh/id_rsa or an .html file must not make it servable.
+        if candidate is not None and candidate.suffix.lower() in AUDIO_EXTENSIONS:
             candidate = apply_remaps(candidate, remaps)
             if candidate.is_file():
                 return candidate
@@ -219,13 +242,13 @@ class Library:
         trusted when it is unique; otherwise the parent folders (album,
         then artist) must match too.
         """
-        matches = self._by_filename.get(original.name.lower(), [])
+        matches = self._by_filename.get(name_key(original.name), [])
         for depth in range(0, 3):
             if depth:
-                want = [p.name.lower() for p in original.parents[:depth]]
+                want = [name_key(p.name) for p in original.parents[:depth]]
                 matches = [
                     m for m in matches
-                    if [p.name.lower() for p in m.parents[:depth]] == want
+                    if [name_key(p.name) for p in m.parents[:depth]] == want
                 ]
             if len(matches) == 1:
                 return matches[0]

@@ -163,3 +163,16 @@ input[type="range"] { accent-color: var(--accent); }
   .volume { display: none; }
   .tracks .album, .tracks .num { display: none; }
 }
+.settings section.add-station { margin-top: 24px; }
+
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+.busy-note { color: var(--accent); font-size: 12px; padding: 0 8px 8px; }
+body.busy .main { cursor: progress; }
+.tracks tbody tr:focus { outline: none; }
+.tracks tbody tr:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+button:focus-visible, input:focus-visible, .nav-item:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}

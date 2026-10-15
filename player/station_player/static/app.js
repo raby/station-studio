@@ -35,16 +35,40 @@ function store(key, value) {
   } catch { return null; }
 }
 
+let pending = 0;
+
+function setBusy(delta) {
+  pending += delta;
+  const busy = pending > 0;
+  const status = $("#busy");
+  status.hidden = !busy;
+  document.body.classList.toggle("busy", busy);
+  for (const b of document.querySelectorAll("[data-busy-disable]")) b.disabled = busy;
+}
+
+// Polite announcement for screen readers (visually hidden).
+function announce(text) {
+  const region = $("#announce");
+  region.textContent = "";
+  setTimeout(() => { region.textContent = text; }, 50);
+}
+
 async function api(path, body) {
   const opts = body === undefined ? {} : {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-Station-Player": "1" },
     body: JSON.stringify(body),
   };
-  const res = await fetch(path, opts);
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
-  return data;
+  // Settings changes rescan the library, which can take a while.
+  if (body !== undefined) setBusy(1);
+  try {
+    const res = await fetch(path, opts);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+    return data;
+  } finally {
+    if (body !== undefined) setBusy(-1);
+  }
 }
 
 // ---------- state --------------------------------------------------------
@@ -85,13 +109,21 @@ function renderErrors(extra) {
 }
 
 // Run a settings action from a button; failures show in the error box.
-async function act(path, body) {
+async function act(path, body, done = "Done") {
   try {
     await loadState(await api(path, body));
     renderView();
+    focusHeading();
+    announce(done);
   } catch (err) {
     renderErrors(err.message);
   }
+}
+
+// After a view is rebuilt, put focus somewhere sensible, not <body>.
+function focusHeading() {
+  const h = $("#view h1");
+  if (h) { h.tabIndex = -1; h.focus(); }
 }
 
 function navButton(label, count, view, active) {
@@ -163,10 +195,13 @@ function matches(t, q) {
 function playlistView(pl) {
   // Rows are built once per view. Filtering hides rows and track changes
   // move the "playing" class, so a 10k-track library stays responsive.
+  // Keyboard: one row is in the tab order at a time (roving tabindex);
+  // arrow keys move between rows and Enter plays the focused one.
   const rows = pl.tracks.map((t, i) => el("tr", {
     "data-index": i,
+    tabindex: "-1",
     class: t.available ? null : "missing",
-    title: t.available ? "Double-click to play" : "The audio file for this track wasn't found",
+    title: t.available ? "Double-click or press Enter to play" : "The audio file for this track wasn't found",
   },
     el("td", { class: "num" }, i + 1),
     el("td", { class: "title" }, t.name),
@@ -174,14 +209,46 @@ function playlistView(pl) {
     el("td", { class: "album" }, t.album || ""),
     el("td", { class: "dur" }, t.duration_ms ? fmtTime(t.duration_ms / 1000) : ""),
   ));
+  const visibleRows = () => rows.filter((r) => !r.hidden);
+  const focusRow = (tr) => {
+    for (const r of rows) if (r.tabIndex === 0) r.tabIndex = -1;
+    tr.tabIndex = 0;
+    tr.focus();
+  };
   const tbody = el("tbody", {
     ondblclick: (e) => {
       const tr = e.target.closest("tr[data-index]");
       if (tr) playPlaylist(pl, Number(tr.dataset.index));
     },
+    onclick: (e) => {
+      const tr = e.target.closest("tr[data-index]");
+      if (tr) focusRow(tr);
+    },
+    onkeydown: (e) => {
+      const tr = e.target.closest("tr[data-index]");
+      if (!tr) return;
+      const vis = visibleRows();
+      const at = vis.indexOf(tr);
+      let next = null;
+      if (e.key === "ArrowDown") next = vis[at + 1];
+      else if (e.key === "ArrowUp") next = vis[at - 1];
+      else if (e.key === "Home") next = vis[0];
+      else if (e.key === "End") next = vis[vis.length - 1];
+      else if (e.key === "PageDown") next = vis[Math.min(at + 15, vis.length - 1)];
+      else if (e.key === "PageUp") next = vis[Math.max(at - 15, 0)];
+      else if (e.key === "Enter") {
+        e.preventDefault();
+        playPlaylist(pl, Number(tr.dataset.index));
+        return;
+      } else return;
+      e.preventDefault();
+      if (next) focusRow(next);
+    },
   }, rows);
   const empty = el("div", { class: "empty" }, pl.count ? "No tracks match." : "This playlist is empty.");
   const table = el("table", { class: "tracks" },
+    el("caption", { class: "sr-only" },
+      `${pl.name}. Use the arrow keys to move between tracks and Enter to play.`),
     el("thead", {}, el("tr", {},
       el("th", { class: "num" }, "#"), el("th", { class: "title" }, "Title"),
       el("th", { class: "artist" }, "Artist"), el("th", { class: "album" }, "Album"),
@@ -190,12 +257,15 @@ function playlistView(pl) {
 
   const applyFilter = () => {
     const q = S.filter.toLowerCase();
+    let first = null;
     let shown = 0;
     pl.tracks.forEach((t, i) => {
       const hit = matches(t, q);
       rows[i].hidden = !hit;
-      if (hit) shown++;
+      rows[i].tabIndex = -1;
+      if (hit) { shown++; first = first || rows[i]; }
     });
+    if (first) first.tabIndex = 0;
     table.hidden = shown === 0;
     empty.hidden = shown !== 0;
   };
@@ -243,7 +313,7 @@ function markPlaying() {
 // ---------- radio view --------------------------------------------------
 
 function radioView() {
-  const msg = el("div", { class: "form-msg" });
+  const msg = el("div", { class: "form-msg", role: "status" });
   const name = el("input", { placeholder: "Station name", "aria-label": "Station name" });
   const url = el("input", { placeholder: "https://… stream, .pls or .m3u URL", "aria-label": "Stream URL" });
   const add = async (e) => {
@@ -251,6 +321,8 @@ function radioView() {
     try {
       await loadState(await api("/api/stations", { name: name.value, url: url.value }));
       renderView();
+      focusHeading();
+      announce("Station added");
     } catch (err) { msg.textContent = err.message; }
   };
 
@@ -267,7 +339,7 @@ function radioView() {
         el("button", {
           type: "button", class: "btn",
           onclick: () => {
-            if (confirm(`Remove ${st.name}?`)) act("/api/stations/remove", { url: st.url });
+            if (confirm(`Remove ${st.name}?`)) act("/api/stations/remove", { url: st.url }, `Removed ${st.name}`);
           },
         }, "Remove")));
   });
@@ -276,7 +348,7 @@ function radioView() {
   return el("div", {},
     el("div", { class: "view-head" }, el("h1", {}, "Radio")),
     cards.length ? el("div", { class: "cards" }, cards) : el("div", { class: "empty" }, "No stations yet."),
-    el("div", { class: "settings" }, el("section", { style: "margin-top:24px" },
+    el("div", { class: "settings" }, el("section", { class: "add-station" },
       el("h2", {}, "Add a station"),
       el("form", { class: "form-row", onsubmit: add }, name, url, el("button", { class: "btn" }, "Add")),
       msg)),
@@ -302,19 +374,24 @@ function listSection({ title, help, items, onRemove, form }) {
     items.length
       ? el("ul", {}, items.map((label, i) => el("li", {},
           el("span", {}, label),
-          el("button", { type: "button", class: "btn small", onclick: () => onRemove(i) }, "Remove"))))
+          el("button", {
+            type: "button", class: "btn small", "aria-label": `Remove ${label}`,
+            onclick: () => onRemove(i),
+          }, "Remove"))))
       : null,
     form);
 }
 
 function pathForm(kind, placeholder) {
   const input = el("input", { placeholder, "aria-label": placeholder });
-  const msg = el("div", { class: "form-msg" });
+  const msg = el("div", { class: "form-msg", role: "status" });
   const submit = async (e) => {
     e.preventDefault();
     try {
       await loadState(await api("/api/sources", { kind, path: input.value }));
       renderView();
+      focusHeading();
+      announce("Added");
     } catch (err) { msg.textContent = err.message; }
   };
   return el("div", {}, el("form", { class: "form-row", onsubmit: submit }, input,
@@ -323,16 +400,18 @@ function pathForm(kind, placeholder) {
 
 function settingsView() {
   const cfg = S.lib.config;
-  const removeSource = (kind, list) => (i) => act("/api/sources/remove", { kind, path: list[i] });
+  const removeSource = (kind, list) => (i) => act("/api/sources/remove", { kind, path: list[i] }, "Removed");
 
   const from = el("input", { placeholder: "From, e.g. /Users/rob/Music/iTunes/iTunes Media", "aria-label": "Path from" });
   const to = el("input", { placeholder: "To, e.g. D:/Music", "aria-label": "Path to" });
-  const remapMsg = el("div", { class: "form-msg" });
+  const remapMsg = el("div", { class: "form-msg", role: "status" });
   const addRemap = async (e) => {
     e.preventDefault();
     try {
       await loadState(await api("/api/remaps", { from: from.value, to: to.value }));
       renderView();
+      focusHeading();
+      announce("Path rewrite added");
     } catch (err) { remapMsg.textContent = err.message; }
   };
 
@@ -341,8 +420,8 @@ function settingsView() {
       el("h1", {}, "Sources & settings"),
       el("div", { class: "spacer" }),
       el("button", {
-        type: "button", class: "btn",
-        onclick: () => act("/api/rescan", {}),
+        type: "button", class: "btn", "data-busy-disable": true, disabled: pending > 0 || null,
+        onclick: () => act("/api/rescan", {}, "Library rescanned"),
       }, "Rescan")),
     listSection({
       title: "Playlists (iTunes XML)",
@@ -364,7 +443,7 @@ function settingsView() {
       items: (cfg.path_remaps || []).map((r) => `${r.from}  →  ${r.to}`),
       onRemove: (i) => {
         const r = cfg.path_remaps[i];
-        act("/api/remaps/remove", { from: r.from, to: r.to });
+        act("/api/remaps/remove", { from: r.from, to: r.to }, "Path rewrite removed");
       },
       form: el("div", {}, el("form", { class: "form-row", onsubmit: addRemap }, from, to,
         el("button", { class: "btn" }, "Add")), remapMsg),
@@ -503,7 +582,8 @@ function syncButtons() {
   const rep = $("#btn-repeat");
   rep.setAttribute("aria-pressed", String(S.repeat !== "off"));
   rep.textContent = S.repeat === "one" ? "↻¹" : "↻";
-  rep.title = `Repeat: ${S.repeat}`;
+  rep.title = { off: "Repeat: off", all: "Repeat: all", one: "Repeat: this track" }[S.repeat];
+  rep.setAttribute("aria-label", rep.title);
 }
 
 // ---------- wiring ------------------------------------------------------
@@ -517,7 +597,10 @@ audio.addEventListener("timeupdate", () => {
   }
   $("#time-cur").textContent = fmtTime(audio.currentTime);
   $("#time-dur").textContent = fmtTime(audio.duration);
-  if (!seeking && audio.duration) $("#seek").value = Math.round((audio.currentTime / audio.duration) * 1000);
+  if (!seeking && audio.duration) {
+    $("#seek").value = Math.round((audio.currentTime / audio.duration) * 1000);
+    $("#seek").setAttribute("aria-valuetext", `${fmtTime(audio.currentTime)} of ${fmtTime(audio.duration)}`);
+  }
 });
 audio.addEventListener("ended", () => step(1));
 audio.addEventListener("error", () => {

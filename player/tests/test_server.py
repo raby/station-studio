@@ -60,6 +60,53 @@ def test_resolve_stream_url_reads_pls_and_m3u():
     assert resolve_stream_url("http://x/stream", fetch=lambda u: 1 / 0) == "http://x/stream"
 
 
+def test_resolve_stream_url_reports_unusable_playlist_links():
+    with pytest.raises(ValueError, match="Couldn't read"):
+        resolve_stream_url("http://x/listen.pls", fetch=lambda u: 1 / 0)
+    with pytest.raises(ValueError, match="doesn't contain"):
+        resolve_stream_url("http://x/listen.m3u", fetch=lambda u: "#EXTM3U\nnothing here\n")
+
+
+def test_stream_fetch_has_an_overall_deadline():
+    import socket as s_
+    from station_player import server as srv
+    listener = s_.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen()
+    port = listener.getsockname()[1]
+    conns = []
+
+    def drip():  # accept, then send a byte too slowly to ever finish
+        c, _ = listener.accept()
+        conns.append(c)
+        c.recv(1024)
+        c.sendall(b"HTTP/1.0 200 OK\r\nContent-Length: 1000\r\n\r\n")
+        for _ in range(20):
+            time.sleep(0.2)
+            try:
+                c.sendall(b"x")
+            except OSError:
+                return
+
+    threading.Thread(target=drip, daemon=True).start()
+    t0 = time.monotonic()
+    with pytest.raises(Exception):
+        srv._fetch_text(f"http://127.0.0.1:{port}/x.pls", deadline=1)
+    assert time.monotonic() - t0 < 2.5
+    listener.close()
+
+
+def test_redirects_to_other_schemes_are_refused():
+    import urllib.error
+    import urllib.request
+    from station_player import server as srv
+    handler = srv._HttpOnlyRedirects()
+    req = urllib.request.Request("http://x/a.pls")
+    with pytest.raises(urllib.error.URLError):
+        handler.redirect_request(req, None, 302, "Found", {}, "ftp://evil/x")
+    assert handler.redirect_request(req, None, 302, "Found", {}, "https://ok/x") is not None
+
+
 def test_state_and_playlist_and_ui(running):
     _, port, _, _ = running
     resp, data = request(port, "GET", "/api/state")
@@ -307,3 +354,76 @@ def test_wrongly_typed_settings_are_dropped(tmp_path):
     assert cfg.music_folders == ["/ok"]
     assert cfg.path_remaps == [{"from": "/a", "to": "/b"}]
     assert cfg.stations == [{"name": "S", "url": "https://s"}]
+
+
+def test_security_headers_and_fixed_static_types(running):
+    _, port, _, _ = running
+    resp, _ = request(port, "GET", "/")
+    assert resp.getheader("Content-Type") == "text/html; charset=utf-8"
+    assert "default-src 'self'" in resp.getheader("Content-Security-Policy")
+    assert resp.getheader("X-Content-Type-Options") == "nosniff"
+    resp, _ = request(port, "GET", "/app.js")
+    assert resp.getheader("Content-Type") == "text/javascript; charset=utf-8"
+    resp, _ = request(port, "GET", "/style.css")
+    assert resp.getheader("Content-Type") == "text/css; charset=utf-8"
+    resp, _ = request(port, "GET", "/api/state")
+    assert resp.getheader("X-Content-Type-Options") == "nosniff"
+
+
+def test_audio_endpoint_refuses_non_audio_even_if_indexed(running, tmp_path):
+    app, port, _, _ = running
+    from station_player.library import Track
+    page = tmp_path / "evil.html"
+    page.write_text("<script>alert(1)</script>")
+    app.library.tracks["deadbeefdeadbeef"] = Track(id="deadbeefdeadbeef", name="x", path=page)
+    resp, _ = request(port, "GET", "/audio/deadbeefdeadbeef")
+    assert resp.status == 404
+
+
+def test_unreadable_playlist_link_is_rejected_not_saved(running, monkeypatch):
+    app, port, _, _ = running
+    from station_player import server as srv
+    monkeypatch.setattr(srv, "_fetch_text", lambda url: (_ for _ in ()).throw(OSError("unreachable")))
+    resp, data = request(port, "POST", "/api/stations", {"name": "X", "url": "http://x/listen.pls"},
+                         {"X-Station-Player": "1"})
+    assert resp.status == 400 and "Couldn't read" in json.loads(data)["error"]
+    assert all(s["name"] != "X" for s in app.store.config.stations)
+
+
+def test_piled_up_rescans_share_one_scan(running, monkeypatch):
+    app, _, _, _ = running
+    from station_player import server as srv
+    gate = threading.Event()
+    real_load = srv.Library.load
+    calls = []
+
+    def load(self, *a, **kw):
+        calls.append(1)
+        gate.wait(5)
+        return real_load(self, *a, **kw)
+
+    monkeypatch.setattr(srv.Library, "load", load)
+    threads = [threading.Thread(target=app.rescan) for _ in range(5)]
+    for t in threads:
+        t.start()
+    while not calls:
+        time.sleep(0.01)
+    time.sleep(0.2)  # let the others queue up behind the first scan
+    gate.set()
+    for t in threads:
+        t.join()
+    assert len(calls) <= 2  # the running scan, plus at most one for the rest
+
+
+def test_dropped_connections_are_not_errors(running, monkeypatch):
+    app, port, _, _ = running
+    from http.server import BaseHTTPRequestHandler
+    from station_player import server as srv
+    handler_cls = srv.make_handler(app)
+
+    def aborted(self):
+        raise ConnectionAbortedError(10053, "aborted by the software in your host machine")
+
+    monkeypatch.setattr(BaseHTTPRequestHandler, "handle", aborted)
+    h = handler_cls.__new__(handler_cls)
+    handler_cls.handle(h)  # must not raise

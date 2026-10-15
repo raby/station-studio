@@ -21,6 +21,14 @@ def test_location_to_path_ignores_remote_urls():
     assert location_to_path("") is None
 
 
+def test_apply_remaps_ignores_case_and_unicode_form():
+    remaps = [{"from": "c:\\users\\rob\\music", "to": "D:/Music"}]
+    assert apply_remaps(Path("C:/Users/Rob/Music/A/b.mp3"), remaps).as_posix() == "D:/Music/A/b.mp3"
+    nfd = [{"from": "/Users/Rene\u0301/Music", "to": "/mnt/m"}]
+    assert apply_remaps(Path("/Users/Ren\u00e9/Music/x.mp3"), nfd) == Path("/mnt/m/x.mp3")
+    assert apply_remaps(Path("/Users/Rob/Music"), [{"from": "/users/rob/music", "to": "/m"}]) == Path("/m")
+
+
 def test_apply_remaps_only_on_whole_segments():
     remaps = [{"from": "/Users/rob/Music", "to": "/mnt/music"}]
     assert apply_remaps(Path("/Users/rob/Music/a/b.mp3"), remaps) == Path("/mnt/music/a/b.mp3")
@@ -31,6 +39,12 @@ def test_title_from_filename():
     assert title_from_filename(Path("01 - Artist Name - The Song.mp3")) == ("The Song", "Artist Name")
     assert title_from_filename(Path("07 Just A Title.flac")) == ("Just A Title", None)
     assert title_from_filename(Path("1999.mp3")) == ("1999", None)
+    assert title_from_filename(Path("3. Third.mp3")) == ("Third", None)
+    assert title_from_filename(Path("A2 - Side Two.mp3")) == ("Side Two", None)
+    # Titles that merely start with a number keep it.
+    assert title_from_filename(Path("99 Luftballons.mp3")) == ("99 Luftballons", None)
+    assert title_from_filename(Path("7 Seconds.mp3")) == ("7 Seconds", None)
+    assert title_from_filename(Path("2Pac - Changes.mp3")) == ("Changes", "2Pac")
 
 
 def _track(tid, name, location=None, **extra):
@@ -179,4 +193,29 @@ def test_overlapping_music_folders_still_find_moved_files(tmp_path):
     lib = Library()
     lib.load([str(xml)], [str(tmp_path / "Music"), str(tmp_path / "Music" / "Albums")])
     [track] = [t for t in lib.tracks.values() if t.name == "S"]
+    assert track.path == moved
+
+
+def test_only_audio_locations_are_playable(tmp_path):
+    secret = tmp_path / "id_rsa"
+    secret.write_text("KEY")
+    page = tmp_path / "x.html"
+    page.write_text("<script>")
+    xml = write_itunes_xml(tmp_path / "p.xml", [
+        _track(1, "Key", secret.as_uri()),
+        _track(2, "Page", page.as_uri()),
+    ], [{"Name": "P", "Playlist Items": [{"Track ID": 1}, {"Track ID": 2}]}])
+    lib = Library()
+    lib.load([str(xml)], [str(tmp_path)])
+    assert all(t.path is None for t in lib.tracks.values())
+
+
+def test_moved_file_found_despite_case_and_unicode_form(tmp_path):
+    moved = write_wav(tmp_path / "lib" / "Ren\u00e9" / "Caf\u00e9.wav")
+    xml = write_itunes_xml(tmp_path / "p.xml", [
+        _track(1, "C", "file:///old/RENE%CC%81/Cafe%CC%81.WAV"),
+    ], [{"Name": "P", "Playlist Items": [{"Track ID": 1}]}])
+    lib = Library()
+    lib.load([str(xml)], [str(tmp_path / "lib")])
+    [track] = [t for t in lib.tracks.values() if t.name == "C"]
     assert track.path == moved

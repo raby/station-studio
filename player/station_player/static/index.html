@@ -10,6 +10,7 @@
   <div class="app">
     <aside class="sidebar" aria-label="Library">
       <div class="brand">Station Player</div>
+      <div id="busy" class="busy-note" role="status" hidden>Updating library…</div>
       <nav>
         <h2>Playlists</h2>
         <ul id="nav-itunes" class="nav-list"></ul>
@@ -27,7 +28,7 @@
     </aside>
 
     <main class="main" id="main" tabindex="-1">
-      <div id="errors" class="errors" hidden></div>
+      <div id="errors" class="errors" role="alert" hidden></div>
       <section id="view"></section>
     </main>
 
@@ -38,11 +39,11 @@
       </div>
       <div class="controls">
         <div class="buttons">
-          <button type="button" id="btn-shuffle" class="icon toggle" aria-pressed="false" title="Shuffle">⤮</button>
+          <button type="button" id="btn-shuffle" class="icon toggle" aria-pressed="false" title="Shuffle" aria-label="Shuffle">⤮</button>
           <button type="button" id="btn-prev" class="icon" title="Previous" aria-label="Previous">⏮</button>
           <button type="button" id="btn-play" class="icon play" title="Play" aria-label="Play">▶</button>
           <button type="button" id="btn-next" class="icon" title="Next" aria-label="Next">⏭</button>
-          <button type="button" id="btn-repeat" class="icon toggle" aria-pressed="false" title="Repeat: off">↻</button>
+          <button type="button" id="btn-repeat" class="icon toggle" aria-pressed="false" title="Repeat: off" aria-label="Repeat: off">↻</button>
         </div>
         <div class="seek">
           <span id="time-cur" class="time">0:00</span>
@@ -56,6 +57,7 @@
       </div>
     </footer>
   </div>
+  <div id="announce" class="sr-only" aria-live="polite"></div>
   <script src="/app.js"></script>
 </body>
 </html>
