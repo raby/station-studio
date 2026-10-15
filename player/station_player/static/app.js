@@ -1106,6 +1106,19 @@ async function saveSetting(body, message) {
   }
 }
 
+// When an alarm next goes off, as a Date (local time), or null.
+function nextAlarm(a, now = new Date()) {
+  if (!a || !a.on) return null;
+  const [h, m] = a.time.split(":").map(Number);
+  for (let i = 0; i < 8; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() + i, h, m);
+    if (d > now && a.days.includes((d.getDay() + 6) % 7)) return d;  // Monday = 0
+  }
+  return null;
+}
+
+let alarmSavedAt = 0;  // so the redrawn section can say it was saved
+
 // A wake-up alarm: a playlist or station at a time, on chosen days.
 function alarmSection() {
   const a = S.lib.config.alarm || { on: false, time: "07:00", days: [0, 1, 2, 3, 4], source: null };
@@ -1119,6 +1132,11 @@ function alarmSection() {
   if (a.source) source.value = `${a.source.kind}:${a.source.id}`;
   const on = el("input", { type: "checkbox", id: "alarm-on", checked: a.on || null });
   const msg = el("div", { class: "form-msg", role: "status" });
+  const next = nextAlarm(S.lib.config.alarm);
+  const when = next && next.toLocaleString([], { weekday: "long", day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" });
+  const saved = Date.now() - alarmSavedAt < 5000 ? "Saved. " : "";
+  const summary = el("p", { class: "alarm-next", id: "alarm-next", role: "status" },
+    S.lib.config.alarm ? (next ? `${saved}Next alarm: ${when}, playing ${S.lib.config.alarm.source.name || "your choice"}.` : `${saved}The alarm is off.`) : "");
   const save = async (e) => {
     e.preventDefault();
     const chosen = days.filter((d) => d.checked).map((d) => Number(d.value));
@@ -1129,6 +1147,7 @@ function alarmSection() {
     const name = source.selectedOptions[0] ? source.selectedOptions[0].textContent : "";
     const alarm = { on: on.checked, time: time.value, days: chosen, source: { kind, id, name } };
     if (await saveSetting({ alarm }, on.checked ? `Alarm set for ${time.value}` : "Alarm saved, and off")) {
+      alarmSavedAt = Date.now();
       renderView();
       const again = $("#alarm-on");
       if (again) again.focus();
@@ -1147,6 +1166,7 @@ function alarmSection() {
         el("fieldset", { class: "days" }, el("legend", {}, "Days"),
           ...days.map((d, i) => el("label", {}, d, DAY_NAMES[i])))),
       el("button", { class: "btn" }, "Save alarm")),
+    summary,
     msg);
 }
 

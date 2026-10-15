@@ -278,3 +278,4 @@ body.offline { display: grid; place-items: center; min-height: 100vh; margin: 0;
 .remote-box img { width: 180px; height: 180px; background: #fff; border-radius: 8px; }
 .remote-link { word-break: break-all; font-family: ui-monospace, monospace; font-size: 13px; }
 a.btn { color: var(--text); text-decoration: none; display: inline-block; }
+.alarm-next { color: var(--accent); margin: 8px 0 0; font-weight: 600; }

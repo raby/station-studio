@@ -642,6 +642,14 @@ def test_alarm_play_log_and_remote_settings(page, player):
     alarm = app.store.config.alarm
     assert alarm["time"] == "06:45" and alarm["days"] == [0, 1, 2, 3, 4] and alarm["source"]["kind"] == "playlist"
     assert page.locator("#alarm-on").is_checked()
+    assert page.locator("#alarm-next").inner_text().startswith("Saved. Next alarm: ")
+    # When it next goes off: Monday = 0, the next allowed day after now.
+    nxt = page.evaluate("""() => {
+      const d = nextAlarm({ on: true, time: "06:45", days: [5] }, new Date(2026, 9, 15, 12, 0));  // a Thursday
+      return [d.getDay(), d.getDate(), d.getHours(), d.getMinutes()];
+    }""")
+    assert nxt == [6, 17, 6, 45]  # Saturday 17 October
+    assert page.evaluate("nextAlarm({ on: true, time: '13:00', days: [3] }, new Date(2026, 9, 15, 12, 0)).getDate()") == 15
     href = page.locator("#log-download").get_attribute("href")
     assert href.startswith("/api/playlog.csv?from=") and "&to=" in href
     page.locator("input[data-key=remote]").check()
