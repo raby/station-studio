@@ -55,6 +55,8 @@ def parse_range(header: str, size: int) -> tuple[int, int] | None:
     first, last = m.groups()
     if first == "" and last == "":
         return None
+    if size == 0:
+        raise ValueError("empty file has no satisfiable range")
     if first == "":  # suffix range: last N bytes
         n = int(last)
         if n == 0:
@@ -94,24 +96,35 @@ def _fetch_text(url: str) -> str:
 class PlayerApp:
     """Shared state for request handlers.
 
-    One re-entrant lock serialises every change: mutate the config, save
-    it, rebuild the library. Without it, a slow rescan finishing after a
-    fast one would install a library built from stale settings. A
-    failed save rolls the in-memory config back so memory and disk agree.
+    A lock serialises config changes (mutate, then save; a failed save
+    rolls the in-memory config back). Library rebuilds run outside the
+    lock from a snapshot of the config, so reads stay responsive during a
+    long scan; each change bumps a generation counter and a rebuild only
+    installs its result if no newer change has happened since, so a slow
+    rebuild can never replace a newer library with a stale one.
     """
 
     def __init__(self, store: ConfigStore) -> None:
         self.store = store
         self.library = Library()
         self._lock = threading.RLock()
-        self.rescan()
+        self._generation = 0
+        self._rebuild()
+
+    def _rebuild(self) -> None:
+        with self._lock:
+            generation = self._generation
+            cfg = copy.deepcopy(self.store.config)
+        lib = Library()
+        lib.load(cfg.playlist_sources, cfg.music_folders, cfg.path_remaps)
+        with self._lock:
+            if generation == self._generation:
+                self.library = lib
 
     def rescan(self) -> None:
         with self._lock:
-            cfg = self.store.config
-            lib = Library()
-            lib.load(cfg.playlist_sources, cfg.music_folders, cfg.path_remaps)
-            self.library = lib
+            self._generation += 1
+        self._rebuild()
 
     def state(self) -> dict:
         with self._lock:
@@ -122,12 +135,12 @@ class PlayerApp:
             "playlists": lib.playlist_summaries(),
             "stations": config["stations"],
             "config": config,
-            "errors": list(lib.errors),
+            "errors": self.store.warnings + list(lib.errors),
         }
 
     @contextmanager
     def _change(self, rescan: bool = True):
-        """Apply a config change atomically: save it, then rebuild."""
+        """Apply a config change atomically and save it, then rebuild."""
         with self._lock:
             snapshot = copy.deepcopy(self.store.config)
             try:
@@ -137,14 +150,17 @@ class PlayerApp:
                 self.store.config = snapshot
                 raise
             if rescan:
-                self.rescan()
+                self._generation += 1
+        if rescan:
+            self._rebuild()
 
     # ---- mutations ------------------------------------------------------
 
     def add_source(self, kind: str, path: str) -> None:
         if not path.strip():
             raise ValueError("Path is empty")
-        clean = str(Path(path.strip()).expanduser())
+        # Same normalisation as the CLI, so one folder is stored one way.
+        clean = str(Path(path.strip()).expanduser().resolve())
         if not Path(clean).exists():
             raise ValueError(f"Not found: {clean}")
         with self._change() as cfg:

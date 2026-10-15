@@ -9,7 +9,22 @@ from pathlib import Path
 
 from station_player import __version__
 from station_player.config import ConfigStore
+from station_player.library import AUDIO_EXTENSIONS
 from station_player.server import PlayerApp, make_server
+
+
+def _folder_contents(folder: Path) -> tuple[bool, bool]:
+    """(has .xml, has audio) anywhere below folder; stops once both seen."""
+    has_xml = has_audio = False
+    for p in folder.rglob("*"):
+        suffix = p.suffix.lower()
+        if suffix == ".xml":
+            has_xml = True
+        elif suffix in AUDIO_EXTENSIONS:
+            has_audio = True
+        if has_xml and has_audio:
+            break
+    return has_xml, has_audio
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -32,17 +47,29 @@ def main(argv: list[str] | None = None) -> int:
         if not p.exists():
             print(f"Skipped {raw}: not found", file=sys.stderr)
             continue
-        # XML files, and folders holding XML at any depth (station-studio
-        # writes exports/<station>/<week>.xml), are playlists; any other
-        # folder is a music folder.
-        if p.is_file() and p.suffix.lower() != ".xml":
-            print(f"Skipped {raw}: pass an iTunes .xml file or a folder", file=sys.stderr)
-            continue
-        is_playlist = p.is_file() or next(p.rglob("*.xml"), None) is not None
-        target = store.config.playlist_sources if is_playlist else store.config.music_folders
-        if str(p) not in target:
-            target.append(str(p))
-            added = True
+        if p.is_file():
+            if p.suffix.lower() != ".xml":
+                print(f"Skipped {raw}: pass an iTunes .xml file or a folder", file=sys.stderr)
+                continue
+            targets = [store.config.playlist_sources]
+        else:
+            # Folders holding XML at any depth (station-studio writes
+            # exports/<station>/<week>.xml) are playlist sources; folders
+            # holding audio are music folders. An iTunes folder is both.
+            try:
+                has_xml, has_audio = _folder_contents(p)
+            except OSError as exc:
+                print(f"Skipped {raw}: {exc}", file=sys.stderr)
+                continue
+            targets = []
+            if has_xml:
+                targets.append(store.config.playlist_sources)
+            if has_audio or not has_xml:
+                targets.append(store.config.music_folders)
+        for target in targets:
+            if str(p) not in target:
+                target.append(str(p))
+                added = True
     if added:
         try:
             store.save()

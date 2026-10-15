@@ -142,3 +142,41 @@ def test_moved_file_namesakes_are_disambiguated_by_folder_or_left_missing(tmp_pa
     paths = {t.name: t.path for t in lib.tracks.values() if t.name.endswith("intro")}
     assert paths["A intro"] == a
     assert paths["Unknown intro"] is None
+
+
+def test_wrongly_shaped_xml_is_reported_not_fatal(tmp_path):
+    import plistlib
+    good_audio = write_wav(tmp_path / "a.wav")
+    bad_tracks = tmp_path / "bad_tracks.xml"
+    bad_tracks.write_bytes(plistlib.dumps({"Tracks": ["not", "a", "dict"]}))
+    odd_items = tmp_path / "odd_items.xml"
+    odd_items.write_bytes(plistlib.dumps({
+        "Tracks": {"1": {"Track ID": 1, "Name": 1999, "Album": 7, "Total Time": "long",
+                         "Location": good_audio.as_uri()}},
+        "Playlists": [
+            {"Name": "Strings", "Playlist Items": "oops"},
+            {"Name": "Mixed", "Playlist Items": ["x", {"Track ID": 1}, {"Track ID": [1]}]},
+        ],
+    }))
+    lib = Library()
+    lib.load([str(bad_tracks), str(odd_items)], [])
+    assert lib.errors == ["bad_tracks.xml is not an iTunes library XML"]
+    [pl] = lib.playlist_summaries()
+    detail = lib.playlist_detail(pl["id"])
+    assert pl["name"] == "Mixed"
+    assert [(t["name"], t["album"], t["duration_ms"]) for t in detail["tracks"]] == [("1999", "7", None)]
+
+    # The same files found by scanning a folder are skipped quietly.
+    lib = Library()
+    lib.load([str(tmp_path)], [])
+    assert lib.errors == []
+
+
+def test_overlapping_music_folders_still_find_moved_files(tmp_path):
+    moved = write_wav(tmp_path / "Music" / "Albums" / "Song.wav")
+    xml = write_itunes_xml(tmp_path / "p.xml", [_track(1, "S", "file:///old/place/Song.wav")],
+                           [{"Name": "P", "Playlist Items": [{"Track ID": 1}]}])
+    lib = Library()
+    lib.load([str(xml)], [str(tmp_path / "Music"), str(tmp_path / "Music" / "Albums")])
+    [track] = [t for t in lib.tracks.values() if t.name == "S"]
+    assert track.path == moved

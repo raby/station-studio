@@ -77,10 +77,21 @@ async function loadState(newState) {
   renderErrors();
 }
 
-function renderErrors() {
+function renderErrors(extra) {
   const box = $("#errors");
-  box.replaceChildren(...S.lib.errors.map((e) => el("div", {}, e)));
-  box.hidden = S.lib.errors.length === 0;
+  const all = extra ? [extra, ...S.lib.errors] : S.lib.errors;
+  box.replaceChildren(...all.map((e) => el("div", {}, e)));
+  box.hidden = all.length === 0;
+}
+
+// Run a settings action from a button; failures show in the error box.
+async function act(path, body) {
+  try {
+    await loadState(await api(path, body));
+    renderView();
+  } catch (err) {
+    renderErrors(err.message);
+  }
 }
 
 function navButton(label, count, view, active) {
@@ -106,13 +117,25 @@ function renderNav() {
   }
 }
 
+let showToken = 0;
+
 async function show(view) {
+  // Only the latest click may render: a slow response for an earlier
+  // click must not replace the playlist the user has since opened.
+  const token = ++showToken;
   S.view = view;
   store("view", JSON.stringify(view));
   if (view.type === "playlist") {
+    let detail = null;
     try {
-      S.detail = await api(`/api/playlists/${view.id}`);
+      detail = await api(`/api/playlists/${view.id}`);
     } catch {
+      detail = null;
+    }
+    if (token !== showToken) return;
+    if (detail) {
+      S.detail = detail;
+    } else {
       S.view = { type: "settings" };
       S.detail = null;
     }
@@ -232,25 +255,24 @@ function radioView() {
   };
 
   const cards = S.lib.stations.map((st) => {
-    const live = S.mode === "radio" && S.station && S.station.url === st.url;
-    return el("div", { class: "card" + (live ? " live" : "") },
+    const isLive = () => S.mode === "radio" && S.station && S.station.url === st.url;
+    return el("div", { class: "card", "data-url": st.url },
       el("div", { class: "name" }, st.name),
       el("div", { class: "url" }, st.url),
       el("div", { class: "row" },
         el("button", {
-          type: "button", class: "btn primary",
-          onclick: () => (live && !audio.paused ? audio.pause() : playStation(st)),
-        }, live && !audio.paused ? "❚❚ Pause" : "▶ Listen"),
+          type: "button", class: "btn primary listen",
+          onclick: () => (isLive() && !audio.paused ? audio.pause() : playStation(st)),
+        }, "▶ Listen"),
         el("button", {
           type: "button", class: "btn",
-          onclick: async () => {
-            if (!confirm(`Remove ${st.name}?`)) return;
-            await loadState(await api("/api/stations/remove", { url: st.url }));
-            renderView();
+          onclick: () => {
+            if (confirm(`Remove ${st.name}?`)) act("/api/stations/remove", { url: st.url });
           },
         }, "Remove")));
   });
 
+  queueMicrotask(syncRadioCards);
   return el("div", {},
     el("div", { class: "view-head" }, el("h1", {}, "Radio")),
     cards.length ? el("div", { class: "cards" }, cards) : el("div", { class: "empty" }, "No stations yet."),
@@ -259,6 +281,16 @@ function radioView() {
       el("form", { class: "form-row", onsubmit: add }, name, url, el("button", { class: "btn" }, "Add")),
       msg)),
   );
+}
+
+// Reflect play state on the station cards without rebuilding the view,
+// so text typed into "Add a station" survives play/pause/stall events.
+function syncRadioCards() {
+  for (const card of document.querySelectorAll("#view .card[data-url]")) {
+    const live = S.mode === "radio" && S.station && S.station.url === card.dataset.url;
+    card.classList.toggle("live", Boolean(live));
+    card.querySelector(".listen").textContent = live && !audio.paused ? "❚❚ Pause" : "▶ Listen";
+  }
 }
 
 // ---------- settings view -----------------------------------------------
@@ -291,10 +323,7 @@ function pathForm(kind, placeholder) {
 
 function settingsView() {
   const cfg = S.lib.config;
-  const removeSource = (kind, list) => async (i) => {
-    await loadState(await api("/api/sources/remove", { kind, path: list[i] }));
-    renderView();
-  };
+  const removeSource = (kind, list) => (i) => act("/api/sources/remove", { kind, path: list[i] });
 
   const from = el("input", { placeholder: "From, e.g. /Users/rob/Music/iTunes/iTunes Media", "aria-label": "Path from" });
   const to = el("input", { placeholder: "To, e.g. D:/Music", "aria-label": "Path to" });
@@ -313,7 +342,7 @@ function settingsView() {
       el("div", { class: "spacer" }),
       el("button", {
         type: "button", class: "btn",
-        onclick: async () => { await loadState(await api("/api/rescan", {})); renderView(); },
+        onclick: () => act("/api/rescan", {}),
       }, "Rescan")),
     listSection({
       title: "Playlists (iTunes XML)",
@@ -333,10 +362,9 @@ function settingsView() {
       title: "Path rewrites",
       help: "When a playlist was made on another computer, rewrite the start of each track's path so it points at your copy of the music.",
       items: (cfg.path_remaps || []).map((r) => `${r.from}  →  ${r.to}`),
-      onRemove: async (i) => {
+      onRemove: (i) => {
         const r = cfg.path_remaps[i];
-        await loadState(await api("/api/remaps/remove", { from: r.from, to: r.to }));
-        renderView();
+        act("/api/remaps/remove", { from: r.from, to: r.to });
       },
       form: el("div", {}, el("form", { class: "form-row", onsubmit: addRemap }, from, to,
         el("button", { class: "btn" }, "Add")), remapMsg),
@@ -416,7 +444,7 @@ function playStation(st) {
   audio.play().catch(() => {});
   updateNow();
   markPlaying();
-  if (S.view.type === "radio") renderView();
+  syncRadioCards();
 }
 
 function togglePlay() {
@@ -505,7 +533,7 @@ audio.addEventListener("error", () => {
 for (const ev of ["play", "pause", "playing"]) {
   audio.addEventListener(ev, () => {
     syncButtons();
-    if (S.view.type === "radio") renderView();
+    syncRadioCards();
   });
 }
 

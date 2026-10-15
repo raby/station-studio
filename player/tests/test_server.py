@@ -2,6 +2,7 @@ import http.client
 import json
 import socket
 import threading
+import time
 
 import pytest
 
@@ -212,3 +213,97 @@ def test_concurrent_changes_end_with_the_latest_settings(running):
     assert sorted(app.store.config.music_folders) == sorted(folders)
     names = {p["name"] for p in app.library.playlist_summaries() if p["kind"] == "folder"}
     assert names == {f"f{i}" for i in range(6)}
+
+
+def test_parse_range_on_empty_file_is_unsatisfiable():
+    with pytest.raises(ValueError):
+        parse_range("bytes=-500", 0)
+    with pytest.raises(ValueError):
+        parse_range("bytes=0-", 0)
+
+
+def test_added_paths_are_normalised(running):
+    app, port, _, tmp = running
+    write_wav(tmp / "folder" / "a.wav")
+    roundabout = str(tmp / "folder" / ".." / "folder")
+    request(port, "POST", "/api/sources", {"kind": "music", "path": roundabout}, {"X-Station-Player": "1"})
+    request(port, "POST", "/api/sources", {"kind": "music", "path": str(tmp / "folder")}, {"X-Station-Player": "1"})
+    assert app.store.config.music_folders == [str((tmp / "folder").resolve())]
+
+
+def test_state_stays_responsive_during_a_rebuild(running, monkeypatch):
+    app, port, _, _ = running
+    from station_player import server as srv
+    started, release = threading.Event(), threading.Event()
+    real_load = srv.Library.load
+
+    def slow_load(self, *a, **kw):
+        started.set()
+        release.wait(5)
+        return real_load(self, *a, **kw)
+
+    monkeypatch.setattr(srv.Library, "load", slow_load)
+    t = threading.Thread(target=app.rescan)
+    t.start()
+    assert started.wait(5)
+    t0 = time.monotonic()
+    resp, data = request(port, "GET", "/api/state")  # must not wait for the scan
+    assert resp.status == 200
+    assert time.monotonic() - t0 < 1
+    release.set()
+    t.join()
+
+
+def test_stale_rebuild_does_not_replace_newer_library(running, monkeypatch):
+    app, _, _, tmp = running
+    from station_player import server as srv
+    write_wav(tmp / "newer" / "a.wav")
+    gate = threading.Event()
+    real_load = srv.Library.load
+    calls = []
+
+    def load(self, sources, folders, remaps):
+        calls.append(list(folders))
+        if len(calls) == 1:  # the first (older) rebuild is slow
+            gate.wait(5)
+        return real_load(self, sources, folders, remaps)
+
+    monkeypatch.setattr(srv.Library, "load", load)
+    slow = threading.Thread(target=app.rescan)
+    slow.start()
+    while not calls:
+        pass
+    app.add_source("music", str(tmp / "newer"))  # newer change finishes first
+    gate.set()
+    slow.join()
+    assert any(p["name"] == "newer" for p in app.library.playlist_summaries())
+
+
+def test_corrupt_settings_file_is_set_aside(tmp_path):
+    home = tmp_path / "player-home"
+    home.mkdir()
+    (home / "config.json").write_text('{"music_folders": ["a",], }')
+    store = ConfigStore()
+    assert store.config.music_folders == []
+    assert store.warnings and "could not be read" in store.warnings[0]
+    assert not (home / "config.json").exists()
+    assert list(home.glob("config.broken-*.json"))
+    app = PlayerApp(store)
+    assert app.state()["errors"][0] == store.warnings[0]
+
+
+def test_wrongly_typed_settings_are_dropped(tmp_path):
+    home = tmp_path / "player-home"
+    home.mkdir()
+    (home / "config.json").write_text(json.dumps({
+        "playlist_sources": None,
+        "music_folders": ["/ok", 3, ""],
+        "path_remaps": [{"from": "/a", "to": "/b"}, {"from": "/a"}, "x"],
+        "stations": [{"name": "S", "url": "https://s"}, {"url": None}],
+        "unknown": 1,
+    }))
+    cfg = ConfigStore().config
+    assert cfg.playlist_sources == []
+    assert cfg.music_folders == ["/ok"]
+    assert cfg.path_remaps == [{"from": "/a", "to": "/b"}]
+    assert cfg.stations == [{"name": "S", "url": "https://s"}]

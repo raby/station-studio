@@ -126,6 +126,19 @@ def scan_audio_files(folder: Path) -> list[Path]:
     return sorted(files, key=lambda p: p.as_posix().lower())
 
 
+class _NotItunes(Exception):
+    pass
+
+
+def _text(value) -> str | None:
+    """iTunes text fields, tolerating numbers (e.g. an album called 1999)."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return str(value)
+    return None
+
+
 class Library:
     """In-memory index of everything playable. Rebuilt by `load()`."""
 
@@ -152,20 +165,33 @@ class Library:
         remaps = remaps or []
 
         folder_files: list[tuple[Path, list[Path]]] = []
+        indexed: set[Path] = set()  # overlapping folders must not double-count
         for raw in music_folders:
             folder = Path(raw).expanduser()
             if not folder.is_dir():
                 self.errors.append(f"Music folder not found: {folder}")
                 continue
-            files = scan_audio_files(folder)
+            try:
+                files = scan_audio_files(folder)
+            except OSError as exc:
+                self.errors.append(f"Could not read music folder {folder}: {exc}")
+                continue
             folder_files.append((folder, files))
             for f in files:
+                key = f.resolve()
+                if key in indexed:
+                    continue
+                indexed.add(key)
                 self._by_filename.setdefault(f.name.lower(), []).append(f)
 
         for raw in playlist_sources:
             src = Path(raw).expanduser()
             if src.is_dir():
-                xmls = sorted(src.rglob("*.xml"), key=lambda p: p.as_posix().lower())
+                try:
+                    xmls = sorted(src.rglob("*.xml"), key=lambda p: p.as_posix().lower())
+                except OSError as exc:
+                    self.errors.append(f"Could not read playlist folder {src}: {exc}")
+                    continue
                 for xml in xmls:
                     self._load_itunes_xml(xml, remaps, quiet=True)
             elif src.is_file():
@@ -208,72 +234,90 @@ class Library:
         return None
 
     def _load_itunes_xml(self, xml: Path, remaps: list[dict], quiet: bool = False) -> None:
+        """Load one XML. Any file that isn't a usable iTunes library is
+        reported (or skipped quietly when found by a folder scan), never
+        allowed to take the whole library down with it."""
         try:
             with xml.open("rb") as fh:
                 data = plistlib.load(fh)
-        except Exception as exc:  # malformed / not a plist
-            if not quiet:
-                self.errors.append(f"Could not read {xml.name}: {exc}")
-            return
-        if not isinstance(data, dict) or "Tracks" not in data:
+            tracks, playlists = self._parse_itunes(xml, data, remaps)
+        except _NotItunes:
             if not quiet:
                 self.errors.append(f"{xml.name} is not an iTunes library XML")
             return
+        except Exception as exc:  # malformed plist, unreadable file
+            if not quiet:
+                self.errors.append(f"Could not read {xml.name}: {exc}")
+            return
+        for t in tracks:
+            self.tracks.setdefault(t.id, t)
+        for pl in playlists:
+            self.playlists.setdefault(pl.id, pl)  # same playlist loaded twice
 
+    def _parse_itunes(self, xml: Path, data, remaps: list[dict]) -> tuple[list[Track], list[Playlist]]:
+        if not isinstance(data, dict) or not isinstance(data.get("Tracks"), dict):
+            raise _NotItunes()
+
+        tracks: list[Track] = []
         # iTunes Track ID (scoped to this file) -> our track id
         local_ids: dict[int, str] = {}
-        for key, raw in (data.get("Tracks") or {}).items():
+        for key, raw in data["Tracks"].items():
             if not isinstance(raw, dict):
                 continue
             path = self._resolve(raw, remaps)
-            pid = raw.get("Persistent ID") or f"{xml}:{key}"
-            tid = _short_hash("itunes", str(pid), str(path or ""))
-            if tid not in self.tracks:
-                self.tracks[tid] = Track(
-                    id=tid,
-                    name=raw.get("Name") or (path.stem if path else "Unknown"),
-                    artist=raw.get("Artist"),
-                    album=raw.get("Album"),
-                    genre=raw.get("Genre"),
-                    duration_ms=raw.get("Total Time"),
-                    path=path,
-                )
+            pid = _text(raw.get("Persistent ID")) or f"{xml}:{key}"
+            tid = _short_hash("itunes", pid, str(path or ""))
+            duration = raw.get("Total Time")
+            tracks.append(Track(
+                id=tid,
+                name=_text(raw.get("Name")) or (path.stem if path else "Unknown"),
+                artist=_text(raw.get("Artist")),
+                album=_text(raw.get("Album")),
+                genre=_text(raw.get("Genre")),
+                duration_ms=duration if isinstance(duration, int) and not isinstance(duration, bool) else None,
+                path=path,
+            ))
             track_id = raw.get("Track ID")
             if isinstance(track_id, int):
                 local_ids[track_id] = tid
             elif str(key).isdigit():
                 local_ids[int(key)] = tid
 
-        playlists = [
-            p for p in (data.get("Playlists") or [])
+        raw_playlists = data.get("Playlists")
+        candidates = [
+            p for p in (raw_playlists if isinstance(raw_playlists, list) else [])
             if isinstance(p, dict)
             and not p.get("Master")
             and not p.get("Folder")
             and "Distinguished Kind" not in p
-            and p.get("Playlist Items")
+            and isinstance(p.get("Playlist Items"), list)
+            and p["Playlist Items"]
         ]
-        if not playlists:
+        if not candidates:
             # A library with no usable playlists: offer every track.
-            playlists = [{
+            candidates = [{
                 "Name": xml.stem,
                 "Playlist Items": [{"Track ID": k} for k in local_ids],
             }]
 
-        for p in playlists:
-            name = p.get("Name") or xml.stem
+        playlists: list[Playlist] = []
+        for p in candidates:
+            name = _text(p.get("Name")) or xml.stem
             pl = Playlist(
-                id=_short_hash("pl", str(xml), str(p.get("Playlist Persistent ID") or name)),
+                id=_short_hash("pl", str(xml), _text(p.get("Playlist Persistent ID")) or name),
                 name=name,
                 kind="itunes",
                 source=str(xml),
             )
-            for item in p.get("Playlist Items", []):
-                tid = local_ids.get(item.get("Track ID"))
+            for item in p["Playlist Items"]:
+                if not isinstance(item, dict):
+                    continue
+                ref = item.get("Track ID")
+                tid = local_ids.get(ref) if isinstance(ref, int) else None
                 if tid:
                     pl.track_ids.append(tid)
-            if pl.id in self.playlists:  # same playlist loaded twice
-                continue
-            self.playlists[pl.id] = pl
+            playlists.append(pl)
+        return tracks, playlists
 
     def _add_folder_playlist(self, folder: Path, files: list[Path]) -> None:
         pl = Playlist(
