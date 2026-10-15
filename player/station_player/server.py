@@ -31,7 +31,7 @@ from station_player.recorder import Recorder
 from station_player.window import browser_name, find_browser
 from station_player.config import ConfigStore
 from station_player.desktop import Desktop
-from station_player.library import Library, _short_hash
+from station_player.library import AUDIO_EXTENSIONS, OPENED_ID, Library, _short_hash
 from station_player.tags import MAX_ART_BYTES, TagCache, folder_cover, image_type, read_art
 
 logger = logging.getLogger(__name__)
@@ -54,6 +54,7 @@ _STATIC_TYPES = {
     ".css": "text/css; charset=utf-8",
     ".svg": "image/svg+xml",
     ".png": "image/png",
+    ".webmanifest": "application/manifest+json",
     ".ico": "image/x-icon",
 }
 # The UI only talks to this server; audio may come from radio stations.
@@ -178,6 +179,11 @@ class PlayerApp:
         self._generation = 0
         self._installed = -1
         self._titles: dict[str, str | None] = {}  # station url -> song
+        # Files opened with "Open With" this session, and the latest
+        # request for the page to play one.
+        self.opened: list[Path] = []
+        self.open_request: dict | None = None
+        self.page_seen = 0.0  # when a page last checked for requests
         if scan:
             self._rebuild()
 
@@ -214,7 +220,7 @@ class PlayerApp:
                 self.tag_cache.save()
             with self._lock:
                 if generation == self._generation:
-                    self.library = lib
+                    self.library = lib.with_opened(self.opened, self.tag_cache) if self.opened else lib
                     self._installed = generation
 
     def rescan(self) -> None:
@@ -267,6 +273,42 @@ class PlayerApp:
                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             if hasattr(proc, "wait"):
                 threading.Thread(target=proc.wait, daemon=True).start()  # no zombie left behind
+
+    MAX_OPENED = 500
+
+    def open_files(self, paths) -> dict:
+        """Play audio files opened with Station Player from the computer's
+        file manager: they join "Opened files" and the page plays the
+        first. Returns the request the page picks up."""
+        if not isinstance(paths, list) or not paths:
+            raise ValueError("paths must be a list of files")
+        files = []
+        for raw in paths[:self.MAX_OPENED]:
+            if not isinstance(raw, str) or not raw.strip():
+                continue
+            p = Path(raw).expanduser().resolve()
+            if p.suffix.lower() in AUDIO_EXTENSIONS and p.is_file() and p not in files:
+                files.append(p)
+        if not files:
+            raise ValueError("None of those are audio files Station Player can play")
+        with self._lock:
+            self.opened = [f for f in self.opened if f not in files] + files
+            del self.opened[:-self.MAX_OPENED]
+            self.library = self.library.with_opened(self.opened, self.tag_cache)
+            seq = (self.open_request or {}).get("seq", 0) + 1
+            self.open_request = {"seq": seq, "playlist": OPENED_ID,
+                                 "track": _short_hash("file", str(files[0])), "at": time.time()}
+            return dict(self.open_request)
+
+    def inbox(self) -> dict:
+        """What a page polls: the latest open request, and how old it is."""
+        self.page_seen = time.time()
+        req = self.open_request
+        return {"open": {**req, "age": time.time() - req["at"]} if req else None}
+
+    def page_open(self) -> bool:
+        """Whether a player page has checked in during the last few seconds."""
+        return time.time() - self.page_seen < 5
 
     def play_recording(self, file: str) -> dict:
         """Put a finished recording in the library (the recordings folder
@@ -647,6 +689,8 @@ def make_handler(app: PlayerApp):
                 if found is None:
                     return self._error(HTTPStatus.NOT_FOUND, "Track not available")
                 return self._send_json(found)
+            if path == "/api/inbox":
+                return self._send_json(app.inbox())
             if path == "/api/recordings":
                 return self._send_json({"recordings": app.recorder.status(),
                                         "folder": str(app.recorder.folder)})
@@ -846,6 +890,9 @@ def make_handler(app: PlayerApp):
                         app.record(str(data.get("station", "")), data["on"])
                     except LookupError:
                         return self._error(HTTPStatus.NOT_FOUND, "No such station")
+                elif path == "/api/open":
+                    found = app.open_files(data.get("paths"))
+                    return self._send_json({**found, "page_open": app.page_open()})
                 elif path == "/api/recordings/play":
                     found = app.play_recording(str(data.get("file", "")))
                     return self._send_json({**app.state(), **found})

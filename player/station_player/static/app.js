@@ -1035,8 +1035,23 @@ function appSection() {
     }
   };
   const browser = S.lib.window_browser;
+  // Installed as an app, the player gets its own name and icon in the
+  // Dock / taskbar and Alt-Tab, instead of being one of the browser's windows.
+  const install = installPrompt ? el("p", {},
+    el("button", {
+      type: "button", class: "btn", id: "btn-install",
+      onclick: async () => {
+        const prompt = installPrompt;
+        installPrompt = null;  // each offer can be used once
+        prompt.prompt();
+        await prompt.userChoice.catch(() => null);
+        if (S.view.type === "settings") renderView();
+      },
+    }, "Install Station Player as an app"),
+    el("span", { class: "help" }, " so it has its own icon in the Dock (or taskbar) and in Alt-Tab.")) : null;
   return el("section", {},
     el("h2", {}, "App"),
+    install,
     d && d.supported ? el("p", { class: "help" },
       "Open Station Player like any other app, without a terminal. Turn these off before uninstalling.") : null,
     el("div", { class: "checks" },
@@ -2119,6 +2134,40 @@ if ("mediaSession" in navigator) {
   ms.setActionHandler("previoustrack", previous);
 }
 
+// ---------- installing as an app ------------------------------------------
+
+// The browser offers to install the player as an app (see the App
+// settings); it doesn't once it's installed.
+let installPrompt = null;
+addEventListener("beforeinstallprompt", (e) => {
+  e.preventDefault();
+  installPrompt = e;
+  if (S.view.type === "settings") renderView();
+});
+addEventListener("appinstalled", () => {
+  installPrompt = null;
+  announce("Station Player is installed as an app");
+  if (S.view.type === "settings") renderView();
+});
+
+// ---------- files opened with Station Player ----------------------------
+
+// Files chosen with "Open With" in Finder / Explorer reach the server; the
+// page checks for them and plays the first. Each request plays once, in
+// whichever window gets to it first.
+async function checkInbox({ fresh = 0 } = {}) {
+  let req;
+  try { req = (await api("/api/inbox")).open; } catch { return; }
+  if (!req || String(req.seq) === store("opened-seq")) return;
+  if (fresh && req.age > fresh) { store("opened-seq", String(req.seq)); return; }
+  store("opened-seq", String(req.seq));
+  try { await loadState(); } catch { return; }
+  await show({ type: "playlist", id: req.playlist });
+  if (S.view.id !== req.playlist || !S.detail) return;
+  const i = S.detail.tracks.findIndex((t) => t.id === req.track);
+  if (i >= 0) playPlaylist(S.detail, i);
+}
+
 // ---------- boot --------------------------------------------------------
 
 (async function boot() {
@@ -2153,10 +2202,14 @@ if ("mediaSession" in navigator) {
     return;
   }
   if (!S.lib.scanning) await restoreSession();
-  if (showToken > 0) return;  // the user already opened something while it scanned
-  const view = readJSON("view");
-  const known = view && view.type !== "search" && (view.type !== "playlist" || S.lib.playlists.some((p) => p.id === view.id));
-  if (known) return show(view);
-  const first = S.lib.playlists[0];
-  show(first ? { type: "playlist", id: first.id } : { type: "settings" });
+  if (showToken === 0) {  // the user hasn't opened something while it scanned
+    const view = readJSON("view");
+    const known = view && view.type !== "search" && (view.type !== "playlist" || S.lib.playlists.some((p) => p.id === view.id));
+    const first = S.lib.playlists[0];
+    await show(known ? view : first ? { type: "playlist", id: first.id } : { type: "settings" });
+  }
+  // A file opened just now (which may be why this window opened) plays;
+  // an old request doesn't replay when the player is reopened later.
+  await checkInbox({ fresh: 30 });
+  setInterval(() => { if ($("#view")) checkInbox(); }, 1500);
 })();

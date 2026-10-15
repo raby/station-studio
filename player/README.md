@@ -53,12 +53,27 @@ line: `station-player --add-shortcut`, `--start-at-login` and
 `--remove-shortcuts`. Turn them off (or run `--remove-shortcuts`)
 before `pipx uninstall station-player`.
 
+### Open With
+
+With the shortcut turned on, Station Player is offered in **Open With**
+for audio files: right-click a song in Finder (or Explorer, or your file
+manager) › Open With › Station Player. It plays straight away, in the
+window that's open or a new one, and joins *Opened files* under
+*Folders*. Station Player never makes itself the default app for audio.
+A shortcut made by an earlier version is brought up to date the next
+time Station Player starts.
+
 ### Its own window
 
 With Google Chrome, Microsoft Edge or Brave installed, Station Player
 opens in a plain window of its own, with no tabs or address bar, kept
 separate from your browsing. Without one of them it opens in a browser
 tab. Turn the window off under **Sources & settings › App**.
+
+That window still counts as one of the browser's: in the Dock and
+Alt-Tab it shows as Chrome (or Edge, or Brave). **Install Station Player
+as an app** under Sources & settings › App gives it its own name and icon
+there, and Station Player opens that way from then on.
 
 When started from a shortcut there's no terminal, so messages go to
 `~/.station-player/station-player.log`.

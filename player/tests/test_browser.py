@@ -487,3 +487,47 @@ def test_saving_the_queue_with_repeat_all_lists_each_track_once(page):
     page.locator("#view button", has_text="Save as a playlist").click()
     page.wait_for_selector("#view h1:has-text('Loop')")
     assert row_names(page) == ["Three", "Quiet", "One", "Two"]
+
+
+def test_open_with_plays_the_file(page, player):
+    app, _, tmp = player
+    song = tone(tmp / "Downloads" / "Opened Song.wav", 3.0, 0.4)
+    app.open_files([str(song)])
+    page.wait_for_function("() => S.mode === 'track' && current().name === 'Opened Song' && !audio.paused",
+                           timeout=5000)
+    assert page.locator("#view h1").inner_text() == "Opened files"
+    assert page.locator("#nav-folders .nav-item", has_text="Opened files").count() == 1
+    # Reopening the player later doesn't play it again.
+    page.locator("#btn-play").click()
+    page.reload()
+    page.wait_for_selector("#view tbody tr")
+    page.wait_for_timeout(2000)
+    assert page.evaluate("audio.paused")
+
+
+def test_a_window_opened_for_a_file_plays_it(browser, player):
+    app, url, tmp = player
+    song = tone(tmp / "Downloads" / "Fresh.wav", 3.0, 0.4)
+    app.open_files([str(song)])
+    ctx = browser.new_context()
+    pg = ctx.new_page()
+    pg.goto(url)
+    pg.wait_for_function("() => S.mode === 'track' && current().name === 'Fresh'", timeout=10000)
+    ctx.close()
+
+
+def test_install_as_an_app(page):
+    page.locator(".nav-item[data-view=settings]").click()
+    assert page.locator("#btn-install").count() == 0
+    page.evaluate("""() => {
+      const e = new Event("beforeinstallprompt", { cancelable: true });
+      e.prompt = () => { window.prompted = true; };
+      e.userChoice = Promise.resolve({ outcome: "accepted" });
+      dispatchEvent(e);
+    }""")
+    page.locator("#btn-install").click()
+    assert page.evaluate("window.prompted === true")
+    page.wait_for_function("() => !document.querySelector('#btn-install')")
+    manifest = page.evaluate("async () => (await fetch('/manifest.webmanifest')).json()")
+    assert manifest["name"] == "Station Player" and manifest["display"] == "standalone"
+    assert {i["sizes"] for i in manifest["icons"]} == {"192x192", "512x512"}

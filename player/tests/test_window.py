@@ -76,3 +76,18 @@ def test_a_browser_that_quits_at_once_falls_back_to_a_tab(tmp_path, monkeypatch)
 def test_snap_browsers_are_skipped():
     which = {"chromium": "/snap/bin/chromium", "brave": "/usr/bin/brave"}.get
     assert window.find_browser("linux", {}, which=which) == "/usr/bin/brave"
+
+
+def test_an_installed_app_opens_as_that_app(tmp_path):
+    profile = tmp_path / "window"
+    assert window.installed_app_id(profile) is None
+    (profile / "Default/Web Applications/Manifest Resources/ndclgahegldohknijikipmikgfefalhe").mkdir(parents=True)
+    app_id = window.installed_app_id(profile)
+    assert app_id == "ndclgahegldohknijikipmikgfefalhe"
+    cmd = window.window_command("/b", window.DEFAULT_URL, profile, app_id)
+    assert f"--app-id={app_id}" in cmd and not any(a.startswith("--app=") for a in cmd)
+    # On another port the installed app (which opens the usual one) isn't used.
+    assert "--app=http://127.0.0.1:9000/" in window.window_command("/b", "http://127.0.0.1:9000/", profile, app_id)
+    ran = []
+    window.open_ui(window.DEFAULT_URL, tmp_path, exe="/b", run=ran.append)
+    assert f"--app-id={app_id}" in ran[0]

@@ -6,6 +6,10 @@ finds one, with its own browser profile under the player's home folder,
 so the window is separate from your browsing: closing the browser leaves
 the player open, and closing the player leaves your tabs alone. Without
 one of those browsers it opens in a normal browser tab as before.
+
+Installed as an app from that window (Settings › App), it's a proper app
+in the browser's eyes: its own name and icon in the Dock, Alt-Tab and the
+taskbar. From then on it's opened that way (`--app-id`).
 """
 from __future__ import annotations
 
@@ -62,9 +66,28 @@ def browser_name(exe: str | None) -> str | None:
     return "your browser"
 
 
-def window_command(exe: str, url: str, profile: Path) -> list[str]:
+DEFAULT_URL = "http://127.0.0.1:8765/"
+
+
+def installed_app_id(profile: Path) -> str | None:
+    """The id of Station Player installed as an app in its own browser
+    profile (the only app ever installed there), or None."""
+    root = profile / "Default" / "Web Applications" / "Manifest Resources"
+    try:
+        found = [p for p in root.iterdir() if p.is_dir() and len(p.name) == 32 and p.name.isalpha()]
+    except OSError:
+        return None
+    if not found:
+        return None
+    return max(found, key=lambda p: p.stat().st_mtime).name
+
+
+def window_command(exe: str, url: str, profile: Path, app_id: str | None = None) -> list[str]:
+    # The installed app always opens the usual address, so it's only
+    # used when the player is on it.
+    target = f"--app-id={app_id}" if app_id and url == DEFAULT_URL else f"--app={url}"
     return [
-        exe, f"--app={url}", f"--user-data-dir={profile}",
+        exe, target, f"--user-data-dir={profile}",
         "--no-first-run", "--no-default-browser-check", "--window-size=1200,800",
         # It's a music player: let it start sound without a click first.
         "--autoplay-policy=no-user-gesture-required",
@@ -76,7 +99,8 @@ def open_ui(url: str, home: Path, own_window: bool = True, exe: str | None = Non
     tab. Returns "window" or "tab"."""
     exe = exe if exe is not None else (find_browser() if own_window else None)
     if own_window and exe:
-        cmd = window_command(exe, url, home / "window")
+        profile = home / "window"
+        cmd = window_command(exe, url, profile, installed_app_id(profile))
         try:
             proc = (run or _spawn)(cmd)
             if not _failed(proc):

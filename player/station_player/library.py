@@ -6,6 +6,8 @@ there, so the player never becomes a general file server.
 """
 from __future__ import annotations
 
+import copy
+
 import hashlib
 import logging
 import plistlib
@@ -160,6 +162,9 @@ def _text(value) -> str | None:
     if isinstance(value, (int, float)) and not isinstance(value, bool):
         return str(value)
     return None
+
+
+OPENED_ID = "opened"
 
 
 class Library:
@@ -374,6 +379,29 @@ class Library:
                 )
             pl.track_ids.append(tid)
         self.playlists[pl.id] = pl
+
+    def with_opened(self, files: list[Path], tag_cache: TagCache | None = None) -> "Library":
+        """A copy that also has the files opened with Station Player (from
+        Finder / Explorer's Open With) as the playlist "Opened files". A
+        copy, so requests reading this library meanwhile aren't disturbed."""
+        new = copy.copy(self)
+        new.tracks = dict(self.tracks)
+        new.playlists = {k: v for k, v in self.playlists.items() if k != OPENED_ID}
+        new._search_text = dict(self._search_text)
+        new._by_path = None
+        if not files:
+            return new
+        pl = Playlist(id=OPENED_ID, name="Opened files", kind="folder", source="")
+        for f in files:
+            tid = _short_hash("file", str(f))
+            if tid not in new.tracks:
+                tags = tag_cache.get(f) if tag_cache is not None else read_tags(f)
+                title, artist = title_from_filename(f)
+                new.tracks[tid] = Track(id=tid, name=tags.title or title, artist=tags.artist or artist,
+                                        album=tags.album, genre=tags.genre, duration_ms=tags.duration_ms, path=f)
+            pl.track_ids.append(tid)
+        new.playlists[OPENED_ID] = pl
+        return new
 
     # ---- queries --------------------------------------------------------
 
