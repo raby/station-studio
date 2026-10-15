@@ -30,6 +30,7 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 html, body { height: 100%; margin: 0; }
 body {
   background: var(--bg);
@@ -186,3 +187,35 @@ button:focus-visible, input:focus-visible, .nav-item:focus-visible {
 .stopped { max-width: 520px; margin: 15vh auto; padding: 0 16px; text-align: center; }
 .stopped p { color: var(--muted); }
 .tracks tbody { user-select: none; }
+
+/* ---- search, queue, update notice ---- */
+.lib-search { padding: 0 8px 4px; }
+.lib-search input {
+  width: 100%; background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px;
+  padding: 6px 10px; color: var(--text);
+}
+.update-note {
+  margin: 16px 8px 0; padding: 10px; border: 1px solid var(--accent); border-radius: 8px;
+  font-size: 13px; display: flex; flex-direction: column; gap: 6px; align-items: flex-start;
+}
+.update-note code { font-size: 12px; background: var(--panel-2); padding: 1px 4px; border-radius: 4px; }
+.tracks .more { width: 36px; text-align: center; padding: 0; }
+.row-more {
+  background: none; border: 0; border-radius: 4px; cursor: pointer; color: var(--muted);
+  width: 28px; height: 24px; opacity: 0;
+}
+.tracks tbody tr:hover .row-more, .tracks tbody tr:focus .row-more, .tracks tbody tr.playing .row-more, .row-more:focus-visible { opacity: 1; }
+@media (hover: none) { .row-more { opacity: 1; } }
+.row-more:hover { background: var(--panel-2); color: var(--text); }
+.track-menu {
+  position: fixed; z-index: 10; min-width: 160px; padding: 4px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .35); display: flex; flex-direction: column;
+}
+.track-menu button {
+  background: none; border: 0; text-align: left; padding: 7px 10px; border-radius: 6px; cursor: pointer;
+}
+.track-menu button:hover, .track-menu button:focus { background: var(--panel-2); outline: none; }
+.upnext .muted { color: var(--muted); }
+.upnext ol.coming { margin: 0; padding-left: 22px; }
+.upnext ol.coming li { padding: 3px 0; }

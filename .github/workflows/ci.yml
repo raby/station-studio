@@ -44,7 +44,10 @@ jobs:
         with:
           python-version: '3.12'
       - name: install
-        run: python -m pip install pytest
+        # Playwright drives the player page in Chromium (tests/test_browser.py).
+        run: |
+          python -m pip install pytest playwright==1.56.0
+          python -m playwright install --with-deps chromium
       - name: pytest
         working-directory: player
         run: python -m pytest -q

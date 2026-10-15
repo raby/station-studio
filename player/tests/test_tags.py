@@ -327,3 +327,77 @@ def test_v24_utf16_values_and_tag_wide_unsync(tmp_path):
     raw = frame("APIC", pic.replace(b"\xff", b"\xff\x00"))
     data, mime = read_art(write(tmp_path, id3(raw, flags=0x80), "u.mp3"))
     assert mime == "image/jpeg" and data == JPEG
+
+
+# ---- volume levelling tags ----------------------------------------------------
+
+def txxx(desc: str, value: str, enc=3) -> bytes:
+    codec = {0: "latin-1", 1: "utf-16", 3: "utf-8"}[enc]
+    term = b"\x00\x00" if enc == 1 else b"\x00"
+    return bytes([enc]) + desc.encode(codec) + term + value.encode(codec)
+
+
+def test_replaygain_from_id3_txxx(tmp_path):
+    body = (frame("TIT2", text("Song"))
+            + frame("TXXX", txxx("replaygain_track_gain", "-7.25 dB", enc=1))
+            + frame("TXXX", txxx("REPLAYGAIN_TRACK_PEAK", "0.988525")))
+    tags = read_tags(write(tmp_path, id3(body)))
+    assert (tags.title, tags.gain_db, tags.peak) == ("Song", -7.25, 0.988525)
+
+
+def test_itunes_sound_check_from_id3_comment(tmp_path):
+    # 2000 = 10^(3/10) * 1000, so -3 dB; peaks 0x7FFF and 0x4000.
+    norm = " 000007D0 000003E8 00000000 00000000 00000000 00000000 00000000 00007FFF 00004000 00000000"
+    comm = b"\x00eng" + b"iTunNORM\x00" + norm.encode()
+    tags = read_tags(write(tmp_path, id3(frame("COMM", comm, major=3), major=3)))
+    assert tags.gain_db == pytest.approx(-3.01, abs=0.01)
+    assert tags.peak == pytest.approx(0x7FFF / 32768)
+
+
+def test_replaygain_wins_over_sound_check_and_junk_is_ignored(tmp_path):
+    comm = b"\x00eng" + b"iTunNORM\x00" + b" 000007D0 000007D0"
+    body = frame("COMM", comm) + frame("TXXX", txxx("REPLAYGAIN_TRACK_GAIN", "+2.5 dB"))
+    assert read_tags(write(tmp_path, id3(body))).gain_db == 2.5
+    for junk in ("loud", "nan dB", "999 dB", ""):
+        body = frame("TXXX", txxx("REPLAYGAIN_TRACK_GAIN", junk))
+        assert read_tags(write(tmp_path, id3(body))).gain_db is None
+
+
+def vorbis_comment(*entries: str) -> bytes:
+    out = struct.pack("<I", 3) + b"enc" + struct.pack("<I", len(entries))
+    for e in entries:
+        raw = e.encode()
+        out += struct.pack("<I", len(raw)) + raw
+    return out
+
+
+def test_replaygain_from_flac_and_r128_from_opus_style_comments(tmp_path):
+    block = vorbis_comment("TITLE=x", "REPLAYGAIN_TRACK_GAIN=-4.10 dB", "REPLAYGAIN_TRACK_PEAK=1.05")
+    flac = b"fLaC" + bytes([0x84]) + len(block).to_bytes(3, "big") + block
+    tags = read_tags(write(tmp_path, flac, "x.flac"))
+    assert (tags.gain_db, tags.peak) == (-4.1, 1.05)
+    # R128 is Q7.8 relative to -23 LUFS: -1280/256 = -5 dB there, 0 dB at -18.
+    block = vorbis_comment("R128_TRACK_GAIN=-1280")
+    flac = b"fLaC" + bytes([0x84]) + len(block).to_bytes(3, "big") + block
+    assert read_tags(write(tmp_path, flac, "y.flac")).gain_db == 0.0
+
+
+def atom(kind: bytes, body: bytes) -> bytes:
+    return struct.pack(">I", len(body) + 8) + kind + body
+
+
+def test_replaygain_and_sound_check_from_mp4_freeform_atoms(tmp_path):
+    def freeform(name: str, value: str) -> bytes:
+        return atom(b"----", atom(b"mean", b"\x00" * 4 + b"com.apple.iTunes")
+                    + atom(b"name", b"\x00" * 4 + name.encode())
+                    + atom(b"data", b"\x00\x00\x00\x01" + b"\x00" * 4 + value.encode()))
+
+    def m4a(*items: bytes) -> bytes:
+        ilst = atom(b"ilst", b"".join(items))
+        return atom(b"ftyp", b"M4A " + b"\x00" * 4) + atom(b"moov", atom(b"udta", atom(b"meta", b"\x00" * 4 + ilst)))
+
+    tags = read_tags(write(tmp_path, m4a(freeform("replaygain_track_gain", "-9.00 dB")), "a.m4a"))
+    assert tags.gain_db == -9.0
+    norm = " 000003E8 000003E8 0 0 0 0 0 00004000 00004000 0"
+    tags = read_tags(write(tmp_path, m4a(freeform("iTunNORM", norm)), "b.m4a"))
+    assert (tags.gain_db, tags.peak) == (0.0, 0.5)

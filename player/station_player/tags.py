@@ -14,7 +14,9 @@ import base64
 import io
 import json
 import logging
+import math
 import os
+import re
 import struct
 import threading
 import zlib
@@ -58,6 +60,11 @@ class Tags:
     album: str | None = None
     genre: str | None = None
     duration_ms: int | None = None
+    # Volume levelling: the ReplayGain-style track gain in dB (what brings
+    # the track to about -18 LUFS) and the sample peak (1.0 = full scale),
+    # from ReplayGain, R128 (Opus) or iTunes Sound Check tags.
+    gain_db: float | None = None
+    peak: float | None = None
 
 
 class _Done(Exception):
@@ -155,6 +162,56 @@ def _set(tags: Tags, key: str, value) -> None:
             setattr(tags, key, value)
 
 
+def _number(text: str | None) -> float | None:
+    """"-6.48 dB" -> -6.48; None for anything that isn't a sane number."""
+    if not text:
+        return None
+    m = re.match(r"\s*([-+]?\d+(?:\.\d+)?)", text)
+    if not m:
+        return None
+    value = float(m.group(1))
+    return value if math.isfinite(value) else None
+
+
+def _set_gain(tags: Tags, gain: float | None, peak: float | None = None) -> None:
+    """Keep the first track gain found; ignore absurd values."""
+    if tags.gain_db is None and gain is not None and -60 <= gain <= 60:
+        tags.gain_db = round(gain, 2)
+    if tags.peak is None and peak is not None and 0 < peak <= 16:
+        tags.peak = round(peak, 6)
+
+
+def _soundcheck(text: str | None) -> tuple[float, float | None] | None:
+    """iTunes Sound Check ("iTunNORM"): ten hex numbers. The first two are
+    the left and right adjustment (1000 = 0 dB, as 10^(-dB/10) * 1000),
+    the 8th and 9th the peaks in 16-bit sample units."""
+    if not text:
+        return None
+    try:
+        values = [int(v, 16) for v in text.split()]
+    except ValueError:
+        return None
+    if len(values) < 2 or max(values[0], values[1]) <= 0:
+        return None
+    gain = -10 * math.log10(max(values[0], values[1]) / 1000)
+    peak = max(values[7], values[8]) / 32768 if len(values) >= 9 and max(values[7], values[8]) else None
+    return gain, peak
+
+
+def _gain_fields(fields: dict[str, str], tags: Tags) -> None:
+    """ReplayGain / R128 / Sound Check from upper-cased name -> value pairs."""
+    gain = _number(fields.get("REPLAYGAIN_TRACK_GAIN"))
+    peak = _number(fields.get("REPLAYGAIN_TRACK_PEAK"))
+    if gain is None and fields.get("R128_TRACK_GAIN"):
+        r128 = _number(fields["R128_TRACK_GAIN"])  # Q7.8 dB relative to -23 LUFS
+        gain = r128 / 256 + 5 if r128 is not None else None
+    if gain is None:
+        sc = _soundcheck(fields.get("ITUNNORM"))
+        if sc:
+            gain, peak = sc[0], peak if peak is not None else sc[1]
+    _set_gain(tags, gain, peak)
+
+
 def _genre_name(raw: str) -> str:
     """ID3 genres may be "(17)", "17", "(17)Rock" or plain text."""
     text = raw.strip()
@@ -211,6 +268,7 @@ _ID3_TEXT = {
     "TCON": "genre", "TCO": "genre",
 }
 _ID3_ART = ("APIC", "PIC")
+_ID3_USER = ("TXXX", "TXX", "COMM", "COM")  # ReplayGain and Sound Check live here
 
 
 def _syncsafe(b: bytes) -> int:
@@ -341,9 +399,12 @@ def _id3v2(fh: BinaryIO, start: int, tags: Tags, art: list | None) -> int:
     tag_unsync = major == 4 and bool(flags & 0x80)
 
     albumartist = None
+    gain_fields: dict[str, str] = {}
     for fid, fflags, data_start, fsize in frames:
         key = _ID3_TEXT.get(fid)
         is_art = fid in _ID3_ART
+        if fid in _ID3_USER:
+            key = "user"
         if not (key or (is_art and art is not None)):
             continue
         cap = MAX_ART_BYTES if is_art else _MAX_TEXT_BYTES * 4
@@ -356,6 +417,10 @@ def _id3v2(fh: BinaryIO, start: int, tags: Tags, art: list | None) -> int:
                 pic = _id3_picture(fid, data)
                 if pic and art is not None:
                     art.append(pic)
+            elif key == "user":
+                pair = _id3_user_text(fid, data)
+                if pair:
+                    gain_fields.setdefault(*pair)
             elif key == "albumartist":
                 albumartist = albumartist or _id3_text(data)
             elif key == "genre":
@@ -366,7 +431,22 @@ def _id3v2(fh: BinaryIO, start: int, tags: Tags, art: list | None) -> int:
                 _set(tags, key, _id3_text(data))
     if albumartist:
         _set(tags, "artist", albumartist)
+    _gain_fields(gain_fields, tags)
     return end
+
+
+def _id3_user_text(fid: str, data: bytes) -> tuple[str, str] | None:
+    """(DESCRIPTION, value) from a TXXX or COMM frame."""
+    if len(data) < 2:
+        return None
+    enc = data[0]
+    body = data[4:] if fid in ("COMM", "COM") else data[1:]  # COMM has a language
+    value = _split_terminated(body, enc)
+    desc = _id3_text(bytes([enc]) + body[:len(body) - len(value)])
+    text = _id3_text(bytes([enc]) + value)
+    if not desc or not text:
+        return None
+    return desc.upper(), text
 
 
 def _inflate(data: bytes, cap: int) -> bytes | None:
@@ -516,6 +596,7 @@ def _vorbis_comments(data: bytes, tags: Tags, art: list | None) -> None:
         _set(tags, "artist", fields.get("ARTIST") or fields.get("ALBUMARTIST"))
         _set(tags, "album", fields.get("ALBUM"))
         _set(tags, "genre", fields.get("GENRE"))
+        _gain_fields(fields, tags)
 
 
 def _vorbis_fields(data: bytes, fields: dict[str, str], art: list | None) -> None:
@@ -759,9 +840,30 @@ def _mp4(fh: BinaryIO, tags: Tags, art: list | None) -> None:
         _set(tags, "artist", albumartist)
 
 
+def _mp4_freeform(fh, start: int, end: int) -> tuple[str, str] | None:
+    """A '----' item: (NAME, value), e.g. ("REPLAYGAIN_TRACK_GAIN", "-6.5 dB")."""
+    name = value = None
+    for kind, s, e in _atoms(fh, start, end):
+        if e - s > _MAX_TEXT_BYTES:
+            continue
+        fh.seek(s)
+        body = fh.read(e - s)
+        if kind == b"name" and len(body) > 4:
+            name = body[4:].decode("utf-8", "replace").strip().upper()
+        elif kind == b"data" and len(body) > 8:
+            value = body[8:].decode("utf-8", "replace").strip("\x00 ")
+    return (name, value) if name and value else None
+
+
 def _mp4_ilst(fh, start, end, tags: Tags, art: list | None) -> str | None:
     albumartist = None
+    gain_fields: dict[str, str] = {}
     for item, s, e in _atoms(fh, start, end):
+        if item == b"----":
+            pair = _mp4_freeform(fh, s, e)
+            if pair:
+                gain_fields.setdefault(*pair)
+            continue
         want_art = item == b"covr" and art is not None
         if item not in _MP4_TEXT and item != b"gnre" and not want_art:
             continue
@@ -789,6 +891,7 @@ def _mp4_ilst(fh, start, end, tags: Tags, art: list | None) -> str | None:
             else:
                 _set(tags, key, text)
             break
+    _gain_fields(gain_fields, tags)
     return albumartist
 
 
@@ -881,7 +984,7 @@ class TagCache:
     or changed files are opened on later scans. Stored as JSON beside the
     settings; a missing or damaged cache just means a slower scan."""
 
-    VERSION = 1
+    VERSION = 2  # 2: gain_db and peak
 
     def __init__(self, path: Path | None) -> None:
         self.path = path

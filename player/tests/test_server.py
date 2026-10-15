@@ -580,3 +580,95 @@ def test_a_failed_scan_reports_an_error_instead_of_scanning_forever(tmp_path, mo
     state = app.state()
     assert state["scanning"] is False
     assert any("disk on fire" in e for e in state["errors"])
+
+
+# ---- 0.3: search, queue lookups, levelling, new-version notice --------------
+
+H = {"X-Station-Player": "1"}
+
+
+def track_id(port):
+    state = json.loads(request(port, "GET", "/api/state")[1])
+    detail = json.loads(request(port, "GET", f"/api/playlists/{state['playlists'][0]['id']}")[1])
+    return detail["tracks"][0]["id"]
+
+
+def test_library_search_matches_every_word_and_dedupes(tmp_path):
+    from station_player.library import Library
+    music = tmp_path / "m"
+    write_wav(music / "Artist - Blue Song.wav")
+    write_wav(music / "Other - Red Song.wav")
+    song = music / "Artist - Blue Song.wav"
+    # The same file in two weekly exports, and in the music folder.
+    for week in ("001", "002"):
+        write_itunes_xml(tmp_path / "x" / f"{week}.xml",
+                         [{"Track ID": 1, "Name": "Blue Song", "Artist": "Artist", "Persistent ID": "P1",
+                           "Location": song.as_uri()}],
+                         [{"Name": f"Week {week}", "Playlist Items": [{"Track ID": 1}]}])
+    lib = Library()
+    lib.load([str(tmp_path / "x")], [str(music)])
+    assert [t["name"] for t in lib.search("blue ARTIST")["tracks"]] == ["Blue Song"]
+    assert lib.search("song")["total"] == 2
+    assert lib.search("song", limit=1) == {"tracks": lib.search("song")["tracks"][:1], "total": 2}
+    assert lib.search("   ")["total"] == 0
+    assert lib.search("green")["total"] == 0
+
+
+def test_search_tracks_and_loudness_endpoints(running):
+    app, port, song, tmp = running
+    resp, body = request(port, "GET", "/api/search?q=so")
+    assert resp.status == 200 and json.loads(body)["tracks"][0]["name"] == "Song"
+    tid = track_id(port)
+
+    resp, body = request(port, "POST", "/api/tracks", {"ids": ["nope", tid]}, H)
+    assert [t["id"] for t in json.loads(body)["tracks"]] == [tid]
+    assert request(port, "POST", "/api/tracks", {"ids": "x"}, H)[0].status == 400
+
+    # Untagged: unknown until the browser measures it.
+    assert json.loads(request(port, "GET", f"/api/loudness/{tid}")[1]) == {"lufs": None, "peak": None, "source": None}
+    assert request(port, "POST", "/api/loudness", {"id": tid, "lufs": -11.234, "peak": 0.9}, H)[0].status == 200
+    assert json.loads(request(port, "GET", f"/api/loudness/{tid}")[1]) == {"lufs": -11.23, "peak": 0.9, "source": "measured"}
+    for bad in ({"lufs": "loud"}, {"lufs": 50}, {"lufs": -10, "peak": -1}, {"lufs": True}, {"lufs": float("nan")}):
+        assert request(port, "POST", "/api/loudness", {"id": tid, **bad}, H)[0].status == 400, bad
+    assert request(port, "POST", "/api/loudness", {"id": "nope", "lufs": -10}, H)[0].status == 404
+    assert request(port, "GET", "/api/loudness/nope")[0].status == 404
+
+    # Remembered across restarts, and forgotten when the file changes.
+    again = PlayerApp(app.store)
+    assert again.loudness(tid)["lufs"] == -11.23
+    write_wav(song, frames=5000)
+    assert again.loudness(tid)["lufs"] is None
+
+
+def test_loudness_from_replaygain_tags(tmp_path):
+    from station_player.tags import Tags
+    music = tmp_path / "m"
+    write_wav(music / "a.wav")
+    store = ConfigStore()
+    store.config.music_folders = [str(music)]
+    app = PlayerApp(store)
+    tid = next(iter(app.library.tracks))
+    app.tag_cache.get = lambda path: Tags(gain_db=-6.5, peak=0.99)
+    assert app.loudness(tid) == {"lufs": -11.5, "peak": 0.99, "source": "tags"}
+
+
+def test_new_version_notice_and_its_setting(tmp_path):
+    from station_player import __version__
+    store = ConfigStore()
+    app = PlayerApp(store, scan=False)
+    app.check_for_update(fetch=lambda: "99.0").join(5)
+    assert app.state()["update"] == "99.0"
+    app.latest_version = __version__
+    assert app.state()["update"] is None
+    app.latest_version = "99.0"
+    server, port = serve(app)
+    try:
+        resp, body = request(port, "POST", "/api/settings", {"check_updates": False}, H)
+        assert resp.status == 200 and json.loads(body)["update"] is None
+        assert json.loads(store.path.read_text())["check_updates"] is False
+        assert app.check_for_update(fetch=lambda: 1 / 0) is None  # turned off: never asks
+        assert request(port, "POST", "/api/settings", {"check_updates": "yes"}, H)[0].status == 400
+    finally:
+        server.shutdown()
+        server.server_close()
+    assert ConfigStore().config.check_updates is False

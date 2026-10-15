@@ -35,3 +35,5 @@ def write_itunes_xml(path: Path, tracks: list[dict], playlists: list[dict]) -> P
 def isolated_homes(tmp_path, monkeypatch):
     monkeypatch.setenv("STATION_PLAYER_HOME", str(tmp_path / "player-home"))
     monkeypatch.setenv("STATION_STUDIO_HOME", str(tmp_path / "studio-home"))
+    # Tests never ask PyPI for new versions.
+    monkeypatch.setattr("station_player.updates._fetch_latest", lambda *a, **k: None)

@@ -50,6 +50,8 @@ class Config:
     path_remaps: list[dict] = field(default_factory=list)
     # [{"name": ..., "url": ...}]
     stations: list[dict] = field(default_factory=lambda: [dict(s) for s in DEFAULT_STATIONS])
+    # ask PyPI once a day whether a newer Station Player is out
+    check_updates: bool = True
 
     def to_json(self) -> dict:
         return asdict(self)
@@ -79,6 +81,8 @@ def config_from_json(data: dict) -> Config:
     )
     if "stations" in data:
         cfg.stations = _pairs(data.get("stations"), ("name", "url"))
+    if isinstance(data.get("check_updates"), bool):
+        cfg.check_updates = data["check_updates"]
     return cfg
 
 
