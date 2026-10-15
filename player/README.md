@@ -56,6 +56,8 @@ Open **Sources & settings** in the sidebar.
    from `/Users/rob/Music/iTunes/iTunes Media` to `D:/Music`.
 
 Tracks whose audio file can't be found are greyed out and skipped.
+Only audio files (mp3, m4a/aac, flac, wav, ogg/opus, aiff, webm) are
+ever played or served, whatever a playlist file points at.
 
 Settings live in `~/.station-player/config.json` (override the folder
 with `$STATION_PLAYER_HOME`).
@@ -64,7 +66,9 @@ with `$STATION_PLAYER_HOME`).
 
 - Double-click a track to play from there, or **▶ Play** for the whole
   playlist. Shuffle and repeat (all / one) sit next to the transport.
-- Space plays and pauses; ← and → skip 10 seconds. Keyboard media keys
+- Keyboard: Tab into the track list, move with ↑ ↓ (Home / End /
+  Page Up / Page Down), Enter plays. Space plays and pauses; ← and →
+  skip 10 seconds. Keyboard media keys
   and the OS now-playing panel work through the browser's Media Session
   support.
 - Pausing a radio station and pressing play again reconnects to the live
