@@ -448,7 +448,9 @@ def test_record_a_station(page, player):
 
 def test_own_window_setting(page, player):
     app, _, _ = player
-    app.window_browser = None
+    app.window_browser = None  # the page loaded with whatever this machine has
+    page.reload()
+    page.wait_for_selector("#view")
     page.locator(".nav-item[data-view=settings]").click()
     assert page.locator("input[data-key=window]").count() == 0
     assert "Microsoft Edge" in page.locator("#view").inner_text()
