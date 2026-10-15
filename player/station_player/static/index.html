@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Station Player</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar" aria-label="Library">
+      <div class="brand">Station Player</div>
+      <nav>
+        <h2>Playlists</h2>
+        <ul id="nav-itunes" class="nav-list"></ul>
+        <h2>Folders</h2>
+        <ul id="nav-folders" class="nav-list"></ul>
+        <h2>Radio</h2>
+        <ul class="nav-list">
+          <li><button type="button" class="nav-item" data-view="radio">Stations</button></li>
+        </ul>
+        <h2>Setup</h2>
+        <ul class="nav-list">
+          <li><button type="button" class="nav-item" data-view="settings">Sources &amp; settings</button></li>
+        </ul>
+      </nav>
+    </aside>
+
+    <main class="main" id="main" tabindex="-1">
+      <div id="errors" class="errors" hidden></div>
+      <section id="view"></section>
+    </main>
+
+    <footer class="bar" aria-label="Player">
+      <div class="now">
+        <div class="now-title" id="now-title">Nothing playing</div>
+        <div class="now-sub" id="now-sub"></div>
+      </div>
+      <div class="controls">
+        <div class="buttons">
+          <button type="button" id="btn-shuffle" class="icon toggle" aria-pressed="false" title="Shuffle">⤮</button>
+          <button type="button" id="btn-prev" class="icon" title="Previous" aria-label="Previous">⏮</button>
+          <button type="button" id="btn-play" class="icon play" title="Play" aria-label="Play">▶</button>
+          <button type="button" id="btn-next" class="icon" title="Next" aria-label="Next">⏭</button>
+          <button type="button" id="btn-repeat" class="icon toggle" aria-pressed="false" title="Repeat: off">↻</button>
+        </div>
+        <div class="seek">
+          <span id="time-cur" class="time">0:00</span>
+          <input type="range" id="seek" min="0" max="1000" value="0" step="1" aria-label="Seek">
+          <span id="time-dur" class="time">0:00</span>
+        </div>
+      </div>
+      <div class="volume">
+        <span aria-hidden="true">🔊</span>
+        <input type="range" id="volume" min="0" max="1" step="0.01" value="0.8" aria-label="Volume">
+      </div>
+    </footer>
+  </div>
+  <script src="/app.js"></script>
+</body>
+</html>
