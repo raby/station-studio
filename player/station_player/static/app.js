@@ -122,6 +122,7 @@ async function loadState(newState) {
   renderNav();
   renderErrors();
   renderUpdate();
+  syncRecordings();
 }
 
 function renderErrors(extra) {
@@ -179,6 +180,10 @@ function renderNav() {
   const isActive = (pl) => S.view.type === "playlist" && S.view.id === pl.id;
   const itunes = S.lib.playlists.filter((p) => p.kind === "itunes");
   const folders = S.lib.playlists.filter((p) => p.kind === "folder");
+  const mine = myPlaylists();
+  $("#nav-mine").replaceChildren(...(mine.length
+    ? mine.map((p) => navButton(p.name, p.count, { type: "playlist", id: p.id }, isActive(p)))
+    : [el("li", { class: "nav-empty" }, "Make one with +")]));
   $("#nav-itunes").replaceChildren(...(itunes.length
     ? itunes.map((p) => navButton(p.name, p.count, { type: "playlist", id: p.id }, isActive(p)))
     : [el("li", { class: "nav-empty" }, "None yet")]));
@@ -251,10 +256,12 @@ function playlistView(pl) {
   // move the "playing" class, so a 10k-track library stays responsive.
   // Keyboard: one row is in the tab order at a time (roving tabindex);
   // arrow keys move between rows and Enter plays the focused one.
+  const mine = isMine(pl);
   const rows = pl.tracks.map((t, i) => el("tr", {
     "data-index": i,
     "data-id": t.id,
     tabindex: "-1",
+    draggable: mine ? "true" : null,
     class: t.available ? null : "missing",
     title: t.available ? "Double-click or press Enter to play" : "The audio file for this track wasn't found",
   },
@@ -263,8 +270,8 @@ function playlistView(pl) {
     el("td", { class: "artist" }, t.artist || ""),
     el("td", { class: "album" }, t.album || ""),
     el("td", { class: "dur" }, t.duration_ms ? fmtTime(t.duration_ms / 1000) : ""),
-    el("td", { class: "more" }, t.available
-      ? el("button", { type: "button", class: "row-more", tabindex: "-1", "aria-label": `More for ${t.name}`, title: "Play next or add to queue" }, "⋯")
+    el("td", { class: "more" }, t.available || mine
+      ? el("button", { type: "button", class: "row-more", tabindex: "-1", "aria-label": `More for ${t.name}`, title: "Play next, add to a playlist and more" }, "⋯")
       : null),
   ));
   const visibleRows = () => rows.filter((r) => !r.hidden);
@@ -287,7 +294,7 @@ function playlistView(pl) {
     },
     oncontextmenu: (e) => {
       const tr = e.target.closest("tr[data-index]");
-      if (!tr || !trackOf(tr).available) return;
+      if (!tr || !(trackOf(tr).available || mine)) return;
       e.preventDefault();
       focusRow(tr);
       openTrackMenu(trackOf(tr), pl, tr, tr, { x: e.clientX, y: e.clientY });
@@ -295,6 +302,18 @@ function playlistView(pl) {
     onkeydown: (e) => {
       const tr = e.target.closest("tr[data-index]");
       if (!tr) return;
+      // In my playlists: Alt+arrows move a track, Delete removes it.
+      if (mine && e.altKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+        e.preventDefault();
+        const i = Number(tr.dataset.index);
+        moveInPlaylist(pl, i, i + (e.key === "ArrowUp" ? -1 : 1));
+        return;
+      }
+      if (mine && (e.key === "Delete" || e.key === "Backspace")) {
+        e.preventDefault();
+        removeFromPlaylist(pl, Number(tr.dataset.index));
+        return;
+      }
       const vis = visibleRows();
       const at = vis.indexOf(tr);
       let next = null;
@@ -318,19 +337,22 @@ function playlistView(pl) {
         return;
       } else if (e.key === "ContextMenu" || (e.key === "F10" && e.shiftKey)) {
         e.preventDefault();
-        if (trackOf(tr).available) openTrackMenu(trackOf(tr), pl, tr, tr);
+        if (trackOf(tr).available || mine) openTrackMenu(trackOf(tr), pl, tr, tr);
         return;
       } else return;
       e.preventDefault();
       if (next) focusRow(next);
     },
   }, rows);
+  if (mine) dragToReorder(tbody, pl);
   const empty = el("div", { class: "empty" },
-    pl.search ? "Nothing in your library matches." : pl.count ? "No tracks match." : "This playlist is empty.");
+    pl.search ? "Nothing in your library matches." : pl.count ? "No tracks match."
+      : mine ? "This playlist is empty. Add tracks with the ⋯ button on any track, or by right-clicking it." : "This playlist is empty.");
   const table = el("table", { class: "tracks" },
     el("caption", { class: "sr-only" },
       `${pl.name}. Use the arrow keys to move between tracks and Enter to play. ` +
-      "N plays the track next, Q adds it to the queue."),
+      "N plays the track next, Q adds it to the queue." +
+      (mine ? " Alt with the up or down arrow moves a track, Delete removes it." : "")),
     el("thead", {}, el("tr", {},
       el("th", { class: "num" }, "#"), el("th", { class: "title" }, "Title"),
       el("th", { class: "artist" }, "Artist"), el("th", { class: "album" }, "Album"),
@@ -363,9 +385,24 @@ function playlistView(pl) {
     oninput: (e) => { S.filter = e.target.value; applyFilter(); },
   });
 
+  const ids = () => pl.tracks.filter((t) => t.available).map((t) => t.id);
+  const small = (label, onclick, extra = {}) => el("button", { type: "button", class: "btn small", onclick, ...extra }, label);
+  const exportLink = pl.search ? null : el("a", {
+    class: "btn small", href: `/api/playlists/${encodeURIComponent(pl.id)}.m3u`, download: "",
+    title: "Save this playlist as an .m3u file other players can open",
+  }, "Export M3U");
+  const actions = el("div", { class: "head-actions" },
+    mine ? small("Rename", () => renamePlaylist(pl)) : null,
+    mine ? small("Delete", () => deletePlaylist(pl)) : null,
+    !mine && playable ? small(pl.search ? "Save as a playlist" : "Copy to My playlists", async () => {
+      const pid = await newPlaylist(ids(), pl.search ? pl.name.replace(/^Search: /, "") : pl.name);
+      if (pid) show({ type: "playlist", id: pid });
+    }) : null,
+    exportLink);
+
   const view = el("div", {},
     el("div", { class: "view-head" },
-      el("div", {}, el("h1", {}, pl.name), el("div", { class: "meta" }, meta)),
+      el("div", {}, el("h1", {}, pl.name), el("div", { class: "meta" }, meta), actions),
       el("div", { class: "spacer" }),
       search,
       el("button", {
@@ -396,7 +433,160 @@ function markPlaying() {
   if (tr && tr.dataset.id === t.id) tr.classList.add("playing");
 }
 
-// ---------- "play next" menu ------------------------------------------------
+// Drag a row of one of my playlists to a new place.
+function dragToReorder(tbody, pl) {
+  let from = null;
+  const clear = () => {
+    for (const r of tbody.querySelectorAll(".drop-before, .drop-after")) r.classList.remove("drop-before", "drop-after");
+  };
+  const spot = (e) => {
+    const tr = e.target.closest("tr[data-index]");
+    if (!tr) return null;
+    const box = tr.getBoundingClientRect();
+    return { tr, after: e.clientY > box.top + box.height / 2 };
+  };
+  tbody.addEventListener("dragstart", (e) => {
+    const tr = e.target.closest("tr[data-index]");
+    if (!tr) return;
+    from = Number(tr.dataset.index);
+    tr.classList.add("dragging");
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", pl.tracks[from].name);
+  });
+  tbody.addEventListener("dragover", (e) => {
+    if (from === null) return;
+    const at = spot(e);
+    if (!at) return;
+    e.preventDefault();
+    clear();
+    at.tr.classList.add(at.after ? "drop-after" : "drop-before");
+  });
+  tbody.addEventListener("dragleave", (e) => { if (!tbody.contains(e.relatedTarget)) clear(); });
+  tbody.addEventListener("drop", (e) => {
+    const at = spot(e);
+    clear();
+    if (from === null || !at) return;
+    e.preventDefault();
+    let to = Number(at.tr.dataset.index) + (at.after ? 1 : 0);
+    if (to > from) to -= 1;
+    const start = from;
+    from = null;
+    moveInPlaylist(pl, start, to);
+  });
+  tbody.addEventListener("dragend", () => {
+    from = null;
+    clear();
+    for (const r of tbody.querySelectorAll(".dragging")) r.classList.remove("dragging");
+  });
+}
+
+// ---------- my playlists ---------------------------------------------------
+
+const isMine = (pl) => Boolean(pl && pl.kind === "mine");
+const myPlaylists = () => S.lib.playlists.filter((p) => p.kind === "mine");
+
+// Ask for a name and make a playlist of `ids`. Returns its id, or null.
+async function newPlaylist(ids = [], suggested = "") {
+  const name = prompt("Name for the new playlist:", suggested);
+  if (name === null || !name.trim()) return null;
+  try {
+    const res = await api("/api/my-playlists", { name, ids }, { quiet: true });
+    await loadState(res);
+    announce(ids.length ? `Saved ${ids.length} tracks as ${name.trim()}` : `Made the playlist ${name.trim()}`);
+    return res.created;
+  } catch (err) {
+    renderErrors(err.message);
+    return null;
+  }
+}
+
+async function addToPlaylist(pid, ids, what) {
+  const target = S.lib.playlists.find((p) => p.id === pid);
+  try {
+    await loadState(await api(`/api/my-playlists/${pid}/add`, { ids }, { quiet: true }));
+    announce(`Added ${what} to ${target ? target.name : "the playlist"}`);
+  } catch (err) {
+    renderErrors(err.message);
+    return;
+  }
+  if (S.view.type === "playlist" && S.view.id === pid) await refreshDetail();
+}
+
+// Save a new order (or fewer tracks) for one of my playlists.
+async function setPlaylistTracks(pid, ids, focusIndex, message) {
+  try {
+    await loadState(await api(`/api/my-playlists/${pid}/set`, { ids }, { quiet: true }));
+    announce(message);
+  } catch (err) {
+    renderErrors(err.message);
+  }
+  await refreshDetail(focusIndex);
+}
+
+function moveInPlaylist(pl, from, to) {
+  if (to < 0 || to >= pl.tracks.length || from === to) return;
+  const ids = pl.tracks.map((t) => t.id);
+  const [moved] = ids.splice(from, 1);
+  ids.splice(to, 0, moved);
+  setPlaylistTracks(pl.id, ids, to, `${pl.tracks[from].name} moved to number ${to + 1}`);
+}
+
+function removeFromPlaylist(pl, index) {
+  const ids = pl.tracks.map((t) => t.id);
+  ids.splice(index, 1);
+  setPlaylistTracks(pl.id, ids, Math.min(index, ids.length - 1), `Removed ${pl.tracks[index].name} from ${pl.name}`);
+}
+
+async function renamePlaylist(pl) {
+  const name = prompt("New name for this playlist:", pl.name);
+  if (name === null || !name.trim() || name.trim() === pl.name) return;
+  try {
+    await loadState(await api(`/api/my-playlists/${pl.id}/rename`, { name }, { quiet: true }));
+  } catch (err) {
+    renderErrors(err.message);
+    return;
+  }
+  await refreshDetail();
+  focusHeading();
+  announce(`Renamed to ${name.trim()}`);
+}
+
+async function deletePlaylist(pl) {
+  if (!confirm(`Delete the playlist ${pl.name}? The music itself stays where it is.`)) return;
+  try {
+    await loadState(await api(`/api/my-playlists/${pl.id}/delete`, {}, { quiet: true }));
+  } catch (err) {
+    renderErrors(err.message);
+    return;
+  }
+  announce(`Deleted ${pl.name}`);
+  const first = S.lib.playlists[0];
+  await show(first ? { type: "playlist", id: first.id } : { type: "settings" });
+  focusHeading();
+}
+
+// Fetch the playlist on show again after a change, keeping the scroll
+// position and (optionally) focusing a row.
+async function refreshDetail(focusIndex) {
+  if (S.view.type !== "playlist") return;
+  const token = ++showToken;
+  let detail = null;
+  try { detail = await api(`/api/playlists/${S.view.id}`); } catch { detail = null; }
+  if (token !== showToken) return;
+  if (!detail) { show({ type: "settings" }); return; }
+  const top = $("#main").scrollTop;
+  S.detail = detail;
+  renderView();
+  $("#main").scrollTop = top;
+  if (focusIndex === undefined || focusIndex < 0) return;
+  const tr = $(`#view tr[data-index="${focusIndex}"]`);
+  if (!tr || tr.hidden) return;
+  for (const r of document.querySelectorAll("#view tbody tr")) r.tabIndex = -1;
+  tr.tabIndex = 0;
+  tr.focus();
+}
+
+// ---------- track menu ------------------------------------------------------
 
 let menuReturn = null;
 
@@ -411,19 +601,49 @@ function closeTrackMenu() {
 function openTrackMenu(track, pl, anchor, returnTo, at) {
   const menu = $("#track-menu");
   menuReturn = returnTo;
-  const item = (label, where) => el("button", {
+  const index = pl.tracks.indexOf(track);
+  const item = (label, fn) => el("button", {
     type: "button", role: "menuitem", tabindex: "-1",
-    onclick: () => { closeTrackMenu(); queueTrack(track, pl, where); },
+    onclick: () => { closeTrackMenu(); fn(); },
   }, label);
-  menu.replaceChildren(item("Play next", "next"), item("Add to queue", "end"));
+  const place = () => {
+    const box = anchor.getBoundingClientRect();
+    const x = at ? at.x : box.right - menu.offsetWidth;
+    const y = at ? at.y : box.bottom;
+    menu.style.left = `${Math.max(8, Math.min(x, innerWidth - menu.offsetWidth - 8))}px`;
+    menu.style.top = `${Math.max(8, Math.min(y, innerHeight - menu.offsetHeight - 8))}px`;
+    menu.querySelector("button").focus();
+  };
+  // "Add to playlist…" swaps the menu for a list of my playlists.
+  const choosePlaylist = () => {
+    menu.replaceChildren(
+      el("div", { class: "menu-label", "aria-hidden": "true" }, "Add to playlist"),
+      ...myPlaylists().filter((p) => p.id !== pl.id).map((p) =>
+        item(p.name, () => addToPlaylist(p.id, [track.id], track.name))),
+      item("New playlist…", async () => {
+        const pid = await newPlaylist([track.id]);
+        if (pid) announce(`${track.name} is in the new playlist`);
+      }));
+    place();
+  };
+  const items = [];
+  if (track.available) {
+    items.push(item("Play next", () => queueTrack(track, pl, "next")),
+      item("Add to queue", () => queueTrack(track, pl, "end")),
+      el("button", { type: "button", role: "menuitem", tabindex: "-1", "aria-haspopup": "menu", onclick: choosePlaylist },
+        "Add to playlist…"));
+  }
+  if (isMine(pl)) {
+    if (items.length) items.push(el("hr", { role: "separator" }));
+    if (index > 0) items.push(item("Move up", () => moveInPlaylist(pl, index, index - 1)));
+    if (index < pl.tracks.length - 1) items.push(item("Move down", () => moveInPlaylist(pl, index, index + 1)));
+    items.push(item("Remove from this playlist", () => removeFromPlaylist(pl, index)));
+  }
+  if (!items.length) return;
+  menu.replaceChildren(...items);
   menu.setAttribute("aria-label", track.name);
   menu.hidden = false;
-  const box = anchor.getBoundingClientRect();
-  const x = at ? at.x : box.right - menu.offsetWidth;
-  const y = at ? at.y : box.bottom;
-  menu.style.left = `${Math.max(8, Math.min(x, innerWidth - menu.offsetWidth - 8))}px`;
-  menu.style.top = `${Math.max(8, Math.min(y, innerHeight - menu.offsetHeight - 8))}px`;
-  menu.querySelector("button").focus();
+  place();
 }
 
 $("#track-menu").addEventListener("keydown", (e) => {
@@ -477,8 +697,17 @@ function upNextView() {
       onclick: () => { S.upNext.splice(i, 1); queueChanged(); announce(`Removed ${track.name}`); },
     }, "Remove")));
   const coming = comingFromQueue(30);
+  const all = [...(t ? [t] : []), ...S.upNext, ...comingFromQueue(Infinity)];
   return el("div", { class: "settings upnext" },
-    el("div", { class: "view-head" }, el("h1", {}, "Up next")),
+    el("div", { class: "view-head" }, el("h1", {}, "Up next"), el("div", { class: "spacer" }),
+      all.length ? el("button", {
+        type: "button", class: "btn",
+        title: "The playing track, your queue and the rest of the playlist, in play order",
+        onclick: async () => {
+          const pid = await newPlaylist(all.map((x) => x.id), S.queueLabel && S.queueLabel !== "your queue" ? `${S.queueLabel} (my order)` : "");
+          if (pid) show({ type: "playlist", id: pid });
+        },
+      }, "Save as a playlist") : null),
     el("section", {},
       el("h2", {}, "Now playing"),
       t ? el("p", {}, line(t)) : el("p", { class: "help" }, S.mode === "radio" ? `${S.station.name} (radio)` : "Nothing yet.")),
@@ -548,12 +777,14 @@ function radioView() {
     return el("div", { class: "card", "data-url": st.url },
       el("div", { class: "name" }, st.name),
       el("div", { class: "song", hidden: true }),
+      el("div", { class: "rec", role: "status", hidden: true }),
       el("div", { class: "url" }, st.url),
       el("div", { class: "row" },
         el("button", {
           type: "button", class: "btn primary listen",
           onclick: () => (isLive() && !audio.paused ? audio.pause() : playStation(st)),
         }, "▶ Listen"),
+        el("button", { type: "button", class: "btn rec-btn", onclick: () => toggleRecording(st) }, "● Record"),
         el("button", {
           type: "button", class: "btn",
           onclick: () => {
@@ -563,13 +794,24 @@ function radioView() {
   });
 
   queueMicrotask(syncRadioCards);
+  queueMicrotask(syncRecordings);
   return el("div", {},
     el("div", { class: "view-head" }, el("h1", {}, "Radio")),
     cards.length ? el("div", { class: "cards" }, cards) : el("div", { class: "empty" }, "No stations yet."),
     el("div", { class: "settings" }, el("section", { class: "add-station" },
       el("h2", {}, "Add a station"),
       el("form", { class: "form-row", onsubmit: add }, name, url, el("button", { class: "btn" }, "Add")),
-      msg)),
+      msg),
+    el("section", {},
+      el("h2", {}, "Recordings"),
+      el("p", { class: "help" },
+        "Record records a station to a file, whether or not you're listening to it, exactly as the station sends it. ",
+        "When the station sends song titles, they're saved in a text file beside the recording. ",
+        `Recordings go in ${S.lib.recordings_folder || "your Music folder"}. A recording stops by itself after 12 hours.`),
+      el("button", {
+        type: "button", class: "btn",
+        onclick: () => api("/api/recordings/open", {}, { quiet: true }).catch((err) => renderErrors(err.message)),
+      }, "Open recordings folder"))),
   );
 }
 
@@ -584,6 +826,74 @@ function syncRadioCards() {
     song.textContent = live && S.radioTitle ? `Now playing: ${S.radioTitle}` : "";
     song.hidden = !song.textContent;
   }
+}
+
+// ---------- recording ---------------------------------------------------
+
+const recordingOf = (url) => (S.lib.recordings || []).find((r) => r.url === url);
+const activeRecordings = () => (S.lib.recordings || []).filter((r) => !r.done);
+
+function fmtBytes(n) {
+  return n >= 1e9 ? `${(n / 1e9).toFixed(1)} GB` : `${(n / 1e6).toFixed(1)} MB`;
+}
+
+async function toggleRecording(st) {
+  const rec = recordingOf(st.url);
+  const on = !(rec && !rec.done);
+  try {
+    await loadState(await api("/api/record", { station: st.id, on }, { quiet: true }));
+  } catch (err) {
+    renderErrors(err.message);
+    return;
+  }
+  const after = recordingOf(st.url);
+  announce(on ? `Recording ${st.name}` : `Stopped recording ${st.name}${after && after.file ? `. Saved as ${baseName(after.file)}` : ""}`);
+}
+
+const baseName = (path) => path.split(/[\\/]/).pop();
+
+// Show recordings on the station cards and in the sidebar, and keep
+// checking on them while any is running.
+let recTimer = null;
+function syncRecordings() {
+  const active = activeRecordings();
+  const box = $("#rec-status");
+  box.replaceChildren(...active.map((r) => el("button", {
+    type: "button", onclick: () => show({ type: "radio" }), title: "Go to Radio",
+  }, el("span", { class: "rec-dot", "aria-hidden": "true" }), `Recording ${r.name} · ${fmtTime(r.seconds)}`)));
+  box.hidden = active.length === 0;
+  for (const card of document.querySelectorAll("#view .card[data-url]")) {
+    const r = recordingOf(card.dataset.url);
+    const running = Boolean(r && !r.done);
+    card.classList.toggle("recording", running);
+    const btn = card.querySelector(".rec-btn");
+    btn.textContent = running ? "■ Stop recording" : "● Record";
+    btn.setAttribute("aria-pressed", String(running));
+    const line = card.querySelector(".rec");
+    line.className = "rec";
+    if (running) {
+      line.textContent = `● Recording · ${fmtTime(r.seconds)} · ${fmtBytes(r.bytes)}`;
+    } else if (r && r.error) {
+      line.textContent = `Recording stopped: ${r.error}`;
+      line.classList.add("error");
+    } else if (r && r.file) {
+      line.textContent = `Saved ${baseName(r.file)} (${fmtBytes(r.bytes)})`;
+      line.classList.add("saved");
+    } else {
+      line.textContent = "";
+    }
+    line.hidden = !line.textContent;
+  }
+  clearTimeout(recTimer);
+  if (active.length) recTimer = setTimeout(pollRecordings, 1000);
+}
+
+async function pollRecordings() {
+  try {
+    const data = await api("/api/recordings");
+    S.lib.recordings = data.recordings;
+  } catch { /* try again next time */ }
+  syncRecordings();
 }
 
 // ---------- settings view -----------------------------------------------
@@ -660,6 +970,15 @@ function appSection() {
       renderErrors(err.message);
     }
   };
+  const windowChange = async (on) => {
+    try {
+      await loadState(await api("/api/settings", { own_window: on }, { quiet: true }));
+      announce(`Own window turned ${on ? "on" : "off"}. This applies the next time Station Player opens.`);
+    } catch (err) {
+      renderErrors(err.message);
+    }
+  };
+  const browser = S.lib.window_browser;
   return el("section", {},
     el("h2", {}, "App"),
     d && d.supported ? el("p", { class: "help" },
@@ -667,15 +986,34 @@ function appSection() {
     el("div", { class: "checks" },
       d && d.supported ? checkbox("shortcut", where, d.shortcut, desktopChange("shortcut")) : null,
       d && d.supported ? checkbox("login", "Start Station Player in the background when I log in", d.login, desktopChange("login")) : null,
+      browser ? checkbox("window", `Open in a window of its own (using ${browser}), not a browser tab`,
+        S.lib.config.own_window !== false, windowChange) : null,
       checkbox("updates", "Tell me when a new version is out (asks pypi.org once a day)",
-        S.lib.config.check_updates !== false, updatesChange)));
+        S.lib.config.check_updates !== false, updatesChange)),
+    browser ? null : el("p", { class: "help" },
+      "Station Player opens in a browser tab. With Google Chrome, Microsoft Edge or Brave installed it opens in a window of its own instead."));
 }
 
 function playbackSection() {
+  const label = (v) => (v ? `${v} s` : "Off");
+  const out = el("output", { for: "crossfade" }, label(X.secs));
+  const slider = el("input", {
+    type: "range", id: "crossfade", min: 0, max: MAX_CROSSFADE, step: 1, value: X.secs,
+    "aria-valuetext": label(X.secs),
+    oninput: (e) => {
+      setCrossfade(Number(e.target.value));
+      out.textContent = label(X.secs);
+      e.target.setAttribute("aria-valuetext", X.secs ? `${X.secs} seconds` : "Off");
+    },
+  });
   return el("section", {},
     el("h2", {}, "Playback"),
     el("p", { class: "help" },
-      "Tracks always play back to back with no gap. Volume levelling plays every track at about the same loudness, ",
+      "Tracks play back to back with no gap, or, with crossfade, the next one fades in as the last one fades out. ",
+      "Tracks from the same album and short ones (jingles, idents) are never crossfaded."),
+    el("div", { class: "range-row" }, el("label", { for: "crossfade" }, "Crossfade"), slider, out),
+    el("p", { class: "help" },
+      "Volume levelling plays every track at about the same loudness, ",
       "using ReplayGain or Sound Check information where a file has it and measuring the rest the first time they play."),
     el("div", { class: "checks" },
       checkbox("level", "Even out the volume between tracks", L.on, async (on) => {
@@ -829,13 +1167,15 @@ function levelGain(trackId) {
   return Math.min(gain, ceiling);
 }
 
+// `smooth`: true eases into the new level, a number is the easing time.
 function setDeckGain(i, trackId, smooth) {
   const node = L.gains[i];
   if (!node || !L.master) return;
-  const value = levelGain(trackId);
+  const value = levelGain(trackId) * fadeMul[i];
   const now = L.ctx.currentTime;
+  const ease = smooth === true ? 0.4 : smooth || 0;
   node.gain.cancelScheduledValues(now);
-  if (smooth) node.gain.setTargetAtTime(value, now, 0.4);
+  if (ease) node.gain.setTargetAtTime(value, now, ease);
   else node.gain.setValueAtTime(value, now);
 }
 
@@ -1077,6 +1417,7 @@ function step(dir, opts = {}) {
   const m = nextMove(dir, opts);
   if (m.stop) return stopAtEnd();
   if (m.same) {
+    endFade();
     audio.currentTime = 0;
     audio.play().catch(() => {});
     return;
@@ -1087,6 +1428,7 @@ function step(dir, opts = {}) {
 
 function stopAtEnd() {
   cancelHandoff();
+  endFade();
   audio.pause();
   S.pos = -1;
   S.extra = null;
@@ -1114,6 +1456,7 @@ function stopRadio() {
 // track (lined up by preloadNext), else this one.
 function loadTrack(track, { startAt = 0, autoplay = true } = {}) {
   cancelHandoff();
+  endFade();
   stopRadio();
   const pre = otherDeck();
   if (pre.dataset.trackId === track.id && !pre.error) deckIdx = 1 - deckIdx;
@@ -1176,9 +1519,17 @@ function nextIsReady() {
 }
 
 function watchForEnd() {
-  if (handoffTimer || S.mode !== "track" || audio.paused || !audio.src) return;
+  if (handoffTimer || X.timer || S.mode !== "track" || audio.paused || !audio.src) return;
   const left = audio.duration - audio.currentTime;
-  if (!isFinite(left) || left > 0.25 || !nextIsReady()) return;
+  if (!isFinite(left) || left > Math.max(X.secs, 0.25)) return;
+  const m = nextIsReady();
+  if (!m) return;
+  const fade = crossfadeLength(m);
+  if (fade) {
+    if (left > fade) return;
+    if (left > 0.5) { handoff(left); return; }
+  }
+  if (left > 0.25) return;
   const deck = audio;
   handoffTimer = setTimeout(() => {
     handoffTimer = null;
@@ -1195,23 +1546,96 @@ function cancelHandoff() {
   handoffTimer = null;
 }
 
-function handoff() {
+// Start the lined-up track: at once (gapless), or fading in over `fade`
+// seconds while the last one fades out.
+function handoff(fade = 0) {
   const m = nextIsReady();
   if (!m) return;
   const pre = otherDeck();
   applyMove(m);
   const old = audio;
+  const oldIdx = deckIdx;
   deckIdx = 1 - deckIdx;
   audio = pre;
   if (audio.currentTime) audio.currentTime = 0;
-  // The old deck plays out its last few milliseconds, then stops for
-  // sure, even if its duration was misjudged.
-  setTimeout(() => { if (old !== audio && !old.paused) { old.pause(); preloadNext(); } }, 250);
+  if (fade) {
+    startFade(oldIdx, deckIdx, fade);
+  } else {
+    // The old deck plays out its last few milliseconds, then stops for
+    // sure, even if its duration was misjudged.
+    setTimeout(() => { if (old !== audio && !old.paused) { old.pause(); preloadNext(); } }, 250);
+  }
   setDeckGain(deckIdx, m.track.id, false);
   audio.play().catch(() => {});
   updateNow();
   markPlaying();
   queueChanged();
+}
+
+// ---------- crossfade ----------------------------------------------------
+
+// With crossfade on, the next track starts a few seconds before this one
+// ends: one fades in as the other fades out. Tracks that run into each
+// other on an album, short ones and repeat-one stay gapless, and so does
+// skipping with Next.
+const MAX_CROSSFADE = 12;
+const X = {
+  secs: Math.max(0, Math.min(MAX_CROSSFADE, Number(store("crossfade")) || 0)),
+  timer: null, from: 0, to: 1, start: 0, length: 0,
+};
+const fadeMul = [1, 1];  // each deck's share of the volume during a fade
+
+function crossfadeLength(m) {
+  if (!X.secs || S.repeat === "one" || !m || m.same) return 0;
+  const cur = current();
+  const pre = otherDeck();
+  if (!(audio.duration >= X.secs * 2) || !(pre.duration >= X.secs * 2)) return 0;
+  if (cur && cur.album && cur.album === m.track.album && (cur.artist || "") === (m.track.artist || "")) return 0;
+  return X.secs;
+}
+
+function startFade(from, to, secs) {
+  endFade();
+  Object.assign(X, { from, to, start: performance.now(), length: secs * 1000 });
+  fadeMul[to] = 0;
+  fadeMul[from] = 1;
+  applyFade();
+  X.timer = setInterval(stepFade, 50);
+}
+
+function stepFade() {
+  const t = Math.min(1, (performance.now() - X.start) / X.length);
+  // Equal-power curves keep the overall loudness steady through the fade.
+  fadeMul[X.to] = Math.sin(t * Math.PI / 2);
+  fadeMul[X.from] = Math.cos(t * Math.PI / 2);
+  applyFade();
+  if (t >= 1) endFade();
+}
+
+// Finish a fade at once: the old track stops, the new one plays at full
+// volume. Pausing, seeking or changing track mid-fade does this.
+function endFade() {
+  if (X.timer === null) return;
+  clearInterval(X.timer);
+  X.timer = null;
+  const old = decks[X.from];
+  if (old !== audio && !old.paused) old.pause();
+  fadeMul[0] = fadeMul[1] = 1;
+  applyFade();
+  preloadNext();
+}
+
+function applyFade() {
+  const v = Number(volume.value);
+  decks.forEach((d, i) => {
+    if (L.master) setDeckGain(i, d.dataset.trackId, 0.03);
+    else d.volume = v * fadeMul[i];
+  });
+}
+
+function setCrossfade(secs) {
+  X.secs = Math.max(0, Math.min(MAX_CROSSFADE, secs));
+  store("crossfade", String(X.secs));
 }
 
 // Radio plays through the player's relay, which reads the song titles
@@ -1220,6 +1644,7 @@ function handoff() {
 function playStation(st, { via = "relay", autoplay = true } = {}) {
   const sameStation = S.mode === "radio" && S.station && S.station.url === st.url;
   cancelHandoff();
+  endFade();
   S.mode = "radio";
   S.station = st;
   S.pos = -1;
@@ -1290,7 +1715,7 @@ function pauseAll() {
 
 function previous() {
   if (S.mode !== "track") return;
-  if (audio.currentTime > 3) audio.currentTime = 0;
+  if (audio.currentTime > 3) { endFade(); audio.currentTime = 0; }
   else step(-1, { userInitiated: true });
 }
 
@@ -1504,7 +1929,7 @@ for (const ev of ["play", "pause", "playing"]) {
     syncRadioCards();
   });
 }
-onAudio("pause", () => { cancelHandoff(); saveSession(); });
+onAudio("pause", () => { cancelHandoff(); endFade(); saveSession(); });
 onAudio("seeking", cancelHandoff);
 onAudio("playing", () => { if (S.mode === "radio") pollTitle(); });
 addEventListener("pagehide", () => saveSession());
@@ -1513,7 +1938,9 @@ $("#now-art").addEventListener("load", (e) => { e.target.hidden = false; });
 $("#now-art").addEventListener("error", (e) => { e.target.hidden = true; });
 
 async function quitApp() {
-  if (!confirm("Quit Station Player? Music and radio will stop.")) return;
+  const recording = activeRecordings().length > 0;
+  if (!confirm(recording ? "Quit Station Player? Music and radio will stop, and so will recording."
+    : "Quit Station Player? Music and radio will stop.")) return;
   saveSession();
   audio.pause();
   try {
@@ -1523,6 +1950,7 @@ async function quitApp() {
     return;
   }
   clearTimeout(titleTimer);
+  clearTimeout(recTimer);
   titleToken++;  // a poll already in flight must not schedule another
   const heading = el("h1", { tabindex: "-1" }, "Station Player has stopped");
   document.body.replaceChildren(el("main", { class: "stopped" },
@@ -1539,6 +1967,7 @@ seek.addEventListener("input", () => {
   if (audio.duration) $("#time-cur").textContent = fmtTime((seek.value / 1000) * audio.duration);
 });
 seek.addEventListener("change", () => {
+  endFade();
   if (audio.duration) audio.currentTime = (seek.value / 1000) * audio.duration;
   seeking = false;
 });
@@ -1549,7 +1978,7 @@ const volume = $("#volume");
 volume.value = store("volume") ?? 0.8;
 function applyVolume() {
   const v = Number(volume.value);
-  for (const d of decks) d.volume = L.master ? 1 : v;
+  decks.forEach((d, i) => { d.volume = L.master ? 1 : v * fadeMul[i]; });
   radioEl.volume = v;
   if (L.master) L.master.gain.value = v;
 }
@@ -1584,6 +2013,10 @@ $("#btn-repeat").addEventListener("click", () => {
 for (const b of document.querySelectorAll(".nav-item[data-view]")) {
   b.addEventListener("click", () => show({ type: b.dataset.view }));
 }
+$("#btn-new-playlist").addEventListener("click", async () => {
+  const pid = await newPlaylist([]);
+  if (pid) { await show({ type: "playlist", id: pid }); focusHeading(); }
+});
 
 // Library search: results show as you type.
 let searchTimer = null;
@@ -1615,8 +2048,8 @@ document.addEventListener("keydown", (e) => {
   if (e.target.closest("input, textarea, button, select, #track-menu")) return;
   if (e.key === "/") { e.preventDefault(); libSearch.focus(); libSearch.select(); }
   else if (e.code === "Space") { e.preventDefault(); togglePlay(); }
-  else if (e.code === "ArrowRight" && S.mode === "track") audio.currentTime += 10;
-  else if (e.code === "ArrowLeft" && S.mode === "track") audio.currentTime -= 10;
+  else if (e.code === "ArrowRight" && S.mode === "track") { endFade(); audio.currentTime += 10; }
+  else if (e.code === "ArrowLeft" && S.mode === "track") { endFade(); audio.currentTime -= 10; }
 });
 
 if ("mediaSession" in navigator) {

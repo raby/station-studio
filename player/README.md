@@ -19,8 +19,8 @@ Song details and cover art come from the files themselves (mp3, m4a,
 flac, ogg / opus, wav, aiff), or from a `cover.jpg` / `folder.jpg` in
 the album's folder.
 
-It runs as a small local server on your computer with a browser window as
-the UI. It needs nothing beyond Python 3.11+ and listens only on
+It runs as a small local server on your computer, shown in a window of
+its own (or a browser tab). It needs nothing beyond Python 3.11+ and listens only on
 `127.0.0.1`, so nothing is reachable from your network.
 
 ## Install and run
@@ -53,6 +53,13 @@ line: `station-player --add-shortcut`, `--start-at-login` and
 `--remove-shortcuts`. Turn them off (or run `--remove-shortcuts`)
 before `pipx uninstall station-player`.
 
+### Its own window
+
+With Google Chrome, Microsoft Edge or Brave installed, Station Player
+opens in a plain window of its own, with no tabs or address bar, kept
+separate from your browsing. Without one of them it opens in a browser
+tab. Turn the window off under **Sources & settings › App**.
+
 When started from a shortcut there's no terminal, so messages go to
 `~/.station-player/station-player.log`.
 
@@ -63,7 +70,7 @@ cd player
 python -m station_player
 ```
 
-A browser tab opens at <http://127.0.0.1:8765/>. Useful flags:
+The player opens at <http://127.0.0.1:8765/>. Useful flags:
 
 ```bash
 station-player ~/Music/Albums ~/exports/week-012.xml   # add sources on launch
@@ -104,11 +111,24 @@ read again on later scans.
   and the OS now-playing panel work through the browser's Media Session
   support.
 - Tracks play back to back with no gap between them, so mixes and live
-  albums flow straight through.
+  albums flow straight through. Or set **Crossfade** (Sources & settings
+  › Playback, up to 12 seconds) to fade each track into the next.
+  Tracks from the same album, short ones such as jingles, and repeat-one
+  stay gapless, and Next skips straight away.
 - **Up next**: the ⋯ button on a track (or right-click, or N / Q on a
   focused row) offers **Play next** and **Add to queue**. Queued tracks
   play before the rest of the playlist; **Up next** in the sidebar shows
   them, and lets you reorder, remove or clear them.
+- **My playlists**: make your own with **+** next to *My playlists* in
+  the sidebar, then add tracks from the ⋯ menu (**Add to playlist…**).
+  In one of your playlists, drag tracks to reorder them (or Alt+↑ / ↓),
+  and press Delete or use the ⋯ menu to take one out. Any playlist can
+  be copied into My playlists, and **Save as a playlist** in Up next
+  keeps the current play order. They're kept in
+  `~/.station-player/my-playlists.json`, and a track whose file moves
+  is found again by its location.
+- **Export M3U** on any playlist saves it as an `.m3u` file other
+  players (VLC, foobar2000, Winamp, Music) can open.
 - **Search library** at the top of the sidebar (or press `/`) searches
   every track in every playlist and folder by title, artist, album or
   genre.
@@ -119,10 +139,16 @@ read again on later scans.
   at about the same loudness. It uses ReplayGain or iTunes Sound Check
   information where a file has it, and otherwise measures the track in
   the browser the first time it plays (or while the track before it
-  plays) and remembers the result. Files over 20 minutes are only
+  plays) and remembers the result. Files over 12 minutes are only
   levelled when they carry that information.
 - Pausing a radio station and pressing play again reconnects to the live
   broadcast instead of resuming from where it stopped.
+- **Record** on a station card records it to a file, whether or not
+  you're listening to it, exactly as the station sends it (no
+  re-encoding). Song titles, when the station sends them, go in a text
+  file beside it. Recordings are saved in `Music/Station Player
+  Recordings` (**Open recordings folder** on the Radio page), reconnect
+  by themselves if the station drops, and stop after 12 hours.
 - Radio plays through Station Player itself, which is how it can read
   the song titles stations send (the browser can't). If a station can't
   be relayed that way, it plays directly, just without song titles.

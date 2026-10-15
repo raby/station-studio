@@ -75,7 +75,7 @@ def test_cli_hands_sources_to_a_running_copy_instead_of_saving(tmp_path, monkeyp
     sent, opened = [], []
     monkeypatch.setattr(cli, "_running_instance", lambda url: True)
     monkeypatch.setattr(cli, "_send_sources", lambda url, sources: sent.extend(sources))
-    monkeypatch.setattr(cli.webbrowser, "open", opened.append)
+    monkeypatch.setattr(cli, "open_ui", lambda url, home, own_window=True: opened.append(url))
     monkeypatch.setattr(cli, "make_server", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no second server")))
     assert cli.main([str(music)]) == 0
     assert sent == [("music", str(music.resolve()))]
@@ -154,7 +154,7 @@ def test_mac_style_launch_detaches_and_reuses_the_running_copy(tmp_path, monkeyp
     url = f"http://127.0.0.1:{port}/"
     opened = []
     monkeypatch.setattr(cli, "_detach_needed", lambda: True)
-    monkeypatch.setattr(cli.webbrowser, "open", opened.append)
+    monkeypatch.setattr(cli, "open_ui", lambda url, home, own_window=True: opened.append(url))
     monkeypatch.setenv("PYTHONPATH", str(Path(cli.__file__).resolve().parents[1]))
     try:
         assert cli.main(["--app", "--port", str(port)]) == 0
@@ -180,7 +180,7 @@ def test_app_mode_shows_the_copy_that_won_a_startup_race(monkeypatch):
     opened = []
     monkeypatch.setattr(cli, "_running_instance", lambda url: next(answers))
     monkeypatch.setattr(cli.time, "sleep", lambda s: None)
-    monkeypatch.setattr(cli.webbrowser, "open", opened.append)
+    monkeypatch.setattr(cli, "open_ui", lambda url, home, own_window=True: opened.append(url))
     monkeypatch.setattr(cli, "make_server", lambda app, port: (_ for _ in ()).throw(OSError("in use")))
     assert cli.main(["--app"]) == 0
     assert opened == ["http://127.0.0.1:8765/"]

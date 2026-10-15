@@ -10,9 +10,11 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import logging
 import re
 import socket
+import subprocess
 import sys
 import threading
 import time
@@ -22,9 +24,11 @@ from contextlib import contextmanager
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 
-from station_player import __version__, loudness, radio, updates
+from station_player import __version__, loudness, myplaylists, radio, updates
+from station_player.recorder import Recorder
+from station_player.window import browser_name, find_browser
 from station_player.config import ConfigStore
 from station_player.desktop import Desktop
 from station_player.library import Library, _short_hash
@@ -156,12 +160,17 @@ class PlayerApp:
     rebuild can never replace a newer library with a stale one.
     """
 
-    def __init__(self, store: ConfigStore, scan: bool = True, desktop: Desktop | None = None) -> None:
+    def __init__(self, store: ConfigStore, scan: bool = True, desktop: Desktop | None = None,
+                 recorder: Recorder | None = None) -> None:
         self.store = store
         self.library = Library()
         self.desktop = desktop or Desktop()
         self.tag_cache = TagCache(store.home / "tag-cache.json")
         self.loudness_store = loudness.LoudnessStore(store.home / "loudness.json")
+        self.my_playlists = myplaylists.PlaylistStore(store.home / "my-playlists.json")
+        self.recorder = recorder or Recorder(user_agent=f"StationPlayer/{__version__}")
+        # which browser the player's own window uses (None: opens in a tab)
+        self.window_browser = browser_name(find_browser())
         self.latest_version: str | None = None
         self._update_lock = threading.Lock()
         self._lock = threading.RLock()
@@ -221,15 +230,123 @@ class PlayerApp:
         stations = [{**s, "id": station_id(s["url"])} for s in config["stations"]]
         return {
             "version": __version__,
-            "playlists": lib.playlist_summaries(),
+            "playlists": lib.playlist_summaries() + self.my_summaries(),
             "stations": stations,
             "config": config,
-            "errors": self.store.warnings + list(lib.errors),
+            "errors": self.store.warnings + list(lib.errors)
+            + ([self.my_playlists.warning] if self.my_playlists.warning else []),
             "scanning": scanning,
             "desktop": self.desktop.status(),
+            "recordings": self.recorder.status(),
+            "recordings_folder": str(self.recorder.folder),
+            "window_browser": self.window_browser,
             "update": self.latest_version
             if config["check_updates"] and updates.is_newer(self.latest_version, __version__) else None,
         }
+
+    # ---- recording ---------------------------------------------------------------
+
+    def record(self, sid: str, on: bool) -> None:
+        url = self.station_url(sid)
+        if url is None:
+            raise LookupError("No such station")
+        if on:
+            name = next((s["name"] for s in self.store.config.stations if s["url"] == url), url)
+            self.recorder.start(url, name)
+        else:
+            self.recorder.stop(url)
+
+    def open_recordings_folder(self) -> None:
+        """Show the recordings folder in Finder / Explorer / the file manager."""
+        folder = self.recorder.folder
+        folder.mkdir(parents=True, exist_ok=True)
+        if sys.platform == "win32":
+            os.startfile(folder)  # type: ignore[attr-defined]
+        else:
+            subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", str(folder)],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    # ---- my playlists ---------------------------------------------------------
+
+    def _resolve(self, entry: dict) -> tuple[dict, str | None]:
+        """A playlist entry as a track (and its file), found by id, then by
+        path; a missing one keeps its name and shows as not found."""
+        lib = self.library
+        track = lib.tracks.get(entry["id"]) or lib.by_path(entry.get("path"))
+        if track is not None:
+            return track.to_json(), str(track.path) if track.path else None
+        return {
+            "id": entry["id"], "name": entry.get("name") or "Unknown track", "artist": entry.get("artist"),
+            "album": entry.get("album"), "genre": None, "duration_ms": None, "available": False,
+        }, None
+
+    def my_summaries(self) -> list[dict]:
+        out = []
+        for p in self.my_playlists.all():
+            tracks = [self._resolve(e)[0] for e in p["entries"]]
+            out.append({"id": p["id"], "name": p["name"], "kind": "mine", "source": "",
+                        "count": len(tracks), "missing": sum(1 for t in tracks if not t["available"])})
+        return sorted(out, key=lambda s: s["name"].lower())
+
+    def playlist_detail(self, pid: str) -> dict | None:
+        if not pid.startswith("mine-"):
+            return self.library.playlist_detail(pid)
+        p = self.my_playlists.get(pid)
+        if p is None:
+            return None
+        tracks = [self._resolve(e)[0] for e in p["entries"]]
+        return {"id": pid, "name": p["name"], "kind": "mine", "source": "", "count": len(tracks),
+                "missing": sum(1 for t in tracks if not t["available"]), "tracks": tracks}
+
+    def _entries(self, ids, current: list[dict] | None = None) -> list[dict]:
+        """Entries for track ids: ones already in the playlist keep what
+        they remember (so missing tracks aren't lost), others come from
+        the library; unknown ids are dropped."""
+        if not isinstance(ids, list) or len(ids) > myplaylists.MAX_ENTRIES:
+            raise ValueError("ids must be a list")
+        spare: dict[str, list[dict]] = {}
+        for e in current or []:
+            spare.setdefault(e["id"], []).append(e)
+        out = []
+        for tid in ids:
+            if not isinstance(tid, str):
+                continue
+            if spare.get(tid):
+                out.append(spare[tid].pop(0))
+                continue
+            t = self.library.tracks.get(tid)
+            if t is not None:
+                out.append({"id": t.id, "path": str(t.path) if t.path else None,
+                            "name": t.name, "artist": t.artist, "album": t.album})
+        return out
+
+    def create_playlist(self, name, ids) -> str:
+        return self.my_playlists.create(name, self._entries(ids or []))
+
+    def add_to_playlist(self, pid: str, ids) -> None:
+        self.my_playlists.add(pid, self._entries(ids))
+
+    def set_playlist_tracks(self, pid: str, ids) -> None:
+        current = self.my_playlists.get(pid)
+        if current is None:
+            raise LookupError("No such playlist")
+        self.my_playlists.set_entries(pid, self._entries(ids, current["entries"]))
+
+    def m3u(self, pid: str) -> tuple[str, str] | None:
+        """(name, text) of any playlist as an M3U file."""
+        if pid.startswith("mine-"):
+            p = self.my_playlists.get(pid)
+            if p is None:
+                return None
+            resolved = [self._resolve(e) for e in p["entries"]]
+            return p["name"], myplaylists.m3u(p["name"], [r[0] for r in resolved], [r[1] for r in resolved])
+        lib = self.library
+        pl = lib.playlists.get(pid)
+        if pl is None:
+            return None
+        tracks = [lib.tracks[t] for t in pl.track_ids]
+        return pl.name, myplaylists.m3u(pl.name, [t.to_json() for t in tracks],
+                                        [str(t.path) if t.path else None for t in tracks])
 
     # ---- new versions ------------------------------------------------------
 
@@ -259,6 +376,10 @@ class PlayerApp:
         thread = threading.Thread(target=loop, name="update-checks", daemon=True)
         thread.start()
         return thread
+
+    def set_own_window(self, on: bool) -> None:
+        with self._change(rescan=False) as cfg:
+            cfg.own_window = on
 
     def set_check_updates(self, on: bool) -> None:
         with self._change(rescan=False) as cfg:
@@ -444,6 +565,18 @@ def make_handler(app: PlayerApp):
             if self.command != "HEAD":
                 self.wfile.write(body)
 
+        def _send_download(self, body: bytes, name: str, ext: str, ctype: str):
+            safe = re.sub(r'[^\w .()-]+', "_", name, flags=re.ASCII).strip(" ._") or "playlist"
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Disposition",
+                             f"attachment; filename=\"{safe}.{ext}\"; filename*=UTF-8''{quote(name)}.{ext}")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            if self.command != "HEAD":
+                self.wfile.write(body)
+
         def _error(self, status, message):
             self._send_json({"error": message}, status)
 
@@ -473,8 +606,13 @@ def make_handler(app: PlayerApp):
             path = urlparse(self.path).path
             if path == "/api/state":
                 return self._send_json(app.state())
+            if path.startswith("/api/playlists/") and path.endswith(".m3u"):
+                found = app.m3u(path[len("/api/playlists/"):-len(".m3u")])
+                if found is None:
+                    return self._error(HTTPStatus.NOT_FOUND, "No such playlist")
+                return self._send_download(found[1].encode("utf-8"), found[0], "m3u", "audio/x-mpegurl")
             if path.startswith("/api/playlists/"):
-                detail = app.library.playlist_detail(path.rsplit("/", 1)[1])
+                detail = app.playlist_detail(path.rsplit("/", 1)[1])
                 if detail is None:
                     return self._error(HTTPStatus.NOT_FOUND, "No such playlist")
                 return self._send_json(detail)
@@ -492,6 +630,9 @@ def make_handler(app: PlayerApp):
                 if found is None:
                     return self._error(HTTPStatus.NOT_FOUND, "Track not available")
                 return self._send_json(found)
+            if path == "/api/recordings":
+                return self._send_json({"recordings": app.recorder.status(),
+                                        "folder": str(app.recorder.folder)})
             if path == "/api/nowplaying":
                 sid = parse_qs(urlparse(self.path).query).get("station", [""])[0]
                 url = app.station_url(sid)
@@ -656,8 +797,43 @@ def make_handler(app: PlayerApp):
                         if not isinstance(data["check_updates"], bool):
                             raise ValueError("check_updates must be true or false")
                         app.set_check_updates(data["check_updates"])
+                    if "own_window" in data:
+                        if not isinstance(data["own_window"], bool):
+                            raise ValueError("own_window must be true or false")
+                        app.set_own_window(data["own_window"])
+                elif path == "/api/my-playlists":
+                    pid = app.create_playlist(data.get("name"), data.get("ids"))
+                    return self._send_json({**app.state(), "created": pid})
+                elif path.startswith("/api/my-playlists/"):
+                    parts = path.split("/")
+                    if len(parts) != 5:
+                        return self._error(HTTPStatus.NOT_FOUND, "Not found")
+                    pid, action = parts[3], parts[4]
+                    try:
+                        if action == "rename":
+                            app.my_playlists.rename(pid, data.get("name"))
+                        elif action == "delete":
+                            app.my_playlists.delete(pid)
+                        elif action == "add":
+                            app.add_to_playlist(pid, data.get("ids"))
+                        elif action == "set":
+                            app.set_playlist_tracks(pid, data.get("ids"))
+                        else:
+                            return self._error(HTTPStatus.NOT_FOUND, "Not found")
+                    except LookupError:
+                        return self._error(HTTPStatus.NOT_FOUND, "No such playlist")
+                elif path == "/api/record":
+                    if not isinstance(data.get("on"), bool):
+                        raise ValueError("on must be true or false")
+                    try:
+                        app.record(str(data.get("station", "")), data["on"])
+                    except LookupError:
+                        return self._error(HTTPStatus.NOT_FOUND, "No such station")
+                elif path == "/api/recordings/open":
+                    app.open_recordings_folder()
                 elif path == "/api/quit":
                     self._send_json({"ok": True})
+                    app.recorder.stop_all()  # close recordings cleanly
                     threading.Thread(target=self.server.shutdown, daemon=True).start()
                     return
                 else:

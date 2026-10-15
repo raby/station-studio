@@ -10,11 +10,11 @@ import subprocess
 import sys
 import time
 import urllib.request
-import webbrowser
 from pathlib import Path
 
 from station_player import __version__
 from station_player.config import ConfigStore, get_home
+from station_player.window import open_ui
 from station_player.desktop import Desktop
 from station_player.library import AUDIO_EXTENSIONS
 from station_player.server import API_HEADER, PlayerApp, make_server
@@ -133,6 +133,11 @@ def _log_to_file() -> None:
     logging.basicConfig(level=logging.INFO, handlers=[handler], force=True)
 
 
+def _show(url: str, store: ConfigStore | None = None) -> None:
+    store = store or ConfigStore()
+    open_ui(url, store.home, own_window=store.config.own_window)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="station-player",
@@ -190,13 +195,13 @@ def main(argv: list[str] | None = None) -> int:
         _send_sources(url, sources)
         print(f"Station Player is already running on {url}")
         if not args.no_browser:
-            webbrowser.open(url)
+            _show(url)
         return 0
 
     if args.app and not args.no_browser and _detach_needed():
         if not _start_detached(args.port, args.sources, url):
             return 1
-        webbrowser.open(url)
+        _show(url)
         return 0
 
     store = ConfigStore()
@@ -220,7 +225,7 @@ def main(argv: list[str] | None = None) -> int:
         # the other copy won the port, so show that one.
         if args.app and _wait_for_instance(url, 5):
             if not args.no_browser:
-                webbrowser.open(url)
+                _show(url, store)
             return 0
         print(f"Could not listen on port {args.port}: {exc}", file=sys.stderr)
         logging.error("Could not listen on port %s: %s", args.port, exc)
@@ -239,12 +244,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.app:
         logging.info("Station Player %s started on %s", __version__, url)
     if not args.no_browser:
-        webbrowser.open(url)
+        _show(url, store)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
+        app.recorder.stop_all()
         server.server_close()
     return 0
 

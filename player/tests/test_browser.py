@@ -271,3 +271,193 @@ def test_reordering_the_queue_keeps_focus(page):
     page.keyboard.press("Enter")
     assert page.evaluate("S.upNext.map(t => t.name)") == ["Quiet", "Three"]
     assert page.evaluate("document.activeElement.getAttribute('aria-label')") == "Move Quiet down"
+
+
+# ---- 0.4.0: my playlists, crossfade, recording, own window ----------------
+
+def answer_prompts(page, *answers):
+    """Answer the next prompt() dialogs in turn; confirm() gets True."""
+    queue = list(answers)
+    seen = []
+
+    def handle(dialog):
+        seen.append(dialog.message)
+        if dialog.type == "prompt":
+            dialog.accept(queue.pop(0))
+        else:
+            dialog.accept()
+    page.on("dialog", handle)
+    return seen
+
+
+def row_names(page):
+    return page.locator("#view tbody tr td.title").all_inner_texts()
+
+
+def open_menu(page, index):
+    row = page.locator("#view tbody tr").nth(index)
+    row.hover()
+    row.locator(".row-more").click()
+
+
+def test_make_and_edit_a_playlist(page):
+    answer_prompts(page, "Road trip", "Evenings")
+    page.locator("#btn-new-playlist").click()
+    page.wait_for_selector("#view h1:has-text('Road trip')")
+    assert "This playlist is empty" in page.locator("#view").inner_text()
+    page.locator("#nav-folders .nav-item").first.click()
+    page.wait_for_selector("#view tbody tr")
+    for i in (1, 0, 2):
+        open_menu(page, i)
+        page.locator("#track-menu button", has_text="Add to playlist…").click()
+        page.locator("#track-menu button", has_text="Road trip").click()
+    page.locator("#nav-mine .nav-item", has_text="Road trip").click()
+    page.wait_for_selector("#view h1:has-text('Road trip')")
+    page.wait_for_function("() => document.querySelectorAll('#view tbody tr').length === 3")
+    assert row_names(page) == ["Two", "One", "Three"]
+    assert page.locator("#nav-mine .count").inner_text() == "3"
+
+    # Alt+Up moves a track and keeps it focused; Delete removes one.
+    page.locator("#view tbody tr").nth(1).focus()
+    page.keyboard.press("Alt+ArrowUp")
+    page.wait_for_function("() => document.querySelector('#view tbody tr td.title').textContent === 'One'")
+    assert row_names(page) == ["One", "Two", "Three"]
+    assert page.evaluate("document.activeElement.querySelector('td.title').textContent") == "One"
+    page.keyboard.press("Delete")
+    page.wait_for_function("() => document.querySelectorAll('#view tbody tr').length === 2")
+    assert row_names(page) == ["Two", "Three"]
+
+    # Drag "Three" above "Two".
+    rows = page.locator("#view tbody tr")
+    rows.nth(1).drag_to(rows.nth(0), target_position={"x": 20, "y": 2})
+    page.wait_for_function("() => document.querySelector('#view tbody tr td.title').textContent === 'Three'")
+
+    page.locator("#view button", has_text="Rename").click()
+    page.wait_for_selector("#view h1:has-text('Evenings')")
+    assert page.locator("#nav-mine .nav-item", has_text="Evenings").count() == 1
+
+    href = page.locator("#view a", has_text="Export M3U").get_attribute("href")
+    m3u = page.evaluate("async (h) => (await fetch(h)).text()", href)
+    assert m3u.startswith("#EXTM3U\n#PLAYLIST:Evenings\n") and "03 Three.wav" in m3u
+
+    page.locator("#view button", has_text="Delete").click()
+    page.wait_for_function("() => !document.querySelector('#nav-mine .nav-item')")
+
+
+def test_copy_a_playlist_and_save_the_queue(page):
+    answer_prompts(page, "My copy", "Saved queue")
+    page.locator("#view button", has_text="Copy to My playlists").click()
+    page.wait_for_selector("#view h1:has-text('My copy')")
+    assert row_names(page) == ["One", "Two", "Three", "Quiet"]
+    rows = page.locator("#view tbody tr")
+    rows.nth(1).dblclick()
+    rows.nth(3).focus()
+    page.keyboard.press("n")
+    page.locator(".nav-item[data-view=upnext]").click()
+    page.locator("#view button", has_text="Save as a playlist").click()
+    page.wait_for_selector("#view h1:has-text('Saved queue')")
+    assert row_names(page) == ["Two", "Quiet", "Three", "Quiet"]  # in play order
+
+
+def test_missing_tracks_can_be_removed_from_my_playlists(page, player):
+    app, _, tmp = player
+    ids = [t["id"] for t in app.library.playlist_detail(app.library.playlist_summaries()[0]["id"])["tracks"]]
+    app.create_playlist("Mix", ids[:2])
+    (tmp / "Music" / "01 One.wav").unlink()
+    app.rescan()
+    page.reload()
+    page.locator("#nav-mine .nav-item").first.click()
+    page.wait_for_selector("#view tbody tr.missing")
+    open_menu(page, 0)
+    items = page.locator("#track-menu button").all_inner_texts()
+    assert items == ["Move down", "Remove from this playlist"]
+    page.locator("#track-menu button", has_text="Remove").click()
+    page.wait_for_function("() => document.querySelectorAll('#view tbody tr').length === 1")
+    assert row_names(page) == ["Two"]
+
+
+def test_crossfade(page):
+    page.evaluate("localStorage.setItem('sp.crossfade', '0.6')")
+    page.reload()
+    page.wait_for_selector("#view tbody tr")
+    page.evaluate("""() => {
+      window.fades = [];
+      setInterval(() => { if (X.timer) fades.push([performance.now(), decks.map(d => d.paused ? null : d.volume)]); }, 20);
+    }""")
+    page.locator("#view tbody tr").first.dblclick()
+    page.wait_for_function("() => current().name === 'Two' && X.timer === null && fades.length > 0", timeout=10000)
+    fades = page.evaluate("fades")
+    span = fades[-1][0] - fades[0][0]
+    assert 350 < span < 900, span
+    # Both tracks play during the fade, at less than full volume, the
+    # new one rising and the old one falling.
+    middle = [v for _, v in fades if None not in v and 0.05 < min(v)]
+    assert middle, fades
+    assert all(max(v) < 0.8 for v in middle)
+    assert fades[0][1][0] == pytest.approx(0.8, abs=0.1) or fades[0][1][1] == pytest.approx(0.8, abs=0.1)
+    page.wait_for_timeout(100)
+    assert page.evaluate("decks.filter(d => !d.paused).length") == 1
+    assert page.evaluate("audio.volume") == pytest.approx(0.8)
+
+
+def test_pausing_during_a_crossfade_stops_both_tracks(page):
+    page.evaluate("localStorage.setItem('sp.crossfade', '0.6')")
+    page.reload()
+    page.wait_for_selector("#view tbody tr")
+    page.locator("#view tbody tr").first.dblclick()
+    page.wait_for_function("() => X.timer !== null", timeout=10000, polling=10)
+    page.locator("#btn-play").click()
+    assert page.evaluate("decks.every(d => d.paused)")
+    assert page.evaluate("X.timer === null && fadeMul.every(m => m === 1)")
+    assert page.evaluate("current().name") == "Two"
+    page.locator("#btn-play").click()
+    page.wait_for_function("() => !audio.paused && audio.volume > 0.79")
+
+
+def test_crossfade_setting(page):
+    page.locator(".nav-item[data-view=settings]").click()
+    slider = page.locator("#crossfade")
+    slider.focus()
+    for _ in range(4):
+        page.keyboard.press("ArrowRight")
+    assert page.locator("output[for=crossfade]").inner_text() == "4 s"
+    assert page.evaluate("localStorage.getItem('sp.crossfade')") == "4"
+
+
+def test_record_a_station(page, player):
+    from station_player.recorder import Recorder
+    from test_recorder import FakeStream, Opener
+
+    app, _, tmp = player
+    app.recorder = Recorder(tmp / "rec", opener=Opener(FakeStream(b"x" * 1000, live=True)))
+    page.locator(".nav-item[data-view=radio]").click()
+    card = page.locator(".card", has_text="Test FM")
+    card.locator(".rec-btn").click()
+    page.wait_for_function("() => document.querySelector('#rec-status').textContent.includes('Recording Test FM')")
+    page.wait_for_function("() => document.querySelector('.card .rec').textContent.includes('MB')")
+    assert card.locator(".rec-btn").inner_text() == "■ Stop recording"
+    seen = []
+    page.once("dialog", lambda d: (seen.append(d.message), d.dismiss()))
+    page.locator("#btn-quit").click()
+    assert "recording" in seen[0]
+    card.locator(".rec-btn").click()
+    page.wait_for_function("() => document.querySelector('.card .rec').textContent.startsWith('Saved Test FM')")
+    assert page.locator("#rec-status").is_hidden()
+    assert len(list((tmp / "rec").glob("Test FM *.mp3"))) == 1
+
+
+def test_own_window_setting(page, player):
+    app, _, _ = player
+    app.window_browser = None
+    page.locator(".nav-item[data-view=settings]").click()
+    assert page.locator("input[data-key=window]").count() == 0
+    assert "Microsoft Edge" in page.locator("#view").inner_text()
+    app.window_browser = "Google Chrome"
+    page.reload()
+    page.wait_for_selector("#view")
+    page.locator(".nav-item[data-view=settings]").click()
+    box = page.locator("input[data-key=window]")
+    assert box.is_checked()
+    box.uncheck()
+    page.wait_for_function("() => S.lib.config.own_window === false")
+    assert app.store.config.own_window is False

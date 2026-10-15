@@ -173,6 +173,7 @@ class Library:
         # to find tracks whose iTunes Location points somewhere else.
         self._by_filename: dict[str, list[Path]] = {}
         self._search_text: dict[str, str] = {}  # track id -> what search looks in
+        self._by_path: dict[str, Track] | None = None
 
     # ---- loading --------------------------------------------------------
 
@@ -188,6 +189,7 @@ class Library:
         self.errors.clear()
         self._by_filename.clear()
         self._search_text.clear()
+        self._by_path = None
         remaps = remaps or []
 
         folder_files: list[tuple[Path, list[Path]]] = []
@@ -386,6 +388,18 @@ class Library:
         out = pl.summary(self.tracks)
         out["tracks"] = [self.tracks[t].to_json() for t in pl.track_ids]
         return out
+
+    def by_path(self, path: str | None) -> Track | None:
+        """The library's track for a file, if it has one."""
+        if not path:
+            return None
+        if self._by_path is None:
+            index: dict[str, Track] = {}
+            for t in self.tracks.values():
+                if t.path is not None:
+                    index.setdefault(str(t.path), t)
+            self._by_path = index
+        return self._by_path.get(path)
 
     def tracks_json(self, ids: list[str]) -> list[dict]:
         """The tracks still in the library, in the order asked for."""
