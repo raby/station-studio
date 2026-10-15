@@ -12,7 +12,13 @@
     <aside class="sidebar" aria-label="Library">
       <div class="brand">Station Player</div>
       <div id="busy" class="busy-note" role="status" hidden>Updating library…</div>
+      <div class="lib-search" role="search">
+        <input type="search" id="lib-search" placeholder="Search library  ( / )" aria-label="Search your whole library" autocomplete="off">
+      </div>
       <nav>
+        <ul class="nav-list">
+          <li><button type="button" class="nav-item" data-view="upnext"><span>Up next</span><span class="count" id="upnext-count"></span></button></li>
+        </ul>
         <h2>Playlists</h2>
         <ul id="nav-itunes" class="nav-list"></ul>
         <h2>Folders</h2>
@@ -27,6 +33,7 @@
           <li><button type="button" class="nav-item" id="btn-quit">Quit Station Player</button></li>
         </ul>
       </nav>
+      <div id="update" class="update-note" role="status" hidden></div>
     </aside>
 
     <main class="main" id="main" tabindex="-1">
@@ -62,6 +69,7 @@
       </div>
     </footer>
   </div>
+  <div id="track-menu" class="track-menu" role="menu" hidden></div>
   <div id="announce" class="sr-only" aria-live="polite"></div>
   <script src="/app.js"></script>
 </body>

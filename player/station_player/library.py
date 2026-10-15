@@ -172,6 +172,7 @@ class Library:
         # filename (lowercased) -> paths, from scanned music folders; used
         # to find tracks whose iTunes Location points somewhere else.
         self._by_filename: dict[str, list[Path]] = {}
+        self._search_text: dict[str, str] = {}  # track id -> what search looks in
 
     # ---- loading --------------------------------------------------------
 
@@ -186,6 +187,7 @@ class Library:
         self.playlists.clear()
         self.errors.clear()
         self._by_filename.clear()
+        self._search_text.clear()
         remaps = remaps or []
 
         folder_files: list[tuple[Path, list[Path]]] = []
@@ -384,3 +386,32 @@ class Library:
         out = pl.summary(self.tracks)
         out["tracks"] = [self.tracks[t].to_json() for t in pl.track_ids]
         return out
+
+    def tracks_json(self, ids: list[str]) -> list[dict]:
+        """The tracks still in the library, in the order asked for."""
+        return [self.tracks[t].to_json() for t in ids if t in self.tracks]
+
+    def search(self, query: str, limit: int = 300) -> dict:
+        """Tracks whose title, artist, album or genre contain every word of
+        `query`. The same file listed in several playlists (or weekly
+        exports) is returned once."""
+        words = name_key(query).split()
+        if not words:
+            return {"tracks": [], "total": 0}
+        found: list[dict] = []
+        seen: set = set()
+        total = 0
+        for t in self.tracks.values():
+            hay = self._search_text.get(t.id)
+            if hay is None:
+                hay = self._search_text[t.id] = name_key(" ".join(v for v in (t.name, t.artist, t.album, t.genre) if v))
+            if not all(w in hay for w in words):
+                continue
+            key = str(t.path) if t.path else (t.name, t.artist, t.album)
+            if key in seen:
+                continue
+            seen.add(key)
+            total += 1
+            if len(found) < limit:
+                found.append(t.to_json())
+        return {"tracks": found, "total": total}

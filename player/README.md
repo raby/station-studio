@@ -103,11 +103,36 @@ read again on later scans.
   skip 10 seconds. Keyboard media keys
   and the OS now-playing panel work through the browser's Media Session
   support.
+- Tracks play back to back with no gap between them, so mixes and live
+  albums flow straight through.
+- **Up next**: the ⋯ button on a track (or right-click, or N / Q on a
+  focused row) offers **Play next** and **Add to queue**. Queued tracks
+  play before the rest of the playlist; **Up next** in the sidebar shows
+  them, and lets you reorder, remove or clear them.
+- **Search library** at the top of the sidebar (or press `/`) searches
+  every track in every playlist and folder by title, artist, album or
+  genre.
+- Close the window and open it again and Station Player is where you
+  left it: the same playlist, queue and track, paused at the same point
+  (or the same radio station). Press play to carry on.
+- **Volume levelling** (Sources & settings › Playback) plays every track
+  at about the same loudness. It uses ReplayGain or iTunes Sound Check
+  information where a file has it, and otherwise measures the track in
+  the browser the first time it plays (or while the track before it
+  plays) and remembers the result. Files over 20 minutes are only
+  levelled when they carry that information.
 - Pausing a radio station and pressing play again reconnects to the live
   broadcast instead of resuming from where it stopped.
 - Radio plays through Station Player itself, which is how it can read
   the song titles stations send (the browser can't). If a station can't
   be relayed that way, it plays directly, just without song titles.
+
+## New versions
+
+Once a day Station Player asks pypi.org for the newest version number
+(nothing else is sent). When there's a newer one, the sidebar says so;
+update with `pipx upgrade station-player` and restart it. Turn this off
+under Sources & settings › App.
 
 ## A note on Station Studio's example stations
 
@@ -122,6 +147,10 @@ generates carry each track's file location through to this player.
 cd player
 python -m pytest
 ```
+
+`tests/test_browser.py` drives the page in Chromium and is skipped unless
+Playwright is installed (`pip install playwright && python -m playwright
+install chromium`).
 
 ### Releasing
 

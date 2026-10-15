@@ -15,6 +15,7 @@ import re
 import socket
 import sys
 import threading
+import time
 import urllib.error
 import urllib.request
 from contextlib import contextmanager
@@ -23,7 +24,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from station_player import __version__, radio
+from station_player import __version__, loudness, radio, updates
 from station_player.config import ConfigStore
 from station_player.desktop import Desktop
 from station_player.library import Library, _short_hash
@@ -160,6 +161,9 @@ class PlayerApp:
         self.library = Library()
         self.desktop = desktop or Desktop()
         self.tag_cache = TagCache(store.home / "tag-cache.json")
+        self.loudness_store = loudness.LoudnessStore(store.home / "loudness.json")
+        self.latest_version: str | None = None
+        self._update_lock = threading.Lock()
         self._lock = threading.RLock()
         self._scan_lock = threading.Lock()  # one disk scan at a time
         self._generation = 0
@@ -223,7 +227,65 @@ class PlayerApp:
             "errors": self.store.warnings + list(lib.errors),
             "scanning": scanning,
             "desktop": self.desktop.status(),
+            "update": self.latest_version
+            if config["check_updates"] and updates.is_newer(self.latest_version, __version__) else None,
         }
+
+    # ---- new versions ------------------------------------------------------
+
+    def check_for_update(self, fetch=None) -> threading.Thread | None:
+        """Look for a newer release in the background (when allowed)."""
+        if not self.store.config.check_updates:
+            return None
+
+        def work():
+            kwargs = {"fetch": fetch} if fetch else {}
+            with self._update_lock:  # one check at a time
+                self.latest_version = updates.latest_version(self.store.home / "update-check.json", **kwargs)
+
+        worker = threading.Thread(target=work, name="update-check", daemon=True)
+        worker.start()
+        return worker
+
+    def keep_checking_for_updates(self) -> threading.Thread:
+        """Check now and then daily: it may run at login for weeks."""
+        def loop():
+            while True:
+                worker = self.check_for_update()
+                if worker:
+                    worker.join()
+                time.sleep(updates.CHECK_EVERY)
+
+        thread = threading.Thread(target=loop, name="update-checks", daemon=True)
+        thread.start()
+        return thread
+
+    def set_check_updates(self, on: bool) -> None:
+        with self._change(rescan=False) as cfg:
+            cfg.check_updates = on
+        if on:
+            self.check_for_update()
+
+    # ---- volume levelling ------------------------------------------------------
+
+    def loudness(self, track_id: str) -> dict | None:
+        """How loud a track is: from its tags, else a remembered
+        measurement. None for unknown tracks; {"lufs": None} when it
+        still needs measuring."""
+        track = self.library.tracks.get(track_id)
+        if track is None or track.path is None:
+            return None
+        tags = self.tag_cache.get(track.path)
+        return (loudness.from_tags(tags.gain_db, tags.peak)
+                or self.loudness_store.get(track.path)
+                or {"lufs": None, "peak": None, "source": None})
+
+    def set_loudness(self, track_id: str, lufs, peak) -> None:
+        track = self.library.tracks.get(track_id)
+        if track is None or track.path is None:
+            raise LookupError("No such track")
+        lufs, peak = loudness.valid(lufs, peak)
+        self.loudness_store.put(track.path, lufs, peak)
 
     # ---- radio -----------------------------------------------------------
 
@@ -422,6 +484,14 @@ def make_handler(app: PlayerApp):
                 return self._serve_art(path.rsplit("/", 1)[1], head_only)
             if path.startswith("/radio/"):
                 return self._serve_radio(path.rsplit("/", 1)[1], head_only)
+            if path == "/api/search":
+                query = parse_qs(urlparse(self.path).query).get("q", [""])[0]
+                return self._send_json(app.library.search(query[:200]))
+            if path.startswith("/api/loudness/"):
+                found = app.loudness(path.rsplit("/", 1)[1])
+                if found is None:
+                    return self._error(HTTPStatus.NOT_FOUND, "Track not available")
+                return self._send_json(found)
             if path == "/api/nowplaying":
                 sid = parse_qs(urlparse(self.path).query).get("station", [""])[0]
                 url = app.station_url(sid)
@@ -570,6 +640,22 @@ def make_handler(app: PlayerApp):
                             app.desktop.set_login(bool(data["login"]))
                     except OSError as exc:
                         return self._error(HTTPStatus.INTERNAL_SERVER_ERROR, f"Couldn't change shortcuts: {exc}")
+                elif path == "/api/tracks":
+                    ids = data.get("ids")
+                    if not isinstance(ids, list) or len(ids) > 40_000:
+                        raise ValueError("ids must be a list")
+                    return self._send_json({"tracks": app.library.tracks_json([i for i in ids if isinstance(i, str)])})
+                elif path == "/api/loudness":
+                    try:
+                        app.set_loudness(str(data.get("id", "")), data.get("lufs"), data.get("peak"))
+                    except LookupError:
+                        return self._error(HTTPStatus.NOT_FOUND, "Track not available")
+                    return self._send_json({"ok": True})
+                elif path == "/api/settings":
+                    if "check_updates" in data:
+                        if not isinstance(data["check_updates"], bool):
+                            raise ValueError("check_updates must be true or false")
+                        app.set_check_updates(data["check_updates"])
                 elif path == "/api/quit":
                     self._send_json({"ok": True})
                     threading.Thread(target=self.server.shutdown, daemon=True).start()
