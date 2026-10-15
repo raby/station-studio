@@ -12,6 +12,7 @@ import csv
 import io
 import json
 import logging
+import math
 import threading
 from datetime import date, datetime
 from pathlib import Path
@@ -90,7 +91,8 @@ class PlayLog:
         details: dict[str, object] = {}
         count = 0
         for e in self.entries(first, last):
-            if not isinstance(e.get("seconds"), (int, float)) or e["seconds"] < MIN_SECONDS:
+            seconds = e.get("seconds")
+            if not isinstance(seconds, (int, float)) or not math.isfinite(seconds) or seconds < MIN_SECONDS:
                 continue
             path = e.get("path")
             if isinstance(path, str) and path not in details:
@@ -100,11 +102,13 @@ class PlayLog:
                     details[path] = None
             tags = details.get(path) if isinstance(path, str) else None
             duration = e.get("duration_ms")
+            if not isinstance(duration, (int, float)) or not math.isfinite(duration):
+                duration = None
             writer.writerow([_cell(v) for v in (
                 e["at"].strftime("%Y-%m-%d"), e["at"].strftime("%H:%M:%S"),
                 e.get("title"), e.get("artist"), e.get("album"),
                 tags and tags.composer, tags and tags.label, tags and tags.isrc,
-                _clock(duration / 1000) if isinstance(duration, (int, float)) else "",
+                _clock(duration / 1000) if duration is not None else "",
                 _clock(e["seconds"]),
             )])
             count += 1

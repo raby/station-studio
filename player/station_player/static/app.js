@@ -1828,7 +1828,7 @@ function endFade() {
 }
 
 function applyFade() {
-  const v = Number(volume.value);
+  const v = playVolume();
   decks.forEach((d, i) => {
     if (L.master) setDeckGain(i, d.dataset.trackId, 0.03);
     else d.volume = v * fadeMul[i];
@@ -1844,6 +1844,7 @@ function setCrossfade(secs) {
 // stations send. If the relay can't handle a station, the browser plays
 // the station's own URL instead (no song titles then).
 function playStation(st, { via = "relay", autoplay = true } = {}) {
+  if (SLEEP.track) setSleep(0);  // "after this track" doesn't apply to a station
   const sameStation = S.mode === "radio" && S.station && S.station.url === st.url;
   cancelHandoff();
   endFade();
@@ -2190,10 +2191,12 @@ seek.addEventListener("change", () => {
 // gains and the slider sets the master gain.
 const volume = $("#volume");
 volume.value = store("volume") ?? 0.8;
-// volMul fades the volume for the sleep timer (down) and the alarm (up).
-let volMul = 1;
+// The sleep timer fades the volume down at its end, the alarm up at its
+// start; each has its own share, so one can't undo the other.
+const volMul = { sleep: 1, alarm: 1 };
+const playVolume = () => Number(volume.value) * volMul.sleep * volMul.alarm;
 function applyVolume() {
-  const v = Number(volume.value) * volMul;
+  const v = playVolume();
   decks.forEach((d, i) => { d.volume = L.master ? 1 : v * fadeMul[i]; });
   radioEl.volume = v;
   if (L.master) L.master.gain.value = v;
@@ -2366,7 +2369,15 @@ setInterval(() => {
   }
   meter.last = now;
 }, 250);
-addEventListener("pagehide", flushMeter);
+addEventListener("pagehide", () => {
+  flushMeter();
+  // Tell the player this window has gone, so the alarm or the phone remote
+  // opens a new one rather than waiting for it.
+  fetch("/api/page-closed", {
+    method: "POST", keepalive: true,
+    headers: { "Content-Type": "application/json", "X-Station-Player": "1" }, body: "{}",
+  }).catch(() => {});
+});
 
 // ---------- sleep timer ---------------------------------------------------
 
@@ -2377,12 +2388,12 @@ const SLEEP_FADE = 20;
 function setSleep(minutes) {
   clearInterval(SLEEP.timer);
   Object.assign(SLEEP, { at: 0, track: false, timer: null });
-  if (minutes === "track") SLEEP.track = true;
+  if (minutes === "track") SLEEP.track = S.mode !== "radio";  // a station has no end
   else if (Number(minutes) > 0) {
     SLEEP.at = Date.now() + Number(minutes) * 60000;
     SLEEP.timer = setInterval(sleepTick, 250);
   }
-  if (volMul !== 1 && !ALARM.timer) { volMul = 1; applyVolume(); }
+  if (volMul.sleep !== 1) { volMul.sleep = 1; applyVolume(); }
   if (SLEEP.track) preloadNext();
   syncSleep();
 }
@@ -2398,7 +2409,7 @@ function sleepTick() {
     return;
   }
   const mul = Math.min(1, left / SLEEP_FADE);
-  if (mul !== volMul) { volMul = mul; applyVolume(); }
+  if (mul !== volMul.sleep) { volMul.sleep = mul; applyVolume(); }
   syncSleep();
 }
 function syncSleep() {
@@ -2431,16 +2442,16 @@ const ALARM = { timer: null };
 const ALARM_FADE = 60;
 async function alarmGoesOff(req, fresh) {
   if (!req || String(req.seq) === store("alarm-seq")) return;
-  store("alarm-seq", String(req.seq));
+  store("alarm-seq", String(req.seq));  // unique across restarts of the player
   if (req.age > (fresh ? 120 : 300)) return;  // long past: the computer was asleep
   try { await loadState(); } catch { return; }
   setSleep(0);
   clearInterval(ALARM.timer);
-  volMul = 0.02;
+  volMul.alarm = 0.02;
   applyVolume();
   const played = await playSource(req.source.kind, req.source.id).catch(() => false);
   if (!played) {
-    volMul = 1;
+    volMul.alarm = 1;
     applyVolume();
     renderErrors(`The alarm couldn't play ${req.source.name || "its playlist"}: it isn't in the library any more.`);
     return;
@@ -2448,9 +2459,9 @@ async function alarmGoesOff(req, fresh) {
   announce(`Alarm: playing ${req.source.name || ""}`);
   const start = Date.now();
   ALARM.timer = setInterval(() => {
-    volMul = Math.min(1, 0.02 + (Date.now() - start) / 1000 / ALARM_FADE);
+    volMul.alarm = Math.min(1, 0.02 + (Date.now() - start) / 1000 / ALARM_FADE);
     applyVolume();
-    if (volMul >= 1) { clearInterval(ALARM.timer); ALARM.timer = null; }
+    if (volMul.alarm >= 1) { clearInterval(ALARM.timer); ALARM.timer = null; }
   }, 250);
 }
 

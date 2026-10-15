@@ -71,6 +71,16 @@ def test_play_log_export(running):
     call(port, "POST", "/api/played", {"id": tid, "started": start.timestamp() * 1000, "seconds": 60})
     assert len(app.play_log.entries(date(2026, 9, 1), date(2026, 9, 30))) == 2
     assert call(port, "POST", "/api/played", {"id": tid, "started": "x", "seconds": 1})[0] == 400
+    # NaN (which JSON parsing accepts) is refused, and never breaks the export.
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+    conn.request("POST", "/api/played", body='{"id": "%s", "started": 1, "seconds": NaN}' % tid,
+                 headers={"Host": f"127.0.0.1:{port}", "Content-Type": "application/json", "X-Station-Player": "1"})
+    assert conn.getresponse().status == 400
+    conn.close()
+    with app.play_log.path.open("a") as fh:
+        fh.write('{"at": "2026-09-15T10:00:00+00:00", "seconds": NaN, "duration_ms": NaN}\n'
+                 '{"at": "2026-09-15T11:00:00+00:00", "seconds": 40, "duration_ms": NaN}\n')
+    assert call(port, "GET", "/api/playlog.csv?from=2026-09-01&to=2026-09-30")[0] == 200
 
 
 def test_play_log_reads_reporting_tags_and_survives_damage(tmp_path):
@@ -117,13 +127,40 @@ def test_alarm_goes_off_once_on_its_days(running):
     assert opened == [1]                                      # no window was open: one opens
     _, _, body = call(port, "GET", "/api/inbox")
     alarm = json.loads(body)["alarm"]
-    assert alarm["source"]["id"] == "abc" and alarm["seq"] == 1
+    assert alarm["source"]["id"] == "abc"
+    # A restart doesn't reuse the number (the page remembers the last one it
+    # played), and doesn't set off an alarm that has already gone off.
+    again = PlayerApp(app.store, scan=False)
+    assert not again.check_alarm(monday.replace(minute=33))
+    assert again.check_alarm(datetime(2026, 10, 14, 7, 30))
+    assert again.alarm_request["seq"] != alarm["seq"]
     assert not app.check_alarm(datetime(2026, 10, 13, 7, 40))  # ten minutes late: skipped
     assert not app.check_alarm(datetime(2026, 10, 17, 7, 30))  # Saturday
     assert app.check_alarm(datetime(2026, 10, 13, 7, 30))
     assert opened == [1]  # the page has checked in since: it plays there
     app.set_alarm({**ALARM, "on": False})
     assert not app.check_alarm(datetime(2026, 10, 14, 7, 30))
+
+
+def test_alarm_in_the_hour_the_clocks_skip(monkeypatch):
+    import os
+    import time as _time
+    if not hasattr(_time, "tzset"):
+        pytest.skip("needs time.tzset")
+    monkeypatch.setenv("TZ", "Europe/London")
+    _time.tzset()
+    try:
+        app = PlayerApp(ConfigStore(), scan=False)
+        # 29 March 2026: UK clocks go from 01:00 to 02:00 (a Sunday).
+        app.store.config.alarm = {**ALARM, "time": "01:30", "days": [6]}
+        assert app.check_alarm(datetime(2026, 3, 29, 2, 0, 15))
+        app._alarm_fired = None
+        app.store.config.alarm = {**ALARM, "time": "06:30", "days": [6]}
+        assert not app.check_alarm(datetime(2026, 3, 29, 7, 0))  # an ordinary time: 30 minutes late is too late
+    finally:
+        monkeypatch.undo()
+        _time.tzset()
+    assert os.environ.get("TZ") != "Europe/London"
 
 
 def test_alarm_just_before_midnight():
@@ -170,6 +207,8 @@ def test_phone_remote_end_to_end(running, monkeypatch):
         assert call(rport, "GET", path)[0] == 404, path
     assert call(rport, "POST", base + "api/command", {"cmd": "next"}, {"X-Station-Player": "0"})[0] == 404
     assert call(rport, "POST", base + "api/command", {"cmd": "nope"})[0] == 400
+    assert call(rport, "POST", base + "api/command", {"cmd": "next"}, {"Content-Length": "-1"})[0] == 400
+    assert remote.RemoteServer.__init__ and app.remote_server.httpd.RequestHandlerClass.timeout == 10
 
     view = json.loads(call(rport, "GET", base + "api/status")[2])
     assert view["page_open"] is False and view["playlists"][0]["name"] == "Week 1"

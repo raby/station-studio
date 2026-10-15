@@ -588,7 +588,7 @@ def test_sleep_timer(page):
     assert page.locator("#sleep").input_value() == "on"
     assert "Sleep in 1 min" in page.locator("#sleep option[value=on]").inner_text()
     page.wait_for_function("() => audio.paused && SLEEP.at === 0", timeout=5000)
-    assert page.evaluate("volMul") == 1 and page.evaluate("audio.volume") == pytest.approx(0.8)
+    assert page.evaluate("volMul.sleep") == 1 and page.evaluate("audio.volume") == pytest.approx(0.8)
     assert not errors
 
 
@@ -598,7 +598,11 @@ def test_alarm_plays_and_fades_in(page, player):
     pid = next(iter(app.library.playlists))
     app.alarm_request = {"seq": 1, "source": {"kind": "playlist", "id": pid, "name": "Music"}, "at": _time.time()}
     page.wait_for_function("() => !audio.paused && S.mode === 'track'", timeout=5000)
-    assert page.evaluate("ALARM.timer !== null && volMul < 0.2")
+    assert page.evaluate("ALARM.timer !== null && volMul.alarm < 0.2")
+    # A sleep timer set meanwhile (a snooze) doesn't undo the fade-in.
+    page.evaluate("setSleep(15)")
+    page.wait_for_timeout(600)
+    assert page.evaluate("audio.volume") < 0.2
     assert page.evaluate("audio.volume") < 0.2
     # It plays once, not again on the next check.
     page.evaluate("pauseAll()")

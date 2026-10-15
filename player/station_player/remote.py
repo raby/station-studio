@@ -97,6 +97,7 @@ class RemoteServer:
 def _make_handler(app):
     class Handler(BaseHTTPRequestHandler):
         server_version = "StationPlayerRemote"
+        timeout = 10  # a connection that sends nothing doesn't hold a thread
         sys_version = ""
 
         def log_message(self, fmt, *args):
@@ -161,7 +162,7 @@ def _make_handler(app):
                 return self._not_found()
             try:
                 length = int(self.headers.get("Content-Length") or 0)
-                if length > 4096:
+                if length < 0 or length > 4096:
                     raise ValueError("Too long")
                 data = json.loads(self.rfile.read(length) or b"{}")
                 if not isinstance(data, dict):

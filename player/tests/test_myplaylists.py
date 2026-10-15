@@ -199,17 +199,21 @@ def test_open_files_from_the_file_manager(running):
     app, port, tmp = running
     loose = write_wav(tmp / "Downloads" / "Demo Song.wav")
     status, found = post(port, "/api/open", {"paths": [str(loose), str(tmp / "notes.txt"), 5]})
-    assert status == 200 and found["playlist"] == "opened" and found["seq"] == 1
+    assert status == 200 and found["playlist"] == "opened"
+    first = found["seq"]
     assert found["page_open"] is False
     detail = json.loads(get(port, "/api/playlists/opened")[1])
     assert detail["name"] == "Opened files" and [t["name"] for t in detail["tracks"]] == ["Demo Song"]
     assert detail["tracks"][0]["id"] == found["track"]
     inbox = json.loads(get(port, "/api/inbox")[1])
-    assert inbox["open"]["seq"] == 1 and inbox["open"]["age"] < 5
+    assert inbox["open"]["seq"] == first and inbox["open"]["age"] < 5
     # A page is now checking in; later files join the same playlist.
     other = write_wav(tmp / "Downloads" / "Other.wav")
     status, found = post(port, "/api/open", {"paths": [str(other)]})
-    assert found["seq"] == 2 and found["page_open"] is True
+    assert found["seq"] > first and found["page_open"] is True
+    # The window closing says so: the next file opens a new window.
+    post(port, "/api/page-closed", {})
+    assert not app.page_open()
     # Opened files survive a rescan.
     app.rescan()
     assert [t["name"] for t in app.playlist_detail("opened")["tracks"]] == ["Demo Song", "Other"]

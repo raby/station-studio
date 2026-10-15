@@ -12,6 +12,7 @@ import copy
 import json
 import os
 import logging
+import math
 import re
 import socket
 import subprocess
@@ -190,7 +191,13 @@ class PlayerApp:
         self.play_log = PlayLog(store.home / "play-log.jsonl")
         # The alarm going off: what the page plays (same pattern as open_request).
         self.alarm_request: dict | None = None
-        self._alarm_fired: str | None = None  # "YYYY-MM-DD HH:MM" it last went off for
+        # The time it last went off for ("YYYY-MM-DD HH:MM"), kept on disk so a
+        # restart just after an alarm doesn't set it off again.
+        self._alarm_file = store.home / "alarm-fired.txt"
+        try:
+            self._alarm_fired: str | None = self._alarm_file.read_text(encoding="utf-8").strip() or None
+        except OSError:
+            self._alarm_fired = None
         # Opens a player window (set by __main__; None in tests).
         self.show_window = None
         # Phone remote: its server, commands waiting for the page, and the
@@ -312,7 +319,8 @@ class PlayerApp:
             self.opened = [f for f in self.opened if f not in files] + files
             del self.opened[:-self.MAX_OPENED]
             self.library = self.library.with_opened(self.opened, self.tag_cache)
-            seq = (self.open_request or {}).get("seq", 0) + 1
+            # Unique across restarts: the page remembers the last one it played.
+            seq = max(time.time_ns(), (self.open_request or {}).get("seq", 0) + 1)
             self.open_request = {"seq": seq, "playlist": OPENED_ID,
                                  "track": _short_hash("file", str(files[0])), "at": time.time()}
             return dict(self.open_request)
@@ -332,8 +340,13 @@ class PlayerApp:
         return out
 
     def page_open(self) -> bool:
-        """Whether a player page has checked in during the last few seconds."""
-        return time.time() - self.page_seen < 5
+        """Whether a player page is open: it checks in every second, but a
+        hidden window's timers can be slowed to once a minute, so allow
+        for that. A window that closes says so (`page_closed`)."""
+        return time.time() - self.page_seen < 70
+
+    def page_closed(self) -> None:
+        self.page_seen = 0.0
 
     # ---- play log ---------------------------------------------------------------
 
@@ -341,7 +354,8 @@ class PlayerApp:
         """The page reports a track it played: when it started (ms since
         1970) and how many seconds were listened to."""
         if not isinstance(track_id, str) or not isinstance(started, (int, float)) \
-                or not isinstance(seconds, (int, float)) or isinstance(seconds, bool):
+                or not isinstance(seconds, (int, float)) or isinstance(seconds, bool) \
+                or not math.isfinite(seconds) or not math.isfinite(started):
             raise ValueError("id, started and seconds are needed")
         if not self.store.config.play_log or seconds <= 0:
             return
@@ -379,14 +393,21 @@ class PlayerApp:
         for days_back in (0, 1):  # an alarm at 23:58 is still due at 00:01
             due = (now - timedelta(days=days_back)).replace(hour=hour, minute=minute, second=0, microsecond=0)
             key = due.strftime("%Y-%m-%d %H:%M")
-            if due.weekday() in alarm["days"] and timedelta(0) <= now - due < timedelta(minutes=5) \
+            # A time the clocks skip (spring forward) goes off once they have.
+            late = timedelta(minutes=65 if _skipped(due) else 5)
+            if due.weekday() in alarm["days"] and timedelta(0) <= now - due < late \
                     and key != self._alarm_fired:
                 break
         else:
             return False
         self._alarm_fired = key
+        try:
+            self._alarm_file.parent.mkdir(parents=True, exist_ok=True)
+            self._alarm_file.write_text(key, encoding="utf-8")
+        except OSError as exc:
+            logger.warning("Could not save the alarm time: %s", exc)
         with self._lock:
-            seq = (self.alarm_request or {}).get("seq", 0) + 1
+            seq = max(time.time_ns(), (self.alarm_request or {}).get("seq", 0) + 1)
             self.alarm_request = {"seq": seq, "source": dict(alarm["source"]), "at": time.time()}
         logger.info("Alarm: playing %s", alarm["source"].get("name") or alarm["source"]["id"])
         if not self.page_open():
@@ -749,6 +770,14 @@ class PlayerApp:
             cfg.stations[:] = [s for s in cfg.stations if s.get("url") != url]
 
 
+def _skipped(local: datetime) -> bool:
+    """Whether a local time doesn't exist (skipped when the clocks go forward)."""
+    try:
+        return datetime.fromtimestamp(local.timestamp()).replace(tzinfo=None) != local
+    except (OverflowError, OSError, ValueError):
+        return False
+
+
 def station_id(url: str) -> str:
     return _short_hash("station", url)
 
@@ -1068,6 +1097,9 @@ def make_handler(app: PlayerApp):
                         app.set_alarm(data["alarm"])
                 elif path == "/api/played":
                     app.played(data.get("id"), data.get("started"), data.get("seconds"))
+                    return self._send_json({"ok": True})
+                elif path == "/api/page-closed":
+                    app.page_closed()
                     return self._send_json({"ok": True})
                 elif path == "/api/remote/status":
                     app.set_player_status(data)
