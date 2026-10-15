@@ -69,6 +69,11 @@ def player(tmp_path):
     server.server_close()
 
 
+def open_settings(page, tab):
+    page.locator(".nav-item[data-view=settings]").click()
+    page.locator(f"#tab-{tab}").click()
+
+
 @pytest.fixture
 def page(browser, player):
     ctx = browser.new_context()
@@ -195,7 +200,7 @@ def test_library_search(page):
 
 def test_volume_levelling_measures_and_evens_out_tracks(page, player):
     app, _, tmp = player
-    page.locator(".nav-item[data-view=settings]").click()
+    open_settings(page, "playback")
     page.locator("input[data-key=level]").check()
     page.locator("#nav-folders .nav-item").first.click()
     page.locator("#view tbody tr").nth(3).dblclick()  # the quiet one
@@ -416,7 +421,7 @@ def test_pausing_during_a_crossfade_stops_both_tracks(page):
 
 
 def test_crossfade_setting(page):
-    page.locator(".nav-item[data-view=settings]").click()
+    open_settings(page, "playback")
     slider = page.locator("#crossfade")
     slider.focus()
     for _ in range(4):
@@ -438,7 +443,7 @@ def test_record_a_station(page, player):
     card.locator(".rec-btn").click()
     page.wait_for_function("() => document.querySelector('#rec-status').textContent.includes('Recording Test FM')")
     page.wait_for_function("() => document.querySelector('.card .rec').textContent.includes('MB')")
-    assert card.locator(".rec-btn").inner_text() == "■ Stop recording"
+    assert card.locator(".rec-btn").inner_text() == "Stop recording"
     seen = []
     page.once("dialog", lambda d: (seen.append(d.message), d.dismiss()))
     page.locator("#btn-quit").click()
@@ -465,13 +470,13 @@ def test_own_window_setting(page, player):
     app.window_browser = None  # the page loaded with whatever this machine has
     page.reload()
     page.wait_for_selector("#view")
-    page.locator(".nav-item[data-view=settings]").click()
+    open_settings(page, "app")
     assert page.locator("input[data-key=window]").count() == 0
     assert "Microsoft Edge" in page.locator("#view").inner_text()
     app.window_browser = "Google Chrome"
     page.reload()
     page.wait_for_selector("#view")
-    page.locator(".nav-item[data-view=settings]").click()
+    open_settings(page, "app")
     box = page.locator("input[data-key=window]")
     assert box.is_checked()
     box.uncheck()
@@ -518,7 +523,7 @@ def test_a_window_opened_for_a_file_plays_it(browser, player):
 
 
 def test_install_as_an_app(page):
-    page.locator(".nav-item[data-view=settings]").click()
+    open_settings(page, "app")
     assert page.locator("#btn-install").count() == 0
     page.evaluate("""() => {
       const e = new Event("beforeinstallprompt", { cancelable: true });
@@ -634,7 +639,7 @@ def test_alarm_play_log_and_remote_settings(page, player):
     app.store.config.remote_port = 0
     errors = []
     page.on("pageerror", lambda e: errors.append(str(e)))
-    page.locator(".nav-item[data-view=settings]").click()
+    open_settings(page, "alarm")
     page.locator("#alarm-time").fill("06:45")
     page.locator("#alarm-on").check()
     page.get_by_role("button", name="Save alarm").click()
@@ -650,8 +655,10 @@ def test_alarm_play_log_and_remote_settings(page, player):
     }""")
     assert nxt == [6, 17, 6, 45]  # Saturday 17 October
     assert page.evaluate("nextAlarm({ on: true, time: '13:00', days: [3] }, new Date(2026, 9, 15, 12, 0)).getDate()") == 15
+    page.locator("#tab-log").click()
     href = page.locator("#log-download").get_attribute("href")
     assert href.startswith("/api/playlog.csv?from=") and "&to=" in href
+    page.locator("#tab-remote").click()
     page.locator("input[data-key=remote]").check()
     page.wait_for_function("() => S.lib.remote && S.lib.remote.on")
     if page.evaluate("S.lib.remote.url"):  # the test machine is on a network
