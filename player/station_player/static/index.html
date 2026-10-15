@@ -70,6 +70,15 @@
         </div>
       </div>
       <div class="volume">
+        <select id="sleep" class="sleep" aria-label="Sleep timer" title="Sleep timer">
+          <option value="">Sleep: off</option>
+          <option value="15">Sleep in 15 min</option>
+          <option value="30">Sleep in 30 min</option>
+          <option value="45">Sleep in 45 min</option>
+          <option value="60">Sleep in 1 hour</option>
+          <option value="90">Sleep in 1½ hours</option>
+          <option value="track">Sleep after this track</option>
+        </select>
         <span aria-hidden="true">🔊</span>
         <input type="range" id="volume" min="0" max="1" step="0.01" value="0.8" aria-label="Volume">
       </div>

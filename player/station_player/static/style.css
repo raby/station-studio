@@ -259,3 +259,22 @@ body.offline { display: grid; place-items: center; min-height: 100vh; margin: 0;
 .offline-box { text-align: center; max-width: 32em; padding: 24px; }
 .offline-box h1 { font-size: 22px; margin: 12px 0 4px; }
 .offline-box p { color: var(--muted); }
+
+/* Sleep timer, in the player bar. */
+.sleep, .field select, .field input {
+  font: inherit; font-size: 13px; background: var(--panel); color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px; padding: 4px 6px;
+}
+.sleep { max-width: 11em; color: var(--muted); }
+.sleep.on { color: var(--accent); border-color: var(--accent); }
+
+/* Alarm, play log and phone remote settings. */
+.fields { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: end; margin: 10px 0; }
+.field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
+.days { display: flex; flex-wrap: wrap; gap: 4px 10px; border: 0; padding: 0; margin: 0; }
+.days legend { font-size: 13px; color: var(--muted); padding: 0; margin-bottom: 4px; }
+.days label { display: inline-flex; gap: 4px; align-items: center; color: var(--text); }
+.remote-box { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; margin: 10px 0; }
+.remote-box img { width: 180px; height: 180px; background: #fff; border-radius: 8px; }
+.remote-link { word-break: break-all; font-family: ui-monospace, monospace; font-size: 13px; }
+a.btn { color: var(--text); text-decoration: none; display: inline-block; }

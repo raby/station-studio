@@ -6,6 +6,7 @@ import math
 import os
 import struct
 import threading
+import time
 import wave
 from pathlib import Path
 
@@ -557,3 +558,96 @@ def test_window_opened_while_the_player_is_off_starts_it_and_waits(browser, tmp_
         ctx.close()
         server.shutdown()
         server.server_close()
+
+
+def test_plays_are_logged_for_the_play_log(page, player):
+    from datetime import date
+    app = player[0]
+    page.locator("#view tbody tr").first.dblclick()
+    page.wait_for_function("() => current() && current().name === 'Two'", timeout=10000)
+    today = date.today()
+    deadline = time.monotonic() + 5
+    while not app.play_log.entries(today, today) and time.monotonic() < deadline:
+        time.sleep(0.1)
+    [entry] = app.play_log.entries(today, today)
+    assert entry["title"] == "One" and 1 <= entry["seconds"] <= 3
+
+
+def test_sleep_timer(page):
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    # After this track: it plays to the end, then the next one waits, paused.
+    page.locator("#sleep").select_option("track")
+    page.locator("#view tbody tr").first.dblclick()
+    page.wait_for_function("() => current().name === 'Two' && audio.paused && !SLEEP.track", timeout=10000)
+    assert page.evaluate("decks.every(d => d.paused)")
+    assert page.locator("#sleep").input_value() == ""
+    # In a number of minutes (here a second and a half): fades, then stops.
+    page.locator("#btn-play").click()
+    page.evaluate("setSleep(0.025)")
+    assert page.locator("#sleep").input_value() == "on"
+    assert "Sleep in 1 min" in page.locator("#sleep option[value=on]").inner_text()
+    page.wait_for_function("() => audio.paused && SLEEP.at === 0", timeout=5000)
+    assert page.evaluate("volMul") == 1 and page.evaluate("audio.volume") == pytest.approx(0.8)
+    assert not errors
+
+
+def test_alarm_plays_and_fades_in(page, player):
+    import time as _time
+    app = player[0]
+    pid = next(iter(app.library.playlists))
+    app.alarm_request = {"seq": 1, "source": {"kind": "playlist", "id": pid, "name": "Music"}, "at": _time.time()}
+    page.wait_for_function("() => !audio.paused && S.mode === 'track'", timeout=5000)
+    assert page.evaluate("ALARM.timer !== null && volMul < 0.2")
+    assert page.evaluate("audio.volume") < 0.2
+    # It plays once, not again on the next check.
+    page.evaluate("pauseAll()")
+    page.wait_for_timeout(1500)
+    assert page.evaluate("audio.paused")
+
+
+def test_phone_remote_commands_reach_the_page(page, player):
+    app = player[0]
+    app.store.config.remote = True
+    page.evaluate("loadState()")
+    pid = next(iter(app.library.playlists))
+    app.remote_command({"cmd": "playlist", "id": pid})
+    page.wait_for_function("() => !audio.paused && S.mode === 'track'", timeout=5000)
+    app.remote_command({"cmd": "volume", "value": 0.25})
+    page.wait_for_function("() => Number($('#volume').value) === 0.25", timeout=5000)
+    deadline = time.monotonic() + 5
+    while app.player_status.get("volume") != 0.25 and time.monotonic() < deadline:
+        time.sleep(0.1)
+    assert app.player_status["playing"] is True and app.player_status["title"]
+    app.remote_command({"cmd": "toggle"})
+    page.wait_for_function("() => audio.paused", timeout=5000)
+    app.remote_command({"cmd": "sleep", "minutes": 30})
+    page.wait_for_function("() => SLEEP.at > 0", timeout=5000)
+
+
+def test_alarm_play_log_and_remote_settings(page, player):
+    app = player[0]
+    app.store.config.remote_port = 0
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.locator(".nav-item[data-view=settings]").click()
+    page.locator("#alarm-time").fill("06:45")
+    page.locator("#alarm-on").check()
+    page.get_by_role("button", name="Save alarm").click()
+    page.wait_for_function("() => S.lib.config.alarm && S.lib.config.alarm.on")
+    alarm = app.store.config.alarm
+    assert alarm["time"] == "06:45" and alarm["days"] == [0, 1, 2, 3, 4] and alarm["source"]["kind"] == "playlist"
+    assert page.locator("#alarm-on").is_checked()
+    href = page.locator("#log-download").get_attribute("href")
+    assert href.startswith("/api/playlog.csv?from=") and "&to=" in href
+    page.locator("input[data-key=remote]").check()
+    page.wait_for_function("() => S.lib.remote && S.lib.remote.on")
+    if page.evaluate("S.lib.remote.url"):  # the test machine is on a network
+        page.wait_for_function("() => { const i = document.querySelector('.remote-box img'); return i && i.naturalWidth > 0; }")
+        old = app.store.config.remote_token
+        page.locator("#btn-new-link").click()
+        page.wait_for_function(f"() => !S.lib.remote.url.includes({old!r})")
+    page.locator("input[data-key=remote]").uncheck()
+    page.wait_for_function("() => !S.lib.remote.on")
+    assert app.remote_server is None
+    assert not errors

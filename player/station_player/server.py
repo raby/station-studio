@@ -21,12 +21,15 @@ import time
 import urllib.error
 import urllib.request
 from contextlib import contextmanager
+from datetime import date, datetime, timedelta
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlparse
 
-from station_player import __version__, loudness, myplaylists, radio, updates
+from station_player import __version__, loudness, myplaylists, qr, radio, remote, updates
+from station_player.config import clean_alarm
+from station_player.playlog import PlayLog
 from station_player.recorder import Recorder
 from station_player.window import browser_name, find_browser
 from station_player.config import ConfigStore
@@ -184,6 +187,19 @@ class PlayerApp:
         self.opened: list[Path] = []
         self.open_request: dict | None = None
         self.page_seen = 0.0  # when a page last checked for requests
+        self.play_log = PlayLog(store.home / "play-log.jsonl")
+        # The alarm going off: what the page plays (same pattern as open_request).
+        self.alarm_request: dict | None = None
+        self._alarm_fired: str | None = None  # "YYYY-MM-DD HH:MM" it last went off for
+        # Opens a player window (set by __main__; None in tests).
+        self.show_window = None
+        # Phone remote: its server, commands waiting for the page, and the
+        # page's latest report of what's playing.
+        self.remote_server: remote.RemoteServer | None = None
+        self.remote_error: str | None = None
+        self.remote_commands: list[dict] = []
+        self.player_status: dict = {}
+        self._window_asked = 0.0
         if scan:
             self._rebuild()
 
@@ -246,6 +262,7 @@ class PlayerApp:
             "recordings": self.recorder.status(),
             "recordings_folder": str(self.recorder.folder),
             "window_browser": self.window_browser,
+            "remote": self.remote_info(),
             "update": self.latest_version
             if config["check_updates"] and updates.is_newer(self.latest_version, __version__) else None,
         }
@@ -301,14 +318,174 @@ class PlayerApp:
             return dict(self.open_request)
 
     def inbox(self) -> dict:
-        """What a page polls: the latest open request, and how old it is."""
-        self.page_seen = time.time()
-        req = self.open_request
-        return {"open": {**req, "age": time.time() - req["at"]} if req else None}
+        """What a page polls: the latest open request and alarm (with how
+        old they are), and commands from the phone remote, which are
+        handed to the first page that asks."""
+        now = time.time()
+        self.page_seen = now
+        with self._lock:
+            commands = [c for c in self.remote_commands if now - c["at"] < 60]
+            self.remote_commands = []
+        out = {"commands": commands}
+        for key, req in (("open", self.open_request), ("alarm", self.alarm_request)):
+            out[key] = {**req, "age": now - req["at"]} if req else None
+        return out
 
     def page_open(self) -> bool:
         """Whether a player page has checked in during the last few seconds."""
         return time.time() - self.page_seen < 5
+
+    # ---- play log ---------------------------------------------------------------
+
+    def played(self, track_id, started, seconds) -> None:
+        """The page reports a track it played: when it started (ms since
+        1970) and how many seconds were listened to."""
+        if not isinstance(track_id, str) or not isinstance(started, (int, float)) \
+                or not isinstance(seconds, (int, float)) or isinstance(seconds, bool):
+            raise ValueError("id, started and seconds are needed")
+        if not self.store.config.play_log or seconds <= 0:
+            return
+        track = self.library.tracks.get(track_id)
+        if track is None:
+            return
+        try:
+            when = datetime.fromtimestamp(started / 1000)
+        except (ValueError, OverflowError, OSError):
+            raise ValueError("started is not a time") from None
+        self.play_log.add(when, min(float(seconds), 24 * 3600), {
+            "title": track.name, "artist": track.artist, "album": track.album,
+            "duration_ms": track.duration_ms, "path": str(track.path) if track.path else None})
+
+    def set_play_log(self, on: bool) -> None:
+        with self._change(rescan=False) as cfg:
+            cfg.play_log = on
+
+    # ---- alarm ----------------------------------------------------------------
+
+    def set_alarm(self, value) -> None:
+        alarm = clean_alarm(value)
+        with self._change(rescan=False) as cfg:
+            cfg.alarm = alarm
+
+    def check_alarm(self, now: datetime | None = None) -> bool:
+        """Set the alarm off if it's due: at its time, or up to five minutes
+        late (the computer was busy or just woke). Opens a window when
+        none is open. Returns whether it went off."""
+        alarm = self.store.config.alarm
+        if not alarm or not alarm.get("on"):
+            return False
+        now = now or datetime.now()
+        hour, minute = map(int, alarm["time"].split(":"))
+        for days_back in (0, 1):  # an alarm at 23:58 is still due at 00:01
+            due = (now - timedelta(days=days_back)).replace(hour=hour, minute=minute, second=0, microsecond=0)
+            key = due.strftime("%Y-%m-%d %H:%M")
+            if due.weekday() in alarm["days"] and timedelta(0) <= now - due < timedelta(minutes=5) \
+                    and key != self._alarm_fired:
+                break
+        else:
+            return False
+        self._alarm_fired = key
+        with self._lock:
+            seq = (self.alarm_request or {}).get("seq", 0) + 1
+            self.alarm_request = {"seq": seq, "source": dict(alarm["source"]), "at": time.time()}
+        logger.info("Alarm: playing %s", alarm["source"].get("name") or alarm["source"]["id"])
+        if not self.page_open():
+            self._open_window()
+        return True
+
+    def watch_alarm(self) -> threading.Thread:
+        def loop():
+            while True:
+                try:
+                    self.check_alarm()
+                except Exception:
+                    logger.exception("Alarm check failed")
+                time.sleep(15)
+
+        thread = threading.Thread(target=loop, name="alarm", daemon=True)
+        thread.start()
+        return thread
+
+    def _open_window(self) -> None:
+        if self.show_window and time.time() - self._window_asked > 20:
+            self._window_asked = time.time()
+            try:
+                self.show_window()
+            except Exception:
+                logger.exception("Could not open a player window")
+
+    # ---- phone remote -----------------------------------------------------------
+
+    def set_remote(self, on: bool) -> None:
+        with self._change(rescan=False) as cfg:
+            cfg.remote = on
+            if on and not cfg.remote_token:
+                cfg.remote_token = remote.new_token()
+        self.apply_remote()
+
+    def new_remote_link(self) -> None:
+        with self._change(rescan=False) as cfg:
+            cfg.remote_token = remote.new_token()
+
+    def apply_remote(self) -> None:
+        """Start or stop the remote's server to match the settings."""
+        cfg = self.store.config
+        with self._lock:
+            running = self.remote_server
+            if cfg.remote and cfg.remote_token and running is None:
+                try:
+                    self.remote_server = remote.RemoteServer(self, cfg.remote_port)
+                    self.remote_error = None
+                except OSError as exc:
+                    self.remote_error = f"The phone remote couldn't start on port {cfg.remote_port}: {exc}"
+                    logger.warning(self.remote_error)
+            elif not cfg.remote:
+                self.remote_server = None
+                self.remote_error = None
+        if running is not None and not cfg.remote:
+            running.stop()
+
+    def remote_info(self) -> dict:
+        cfg = self.store.config
+        address = remote.lan_address() if self.remote_server else None
+        url = (f"http://{address}:{self.remote_server.port}/r/{cfg.remote_token}/"
+               if address and self.remote_server else None)
+        return {"on": cfg.remote, "url": url, "error": self.remote_error,
+                "network": address is not None or not self.remote_server}
+
+    def remote_command(self, command: dict) -> None:
+        with self._lock:
+            self.remote_commands.append({**command, "at": time.time()})
+            del self.remote_commands[:-20]
+        if not self.page_open():
+            self._open_window()
+
+    def set_player_status(self, data: dict) -> None:
+        status = {}
+        for key in ("mode", "title", "artist", "album", "station", "track", "queue"):
+            if isinstance(data.get(key), str):
+                status[key] = data[key][:300]
+        for key in ("playing",):
+            if isinstance(data.get(key), bool):
+                status[key] = data[key]
+        for key in ("volume", "position", "duration", "sleep_left"):
+            if isinstance(data.get(key), (int, float)) and not isinstance(data.get(key), bool):
+                status[key] = data[key]
+        if data.get("sleep_left") == "track":
+            status["sleep_left"] = "track"
+        self.player_status = status
+
+    def remote_view(self) -> dict:
+        """What the phone shows: what's playing, and what it can play."""
+        with self._lock:
+            lib = self.library
+        return {
+            "page_open": self.page_open(),
+            "status": self.player_status if self.page_open() else {},
+            "playlists": [{"id": p["id"], "name": p["name"], "kind": p["kind"]}
+                          for p in self.my_summaries() + lib.playlist_summaries()],
+            "stations": [{"id": station_id(s["url"]), "name": s["name"]} for s in self.store.config.stations],
+        }
 
     def play_recording(self, file: str) -> dict:
         """Put a finished recording in the library (the recordings folder
@@ -691,6 +868,29 @@ def make_handler(app: PlayerApp):
                 return self._send_json(found)
             if path == "/api/inbox":
                 return self._send_json(app.inbox())
+            if path == "/api/playlog.csv":
+                q = parse_qs(urlparse(self.path).query)
+                try:
+                    first = date.fromisoformat(q.get("from", [""])[0])
+                    last = date.fromisoformat(q.get("to", [""])[0])
+                except ValueError:
+                    return self._error(HTTPStatus.BAD_REQUEST, "from and to must be dates (YYYY-MM-DD)")
+                body, _count = app.play_log.csv(first, last)
+                return self._send_download(body.encode("utf-8-sig"), f"Play log {first} to {last}",
+                                           "csv", "text/csv; charset=utf-8")
+            if path == "/api/remote/qr.svg":
+                info = app.remote_info()
+                if not info["url"]:
+                    return self._error(HTTPStatus.NOT_FOUND, "The phone remote is off")
+                body = qr.svg(info["url"]).encode()
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", "image/svg+xml")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                if not head_only:
+                    self.wfile.write(body)
+                return None
             if path == "/api/recordings":
                 return self._send_json({"recordings": app.recorder.status(),
                                         "folder": str(app.recorder.folder)})
@@ -858,10 +1058,22 @@ def make_handler(app: PlayerApp):
                         if not isinstance(data["check_updates"], bool):
                             raise ValueError("check_updates must be true or false")
                         app.set_check_updates(data["check_updates"])
-                    if "own_window" in data:
-                        if not isinstance(data["own_window"], bool):
-                            raise ValueError("own_window must be true or false")
-                        app.set_own_window(data["own_window"])
+                    for key, apply in (("own_window", app.set_own_window), ("play_log", app.set_play_log),
+                                       ("remote", app.set_remote)):
+                        if key in data:
+                            if not isinstance(data[key], bool):
+                                raise ValueError(f"{key} must be true or false")
+                            apply(data[key])
+                    if "alarm" in data:
+                        app.set_alarm(data["alarm"])
+                elif path == "/api/played":
+                    app.played(data.get("id"), data.get("started"), data.get("seconds"))
+                    return self._send_json({"ok": True})
+                elif path == "/api/remote/status":
+                    app.set_player_status(data)
+                    return self._send_json({"ok": True})
+                elif path == "/api/remote/new-link":
+                    app.new_remote_link()
                 elif path == "/api/my-playlists":
                     pid = app.create_playlist(data.get("name"), data.get("ids"))
                     return self._send_json({**app.state(), "created": pid})

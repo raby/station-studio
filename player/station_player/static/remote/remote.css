@@ -1,0 +1,40 @@
+:root {
+  --bg: #121417; --panel: #1a1d22; --border: #2d323a; --text: #e8eaed;
+  --muted: #9aa1ab; --accent: #f0a63a; --accent-text: #1a1206;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f6f6f4; --panel: #ffffff; --border: #dddcd7; --text: #1d1d1b;
+    --muted: #6b6a66; --accent: #c46d00; --accent-text: #ffffff;
+    color-scheme: light;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font: 16px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+main { max-width: 480px; margin: 0 auto; padding: 16px; }
+.note { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
+.now { text-align: center; }
+.now img { width: 220px; height: 220px; max-width: 70vw; max-height: 70vw; object-fit: cover; border-radius: 10px; }
+h1 { font-size: 20px; margin: 12px 0 2px; overflow-wrap: anywhere; }
+h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 24px 0 6px; }
+.sub { color: var(--muted); margin: 0; overflow-wrap: anywhere; }
+.buttons { display: flex; justify-content: center; gap: 18px; margin: 18px 0; }
+button {
+  font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--border);
+  border-radius: 999px; width: 60px; height: 60px; font-size: 22px; cursor: pointer;
+}
+button.play { width: 76px; height: 76px; background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+button:disabled { opacity: 0.4; }
+.row { display: flex; align-items: center; gap: 12px; margin: 12px 0; color: var(--muted); }
+.row input { flex: 1; accent-color: var(--accent); }
+.row select { flex: 1; font: inherit; background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 8px; }
+.list { list-style: none; margin: 0; padding: 0; }
+.list button {
+  width: 100%; height: auto; border-radius: 8px; text-align: left; font-size: 16px;
+  padding: 12px 14px; margin: 4px 0;
+}
+.list button.on { border-color: var(--accent); color: var(--accent); }

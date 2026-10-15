@@ -275,6 +275,11 @@ def main(argv: list[str] | None = None) -> int:
     # Serve straight away; the library fills in as the scan finishes.
     app.scan_in_background(on_done=report_scan)
     app.keep_checking_for_updates()
+    # The alarm opens a window if none is open when it goes off; so do
+    # commands from the phone remote.
+    app.show_window = lambda: _show(url, store)
+    app.watch_alarm()
+    app.apply_remote()
     # A shortcut made by an older version is brought up to date (for Open With).
     threading.Thread(target=_refresh_shortcut, args=(app,), daemon=True).start()
     print(f"Station Player {__version__} on {url}  (Ctrl+C or Quit in the app to stop)")
@@ -289,6 +294,8 @@ def main(argv: list[str] | None = None) -> int:
         pass
     finally:
         app.recorder.stop_all()
+        if app.remote_server:
+            app.remote_server.stop()
         server.server_close()
     return 0
 
