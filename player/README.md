@@ -197,10 +197,35 @@ read again on later scans.
 - **Sleep timer**: the menu beside the volume stops playback after 15
   minutes to an hour and a half (fading out over the last 20 seconds),
   or at the end of the track playing.
-- **Alarm** (Settings › Alarm & sleep): wake up to a playlist or a
-  station at a set time on chosen days, fading in over a minute.
-  Station Player has to be running then (turn on *Start at login*) and
-  the computer awake; if no player window is open, one opens.
+
+## Finding radio stations
+
+**Find stations** on the Radio page searches
+[Radio Browser](https://www.radio-browser.info), a free community
+directory of tens of thousands of stations. It opens on the most popular
+ones; search by name, pick a genre or a country, or sort by most played.
+Each result shows the station's logo, country, genres and stream
+quality: **Listen** plays it straight away, and **Add** puts it in your
+stations, where it can be recorded and set as an alarm. Searches, and the
+logos, go to radio-browser.info through Station Player; nothing else is
+sent.
+
+## Clock and alarms
+
+**Clock & alarms** in the sidebar shows a big clock (digits, or a
+clock face) with today's date and the next alarm.
+
+- **Alarms**: up to 10, each with a time, the days it repeats, a label
+  and a playlist or station to wake up to. Switch each on and off
+  without deleting it. They fade in over a minute.
+- When one goes off, a full-screen alarm shows **Snooze 9 min** and
+  **Stop** (or Escape to turn the alarm off and keep the music playing).
+  The phone remote gets the same two buttons.
+- **Night mode** fills the screen with a dim clock for the bedside and
+  keeps the screen awake. Click or press any key to leave it.
+
+Station Player has to be running at alarm time (turn on *Start at
+login*) and the computer awake; if no player window is open, one opens.
 
 ## Play log (PRS / PPL returns)
 
@@ -217,14 +242,15 @@ there too.
 
 ## Phone remote
 
-Turn on **Phone remote** (Settings › Phone remote) and scan the QR code with
-a phone on the same Wi-Fi: it shows what's playing and has play/pause,
-next, previous, volume, the sleep timer, and your playlists and
-stations. The sound still plays on the computer. It's a separate small
-server on port 8766, reachable only through the secret link; **Make a
-new link** stops the old one working. The first time, your computer may
-ask whether to let Station Player (or Python) accept incoming
-connections: allow it, or the phone can't connect.
+Turn on **Phone remote** (Settings › Phone remote) and scan the QR code
+with a phone on the same Wi-Fi: it shows what's playing and has
+play/pause, next, previous, volume, the sleep timer, and your playlists
+and stations, and Snooze / Stop when an alarm goes off. The sound still
+plays on the computer. It's a separate small server on port 8766,
+reachable only through the secret link; **Make a new link** stops the
+old one working. The first time, your computer may ask whether to let
+Station Player (or Python) accept incoming connections: allow it, or the
+phone can't connect.
 
 ## New versions
 

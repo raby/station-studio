@@ -3,6 +3,7 @@ playback, the queue, resuming, library search, volume levelling and the
 new-version notice. Skipped when Playwright isn't installed."""
 import json
 import math
+import re
 import os
 import struct
 import threading
@@ -20,9 +21,14 @@ else:
     sync_api = pytest.importorskip("playwright.sync_api")
 
 from station_player.config import ConfigStore  # noqa: E402
+from station_player.directory import Directory  # noqa: E402
 from station_player.server import PlayerApp, make_server  # noqa: E402
 
 RATE = 22050
+
+
+def offline(url, user_agent, limit):
+    raise OSError("no internet in tests")
 
 
 def tone(path: Path, seconds: float, amplitude: float, freq: float = 440.0) -> Path:
@@ -62,6 +68,7 @@ def player(tmp_path):
     store.config.music_folders = [str(music)]
     store.config.stations = [{"name": "Test FM", "url": "http://127.0.0.1:9/stream"}]
     app = PlayerApp(store)
+    app.directory = Directory(fetch=offline)
     server = make_server(app, port=0)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     yield app, f"http://127.0.0.1:{server.server_address[1]}/", tmp_path
@@ -598,10 +605,8 @@ def test_sleep_timer(page):
 
 
 def test_alarm_plays_and_fades_in(page, player):
-    import time as _time
     app = player[0]
-    pid = next(iter(app.library.playlists))
-    app.alarm_request = {"seq": 1, "source": {"kind": "playlist", "id": pid, "name": "Music"}, "at": _time.time()}
+    ring(app)
     page.wait_for_function("() => !audio.paused && S.mode === 'track'", timeout=5000)
     assert page.evaluate("ALARM.timer !== null && volMul.alarm < 0.2")
     # A sleep timer set meanwhile (a snooze) doesn't undo the fade-in.
@@ -634,28 +639,12 @@ def test_phone_remote_commands_reach_the_page(page, player):
     page.wait_for_function("() => SLEEP.at > 0", timeout=5000)
 
 
-def test_alarm_play_log_and_remote_settings(page, player):
+def test_play_log_and_remote_settings(page, player):
     app = player[0]
     app.store.config.remote_port = 0
     errors = []
     page.on("pageerror", lambda e: errors.append(str(e)))
-    open_settings(page, "alarm")
-    page.locator("#alarm-time").fill("06:45")
-    page.locator("#alarm-on").check()
-    page.get_by_role("button", name="Save alarm").click()
-    page.wait_for_function("() => S.lib.config.alarm && S.lib.config.alarm.on")
-    alarm = app.store.config.alarm
-    assert alarm["time"] == "06:45" and alarm["days"] == [0, 1, 2, 3, 4] and alarm["source"]["kind"] == "playlist"
-    assert page.locator("#alarm-on").is_checked()
-    assert page.locator("#alarm-next").inner_text().startswith("Saved. Next alarm: ")
-    # When it next goes off: Monday = 0, the next allowed day after now.
-    nxt = page.evaluate("""() => {
-      const d = nextAlarm({ on: true, time: "06:45", days: [5] }, new Date(2026, 9, 15, 12, 0));  // a Thursday
-      return [d.getDay(), d.getDate(), d.getHours(), d.getMinutes()];
-    }""")
-    assert nxt == [6, 17, 6, 45]  # Saturday 17 October
-    assert page.evaluate("nextAlarm({ on: true, time: '13:00', days: [3] }, new Date(2026, 9, 15, 12, 0)).getDate()") == 15
-    page.locator("#tab-log").click()
+    open_settings(page, "log")
     href = page.locator("#log-download").get_attribute("href")
     assert href.startswith("/api/playlog.csv?from=") and "&to=" in href
     page.locator("#tab-remote").click()
@@ -810,3 +799,233 @@ def test_recordings_page(page, player):
     assert page.evaluate("S.view.type") == "recordings"
     assert "Old FM" in page.locator("#now-sub").inner_text()
     assert not errors
+
+
+def test_clock_page_and_alarms(page, player):
+    app = player[0]
+    page.on("dialog", lambda d: d.accept())
+    page.locator(".nav-item[data-view=clock]").click()
+    sync_api.expect(page.locator("#view h1")).to_have_text("Clock")
+    sync_api.expect(page.locator(".clock-hero .digits .hm")).not_to_be_empty()
+    sync_api.expect(page.locator(".next-alarm")).to_have_text("No alarms on")
+    # The clock face, remembered next time.
+    page.get_by_role("button", name="Clock face").click()
+    sync_api.expect(page.locator(".clock-hero svg.analogue")).to_be_visible()
+    page.wait_for_function("() => document.querySelector('[data-hand=m]').getAttribute('transform')")
+    assert page.evaluate("store('clock-face')") == "analogue"
+    page.get_by_role("button", name="Digits").click()
+    # Add an alarm.
+    page.locator("#btn-add-alarm").click()
+    sync_api.expect(page.locator("#alarm-time")).to_be_focused()
+    page.locator("#alarm-time").fill("06:45")
+    page.locator("#alarm-label").fill("Work")
+    page.get_by_role("button", name="Set alarm").click()
+    card = page.locator(".alarm-card", has_text="Work")
+    sync_api.expect(card.locator(".alarm-time")).to_have_text("06:45")
+    sync_api.expect(card.locator(".facts")).to_contain_text("Weekdays")
+    sync_api.expect(card.locator(".alarm-edit")).to_be_focused()
+    (a,) = app.store.config.alarms
+    assert (a["time"], a["label"], a["days"], a["on"], a["source"]["kind"]) == ("06:45", "Work", [0, 1, 2, 3, 4], True, "playlist")
+    sync_api.expect(page.locator(".next-alarm")).to_contain_text(re.compile(r"Next alarm: \w+ 0?6:45.* · Work"))
+    sync_api.expect(page.locator("#nav-next-alarm")).to_contain_text("6:45")
+    # A second one, at weekends, playing the radio.
+    page.locator("#btn-add-alarm").click()
+    page.locator("#alarm-time").fill("09:30")
+    page.locator(".alarm-form .days label", has_text="Mon").click()  # untick the weekdays
+    for day in ["Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]:
+        page.locator(".alarm-form .days label", has_text=day).click()
+    page.locator("#alarm-source").select_option(label="Test FM")
+    page.get_by_role("button", name="Set alarm").click()
+    sync_api.expect(page.locator(".alarm-card")).to_have_count(2)
+    weekend = page.locator(".alarm-card", has_text="09:30")
+    sync_api.expect(weekend.locator(".facts")).to_contain_text("Weekends · Test FM")
+    # Turn the first off: the switch keeps focus.
+    switch = card.locator("input[type=checkbox]")
+    switch.uncheck()
+    page.wait_for_function("() => !S.lib.config.alarms[0].on")
+    sync_api.expect(page.locator(f"#view input[data-key=alarm-{a['id']}]")).to_be_focused()
+    assert app.store.config.alarms[0]["on"] is False
+    # Edit the time; Escape cancels an edit.
+    weekend.locator(".alarm-edit").click()
+    page.keyboard.press("Escape")
+    sync_api.expect(page.locator(".alarm-form")).to_have_count(0)
+    weekend.locator(".alarm-edit").click()
+    page.locator("#alarm-time").fill("10:15")
+    page.get_by_role("button", name="Save alarm").click()
+    sync_api.expect(page.locator(".alarm-card", has_text="10:15")).to_have_count(1)
+    assert app.store.config.alarms[1]["time"] == "10:15"
+    # Delete it.
+    page.locator(".alarm-card", has_text="10:15").locator(".alarm-edit").click()
+    page.get_by_role("button", name="Delete").click()
+    sync_api.expect(page.locator(".alarm-card")).to_have_count(1)
+    assert len(app.store.config.alarms) == 1
+    # Settings points here now.
+    open_settings(page, "alarm")
+    page.locator("#btn-open-clock").click()
+    sync_api.expect(page.locator("#view h1")).to_have_text("Clock")
+
+
+def ring(app, label="Wake up"):
+    """Set an alarm off now, as the server does at its time."""
+    from datetime import datetime
+    now = datetime.now()
+    pid = next(iter(app.library.playlists))
+    app.store.config.alarms = [{"id": "0000000a", "on": True, "time": now.strftime("%H:%M"), "days": [now.weekday()],
+                                "label": label, "source": {"kind": "playlist", "id": pid, "name": "Music"}}]
+    app._alarm_fired = {}
+    assert app.check_alarm(now)
+
+
+def test_alarm_screen_snooze_and_stop(page, player):
+    app = player[0]
+    ring(app)
+    screen = page.locator("#alarm-screen")
+    sync_api.expect(screen).to_be_visible(timeout=5000)
+    sync_api.expect(screen.locator("h2")).to_have_text("Wake up")
+    sync_api.expect(screen).to_contain_text("Playing Music")
+    sync_api.expect(page.locator("#btn-snooze")).to_be_focused()
+    page.wait_for_function("() => !audio.paused")
+    # Tab stays on the alarm screen.
+    for _ in range(4):
+        page.keyboard.press("Tab")
+        assert page.evaluate("document.getElementById('alarm-screen').contains(document.activeElement)")
+    page.locator("#btn-snooze").click()
+    sync_api.expect(screen).to_be_hidden()
+    page.wait_for_function("() => audio.paused")
+    assert app.alarm_state()["snoozed_until"] > time.time() + 8 * 60
+    sync_api.expect(page.locator(".toast").last).to_contain_text("Snoozed until")
+    page.locator(".nav-item[data-view=clock]").click()
+    sync_api.expect(page.locator(".next-alarm")).to_contain_text("Snoozed until")
+    page.locator("#btn-cancel-snooze").click()
+    page.wait_for_function("() => !S.lib.alarm_state.snoozed_until")
+    assert app.alarm_state()["snoozed_until"] is None
+    # Ringing again: Stop.
+    ring(app, "Second")
+    sync_api.expect(screen.locator("h2")).to_have_text("Second", timeout=5000)
+    page.locator("#btn-stop-alarm").click()
+    sync_api.expect(screen).to_be_hidden()
+    page.wait_for_function("() => audio.paused && ALARM.timer === null && volMul.alarm === 1")
+    assert app.alarm_state()["ringing"] is None
+    # Keep playing: the alarm goes, the music doesn't.
+    ring(app, "Third")
+    sync_api.expect(screen.locator("h2")).to_have_text("Third", timeout=5000)
+    page.wait_for_function("() => !audio.paused")
+    page.keyboard.press("Escape")
+    sync_api.expect(screen).to_be_hidden()
+    page.wait_for_timeout(300)
+    assert page.evaluate("!audio.paused && volMul.alarm === 1")
+    assert app.alarm_state()["ringing"] is None
+
+
+def test_snooze_from_the_phone(page, player):
+    app = player[0]
+    app.store.config.remote = True
+    page.evaluate("loadState()")
+    ring(app)
+    sync_api.expect(page.locator("#alarm-screen")).to_be_visible(timeout=5000)
+    app.remote_command({"cmd": "snooze"})
+    sync_api.expect(page.locator("#alarm-screen")).to_be_hidden(timeout=5000)
+    page.wait_for_function("() => audio.paused")
+    assert app.alarm_state()["snoozed_until"]
+    ring(app)
+    sync_api.expect(page.locator("#alarm-screen")).to_be_visible(timeout=5000)
+    app.remote_command({"cmd": "stop_alarm"})
+    sync_api.expect(page.locator("#alarm-screen")).to_be_hidden(timeout=5000)
+    assert app.alarm_state() == {"ringing": None, "snoozed_until": None}
+
+
+def test_an_alarm_stopped_before_the_page_sees_it_stays_quiet(page, player):
+    app = player[0]
+    page.evaluate("checkInbox = async () => {}")  # hold the page's next look
+    ring(app)
+    app.stop_alarm()
+    page.evaluate("alarmGoesOff(" + json.dumps(app.inbox()["alarm"]) + ", 0)")
+    page.wait_for_timeout(500)
+    assert page.evaluate("audio.paused && document.getElementById('alarm-screen').hidden")
+
+
+def test_night_mode(page):
+    page.locator(".nav-item[data-view=clock]").click()
+    page.locator("#btn-night").click()
+    night = page.locator("#night")
+    sync_api.expect(night).to_be_visible()
+    sync_api.expect(night.locator(".digits .hm")).not_to_be_empty()
+    page.keyboard.press("Space")
+    sync_api.expect(night).to_be_hidden()
+    sync_api.expect(page.locator("#btn-night")).to_be_focused()
+
+
+PNG = bytes.fromhex(
+    "89504e470d0a1a0a0000000d4948445200000001000000010806000000"
+    "1f15c4890000000d49444154789c6360f8cfc0f01f0005000201a0b2e1a10000000049454e44ae426082")
+
+
+class FakeDirectoryNet:
+    def __init__(self):
+        self.asked = []
+
+    def __call__(self, url, user_agent, limit):
+        self.asked.append(url)
+        if url.startswith("https://logo.example/"):
+            return PNG, "image/png"
+        if "/json/tags" in url:
+            return json.dumps([{"name": "jazz", "stationcount": 900}, {"name": "news", "stationcount": 800}]).encode(), "application/json"
+        if "/json/url/" in url:
+            return b"[]", "application/json"
+        jazz = "tag=jazz" in url
+        items = [
+            {"stationuuid": "11111111-1111", "name": "Jazz Cafe Radio", "url_resolved": "http://127.0.0.1:9/jazz",
+             "favicon": "https://logo.example/jazz.png", "tags": "jazz,smooth", "country": "United Kingdom",
+             "countrycode": "GB", "codec": "MP3", "bitrate": 128, "votes": 50},
+        ] + ([] if jazz else [
+            {"stationuuid": "22222222-2222", "name": "World News", "url_resolved": "http://127.0.0.1:9/news",
+             "favicon": "", "tags": "news", "country": "Ireland", "codec": "AAC", "bitrate": 64, "votes": 40},
+        ])
+        return json.dumps(items).encode(), "application/json"
+
+
+def test_find_stations(page, player):
+    app = player[0]
+    net = FakeDirectoryNet()
+    app.directory = Directory(fetch=net, servers=["api.example"], public=lambda host: True)
+    page.locator(".nav-item[data-view=radio]").click()
+    # Opens on the most popular stations, with genres to browse.
+    results = page.locator("#finder-results .find-card")
+    sync_api.expect(results).to_have_count(2)
+    sync_api.expect(page.locator("#finder-results")).to_contain_text("The most popular stations right now")
+    jazz = results.filter(has_text="Jazz Cafe Radio")
+    sync_api.expect(jazz.locator(".facts")).to_have_text("United Kingdom · MP3 128 kbps")
+    page.wait_for_function("() => { const i = document.querySelector('.find-card img.logo'); return i && i.naturalWidth === 1; }")
+    sync_api.expect(results.filter(has_text="World News").locator(".glyph")).to_be_visible()
+    sync_api.expect(page.locator("#finder-tags .chip")).to_have_count(2)
+    page.locator("#finder-tags .chip", has_text="jazz").click()
+    sync_api.expect(results).to_have_count(1)
+    assert "tag=jazz" in net.asked[-1]
+    sync_api.expect(page.locator("#finder-tags .chip", has_text="jazz")).to_have_attribute("aria-pressed", "true")
+    # A search by name and country.
+    page.locator("#finder-q").fill("cafe")
+    page.locator("#finder-country").select_option("GB")
+    page.locator("#finder-q").press("Enter")
+    sync_api.expect(page.locator("#finder-results")).to_contain_text("“cafe”")
+    asked = net.asked[-1]
+    assert "name=cafe" in asked and "countrycode=GB" in asked
+    # Listen before adding.
+    jazz.get_by_role("button", name="Listen to Jazz Cafe Radio").click()
+    page.wait_for_function("() => S.mode === 'radio' && S.station.url === 'http://127.0.0.1:9/jazz'")
+    assert page.evaluate("S.station.name") == "Jazz Cafe Radio"
+    deadline = time.monotonic() + 5
+    while not any("/json/url/11111111-1111" in u for u in net.asked) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert any("/json/url/11111111-1111" in u for u in net.asked)
+    # Add it to your stations.
+    jazz.get_by_role("button", name="Add Jazz Cafe Radio to your stations").click()
+    sync_api.expect(page.locator(".card[data-url='http://127.0.0.1:9/jazz']")).to_be_visible()
+    sync_api.expect(jazz.get_by_role("button", name="Jazz Cafe Radio is in your stations")).to_be_disabled()
+    assert any(s["url"] == "http://127.0.0.1:9/jazz" and s["name"] == "Jazz Cafe Radio" for s in app.store.config.stations)
+    sync_api.expect(page.locator("#finder-q")).to_have_value("cafe")  # still there after the redraw
+
+
+def test_find_stations_offline(page):
+    page.locator(".nav-item[data-view=radio]").click()
+    sync_api.expect(page.locator("#finder-results .errors")).to_contain_text("Couldn't reach the station directory")
+    sync_api.expect(page.locator("#finder-tags .chip")).to_have_count(0)

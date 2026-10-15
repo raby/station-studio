@@ -525,7 +525,6 @@ body.offline { display: grid; place-items: center; min-height: 100vh; margin: 0;
 .remote-box { display: flex; flex-wrap: wrap; gap: 20px; align-items: center; margin: 14px 0; }
 .remote-box img { width: 180px; height: 180px; background: #fff; border-radius: 12px; padding: 6px; }
 .remote-link { word-break: break-all; font-family: ui-monospace, monospace; font-size: 13px; }
-.alarm-next { color: var(--accent); margin: 12px 0 0; font-weight: 600; }
 
 /* Recordings page. */
 .tag-filter { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 16px; }
@@ -560,3 +559,109 @@ body.offline { display: grid; place-items: center; min-height: 100vh; margin: 0;
   .recording .actions { padding-left: 56px; }
   .rec-edit, .songs { margin-left: 0; }
 }
+
+/* ---- clock, alarms, alarm screen, night mode ---- */
+.segmented { display: inline-flex; padding: 3px; gap: 2px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px; }
+.seg {
+  background: none; border: 0; border-radius: 7px; padding: 6px 12px; min-height: 30px; cursor: pointer;
+  color: var(--muted); font-weight: 600; font-size: 13px;
+}
+.seg:hover { color: var(--text); }
+.seg[aria-pressed="true"] { background: var(--panel); color: var(--text); box-shadow: var(--shadow-sm); }
+.clock-hero {
+  display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 28px 16px 30px; margin-bottom: 26px;
+  background: radial-gradient(120% 140% at 50% 0%, var(--accent-soft), transparent 60%), var(--panel);
+  border: 1px solid var(--border); border-radius: 18px;
+}
+.digits { display: flex; align-items: baseline; gap: .12em; font-variant-numeric: tabular-nums; font-weight: 300; letter-spacing: -.03em; line-height: 1; }
+.digits .sec { font-size: .32em; color: var(--muted); font-weight: 400; letter-spacing: 0; }
+.digits.big { font-size: clamp(64px, 11vw, 132px); }
+.digits.huge { font-size: clamp(80px, 20vw, 260px); }
+svg.analogue.big { width: clamp(180px, 26vw, 280px); height: auto; }
+svg.analogue.huge { width: min(62vh, 78vw); height: auto; }
+.analogue .rim { fill: var(--panel-2); stroke: var(--border-strong); stroke-width: 2; }
+.analogue .tick { stroke: var(--faint); stroke-width: 1; }
+.analogue .tick.major { stroke: var(--text); stroke-width: 2.5; stroke-linecap: round; }
+.analogue .hand { stroke: var(--text); stroke-linecap: round; }
+.analogue .hand.hour { stroke-width: 6; }
+.analogue .hand.minute { stroke-width: 4; }
+.analogue .hand.second { stroke: var(--accent); stroke-width: 1.6; }
+.analogue .hub { fill: var(--accent); }
+.clock-hero .today { color: var(--muted); font-size: 16px; margin-top: 8px; }
+.next-alarm { color: var(--accent); font-weight: 600; min-height: 1.4em; display: inline-flex; gap: 6px; align-items: center; }
+.alarms { max-width: 900px; }
+.section-head { display: flex; align-items: center; gap: 12px; }
+.section-head h2 { margin: 0; }
+.section-head .spacer { flex: 1; }
+.alarm-list { list-style: none; margin: 14px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.alarm-card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 16px; }
+.alarm-card.new { margin-top: 14px; border-color: var(--accent); }
+.alarm-row { display: flex; align-items: center; gap: 16px; }
+.alarm-time { font-size: 30px; font-weight: 300; font-variant-numeric: tabular-nums; letter-spacing: -.02em; min-width: 3.2em; }
+.alarm-card .info { flex: 1; min-width: 0; }
+.alarm-card .name { font-weight: 650; overflow-wrap: anywhere; }
+.alarm-card .facts { color: var(--muted); font-size: 13px; }
+.alarm-card.off .alarm-time, .alarm-card.off .info { opacity: .5; }
+.alarm-form { padding-top: 6px; }
+.alarm-card .alarm-form { border-top: 1px solid var(--border); margin-top: 12px; }
+.alarm-form .field.grow { flex: 1; min-width: 180px; }
+.alarm-form .field.grow input, .alarm-form .field.grow select { width: 100%; }
+.alarm-form .row { display: flex; gap: 8px; align-items: center; margin-top: 14px; }
+.alarm-form .row .spacer { flex: 1; }
+.form-msg { color: var(--danger); font-size: 13px; min-height: 0; }
+.form-msg:not(:empty) { margin-top: 8px; }
+
+.alarm-screen, .night {
+  position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; text-align: center; padding: 24px;
+}
+.alarm-screen {
+  background: radial-gradient(90% 80% at 50% 30%, rgba(245, 165, 36, .22), transparent 70%), var(--bg);
+  animation: alarm-in .4s ease-out;
+}
+@keyframes alarm-in { from { opacity: 0; transform: scale(1.02); } }
+.alarm-inner { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.alarm-screen h2 { font-size: clamp(22px, 4vw, 36px); margin: 8px 0 0; letter-spacing: -.01em; }
+.alarm-playing { color: var(--muted); margin: 0; }
+.alarm-actions { display: flex; gap: 14px; flex-wrap: wrap; justify-content: center; margin: 22px 0 6px; }
+.alarm-actions .btn.big { min-width: 200px; padding: 16px 26px; font-size: 18px; border-radius: 14px; }
+.alarm-actions .btn.big svg.i { width: 22px; height: 22px; }
+/* Night mode: dim red-orange on black, kind to eyes in the dark. */
+.night { background: #000; color: #b5551f; cursor: pointer; outline: none; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; }
+.night .digits .sec { color: #6e3313; }
+.night .today, .night .next-alarm { color: #7a3a16; font-size: 18px; font-weight: 500; }
+.night .night-hint { position: absolute; bottom: 18px; left: 0; right: 0; margin: 0; color: #3d1d0b; font-size: 13px; }
+.night .analogue .rim { fill: #000; stroke: #3d1d0b; }
+.night .analogue .tick, .night .analogue .tick.major, .night .analogue .hand { stroke: #b5551f; }
+.night .analogue .hand.second { stroke: #6e3313; }
+.night .analogue .hub { fill: #b5551f; }
+@media (prefers-reduced-motion: reduce) { .alarm-screen { animation: none; } }
+@media (max-width: 760px) {
+  .alarm-row { flex-wrap: wrap; gap: 10px; }
+  .alarm-time { font-size: 24px; min-width: 0; }
+}
+
+/* ---- finding stations ---- */
+.finder-form input[type=search] { flex: 1; min-width: 200px; }
+.finder { margin-top: 30px; }
+.finder #finder-tags { margin: 12px 0 14px; }
+.find-list { list-style: none; margin: 8px 0 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 10px; }
+.find-card {
+  display: flex; gap: 12px; align-items: flex-start; padding: 12px; min-width: 0;
+  background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
+}
+.find-card.live { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.find-art { flex: none; width: 48px; height: 48px; }
+.find-art .logo { width: 48px; height: 48px; border-radius: 10px; object-fit: cover; background: #fff; }
+.find-art .glyph { width: 48px; height: 48px; }
+.find-card .info { flex: 1; min-width: 0; }
+.find-card .name { font-weight: 650; overflow-wrap: anywhere; }
+.find-card .facts { color: var(--muted); font-size: 12px; }
+.find-card .tag-row { margin-top: 5px; }
+.find-card .song { font-size: 12px; color: var(--accent); font-weight: 600; margin-top: 4px; }
+.find-card .actions { display: flex; flex-direction: column; gap: 6px; flex: none; }
+.find-card .btn.added { color: var(--ok); border-color: transparent; background: var(--ok-soft); opacity: 1; }
+.finding::before {
+  content: ""; display: inline-block; vertical-align: -1px; margin-right: 8px; width: 10px; height: 10px; border-radius: 50%;
+  border: 2px solid var(--accent); border-right-color: transparent; animation: spin .8s linear infinite;
+}
+@media (max-width: 760px) { .find-list { grid-template-columns: 1fr; } }

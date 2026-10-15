@@ -40,8 +40,38 @@ function item(label, onclick, on) {
   return li;
 }
 
+const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+function clock(epoch) {
+  const d = new Date(epoch * 1000);
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
+// "Tue 07:00": the computer's own local time, as written in `at`.
+function when(iso) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}:\d{2})/.exec(iso || "");
+  if (!m) return "";
+  return `${DAYS[new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])).getUTCDay()]} ${m[4]}`;
+}
+
+function renderAlarm(a) {
+  a = a || {};
+  const ringing = !!a.ringing;
+  const snoozed = !ringing && typeof a.snoozed_until === "number";
+  $("#alarm").hidden = !(ringing || snoozed);
+  $("#alarm-head").textContent = ringing ? "Alarm" : snoozed ? `Snoozed until ${clock(a.snoozed_until)}` : "";
+  $("#alarm-label").textContent = a.label || "";
+  $("#alarm-label").hidden = !a.label;
+  $("#alarm-snooze").hidden = !ringing;
+  const next = !ringing && !snoozed && a.next ? a.next : null;
+  $("#next-alarm").hidden = !next;
+  $("#next-alarm").textContent = next
+    ? `Next alarm: ${[when(next.at), next.label].filter(Boolean).join(" · ")}` : "";
+}
+
 function render(data) {
   view = data;
+  renderAlarm(data.alarm);
   const s = data.status || {};
   offline(data.page_open ? "" : "Station Player's window is closed on the computer. Choose something to play and it opens.");
   const radio = s.mode === "radio";
@@ -88,6 +118,8 @@ async function refresh() {
 $("#art").addEventListener("load", () => { $("#art").hidden = false; });
 $("#art").addEventListener("error", () => { $("#art").hidden = true; });
 $("#toggle").addEventListener("click", () => call({ cmd: "toggle" }));
+$("#alarm-snooze").addEventListener("click", () => call({ cmd: "snooze" }));
+$("#alarm-stop").addEventListener("click", () => call({ cmd: "stop_alarm" }));
 $("#next").addEventListener("click", () => call({ cmd: "next" }));
 $("#prev").addEventListener("click", () => call({ cmd: "prev" }));
 $("#volume").addEventListener("change", (e) => { busyVolume = Date.now(); call({ cmd: "volume", value: Number(e.target.value) }); });
