@@ -258,3 +258,52 @@ def test_stopping_while_still_connecting_shows_as_stopped(tmp_path):
     while not rec.status()[0]["done"] and time.monotonic() < deadline:
         time.sleep(0.05)
     assert rec.status()[0]["done"] and not rec.status()[0]["stopping"]
+
+
+def test_recordings_list_labels_and_tags(tmp_path):
+    from station_player.config import ConfigStore
+    from station_player.server import PlayerApp, make_server, station_id
+
+    store = ConfigStore(tmp_path / "home")
+    store.config.stations = [{"name": "Test FM", "url": "http://radio/x"}]
+    rec_dir = tmp_path / "rec"
+    rec_dir.mkdir()
+    # A recording from before labels existed: station and time from its name.
+    (rec_dir / "Old FM 2026-10-01 07.30.mp3").write_bytes(b"x" * 1000)
+    (rec_dir / "Old FM 2026-10-01 07.30.txt").write_text("00:00:05  Song A\n00:03:10  Song B\n")
+    (rec_dir / "notes.txt").write_text("not a recording")
+    app = PlayerApp(store, recorder=Recorder(rec_dir, opener=Opener(FakeStream(b"abc"))))
+    server = make_server(app, port=0)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    port = server.server_address[1]
+    h = {"X-Station-Player": "1"}
+    try:
+        request(port, "POST", "/api/record", {"station": station_id("http://radio/x"), "on": True}, h)
+        wait_until(lambda: only(app.recorder)["done"])
+        items = json.loads(request(port, "GET", "/api/recordings/list")[1])["recordings"]
+        assert [r["station"] for r in items] == ["Test FM", "Old FM"]  # newest first
+        new, old = items
+        assert new["seconds"] is not None and new["label"] == "" and new["tags"] == []
+        assert old["started"] == "2026-10-01T07:30:00" and old["songs"] == ["00:00:05  Song A", "00:03:10  Song B"]
+
+        resp, body = request(port, "POST", "/api/recordings/label",
+                             {"file": old["file"], "label": "  Breakfast  show ", "tags": ["Interview", "interview", " live "]}, h)
+        assert resp.status == 200
+        old = next(r for r in json.loads(body)["recordings"] if r["file"] == old["file"])
+        assert old["label"] == "Breakfast show" and old["tags"] == ["Interview", "live"]
+        saved = json.loads((rec_dir / "recordings.json").read_text())["items"]
+        assert saved["Old FM 2026-10-01 07.30.mp3"]["tags"] == ["Interview", "live"]
+
+        # Played, it shows under its label, with the station as the artist.
+        resp, body = request(port, "POST", "/api/recordings/play", {"file": old["file"]}, h)
+        track = app.library.tracks[json.loads(body)["track"]]
+        assert track.name == "Breakfast show" and track.artist == "Old FM"
+
+        for bad in ({"file": str(tmp_path / "home" / "config.json"), "label": "x", "tags": []},
+                    {"file": old["file"], "label": "x", "tags": "not a list"},
+                    {"file": old["file"], "label": 5, "tags": []},
+                    {"file": old["file"], "label": "x", "tags": [f"t{i}" for i in range(30)]}):
+            assert request(port, "POST", "/api/recordings/label", bad, h)[0].status == 400
+    finally:
+        server.shutdown()
+        server.server_close()

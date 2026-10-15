@@ -9,6 +9,7 @@ the recording carries on in the same file.
 """
 from __future__ import annotations
 
+import json
 import logging
 import re
 import socket
@@ -49,7 +50,9 @@ def file_stem(station: str, when: datetime) -> str:
 
 
 class Recording:
-    def __init__(self, url: str, name: str, folder: Path, opener, user_agent: str) -> None:
+    def __init__(self, url: str, name: str, folder: Path, opener, user_agent: str,
+                 index: "RecordingIndex | None" = None) -> None:
+        self.index = index
         self.url = url
         self.name = name
         self.folder = folder
@@ -187,6 +190,13 @@ class Recording:
                     except OSError:
                         pass
             self.ended = time.time()
+            if self.file is not None and self.index is not None:
+                try:
+                    self.index.update(self.file.name, station=self.name,
+                                      started=datetime.fromtimestamp(self.started).isoformat(timespec="seconds"),
+                                      seconds=int(self.ended - self.started))
+                except OSError:
+                    pass  # the list falls back on the file name
             self.done = True
 
 
@@ -197,13 +207,14 @@ class Recorder:
         self._agent = user_agent
         self._lock = threading.Lock()
         self._recordings: dict[str, Recording] = {}  # station url -> latest
+        self.index = RecordingIndex(self.folder)
 
     def start(self, url: str, name: str) -> None:
         with self._lock:
             current = self._recordings.get(url)
             if current is not None and not current.done and not current.stopping:
                 return  # already recording
-            rec = Recording(url, name, self.folder, self._open, self._agent)
+            rec = Recording(url, name, self.folder, self._open, self._agent, self.index)
             self._recordings[url] = rec
         rec.thread.start()
 
@@ -228,7 +239,125 @@ class Recorder:
         with self._lock:
             return [r.status() for r in self._recordings.values()]
 
+    def listing(self) -> list[dict]:
+        with self._lock:
+            active = {r.file.name for r in self._recordings.values() if not r.done and r.file is not None}
+        return self.index.listing(active)
+
     def forget_finished(self) -> None:
         with self._lock:
             for url in [u for u, r in self._recordings.items() if r.done]:
                 del self._recordings[url]
+
+
+# ---- the recordings list ----------------------------------------------------------
+
+INDEX_NAME = "recordings.json"  # labels and tags, kept beside the recordings
+_AUDIO_EXTS = {f".{e}" for e in _EXTENSIONS.values()} | {".audio"}
+_STEM = re.compile(r"^(?P<station>.+) (?P<when>\d{4}-\d{2}-\d{2} \d{2}\.\d{2})(?: \(\d+\))?$")
+MAX_TAGS = 20
+MAX_TAG = 40
+MAX_LABEL = 200
+
+
+def clean_tags(tags) -> list[str]:
+    """Tags as typed: trimmed, without repeats (ignoring case). Raises ValueError."""
+    if not isinstance(tags, list) or not all(isinstance(t, str) for t in tags):
+        raise ValueError("tags must be a list of words")
+    out: list[str] = []
+    for t in tags:
+        t = " ".join(t.split())[:MAX_TAG]
+        if t and t.casefold() not in (o.casefold() for o in out):
+            out.append(t)
+    if len(out) > MAX_TAGS:
+        raise ValueError(f"At most {MAX_TAGS} tags")
+    return out
+
+
+def station_from_name(name: str) -> str:
+    """The station in a recording's file name ("Rebirth Radio 2026-10-15 18.05.mp3")."""
+    m = _STEM.match(Path(name).stem)
+    return m.group("station") if m else ""
+
+
+class RecordingIndex:
+    """What's known about each recording beyond its file: the station,
+    when it started and how long it ran (written when it finishes), and
+    the label and tags you give it. One JSON file in the recordings folder,
+    keyed by file name, so it moves with the recordings."""
+
+    def __init__(self, folder: Path) -> None:
+        self.path = folder / INDEX_NAME
+        self._lock = threading.Lock()
+
+    def _read(self) -> dict:
+        try:
+            data = json.loads(self.path.read_text(encoding="utf-8"))
+            items = data.get("items") if isinstance(data, dict) else None
+            return {k: v for k, v in items.items() if isinstance(v, dict)} if isinstance(items, dict) else {}
+        except (OSError, ValueError):
+            return {}
+
+    def _write(self, items: dict) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self.path.with_name(INDEX_NAME + ".tmp")
+        tmp.write_text(json.dumps({"v": 1, "items": items}, ensure_ascii=False, indent=1), encoding="utf-8")
+        tmp.replace(self.path)
+
+    def all(self) -> dict:
+        with self._lock:
+            return self._read()
+
+    def update(self, name: str, **fields) -> None:
+        with self._lock:
+            items = self._read()
+            entry = items.setdefault(name, {})
+            entry.update({k: v for k, v in fields.items() if v is not None})
+            try:
+                self._write(items)
+            except OSError as exc:
+                logger.warning("Could not save the recordings list: %s", exc)
+                raise
+
+    def listing(self, active: set[str]) -> list[dict]:
+        """Every finished recording in the folder, newest first. Files still
+        being written (`active`, by name) are left out."""
+        known = self.all()
+        out = []
+        try:
+            files = [p for p in self.path.parent.iterdir()
+                     if p.suffix.lower() in _AUDIO_EXTS and p.is_file() and p.name not in active]
+        except OSError:
+            return []
+        for f in files:
+            meta = known.get(f.name, {})
+            try:
+                st = f.stat()
+            except OSError:
+                continue
+            m = _STEM.match(f.stem)
+            station = meta.get("station") or (m.group("station") if m else "")
+            started = meta.get("started")
+            if not started:
+                try:
+                    started = datetime.strptime(m.group("when"), "%Y-%m-%d %H.%M").isoformat() if m else None
+                except ValueError:
+                    started = None
+            started = started or datetime.fromtimestamp(st.st_mtime).isoformat(timespec="seconds")
+            songs = []
+            try:
+                with f.with_suffix(".txt").open(encoding="utf-8", errors="replace") as fh:
+                    for line in fh:
+                        if line.strip():
+                            songs.append(line.rstrip("\n"))
+                        if len(songs) >= 500:
+                            break
+            except OSError:
+                pass
+            out.append({
+                "file": str(f), "name": f.name, "label": meta.get("label") or "",
+                "tags": meta.get("tags") or [], "station": station, "started": started,
+                "seconds": meta.get("seconds"), "bytes": st.st_size, "songs": songs,
+            })
+        out.sort(key=lambda r: r["started"], reverse=True)
+        return out

@@ -237,7 +237,8 @@ class PlayerApp:
                 cfg = copy.deepcopy(self.store.config)
             lib = Library()
             try:
-                lib.load(cfg.playlist_sources, cfg.music_folders, cfg.path_remaps, self.tag_cache)
+                lib.load(cfg.playlist_sources, cfg.music_folders, cfg.path_remaps, self.tag_cache,
+                         self._recording_names())
             except Exception as exc:
                 # Never leave the UI waiting on a scan that died.
                 logger.exception("Library scan failed")
@@ -331,6 +332,38 @@ class PlayerApp:
             self.recorder.start(url, name)
         else:
             self.recorder.stop(url)
+
+    def _recording_names(self) -> dict[str, dict]:
+        """Recordings' labels and stations, so the library shows them."""
+        folder = self.recorder.folder
+        out = {}
+        from station_player.recorder import station_from_name
+        for name, meta in self.recorder.index.all().items():
+            label, station = meta.get("label"), meta.get("station") or station_from_name(name)
+            if label or station:
+                out[str(folder / name)] = {"name": label, "artist": station}
+        return out
+
+    def recordings_list(self) -> dict:
+        return {"recordings": self.recorder.listing(), "folder": str(self.recorder.folder)}
+
+    def label_recording(self, file: str, label, tags) -> None:
+        """Give a finished recording a label and tags. Raises ValueError."""
+        from station_player.recorder import MAX_LABEL, clean_tags
+        folder = self.recorder.folder.resolve()
+        path = Path(file).resolve() if file else None
+        if path is None or path.parent != folder or not path.is_file():
+            raise ValueError("That recording wasn't found")
+        if not isinstance(label, str):
+            raise ValueError("label must be text")
+        label = " ".join(label.split())[:MAX_LABEL]
+        tags = clean_tags(tags)
+        try:
+            self.recorder.index.update(path.name, label=label, tags=tags)
+        except OSError as exc:
+            raise ValueError(f"Couldn't save the label: {exc}") from None
+        if any(Path(f).expanduser().resolve() == folder for f in self.store.config.music_folders):
+            self.rescan()  # so the new name shows when it plays
 
     def open_recordings_folder(self) -> None:
         """Show the recordings folder in Finder / Explorer / the file manager."""
@@ -1038,6 +1071,8 @@ def make_handler(app: PlayerApp):
                 return None
             if path == "/api/suggestions":
                 return self._send_json({"suggestions": app.suggestions()})
+            if path == "/api/recordings/list":
+                return self._send_json(app.recordings_list())
             if path == "/api/recordings":
                 return self._send_json({"recordings": app.recorder.status(),
                                         "folder": str(app.recorder.folder)})
@@ -1280,6 +1315,9 @@ def make_handler(app: PlayerApp):
                 elif path == "/api/open":
                     found = app.open_files(data.get("paths"))
                     return self._send_json({**found, "page_open": app.page_open()})
+                elif path == "/api/recordings/label":
+                    app.label_recording(str(data.get("file", "")), data.get("label", ""), data.get("tags", []))
+                    return self._send_json(app.recordings_list())
                 elif path == "/api/recordings/play":
                     found = app.play_recording(str(data.get("file", "")))
                     return self._send_json({**app.state(), **found})

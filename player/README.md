@@ -182,10 +182,14 @@ read again on later scans.
   you're listening to it, exactly as the station sends it (no
   re-encoding). Song titles, when the station sends them, go in a text
   file beside it. Recordings are saved in `Music/Station Player
-  Recordings` (**Open recordings folder** on the Radio page), reconnect
-  by themselves if the station drops, and stop after 12 hours. **▶ Play**
-  beside a finished recording plays it here (the recordings folder joins
-  your music folders, so they're all under *Folders* too).
+  Recordings`, reconnect by themselves if the station drops, and stop
+  after 12 hours.
+- **Recordings** in the sidebar lists every finished recording, newest
+  first, with its station, date, length and the songs it caught. The
+  pencil gives one a label and tags (say *breakfast show, interview*);
+  click a tag to see only those, or search labels, tags and songs.
+  **Play** plays it under its label. Labels and tags are kept in
+  `recordings.json` in the recordings folder, so they move with it.
 - Radio plays through Station Player itself, which is how it can read
   the song titles stations send (the browser can't). If a station can't
   be relayed that way, it plays directly, just without song titles.

@@ -526,3 +526,37 @@ body.offline { display: grid; place-items: center; min-height: 100vh; margin: 0;
 .remote-box img { width: 180px; height: 180px; background: #fff; border-radius: 12px; padding: 6px; }
 .remote-link { word-break: break-all; font-family: ui-monospace, monospace; font-size: 13px; }
 .alarm-next { color: var(--accent); margin: 12px 0 0; font-weight: 600; }
+
+/* Recordings page. */
+.tag-filter { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 16px; }
+.chip {
+  border: 1px solid var(--border-strong); background: var(--panel); color: var(--muted);
+  border-radius: 16px; padding: 4px 12px; min-height: 30px; cursor: pointer; font-size: 13px; font-weight: 550;
+}
+.chip:hover { color: var(--text); border-color: var(--faint); }
+.chip[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+.rec-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; max-width: 900px; }
+.recording { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; }
+.rec-main { display: flex; align-items: center; gap: 14px; }
+.recording .info { flex: 1; min-width: 0; }
+.recording .name { font-weight: 650; overflow-wrap: anywhere; }
+.recording .facts { color: var(--muted); font-size: 13px; }
+.recording .actions { display: flex; gap: 6px; align-items: center; }
+.tag-row { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+.tag {
+  border: 0; background: var(--accent-soft); color: var(--accent); border-radius: 10px;
+  padding: 1px 9px; font-size: 12px; font-weight: 600; cursor: pointer;
+}
+.tag:hover { text-decoration: underline; }
+.rec-edit { display: flex; flex-direction: column; gap: 6px; margin: 12px 0 2px 56px; max-width: 520px; }
+.rec-edit .row { display: flex; gap: 8px; margin-top: 4px; }
+.songs { margin: 8px 0 0 56px; font-size: 13px; color: var(--muted); }
+.songs summary { cursor: pointer; }
+.songs summary:hover { color: var(--text); }
+.songs ol { margin: 6px 0 0; padding-left: 20px; max-height: 260px; overflow-y: auto; font-variant-numeric: tabular-nums; }
+@media (max-width: 760px) {
+  .rec-main { flex-wrap: wrap; }
+  .recording .info { flex-basis: calc(100% - 56px); }
+  .recording .actions { padding-left: 56px; }
+  .rec-edit, .songs { margin-left: 0; }
+}

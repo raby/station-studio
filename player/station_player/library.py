@@ -202,7 +202,11 @@ class Library:
         music_folders: list[str],
         remaps: list[dict] | None = None,
         tag_cache: TagCache | None = None,
+        names: dict[str, dict] | None = None,
     ) -> None:
+        """`names` gives some files a title and artist of their own (by
+        path): radio recordings, labelled in the Recordings page."""
+        self._names = names or {}
         self.tracks.clear()
         self.playlists.clear()
         self.errors.clear()
@@ -385,10 +389,11 @@ class Library:
                 tags = tag_cache.get(f) if tag_cache is not None else read_tags(f)
                 title, artist = title_from_filename(f)
                 album = f.parent.name if f.parent != folder else None
+                own = getattr(self, "_names", {}).get(str(f), {})
                 self.tracks[tid] = Track(
                     id=tid,
-                    name=tags.title or title,
-                    artist=tags.artist or artist,
+                    name=own.get("name") or tags.title or title,
+                    artist=own.get("artist") or tags.artist or artist,
                     album=tags.album or album,
                     genre=tags.genre,
                     duration_ms=tags.duration_ms,

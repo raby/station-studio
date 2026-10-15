@@ -773,3 +773,40 @@ def test_edit_test_and_move_stations(page, player):
     page.keyboard.press("Escape")
     sync_api.expect(page.locator("form.edit")).to_have_count(0)
     sync_api.expect(page.get_by_role("button", name="Edit Renamed FM")).to_be_focused()
+
+
+def test_recordings_page(page, player):
+    from station_player.recorder import Recorder
+    from test_recorder import FakeStream, Opener
+
+    app, _, tmp = player
+    sound = tone(tmp / "station.wav", 2.0, 0.3).read_bytes()
+    app.recorder = Recorder(tmp / "rec", opener=Opener(FakeStream(sound, ctype="audio/wav")))
+    (tmp / "rec").mkdir()
+    tone(tmp / "rec" / "Old FM 2026-10-01 07.30.wav", 1.0, 0.3)
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.locator(".nav-item[data-view=recordings]").click()
+    row = page.locator(".recording", has_text="Old FM")
+    sync_api.expect(row.locator(".name")).to_contain_text("Old FM ·")
+    row.get_by_role("button", name="Edit").click()
+    sync_api.expect(page.locator("#rec-label-0")).to_be_focused()
+    page.locator("#rec-label-0").fill("Breakfast show")
+    page.locator("#rec-tags-0").fill("interview, live")
+    page.get_by_role("button", name="Save", exact=True).click()
+    row = page.locator(".recording", has_text="Breakfast show")
+    sync_api.expect(row.locator(".tag")).to_have_count(2)
+    sync_api.expect(page.get_by_role("button", name="Edit Breakfast show")).to_be_focused()
+    # Tags filter the list; so does the search box.
+    page.locator(".tag-filter .chip", has_text="interview").click()
+    sync_api.expect(page.locator(".recording")).to_have_count(1)
+    page.locator("#rec-search").fill("nothing like this")
+    sync_api.expect(page.locator(".recording")).to_have_count(0)
+    sync_api.expect(page.locator("#rec-search")).to_be_focused()
+    page.locator("#rec-search").fill("")
+    # Plays without leaving the page, under its label.
+    row.get_by_role("button", name="Play Breakfast show").click()
+    page.wait_for_function("() => S.mode === 'track' && current().name === 'Breakfast show' && !audio.paused")
+    assert page.evaluate("S.view.type") == "recordings"
+    assert "Old FM" in page.locator("#now-sub").inner_text()
+    assert not errors
