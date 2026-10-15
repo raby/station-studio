@@ -1354,7 +1354,7 @@ async function locateMissing() {
     toast(err.message, { error: true });
     return;
   }
-  try { await loadState(res.state || undefined); } catch { /* shown on the next check */ }
+  await loadState(res);
   if (S.view.type === "playlist" && S.view.id) await refreshDetail(undefined, S.view.id);
   else renderView();
   if (res.found) toast(`Found ${plural(res.found, "track")}${res.missing ? `. ${plural(res.missing, "track")} still missing.` : ""}`);

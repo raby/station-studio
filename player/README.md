@@ -13,7 +13,9 @@ It plays three kinds of thing:
   ogg/opus, aiff). Each folder shows up as its own playlist.
 - **Internet radio**: any stream URL, including `.pls` and `.m3u` links.
   Rebirth Radio is set up out of the box. When a station sends the name
-  of the song it's playing, Station Player shows it.
+  of the song it's playing, Station Player shows it. **Test** checks a
+  link plays before you add it; the pencil on a station renames it,
+  changes its link, moves it up or down or removes it.
 
 Song details and cover art come from the files themselves (mp3, m4a,
 flac, ogg / opus, wav, aiff), or from a `cover.jpg` / `folder.jpg` in
@@ -40,7 +42,7 @@ also has the wheel attached, for installing without PyPI.
 
 ### Open it like a normal app
 
-In **Sources & settings › App**, turn on the shortcut and Station
+In **Settings › App**, turn on the shortcut and Station
 Player appears in the Start menu and on the desktop (Windows), in
 Applications, Launchpad and Spotlight (macOS), or in the apps menu
 (Linux). Opening it starts the player in the background and opens its
@@ -68,11 +70,11 @@ time Station Player starts.
 With Google Chrome, Microsoft Edge or Brave installed, Station Player
 opens in a plain window of its own, with no tabs or address bar, kept
 separate from your browsing. Without one of them it opens in a browser
-tab. Turn the window off under **Sources & settings › App**.
+tab. Turn the window off under **Settings › App**.
 
 That window still counts as one of the browser's: in the Dock and
 Alt-Tab it shows as Chrome (or Edge, or Brave). **Install Station Player
-as an app** under Sources & settings › App gives it its own name and icon
+as an app** under Settings › App gives it its own name and icon
 there, and Station Player opens that way from then on.
 Keep it in the Dock or taskbar if you like: opened from there while the
 player isn't running, it starts the player and opens once it's up (the
@@ -98,18 +100,32 @@ station-player --port 9000 --no-browser
 
 ## Setting it up
 
-Open **Sources & settings** in the sidebar.
+The first time it opens with nothing set up, Station Player shows a
+welcome screen listing the music it found on your computer (your Music
+folder, Station Studio's exports, iTunes library exports): click **Add**
+beside one, or **Add a music folder** / **Add iTunes or station-studio
+playlists** to choose with your computer's own folder window. **Add
+music** in the sidebar brings the same screen back later.
 
-1. **Playlists (iTunes XML).** Add an exported `.xml` file, or a folder of
+**Settings › Music** lists everything Station Player reads, with how many
+tracks each has:
+
+1. **Playlists (iTunes XML).** An exported `.xml` file, or a folder of
    them. On first run Station Player adds Station Studio's exports folder
    (`~/.station-studio/exports`) automatically when it exists, so every
    week you export appears without doing anything.
-2. **Music folders.** Add the folder your music lives in. Besides
-   appearing under *Folders*, these files are used to find playlist
-   tracks whose saved location no longer exists (matched by file name).
-3. **Path rewrites.** If the playlists were made on another computer, say
-   a Mac library played back on a PC, rewrite the start of the path:
-   from `/Users/rob/Music/iTunes/iTunes Media` to `D:/Music`.
+2. **Music folders.** Folders of audio files. Besides appearing under
+   *Folders*, these files are used to find playlist tracks whose saved
+   location no longer exists (matched by file name).
+3. **Missing tracks.** When playlist tracks can't be found (the music
+   moved to another drive, or the playlists were made on another
+   computer), click **Find them…** and choose the folder the music is in
+   now. Station Player works out the path rewrite itself. Rewrites can
+   also be added by hand under **Advanced**: from
+   `/Users/rob/Music/iTunes/iTunes Media` to `D:/Music`, say.
+
+On Linux the folder window needs `zenity` or `kdialog`; without one,
+type or paste paths under **Type or paste a path instead**.
 
 Tracks whose audio file can't be found are greyed out and skipped.
 Only audio files (mp3, m4a/aac, flac, wav, ogg/opus, aiff, webm) are
@@ -130,7 +146,7 @@ read again on later scans.
   and the OS now-playing panel work through the browser's Media Session
   support.
 - Tracks play back to back with no gap between them, so mixes and live
-  albums flow straight through. Or set **Crossfade** (Sources & settings
+  albums flow straight through. Or set **Crossfade** (Settings
   › Playback, up to 12 seconds) to fade each track into the next.
   Tracks from the same album, short ones such as jingles, and repeat-one
   stay gapless, and Next skips straight away.
@@ -154,7 +170,7 @@ read again on later scans.
 - Close the window and open it again and Station Player is where you
   left it: the same playlist, queue and track, paused at the same point
   (or the same radio station). Press play to carry on.
-- **Volume levelling** (Sources & settings › Playback) plays every track
+- **Volume levelling** (Settings › Playback) plays every track
   at about the same loudness. It uses ReplayGain or iTunes Sound Check
   information where a file has it, and otherwise measures the track in
   the browser the first time it plays (or while the track before it
@@ -177,7 +193,7 @@ read again on later scans.
 - **Sleep timer**: the menu beside the volume stops playback after 15
   minutes to an hour and a half (fading out over the last 20 seconds),
   or at the end of the track playing.
-- **Alarm** (Sources & settings › Alarm): wake up to a playlist or a
+- **Alarm** (Settings › Alarm & sleep): wake up to a playlist or a
   station at a set time on chosen days, fading in over a minute.
   Station Player has to be running then (turn on *Start at login*) and
   the computer awake; if no player window is open, one opens.
@@ -185,8 +201,8 @@ read again on later scans.
 ## Play log (PRS / PPL returns)
 
 Station Player keeps a log of every track played, in
-`~/.station-player/play-log.jsonl`. **Download play log** (Sources &
-settings › Play log) saves the plays between two dates as a CSV
+`~/.station-player/play-log.jsonl`. **Download play log** (Settings ›
+Play log) saves the plays between two dates as a CSV
 spreadsheet with the date and time, title, artist, album, composer,
 label and ISRC, the track's length and how long it played, ready to
 copy into a PRS for Music or PPL music return. Composer, label and ISRC
@@ -197,7 +213,7 @@ there too.
 
 ## Phone remote
 
-Turn on **Phone remote** (Sources & settings) and scan the QR code with
+Turn on **Phone remote** (Settings › Phone remote) and scan the QR code with
 a phone on the same Wi-Fi: it shows what's playing and has play/pause,
 next, previous, volume, the sleep timer, and your playlists and
 stations. The sound still plays on the computer. It's a separate small
@@ -211,7 +227,7 @@ connections: allow it, or the phone can't connect.
 Once a day Station Player asks pypi.org for the newest version number
 (nothing else is sent). When there's a newer one, the sidebar says so;
 update with `pipx upgrade station-player` and restart it. Turn this off
-under Sources & settings › App.
+under Settings › App.
 
 ## A note on Station Studio's example stations
 

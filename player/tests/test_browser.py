@@ -670,3 +670,105 @@ def test_alarm_play_log_and_remote_settings(page, player):
     page.wait_for_function("() => !S.lib.remote.on")
     assert app.remote_server is None
     assert not errors
+
+
+class FakePicker:
+    def __init__(self, answer):
+        self.answer = answer
+        self.asked = []
+
+    def pick(self, kind):
+        self.asked.append(kind)
+        return self.answer
+
+
+def test_welcome_screen_adds_music(browser, tmp_path):
+    home = tmp_path / "user"
+    tone(home / "Music" / "Found.wav", 1.0, 0.3)
+    other = tone(tmp_path / "Elsewhere" / "Chosen.wav", 1.0, 0.3).parent
+    store = ConfigStore(tmp_path / "conf")
+    app = PlayerApp(store)
+    app.suggest_home = home
+    app.picker = FakePicker({"path": str(other)})
+    server = make_server(app, port=0)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    ctx = browser.new_context()
+    try:
+        pg = ctx.new_page()
+        errors = []
+        pg.on("pageerror", lambda e: errors.append(str(e)))
+        pg.goto(f"http://127.0.0.1:{server.server_address[1]}/")
+        # Nothing set up yet: the welcome screen, with the Music folder it found.
+        sync_api.expect(pg.locator("#view h1")).to_have_text("Welcome to Station Player")
+        found = pg.locator(".suggestion", has_text="Music folder")
+        sync_api.expect(found).to_contain_text("1 song")
+        found.get_by_role("button").click()
+        sync_api.expect(found.locator(".added-mark")).to_be_visible()
+        sync_api.expect(pg.locator(".toast").first).to_contain_text("Added")
+        assert store.config.music_folders == [str((home / "Music").resolve())]
+        # The computer's own folder chooser adds another.
+        pg.locator("#add-folder").click()
+        pg.wait_for_function("() => (S.lib.sources || []).length === 2")
+        assert app.picker.asked == ["folder"]
+        pg.locator("#btn-start-listening").click()
+        pg.wait_for_selector("#view tbody tr")
+        assert not errors
+    finally:
+        ctx.close()
+        server.shutdown()
+        server.server_close()
+
+
+def test_music_settings_page(page, player):
+    app, _, tmp = player
+    app.picker = FakePicker({"cancelled": True})
+    open_settings(page, "music")
+    card = page.locator(".source", has_text="Music")
+    sync_api.expect(card).to_contain_text("4 tracks")
+    # Arrow keys move between the settings pages.
+    page.locator("#tab-music").focus()
+    page.keyboard.press("ArrowRight")
+    sync_api.expect(page.locator("#tab-playback")).to_have_attribute("aria-selected", "true")
+    page.keyboard.press("ArrowLeft")
+    sync_api.expect(page.locator("#tab-music")).to_be_focused()
+    # Cancelling the chooser changes nothing.
+    page.locator("#add-playlists").click()
+    page.wait_for_timeout(300)
+    assert app.picker.asked == ["file"] and len(app.store.config.music_folders) == 1
+    # A computer with no chooser offers the path box instead.
+    import station_player.setup as setup
+
+    class NoPicker:
+        def pick(self, kind):
+            raise setup.PickerUnavailable("No folder window on this computer")
+    app.picker = NoPicker()
+    page.locator("#add-folder").click()
+    sync_api.expect(page.locator("details.typed")).to_have_attribute("open", "")
+    sync_api.expect(page.locator(".toast.error")).to_contain_text("type the path")
+    # Removing a folder leaves its files alone.
+    page.locator(".source", has_text="Music").get_by_role("button", name="Remove").click()
+    page.wait_for_function("() => S.lib.sources.length === 0")
+    assert (tmp / "Music" / "01 One.wav").exists()
+
+
+def test_edit_test_and_move_stations(page, player):
+    app = player[0]
+    app.store.config.stations.append({"name": "Second FM", "url": "http://127.0.0.1:9/two"})
+    page.evaluate("loadState()")
+    app.test_station = lambda url: {"ok": True, "type": "audio/mpeg", "name": "Tested FM", "url": url}
+    page.locator(".nav-item[data-view=radio]").click()
+    page.get_by_role("button", name="Edit Test FM").click()
+    card = page.locator(".card", has=page.locator("form.edit"))
+    card.get_by_role("button", name="Test", exact=True).click()
+    sync_api.expect(card.locator(".test-result")).to_contain_text("It works: Tested FM")
+    card.get_by_label("Name").fill("Renamed FM")
+    card.get_by_role("button", name="Save", exact=True).click()
+    sync_api.expect(page.locator(".toast").last).to_contain_text("Saved Renamed FM")
+    assert app.store.config.stations[0]["name"] == "Renamed FM"
+    page.get_by_role("button", name="Edit Renamed FM").click()
+    page.get_by_role("button", name="Move Renamed FM down").click()
+    page.wait_for_function("() => S.lib.stations[1].name === 'Renamed FM'")
+    assert [s["name"] for s in app.store.config.stations] == ["Second FM", "Renamed FM"]
+    sync_api.expect(page.get_by_role("button", name="Move Renamed FM up")).to_be_focused()
+    page.keyboard.press("Escape")
+    sync_api.expect(page.locator("form.edit")).to_have_count(0)

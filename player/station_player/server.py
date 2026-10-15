@@ -28,14 +28,14 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlparse
 
-from station_player import __version__, loudness, myplaylists, qr, radio, remote, updates
+from station_player import __version__, loudness, myplaylists, qr, radio, remote, setup, updates
 from station_player.config import clean_alarm
 from station_player.playlog import PlayLog
 from station_player.recorder import Recorder
 from station_player.window import browser_name, find_browser
 from station_player.config import ConfigStore
 from station_player.desktop import Desktop
-from station_player.library import AUDIO_EXTENSIONS, OPENED_ID, Library, _short_hash
+from station_player.library import AUDIO_EXTENSIONS, OPENED_ID, Library, _short_hash, name_key
 from station_player.tags import MAX_ART_BYTES, TagCache, folder_cover, image_type, read_art
 
 logger = logging.getLogger(__name__)
@@ -207,6 +207,10 @@ class PlayerApp:
         self.remote_commands: list[dict] = []
         self.player_status: dict = {}
         self._window_asked = 0.0
+        # The computer's own folder / file windows, and where suggestions
+        # look for music (both swapped in tests).
+        self.picker = setup.Picker()
+        self.suggest_home: Path | None = None
         if scan:
             self._rebuild()
 
@@ -272,7 +276,39 @@ class PlayerApp:
             "remote": self.remote_info(),
             "update": self.latest_version
             if config["check_updates"] and updates.is_newer(self.latest_version, __version__) else None,
+            "sources": _source_summaries(lib, config),
+            "missing": lib.missing_count(),
         }
+
+    # ---- setting up -----------------------------------------------------------
+
+    def suggestions(self) -> list[dict]:
+        with self._lock:
+            cfg = copy.deepcopy(self.store.config)
+        return setup.suggestions(cfg, home=self.suggest_home)
+
+    def locate(self, folder: str) -> dict:
+        """Find missing tracks in `folder` and add the path rewrite that
+        finds the most of them. Returns how many were found and the rewrite
+        (None when nothing matched)."""
+        root = Path(folder.strip()).expanduser() if folder.strip() else None
+        if root is None or not root.is_dir():
+            raise ValueError(f"Folder not found: {folder}")
+        root = root.resolve()
+        before = setup.missing_locations(self.library.tracks.values())
+        remap = setup.find_remap(before.values(), root)
+        if remap is not None:
+            key = name_key(remap["from"])
+            with self._change() as cfg:
+                # A newer answer for the same old folder replaces the old one.
+                cfg.path_remaps[:] = [r for r in cfg.path_remaps
+                                      if name_key(r["from"].replace("\\", "/").rstrip("/")) != key] + [remap]
+        lib = self.library
+        now = {str(t.location) for t in lib.tracks.values() if t.available and t.location is not None}
+        return {"found": len(before.keys() & now), "missing": lib.missing_count(), "remap": remap}
+
+    def test_station(self, url: str) -> dict:
+        return setup.check_station(url, resolve_stream_url, user_agent=f"StationPlayer/{__version__}")
 
     # ---- recording ---------------------------------------------------------------
 
@@ -769,6 +805,46 @@ class PlayerApp:
         with self._change(rescan=False) as cfg:
             cfg.stations[:] = [s for s in cfg.stations if s.get("url") != url]
 
+    def update_station(self, url: str, name=None, new_url=None) -> None:
+        """Rename a station and/or change its address. Raises LookupError
+        for an unknown station."""
+        if name is not None:
+            name = str(name).strip()
+            if not name:
+                raise ValueError("Station name is empty")
+        resolved = None
+        if new_url is not None:
+            new_url = str(new_url).strip()
+            if not new_url.startswith(("http://", "https://")):
+                raise ValueError("Stream URL must start with http:// or https://")
+            resolved = resolve_stream_url(new_url)  # network: outside the lock
+        with self._change(rescan=False) as cfg:
+            station = next((s for s in cfg.stations if s.get("url") == url), None)
+            if station is None:
+                raise LookupError("No such station")
+            alarm_source = (cfg.alarm or {}).get("source") or {}
+            wakes = alarm_source.get("kind") == "station" and alarm_source.get("id") == station_id(url)
+            if resolved is not None and resolved != url:
+                if any(s.get("url") == resolved for s in cfg.stations):
+                    raise ValueError("That stream is already one of your stations")
+                station["url"] = resolved
+                if wakes:  # the alarm finds stations by an id made from the address
+                    alarm_source["id"] = station_id(resolved)
+            if name:
+                station["name"] = name
+                if wakes:
+                    alarm_source["name"] = name[:200]
+
+    def move_station(self, url: str, to) -> None:
+        if not isinstance(to, int) or isinstance(to, bool):
+            raise ValueError("to must be a position (0 is first)")
+        with self._change(rescan=False) as cfg:
+            index = next((i for i, s in enumerate(cfg.stations) if s.get("url") == url), None)
+            if index is None:
+                raise LookupError("No such station")
+            station = cfg.stations.pop(index)
+            cfg.stations.insert(max(0, min(to, len(cfg.stations))), station)
+
 
 def _skipped(local: datetime) -> bool:
     """Whether a local time doesn't exist (skipped when the clocks go forward)."""
@@ -776,6 +852,25 @@ def _skipped(local: datetime) -> bool:
         return datetime.fromtimestamp(local.timestamp()).replace(tzinfo=None) != local
     except (OverflowError, OSError, ValueError):
         return False
+
+
+def _source_summaries(lib: Library, config: dict) -> list[dict]:
+    """Each configured source with what the library found in it."""
+    out = []
+    for kind, key in (("playlist", "playlist_sources"), ("music", "music_folders")):
+        for raw in config[key]:
+            path = Path(raw).expanduser()
+            src = str(path)  # how the library wrote it into Playlist.source
+            inside = src.rstrip("/\\") + os.sep
+            want = "itunes" if kind == "playlist" else "folder"
+            pls = [p for p in lib.playlists.values()
+                   if p.kind == want and p.id != OPENED_ID and (p.source == src or p.source.startswith(inside))]
+            tracks = set()
+            for p in pls:
+                tracks.update(p.track_ids)
+            out.append({"kind": kind, "path": raw, "name": path.name or raw, "exists": path.exists(),
+                        "tracks": len(tracks), "playlists": len(pls)})
+    return out
 
 
 def station_id(url: str) -> str:
@@ -920,6 +1015,8 @@ def make_handler(app: PlayerApp):
                 if not head_only:
                     self.wfile.write(body)
                 return None
+            if path == "/api/suggestions":
+                return self._send_json({"suggestions": app.suggestions()})
             if path == "/api/recordings":
                 return self._send_json({"recordings": app.recorder.status(),
                                         "folder": str(app.recorder.folder)})
@@ -1063,6 +1160,31 @@ def make_handler(app: PlayerApp):
                     app.add_station(str(data.get("name", "")), str(data.get("url", "")))
                 elif path == "/api/stations/remove":
                     app.remove_station(str(data.get("url", "")))
+                elif path == "/api/stations/update":
+                    try:
+                        app.update_station(str(data.get("url", "")), data.get("name"), data.get("new_url"))
+                    except LookupError:
+                        return self._error(HTTPStatus.NOT_FOUND, "No such station")
+                elif path == "/api/stations/move":
+                    try:
+                        app.move_station(str(data.get("url", "")), data.get("to"))
+                    except LookupError:
+                        return self._error(HTTPStatus.NOT_FOUND, "No such station")
+                elif path == "/api/stations/test":
+                    return self._send_json(app.test_station(str(data.get("url", ""))))
+                elif path == "/api/pick":
+                    try:
+                        return self._send_json(app.picker.pick(str(data.get("kind", ""))))
+                    except setup.PickerBusy as exc:
+                        return self._error(HTTPStatus.CONFLICT, str(exc))
+                    except setup.PickerUnavailable as exc:
+                        return self._send_json({"error": str(exc), "unsupported": True},
+                                               HTTPStatus.NOT_IMPLEMENTED)
+                    except setup.PickerFailed as exc:
+                        return self._error(HTTPStatus.INTERNAL_SERVER_ERROR, str(exc))
+                elif path == "/api/locate":
+                    found = app.locate(str(data.get("folder", "")))
+                    return self._send_json({**app.state(), **found})
                 elif path == "/api/desktop":
                     try:
                         if "shortcut" in data:
