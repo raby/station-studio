@@ -245,6 +245,11 @@ a.btn { text-decoration: none; display: inline-block; }
 .card .rec { font-size: 12px; color: var(--danger); }
 .card .rec.error { color: var(--danger); }
 .card .rec.saved { color: var(--muted); word-break: break-all; }
+.card .rec { display: flex; align-items: center; gap: 8px; }
+.card .rec-text { flex: 1; min-width: 0; }
+.card .rec-play { flex: none; color: var(--text); }
+.card .row { flex-wrap: wrap; }
+.card .row .btn { white-space: nowrap; }
 .range-row { display: flex; align-items: center; gap: 10px; max-width: 420px; }
 .range-row input { flex: 1; }
 .range-row output { min-width: 56px; font-variant-numeric: tabular-nums; }

@@ -216,3 +216,23 @@ def test_record_again_while_the_last_one_is_still_stopping(tmp_path):
     rec.start("http://radio/x", "Test FM")
     assert rec._recordings["http://radio/x"] is not first
     rec.stop_all()
+
+
+def test_play_recording_only_takes_files_from_the_recordings_folder(tmp_path):
+    from conftest import write_wav
+    from station_player.config import ConfigStore
+    from station_player.server import PlayerApp
+
+    app = PlayerApp(ConfigStore(tmp_path / "home"), recorder=Recorder(tmp_path / "rec", opener=Opener()))
+    made = write_wav(tmp_path / "rec" / "Test FM 2026-10-15 09.00.wav")
+    found = app.play_recording(str(made))
+    assert found["track"] in app.library.tracks
+    assert app.store.config.music_folders == [str((tmp_path / "rec").resolve())]
+    # A second one is picked up without adding the folder again.
+    second = write_wav(tmp_path / "rec" / "Test FM 2026-10-15 10.00.wav")
+    assert app.play_recording(str(second))["playlist"] == found["playlist"]
+    assert len(app.store.config.music_folders) == 1
+    outside = write_wav(tmp_path / "elsewhere.wav")
+    for bad in (str(outside), str(tmp_path / "rec" / ".." / "elsewhere.wav"), "", str(tmp_path / "rec" / "nope.wav")):
+        with pytest.raises(ValueError):
+            app.play_recording(bad)

@@ -268,6 +268,24 @@ class PlayerApp:
             if hasattr(proc, "wait"):
                 threading.Thread(target=proc.wait, daemon=True).start()  # no zombie left behind
 
+    def play_recording(self, file: str) -> dict:
+        """Put a finished recording in the library (the recordings folder
+        becomes one of the music folders) and say where to find it."""
+        folder = self.recorder.folder.resolve()
+        path = Path(file).resolve() if file else None
+        if path is None or path.parent != folder or not path.is_file():
+            raise ValueError("That recording wasn't found")
+        if str(folder) not in self.store.config.music_folders:
+            self.add_source("music", str(folder))
+        elif self.library.by_path(str(path)) is None:
+            self.rescan()  # a recording made since the last scan
+        track = self.library.by_path(str(path))
+        playlist = next((p for p in self.library.playlists.values()
+                         if p.kind == "folder" and Path(p.source).resolve() == folder), None)
+        if track is None or playlist is None:
+            raise ValueError("That recording can't be played")
+        return {"playlist": playlist.id, "track": track.id}
+
     # ---- my playlists ---------------------------------------------------------
 
     def _resolve(self, entry: dict) -> tuple[dict, str | None]:
@@ -828,6 +846,9 @@ def make_handler(app: PlayerApp):
                         app.record(str(data.get("station", "")), data["on"])
                     except LookupError:
                         return self._error(HTTPStatus.NOT_FOUND, "No such station")
+                elif path == "/api/recordings/play":
+                    found = app.play_recording(str(data.get("file", "")))
+                    return self._send_json({**app.state(), **found})
                 elif path == "/api/recordings/open":
                     try:
                         app.open_recordings_folder()

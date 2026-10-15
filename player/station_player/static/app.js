@@ -786,7 +786,8 @@ function radioView() {
     return el("div", { class: "card", "data-url": st.url },
       el("div", { class: "name" }, st.name),
       el("div", { class: "song", hidden: true }),
-      el("div", { class: "rec", hidden: true }),
+      el("div", { class: "rec", hidden: true }, el("span", { class: "rec-text" }),
+        el("button", { type: "button", class: "btn small rec-play", hidden: true }, "▶ Play")),
       el("div", { class: "url" }, st.url),
       el("div", { class: "row" },
         el("button", {
@@ -897,22 +898,48 @@ function syncRecordings() {
     const btn = card.querySelector(".rec-btn");
     btn.textContent = running ? "■ Stop recording" : "● Record";
     const line = card.querySelector(".rec");
+    const text = line.querySelector(".rec-text");
+    const play = line.querySelector(".rec-play");
     line.className = "rec";
+    play.hidden = true;
     if (running) {
-      line.textContent = `● Recording · ${fmtTime(r.seconds)} · ${fmtBytes(r.bytes)}`;
+      text.textContent = `● Recording · ${fmtTime(r.seconds)} · ${fmtBytes(r.bytes)}`;
     } else if (r && r.error) {
-      line.textContent = `Recording stopped: ${r.error}`;
+      text.textContent = `Recording stopped: ${r.error}`;
       line.classList.add("error");
     } else if (r && r.file) {
-      line.textContent = `Saved ${baseName(r.file)} (${fmtBytes(r.bytes)})`;
+      text.textContent = `Saved ${baseName(r.file)} (${fmtBytes(r.bytes)})`;
       line.classList.add("saved");
     } else {
-      line.textContent = "";
+      text.textContent = "";
     }
-    line.hidden = !line.textContent;
+    // A recording that saved anything can be played here.
+    if (r && r.done && r.file && r.bytes) {
+      play.hidden = false;
+      play.setAttribute("aria-label", `Play ${baseName(r.file)}`);
+      play.onclick = () => playRecording(r.file);
+    }
+    line.hidden = !text.textContent;
   }
   clearTimeout(recTimer);
   if (active.length) recTimer = setTimeout(pollRecordings, 1000);
+}
+
+// Play a finished recording: its folder joins the music folders (once),
+// so it shows under Folders like any other music.
+async function playRecording(file) {
+  let res;
+  try {
+    res = await api("/api/recordings/play", { file });
+  } catch (err) {
+    renderErrors(err.message);
+    return;
+  }
+  await loadState(res);
+  await show({ type: "playlist", id: res.playlist });
+  if (S.view.id !== res.playlist || !S.detail) return;
+  const i = S.detail.tracks.findIndex((t) => t.id === res.track);
+  if (i >= 0) playPlaylist(S.detail, i);
 }
 
 async function pollRecordings() {

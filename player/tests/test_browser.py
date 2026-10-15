@@ -429,7 +429,9 @@ def test_record_a_station(page, player):
     from test_recorder import FakeStream, Opener
 
     app, _, tmp = player
-    app.recorder = Recorder(tmp / "rec", opener=Opener(FakeStream(b"x" * 1000, live=True)))
+    # A station sending a real (WAV) sound, so the recording plays back.
+    sound = tone(tmp / "station.wav", 2.0, 0.3).read_bytes()
+    app.recorder = Recorder(tmp / "rec", opener=Opener(FakeStream(sound, ctype="audio/wav")))
     page.locator(".nav-item[data-view=radio]").click()
     card = page.locator(".card", has_text="Test FM")
     card.locator(".rec-btn").click()
@@ -443,7 +445,18 @@ def test_record_a_station(page, player):
     card.locator(".rec-btn").click()
     page.wait_for_function("() => document.querySelector('.card .rec').textContent.startsWith('Saved Test FM')")
     assert page.locator("#rec-status").is_hidden()
-    assert len(list((tmp / "rec").glob("Test FM *.mp3"))) == 1
+    assert len(list((tmp / "rec").glob("Test FM *.wav"))) == 1
+    # The buttons stay inside the card, even at its narrowest.
+    page.evaluate("document.querySelector('.cards').style.gridTemplateColumns = 'repeat(auto-fill, 220px)'")
+    assert page.evaluate("""() => [...document.querySelectorAll('.card')].every(c => {
+      const box = c.getBoundingClientRect();
+      return [...c.querySelectorAll('button')].every(b => b.getBoundingClientRect().right <= box.right + 0.5);
+    })""")
+    # Play it: the recordings folder joins the music folders.
+    card.locator(".rec-play").click()
+    page.wait_for_function("() => S.mode === 'track' && current().name.startsWith('Test FM') && !audio.paused")
+    assert app.store.config.music_folders[-1] == str((tmp / "rec").resolve())
+    assert page.locator("#view h1").inner_text() == "rec"
 
 
 def test_own_window_setting(page, player):

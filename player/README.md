@@ -148,7 +148,9 @@ read again on later scans.
   re-encoding). Song titles, when the station sends them, go in a text
   file beside it. Recordings are saved in `Music/Station Player
   Recordings` (**Open recordings folder** on the Radio page), reconnect
-  by themselves if the station drops, and stop after 12 hours.
+  by themselves if the station drops, and stop after 12 hours. **▶ Play**
+  beside a finished recording plays it here (the recordings folder joins
+  your music folders, so they're all under *Folders* too).
 - Radio plays through Station Player itself, which is how it can read
   the song titles stations send (the browser can't). If a station can't
   be relayed that way, it plays directly, just without song titles.
