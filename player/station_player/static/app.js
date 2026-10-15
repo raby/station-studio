@@ -414,11 +414,24 @@ function appSection() {
     mac: "Add Station Player to your Applications folder (find it in Launchpad and Spotlight)",
     linux: "Add Station Player to your apps menu and the desktop",
   }[d.platform];
+  const names = { shortcut: "Shortcut", login: "Start at login" };
   const toggle = (key, label) => el("label", { class: "check" },
     el("input", {
-      type: "checkbox", checked: d[key] || null, "data-busy-disable": true,
-      onchange: (e) => act("/api/desktop", { [key]: e.target.checked },
-        e.target.checked ? "Turned on" : "Turned off"),
+      type: "checkbox", checked: d[key] || null, "data-key": key,
+      onchange: async (e) => {
+        const on = e.target.checked;
+        try {
+          await loadState(await api("/api/desktop", { [key]: on }));
+          announce(`${names[key]} turned ${on ? "on" : "off"}`);
+        } catch (err) {
+          renderErrors(err.message);
+        }
+        // Redraw from what the server reports (unticking a failed change)
+        // and keep the keyboard on the same switch.
+        renderView();
+        const again = document.querySelector(`#view input[data-key="${key}"]`);
+        if (again) again.focus();
+      },
     }),
     el("span", {}, label));
   return el("section", {},
@@ -581,7 +594,8 @@ async function pollTitle() {
     const data = await api(`/api/nowplaying?station=${S.station.id}`);
     if (token === titleToken && S.mode === "radio") setRadioTitle(data.title || null);
   } catch { /* keep the last title */ }
-  if (token === titleToken) titleTimer = setTimeout(pollTitle, 5000);
+  // Paused radio isn't playing anything; polling restarts on "play".
+  if (token === titleToken && !audio.paused) titleTimer = setTimeout(pollTitle, 5000);
 }
 
 function setRadioTitle(title) {
@@ -590,7 +604,7 @@ function setRadioTitle(title) {
   if (S.mode === "radio") {
     updateNow();
     syncRadioCards();
-    if (title) announce(`Now playing: ${title}`);
+    if (title && !audio.paused) announce(`Now playing: ${title}`);
   }
 }
 
@@ -721,6 +735,7 @@ for (const ev of ["play", "pause", "playing"]) {
     syncRadioCards();
   });
 }
+audio.addEventListener("playing", () => { if (S.mode === "radio") pollTitle(); });
 
 $("#now-art").addEventListener("load", (e) => { e.target.hidden = false; });
 $("#now-art").addEventListener("error", (e) => { e.target.hidden = true; });
@@ -735,10 +750,13 @@ async function quitApp() {
     return;
   }
   clearTimeout(titleTimer);
+  titleToken++;  // a poll already in flight must not schedule another
+  const heading = el("h1", { tabindex: "-1" }, "Station Player has stopped");
   document.body.replaceChildren(el("main", { class: "stopped" },
-    el("h1", {}, "Station Player has stopped"),
+    heading,
     el("p", {}, "You can close this tab. To start it again, open Station Player from its shortcut, or run station-player.")));
   document.title = "Station Player (stopped)";
+  heading.focus();
 }
 $("#btn-quit").addEventListener("click", quitApp);
 
@@ -810,19 +828,28 @@ if ("mediaSession" in navigator) {
     if (S.lib.scanning) {
       $("#view").replaceChildren(el("div", { class: "empty" }, "Reading your music library…"));
       setBusy(1);
+      const started = Date.now();
       try {
-        while (S.lib.scanning) {
+        while (S.lib.scanning && Date.now() - started < 10 * 60 * 1000) {
           await new Promise((r) => setTimeout(r, 700));
           await loadState();
         }
       } finally {
         setBusy(-1);
       }
+      if (S.lib.scanning) {
+        renderErrors("Reading your music library is taking a long time. Playlists appear in the sidebar as soon as it finishes.");
+        const wait = setInterval(async () => {
+          try { await loadState(); } catch { return; }
+          if (!S.lib.scanning) clearInterval(wait);
+        }, 3000);
+      }
     }
   } catch (err) {
     $("#view").replaceChildren(el("div", { class: "errors" }, `Can't reach the player server: ${err.message}`));
     return;
   }
+  if (showToken > 0) return;  // the user already opened something while it scanned
   let view = null;
   try { view = JSON.parse(store("view") || "null"); } catch { view = null; }
   const known = view && (view.type !== "playlist" || S.lib.playlists.some((p) => p.id === view.id));

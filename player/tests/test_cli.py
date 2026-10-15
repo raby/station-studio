@@ -41,7 +41,7 @@ def test_cli_classifies_sources_and_scans_once(tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "make_server", fake_make_server)
     threads = []
     real_bg = cli.PlayerApp.scan_in_background
-    monkeypatch.setattr(cli.PlayerApp, "scan_in_background", lambda self: threads.append(real_bg(self)))
+    monkeypatch.setattr(cli.PlayerApp, "scan_in_background", lambda self, on_done=None: threads.append(real_bg(self, on_done)))
 
     rc = cli.main([str(exports), str(music), str(single), str(music / "a.wav"),
                    str(tmp_path / "missing"), "--no-browser"])
@@ -84,7 +84,12 @@ def test_cli_hands_sources_to_a_running_copy_instead_of_saving(tmp_path, monkeyp
     assert not (tmp_path / "player-home" / "config.json").exists()
 
 
-def test_running_instance_check_against_a_real_server(tmp_path):
+def test_running_instance_check_against_a_real_server(tmp_path, monkeypatch):
+    # A system proxy with no localhost exception must not hide the copy.
+    monkeypatch.setenv("http_proxy", "http://127.0.0.1:9")
+    monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:9")
+    monkeypatch.delenv("no_proxy", raising=False)
+    monkeypatch.delenv("NO_PROXY", raising=False)
     import threading
     from station_player.config import ConfigStore
     from station_player.server import PlayerApp, make_server
@@ -168,3 +173,39 @@ def test_mac_style_launch_detaches_and_reuses_the_running_copy(tmp_path, monkeyp
     while cli._running_instance(url) and time.monotonic() < deadline:
         time.sleep(0.1)
     assert not cli._running_instance(url)
+
+
+def test_app_mode_shows_the_copy_that_won_a_startup_race(monkeypatch):
+    answers = iter([False, False, True])
+    opened = []
+    monkeypatch.setattr(cli, "_running_instance", lambda url: next(answers))
+    monkeypatch.setattr(cli.time, "sleep", lambda s: None)
+    monkeypatch.setattr(cli.webbrowser, "open", opened.append)
+    monkeypatch.setattr(cli, "make_server", lambda app, port: (_ for _ in ()).throw(OSError("in use")))
+    assert cli.main(["--app"]) == 0
+    assert opened == ["http://127.0.0.1:8765/"]
+
+
+def test_scan_problems_are_reported_once_the_scan_finishes(tmp_path, monkeypatch, capsys):
+    store_missing = tmp_path / "gone"
+    monkeypatch.setattr(cli, "_running_instance", lambda url: False)
+    threads = []
+    real_bg = cli.PlayerApp.scan_in_background
+    monkeypatch.setattr(cli.PlayerApp, "scan_in_background",
+                        lambda self, on_done=None: threads.append(real_bg(self, on_done)))
+
+    class FakeServer:
+        def serve_forever(self):
+            for t in threads:
+                t.join(5)
+            raise KeyboardInterrupt
+
+        def server_close(self):
+            pass
+
+    monkeypatch.setattr(cli, "make_server", lambda app, port: FakeServer())
+    home = tmp_path / "player-home"
+    home.mkdir()
+    (home / "config.json").write_text(json.dumps({"music_folders": [str(store_missing)]}))
+    assert cli.main(["--no-browser"]) == 0
+    assert "Music folder not found" in capsys.readouterr().out

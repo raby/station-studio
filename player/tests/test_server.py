@@ -566,3 +566,17 @@ def test_background_scan_reports_progress(tmp_path, monkeypatch):
     worker.join(5)
     state = app.state()
     assert state["scanning"] is False and state["playlists"]
+
+
+def test_a_failed_scan_reports_an_error_instead_of_scanning_forever(tmp_path, monkeypatch):
+    from station_player import server as srv
+
+    def boom(self, *a):
+        raise RuntimeError("disk on fire")
+
+    monkeypatch.setattr(srv.Library, "load", boom)
+    app = PlayerApp(ConfigStore(), scan=False)
+    app.scan_in_background().join(5)
+    state = app.state()
+    assert state["scanning"] is False
+    assert any("disk on fire" in e for e in state["errors"])

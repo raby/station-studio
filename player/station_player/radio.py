@@ -10,9 +10,13 @@ rejects.
 """
 from __future__ import annotations
 
+import logging
 import re
 import socket
 import ssl
+import subprocess
+import sys
+import threading
 import time
 from dataclasses import dataclass
 from typing import Callable, Iterator
@@ -28,8 +32,43 @@ _MAX_REDIRECTS = 4
 _AUDIO_TYPE_RE = re.compile(r"^(audio/[a-z0-9.+-]+|application/ogg)$")
 
 
+logger = logging.getLogger(__name__)
+
+
 class StreamError(Exception):
     pass
+
+
+_tls_lock = threading.Lock()
+_tls: ssl.SSLContext | None = None
+
+
+def _macos_root_certs() -> str:
+    """The system's trusted roots, as PEM, from the macOS keychain."""
+    out = subprocess.run(
+        ["/usr/bin/security", "find-certificate", "-a", "-p",
+         "/System/Library/Keychains/SystemRootCertificates.keychain"],
+        capture_output=True, text=True, timeout=10, check=True)
+    return out.stdout
+
+
+def tls_context(platform: str | None = None, load_roots=_macos_root_certs) -> ssl.SSLContext:
+    """A verifying TLS context. Python from python.org on macOS ships with
+    no certificates until "Install Certificates.command" is run (browsers
+    use the system's), so there the keychain's roots are loaded instead."""
+    global _tls
+    with _tls_lock:
+        if _tls is not None and platform is None:
+            return _tls
+        ctx = ssl.create_default_context()
+        if (platform or sys.platform) == "darwin" and not ctx.cert_store_stats().get("x509_ca"):
+            try:
+                ctx.load_verify_locations(cadata=load_roots())
+            except (OSError, subprocess.SubprocessError, ssl.SSLError, ValueError) as exc:
+                logger.warning("No trusted certificates for https stations: %s", exc)
+        if platform is None:
+            _tls = ctx
+        return ctx
 
 
 class _Body:
@@ -137,7 +176,7 @@ def _request(url: str, user_agent: str, deadline: float) -> Stream:
     try:
         if secure:
             sock.settimeout(_remaining(deadline))
-            sock = ssl.create_default_context().wrap_socket(sock, server_hostname=host)
+            sock = tls_context().wrap_socket(sock, server_hostname=host)
         request = (
             f"GET {path} HTTP/1.0\r\n"
             f"Host: {host_header}\r\n"

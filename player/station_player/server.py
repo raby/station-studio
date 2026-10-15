@@ -12,6 +12,8 @@ import copy
 import json
 import logging
 import re
+import socket
+import sys
 import threading
 import urllib.error
 import urllib.request
@@ -166,9 +168,14 @@ class PlayerApp:
         if scan:
             self._rebuild()
 
-    def scan_in_background(self) -> threading.Thread:
+    def scan_in_background(self, on_done=None) -> threading.Thread:
         """First scan without blocking startup; the UI shows progress."""
-        worker = threading.Thread(target=self._rebuild, name="library-scan", daemon=True)
+        def work():
+            self._rebuild()
+            if on_done:
+                on_done()
+
+        worker = threading.Thread(target=work, name="library-scan", daemon=True)
         worker.start()
         return worker
 
@@ -185,6 +192,11 @@ class PlayerApp:
             lib = Library()
             try:
                 lib.load(cfg.playlist_sources, cfg.music_folders, cfg.path_remaps, self.tag_cache)
+            except Exception as exc:
+                # Never leave the UI waiting on a scan that died.
+                logger.exception("Library scan failed")
+                lib = Library()
+                lib.errors.append(f"Reading the library failed: {exc}")
             finally:
                 self.tag_cache.save()
             with self._lock:
@@ -391,6 +403,11 @@ def make_handler(app: PlayerApp):
         def do_GET(self, head_only: bool = False):
             if not self._host_ok():
                 return self._error(HTTPStatus.FORBIDDEN, "Bad host")
+            # Browsers say where a request came from. Other websites may
+            # not embed the player's audio, art or radio relay (that would
+            # also tell them it's running and what's in the library).
+            if self.headers.get("Sec-Fetch-Site", "same-origin") not in ("same-origin", "none"):
+                return self._error(HTTPStatus.FORBIDDEN, "Cross-site request")
             path = urlparse(self.path).path
             if path == "/api/state":
                 return self._send_json(app.state())
@@ -433,16 +450,16 @@ def make_handler(app: PlayerApp):
                 return self._error(HTTPStatus.NOT_FOUND, "No such station")
             if head_only:
                 return self._error(HTTPStatus.METHOD_NOT_ALLOWED, "Use GET")
+            app.set_title(url, None)  # no stale song from the last visit
             try:
                 stream = radio.open_stream(url, user_agent=f"StationPlayer/{__version__}")
             except radio.StreamError as exc:
-                logger.info("Radio relay for %s failed: %s", url, exc)
+                logger.warning("Radio relay for %s failed, playing it directly: %s", url, exc)
                 return self._error(HTTPStatus.BAD_GATEWAY, "Couldn't connect to this station")
             try:
                 ctype = stream.content_type
                 if ctype is None:
                     return self._error(HTTPStatus.BAD_GATEWAY, "This station isn't a plain audio stream")
-                app.set_title(url, None)
                 self.send_response(HTTPStatus.OK)
                 self.send_header("Content-Type", ctype)
                 self.send_header("Cache-Control", "no-store")
@@ -569,8 +586,20 @@ def make_handler(app: PlayerApp):
     return Handler
 
 
+class _Server(ThreadingHTTPServer):
+    # On Windows SO_REUSEADDR lets a second program bind a port that is
+    # already in use, so two copies could both "start"; ask for the port
+    # exclusively there instead.
+    if sys.platform == "win32":
+        allow_reuse_address = False
+
+        def server_bind(self):
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+            super().server_bind()
+
+
 def make_server(app: PlayerApp, host: str = "127.0.0.1", port: int = 8765) -> ThreadingHTTPServer:
-    server = ThreadingHTTPServer((host, port), make_handler(app))
+    server = _Server((host, port), make_handler(app))
     server.daemon_threads = True
     return server
 

@@ -58,10 +58,15 @@ def _classify(raw: str) -> list[tuple[str, str]] | str:
     return kinds
 
 
+# Talking to ourselves on 127.0.0.1 must never go through a proxy: a
+# system proxy without a localhost exception would hide the running copy.
+_local = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
 def _running_instance(url: str) -> bool:
     """True when a Station Player already answers at `url`."""
     try:
-        with urllib.request.urlopen(url + "api/state", timeout=2) as resp:
+        with _local.open(url + "api/state", timeout=2) as resp:
             return "version" in json.load(resp)
     except Exception:
         return False
@@ -75,7 +80,7 @@ def _send_sources(url: str, sources: list[tuple[str, str]]) -> None:
             url + "api/sources", data=json.dumps({"kind": kind, "path": path}).encode(),
             headers={"Content-Type": "application/json", API_HEADER: "1"}, method="POST")
         try:
-            urllib.request.urlopen(req, timeout=120).close()
+            _local.open(req, timeout=120).close()
         except Exception as exc:
             print(f"Could not add {path}: {exc}", file=sys.stderr)
 
@@ -91,7 +96,7 @@ def _detach_needed() -> bool:
 
 
 def _start_detached(port: int, sources: list[str], url: str) -> bool:
-    cmd = [sys.executable, "-m", "station_player", "--app", "--no-browser",
+    cmd = [sys.executable, "-P", "-m", "station_player", "--app", "--no-browser",
            "--port", str(port), *sources]
     try:
         subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
@@ -100,12 +105,18 @@ def _start_detached(port: int, sources: list[str], url: str) -> bool:
     except OSError as exc:
         logging.error("Could not start Station Player: %s", exc)
         return False
-    deadline = time.monotonic() + 20
+    if _wait_for_instance(url, 20):
+        return True
+    logging.error("Station Player did not start; see the messages above")
+    return False
+
+
+def _wait_for_instance(url: str, seconds: float) -> bool:
+    deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
         if _running_instance(url):
             return True
         time.sleep(0.2)
-    logging.error("Station Player did not start; see the messages above")
     return False
 
 
@@ -205,11 +216,23 @@ def main(argv: list[str] | None = None) -> int:
     try:
         server = make_server(app, port=args.port)
     except OSError as exc:
+        # Two clicks at once, or a click while the login copy starts:
+        # the other copy won the port, so show that one.
+        if args.app and _wait_for_instance(url, 5):
+            if not args.no_browser:
+                webbrowser.open(url)
+            return 0
         print(f"Could not listen on port {args.port}: {exc}", file=sys.stderr)
         logging.error("Could not listen on port %s: %s", args.port, exc)
         return 1
+
+    def report_scan() -> None:
+        for err in app.library.errors:
+            print(f"  ! {err}")
+            logging.warning("%s", err)
+
     # Serve straight away; the library fills in as the scan finishes.
-    app.scan_in_background()
+    app.scan_in_background(on_done=report_scan)
     print(f"Station Player {__version__} on {url}  (Ctrl+C or Quit in the app to stop)")
     print(f"Settings: {store.path}")
     if args.app:

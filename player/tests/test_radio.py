@@ -223,3 +223,46 @@ def test_relay_refuses_what_it_cant_play(player):
     # Only configured stations can be relayed: no fetching arbitrary URLs.
     assert get(port, "/radio/0123456789abcdef")[0].status == 404
     assert get(port, "/api/nowplaying?station=nope")[0].status == 404
+
+
+def test_python_org_macos_gets_the_keychain_roots(monkeypatch):
+    import ssl
+    # Stand in for a python.org macOS build: no CA certificates of its own.
+    monkeypatch.setattr(ssl.SSLContext, "cert_store_stats", lambda self: {"x509_ca": 0})
+    pem = _any_system_cert()
+    calls = []
+    ctx = radio.tls_context(platform="darwin", load_roots=lambda: calls.append(1) or pem)
+    assert calls == [1]
+    assert ctx.get_ca_certs()  # the keychain roots were loaded
+    radio.tls_context(platform="linux", load_roots=lambda: calls.append(1) or pem)
+    assert calls == [1]  # other systems keep their own store
+
+
+def _any_system_cert() -> str:
+    import ssl
+    ctx = ssl.create_default_context()
+    certs = ctx.get_ca_certs(binary_form=True)
+    if not certs:
+        pytest.skip("no system certificates to borrow")
+    return ssl.DER_cert_to_PEM_cert(certs[0])
+
+
+def test_stale_title_is_cleared_when_a_station_is_reopened(player):
+    app, port, station = player
+    url = station.url + "/html"
+    app.set_title(url, "Old Song")
+    get(port, f"/radio/{station_id(url)}")  # relay refused, but the old title goes
+    assert app.title(url) is None
+
+
+def test_other_websites_cannot_use_the_relay_or_media(player):
+    app, port, station = player
+    sid = station_id(station.url + "/icy")
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+    conn.request("GET", f"/radio/{sid}", headers={"Host": f"127.0.0.1:{port}", "Sec-Fetch-Site": "cross-site"})
+    assert conn.getresponse().status == 403
+    conn.close()
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+    conn.request("GET", "/api/state", headers={"Host": f"127.0.0.1:{port}", "Sec-Fetch-Site": "same-origin"})
+    assert conn.getresponse().status == 200
+    conn.close()

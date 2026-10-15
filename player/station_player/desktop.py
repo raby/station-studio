@@ -50,7 +50,9 @@ def launch_command(background: bool = False, platform: str | None = None,
         windowless = exe.with_name("pythonw.exe")
         if windowless.exists():
             exe = windowless
-    cmd = [str(exe), "-m", "station_player", "--app"]
+    # -P: don't put the working folder on sys.path, where a stray
+    # "random.py" in the home folder could shadow the standard library.
+    cmd = [str(exe), "-P", "-m", "station_player", "--app"]
     if background:
         cmd.append("--no-browser")
     return cmd
@@ -66,6 +68,18 @@ def _desktop_exec(args: list[str]) -> str:
         out.append(arg)
     # The whole value is a desktop-file string, where "\" is escaped again.
     return " ".join(out).replace("\\", "\\\\")
+
+
+def _trust_on_gnome(entry: Path) -> None:
+    """GNOME's desktop icons also want the file marked trusted, or they
+    ask "Allow Launching?" first. Best effort: nothing else needs it."""
+    gio = shutil.which("gio")
+    if gio:
+        try:
+            subprocess.run([gio, "set", str(entry), "metadata::trusted", "true"],
+                           capture_output=True, timeout=5)
+        except (OSError, subprocess.SubprocessError):
+            pass
 
 
 class Desktop:
@@ -203,6 +217,7 @@ class Desktop:
             if on_desktop:
                 on_desktop.write_text(text, encoding="utf-8")
                 on_desktop.chmod(0o755)  # desktops only launch executable entries
+                _trust_on_gnome(on_desktop)
         else:
             for path in (menu, on_desktop):
                 if path is not None:
@@ -313,8 +328,7 @@ class Desktop:
                    "SP_ARGS": subprocess.list2cmdline(cmd[1:]), "SP_HOME": str(self.home),
                    "SP_ICON": str(ICON_DIR / "icon.ico")}
             result = self._run(
-                ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
-                 "-Command", script],
+                ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
                 env=env, capture_output=True, text=True, creationflags=_CREATE_NO_WINDOW,
             )
             if result.returncode != 0:

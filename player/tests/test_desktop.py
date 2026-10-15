@@ -24,7 +24,7 @@ def test_linux_shortcut_menu_desktop_and_login(tmp_path):
     d.set_shortcut(True)
     menu = tmp_path / ".local/share/applications/station-player.desktop"
     text = menu.read_text()
-    assert 'Exec="/opt/My Tools/venv/bin/python" -m station_player --app\n' in text
+    assert 'Exec="/opt/My Tools/venv/bin/python" -P -m station_player --app\n' in text
     assert "Terminal=false" in text and f"Name={APP_NAME}" in text
     on_desktop = tmp_path / "Desktop" / "station-player.desktop"
     assert on_desktop.read_text() == text
@@ -80,14 +80,14 @@ def test_mac_app_bundle_and_login_agent(tmp_path):
     assert info["LSUIElement"] is True
     script = (bundle / "Contents/MacOS/station-player").read_text()
     assert script.startswith("#!/bin/sh\nexec ")
-    assert shlex.split(script.splitlines()[1])[1:] == [PY, "-m", "station_player", "--app", "$@"]
+    assert shlex.split(script.splitlines()[1])[1:] == [PY, "-P", "-m", "station_player", "--app", "$@"]
     assert (bundle / "Contents/MacOS/station-player").stat().st_mode & 0o111
     assert (bundle / "Contents/Resources/icon.icns").exists()
 
     d.set_login(True)
     with (tmp_path / "Library/LaunchAgents" / f"{APP_ID}.plist").open("rb") as fh:
         agent = plistlib.load(fh)
-    assert agent["ProgramArguments"] == [PY, "-m", "station_player", "--app", "--no-browser"]
+    assert agent["ProgramArguments"] == [PY, "-P", "-m", "station_player", "--app", "--no-browser"]
     assert agent["RunAtLoad"] is True
     assert d.status()["shortcut"] and d.status()["login"]
 
@@ -145,12 +145,12 @@ def test_windows_shortcuts_and_run_key(tmp_path):
     cmd, env, kw = runs[0]
     assert cmd[0] == "powershell" and "$env:SP_LINK" in cmd[-1]
     assert env["SP_TARGET"].endswith("pythonw.exe")  # no console window
-    assert env["SP_ARGS"] == "-m station_player --app"
+    assert env["SP_ARGS"] == "-P -m station_player --app"
     assert env["SP_LINK"] not in cmd[-1]  # paths never pasted into the script
     assert kw["creationflags"] == dt._CREATE_NO_WINDOW
 
     d.set_login(True)
-    assert reg.values[APP_NAME].endswith("pythonw.exe -m station_player --app --no-browser")
+    assert reg.values[APP_NAME].endswith("pythonw.exe -P -m station_player --app --no-browser")
     assert d.status() == {"supported": True, "platform": "windows", "shortcut": True, "login": True}
 
     d.remove_all()

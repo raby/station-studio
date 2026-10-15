@@ -1,4 +1,5 @@
 import random
+import zlib
 import struct
 import time
 from pathlib import Path
@@ -243,3 +244,86 @@ def test_damaged_cache_is_ignored(tmp_path):
     cache_file.write_text('{"version": 1, "entries": {"%s": [[1, 2], {"title": 5, "bogus": 1}]}}'
                           % str(song).replace("\\", "\\\\"))
     assert TagCache(cache_file).get(song).title == "Tëst Title"
+
+
+# ---- review round: regressions ---------------------------------------------------
+
+def _zlib_of_zeros(prefix: bytes, megabytes: int) -> bytes:
+    """Compress prefix + N MB of zeros without ever holding them."""
+    z = zlib.compressobj(9)
+    out = [z.compress(prefix)]
+    block = b"\x00" * (1024 * 1024)
+    for _ in range(megabytes):
+        out.append(z.compress(block))
+    out.append(z.flush())
+    return b"".join(out)
+
+
+def test_compressed_frame_bombs_are_refused(tmp_path):
+    import resource
+    title_bomb = _zlib_of_zeros(b"\x03", 256)
+    art_bomb = _zlib_of_zeros(b"\x00image/png\x00\x03\x00", 512)
+    body = frame("TIT2", struct.pack(">I", 0) + title_bomb, flags=0x0009) + frame("TPE1", text("Still read"))
+    path = write(tmp_path, id3(body))
+    art_path = write(tmp_path, id3(frame("APIC", struct.pack(">I", 0) + art_bomb, flags=0x0009)), "b.mp3")
+    before = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    started = time.monotonic()
+    tags = read_tags(path)
+    assert read_art(art_path) is None
+    assert time.monotonic() - started < 2
+    assert resource.getrusage(resource.RUSAGE_SELF).ru_maxrss - before < 64 * 1024  # KB on Linux
+    assert tags.title is None and tags.artist == "Still read"
+
+
+@pytest.mark.parametrize("length", [256, 300, 1000])
+def test_v24_plain_sizes_whose_bytes_look_syncsafe(tmp_path, length):
+    # 256 is 00 00 01 00: valid syncsafe bytes, but meant as a plain integer.
+    body = (frame("TIT2", text("t" * (length - 1)), plain_size=True)
+            + frame("TPE1", text("Artist"), plain_size=True)
+            + frame("APIC", b"\x00image/png\x00\x03\x00" + PNG, plain_size=True))
+    path = write(tmp_path, id3(body))
+    tags = read_tags(path)
+    assert tags.title == "t" * (length - 1)
+    assert tags.artist == "Artist"
+    assert read_art(path) == (PNG, "image/png")
+
+
+def test_no_mp3_duration_guessed_for_other_formats(tmp_path):
+    # MP3 frames inside a file named .aac/.webm must not produce a duration.
+    data = (FIXTURES / "untagged-cbr.mp3").read_bytes()
+    assert read_tags(write(tmp_path, data, "x.aac")).duration_ms is None
+    assert read_tags(write(tmp_path, data, "x.webm")).duration_ms is None
+    assert read_tags(write(tmp_path, data, "x.mp3")).duration_ms
+
+
+def test_scan_reads_ogg_text_without_reading_big_pictures(monkeypatch):
+    import station_player.tags as tags_mod
+    monkeypatch.setattr(tags_mod, "_SCAN_PACKET_LIMIT", 120)  # cut inside the comment packet
+    tags = read_tags(FIXTURES / "tagged.opus")
+    assert tags.title == "Tëst Title"
+    assert read_art(FIXTURES / "tagged.opus") is not None  # art still reads in full
+
+
+def test_front_cover_preferred_over_other_pictures(tmp_path):
+    back = b"\x00image/png\x00\x04\x00" + PNG
+    front = b"\x00image/jpeg\x00\x03\x00" + JPEG
+    data, mime = read_art(write(tmp_path, id3(frame("APIC", back) + frame("APIC", front))))
+    assert mime == "image/jpeg"
+
+
+def test_aiff_text_chunks_and_bad_sample_rate(tmp_path):
+    comm = struct.pack(">hIh", 1, 8000, 16) + b"\x7f\xff" + b"\xff" * 8  # absurd rate
+    name = b"Song Name\x00"
+    chunks = b"COMM" + struct.pack(">I", len(comm)) + comm + b"NAME" + struct.pack(">I", len(name)) + name
+    data = b"FORM" + struct.pack(">I", 4 + len(chunks)) + b"AIFF" + chunks
+    tags = read_tags(write(tmp_path, data, "x.aiff"))
+    assert tags.title == "Song Name" and tags.duration_ms is None
+
+
+def test_v24_utf16_values_and_tag_wide_unsync(tmp_path):
+    two = b"\x01" + "A".encode("utf-16") + b"\x00\x00" + "B".encode("utf-16")
+    assert read_tags(write(tmp_path, id3(frame("TIT2", two)))).title == "A / B"
+    pic = b"\x00image/jpeg\x00\x03\x00" + JPEG
+    raw = frame("APIC", pic.replace(b"\xff", b"\xff\x00"))
+    data, mime = read_art(write(tmp_path, id3(raw, flags=0x80), "u.mp3"))
+    assert mime == "image/jpeg" and data == JPEG
