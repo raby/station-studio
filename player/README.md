@@ -159,7 +159,12 @@ read again on later scans.
   In one of your playlists, drag tracks to reorder them (or Alt+↑ / ↓),
   and press Delete or use the ⋯ menu to take one out. Any playlist can
   be copied into My playlists, and **Save as a playlist** in Up next
-  keeps the current play order. They're kept in
+  keeps the current play order.
+  To add several tracks at once, Shift-click a run of them (or
+  Shift+↑ / ↓), Cmd-click (Ctrl-click on Windows) to pick more or fewer,
+  or Cmd/Ctrl+A for all; a bar shows **Add to playlist…**, **Play next**,
+  **Add to queue** and, in your own playlists, **Remove**. Recordings
+  have a **+** on the Recordings page to add one to a playlist. Your playlists are kept in
   `~/.station-player/my-playlists.json`, and a track whose file moves
   is found again by its location.
 - **Export M3U** on any playlist saves it as an `.m3u` file other
