@@ -42,11 +42,6 @@ function item(label, onclick, on) {
 
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
-function clock(epoch) {
-  const d = new Date(epoch * 1000);
-  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-}
-
 // "Tue 07:00": the computer's own local time, as written in `at`.
 function when(iso) {
   const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}:\d{2})/.exec(iso || "");
@@ -59,7 +54,7 @@ function renderAlarm(a) {
   const ringing = !!a.ringing;
   const snoozed = !ringing && typeof a.snoozed_until === "number";
   $("#alarm").hidden = !(ringing || snoozed);
-  $("#alarm-head").textContent = ringing ? "Alarm" : snoozed ? `Snoozed until ${clock(a.snoozed_until)}` : "";
+  $("#alarm-head").textContent = ringing ? "Alarm" : snoozed ? `Snoozed until ${a.snoozed_until_text}` : "";
   $("#alarm-label").textContent = a.label || "";
   $("#alarm-label").hidden = !a.label;
   $("#alarm-snooze").hidden = !ringing;

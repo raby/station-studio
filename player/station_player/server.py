@@ -426,6 +426,9 @@ class PlayerApp:
         out = {"commands": commands}
         for key, req in (("open", self.open_request), ("alarm", self.alarm_request)):
             out[key] = {**req, "age": now - req["at"]} if req else None
+        # Which alarm is ringing now (its seq), so a window showing one
+        # notices when it was snoozed or stopped elsewhere, or timed out.
+        out["ringing"] = (self.alarm_state()["ringing"] or {}).get("seq")
         return out
 
     def page_open(self) -> bool:
@@ -744,8 +747,11 @@ class PlayerApp:
             snooze = copy.deepcopy(self._snooze)
         ringing = state["ringing"]
         label = ringing["label"] if ringing else snooze["label"] if snooze else ""
-        return {"ringing": ringing is not None, "label": label,
-                "snoozed_until": state["snoozed_until"], "next": self.next_alarm()}
+        until = state["snoozed_until"]
+        return {"ringing": ringing is not None, "label": label, "snoozed_until": until,
+                # in the computer's time, like "next" (the phone's zone may differ)
+                "snoozed_until_text": datetime.fromtimestamp(until).strftime("%H:%M") if until else "",
+                "next": self.next_alarm()}
 
     def play_recording(self, file: str) -> dict:
         """Put a finished recording in the library (the recordings folder

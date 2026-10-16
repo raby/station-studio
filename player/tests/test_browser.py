@@ -934,6 +934,17 @@ def test_snooze_from_the_phone(page, player):
     assert app.alarm_state() == {"ringing": None, "snoozed_until": None}
 
 
+def test_an_alarm_nobody_answers_stops_after_half_an_hour(page, player):
+    app = player[0]
+    ring(app)
+    sync_api.expect(page.locator("#alarm-screen")).to_be_visible(timeout=5000)
+    page.wait_for_function("() => !audio.paused")
+    with app._lock:
+        app._ringing["at"] -= app.RING_FOR + 1
+    sync_api.expect(page.locator("#alarm-screen")).to_be_hidden(timeout=5000)
+    page.wait_for_function("() => audio.paused && ALARM.seq === null")
+
+
 def test_an_alarm_stopped_before_the_page_sees_it_stays_quiet(page, player):
     app = player[0]
     page.evaluate("checkInbox = async () => {}")  # hold the page's next look

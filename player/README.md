@@ -206,9 +206,11 @@ directory of tens of thousands of stations. It opens on the most popular
 ones; search by name, pick a genre or a country, or sort by most played.
 Each result shows the station's logo, country, genres and stream
 quality: **Listen** plays it straight away, and **Add** puts it in your
-stations, where it can be recorded and set as an alarm. Searches, and the
-logos, go to radio-browser.info through Station Player; nothing else is
-sent.
+stations, where it can be recorded and set as an alarm. Searches go to
+radio-browser.info, which also hears which stations you Listen to there
+(it ranks stations that way); logos come from each station's own
+website. Station Player fetches both itself, so the page never contacts
+other sites.
 
 ## Clock and alarms
 

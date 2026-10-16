@@ -187,3 +187,61 @@ def test_server_endpoints(tmp_path):
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_logos_connect_only_to_the_address_that_was_checked():
+    import http.server
+    import threading
+
+    from station_player.directory import _fetch_public
+
+    seen = {}
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            seen["host"] = self.headers.get("Host")
+            self.send_response(200)
+            self.send_header("Content-Type", "image/png")
+            self.end_headers()
+            self.wfile.write(b"PNGDATA")
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    port = server.server_address[1]
+    looked_up = []
+
+    def resolve(host, port, type=0):
+        looked_up.append(host)
+        return [(None, None, None, None, ("127.0.0.1", port))]
+    try:
+        # A local address is refused before anything is sent.
+        with pytest.raises(OSError, match="public internet"):
+            _fetch_public(f"http://logo.example:{port}/a.png", "UA", 1000, resolve=resolve)
+        assert seen == {}
+        # Allowed (as a public one would be): it connects to that address,
+        # asking for the station's own host name, and looks it up once.
+        looked_up.clear()
+        body, ctype = _fetch_public(f"http://logo.example:{port}/a.png", "UA", 1000, resolve=resolve,
+                                    allowed=lambda ip: True)
+        assert (body, ctype) == (b"PNGDATA", "image/png")
+        assert seen["host"] == f"logo.example:{port}" and looked_up == ["logo.example"]
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_odd_answers_dont_break_tags_or_logos():
+    import http.client
+
+    def broken(url, ua, limit):
+        raise http.client.IncompleteRead(b"")
+    d = Directory(fetch=FakeNet({"https://": api_answer([{"name": "pop", "stationcount": "lots"}])}), servers=["one"],
+                  logo_fetch=broken, public=lambda h: True)
+    assert d.tags() == [{"name": "pop", "stations": 0}]
+    d._logos["https://img.example/a.png"] = None
+    assert d.logo("https://img.example/a.png") is None
+    with pytest.raises(DirectoryError):
+        Directory(fetch=broken, servers=["one"]).search()

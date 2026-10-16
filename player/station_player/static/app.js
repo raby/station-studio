@@ -1562,7 +1562,8 @@ function clockView() {
       el("div", { class: "today", "data-today": "" }),
       el("div", { class: "next-alarm", "data-next-alarm": "", role: "status" }),
       S.lib.alarm_state && S.lib.alarm_state.snoozed_until ? el("button", {
-        type: "button", class: "btn small", id: "btn-cancel-snooze", onclick: () => stopAlarm({ keepPlaying: true, message: "Snooze cancelled" }),
+        type: "button", class: "btn small", id: "btn-cancel-snooze",
+        onclick: async () => { await stopAlarm({ keepPlaying: true, message: "Snooze cancelled" }); renderView(); refocus("#btn-add-alarm"); },
       }, "Cancel snooze") : null),
     el("section", { class: "alarms" },
       el("div", { class: "section-head" },
@@ -1622,32 +1623,53 @@ function endAlarmFade() {
   if (volMul.alarm !== 1) { volMul.alarm = 1; applyVolume(); }
 }
 
-// `fromRemote`: the phone already told the player; only the page catches up.
-async function snoozeAlarm({ fromRemote = false } = {}) {
-  pauseAll();
-  endAlarmFade();
-  hideAlarmScreen();
-  if (!fromRemote) {
-    try { await loadState(await api("/api/alarm/snooze", { minutes: SNOOZE_MINUTES }, { quiet: true })); } catch (err) { renderErrors(err.message); return; }
-  } else {
-    try { await loadState(); } catch { /* next check */ }
+// The server is told first: if it says no (the alarm had already ended),
+// the screen and the music stay as they are and the message says why.
+async function snoozeAlarm() {
+  const seq = ALARM.seq;
+  ALARM.seq = null;  // so the inbox check meanwhile doesn't end it a second time
+  try {
+    await loadState(await api("/api/alarm/snooze", { minutes: SNOOZE_MINUTES }, { quiet: true }));
+  } catch (err) {
+    ALARM.seq = seq;
+    toast(err.status === 409 ? "The alarm had already stopped" : err.message, { error: true });
+    return;
   }
+  endAlarm({ pause: true });
   const until = S.lib.alarm_state && S.lib.alarm_state.snoozed_until;
   toast(until ? `Snoozed until ${hhmm(new Date(until * 1000))}` : "Snoozed");
-  if (S.view.type === "clock") renderView();
 }
 
-async function stopAlarm({ keepPlaying = false, fromRemote = false, message = "" } = {}) {
-  if (!keepPlaying) pauseAll();
+async function stopAlarm({ keepPlaying = false, message = "" } = {}) {
+  const seq = ALARM.seq;
+  ALARM.seq = null;
+  try {
+    await loadState(await api("/api/alarm/stop", {}, { quiet: true }));
+  } catch (err) {
+    ALARM.seq = seq;
+    toast(err.message, { error: true });
+    return;
+  }
+  endAlarm({ pause: !keepPlaying });
+  toast(message || (keepPlaying ? "Alarm off. The music plays on." : "Alarm stopped"));
+}
+
+// This window's alarm is over: snoozed or stopped here, from the phone or
+// another window, or it rang unanswered for half an hour.
+function endAlarm({ pause }) {
+  ALARM.seq = null;
+  if (pause) pauseAll();
   endAlarmFade();
   hideAlarmScreen();
-  if (!fromRemote) {
-    try { await loadState(await api("/api/alarm/stop", {}, { quiet: true })); } catch (err) { renderErrors(err.message); return; }
-  } else {
-    try { await loadState(); } catch { /* next check */ }
-  }
-  toast(message || (keepPlaying ? "Alarm off. The music plays on." : "Alarm stopped"));
-  if (S.view.type === "clock") renderView();
+  if (S.view.type === "clock" && !C.editing) renderView();
+}
+
+// Called on every inbox check while this window's alarm is ringing.
+async function alarmEndedElsewhere() {
+  try { await loadState(); } catch { /* still says what happened */ }
+  endAlarm({ pause: true });
+  const until = S.lib.alarm_state && S.lib.alarm_state.snoozed_until;
+  toast(until ? `Snoozed until ${hhmm(new Date(until * 1000))}` : "Alarm stopped");
 }
 
 $("#alarm-screen").addEventListener("keydown", (e) => {
@@ -1679,18 +1701,18 @@ async function nightMode() {
   try { if (navigator.wakeLock) wakeLock = await navigator.wakeLock.request("screen"); } catch { wakeLock = null; }
 }
 
-function leaveNight() {
+// Resolves once full screen has closed (which moves focus), so focus can
+// be put back afterwards: on the Night mode button, or wherever the caller says.
+async function leaveNight({ restoreFocus = true } = {}) {
   const box = $("#night");
   if (box.hidden) return;
   box.hidden = true;
   box.replaceChildren();
   if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
-  // Leaving full screen moves focus, so put it back once that's done.
-  const back = () => refocus("#btn-night");
-  if (document.fullscreenElement) document.exitFullscreen().then(back, back);
-  else back();
+  if (document.fullscreenElement) await document.exitFullscreen().catch(() => {});
+  if (restoreFocus) refocus("#btn-night");
 }
-$("#night").addEventListener("click", leaveNight);
+$("#night").addEventListener("click", () => leaveNight());
 $("#night").addEventListener("keydown", (e) => { e.preventDefault(); e.stopPropagation(); leaveNight(); });
 document.addEventListener("fullscreenchange", () => { if (!document.fullscreenElement && !$("#night").hidden) leaveNight(); });
 
@@ -3419,6 +3441,7 @@ async function checkInbox({ fresh = 0 } = {}) {
     try { await runCommand(c); } catch { /* a playlist that's gone, say */ }
   }
   await alarmGoesOff(box.alarm, fresh);
+  if (ALARM.seq !== null && String(box.ringing) !== String(ALARM.seq)) await alarmEndedElsewhere();
   const req = box.open;
   if (!req || String(req.seq) === store("opened-seq")) return;
   if (fresh && req.age > fresh) { store("opened-seq", String(req.seq)); return; }
@@ -3544,7 +3567,7 @@ $("#sleep").addEventListener("change", (e) => {
 
 // The server sets the alarm off at its time (opening a window if none is
 // open); the page plays it, fading in over a minute.
-const ALARM = { timer: null };
+const ALARM = { timer: null, seq: null };  // seq: the alarm ringing in this window
 const ALARM_FADE = 60;
 async function alarmGoesOff(req, fresh) {
   if (!req || String(req.seq) === store("alarm-seq")) return;
@@ -3563,10 +3586,12 @@ async function alarmGoesOff(req, fresh) {
     volMul.alarm = 1;
     applyVolume();
     renderErrors(`The alarm couldn't play ${req.source.name || "its playlist"}: it isn't in the library any more.`);
+    api("/api/alarm/stop", {}, { quiet: true }).catch(() => {});  // so the phone doesn't offer Snooze for nothing
     return;
   }
   announce(`Alarm: playing ${req.source.name || ""}`);
-  leaveNight();  // the alarm screen can't show over a full-screen clock
+  ALARM.seq = req.seq;
+  await leaveNight({ restoreFocus: false });  // the alarm screen can't show over a full-screen clock
   showAlarmScreen(req);
   const start = Date.now();
   ALARM.timer = setInterval(() => {
@@ -3590,8 +3615,8 @@ async function runCommand(c) {
     store("volume", volume.value);
   } else if (c.cmd === "playlist" || c.cmd === "station") await playSource(c.cmd, c.id);
   else if (c.cmd === "sleep") setSleep(c.minutes);
-  else if (c.cmd === "snooze") await snoozeAlarm({ fromRemote: true });
-  else if (c.cmd === "stop_alarm") await stopAlarm({ fromRemote: true });
+  // snooze and stop_alarm: the server has acted on them already, and
+  // checkInbox ends the alarm in whichever window is ringing.
   syncButtons();
   reportStatus();
 }

@@ -608,8 +608,8 @@ svg.analogue.huge { width: min(62vh, 78vw); height: auto; }
 .alarm-form .field.grow input, .alarm-form .field.grow select { width: 100%; }
 .alarm-form .row { display: flex; gap: 8px; align-items: center; margin-top: 14px; }
 .alarm-form .row .spacer { flex: 1; }
-.form-msg { color: var(--danger); font-size: 13px; min-height: 0; }
-.form-msg:not(:empty) { margin-top: 8px; }
+.alarm-form .form-msg { color: var(--danger); font-size: 13px; }
+.alarm-form .form-msg:not(:empty) { margin-top: 8px; }
 
 .alarm-screen, .night {
   position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; text-align: center; padding: 24px;

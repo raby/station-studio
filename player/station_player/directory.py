@@ -8,13 +8,13 @@ small images, so the player can't be used to fetch anything else.
 """
 from __future__ import annotations
 
+import http.client
+import ipaddress
 import json
 import logging
 import random
-import ipaddress
 import socket
 import threading
-import urllib.error
 import urllib.request
 from collections import OrderedDict
 from typing import Callable
@@ -51,6 +51,54 @@ def _fetch(url: str, user_agent: str, limit: int) -> tuple[bytes, str]:
     with opener.open(req, timeout=TIMEOUT) as resp:
         body = resp.read(limit + 1)
         return body, resp.headers.get("Content-Type", "")
+
+
+class _PinnedHTTP(http.client.HTTPConnection):
+    """Connects to an address already checked, not to whatever the name
+    resolves to by then (so DNS can't be switched to a local address)."""
+
+    def __init__(self, host, port, ip, **kw):
+        super().__init__(host, port, **kw)
+        self._ip = ip
+
+    def connect(self):
+        self.sock = socket.create_connection((self._ip, self.port), self.timeout)
+
+
+class _PinnedHTTPS(http.client.HTTPSConnection):
+    def __init__(self, host, port, ip, **kw):
+        super().__init__(host, port, **kw)
+        self._ip = ip
+
+    def connect(self):
+        sock = socket.create_connection((self._ip, self.port), self.timeout)
+        self.sock = self._context.wrap_socket(sock, server_hostname=self.host)
+
+
+def _fetch_public(url: str, user_agent: str, limit: int, resolve=socket.getaddrinfo,
+                  allowed=lambda ip: ip.is_global) -> tuple[bytes, str]:
+    """GET `url` from a host on the public internet only, connecting to
+    the very address that was checked; no redirects."""
+    parts = urlparse(url)
+    host, https = parts.hostname or "", parts.scheme == "https"
+    port = parts.port or (443 if https else 80)
+    try:
+        addrs = [info[4][0] for info in resolve(host, port, type=socket.SOCK_STREAM)]
+    except UnicodeError as exc:
+        raise OSError(str(exc)) from exc
+    if not addrs or not all(allowed(ipaddress.ip_address(a.split("%")[0])) for a in addrs):
+        raise OSError(f"{host} isn't on the public internet")
+    conn = (_PinnedHTTPS(host, port, addrs[0], context=tls_context(), timeout=TIMEOUT) if https
+            else _PinnedHTTP(host, port, addrs[0], timeout=TIMEOUT))
+    try:
+        path = (parts.path or "/") + (f"?{parts.query}" if parts.query else "")
+        conn.request("GET", path, headers={"User-Agent": user_agent, "Accept": "image/*"})
+        resp = conn.getresponse()
+        if resp.status != 200:
+            raise OSError(f"HTTP {resp.status}")
+        return resp.read(limit + 1), resp.headers.get("Content-Type", "")
+    finally:
+        conn.close()
 
 
 def is_public_host(host: str, resolve=socket.getaddrinfo) -> bool:
@@ -110,10 +158,14 @@ def clean_station(raw: dict) -> dict | None:
 
 class Directory:
     def __init__(self, user_agent: str = "StationPlayer", fetch: Callable = _fetch,
-                 servers: list[str] | None = None, public: Callable[[str], bool] = is_public_host) -> None:
+                 servers: list[str] | None = None, public: Callable[[str], bool] = is_public_host,
+                 logo_fetch: Callable | None = None) -> None:
         self.user_agent = user_agent
         self._fetch = fetch
         self._public = public
+        # Logos come from stations' own hosts: only public ones, pinned to
+        # the checked address. (Tests that fake the API fake these too.)
+        self._logo_fetch = logo_fetch or (_fetch_public if fetch is _fetch else fetch)
         self.servers = list(servers or SERVERS)
         self._good: str | None = None  # the mirror that answered last
         self._lock = threading.Lock()
@@ -130,7 +182,7 @@ class Directory:
             try:
                 body, _ = self._fetch(f"https://{host}{path}?{query}", self.user_agent, 4 * 1024 * 1024)
                 data = json.loads(body)
-            except (OSError, ValueError, urllib.error.URLError) as exc:
+            except (OSError, ValueError, http.client.HTTPException) as exc:
                 last = exc
                 continue
             with self._lock:
@@ -177,7 +229,11 @@ class Directory:
                                             "hidebroken": "true", "limit": str(limit)}):
             name = _text(raw.get("name"), 30) if isinstance(raw, dict) else ""
             if name:
-                out.append({"name": name, "stations": int(raw.get("stationcount") or 0)})
+                try:
+                    count = max(0, int(raw.get("stationcount") or 0))
+                except (TypeError, ValueError):
+                    count = 0
+                out.append({"name": name, "stations": count})
         return out
 
     def clicked(self, uuid: str) -> None:
@@ -206,8 +262,8 @@ class Directory:
         if not self._public(urlparse(url).hostname or ""):
             return None
         try:
-            body, ctype = self._fetch(url, self.user_agent, MAX_LOGO_BYTES)
-        except (OSError, ValueError, urllib.error.URLError):
+            body, ctype = self._logo_fetch(url, self.user_agent, MAX_LOGO_BYTES)
+        except (OSError, ValueError, http.client.HTTPException):
             return None
         ctype = ctype.split(";")[0].strip().lower()
         if len(body) > MAX_LOGO_BYTES or ctype not in LOGO_TYPES:
