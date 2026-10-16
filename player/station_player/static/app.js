@@ -1074,9 +1074,23 @@ function syncRadioCards() {
 // ---------- finding stations ------------------------------------------------
 // Searches Radio Browser (radio-browser.info) through the player server.
 
-const F = { q: "", draft: null, tag: "", country: "", order: "votes", results: null, loading: false, error: "", tags: null, token: 0, asked: false };
+// `source`: "" for Radio Browser, "somafm" for SomaFM's own channel list.
+const F = { q: "", draft: null, tag: "", country: homeCountry(), order: "votes", source: "", results: null, loading: false, error: "", token: 0, asked: false };
 const FIND_COUNTRIES = ["GB", "IE", "US", "CA", "AU", "NZ", "DE", "FR", "NL", "BE", "ES", "PT", "IT", "CH", "AT", "SE",
   "NO", "DK", "FI", "PL", "CZ", "GR", "TR", "BR", "MX", "AR", "JM", "NG", "ZA", "KE", "IN", "JP", "KR"];
+
+// Genres to browse (the directory's most used tags are mostly one
+// country's, so these are picked by hand).
+const FIND_GENRES = ["jazz", "soul", "funk", "reggae", "hip hop", "house", "techno", "drum and bass", "ambient",
+  "chillout", "electronic", "rock", "indie", "metal", "folk", "blues", "country", "classical", "oldies", "80s",
+  "90s", "news", "talk"];
+
+// The country this computer is set to (en-GB: GB), searched by default.
+function homeCountry() {
+  const tag = (navigator.language || "").split(/[@.]/)[0];  // "en-US@posix" on some Linux setups
+  const region = (tag.split(/[-_]/)[1] || "").toUpperCase();
+  return /^[A-Z]{2}$/.test(region) ? region : "";
+}
 
 function countryName(code) {
   try { return new Intl.DisplayNames([], { type: "region" }).of(code) || code; } catch { return code; }
@@ -1091,7 +1105,8 @@ async function findStations(more = {}) {
   renderFinderResults();
   const params = new URLSearchParams({ q: F.q, tag: F.tag, country: F.country, order: F.order });
   try {
-    const res = await api(`/api/directory/search?${params}`, undefined, { quiet: true });
+    const res = await api(F.source === "somafm" ? "/api/directory/somafm" : `/api/directory/search?${params}`,
+      undefined, { quiet: true });
     if (token !== F.token) return;
     F.results = res.stations || [];
   } catch (err) {
@@ -1105,24 +1120,25 @@ async function findStations(more = {}) {
   announce(F.error ? F.error : n ? `${plural(n, "station")} found` : "No stations found");
 }
 
-async function loadFinderTags() {
-  if (F.tags) return;
-  F.tags = [];
-  try {
-    F.tags = ((await api("/api/directory/tags", undefined, { quiet: true })).tags || []).slice(0, 18);
-  } catch { F.tags = null; return; }  // tried again next visit
-  const box = $("#finder-tags");
-  if (box) box.replaceChildren(...finderTagChips());
+function finderTagChips() {
+  const chip = (label, pressed, onclick, cls = "chip") => el("button", { type: "button", class: cls, "aria-pressed": String(pressed), onclick }, label);
+  return [
+    chip("SomaFM", F.source === "somafm", () => {
+      findStations({ source: F.source === "somafm" ? "" : "somafm", tag: "" });
+      syncFinderChips();
+    }, "chip somafm"),
+    ...FIND_GENRES.map((g) => chip(g, F.source === "" && F.tag === g, () => {
+      findStations({ source: "", tag: F.tag === g && F.source === "" ? "" : g });
+      syncFinderChips();
+    })),
+  ];
 }
 
-function finderTagChips() {
-  return (F.tags || []).map((t) => el("button", {
-    type: "button", class: "chip", "aria-pressed": String(F.tag === t.name),
-    onclick: () => {
-      findStations({ tag: F.tag === t.name ? "" : t.name });
-      for (const c of document.querySelectorAll("#finder-tags .chip")) c.setAttribute("aria-pressed", String(c.textContent === F.tag));
-    },
-  }, t.name));
+function syncFinderChips() {
+  for (const c of document.querySelectorAll("#finder-tags .chip")) {
+    const on = c.classList.contains("somafm") ? F.source === "somafm" : F.source === "" && c.textContent === F.tag;
+    c.setAttribute("aria-pressed", String(on));
+  }
 }
 
 function stationFacts(st) {
@@ -1146,10 +1162,10 @@ function finderCard(st) {
       st.tags.length ? el("div", { class: "tag-row" }, st.tags.slice(0, 4).map((t) => el("button", {
         type: "button", class: "tag", title: `Find more ${t} stations`,
         onclick: () => {
-          findStations({ tag: t, q: "", draft: "" });
+          findStations({ source: "", tag: t, q: "", draft: "" });
           const box = $("#finder-q");
           if (box) box.value = "";
-          for (const c of document.querySelectorAll("#finder-tags .chip")) c.setAttribute("aria-pressed", String(c.textContent === t));
+          syncFinderChips();
         },
       }, t))) : null,
       el("div", { class: "song", hidden: true })),
@@ -1194,9 +1210,12 @@ function renderFinderResults() {
     box.replaceChildren(el("p", { class: "help" }, "No stations found. Try fewer words, or another genre or country."));
     return;
   }
-  const what = [F.q && `“${F.q}”`, F.tag, F.country && countryName(F.country)].filter(Boolean).join(", ");
+  const what = [F.q && `“${F.q}”`, F.tag].filter(Boolean).join(", ");
+  const where = F.country ? ` in ${countryName(F.country)}` : "";
   box.replaceChildren(
-    el("p", { class: "help" }, what ? `${plural(F.results.length, "station")} for ${what}` : "The most popular stations right now"),
+    el("p", { class: "help" }, F.source === "somafm"
+      ? "SomaFM: listener-supported radio from San Francisco, with no adverts"
+      : what ? `${plural(F.results.length, "station")} for ${what}${where}` : `The most popular stations${where || " right now"}`),
     el("ul", { class: "find-list" }, F.results.map(finderCard)));
   syncRadioCards();
 }
@@ -1206,8 +1225,8 @@ function finderSection() {
     type: "search", id: "finder-q", value: F.draft ?? F.q, placeholder: "Station name, e.g. jazz fm", "aria-label": "Station name",
     oninput: (e) => { F.draft = e.target.value; },  // kept if the page redraws
   });
-  const here = (navigator.language || "").split("-")[1];
-  const codes = here && !FIND_COUNTRIES.includes(here.toUpperCase()) ? [here.toUpperCase(), ...FIND_COUNTRIES] : FIND_COUNTRIES;
+  const here = homeCountry();
+  const codes = here && !FIND_COUNTRIES.includes(here) ? [here, ...FIND_COUNTRIES] : FIND_COUNTRIES;
   const country = el("select", { id: "finder-country", "aria-label": "Country" },
     el("option", { value: "" }, "Any country"),
     ...codes.map((c) => el("option", { value: c }, countryName(c)))
@@ -1218,18 +1237,18 @@ function finderSection() {
   order.value = F.order;
   const search = (e) => {
     if (e) e.preventDefault();
-    findStations({ q: q.value.trim(), country: country.value, order: order.value });
+    findStations({ source: "", q: q.value.trim(), country: country.value, order: order.value });
+    syncFinderChips();
   };
   country.addEventListener("change", () => search());
   order.addEventListener("change", () => search());
   queueMicrotask(() => {
-    loadFinderTags();
     renderFinderResults();
     if (!F.asked) findStations();  // start with the most popular stations
   });
   return el("section", { class: "finder" },
     el("h2", {}, "Find stations"),
-    el("p", { class: "help" }, "Search thousands of stations from around the world in the free Radio Browser directory (radio-browser.info). Listen first, then Add the ones you like."),
+    el("p", { class: "help" }, "Search thousands of stations from around the world in the free Radio Browser directory (radio-browser.info), or browse SomaFM's ad-free channels. Listen first, then Add the ones you like."),
     el("form", { class: "form-row finder-form", role: "search", onsubmit: search },
       q, country, order, el("button", { class: "btn primary", id: "btn-find" }, ...iconLabel("search", "Search"))),
     el("div", { class: "tag-filter", id: "finder-tags", role: "group", "aria-label": "Genres" }, ...finderTagChips()),

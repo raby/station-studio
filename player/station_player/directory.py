@@ -1,5 +1,6 @@
 """Finding radio stations: search Radio Browser (radio-browser.info), the
-free community directory of internet radio stations.
+free community directory of internet radio stations, and list SomaFM's
+channels (somafm.com).
 
 The page can't reach other sites itself (its security policy allows only
 the player), so searches and station logos go through here. Logos are
@@ -8,6 +9,7 @@ small images, so the player can't be used to fetch anything else.
 """
 from __future__ import annotations
 
+import copy
 import http.client
 import ipaddress
 import json
@@ -15,6 +17,7 @@ import logging
 import random
 import socket
 import threading
+import time
 import urllib.request
 from collections import OrderedDict
 from typing import Callable
@@ -34,6 +37,7 @@ MAX_LOGO_BYTES = 256 * 1024
 # Not SVG: it can carry script.
 LOGO_TYPES = ("image/png", "image/jpeg", "image/gif", "image/webp", "image/x-icon", "image/vnd.microsoft.icon")
 ORDERS = {"votes": "votes", "popular": "clickcount", "name": "name"}
+SOMAFM_LIST = "https://somafm.com/channels.json"
 
 
 class DirectoryError(Exception):
@@ -156,6 +160,30 @@ def clean_station(raw: dict) -> dict | None:
     }
 
 
+def clean_somafm(raw: dict) -> dict | None:
+    """A SomaFM channel as a station (its 128k MP3 stream); None when it
+    has no MP3 stream or no usable id."""
+    if not isinstance(raw, dict):
+        return None
+    cid = _text(raw.get("id"), 40)
+    title = _text(raw.get("title"))
+    playlists = raw.get("playlists") if isinstance(raw.get("playlists"), list) else []
+    if not cid or not title or not all(c.isalnum() or c in "-_" for c in cid) \
+            or not any(isinstance(p, dict) and p.get("format") == "mp3" for p in playlists):
+        return None
+    try:
+        listeners = max(0, int(raw.get("listeners") or 0))
+    except (TypeError, ValueError):
+        listeners = 0
+    genres = [t for t in (_text(g, 30) for g in str(raw.get("genre") or "").split("|")) if t][:4]
+    return {
+        "uuid": "", "name": f"SomaFM {title}", "url": f"https://ice1.somafm.com/{cid}-128-mp3",
+        "homepage": f"https://somafm.com/{cid}/", "logo": _http_url(raw.get("image")),
+        "tags": genres, "country": _text(raw.get("description"), 120), "countrycode": "",
+        "codec": "MP3", "bitrate": 128, "votes": listeners, "hls": False,
+    }
+
+
 class Directory:
     def __init__(self, user_agent: str = "StationPlayer", fetch: Callable = _fetch,
                  servers: list[str] | None = None, public: Callable[[str], bool] = is_public_host,
@@ -171,6 +199,7 @@ class Directory:
         self._lock = threading.Lock()
         self._logos: OrderedDict[str, None] = OrderedDict()  # addresses it handed out
         self._logo_cache: OrderedDict[str, tuple[bytes, str]] = OrderedDict()
+        self._soma: tuple[float, list[dict]] | None = None  # (when, channels)
 
     def _api(self, path: str, params: dict) -> list:
         query = urlencode({k: v for k, v in params.items() if v not in (None, "")})
@@ -213,6 +242,10 @@ class Directory:
             found.append(st)
             if len(found) >= limit:
                 break
+        self._remember_logos(found)
+        return found
+
+    def _remember_logos(self, found: list[dict]) -> None:
         with self._lock:
             for st in found:
                 if st["logo"]:
@@ -220,21 +253,28 @@ class Directory:
                     self._logos.move_to_end(st["logo"])
             while len(self._logos) > 2000:
                 self._logos.popitem(last=False)
-        return found
 
-    def tags(self, limit: int = 40) -> list[dict]:
-        """The most used genre tags, for browsing."""
-        out = []
-        for raw in self._api("/json/tags", {"order": "stationcount", "reverse": "true",
-                                            "hidebroken": "true", "limit": str(limit)}):
-            name = _text(raw.get("name"), 30) if isinstance(raw, dict) else ""
-            if name:
-                try:
-                    count = max(0, int(raw.get("stationcount") or 0))
-                except (TypeError, ValueError):
-                    count = 0
-                out.append({"name": name, "stations": count})
-        return out
+    def somafm(self) -> list[dict]:
+        """SomaFM's channels, from its own public list (kept for ten minutes)."""
+        with self._lock:
+            if self._soma and time.monotonic() - self._soma[0] < 600:
+                return copy.deepcopy(self._soma[1])
+        try:
+            body, _ = self._fetch(SOMAFM_LIST, self.user_agent, 1024 * 1024)
+            channels = json.loads(body).get("channels")
+        except (OSError, ValueError, AttributeError, http.client.HTTPException) as exc:
+            logger.info("SomaFM unreachable: %s", exc)
+            raise DirectoryError("Couldn't reach SomaFM (somafm.com). Check the internet connection and try again.") from exc
+        found = []
+        for ch in channels if isinstance(channels, list) else []:
+            st = clean_somafm(ch)
+            if st:
+                found.append(st)
+        found.sort(key=lambda st: -st["votes"])  # most listened first
+        self._remember_logos(found)
+        with self._lock:
+            self._soma = (time.monotonic(), found)
+        return copy.deepcopy(found)
 
     def clicked(self, uuid: str) -> None:
         """Tell the directory a station was played (it ranks stations by

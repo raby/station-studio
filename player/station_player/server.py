@@ -1274,8 +1274,8 @@ def make_handler(app: PlayerApp):
                     return self._send_json({"stations": app.directory.search(
                         q=q.get("q", ""), tag=q.get("tag", ""), country=q.get("country", ""),
                         order=q.get("order", "votes"))})
-                if path == "/api/directory/tags":
-                    return self._send_json({"tags": app.directory.tags()})
+                if path == "/api/directory/somafm":
+                    return self._send_json({"stations": app.directory.somafm()})
             except DirectoryError as exc:
                 return self._error(HTTPStatus.BAD_GATEWAY, str(exc))
             return self._error(HTTPStatus.NOT_FOUND, "Not found")
