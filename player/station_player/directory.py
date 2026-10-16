@@ -23,6 +23,7 @@ from collections import OrderedDict
 from typing import Callable
 from urllib.parse import urlencode, urlparse
 
+from station_player.logos import sniff
 from station_player.radio import tls_context
 
 logger = logging.getLogger(__name__)
@@ -268,7 +269,7 @@ class Directory:
             if st and st["logo"]:
                 self._remember([st])
                 got = self.logo(st["logo"])
-                if got:
+                if got and sniff(got[0]):  # really a picture, whatever the server said
                     return got
         return None
 

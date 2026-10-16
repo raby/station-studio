@@ -1091,6 +1091,9 @@ def test_logos_recently_played_and_more_results(page, player):
     page.locator("#btn-more").click()
     sync_api.expect(results).to_have_count(100)
     sync_api.expect(page.locator("#btn-more")).to_have_count(0)  # that's all of them
+    # A new search while more were loading can still show more.
+    page.evaluate("F.more = true; findStations({})")
+    sync_api.expect(page.locator("#btn-more")).to_be_enabled()
     # Searches as you type, after a pause (one letter isn't enough).
     before = len(net.asked)
     page.locator("#finder-q").press_sequentially("s")
@@ -1143,6 +1146,7 @@ def test_choose_find_and_remove_a_station_logo(page, player, tmp_path):
     page.locator(".nav-item[data-view=radio]").click()
     card = page.locator(".card[data-url='http://127.0.0.1:9/stream']")
     card.get_by_role("button", name="Edit Test FM").click()
+    card.get_by_label("Station name").fill("Renamed FM")  # typed, not saved yet
     # Choose a picture from a file.
     picture = tmp_path / "logo.png"
     picture.write_bytes(PNG)
@@ -1150,6 +1154,7 @@ def test_choose_find_and_remove_a_station_logo(page, player, tmp_path):
     # The form stays open, showing the new logo.
     sync_api.expect(card.locator(".logo-row img.logo")).to_have_attribute("src", re.compile(r"^/logo/"))
     assert app.store.config.stations[0]["logo"].endswith(".png")
+    sync_api.expect(card.get_by_label("Station name")).to_have_value("Renamed FM")
     # Something that isn't a picture is refused.
     bad = tmp_path / "x.png"
     bad.write_bytes(b"<svg onload=alert(1)>")
@@ -1158,6 +1163,7 @@ def test_choose_find_and_remove_a_station_logo(page, player, tmp_path):
     # The one Radio Browser has (none here: it says so), then no logo.
     card.get_by_role("button", name="Find logo").click()
     sync_api.expect(card.locator(".test-result")).to_contain_text("no logo")
+    sync_api.expect(card.get_by_role("button", name="Find logo")).to_be_enabled()
     card.get_by_role("button", name="No logo").click()
     sync_api.expect(card.locator(".logo-row .glyph")).to_be_visible()
     assert "logo" not in app.store.config.stations[0]

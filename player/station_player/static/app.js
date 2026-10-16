@@ -944,7 +944,7 @@ function readFile(file) {
   });
 }
 
-function logoEditor(st, result) {
+function logoEditor(st, result, nameInput, urlInput) {
   const show = (ok, text) => {
     result.className = `test-result ${ok ? "ok" : "bad"}`;
     result.replaceChildren(icon(ok ? "check" : "alert"), el("span", {}, text));
@@ -953,7 +953,11 @@ function logoEditor(st, result) {
   const set = async (body, done) => {
     try {
       await loadState(await api("/api/stations/logo", { url: st.url, ...body }, { quiet: true }));
+      // The form is drawn again: keep what was typed but not saved yet.
+      const typed = [nameInput.value, urlInput.value];
       renderView();
+      const inputs = document.querySelectorAll(`#view .card[data-url="${CSS.escape(st.url)}"] .edit input:not([type=file])`);
+      if (inputs.length >= 2) [inputs[0].value, inputs[1].value] = typed;
       refocus(`#view .card[data-url="${CSS.escape(st.url)}"] .logo-row button`);
       toast(done);
     } catch (err) { show(false, err.message); }
@@ -972,9 +976,11 @@ function logoEditor(st, result) {
     el("button", {
       type: "button", class: "btn small", title: "Look this station up in Radio Browser",
       onclick: async (e) => {
-        e.currentTarget.disabled = true;
+        const btn = e.currentTarget;
+        btn.disabled = true;
         show(true, "Looking…");
         await set({ find: true }, `Found a logo for ${st.name}`);
+        btn.disabled = false;  // still here when nothing was found
       },
     }, ...iconLabel("search", "Find logo")),
     el("button", { type: "button", class: "btn small", onclick: () => file.click() }, "Choose picture…"),
@@ -1040,7 +1046,7 @@ function stationCard(st, i, count) {
     editing ? el("form", { class: "edit", onsubmit: save },
       el("label", {}, "Name", name),
       el("label", {}, "Stream URL", url),
-      logoEditor(st, result),
+      logoEditor(st, result, name, url),
       result,
       el("div", { class: "row" },
         el("button", { class: "btn primary" }, "Save"),
@@ -1169,8 +1175,11 @@ function syncRecent() {
 }
 
 async function notePlayed(st) {
+  S.notedUrl = st.url;
   try {
-    S.lib = await api("/api/stations/played", { name: st.name, url: st.url, logo_url: st.logo_url || "" }, { quiet: true });
+    const res = await api("/api/stations/played", { name: st.name, url: st.url, logo_url: st.logo_url || "" }, { quiet: true });
+    // Only the list: the rest may be older than a change made meanwhile.
+    S.lib.recent_stations = res.recent_stations;
     syncRecent();
   } catch { /* not one the player knows: nothing to remember */ }
 }
@@ -1234,6 +1243,7 @@ async function findStations(more = {}) {
   F.error = "";
   F.asked = true;
   F.next = null;
+  F.more = false;  // a "Show more" for the last search no longer counts
   renderFinderResults();
   const params = new URLSearchParams({ q: F.q, tag: F.tag, country: F.country, order: F.order });
   try {
@@ -1353,7 +1363,7 @@ function finderCard(st) {
             await loadState(await api("/api/stations", { name: st.name, url: st.url, logo_url: st.logo || "" }, { quiet: true }));
             renderView();
             toast(`Added ${st.name} to your stations`);
-            refocus(`#view .find-card[data-find="${CSS.escape(st.url)}"] .listen`);
+            refocus(`#finder-results .find-card[data-find="${CSS.escape(st.url)}"] .listen`);
           } catch (err) {
             btn.disabled = false;
             toast(err.message, { error: true });
@@ -3184,7 +3194,7 @@ function playStation(st, { via = "relay", autoplay = true } = {}) {
   if (autoplay) {
     audio.src = S.radioSrc;
     audio.play().catch(() => {});
-    if (!sameStation) notePlayed(st);
+    if (!sameStation || S.notedUrl !== st.url) notePlayed(st);
   }
   updateNow();
   markPlaying();
@@ -3230,7 +3240,10 @@ function togglePlay() {
   }
   if (audio.paused) {
     // A paused live stream has fallen behind; reconnect to go live again.
-    if (S.mode === "radio") audio.src = S.radioSrc;
+    if (S.mode === "radio") {
+      audio.src = S.radioSrc;
+      if (S.notedUrl !== S.station.url) notePlayed(S.station);  // e.g. resumed after a restart
+    }
     else ensureGraph();
     audio.play().catch(() => {});
   } else {

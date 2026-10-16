@@ -9,7 +9,10 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 import re
+import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -47,6 +50,7 @@ class LogoStore:
     def __init__(self, folder: Path, grace: float = GRACE_SECONDS) -> None:
         self.folder = folder
         self.grace = grace
+        self._lock = threading.Lock()  # saving and pruning, one at a time
 
     def save(self, data: bytes) -> str:
         """Keep an image; returns its name. ValueError if it isn't a small
@@ -58,13 +62,19 @@ class LogoStore:
             raise ValueError("That picture is too big (the limit is 256 KB)")
         name = f"{hashlib.sha256(data).hexdigest()[:16]}.{TYPES[ctype]}"
         path = self.folder / name
-        if path.is_file():
-            path.touch()  # just used again: see prune
-        else:
+        with self._lock:
+            if path.is_file() and path.stat().st_size == len(data):
+                os.utime(path)  # just used again: see prune
+                return name
             self.folder.mkdir(parents=True, exist_ok=True)
-            tmp = path.with_suffix(".tmp")
-            tmp.write_bytes(data)
-            tmp.replace(path)
+            fd, tmp = tempfile.mkstemp(dir=self.folder, suffix=".tmp")
+            try:
+                with os.fdopen(fd, "wb") as fh:
+                    fh.write(data)
+                os.replace(tmp, path)
+            except BaseException:
+                Path(tmp).unlink(missing_ok=True)
+                raise
         return name
 
     def get(self, name: str) -> tuple[bytes, str] | None:
@@ -77,7 +87,15 @@ class LogoStore:
         return data, SERVE_TYPES[name.rsplit(".", 1)[1]]
 
     def has(self, name: str) -> bool:
-        return is_name(name) and (self.folder / name).is_file()
+        """Whether that logo is kept; marks it just used (see prune)."""
+        if not is_name(name):
+            return False
+        with self._lock:
+            try:
+                os.utime(self.folder / name)
+            except OSError:
+                return False
+        return True
 
     def prune(self, keep: set[str]) -> None:
         """Delete logos nothing uses any more. Ones saved in the last
@@ -87,6 +105,10 @@ class LogoStore:
         except OSError:
             return
         now = time.time()
+        with self._lock:
+            self._prune(files, keep, now)
+
+    def _prune(self, files: list[Path], keep: set[str], now: float) -> None:
         for path in files:
             if is_name(path.name) and path.name not in keep:
                 try:

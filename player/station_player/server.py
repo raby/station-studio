@@ -1053,13 +1053,17 @@ class PlayerApp:
             if not any(s.get("url") == url for s in self.store.config.stations):
                 raise LookupError("No such station")
         name = None
-        if find:
-            got = self.directory.find_logo(url)  # network: outside the lock
-            if got is None:
-                return False
-            name = self.logos.save(got[0])
-        elif image is not None:
-            name = self.logos.save(image)
+        try:
+            if find:
+                got = self.directory.find_logo(url)  # network: outside the lock
+                if got is None:
+                    return False
+                name = self.logos.save(got[0])
+            elif image is not None:
+                name = self.logos.save(image)
+        except OSError as exc:
+            logger.warning("Couldn't keep a logo: %s", exc)
+            raise ValueError("Couldn't save the logo on this computer") from None
         with self._change(rescan=False) as cfg:
             for st in cfg.stations + cfg.recent_stations:
                 if st.get("url") == url:

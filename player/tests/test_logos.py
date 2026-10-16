@@ -67,6 +67,8 @@ class Net:
 
     def __call__(self, url, ua, limit):
         self.asked.append(url)
+        if url.startswith("https://logo.example/fake"):
+            return b"<html>not a picture</html>", "image/png"
         if url.startswith("https://logo.example/"):
             return PNG, "image/png"
         if "/json/stations/byurl" in url:
@@ -98,6 +100,27 @@ def test_find_logo_by_stream_address():
     assert "url=https%3A%2F%2Fs%2Fa" in [u for u in net.asked if "byurl" in u][0]
     assert Directory(fetch=Net(), servers=["one"]).find_logo("https://s/a") is None
     assert d.find_logo("file:///etc/passwd") is None
+    # A "picture" that isn't one is passed over.
+    fake = Net(byurl=[raw("A", "https://s/a", "https://logo.example/fake.png")])
+    assert Directory(fetch=fake, servers=["one"], public=lambda h: True).find_logo("https://s/a") is None
+
+
+def test_saving_the_same_picture_at_once(tmp_path):
+    logos = LogoStore(tmp_path / "logos")
+    names, errors = [], []
+
+    def save():
+        try:
+            names.append(logos.save(PNG))
+        except Exception as exc:  # noqa: BLE001
+            errors.append(exc)
+    threads = [threading.Thread(target=save) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert not errors and len(set(names)) == 1 and logos.get(names[0]) == (PNG, "image/png")
+    assert [p.name for p in (tmp_path / "logos").iterdir()] == names[:1]  # no temporary files left
 
 
 @pytest.fixture
