@@ -654,7 +654,11 @@ svg.analogue.huge { width: min(62vh, 78vw); height: auto; }
 .find-art .logo { width: 48px; height: 48px; border-radius: 10px; object-fit: cover; background: #fff; }
 .find-art .glyph { width: 48px; height: 48px; }
 .find-card .info { flex: 1; min-width: 0; }
-.find-card .name { font-weight: 650; overflow-wrap: anywhere; }
+/* Not the settings list's row style: top-aligned, words kept whole. */
+.settings li.find-card { align-items: flex-start; word-break: normal; margin: 0; padding: 12px; gap: 12px; }
+.settings li.find-card span { flex: none; }
+.find-card .name { font-weight: 650; overflow-wrap: break-word; }
+.find-card .tag { max-width: 14em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .find-card .facts { color: var(--muted); font-size: 12px; }
 .find-card .tag-row { margin-top: 5px; }
 .find-card .song { font-size: 12px; color: var(--accent); font-weight: 600; margin-top: 4px; }
