@@ -407,27 +407,123 @@ function playlistView(pl) {
     tr.focus();
   };
   const trackOf = (tr) => pl.tracks[Number(tr.dataset.index)];
+
+  // Selecting several tracks: Cmd/Ctrl-click adds or takes away one,
+  // Shift-click (or Shift+arrows) a run, Cmd/Ctrl+A all those showing.
+  const sel = new Set();
+  let anchor = null;
+  const selected = () => [...sel].sort((a, b) => a - b).map((i) => pl.tracks[i]);
+  const bar = el("div", { class: "select-bar", hidden: true, role: "toolbar", "aria-label": "Selected tracks" });
+  const syncSelection = () => {
+    rows.forEach((r, i) => {
+      const on = sel.has(i) && sel.size > 1;
+      r.classList.toggle("selected", on);
+      r.setAttribute("aria-selected", String(on));
+    });
+    if (sel.size < 2) { bar.hidden = true; return; }
+    const group = selected();
+    const playable = group.filter((t) => t.available);
+    const what = plural(playable.length, "track");
+    const addBtn = el("button", {
+      type: "button", class: "btn small primary", disabled: playable.length ? null : true, "aria-haspopup": "menu",
+      onclick: (e) => playlistChooser(playable.map((t) => t.id), what, e.currentTarget, e.currentTarget, null, pl.id),
+    }, ...iconLabel("plus", "Add to playlist…"));
+    bar.replaceChildren(
+      el("span", { class: "count" }, `${plural(sel.size, "track")} selected`),
+      addBtn,
+      el("button", { type: "button", class: "btn small", disabled: playable.length ? null : true, onclick: () => queueTracks(playable, pl, "next") }, "Play next"),
+      el("button", { type: "button", class: "btn small", disabled: playable.length ? null : true, onclick: () => queueTracks(playable, pl, "end") }, "Add to queue"),
+      mine ? el("button", { type: "button", class: "btn small danger", onclick: () => removeManyFromPlaylist(pl, [...sel]) }, "Remove") : null,
+      el("span", { class: "spacer" }),
+      el("button", { type: "button", class: "btn small ghost", onclick: () => { clearSelection(); } }, "Clear"));
+    bar.hidden = false;
+  };
+  const clearSelection = () => { sel.clear(); anchor = null; syncSelection(); };
+  const selectRun = (to) => {
+    const vis = visibleRows();
+    const a = vis.indexOf(rows[anchor ?? Number(to.dataset.index)]);
+    const b = vis.indexOf(to);
+    sel.clear();
+    if (a < 0) { sel.add(Number(to.dataset.index)); } else {
+      for (const r of vis.slice(Math.min(a, b), Math.max(a, b) + 1)) sel.add(Number(r.dataset.index));
+    }
+    syncSelection();
+  };
+  const pick = (tr, e) => {
+    const i = Number(tr.dataset.index);
+    if (e.shiftKey) { selectRun(tr); return; }
+    if (e.metaKey || e.ctrlKey) {
+      if (sel.size === 0 && anchor !== null && anchor !== i) sel.add(anchor);  // the row picked before counts too
+      if (sel.has(i)) sel.delete(i); else sel.add(i);
+      anchor = i;
+      syncSelection();
+      return;
+    }
+    sel.clear();
+    sel.add(i);
+    anchor = i;
+    syncSelection();
+  };
+  const groupFor = (tr) => (sel.size > 1 && sel.has(Number(tr.dataset.index)) ? selected() : null);
+
   const tbody = el("tbody", {
     ondblclick: (e) => {
       const tr = e.target.closest("tr[data-index]");
-      if (tr && !e.target.closest(".row-more")) playPlaylist(pl, Number(tr.dataset.index));
+      if (tr && !e.target.closest(".row-more") && !e.shiftKey && !e.metaKey && !e.ctrlKey) playPlaylist(pl, Number(tr.dataset.index));
     },
     onclick: (e) => {
       const tr = e.target.closest("tr[data-index]");
       if (!tr) return;
       focusRow(tr);
-      if (e.target.closest(".row-more")) openTrackMenu(trackOf(tr), pl, e.target.closest(".row-more"), tr);
+      if (e.target.closest(".row-more")) {
+        openTrackMenu(trackOf(tr), pl, e.target.closest(".row-more"), tr, undefined, groupFor(tr));
+        return;
+      }
+      pick(tr, e);
     },
+    onmousedown: (e) => { if (e.shiftKey) e.preventDefault(); },  // no text selection on Shift-click
     oncontextmenu: (e) => {
       const tr = e.target.closest("tr[data-index]");
-      if (!tr || !(trackOf(tr).available || mine)) return;
+      if (!tr) return;
+      const group = groupFor(tr);
+      if (!group && !(trackOf(tr).available || mine)) return;
       e.preventDefault();
       focusRow(tr);
-      openTrackMenu(trackOf(tr), pl, tr, tr, { x: e.clientX, y: e.clientY });
+      openTrackMenu(trackOf(tr), pl, tr, tr, { x: e.clientX, y: e.clientY }, group);
     },
     onkeydown: (e) => {
       const tr = e.target.closest("tr[data-index]");
       if (!tr) return;
+      if ((e.metaKey || e.ctrlKey) && (e.key === "a" || e.key === "A")) {
+        e.preventDefault();
+        for (const r of visibleRows()) sel.add(Number(r.dataset.index));
+        syncSelection();
+        announce(`${plural(sel.size, "track")} selected`);
+        return;
+      }
+      if (e.key === "Escape" && sel.size > 1) {
+        e.preventDefault();
+        clearSelection();
+        announce("Selection cleared");
+        return;
+      }
+      if (e.shiftKey && (e.key === "ArrowUp" || e.key === "ArrowDown") && !e.altKey) {
+        e.preventDefault();
+        const vis = visibleRows();
+        const next = vis[vis.indexOf(tr) + (e.key === "ArrowUp" ? -1 : 1)];
+        if (!next) return;
+        // A run starts from this track, unless it extends one it belongs to.
+        if (anchor === null || rows[anchor].hidden || !sel.has(Number(tr.dataset.index))) anchor = Number(tr.dataset.index);
+        focusRow(next);
+        selectRun(next);
+        announce(`${plural(sel.size, "track")} selected`);
+        return;
+      }
+      if (e.key === " " && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        pick(tr, { metaKey: true });
+        return;
+      }
       // In my playlists: Alt+arrows move a track, Delete removes it.
       if (mine && e.altKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
         e.preventDefault();
@@ -437,7 +533,8 @@ function playlistView(pl) {
       }
       if (mine && (e.key === "Delete" || e.key === "Backspace")) {
         e.preventDefault();
-        removeFromPlaylist(pl, Number(tr.dataset.index));
+        if (groupFor(tr)) removeManyFromPlaylist(pl, [...sel]);
+        else removeFromPlaylist(pl, Number(tr.dataset.index));
         return;
       }
       const vis = visibleRows();
@@ -463,7 +560,7 @@ function playlistView(pl) {
         return;
       } else if (e.key === "ContextMenu" || (e.key === "F10" && e.shiftKey)) {
         e.preventDefault();
-        if (trackOf(tr).available || mine) openTrackMenu(trackOf(tr), pl, tr, tr);
+        if (groupFor(tr) || trackOf(tr).available || mine) openTrackMenu(trackOf(tr), pl, tr, tr, undefined, groupFor(tr));
         return;
       } else return;
       e.preventDefault();
@@ -474,10 +571,10 @@ function playlistView(pl) {
   const empty = el("div", { class: "empty" },
     pl.search ? "Nothing in your library matches." : pl.count ? "No tracks match."
       : mine ? "This playlist is empty. Add tracks with the ⋯ button on any track, or by right-clicking it." : "This playlist is empty.");
-  const table = el("table", { class: "tracks" },
+  const table = el("table", { class: "tracks", "aria-multiselectable": "true" },
     el("caption", { class: "sr-only" },
       `${pl.name}. Use the arrow keys to move between tracks and Enter to play. ` +
-      "N plays the track next, Q adds it to the queue." +
+      "N plays the track next, Q adds it to the queue. Shift with the arrows selects several tracks, Control or Command A selects all." +
       (mine ? " Alt with the up or down arrow moves a track, Delete removes it." : "")),
     el("thead", {}, el("tr", {},
       el("th", { class: "num" }, "#"), el("th", { class: "title" }, "Title"),
@@ -493,8 +590,9 @@ function playlistView(pl) {
       const hit = matches(t, q);
       rows[i].hidden = !hit;
       rows[i].tabIndex = -1;
-      if (hit) { shown++; first = first || rows[i]; }
+      if (hit) { shown++; first = first || rows[i]; } else sel.delete(i);  // only what's showing stays selected
     });
+    syncSelection();
     if (first) first.tabIndex = 0;
     table.hidden = shown === 0;
     empty.hidden = shown !== 0;
@@ -539,6 +637,7 @@ function playlistView(pl) {
     !pl.search && pl.missing && S.lib.missing && pl.kind !== "folder" ? missingBanner(pl.missing === pl.count
       ? "None of these tracks were found on this computer"
       : `${pl.missing} of these tracks weren't found on this computer`) : null,
+    bar,
     table,
     empty,
   );
@@ -628,7 +727,7 @@ async function addToPlaylist(pid, ids, what) {
   const target = S.lib.playlists.find((p) => p.id === pid);
   try {
     await loadState(await api(`/api/my-playlists/${pid}/add`, { ids }, { quiet: true }));
-    announce(`Added ${what} to ${target ? target.name : "the playlist"}`);
+    toast(`Added ${what} to ${target ? target.name : "the playlist"}`);
   } catch (err) {
     renderErrors(err.message);
     return;
@@ -668,6 +767,14 @@ function removeFromPlaylist(pl, index) {
   const ids = pl.tracks.map((t) => t.id);
   ids.splice(index, 1);
   setPlaylistTracks(pl.id, ids, Math.min(index, ids.length - 1), `Removed ${pl.tracks[index].name} from ${pl.name}`);
+}
+
+function removeManyFromPlaylist(pl, indexes) {
+  if (savingPlaylist || !indexes.length) return;
+  const gone = new Set(indexes);
+  const ids = pl.tracks.map((t) => t.id).filter((_, i) => !gone.has(i));
+  const first = Math.min(...indexes);
+  setPlaylistTracks(pl.id, ids, Math.min(first, ids.length - 1), `Removed ${plural(gone.size, "track")} from ${pl.name}`);
 }
 
 async function renamePlaylist(pl) {
@@ -733,49 +840,79 @@ function closeTrackMenu() {
   menuReturn = null;
 }
 
-function openTrackMenu(track, pl, anchor, returnTo, at) {
-  const menu = $("#track-menu");
-  menuReturn = returnTo;
-  const index = pl.tracks.indexOf(track);
-  const item = (label, fn) => el("button", {
+function menuItem(label, fn) {
+  return el("button", {
     type: "button", role: "menuitem", tabindex: "-1",
     onclick: () => { closeTrackMenu(); fn(); },
   }, label);
-  const place = () => {
-    const box = anchor.getBoundingClientRect();
-    const x = at ? at.x : box.right - menu.offsetWidth;
-    const y = at ? at.y : box.bottom;
-    menu.style.left = `${Math.max(8, Math.min(x, innerWidth - menu.offsetWidth - 8))}px`;
-    menu.style.top = `${Math.max(8, Math.min(y, innerHeight - menu.offsetHeight - 8))}px`;
-    menu.querySelector("button").focus();
-  };
-  // "Add to playlist…" swaps the menu for a list of my playlists.
-  const choosePlaylist = () => {
-    menu.replaceChildren(
-      el("div", { class: "menu-label", "aria-hidden": "true" }, "Add to playlist"),
-      ...myPlaylists().filter((p) => p.id !== pl.id).map((p) =>
-        item(p.name, () => addToPlaylist(p.id, [track.id], track.name))),
-      item("New playlist…", () => newPlaylist([track.id])));
-    place();
-  };
+}
+
+// Show the menu with `items`, by `anchor` (or at the pointer, `at`).
+function showMenu(items, label, anchor, returnTo, at) {
+  const menu = $("#track-menu");
+  menuReturn = returnTo;
+  menu.replaceChildren(...items);
+  menu.setAttribute("aria-label", label);
+  menu.hidden = false;
+  const box = anchor.getBoundingClientRect();
+  const x = at ? at.x : box.right - menu.offsetWidth;
+  const y = at ? at.y : box.bottom;
+  menu.style.left = `${Math.max(8, Math.min(x, innerWidth - menu.offsetWidth - 8))}px`;
+  menu.style.top = `${Math.max(8, Math.min(y, innerHeight - menu.offsetHeight - 8))}px`;
+  menu.querySelector("button").focus();
+}
+
+// The list of my playlists to add `ids` to (`what` names them).
+function playlistChooser(ids, what, anchor, returnTo, at, exclude = null) {
+  showMenu([
+    el("div", { class: "menu-label", "aria-hidden": "true" }, "Add to playlist"),
+    ...myPlaylists().filter((p) => p.id !== exclude).map((p) => menuItem(p.name, () => addToPlaylist(p.id, ids, what))),
+    menuItem("New playlist…", () => newPlaylist(ids)),
+  ], `Add ${what} to a playlist`, anchor, returnTo, at);
+}
+
+// The ⋯ menu for one track, or for `group` (several selected tracks).
+function openTrackMenu(track, pl, anchor, returnTo, at, group = null) {
+  if (group && group.length > 1) return openGroupMenu(group, pl, anchor, returnTo, at);
+  const index = pl.tracks.indexOf(track);
   const items = [];
   if (track.available) {
-    items.push(item("Play next", () => queueTrack(track, pl, "next")),
-      item("Add to queue", () => queueTrack(track, pl, "end")),
-      el("button", { type: "button", role: "menuitem", tabindex: "-1", "aria-haspopup": "menu", onclick: choosePlaylist },
-        "Add to playlist…"));
+    items.push(menuItem("Play next", () => queueTrack(track, pl, "next")),
+      menuItem("Add to queue", () => queueTrack(track, pl, "end")),
+      el("button", {
+        type: "button", role: "menuitem", tabindex: "-1", "aria-haspopup": "menu",
+        onclick: () => playlistChooser([track.id], track.name, anchor, returnTo, at, pl.id),
+      }, "Add to playlist…"));
   }
   if (isMine(pl)) {
     if (items.length) items.push(el("hr", { role: "separator" }));
-    if (index > 0) items.push(item("Move up", () => moveInPlaylist(pl, index, index - 1)));
-    if (index < pl.tracks.length - 1) items.push(item("Move down", () => moveInPlaylist(pl, index, index + 1)));
-    items.push(item("Remove from this playlist", () => removeFromPlaylist(pl, index)));
+    if (index > 0) items.push(menuItem("Move up", () => moveInPlaylist(pl, index, index - 1)));
+    if (index < pl.tracks.length - 1) items.push(menuItem("Move down", () => moveInPlaylist(pl, index, index + 1)));
+    items.push(menuItem("Remove from this playlist", () => removeFromPlaylist(pl, index)));
   }
   if (!items.length) return;
-  menu.replaceChildren(...items);
-  menu.setAttribute("aria-label", track.name);
-  menu.hidden = false;
-  place();
+  showMenu(items, track.name, anchor, returnTo, at);
+}
+
+function openGroupMenu(group, pl, anchor, returnTo, at) {
+  const playable = group.filter((t) => t.available);
+  const what = plural(playable.length, "track");
+  const items = [];
+  if (playable.length) {
+    items.push(menuItem(`Play ${what} next`, () => queueTracks(playable, pl, "next")),
+      menuItem(`Add ${what} to the queue`, () => queueTracks(playable, pl, "end")),
+      el("button", {
+        type: "button", role: "menuitem", tabindex: "-1", "aria-haspopup": "menu",
+        onclick: () => playlistChooser(playable.map((t) => t.id), what, anchor, returnTo, at, pl.id),
+      }, `Add ${what} to a playlist…`));
+  }
+  if (isMine(pl)) {
+    if (items.length) items.push(el("hr", { role: "separator" }));
+    items.push(menuItem(`Remove ${plural(group.length, "track")} from this playlist`,
+      () => removeManyFromPlaylist(pl, group.map((t) => pl.tracks.indexOf(t)))));
+  }
+  if (!items.length) return;
+  showMenu(items, `${plural(group.length, "track")} selected`, anchor, returnTo, at);
 }
 
 $("#track-menu").addEventListener("keydown", (e) => {
@@ -1543,6 +1680,11 @@ function recordingRow(r, i) {
           onclick: () => playRecording(r.file, { stay: true }),
         }, ...iconLabel("play", "Play")),
         el("button", {
+          type: "button", class: "btn small icon-only", "aria-label": `Add ${recTitle(r)} to a playlist`,
+          title: "Add to playlist", "aria-haspopup": "menu",
+          onclick: (e) => addRecordingToPlaylist(r, e.currentTarget),
+        }, icon("plus")),
+        el("button", {
           type: "button", class: "btn small ghost icon-only", "aria-label": `Edit ${recTitle(r)}`, title: "Label and tags",
           onclick: () => { R.editing = r.file; renderView(); refocus(`#rec-label-${i}`); },
         }, icon("edit")))),
@@ -2068,6 +2210,19 @@ async function playRecording(file, { stay = false } = {}) {
   if (S.view.id !== res.playlist || !S.detail) return;
   const i = S.detail.tracks.findIndex((t) => t.id === res.track);
   if (i >= 0) playPlaylist(S.detail, i);
+}
+
+// A recording joins the library (as playRecording does) to be added.
+async function addRecordingToPlaylist(r, button) {
+  let res;
+  try {
+    res = await api("/api/recordings/play", { file: r.file }, { quiet: true });
+  } catch (err) {
+    toast(err.message, { error: true });
+    return;
+  }
+  await loadState(res);
+  if (document.contains(button)) playlistChooser([res.track], recTitle(r), button, button);
 }
 
 async function pollRecordings() {
@@ -2929,6 +3084,24 @@ function queueTrack(track, pl, where) {
     return;
   }
   announce(where === "next" ? `${track.name} plays next` : `${track.name} added to the queue`);
+  queueChanged();
+}
+
+// Several tracks, in their order: "next" puts them all ahead of the
+// rest of the queue; "end" after it.
+function queueTracks(tracks, pl, where) {
+  const ok = tracks.filter((t) => t.available);
+  if (!ok.length) return;
+  if (S.mode !== "track") {
+    // Nothing from the library playing: the first starts now, the rest follow.
+    queueTrack(ok[0], pl, "next");
+    for (const t of ok.slice(1)) S.upNext.push({ ...t, _index: pl.tracks.indexOf(t), _source: pl.id });
+  } else {
+    const copies = ok.map((t) => ({ ...t, _index: pl.tracks.indexOf(t), _source: pl.id }));
+    if (where === "next") S.upNext.unshift(...copies);
+    else S.upNext.push(...copies);
+  }
+  announce(where === "next" ? `${plural(ok.length, "track")} play next` : `${plural(ok.length, "track")} added to the queue`);
   queueChanged();
 }
 

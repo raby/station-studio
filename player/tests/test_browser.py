@@ -1182,3 +1182,74 @@ def test_choose_find_and_remove_a_station_logo(page, player, tmp_path):
     sync_api.expect(card.locator(".card-top img.logo")).to_have_attribute("src", re.compile(r"^/logo/"))
     sync_api.expect(page.locator("#btn-find-logos")).to_have_count(0)  # every station has one now
     assert any("/json/stations/byurl" in u for u in net.asked)
+
+
+def test_select_several_tracks_and_add_them_together(page, player):
+    app = player[0]
+    answer_prompts(page, "Mix")
+    page.locator("#nav-folders .nav-item").first.click()
+    page.wait_for_selector("#view tbody tr")
+    rows = page.locator("#view tbody tr")
+    bar = page.locator(".select-bar")
+    # One click picks one track: no bar.
+    rows.nth(0).click()
+    sync_api.expect(bar).to_be_hidden()
+    # Shift-click picks a run, Cmd/Ctrl-click one more or one less.
+    rows.nth(2).click(modifiers=["Shift"])
+    sync_api.expect(bar.locator(".count")).to_have_text("3 tracks selected")
+    rows.nth(1).click(modifiers=["ControlOrMeta"])
+    sync_api.expect(bar.locator(".count")).to_have_text("2 tracks selected")
+    sync_api.expect(page.locator("#view tbody tr.selected")).to_have_count(2)
+    # Add them to a new playlist, in the playlist's order.
+    bar.get_by_role("button", name="Add to playlist…").click()
+    page.locator("#track-menu button", has_text="New playlist…").click()
+    page.wait_for_function("() => S.lib.playlists.some((p) => p.kind === 'mine' && p.count === 2)")
+    mix = next(p for p in app.my_summaries() if p["name"] == "Mix")
+    assert [t["name"] for t in app.playlist_detail(mix["id"])["tracks"]] == ["One", "Three"]
+    # The ⋯ menu on a selected track acts on them all; Escape clears.
+    rows.nth(3).click(modifiers=["ControlOrMeta"])
+    open_menu(page, 3)
+    sync_api.expect(page.locator("#track-menu")).to_have_attribute("aria-label", "3 tracks selected")
+    page.locator("#track-menu button", has_text="Add 3 tracks to a playlist…").click()
+    page.locator("#track-menu button", has_text="Mix").click()
+    sync_api.expect(page.locator("#nav-mine .count")).to_have_text("5")
+    page.keyboard.press("Escape")
+    rows.nth(3).focus()
+    page.keyboard.press("Escape")
+    sync_api.expect(bar).to_be_hidden()
+    # Keyboard: Shift+arrows select a run; Cmd/Ctrl+A all; play them next.
+    rows.nth(0).focus()
+    page.keyboard.press("Shift+ArrowDown")
+    sync_api.expect(bar.locator(".count")).to_have_text("2 tracks selected")
+    page.keyboard.press("ControlOrMeta+a")
+    sync_api.expect(bar.locator(".count")).to_have_text("4 tracks selected")
+    bar.get_by_role("button", name="Add to queue").click()
+    page.wait_for_function("() => S.mode === 'track' && S.upNext.length === 3")
+    # In my playlist, several go at once.
+    page.locator("#nav-mine .nav-item", has_text="Mix").click()
+    page.wait_for_function("() => document.querySelectorAll('#view tbody tr').length === 5")
+    rows.nth(0).click()
+    rows.nth(1).click(modifiers=["Shift"])
+    bar.get_by_role("button", name="Remove").click()
+    page.wait_for_function("() => document.querySelectorAll('#view tbody tr').length === 3")
+    assert row_names(page) == ["One", "Three", "Quiet"]
+
+
+def test_add_a_recording_to_a_playlist(page, player):
+    from station_player.recorder import Recorder
+    from test_recorder import FakeStream, Opener
+
+    app, _, tmp = player
+    app.recorder = Recorder(tmp / "rec", opener=Opener(FakeStream(b"", ctype="audio/wav")))
+    (tmp / "rec").mkdir()
+    tone(tmp / "rec" / "Old FM 2026-10-01 07.30.wav", 1.0, 0.3)
+    app.create_playlist("Shows", [])
+    page.reload()
+    page.locator(".nav-item[data-view=recordings]").click()
+    add = page.get_by_role("button", name=re.compile(r"^Add Old FM .* to a playlist$"))
+    add.click()
+    page.locator("#track-menu button", has_text="Shows").click()
+    sync_api.expect(page.locator("#nav-mine .count")).to_have_text("1")
+    shows = next(p for p in app.my_summaries() if p["name"] == "Shows")
+    assert [t["name"] for t in app.playlist_detail(shows["id"])["tracks"]][0].startswith("Old FM")
+    sync_api.expect(add).to_be_focused()  # back where it was

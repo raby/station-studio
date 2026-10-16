@@ -160,6 +160,14 @@ table.tracks { width: 100%; border-collapse: collapse; }
 .tracks tr { cursor: default; }
 .tracks tbody tr:hover { background: var(--row-hover); }
 .tracks tr.playing { background: var(--row-active); }
+.tracks tbody tr.selected, .tracks tbody tr.selected:hover { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
+.select-bar {
+  position: sticky; top: 0; z-index: 3; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 8px 12px; margin-bottom: 8px; border-radius: var(--radius);
+  background: var(--panel); border: 1px solid var(--accent); box-shadow: var(--shadow-sm);
+}
+.select-bar .count { font-weight: 650; margin-right: 4px; }
+.select-bar .spacer { flex: 1; }
 .tracks tr.playing td.title { color: var(--accent); font-weight: 600; }
 .tracks tr.missing, .tracks tr.missing td { color: var(--faint); }
 .tracks tr.missing td.title::after { content: " · file not found"; font-size: 12px; }
