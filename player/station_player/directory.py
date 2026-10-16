@@ -191,6 +191,7 @@ class Directory:
         self.user_agent = user_agent
         self._fetch = fetch
         self._public = public
+        self.public = public  # also approves hosts for preview relays
         # Logos come from stations' own hosts: only public ones, pinned to
         # the checked address. (Tests that fake the API fake these too.)
         self._logo_fetch = logo_fetch or (_fetch_public if fetch is _fetch else fetch)
@@ -200,6 +201,7 @@ class Directory:
         self._logos: OrderedDict[str, None] = OrderedDict()  # addresses it handed out
         self._logo_cache: OrderedDict[str, tuple[bytes, str]] = OrderedDict()
         self._soma: tuple[float, list[dict]] | None = None  # (when, channels)
+        self._streams: OrderedDict[str, None] = OrderedDict()  # stream addresses it handed out
 
     def _api(self, path: str, params: dict) -> list:
         query = urlencode({k: v for k, v in params.items() if v not in (None, "")})
@@ -236,17 +238,28 @@ class Directory:
         seen = set()
         for raw in self._api("/json/stations/search", params):
             st = clean_station(raw)
-            if st is None or st["hls"] or st["url"] in seen:
-                continue  # HLS streams can't be played or recorded here
+            if st is None or st["url"] in seen:
+                continue
             seen.add(st["url"])
             found.append(st)
             if len(found) >= limit:
                 break
-        self._remember_logos(found)
+        self._remember(found)
         return found
 
-    def _remember_logos(self, found: list[dict]) -> None:
+    def listed(self, url: str) -> bool:
+        """Whether the directory listed this stream address (so the player
+        may relay it for a preview)."""
         with self._lock:
+            return url in self._streams
+
+    def _remember(self, found: list[dict]) -> None:
+        with self._lock:
+            for st in found:
+                self._streams[st["url"]] = None
+                self._streams.move_to_end(st["url"])
+            while len(self._streams) > 2000:
+                self._streams.popitem(last=False)
             for st in found:
                 if st["logo"]:
                     self._logos[st["logo"]] = None
@@ -271,7 +284,7 @@ class Directory:
             if st:
                 found.append(st)
         found.sort(key=lambda st: -st["votes"])  # most listened first
-        self._remember_logos(found)
+        self._remember(found)
         with self._lock:
             self._soma = (time.monotonic(), found)
         return copy.deepcopy(found)

@@ -193,6 +193,10 @@ read again on later scans.
 - Radio plays through Station Player itself, which is how it can read
   the song titles stations send (the browser can't). If a station can't
   be relayed that way, it plays directly, just without song titles.
+- Stations that broadcast as HLS (`.m3u8` playlists of short audio
+  files, as BBC radio does) play and record too: Station Player follows
+  the playlist and turns it into one continuous stream. Encrypted
+  streams aren't supported.
 
 - **Sleep timer**: the menu beside the volume stops playback after 15
   minutes to an hour and a half (fading out over the last 20 seconds),
@@ -208,7 +212,7 @@ stations in your country (from your computer's language settings; choose
 country, or sort by most played. **SomaFM** lists the channels of
 [SomaFM](https://somafm.com), listener-supported radio with no adverts.
 Each result shows the station's logo, country, genres and stream
-quality: **Listen** plays it straight away, and **Add** puts it in your
+quality: **Listen** plays it straight away (through Station Player, so song titles show), and **Add** puts it in your
 stations, where it can be recorded and set as an alarm. Searches go to
 radio-browser.info (and somafm.com for SomaFM), which also hears which
 stations you Listen to there (it ranks stations that way); logos come

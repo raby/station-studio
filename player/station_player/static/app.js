@@ -1142,7 +1142,10 @@ function syncFinderChips() {
 }
 
 function stationFacts(st) {
-  return [st.country, st.codec && st.bitrate ? `${st.codec} ${st.bitrate} kbps` : st.codec || (st.bitrate ? `${st.bitrate} kbps` : "")]
+  // "United Kingdom", not the directory's "The United Kingdom Of Great
+  // Britain And Northern Ireland"; left out when searching that country.
+  const country = st.countrycode ? (st.countrycode === F.country ? "" : countryName(st.countrycode)) : st.country;
+  return [country, st.codec && st.bitrate ? `${st.codec} ${st.bitrate} kbps` : st.codec || (st.bitrate ? `${st.bitrate} kbps` : "")]
     .filter(Boolean).join(" · ");
 }
 
@@ -1176,7 +1179,7 @@ function finderCard(st) {
           const live = S.mode === "radio" && S.station && S.station.url === st.url;
           if (live && !audio.paused) { audio.pause(); return; }
           const mine = (S.lib.stations || []).find((x) => x.url === st.url);
-          playStation(mine || { name: st.name, url: st.url });
+          playStation(mine || { name: st.name, url: st.url, preview: true });
           if (st.uuid) api("/api/directory/clicked", { uuid: st.uuid }, { quiet: true }).catch(() => {});
         },
       }, ...iconLabel("play", "Listen")),
@@ -2998,7 +3001,10 @@ function playStation(st, { via = "relay", autoplay = true } = {}) {
   S.extra = null;
   for (const d of decks) unload(d);
   audio = radioEl;
-  S.radioSrc = via === "relay" && st.id ? `/radio/${st.id}` : st.url;
+  // A finder result (not saved yet) relays too, for its song titles and
+  // so HLS stations play at all.
+  S.radioSrc = via !== "relay" ? st.url : st.id ? `/radio/${st.id}`
+    : st.preview ? `/radio/preview?u=${encodeURIComponent(st.url)}` : st.url;
   if (!sameStation || S.radioSrc === st.url) S.radioTitle = null;
   if (autoplay) {
     audio.src = S.radioSrc;
@@ -3023,7 +3029,8 @@ async function pollTitle() {
     return;
   }
   try {
-    const data = await api(`/api/nowplaying?station=${S.station.id}`);
+    const data = await api(S.station.id ? `/api/nowplaying?station=${S.station.id}`
+      : `/api/nowplaying?u=${encodeURIComponent(S.station.url)}`);
     if (token === titleToken && S.mode === "radio") setRadioTitle(data.title || null);
   } catch { /* keep the last title */ }
   // Paused radio isn't playing anything; polling restarts on "play".
@@ -3080,6 +3087,13 @@ function setArt(src) {
   }
 }
 
+// In its own app window the system already shows "Station Player"
+// before the title, so it isn't repeated there.
+function appTitle(what) {
+  const ownWindow = matchMedia("(display-mode: standalone), (display-mode: minimal-ui)").matches;
+  return ownWindow ? what : `${what} · Station Player`;
+}
+
 function updateNow() {
   const title = $("#now-title");
   const sub = $("#now-sub");
@@ -3087,11 +3101,11 @@ function updateNow() {
   if (S.mode === "radio") {
     title.replaceChildren(el("span", { class: "live-badge" }, "LIVE"), S.station.name);
     sub.textContent = S.radioTitle || "Internet radio";
-    document.title = `${S.radioTitle || S.station.name} · Station Player`;
+    document.title = appTitle(S.radioTitle || S.station.name);
   } else if (S.mode === "track" && t) {
     title.textContent = t.name;
     sub.textContent = [t.artist, S.extra ? "from your queue" : S.queueLabel].filter(Boolean).join(" · ");
-    document.title = `${t.name} · Station Player`;
+    document.title = appTitle(t.name);
   } else {
     title.textContent = "Nothing playing";
     sub.textContent = "";

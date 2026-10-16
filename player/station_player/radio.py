@@ -22,6 +22,9 @@ from dataclasses import dataclass
 from typing import Callable, Iterator
 from urllib.parse import urljoin, urlparse
 
+from station_player import hls
+from station_player.hls import is_playlist
+
 CONNECT_SECONDS = 10      # to connect and receive the response headers
 READ_SECONDS = 30         # silence from the station before giving up
 MAX_METAINT = 1 << 20     # an absurd metadata interval means junk
@@ -178,10 +181,17 @@ class Stream:
             pass
 
 
-def open_stream(url: str, user_agent: str = "StationPlayer", timeout: float = CONNECT_SECONDS) -> Stream:
-    """Connect to a stream asking for ICY metadata; follows redirects."""
+def open_stream(url: str, user_agent: str = "StationPlayer", timeout: float = CONNECT_SECONDS,
+                hls: bool = True, check: Callable[[str], bool] | None = None):
+    """Connect to a stream asking for ICY metadata; follows redirects.
+    An HLS playlist (.m3u8) comes back as an hls.HlsStream, which reads
+    the same way. `check(host)`, when given, must approve every host
+    contacted (redirects and HLS segments included)."""
     deadline = time.monotonic() + timeout
     for _ in range(_MAX_REDIRECTS + 1):
+        host = urlparse(url).hostname or ""
+        if check is not None and not check(host):
+            raise StreamError(f"{host} isn't on the public internet")
         stream = _request(url, user_agent, deadline)
         if stream.status in (301, 302, 303, 307, 308):
             location = stream.headers.get("location", "")
@@ -197,8 +207,38 @@ def open_stream(url: str, user_agent: str = "StationPlayer", timeout: float = CO
         if "chunked" in stream.headers.get("transfer-encoding", "").lower():
             stream.body = _ChunkedBody(stream.body)
         stream.sock.settimeout(READ_SECONDS)
+        if hls and is_playlist(stream.headers.get("content-type", ""), url):
+            return _open_hls(stream, user_agent, check)
         return stream
     raise StreamError("too many redirects")
+
+
+def read_all(stream: Stream, limit: int) -> bytes:
+    """The rest of a (short) response; StreamError past `limit` bytes."""
+    data = b""
+    try:
+        while chunk := stream.body.read1(64 * 1024):
+            data += chunk
+            if len(data) > limit:
+                raise StreamError("response too large")
+    finally:
+        stream.close()
+    return data
+
+
+def _open_hls(stream: Stream, user_agent: str, check):
+    def fetch(url: str, limit: int) -> bytes:
+        try:
+            return read_all(open_stream(url, user_agent, hls=False, check=check), limit)
+        except StreamError as exc:
+            raise OSError(str(exc)) from None  # what stream readers expect
+    try:
+        text = read_all(stream, hls.MAX_PLAYLIST_BYTES).decode("utf-8", "replace")
+        return hls.HlsStream(stream.url, text, fetch)
+    except hls.HlsError as exc:
+        raise StreamError(f"HLS: {exc}") from None
+    except OSError as exc:
+        raise StreamError(str(exc) or exc.__class__.__name__) from None
 
 
 def _remaining(deadline: float) -> float:

@@ -52,7 +52,7 @@ def test_clean_station_keeps_what_the_page_shows():
     assert st["url"] == "https://x/live"
 
 
-def test_search_drops_hls_and_duplicates_and_remembers_mirror():
+def test_search_drops_duplicates_and_remembers_mirror():
     items = [raw("A", "https://s/a"), raw("A again", "https://s/a"), raw("HLS", "https://s/h.m3u8", hls=1),
              raw("B", "https://s/b")]
     net = FakeNet({"https://de1.api.radio-browser.info/": api_answer(items)},
@@ -60,7 +60,8 @@ def test_search_drops_hls_and_duplicates_and_remembers_mirror():
                         "nl1.api.radio-browser.info"])
     d = Directory(fetch=net)
     found = d.search(q="a", tag="Jazz", country="gb", order="popular")
-    assert [s["name"] for s in found] == ["A", "B"]
+    assert [s["name"] for s in found] == ["A", "HLS", "B"]  # HLS plays through the player
+    assert d.listed("https://s/h.m3u8") and not d.listed("https://elsewhere/")
     asked = net.asked[-1]
     assert "/json/stations/search?" in asked
     assert "name=a" in asked and "tag=jazz" in asked and "countrycode=GB" in asked and "order=clickcount" in asked

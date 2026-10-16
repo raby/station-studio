@@ -1246,8 +1246,9 @@ def make_handler(app: PlayerApp):
             if path.startswith("/api/directory/"):
                 return self._serve_directory(path, head_only)
             if path == "/api/nowplaying":
-                sid = parse_qs(urlparse(self.path).query).get("station", [""])[0]
-                url = app.station_url(sid)
+                q = parse_qs(urlparse(self.path).query)
+                sid, preview = q.get("station", [""])[0], q.get("u", [""])[0]
+                url = preview if preview and app.directory.listed(preview) else app.station_url(sid)
                 if url is None:
                     return self._error(HTTPStatus.NOT_FOUND, "No such station")
                 return self._send_json({"title": app.title(url)})
@@ -1294,15 +1295,23 @@ def make_handler(app: PlayerApp):
                 self.wfile.write(data)
 
         def _serve_radio(self, sid: str, head_only: bool):
-            """Relay a station, keeping the song titles it sends."""
-            url = app.station_url(sid)
+            """Relay a station, keeping the song titles it sends. "preview"
+            relays a station the finder listed (?u=), from public hosts only."""
+            check = None
+            if sid == "preview":
+                url = parse_qs(urlparse(self.path).query).get("u", [""])[0]
+                if not app.directory.listed(url):
+                    return self._error(HTTPStatus.NOT_FOUND, "Not a station the finder listed")
+                check = app.directory.public
+            else:
+                url = app.station_url(sid)
             if url is None:
                 return self._error(HTTPStatus.NOT_FOUND, "No such station")
             if head_only:
                 return self._error(HTTPStatus.METHOD_NOT_ALLOWED, "Use GET")
             app.set_title(url, None)  # no stale song from the last visit
             try:
-                stream = radio.open_stream(url, user_agent=f"StationPlayer/{__version__}")
+                stream = radio.open_stream(url, user_agent=f"StationPlayer/{__version__}", check=check)
             except radio.StreamError as exc:
                 logger.warning("Radio relay for %s failed, playing it directly: %s", url, exc)
                 return self._error(HTTPStatus.BAD_GATEWAY, "Couldn't connect to this station")
