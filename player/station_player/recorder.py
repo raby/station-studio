@@ -35,6 +35,7 @@ _EXTENSIONS = {
     "audio/mpeg": "mp3", "audio/mp3": "mp3", "audio/aac": "aac", "audio/aacp": "aac",
     "audio/x-aac": "aac", "audio/ogg": "ogg", "application/ogg": "ogg", "audio/opus": "opus",
     "audio/flac": "flac", "audio/x-flac": "flac", "audio/webm": "webm", "audio/wav": "wav",
+    "audio/mp4": "m4a",  # an HLS station's fragmented MP4
 }
 
 

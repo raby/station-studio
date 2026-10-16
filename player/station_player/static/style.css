@@ -643,6 +643,7 @@ svg.analogue.huge { width: min(62vh, 78vw); height: auto; }
 /* ---- finding stations ---- */
 .finder-form input[type=search] { flex: 1; min-width: 200px; }
 .finder { margin-top: 30px; }
+.chip.somafm:not([aria-pressed="true"]) { border-color: var(--accent); color: var(--accent); }
 .finder #finder-tags { margin: 12px 0 14px; }
 .find-list { list-style: none; margin: 8px 0 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 10px; }
 .find-card {

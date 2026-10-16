@@ -52,7 +52,7 @@ def test_clean_station_keeps_what_the_page_shows():
     assert st["url"] == "https://x/live"
 
 
-def test_search_drops_hls_and_duplicates_and_remembers_mirror():
+def test_search_drops_duplicates_and_remembers_mirror():
     items = [raw("A", "https://s/a"), raw("A again", "https://s/a"), raw("HLS", "https://s/h.m3u8", hls=1),
              raw("B", "https://s/b")]
     net = FakeNet({"https://de1.api.radio-browser.info/": api_answer(items)},
@@ -60,7 +60,8 @@ def test_search_drops_hls_and_duplicates_and_remembers_mirror():
                         "nl1.api.radio-browser.info"])
     d = Directory(fetch=net)
     found = d.search(q="a", tag="Jazz", country="gb", order="popular")
-    assert [s["name"] for s in found] == ["A", "B"]
+    assert [s["name"] for s in found] == ["A", "HLS", "B"]  # HLS plays through the player
+    assert d.listed("https://s/h.m3u8") and not d.listed("https://elsewhere/")
     asked = net.asked[-1]
     assert "/json/stations/search?" in asked
     assert "name=a" in asked and "tag=jazz" in asked and "countrycode=GB" in asked and "order=clickcount" in asked
@@ -85,10 +86,29 @@ def test_search_rejects_an_odd_answer():
         d.search()
 
 
-def test_tags():
-    d = Directory(fetch=FakeNet({"https://": api_answer([{"name": "pop", "stationcount": 900}, {"name": ""}, "x"])}),
-                  servers=["one"])
-    assert d.tags() == [{"name": "pop", "stations": 900}]
+def soma_channel(cid, title, listeners, formats=("mp3", "aac"), **more):
+    return {"id": cid, "title": title, "description": f"{title} description", "genre": "ambient|electronica",
+            "image": f"https://api.somafm.com/img/{cid}120.png", "listeners": str(listeners),
+            "playlists": [{"url": f"https://api.somafm.com/{cid}.pls", "format": f} for f in formats], **more}
+
+
+def test_somafm_channels():
+    channels = [soma_channel("groovesalad", "Groove Salad", 900), soma_channel("dronezone", "Drone Zone", 1500),
+                soma_channel("aaconly", "AAC Only", 10, formats=("aac",)), soma_channel("../x", "Bad id", 5),
+                {"id": "notitle"}, "nonsense"]
+    net = FakeNet({"https://somafm.com/channels.json": (json.dumps({"channels": channels}).encode(), "application/json")})
+    d = Directory(fetch=net, servers=["one"])
+    found = d.somafm()
+    assert [s["name"] for s in found] == ["SomaFM Drone Zone", "SomaFM Groove Salad"]  # most listened first
+    gs = found[1]
+    assert gs["url"] == "https://ice1.somafm.com/groovesalad-128-mp3"
+    assert gs["tags"] == ["ambient", "electronica"] and gs["codec"] == "MP3" and gs["bitrate"] == 128
+    assert "https://api.somafm.com/img/groovesalad120.png" in d._logos  # its logo may be shown
+    # Asked once, then kept for a while.
+    d.somafm()
+    assert len(net.asked) == 1
+    with pytest.raises(DirectoryError, match="somafm.com"):
+        Directory(fetch=FakeNet(), servers=["one"]).somafm()
 
 
 def test_logo_only_for_addresses_the_directory_gave_out():
@@ -149,7 +169,8 @@ def test_server_endpoints(tmp_path):
 
     png = b"\x89PNG\r\n\x1a\n" + b"0" * 20
     net = FakeNet({"https://one/json/stations": api_answer([raw("A", "https://s/a", favicon="https://img.example/a.png")]),
-                   "https://one/json/tags": api_answer([{"name": "pop", "stationcount": 3}]),
+                   "https://somafm.com/channels.json": (json.dumps({"channels": [soma_channel("gs", "Groove Salad", 1)]}).encode(),
+                                                        "application/json"),
                    "https://img.example/a.png": (png, "image/png")})
     app = PlayerApp(ConfigStore(tmp_path / "home"), scan=False)
     app.directory = Directory(fetch=net, servers=["one"], public=lambda host: True)
@@ -168,8 +189,8 @@ def test_server_endpoints(tmp_path):
     try:
         resp, data = get("/api/directory/search?q=a&country=gb")
         assert resp.status == 200 and json.loads(data)["stations"][0]["name"] == "A"
-        resp, data = get("/api/directory/tags")
-        assert json.loads(data) == {"tags": [{"name": "pop", "stations": 3}]}
+        resp, data = get("/api/directory/somafm")
+        assert json.loads(data)["stations"][0]["name"] == "SomaFM Groove Salad"
         resp, data = get("/api/directory/logo?u=" + "https%3A%2F%2Fimg.example%2Fa.png")
         assert resp.status == 200 and data == png and resp.getheader("Content-Type") == "image/png"
         resp, _ = get("/api/directory/logo?u=http%3A%2F%2F127.0.0.1%2F")
@@ -233,14 +254,12 @@ def test_logos_connect_only_to_the_address_that_was_checked():
         server.server_close()
 
 
-def test_odd_answers_dont_break_tags_or_logos():
+def test_odd_answers_dont_break_logos():
     import http.client
 
     def broken(url, ua, limit):
         raise http.client.IncompleteRead(b"")
-    d = Directory(fetch=FakeNet({"https://": api_answer([{"name": "pop", "stationcount": "lots"}])}), servers=["one"],
-                  logo_fetch=broken, public=lambda h: True)
-    assert d.tags() == [{"name": "pop", "stations": 0}]
+    d = Directory(fetch=FakeNet(), servers=["one"], logo_fetch=broken, public=lambda h: True)
     d._logos["https://img.example/a.png"] = None
     assert d.logo("https://img.example/a.png") is None
     with pytest.raises(DirectoryError):

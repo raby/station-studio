@@ -979,8 +979,10 @@ class FakeDirectoryNet:
         self.asked.append(url)
         if url.startswith("https://logo.example/"):
             return PNG, "image/png"
-        if "/json/tags" in url:
-            return json.dumps([{"name": "jazz", "stationcount": 900}, {"name": "news", "stationcount": 800}]).encode(), "application/json"
+        if url == "https://somafm.com/channels.json":
+            return json.dumps({"channels": [{"id": "groovesalad", "title": "Groove Salad", "genre": "ambient",
+                                             "description": "Ambient beats", "listeners": "9",
+                                             "playlists": [{"format": "mp3", "url": "x"}]}]}).encode(), "application/json"
         if "/json/url/" in url:
             return b"[]", "application/json"
         jazz = "tag=jazz" in url
@@ -1003,16 +1005,27 @@ def test_find_stations(page, player):
     # Opens on the most popular stations, with genres to browse.
     results = page.locator("#finder-results .find-card")
     sync_api.expect(results).to_have_count(2)
+    sync_api.expect(page.locator("#finder-results")).to_contain_text("The most popular stations in United States")
+    assert "countrycode=US" in net.asked[0]  # this computer's country (en-US here)
+    page.locator("#finder-country").select_option("")
     sync_api.expect(page.locator("#finder-results")).to_contain_text("The most popular stations right now")
     jazz = results.filter(has_text="Jazz Cafe Radio")
     sync_api.expect(jazz.locator(".facts")).to_have_text("United Kingdom · MP3 128 kbps")
     page.wait_for_function("() => { const i = document.querySelector('.find-card img.logo'); return i && i.naturalWidth === 1; }")
     sync_api.expect(results.filter(has_text="World News").locator(".glyph")).to_be_visible()
-    sync_api.expect(page.locator("#finder-tags .chip")).to_have_count(2)
+    sync_api.expect(page.locator("#finder-tags .chip", has_text="drum and bass")).to_be_visible()
     page.locator("#finder-tags .chip", has_text="jazz").click()
     sync_api.expect(results).to_have_count(1)
     assert "tag=jazz" in net.asked[-1]
     sync_api.expect(page.locator("#finder-tags .chip", has_text="jazz")).to_have_attribute("aria-pressed", "true")
+    # SomaFM's own channels.
+    page.locator("#finder-tags .chip.somafm").click()
+    sync_api.expect(results).to_have_count(1)
+    sync_api.expect(results.locator(".name")).to_have_text("SomaFM Groove Salad")
+    sync_api.expect(page.locator("#finder-tags .chip", has_text="jazz")).to_have_attribute("aria-pressed", "false")
+    page.locator("#finder-tags .chip", has_text="jazz").click()
+    sync_api.expect(results).to_have_count(1)
+    sync_api.expect(results.locator(".name")).to_have_text("Jazz Cafe Radio")
     # A search by name and country.
     page.locator("#finder-q").fill("cafe")
     page.locator("#finder-country").select_option("GB")
@@ -1039,4 +1052,4 @@ def test_find_stations(page, player):
 def test_find_stations_offline(page):
     page.locator(".nav-item[data-view=radio]").click()
     sync_api.expect(page.locator("#finder-results .errors")).to_contain_text("Couldn't reach the station directory")
-    sync_api.expect(page.locator("#finder-tags .chip")).to_have_count(0)
+    sync_api.expect(page.locator("#finder-tags .chip").first).to_have_text("SomaFM")
