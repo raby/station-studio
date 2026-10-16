@@ -311,6 +311,9 @@ function renderNav() {
   $("#btn-add-music").setAttribute("aria-current", S.view.type === "welcome" ? "true" : "false");
   const count = $("#upnext-count");
   count.textContent = S.upNext.length || "";
+  const next = S.lib && S.lib.next_alarm;
+  $("#nav-next-alarm").textContent = next ? hhmm(new Date(next.at)) : "";
+  $("#nav-next-alarm").title = next ? `Next alarm ${hhmm(new Date(next.at))}` : "";
 }
 
 let showToken = 0;
@@ -362,6 +365,7 @@ function renderView() {
   else if (S.view.type === "recordings") root.replaceChildren(recordingsView());
   else if (S.view.type === "upnext") root.replaceChildren(upNextView());
   else if (S.view.type === "welcome") root.replaceChildren(welcomeView());
+  else if (S.view.type === "clock") root.replaceChildren(clockView());
   else root.replaceChildren(settingsView());
   for (const r of root.querySelectorAll('input[type="range"]')) fillRange(r);
 }
@@ -1022,9 +1026,9 @@ function radioView() {
     cards.length ? el("div", { class: "cards" }, cards) : el("div", { class: "empty-state" },
       el("div", { class: "glyph big" }, icon("radio")),
       el("h2", {}, "No stations yet"),
-      el("p", {}, "Add an internet radio station below with its stream link. Most stations list one on their website, often as a .pls or .m3u file.")),
-    el("div", { class: "settings" }, el("section", { class: "add-station" },
-      el("h2", {}, "Add a station"),
+      el("p", {}, "Find stations below, or add one with its stream link. Most stations list one on their website, often as a .pls or .m3u file.")),
+    el("div", { class: "settings" }, finderSection(), el("section", { class: "add-station" },
+      el("h2", {}, "Add a station by its link"),
       el("p", { class: "help" }, "Test checks the link plays, and fills in the name when the station sends one."),
       el("form", { class: "form-row", onsubmit: add }, name, url,
         el("button", { type: "button", class: "btn", onclick: test }, "Test"),
@@ -1055,6 +1059,181 @@ function syncRadioCards() {
     song.textContent = live && S.radioTitle ? `Now playing: ${S.radioTitle}` : "";
     song.hidden = !song.textContent;
   }
+  for (const card of document.querySelectorAll("#view .find-card[data-find]")) {
+    const live = S.mode === "radio" && S.station && S.station.url === card.dataset.find;
+    card.classList.toggle("live", Boolean(live));
+    const listen = card.querySelector(".listen");
+    const label = live && !audio.paused ? "Pause" : "Listen";
+    if (listen.textContent !== label) listen.replaceChildren(...iconLabel(label === "Pause" ? "pause" : "play", label));
+    const song = card.querySelector(".song");
+    song.textContent = live && S.radioTitle ? `Now playing: ${S.radioTitle}` : "";
+    song.hidden = !song.textContent;
+  }
+}
+
+// ---------- finding stations ------------------------------------------------
+// Searches Radio Browser (radio-browser.info) through the player server.
+
+const F = { q: "", draft: null, tag: "", country: "", order: "votes", results: null, loading: false, error: "", tags: null, token: 0, asked: false };
+const FIND_COUNTRIES = ["GB", "IE", "US", "CA", "AU", "NZ", "DE", "FR", "NL", "BE", "ES", "PT", "IT", "CH", "AT", "SE",
+  "NO", "DK", "FI", "PL", "CZ", "GR", "TR", "BR", "MX", "AR", "JM", "NG", "ZA", "KE", "IN", "JP", "KR"];
+
+function countryName(code) {
+  try { return new Intl.DisplayNames([], { type: "region" }).of(code) || code; } catch { return code; }
+}
+
+async function findStations(more = {}) {
+  Object.assign(F, more);
+  const token = ++F.token;
+  F.loading = true;
+  F.error = "";
+  F.asked = true;
+  renderFinderResults();
+  const params = new URLSearchParams({ q: F.q, tag: F.tag, country: F.country, order: F.order });
+  try {
+    const res = await api(`/api/directory/search?${params}`, undefined, { quiet: true });
+    if (token !== F.token) return;
+    F.results = res.stations || [];
+  } catch (err) {
+    if (token !== F.token) return;
+    F.results = null;
+    F.error = err.message;
+  }
+  F.loading = false;
+  renderFinderResults();
+  const n = F.results ? F.results.length : 0;
+  announce(F.error ? F.error : n ? `${plural(n, "station")} found` : "No stations found");
+}
+
+async function loadFinderTags() {
+  if (F.tags) return;
+  F.tags = [];
+  try {
+    F.tags = ((await api("/api/directory/tags", undefined, { quiet: true })).tags || []).slice(0, 18);
+  } catch { F.tags = null; return; }  // tried again next visit
+  const box = $("#finder-tags");
+  if (box) box.replaceChildren(...finderTagChips());
+}
+
+function finderTagChips() {
+  return (F.tags || []).map((t) => el("button", {
+    type: "button", class: "chip", "aria-pressed": String(F.tag === t.name),
+    onclick: () => {
+      findStations({ tag: F.tag === t.name ? "" : t.name });
+      for (const c of document.querySelectorAll("#finder-tags .chip")) c.setAttribute("aria-pressed", String(c.textContent === F.tag));
+    },
+  }, t.name));
+}
+
+function stationFacts(st) {
+  return [st.country, st.codec && st.bitrate ? `${st.codec} ${st.bitrate} kbps` : st.codec || (st.bitrate ? `${st.bitrate} kbps` : "")]
+    .filter(Boolean).join(" · ");
+}
+
+function finderCard(st) {
+  const saved = (S.lib.stations || []).some((x) => x.url === st.url);
+  const logo = st.logo ? el("img", { class: "logo", alt: "", loading: "lazy", src: `/api/directory/logo?u=${encodeURIComponent(st.logo)}` }) : null;
+  const glyph = el("div", { class: "glyph" }, icon("radio"));
+  if (logo) {
+    glyph.hidden = true;
+    logo.addEventListener("error", () => { logo.remove(); glyph.hidden = false; });
+  }
+  return el("li", { class: "find-card", "data-find": st.url },
+    el("div", { class: "find-art" }, logo, glyph),
+    el("div", { class: "info" },
+      el("div", { class: "name" }, st.name),
+      el("div", { class: "facts" }, stationFacts(st)),
+      st.tags.length ? el("div", { class: "tag-row" }, st.tags.slice(0, 4).map((t) => el("button", {
+        type: "button", class: "tag", title: `Find more ${t} stations`,
+        onclick: () => {
+          findStations({ tag: t, q: "", draft: "" });
+          const box = $("#finder-q");
+          if (box) box.value = "";
+          for (const c of document.querySelectorAll("#finder-tags .chip")) c.setAttribute("aria-pressed", String(c.textContent === t));
+        },
+      }, t))) : null,
+      el("div", { class: "song", hidden: true })),
+    el("div", { class: "actions" },
+      el("button", {
+        type: "button", class: "btn small listen", "aria-label": `Listen to ${st.name}`,
+        onclick: () => {
+          const live = S.mode === "radio" && S.station && S.station.url === st.url;
+          if (live && !audio.paused) { audio.pause(); return; }
+          const mine = (S.lib.stations || []).find((x) => x.url === st.url);
+          playStation(mine || { name: st.name, url: st.url });
+          if (st.uuid) api("/api/directory/clicked", { uuid: st.uuid }, { quiet: true }).catch(() => {});
+        },
+      }, ...iconLabel("play", "Listen")),
+      el("button", {
+        type: "button", class: saved ? "btn small added" : "btn small primary add", disabled: saved || null,
+        "aria-label": saved ? `${st.name} is in your stations` : `Add ${st.name} to your stations`,
+        onclick: async (e) => {
+          const btn = e.currentTarget;
+          btn.disabled = true;
+          try {
+            await loadState(await api("/api/stations", { name: st.name, url: st.url }, { quiet: true }));
+            renderView();
+            toast(`Added ${st.name} to your stations`);
+            refocus(`#view .find-card[data-find="${CSS.escape(st.url)}"] .listen`);
+          } catch (err) {
+            btn.disabled = false;
+            toast(err.message, { error: true });
+          }
+        },
+      }, ...(saved ? iconLabel("check", "Added") : iconLabel("plus", "Add")))));
+}
+
+function renderFinderResults() {
+  const box = $("#finder-results");
+  if (!box) return;
+  box.setAttribute("aria-busy", String(F.loading));
+  if (F.loading) { box.replaceChildren(el("p", { class: "help finding" }, "Searching…")); return; }
+  if (F.error) { box.replaceChildren(el("p", { class: "errors" }, F.error)); return; }
+  if (!F.results) { box.replaceChildren(); return; }
+  if (!F.results.length) {
+    box.replaceChildren(el("p", { class: "help" }, "No stations found. Try fewer words, or another genre or country."));
+    return;
+  }
+  const what = [F.q && `“${F.q}”`, F.tag, F.country && countryName(F.country)].filter(Boolean).join(", ");
+  box.replaceChildren(
+    el("p", { class: "help" }, what ? `${plural(F.results.length, "station")} for ${what}` : "The most popular stations right now"),
+    el("ul", { class: "find-list" }, F.results.map(finderCard)));
+  syncRadioCards();
+}
+
+function finderSection() {
+  const q = el("input", {
+    type: "search", id: "finder-q", value: F.draft ?? F.q, placeholder: "Station name, e.g. jazz fm", "aria-label": "Station name",
+    oninput: (e) => { F.draft = e.target.value; },  // kept if the page redraws
+  });
+  const here = (navigator.language || "").split("-")[1];
+  const codes = here && !FIND_COUNTRIES.includes(here.toUpperCase()) ? [here.toUpperCase(), ...FIND_COUNTRIES] : FIND_COUNTRIES;
+  const country = el("select", { id: "finder-country", "aria-label": "Country" },
+    el("option", { value: "" }, "Any country"),
+    ...codes.map((c) => el("option", { value: c }, countryName(c)))
+      .sort((a, b) => a.textContent.localeCompare(b.textContent)));
+  country.value = F.country;
+  const order = el("select", { id: "finder-order", "aria-label": "Sort by" },
+    el("option", { value: "votes" }, "Best liked"), el("option", { value: "popular" }, "Most played"), el("option", { value: "name" }, "A to Z"));
+  order.value = F.order;
+  const search = (e) => {
+    if (e) e.preventDefault();
+    findStations({ q: q.value.trim(), country: country.value, order: order.value });
+  };
+  country.addEventListener("change", () => search());
+  order.addEventListener("change", () => search());
+  queueMicrotask(() => {
+    loadFinderTags();
+    renderFinderResults();
+    if (!F.asked) findStations();  // start with the most popular stations
+  });
+  return el("section", { class: "finder" },
+    el("h2", {}, "Find stations"),
+    el("p", { class: "help" }, "Search thousands of stations from around the world in the free Radio Browser directory (radio-browser.info). Listen first, then Add the ones you like."),
+    el("form", { class: "form-row finder-form", role: "search", onsubmit: search },
+      q, country, order, el("button", { class: "btn primary", id: "btn-find" }, ...iconLabel("search", "Search"))),
+    el("div", { class: "tag-filter", id: "finder-tags", role: "group", "aria-label": "Genres" }, ...finderTagChips()),
+    el("div", { id: "finder-results", "aria-live": "polite" }));
 }
 
 // ---------- recordings page -----------------------------------------------
@@ -1192,6 +1371,351 @@ function recordingsView() {
       : [list, none],
     activeRecordings().length ? el("p", { class: "help" }, "Recordings still going appear here once they're stopped.") : null);
 }
+
+// ---------- clock and alarms ------------------------------------------------
+
+const MAX_ALARMS = 10;
+const SNOOZE_MINUTES = 9;
+const C = { editing: null, face: store("clock-face") || "digital", timer: null, draft: null };
+
+const alarmsList = () => (S.lib.config.alarms || []);
+const pad2 = (n) => String(n).padStart(2, "0");
+const hhmm = (d) => d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+// "Weekdays", "Every day", "Sat, Sun"…
+function daysText(days) {
+  const set = [...days].sort().join("");
+  if (set === "0123456") return "Every day";
+  if (set === "01234") return "Weekdays";
+  if (set === "56") return "Weekends";
+  return days.map((d) => DAY_NAMES[d]).join(", ");
+}
+
+function nextAlarmText() {
+  const n = S.lib.next_alarm;
+  const snooze = S.lib.alarm_state && S.lib.alarm_state.snoozed_until;
+  if (snooze) return `Snoozed until ${hhmm(new Date(snooze * 1000))}`;
+  if (!n) return alarmsList().some((a) => a.on) ? "" : "No alarms on";
+  const at = new Date(n.at);
+  const today = new Date();
+  const tomorrow = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
+  const day = at.toDateString() === today.toDateString() ? "Today"
+    : at.toDateString() === tomorrow.toDateString() ? "Tomorrow"
+      : at - today < 6 * 86400000 ? at.toLocaleDateString([], { weekday: "long" })
+        : at.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" });  // a week away: not "Thursday" on a Thursday
+  return `Next alarm: ${day} ${hhmm(at)}${n.label ? ` · ${n.label}` : ""}`;
+}
+
+async function saveAlarms(alarms, message) {
+  return saveSetting({ alarms }, message);
+}
+
+// The big clock: digits, or a face with hands.
+function clockFace(size = "big") {
+  if (C.face === "analogue") {
+    const svg = document.createElementNS(SVG, "svg");
+    svg.setAttribute("viewBox", "0 0 200 200");
+    svg.setAttribute("class", `analogue ${size}`);
+    svg.setAttribute("role", "img");
+    const part = (tag, attrs) => {
+      const n = document.createElementNS(SVG, tag);
+      for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+      svg.append(n);
+      return n;
+    };
+    part("circle", { cx: 100, cy: 100, r: 94, class: "rim" });
+    for (let i = 0; i < 60; i++) {
+      const major = i % 5 === 0;
+      part("line", { x1: 100, y1: major ? 12 : 9, x2: 100, y2: major ? 24 : 15, class: major ? "tick major" : "tick",
+        transform: `rotate(${i * 6} 100 100)` });
+    }
+    part("line", { x1: 100, y1: 104, x2: 100, y2: 52, class: "hand hour", "data-hand": "h" });
+    part("line", { x1: 100, y1: 108, x2: 100, y2: 30, class: "hand minute", "data-hand": "m" });
+    part("line", { x1: 100, y1: 114, x2: 100, y2: 22, class: "hand second", "data-hand": "s" });
+    part("circle", { cx: 100, cy: 100, r: 4, class: "hub" });
+    return svg;
+  }
+  return el("div", { class: `digits ${size}`, "data-digits": "" },
+    el("span", { class: "hm" }), el("span", { class: "sec" }));
+}
+
+// Move every clock on screen to now.
+function tickClocks() {
+  const now = new Date();
+  for (const d of document.querySelectorAll("[data-digits]")) {
+    d.querySelector(".hm").textContent = hhmm(now);
+    d.querySelector(".sec").textContent = pad2(now.getSeconds());
+  }
+  for (const svg of document.querySelectorAll("svg.analogue")) {
+    const s = now.getSeconds(), m = now.getMinutes() + s / 60, h = (now.getHours() % 12) + m / 60;
+    svg.querySelector('[data-hand="h"]').setAttribute("transform", `rotate(${h * 30} 100 100)`);
+    svg.querySelector('[data-hand="m"]').setAttribute("transform", `rotate(${m * 6} 100 100)`);
+    svg.querySelector('[data-hand="s"]').setAttribute("transform", `rotate(${s * 6} 100 100)`);
+    svg.setAttribute("aria-label", `The time is ${hhmm(now)}`);
+  }
+  for (const d of document.querySelectorAll("[data-today]")) {
+    d.textContent = now.toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" });
+  }
+  for (const d of document.querySelectorAll("[data-next-alarm]")) d.textContent = nextAlarmText();
+}
+setInterval(() => { if (document.querySelector("[data-digits], svg.analogue")) tickClocks(); }, 1000);
+// Once the next alarm has gone by, ask the server which one is next.
+setInterval(() => {
+  const n = S.lib && S.lib.next_alarm;
+  if (n && new Date(n.at) < Date.now() - 5000) loadState().then(() => { if (S.view.type === "clock" && !C.editing) renderView(); }).catch(() => {});
+}, 15000);
+
+function alarmEditor(a, isNew) {
+  const time = el("input", { type: "time", id: "alarm-time", value: a.time, required: true });
+  const label = el("input", { id: "alarm-label", value: a.label || "", placeholder: "Label (optional), e.g. Work", maxlength: 60 });
+  const days = DAY_NAMES.map((name, i) => el("input", { type: "checkbox", value: i, checked: a.days.includes(i) || null }));
+  const source = el("select", { id: "alarm-source" },
+    el("optgroup", { label: "Playlists" }, ...S.lib.playlists.map((p) => el("option", { value: `playlist:${p.id}` }, p.name))),
+    el("optgroup", { label: "Radio" }, ...(S.lib.stations || []).map((st) => el("option", { value: `station:${st.id}` }, st.name))));
+  if (a.source) source.value = `${a.source.kind}:${a.source.id}`;
+  const msg = el("div", { class: "form-msg", role: "status" });
+  const close = () => { C.editing = null; renderView(); refocus(isNew ? "#btn-add-alarm" : `#view [data-alarm="${a.id}"] .alarm-edit`); };
+  const save = async (e) => {
+    e.preventDefault();
+    const chosen = days.filter((d) => d.checked).map((d) => Number(d.value));
+    if (!chosen.length) { msg.textContent = "Choose at least one day"; return; }
+    if (!source.value) { msg.textContent = "Choose something to play"; return; }
+    const [kind, ...rest] = source.value.split(":");
+    const name = source.selectedOptions[0] ? source.selectedOptions[0].textContent : "";
+    const updated = { ...a, on: true, time: time.value, label: label.value.trim(), days: chosen, source: { kind, id: rest.join(":"), name } };
+    const list = isNew ? [...alarmsList(), updated] : alarmsList().map((x) => (x.id === a.id ? updated : x));
+    if (await saveAlarms(list, `Alarm set for ${time.value}, ${daysText(chosen).toLowerCase()}`)) {
+      C.editing = null;
+      renderView();
+      const saved = alarmsList()[isNew ? alarmsList().length - 1 : alarmsList().findIndex((x) => x.id === a.id)];
+      refocus(saved ? `#view [data-alarm="${saved.id}"] .alarm-edit` : "#btn-add-alarm");
+    }
+  };
+  const remove = async () => {
+    if (!confirm(`Delete the ${a.time} alarm${a.label ? ` (${a.label})` : ""}?`)) return;
+    if (await saveAlarms(alarmsList().filter((x) => x.id !== a.id), "Alarm deleted")) {
+      C.editing = null;
+      renderView();
+      refocus("#btn-add-alarm");
+    }
+  };
+  return el("form", { class: "alarm-form", onsubmit: save,
+    onkeydown: (e) => { if (e.key === "Escape") { e.preventDefault(); close(); } } },
+    el("div", { class: "fields" },
+      el("label", { class: "field" }, "Time", time),
+      el("label", { class: "field grow" }, "Label", label),
+      el("label", { class: "field grow" }, "Play", source)),
+    el("fieldset", { class: "days" }, el("legend", {}, "Days"), ...days.map((d, i) => el("label", {}, d, DAY_NAMES[i]))),
+    msg,
+    el("div", { class: "row" },
+      el("button", { class: "btn primary" }, isNew ? "Set alarm" : "Save alarm"),
+      el("button", { type: "button", class: "btn ghost", onclick: close }, "Cancel"),
+      el("span", { class: "spacer" }),
+      isNew ? null : el("button", { type: "button", class: "btn small danger", onclick: remove }, ...iconLabel("trash", "Delete"))));
+}
+
+function alarmCard(a) {
+  const editing = C.editing === a.id;
+  const toggle = el("input", {
+    type: "checkbox", checked: a.on || null, "data-key": `alarm-${a.id}`,
+    "aria-label": `Alarm at ${a.time}${a.label ? `, ${a.label}` : ""}`,
+    onchange: async (e) => {
+      const on = e.target.checked;
+      const list = alarmsList().map((x) => (x.id === a.id ? { ...x, on } : x));
+      await saveAlarms(list, on ? `Alarm on for ${a.time}` : `Alarm at ${a.time} off`);
+      renderView();
+      refocus(`#view input[data-key="alarm-${a.id}"]`);
+    },
+  });
+  return el("li", { class: a.on ? "alarm-card" : "alarm-card off", "data-alarm": a.id },
+    el("div", { class: "alarm-row" },
+      el("div", { class: "alarm-time" }, a.time),
+      el("div", { class: "info" },
+        el("div", { class: "name" }, a.label || "Alarm"),
+        el("div", { class: "facts" }, `${daysText(a.days)} · ${a.source ? a.source.name : ""}`)),
+      el("button", {
+        type: "button", class: "btn ghost icon-only alarm-edit", "aria-label": `Edit the ${a.time} alarm`,
+        onclick: () => { C.editing = a.id; renderView(); refocus("#alarm-time"); },
+      }, icon("edit")),
+      el("label", { class: "check" }, toggle)),
+    editing ? alarmEditor(a, false) : null);
+}
+
+function clockView() {
+  const alarms = alarmsList();
+  const adding = C.editing === "new";
+  const faceButton = (face, label) => el("button", {
+    type: "button", class: "seg", "aria-pressed": String(C.face === face),
+    onclick: () => { C.face = face; store("clock-face", face); renderView(); refocus(`#view .seg[aria-pressed="true"]`); },
+  }, label);
+  const blank = { id: "", on: true, time: "07:00", label: "", days: [0, 1, 2, 3, 4], source: null };
+  queueMicrotask(tickClocks);
+  return el("div", { class: "clock-page" },
+    el("div", { class: "view-head" },
+      el("h1", {}, "Clock"),
+      el("div", { class: "spacer" }),
+      el("div", { class: "segmented", role: "group", "aria-label": "Clock style" },
+        faceButton("digital", "Digits"), faceButton("analogue", "Clock face")),
+      el("button", { type: "button", class: "btn", id: "btn-night", onclick: nightMode }, ...iconLabel("moon", "Night mode"))),
+    el("div", { class: "clock-hero" },
+      clockFace("big"),
+      el("div", { class: "today", "data-today": "" }),
+      el("div", { class: "next-alarm", "data-next-alarm": "", role: "status" }),
+      S.lib.alarm_state && S.lib.alarm_state.snoozed_until ? el("button", {
+        type: "button", class: "btn small", id: "btn-cancel-snooze",
+        onclick: async () => { await stopAlarm({ keepPlaying: true, message: "Snooze cancelled" }); renderView(); refocus("#btn-add-alarm"); },
+      }, "Cancel snooze") : null),
+    el("section", { class: "alarms" },
+      el("div", { class: "section-head" },
+        el("h2", {}, "Alarms"),
+        el("span", { class: "spacer" }),
+        el("button", {
+          type: "button", class: "btn primary", id: "btn-add-alarm", disabled: alarms.length >= MAX_ALARMS || adding || null,
+          onclick: () => { C.editing = "new"; renderView(); refocus("#alarm-time"); },
+        }, ...iconLabel("plus", "Add alarm"))),
+      el("p", { class: "help" },
+        "Alarms fade in over a minute. Station Player has to be running at the time (turn on Start at login under Settings › App) ",
+        "and the computer awake: it can't wake a sleeping computer."),
+      adding ? el("div", { class: "alarm-card new" }, alarmEditor(blank, true)) : null,
+      alarms.length ? el("ul", { class: "alarm-list" }, [...alarms].sort((x, y) => x.time.localeCompare(y.time)).map(alarmCard))
+        : adding ? null : el("div", { class: "empty-state" },
+            el("div", { class: "glyph big" }, icon("clock")),
+            el("h2", {}, "No alarms yet"),
+            el("p", {}, "Wake up to a playlist or a radio station. Add an alarm to get started."))));
+}
+
+// ---------- alarm going off ---------------------------------------------------
+
+let alarmScreenReturn = null;
+
+function showAlarmScreen(req) {
+  const box = $("#alarm-screen");
+  alarmScreenReturn = document.activeElement;
+  box.replaceChildren(
+    el("div", { class: "alarm-inner" },
+      clockFace("huge"),
+      el("h2", { id: "alarm-screen-title" }, req.label || (req.snoozed ? "Alarm (snoozed)" : "Good morning")),
+      el("p", { class: "alarm-playing" }, req.source && req.source.name ? `Playing ${req.source.name}` : ""),
+      el("div", { class: "alarm-actions" },
+        el("button", { type: "button", class: "btn big primary", id: "btn-snooze", onclick: () => snoozeAlarm() },
+          ...iconLabel("moon", `Snooze ${SNOOZE_MINUTES} min`)),
+        el("button", { type: "button", class: "btn big", id: "btn-stop-alarm", onclick: () => stopAlarm() },
+          ...iconLabel("stop", "Stop"))),
+      el("button", { type: "button", class: "btn ghost", id: "btn-keep-playing", onclick: () => stopAlarm({ keepPlaying: true }) },
+        "Turn off the alarm, keep the music playing")));
+  box.hidden = false;
+  tickClocks();
+  $("#btn-snooze").focus();
+}
+
+function hideAlarmScreen() {
+  const box = $("#alarm-screen");
+  if (box.hidden) return;
+  box.hidden = true;
+  box.replaceChildren();
+  if (alarmScreenReturn && document.contains(alarmScreenReturn)) alarmScreenReturn.focus();
+  alarmScreenReturn = null;
+}
+
+function endAlarmFade() {
+  clearInterval(ALARM.timer);
+  ALARM.timer = null;
+  if (volMul.alarm !== 1) { volMul.alarm = 1; applyVolume(); }
+}
+
+// The server is told first: if it says no (the alarm had already ended),
+// the screen and the music stay as they are and the message says why.
+async function snoozeAlarm() {
+  const seq = ALARM.seq;
+  ALARM.seq = null;  // so the inbox check meanwhile doesn't end it a second time
+  try {
+    await loadState(await api("/api/alarm/snooze", { minutes: SNOOZE_MINUTES }, { quiet: true }));
+  } catch (err) {
+    ALARM.seq = seq;
+    toast(err.status === 409 ? "The alarm had already stopped" : err.message, { error: true });
+    return;
+  }
+  endAlarm({ pause: true });
+  const until = S.lib.alarm_state && S.lib.alarm_state.snoozed_until;
+  toast(until ? `Snoozed until ${hhmm(new Date(until * 1000))}` : "Snoozed");
+}
+
+async function stopAlarm({ keepPlaying = false, message = "" } = {}) {
+  const seq = ALARM.seq;
+  ALARM.seq = null;
+  try {
+    await loadState(await api("/api/alarm/stop", {}, { quiet: true }));
+  } catch (err) {
+    ALARM.seq = seq;
+    toast(err.message, { error: true });
+    return;
+  }
+  endAlarm({ pause: !keepPlaying });
+  toast(message || (keepPlaying ? "Alarm off. The music plays on." : "Alarm stopped"));
+}
+
+// This window's alarm is over: snoozed or stopped here, from the phone or
+// another window, or it rang unanswered for half an hour.
+function endAlarm({ pause }) {
+  ALARM.seq = null;
+  if (pause) pauseAll();
+  endAlarmFade();
+  hideAlarmScreen();
+  if (S.view.type === "clock" && !C.editing) renderView();
+}
+
+// Called on every inbox check while this window's alarm is ringing.
+async function alarmEndedElsewhere() {
+  try { await loadState(); } catch { /* still says what happened */ }
+  endAlarm({ pause: true });
+  const until = S.lib.alarm_state && S.lib.alarm_state.snoozed_until;
+  toast(until ? `Snoozed until ${hhmm(new Date(until * 1000))}` : "Alarm stopped");
+}
+
+$("#alarm-screen").addEventListener("keydown", (e) => {
+  e.stopPropagation();  // the player's own shortcuts (Space plays and pauses) wait
+  if (e.key === "Escape") { e.preventDefault(); stopAlarm({ keepPlaying: true }); return; }
+  if (e.key !== "Tab") return;
+  // Focus stays on the alarm screen while it's up.
+  const items = [...$("#alarm-screen").querySelectorAll("button")];
+  const at = items.indexOf(document.activeElement);
+  e.preventDefault();
+  items[(at + (e.shiftKey ? -1 : 1) + items.length) % items.length].focus();
+});
+
+// ---------- night mode ----------------------------------------------------------
+
+let wakeLock = null;
+
+async function nightMode() {
+  const box = $("#night");
+  box.replaceChildren(
+    clockFace("huge"),
+    el("div", { class: "today", "data-today": "" }),
+    el("div", { class: "next-alarm", "data-next-alarm": "" }),
+    el("p", { class: "night-hint" }, "Click or press any key to leave night mode"));
+  box.hidden = false;
+  tickClocks();
+  box.focus();
+  try { if (box.requestFullscreen) await box.requestFullscreen(); } catch { /* fine in a window */ }
+  try { if (navigator.wakeLock) wakeLock = await navigator.wakeLock.request("screen"); } catch { wakeLock = null; }
+}
+
+// Resolves once full screen has closed (which moves focus), so focus can
+// be put back afterwards: on the Night mode button, or wherever the caller says.
+async function leaveNight({ restoreFocus = true } = {}) {
+  const box = $("#night");
+  if (box.hidden) return;
+  box.hidden = true;
+  box.replaceChildren();
+  if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
+  if (document.fullscreenElement) await document.exitFullscreen().catch(() => {});
+  if (restoreFocus) refocus("#btn-night");
+}
+$("#night").addEventListener("click", () => leaveNight());
+$("#night").addEventListener("keydown", (e) => { e.preventDefault(); e.stopPropagation(); leaveNight(); });
+document.addEventListener("fullscreenchange", () => { if (!document.fullscreenElement && !$("#night").hidden) leaveNight(); });
+
 
 // ---------- recording ---------------------------------------------------
 
@@ -1629,7 +2153,11 @@ function musicPage() {
 
 function alarmPage() {
   return el("div", {},
-    alarmSection(),
+    el("section", {},
+      el("h2", {}, "Alarms"),
+      el("p", { class: "help" }, "Alarms now live on the Clock page, with a big clock and night mode for the bedside."),
+      el("button", { type: "button", class: "btn", id: "btn-open-clock", onclick: () => show({ type: "clock" }) },
+        ...iconLabel("clock", "Open the Clock page"))),
     el("section", {},
       el("h2", {}, "Sleep timer"),
       el("p", { class: "help" },
@@ -1804,70 +2332,6 @@ async function saveSetting(body, message) {
     renderErrors(err.message);
     return false;
   }
-}
-
-// When an alarm next goes off, as a Date (local time), or null.
-function nextAlarm(a, now = new Date()) {
-  if (!a || !a.on) return null;
-  const [h, m] = a.time.split(":").map(Number);
-  for (let i = 0; i < 8; i++) {
-    const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() + i, h, m);
-    if (d > now && a.days.includes((d.getDay() + 6) % 7)) return d;  // Monday = 0
-  }
-  return null;
-}
-
-let alarmSavedAt = 0;  // so the redrawn section can say it was saved
-
-// A wake-up alarm: a playlist or station at a time, on chosen days.
-function alarmSection() {
-  const a = S.lib.config.alarm || { on: false, time: "07:00", days: [0, 1, 2, 3, 4], source: null };
-  const time = el("input", { type: "time", id: "alarm-time", value: a.time, required: true });
-  const days = DAY_NAMES.map((name, i) => el("input", { type: "checkbox", value: i, checked: a.days.includes(i) || null }));
-  const source = el("select", { id: "alarm-source" },
-    el("optgroup", { label: "Playlists" },
-      ...S.lib.playlists.map((p) => el("option", { value: `playlist:${p.id}` }, p.name))),
-    el("optgroup", { label: "Radio" },
-      ...(S.lib.stations || []).map((st) => el("option", { value: `station:${st.id}` }, st.name))));
-  if (a.source) source.value = `${a.source.kind}:${a.source.id}`;
-  const on = el("input", { type: "checkbox", id: "alarm-on", checked: a.on || null });
-  const msg = el("div", { class: "form-msg", role: "status" });
-  const next = nextAlarm(S.lib.config.alarm);
-  const when = next && next.toLocaleString([], { weekday: "long", day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" });
-  const saved = Date.now() - alarmSavedAt < 5000 ? "Saved. " : "";
-  const summary = el("p", { class: "alarm-next", id: "alarm-next", role: "status" },
-    S.lib.config.alarm ? (next ? `${saved}Next alarm: ${when}, playing ${S.lib.config.alarm.source.name || "your choice"}.` : `${saved}The alarm is off.`) : "");
-  const save = async (e) => {
-    e.preventDefault();
-    const chosen = days.filter((d) => d.checked).map((d) => Number(d.value));
-    if (!chosen.length) { msg.textContent = "Choose at least one day"; return; }
-    if (!source.value) { msg.textContent = "Choose something to play"; return; }
-    const [kind, ...rest] = source.value.split(":");
-    const id = rest.join(":");
-    const name = source.selectedOptions[0] ? source.selectedOptions[0].textContent : "";
-    const alarm = { on: on.checked, time: time.value, days: chosen, source: { kind, id, name } };
-    if (await saveSetting({ alarm }, on.checked ? `Alarm set for ${time.value}` : "Alarm saved, and off")) {
-      alarmSavedAt = Date.now();
-      renderView();
-      const again = $("#alarm-on");
-      if (again) again.focus();
-    }
-  };
-  return el("section", {},
-    el("h2", {}, "Alarm"),
-    el("p", { class: "help" },
-      "Wake up to a playlist or a station. It fades in over a minute. ",
-      "Station Player has to be running at the time (turn on Start at login on the App page) and the computer awake: it can't wake a sleeping computer."),
-    el("form", { onsubmit: save },
-      el("label", { class: "check" }, on, el("span", {}, "Alarm on")),
-      el("div", { class: "fields" },
-        el("label", { class: "field" }, "Time", time),
-        el("label", { class: "field" }, "Play", source),
-        el("fieldset", { class: "days" }, el("legend", {}, "Days"),
-          ...days.map((d, i) => el("label", {}, d, DAY_NAMES[i])))),
-      el("button", { class: "btn" }, "Save alarm")),
-    summary,
-    msg);
 }
 
 function isoDate(d) {
@@ -2977,6 +3441,7 @@ async function checkInbox({ fresh = 0 } = {}) {
     try { await runCommand(c); } catch { /* a playlist that's gone, say */ }
   }
   await alarmGoesOff(box.alarm, fresh);
+  if (ALARM.seq !== null && String(box.ringing) !== String(ALARM.seq)) await alarmEndedElsewhere();
   const req = box.open;
   if (!req || String(req.seq) === store("opened-seq")) return;
   if (fresh && req.age > fresh) { store("opened-seq", String(req.seq)); return; }
@@ -3102,13 +3567,16 @@ $("#sleep").addEventListener("change", (e) => {
 
 // The server sets the alarm off at its time (opening a window if none is
 // open); the page plays it, fading in over a minute.
-const ALARM = { timer: null };
+const ALARM = { timer: null, seq: null };  // seq: the alarm ringing in this window
 const ALARM_FADE = 60;
 async function alarmGoesOff(req, fresh) {
   if (!req || String(req.seq) === store("alarm-seq")) return;
   store("alarm-seq", String(req.seq));  // unique across restarts of the player
   if (req.age > (fresh ? 120 : 300)) return;  // long past: the computer was asleep
   try { await loadState(); } catch { return; }
+  // Already stopped or snoozed (from the phone, or another window): stay quiet.
+  const ringing = S.lib.alarm_state && S.lib.alarm_state.ringing;
+  if (!ringing || String(ringing.seq) !== String(req.seq)) return;
   setSleep(0);
   clearInterval(ALARM.timer);
   volMul.alarm = 0.02;
@@ -3118,9 +3586,13 @@ async function alarmGoesOff(req, fresh) {
     volMul.alarm = 1;
     applyVolume();
     renderErrors(`The alarm couldn't play ${req.source.name || "its playlist"}: it isn't in the library any more.`);
+    api("/api/alarm/stop", {}, { quiet: true }).catch(() => {});  // so the phone doesn't offer Snooze for nothing
     return;
   }
   announce(`Alarm: playing ${req.source.name || ""}`);
+  ALARM.seq = req.seq;
+  await leaveNight({ restoreFocus: false });  // the alarm screen can't show over a full-screen clock
+  showAlarmScreen(req);
   const start = Date.now();
   ALARM.timer = setInterval(() => {
     volMul.alarm = Math.min(1, 0.02 + (Date.now() - start) / 1000 / ALARM_FADE);
@@ -3143,6 +3615,8 @@ async function runCommand(c) {
     store("volume", volume.value);
   } else if (c.cmd === "playlist" || c.cmd === "station") await playSource(c.cmd, c.id);
   else if (c.cmd === "sleep") setSleep(c.minutes);
+  // snooze and stop_alarm: the server has acted on them already, and
+  // checkInbox ends the alarm in whichever window is ringing.
   syncButtons();
   reportStatus();
 }

@@ -570,8 +570,10 @@ def names(state):
 
 def test_rename_and_readdress_a_station(stations):
     app, port = stations
-    app.store.config.alarm = {"on": True, "time": "07:00", "days": [0],
-                              "source": {"kind": "station", "id": station_id("http://b.example/2"), "name": "B"}}
+    wake = {"on": True, "time": "07:00", "days": [0], "label": "",
+            "source": {"kind": "station", "id": station_id("http://b.example/2"), "name": "B"}}
+    app.store.config.alarms = [{**wake, "id": "0000000a"}, {**wake, "id": "0000000b", "time": "08:00"},
+                               {**wake, "id": "0000000c", "source": {"kind": "station", "id": "other", "name": "A"}}]
     resp, state = request(port, "POST", "/api/stations/update", {"url": "http://b.example/2", "name": "  Bee FM "}, H)
     assert resp.status == 200 and names(state) == ["A", "Bee FM", "C"]
     resp, state = request(port, "POST", "/api/stations/update",
@@ -579,9 +581,10 @@ def test_rename_and_readdress_a_station(stations):
     assert resp.status == 200
     assert state["stations"][1] == {"name": "Bee FM", "url": "https://b.example/new",
                                     "id": station_id("https://b.example/new")}
-    # The alarm still finds the station.
-    assert state["config"]["alarm"]["source"] == {"kind": "station", "id": station_id("https://b.example/new"),
-                                                  "name": "Bee FM"}
+    # Every alarm that plays it still finds the station; others are left alone.
+    for alarm in state["config"]["alarms"][:2]:
+        assert alarm["source"] == {"kind": "station", "id": station_id("https://b.example/new"), "name": "Bee FM"}
+    assert state["config"]["alarms"][2]["source"] == {"kind": "station", "id": "other", "name": "A"}
     saved = json.loads(app.store.path.read_text())
     assert saved["stations"][1]["url"] == "https://b.example/new"
 

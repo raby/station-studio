@@ -29,7 +29,8 @@ from pathlib import Path
 from urllib.parse import parse_qs, quote, urlparse
 
 from station_player import __version__, loudness, myplaylists, qr, radio, remote, setup, updates
-from station_player.config import clean_alarm
+from station_player.config import clean_alarm, clean_alarms
+from station_player.directory import Directory, DirectoryError
 from station_player.playlog import PlayLog
 from station_player.recorder import Recorder
 from station_player.window import browser_name, find_browser
@@ -154,6 +155,10 @@ def _fetch_text(url: str, deadline: float = _STREAM_FETCH_SECONDS) -> str:
     raise result.get("error") or TimeoutError("timed out")
 
 
+class AlarmNotRinging(Exception):
+    """Snooze asked for with no alarm ringing."""
+
+
 class PlayerApp:
     """Shared state for request handlers.
 
@@ -174,6 +179,8 @@ class PlayerApp:
         self.loudness_store = loudness.LoudnessStore(store.home / "loudness.json")
         self.my_playlists = myplaylists.PlaylistStore(store.home / "my-playlists.json")
         self.recorder = recorder or Recorder(user_agent=f"StationPlayer/{__version__}")
+        # Finding stations in the Radio Browser directory.
+        self.directory = Directory(user_agent=f"StationPlayer/{__version__}")
         # which browser the player's own window uses (None: opens in a tab)
         self.window_browser = browser_name(find_browser())
         self.latest_version: str | None = None
@@ -191,13 +198,14 @@ class PlayerApp:
         self.play_log = PlayLog(store.home / "play-log.jsonl")
         # The alarm going off: what the page plays (same pattern as open_request).
         self.alarm_request: dict | None = None
-        # The time it last went off for ("YYYY-MM-DD HH:MM"), kept on disk so a
-        # restart just after an alarm doesn't set it off again.
-        self._alarm_file = store.home / "alarm-fired.txt"
-        try:
-            self._alarm_fired: str | None = self._alarm_file.read_text(encoding="utf-8").strip() or None
-        except OSError:
-            self._alarm_fired = None
+        # The alarm that is ringing now, and a snoozed one (see alarm_state).
+        self._ringing: dict | None = None
+        self._snooze: dict | None = None
+        # The times each alarm last went off for ({alarm id: ["YYYY-MM-DD
+        # HH:MM", ...]}), kept on disk so a restart just after an alarm
+        # doesn't set it off again.
+        self._alarm_file = store.home / "alarm-fired.json"
+        self._alarm_fired: dict[str, list[str]] = self._read_fired()
         # Opens a player window (set by __main__; None in tests).
         self.show_window = None
         # Phone remote: its server, commands waiting for the page, and the
@@ -279,6 +287,8 @@ class PlayerApp:
             if config["check_updates"] and updates.is_newer(self.latest_version, __version__) else None,
             "sources": _source_summaries(lib, config),
             "missing": lib.missing_count(),
+            "next_alarm": self.next_alarm(),
+            "alarm_state": self.alarm_state(),
         }
 
     # ---- setting up -----------------------------------------------------------
@@ -416,6 +426,9 @@ class PlayerApp:
         out = {"commands": commands}
         for key, req in (("open", self.open_request), ("alarm", self.alarm_request)):
             out[key] = {**req, "age": now - req["at"]} if req else None
+        # Which alarm is ringing now (its seq), so a window showing one
+        # notices when it was snoozed or stopped elsewhere, or timed out.
+        out["ringing"] = (self.alarm_state()["ringing"] or {}).get("seq")
         return out
 
     def page_open(self) -> bool:
@@ -455,43 +468,168 @@ class PlayerApp:
 
     # ---- alarm ----------------------------------------------------------------
 
-    def set_alarm(self, value) -> None:
-        alarm = clean_alarm(value)
+    RING_FOR = 30 * 60  # an alarm nobody stops stops ringing after this (seconds)
+    SNOOZE_MINUTES = 9
+
+    def _read_fired(self) -> dict[str, list[str]]:
+        try:
+            data = json.loads(self._alarm_file.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            data = None
+        if isinstance(data, dict):
+            return {k: [t for t in v if isinstance(t, str)] for k, v in data.items()
+                    if isinstance(k, str) and isinstance(v, list)}
+        # 0.6 kept one time for its one alarm, which is now the first.
+        try:
+            legacy = (self.store.home / "alarm-fired.txt").read_text(encoding="utf-8").strip()
+        except OSError:
+            legacy = ""
+        return {a["id"]: [legacy] for a in self.store.config.alarms} if legacy else {}
+
+    def set_alarms(self, value) -> None:
+        alarms = clean_alarms(value)
         with self._change(rescan=False) as cfg:
-            cfg.alarm = alarm
+            cfg.alarms = alarms
+        with self._lock:
+            snooze = self._snooze
+            if snooze and not any(a["id"] == snooze["alarm_id"] and a["on"] for a in alarms):
+                self._snooze = None  # its alarm was deleted or turned off
+                logger.info("Alarm: snooze cancelled (the alarm was changed)")
+
+    def set_alarm(self, value) -> None:
+        """The single alarm of 0.6's settings: the whole list becomes it."""
+        alarm = clean_alarm(value)
+        self.set_alarms([] if alarm is None else [{**value, "id": alarm["id"]}])
 
     def check_alarm(self, now: datetime | None = None) -> bool:
-        """Set the alarm off if it's due: at its time, or up to five minutes
-        late (the computer was busy or just woke). Opens a window when
-        none is open. Returns whether it went off."""
-        alarm = self.store.config.alarm
-        if not alarm or not alarm.get("on"):
-            return False
+        """Set an alarm off if it's due: at its time, or up to five minutes
+        late (the computer was busy or just woke), or a snoozed alarm when
+        its snooze is up. Opens a window when none is open. Returns
+        whether one went off."""
+        when = now.timestamp() if now else time.time()
         now = now or datetime.now()
-        hour, minute = map(int, alarm["time"].split(":"))
-        for days_back in (0, 1):  # an alarm at 23:58 is still due at 00:01
-            due = (now - timedelta(days=days_back)).replace(hour=hour, minute=minute, second=0, microsecond=0)
-            key = due.strftime("%Y-%m-%d %H:%M")
-            # A time the clocks skip (spring forward) goes off once they have.
-            late = timedelta(minutes=65 if _skipped(due) else 5)
-            if due.weekday() in alarm["days"] and timedelta(0) <= now - due < late \
-                    and key != self._alarm_fired:
-                break
-        else:
+        with self._lock:
+            snooze = self._snooze
+            if snooze and when >= snooze["until"]:
+                self._snooze = None
+                self._ring(snooze, snoozed=True)
+                fired = True
+            else:
+                fired = self._check_due(now)
+        if fired and not self.page_open():
+            self._open_window()
+        return fired
+
+    def _check_due(self, now: datetime) -> bool:
+        due_now: list[tuple[dict, str]] = []
+        for alarm in self.store.config.alarms:
+            if not alarm.get("on"):
+                continue
+            hour, minute = map(int, alarm["time"].split(":"))
+            fired = self._alarm_fired.get(alarm["id"], [])
+            for days_back in (0, 1):  # an alarm at 23:58 is still due at 00:01
+                due = (now - timedelta(days=days_back)).replace(hour=hour, minute=minute, second=0, microsecond=0)
+                key = due.strftime("%Y-%m-%d %H:%M")
+                # A time the clocks skip (spring forward) goes off once they have.
+                late = timedelta(minutes=65 if _skipped(due) else 5)
+                if due.weekday() in alarm["days"] and timedelta(0) <= now - due < late and key not in fired:
+                    due_now.append((alarm, key))
+                    break
+        if not due_now:
             return False
-        self._alarm_fired = key
+        # Several due at once ring once: the first in the list. All of them
+        # count as gone off, so the others don't ring a moment later.
+        recent = (now - timedelta(days=2)).strftime("%Y-%m-%d %H:%M")
+        for alarm, key in due_now:
+            keys = [k for k in self._alarm_fired.get(alarm["id"], []) if k >= recent] + [key]
+            self._alarm_fired[alarm["id"]] = keys[-10:]
+        ids = {a["id"] for a in self.store.config.alarms}
+        self._alarm_fired = {k: v for k, v in self._alarm_fired.items() if k in ids}
         try:
             self._alarm_file.parent.mkdir(parents=True, exist_ok=True)
-            self._alarm_file.write_text(key, encoding="utf-8")
+            self._alarm_file.write_text(json.dumps(self._alarm_fired), encoding="utf-8")
         except OSError as exc:
             logger.warning("Could not save the alarm time: %s", exc)
-        with self._lock:
-            seq = max(time.time_ns(), (self.alarm_request or {}).get("seq", 0) + 1)
-            self.alarm_request = {"seq": seq, "source": dict(alarm["source"]), "at": time.time()}
-        logger.info("Alarm: playing %s", alarm["source"].get("name") or alarm["source"]["id"])
-        if not self.page_open():
-            self._open_window()
+        alarm = due_now[0][0]
+        self._snooze = None  # a new alarm takes over from a snoozed one
+        self._ring({"alarm_id": alarm["id"], "label": alarm.get("label", ""),
+                    "source": dict(alarm["source"])}, snoozed=False)
         return True
+
+    def _ring(self, alarm: dict, snoozed: bool) -> None:
+        """Set an alarm ringing (called with the lock held)."""
+        seq = max(time.time_ns(), (self.alarm_request or {}).get("seq", 0) + 1)
+        at = time.time()
+        info = {"alarm_id": alarm["alarm_id"], "label": alarm["label"],
+                "source": dict(alarm["source"]), "snoozed": snoozed}
+        self.alarm_request = {"seq": seq, **info, "at": at}
+        self._ringing = {"seq": seq, **info, "source": dict(alarm["source"]), "at": at}
+        logger.info("Alarm%s%s: playing %s", " (after snoozing)" if snoozed else "",
+                    f" \"{alarm['label']}\"" if alarm["label"] else "",
+                    alarm["source"].get("name") or alarm["source"]["id"])
+
+    def _ringing_now(self) -> dict | None:
+        ringing = self._ringing
+        if ringing and time.time() - ringing["at"] >= self.RING_FOR:
+            self._ringing = ringing = None
+        return ringing
+
+    def alarm_state(self) -> dict:
+        with self._lock:
+            ringing = self._ringing_now()
+            snooze = self._snooze
+            return {"ringing": copy.deepcopy(ringing),
+                    "snoozed_until": snooze["until"] if snooze else None}
+
+    def snooze_alarm(self, minutes: int = SNOOZE_MINUTES) -> dict:
+        """Snooze the ringing alarm. Raises AlarmNotRinging when none is."""
+        if not isinstance(minutes, int) or isinstance(minutes, bool) or not 1 <= minutes <= 60:
+            raise ValueError("minutes must be a whole number from 1 to 60")
+        with self._lock:
+            ringing = self._ringing_now()
+            if ringing is None:
+                raise AlarmNotRinging("No alarm is ringing")
+            self._ringing = None
+            self._snooze = {"until": time.time() + minutes * 60, "alarm_id": ringing["alarm_id"],
+                            "label": ringing["label"], "source": dict(ringing["source"])}
+        logger.info("Alarm snoozed for %d minute%s", minutes, "" if minutes == 1 else "s")
+        return self.alarm_state()
+
+    def stop_alarm(self) -> bool:
+        """Stop the ringing alarm and any snooze. Returns whether there was
+        either to stop."""
+        with self._lock:
+            had = self._ringing_now() is not None or self._snooze is not None
+            self._ringing = self._snooze = None
+        if had:
+            logger.info("Alarm stopped")
+        return had
+
+    def next_alarm(self, now: datetime | None = None) -> dict | None:
+        """The soonest alarm to come (a snoozed one counts), or None."""
+        now = now or datetime.now()
+        best: tuple[float, datetime, dict] | None = None
+        for alarm in self.store.config.alarms:
+            if not alarm.get("on"):
+                continue
+            hour, minute = map(int, alarm["time"].split(":"))
+            for ahead in range(8):
+                due = (now + timedelta(days=ahead)).replace(hour=hour, minute=minute, second=0, microsecond=0)
+                if due > now and due.weekday() in alarm["days"]:
+                    at = due.astimezone()
+                    if best is None or at.timestamp() < best[0]:
+                        best = (at.timestamp(), at, {"alarm_id": alarm["id"], "label": alarm.get("label", ""),
+                                                     "source_name": alarm["source"].get("name", "")})
+                    break
+        with self._lock:
+            snooze = self._snooze
+        if snooze and (best is None or snooze["until"] < best[0]):
+            at = datetime.fromtimestamp(snooze["until"]).astimezone()
+            best = (snooze["until"], at, {"alarm_id": snooze["alarm_id"], "label": snooze["label"],
+                                          "source_name": snooze["source"].get("name", "")})
+        if best is None:
+            return None
+        return {"at": best[1].isoformat(timespec="seconds"), **best[2]}
 
     def watch_alarm(self) -> threading.Thread:
         def loop():
@@ -554,6 +692,21 @@ class PlayerApp:
                 "network": address is not None or not self.remote_server}
 
     def remote_command(self, command: dict) -> None:
+        if command["cmd"] in ("snooze", "stop_alarm"):
+            # Done here and now, so it works with no window open; the page
+            # is told too, to pause and close its alarm screen. Nothing
+            # ringing (or snoozed, for stop): nothing to do.
+            if command["cmd"] == "snooze":
+                try:
+                    self.snooze_alarm(self.SNOOZE_MINUTES)
+                except AlarmNotRinging:
+                    return
+            elif not self.stop_alarm():
+                return
+            with self._lock:
+                self.remote_commands.append({**command, "at": time.time()})
+                del self.remote_commands[:-20]
+            return
         with self._lock:
             self.remote_commands.append({**command, "at": time.time()})
             del self.remote_commands[:-20]
@@ -585,7 +738,20 @@ class PlayerApp:
             "playlists": [{"id": p["id"], "name": p["name"], "kind": p["kind"]}
                           for p in self.my_summaries() + lib.playlist_summaries()],
             "stations": [{"id": station_id(s["url"]), "name": s["name"]} for s in self.store.config.stations],
+            "alarm": self._remote_alarm(),
         }
+
+    def _remote_alarm(self) -> dict:
+        state = self.alarm_state()
+        with self._lock:
+            snooze = copy.deepcopy(self._snooze)
+        ringing = state["ringing"]
+        label = ringing["label"] if ringing else snooze["label"] if snooze else ""
+        until = state["snoozed_until"]
+        return {"ringing": ringing is not None, "label": label, "snoozed_until": until,
+                # in the computer's time, like "next" (the phone's zone may differ)
+                "snoozed_until_text": datetime.fromtimestamp(until).strftime("%H:%M") if until else "",
+                "next": self.next_alarm()}
 
     def play_recording(self, file: str) -> dict:
         """Put a finished recording in the library (the recordings folder
@@ -865,20 +1031,21 @@ class PlayerApp:
             station = next((s for s in cfg.stations if s.get("url") == url), None)
             if station is None:
                 raise LookupError("No such station")
-            alarm_source = (cfg.alarm or {}).get("source") or {}
-            wakes = alarm_source.get("kind") == "station" and alarm_source.get("id") == station_id(url)
+            # alarms find stations by an id made from the address
+            wakes = [a["source"] for a in cfg.alarms
+                     if a["source"].get("kind") == "station" and a["source"].get("id") == station_id(url)]
             if resolved is not None and resolved != url:
                 if any(r["url"] == url and not r["done"] and not r.get("stopping") for r in self.recorder.status()):
                     raise ValueError("Stop recording this station before changing its link")
                 if any(s.get("url") == resolved for s in cfg.stations):
                     raise ValueError("That stream is already one of your stations")
                 station["url"] = resolved
-                if wakes:  # the alarm finds stations by an id made from the address
-                    alarm_source["id"] = station_id(resolved)
+                for source in wakes:
+                    source["id"] = station_id(resolved)
             if name:
                 station["name"] = name
-                if wakes:
-                    alarm_source["name"] = name[:200]
+                for source in wakes:
+                    source["name"] = name[:200]
 
     def move_station(self, url: str, to) -> None:
         if not isinstance(to, int) or isinstance(to, bool):
@@ -1076,6 +1243,8 @@ def make_handler(app: PlayerApp):
             if path == "/api/recordings":
                 return self._send_json({"recordings": app.recorder.status(),
                                         "folder": str(app.recorder.folder)})
+            if path.startswith("/api/directory/"):
+                return self._serve_directory(path, head_only)
             if path == "/api/nowplaying":
                 sid = parse_qs(urlparse(self.path).query).get("station", [""])[0]
                 url = app.station_url(sid)
@@ -1083,6 +1252,33 @@ def make_handler(app: PlayerApp):
                     return self._error(HTTPStatus.NOT_FOUND, "No such station")
                 return self._send_json({"title": app.title(url)})
             return self._serve_static(path, head_only)
+
+        def _serve_directory(self, path: str, head_only: bool):
+            q = {k: v[0] for k, v in parse_qs(urlparse(self.path).query).items()}
+            if path == "/api/directory/logo":
+                found = app.directory.logo(q.get("u", ""))
+                if found is None:
+                    return self._error(HTTPStatus.NOT_FOUND, "No logo")
+                body, ctype = found
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", ctype)
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Cache-Control", "private, max-age=86400")
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.end_headers()
+                if not head_only:
+                    self.wfile.write(body)
+                return None
+            try:
+                if path == "/api/directory/search":
+                    return self._send_json({"stations": app.directory.search(
+                        q=q.get("q", ""), tag=q.get("tag", ""), country=q.get("country", ""),
+                        order=q.get("order", "votes"))})
+                if path == "/api/directory/tags":
+                    return self._send_json({"tags": app.directory.tags()})
+            except DirectoryError as exc:
+                return self._error(HTTPStatus.BAD_GATEWAY, str(exc))
+            return self._error(HTTPStatus.NOT_FOUND, "Not found")
 
         def _serve_art(self, track_id: str, head_only: bool):
             found = app.artwork(track_id)
@@ -1271,8 +1467,18 @@ def make_handler(app: PlayerApp):
                             if not isinstance(data[key], bool):
                                 raise ValueError(f"{key} must be true or false")
                             apply(data[key])
-                    if "alarm" in data:
+                    if "alarms" in data:
+                        app.set_alarms(data["alarms"])
+                    elif "alarm" in data:
                         app.set_alarm(data["alarm"])
+                elif path == "/api/alarm/snooze":
+                    minutes = data.get("minutes", PlayerApp.SNOOZE_MINUTES)
+                    try:
+                        app.snooze_alarm(minutes)
+                    except AlarmNotRinging as exc:
+                        return self._error(HTTPStatus.CONFLICT, str(exc))
+                elif path == "/api/alarm/stop":
+                    app.stop_alarm()
                 elif path == "/api/played":
                     app.played(data.get("id"), data.get("started"), data.get("seconds"))
                     return self._send_json({"ok": True})
@@ -1327,6 +1533,9 @@ def make_handler(app: PlayerApp):
                     except OSError as exc:
                         return self._error(HTTPStatus.INTERNAL_SERVER_ERROR,
                                            f"Couldn't open the recordings folder ({app.recorder.folder}): {exc}")
+                elif path == "/api/directory/clicked":
+                    app.directory.clicked(str(data.get("uuid", "")))
+                    return self._send_json({"ok": True})
                 elif path == "/api/quit":
                     self._send_json({"ok": True})
                     app.recorder.stop_all()  # close recordings cleanly

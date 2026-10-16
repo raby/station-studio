@@ -35,6 +35,10 @@
           <li><button type="button" class="nav-item" data-view="radio"><span data-icon="radio"></span><span>Stations</span></button></li>
           <li><button type="button" class="nav-item" data-view="recordings"><span data-icon="record"></span><span>Recordings</span></button></li>
         </ul>
+        <h2>Clock</h2>
+        <ul class="nav-list">
+          <li><button type="button" class="nav-item" data-view="clock"><span data-icon="clock"></span><span>Clock &amp; alarms</span><span class="count" id="nav-next-alarm"></span></button></li>
+        </ul>
         <div id="rec-status" class="rec-status" hidden></div>
         <h2>Setup</h2>
         <ul class="nav-list">
@@ -90,6 +94,8 @@
   </div>
   <div id="track-menu" class="track-menu" role="menu" hidden></div>
   <div id="announce" class="sr-only" aria-live="polite"></div>
+  <div id="alarm-screen" class="alarm-screen" role="alertdialog" aria-modal="true" aria-labelledby="alarm-screen-title" hidden></div>
+  <div id="night" class="night" tabindex="-1" hidden></div>
   <div id="toasts" class="toasts" aria-hidden="true"></div>
   <script src="/app.js"></script>
 </body>

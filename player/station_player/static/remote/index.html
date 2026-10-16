@@ -11,6 +11,15 @@
 <body>
   <main>
     <p id="offline" class="note" role="status" hidden></p>
+    <section id="alarm" class="alarm" role="alert" aria-label="Alarm" hidden>
+      <p id="alarm-head" class="alarm-head">Alarm</p>
+      <p id="alarm-label" class="alarm-label" hidden></p>
+      <div class="alarm-buttons">
+        <button type="button" id="alarm-snooze" class="wide">Snooze 9 min</button>
+        <button type="button" id="alarm-stop" class="wide stop">Stop</button>
+      </div>
+    </section>
+    <p id="next-alarm" class="next-alarm" hidden></p>
     <section class="now" aria-label="Now playing">
       <img id="art" alt="" hidden>
       <h1 id="title">Nothing playing</h1>

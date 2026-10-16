@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import re
+import secrets
 import threading
 import time
 from dataclasses import asdict, dataclass, field
@@ -57,9 +58,10 @@ class Config:
     own_window: bool = True
     # keep a log of the tracks played, for music reporting (PRS / PPL)
     play_log: bool = True
-    # wake-up alarm: {"on", "time": "HH:MM", "days": [0-6, Monday = 0],
-    # "source": {"kind": "playlist" | "station", "id", "name"}}
-    alarm: dict | None = None
+    # wake-up alarms (up to MAX_ALARMS): [{"id": 8 hex digits, "on",
+    # "time": "HH:MM", "days": [0-6, Monday = 0],
+    # "source": {"kind": "playlist" | "station", "id", "name"}, "label"}]
+    alarms: list[dict] = field(default_factory=list)
     # control the player from a phone on the same network (see remote.py)
     remote: bool = False
     remote_token: str = ""
@@ -84,26 +86,94 @@ def _pairs(value, keys: tuple[str, str]) -> list[dict]:
     ]
 
 
-def clean_alarm(value) -> dict | None:
-    """A valid alarm setting, or None. Raises ValueError for a bad one."""
-    if value is None:
-        return None
+MAX_ALARMS = 10
+MAX_ALARM_LABEL = 60
+_ALARM_ID = re.compile(r"[0-9a-f]{8}")
+
+
+def new_alarm_id() -> str:
+    return secrets.token_hex(4)
+
+
+def _clean_one_alarm(value, where: str = "The alarm") -> dict:
+    """One alarm, checked; its id is kept as given (clean_alarms fixes it)."""
     if not isinstance(value, dict):
-        raise ValueError("alarm must be an object")
+        raise ValueError(f"{where} isn't set out properly")
     when = value.get("time")
     if not isinstance(when, str) or not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", when):
-        raise ValueError("alarm time must be HH:MM")
+        raise ValueError(f"{where} needs a time written as HH:MM, like 07:30")
     days = value.get("days")
-    if not isinstance(days, list) or not days or not all(isinstance(d, int) and 0 <= d <= 6 for d in days):
-        raise ValueError("alarm days must be a list of 0 (Monday) to 6 (Sunday)")
+    if not isinstance(days, list) or not days or not all(
+            isinstance(d, int) and not isinstance(d, bool) and 0 <= d <= 6 for d in days):
+        raise ValueError(f"{where} needs at least one day (0 is Monday, 6 is Sunday)")
     source = value.get("source")
     if not (isinstance(source, dict) and source.get("kind") in ("playlist", "station")
             and isinstance(source.get("id"), str) and source["id"]):
-        raise ValueError("alarm needs a playlist or station to play")
+        raise ValueError(f"{where} needs a playlist or station to play")
     name = source.get("name")
-    return {"on": bool(value.get("on")), "time": when, "days": sorted(set(days)),
+    label = value.get("label")
+    if label is None:
+        label = ""
+    if not isinstance(label, str):
+        raise ValueError(f"{where}'s label must be text")
+    alarm_id = value.get("id")
+    return {"id": alarm_id if isinstance(alarm_id, str) else "",
+            "on": bool(value.get("on")), "time": when, "days": sorted(set(days)),
             "source": {"kind": source["kind"], "id": source["id"][:100],
-                       "name": name[:200] if isinstance(name, str) else ""}}
+                       "name": name[:200] if isinstance(name, str) else ""},
+            "label": " ".join(label.split())[:MAX_ALARM_LABEL].strip()}
+
+
+def _fix_ids(alarms: list[dict]) -> list[dict]:
+    """Missing, malformed or repeated ids get new random ones."""
+    seen: set[str] = set()
+    for alarm in alarms:
+        if not _ALARM_ID.fullmatch(alarm.get("id") or "") or alarm["id"] in seen:
+            alarm["id"] = new_alarm_id()
+            while alarm["id"] in seen or any(a.get("id") == alarm["id"] for a in alarms if a is not alarm):
+                alarm["id"] = new_alarm_id()
+        seen.add(alarm["id"])
+    return alarms
+
+
+def clean_alarm(value) -> dict | None:
+    """A valid single alarm (with an id and label), or None. Raises ValueError."""
+    if value is None:
+        return None
+    return _fix_ids([_clean_one_alarm(value)])[0]
+
+
+def clean_alarms(value) -> list[dict]:
+    """A valid list of alarms. Raises ValueError with a message for people."""
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ValueError("The alarms aren't set out properly (expected a list)")
+    if len(value) > MAX_ALARMS:
+        raise ValueError(f"You can have up to {MAX_ALARMS} alarms")
+    many = len(value) > 1
+    return _fix_ids([_clean_one_alarm(v, f"Alarm {i + 1}" if many else "The alarm")
+                     for i, v in enumerate(value)])
+
+
+def _alarms_from_json(data: dict) -> list[dict]:
+    """Alarms from a settings file: malformed ones are dropped, and the
+    single `alarm` of older versions becomes the first of a list."""
+    if "alarms" in data:
+        raw = data["alarms"] if isinstance(data["alarms"], list) else []
+    elif data.get("alarm") is not None:
+        raw = [{**data["alarm"], "id": None, "label": ""}] if isinstance(data["alarm"], dict) else []
+    else:
+        raw = []
+    out = []
+    for item in raw:
+        try:
+            out.append(_clean_one_alarm(item))
+        except ValueError:
+            continue
+        if len(out) == MAX_ALARMS:
+            break
+    return _fix_ids(out)
 
 
 def config_from_json(data: dict) -> Config:
@@ -120,10 +190,7 @@ def config_from_json(data: dict) -> Config:
     for key in ("own_window", "play_log", "remote"):
         if isinstance(data.get(key), bool):
             setattr(cfg, key, data[key])
-    try:
-        cfg.alarm = clean_alarm(data.get("alarm"))
-    except ValueError:
-        pass
+    cfg.alarms = _alarms_from_json(data)
     token = data.get("remote_token")
     if isinstance(token, str) and re.fullmatch(r"[A-Za-z0-9_-]{16,64}", token):
         cfg.remote_token = token
@@ -140,8 +207,14 @@ class ConfigStore:
         self._lock = threading.Lock()
         self.warnings: list[str] = []
         self.config = self._read()
+        if self._needs_save:
+            try:  # e.g. new alarm ids: written now so they stay the same next time
+                self.save()
+            except OSError as exc:
+                logger.warning("Could not update the settings file: %s", exc)
 
     def _read(self) -> Config:
+        self._needs_save = False
         if not self.path.is_file():
             cfg = Config()
             exports = station_studio_exports()
@@ -165,7 +238,12 @@ class ConfigStore:
             logger.warning(message)
             self.warnings.append(message)
             return Config()
-        return config_from_json(data)
+        cfg = config_from_json(data)
+        given = data.get("alarms") if isinstance(data.get("alarms"), list) else []
+        given_ids = [a.get("id") if isinstance(a, dict) else None for a in given]
+        self._needs_save = "alarms" not in data and data.get("alarm") is not None \
+            or any(a["id"] not in given_ids for a in cfg.alarms)
+        return cfg
 
     def save(self) -> None:
         with self._lock:

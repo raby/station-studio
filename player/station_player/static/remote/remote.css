@@ -11,6 +11,7 @@
   }
 }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 body {
   margin: 0; background: var(--bg); color: var(--text);
   font: 16px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -38,3 +39,16 @@ button:disabled { opacity: 0.4; }
   padding: 12px 14px; margin: 4px 0;
 }
 .list button.on { border-color: var(--accent); color: var(--accent); }
+.alarm {
+  background: var(--panel); border: 2px solid var(--accent); border-radius: 12px;
+  padding: 16px; margin: 0 0 16px; text-align: center;
+}
+.alarm-head { font-size: 24px; font-weight: 700; margin: 0; color: var(--accent); }
+.alarm-label { font-size: 18px; margin: 4px 0 0; overflow-wrap: anywhere; }
+.alarm-buttons { display: flex; gap: 12px; margin-top: 16px; }
+button.wide {
+  flex: 1; width: auto; height: auto; min-height: 64px; border-radius: 12px;
+  font-size: 20px; font-weight: 600; padding: 12px;
+}
+button.stop { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+.next-alarm { color: var(--muted); font-size: 14px; text-align: center; margin: 0 0 8px; overflow-wrap: anywhere; }

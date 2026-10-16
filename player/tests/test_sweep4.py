@@ -110,8 +110,8 @@ def test_alarm_setting_is_checked():
                 {**ALARM, "days": [7]}, {**ALARM, "source": {"kind": "file", "id": "x"}}):
         with pytest.raises(ValueError):
             clean_alarm(bad)
-    assert config_from_json({"alarm": {"time": "nope"}}).alarm is None
-    assert config_from_json({"alarm": ALARM}).alarm["time"] == "07:30"
+    assert config_from_json({"alarm": {"time": "nope"}}).alarms == []
+    assert config_from_json({"alarm": ALARM}).alarms[0]["time"] == "07:30"
 
 
 def test_alarm_goes_off_once_on_its_days(running):
@@ -152,10 +152,9 @@ def test_alarm_in_the_hour_the_clocks_skip(monkeypatch):
     try:
         app = PlayerApp(ConfigStore(), scan=False)
         # 29 March 2026: UK clocks go from 01:00 to 02:00 (a Sunday).
-        app.store.config.alarm = {**ALARM, "time": "01:30", "days": [6]}
+        app.store.config.alarms = [{**ALARM, "id": "0000000a", "time": "01:30", "days": [6]}]
         assert app.check_alarm(datetime(2026, 3, 29, 2, 0, 15))
-        app._alarm_fired = None
-        app.store.config.alarm = {**ALARM, "time": "06:30", "days": [6]}
+        app.store.config.alarms = [{**ALARM, "id": "0000000b", "time": "06:30", "days": [6]}]
         assert not app.check_alarm(datetime(2026, 3, 29, 7, 0))  # an ordinary time: 30 minutes late is too late
     finally:
         monkeypatch.undo()
@@ -165,7 +164,7 @@ def test_alarm_in_the_hour_the_clocks_skip(monkeypatch):
 
 def test_alarm_just_before_midnight():
     app = PlayerApp(ConfigStore(), scan=False)
-    app.store.config.alarm = {**ALARM, "time": "23:59", "days": [6]}
+    app.store.config.alarms = [{**ALARM, "id": "0000000a", "time": "23:59", "days": [6]}]
     assert app.check_alarm(datetime(2026, 10, 19, 0, 1))  # Sunday 23:59, seen on Monday
 
 

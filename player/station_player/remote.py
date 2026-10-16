@@ -6,7 +6,8 @@ Off unless turned on in Settings. It listens on every network interface
 `/r/<token>/`, which the Settings page shows with a QR code to scan.
 Making a new link stops the old one working. It serves the remote page,
 the player's status and cover art, and takes a short list of commands
-(play/pause, next, volume, play a playlist or station, sleep timer).
+(play/pause, next, volume, play a playlist or station, sleep timer,
+snooze or stop a ringing alarm).
 Nothing else the player serves is reachable from the network.
 
 Sound still plays on the computer: commands are handed to the player
@@ -35,7 +36,7 @@ _CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'
         "connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; "
         "frame-ancestors 'none'")
 API_HEADER = "X-Station-Player"
-COMMANDS = ("toggle", "next", "prev", "volume", "playlist", "station", "sleep")
+COMMANDS = ("toggle", "next", "prev", "volume", "playlist", "station", "sleep", "snooze", "stop_alarm")
 
 
 def new_token() -> str:
