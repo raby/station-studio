@@ -126,6 +126,15 @@ def test_music_folder_becomes_playlist(tmp_path):
         ("First", "Band", "Disc"), ("Second", "Band", "Disc")]
 
 
+def test_namesake_music_folders_say_where_they_are(tmp_path):
+    for parent in ("Rob", "Shared"):
+        write_wav(tmp_path / parent / "Music" / "01 - Band - Song.wav")
+    write_wav(tmp_path / "Other" / "Albums" / "01 - Band - Song.wav")
+    lib = Library()
+    lib.load([], [str(tmp_path / "Rob" / "Music"), str(tmp_path / "Shared" / "Music"), str(tmp_path / "Other" / "Albums")])
+    assert sorted(p["name"] for p in lib.playlist_summaries()) == ["Albums", "Music (Rob)", "Music (Shared)"]
+
+
 def test_bad_sources_become_errors_not_crashes(tmp_path):
     junk = tmp_path / "junk.xml"
     junk.write_text("<not a plist")

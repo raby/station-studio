@@ -253,6 +253,19 @@ class Library:
 
         for folder, files in folder_files:
             self._add_folder_playlist(folder, files, tag_cache)
+        self._name_namesake_folders()
+
+    def _name_namesake_folders(self) -> None:
+        """Two folders both called "Music" read as "Music (Rob)" and
+        "Music (Shared)": each gets the folder it's in."""
+        folders = [pl for pl in self.playlists.values() if pl.kind == "folder" and pl.source]
+        counts: dict[str, int] = {}
+        for pl in folders:
+            counts[name_key(pl.name)] = counts.get(name_key(pl.name), 0) + 1
+        for pl in folders:
+            parent = Path(pl.source).parent
+            if counts[name_key(pl.name)] > 1 and parent.name:
+                pl.name = f"{pl.name} ({parent.name})"
 
     def _resolve(self, raw: dict, remaps: list[dict]) -> tuple[Path | None, Path | None]:
         """(the local file or None, where the XML said it was)."""

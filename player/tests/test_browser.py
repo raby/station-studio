@@ -984,6 +984,9 @@ class FakeDirectoryNet:
             return json.dumps({"channels": [{"id": "groovesalad", "title": "Groove Salad", "genre": "ambient",
                                              "description": "Ambient beats", "listeners": "9",
                                              "playlists": [{"format": "mp3", "url": "x"}]}]}).encode(), "application/json"
+        if "/json/stations/byurl" in url and getattr(self, "byurl", False):
+            return json.dumps([{"name": "Found", "url_resolved": "http://127.0.0.1:9/stream",
+                                "favicon": "https://logo.example/found.png"}]).encode(), "application/json"
         if "/json/url/" in url or "/json/stations/byurl" in url:
             return b"[]", "application/json"
         jazz = "tag=jazz" in url
@@ -1067,7 +1070,8 @@ class ManyStationsNet(FakeDirectoryNet):
         start, count = int(q.get("offset", ["0"])[0]), int(q["limit"][0])
         items = [{"stationuuid": f"uuid-{n}", "name": f"Station {n}", "url_resolved": f"http://127.0.0.1:9/s{n}",
                   "favicon": "https://logo.example/s.png" if n == 0 else "", "tags": "pop", "country": "Ireland",
-                  "countrycode": "IE", "codec": "AAC", "bitrate": 32 if n == 1 else 128, "votes": 100 - n}
+                  "countrycode": "IE", "codec": "UNKNOWN" if n == 2 else "MP3" if n == 3 else "AAC",
+                  "bitrate": {1: 32, 2: 0, 3: 56}.get(n, 128), "votes": 100 - n}
                  for n in range(start, min(100, start + count))]
         return json.dumps(items).encode(), "application/json"
 
@@ -1082,7 +1086,9 @@ def test_logos_recently_played_and_more_results(page, player):
     sync_api.expect(page.locator("#recent")).to_be_hidden()  # nothing played yet
     # A hint on thin-sounding streams only.
     sync_api.expect(results.filter(has_text="Station 1").first.locator(".low-q")).to_have_text("Low quality")
-    sync_api.expect(page.locator("#finder-results .low-q")).to_have_count(1)
+    sync_api.expect(results.filter(has_text="Station 3").first.locator(".low-q")).to_be_visible()  # MP3 56k
+    sync_api.expect(page.locator("#finder-results .low-q")).to_have_count(2)  # not AAC at 128k
+    sync_api.expect(results.filter(has_text="Station 2").first.locator(".facts")).to_have_text("Ireland")  # no "UNKNOWN"
     # Show more adds the next page below, and focus moves to it.
     page.locator("#btn-more").click()
     sync_api.expect(results).to_have_count(80)
@@ -1170,4 +1176,9 @@ def test_choose_find_and_remove_a_station_logo(page, player, tmp_path):
     assert not any((app.store.home / "logos").glob("*.png"))  # nothing left over
     card.get_by_role("button", name="Cancel").click()
     sync_api.expect(card.locator(".card-top .glyph")).to_be_visible()
+    # Find logos looks up every station without one.
+    net.byurl = True
+    page.locator("#btn-find-logos").click()
+    sync_api.expect(card.locator(".card-top img.logo")).to_have_attribute("src", re.compile(r"^/logo/"))
+    sync_api.expect(page.locator("#btn-find-logos")).to_have_count(0)  # every station has one now
     assert any("/json/stations/byurl" in u for u in net.asked)

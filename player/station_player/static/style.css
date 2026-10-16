@@ -181,6 +181,9 @@ table.tracks { width: 100%; border-collapse: collapse; }
   transition: border-color .15s, box-shadow .15s;
 }
 .card:hover { border-color: var(--border-strong); box-shadow: var(--shadow-sm); }
+/* Buttons line up along the bottom, however long the names above them. */
+.card .view-part { display: flex; flex-direction: column; gap: 9px; flex: 1; }
+.card .view-part > .row { margin-top: auto; }
 .card.live { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .card-top { display: flex; align-items: center; gap: 12px; }
 .card .name { font-weight: 650; font-size: 15px; flex: 1; min-width: 0; overflow-wrap: anywhere; }
@@ -351,6 +354,7 @@ table.tracks { width: 100%; border-collapse: collapse; }
   border-radius: 50%; background: var(--accent);
 }
 .seek { display: flex; align-items: center; gap: 10px; width: 100%; max-width: 620px; }
+.seek.off { visibility: hidden; }
 .seek input { flex: 1; }
 .time { font-size: 12px; color: var(--faint); font-variant-numeric: tabular-nums; width: 44px; text-align: center; }
 .volume { display: flex; align-items: center; gap: 10px; justify-content: flex-end; color: var(--muted); }

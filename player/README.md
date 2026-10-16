@@ -220,8 +220,8 @@ from each station's own website. Station Player fetches them itself, so
 the page never contacts other sites.
 
 Results update as you type (or press Search), and **Show more** adds
-the next 40 below. Streams under 64 kbps are marked **Low quality**:
-they tend to sound thin.
+the next 40 below. Streams likely to sound thin are marked **Low
+quality**: MP3 under 64 kbps, AAC or Opus under 48 kbps.
 
 **Recently played** at the top of the Radio page lists the last 8
 stations you listened to, saved or not, so a station you tried from
@@ -230,8 +230,8 @@ the finder is easy to find again (and Add). **Clear** empties it.
 **Station logos** show on your stations, in the now-playing bar and in
 the computer's media controls (the Mac's Now Playing, Windows' media
 panel). Stations added from the finder bring their logo with them; for
-others, **Edit** a station and choose **Find logo** (looks it up in
-Radio Browser) or **Choose picture…** (a PNG, JPEG, GIF or WebP up to
+others, **Find logos** at the top of the Radio page looks them all up in
+Radio Browser at once, or **Edit** a station and choose **Find logo** or **Choose picture…** (a PNG, JPEG, GIF or WebP up to
 256 KB). Logos are kept in the `logos` folder beside the settings file,
 so they show without asking the station's website each time.
 

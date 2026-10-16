@@ -1095,7 +1095,11 @@ function radioView() {
   queueMicrotask(syncRadioCards);
   queueMicrotask(syncRecordings);
   return el("div", {},
-    el("div", { class: "view-head" }, el("h1", {}, "Radio")),
+    el("div", { class: "view-head" }, el("h1", {}, "Radio"), el("div", { class: "spacer" }),
+      stations.some((x) => !x.logo) ? el("button", {
+        type: "button", class: "btn", id: "btn-find-logos", title: "Look your stations up in Radio Browser",
+        onclick: findAllLogos,
+      }, ...iconLabel("search", "Find logos")) : null),
     cards.length ? el("div", { class: "cards" }, cards) : el("div", { class: "empty-state" },
       el("div", { class: "glyph big" }, icon("radio")),
       el("h2", {}, "No stations yet"),
@@ -1117,6 +1121,27 @@ function radioView() {
       el("button", { type: "button", class: "btn", onclick: () => show({ type: "recordings" }) },
         ...iconLabel("record", "See your recordings")))),
   );
+}
+
+// Look up every saved station that has no logo yet, one at a time.
+async function findAllLogos(e) {
+  const btn = e.currentTarget;
+  btn.disabled = true;
+  const missing = (S.lib.stations || []).filter((x) => !x.logo);
+  let found = 0;
+  let state = null;
+  for (const [i, st] of missing.entries()) {
+    btn.replaceChildren(`Looking… ${i + 1} of ${missing.length}`);
+    try {
+      state = await api("/api/stations/logo", { url: st.url, find: true }, { quiet: true });
+      found += 1;
+    } catch { /* none for this one (or the directory is unreachable) */ }
+  }
+  if (state) await loadState(state);
+  renderView();
+  refocus("#btn-find-logos");
+  toast(found ? `Found ${plural(found, "logo")}${found < missing.length ? `; ${missing.length - found} not in Radio Browser (Edit a station to choose a picture)` : ""}`
+    : "Radio Browser has no logos for these stations. Edit a station to choose a picture.");
 }
 
 // Stations listened to lately (saved or tried from the finder), newest first.
@@ -1313,15 +1338,21 @@ function syncFinderChips() {
   }
 }
 
-const LOW_KBPS = 64;
+// Below these a stream tends to sound thin. AAC (and Opus) hold up at
+// lower rates than MP3: BBC World Service's 48k AAC+ sounds fine.
+function lowQuality(st) {
+  const efficient = /aac|opus|ogg/i.test(st.codec || "");
+  return st.bitrate > 0 && st.bitrate < (efficient ? 48 : 64);
+}
 
 function stationFacts(st) {
   // "United Kingdom", not the directory's "The United Kingdom Of Great
   // Britain And Northern Ireland"; left out when searching that country.
   const country = st.countrycode ? (st.countrycode === F.country ? "" : countryName(st.countrycode)) : st.country;
-  const text = [country, st.codec && st.bitrate ? `${st.codec} ${st.bitrate} kbps` : st.codec || (st.bitrate ? `${st.bitrate} kbps` : "")]
+  const codec = /^unknown$/i.test(st.codec || "") ? "" : st.codec;  // the directory couldn't tell
+  const text = [country, codec && st.bitrate ? `${codec} ${st.bitrate} kbps` : codec || (st.bitrate ? `${st.bitrate} kbps` : "")]
     .filter(Boolean).join(" · ");
-  const low = st.bitrate > 0 && st.bitrate < LOW_KBPS;
+  const low = lowQuality(st);
   return low ? [text, el("span", { class: "low-q", title: `${st.bitrate} kbps: may sound thin or muffled` }, "Low quality")] : [text];
 }
 
@@ -3302,8 +3333,8 @@ function updateNow() {
   }
   $("#seek").disabled = S.mode !== "track";
   if (S.mode !== "track") { $("#seek").value = 0; fillRange($("#seek")); }
-  // Live radio has nowhere to seek to.
-  $(".bar .seek").hidden = S.mode === "radio";
+  // Live radio has nowhere to seek to (kept in place so the bar doesn't jump).
+  $(".bar .seek").classList.toggle("off", S.mode !== "track");
   const art = S.mode === "track" && t ? `/art/${t.id}` : S.mode === "radio" ? logoSrc(S.station) : null;
   $("#now-art").classList.toggle("logo-art", S.mode === "radio");
   setArt(art);
