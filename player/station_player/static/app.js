@@ -916,6 +916,72 @@ async function testStream(url, out) {
   }
 }
 
+// A station's logo: one kept by the player (saved stations, Recently
+// played), else the finder's (fetched through the player).
+function logoSrc(st) {
+  if (st && st.logo && /^[0-9a-f]{16}\.\w+$/.test(st.logo)) return `/logo/${st.logo}`;
+  if (st && st.logo_url) return `/api/directory/logo?u=${encodeURIComponent(st.logo_url)}`;
+  return null;
+}
+
+// The logo, or the radio glyph when there's none (or it won't load).
+function stationArt(st, cls = "glyph") {
+  const glyph = el("div", { class: cls }, icon("radio"));
+  const src = logoSrc(st);
+  if (!src) return glyph;
+  const img = el("img", { class: "logo", alt: "", loading: "lazy", src });
+  glyph.hidden = true;
+  img.addEventListener("error", () => { img.remove(); glyph.hidden = false; });
+  return el("div", { class: "station-art" }, img, glyph);
+}
+
+function readFile(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result).split(",", 2)[1] || "");
+    r.onerror = () => reject(new Error("That file couldn't be read"));
+    r.readAsDataURL(file);
+  });
+}
+
+function logoEditor(st, result) {
+  const show = (ok, text) => {
+    result.className = `test-result ${ok ? "ok" : "bad"}`;
+    result.replaceChildren(icon(ok ? "check" : "alert"), el("span", {}, text));
+    result.hidden = false;
+  };
+  const set = async (body, done) => {
+    try {
+      await loadState(await api("/api/stations/logo", { url: st.url, ...body }, { quiet: true }));
+      renderView();
+      refocus(`#view .card[data-url="${CSS.escape(st.url)}"] .logo-row button`);
+      toast(done);
+    } catch (err) { show(false, err.message); }
+  };
+  const file = el("input", {
+    type: "file", accept: "image/png,image/jpeg,image/gif,image/webp", hidden: true,
+    onchange: async () => {
+      const f = file.files && file.files[0];
+      if (!f) return;
+      if (f.size > 256 * 1024) { show(false, "That picture is too big (the limit is 256 KB)"); return; }
+      try { await set({ image: await readFile(f) }, `New logo for ${st.name}`); } catch (err) { show(false, err.message); }
+    },
+  });
+  return el("div", { class: "row logo-row" },
+    stationArt(st),
+    el("button", {
+      type: "button", class: "btn small", title: "Look this station up in Radio Browser",
+      onclick: async (e) => {
+        e.currentTarget.disabled = true;
+        show(true, "Looking…");
+        await set({ find: true }, `Found a logo for ${st.name}`);
+      },
+    }, ...iconLabel("search", "Find logo")),
+    el("button", { type: "button", class: "btn small", onclick: () => file.click() }, "Choose picture…"),
+    st.logo ? el("button", { type: "button", class: "btn small ghost", onclick: () => set({}, `Removed ${st.name}'s logo`) }, "No logo") : null,
+    file);
+}
+
 function stationCard(st, i, count) {
   const isLive = () => S.mode === "radio" && S.station && S.station.url === st.url;
   const name = el("input", { value: st.name, "aria-label": "Station name", required: true });
@@ -956,7 +1022,7 @@ function stationCard(st, i, count) {
   const card = el("div", { class: "card", "data-url": st.url },
     el("div", { class: "view-part", hidden: editing },
       el("div", { class: "card-top" },
-        el("div", { class: "glyph" }, icon("radio")),
+        stationArt(st),
         el("div", { class: "name" }, st.name),
         el("button", {
           type: "button", class: "btn ghost icon-only", "aria-label": `Edit ${st.name}`, title: "Edit, test, move or remove",
@@ -974,6 +1040,7 @@ function stationCard(st, i, count) {
     editing ? el("form", { class: "edit", onsubmit: save },
       el("label", {}, "Name", name),
       el("label", {}, "Stream URL", url),
+      logoEditor(st, result),
       result,
       el("div", { class: "row" },
         el("button", { class: "btn primary" }, "Save"),
@@ -1027,7 +1094,7 @@ function radioView() {
       el("div", { class: "glyph big" }, icon("radio")),
       el("h2", {}, "No stations yet"),
       el("p", {}, "Find stations below, or add one with its stream link. Most stations list one on their website, often as a .pls or .m3u file.")),
-    el("div", { class: "settings" }, finderSection(), el("section", { class: "add-station" },
+    el("div", { class: "settings" }, recentSection(), finderSection(), el("section", { class: "add-station" },
       el("h2", {}, "Add a station by its link"),
       el("p", { class: "help" }, "Test checks the link plays, and fills in the name when the station sends one."),
       el("form", { class: "form-row", onsubmit: add }, name, url,
@@ -1044,6 +1111,68 @@ function radioView() {
       el("button", { type: "button", class: "btn", onclick: () => show({ type: "recordings" }) },
         ...iconLabel("record", "See your recordings")))),
   );
+}
+
+// Stations listened to lately (saved or tried from the finder), newest first.
+function recentSection() {
+  const recent = S.lib.recent_stations || [];
+  return el("section", { class: "recent", id: "recent", hidden: !recent.length || null },
+    el("div", { class: "section-head" },
+      el("h2", {}, "Recently played"),
+      el("span", { class: "spacer" }),
+      el("button", {
+        type: "button", class: "btn small ghost", "aria-label": "Clear Recently played",
+        onclick: () => act("/api/stations/recent/clear", {}, "Cleared Recently played"),
+      }, "Clear")),
+    el("ul", { class: "recent-list" }, recent.map((r) => {
+      const mine = (S.lib.stations || []).find((x) => x.url === r.url);
+      const st = mine || { name: r.name, url: r.url, logo: r.logo, preview: true };
+      return el("li", { class: "recent-card find-card", "data-find": r.url },
+        stationArt(st),
+        el("div", { class: "info" },
+          el("div", { class: "name" }, st.name),
+          el("div", { class: "facts" }, mine ? "In your stations" : "Not saved"),
+          el("div", { class: "song", hidden: true })),
+        el("div", { class: "actions" },
+          el("button", {
+            type: "button", class: "btn small listen", "aria-label": `Listen to ${st.name}`,
+            onclick: () => {
+              const live = S.mode === "radio" && S.station && S.station.url === r.url;
+              if (live && !audio.paused) audio.pause(); else playStation(st);
+            },
+          }, ...iconLabel("play", "Listen")),
+          mine ? null : el("button", {
+            type: "button", class: "btn small primary add", "aria-label": `Add ${st.name} to your stations`,
+            onclick: async (e) => {
+              const btn = e.currentTarget;
+              btn.disabled = true;
+              try {
+                await loadState(await api("/api/stations", { name: r.name, url: r.url, logo: r.logo || "" }, { quiet: true }));
+                renderView();
+                toast(`Added ${r.name} to your stations`);
+                refocus(`#view .recent-card[data-find="${CSS.escape(r.url)}"] .listen`);
+              } catch (err) { btn.disabled = false; toast(err.message, { error: true }); }
+            },
+          }, ...iconLabel("plus", "Add"))));
+    })));
+}
+
+// Redraw Recently played in place (the rest of the page keeps what's typed).
+function syncRecent() {
+  const old = document.querySelector("#view #recent");
+  if (!old) return;
+  const focused = old.contains(document.activeElement) ? document.activeElement.getAttribute("aria-label") : null;
+  const fresh = recentSection();
+  old.replaceWith(fresh);
+  if (focused) fresh.querySelector(`[aria-label="${CSS.escape(focused)}"]`)?.focus();
+  syncRadioCards();
+}
+
+async function notePlayed(st) {
+  try {
+    S.lib = await api("/api/stations/played", { name: st.name, url: st.url, logo_url: st.logo_url || "" }, { quiet: true });
+    syncRecent();
+  } catch { /* not one the player knows: nothing to remember */ }
 }
 
 // Reflect play state on the station cards without rebuilding the view,
@@ -1075,7 +1204,8 @@ function syncRadioCards() {
 // Searches Radio Browser (radio-browser.info) through the player server.
 
 // `source`: "" for Radio Browser, "somafm" for SomaFM's own channel list.
-const F = { q: "", draft: null, tag: "", country: homeCountry(), order: "votes", source: "", results: null, loading: false, error: "", token: 0, asked: false };
+const F = { q: "", draft: null, tag: "", country: homeCountry(), order: "votes", source: "", results: null, loading: false,
+  error: "", token: 0, asked: false, next: null, more: false, typing: null };
 const FIND_COUNTRIES = ["GB", "IE", "US", "CA", "AU", "NZ", "DE", "FR", "NL", "BE", "ES", "PT", "IT", "CH", "AT", "SE",
   "NO", "DK", "FI", "PL", "CZ", "GR", "TR", "BR", "MX", "AR", "JM", "NG", "ZA", "KE", "IN", "JP", "KR"];
 
@@ -1098,10 +1228,12 @@ function countryName(code) {
 
 async function findStations(more = {}) {
   Object.assign(F, more);
+  clearTimeout(F.typing);
   const token = ++F.token;
   F.loading = true;
   F.error = "";
   F.asked = true;
+  F.next = null;
   renderFinderResults();
   const params = new URLSearchParams({ q: F.q, tag: F.tag, country: F.country, order: F.order });
   try {
@@ -1109,6 +1241,7 @@ async function findStations(more = {}) {
       undefined, { quiet: true });
     if (token !== F.token) return;
     F.results = res.stations || [];
+    F.next = res.next ?? null;
   } catch (err) {
     if (token !== F.token) return;
     F.results = null;
@@ -1118,6 +1251,35 @@ async function findStations(more = {}) {
   renderFinderResults();
   const n = F.results ? F.results.length : 0;
   announce(F.error ? F.error : n ? `${plural(n, "station")} found` : "No stations found");
+}
+
+// The next page of the same search, added below what's shown.
+async function moreStations() {
+  if (F.next == null || F.more) return;
+  const token = F.token;
+  F.more = true;
+  renderFinderResults();
+  const params = new URLSearchParams({ q: F.q, tag: F.tag, country: F.country, order: F.order, offset: F.next });
+  let added = 0;
+  try {
+    const res = await api(`/api/directory/search?${params}`, undefined, { quiet: true });
+    if (token !== F.token) return;
+    const have = new Set(F.results.map((x) => x.url));
+    const fresh = (res.stations || []).filter((x) => !have.has(x.url));
+    added = fresh.length;
+    F.results = F.results.concat(fresh);
+    F.next = res.next ?? null;
+  } catch (err) {
+    if (token !== F.token) return;
+    toast(err.message, { error: true });
+  } finally {
+    if (token === F.token) F.more = false;
+  }
+  const first = F.results.length - added;
+  renderFinderResults();
+  announce(added ? `${plural(added, "more station")} shown` : "No more stations");
+  // Keyboard users carry on from the first new result.
+  if (added) document.querySelectorAll("#finder-results .find-card .listen")[first]?.focus();
 }
 
 function finderTagChips() {
@@ -1141,27 +1303,25 @@ function syncFinderChips() {
   }
 }
 
+const LOW_KBPS = 64;
+
 function stationFacts(st) {
   // "United Kingdom", not the directory's "The United Kingdom Of Great
   // Britain And Northern Ireland"; left out when searching that country.
   const country = st.countrycode ? (st.countrycode === F.country ? "" : countryName(st.countrycode)) : st.country;
-  return [country, st.codec && st.bitrate ? `${st.codec} ${st.bitrate} kbps` : st.codec || (st.bitrate ? `${st.bitrate} kbps` : "")]
+  const text = [country, st.codec && st.bitrate ? `${st.codec} ${st.bitrate} kbps` : st.codec || (st.bitrate ? `${st.bitrate} kbps` : "")]
     .filter(Boolean).join(" · ");
+  const low = st.bitrate > 0 && st.bitrate < LOW_KBPS;
+  return low ? [text, el("span", { class: "low-q", title: `${st.bitrate} kbps: may sound thin or muffled` }, "Low quality")] : [text];
 }
 
 function finderCard(st) {
   const saved = (S.lib.stations || []).some((x) => x.url === st.url);
-  const logo = st.logo ? el("img", { class: "logo", alt: "", loading: "lazy", src: `/api/directory/logo?u=${encodeURIComponent(st.logo)}` }) : null;
-  const glyph = el("div", { class: "glyph" }, icon("radio"));
-  if (logo) {
-    glyph.hidden = true;
-    logo.addEventListener("error", () => { logo.remove(); glyph.hidden = false; });
-  }
   return el("li", { class: "find-card", "data-find": st.url },
-    el("div", { class: "find-art" }, logo, glyph),
+    stationArt({ logo_url: st.logo }),
     el("div", { class: "info" },
       el("div", { class: "name" }, st.name),
-      el("div", { class: "facts" }, stationFacts(st)),
+      el("div", { class: "facts" }, ...stationFacts(st)),
       st.tags.length ? el("div", { class: "tag-row" }, st.tags.slice(0, 4).map((t) => el("button", {
         type: "button", class: "tag", title: `Find more ${t} stations`,
         onclick: () => {
@@ -1179,7 +1339,7 @@ function finderCard(st) {
           const live = S.mode === "radio" && S.station && S.station.url === st.url;
           if (live && !audio.paused) { audio.pause(); return; }
           const mine = (S.lib.stations || []).find((x) => x.url === st.url);
-          playStation(mine || { name: st.name, url: st.url, preview: true });
+          playStation(mine || { name: st.name, url: st.url, logo_url: st.logo, preview: true });
           if (st.uuid) api("/api/directory/clicked", { uuid: st.uuid }, { quiet: true }).catch(() => {});
         },
       }, ...iconLabel("play", "Listen")),
@@ -1190,7 +1350,7 @@ function finderCard(st) {
           const btn = e.currentTarget;
           btn.disabled = true;
           try {
-            await loadState(await api("/api/stations", { name: st.name, url: st.url }, { quiet: true }));
+            await loadState(await api("/api/stations", { name: st.name, url: st.url, logo_url: st.logo || "" }, { quiet: true }));
             renderView();
             toast(`Added ${st.name} to your stations`);
             refocus(`#view .find-card[data-find="${CSS.escape(st.url)}"] .listen`);
@@ -1215,18 +1375,33 @@ function renderFinderResults() {
   }
   const what = [F.q && `“${F.q}”`, F.tag].filter(Boolean).join(", ");
   const where = F.country ? ` in ${countryName(F.country)}` : "";
+  const more = F.source !== "somafm" && F.next != null;
   box.replaceChildren(
     el("p", { class: "help" }, F.source === "somafm"
       ? "SomaFM: listener-supported radio from San Francisco, with no adverts"
       : what ? `${plural(F.results.length, "station")} for ${what}${where}` : `The most popular stations${where || " right now"}`),
-    el("ul", { class: "find-list" }, F.results.map(finderCard)));
+    el("ul", { class: "find-list" }, F.results.map(finderCard)),
+    more ? el("div", { class: "more-row" }, el("button", {
+      type: "button", class: "btn", id: "btn-more", disabled: F.more || null, onclick: moreStations,
+    }, F.more ? "Loading…" : "Show more")) : null);
   syncRadioCards();
 }
 
 function finderSection() {
   const q = el("input", {
     type: "search", id: "finder-q", value: F.draft ?? F.q, placeholder: "Station name, e.g. jazz fm", "aria-label": "Station name",
-    oninput: (e) => { F.draft = e.target.value; },  // kept if the page redraws
+    oninput: (e) => {
+      F.draft = e.target.value;  // kept if the page redraws
+      // Search as you type, once typing pauses (and not on one letter).
+      clearTimeout(F.typing);
+      const typed = e.target.value.trim();
+      if (typed === F.q || typed.length === 1) return;
+      F.typing = setTimeout(() => {
+        if ($("#finder-q") !== q) return;  // the page moved on
+        findStations({ source: "", q: typed, country: country.value, order: order.value });
+        syncFinderChips();
+      }, 450);
+    },
   });
   const here = homeCountry();
   const codes = here && !FIND_COUNTRIES.includes(here) ? [here, ...FIND_COUNTRIES] : FIND_COUNTRIES;
@@ -3009,6 +3184,7 @@ function playStation(st, { via = "relay", autoplay = true } = {}) {
   if (autoplay) {
     audio.src = S.radioSrc;
     audio.play().catch(() => {});
+    if (!sameStation) notePlayed(st);
   }
   updateNow();
   markPlaying();
@@ -3113,13 +3289,16 @@ function updateNow() {
   }
   $("#seek").disabled = S.mode !== "track";
   if (S.mode !== "track") { $("#seek").value = 0; fillRange($("#seek")); }
-  const art = S.mode === "track" && t ? `/art/${t.id}` : null;
+  // Live radio has nowhere to seek to.
+  $(".bar .seek").hidden = S.mode === "radio";
+  const art = S.mode === "track" && t ? `/art/${t.id}` : S.mode === "radio" ? logoSrc(S.station) : null;
+  $("#now-art").classList.toggle("logo-art", S.mode === "radio");
   setArt(art);
   if (!("mediaSession" in navigator)) return;
   if (S.mode === "idle") { navigator.mediaSession.metadata = null; return; }
   const artwork = art ? [{ src: new URL(art, location.href).href }] : [];
   navigator.mediaSession.metadata = new MediaMetadata(S.mode === "radio"
-    ? { title: S.radioTitle || S.station.name, artist: S.radioTitle ? S.station.name : "Live radio" }
+    ? { title: S.radioTitle || S.station.name, artist: S.radioTitle ? S.station.name : "Live radio", artwork }
     : { title: t.name, artist: t.artist || "", album: t.album || S.queueLabel || "", artwork });
 }
 
@@ -3172,7 +3351,8 @@ async function restoreSession() {
   const p = readJSON("position") || {};
   if (!q || q.v !== 1) return;
   if (q.mode === "radio") {
-    const st = S.lib.stations.find((s) => s.url === q.station);
+    const recent = (S.lib.recent_stations || []).find((s) => s.url === q.station);
+    const st = S.lib.stations.find((s) => s.url === q.station) || (recent && { ...recent, preview: true });
     if (st) playStation(st, { autoplay: false });
     return;
   }

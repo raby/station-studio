@@ -651,9 +651,20 @@ svg.analogue.huge { width: min(62vh, 78vw); height: auto; }
   background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
 }
 .find-card.live { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
-.find-art { flex: none; width: 48px; height: 48px; }
-.find-art .logo { width: 48px; height: 48px; border-radius: 10px; object-fit: cover; background: #fff; }
-.find-art .glyph { width: 48px; height: 48px; }
+.station-art { flex: none; width: 42px; height: 42px; }
+.station-art .logo { width: 100%; height: 100%; border-radius: 11px; object-fit: contain; background: #fff; display: block; }
+.station-art .glyph { width: 100%; height: 100%; }
+.find-card > .station-art, .find-card > .glyph { width: 48px; height: 48px; }
+.find-card .low-q {
+  display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 6px; font-size: 11px; font-weight: 600;
+  background: var(--accent-soft); color: var(--accent);
+}
+.more-row { display: flex; justify-content: center; margin-top: 12px; }
+.recent { margin-bottom: 8px; }
+.recent-list { list-style: none; margin: 8px 0 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
+.recent-card .facts { color: var(--muted); font-size: 12px; }
+.card .logo-row .station-art, .card .logo-row > .glyph { width: 36px; height: 36px; }
+.now-art.logo-art { object-fit: contain; background: #fff; }
 .find-card .info { flex: 1; min-width: 0; }
 /* Not the settings list's row style: top-aligned, words kept whole. */
 .settings li.find-card { align-items: flex-start; word-break: normal; margin: 0; padding: 12px; gap: 12px; }

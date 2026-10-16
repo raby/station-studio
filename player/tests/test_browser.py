@@ -10,6 +10,7 @@ import threading
 import time
 import wave
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 
@@ -983,7 +984,7 @@ class FakeDirectoryNet:
             return json.dumps({"channels": [{"id": "groovesalad", "title": "Groove Salad", "genre": "ambient",
                                              "description": "Ambient beats", "listeners": "9",
                                              "playlists": [{"format": "mp3", "url": "x"}]}]}).encode(), "application/json"
-        if "/json/url/" in url:
+        if "/json/url/" in url or "/json/stations/byurl" in url:
             return b"[]", "application/json"
         jazz = "tag=jazz" in url
         items = [
@@ -1053,3 +1054,114 @@ def test_find_stations_offline(page):
     page.locator(".nav-item[data-view=radio]").click()
     sync_api.expect(page.locator("#finder-results .errors")).to_contain_text("Couldn't reach the station directory")
     sync_api.expect(page.locator("#finder-tags .chip").first).to_have_text("SomaFM")
+
+
+class ManyStationsNet(FakeDirectoryNet):
+    """100 stations, paged; the first has a logo, the second a low bitrate."""
+
+    def __call__(self, url, user_agent, limit):
+        if "/json/stations/search" not in url:
+            return super().__call__(url, user_agent, limit)
+        self.asked.append(url)
+        q = parse_qs(urlparse(url).query)
+        start, count = int(q.get("offset", ["0"])[0]), int(q["limit"][0])
+        items = [{"stationuuid": f"uuid-{n}", "name": f"Station {n}", "url_resolved": f"http://127.0.0.1:9/s{n}",
+                  "favicon": "https://logo.example/s.png" if n == 0 else "", "tags": "pop", "country": "Ireland",
+                  "countrycode": "IE", "codec": "AAC", "bitrate": 32 if n == 1 else 128, "votes": 100 - n}
+                 for n in range(start, min(100, start + count))]
+        return json.dumps(items).encode(), "application/json"
+
+
+def test_logos_recently_played_and_more_results(page, player):
+    app = player[0]
+    net = ManyStationsNet()
+    app.directory = Directory(fetch=net, servers=["api.example"], public=lambda host: True)
+    page.locator(".nav-item[data-view=radio]").click()
+    results = page.locator("#finder-results .find-card")
+    sync_api.expect(results).to_have_count(40)
+    sync_api.expect(page.locator("#recent")).to_be_hidden()  # nothing played yet
+    # A hint on thin-sounding streams only.
+    sync_api.expect(results.filter(has_text="Station 1").first.locator(".low-q")).to_have_text("Low quality")
+    sync_api.expect(page.locator("#finder-results .low-q")).to_have_count(1)
+    # Show more adds the next page below, and focus moves to it.
+    page.locator("#btn-more").click()
+    sync_api.expect(results).to_have_count(80)
+    assert "offset=40" in net.asked[-1]
+    sync_api.expect(results.nth(40).locator(".listen")).to_be_focused()
+    page.locator("#btn-more").click()
+    sync_api.expect(results).to_have_count(100)
+    sync_api.expect(page.locator("#btn-more")).to_have_count(0)  # that's all of them
+    # Searches as you type, after a pause (one letter isn't enough).
+    before = len(net.asked)
+    page.locator("#finder-q").press_sequentially("s")
+    page.wait_for_timeout(700)
+    assert len(net.asked) == before
+    page.locator("#finder-q").press_sequentially("ta")
+    page.wait_for_function("() => F.q === 'sta' && !F.loading")
+    assert "name=sta" in net.asked[-1]
+    sync_api.expect(page.locator("#finder-q")).to_have_value("sta")
+    # Listening puts it in Recently played, with its logo kept by the player.
+    first = results.filter(has_text="Station 0").first
+    first.get_by_role("button", name="Listen to Station 0").click()
+    recent = page.locator("#recent .recent-card")
+    sync_api.expect(recent).to_have_count(1)
+    sync_api.expect(recent.locator(".facts")).to_have_text("Not saved")
+    sync_api.expect(recent.locator("img.logo")).to_have_attribute("src", re.compile(r"^/logo/[0-9a-f]{16}\.png$"))
+    assert app.store.config.recent_stations[0]["url"] == "http://127.0.0.1:9/s0"
+    # The logo shows in the now-playing bar and the system's media panel;
+    # live radio has no seek bar.
+    sync_api.expect(page.locator("#now-art")).to_have_attribute("src", re.compile(r"/api/directory/logo\?u="))
+    assert page.evaluate("navigator.mediaSession.metadata.artwork.length") == 1
+    sync_api.expect(page.locator(".bar .seek")).to_be_hidden()
+    sync_api.expect(page.locator("#finder-q")).to_have_value("sta")  # typing survived the update
+    # Add it from Recently played: a saved station with the same logo.
+    recent.get_by_role("button", name="Add Station 0 to your stations").click()
+    card = page.locator(".card[data-url='http://127.0.0.1:9/s0']")
+    sync_api.expect(card.locator("img.logo")).to_have_attribute("src", re.compile(r"^/logo/"))
+    sync_api.expect(recent.locator(".facts")).to_have_text("In your stations")
+    saved = next(s for s in app.store.config.stations if s["url"] == "http://127.0.0.1:9/s0")
+    assert saved["logo"] == app.store.config.recent_stations[0]["logo"]
+    # A saved station plays with its own logo; a track brings the seek bar back.
+    card.get_by_role("button", name="Listen").click()
+    sync_api.expect(page.locator("#now-art")).to_have_attribute("src", f"/logo/{saved['logo']}")
+    page.locator("#nav-folders .nav-item").first.click()
+    page.locator("#view tbody tr").first.dblclick()
+    page.wait_for_function("() => S.mode === 'track'")
+    sync_api.expect(page.locator(".bar .seek")).to_be_visible()
+    # Clear forgets the list (the saved station keeps its logo).
+    page.locator(".nav-item[data-view=radio]").click()
+    page.get_by_role("button", name="Clear Recently played").click()
+    sync_api.expect(page.locator("#recent")).to_be_hidden()
+    assert app.logos.has(saved["logo"])
+
+
+def test_choose_find_and_remove_a_station_logo(page, player, tmp_path):
+    app = player[0]
+    app.logos.grace = 0
+    net = FakeDirectoryNet()
+    app.directory = Directory(fetch=net, servers=["api.example"], public=lambda host: True)
+    page.locator(".nav-item[data-view=radio]").click()
+    card = page.locator(".card[data-url='http://127.0.0.1:9/stream']")
+    card.get_by_role("button", name="Edit Test FM").click()
+    # Choose a picture from a file.
+    picture = tmp_path / "logo.png"
+    picture.write_bytes(PNG)
+    card.locator(".logo-row input[type=file]").set_input_files(str(picture))
+    # The form stays open, showing the new logo.
+    sync_api.expect(card.locator(".logo-row img.logo")).to_have_attribute("src", re.compile(r"^/logo/"))
+    assert app.store.config.stations[0]["logo"].endswith(".png")
+    # Something that isn't a picture is refused.
+    bad = tmp_path / "x.png"
+    bad.write_bytes(b"<svg onload=alert(1)>")
+    card.locator(".logo-row input[type=file]").set_input_files(str(bad))
+    sync_api.expect(card.locator(".test-result")).to_contain_text("isn't a PNG")
+    # The one Radio Browser has (none here: it says so), then no logo.
+    card.get_by_role("button", name="Find logo").click()
+    sync_api.expect(card.locator(".test-result")).to_contain_text("no logo")
+    card.get_by_role("button", name="No logo").click()
+    sync_api.expect(card.locator(".logo-row .glyph")).to_be_visible()
+    assert "logo" not in app.store.config.stations[0]
+    assert not any((app.store.home / "logos").glob("*.png"))  # nothing left over
+    card.get_by_role("button", name="Cancel").click()
+    sync_api.expect(card.locator(".card-top .glyph")).to_be_visible()
+    assert any("/json/stations/byurl" in u for u in net.asked)
