@@ -1202,6 +1202,7 @@ def test_select_several_tracks_and_add_them_together(page, player):
     # Shift-click picks a run, Cmd/Ctrl-click one more or one less.
     rows.nth(2).click(modifiers=["Shift"])
     sync_api.expect(bar.locator(".count")).to_have_text("3 tracks selected")
+    sync_api.expect(bar).not_to_contain_text("null")
     rows.nth(1).click(modifiers=["ControlOrMeta"])
     sync_api.expect(bar.locator(".count")).to_have_text("2 tracks selected")
     sync_api.expect(page.locator("#view tbody tr.selected")).to_have_count(2)

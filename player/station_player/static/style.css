@@ -173,6 +173,7 @@ table.tracks { width: 100%; border-collapse: collapse; }
 .tracks tr.missing, .tracks tr.missing td { color: var(--faint); }
 .tracks tr.missing td.title::after { content: " · file not found"; font-size: 12px; }
 .tracks .num, .tracks .dur { width: 60px; text-align: right; font-variant-numeric: tabular-nums; color: var(--faint); }
+.tracks .dur { width: 90px; white-space: nowrap; }  /* room for an hour-long mix: 1:02:13 */
 .tracks .title { width: 38%; }
 .empty { color: var(--muted); padding: 48px 0; text-align: center; }
 

@@ -440,14 +440,15 @@ function playlistView(pl) {
       type: "button", class: "btn small primary", disabled: playable.length ? null : true, "aria-haspopup": "menu",
       onclick: (e) => playlistChooser(playable.map((t) => t.id), what, e.currentTarget, e.currentTarget, null, pl.id),
     }, ...iconLabel("plus", "Add to playlist…"));
-    bar.replaceChildren(
+    bar.replaceChildren(...[  // (replaceChildren would show a null as "null")
       el("span", { class: "count" }, `${plural(sel.size, "track")} selected`),
       addBtn,
       el("button", { type: "button", class: "btn small", disabled: playable.length ? null : true, onclick: () => queueTracks(playable, pl, "next") }, "Play next"),
       el("button", { type: "button", class: "btn small", disabled: playable.length ? null : true, onclick: () => queueTracks(playable, pl, "end") }, "Add to queue"),
       mine ? el("button", { type: "button", class: "btn small danger", onclick: () => removeManyFromPlaylist(pl, [...sel]) }, "Remove") : null,
       el("span", { class: "spacer" }),
-      el("button", { type: "button", class: "btn small ghost", onclick: () => { clearSelection(); } }, "Clear"));
+      el("button", { type: "button", class: "btn small ghost", onclick: () => { clearSelection(); } }, "Clear"),
+    ].filter(Boolean));
     bar.hidden = false;
   };
   const clearSelection = () => {
