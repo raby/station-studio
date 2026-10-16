@@ -15,6 +15,8 @@ import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+from station_player.logos import is_name as is_logo_name
+
 logger = logging.getLogger(__name__)
 
 ENV_VAR = "STATION_PLAYER_HOME"
@@ -50,8 +52,10 @@ class Config:
     music_folders: list[str] = field(default_factory=list)
     # [{"from": "/Users/rob/Music", "to": "D:/Music"}]
     path_remaps: list[dict] = field(default_factory=list)
-    # [{"name": ..., "url": ...}]
+    # [{"name": ..., "url": ..., "logo": a logos.py name (optional)}]
     stations: list[dict] = field(default_factory=lambda: [dict(s) for s in DEFAULT_STATIONS])
+    # stations listened to lately, newest first (saved or not), same shape
+    recent_stations: list[dict] = field(default_factory=list)
     # ask PyPI once a day whether a newer Station Player is out
     check_updates: bool = True
     # open in an app window of its own (Chrome/Edge/Brave) rather than a tab
@@ -84,6 +88,23 @@ def _pairs(value, keys: tuple[str, str]) -> list[dict]:
         {k: v[k] for k in keys} for v in value
         if isinstance(v, dict) and all(isinstance(v.get(k), str) and v[k].strip() for k in keys)
     ]
+
+
+MAX_RECENT = 8
+
+
+def _stations(value) -> list[dict]:
+    """[{"name", "url"}] pairs, keeping a logo name where there is one."""
+    if not isinstance(value, list):
+        return []
+    out = []
+    for v in value:
+        if isinstance(v, dict) and all(isinstance(v.get(k), str) and v[k].strip() for k in ("name", "url")):
+            st = {"name": v["name"], "url": v["url"]}
+            if is_logo_name(v.get("logo")):
+                st["logo"] = v["logo"]
+            out.append(st)
+    return out
 
 
 MAX_ALARMS = 10
@@ -184,7 +205,8 @@ def config_from_json(data: dict) -> Config:
         path_remaps=_pairs(data.get("path_remaps"), ("from", "to")),
     )
     if "stations" in data:
-        cfg.stations = _pairs(data.get("stations"), ("name", "url"))
+        cfg.stations = _stations(data.get("stations"))
+    cfg.recent_stations = _stations(data.get("recent_stations"))[:MAX_RECENT]
     if isinstance(data.get("check_updates"), bool):
         cfg.check_updates = data["check_updates"]
     for key in ("own_window", "play_log", "remote"):

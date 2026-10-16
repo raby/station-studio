@@ -8,6 +8,8 @@ a CORS preflight this server never approves.
 """
 from __future__ import annotations
 
+import base64
+import binascii
 import copy
 import json
 import os
@@ -29,8 +31,9 @@ from pathlib import Path
 from urllib.parse import parse_qs, quote, urlparse
 
 from station_player import __version__, loudness, myplaylists, qr, radio, remote, setup, updates
-from station_player.config import clean_alarm, clean_alarms
+from station_player.config import MAX_RECENT, clean_alarm, clean_alarms
 from station_player.directory import Directory, DirectoryError
+from station_player.logos import LogoStore
 from station_player.playlog import PlayLog
 from station_player.recorder import Recorder
 from station_player.window import browser_name, find_browser
@@ -181,6 +184,7 @@ class PlayerApp:
         self.recorder = recorder or Recorder(user_agent=f"StationPlayer/{__version__}")
         # Finding stations in the Radio Browser directory.
         self.directory = Directory(user_agent=f"StationPlayer/{__version__}")
+        self.logos = LogoStore(store.home / "logos")
         # which browser the player's own window uses (None: opens in a tab)
         self.window_browser = browser_name(find_browser())
         self.latest_version: str | None = None
@@ -270,10 +274,13 @@ class PlayerApp:
             config = copy.deepcopy(self.store.config.to_json())
             scanning = self._installed != self._generation
         stations = [{**s, "id": station_id(s["url"])} for s in config["stations"]]
+        saved = {s["url"] for s in stations}
+        recent = [{**s, "saved": s["url"] in saved} for s in config["recent_stations"]]
         return {
             "version": __version__,
             "playlists": lib.playlist_summaries() + self.my_summaries(),
             "stations": stations,
+            "recent_stations": recent,
             "config": config,
             "errors": self.store.warnings + list(lib.errors)
             + ([self.my_playlists.warning] if self.my_playlists.warning else []),
@@ -999,20 +1006,103 @@ class PlayerApp:
                 r for r in cfg.path_remaps if not (r.get("from") == src and r.get("to") == dst)
             ]
 
-    def add_station(self, name: str, url: str) -> dict:
+    def add_station(self, name: str, url: str, logo: str | None = None, logo_url: str | None = None) -> dict:
+        """`logo`: a logo already kept (from Recently played); `logo_url`:
+        one the finder listed, fetched now."""
         url = url.strip()
         if not url.startswith(("http://", "https://")):
             raise ValueError("Stream URL must start with http:// or https://")
-        # Network fetch for .pls/.m3u happens outside the lock.
+        # Network fetches (.pls/.m3u, the logo) happen outside the lock.
         station = {"name": name.strip() or url, "url": resolve_stream_url(url)}
+        name_ = self._keep_logo(logo, logo_url)
+        if name_:
+            station["logo"] = name_
         with self._change(rescan=False) as cfg:
             if all(s.get("url") != station["url"] for s in cfg.stations):
                 cfg.stations.append(station)
         return station
 
+    def _keep_logo(self, logo: str | None, logo_url: str | None) -> str | None:
+        if logo and self.logos.has(logo):
+            return logo
+        if logo_url:
+            got = self.directory.logo(logo_url)
+            if got:
+                try:
+                    return self.logos.save(got[0])
+                except (ValueError, OSError) as exc:
+                    logger.info("Couldn't keep the logo %s: %s", logo_url, exc)
+        return None
+
+    def _prune_logos(self) -> None:
+        with self._lock:
+            cfg = self.store.config
+            keep = {s["logo"] for s in cfg.stations + cfg.recent_stations if s.get("logo")}
+        self.logos.prune(keep)
+
     def remove_station(self, url: str) -> None:
         with self._change(rescan=False) as cfg:
             cfg.stations[:] = [s for s in cfg.stations if s.get("url") != url]
+        self._prune_logos()
+
+    def set_station_logo(self, url: str, image: bytes | None = None, find: bool = False) -> bool:
+        """Give a saved station a logo: a picture chosen from a file
+        (`image`), the one Radio Browser has for it (`find`; False if it
+        has none), or none at all. LookupError for an unknown station."""
+        with self._lock:
+            if not any(s.get("url") == url for s in self.store.config.stations):
+                raise LookupError("No such station")
+        name = None
+        try:
+            if find:
+                got = self.directory.find_logo(url)  # network: outside the lock
+                if got is None:
+                    return False
+                name = self.logos.save(got[0])
+            elif image is not None:
+                name = self.logos.save(image)
+        except OSError as exc:
+            logger.warning("Couldn't keep a logo: %s", exc)
+            raise ValueError("Couldn't save the logo on this computer") from None
+        with self._change(rescan=False) as cfg:
+            for st in cfg.stations + cfg.recent_stations:
+                if st.get("url") == url:
+                    if name:
+                        st["logo"] = name
+                    else:
+                        st.pop("logo", None)
+        self._prune_logos()
+        return True
+
+    def can_preview(self, url: str) -> bool:
+        """Whether a station that isn't saved may be relayed: the finder
+        listed it, or it's in Recently played."""
+        if self.directory.listed(url):
+            return True
+        with self._lock:
+            return any(s.get("url") == url for s in self.store.config.recent_stations)
+
+    def station_played(self, name: str, url: str, logo_url: str | None = None) -> None:
+        """Put a station at the top of Recently played. Only saved
+        stations and ones the finder listed count."""
+        name = name.strip()[:200]
+        with self._lock:
+            saved = next((s for s in self.store.config.stations if s.get("url") == url), None)
+            before = next((s for s in self.store.config.recent_stations if s.get("url") == url), None)
+        if saved is None and before is None and not self.directory.listed(url):
+            raise ValueError("Not a station the player knows")
+        entry = {"name": (saved or {}).get("name") or name or (before or {}).get("name") or url, "url": url}
+        logo = (saved or {}).get("logo") or (before or {}).get("logo") or self._keep_logo(None, logo_url)
+        if logo:
+            entry["logo"] = logo
+        with self._change(rescan=False) as cfg:
+            cfg.recent_stations[:] = [entry] + [s for s in cfg.recent_stations if s.get("url") != url][:MAX_RECENT - 1]
+        self._prune_logos()
+
+    def forget_recent(self) -> None:
+        with self._change(rescan=False) as cfg:
+            cfg.recent_stations.clear()
+        self._prune_logos()
 
     def update_station(self, url: str, name=None, new_url=None) -> None:
         """Rename a station and/or change its address. Raises LookupError
@@ -1203,6 +1293,8 @@ def make_handler(app: PlayerApp):
                 return self._serve_art(path.rsplit("/", 1)[1], head_only)
             if path.startswith("/radio/"):
                 return self._serve_radio(path.rsplit("/", 1)[1], head_only)
+            if path.startswith("/logo/"):
+                return self._serve_logo(path.rsplit("/", 1)[1], head_only)
             if path == "/api/search":
                 query = parse_qs(urlparse(self.path).query).get("q", [""])[0]
                 return self._send_json(app.library.search(query[:200]))
@@ -1248,7 +1340,7 @@ def make_handler(app: PlayerApp):
             if path == "/api/nowplaying":
                 q = parse_qs(urlparse(self.path).query)
                 sid, preview = q.get("station", [""])[0], q.get("u", [""])[0]
-                url = preview if preview and app.directory.listed(preview) else app.station_url(sid)
+                url = preview if preview and app.can_preview(preview) else app.station_url(sid)
                 if url is None:
                     return self._error(HTTPStatus.NOT_FOUND, "No such station")
                 return self._send_json({"title": app.title(url)})
@@ -1272,9 +1364,13 @@ def make_handler(app: PlayerApp):
                 return None
             try:
                 if path == "/api/directory/search":
-                    return self._send_json({"stations": app.directory.search(
+                    try:
+                        offset = int(q.get("offset", "0") or 0)
+                    except ValueError:
+                        offset = 0
+                    return self._send_json(app.directory.search_page(
                         q=q.get("q", ""), tag=q.get("tag", ""), country=q.get("country", ""),
-                        order=q.get("order", "votes"))})
+                        order=q.get("order", "votes"), offset=offset))
                 if path == "/api/directory/somafm":
                     return self._send_json({"stations": app.directory.somafm()})
             except DirectoryError as exc:
@@ -1300,7 +1396,7 @@ def make_handler(app: PlayerApp):
             check = None
             if sid == "preview":
                 url = parse_qs(urlparse(self.path).query).get("u", [""])[0]
-                if not app.directory.listed(url):
+                if not app.can_preview(url):
                     return self._error(HTTPStatus.NOT_FOUND, "Not a station the finder listed")
                 check = app.directory.public
             else:
@@ -1331,6 +1427,19 @@ def make_handler(app: PlayerApp):
                 pass  # the listener or the station went away
             finally:
                 stream.close()
+
+        def _serve_logo(self, name: str, head_only: bool):
+            found = app.logos.get(name)
+            if found is None:
+                return self._error(HTTPStatus.NOT_FOUND, "No such logo")
+            body, ctype = found
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "private, max-age=31536000, immutable")  # named by its contents
+            self.end_headers()
+            if not head_only:
+                self.wfile.write(body)
 
         def _serve_static(self, path: str, head_only: bool):
             name = "index.html" if path in ("/", "") else path.lstrip("/")
@@ -1418,7 +1527,28 @@ def make_handler(app: PlayerApp):
                 elif path == "/api/remaps/remove":
                     app.remove_remap(str(data.get("from", "")), str(data.get("to", "")))
                 elif path == "/api/stations":
-                    app.add_station(str(data.get("name", "")), str(data.get("url", "")))
+                    app.add_station(str(data.get("name", "")), str(data.get("url", "")),
+                                    logo=str(data.get("logo") or "") or None,
+                                    logo_url=str(data.get("logo_url") or "") or None)
+                elif path == "/api/stations/played":
+                    app.station_played(str(data.get("name", "")), str(data.get("url", "")),
+                                       logo_url=str(data.get("logo_url") or "") or None)
+                elif path == "/api/stations/recent/clear":
+                    app.forget_recent()
+                elif path == "/api/stations/logo":
+                    image = data.get("image")
+                    try:
+                        raw = base64.b64decode(image, validate=True) if isinstance(image, str) and image else None
+                    except binascii.Error:
+                        raise ValueError("That picture couldn't be read") from None
+                    try:
+                        found = app.set_station_logo(str(data.get("url", "")), image=raw, find=data.get("find") is True)
+                    except LookupError:
+                        return self._error(HTTPStatus.NOT_FOUND, "No such station")
+                    except DirectoryError as exc:
+                        return self._error(HTTPStatus.BAD_GATEWAY, str(exc))
+                    if not found:
+                        return self._error(HTTPStatus.NOT_FOUND, "Radio Browser has no logo for this station")
                 elif path == "/api/stations/remove":
                     app.remove_station(str(data.get("url", "")))
                 elif path == "/api/stations/update":

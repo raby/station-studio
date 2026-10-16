@@ -6,4 +6,4 @@ streams. Runs as a small local web server bound to 127.0.0.1 with a
 browser UI; standard library only, no third-party dependencies.
 """
 
-__version__ = "0.7.1"
+__version__ = "0.8.0"

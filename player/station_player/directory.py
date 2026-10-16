@@ -23,6 +23,7 @@ from collections import OrderedDict
 from typing import Callable
 from urllib.parse import urlencode, urlparse
 
+from station_player.logos import sniff
 from station_player.radio import tls_context
 
 logger = logging.getLogger(__name__)
@@ -34,6 +35,7 @@ SERVERS = ["all.api.radio-browser.info", "de1.api.radio-browser.info", "de2.api.
 TIMEOUT = 8
 MAX_RESULTS = 60
 MAX_LOGO_BYTES = 256 * 1024
+MAX_OFFSET = 5000  # how far "Show more" goes
 # Not SVG: it can carry script.
 LOGO_TYPES = ("image/png", "image/jpeg", "image/gif", "image/webp", "image/x-icon", "image/vnd.microsoft.icon")
 ORDERS = {"votes": "votes", "popular": "clickcount", "name": "name"}
@@ -225,27 +227,51 @@ class Directory:
         raise DirectoryError("Couldn't reach the station directory (radio-browser.info). Check the internet connection and try again.")
 
     def search(self, q: str = "", tag: str = "", country: str = "", order: str = "votes",
-               limit: int = 40) -> list[dict]:
-        """Stations matching a name, a genre tag and/or a country code; with
-        none of them, the most popular stations."""
+               limit: int = 40, offset: int = 0) -> list[dict]:
+        return self.search_page(q, tag, country, order, limit, offset)["stations"]
+
+    def search_page(self, q: str = "", tag: str = "", country: str = "", order: str = "votes",
+                    limit: int = 40, offset: int = 0) -> dict:
+        """{"stations": up to `limit` stations matching a name, a genre tag
+        and/or a country code (with none of them, the most popular), "next":
+        the offset that continues the list, or None at its end}."""
         limit = max(1, min(MAX_RESULTS, int(limit)))
+        offset = max(0, min(MAX_OFFSET, int(offset)))
+        asked = limit * 2  # some are dropped below
         params = {
             "name": _text(q, 100), "tag": _text(tag, 50).lower(), "countrycode": _text(country, 2).upper(),
             "order": ORDERS.get(order, "votes"), "reverse": "false" if order == "name" else "true",
-            "hidebroken": "true", "limit": str(limit * 2),  # some are dropped below
+            "hidebroken": "true", "limit": str(asked), "offset": str(offset),
         }
         found = []
         seen = set()
-        for raw in self._api("/json/stations/search", params):
+        raws = self._api("/json/stations/search", params)
+        used = len(raws)
+        for i, raw in enumerate(raws):
             st = clean_station(raw)
             if st is None or st["url"] in seen:
                 continue
             seen.add(st["url"])
             found.append(st)
             if len(found) >= limit:
+                used = i + 1
                 break
         self._remember(found)
-        return found
+        more = used < len(raws) or len(raws) >= asked
+        return {"stations": found, "next": offset + used if more and offset + used <= MAX_OFFSET else None}
+
+    def find_logo(self, stream_url: str) -> tuple[bytes, str] | None:
+        """The logo Radio Browser has for a stream address, if any."""
+        if not stream_url.startswith(("http://", "https://")):
+            return None
+        for raw in self._api("/json/stations/byurl", {"url": stream_url[:2000]}):
+            st = clean_station(raw)
+            if st and st["logo"]:
+                self._remember([st])
+                got = self.logo(st["logo"])
+                if got and sniff(got[0]):  # really a picture, whatever the server said
+                    return got
+        return None
 
     def listed(self, url: str) -> bool:
         """Whether the directory listed this stream address (so the player
