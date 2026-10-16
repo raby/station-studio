@@ -162,8 +162,9 @@ table.tracks { width: 100%; border-collapse: collapse; }
 .tracks tr.playing { background: var(--row-active); }
 .tracks tbody tr.selected, .tracks tbody tr.selected:hover { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
 .select-bar {
-  position: sticky; top: 0; z-index: 3; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-  padding: 8px 12px; margin-bottom: 8px; border-radius: var(--radius);
+  /* Below the list, kept in sight at the bottom: rows don't move when it appears. */
+  position: sticky; bottom: 8px; z-index: 3; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 8px 12px; margin-top: 8px; border-radius: var(--radius);
   background: var(--panel); border: 1px solid var(--accent); box-shadow: var(--shadow-sm);
 }
 .select-bar .count { font-weight: 650; margin-right: 4px; }

@@ -413,13 +413,25 @@ function playlistView(pl) {
   const sel = new Set();
   let anchor = null;
   const selected = () => [...sel].sort((a, b) => a - b).map((i) => pl.tracks[i]);
-  const bar = el("div", { class: "select-bar", hidden: true, role: "toolbar", "aria-label": "Selected tracks" });
+  const bar = el("div", {
+    class: "select-bar", hidden: true, role: "toolbar", "aria-label": "Selected tracks",
+    onkeydown: (e) => { if (e.key === "Escape") { e.preventDefault(); clearSelection(); } },
+  });
+  const marked = new Set();  // rows shown as selected (only those change)
   const syncSelection = () => {
-    rows.forEach((r, i) => {
-      const on = sel.has(i) && sel.size > 1;
-      r.classList.toggle("selected", on);
-      r.setAttribute("aria-selected", String(on));
-    });
+    const want = sel.size > 1 ? sel : new Set();
+    for (const i of [...marked]) {
+      if (want.has(i)) continue;
+      rows[i].classList.remove("selected");
+      rows[i].querySelector(".sel-note")?.remove();
+      marked.delete(i);
+    }
+    for (const i of want) {
+      if (marked.has(i)) continue;
+      rows[i].classList.add("selected");
+      rows[i].querySelector("td.title").append(el("span", { class: "sr-only sel-note" }, " (selected)"));
+      marked.add(i);
+    }
     if (sel.size < 2) { bar.hidden = true; return; }
     const group = selected();
     const playable = group.filter((t) => t.available);
@@ -438,7 +450,13 @@ function playlistView(pl) {
       el("button", { type: "button", class: "btn small ghost", onclick: () => { clearSelection(); } }, "Clear"));
     bar.hidden = false;
   };
-  const clearSelection = () => { sel.clear(); anchor = null; syncSelection(); };
+  const clearSelection = () => {
+    const back = bar.contains(document.activeElement);
+    sel.clear();
+    anchor = null;
+    syncSelection();
+    if (back) rows.find((r) => r.tabIndex === 0 && !r.hidden)?.focus();
+  };
   const selectRun = (to) => {
     const vis = visibleRows();
     const a = vis.indexOf(rows[anchor ?? Number(to.dataset.index)]);
@@ -453,7 +471,6 @@ function playlistView(pl) {
     const i = Number(tr.dataset.index);
     if (e.shiftKey) { selectRun(tr); return; }
     if (e.metaKey || e.ctrlKey) {
-      if (sel.size === 0 && anchor !== null && anchor !== i) sel.add(anchor);  // the row picked before counts too
       if (sel.has(i)) sel.delete(i); else sel.add(i);
       anchor = i;
       syncSelection();
@@ -486,7 +503,8 @@ function playlistView(pl) {
       const tr = e.target.closest("tr[data-index]");
       if (!tr) return;
       const group = groupFor(tr);
-      if (!group && !(trackOf(tr).available || mine)) return;
+      const useful = group ? mine || group.some((t) => t.available) : trackOf(tr).available || mine;
+      if (!useful) return;  // nothing to offer: leave the browser's own menu
       e.preventDefault();
       focusRow(tr);
       openTrackMenu(trackOf(tr), pl, tr, tr, { x: e.clientX, y: e.clientY }, group);
@@ -521,6 +539,7 @@ function playlistView(pl) {
       }
       if (e.key === " " && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
+        e.stopPropagation();  // not play/pause as well
         pick(tr, { metaKey: true });
         return;
       }
@@ -552,11 +571,11 @@ function playlistView(pl) {
         return;
       } else if ((e.key === "n" || e.key === "N") && !e.ctrlKey && !e.metaKey && !e.altKey) {
         e.preventDefault();
-        queueTrack(trackOf(tr), pl, "next");
+        if (groupFor(tr)) queueTracks(selected(), pl, "next"); else queueTrack(trackOf(tr), pl, "next");
         return;
       } else if ((e.key === "q" || e.key === "Q") && !e.ctrlKey && !e.metaKey && !e.altKey) {
         e.preventDefault();
-        queueTrack(trackOf(tr), pl, "end");
+        if (groupFor(tr)) queueTracks(selected(), pl, "end"); else queueTrack(trackOf(tr), pl, "end");
         return;
       } else if (e.key === "ContextMenu" || (e.key === "F10" && e.shiftKey)) {
         e.preventDefault();
@@ -564,14 +583,20 @@ function playlistView(pl) {
         return;
       } else return;
       e.preventDefault();
-      if (next) focusRow(next);
+      if (!next) return;
+      focusRow(next);
+      if (sel.size <= 1) {  // nothing picked yet: the selection follows focus
+        sel.clear();
+        sel.add(Number(next.dataset.index));
+        anchor = Number(next.dataset.index);
+      }
     },
   }, rows);
   if (mine) dragToReorder(tbody, pl);
   const empty = el("div", { class: "empty" },
     pl.search ? "Nothing in your library matches." : pl.count ? "No tracks match."
       : mine ? "This playlist is empty. Add tracks with the ⋯ button on any track, or by right-clicking it." : "This playlist is empty.");
-  const table = el("table", { class: "tracks", "aria-multiselectable": "true" },
+  const table = el("table", { class: "tracks" },
     el("caption", { class: "sr-only" },
       `${pl.name}. Use the arrow keys to move between tracks and Enter to play. ` +
       "N plays the track next, Q adds it to the queue. Shift with the arrows selects several tracks, Control or Command A selects all." +
@@ -592,6 +617,7 @@ function playlistView(pl) {
       rows[i].tabIndex = -1;
       if (hit) { shown++; first = first || rows[i]; } else sel.delete(i);  // only what's showing stays selected
     });
+    if (anchor !== null && rows[anchor].hidden) anchor = null;
     syncSelection();
     if (first) first.tabIndex = 0;
     table.hidden = shown === 0;
@@ -637,8 +663,8 @@ function playlistView(pl) {
     !pl.search && pl.missing && S.lib.missing && pl.kind !== "folder" ? missingBanner(pl.missing === pl.count
       ? "None of these tracks were found on this computer"
       : `${pl.missing} of these tracks weren't found on this computer`) : null,
-    bar,
     table,
+    bar,
     empty,
   );
   applyFilter();
@@ -2214,12 +2240,16 @@ async function playRecording(file, { stay = false } = {}) {
 
 // A recording joins the library (as playRecording does) to be added.
 async function addRecordingToPlaylist(r, button) {
+  if (button.disabled) return;
+  button.disabled = true;  // the first time, the library takes a moment to add the recordings
   let res;
   try {
-    res = await api("/api/recordings/play", { file: r.file }, { quiet: true });
+    res = await api("/api/recordings/play", { file: r.file });
   } catch (err) {
     toast(err.message, { error: true });
     return;
+  } finally {
+    button.disabled = false;
   }
   await loadState(res);
   if (document.contains(button)) playlistChooser([res.track], recTitle(r), button, button);
@@ -3093,9 +3123,13 @@ function queueTracks(tracks, pl, where) {
   const ok = tracks.filter((t) => t.available);
   if (!ok.length) return;
   if (S.mode !== "track") {
-    // Nothing from the library playing: the first starts now, the rest follow.
+    // Nothing from the library playing: the first starts now, the rest
+    // straight after it (ahead of anything left in the queue).
     queueTrack(ok[0], pl, "next");
-    for (const t of ok.slice(1)) S.upNext.push({ ...t, _index: pl.tracks.indexOf(t), _source: pl.id });
+    S.upNext.unshift(...ok.slice(1).map((t) => ({ ...t, _index: pl.tracks.indexOf(t), _source: pl.id })));
+    if (ok.length > 1) announce(`Playing ${ok[0].name}, ${plural(ok.length - 1, "more track")} next`);
+    queueChanged();
+    return;
   } else {
     const copies = ok.map((t) => ({ ...t, _index: pl.tracks.indexOf(t), _source: pl.id }));
     if (where === "next") S.upNext.unshift(...copies);

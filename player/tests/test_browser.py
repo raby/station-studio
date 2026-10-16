@@ -1194,6 +1194,11 @@ def test_select_several_tracks_and_add_them_together(page, player):
     # One click picks one track: no bar.
     rows.nth(0).click()
     sync_api.expect(bar).to_be_hidden()
+    # A track taken out of the selection stays out.
+    rows.nth(0).click(modifiers=["ControlOrMeta"])
+    rows.nth(1).click(modifiers=["ControlOrMeta"])
+    sync_api.expect(bar).to_be_hidden()
+    rows.nth(0).click()
     # Shift-click picks a run, Cmd/Ctrl-click one more or one less.
     rows.nth(2).click(modifiers=["Shift"])
     sync_api.expect(bar.locator(".count")).to_have_text("3 tracks selected")
@@ -1217,6 +1222,11 @@ def test_select_several_tracks_and_add_them_together(page, player):
     rows.nth(3).focus()
     page.keyboard.press("Escape")
     sync_api.expect(bar).to_be_hidden()
+    # Cmd/Ctrl+Space picks a track without starting or stopping playback.
+    rows.nth(0).focus()
+    page.keyboard.press("ControlOrMeta+Space")
+    assert page.evaluate("S.mode") == "idle"
+    page.keyboard.press("Escape")
     # Keyboard: Shift+arrows select a run; Cmd/Ctrl+A all; play them next.
     rows.nth(0).focus()
     page.keyboard.press("Shift+ArrowDown")
