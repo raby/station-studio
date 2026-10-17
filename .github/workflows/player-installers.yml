@@ -113,6 +113,8 @@ jobs:
 
       - name: make the setup .exe
         if: matrix.kind == 'windows'
+        env:
+          MSYS_NO_PATHCONV: '1'  # Git Bash would turn ISCC's /D… options into paths
         run: |
           set -e
           ISCC="/c/Program Files (x86)/Inno Setup 6/ISCC.exe"
@@ -121,7 +123,7 @@ jobs:
           "$ISCC" /DVersion=${{ steps.version.outputs.version }} \
             "/DSource=$(cygpath -w "$PWD/build/dist/Station Player")" \
             "/DOutput=$(cygpath -w "$PWD/out")" \
-            player/packaging/windows/installer.iss
+            "$(cygpath -w "$PWD/player/packaging/windows/installer.iss")"
           ls -la out
 
       - uses: actions/upload-artifact@v4
