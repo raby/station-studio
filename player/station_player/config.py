@@ -26,7 +26,14 @@ DEFAULT_STATIONS = [
         "name": "Rebirth Radio",
         "url": "https://sh.uk.audio-stream.com/proxy/adgerdes?mp=/stream",
     },
+    {
+        "name": "Rebirth Classics",
+        "url": "http://81.150.147.206:8000",
+    },
 ]
+# Settings from before the player kept track of which built-in stations it
+# had already added only ever had this one.
+_FIRST_DEFAULTS = [DEFAULT_STATIONS[0]["url"]]
 
 
 def get_home() -> Path:
@@ -54,6 +61,9 @@ class Config:
     path_remaps: list[dict] = field(default_factory=list)
     # [{"name": ..., "url": ..., "logo": a logos.py name (optional)}]
     stations: list[dict] = field(default_factory=lambda: [dict(s) for s in DEFAULT_STATIONS])
+    # the built-in stations already added once: a new one is added to
+    # existing settings once too, and one you remove stays removed
+    defaults_offered: list[str] = field(default_factory=lambda: [s["url"] for s in DEFAULT_STATIONS])
     # stations listened to lately, newest first (saved or not), same shape
     recent_stations: list[dict] = field(default_factory=list)
     # ask PyPI once a day whether a newer Station Player is out
@@ -206,6 +216,14 @@ def config_from_json(data: dict) -> Config:
     )
     if "stations" in data:
         cfg.stations = _stations(data.get("stations"))
+    offered = _str_list(data.get("defaults_offered")) if "defaults_offered" in data else list(_FIRST_DEFAULTS)
+    for st in DEFAULT_STATIONS:
+        if st["url"] in offered:
+            continue
+        if all(s["url"] != st["url"] for s in cfg.stations):
+            cfg.stations.append(dict(st))
+        offered.append(st["url"])
+    cfg.defaults_offered = offered
     cfg.recent_stations = _stations(data.get("recent_stations"))[:MAX_RECENT]
     if isinstance(data.get("check_updates"), bool):
         cfg.check_updates = data["check_updates"]
@@ -264,7 +282,8 @@ class ConfigStore:
         given = data.get("alarms") if isinstance(data.get("alarms"), list) else []
         given_ids = [a.get("id") if isinstance(a, dict) else None for a in given]
         self._needs_save = "alarms" not in data and data.get("alarm") is not None \
-            or any(a["id"] not in given_ids for a in cfg.alarms)
+            or any(a["id"] not in given_ids for a in cfg.alarms) \
+            or cfg.defaults_offered != data.get("defaults_offered")  # a new built-in station was added
         return cfg
 
     def save(self) -> None:

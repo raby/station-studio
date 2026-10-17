@@ -12,7 +12,7 @@ It plays three kinds of thing:
 - **Music folders**: any folder of audio files (mp3, m4a/aac, flac, wav,
   ogg/opus, aiff). Each folder shows up as its own playlist.
 - **Internet radio**: any stream URL, including `.pls` and `.m3u` links.
-  Rebirth Radio is set up out of the box. When a station sends the name
+  Rebirth Radio and Rebirth Classics are set up out of the box. When a station sends the name
   of the song it's playing, Station Player shows it. **Test** checks a
   link plays before you add it; the pencil on a station renames it,
   changes its link, moves it up or down or removes it.
