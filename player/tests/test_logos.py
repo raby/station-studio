@@ -5,7 +5,7 @@ import threading
 
 import pytest
 
-from station_player.config import ConfigStore
+from station_player.config import DEFAULT_STATIONS, ConfigStore
 from station_player.directory import Directory
 from station_player.logos import LogoStore, is_name, sniff
 from station_player.server import PlayerApp, make_server
@@ -49,6 +49,7 @@ def test_config_keeps_logo_names_and_recent(tmp_path):
         "stations": [{"name": "A", "url": "https://a/", "logo": "0123456789abcdef.png"},
                      {"name": "B", "url": "https://b/", "logo": "../../etc/passwd"}],
         "recent_stations": [{"name": f"R{n}", "url": f"https://r/{n}"} for n in range(12)] + ["junk"],
+        "defaults_offered": [s["url"] for s in DEFAULT_STATIONS],
     }))
     cfg = ConfigStore(home).config
     assert cfg.stations == [{"name": "A", "url": "https://a/", "logo": "0123456789abcdef.png"},

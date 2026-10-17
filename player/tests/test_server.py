@@ -9,7 +9,7 @@ import time
 import pytest
 
 from conftest import write_itunes_xml, write_wav
-from station_player.config import ConfigStore
+from station_player.config import DEFAULT_STATIONS, Config, ConfigStore
 from station_player.server import PlayerApp, make_server, parse_range, resolve_stream_url
 
 
@@ -169,16 +169,17 @@ def test_add_and_remove_sources_and_stations_persist(running):
     assert resp.status == 400 and "Not found" in json.loads(data)["error"]
 
     resp, data = request(port, "POST", "/api/stations", {"name": "Test FM", "url": "https://test.example/live"}, h)
-    assert [s["name"] for s in json.loads(data)["stations"]] == ["Rebirth Radio", "Test FM"]
+    assert [s["name"] for s in json.loads(data)["stations"]] == ["Rebirth Radio", "Rebirth Classics", "Test FM"]
     resp, data = request(port, "POST", "/api/stations", {"name": "Bad", "url": "ftp://x"}, h)
     assert resp.status == 400
 
     saved = json.loads(app.store.path.read_text())
     assert saved["music_folders"] == [str(tmp / "folder")]
-    assert saved["stations"][1]["url"] == "https://test.example/live"
+    assert saved["stations"][2]["url"] == "https://test.example/live"
 
     request(port, "POST", "/api/stations/remove",
             {"url": "https://sh.uk.audio-stream.com/proxy/adgerdes?mp=/stream"}, h)
+    request(port, "POST", "/api/stations/remove", {"url": "http://81.150.147.206:8000"}, h)
     request(port, "POST", "/api/sources/remove", {"kind": "music", "path": str(tmp / "folder")}, h)
     resp, data = request(port, "POST", "/api/remaps", {"from": "/a", "to": "/b"}, h)
     state = json.loads(data)
@@ -350,6 +351,7 @@ def test_wrongly_typed_settings_are_dropped(tmp_path):
         "music_folders": ["/ok", 3, ""],
         "path_remaps": [{"from": "/a", "to": "/b"}, {"from": "/a"}, "x"],
         "stations": [{"name": "S", "url": "https://s"}, {"url": None}],
+        "defaults_offered": [s["url"] for s in DEFAULT_STATIONS],
         "unknown": 1,
     }))
     cfg = ConfigStore().config
@@ -673,3 +675,21 @@ def test_new_version_notice_and_its_setting(tmp_path):
         server.shutdown()
         server.server_close()
     assert ConfigStore().config.check_updates is False
+
+
+def test_new_built_in_station_is_added_once(tmp_path):
+    rebirth, classics = DEFAULT_STATIONS
+    home = tmp_path / "player-home"
+    home.mkdir()
+    # settings from before Rebirth Classics was built in
+    (home / "config.json").write_text(json.dumps({"stations": [rebirth, {"name": "Mine", "url": "https://m"}]}))
+    store = ConfigStore(home)
+    assert store.config.stations == [rebirth, {"name": "Mine", "url": "https://m"}, classics]
+    saved = json.loads((home / "config.json").read_text())
+    assert saved["defaults_offered"] == [rebirth["url"], classics["url"]]
+
+    store.config.stations = [s for s in store.config.stations if s["url"] != classics["url"]]
+    store.save()
+    assert classics not in ConfigStore(home).config.stations  # removed stays removed
+
+    assert Config().stations == [rebirth, classics]  # a fresh install has both
