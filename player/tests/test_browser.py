@@ -1367,3 +1367,18 @@ def test_dock_menu_play_pause(page, player):
     assert page.evaluate("location.search") == ""
     manifest = json.loads((Path(__file__).parents[1] / "station_player/static/manifest.webmanifest").read_text())
     assert [s["url"] for s in manifest["shortcuts"]] == ["/?do=toggle", "/?do=next"]
+
+
+def test_downloaded_app_shows_how_to_update_it(page, player):
+    app = player[0]
+    app.desktop.bundled = True
+    app.latest_version = "99.0.0"
+    page.reload()
+    note = page.locator("#update")
+    note.wait_for(state="visible")
+    assert "pipx" not in note.inner_text()
+    assert note.get_by_role("link", name="download it").get_attribute("href").endswith("/player-v99.0.0")
+    # The installer made its shortcuts, so Settings doesn't offer to.
+    open_settings(page, "app")
+    sync_api.expect(page.locator("#view")).to_contain_text("Start Station Player in the background")
+    sync_api.expect(page.get_by_text("Add Station Player to")).to_have_count(0)

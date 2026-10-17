@@ -1,3 +1,4 @@
+import pytest
 import json
 import socket
 import time
@@ -299,3 +300,76 @@ def test_send_station_against_a_real_server(capsys):
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_station_player_link_starts_without_a_window(monkeypatch):
+    shown = []
+    monkeypatch.setattr(cli, "_running_instance", lambda url: True)
+    monkeypatch.setattr(cli, "open_ui", lambda url, home, own_window=True: shown.append(url))
+    assert cli.main(["station-player://start", "-psn_0_12345"]) == 0
+    assert shown == []  # the page that asked is the window
+
+
+def test_bundled_app_always_runs_as_an_app(monkeypatch):
+    seen = []
+    monkeypatch.setattr(cli, "bundled", lambda: True)
+    monkeypatch.setattr(cli, "_log_to_file", lambda: seen.append("log"))
+    monkeypatch.setattr(cli, "_running_instance", lambda url: True)
+    monkeypatch.setattr(cli, "open_ui", lambda url, home, own_window=True: seen.append("show"))
+    assert cli.main([]) == 0
+    assert seen == ["log", "show"]
+
+
+def test_mac_app_always_hands_over_to_its_helper(monkeypatch, tmp_path):
+    started, shown = [], []
+    monkeypatch.setattr(cli, "bundled", lambda: True)
+    monkeypatch.setattr(cli.sys, "platform", "darwin")
+    monkeypatch.setattr(cli, "app_executable", lambda: tmp_path / "station-player-server")
+    monkeypatch.setattr(cli, "_log_to_file", lambda: None)
+    monkeypatch.setattr(cli, "_running_instance", lambda url: False)
+    monkeypatch.setattr(cli, "_start_detached", lambda *a: (started.append(a), True)[1])
+    monkeypatch.setattr(cli, "open_ui", lambda url, home, own_window=True: shown.append(url))
+    monkeypatch.setattr(cli, "make_server", lambda app, port: pytest.fail("the app itself must not serve"))
+    # A station-player: link (no window) and a click in the Finder (window).
+    assert cli.main(["station-player://start"]) == 0
+    assert cli.main([]) == 0
+    assert len(started) == 2 and shown == ["http://127.0.0.1:8765/"]
+
+
+def test_an_older_copy_makes_way_for_this_one(monkeypatch):
+    # Left running at login by a pipx install, or by the version before an update.
+    answers = iter([True, False])
+    asked = []
+    monkeypatch.setattr(cli, "_running_instance", lambda url: next(answers))
+    monkeypatch.setattr(cli, "_outdated_instance", lambda url: True)
+    monkeypatch.setattr(cli, "_quit_instance", lambda url: asked.append(url) or True)
+    monkeypatch.setattr(cli, "_send_open", lambda url, files: pytest.fail("handed over to the old copy"))
+    monkeypatch.setattr(cli, "make_server", lambda app, port: (_ for _ in ()).throw(OSError("stop here")))
+    assert cli.main(["--no-browser"]) == 1  # went on to start its own
+    assert asked == ["http://127.0.0.1:8765/"]
+
+
+def test_outdated_instance_compares_versions_and_kind(monkeypatch):
+    import io
+    import json as _json
+    state = {}
+
+    class Resp(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    monkeypatch.setattr(cli._local, "open", lambda url, timeout=0: Resp(_json.dumps(state).encode()))
+    url = "http://127.0.0.1:8765/"
+    state.update(version=cli.__version__, bundled=False)
+    assert not cli._outdated_instance(url)
+    state.update(version="0.1.0")
+    assert cli._outdated_instance(url)
+    state.update(version="99.0.0")
+    assert not cli._outdated_instance(url)  # a newer copy keeps running
+    monkeypatch.setattr(cli, "bundled", lambda: True)
+    assert cli._outdated_instance(url)  # the downloaded app replaces a pipx copy
+    state.update(bundled=True)
+    assert not cli._outdated_instance(url)

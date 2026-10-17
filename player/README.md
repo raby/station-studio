@@ -27,6 +27,34 @@ its own (or a browser tab). It needs nothing beyond Python 3.11+ and listens onl
 
 ## Install and run
 
+### Without a terminal (Mac and Windows)
+
+Each [Station Player release](https://github.com/raby/station-studio/releases?q=player&expanded=true)
+has downloads that carry everything they need, Python included:
+
+- **Mac:** `StationPlayer-<version>-mac-apple-silicon.dmg` for Macs with
+  an M chip (2020 on), `-mac-intel.dmg` for older ones. Open it and drag
+  Station Player into Applications. It isn't signed with a paid Apple
+  certificate, so the first time macOS says it can't check it: open
+  **System Settings › Privacy & Security**, scroll down and press
+  **Open Anyway** (once).
+- **Windows:** `StationPlayer-<version>-windows-setup.exe`. If Windows
+  says it protected your PC, press **More info** › **Run anyway**. It
+  installs for the current user only (no administrator password), puts
+  Station Player in the Start menu (and on the desktop, if you leave
+  that ticked) and in Open With for audio files. Uninstall it from
+  Settings › Apps.
+
+To update, download the new version and install it the same way, over
+the old one; the player says when one is out. An older copy still
+running in the background (or a pipx install's) quits when the new one
+opens, and start at login moves over to the downloaded app. These builds are made by
+`.github/workflows/player-installers.yml` from
+`packaging/station-player.spec` (PyInstaller) and
+`packaging/windows/installer.iss` (Inno Setup).
+
+### With pipx
+
 You need Python 3.11 or newer and [pipx](https://pipx.pypa.io)
 (macOS: `brew install pipx`; Windows: `py -m pip install --user pipx`,
 then `py -m pipx ensurepath`). No checkout of this repo is needed.

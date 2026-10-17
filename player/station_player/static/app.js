@@ -258,7 +258,11 @@ function renderUpdate() {
   }
   box.replaceChildren(
     el("div", {}, `Station Player ${latest} is out.`),
-    el("div", {}, "To update, run ", el("code", {}, "pipx upgrade station-player"), " and restart it."),
+    S.lib.bundled
+      ? el("div", {}, "To update, ", el("a", {
+        href: `https://github.com/raby/station-studio/releases/tag/player-v${latest}`, target: "_blank", rel: "noopener",
+      }, "download it"), " and install it over this one.")
+      : el("div", {}, "To update, run ", el("code", {}, "pipx upgrade station-player"), " and restart it."),
     el("button", {
       type: "button", class: "btn small",
       onclick: () => { store("dismissed-update", latest); renderUpdate(); },
@@ -2787,10 +2791,10 @@ function appSection() {
   return el("section", {},
     el("h2", {}, "App"),
     install,
-    d && d.supported ? el("p", { class: "help" },
+    d && d.supported && !d.bundled ? el("p", { class: "help" },
       "Open Station Player like any other app, without a terminal. Turn these off before uninstalling.") : null,
     el("div", { class: "checks" },
-      d && d.supported ? checkbox("shortcut", where, d.shortcut, desktopChange("shortcut")) : null,
+      d && d.supported && !d.bundled ? checkbox("shortcut", where, d.shortcut, desktopChange("shortcut")) : null,
       d && d.supported ? checkbox("login", "Start Station Player in the background when I log in", d.login, desktopChange("login")) : null,
       browser ? checkbox("window", `Open in a window of its own (using ${browser}), not a browser tab`,
         S.lib.config.own_window !== false, windowChange) : null,

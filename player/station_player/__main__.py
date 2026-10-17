@@ -14,10 +14,10 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from station_player import __version__
+from station_player import __version__, updates
 from station_player.config import ConfigStore, get_home
 from station_player.window import open_ui
-from station_player.desktop import Desktop
+from station_player.desktop import URL_SCHEME, Desktop, app_executable, bundled
 from station_player.library import AUDIO_EXTENSIONS
 from station_player.server import API_HEADER, PlayerApp, make_server
 
@@ -74,6 +74,37 @@ def _running_instance(url: str) -> bool:
             return "version" in json.load(resp)
     except Exception:
         return False
+
+
+def _outdated_instance(url: str) -> bool:
+    """True when the copy answering at `url` should make way for this one:
+    it's an older version (left running in the background after an
+    update), or it's a pipx install and this is the downloaded app."""
+    try:
+        with _local.open(url + "api/state", timeout=2) as resp:
+            state = json.load(resp)
+    except Exception:
+        return False
+    if not isinstance(state, dict) or "version" not in state:
+        return False
+    return (bundled() and not state.get("bundled")) or updates.is_newer(__version__, str(state["version"]))
+
+
+def _quit_instance(url: str) -> bool:
+    """Ask the copy at `url` to quit. True once it has gone."""
+    req = urllib.request.Request(url + "api/quit", data=b"{}",
+                                 headers={"Content-Type": "application/json", API_HEADER: "1"}, method="POST")
+    try:
+        _local.open(req, timeout=10).close()
+    except Exception as exc:
+        logging.warning("Could not ask the older Station Player to quit: %s", exc)
+        return False
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        if not _running_instance(url):
+            return True
+        time.sleep(0.2)
+    return False
 
 
 def _send_open(url: str, files: list[str]) -> bool:
@@ -136,17 +167,35 @@ def _detach_needed() -> bool:
     return sys.platform == "darwin" and not os.environ.get(_CHILD_ENV)
 
 
+def _app_on_mac() -> bool:
+    """The downloaded Mac app itself (not its helper): it only ever hands
+    over, since while it lives macOS sends later clicks on the app to it."""
+    return bundled() and sys.platform == "darwin" and app_executable() != Path(sys.executable)
+
+
+def _misplaced() -> bool:
+    """The Mac app opened from the disk image (or from Downloads, which
+    macOS runs from a temporary copy): what it sets up stops working."""
+    exe = str(sys.executable)
+    return bundled() and sys.platform == "darwin" and (exe.startswith("/Volumes/") or "/AppTranslocation/" in exe)
+
+
 def _start_detached(port: int, sources: list[str], url: str, station: str | None = None) -> bool:
-    cmd = [sys.executable, "-P", "-m", "station_player", "--app", "--no-browser",
+    me = [str(app_executable())] if bundled() else [sys.executable, "-P", "-m", "station_player"]
+    cmd = [*me, "--app", "--no-browser",
            "--port", str(port), *(["--station", station] if station else []), *sources]
     try:
         subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                          stderr=subprocess.DEVNULL, start_new_session=True,
-                         env={**os.environ, _CHILD_ENV: "1"})
+                         # PYINSTALLER_RESET_ENVIRONMENT: the downloaded app's helper
+                         # starts afresh, not as part of the app that started it.
+                         env={**os.environ, _CHILD_ENV: "1", **({"PYINSTALLER_RESET_ENVIRONMENT": "1"} if bundled() else {})})
     except OSError as exc:
         logging.error("Could not start Station Player: %s", exc)
         return False
-    if _wait_for_instance(url, 20):
+    # Generous: the first start of a newly downloaded app is slow while
+    # macOS checks it, more so on older Macs.
+    if _wait_for_instance(url, 60):
         return True
     logging.error("Station Player did not start; see the messages above")
     return False
@@ -207,7 +256,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--remove-shortcuts", action="store_true",
                         help="remove the shortcuts and the start-at-login entry, then exit")
     parser.add_argument("--version", action="version", version=f"station-player {__version__}")
+    if argv is None:
+        argv = sys.argv[1:]
+    # The Mac app may be handed a process id by older macOS, and a
+    # station-player: link (the offline page's Start button) asks for the
+    # player to start without a window of its own.
+    argv = [a for a in argv if not a.startswith("-psn_")]
+    if any(a.lower().startswith(f"{URL_SCHEME}:") for a in argv):
+        argv = [a for a in argv if not a.lower().startswith(f"{URL_SCHEME}:")] + ["--no-browser"]
     args = parser.parse_args(argv)
+    if bundled():
+        args.app = True  # the downloaded app has no terminal: log to a file, reuse a running copy
 
     if args.add_shortcut or args.start_at_login or args.remove_shortcuts:
         desktop = Desktop()
@@ -254,14 +313,20 @@ def main(argv: list[str] | None = None) -> int:
             _show(url, store)
         return 0
 
-    if _running_instance(url):
+    running = _running_instance(url)
+    if running and _outdated_instance(url):
+        print(f"Replacing the older Station Player running on {url}")
+        logging.info("Replacing the older Station Player running on %s", url)
+        running = not _quit_instance(url)
+    if running:
         print(f"Station Player is already running on {url}")
         return hand_over()
 
-    if args.app and not args.no_browser and _detach_needed():
+    if args.app and (not args.no_browser and _detach_needed() or _app_on_mac()):
         if not _start_detached(args.port, args.sources, url, args.station):
             return 1
-        _show(url)
+        if not args.no_browser:
+            _show(url)
         return 0
 
     store = ConfigStore()
@@ -281,6 +346,10 @@ def main(argv: list[str] | None = None) -> int:
     app = PlayerApp(store, scan=False)
     if opened:
         app.open_files(opened)  # played as soon as the window opens
+    if _misplaced():
+        app.remote_commands.append({"cmd": "notice", "hold": True, "at": time.time(), "text":
+                                    "Drag Station Player into your Applications folder and open it from there: "
+                                    "opened from the download, start-at-login and desktop icons won't keep working."})
     if args.station:
         try:
             app.start_station(args.station, hold=True)  # likewise, however long it takes to open

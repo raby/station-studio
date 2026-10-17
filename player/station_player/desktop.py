@@ -61,10 +61,29 @@ def current_platform() -> str:
     return "other"
 
 
+MAC_HELPER = "station-player-server"  # see packaging/station-player.spec
+
+
+def bundled() -> bool:
+    """Whether this is the app from the Mac or Windows download, which
+    carries its own Python, rather than a pipx install."""
+    return bool(getattr(sys, "frozen", False))
+
+
+def app_executable() -> Path:
+    """What runs the downloaded app's player: on the Mac its helper (see
+    MAC_HELPER), elsewhere the app itself."""
+    exe = Path(sys.executable)
+    helper = exe.with_name(MAC_HELPER)
+    return helper if sys.platform == "darwin" and helper.exists() else exe
+
+
 def launch_command(background: bool = False, platform: str | None = None,
                    python: str | None = None) -> list[str]:
     """The command a shortcut runs. On Windows it uses pythonw.exe, so no
-    console window opens."""
+    console window opens. The downloaded app runs itself."""
+    if python is None and bundled():
+        return [str(app_executable()), "--app", *(["--no-browser"] if background else [])]
     platform = platform or current_platform()
     exe = Path(python or sys.executable)
     if platform == "windows":
@@ -145,8 +164,12 @@ class Desktop:
 
     def __init__(self, platform: str | None = None, home: Path | None = None,
                  env: dict | None = None, python: str | None = None,
-                 run=None, registry=None, folders: dict | None = None, classes=None) -> None:
+                 run=None, registry=None, folders: dict | None = None, classes=None,
+                 is_bundled: bool | None = None) -> None:
         self.platform = platform or current_platform()
+        # The downloaded app: its installer (or the Applications folder)
+        # gives it its shortcuts, so the player doesn't make its own.
+        self.bundled = bundled() if is_bundled is None else is_bundled
         self.home = home or Path.home()
         self.env = os.environ if env is None else env
         self.python = python
@@ -163,7 +186,7 @@ class Desktop:
 
     def status(self) -> dict:
         info = {"supported": self.supported, "platform": self.platform,
-                "shortcut": False, "login": False}
+                "shortcut": False, "login": False, "bundled": self.bundled}
         if not self.supported:
             return info
         try:
@@ -183,7 +206,23 @@ class Desktop:
 
     def refresh(self) -> bool:
         """Rewrite a shortcut made by an older version (so it gains what's
-        new, like Open With). True when it rewrote one."""
+        new, like Open With). True when it rewrote one. The downloaded
+        app on Windows puts itself in Open With (and registers its
+        station-player: link) here, the first time it starts."""
+        if self.bundled:
+            changed = self._claim_login()
+            if self.platform == "mac" and self._shortcut_exists():
+                # The applet a pipx install made would answer Open With and
+                # station-player: links in this app's place.
+                self._mac_shortcut(False)
+                return True
+            if self.platform != "windows":
+                return changed
+            want = subprocess.list2cmdline(launch_command(False, "windows", self.python)) + ' "%1"'
+            if self._cls().get(rf"Software\Classes\{PROG_ID}\shell\open\command", "") == want:
+                return changed
+            self._windows_open_with(True)
+            return True
         if not self.supported or not self._shortcut_exists():
             return False
         if self.platform == "mac":
@@ -206,6 +245,26 @@ class Desktop:
             self._windows_open_with(True)
             return True
         self.set_shortcut(True)
+        return True
+
+    def _claim_login(self) -> bool:
+        """Start at login made by a pipx install (or an app since moved)
+        would start that copy at login: point it at this app instead.
+        True when it changed it."""
+        if self.platform not in ("mac", "windows") or not self._login_exists():
+            return False
+        want = launch_command(True, self.platform, self.python)
+        if self.platform == "mac":
+            try:
+                with self._mac_agent().open("rb") as fh:
+                    have = plistlib.load(fh).get("ProgramArguments")
+            except (OSError, plistlib.InvalidFileException, ValueError):
+                have = None
+        else:
+            want, have = subprocess.list2cmdline(want), self._reg().get(APP_NAME)
+        if have == want:
+            return False
+        self.set_login(True)
         return True
 
     def remove_all(self) -> None:

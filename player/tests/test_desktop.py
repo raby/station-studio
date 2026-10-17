@@ -21,7 +21,8 @@ def make(platform, tmp_path, **kw):
 def test_linux_shortcut_menu_desktop_and_login(tmp_path):
     (tmp_path / "Desktop").mkdir()
     d = make("linux", tmp_path)
-    assert d.status() == {"supported": True, "platform": "linux", "shortcut": False, "login": False}
+    assert d.status() == {"supported": True, "platform": "linux", "shortcut": False, "login": False,
+                          "bundled": False}
 
     d.set_shortcut(True)
     menu = tmp_path / ".local/share/applications/station-player.desktop"
@@ -96,7 +97,8 @@ def test_mac_app_bundle_and_login_agent(tmp_path):
 
     d.remove_all()
     assert not bundle.exists()
-    assert d.status() == {"supported": True, "platform": "mac", "shortcut": False, "login": False}
+    assert d.status() == {"supported": True, "platform": "mac", "shortcut": False, "login": False,
+                          "bundled": False}
 
 
 def fake_osacompile(calls):
@@ -254,7 +256,8 @@ def test_windows_shortcuts_and_run_key(tmp_path):
 
     d.set_login(True)
     assert reg.values[APP_NAME].endswith("pythonw.exe -P -m station_player --app --no-browser")
-    assert d.status() == {"supported": True, "platform": "windows", "shortcut": True, "login": True}
+    assert d.status() == {"supported": True, "platform": "windows", "shortcut": True, "login": True,
+                          "bundled": False}
 
     d.remove_all()
     assert not list(folders["programs"].glob("*.lnk")) and reg.values == {} and keys.values == {}
@@ -382,3 +385,60 @@ def test_station_icon_needs_a_desktop(tmp_path):
         make("linux", tmp_path).station_shortcut("X", URL, tmp_path / "icons")
     with pytest.raises(OSError):
         make("other", tmp_path).station_shortcut("X", URL, tmp_path / "icons")
+
+
+# ---- the downloaded app (PyInstaller) ---------------------------------------------
+
+def test_bundled_app_runs_itself(monkeypatch):
+    monkeypatch.setattr(dt.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(dt.sys, "executable", "/Applications/Station Player.app/Contents/MacOS/Station Player")
+    assert launch_command() == [dt.sys.executable, "--app"]
+    assert launch_command(background=True) == [dt.sys.executable, "--app", "--no-browser"]
+    assert Desktop(platform="mac").status()["bundled"] is True
+
+
+def test_bundled_windows_app_puts_itself_in_open_with(tmp_path, monkeypatch):
+    monkeypatch.setattr(dt.sys, "frozen", True, raising=False)
+    exe = r"C:\Users\rob\AppData\Local\Programs\Station Player\Station Player.exe"
+    monkeypatch.setattr(dt.sys, "executable", exe)
+    keys = FakeKeys()
+    d = Desktop(platform="windows", home=tmp_path, env={}, classes=keys, registry=FakeRegistry(),
+                folders={"programs": tmp_path / "P", "desktop": tmp_path / "D"})
+    assert d.refresh() is True  # first start after installing
+    assert keys.values[(rf"Software\Classes\{dt.PROG_ID}\shell\open\command", "")] == f'"{exe}" --app "%1"'
+    assert keys.values[(r"Software\Classes\station-player\shell\open\command", "")] == f'"{exe}" --app --no-browser'
+    assert d.refresh() is False
+    assert not (tmp_path / "P").exists()  # the installer makes the Start menu entry, not the player
+    assert make("mac", tmp_path, is_bundled=True).refresh() is False
+
+
+def test_bundled_mac_app_removes_the_old_pipx_applet(tmp_path):
+    make("mac", tmp_path).set_shortcut(True)  # left by a pipx install
+    d = make("mac", tmp_path, is_bundled=True)
+    assert d.refresh() is True
+    assert not (tmp_path / "Applications" / f"{APP_NAME}.app").exists()
+    assert d.refresh() is False
+
+
+def test_bundled_mac_app_takes_over_start_at_login_from_pipx(tmp_path, monkeypatch):
+    make("mac", tmp_path).set_login(True)  # left by a pipx install
+    monkeypatch.setattr(dt.sys, "frozen", True, raising=False)
+    exe = "/Applications/Station Player.app/Contents/MacOS/station-player-server"
+    monkeypatch.setattr(dt, "app_executable", lambda: Path(exe))
+    d = Desktop(platform="mac", home=tmp_path, env={})
+    assert d.refresh() is True
+    with (tmp_path / "Library/LaunchAgents" / f"{APP_ID}.plist").open("rb") as fh:
+        assert plistlib.load(fh)["ProgramArguments"] == [exe, "--app", "--no-browser"]
+    assert d.refresh() is False
+
+
+def test_bundled_windows_app_takes_over_start_at_login_from_pipx(tmp_path, monkeypatch):
+    reg = FakeRegistry()
+    folders = {"programs": tmp_path / "P", "desktop": tmp_path / "D"}
+    make("windows", tmp_path, registry=reg, classes=FakeKeys(), folders=folders).set_login(True)
+    monkeypatch.setattr(dt.sys, "frozen", True, raising=False)
+    exe = r"C:\Users\rob\AppData\Local\Programs\Station Player\Station Player.exe"
+    monkeypatch.setattr(dt.sys, "executable", exe)
+    d = Desktop(platform="windows", home=tmp_path, env={}, registry=reg, classes=FakeKeys(), folders=folders)
+    assert d.refresh() is True
+    assert reg.values[APP_NAME] == f'"{exe}" --app --no-browser'

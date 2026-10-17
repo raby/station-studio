@@ -58,11 +58,16 @@ const HELP = [
   ["log", "Play log for PRS and PPL", [
     ["Station Player notes every track it plays. ", ["Download play log"], " in Settings saves the plays between two dates as a spreadsheet, ready for a PRS for Music or PPL return. Radio isn't included, nor tracks skipped within 30 seconds."],
   ]],
+  ["install", "Installing it on another computer", [
+    ["On a Mac: download ", ["Station Player for Mac"], " from the download page, open it and drag Station Player into Applications. The first time you open it, macOS says it can't check it for malicious software, because it comes from a person rather than the App Store: open ", ["System Settings › Privacy & Security"], ", scroll down and press ", ["Open Anyway"], ". You only do this once."],
+    ["On Windows: download ", ["Station Player for Windows"], " and run it. If Windows says it protected your PC, press ", ["More info"], " then ", ["Run anyway"], ". It installs for you alone, with no administrator password, and puts Station Player in the Start menu."],
+    "To remove it: on a Mac, turn off start-at-login in Settings › App, then drag Station Player from Applications to the Bin. On Windows, use Settings › Apps like any other program.",
+  ], { label: "Open the download page", href: "https://github.com/raby/station-studio/releases?q=player&expanded=true" }],
   ["trouble", "When something isn't right", [
     ["Tracks greyed out: their music files have moved. In ", ["Settings › Music"], ", press ", ["Find them…"], " and choose the folder the music is in now."],
     ["A station won't play: edit it and press ", ["Test"], ". Stations change their links from time to time; Find stations usually has the new one."],
     "The window says it can't reach the player: Station Player was quit. Open it again from its icon.",
-    "Updates: when a new version is out, the sidebar says so. To update, open Terminal (on Windows, Command Prompt), type pipx upgrade station-player, press Return, then open Station Player again.",
+    "Updates: when a new version is out, the sidebar says so and how to get it. If you downloaded Station Player, download the new version and install it the same way, over the old one.",
   ]],
 ];
 
@@ -88,6 +93,7 @@ function helpView() {
     HELP.map(([id, title, parts, go]) => el("section", { class: "help-section", id: `help-${id}` },
       el("h2", { tabindex: "-1" }, title),
       parts.map((p) => el("p", {}, ...helpText(p))),
-      go ? el("button", { type: "button", class: "btn", onclick: () => show(go.view) }, go.label) : null)),
+      go && go.href ? el("a", { class: "btn", href: go.href, target: "_blank", rel: "noopener" }, go.label)
+        : go ? el("button", { type: "button", class: "btn", onclick: () => show(go.view) }, go.label) : null)),
     el("p", { class: "help-version" }, `Station Player ${S.lib && S.lib.version ? S.lib.version : ""}`));
 }
