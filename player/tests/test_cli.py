@@ -247,3 +247,55 @@ def test_send_open_against_a_real_server(tmp_path):
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_station_icon_plays_in_the_running_copy(monkeypatch):
+    sent, shown = [], []
+    monkeypatch.setattr(cli, "_running_instance", lambda url: True)
+    monkeypatch.setattr(cli, "open_ui", lambda url, home, own_window=True: shown.append(url))
+    window = {"open": True}
+    monkeypatch.setattr(cli, "_send_station", lambda url, st: (sent.append(st), window["open"])[1])
+    assert cli.main(["--app", "--station", "https://s.example/live"]) == 0
+    assert sent == ["https://s.example/live"] and shown == []
+    window["open"] = False
+    assert cli.main(["--app", "--station", "https://s.example/live"]) == 0
+    assert shown == ["http://127.0.0.1:8765/"]
+
+
+def test_station_icon_starts_the_player_playing(monkeypatch):
+    from station_player.config import DEFAULT_STATIONS
+    monkeypatch.setattr(cli, "_running_instance", lambda url: False)
+    monkeypatch.setattr(cli, "_detach_needed", lambda: False)
+    apps = []
+
+    class FakeServer:
+        def serve_forever(self):
+            raise KeyboardInterrupt
+
+        def server_close(self):
+            pass
+
+    monkeypatch.setattr(cli, "make_server", lambda app, port: (apps.append(app), FakeServer())[1])
+    monkeypatch.setattr(cli.PlayerApp, "scan_in_background", lambda self, on_done=None: None)
+    monkeypatch.setattr(cli.PlayerApp, "keep_checking_for_updates", lambda self: None)
+    url = DEFAULT_STATIONS[1]["url"]
+    assert cli.main(["--no-browser", "--station", url]) == 0
+    assert [c["cmd"] for c in apps[0].remote_commands] == ["station"]
+
+
+def test_send_station_against_a_real_server(capsys):
+    import threading
+    from station_player.config import DEFAULT_STATIONS, ConfigStore
+    from station_player.server import PlayerApp, make_server
+    app = PlayerApp(ConfigStore())
+    server = make_server(app, port=0)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{server.server_address[1]}/"
+    try:
+        assert cli._send_station(base, DEFAULT_STATIONS[0]["url"]) is False  # no window open
+        assert len(app.remote_commands) == 1
+        assert cli._send_station(base, "https://gone.example/") is False
+        assert "isn't one of your stations any more" in capsys.readouterr().err
+    finally:
+        server.shutdown()
+        server.server_close()

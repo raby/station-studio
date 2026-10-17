@@ -20,10 +20,12 @@ Windows.
 """
 from __future__ import annotations
 
+import hashlib
 import os
 import plistlib
 import shlex
 import shutil
+import struct
 import subprocess
 import sys
 from pathlib import Path
@@ -99,6 +101,28 @@ def _trust_on_gnome(entry: Path) -> None:
                            capture_output=True, timeout=5)
         except (OSError, subprocess.SubprocessError):
             pass
+
+
+def _file_name(name: str) -> str:
+    """A station's name as a file name every system accepts."""
+    out = "".join(" " if c in '/\\:*?"<>|' or ord(c) < 32 else c for c in name)
+    out = " ".join(out.split()).strip(". ")[:60].strip(". ")
+    return out or "Station"
+
+
+def _desktop_value(text: str) -> str:
+    """Text for a desktop-file value: on one line, with its backslashes kept."""
+    return " ".join(text.split()).replace("\\", "\\\\")
+
+
+def png_to_ico(png: bytes) -> bytes:
+    """A Windows icon holding one PNG picture (Windows Vista and later
+    read these). The size in the header is taken from the PNG."""
+    width, height = struct.unpack(">II", png[16:24])
+    w, h = (0 if v >= 256 else v for v in (width, height))  # 0 means 256 or more
+    header = struct.pack("<HHH", 0, 1, 1)
+    entry = struct.pack("<BBBBHHII", w, h, 0, 0, 1, 32, len(png), 6 + 16)
+    return header + entry + png
 
 
 class Desktop:
@@ -192,6 +216,151 @@ class Desktop:
         if self.platform == "mac":
             return self._mac_agent().exists()
         return self._linux_autostart().exists()
+
+    # ---- a desktop icon for one station ---------------------------------------
+
+    def station_shortcut(self, name: str, url: str, icons: Path, logo: Path | None = None) -> Path:
+        """Put an icon on the desktop that opens the player and plays the
+        station at `url`, with its logo when it has one (`icons`: where
+        the icon's picture is kept). Returns the icon's path. Made again,
+        it replaces the one it made before rather than adding another."""
+        self._require_support()
+        sid = hashlib.sha256(url.encode("utf-8")).hexdigest()[:12]
+        cmd = launch_command(False, self.platform, self.python) + ["--station", url]
+        title = _file_name(name)
+        if self.platform == "mac":
+            return self._mac_station(title, sid, cmd, icons, logo)
+        if self.platform == "windows":
+            return self._windows_station(title, sid, url, cmd, icons, logo)
+        return self._linux_station(name, title, sid, url, cmd, icons, logo)
+
+    def _free_name(self, folder: Path, title: str, suffix: str, ours) -> Path:
+        """`folder/title+suffix`, or "title 2" and so on when something
+        that isn't this station's icon already has the name."""
+        for n in range(1, 100):
+            path = folder / f"{title if n == 1 else f'{title} {n}'}{suffix}"
+            if not path.exists() and not path.is_symlink() or ours(path):
+                return path
+        raise OSError("There are too many icons with that name on the desktop")
+
+    def _desktop_folder(self) -> Path:
+        if self.platform == "windows":
+            folder = self._win_folder("desktop")
+        elif self.platform == "mac":
+            folder = self.home / "Desktop"
+        else:
+            folder = self._linux_desktop_dir()
+        if folder is None or not folder.is_dir():
+            raise OSError("Couldn't find your desktop folder")
+        return folder
+
+    def _linux_station(self, name, title, sid, url, cmd, icons, logo) -> Path:
+        mark = f"X-Station-Player-Station={_desktop_value(url)}"
+
+        def ours(path: Path) -> bool:
+            try:
+                return mark in path.read_text(encoding="utf-8").splitlines()
+            except (OSError, UnicodeDecodeError):
+                return False
+
+        path = self._free_name(self._desktop_folder(), title, ".desktop", ours)
+        if logo is not None and logo.suffix.lower() in (".png", ".jpg"):
+            icons.mkdir(parents=True, exist_ok=True)
+            picture = icons / f"{sid}{logo.suffix.lower()}"
+            shutil.copyfile(logo, picture)
+        else:
+            self._linux_install_icon()
+            picture = self._linux_icon()
+        path.write_text("\n".join([
+            "[Desktop Entry]",
+            "Type=Application",
+            "Version=1.0",
+            f"Name={_desktop_value(name)}",
+            f"Comment=Listen to {_desktop_value(name)} in {APP_NAME}",
+            f"Exec={_desktop_exec(cmd)}",
+            f"Icon={picture}",
+            "Terminal=false",
+            "StartupNotify=false",
+            mark,
+        ]) + "\n", encoding="utf-8")
+        path.chmod(0o755)  # desktops only launch executable entries
+        _trust_on_gnome(path)
+        return path
+
+    def _mac_station(self, title, sid, cmd, icons, logo) -> Path:
+        bundle_id = f"{APP_ID}.station.{sid}"
+
+        def ours(path: Path) -> bool:
+            try:
+                with (path / "Contents" / "Info.plist").open("rb") as fh:
+                    return plistlib.load(fh).get("CFBundleIdentifier") == bundle_id
+            except (OSError, plistlib.InvalidFileException, ValueError):
+                return False
+
+        bundle = self._free_name(self._desktop_folder(), title, ".app", ours)
+        icon = ICON_DIR / "icon.icns"
+        if logo is not None:
+            icons.mkdir(parents=True, exist_ok=True)
+            made = icons / f"{sid}.icns"
+            try:
+                result = self._run(["sips", "-s", "format", "icns", "-z", "256", "256", str(logo), "--out", str(made)],
+                                   capture_output=True, text=True)
+                if result.returncode == 0 and made.is_file():
+                    icon = made
+            except OSError:
+                pass
+        line = " ".join(shlex.quote(a) for a in cmd)
+        quoted = line.replace("\\", "\\\\").replace('"', '\\"')
+        script = f'on run\n\tdo shell script "{quoted} >/dev/null 2>&1 &"\nend run\n'
+        info = {"CFBundleName": bundle.stem, "CFBundleDisplayName": bundle.stem, "CFBundleIdentifier": bundle_id}
+        if self._mac_compile(bundle, script, info, icon):
+            return bundle
+        # No osacompile: a plain bundle that runs the same command.
+        if bundle.exists():
+            shutil.rmtree(bundle)
+        contents = bundle / "Contents"
+        (contents / "MacOS").mkdir(parents=True)
+        (contents / "Resources").mkdir()
+        exe = contents / "MacOS" / "station"
+        exe.write_text(f"#!/bin/sh\nexec {line}\n", encoding="utf-8")
+        exe.chmod(0o755)
+        if icon.exists():
+            shutil.copyfile(icon, contents / "Resources" / "icon.icns")
+        with (contents / "Info.plist").open("wb") as fh:
+            plistlib.dump({**info, "CFBundleExecutable": "station", "CFBundleIconFile": "icon",
+                           "CFBundlePackageType": "APPL", "CFBundleShortVersionString": __version__,
+                           "CFBundleVersion": __version__, "LSUIElement": True}, fh)
+        return bundle
+
+    def _windows_station(self, title, sid, url, cmd, icons, logo) -> Path:
+        args = subprocess.list2cmdline(cmd[1:])
+
+        def ours(path: Path) -> bool:
+            try:  # a .lnk keeps its arguments as UTF-16 text
+                return args.encode("utf-16-le") in path.read_bytes()
+            except OSError:
+                return False
+
+        link = self._free_name(self._desktop_folder(), title, ".lnk", ours)
+        icon = ICON_DIR / "icon.ico"
+        if logo is not None and logo.suffix.lower() == ".png":
+            icons.mkdir(parents=True, exist_ok=True)
+            made = icons / f"{sid}.ico"
+            made.write_bytes(png_to_ico(logo.read_bytes()))
+            icon = made
+        script = (
+            "$s = (New-Object -ComObject WScript.Shell).CreateShortcut($env:SP_LINK); "
+            "$s.TargetPath = $env:SP_TARGET; $s.Arguments = $env:SP_ARGS; "
+            "$s.WorkingDirectory = $env:SP_HOME; $s.IconLocation = $env:SP_ICON; "
+            "$s.Description = $env:SP_DESC; $s.Save()"
+        )
+        env = {**self.env, "SP_LINK": str(link), "SP_TARGET": cmd[0], "SP_ARGS": args,
+               "SP_HOME": str(self.home), "SP_ICON": str(icon), "SP_DESC": f"Listen in {APP_NAME}"}
+        result = self._run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+                           env=env, capture_output=True, text=True, creationflags=_CREATE_NO_WINDOW)
+        if result.returncode != 0:
+            raise OSError(f"Could not create {link.name}: {(result.stderr or '').strip()}")
+        return link
 
     # ---- Linux -------------------------------------------------------------------
 
@@ -355,6 +524,23 @@ class Desktop:
             f'\tdo shell script "{quoted} --no-browser >/dev/null 2>&1 &"\n'
             "end open location\n"
         )
+        return self._mac_compile(bundle, script, {
+            "StationPlayerShortcutRevision": MAC_SHORTCUT_REVISION,
+            "CFBundleURLTypes": [{"CFBundleURLName": APP_ID, "CFBundleURLSchemes": [URL_SCHEME]}],
+            "CFBundleName": APP_NAME,
+            "CFBundleDisplayName": APP_NAME,
+            "CFBundleIdentifier": APP_ID,
+            "CFBundleDocumentTypes": [{
+                "CFBundleTypeName": "Audio",
+                "CFBundleTypeRole": "Viewer",
+                "LSHandlerRank": "Alternate",  # offered, never made the default
+                "LSItemContentTypes": ["public.audio"],
+            }],
+        }, ICON_DIR / "icon.icns", register=True)
+
+    def _mac_compile(self, bundle: Path, script: str, extra: dict, icon: Path, register: bool = False) -> bool:
+        """Compile an AppleScript applet to `bundle`, with `extra` in its
+        Info.plist and `icon`. False when osacompile isn't there."""
         # Built beside the old app, then swapped in; the name must end in
         # .app for osacompile to make an applet.
         staging = bundle.with_name(f".{bundle.stem} (updating).app")
@@ -381,24 +567,13 @@ class Desktop:
             (staging / "Contents" / "Resources" / "Assets.car").unlink()
         info.pop("CFBundleIconName", None)
         info.update({
-            "StationPlayerShortcutRevision": MAC_SHORTCUT_REVISION,
-            "CFBundleURLTypes": [{"CFBundleURLName": APP_ID, "CFBundleURLSchemes": [URL_SCHEME]}],
-            "CFBundleName": APP_NAME,
-            "CFBundleDisplayName": APP_NAME,
-            "CFBundleIdentifier": APP_ID,
+            **extra,
             "CFBundleShortVersionString": __version__,
             "CFBundleVersion": __version__,
             "LSUIElement": True,  # the applet only starts the player: no Dock icon
-            "CFBundleDocumentTypes": [{
-                "CFBundleTypeName": "Audio",
-                "CFBundleTypeRole": "Viewer",
-                "LSHandlerRank": "Alternate",  # offered, never made the default
-                "LSItemContentTypes": ["public.audio"],
-            }],
         })
         with info_path.open("wb") as fh:
             plistlib.dump(info, fh)
-        icon = ICON_DIR / "icon.icns"
         if icon.exists():
             shutil.copyfile(icon, staging / "Contents" / "Resources" / f"{info.get('CFBundleIconFile', 'applet')}.icns")
         # Editing the bundle breaks osacompile's signature; sign it again
@@ -410,10 +585,11 @@ class Desktop:
         if bundle.exists():
             shutil.rmtree(bundle)
         staging.rename(bundle)
-        try:  # tell Finder about the new Open With entry straight away
-            self._run([LSREGISTER, "-f", str(bundle)], capture_output=True, text=True)
-        except OSError:
-            pass
+        if register:
+            try:  # tell Finder about the new Open With entry straight away
+                self._run([LSREGISTER, "-f", str(bundle)], capture_output=True, text=True)
+            except OSError:
+                pass
         return True
 
     def _mac_login(self, on: bool) -> None:

@@ -59,7 +59,8 @@ class Config:
     music_folders: list[str] = field(default_factory=list)
     # [{"from": "/Users/rob/Music", "to": "D:/Music"}]
     path_remaps: list[dict] = field(default_factory=list)
-    # [{"name": ..., "url": ..., "logo": a logos.py name (optional)}]
+    # [{"name": ..., "url": ..., "logo": a logos.py name (optional),
+    #   "tags": your own labels, like "jazz" (optional)}]
     stations: list[dict] = field(default_factory=lambda: [dict(s) for s in DEFAULT_STATIONS])
     # the built-in stations already added once: a new one is added to
     # existing settings once too, and one you remove stays removed
@@ -101,10 +102,31 @@ def _pairs(value, keys: tuple[str, str]) -> list[dict]:
 
 
 MAX_RECENT = 8
+MAX_TAGS = 12
+MAX_TAG = 30
+
+
+def clean_tags(value) -> list[str]:
+    """Tags as given (a list, or text split at commas): tidied, at most
+    MAX_TAGS, without repeats that differ only in capitals."""
+    if isinstance(value, str):
+        value = value.split(",")
+    if not isinstance(value, list):
+        return []
+    out: list[str] = []
+    for v in value:
+        if not isinstance(v, str):
+            continue
+        tag = " ".join(v.split())[:MAX_TAG].strip()
+        if tag and tag.casefold() not in (t.casefold() for t in out):
+            out.append(tag)
+        if len(out) == MAX_TAGS:
+            break
+    return out
 
 
 def _stations(value) -> list[dict]:
-    """[{"name", "url"}] pairs, keeping a logo name where there is one."""
+    """[{"name", "url"}] pairs, keeping a logo name and tags where there are some."""
     if not isinstance(value, list):
         return []
     out = []
@@ -113,6 +135,9 @@ def _stations(value) -> list[dict]:
             st = {"name": v["name"], "url": v["url"]}
             if is_logo_name(v.get("logo")):
                 st["logo"] = v["logo"]
+            tags = clean_tags(v.get("tags"))
+            if tags:
+                st["tags"] = tags
             out.append(st)
     return out
 

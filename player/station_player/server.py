@@ -31,7 +31,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, quote, urlparse
 
 from station_player import __version__, loudness, myplaylists, qr, radio, remote, setup, updates
-from station_player.config import MAX_RECENT, clean_alarm, clean_alarms
+from station_player.config import MAX_RECENT, clean_alarm, clean_alarms, clean_tags
 from station_player.directory import Directory, DirectoryError
 from station_player.logos import LogoStore
 from station_player.playlog import PlayLog
@@ -437,6 +437,24 @@ class PlayerApp:
         # notices when it was snoozed or stopped elsewhere, or timed out.
         out["ringing"] = (self.alarm_state()["ringing"] or {}).get("seq")
         return out
+
+    def start_station(self, url: str) -> None:
+        """Have the page play a saved station (a desktop icon for it was
+        clicked). LookupError when it isn't one of the saved stations."""
+        with self._lock:
+            if not any(s.get("url") == url for s in self.store.config.stations):
+                raise LookupError("That station isn't one of your stations any more")
+            self.remote_commands.append({"cmd": "station", "id": station_id(url), "at": time.time()})
+            del self.remote_commands[:-20]
+
+    def station_shortcut(self, url: str) -> str:
+        """Put an icon for a saved station on the desktop; returns where."""
+        with self._lock:
+            station = next((dict(s) for s in self.store.config.stations if s.get("url") == url), None)
+        if station is None:
+            raise LookupError("No such station")
+        logo = self.logos.folder / station["logo"] if station.get("logo") and self.logos.has(station["logo"]) else None
+        return str(self.desktop.station_shortcut(station["name"], url, self.store.home / "station-icons", logo))
 
     def page_open(self) -> bool:
         """Whether a player page is open: it checks in every second, but a
@@ -1006,9 +1024,10 @@ class PlayerApp:
                 r for r in cfg.path_remaps if not (r.get("from") == src and r.get("to") == dst)
             ]
 
-    def add_station(self, name: str, url: str, logo: str | None = None, logo_url: str | None = None) -> dict:
+    def add_station(self, name: str, url: str, logo: str | None = None, logo_url: str | None = None,
+                    tags=None) -> dict:
         """`logo`: a logo already kept (from Recently played); `logo_url`:
-        one the finder listed, fetched now."""
+        one the finder listed, fetched now; `tags`: your own labels."""
         url = url.strip()
         if not url.startswith(("http://", "https://")):
             raise ValueError("Stream URL must start with http:// or https://")
@@ -1017,6 +1036,8 @@ class PlayerApp:
         name_ = self._keep_logo(logo, logo_url)
         if name_:
             station["logo"] = name_
+        if clean_tags(tags):
+            station["tags"] = clean_tags(tags)
         with self._change(rescan=False) as cfg:
             if all(s.get("url") != station["url"] for s in cfg.stations):
                 cfg.stations.append(station)
@@ -1104,9 +1125,9 @@ class PlayerApp:
             cfg.recent_stations.clear()
         self._prune_logos()
 
-    def update_station(self, url: str, name=None, new_url=None) -> None:
-        """Rename a station and/or change its address. Raises LookupError
-        for an unknown station."""
+    def update_station(self, url: str, name=None, new_url=None, tags=None) -> None:
+        """Rename a station, change its address and/or its tags (None
+        leaves each as it is). Raises LookupError for an unknown station."""
         if name is not None:
             name = str(name).strip()
             if not name:
@@ -1136,6 +1157,11 @@ class PlayerApp:
                 station["name"] = name
                 for source in wakes:
                     source["name"] = name[:200]
+            if tags is not None:
+                if clean_tags(tags):
+                    station["tags"] = clean_tags(tags)
+                else:
+                    station.pop("tags", None)
 
     def move_station(self, url: str, to) -> None:
         if not isinstance(to, int) or isinstance(to, bool):
@@ -1529,7 +1555,8 @@ def make_handler(app: PlayerApp):
                 elif path == "/api/stations":
                     app.add_station(str(data.get("name", "")), str(data.get("url", "")),
                                     logo=str(data.get("logo") or "") or None,
-                                    logo_url=str(data.get("logo_url") or "") or None)
+                                    logo_url=str(data.get("logo_url") or "") or None,
+                                    tags=data.get("tags"))
                 elif path == "/api/stations/played":
                     app.station_played(str(data.get("name", "")), str(data.get("url", "")),
                                        logo_url=str(data.get("logo_url") or "") or None)
@@ -1553,7 +1580,8 @@ def make_handler(app: PlayerApp):
                     app.remove_station(str(data.get("url", "")))
                 elif path == "/api/stations/update":
                     try:
-                        app.update_station(str(data.get("url", "")), data.get("name"), data.get("new_url"))
+                        app.update_station(str(data.get("url", "")), data.get("name"), data.get("new_url"),
+                                           data.get("tags"))
                     except LookupError:
                         return self._error(HTTPStatus.NOT_FOUND, "No such station")
                 elif path == "/api/stations/move":
@@ -1657,6 +1685,20 @@ def make_handler(app: PlayerApp):
                         app.record(str(data.get("station", "")), data["on"])
                     except LookupError:
                         return self._error(HTTPStatus.NOT_FOUND, "No such station")
+                elif path == "/api/stations/start":
+                    try:
+                        app.start_station(str(data.get("url", "")))
+                    except LookupError as exc:
+                        return self._error(HTTPStatus.NOT_FOUND, str(exc))
+                    return self._send_json({"page_open": app.page_open()})
+                elif path == "/api/stations/shortcut":
+                    try:
+                        where = app.station_shortcut(str(data.get("url", "")))
+                    except LookupError:
+                        return self._error(HTTPStatus.NOT_FOUND, "No such station")
+                    except OSError as exc:
+                        return self._error(HTTPStatus.INTERNAL_SERVER_ERROR, f"Couldn't make the icon: {exc}")
+                    return self._send_json({"path": where})
                 elif path == "/api/open":
                     found = app.open_files(data.get("paths"))
                     return self._send_json({**found, "page_open": app.page_open()})

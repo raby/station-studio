@@ -1264,3 +1264,76 @@ def test_add_a_recording_to_a_playlist(page, player):
     shows = next(p for p in app.my_summaries() if p["name"] == "Shows")
     assert [t["name"] for t in app.playlist_detail(shows["id"])["tracks"]][0].startswith("Old FM")
     sync_api.expect(add).to_be_focused()  # back where it was
+
+
+def test_tag_stations_and_filter_by_tag(page, player):
+    app = player[0]
+    app.store.config.stations.append({"name": "Second FM", "url": "http://127.0.0.1:9/two", "tags": ["soul"]})
+    page.evaluate("loadState()")
+    page.locator(".nav-item[data-view=radio]").click()
+    page.get_by_role("button", name="Edit Test FM").click()
+    card = page.locator(".card", has=page.locator("form.edit"))
+    # A tag used on another station is one click away.
+    card.get_by_role("button", name="Add the tag soul").click()
+    sync_api.expect(card.get_by_label("Tags")).to_have_value("soul")
+    card.get_by_label("Tags").fill("soul, Late night, SOUL")
+    card.get_by_role("button", name="Save", exact=True).click()
+    sync_api.expect(page.locator(".toast").last).to_contain_text("Saved Test FM")
+    assert app.store.config.stations[0]["tags"] == ["soul", "Late night"]
+    chips = page.locator("#station-tags .chip")
+    sync_api.expect(chips).to_have_text(["All", "Late night (1)", "soul (2)"])
+    chips.filter(has_text="Late night").click()
+    sync_api.expect(page.locator(".cards .card:visible")).to_have_count(1)
+    sync_api.expect(page.locator("#station-tags [data-tag='Late night']")).to_be_focused()
+    # The filter is remembered, and a tag on a card picks it too.
+    page.reload()
+    page.locator(".nav-item[data-view=radio]").click()
+    sync_api.expect(page.locator(".cards .card:visible")).to_have_count(1)
+    page.locator("#station-tags .chip", has_text="All").click()
+    sync_api.expect(page.locator(".cards .card:visible")).to_have_count(2)
+    page.locator(".card .tag", has_text="soul").first.click()
+    sync_api.expect(page.locator(".cards .card:visible")).to_have_count(2)
+    sync_api.expect(page.locator("#station-tags [data-tag=soul]")).to_have_attribute("aria-pressed", "true")
+
+
+def test_put_a_station_on_the_desktop(page, player):
+    app = player[0]
+    made = []
+
+    class Icons:
+        def status(self):
+            return {"supported": True, "platform": "mac", "shortcut": False, "login": False}
+
+        def station_shortcut(self, name, url, icons, logo=None):
+            made.append(name)
+            return Path("/Users/x/Desktop") / f"{name}.app"
+
+    app.desktop = Icons()
+    page.evaluate("loadState()")
+    page.locator(".nav-item[data-view=radio]").click()
+    page.get_by_role("button", name="Edit Test FM").click()
+    page.get_by_role("button", name="Put on desktop").click()
+    sync_api.expect(page.locator(".toast").last).to_contain_text("Test FM is on your desktop")
+    assert made == ["Test FM"]
+
+
+def test_help_page(page):
+    page.locator(".nav-item[data-view=help]").click()
+    sync_api.expect(page.locator("#view h1")).to_have_text("Help")
+    page.locator(".help-toc .chip", has_text="Tagging stations").click()
+    sync_api.expect(page.locator("#help-tags h2")).to_be_focused()
+    page.locator("#help-radio").get_by_role("button", name="Go to Stations").click()
+    sync_api.expect(page.locator("#view h1")).to_have_text("Radio")
+
+
+def test_dock_menu_play_pause(page, player):
+    page.locator("#view tbody tr").first.dblclick()
+    page.wait_for_function("() => S.mode === 'track' && !audio.paused")
+    page.evaluate("runLaunch('toggle')")
+    page.wait_for_function("() => audio.paused")
+    # A window opened from the menu acts once it's up, and tidies its address.
+    page.goto(player[1] + "?do=toggle")
+    page.wait_for_function("() => S.mode === 'track' && !audio.paused", timeout=10000)
+    assert page.evaluate("location.search") == ""
+    manifest = json.loads((Path(__file__).parents[1] / "station_player/static/manifest.webmanifest").read_text())
+    assert [s["url"] for s in manifest["shortcuts"]] == ["/?do=toggle", "/?do=next"]
