@@ -761,3 +761,25 @@ def test_station_desktop_icon_and_start(running):
     assert [(c["cmd"], c["id"]) for c in box["commands"]] == [("station", station_id(url))]
     resp, data = request(port, "POST", "/api/stations/start", {"url": "https://gone"}, h)
     assert resp.status == 404 and "isn't one of your stations" in json.loads(data)["error"]
+    # ...and the page says why nothing played.
+    box = json.loads(request(port, "GET", "/api/inbox")[1])
+    assert [c["cmd"] for c in box["commands"]] == ["notice"]
+
+    # Queued as the player starts, it waits for the window however long
+    # that takes; a page starting up can take just the stations.
+    app.start_station(url, hold=True)
+    app.remote_commands.append({"cmd": "toggle", "at": 0})
+    app.remote_commands[0]["at"] = 0  # long ago
+    box = json.loads(request(port, "GET", "/api/inbox?only=station")[1])
+    assert [c["cmd"] for c in box["commands"]] == ["station"] and "open" not in box
+    assert json.loads(request(port, "GET", "/api/inbox")[1])["commands"] == []  # the old toggle expired
+
+
+def test_tags_take_the_spelling_already_in_use(running):
+    app, port, _, tmp = running
+    h = {"X-Station-Player": "1"}
+    request(port, "POST", "/api/stations", {"name": "A", "url": "https://a.example/", "tags": ["jazz"]}, h)
+    request(port, "POST", "/api/stations", {"name": "B", "url": "https://b.example/", "tags": ["Jazz", "Soul"]}, h)
+    assert app.store.config.stations[-1]["tags"] == ["jazz", "Soul"]
+    request(port, "POST", "/api/stations/update", {"url": "https://a.example/", "tags": "JAZZ, soul"}, h)
+    assert app.store.config.stations[-2]["tags"] == ["jazz", "Soul"]

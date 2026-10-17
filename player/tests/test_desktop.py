@@ -1,5 +1,6 @@
 import plistlib
 import shlex
+import struct
 import subprocess
 from pathlib import Path
 
@@ -350,7 +351,8 @@ def test_windows_station_icon(tmp_path):
 
     def run(cmd, env=None, **kw):
         calls.append(env)
-        Path(env["SP_LINK"]).write_bytes(env["SP_ARGS"].encode("utf-16-le"))
+        args = env["SP_ARGS"].encode("utf-16-le")  # as a .lnk keeps them: a count, then the text
+        Path(env["SP_LINK"]).write_bytes(b"head" + struct.pack("<H", len(args) // 2) + args + b"tail")
         return subprocess.CompletedProcess(cmd, 0, "", "")
 
     desk = tmp_path / "desk"
@@ -365,6 +367,14 @@ def test_windows_station_icon(tmp_path):
     ico = Path(env["SP_ICON"])
     assert ico.suffix == ".ico" and ico.read_bytes()[:6] == b"\0\0\1\0\1\0" and ico.read_bytes()[6] == 48
     assert d.station_shortcut("Soul: 24/7", URL, tmp_path / "icons", logo) == link
+    # A station whose link only starts the same gets an icon of its own.
+    assert d.station_shortcut("Soul: 24/7", URL[:-1], tmp_path / "icons", logo).name == "Soul 24 7 2.lnk"
+    # Too big for an icon: the player's own icon instead.
+    big = tmp_path / "big.png"
+    big.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\0\0\0\rIHDR" + (512).to_bytes(4, "big") * 2)
+    d.station_shortcut("Big", URL + "big", tmp_path / "icons", big)
+    assert calls[-1]["SP_ICON"].endswith("icon.ico")
+    assert dt._file_name("con") == "con station" and dt._file_name("Con FM") == "Con FM"
 
 
 def test_station_icon_needs_a_desktop(tmp_path):

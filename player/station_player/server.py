@@ -421,16 +421,21 @@ class PlayerApp:
                                  "track": _short_hash("file", str(files[0])), "at": time.time()}
             return dict(self.open_request)
 
-    def inbox(self) -> dict:
+    def inbox(self, only: str | None = None) -> dict:
         """What a page polls: the latest open request and alarm (with how
         old they are), and commands from the phone remote, which are
-        handed to the first page that asks."""
+        handed to the first page that asks. `only`: just the commands of
+        that kind (a page starting up plays a station before the library
+        is read)."""
         now = time.time()
         self.page_seen = now
         with self._lock:
-            commands = [c for c in self.remote_commands if now - c["at"] < 60]
-            self.remote_commands = []
+            live = [c for c in self.remote_commands if c.get("hold") or now - c["at"] < 60]
+            commands = [c for c in live if only is None or c["cmd"] == only]
+            self.remote_commands = [c for c in live if c not in commands]
         out = {"commands": commands}
+        if only is not None:
+            return out
         for key, req in (("open", self.open_request), ("alarm", self.alarm_request)):
             out[key] = {**req, "age": now - req["at"]} if req else None
         # Which alarm is ringing now (its seq), so a window showing one
@@ -438,14 +443,20 @@ class PlayerApp:
         out["ringing"] = (self.alarm_state()["ringing"] or {}).get("seq")
         return out
 
-    def start_station(self, url: str) -> None:
+    def start_station(self, url: str, hold: bool = False) -> None:
         """Have the page play a saved station (a desktop icon for it was
-        clicked). LookupError when it isn't one of the saved stations."""
+        clicked). `hold`: the player is starting, so the request waits for
+        the window however long that takes. LookupError when it isn't one
+        of the saved stations (the page says so too)."""
         with self._lock:
-            if not any(s.get("url") == url for s in self.store.config.stations):
-                raise LookupError("That station isn't one of your stations any more")
-            self.remote_commands.append({"cmd": "station", "id": station_id(url), "at": time.time()})
+            known = any(s.get("url") == url for s in self.store.config.stations)
+            command = {"cmd": "station", "id": station_id(url)} if known else {
+                "cmd": "notice", "text": "That desktop icon's station isn't one of your stations any more "
+                                         "(or its link has changed). Edit the station and Put on desktop again."}
+            self.remote_commands.append({**command, "at": time.time(), **({"hold": True} if hold else {})})
             del self.remote_commands[:-20]
+        if not known:
+            raise LookupError("That station isn't one of your stations any more")
 
     def station_shortcut(self, url: str) -> str:
         """Put an icon for a saved station on the desktop; returns where."""
@@ -1036,9 +1047,9 @@ class PlayerApp:
         name_ = self._keep_logo(logo, logo_url)
         if name_:
             station["logo"] = name_
-        if clean_tags(tags):
-            station["tags"] = clean_tags(tags)
         with self._change(rescan=False) as cfg:
+            if clean_tags(tags):
+                station["tags"] = _same_spelling(clean_tags(tags), cfg.stations)
             if all(s.get("url") != station["url"] for s in cfg.stations):
                 cfg.stations.append(station)
         return station
@@ -1159,7 +1170,7 @@ class PlayerApp:
                     source["name"] = name[:200]
             if tags is not None:
                 if clean_tags(tags):
-                    station["tags"] = clean_tags(tags)
+                    station["tags"] = _same_spelling(clean_tags(tags), [s for s in cfg.stations if s is not station])
                 else:
                     station.pop("tags", None)
 
@@ -1208,6 +1219,13 @@ def _source_summaries(lib: Library, config: dict) -> list[dict]:
             out.append({"kind": kind, "path": raw, "name": path.name or raw, "exists": _exists(path),
                         "tracks": len(tracks), "playlists": len(pls)})
     return out
+
+
+def _same_spelling(tags: list[str], stations: list[dict]) -> list[str]:
+    """Tags spelled the way other stations already have them ("Jazz"
+    becomes "jazz" when that's in use), so one tag isn't shown twice."""
+    known = {t.casefold(): t for s in stations for t in s.get("tags", [])}
+    return [known.get(t.casefold(), t) for t in tags]
 
 
 def station_id(url: str) -> str:
@@ -1330,7 +1348,8 @@ def make_handler(app: PlayerApp):
                     return self._error(HTTPStatus.NOT_FOUND, "Track not available")
                 return self._send_json(found)
             if path == "/api/inbox":
-                return self._send_json(app.inbox())
+                only = parse_qs(urlparse(self.path).query).get("only", [None])[0]
+                return self._send_json(app.inbox(only if only in ("station", "notice") else None))
             if path == "/api/playlog.csv":
                 q = parse_qs(urlparse(self.path).query)
                 try:

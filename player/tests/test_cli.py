@@ -280,7 +280,7 @@ def test_station_icon_starts_the_player_playing(monkeypatch):
     monkeypatch.setattr(cli.PlayerApp, "keep_checking_for_updates", lambda self: None)
     url = DEFAULT_STATIONS[1]["url"]
     assert cli.main(["--no-browser", "--station", url]) == 0
-    assert [c["cmd"] for c in apps[0].remote_commands] == ["station"]
+    assert [(c["cmd"], c["hold"]) for c in apps[0].remote_commands] == [("station", True)]
 
 
 def test_send_station_against_a_real_server(capsys):

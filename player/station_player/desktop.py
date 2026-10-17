@@ -107,7 +107,20 @@ def _file_name(name: str) -> str:
     """A station's name as a file name every system accepts."""
     out = "".join(" " if c in '/\\:*?"<>|' or ord(c) < 32 else c for c in name)
     out = " ".join(out.split()).strip(". ")[:60].strip(". ")
+    if out.split(".")[0].upper() in _RESERVED:  # Windows won't make a file called CON
+        out = f"{out} station"
     return out or "Station"
+
+
+_RESERVED = {"CON", "PRN", "AUX", "NUL", *(f"COM{n}" for n in range(1, 10)), *(f"LPT{n}" for n in range(1, 10))}
+
+
+def png_fits_icon(png: bytes) -> bool:
+    """Whether a PNG is one Windows shows as an icon: 256 pixels or smaller."""
+    if png[:8] != b"\x89PNG\r\n\x1a\n" or len(png) < 24:
+        return False
+    width, height = struct.unpack(">II", png[16:24])
+    return 0 < width <= 256 and 0 < height <= 256
 
 
 def _desktop_value(text: str) -> str:
@@ -119,7 +132,7 @@ def png_to_ico(png: bytes) -> bytes:
     """A Windows icon holding one PNG picture (Windows Vista and later
     read these). The size in the header is taken from the PNG."""
     width, height = struct.unpack(">II", png[16:24])
-    w, h = (0 if v >= 256 else v for v in (width, height))  # 0 means 256 or more
+    w, h = (0 if v >= 256 else v for v in (width, height))  # 0 means 256
     header = struct.pack("<HHH", 0, 1, 1)
     entry = struct.pack("<BBBBHHII", w, h, 0, 0, 1, 32, len(png), 6 + 16)
     return header + entry + png
@@ -335,15 +348,20 @@ class Desktop:
     def _windows_station(self, title, sid, url, cmd, icons, logo) -> Path:
         args = subprocess.list2cmdline(cmd[1:])
 
+        # A .lnk keeps its arguments as a count of characters and then
+        # the UTF-16 text: with the count, a link that merely starts the
+        # same (…/jazz and …/jazz128) doesn't match.
+        stored = struct.pack("<H", len(args.encode("utf-16-le")) // 2) + args.encode("utf-16-le")
+
         def ours(path: Path) -> bool:
-            try:  # a .lnk keeps its arguments as UTF-16 text
-                return args.encode("utf-16-le") in path.read_bytes()
+            try:
+                return stored in path.read_bytes()
             except OSError:
                 return False
 
         link = self._free_name(self._desktop_folder(), title, ".lnk", ours)
         icon = ICON_DIR / "icon.ico"
-        if logo is not None and logo.suffix.lower() == ".png":
+        if logo is not None and logo.suffix.lower() == ".png" and png_fits_icon(logo.read_bytes()):
             icons.mkdir(parents=True, exist_ok=True)
             made = icons / f"{sid}.ico"
             made.write_bytes(png_to_ico(logo.read_bytes()))

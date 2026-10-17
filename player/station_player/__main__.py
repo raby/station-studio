@@ -283,7 +283,7 @@ def main(argv: list[str] | None = None) -> int:
         app.open_files(opened)  # played as soon as the window opens
     if args.station:
         try:
-            app.start_station(args.station)  # likewise
+            app.start_station(args.station, hold=True)  # likewise, however long it takes to open
         except LookupError as exc:
             print(f"Could not play {args.station}: {exc}", file=sys.stderr)
             logging.warning("Could not play %s: %s", args.station, exc)

@@ -1120,11 +1120,7 @@ function logoEditor(st, result, nameInput, urlInput) {
     try {
       await loadState(await api("/api/stations/logo", { url: st.url, ...body }, { quiet: true }));
       // The form is drawn again: keep what was typed but not saved yet.
-      const sel = `#view .card[data-url="${CSS.escape(st.url)}"] .edit input:not([type=file])`;
-      const typed = [...document.querySelectorAll(sel)].map((x) => x.value);
-      renderView();
-      const inputs = document.querySelectorAll(sel);
-      if (inputs.length === typed.length) inputs.forEach((x, n) => { x.value = typed[n]; });
+      renderKeepingEdits();
       refocus(`#view .card[data-url="${CSS.escape(st.url)}"] .logo-row button`);
       toast(done);
     } catch (err) { show(false, err.message); }
@@ -1176,8 +1172,19 @@ let stationTag = store("station-tag") || "";
 function setStationTag(tag) {
   stationTag = tag;
   store("station-tag", tag);
-  renderView();
+  renderKeepingEdits();
   refocus(`#view #station-tags [data-tag="${CSS.escape(tag)}"]`);
+}
+
+// Draw the Radio page again, keeping what's typed in a station being
+// edited but not saved yet.
+function renderKeepingEdits() {
+  const sel = editingStation === null ? null : `#view .card[data-url="${CSS.escape(editingStation)}"] .edit input:not([type=file])`;
+  const typed = sel ? [...document.querySelectorAll(sel)].map((x) => x.value) : [];
+  renderView();
+  if (!sel) return;
+  const inputs = document.querySelectorAll(sel);
+  if (inputs.length === typed.length) inputs.forEach((x, n) => { x.value = typed[n]; x.dispatchEvent(new Event("input")); });
 }
 
 async function putOnDesktop(st, btn) {
@@ -1317,7 +1324,7 @@ function radioView() {
 
   const stations = S.lib.stations || [];
   const counts = stationTags();
-  if (stationTag && !counts.has(stationTag)) stationTag = "";
+  if (stationTag && !counts.has(stationTag)) { stationTag = ""; store("station-tag", ""); }
   // Filtered cards are hidden, not left out, so Up and Down still move a
   // station past the ones you can't see.
   const cards = stations.map((st, i) => {
@@ -3675,6 +3682,7 @@ function saveSession(force = true) {
 // Put back the queue and track (paused, at the same point) or station
 // that was playing when the player was last open.
 async function restoreSession() {
+  if (S.mode !== "idle") return;  // a desktop icon's station is playing already
   const q = readJSON("queue");
   const p = readJSON("position") || {};
   if (!q || q.v !== 1) return;
@@ -4176,6 +4184,7 @@ async function runCommand(c) {
     applyVolume();
     store("volume", volume.value);
   } else if (c.cmd === "playlist" || c.cmd === "station") await playSource(c.cmd, c.id);
+  else if (c.cmd === "notice") toast(c.text, { error: true });
   else if (c.cmd === "sleep") setSleep(c.minutes);
   // snooze and stop_alarm: the server has acted on them already, and
   // checkInbox ends the alarm in whichever window is ringing.
@@ -4211,6 +4220,12 @@ setInterval(reportStatus, 1000);
   updateNow();
   try {
     await loadState();
+    // A station's desktop icon started the player: play it now, without
+    // waiting for the music library to be read.
+    try {
+      for (const c of (await api("/api/inbox?only=station")).commands || []) await runCommand(c);
+      for (const c of (await api("/api/inbox?only=notice")).commands || []) await runCommand(c);
+    } catch { /* checked again below */ }
     // The first scan runs in the background; wait for it before
     // choosing which playlist to show.
     if (S.lib.scanning) {

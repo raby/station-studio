@@ -1296,6 +1296,36 @@ def test_tag_stations_and_filter_by_tag(page, player):
     sync_api.expect(page.locator("#station-tags [data-tag=soul]")).to_have_attribute("aria-pressed", "true")
 
 
+def test_desktop_icon_station_plays_before_the_library_is_read(browser, player):
+    app, url, _ = player
+    app.start_station("http://127.0.0.1:9/stream", hold=True)
+    app.remote_commands[0]["at"] = 0  # the library took a long time to read
+    original = app.state
+    app.state = lambda: {**original(), "scanning": True}
+    ctx = browser.new_context()
+    pg = ctx.new_page()
+    try:
+        pg.goto(url)
+        pg.wait_for_function("() => S.mode === 'radio' && S.station && S.station.name === 'Test FM'")
+        app.state = original
+        pg.wait_for_selector("#view tbody tr")
+        assert pg.evaluate("S.mode") == "radio"  # resuming the last session didn't replace it
+    finally:
+        ctx.close()
+
+
+def test_tag_filter_keeps_what_you_typed(page, player):
+    app = player[0]
+    app.store.config.stations.append({"name": "Second FM", "url": "http://127.0.0.1:9/two", "tags": ["soul"]})
+    page.evaluate("loadState()")
+    page.locator(".nav-item[data-view=radio]").click()
+    page.get_by_role("button", name="Edit Test FM").click()
+    card = page.locator(".card", has=page.locator("form.edit"))
+    card.get_by_label("Name").fill("Typed FM")
+    page.locator("#station-tags .chip", has_text="soul").click()
+    sync_api.expect(page.locator(".card", has=page.locator("form.edit")).get_by_label("Name")).to_have_value("Typed FM")
+
+
 def test_put_a_station_on_the_desktop(page, player):
     app = player[0]
     made = []
