@@ -693,3 +693,93 @@ def test_new_built_in_station_is_added_once(tmp_path):
     assert classics not in ConfigStore(home).config.stations  # removed stays removed
 
     assert Config().stations == [rebirth, classics]  # a fresh install has both
+
+
+def test_station_tags(running):
+    app, port, _, tmp = running
+    h = {"X-Station-Player": "1"}
+    resp, data = request(port, "POST", "/api/stations",
+                         {"name": "Jazz FM", "url": "https://jazz.example/live", "tags": ["jazz", " Late  night ", "JAZZ", 3]}, h)
+    jazz = next(s for s in json.loads(data)["stations"] if s["name"] == "Jazz FM")
+    assert jazz["tags"] == ["jazz", "Late night"]
+    resp, data = request(port, "POST", "/api/stations/update",
+                         {"url": "https://jazz.example/live", "tags": "jazz, chill, " + "x" * 40}, h)
+    jazz = next(s for s in json.loads(data)["stations"] if s["name"] == "Jazz FM")
+    assert jazz["tags"] == ["jazz", "chill", "x" * 30]
+    request(port, "POST", "/api/stations/update", {"url": "https://jazz.example/live", "name": "Jazz"}, h)
+    assert app.store.config.stations[-1]["tags"] == ["jazz", "chill", "x" * 30]  # left alone
+    request(port, "POST", "/api/stations/update", {"url": "https://jazz.example/live", "tags": []}, h)
+    assert "tags" not in app.store.config.stations[-1]
+    saved = ConfigStore(app.store.home).config
+    assert saved.stations[-1] == {"name": "Jazz", "url": "https://jazz.example/live"}
+
+
+def test_config_keeps_station_tags(tmp_path):
+    from station_player.config import clean_tags
+    assert clean_tags(["a", "A", "", " b ", None]) == ["a", "b"]
+    assert len(clean_tags([str(n) for n in range(30)])) == 12
+    home = tmp_path / "h"
+    home.mkdir()
+    (home / "config.json").write_text(json.dumps({
+        "stations": [{"name": "S", "url": "https://s", "tags": ["soul", 7, "soul"]}, {"name": "T", "url": "https://t", "tags": "x"}],
+        "defaults_offered": [s["url"] for s in DEFAULT_STATIONS],
+    }))
+    assert ConfigStore(home).config.stations == [{"name": "S", "url": "https://s", "tags": ["soul"]},
+                                                 {"name": "T", "url": "https://t", "tags": ["x"]}]
+
+
+class StationIcons:
+    supported = True
+
+    def __init__(self):
+        self.made = []
+
+    def status(self):
+        return {"supported": True, "platform": "linux", "shortcut": False, "login": False}
+
+    def station_shortcut(self, name, url, icons, logo=None):
+        self.made.append((name, url, icons, logo))
+        return Path("/desk") / f"{name}.desktop"
+
+
+def test_station_desktop_icon_and_start(running):
+    app, port, _, tmp = running
+    h = {"X-Station-Player": "1"}
+    app.desktop = StationIcons()
+    url = DEFAULT_STATIONS[0]["url"]
+    resp, data = request(port, "POST", "/api/stations/shortcut", {"url": url}, h)
+    assert resp.status == 200 and json.loads(data)["path"].endswith("Rebirth Radio.desktop")
+    assert app.desktop.made == [("Rebirth Radio", url, app.store.home / "station-icons", None)]
+    assert request(port, "POST", "/api/stations/shortcut", {"url": "https://nope"}, h)[0].status == 404
+    assert request(port, "POST", "/api/stations/shortcut", {"url": url})[0].status == 403
+
+    # The icon, clicked: the page is asked to play the station.
+    resp, data = request(port, "POST", "/api/stations/start", {"url": url}, h)
+    assert resp.status == 200 and json.loads(data) == {"page_open": False}
+    box = json.loads(request(port, "GET", "/api/inbox")[1])
+    from station_player.server import station_id
+    assert [(c["cmd"], c["id"]) for c in box["commands"]] == [("station", station_id(url))]
+    resp, data = request(port, "POST", "/api/stations/start", {"url": "https://gone"}, h)
+    assert resp.status == 404 and "isn't one of your stations" in json.loads(data)["error"]
+    # ...and the page says why nothing played.
+    box = json.loads(request(port, "GET", "/api/inbox")[1])
+    assert [c["cmd"] for c in box["commands"]] == ["notice"]
+
+    # Queued as the player starts, it waits for the window however long
+    # that takes; a page starting up can take just the stations.
+    app.start_station(url, hold=True)
+    app.remote_commands.append({"cmd": "toggle", "at": 0})
+    app.remote_commands[0]["at"] = 0  # long ago
+    box = json.loads(request(port, "GET", "/api/inbox?only=station")[1])
+    assert [c["cmd"] for c in box["commands"]] == ["station"] and "open" not in box
+    assert json.loads(request(port, "GET", "/api/inbox")[1])["commands"] == []  # the old toggle expired
+
+
+def test_tags_take_the_spelling_already_in_use(running):
+    app, port, _, tmp = running
+    h = {"X-Station-Player": "1"}
+    request(port, "POST", "/api/stations", {"name": "A", "url": "https://a.example/", "tags": ["jazz"]}, h)
+    request(port, "POST", "/api/stations", {"name": "B", "url": "https://b.example/", "tags": ["Jazz", "Soul"]}, h)
+    assert app.store.config.stations[-1]["tags"] == ["jazz", "Soul"]
+    request(port, "POST", "/api/stations/update", {"url": "https://a.example/", "tags": "JAZZ, soul"}, h)
+    assert app.store.config.stations[-2]["tags"] == ["jazz", "Soul"]

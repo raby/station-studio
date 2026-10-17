@@ -10,6 +10,7 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -89,6 +90,27 @@ def _send_open(url: str, files: list[str]) -> bool:
         return True  # nothing to show
 
 
+def _send_station(url: str, station: str) -> bool:
+    """Ask the running copy to play a saved station. True when a player
+    window is open to play it."""
+    req = urllib.request.Request(
+        url + "api/stations/start", data=json.dumps({"url": station}).encode(),
+        headers={"Content-Type": "application/json", API_HEADER: "1"}, method="POST")
+    try:
+        with _local.open(req, timeout=30) as resp:
+            return bool(json.load(resp).get("page_open"))
+    except urllib.error.HTTPError as exc:
+        try:
+            reason = json.load(exc).get("error") or exc.reason
+        except Exception:
+            reason = exc.reason
+        print(f"Could not play {station}: {reason}", file=sys.stderr)
+        logging.warning("Could not play %s: %s", station, reason)
+    except Exception as exc:
+        print(f"Could not play {station}: {exc}", file=sys.stderr)
+    return False
+
+
 def _send_sources(url: str, sources: list[tuple[str, str]]) -> None:
     """Hand sources to the copy that's already running, so its settings
     (which it will save again) include them."""
@@ -114,9 +136,9 @@ def _detach_needed() -> bool:
     return sys.platform == "darwin" and not os.environ.get(_CHILD_ENV)
 
 
-def _start_detached(port: int, sources: list[str], url: str) -> bool:
+def _start_detached(port: int, sources: list[str], url: str, station: str | None = None) -> bool:
     cmd = [sys.executable, "-P", "-m", "station_player", "--app", "--no-browser",
-           "--port", str(port), *sources]
+           "--port", str(port), *(["--station", station] if station else []), *sources]
     try:
         subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                          stderr=subprocess.DEVNULL, start_new_session=True,
@@ -176,6 +198,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-browser", action="store_true", help="don't open a browser window")
     parser.add_argument("--app", action="store_true",
                         help="started from a shortcut: log to a file, reuse a running copy")
+    parser.add_argument("--station", metavar="URL",
+                        help="play this saved station (what a station's desktop icon runs)")
     parser.add_argument("--add-shortcut", action="store_true",
                         help="add Station Player to your apps menu (and desktop), then exit")
     parser.add_argument("--start-at-login", action="store_true",
@@ -224,6 +248,8 @@ def main(argv: list[str] | None = None) -> int:
         # from Open With play in its window, if one is open.
         _send_sources(url, sources)
         window_open = _send_open(url, opened) if opened else False
+        if args.station:
+            window_open = _send_station(url, args.station) or window_open
         if not args.no_browser and not window_open:
             _show(url, store)
         return 0
@@ -233,7 +259,7 @@ def main(argv: list[str] | None = None) -> int:
         return hand_over()
 
     if args.app and not args.no_browser and _detach_needed():
-        if not _start_detached(args.port, args.sources, url):
+        if not _start_detached(args.port, args.sources, url, args.station):
             return 1
         _show(url)
         return 0
@@ -255,6 +281,12 @@ def main(argv: list[str] | None = None) -> int:
     app = PlayerApp(store, scan=False)
     if opened:
         app.open_files(opened)  # played as soon as the window opens
+    if args.station:
+        try:
+            app.start_station(args.station, hold=True)  # likewise, however long it takes to open
+        except LookupError as exc:
+            print(f"Could not play {args.station}: {exc}", file=sys.stderr)
+            logging.warning("Could not play %s: %s", args.station, exc)
 
     try:
         server = make_server(app, port=args.port)

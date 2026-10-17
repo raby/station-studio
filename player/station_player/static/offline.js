@@ -11,7 +11,8 @@ let tries = 0;
 async function poll() {
   try {
     const res = await fetch("/api/state", { cache: "no-store" });
-    if (res.ok) { location.replace("/"); return; }
+    // Keep ?do=… from the Dock menu, so the player does it once it's up.
+    if (res.ok) { location.replace("/" + location.search); return; }
   } catch { /* not up yet */ }
   tries += 1;
   if (tries === 15) {

@@ -59,6 +59,7 @@ const ICONS = {
   file: ["M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z", "M14 2v6h6", "M9 15h6"],
   sparkle: ["M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z", "M19 17l.6 1.4L21 19l-1.4.6L19 21l-.6-1.4L17 19l1.4-.6z"],
   refresh: ["M21 12a9 9 0 1 1-2.64-6.36L21 8", "M21 3v5h-5"],
+  help: ["c 12 12 9", "M9.5 9.2a2.6 2.6 0 0 1 5 .9c0 1.7-2.5 2.3-2.5 3.9", "*c 12 17 1.1"],
   locate: ["c 11 11 7", "M21 21l-4.35-4.35", "M11 8v6", "M8 11h6"],
 };
 const SVG = "http://www.w3.org/2000/svg";
@@ -366,6 +367,7 @@ function renderView() {
   else if (S.view.type === "upnext") root.replaceChildren(upNextView());
   else if (S.view.type === "welcome") root.replaceChildren(welcomeView());
   else if (S.view.type === "clock") root.replaceChildren(clockView());
+  else if (S.view.type === "help") root.replaceChildren(helpView());
   else root.replaceChildren(settingsView());
   for (const r of root.querySelectorAll('input[type="range"]')) fillRange(r);
 }
@@ -1118,10 +1120,7 @@ function logoEditor(st, result, nameInput, urlInput) {
     try {
       await loadState(await api("/api/stations/logo", { url: st.url, ...body }, { quiet: true }));
       // The form is drawn again: keep what was typed but not saved yet.
-      const typed = [nameInput.value, urlInput.value];
-      renderView();
-      const inputs = document.querySelectorAll(`#view .card[data-url="${CSS.escape(st.url)}"] .edit input:not([type=file])`);
-      if (inputs.length >= 2) [inputs[0].value, inputs[1].value] = typed;
+      renderKeepingEdits();
       refocus(`#view .card[data-url="${CSS.escape(st.url)}"] .logo-row button`);
       toast(done);
     } catch (err) { show(false, err.message); }
@@ -1152,10 +1151,68 @@ function logoEditor(st, result, nameInput, urlInput) {
     file);
 }
 
+// Your own tags on stations, like "jazz" or "late night": typed with
+// commas between them, tidied the way the server keeps them.
+function splitTags(text) {
+  const out = [];
+  for (const raw of text.split(",")) {
+    const t = raw.split(/\s+/).filter(Boolean).join(" ").slice(0, 30).trim();
+    if (t && !out.some((x) => x.toLowerCase() === t.toLowerCase())) out.push(t);
+  }
+  return out.slice(0, 12);
+}
+
+function stationTags() {
+  const counts = new Map();
+  for (const st of S.lib.stations || []) for (const t of st.tags || []) counts.set(t, (counts.get(t) || 0) + 1);
+  return counts;
+}
+
+let stationTag = store("station-tag") || "";
+function setStationTag(tag) {
+  stationTag = tag;
+  store("station-tag", tag);
+  renderKeepingEdits();
+  refocus(`#view #station-tags [data-tag="${CSS.escape(tag)}"]`);
+}
+
+// Draw the Radio page again, keeping what's typed in a station being
+// edited but not saved yet.
+function renderKeepingEdits() {
+  const sel = editingStation === null ? null : `#view .card[data-url="${CSS.escape(editingStation)}"] .edit input:not([type=file])`;
+  const typed = sel ? [...document.querySelectorAll(sel)].map((x) => x.value) : [];
+  renderView();
+  if (!sel) return;
+  const inputs = document.querySelectorAll(sel);
+  if (inputs.length === typed.length) inputs.forEach((x, n) => { x.value = typed[n]; x.dispatchEvent(new Event("input")); });
+}
+
+async function putOnDesktop(st, btn) {
+  btn.disabled = true;
+  try {
+    await api("/api/stations/shortcut", { url: st.url }, { quiet: true });
+    toast(`${st.name} is on your desktop: double-click it to listen`);
+  } catch (err) { toast(err.message, { error: true }); }
+  btn.disabled = false;
+}
+
 function stationCard(st, i, count) {
   const isLive = () => S.mode === "radio" && S.station && S.station.url === st.url;
   const name = el("input", { value: st.name, "aria-label": "Station name", required: true });
   const url = el("input", { value: st.url, "aria-label": "Stream URL", required: true });
+  const tags = el("input", { value: (st.tags || []).join(", "), "aria-label": "Tags", placeholder: "jazz, late night", autocomplete: "off" });
+  const suggest = el("div", { class: "tag-row tag-suggest" });
+  const syncSuggest = () => {
+    const have = splitTags(tags.value).map((t) => t.toLowerCase());
+    const others = [...stationTags().keys()].filter((t) => !have.includes(t.toLowerCase())).sort((a, b) => a.localeCompare(b));
+    suggest.replaceChildren(...others.map((t) => el("button", {
+      type: "button", class: "tag", "aria-label": `Add the tag ${t}`,
+      onclick: () => { tags.value = [...splitTags(tags.value), t].join(", "); syncSuggest(); tags.focus(); },
+    }, `+ ${t}`)));
+    suggest.hidden = !others.length;
+  };
+  tags.addEventListener("input", syncSuggest);
+  syncSuggest();
   const result = el("div", { class: "test-result", role: "status", hidden: true });
   const editButton = () => `#view .card[data-url="${CSS.escape(st.url)}"] .card-top button`;
   const close = () => { editingStation = null; renderView(); refocus(editButton()); };
@@ -1164,7 +1221,9 @@ function stationCard(st, i, count) {
     const body = { url: st.url };
     if (name.value.trim() !== st.name) body.name = name.value;
     if (url.value.trim() !== st.url) body.new_url = url.value;
-    if (!body.name && !body.new_url) { close(); return; }
+    const newTags = splitTags(tags.value);
+    if (newTags.join("\n") !== (st.tags || []).join("\n")) body.tags = newTags;
+    if (!body.name && !body.new_url && !body.tags) { close(); return; }
     try {
       await loadState(await api("/api/stations/update", body, { quiet: true }));
       editingStation = null;
@@ -1193,7 +1252,11 @@ function stationCard(st, i, count) {
     el("div", { class: "view-part", hidden: editing },
       el("div", { class: "card-top" },
         stationArt(st),
-        el("div", { class: "name" }, st.name),
+        el("div", { class: "who" }, el("div", { class: "name" }, st.name),
+          (st.tags || []).length ? el("div", { class: "tag-row" }, st.tags.map((t) => el("button", {
+            type: "button", class: "tag", "data-tag": t, title: `Show only stations tagged ${t}`,
+            onclick: () => setStationTag(t),
+          }, t))) : null),
         el("button", {
           type: "button", class: "btn ghost icon-only", "aria-label": `Edit ${st.name}`, title: "Edit, test, move or remove",
           onclick: () => { editingStation = st.url; renderView(); const n = document.querySelector(`#view .card[data-url="${CSS.escape(st.url)}"] input`); if (n) n.focus(); },
@@ -1210,6 +1273,8 @@ function stationCard(st, i, count) {
     editing ? el("form", { class: "edit", onsubmit: save },
       el("label", {}, "Name", name),
       el("label", {}, "Stream URL", url),
+      el("label", {}, "Tags", el("span", { class: "help" }, "Your own labels, with commas between them"), tags),
+      suggest,
       logoEditor(st, result, name, url),
       result,
       el("div", { class: "row" },
@@ -1219,6 +1284,10 @@ function stationCard(st, i, count) {
       el("div", { class: "row moves" },
         el("button", { type: "button", class: "btn small move-up", disabled: i === 0 || null, "aria-label": `Move ${st.name} up`, onclick: () => move(i - 1) }, ...iconLabel("up", "Up")),
         el("button", { type: "button", class: "btn small move-down", disabled: i === count - 1 || null, "aria-label": `Move ${st.name} down`, onclick: () => move(i + 1) }, ...iconLabel("down", "Down")),
+        S.lib.desktop && S.lib.desktop.supported ? el("button", {
+          type: "button", class: "btn small desktop-icon", title: "Double-click the icon to start the player and listen",
+          onclick: (e) => putOnDesktop(st, e.currentTarget),
+        }, ...iconLabel("app", "Put on desktop")) : null,
         el("span", { class: "spacer" }),
         el("button", {
           type: "button", class: "btn small danger",
@@ -1254,7 +1323,18 @@ function radioView() {
   };
 
   const stations = S.lib.stations || [];
-  const cards = stations.map((st, i) => stationCard(st, i, stations.length));
+  const counts = stationTags();
+  if (stationTag && !counts.has(stationTag)) { stationTag = ""; store("station-tag", ""); }
+  // Filtered cards are hidden, not left out, so Up and Down still move a
+  // station past the ones you can't see.
+  const cards = stations.map((st, i) => {
+    const card = stationCard(st, i, stations.length);
+    card.hidden = Boolean(stationTag) && !(st.tags || []).includes(stationTag) && editingStation !== st.url;
+    return card;
+  });
+  const chip = (label, tag) => el("button", {
+    type: "button", class: "chip", "data-tag": tag, "aria-pressed": String(stationTag === tag), onclick: () => setStationTag(tag),
+  }, label);
 
   queueMicrotask(syncRadioCards);
   queueMicrotask(syncRecordings);
@@ -1264,6 +1344,8 @@ function radioView() {
         type: "button", class: "btn", id: "btn-find-logos", title: "Look your stations up in Radio Browser",
         onclick: findAllLogos,
       }, ...iconLabel("search", "Find logos")) : null),
+    counts.size ? el("div", { class: "tag-filter", id: "station-tags", role: "group", "aria-label": "Show stations tagged" },
+      chip("All", ""), ...[...counts.keys()].sort((a, b) => a.localeCompare(b)).map((t) => chip(`${t} (${counts.get(t)})`, t))) : null,
     cards.length ? el("div", { class: "cards" }, cards) : el("div", { class: "empty-state" },
       el("div", { class: "glyph big" }, icon("radio")),
       el("h2", {}, "No stations yet"),
@@ -1555,9 +1637,10 @@ function finderCard(st) {
           const btn = e.currentTarget;
           btn.disabled = true;
           try {
-            await loadState(await api("/api/stations", { name: st.name, url: st.url, logo_url: st.logo || "" }, { quiet: true }));
+            const tags = F.source === "" && F.tag ? [F.tag] : [];
+            await loadState(await api("/api/stations", { name: st.name, url: st.url, logo_url: st.logo || "", tags }, { quiet: true }));
             renderView();
-            toast(`Added ${st.name} to your stations`);
+            toast(`Added ${st.name} to your stations${tags.length ? `, tagged ${tags[0]}` : ""}`);
             refocus(`#finder-results .find-card[data-find="${CSS.escape(st.url)}"] .listen`);
           } catch (err) {
             btn.disabled = false;
@@ -3599,6 +3682,7 @@ function saveSession(force = true) {
 // Put back the queue and track (paused, at the same point) or station
 // that was playing when the player was last open.
 async function restoreSession() {
+  if (S.mode !== "idle") return;  // a desktop icon's station is playing already
   const q = readJSON("queue");
   const p = readJSON("position") || {};
   if (!q || q.v !== 1) return;
@@ -3930,6 +4014,27 @@ async function playSource(kind, id) {
   return true;
 }
 
+// ---------- the Dock / taskbar menu --------------------------------------
+// The installed app's icon offers Play / Pause and Next (the manifest's
+// shortcuts). They open /?do=…, which the window that's open receives
+// (launch_handler: focus-existing), or a new window acts on once it's up.
+const LAUNCH_COMMANDS = { toggle: "toggle", next: "next" };
+const launch = { ready: false, todo: new URLSearchParams(location.search).get("do") };
+if (launch.todo) history.replaceState(null, "", "/");  // a reload doesn't do it again
+if ("launchQueue" in window) {
+  window.launchQueue.setConsumer((params) => {
+    if (!params.targetURL) return;
+    const todo = new URL(params.targetURL).searchParams.get("do");
+    if (!todo) return;
+    if (launch.ready) runLaunch(todo); else launch.todo = todo;
+  });
+}
+async function runLaunch(todo) {
+  launch.todo = null;
+  const cmd = LAUNCH_COMMANDS[todo];
+  if (cmd) await runCommand({ cmd });
+}
+
 // ---------- the play log ------------------------------------------------------
 
 // Tracks played are logged on the computer (for PRS / PPL returns): how
@@ -4079,6 +4184,7 @@ async function runCommand(c) {
     applyVolume();
     store("volume", volume.value);
   } else if (c.cmd === "playlist" || c.cmd === "station") await playSource(c.cmd, c.id);
+  else if (c.cmd === "notice") toast(c.text, { error: true });
   else if (c.cmd === "sleep") setSleep(c.minutes);
   // snooze and stop_alarm: the server has acted on them already, and
   // checkInbox ends the alarm in whichever window is ringing.
@@ -4114,6 +4220,12 @@ setInterval(reportStatus, 1000);
   updateNow();
   try {
     await loadState();
+    // A station's desktop icon started the player: play it now, without
+    // waiting for the music library to be read.
+    try {
+      for (const c of (await api("/api/inbox?only=station")).commands || []) await runCommand(c);
+      for (const c of (await api("/api/inbox?only=notice")).commands || []) await runCommand(c);
+    } catch { /* checked again below */ }
     // The first scan runs in the background; wait for it before
     // choosing which playlist to show.
     if (S.lib.scanning) {
@@ -4153,4 +4265,6 @@ setInterval(reportStatus, 1000);
   // an old request doesn't replay when the player is reopened later.
   await checkInbox({ fresh: 30 });
   setInterval(() => { if ($("#view")) checkInbox(); }, 1000);
+  launch.ready = true;
+  if (launch.todo) await runLaunch(launch.todo);
 })();

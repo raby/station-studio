@@ -197,6 +197,10 @@ table.tracks { width: 100%; border-collapse: collapse; }
 .card.live { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .card-top { display: flex; align-items: center; gap: 12px; }
 .card .name { font-weight: 650; font-size: 15px; flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.card-top .who { flex: 1; min-width: 0; }
+.card .tag-row { margin-top: 4px; }
+.card .tag-suggest { margin-top: -4px; }
+.card .edit label .help { display: block; font-weight: 400; margin: 0 0 2px; }
 .card .url { color: var(--faint); font-size: 12px; word-break: break-all; }
 .card .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .card .row .btn { white-space: nowrap; }
@@ -695,3 +699,14 @@ svg.analogue.huge { width: min(62vh, 78vw); height: auto; }
   border: 2px solid var(--accent); border-right-color: transparent; animation: spin .8s linear infinite;
 }
 @media (max-width: 760px) { .find-list { grid-template-columns: 1fr; } }
+
+/* Help page. */
+.help-page { max-width: 720px; }
+.help-intro { color: var(--muted); margin: 0 0 12px; }
+.help-toc { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 24px; }
+.help-section { margin: 0 0 26px; scroll-margin-top: 16px; }
+.help-section h2 { font-size: 18px; margin: 0 0 8px; }
+.help-section h2:focus { outline: none; }
+.help-section p { margin: 0 0 8px; line-height: 1.55; }
+.help-section .btn { margin-top: 4px; }
+.help-version { color: var(--faint); font-size: 13px; }

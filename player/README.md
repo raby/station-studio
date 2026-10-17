@@ -76,6 +76,9 @@ That window still counts as one of the browser's: in the Dock and
 Alt-Tab it shows as Chrome (or Edge, or Brave). **Install Station Player
 as an app** under Settings › App gives it its own name and icon
 there, and Station Player opens that way from then on.
+Installed that way, right-clicking its icon in the Dock or taskbar
+offers **Play / Pause** and **Next** (an app installed by an earlier
+version picks these up when Chrome next updates it, or install it again).
 Keep it in the Dock or taskbar if you like: opened from there while the
 player isn't running, it starts the player and opens once it's up (the
 browser asks once whether to let it open Station Player; tick "Always
@@ -228,6 +231,19 @@ Results update as you type (or press Search), and **Show more** adds
 the next 40 below. Streams likely to sound thin are marked **Low
 quality**: MP3 under 64 kbps, AAC or Opus under 48 kbps.
 
+**Tags**: Edit a station to give it your own tags, like *jazz* or
+*Sunday morning*, with commas between them (tags you've used before are
+one click away). The tags you've used show as buttons above your
+stations: click one to see only those stations, **All** for every one.
+A station added from the finder while a genre is picked is tagged with
+that genre.
+
+**Put on desktop** (Edit a station) puts an icon for it on your
+desktop, with its logo: double-click it and Station Player opens and
+plays that station, whether or not it was running. On the command
+line, `station-player --station <stream link>` does the same for a saved
+station.
+
 **Recently played** at the top of the Radio page lists the last 8
 stations you listened to, saved or not, so a station you tried from
 the finder is easy to find again (and Add). **Clear** empties it.
@@ -239,6 +255,9 @@ others, **Find logos** at the top of the Radio page looks them all up in
 Radio Browser at once, or **Edit** a station and choose **Find logo** or **Choose picture…** (a PNG, JPEG, GIF or WebP up to
 256 KB). Logos are kept in the `logos` folder beside the settings file,
 so they show without asking the station's website each time.
+
+**Help** in the sidebar is a short guide to everything above, for
+anyone new to Station Player.
 
 ## Clock and alarms
 

@@ -1,5 +1,6 @@
 import plistlib
 import shlex
+import struct
 import subprocess
 from pathlib import Path
 
@@ -279,3 +280,105 @@ def test_unsupported_platform(tmp_path):
     assert d.status()["supported"] is False
     with pytest.raises(OSError):
         d.set_shortcut(True)
+
+
+# ---- a desktop icon for one station ----------------------------------------------
+
+URL = "https://stream.example/live?x=1&y=2"
+
+
+def test_linux_station_icon(tmp_path):
+    (tmp_path / "Desktop").mkdir()
+    logo = tmp_path / "abc.png"
+    logo.write_bytes(b"\x89PNG\r\n\x1a\nfake")
+    d = make("linux", tmp_path)
+    path = d.station_shortcut("Late / Night FM", URL, tmp_path / "icons", logo)
+    assert path == tmp_path / "Desktop" / "Late Night FM.desktop"
+    text = path.read_text()
+    assert "Name=Late / Night FM\n" in text
+    assert f'Exec="{PY}" -P -m station_player --app --station "{URL}"\n' in text
+    icon = next((tmp_path / "icons").glob("*.png"))
+    assert f"Icon={icon}\n" in text
+    assert path.stat().st_mode & 0o111
+    # Made again: the same icon, not a second one.
+    assert d.station_shortcut("Late / Night FM", URL, tmp_path / "icons", logo) == path
+    # Someone else's file with that name is left alone.
+    other = make("linux", tmp_path).station_shortcut("Late / Night FM", URL + "&other", tmp_path / "icons")
+    assert other.name == "Late Night FM 2.desktop" and path.read_text() == text
+    assert "Icon=" in other.read_text() and (tmp_path / ".local/share/icons/station-player.png").exists()
+
+
+def test_mac_station_icon_is_an_applet_with_the_logo(tmp_path):
+    (tmp_path / "Desktop").mkdir()
+    calls = []
+    run = fake_osacompile(calls)
+
+    def with_sips(cmd, **kw):
+        if cmd[0] == "sips":
+            calls.append(cmd)
+            Path(cmd[-1]).write_bytes(b"icns")
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        return run(cmd, **kw)
+
+    logo = tmp_path / "abc.png"
+    logo.write_bytes(b"png")
+    d = make("mac", tmp_path, run=with_sips)
+    bundle = d.station_shortcut("Rebirth Radio", URL, tmp_path / "icons", logo)
+    assert bundle == tmp_path / "Desktop" / "Rebirth Radio.app"
+    with (bundle / "Contents/Info.plist").open("rb") as fh:
+        info = plistlib.load(fh)
+    assert info["CFBundleIdentifier"].startswith(APP_ID + ".station.")
+    assert info["CFBundleName"] == "Rebirth Radio" and "CFBundleDocumentTypes" not in info
+    script = next(c for c in calls if isinstance(c, str))
+    assert f"station_player --app --station '{URL}' >/dev/null" in script
+    assert (bundle / "Contents/Resources/applet.icns").read_bytes() == b"icns"  # the station's logo
+    assert not any(isinstance(c, list) and c[0].endswith("lsregister") for c in calls)
+    assert d.station_shortcut("Rebirth Radio", URL, tmp_path / "icons", logo) == bundle
+
+
+def test_mac_station_icon_without_osacompile(tmp_path):
+    (tmp_path / "Desktop").mkdir()
+    def missing(cmd, **kw):
+        raise FileNotFoundError(cmd[0])
+    bundle = make("mac", tmp_path, run=missing).station_shortcut("Jazz", URL, tmp_path / "icons")
+    script = (bundle / "Contents/MacOS/station").read_text()
+    assert shlex.split(script.splitlines()[1])[1:] == [PY, "-P", "-m", "station_player", "--app", "--station", URL]
+    assert (bundle / "Contents/Resources/icon.icns").exists()
+
+
+def test_windows_station_icon(tmp_path):
+    calls = []
+
+    def run(cmd, env=None, **kw):
+        calls.append(env)
+        args = env["SP_ARGS"].encode("utf-16-le")  # as a .lnk keeps them: a count, then the text
+        Path(env["SP_LINK"]).write_bytes(b"head" + struct.pack("<H", len(args) // 2) + args + b"tail")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    desk = tmp_path / "desk"
+    desk.mkdir()
+    logo = tmp_path / "abc.png"
+    logo.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\0\0\0\rIHDR" + (48).to_bytes(4, "big") * 2 + b"rest")
+    d = make("windows", tmp_path, run=run, folders={"desktop": str(desk), "programs": str(tmp_path / "p")})
+    link = d.station_shortcut("Soul: 24/7", URL, tmp_path / "icons", logo)
+    assert link == desk / "Soul 24 7.lnk"
+    env = calls[0]
+    assert env["SP_ARGS"] == f"-P -m station_player --app --station {URL}"
+    ico = Path(env["SP_ICON"])
+    assert ico.suffix == ".ico" and ico.read_bytes()[:6] == b"\0\0\1\0\1\0" and ico.read_bytes()[6] == 48
+    assert d.station_shortcut("Soul: 24/7", URL, tmp_path / "icons", logo) == link
+    # A station whose link only starts the same gets an icon of its own.
+    assert d.station_shortcut("Soul: 24/7", URL[:-1], tmp_path / "icons", logo).name == "Soul 24 7 2.lnk"
+    # Too big for an icon: the player's own icon instead.
+    big = tmp_path / "big.png"
+    big.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\0\0\0\rIHDR" + (512).to_bytes(4, "big") * 2)
+    d.station_shortcut("Big", URL + "big", tmp_path / "icons", big)
+    assert calls[-1]["SP_ICON"].endswith("icon.ico")
+    assert dt._file_name("con") == "con station" and dt._file_name("Con FM") == "Con FM"
+
+
+def test_station_icon_needs_a_desktop(tmp_path):
+    with pytest.raises(OSError, match="desktop"):
+        make("linux", tmp_path).station_shortcut("X", URL, tmp_path / "icons")
+    with pytest.raises(OSError):
+        make("other", tmp_path).station_shortcut("X", URL, tmp_path / "icons")
