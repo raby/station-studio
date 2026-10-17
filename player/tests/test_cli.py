@@ -1,3 +1,4 @@
+import pytest
 import json
 import socket
 import time
@@ -317,3 +318,19 @@ def test_bundled_app_always_runs_as_an_app(monkeypatch):
     monkeypatch.setattr(cli, "open_ui", lambda url, home, own_window=True: seen.append("show"))
     assert cli.main([]) == 0
     assert seen == ["log", "show"]
+
+
+def test_mac_app_always_hands_over_to_its_helper(monkeypatch, tmp_path):
+    started, shown = [], []
+    monkeypatch.setattr(cli, "bundled", lambda: True)
+    monkeypatch.setattr(cli.sys, "platform", "darwin")
+    monkeypatch.setattr(cli, "app_executable", lambda: tmp_path / "station-player-server")
+    monkeypatch.setattr(cli, "_log_to_file", lambda: None)
+    monkeypatch.setattr(cli, "_running_instance", lambda url: False)
+    monkeypatch.setattr(cli, "_start_detached", lambda *a: (started.append(a), True)[1])
+    monkeypatch.setattr(cli, "open_ui", lambda url, home, own_window=True: shown.append(url))
+    monkeypatch.setattr(cli, "make_server", lambda app, port: pytest.fail("the app itself must not serve"))
+    # A station-player: link (no window) and a click in the Finder (window).
+    assert cli.main(["station-player://start"]) == 0
+    assert cli.main([]) == 0
+    assert len(started) == 2 and shown == ["http://127.0.0.1:8765/"]

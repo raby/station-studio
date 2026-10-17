@@ -143,8 +143,10 @@ jobs:
 
   pypi:
     name: publish to pypi.org
-    if: inputs.pypi
-    needs: release
+    # After the downloads are attached: the player's new-version notice
+    # (which asks PyPI) sends people who downloaded it to the release.
+    if: always() && inputs.pypi && needs.release.result == 'success' && needs.installers.result != 'failure' && needs.installers.result != 'cancelled'
+    needs: [release, installers]
     runs-on: ubuntu-latest
     environment:
       name: pypi-player

@@ -61,10 +61,21 @@ def current_platform() -> str:
     return "other"
 
 
+MAC_HELPER = "station-player-server"  # see packaging/station-player.spec
+
+
 def bundled() -> bool:
     """Whether this is the app from the Mac or Windows download, which
     carries its own Python, rather than a pipx install."""
     return bool(getattr(sys, "frozen", False))
+
+
+def app_executable() -> Path:
+    """What runs the downloaded app's player: on the Mac its helper (see
+    MAC_HELPER), elsewhere the app itself."""
+    exe = Path(sys.executable)
+    helper = exe.with_name(MAC_HELPER)
+    return helper if sys.platform == "darwin" and helper.exists() else exe
 
 
 def launch_command(background: bool = False, platform: str | None = None,
@@ -72,7 +83,7 @@ def launch_command(background: bool = False, platform: str | None = None,
     """The command a shortcut runs. On Windows it uses pythonw.exe, so no
     console window opens. The downloaded app runs itself."""
     if python is None and bundled():
-        return [sys.executable, "--app", *(["--no-browser"] if background else [])]
+        return [str(app_executable()), "--app", *(["--no-browser"] if background else [])]
     platform = platform or current_platform()
     exe = Path(python or sys.executable)
     if platform == "windows":
@@ -199,6 +210,11 @@ class Desktop:
         app on Windows puts itself in Open With (and registers its
         station-player: link) here, the first time it starts."""
         if self.bundled:
+            if self.platform == "mac" and self._shortcut_exists():
+                # The applet a pipx install made would answer Open With and
+                # station-player: links in this app's place.
+                self._mac_shortcut(False)
+                return True
             if self.platform != "windows":
                 return False
             want = subprocess.list2cmdline(launch_command(False, "windows", self.python)) + ' "%1"'

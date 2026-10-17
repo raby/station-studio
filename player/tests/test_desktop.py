@@ -410,3 +410,11 @@ def test_bundled_windows_app_puts_itself_in_open_with(tmp_path, monkeypatch):
     assert d.refresh() is False
     assert not (tmp_path / "P").exists()  # the installer makes the Start menu entry, not the player
     assert make("mac", tmp_path, is_bundled=True).refresh() is False
+
+
+def test_bundled_mac_app_removes_the_old_pipx_applet(tmp_path):
+    make("mac", tmp_path).set_shortcut(True)  # left by a pipx install
+    d = make("mac", tmp_path, is_bundled=True)
+    assert d.refresh() is True
+    assert not (tmp_path / "Applications" / f"{APP_NAME}.app").exists()
+    assert d.refresh() is False

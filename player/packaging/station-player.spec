@@ -16,6 +16,7 @@ ROOT = HERE.parent
 VERSION = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["version"]
 STATIC = ROOT / "station_player" / "static"
 NAME = "Station Player"
+HELPER = "station-player-server"  # keep in step with desktop.MAC_HELPER
 MAC = sys.platform == "darwin"
 
 a = Analysis(
@@ -35,7 +36,20 @@ exe = EXE(
     argv_emulation=MAC,  # files from Open With, station-player: links
     icon=str(STATIC / ("icon.icns" if MAC else "icon.ico")),
 )
-coll = COLLECT(exe, a.binaries, a.datas, name=NAME)
+# On the Mac, the app the Finder opens only hands over to this helper and
+# exits: a process macOS counts as the running app would swallow the next
+# click on the app. The helper runs the player; it takes no Apple events,
+# so macOS never counts it as the app. Login, desktop icons and the
+# station-player: link run it too.
+helper = EXE(
+    pyz,
+    a.scripts,
+    [],
+    exclude_binaries=True,
+    name=HELPER,
+    console=False,
+) if MAC else None
+coll = COLLECT(exe, *([helper] if helper else []), a.binaries, a.datas, name=NAME)
 
 if MAC:
     app = BUNDLE(

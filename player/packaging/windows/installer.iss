@@ -52,3 +52,5 @@ Filename: "{app}\Station Player.exe"; Description: "Open Station Player now"; Fl
 [UninstallRun]
 ; Takes Station Player out of Open With and start-at-login.
 Filename: "{app}\Station Player.exe"; Parameters: "--remove-shortcuts"; Flags: runhidden waituntilterminated; RunOnceId: "RemoveShortcuts"
+; Then stop a running player, so its files can be deleted.
+Filename: "{sys}\taskkill.exe"; Parameters: "/f /im ""Station Player.exe"""; Flags: runhidden waituntilterminated; RunOnceId: "StopPlayer"

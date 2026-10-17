@@ -17,7 +17,7 @@ from pathlib import Path
 from station_player import __version__
 from station_player.config import ConfigStore, get_home
 from station_player.window import open_ui
-from station_player.desktop import URL_SCHEME, Desktop, bundled
+from station_player.desktop import URL_SCHEME, Desktop, app_executable, bundled
 from station_player.library import AUDIO_EXTENSIONS
 from station_player.server import API_HEADER, PlayerApp, make_server
 
@@ -136,8 +136,21 @@ def _detach_needed() -> bool:
     return sys.platform == "darwin" and not os.environ.get(_CHILD_ENV)
 
 
+def _app_on_mac() -> bool:
+    """The downloaded Mac app itself (not its helper): it only ever hands
+    over, since while it lives macOS sends later clicks on the app to it."""
+    return bundled() and sys.platform == "darwin" and app_executable() != Path(sys.executable)
+
+
+def _misplaced() -> bool:
+    """The Mac app opened from the disk image (or from Downloads, which
+    macOS runs from a temporary copy): what it sets up stops working."""
+    exe = str(sys.executable)
+    return bundled() and sys.platform == "darwin" and (exe.startswith("/Volumes/") or "/AppTranslocation/" in exe)
+
+
 def _start_detached(port: int, sources: list[str], url: str, station: str | None = None) -> bool:
-    me = [sys.executable] if bundled() else [sys.executable, "-P", "-m", "station_player"]
+    me = [str(app_executable())] if bundled() else [sys.executable, "-P", "-m", "station_player"]
     cmd = [*me, "--app", "--no-browser",
            "--port", str(port), *(["--station", station] if station else []), *sources]
     try:
@@ -269,10 +282,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Station Player is already running on {url}")
         return hand_over()
 
-    if args.app and not args.no_browser and _detach_needed():
+    if args.app and (not args.no_browser and _detach_needed() or _app_on_mac()):
         if not _start_detached(args.port, args.sources, url, args.station):
             return 1
-        _show(url)
+        if not args.no_browser:
+            _show(url)
         return 0
 
     store = ConfigStore()
@@ -292,6 +306,10 @@ def main(argv: list[str] | None = None) -> int:
     app = PlayerApp(store, scan=False)
     if opened:
         app.open_files(opened)  # played as soon as the window opens
+    if _misplaced():
+        app.remote_commands.append({"cmd": "notice", "hold": True, "at": time.time(), "text":
+                                    "Drag Station Player into your Applications folder and open it from there: "
+                                    "opened from the download, start-at-login and desktop icons won't keep working."})
     if args.station:
         try:
             app.start_station(args.station, hold=True)  # likewise, however long it takes to open
