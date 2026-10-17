@@ -159,10 +159,11 @@ jobs:
     steps:
       - name: download the released files
         # The exact files attached to the GitHub release, so PyPI gets
-        # byte-identical bits to what was smoke-tested.
+        # byte-identical bits to what was smoke-tested. Only the wheel and
+        # sdist: the Mac and Windows downloads aren't for PyPI.
         run: |
           gh release download "player-v${{ needs.release.outputs.version }}" \
-            --repo "$GITHUB_REPOSITORY" --dir dist
+            --repo "$GITHUB_REPOSITORY" --dir dist --pattern '*.whl' --pattern '*.tar.gz'
           ls -la dist
 
       - name: publish
