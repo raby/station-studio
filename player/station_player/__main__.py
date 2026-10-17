@@ -156,11 +156,15 @@ def _start_detached(port: int, sources: list[str], url: str, station: str | None
     try:
         subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                          stderr=subprocess.DEVNULL, start_new_session=True,
-                         env={**os.environ, _CHILD_ENV: "1"})
+                         # PYINSTALLER_RESET_ENVIRONMENT: the downloaded app's helper
+                         # starts afresh, not as part of the app that started it.
+                         env={**os.environ, _CHILD_ENV: "1", **({"PYINSTALLER_RESET_ENVIRONMENT": "1"} if bundled() else {})})
     except OSError as exc:
         logging.error("Could not start Station Player: %s", exc)
         return False
-    if _wait_for_instance(url, 20):
+    # Generous: the first start of a newly downloaded app is slow while
+    # macOS checks it, more so on older Macs.
+    if _wait_for_instance(url, 60):
         return True
     logging.error("Station Player did not start; see the messages above")
     return False

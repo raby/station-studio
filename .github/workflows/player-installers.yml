@@ -86,7 +86,7 @@ jobs:
           fi
           "$EXE" --no-browser --port 8765 &
           PID=$!
-          trap "kill $PID 2>/dev/null || true" EXIT
+          trap 'kill $PID 2>/dev/null || true; echo "--- log"; cat "$STATION_PLAYER_HOME/station-player.log" 2>/dev/null || true' EXIT
           for i in $(seq 1 60); do
             curl -sf http://127.0.0.1:8765/api/state >/dev/null && break
             sleep 1
@@ -110,7 +110,6 @@ jobs:
             pkill -f station-player-server || true
           fi
           echo "smoke OK"
-          cat "$STATION_PLAYER_HOME/station-player.log" || true
 
       - name: make the .dmg
         if: matrix.kind == 'mac'
