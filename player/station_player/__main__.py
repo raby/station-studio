@@ -17,7 +17,7 @@ from pathlib import Path
 from station_player import __version__
 from station_player.config import ConfigStore, get_home
 from station_player.window import open_ui
-from station_player.desktop import Desktop
+from station_player.desktop import URL_SCHEME, Desktop, bundled
 from station_player.library import AUDIO_EXTENSIONS
 from station_player.server import API_HEADER, PlayerApp, make_server
 
@@ -137,7 +137,8 @@ def _detach_needed() -> bool:
 
 
 def _start_detached(port: int, sources: list[str], url: str, station: str | None = None) -> bool:
-    cmd = [sys.executable, "-P", "-m", "station_player", "--app", "--no-browser",
+    me = [sys.executable] if bundled() else [sys.executable, "-P", "-m", "station_player"]
+    cmd = [*me, "--app", "--no-browser",
            "--port", str(port), *(["--station", station] if station else []), *sources]
     try:
         subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
@@ -207,7 +208,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--remove-shortcuts", action="store_true",
                         help="remove the shortcuts and the start-at-login entry, then exit")
     parser.add_argument("--version", action="version", version=f"station-player {__version__}")
+    if argv is None:
+        argv = sys.argv[1:]
+    # The Mac app may be handed a process id by older macOS, and a
+    # station-player: link (the offline page's Start button) asks for the
+    # player to start without a window of its own.
+    argv = [a for a in argv if not a.startswith("-psn_")]
+    if any(a.lower().startswith(f"{URL_SCHEME}:") for a in argv):
+        argv = [a for a in argv if not a.lower().startswith(f"{URL_SCHEME}:")] + ["--no-browser"]
     args = parser.parse_args(argv)
+    if bundled():
+        args.app = True  # the downloaded app has no terminal: log to a file, reuse a running copy
 
     if args.add_shortcut or args.start_at_login or args.remove_shortcuts:
         desktop = Desktop()

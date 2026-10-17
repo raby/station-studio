@@ -1,0 +1,135 @@
+# Station Player downloads for people without a terminal: a Mac .dmg
+# (Apple Silicon and Intel) and a Windows setup .exe, each carrying its
+# own Python (PyInstaller; see player/packaging/station-player.spec).
+#
+# On pull requests that touch the player it builds and smoke-tests them
+# and keeps them as run artifacts, for trying before a release.
+# publish-player.yml calls it with the release's tag to attach them to
+# that GitHub release.
+#
+# They aren't signed with a paid Apple or Microsoft certificate, so the
+# first open needs System Settings › Privacy & Security › Open Anyway on
+# a Mac, and More info › Run anyway on Windows (the release notes and
+# the Help page say so).
+
+name: Station Player installers
+
+on:
+  pull_request:
+    paths:
+      - 'player/**'
+      - '.github/workflows/player-installers.yml'
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      release_tag:
+        description: Attach the installers to this GitHub release
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write  # gh release upload, when called with a tag
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            label: Mac (Apple Silicon)
+            kind: mac
+            arch: apple-silicon
+          - os: macos-15-intel
+            label: Mac (Intel)
+            kind: mac
+            arch: intel
+          - os: windows-latest
+            label: Windows
+            kind: windows
+            arch: x64
+    defaults:
+      run:
+        shell: bash
+    env:
+      GH_TOKEN: ${{ github.token }}
+      STATION_PLAYER_HOME: ${{ github.workspace }}/smoke-home
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: tools
+        run: python -m pip install "pyinstaller>=6.10,<7" certifi
+
+      - name: read version
+        id: version
+        run: echo "version=$(python -c 'import tomllib; print(tomllib.load(open("player/pyproject.toml","rb"))["project"]["version"])')" >> "$GITHUB_OUTPUT"
+
+      - name: build the app
+        run: python -m PyInstaller --noconfirm --clean player/packaging/station-player.spec --distpath build/dist --workpath build/work
+
+      - name: smoke-test the app
+        run: |
+          set -e
+          if [ "${{ matrix.kind }}" = mac ]; then
+            EXE="build/dist/Station Player.app/Contents/MacOS/Station Player"
+          else
+            EXE="build/dist/Station Player/Station Player.exe"
+          fi
+          "$EXE" --no-browser --port 8765 &
+          PID=$!
+          trap "kill $PID 2>/dev/null || true" EXIT
+          for i in $(seq 1 60); do
+            curl -sf http://127.0.0.1:8765/api/state >/dev/null && break
+            sleep 1
+          done
+          curl -sS http://127.0.0.1:8765/api/state | python -c "import json,sys; d=json.load(sys.stdin); assert d['bundled'] and d['version'] == '${{ steps.version.outputs.version }}', d; print('version', d['version'])"
+          curl -sS -o /dev/null -w '%{http_code} %{content_type}\n' http://127.0.0.1:8765/ | grep -q '^200 text/html'
+          curl -sS -o /dev/null -w '%{http_code} %{content_type}\n' http://127.0.0.1:8765/help.js | grep -q '^200 text/javascript'
+          # The certificates bundled for https (stations, Find stations, updates).
+          if [ "${{ matrix.kind }}" = mac ]; then
+            test -f "build/dist/Station Player.app/Contents/Resources/certifi/cacert.pem" \
+              || test -f "build/dist/Station Player.app/Contents/Frameworks/certifi/cacert.pem"
+          fi
+          echo "smoke OK"
+          cat "$STATION_PLAYER_HOME/station-player.log" || true
+
+      - name: make the .dmg
+        if: matrix.kind == 'mac'
+        run: |
+          set -e
+          mkdir -p build/dmg out
+          cp -R "build/dist/Station Player.app" build/dmg/
+          ln -s /Applications build/dmg/Applications
+          hdiutil create -volname "Station Player" -srcfolder build/dmg -ov -format UDZO \
+            "out/StationPlayer-${{ steps.version.outputs.version }}-mac-${{ matrix.arch }}.dmg"
+
+      - name: make the setup .exe
+        if: matrix.kind == 'windows'
+        run: |
+          set -e
+          ISCC="/c/Program Files (x86)/Inno Setup 6/ISCC.exe"
+          if [ ! -f "$ISCC" ]; then choco install innosetup -y --no-progress; fi
+          mkdir -p out
+          "$ISCC" /DVersion=${{ steps.version.outputs.version }} \
+            "/DSource=$(cygpath -w "$PWD/build/dist/Station Player")" \
+            "/DOutput=$(cygpath -w "$PWD/out")" \
+            player/packaging/windows/installer.iss
+          ls -la out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: station-player-${{ matrix.kind }}-${{ matrix.arch }}
+          path: out/*
+          if-no-files-found: error
+
+      - name: attach to the release
+        if: inputs.release_tag != ''
+        run: gh release upload "${{ inputs.release_tag }}" out/* --clobber --repo "$GITHUB_REPOSITORY"

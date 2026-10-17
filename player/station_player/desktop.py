@@ -61,10 +61,18 @@ def current_platform() -> str:
     return "other"
 
 
+def bundled() -> bool:
+    """Whether this is the app from the Mac or Windows download, which
+    carries its own Python, rather than a pipx install."""
+    return bool(getattr(sys, "frozen", False))
+
+
 def launch_command(background: bool = False, platform: str | None = None,
                    python: str | None = None) -> list[str]:
     """The command a shortcut runs. On Windows it uses pythonw.exe, so no
-    console window opens."""
+    console window opens. The downloaded app runs itself."""
+    if python is None and bundled():
+        return [sys.executable, "--app", *(["--no-browser"] if background else [])]
     platform = platform or current_platform()
     exe = Path(python or sys.executable)
     if platform == "windows":
@@ -145,8 +153,12 @@ class Desktop:
 
     def __init__(self, platform: str | None = None, home: Path | None = None,
                  env: dict | None = None, python: str | None = None,
-                 run=None, registry=None, folders: dict | None = None, classes=None) -> None:
+                 run=None, registry=None, folders: dict | None = None, classes=None,
+                 is_bundled: bool | None = None) -> None:
         self.platform = platform or current_platform()
+        # The downloaded app: its installer (or the Applications folder)
+        # gives it its shortcuts, so the player doesn't make its own.
+        self.bundled = bundled() if is_bundled is None else is_bundled
         self.home = home or Path.home()
         self.env = os.environ if env is None else env
         self.python = python
@@ -163,7 +175,7 @@ class Desktop:
 
     def status(self) -> dict:
         info = {"supported": self.supported, "platform": self.platform,
-                "shortcut": False, "login": False}
+                "shortcut": False, "login": False, "bundled": self.bundled}
         if not self.supported:
             return info
         try:
@@ -183,7 +195,17 @@ class Desktop:
 
     def refresh(self) -> bool:
         """Rewrite a shortcut made by an older version (so it gains what's
-        new, like Open With). True when it rewrote one."""
+        new, like Open With). True when it rewrote one. The downloaded
+        app on Windows puts itself in Open With (and registers its
+        station-player: link) here, the first time it starts."""
+        if self.bundled:
+            if self.platform != "windows":
+                return False
+            want = subprocess.list2cmdline(launch_command(False, "windows", self.python)) + ' "%1"'
+            if self._cls().get(rf"Software\Classes\{PROG_ID}\shell\open\command", "") == want:
+                return False
+            self._windows_open_with(True)
+            return True
         if not self.supported or not self._shortcut_exists():
             return False
         if self.platform == "mac":

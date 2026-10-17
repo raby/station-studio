@@ -14,6 +14,9 @@
 # pending publisher): project station-player, owner raby, repo
 # station-studio, workflow publish-player.yml, environment pypi-player.
 #
+# The Mac .dmg files and the Windows setup .exe (player-installers.yml)
+# are built after the release is created and attached to it.
+#
 # Tags are `player-v*`, never `v*`, so this can't trigger station-studio's
 # own publish.yml. Bump player/pyproject.toml's version before each
 # release; the run refuses to overwrite an existing release. With the
@@ -108,7 +111,12 @@ jobs:
           cat > notes.md <<NOTES
           Station Player $VERSION: plays station-studio's exported playlists, local music folders and internet radio.
 
-          **Install** (needs Python 3.11+ and [pipx](https://pipx.pypa.io)):
+          **Download** (no terminal needed; the files are below, under Assets):
+
+          - **Mac:** \`StationPlayer-$VERSION-mac-apple-silicon.dmg\` (Macs from 2020 on with an M chip), or \`-mac-intel.dmg\` for older Macs. Open it and drag Station Player into Applications. The first time, macOS says it can't check the app: open System Settings › Privacy & Security, scroll down and press **Open Anyway**.
+          - **Windows:** \`StationPlayer-$VERSION-windows-setup.exe\`. If Windows says it protected your PC, press **More info**, then **Run anyway**. It installs just for you, with no administrator password.
+
+          **Install with pipx** (needs Python 3.11+ and [pipx](https://pipx.pypa.io)):
 
           \`\`\`
           pipx install https://github.com/$GITHUB_REPOSITORY/releases/download/player-v$VERSION/$WHEEL
@@ -122,6 +130,16 @@ jobs:
             --target "$GITHUB_SHA" \
             --title "Station Player $VERSION" \
             --notes-file notes.md
+
+  installers:
+    name: Mac and Windows downloads
+    needs: release
+    if: needs.release.outputs.exists != 'true'
+    permissions:
+      contents: write  # attach them to the release
+    uses: ./.github/workflows/player-installers.yml
+    with:
+      release_tag: player-v${{ needs.release.outputs.version }}
 
   pypi:
     name: publish to pypi.org

@@ -286,6 +286,7 @@ class PlayerApp:
             + ([self.my_playlists.warning] if self.my_playlists.warning else []),
             "scanning": scanning,
             "desktop": self.desktop.status(),
+            "bundled": getattr(self.desktop, "bundled", False),
             "recordings": self.recorder.status(),
             "recordings_folder": str(self.recorder.folder),
             "window_browser": self.window_browser,

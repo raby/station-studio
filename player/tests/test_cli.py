@@ -299,3 +299,21 @@ def test_send_station_against_a_real_server(capsys):
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_station_player_link_starts_without_a_window(monkeypatch):
+    shown = []
+    monkeypatch.setattr(cli, "_running_instance", lambda url: True)
+    monkeypatch.setattr(cli, "open_ui", lambda url, home, own_window=True: shown.append(url))
+    assert cli.main(["station-player://start", "-psn_0_12345"]) == 0
+    assert shown == []  # the page that asked is the window
+
+
+def test_bundled_app_always_runs_as_an_app(monkeypatch):
+    seen = []
+    monkeypatch.setattr(cli, "bundled", lambda: True)
+    monkeypatch.setattr(cli, "_log_to_file", lambda: seen.append("log"))
+    monkeypatch.setattr(cli, "_running_instance", lambda url: True)
+    monkeypatch.setattr(cli, "open_ui", lambda url, home, own_window=True: seen.append("show"))
+    assert cli.main([]) == 0
+    assert seen == ["log", "show"]
