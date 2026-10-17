@@ -46,7 +46,9 @@ has downloads that carry everything they need, Python included:
   Settings › Apps.
 
 To update, download the new version and install it the same way, over
-the old one; the player says when one is out. These builds are made by
+the old one; the player says when one is out. An older copy still
+running in the background (or a pipx install's) quits when the new one
+opens, and start at login moves over to the downloaded app. These builds are made by
 `.github/workflows/player-installers.yml` from
 `packaging/station-player.spec` (PyInstaller) and
 `packaging/windows/installer.iss` (Inno Setup).

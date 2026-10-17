@@ -418,3 +418,27 @@ def test_bundled_mac_app_removes_the_old_pipx_applet(tmp_path):
     assert d.refresh() is True
     assert not (tmp_path / "Applications" / f"{APP_NAME}.app").exists()
     assert d.refresh() is False
+
+
+def test_bundled_mac_app_takes_over_start_at_login_from_pipx(tmp_path, monkeypatch):
+    make("mac", tmp_path).set_login(True)  # left by a pipx install
+    monkeypatch.setattr(dt.sys, "frozen", True, raising=False)
+    exe = "/Applications/Station Player.app/Contents/MacOS/station-player-server"
+    monkeypatch.setattr(dt, "app_executable", lambda: Path(exe))
+    d = Desktop(platform="mac", home=tmp_path, env={})
+    assert d.refresh() is True
+    with (tmp_path / "Library/LaunchAgents" / f"{APP_ID}.plist").open("rb") as fh:
+        assert plistlib.load(fh)["ProgramArguments"] == [exe, "--app", "--no-browser"]
+    assert d.refresh() is False
+
+
+def test_bundled_windows_app_takes_over_start_at_login_from_pipx(tmp_path, monkeypatch):
+    reg = FakeRegistry()
+    folders = {"programs": tmp_path / "P", "desktop": tmp_path / "D"}
+    make("windows", tmp_path, registry=reg, classes=FakeKeys(), folders=folders).set_login(True)
+    monkeypatch.setattr(dt.sys, "frozen", True, raising=False)
+    exe = r"C:\Users\rob\AppData\Local\Programs\Station Player\Station Player.exe"
+    monkeypatch.setattr(dt.sys, "executable", exe)
+    d = Desktop(platform="windows", home=tmp_path, env={}, registry=reg, classes=FakeKeys(), folders=folders)
+    assert d.refresh() is True
+    assert reg.values[APP_NAME] == f'"{exe}" --app --no-browser'

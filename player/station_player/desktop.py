@@ -210,16 +210,17 @@ class Desktop:
         app on Windows puts itself in Open With (and registers its
         station-player: link) here, the first time it starts."""
         if self.bundled:
+            changed = self._claim_login()
             if self.platform == "mac" and self._shortcut_exists():
                 # The applet a pipx install made would answer Open With and
                 # station-player: links in this app's place.
                 self._mac_shortcut(False)
                 return True
             if self.platform != "windows":
-                return False
+                return changed
             want = subprocess.list2cmdline(launch_command(False, "windows", self.python)) + ' "%1"'
             if self._cls().get(rf"Software\Classes\{PROG_ID}\shell\open\command", "") == want:
-                return False
+                return changed
             self._windows_open_with(True)
             return True
         if not self.supported or not self._shortcut_exists():
@@ -244,6 +245,26 @@ class Desktop:
             self._windows_open_with(True)
             return True
         self.set_shortcut(True)
+        return True
+
+    def _claim_login(self) -> bool:
+        """Start at login made by a pipx install (or an app since moved)
+        would start that copy at login: point it at this app instead.
+        True when it changed it."""
+        if self.platform not in ("mac", "windows") or not self._login_exists():
+            return False
+        want = launch_command(True, self.platform, self.python)
+        if self.platform == "mac":
+            try:
+                with self._mac_agent().open("rb") as fh:
+                    have = plistlib.load(fh).get("ProgramArguments")
+            except (OSError, plistlib.InvalidFileException, ValueError):
+                have = None
+        else:
+            want, have = subprocess.list2cmdline(want), self._reg().get(APP_NAME)
+        if have == want:
+            return False
+        self.set_login(True)
         return True
 
     def remove_all(self) -> None:

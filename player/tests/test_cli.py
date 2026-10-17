@@ -334,3 +334,42 @@ def test_mac_app_always_hands_over_to_its_helper(monkeypatch, tmp_path):
     assert cli.main(["station-player://start"]) == 0
     assert cli.main([]) == 0
     assert len(started) == 2 and shown == ["http://127.0.0.1:8765/"]
+
+
+def test_an_older_copy_makes_way_for_this_one(monkeypatch):
+    # Left running at login by a pipx install, or by the version before an update.
+    answers = iter([True, False])
+    asked = []
+    monkeypatch.setattr(cli, "_running_instance", lambda url: next(answers))
+    monkeypatch.setattr(cli, "_outdated_instance", lambda url: True)
+    monkeypatch.setattr(cli, "_quit_instance", lambda url: asked.append(url) or True)
+    monkeypatch.setattr(cli, "_send_open", lambda url, files: pytest.fail("handed over to the old copy"))
+    monkeypatch.setattr(cli, "make_server", lambda app, port: (_ for _ in ()).throw(OSError("stop here")))
+    assert cli.main(["--no-browser"]) == 1  # went on to start its own
+    assert asked == ["http://127.0.0.1:8765/"]
+
+
+def test_outdated_instance_compares_versions_and_kind(monkeypatch):
+    import io
+    import json as _json
+    state = {}
+
+    class Resp(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    monkeypatch.setattr(cli._local, "open", lambda url, timeout=0: Resp(_json.dumps(state).encode()))
+    url = "http://127.0.0.1:8765/"
+    state.update(version=cli.__version__, bundled=False)
+    assert not cli._outdated_instance(url)
+    state.update(version="0.1.0")
+    assert cli._outdated_instance(url)
+    state.update(version="99.0.0")
+    assert not cli._outdated_instance(url)  # a newer copy keeps running
+    monkeypatch.setattr(cli, "bundled", lambda: True)
+    assert cli._outdated_instance(url)  # the downloaded app replaces a pipx copy
+    state.update(bundled=True)
+    assert not cli._outdated_instance(url)

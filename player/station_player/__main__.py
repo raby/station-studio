@@ -14,7 +14,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from station_player import __version__
+from station_player import __version__, updates
 from station_player.config import ConfigStore, get_home
 from station_player.window import open_ui
 from station_player.desktop import URL_SCHEME, Desktop, app_executable, bundled
@@ -74,6 +74,37 @@ def _running_instance(url: str) -> bool:
             return "version" in json.load(resp)
     except Exception:
         return False
+
+
+def _outdated_instance(url: str) -> bool:
+    """True when the copy answering at `url` should make way for this one:
+    it's an older version (left running in the background after an
+    update), or it's a pipx install and this is the downloaded app."""
+    try:
+        with _local.open(url + "api/state", timeout=2) as resp:
+            state = json.load(resp)
+    except Exception:
+        return False
+    if not isinstance(state, dict) or "version" not in state:
+        return False
+    return (bundled() and not state.get("bundled")) or updates.is_newer(__version__, str(state["version"]))
+
+
+def _quit_instance(url: str) -> bool:
+    """Ask the copy at `url` to quit. True once it has gone."""
+    req = urllib.request.Request(url + "api/quit", data=b"{}",
+                                 headers={"Content-Type": "application/json", API_HEADER: "1"}, method="POST")
+    try:
+        _local.open(req, timeout=10).close()
+    except Exception as exc:
+        logging.warning("Could not ask the older Station Player to quit: %s", exc)
+        return False
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        if not _running_instance(url):
+            return True
+        time.sleep(0.2)
+    return False
 
 
 def _send_open(url: str, files: list[str]) -> bool:
@@ -282,7 +313,12 @@ def main(argv: list[str] | None = None) -> int:
             _show(url, store)
         return 0
 
-    if _running_instance(url):
+    running = _running_instance(url)
+    if running and _outdated_instance(url):
+        print(f"Replacing the older Station Player running on {url}")
+        logging.info("Replacing the older Station Player running on %s", url)
+        running = not _quit_instance(url)
+    if running:
         print(f"Station Player is already running on {url}")
         return hand_over()
 
