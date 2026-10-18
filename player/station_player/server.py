@@ -23,6 +23,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+import zlib
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta
 from http import HTTPStatus
@@ -45,6 +46,8 @@ from station_player.tags import MAX_ART_BYTES, TagCache, folder_cover, image_typ
 logger = logging.getLogger(__name__)
 
 STATIC_DIR = Path(__file__).parent / "static"
+# The car page (player/car/), published with the docs on GitHub Pages.
+CAR_PAGE = "https://raby.github.io/station-studio/car/"
 API_HEADER = "X-Station-Player"
 _ALLOWED_HOSTS = {"127.0.0.1", "localhost", "::1"}
 _RANGE_RE = re.compile(r"^bytes=(\d*)-(\d*)$")
@@ -720,6 +723,17 @@ class PlayerApp:
         if running is not None and not cfg.remote:
             running.stop()
 
+    def car_link(self) -> str:
+        """The link to the car page with this player's stations in it
+        (after the #, so they stay on the phone). See car/car.js."""
+        with self._lock:
+            stations = [[s["name"], s["url"], *([s["tags"]] if s.get("tags") else [])]
+                        for s in self.store.config.stations]
+        data = json.dumps({"v": 1, "s": stations}, ensure_ascii=False, separators=(",", ":")).encode()
+        packer = zlib.compressobj(9, zlib.DEFLATED, -15)  # raw deflate, as DecompressionStream wants
+        packed = base64.urlsafe_b64encode(packer.compress(data) + packer.flush()).rstrip(b"=").decode()
+        return f"{CAR_PAGE}#s={packed}"
+
     def remote_info(self) -> dict:
         cfg = self.store.config
         address = remote.lan_address() if self.remote_server else None
@@ -1361,6 +1375,21 @@ def make_handler(app: PlayerApp):
                 body, _count = app.play_log.csv(first, last)
                 return self._send_download(body.encode("utf-8-sig"), f"Play log {first} to {last}",
                                            "csv", "text/csv; charset=utf-8")
+            if path == "/api/car":
+                with app._lock:
+                    http_only = [st["name"] for st in app.store.config.stations
+                                 if st["url"].lower().startswith("http:")]
+                return self._send_json({"url": app.car_link(), "http_only": http_only})
+            if path == "/api/car/qr.svg":
+                body = qr.svg(app.car_link()).encode()
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", "image/svg+xml")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                if not head_only:
+                    self.wfile.write(body)
+                return None
             if path == "/api/remote/qr.svg":
                 info = app.remote_info()
                 if not info["url"]:

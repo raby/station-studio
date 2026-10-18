@@ -1382,3 +1382,118 @@ def test_downloaded_app_shows_how_to_update_it(page, player):
     open_settings(page, "app")
     sync_api.expect(page.locator("#view")).to_contain_text("Start Station Player in the background")
     sync_api.expect(page.get_by_text("Add Station Player to")).to_have_count(0)
+
+
+# ---- the car page (player/car/, published on GitHub Pages) -------------------------
+
+CAR_DIR = Path(__file__).parents[1] / "car"
+
+
+@pytest.fixture
+def car_site(tmp_path):
+    """The car page, plus a "station" that fails its first request (a
+    dropped signal) and then plays."""
+    import functools
+    from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+
+    sound = tone(tmp_path / "radio" / "tone.wav", 30.0, 0.3).read_bytes()
+    hits = {"flaky": 0}
+
+    class Handler(SimpleHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_GET(self):
+            name = self.path.split("?")[0].lstrip("/")
+            if name in ("good.wav", "flaky.wav"):
+                if name == "flaky.wav":
+                    hits["flaky"] += 1
+                    if hits["flaky"] == 1:
+                        self.send_error(503)
+                        return
+                self.send_response(200)
+                self.send_header("Content-Type", "audio/wav")
+                self.send_header("Content-Length", str(len(sound)))
+                self.end_headers()
+                self.wfile.write(sound)
+                return
+            super().do_GET()
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), functools.partial(Handler, directory=str(CAR_DIR)))
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{server.server_address[1]}/", hits
+    server.shutdown()
+    server.server_close()
+
+
+def test_car_page_plays_the_players_stations(browser, player, car_site):
+    app = player[0]
+    base, hits = car_site
+    app.store.config.stations = [
+        {"name": "Good FM", "url": base + "good.wav", "tags": ["jazz"]},
+        {"name": "Flaky Radio", "url": base + "flaky.wav"},
+        {"name": "Third", "url": base + "good.wav?3", "tags": ["jazz"]},
+    ]
+    link = app.car_link()
+    assert link.startswith("https://raby.github.io/station-studio/car/#s=")
+    ctx = browser.new_context()
+    page = ctx.new_page()
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.goto(base + "index.html" + link[link.index("#"):])
+    tiles = page.locator(".station")
+    sync_api.expect(tiles).to_have_count(3)
+    assert tiles.all_inner_texts()[0].endswith("Good FM")
+
+    tiles.nth(0).click()
+    sync_api.expect(page.locator("#now-status")).to_have_text("Playing", timeout=10000)
+    sync_api.expect(page.locator("#now-name")).to_have_text("Good FM")
+    assert page.evaluate("navigator.mediaSession.metadata.title") == "Good FM"
+
+    # Next (the steering wheel's skip) goes to Flaky Radio, whose first
+    # try fails: it reconnects by itself.
+    page.locator("#btn-next").click()
+    sync_api.expect(page.locator("#now-name")).to_have_text("Flaky Radio")
+    sync_api.expect(page.locator("#now-status")).to_have_text("Playing", timeout=15000)
+    assert hits["flaky"] >= 2
+
+    # Tags filter the stations, and skipping stays within them.
+    page.locator(".tag", has_text="jazz").click()
+    sync_api.expect(tiles).to_have_count(2)
+    page.locator(".station", has_text="Third").click()
+    page.locator("#btn-next").click()
+    sync_api.expect(page.locator("#now-name")).to_have_text("Good FM")
+
+    page.locator("#btn-play").click()  # stop
+    page.wait_for_function("() => audio.paused && !audio.getAttribute('src')")
+    sync_api.expect(page.locator("#btn-play")).to_have_attribute("aria-label", "Play")
+
+    # Opened again without the link (a home-screen icon that lost it), it
+    # still has the stations, the tag and the last station.
+    page.goto(base + "index.html")
+    sync_api.expect(tiles).to_have_count(2)
+    sync_api.expect(page.locator("#now-name")).to_have_text("Good FM")
+    ctx.close()
+    assert not errors, errors
+
+
+def test_car_page_without_stations_says_how_to_get_them(browser, car_site):
+    ctx = browser.new_context()
+    page = ctx.new_page()
+    page.goto(car_site[0] + "index.html")
+    sync_api.expect(page.locator("#empty")).to_be_visible()
+    assert page.locator("#btn-play").is_disabled()
+    ctx.close()
+
+
+def test_settings_in_the_car(page, player):
+    app = player[0]
+    app.store.config.stations = [{"name": "Old Radio", "url": "http://example.com/live"},
+                                 {"name": "New Radio", "url": "https://example.com/live"}]
+    open_settings(page, "car")
+    sync_api.expect(page.locator("#view h2")).to_have_text("In the car")
+    img = page.locator(".car-box img")
+    page.wait_for_function("() => document.querySelector('.car-box img').naturalWidth > 0")
+    assert img.get_attribute("src").startswith("/api/car/qr.svg")
+    sync_api.expect(page.locator("#btn-car-copy")).to_be_enabled()
+    sync_api.expect(page.locator("#view")).to_contain_text("Old Radio has only an http:// link")

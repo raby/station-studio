@@ -329,6 +329,22 @@ old one working. The first time, your computer may ask whether to let
 Station Player (or Python) accept incoming connections: allow it, or the
 phone can't connect.
 
+## In the car
+
+**Settings › In the car** shows a QR code that opens a page on your
+phone with your stations as big buttons. The phone plays them itself,
+over mobile data, so the computer doesn't need to be on. Add the page
+to the home screen and it opens like an app; through Bluetooth, CarPlay
+or Android Auto the car's next / previous buttons skip between
+stations, and a dropped stream reconnects by itself.
+
+The page is `car/` in this folder, published with the docs on GitHub
+Pages at <https://raby.github.io/station-studio/car/>. The stations go
+in the link after the `#` (compressed JSON), so they never reach a
+server; scan again after changing them. A page served over https can't
+play `http://` streams, so stations with only an http link may not play
+on the phone.
+
 ## New versions
 
 Once a day Station Player asks pypi.org for the newest version number

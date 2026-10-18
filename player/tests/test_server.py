@@ -783,3 +783,16 @@ def test_tags_take_the_spelling_already_in_use(running):
     assert app.store.config.stations[-1]["tags"] == ["jazz", "Soul"]
     request(port, "POST", "/api/stations/update", {"url": "https://a.example/", "tags": "JAZZ, soul"}, h)
     assert app.store.config.stations[-2]["tags"] == ["jazz", "Soul"]
+
+
+def test_car_link_carries_the_stations(tmp_path):
+    import base64
+    import zlib
+    store = ConfigStore(tmp_path)
+    store.config.stations = [{"name": "Café FM", "url": "https://x.example/live", "tags": ["jazz"]},
+                             {"name": "Plain", "url": "http://y.example/"}]
+    link = PlayerApp(store, scan=False).car_link()
+    page, packed = link.split("#s=")
+    assert page == "https://raby.github.io/station-studio/car/"
+    data = json.loads(zlib.decompress(base64.urlsafe_b64decode(packed + "=" * (-len(packed) % 4)), -15))
+    assert data == {"v": 1, "s": [["Café FM", "https://x.example/live", ["jazz"]], ["Plain", "http://y.example/"]]}

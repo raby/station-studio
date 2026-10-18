@@ -542,6 +542,7 @@ body.offline { display: grid; place-items: center; min-height: 100vh; margin: 0;
 .days label:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
 .remote-box { display: flex; flex-wrap: wrap; gap: 20px; align-items: center; margin: 14px 0; }
 .remote-box img { width: 180px; height: 180px; background: #fff; border-radius: 12px; padding: 6px; }
+.car-box img { width: 240px; height: 240px; }
 .remote-link { word-break: break-all; font-family: ui-monospace, monospace; font-size: 13px; }
 
 /* Recordings page. */
