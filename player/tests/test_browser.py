@@ -1497,3 +1497,9 @@ def test_settings_in_the_car(page, player):
     assert img.get_attribute("src").startswith("/api/car/qr.svg")
     sync_api.expect(page.locator("#btn-car-copy")).to_be_enabled()
     sync_api.expect(page.locator("#view")).to_contain_text("Old Radio has only an http:// link")
+
+
+def test_alarm_greeting_follows_the_time_of_day(page):
+    at = lambda h, m=0: page.evaluate(f"greeting(new Date(2026, 0, 1, {h}, {m}))")
+    assert [at(7), at(12, 30), at(18, 25), at(23, 30), at(4)] == [
+        "Good morning", "Good afternoon", "Good evening", "Hello", "Hello"]
