@@ -52,6 +52,7 @@ const ICONS = {
   x: ["M18 6L6 18", "M6 6l12 12"],
   clock: ["c 12 12 9", "M12 7v5l3 2"],
   phone: ["r 6.5 2 11 20 2.5", "M11 18h2"],
+  car: ["M4 12l1.8-4.6A2 2 0 0 1 7.7 6h8.6a2 2 0 0 1 1.9 1.4L20 12", "r 2.5 12 19 5.5 1.5", "M5 17.5v2", "M19 17.5v2", "*c 7 14.7 1.1", "*c 17 14.7 1.1"],
   download: ["M12 3v12", "M7 10l5 5 5-5", "M5 21h14"],
   app: ["r 3 4 18 16 2.5", "M3 9h18"],
   headphones: ["M3 18v-6a9 9 0 0 1 18 0v6", "M21 19a2 2 0 0 1-2 2h-1v-6h3z", "M3 19a2 2 0 0 0 2 2h1v-6H3z"],
@@ -2082,13 +2083,22 @@ function clockView() {
 
 let alarmScreenReturn = null;
 
+// By the computer's own clock: an evening alarm doesn't say good morning.
+function greeting(now = new Date()) {
+  const h = now.getHours();
+  if (h >= 5 && h < 12) return "Good morning";
+  if (h >= 12 && h < 18) return "Good afternoon";
+  if (h >= 18 && h < 23) return "Good evening";
+  return "Hello";
+}
+
 function showAlarmScreen(req) {
   const box = $("#alarm-screen");
   alarmScreenReturn = document.activeElement;
   box.replaceChildren(
     el("div", { class: "alarm-inner" },
       clockFace("huge"),
-      el("h2", { id: "alarm-screen-title" }, req.label || (req.snoozed ? "Alarm (snoozed)" : "Good morning")),
+      el("h2", { id: "alarm-screen-title" }, req.label || (req.snoozed ? "Alarm (snoozed)" : greeting())),
       el("p", { class: "alarm-playing" }, req.source && req.source.name ? `Playing ${req.source.name}` : ""),
       el("div", { class: "alarm-actions" },
         el("button", { type: "button", class: "btn big primary", id: "btn-snooze", onclick: () => snoozeAlarm() },
@@ -2681,6 +2691,7 @@ const SETTINGS_TABS = [
   ["playback", "Playback", "headphones", () => playbackSection()],
   ["alarm", "Alarm & sleep", "clock", alarmPage],
   ["remote", "Phone remote", "phone", () => remoteSection()],
+  ["car", "In the car", "car", () => carSection()],
   ["log", "Play log", "log", () => playLogSection()],
   ["app", "App", "app", () => appSection()],
 ];
@@ -2876,6 +2887,46 @@ function playLogSection() {
 }
 
 // The phone remote: a link (and QR code) for a phone on the same Wi-Fi.
+function carSection() {
+  // The car page lives on the web, so it works on mobile data far from
+  // this computer; the stations go to it inside the link (see car/car.js).
+  const more = el("div", {});
+  let link = null;
+  const copy = el("button", {
+    type: "button", class: "btn", id: "btn-car-copy", disabled: true,
+    onclick: async () => {
+      // Copied straight from the click (no fetch first), as Safari wants.
+      try {
+        await navigator.clipboard.writeText(link);
+        toast("Link copied: send it to your phone by message or email");
+      } catch { toast("Couldn't copy the link", { error: true }); }
+    },
+  }, "Copy the link");
+  api("/api/car").then(({ url, http_only: httpOnly }) => {
+    link = url;
+    copy.disabled = false;
+    if (httpOnly && httpOnly.length) {
+      more.replaceChildren(el("p", { class: "help" },
+        `${httpOnly.join(", ")} ${httpOnly.length > 1 ? "have" : "has"} only an http:// link, which phones may not play from the car page. `,
+        "If the station has an https:// link, edit the station and use that."));
+    }
+  }).catch(() => {});
+  return el("section", {},
+    el("h2", {}, "In the car"),
+    el("p", { class: "help" },
+      "Take your radio stations in the car. Scan this code with your phone's camera: it opens a page with big buttons that plays your stations over the phone's mobile data, ",
+      "so the computer doesn't need to be on. Then add it to the phone's home screen."),
+    el("p", { class: "help" },
+      "Connect the phone to the car by Bluetooth, CarPlay or Android Auto and the sound comes through the car's speakers. The steering-wheel buttons skip between stations."),
+    el("div", { class: "remote-box car-box" },
+      el("img", { src: `/api/car/qr.svg?${Date.now()}`, alt: "QR code for the car page with your stations" }),
+      el("div", {},
+        el("p", {}, "Can't scan it? Copy the link and send it to your phone."),
+        copy,
+        el("p", { class: "help" }, "Added or changed stations? Scan the new code to update the phone."))),
+    more);
+}
+
 function remoteSection() {
   const r = S.lib.remote || {};
   const box = [];

@@ -125,6 +125,13 @@ jobs:
           test -f site/404.html
           grep -q 'Switch to dark mode' site/index.html
           grep -q 'Switch to light mode' site/index.html
+      - name: add the Station Player car page
+        # player/car/: the phone page Station Player's Settings › In the
+        # car links to. Added after the checks above, which are for the
+        # MkDocs pages.
+        run: |
+          cp -R player/car site/car
+          test -f site/car/index.html && test -f site/car/car.js && test -f site/car/icon-512.png
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

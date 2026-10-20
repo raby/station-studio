@@ -42,6 +42,12 @@ const HELP = [
     "Double-click it and Station Player opens and plays that station straight away, even when the player wasn't running.",
     "To get rid of one, drag it to the Bin (the Recycle Bin on Windows) like any other icon.",
   ]],
+  ["car", "Radio in the car", [
+    ["In ", ["Settings › In the car"], ", scan the code with your phone's camera. It opens a page on the phone with your stations as big buttons, and plays them over the phone's mobile data, so the computer can stay at home."],
+    "Add the page to the phone's home screen (Share › Add to Home Screen on an iPhone) and it opens like an app.",
+    "Connect the phone to the car by Bluetooth, CarPlay or Android Auto and the sound comes through the car. The next and previous buttons on the steering wheel or the car's screen skip between stations, and the station reconnects by itself after a tunnel or a patch with no signal.",
+    "Added or changed stations? Scan the code again. Stations with only an http:// link may not play on the phone; edit the station and use its https:// link if it has one.",
+  ], { label: "Go to In the car", view: { type: "settings", tab: "car" } }],
   ["record", "Recording radio", [
     ["Record on a station records it to a file, whether or not you're listening. Press it again to stop. A recording stops by itself after 12 hours."],
     ["Recordings in the sidebar lists everything you've recorded, with the songs it caught. Give one a label and tags with the pencil, ", ["Play"], " it, or add it to a playlist with +."],
