@@ -233,6 +233,12 @@ audio.addEventListener("playing", () => {
   S.played = true;
   S.tries = 0;
   status("Playing");
+  // Sound is coming out, whatever paused it on the way (iPhones pause and
+  // resume around a Bluetooth or CarPlay hand-over): show Stop, not Play.
+  if (!S.want) {
+    S.want = true;
+    render();
+  }
   if ("mediaSession" in navigator) navigator.mediaSession.playbackState = "playing";
 });
 audio.addEventListener("waiting", () => { if (S.want && S.played) status("Buffering…"); });
