@@ -1464,6 +1464,13 @@ def test_car_page_plays_the_players_stations(browser, player, car_site):
     page.locator("#btn-next").click()
     sync_api.expect(page.locator("#now-name")).to_have_text("Good FM")
 
+    # Paused and resumed from outside the page (an iPhone handing the sound
+    # over to the car): the big button still shows Stop while it plays.
+    page.evaluate("audio.pause()")
+    sync_api.expect(page.locator("#btn-play")).to_have_attribute("aria-label", "Play")
+    page.evaluate("audio.play()")
+    sync_api.expect(page.locator("#btn-play")).to_have_attribute("aria-label", "Stop")
+
     page.locator("#btn-play").click()  # stop
     page.wait_for_function("() => audio.paused && !audio.getAttribute('src')")
     sync_api.expect(page.locator("#btn-play")).to_have_attribute("aria-label", "Play")
