@@ -615,6 +615,10 @@ svg.analogue.huge { width: min(62vh, 78vw); height: auto; }
 .alarm-list { list-style: none; margin: 14px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .alarm-card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 16px; }
 .alarm-card.new { margin-top: 14px; border-color: var(--accent); }
+.settings li.alarm-card { display: block; padding: 12px 16px; margin-bottom: 0; word-break: normal; border-radius: var(--radius); }
+.settings .alarm-row span { flex: none; }
+.settings .alarm-list { margin-top: 14px; }
+.alarm-card.new .alarm-form { border-top: 0; margin-top: 0; }
 .alarm-row { display: flex; align-items: center; gap: 16px; }
 .alarm-time { font-size: 30px; font-weight: 300; font-variant-numeric: tabular-nums; letter-spacing: -.02em; min-width: 3.2em; }
 .alarm-card .info { flex: 1; min-width: 0; }

@@ -245,7 +245,9 @@ read again on later scans.
 directory of tens of thousands of stations. It opens on the most popular
 stations in your country (from your computer's language settings; choose
 *Any country* to see the world); search by name, pick a genre or a
-country, or sort by most played. **SomaFM** lists the channels of
+country, or sort by most played. Some genre buttons cover two at once
+(*techno / trance*, *house / garage*, *chart / pop*, *asian / bhangra*).
+**SomaFM** lists the channels of
 [SomaFM](https://somafm.com), listener-supported radio with no adverts.
 Each result shows the station's logo, country, genres and stream
 quality: **Listen** plays it straight away (through Station Player, so song titles show), and **Add** puts it in your
@@ -292,9 +294,10 @@ anyone new to Station Player.
 **Clock & alarms** in the sidebar shows a big clock (digits, or a
 clock face) with today's date and the next alarm.
 
-- **Alarms**: up to 10, each with a time, the days it repeats, a label
-  and a playlist or station to wake up to. Switch each on and off
-  without deleting it. They fade in over a minute.
+- **Alarms**: each with a time, the days it repeats (or **Once** on a
+  date, after which it turns itself off), a label and a playlist or
+  station to wake up to. Switch each on and off without deleting it.
+  They fade in over a minute.
 - When one goes off, a full-screen alarm shows **Snooze 9 min** and
   **Stop** (or Escape to turn the alarm off and keep the music playing).
   The phone remote gets the same two buttons.
@@ -303,6 +306,11 @@ clock face) with today's date and the next alarm.
 
 Station Player has to be running at alarm time (turn on *Start at
 login*) and the computer awake; if no player window is open, one opens.
+
+**Schedule** on the Radio page switches station at set times, once or
+every week: the news at 17:00, then back to your station at 17:10. A
+switch only changes what's already playing, and never starts the player
+when it's quiet. Alarms and switches together go up to 30.
 
 ## Play log (PRS / PPL returns)
 
