@@ -231,8 +231,14 @@ const current = () => S.extra || (S.pos >= 0 ? S.queue[S.order[S.pos]] : null);
 
 // ---------- library + navigation ----------------------------------------
 
+// Studio tools (station-studio's playlists, recording, the play log) are
+// for people making a station; without them it's the plain player.
+const studio = () => S.lib?.config?.studio !== false;
+const STUDIO_HELP = ["record", "log"];
+
 async function loadState(newState) {
   S.lib = newState || (await api("/api/state"));
+  document.body.classList.toggle("public", !studio());
   renderNav();
   renderErrors();
   renderUpdate();
@@ -374,6 +380,10 @@ function searchResults(q, found) {
 
 function renderView() {
   const root = $("#view");
+  if (!studio() && (S.view.type === "recordings" || (S.view.type === "settings" && S.view.tab === "log"))) {
+    S.view = { type: "radio" };  // studio tools were turned off
+    renderNav();
+  }
   if ((S.view.type === "playlist" || S.view.type === "search") && S.detail) root.replaceChildren(playlistView(S.detail));
   else if (S.view.type === "radio") root.replaceChildren(radioView());
   else if (S.view.type === "recordings") root.replaceChildren(recordingsView());
@@ -1282,7 +1292,7 @@ function stationCard(st, i, count) {
           type: "button", class: "btn primary listen",
           onclick: () => (isLive() && !audio.paused ? audio.pause() : playStation(st)),
         }, ...iconLabel("play", "Listen")),
-        el("button", { type: "button", class: "btn rec-btn", onclick: () => toggleRecording(st) }, ...iconLabel("record", "Record")))),
+        el("button", { type: "button", class: "btn rec-btn studio-only", onclick: () => toggleRecording(st) }, ...iconLabel("record", "Record")))),
     editing ? el("form", { class: "edit", onsubmit: save },
       el("label", {}, "Name", name),
       el("label", {}, "Stream URL", url),
@@ -1373,7 +1383,7 @@ function radioView() {
         el("button", { class: "btn primary" }, ...iconLabel("plus", "Add"))),
       result,
       msg),
-    el("section", {},
+    el("section", { class: "studio-only" },
       el("h2", {}, "Recordings"),
       el("p", { class: "help" },
         "Record records a station to a file, whether or not you're listening to it, exactly as the station sends it. ",
@@ -3511,7 +3521,7 @@ function sourceCard(src) {
 
 // The two ways in: a folder of music, or playlists exported from iTunes / station-studio.
 function addTiles() {
-  const tile = (glyph, title, sub, onclick, id) => el("button", { type: "button", class: "tile", id, onclick },
+  const tile = (glyph, title, sub, onclick, id, cls = "") => el("button", { type: "button", class: `tile ${cls}`, id, onclick },
     el("span", { class: "glyph" }, icon(glyph)),
     el("span", {}, el("span", { class: "t-title" }, title), el("span", { class: "t-sub" }, sub)));
   return el("div", {},
@@ -3519,8 +3529,8 @@ function addTiles() {
       tile("folder", "Add a music folder", "A folder of songs, such as your Music folder. It shows under Folders.",
         () => pickAndAdd("music", "folder", "#add-folder"), "add-folder"),
       tile("list", "Add iTunes or station-studio playlists", "An exported library (.xml). Station Player picks up its playlists.",
-        () => pickAndAdd("playlist", "file", "#add-playlists"), "add-playlists")),
-    el("p", { class: "help" },
+        () => pickAndAdd("playlist", "file", "#add-playlists"), "add-playlists", "studio-only")),
+    el("p", { class: "help studio-only" },
       "Station-studio saves a new export every week? ",
       el("button", { type: "button", class: "btn small", id: "add-exports", onclick: () => pickAndAdd("playlist", "folder", "#add-exports") }, "Choose its exports folder"),
       " and every new one appears by itself."),
@@ -3533,7 +3543,7 @@ function typedPaths() {
     el("summary", {}, "Type or paste a path instead"),
     el("div", { class: "checks" },
       pathForm("music", "Path to a folder of music"),
-      pathForm("playlist", "Path to an .xml file, or a folder of them")));
+      el("div", { class: "studio-only" }, pathForm("playlist", "Path to an .xml file, or a folder of them"))));
 }
 
 function pathForm(kind, placeholder) {
@@ -3763,8 +3773,9 @@ function openSettingsTab(id) {
 }
 
 function settingsView() {
-  const page = SETTINGS_TABS.find((t) => t[0] === S.view.tab) || SETTINGS_TABS[0];
-  const ids = SETTINGS_TABS.map((t) => t[0]);
+  const shown = SETTINGS_TABS.filter((t) => studio() || t[0] !== "log");
+  const page = shown.find((t) => t[0] === S.view.tab) || shown[0];
+  const ids = shown.map((t) => t[0]);
   const tabs = el("div", {
     class: "tabs", role: "tablist", "aria-label": "Settings pages",
     onkeydown: (e) => {
@@ -3778,7 +3789,7 @@ function settingsView() {
       e.preventDefault();
       openSettingsTab(ids[to]);
     },
-  }, SETTINGS_TABS.map(([id, label, glyph]) => el("button", {
+  }, shown.map(([id, label, glyph]) => el("button", {
     type: "button", role: "tab", class: "tab", id: `tab-${id}`, "aria-controls": "settings-page",
     "aria-selected": String(id === page[0]), tabindex: id === page[0] ? "0" : "-1",
     onclick: () => openSettingsTab(id),
@@ -3867,7 +3878,20 @@ function appSection() {
       checkbox("updates", "Tell me when a new version is out (asks pypi.org once a day)",
         S.lib.config.check_updates !== false, updatesChange)),
     browser ? null : el("p", { class: "help" },
-      "Station Player opens in a browser tab. With Google Chrome, Microsoft Edge or Brave installed it opens in a window of its own instead."));
+      "Station Player opens in a browser tab. With Google Chrome, Microsoft Edge or Brave installed it opens in a window of its own instead."),
+    el("h2", { class: "spaced" }, "Studio tools"),
+    el("p", { class: "help" },
+      "For people who make a radio station: playlists exported from station-studio or iTunes, recording radio, ",
+      "the Recordings page, and the play log for PRS and PPL. Off, Station Player is a simple radio and music player."),
+    el("div", { class: "checks" },
+      checkbox("studio", "Show the studio tools", studio(), async (on) => {
+        try {
+          await loadState(await api("/api/settings", { studio: on }, { quiet: true }));
+          toast(on ? "Studio tools turned on" : "Studio tools turned off. Your recordings and playlists are kept.");
+        } catch (err) {
+          renderErrors(err.message);
+        }
+      })));
 }
 
 function playbackSection() {

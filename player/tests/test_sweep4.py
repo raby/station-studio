@@ -23,6 +23,7 @@ def running(tmp_path):
                        "Persistent ID": "P1", "Location": song.as_uri()}],
                      [{"Name": "Week 1", "Playlist Items": [{"Track ID": 1}]}])
     store = ConfigStore()
+    store.config.studio = True
     store.config.playlist_sources = [str(tmp_path / "exports")]
     app = PlayerApp(store)
     server = make_server(app, port=0)

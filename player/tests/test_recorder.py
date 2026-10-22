@@ -165,6 +165,7 @@ def test_record_endpoints(tmp_path, monkeypatch):
     from station_player.server import PlayerApp, make_server, station_id
 
     store = ConfigStore(tmp_path / "home")
+    store.config.studio = True
     store.config.stations = [{"name": "Test FM", "url": "http://radio/x"}]
     app = PlayerApp(store, recorder=Recorder(tmp_path / "rec", opener=Opener(FakeStream(b"x", live=True))))
     server = make_server(app, port=0)
@@ -265,6 +266,7 @@ def test_recordings_list_labels_and_tags(tmp_path):
     from station_player.server import PlayerApp, make_server, station_id
 
     store = ConfigStore(tmp_path / "home")
+    store.config.studio = True
     store.config.stations = [{"name": "Test FM", "url": "http://radio/x"}]
     rec_dir = tmp_path / "rec"
     rec_dir.mkdir()

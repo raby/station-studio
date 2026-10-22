@@ -13,7 +13,7 @@
 <body>
   <div class="app">
     <aside class="sidebar" aria-label="Library">
-      <div class="brand"><img src="/icon.png" alt="">Station Player</div>
+      <div class="brand"><img src="/icon.png" alt=""><span class="brand-name">Station Player</span><span class="studio-badge studio-only">Studio</span></div>
       <div id="busy" class="busy-note" role="status" hidden>Updating library…</div>
       <div class="lib-search" role="search">
         <span data-icon="search"></span>
@@ -23,8 +23,8 @@
         <ul class="nav-list">
           <li><button type="button" class="nav-item" data-view="upnext"><span data-icon="queue"></span><span>Up next</span><span class="count" id="upnext-count"></span></button></li>
         </ul>
-        <h2>Playlists</h2>
-        <ul id="nav-itunes" class="nav-list"></ul>
+        <h2 class="studio-only">Playlists</h2>
+        <ul id="nav-itunes" class="nav-list studio-only"></ul>
         <div class="nav-head"><h2 id="mine-head">My playlists</h2>
           <button type="button" class="nav-add" id="btn-new-playlist" aria-label="New playlist" title="New playlist"><span data-icon="plus"></span></button></div>
         <ul id="nav-mine" class="nav-list" aria-labelledby="mine-head"></ul>
@@ -33,7 +33,7 @@
         <h2>Radio</h2>
         <ul class="nav-list">
           <li><button type="button" class="nav-item" data-view="radio"><span data-icon="radio"></span><span>Stations</span></button></li>
-          <li><button type="button" class="nav-item" data-view="recordings"><span data-icon="record"></span><span>Recordings</span></button></li>
+          <li class="studio-only"><button type="button" class="nav-item" data-view="recordings"><span data-icon="record"></span><span>Recordings</span></button></li>
         </ul>
         <h2>Clock</h2>
         <ul class="nav-list">

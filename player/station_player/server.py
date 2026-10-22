@@ -350,6 +350,8 @@ class PlayerApp:
         if url is None:
             raise LookupError("No such station")
         if on:
+            if not self.store.config.studio:
+                raise ValueError("Recording is one of the studio tools: turn them on in Settings › App")
             name = next((s["name"] for s in self.store.config.stations if s["url"] == url), url)
             self.recorder.start(url, name)
         else:
@@ -490,7 +492,7 @@ class PlayerApp:
                 or not isinstance(seconds, (int, float)) or isinstance(seconds, bool) \
                 or not math.isfinite(seconds) or not math.isfinite(started):
             raise ValueError("id, started and seconds are needed")
-        if not self.store.config.play_log or seconds <= 0:
+        if not (self.store.config.play_log and self.store.config.studio) or seconds <= 0:
             return
         track = self.library.tracks.get(track_id)
         if track is None:
@@ -502,6 +504,12 @@ class PlayerApp:
         self.play_log.add(when, min(float(seconds), 24 * 3600), {
             "title": track.name, "artist": track.artist, "album": track.album,
             "duration_ms": track.duration_ms, "path": str(track.path) if track.path else None})
+
+    def set_studio(self, on: bool) -> None:
+        with self._change(rescan=False) as cfg:
+            cfg.studio = on
+        if not on:
+            self.recorder.stop_all()  # recordings are kept, just not added to
 
     def set_play_log(self, on: bool) -> None:
         with self._change(rescan=False) as cfg:
@@ -1716,7 +1724,7 @@ def make_handler(app: PlayerApp):
                             raise ValueError("check_updates must be true or false")
                         app.set_check_updates(data["check_updates"])
                     for key, apply in (("own_window", app.set_own_window), ("play_log", app.set_play_log),
-                                       ("remote", app.set_remote)):
+                                       ("remote", app.set_remote), ("studio", app.set_studio)):
                         if key in data:
                             if not isinstance(data[key], bool):
                                 raise ValueError(f"{key} must be true or false")

@@ -66,6 +66,7 @@ def player(tmp_path):
     tone(music / "03 Three.wav", 1.5, 0.5, 660)
     tone(music / "04 Quiet.wav", 2.0, 0.05, 330)
     store = ConfigStore(tmp_path / "home")
+    store.config.studio = True  # everything shows (a new install without station-studio is the plain player)
     store.config.music_folders = [str(music)]
     store.config.stations = [{"name": "Test FM", "url": "http://127.0.0.1:9/stream"}]
     app = PlayerApp(store)
@@ -305,8 +306,14 @@ def test_volume_levelling_measures_and_evens_out_tracks(page, player):
     gains = page.evaluate("[...L.known.keys()].map(id => levelGain(id))")
     assert max(gains) / min(gains) > 5
     assert page.evaluate("L.master !== null && decks.every(d => d.volume === 1)")
-    # Measurements are remembered by the server for next time.
-    saved = json.loads((tmp / "home" / "loudness.json").read_text())
+    # Measurements are remembered by the server for next time (each is
+    # sent in the background, so the second may still be on its way).
+    deadline = time.monotonic() + 5
+    while True:
+        saved = json.loads((tmp / "home" / "loudness.json").read_text())
+        if len(saved["entries"]) >= 2 or time.monotonic() > deadline:
+            break
+        time.sleep(0.05)
     assert len(saved["entries"]) >= 2
 
 
@@ -1724,3 +1731,34 @@ def test_globe(page, player):
     page.locator("#finder-q").press("Enter")
     sync_api.expect(page.locator("#finder-results")).to_be_visible()
     sync_api.expect(page.get_by_role("button", name="List", exact=True)).to_have_attribute("aria-pressed", "true")
+
+
+def test_plain_player_hides_the_studio_tools(page, player):
+    app = player[0]
+    app.store.config.studio = False  # a new install without station-studio
+    page.reload()
+    page.wait_for_selector("#view tbody tr")
+    assert page.evaluate("document.body.classList.contains('public')")
+    for hidden in (".studio-badge", ".nav-item[data-view=recordings]", "#nav-itunes"):
+        sync_api.expect(page.locator(hidden)).to_be_hidden()
+    sync_api.expect(page.locator(".nav-item[data-view=folders], #nav-folders")).to_be_visible()  # your own music stays
+    page.locator(".nav-item[data-view=radio]").click()
+    sync_api.expect(page.locator(".card[data-url] .listen").first).to_be_visible()
+    sync_api.expect(page.locator(".rec-btn").first).to_be_hidden()
+    page.locator(".nav-item[data-view=settings]").click()
+    sync_api.expect(page.locator("#tab-log")).to_have_count(0)
+    page.locator(".nav-item[data-view=help]").click()
+    sync_api.expect(page.locator("#help-record")).to_have_count(0)
+    sync_api.expect(page.locator("#help-studio")).to_be_visible()
+    # Turned on in Settings › App, everything is back.
+    open_settings(page, "app")
+    page.get_by_label("Show the studio tools").check()
+    sync_api.expect(page.locator(".nav-item[data-view=recordings]")).to_be_visible()
+    sync_api.expect(page.locator(".studio-badge")).to_have_text("Studio")
+    sync_api.expect(page.locator("#tab-log")).to_be_visible()
+    assert app.store.config.studio is True
+    # ...and off again from the Recordings page, it goes to the radio.
+    page.locator(".nav-item[data-view=recordings]").click()
+    page.evaluate("api('/api/settings', { studio: false }).then(loadState).then(renderView)")
+    sync_api.expect(page.locator(".view-head h1, .radio-head h1").first).to_be_visible()
+    page.wait_for_function("() => S.view.type === 'radio'")
