@@ -306,8 +306,14 @@ def test_volume_levelling_measures_and_evens_out_tracks(page, player):
     gains = page.evaluate("[...L.known.keys()].map(id => levelGain(id))")
     assert max(gains) / min(gains) > 5
     assert page.evaluate("L.master !== null && decks.every(d => d.volume === 1)")
-    # Measurements are remembered by the server for next time.
-    saved = json.loads((tmp / "home" / "loudness.json").read_text())
+    # Measurements are remembered by the server for next time (each is
+    # sent in the background, so the second may still be on its way).
+    deadline = time.monotonic() + 5
+    while True:
+        saved = json.loads((tmp / "home" / "loudness.json").read_text())
+        if len(saved["entries"]) >= 2 or time.monotonic() > deadline:
+            break
+        time.sleep(0.05)
     assert len(saved["entries"]) >= 2
 
 
