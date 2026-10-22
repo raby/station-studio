@@ -39,6 +39,7 @@ MAX_OFFSET = 5000  # how far "Show more" goes
 MAP_WORLD = 500  # stations on the whole globe
 MAP_COUNTRY = 300  # more, once it's zoomed into one country
 NEWS_TAGS = ("news", "talk")
+SPOKEN = {"news", "talk", "sport", "sports", "information", "politics"}  # not music
 # Not SVG: it can carry script.
 LOGO_TYPES = ("image/png", "image/jpeg", "image/gif", "image/webp", "image/x-icon", "image/vnd.microsoft.icon")
 ORDERS = {"votes": "votes", "popular": "clickcount", "name": "name"}
@@ -191,6 +192,11 @@ def _geo(raw: dict) -> dict:
     return {"lat": round(lat, 4), "lon": round(lon, 4)}
 
 
+def _spoken(raw: dict) -> bool:
+    """Whether a station's tags say it's mostly talking, not music."""
+    return any(w in SPOKEN for t in str(raw.get("tags") or "").lower().split(",") for w in t.split())
+
+
 def clean_somafm(raw: dict) -> dict | None:
     """A SomaFM channel as a station (its 128k MP3 stream); None when it
     has no MP3 stream or no usable id."""
@@ -329,25 +335,30 @@ class Directory:
         more = full and offset + limit <= MAX_OFFSET
         return {"stations": found, "next": offset + limit if more else None}
 
-    def map_stations(self, country: str = "", news: bool = False) -> list[dict]:
+    def map_stations(self, country: str = "", kind: str = "all", genre: str = "") -> list[dict]:
         """Stations the directory knows the position of, for the globe: the
-        best liked worldwide, or in one country; only news and talk with
-        `news`. Kept ten minutes, since the globe asks again as it turns."""
+        best liked worldwide, or in one country. `kind` "news" is news and
+        talk only; "music" leaves those out, or is one genre's. Kept ten
+        minutes, since the globe asks again as it turns."""
         country = _text(country, 2).upper()
         if country and not country.isalpha():
             country = ""
-        key = (country, bool(news))
+        kind = kind if kind in ("news", "music") else "all"
+        tags = genre_tags(genre) if kind == "music" else list(NEWS_TAGS) if kind == "news" else []
+        key = (country, kind, tuple(tags))
         with self._lock:
             got = self._maps.get(key)
             if got and time.monotonic() - got[0] < 600:
                 return copy.deepcopy(got[1])
         want = MAP_COUNTRY if country else MAP_WORLD
         raws = []
-        for tag in NEWS_TAGS if news else ("",):
+        for tag in tags or [""]:
             raws += self._api("/json/stations/search", {
                 "tag": tag, "countrycode": country, "has_geo_info": "true", "order": "votes",
-                "reverse": "true", "hidebroken": "true", "limit": str(want // 2 if news else want),
+                "reverse": "true", "hidebroken": "true", "limit": str(want // len(tags) if tags else want),
             })
+        if kind == "music" and not tags:
+            raws = [r for r in raws if isinstance(r, dict) and not _spoken(r)]
         found, seen = [], set()
         for st in sorted(filter(None, map(clean_station, raws)), key=lambda st: -st["votes"]):
             if "lat" not in st or st["url"] in seen:

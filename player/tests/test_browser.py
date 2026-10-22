@@ -1706,6 +1706,15 @@ def test_globe(page, player):
     page.get_by_role("button", name="News", exact=True).click()
     sync_api.expect(status).to_have_text("2 news and talk stations on the globe")
     assert any("tag=talk" in u for u in net.asked)
+    sync_api.expect(page.locator("#globe-genre")).to_be_hidden()
+    # Music: any (no talk), or one genre.
+    page.get_by_role("button", name="Music", exact=True).click()
+    sync_api.expect(status).to_have_text("3 music stations on the globe")
+    sync_api.expect(page.get_by_role("button", name="News", exact=True)).to_have_attribute("aria-pressed", "false")
+    page.locator("#globe-genre").select_option("jazz")
+    sync_api.expect(status).to_have_text("3 jazz stations on the globe")
+    assert "tag=jazz" in net.asked[-1]
+    assert page.evaluate("localStorage.getItem('sp.globe-genre')") == "jazz"
     # The list comes back, and searching shows it too.
     page.get_by_role("button", name="List", exact=True).click()
     sync_api.expect(page.locator("#finder-tags")).to_be_visible()

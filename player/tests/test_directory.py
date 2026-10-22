@@ -191,7 +191,7 @@ def test_server_endpoints(tmp_path):
         assert resp.status == 200 and json.loads(data)["stations"][0]["name"] == "A"
         resp, data = get("/api/directory/somafm")
         assert json.loads(data)["stations"][0]["name"] == "SomaFM Groove Salad"
-        resp, data = get("/api/directory/map?country=gb&news=1")
+        resp, data = get("/api/directory/map?country=gb&kind=news")
         assert resp.status == 200 and json.loads(data)["stations"] == []  # A has no position
         resp, data = get("/world.json")
         assert resp.status == 200 and resp.getheader("Content-Type") == "application/json"
@@ -318,10 +318,25 @@ def test_map_stations_keep_only_placed_ones_and_are_kept_a_while():
     d.map_stations()
     assert len(net.asked) == 1  # kept, not asked again
     # One country; news asks for news and talk, merged.
-    d.map_stations(country="jp", news=True)
+    d.map_stations(country="jp", kind="news")
     asked = net.asked[1:]
     assert len(asked) == 2 and all("countrycode=JP" in u for u in asked)
     assert "tag=news" in asked[0] and "tag=talk" in asked[1]
     assert d.map_stations(country="1'") == found  # nonsense country: the whole world, as kept
     assert len(net.asked) == 3
+
+
+def test_map_music_leaves_out_talk_or_finds_a_genre():
+    net = FakeNet({"one": lambda: api_answer([
+        raw("Jazz", "https://s/jazz", geo_lat=51.5, geo_long=-0.1, tags="jazz,smooth"),
+        raw("News", "https://s/news", geo_lat=51.5, geo_long=-0.1, tags="local news,culture"),
+        raw("Sport", "https://s/sport", geo_lat=51.5, geo_long=-0.1, tags="Sports"),
+    ])})
+    d = Directory(fetch=net, servers=["one"])
+    assert [st["name"] for st in d.map_stations(kind="music")] == ["Jazz"]
+    assert "tag=&" in net.asked[0] or "tag=" not in net.asked[0]
+    d.map_stations(kind="music", genre="techno / trance")
+    assert "tag=techno" in net.asked[1] and "tag=trance" in net.asked[2] and "limit=250" in net.asked[1]
+    d.map_stations(kind="nonsense")  # everything
+    assert len(net.asked) == 4
 

@@ -1483,7 +1483,7 @@ def make_handler(app: PlayerApp):
                         order=q.get("order", "votes"), offset=offset))
                 if path == "/api/directory/map":
                     return self._send_json({"stations": app.directory.map_stations(
-                        country=q.get("country", ""), news=q.get("news") == "1")})
+                        country=q.get("country", ""), kind=q.get("kind", ""), genre=q.get("genre", ""))})
                 if path == "/api/directory/somafm":
                     return self._send_json({"stations": app.directory.somafm()})
             except DirectoryError as exc:

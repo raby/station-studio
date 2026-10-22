@@ -674,7 +674,14 @@ svg.analogue.huge { width: min(62vh, 78vw); height: auto; }
 .finder-views .btn[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--text); }
 .globe-box { margin-top: 12px; }
 .globe-tools { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
-.globe-tools .help { flex: 1; margin: 0; }
+.globe-tools { flex-wrap: wrap; }
+.globe-tools .help { flex: 1; margin: 0; min-width: 160px; }
+.globe-kinds { display: flex; gap: 0; }
+.globe-kinds .chip { border-radius: 0; margin: 0; }
+.globe-kinds .chip:first-child { border-radius: 999px 0 0 999px; }
+.globe-kinds .chip:last-child { border-radius: 0 999px 999px 0; }
+.globe-kinds .chip + .chip { margin-left: -1px; }
+#globe-genre { width: auto; }
 .globe { display: block; width: 100%; aspect-ratio: 4 / 3; max-height: 70vh; border-radius: var(--radius);
   background: var(--panel); cursor: grab; touch-action: none; }
 .globe:active { cursor: grabbing; }

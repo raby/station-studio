@@ -1922,7 +1922,8 @@ function finderView(view, focus = false) {
 // the countries are Natural Earth's small-scale map (public domain),
 // bundled as world.json and drawn here, with no map service.
 
-const G = { world: null, loading: null, stations: new Map(), countries: new Set(), news: store("globe-news") === "1",
+const G = { world: null, loading: null, stations: new Map(), countries: new Set(),
+  kind: ["music", "news"].includes(store("globe-kind")) ? store("globe-kind") : "all", genre: store("globe-genre") || "",
   lon: 0, lat: 20, zoom: 1, spin: !matchMedia("(prefers-reduced-motion: reduce)").matches, picked: null, raf: 0, last: 0, pointers: new Map(), moved: 0,
   pinch: 0, settle: 0, error: "", busy: 0, token: 0 };
 const GLOBE_MAX_ZOOM = 24;
@@ -1989,7 +1990,7 @@ async function globeStations(country = "") {
   G.busy++;
   globeStatus();
   try {
-    const params = new URLSearchParams({ country, news: G.news ? "1" : "" });
+    const params = new URLSearchParams({ country, kind: G.kind, genre: G.kind === "music" ? G.genre : "" });
     const res = await api(`/api/directory/map?${params}`, undefined, { quiet: true });
     if (token !== G.token) return;
     for (const st of res.stations || []) if (!G.stations.has(st.url)) G.stations.set(st.url, st);
@@ -1998,23 +1999,27 @@ async function globeStations(country = "") {
   } catch (err) {
     if (token === G.token) G.error = err.message;
   } finally {
-    if (token === G.token) G.busy--;  // a News switch started counting again
+    if (token === G.token) G.busy--;  // a switch to Music or News started counting again
   }
   if (token !== G.token) return;
   globeDraw();
   globeList();
 }
 
-function globeSetNews(on) {
-  G.news = on;
-  store("globe-news", on ? "1" : "0");
+// All stations, music only (any, or one genre), or news and talk.
+function globeShow(kind, genre = G.genre) {
+  G.kind = kind;
+  G.genre = genre;
+  store("globe-kind", kind);
+  store("globe-genre", genre);
   G.token++;
   G.stations.clear();
   G.countries.clear();
   G.picked = null;
   G.busy = 0;
-  const btn = $("#globe-news");
-  if (btn) btn.setAttribute("aria-pressed", String(on));
+  for (const b of document.querySelectorAll(".globe-kinds [data-kind]")) b.setAttribute("aria-pressed", String(b.dataset.kind === kind));
+  const pick = $("#globe-genre");
+  if (pick) pick.hidden = kind !== "music";
   globeStations();
   globeSettled();
 }
@@ -2197,7 +2202,8 @@ function globeStatus() {
   const line = $("#globe-status");
   if (!line) return;
   const n = G.stations.size;
-  const what = G.news ? "news and talk station" : "station";
+  const what = G.kind === "news" ? "news and talk station"
+    : G.kind === "music" ? `${G.genre || "music"} station` : "station";
   line.textContent = G.error || (G.busy && !n ? "Finding stations…"
     : `${plural(n, what)} on the globe${G.busy ? ", finding more…" : ""}`);
   line.classList.toggle("errors", Boolean(G.error));
@@ -2328,10 +2334,17 @@ function globeSection() {
   });
   return el("div", { class: "globe-box" },
     el("div", { class: "globe-tools" },
-      el("button", {
-        type: "button", class: "chip", id: "globe-news", "aria-pressed": String(G.news),
-        title: "Show only news and talk stations", onclick: () => globeSetNews(!G.news),
-      }, "News"),
+      el("div", { class: "globe-kinds", role: "group", "aria-label": "Show" },
+        ...[["all", "All"], ["music", "Music"], ["news", "News"]].map(([kind, label]) => el("button", {
+          type: "button", class: "chip", "data-kind": kind, "aria-pressed": String(G.kind === kind),
+          title: { all: "Every station", music: "Music stations, leaving out news and talk", news: "Only news and talk stations" }[kind],
+          onclick: () => { if (G.kind !== kind) globeShow(kind); },
+        }, label))),
+      el("select", {
+        id: "globe-genre", "aria-label": "Music genre", hidden: G.kind !== "music",
+        onchange: (e) => globeShow("music", e.target.value),
+      }, el("option", { value: "" }, "Any music"),
+      ...FIND_GENRES.filter((g) => g !== "news" && g !== "talk").map((g) => el("option", { value: g, selected: g === G.genre }, g))),
       el("p", { class: "help", id: "globe-status", role: "status" }),
       el("button", { type: "button", class: "btn ghost icon-only", "aria-label": "Zoom out", onclick: () => { globeStop(); globeZoom(1 / 1.6); } }, icon("minus")),
       el("button", { type: "button", class: "btn ghost icon-only", "aria-label": "Zoom in", onclick: () => { globeStop(); globeZoom(1.6); } }, icon("plus"))),

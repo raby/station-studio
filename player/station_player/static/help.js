@@ -39,7 +39,7 @@ const HELP = [
   ]],
   ["globe", "The globe", [
     ["Under Find stations, ", ["Globe"], " shows stations as dots on a world globe. Drag to turn it, scroll or pinch to zoom, and tap a dot to listen. The stations nearest the middle are listed underneath, with ", ["Add"], " to keep one."],
-    "Zoom in on a country and it finds more stations there. News shows only news and talk stations, so you can hop from London to Tokyo for the headlines.",
+    ["Zoom in on a country and it finds more stations there. ", ["Music"], " leaves out news and talk, and can show just one genre, like techno or Afrobeats around the world. ", ["News"], " shows only news and talk stations, so you can hop from London to Tokyo for the headlines."],
     "With the globe selected, the arrow keys turn it, plus and minus zoom, and Enter plays the station in the middle.",
   ]],
   ["ambient", "Ambient mode", [
