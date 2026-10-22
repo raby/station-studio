@@ -36,6 +36,10 @@ TIMEOUT = 8
 MAX_RESULTS = 60
 MAX_LOGO_BYTES = 256 * 1024
 MAX_OFFSET = 5000  # how far "Show more" goes
+MAP_WORLD = 500  # stations on the whole globe
+MAP_COUNTRY = 300  # more, once it's zoomed into one country
+NEWS_TAGS = ("news", "talk")
+SPOKEN = {"news", "talk", "sport", "sports", "information", "politics"}  # not music
 # Not SVG: it can carry script.
 LOGO_TYPES = ("image/png", "image/jpeg", "image/gif", "image/webp", "image/x-icon", "image/vnd.microsoft.icon")
 ORDERS = {"votes": "votes", "popular": "clickcount", "name": "name"}
@@ -161,6 +165,7 @@ def clean_station(raw: dict) -> dict | None:
     except (TypeError, ValueError):
         votes = 0
     return {
+        **_geo(raw),
         "uuid": _text(raw.get("stationuuid"), 64),
         "name": name,
         "url": url,
@@ -174,6 +179,22 @@ def clean_station(raw: dict) -> dict | None:
         "votes": votes,
         "hls": bool(raw.get("hls")),
     }
+
+
+def _geo(raw: dict) -> dict:
+    """{"lat", "lon"} where the directory knows where a station is, else {}."""
+    try:
+        lat, lon = float(raw.get("geo_lat")), float(raw.get("geo_long"))
+    except (TypeError, ValueError):
+        return {}
+    if not (-90 <= lat <= 90 and -180 <= lon <= 180) or (lat == 0 and lon == 0):
+        return {}  # 0, 0 is in the sea: a missing position written as zero
+    return {"lat": round(lat, 4), "lon": round(lon, 4)}
+
+
+def _spoken(raw: dict) -> bool:
+    """Whether a station's tags say it's mostly talking, not music."""
+    return any(w in SPOKEN for t in str(raw.get("tags") or "").lower().split(",") for w in t.split())
 
 
 def clean_somafm(raw: dict) -> dict | None:
@@ -218,6 +239,7 @@ class Directory:
         self._logo_cache: OrderedDict[str, tuple[bytes, str]] = OrderedDict()
         self._soma: tuple[float, list[dict]] | None = None  # (when, channels)
         self._streams: OrderedDict[str, None] = OrderedDict()  # stream addresses it handed out
+        self._maps: OrderedDict[tuple, tuple[float, list[dict]]] = OrderedDict()  # globe dots, kept a while
 
     def _api(self, path: str, params: dict) -> list:
         query = urlencode({k: v for k, v in params.items() if v not in (None, "")})
@@ -312,6 +334,43 @@ class Directory:
         self._remember(found)
         more = full and offset + limit <= MAX_OFFSET
         return {"stations": found, "next": offset + limit if more else None}
+
+    def map_stations(self, country: str = "", kind: str = "all", genre: str = "") -> list[dict]:
+        """Stations the directory knows the position of, for the globe: the
+        best liked worldwide, or in one country. `kind` "news" is news and
+        talk only; "music" leaves those out, or is one genre's. Kept ten
+        minutes, since the globe asks again as it turns."""
+        country = _text(country, 2).upper()
+        if country and not country.isalpha():
+            country = ""
+        kind = kind if kind in ("news", "music") else "all"
+        tags = genre_tags(genre) if kind == "music" else list(NEWS_TAGS) if kind == "news" else []
+        key = (country, kind, tuple(tags))
+        with self._lock:
+            got = self._maps.get(key)
+            if got and time.monotonic() - got[0] < 600:
+                return copy.deepcopy(got[1])
+        want = MAP_COUNTRY if country else MAP_WORLD
+        raws = []
+        for tag in tags or [""]:
+            raws += self._api("/json/stations/search", {
+                "tag": tag, "countrycode": country, "has_geo_info": "true", "order": "votes",
+                "reverse": "true", "hidebroken": "true", "limit": str(want // len(tags) if tags else want),
+            })
+        if kind == "music" and not tags:
+            raws = [r for r in raws if isinstance(r, dict) and not _spoken(r)]
+        found, seen = [], set()
+        for st in sorted(filter(None, map(clean_station, raws)), key=lambda st: -st["votes"]):
+            if "lat" not in st or st["url"] in seen:
+                continue
+            seen.add(st["url"])
+            found.append(st)
+        self._remember(found)
+        with self._lock:
+            self._maps[key] = (time.monotonic(), found)
+            while len(self._maps) > 40:
+                self._maps.popitem(last=False)
+        return copy.deepcopy(found)
 
     def find_logo(self, stream_url: str) -> tuple[bytes, str] | None:
         """The logo Radio Browser has for a stream address, if any."""

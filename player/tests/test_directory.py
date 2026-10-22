@@ -191,6 +191,11 @@ def test_server_endpoints(tmp_path):
         assert resp.status == 200 and json.loads(data)["stations"][0]["name"] == "A"
         resp, data = get("/api/directory/somafm")
         assert json.loads(data)["stations"][0]["name"] == "SomaFM Groove Salad"
+        resp, data = get("/api/directory/map?country=gb&kind=news")
+        assert resp.status == 200 and json.loads(data)["stations"] == []  # A has no position
+        resp, data = get("/world.json")
+        assert resp.status == 200 and resp.getheader("Content-Type") == "application/json"
+        assert len(json.loads(data)["countries"]) > 150
         resp, data = get("/api/directory/logo?u=" + "https%3A%2F%2Fimg.example%2Fa.png")
         assert resp.status == 200 and data == png and resp.getheader("Content-Type") == "image/png"
         resp, _ = get("/api/directory/logo?u=http%3A%2F%2F127.0.0.1%2F")
@@ -292,3 +297,46 @@ def test_search_for_either_of_two_tags_merges_them_by_votes():
     assert page["next"] == 2  # a tag filled its page, so there may be more
     assert sorted(parse_qs(urlparse(u).query)["tag"][0] for u in net.asked) == ["techno", "trance"]
     assert d.search_page(tag="techno / trance", limit=2, offset=2)["next"] is None
+
+
+def test_map_stations_keep_only_placed_ones_and_are_kept_a_while():
+    def answer():
+        return api_answer([
+            raw("London", "https://s/ldn", geo_lat=51.5, geo_long=-0.12, votes=5),
+            raw("Nowhere", "https://s/none", geo_lat=None, geo_long=None, votes=99),
+            raw("Zero", "https://s/zero", geo_lat=0, geo_long=0, votes=50),
+            raw("Off the map", "https://s/off", geo_lat=95, geo_long=10, votes=50),
+            raw("Tokyo", "https://s/tky", geo_lat="35.68", geo_long=139.7, votes=40),
+        ])
+    net = FakeNet({"one": answer})
+    d = Directory(fetch=net, servers=["one"])
+    found = d.map_stations()
+    assert [st["name"] for st in found] == ["Tokyo", "London"]  # best liked first
+    assert found[1]["lat"] == 51.5 and found[1]["lon"] == -0.12
+    assert "has_geo_info=true" in net.asked[0] and "countrycode" not in net.asked[0]
+    assert d.listed("https://s/tky")  # may be previewed through the player
+    d.map_stations()
+    assert len(net.asked) == 1  # kept, not asked again
+    # One country; news asks for news and talk, merged.
+    d.map_stations(country="jp", kind="news")
+    asked = net.asked[1:]
+    assert len(asked) == 2 and all("countrycode=JP" in u for u in asked)
+    assert "tag=news" in asked[0] and "tag=talk" in asked[1]
+    assert d.map_stations(country="1'") == found  # nonsense country: the whole world, as kept
+    assert len(net.asked) == 3
+
+
+def test_map_music_leaves_out_talk_or_finds_a_genre():
+    net = FakeNet({"one": lambda: api_answer([
+        raw("Jazz", "https://s/jazz", geo_lat=51.5, geo_long=-0.1, tags="jazz,smooth"),
+        raw("News", "https://s/news", geo_lat=51.5, geo_long=-0.1, tags="local news,culture"),
+        raw("Sport", "https://s/sport", geo_lat=51.5, geo_long=-0.1, tags="Sports"),
+    ])})
+    d = Directory(fetch=net, servers=["one"])
+    assert [st["name"] for st in d.map_stations(kind="music")] == ["Jazz"]
+    assert "tag=&" in net.asked[0] or "tag=" not in net.asked[0]
+    d.map_stations(kind="music", genre="techno / trance")
+    assert "tag=techno" in net.asked[1] and "tag=trance" in net.asked[2] and "limit=250" in net.asked[1]
+    d.map_stations(kind="nonsense")  # everything
+    assert len(net.asked) == 4
+

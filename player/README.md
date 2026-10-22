@@ -261,6 +261,17 @@ Results update as you type (or press Search), and **Show more** adds
 the next 40 below. Streams likely to sound thin are marked **Low
 quality**: MP3 under 64 kbps, AAC or Opus under 48 kbps.
 
+**Globe** shows stations on a world globe instead of a list: drag to
+turn it, scroll or pinch to zoom, and tap a dot to listen. It starts
+with the 500 best-liked stations whose position the directory knows;
+zoom in on a country and it adds up to 300 more there. **Music**
+leaves out news, talk and sport, and can narrow to one genre (the same
+ones as the genre buttons). **News** shows only news and talk stations. The stations nearest the middle are listed
+under the globe, with Listen and Add. Arrow keys turn it, + and − zoom,
+and Enter plays the station in the middle. The country outlines are
+[Natural Earth](https://www.naturalearthdata.com)'s public-domain
+1:110m map, bundled with the player, so the globe needs no map service.
+
 **Tags**: Edit a station to give it your own tags, like *jazz* or
 *Sunday morning*, with commas between them (tags you've used before are
 one click away). The tags you've used show as buttons above your
