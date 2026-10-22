@@ -307,6 +307,17 @@ clock face) with today's date and the next alarm.
 Station Player has to be running at alarm time (turn on *Start at
 login*) and the computer awake; if no player window is open, one opens.
 
+**The tuner** across the top of the Radio page is an old radio's dial
+with your stations along it: click a name, or drag the needle and let
+go near a station (with a hiss of static on the way); Left and Right
+tune to the next one. A line beside the song title moves with the
+sound.
+
+**Ambient** in the sidebar fills the screen with a calm scene and its
+own sound, made as it plays: a fish tank, waves on a shore, or birds at
+dawn. It plays alone or under the music, with its own volume, and the
+sleep timer fades it out too.
+
 **Schedule** on the Radio page switches station at set times, once or
 every week: the news at 17:00, then back to your station at 17:10. A
 switch only changes what's already playing, and never starts the player

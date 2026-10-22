@@ -38,6 +38,7 @@
         <h2>Clock</h2>
         <ul class="nav-list">
           <li><button type="button" class="nav-item" data-view="clock"><span data-icon="clock"></span><span>Clock &amp; alarms</span><span class="count" id="nav-next-alarm"></span></button></li>
+          <li><button type="button" class="nav-item" id="btn-ambient"><span data-icon="waves"></span><span>Ambient</span></button></li>
         </ul>
         <div id="rec-status" class="rec-status" hidden></div>
         <h2>Setup</h2>
@@ -63,6 +64,7 @@
           <div class="now-title" id="now-title">Nothing playing</div>
           <div class="now-sub" id="now-sub"></div>
         </div>
+        <canvas id="wave" class="wave" aria-hidden="true" hidden></canvas>
       </div>
       <div class="controls">
         <div class="buttons">
@@ -97,6 +99,7 @@
   <div id="announce" class="sr-only" aria-live="polite"></div>
   <div id="alarm-screen" class="alarm-screen" role="alertdialog" aria-modal="true" aria-labelledby="alarm-screen-title" hidden></div>
   <div id="night" class="night" tabindex="-1" hidden></div>
+  <div id="ambient" class="ambient" role="dialog" aria-modal="true" aria-label="Ambient" hidden></div>
   <div id="toasts" class="toasts" aria-hidden="true"></div>
   <script src="/help.js"></script>
   <script src="/app.js"></script>
