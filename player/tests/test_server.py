@@ -796,3 +796,36 @@ def test_car_link_carries_the_stations(tmp_path):
     assert page == "https://raby.github.io/station-studio/car/"
     data = json.loads(zlib.decompress(base64.urlsafe_b64decode(packed + "=" * (-len(packed) % 4)), -15))
     assert data == {"v": 1, "s": [["Café FM", "https://x.example/live", ["jazz"]], ["Plain", "http://y.example/"]]}
+
+
+def test_studio_tools_are_on_for_people_who_make_a_station(tmp_path, monkeypatch):
+    from station_player.server import PlayerApp, station_id
+
+    # A new install on a computer without station-studio: the plain player.
+    store = ConfigStore(tmp_path / "plain")
+    assert store.config.studio is False and store.config.playlist_sources == []
+    # With station-studio's exports there: studio tools, and its playlists.
+    exports = tmp_path / "studio-home" / "exports"
+    exports.mkdir(parents=True)
+    store = ConfigStore(tmp_path / "maker")
+    assert store.config.studio is True and store.config.playlist_sources == [str(exports.resolve())]
+    # Settings from before the switch existed keep everything.
+    old = tmp_path / "old"
+    old.mkdir()
+    (old / "config.json").write_text(json.dumps({"music_folders": ["/m"]}))
+    assert ConfigStore(old).config.studio is True
+    # Off: no recording and no play log, and it's remembered.
+    app = PlayerApp(ConfigStore(old), scan=False)
+    stopped = []
+    monkeypatch.setattr(app.recorder, "stop_all", lambda: stopped.append(True))
+    app.set_studio(False)
+    assert stopped and json.loads((old / "config.json").read_text())["studio"] is False
+    assert ConfigStore(old).config.studio is False
+    app.store.config.stations = [{"name": "S", "url": "https://s"}]
+    with pytest.raises(ValueError, match="studio tools"):
+        app.record(station_id("https://s"), True)
+    added = []
+    monkeypatch.setattr(app.play_log, "add", lambda *a: added.append(a))
+    app.library.tracks["t1"] = type("T", (), {"name": "N", "artist": "", "album": "", "duration_ms": 1, "path": None})()
+    app.played("t1", 1.7e12, 60)
+    assert added == []

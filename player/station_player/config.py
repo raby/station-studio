@@ -78,6 +78,11 @@ class Config:
     # "time": "HH:MM", "days": [0-6, Monday = 0],
     # "source": {"kind": "playlist" | "station", "id", "name"}, "label"}]
     alarms: list[dict] = field(default_factory=list)
+    # studio tools, for people who make a station: station-studio's
+    # exported playlists, recording radio and the play log. Off, it's the
+    # plain radio and music player. New installs start with them only if
+    # station-studio is on this computer; older settings keep them.
+    studio: bool = True
     # control the player from a phone on the same network (see remote.py)
     remote: bool = False
     remote_token: str = ""
@@ -272,7 +277,7 @@ def config_from_json(data: dict) -> Config:
     cfg.recent_stations = _stations(data.get("recent_stations"))[:MAX_RECENT]
     if isinstance(data.get("check_updates"), bool):
         cfg.check_updates = data["check_updates"]
-    for key in ("own_window", "play_log", "remote"):
+    for key in ("own_window", "play_log", "remote", "studio"):
         if isinstance(data.get(key), bool):
             setattr(cfg, key, data[key])
     cfg.alarms = _alarms_from_json(data)
@@ -303,7 +308,8 @@ class ConfigStore:
         if not self.path.is_file():
             cfg = Config()
             exports = station_studio_exports()
-            if exports.is_dir():
+            cfg.studio = exports.is_dir()
+            if cfg.studio:
                 cfg.playlist_sources.append(str(exports.resolve()))
             return cfg
         try:

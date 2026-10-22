@@ -84,6 +84,10 @@ const HELP = [
   ["log", "Play log for PRS and PPL", [
     ["Station Player notes every track it plays. ", ["Download play log"], " in Settings saves the plays between two dates as a spreadsheet, ready for a PRS for Music or PPL return. Radio isn't included, nor tracks skipped within 30 seconds."],
   ]],
+  ["studio", "Studio tools", [
+    ["For people who make a radio station, ", ["Settings › App"], " has ", ["Show the studio tools"], ": playlists exported from station-studio or iTunes, recording radio, the Recordings page and the play log. With them off, Station Player is a simple radio and music player; turning them off keeps your recordings and playlists."],
+    "A new install starts with them on only when station-studio is on the same computer.",
+  ]],
   ["install", "Installing it on another computer", [
     ["On a Mac: download ", ["Station Player for Mac"], " from the download page, open it and drag Station Player into Applications. The first time you open it, macOS says it can't check it for malicious software, because it comes from a person rather than the App Store: open ", ["System Settings › Privacy & Security"], ", scroll down and press ", ["Open Anyway"], ". You only do this once."],
     ["On Windows: download ", ["Station Player for Windows"], " and run it. If Windows says it protected your PC, press ", ["More info"], " then ", ["Run anyway"], ". It installs for you alone, with no administrator password, and puts Station Player in the Start menu."],
@@ -111,12 +115,13 @@ function helpView() {
     target.scrollIntoView({ block: "start" });
     target.querySelector("h2").focus();
   };
+  const shown = HELP.filter(([id]) => studio() || !STUDIO_HELP.includes(id));
   return el("div", { class: "help-page" },
     el("div", { class: "view-head" }, el("h1", {}, "Help")),
     el("p", { class: "help-intro" }, "Everything Station Player does, in a few lines each. Click a topic to jump to it."),
     el("nav", { class: "help-toc", "aria-label": "Help topics" },
-      HELP.map(([id, title]) => el("button", { type: "button", class: "chip", onclick: () => jump(id) }, title))),
-    HELP.map(([id, title, parts, go]) => el("section", { class: "help-section", id: `help-${id}` },
+      shown.map(([id, title]) => el("button", { type: "button", class: "chip", onclick: () => jump(id) }, title))),
+    shown.map(([id, title, parts, go]) => el("section", { class: "help-section", id: `help-${id}` },
       el("h2", { tabindex: "-1" }, title),
       parts.map((p) => el("p", {}, ...helpText(p))),
       go && go.href ? el("a", { class: "btn", href: go.href, target: "_blank", rel: "noopener" }, go.label)

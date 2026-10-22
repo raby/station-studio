@@ -129,6 +129,23 @@ station-player ~/Music/Albums ~/exports/week-012.xml   # add sources on launch
 station-player --port 9000 --no-browser
 ```
 
+## Plain player or studio tools
+
+Station Player is one app with two faces. For listeners it's a simple
+radio and music player: stations, Find stations and the globe, your own
+music folders and playlists, alarms, schedules, the sleep timer,
+ambient mode, the car page and the phone remote. **Studio tools**, for
+people who make a station, add playlists exported from station-studio
+or iTunes, recording radio, the Recordings page and the play log for
+PRS / PPL returns; a **Studio** badge beside the name shows they're on.
+
+Turn them on or off in **Settings › App › Show the studio tools**.
+Turning them off hides those features (stopping any recording); your
+recordings, playlists and play log are kept. A new install starts with
+them on only when station-studio is on the same computer (it finds
+station-studio's exports folder); settings from before 0.15 keep them
+on.
+
 ## Setting it up
 
 The first time it opens with nothing set up, Station Player shows a
