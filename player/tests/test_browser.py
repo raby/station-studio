@@ -188,6 +188,88 @@ def test_resume_a_radio_station(page):
     assert page.evaluate("radioEl.paused")
 
 
+@pytest.fixture
+def tone_station(tmp_path):
+    """A "station" on this computer: a tone the player's relay can play."""
+    import functools
+    from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+
+    tone(tmp_path / "streams" / "tone.wav", 20.0, 0.4)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), functools.partial(SimpleHTTPRequestHandler, directory=str(tmp_path / "streams")))
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{server.server_address[1]}/tone.wav"
+    server.shutdown()
+    server.server_close()
+
+
+def test_tuner_tunes_between_stations_and_the_wave_moves(page, player, tone_station):
+    app = player[0]
+    app.store.config.stations = [{"name": n, "url": f"{tone_station}?{i}"} for i, n in enumerate(["One FM", "Two FM", "Three FM"])]
+    page.evaluate("loadState()")
+    page.locator(".nav-item[data-view=radio]").click()
+    tuner = page.locator("#tuner")
+    sync_api.expect(tuner).to_have_attribute("aria-valuetext", "Not tuned")
+    sync_api.expect(page.locator("#tuner-needle")).to_be_hidden()
+    page.locator(".tuner-name", has_text="Two FM").click()
+    page.wait_for_function("() => S.mode === 'radio' && !audio.paused && audio === radioRelay", timeout=10000)
+    sync_api.expect(tuner).to_have_attribute("aria-valuetext", "Two FM")
+    sync_api.expect(page.locator(".tuner-name.on")).to_have_text("Two FM")
+    # The wave listens to the relay and moves with the sound.
+    sync_api.expect(page.locator("#wave")).to_be_visible()
+    page.wait_for_function("() => { const an = waveSource(); if (!an) return false; an.getFloatTimeDomainData(WAVE.buf);"
+                           " return WAVE.buf.some((v) => Math.abs(v) > 0.05); }", timeout=10000)
+    # Keys tune to the next station along.
+    tuner.focus()
+    page.keyboard.press("ArrowRight")
+    page.wait_for_function("() => S.station.name === 'Three FM'")
+    sync_api.expect(tuner).to_have_attribute("aria-valuetext", "Three FM")
+    page.keyboard.press("Home")
+    page.wait_for_function("() => S.station.name === 'One FM'")
+    # Dragging the needle hisses between stations, and lets go on the nearest.
+    box = tuner.bounding_box()
+    page.mouse.move(box["x"] + box["width"] * 0.2, box["y"] + box["height"] / 2)
+    page.mouse.down()
+    page.mouse.move(box["x"] + box["width"] * 0.5, box["y"] + box["height"] / 2, steps=5)
+    page.mouse.move(box["x"] + box["width"] * 0.62, box["y"] + box["height"] / 2, steps=5)
+    assert page.evaluate("TUNE.noise !== null")
+    page.mouse.up()
+    page.wait_for_function("() => S.station.name === 'Two FM' && TUNE.noise === null")
+    # Paused, the wave lies flat.
+    page.evaluate("pauseAll()")
+    page.wait_for_function("() => waveSource() === null")
+
+
+def test_ambient_mode(page):
+    page.locator("#btn-ambient").click()
+    box = page.locator("#ambient")
+    sync_api.expect(box).to_be_visible()
+    for key in ["fish", "waves", "birds"]:
+        page.locator(f'#ambient .seg[data-scene="{key}"]').click()
+        sync_api.expect(page.locator(f'#ambient .seg[data-scene="{key}"]')).to_have_attribute("aria-pressed", "true")
+        page.wait_for_function("() => AMB.sound && AMB.ctx.state === 'running'")
+    assert page.evaluate("store('ambient-scene')") == "birds"
+    # Its volume, and the sleep timer's fade, set the level.
+    page.locator("#ambient input[type=range]").fill("0.2")
+    assert page.evaluate("AMB.volume") == 0.2
+    page.evaluate("volMul.sleep = 0.5; applyVolume()")
+    page.wait_for_function("() => Math.abs(AMB.out.gain.value - 0.05) < 0.01")
+    page.evaluate("volMul.sleep = 1; applyVolume()")
+    # The controls fade after a few still seconds, and come back on a move.
+    page.wait_for_function("() => $('#ambient').classList.contains('still')", timeout=6000)
+    page.mouse.move(200, 200)
+    sync_api.expect(box).not_to_have_class(re.compile("still"))
+    page.keyboard.press("Escape")
+    sync_api.expect(box).to_be_hidden()
+    assert page.evaluate("AMB.sound") is None
+    sync_api.expect(page.locator("#btn-ambient")).to_be_focused()
+    # Opened again it starts the last scene; the sleep timer's end stops its sound.
+    page.locator("#btn-ambient").click()
+    sync_api.expect(page.locator('#ambient .seg[aria-pressed="true"]')).to_have_text("Birds")
+    page.evaluate("setSleep(0.001)")
+    page.wait_for_function("() => AMB.sound === null", timeout=5000)
+    page.locator("#btn-ambient-close").click()
+
+
 def test_library_search(page):
     box = page.locator("#lib-search")
     page.keyboard.press("/")

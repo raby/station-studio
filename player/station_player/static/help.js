@@ -33,6 +33,15 @@ const HELP = [
     ["The pencil on a station renames it, changes its link, gives it a logo, moves it up or down, or removes it."],
     "Recently played lists the last few stations you listened to, so one you tried is easy to find again.",
   ], { label: "Go to Stations", view: { type: "radio" } }],
+  ["tuner", "The tuner", [
+    "The dial at the top of the Stations page is an old radio's tuner, with your stations along it. Click a name, or drag the needle along the dial and let go near a station; you'll hear static on the way.",
+    "With the tuner selected, Left and Right tune to the station before or after. The line moving beside the song title at the bottom follows the sound.",
+  ]],
+  ["ambient", "Ambient mode", [
+    ["Ambient in the sidebar fills the screen with a calm scene and its sound: a ", ["Fish tank"], ", ", ["Waves"], " on a shore, or ", ["Birds"], " at dawn."],
+    "It plays on its own or quietly under the radio, with its own volume. Set the sleep timer and it fades out with everything else.",
+    "Press Escape or Close to leave. The controls hide after a few seconds; move the mouse to bring them back.",
+  ]],
   ["schedule", "Switching station at set times", [
     ["Under ", ["Schedule"], " on the Stations page, ", ["Add a switch"], " changes to a station or playlist at a time you choose, every week on the days you pick or ", ["Once"], " on a date."],
     "For the news at five and then back to your station, add two: 17:00 to the news station, and 17:10 back to yours.",

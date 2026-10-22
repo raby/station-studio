@@ -44,6 +44,7 @@ const ICONS = {
   record: ["*c 12 12 6"],
   stop: ["*r 6 6 12 12 2"],
   moon: ["M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"],
+  waves: ["M2 8c2.5-2 4.5-2 7 0s4.5 2 7 0 4.5-2 6 0", "M2 13c2.5-2 4.5-2 7 0s4.5 2 7 0 4.5-2 6 0", "M2 18c2.5-2 4.5-2 7 0s4.5 2 7 0 4.5-2 6 0"],
   alert: ["M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z", "M12 9v4", "M12 17h.01"],
   edit: ["M12 20h9", "M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"],
   up: ["M12 19V5", "M5 12l7-7 7 7"],
@@ -188,12 +189,17 @@ function readJSON(key) {
 
 // Two players for library tracks: while one plays, the other loads the
 // next track, and starts the moment the first finishes (gapless). Radio
-// has its own player, never routed through volume levelling (a station
-// played directly from another site would be silenced by it).
+// has two of its own, never routed through volume levelling: one for the
+// player's relay, which the sound wave listens to, and one for a station
+// played straight from its own site (routed through the audio graph,
+// another site's sound would be silenced).
 const decks = [new Audio(), new Audio()];
 for (const d of decks) d.preload = "auto";
-const radioEl = new Audio();
-radioEl.preload = "none";
+const radioRelay = new Audio();
+const radioDirect = new Audio();
+const radios = [radioRelay, radioDirect];
+for (const r of radios) r.preload = "none";
+let radioEl = radioRelay;  // the radio player in use
 let deckIdx = 0;
 let audio = decks[0];  // the element playing (or paused) right now
 const otherDeck = () => decks[1 - deckIdx];
@@ -1343,6 +1349,7 @@ function radioView() {
 
   queueMicrotask(syncRadioCards);
   queueMicrotask(syncRecordings);
+  const visible = stations.filter((st) => !stationTag || (st.tags || []).includes(stationTag));
   return el("div", {},
     el("div", { class: "view-head" }, el("h1", {}, "Radio"), el("div", { class: "spacer" }),
       stations.some((x) => !x.logo) ? el("button", {
@@ -1351,6 +1358,7 @@ function radioView() {
       }, ...iconLabel("search", "Find logos")) : null),
     counts.size ? el("div", { class: "tag-filter", id: "station-tags", role: "group", "aria-label": "Show stations tagged" },
       chip("All", ""), ...[...counts.keys()].sort((a, b) => a.localeCompare(b)).map((t) => chip(`${t} (${counts.get(t)})`, t))) : null,
+    visible.length > 1 ? tuner(visible) : null,
     cards.length ? el("div", { class: "cards" }, cards) : el("div", { class: "empty-state" },
       el("div", { class: "glyph big" }, icon("radio")),
       el("h2", {}, "No stations yet"),
@@ -1484,7 +1492,139 @@ async function notePlayed(st) {
 
 // Reflect play state on the station cards without rebuilding the view,
 // so text typed into "Add a station" survives play/pause/stall events.
+// ---------- the tuner ----------------------------------------------------------
+// An old radio's dial across the top of the Radio page: your stations
+// sit along it, and dragging the needle tunes between them, with a hiss
+// of static on the way. Left and Right (or a click) tune too.
+const TUNE = { stations: [], drag: false, noise: null };
+const TUNER_MARKS = [88, 90, 92, 94, 96, 98, 100, 102, 104, 106, 108];
+
+function tuner(stations) {
+  TUNE.stations = stations;
+  const n = stations.length;
+  // Placed through .style: the page's security policy blocks style="".
+  const place = (node, left, maxWidth) => {
+    node.style.left = `${left}%`;
+    if (maxWidth) node.style.maxWidth = `${maxWidth}%`;
+    return node;
+  };
+  const scale = el("div", { class: "tuner-scale" },
+    ...TUNER_MARKS.map((mhz, i) => place(el("span", { class: "tuner-mark" }, String(mhz)), (i / (TUNER_MARKS.length - 1)) * 100)));
+  // Names take turns above and below the scale, so neighbours don't touch.
+  const names = el("div", { class: "tuner-names" },
+    ...stations.map((st, i) => place(el("button", {
+      type: "button", class: i % 2 ? "tuner-name low" : "tuner-name", tabindex: -1, "data-url": st.url, title: st.name,
+      onclick: () => tuneTo(i),
+    }, st.name), ((i + 0.5) / n) * 100, Math.min(40, 190 / n))));
+  const dial = el("div", {
+    class: "tuner-dial", id: "tuner", role: "slider", tabindex: 0, "aria-label": "Tuner",
+    "aria-valuemin": 1, "aria-valuemax": n,
+    onkeydown: (e) => {
+      const i = tunedIndex();
+      const to = { ArrowLeft: i - 1, ArrowDown: i - 1, ArrowRight: i + 1, ArrowUp: i + 1, Home: 0, End: n - 1 }[e.key];
+      if (to === undefined) return;
+      e.preventDefault();
+      tuneTo(Math.max(0, Math.min(n - 1, i < 0 && to < 0 ? 0 : to)));
+    },
+    onpointerdown: (e) => {
+      if (e.button !== 0 || e.target.closest(".tuner-name")) return;
+      e.currentTarget.setPointerCapture(e.pointerId);
+      TUNE.drag = true;
+      dial.classList.add("tuning");
+      dragTo(e);
+    },
+    onpointermove: (e) => { if (TUNE.drag) dragTo(e); },
+    onpointerup: (e) => endDrag(e, true),
+    onpointercancel: (e) => endDrag(e, false),
+  }, scale, el("div", { class: "tuner-needle", id: "tuner-needle" }), names);
+  queueMicrotask(syncTuner);
+  return el("div", { class: "tuner" }, dial);
+}
+
+const tunedIndex = () => TUNE.stations.findIndex((st) => S.mode === "radio" && S.station && st.url === S.station.url);
+
+// Where on the dial (0 to 1) the pointer is, and the nearest station.
+function dialSpot(e) {
+  const box = $("#tuner").getBoundingClientRect();
+  const x = Math.max(0, Math.min(1, (e.clientX - box.left) / box.width));
+  const n = TUNE.stations.length;
+  const i = Math.max(0, Math.min(n - 1, Math.floor(x * n)));
+  return { x, i, off: Math.abs(x * n - (i + 0.5)) * 2 };  // off: 0 on a station, 1 halfway to the next
+}
+
+function dragTo(e) {
+  const { x, i, off } = dialSpot(e);
+  $("#tuner-needle").style.left = `${x * 100}%`;
+  for (const b of document.querySelectorAll(".tuner-name")) b.classList.toggle("near", b.dataset.url === TUNE.stations[i].url);
+  staticHiss(off);
+}
+
+function endDrag(e, tune) {
+  if (!TUNE.drag) return;
+  TUNE.drag = false;
+  $("#tuner")?.classList.remove("tuning");
+  staticHiss(0);
+  if (tune) tuneTo(dialSpot(e).i);
+  else syncTuner();
+}
+
+function tuneTo(i) {
+  const st = TUNE.stations[i];
+  if (!st) return;
+  if (!(S.mode === "radio" && S.station && S.station.url === st.url && !audio.paused)) playStation(st);
+  syncTuner();
+}
+
+function syncTuner() {
+  const dial = $("#tuner");
+  if (!dial || TUNE.drag) return;
+  const i = tunedIndex();
+  const n = TUNE.stations.length;
+  const needle = $("#tuner-needle");
+  needle.hidden = i < 0;
+  if (i >= 0) needle.style.left = `${((i + 0.5) / n) * 100}%`;
+  dial.setAttribute("aria-valuenow", String(Math.max(1, i + 1)));
+  dial.setAttribute("aria-valuetext", i >= 0 ? TUNE.stations[i].name : "Not tuned");
+  for (const b of document.querySelectorAll(".tuner-name")) {
+    b.classList.remove("near");
+    b.classList.toggle("on", i >= 0 && b.dataset.url === TUNE.stations[i].url);
+  }
+}
+
+// Static between stations: looped noise, band-limited like a radio's
+// speaker, louder the further the needle is from a station.
+function staticHiss(level) {
+  if (level > 0 && !TUNE.noise) {
+    waveListen();
+    const ctx = WAVE.ctx;
+    if (!ctx) return;
+    const buf = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    src.loop = true;
+    const band = ctx.createBiquadFilter();
+    band.type = "bandpass";
+    band.frequency.value = 1800;
+    band.Q.value = 0.7;
+    const gain = ctx.createGain();
+    gain.gain.value = 0;
+    src.connect(band).connect(gain).connect(ctx.destination);
+    src.start();
+    TUNE.noise = { src, gain };
+  }
+  if (!TUNE.noise) return;
+  const { src, gain } = TUNE.noise;
+  gain.gain.setTargetAtTime(Math.min(1, level) * 0.25 * playVolume(), src.context.currentTime, 0.03);
+  if (level <= 0) {
+    src.stop(src.context.currentTime + 0.2);
+    TUNE.noise = null;
+  }
+}
+
 function syncRadioCards() {
+  syncTuner();
   for (const card of document.querySelectorAll("#view .card[data-url]")) {
     const live = S.mode === "radio" && S.station && S.station.url === card.dataset.url;
     card.classList.toggle("live", Boolean(live));
@@ -2287,6 +2427,392 @@ $("#night").addEventListener("keydown", (e) => { e.preventDefault(); e.stopPropa
 document.addEventListener("fullscreenchange", () => { if (!document.fullscreenElement && !$("#night").hidden) leaveNight(); });
 
 
+// ---------- ambient mode ----------------------------------------------------
+// A calm scene filling the screen, with its own sound: a fish tank, waves
+// on a shore, or birds at dawn. The sound is made here as it plays (no
+// recordings to fetch), alone or quietly under the music, and the sleep
+// timer fades it out with everything else.
+const AMBIENT_SCENES = [["fish", "Fish tank"], ["waves", "Waves"], ["birds", "Birds"]];
+const AMB = { scene: store("ambient-scene") || "waves", volume: Number(store("ambient-volume") ?? 0.6),
+  ctx: null, out: null, sound: null, raf: 0, t0: 0, hideTimer: null, things: [], wake: null };
+
+function openAmbient() {
+  const box = $("#ambient");
+  const canvas = el("canvas", { class: "ambient-canvas", "aria-hidden": "true" });
+  const scenes = el("div", { class: "segmented", role: "group", "aria-label": "Scene" },
+    ...AMBIENT_SCENES.map(([key, label]) => el("button", {
+      type: "button", class: "seg", "data-scene": key, "aria-pressed": String(AMB.scene === key),
+      onclick: () => setAmbientScene(key),
+    }, label)));
+  const vol = el("input", {
+    type: "range", min: 0, max: 1, step: 0.01, value: AMB.volume, "aria-label": "Ambient volume",
+    oninput: (e) => { AMB.volume = Number(e.target.value); store("ambient-volume", String(AMB.volume)); fillRange(e.target); ambientLevel(); },
+  });
+  fillRange(vol);
+  box.replaceChildren(canvas,
+    el("div", { class: "ambient-controls" },
+      el("h2", { class: "sr-only" }, "Ambient"),
+      scenes,
+      el("label", { class: "ambient-volume" }, icon("volume"), vol),
+      el("button", { type: "button", class: "btn", id: "btn-ambient-close", onclick: () => closeAmbient() }, "Close")));
+  box.hidden = false;
+  document.body.classList.add("ambient-on");
+  setAmbientScene(AMB.scene);
+  ambientNudge();
+  refocus(`#ambient .seg[aria-pressed="true"]`);
+  if (navigator.wakeLock) navigator.wakeLock.request("screen").then((w) => { AMB.wake = w; }).catch(() => {});
+}
+
+function closeAmbient() {
+  const box = $("#ambient");
+  if (box.hidden) return;
+  stopAmbientSound();
+  cancelAnimationFrame(AMB.raf);
+  AMB.raf = 0;
+  clearTimeout(AMB.hideTimer);
+  box.hidden = true;
+  box.replaceChildren();
+  document.body.classList.remove("ambient-on");
+  if (AMB.wake) { AMB.wake.release().catch(() => {}); AMB.wake = null; }
+  refocus("#btn-ambient");
+}
+
+function setAmbientScene(key) {
+  AMB.scene = key;
+  store("ambient-scene", key);
+  for (const b of document.querySelectorAll("#ambient .seg")) b.setAttribute("aria-pressed", String(b.dataset.scene === key));
+  AMB.things = [];
+  AMB.t0 = performance.now();
+  AMB.last = 0;
+  stopAmbientSound();
+  startAmbientSound(key);
+  cancelAnimationFrame(AMB.raf);
+  AMB.raf = requestAnimationFrame(drawAmbient);
+  announce(`Ambient: ${AMBIENT_SCENES.find(([k]) => k === key)[1]}`);
+}
+
+// The controls fade out after a few still seconds, and come back on a
+// move of the mouse or a key.
+function ambientNudge() {
+  const box = $("#ambient");
+  box.classList.remove("still");
+  clearTimeout(AMB.hideTimer);
+  AMB.hideTimer = setTimeout(() => box.classList.add("still"), 4000);
+}
+$("#ambient").addEventListener("pointermove", ambientNudge);
+$("#ambient").addEventListener("keydown", (e) => {
+  ambientNudge();
+  if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); closeAmbient(); }
+});
+$("#btn-ambient").addEventListener("click", openAmbient);
+
+// ---- the sound
+
+function ambientLevel() {
+  if (AMB.out) AMB.out.gain.setTargetAtTime(AMB.volume * volMul.sleep * 0.5, AMB.ctx.currentTime, 0.1);
+}
+
+function noiseBuffer(ctx, seconds, brown = false) {
+  const buf = ctx.createBuffer(1, ctx.sampleRate * seconds, ctx.sampleRate);
+  const d = buf.getChannelData(0);
+  let last = 0;
+  for (let i = 0; i < d.length; i++) {
+    const white = Math.random() * 2 - 1;
+    d[i] = brown ? (last = (last + 0.02 * white) / 1.02) * 3.5 : white;
+  }
+  return buf;
+}
+
+function loopNoise(ctx, brown) {
+  const src = ctx.createBufferSource();
+  src.buffer = noiseBuffer(ctx, 4, brown);
+  src.loop = true;
+  src.start();
+  return src;
+}
+
+// A short tone that slides between pitches: a bird's chirp, a bubble.
+function chirp(ctx, out, at, { from, to, length, level, type = "sine" }) {
+  const osc = ctx.createOscillator();
+  const env = ctx.createGain();
+  osc.type = type;
+  osc.frequency.setValueAtTime(from, at);
+  osc.frequency.exponentialRampToValueAtTime(to, at + length);
+  env.gain.setValueAtTime(0.0001, at);
+  env.gain.exponentialRampToValueAtTime(level, at + Math.min(0.012, length / 4));
+  env.gain.exponentialRampToValueAtTime(0.0001, at + length);
+  osc.connect(env).connect(out);
+  osc.start(at);
+  osc.stop(at + length + 0.02);
+}
+
+function startAmbientSound(key) {
+  if (!AMB.ctx) {
+    try { AMB.ctx = new AudioContext(); } catch { return; }
+  }
+  const ctx = AMB.ctx;
+  ctx.resume().catch(() => {});
+  const out = ctx.createGain();
+  out.gain.value = 0;
+  out.connect(ctx.destination);
+  AMB.out = out;
+  const parts = [];
+  let tick = null;
+  if (key === "waves") {
+    // Noise through a low filter, rising and falling like the sea.
+    const src = loopNoise(ctx, false);
+    const lp = ctx.createBiquadFilter();
+    lp.type = "lowpass";
+    const swell = ctx.createGain();
+    src.connect(lp).connect(swell).connect(out);
+    parts.push(src);
+    tick = () => {
+      const s = ctx.currentTime;
+      const wave = Math.max(0, Math.sin(s * 2 * Math.PI / 9) * 0.6 + Math.sin(s * 2 * Math.PI / 13.7) * 0.4);
+      swell.gain.setTargetAtTime(0.08 + wave * 0.6, s, 0.25);
+      lp.frequency.setTargetAtTime(380 + wave * 1400, s, 0.25);
+    };
+  } else if (key === "fish") {
+    // The tank's pump hum, and bubbles: quick upward pops.
+    const hum = loopNoise(ctx, true);
+    const lp = ctx.createBiquadFilter();
+    lp.type = "lowpass";
+    lp.frequency.value = 260;
+    const g = ctx.createGain();
+    g.gain.value = 0.5;
+    hum.connect(lp).connect(g).connect(out);
+    parts.push(hum);
+    let next = ctx.currentTime;
+    tick = () => {
+      while (next < ctx.currentTime + 0.3) {
+        const stream = Math.random() < 0.15;
+        for (let i = 0; i < (stream ? 6 : 1); i++) {
+          const f = 380 + Math.random() * 700;
+          chirp(ctx, out, next + i * 0.07, { from: f, to: f * 2.4, length: 0.05 + Math.random() * 0.05, level: 0.12 + Math.random() * 0.15 });
+        }
+        next += 0.12 + Math.random() * 0.6;
+      }
+    };
+  } else {
+    // A breeze, and birds: short phrases of chirps, each bird its own pitch.
+    const air = loopNoise(ctx, false);
+    const hp = ctx.createBiquadFilter();
+    hp.type = "bandpass";
+    hp.frequency.value = 900;
+    hp.Q.value = 0.4;
+    const g = ctx.createGain();
+    g.gain.value = 0.05;
+    air.connect(hp).connect(g).connect(out);
+    parts.push(air);
+    const birds = [2600, 3400, 4300, 1900].map((pitch) => ({ pitch, next: ctx.currentTime + Math.random() * 3 }));
+    tick = () => {
+      for (const b of birds) {
+        if (b.next > ctx.currentTime + 0.5) continue;
+        let at = b.next;
+        const notes = 2 + Math.floor(Math.random() * 6);
+        for (let i = 0; i < notes; i++) {
+          const up = Math.random() < 0.6;
+          const f = b.pitch * (0.85 + Math.random() * 0.3);
+          const length = 0.05 + Math.random() * 0.12;
+          chirp(ctx, out, at, { from: up ? f * 0.7 : f * 1.3, to: up ? f * 1.25 : f * 0.8, length, level: 0.05 + Math.random() * 0.08 });
+          at += length + 0.03 + Math.random() * 0.08;
+        }
+        b.next = at + 1.5 + Math.random() * 6;
+      }
+    };
+  }
+  tick();
+  const timer = setInterval(tick, 100);
+  AMB.sound = { parts, timer, out };
+  ambientLevel();
+}
+
+function stopAmbientSound() {
+  const sound = AMB.sound;
+  if (!sound) return;
+  AMB.sound = null;
+  AMB.out = null;
+  clearInterval(sound.timer);
+  const ctx = AMB.ctx;
+  sound.out.gain.setTargetAtTime(0, ctx.currentTime, 0.15);
+  setTimeout(() => {
+    for (const p of sound.parts) { try { p.stop(); } catch { /* already */ } }
+    sound.out.disconnect();
+  }, 900);
+}
+
+// ---- the picture
+
+function drawAmbient(now) {
+  AMB.raf = 0;
+  const cv = document.querySelector("#ambient canvas");
+  if (!cv) return;
+  const dpr = window.devicePixelRatio || 1;
+  const w = Math.round(cv.clientWidth * dpr), h = Math.round(cv.clientHeight * dpr);
+  if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+  const g = cv.getContext("2d");
+  // Still frames for those who'd rather nothing moved.
+  const t = calm.matches ? 0 : (now - AMB.t0) / 1000;
+  ({ fish: drawFish, waves: drawSea, birds: drawDawn })[AMB.scene](g, w, h, t, dpr);
+  if (!calm.matches && !document.hidden) AMB.raf = requestAnimationFrame(drawAmbient);
+}
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && !$("#ambient").hidden && !AMB.raf) AMB.raf = requestAnimationFrame(drawAmbient);
+});
+
+const rand = (a, b) => a + Math.random() * (b - a);
+
+function drawSea(g, w, h, t) {
+  const sky = g.createLinearGradient(0, 0, 0, h * 0.55);
+  sky.addColorStop(0, "#1d2a52");
+  sky.addColorStop(0.6, "#c4607a");
+  sky.addColorStop(1, "#f6b06b");
+  g.fillStyle = sky;
+  g.fillRect(0, 0, w, h);
+  g.fillStyle = "rgba(255, 226, 170, .95)";
+  g.beginPath();
+  g.arc(w * 0.68, h * 0.5, Math.min(w, h) * 0.07, 0, Math.PI * 2);
+  g.fill();
+  const bands = [["#2a3f74", 0.5, 0.004, 0.25], ["#24366a", 0.58, 0.006, 0.4], ["#1c2c5c", 0.68, 0.008, 0.6], ["#16234d", 0.8, 0.011, 0.9]];
+  for (const [color, top, amp, speed] of bands) {
+    g.fillStyle = color;
+    g.beginPath();
+    g.moveTo(0, h);
+    for (let x = 0; x <= w; x += 8) {
+      const y = h * top + Math.sin(x / w * 9 + t * speed) * h * amp * 4 + Math.sin(x / w * 23 - t * speed * 1.7) * h * amp;
+      g.lineTo(x, y);
+    }
+    g.lineTo(w, h);
+    g.fill();
+  }
+  // The sun's glitter on the water.
+  g.fillStyle = "rgba(255, 220, 160, .3)";
+  for (let i = 0; i < 60; i++) {
+    const y = h * (0.52 + (i / 60) * 0.42);
+    const spread = w * (0.015 + (i / 60) * 0.08);
+    const x = w * 0.68 + Math.sin(i * 12.9 + t * 0.8) * spread;
+    g.fillRect(x - spread * 0.4, y, spread * (0.3 + 0.5 * Math.abs(Math.sin(i * 7.3 + t))), 1.5);
+  }
+}
+
+function drawFish(g, w, h, t, dpr) {
+  const water = g.createLinearGradient(0, 0, 0, h);
+  water.addColorStop(0, "#0f4f6e");
+  water.addColorStop(1, "#06192b");
+  g.fillStyle = water;
+  g.fillRect(0, 0, w, h);
+  // Light from above, swaying.
+  g.fillStyle = "rgba(160, 230, 255, .05)";
+  for (let i = 0; i < 5; i++) {
+    const x = w * (0.1 + i * 0.2) + Math.sin(t * 0.3 + i) * w * 0.03;
+    g.beginPath();
+    g.moveTo(x - w * 0.02, 0);
+    g.lineTo(x + w * 0.02, 0);
+    g.lineTo(x + w * 0.09, h);
+    g.lineTo(x - w * 0.03, h);
+    g.fill();
+  }
+  // Weed on the bottom.
+  g.strokeStyle = "#1f6b4a";
+  g.lineWidth = 6 * dpr;
+  g.lineCap = "round";
+  for (let i = 0; i < 14; i++) {
+    const x = w * (i + 0.5) / 14;
+    g.beginPath();
+    g.moveTo(x, h);
+    g.quadraticCurveTo(x + Math.sin(t * 0.8 + i) * 30 * dpr, h * 0.86, x + Math.sin(t * 0.6 + i * 2) * 18 * dpr, h * (0.7 + (i % 3) * 0.05));
+    g.stroke();
+  }
+  if (!AMB.things.length) {
+    const colors = ["#ff8a3d", "#ffd23f", "#4fd1c5", "#f25f5c", "#a78bfa", "#ffb4a2"];
+    for (let i = 0; i < 9; i++) {
+      AMB.things.push({ kind: "fish", x: rand(0, w), y: rand(h * 0.15, h * 0.75), size: rand(14, 34) * dpr,
+        speed: rand(20, 60) * dpr * (Math.random() < 0.5 ? -1 : 1), color: colors[i % colors.length], phase: rand(0, 6) });
+    }
+    for (let i = 0; i < 40; i++) AMB.things.push({ kind: "bubble", x: rand(0, w), y: rand(0, h), r: rand(1.5, 5) * dpr, speed: rand(30, 80) * dpr });
+  }
+  const dt = AMB.last ? Math.min(0.1, t - AMB.last) : 0;
+  AMB.last = t;
+  for (const f of AMB.things) {
+    if (f.kind === "bubble") {
+      f.y -= f.speed * dt;
+      if (f.y < -10) { f.y = h + 10; f.x = rand(0, w); }
+      g.strokeStyle = "rgba(200, 240, 255, .55)";
+      g.lineWidth = 1.2 * dpr;
+      g.beginPath();
+      g.arc(f.x + Math.sin(t * 2 + f.r) * 4 * dpr, f.y, f.r, 0, Math.PI * 2);
+      g.stroke();
+      continue;
+    }
+    f.x += f.speed * dt;
+    if (f.x > w + 60 * dpr) f.x = -60 * dpr;
+    if (f.x < -60 * dpr) f.x = w + 60 * dpr;
+    const y = f.y + Math.sin(t * 0.9 + f.phase) * 10 * dpr;
+    const dir = Math.sign(f.speed);
+    const s = f.size;
+    const wag = Math.sin(t * 6 + f.phase) * 0.25;
+    g.fillStyle = f.color;
+    g.beginPath();
+    g.ellipse(f.x, y, s, s * 0.55, 0, 0, Math.PI * 2);
+    g.fill();
+    g.beginPath();
+    g.moveTo(f.x - dir * s * 0.8, y);
+    g.lineTo(f.x - dir * s * 1.6, y - s * (0.5 + wag));
+    g.lineTo(f.x - dir * s * 1.6, y + s * (0.5 - wag));
+    g.fill();
+    g.fillStyle = "#0b1a26";
+    g.beginPath();
+    g.arc(f.x + dir * s * 0.5, y - s * 0.12, s * 0.1, 0, Math.PI * 2);
+    g.fill();
+  }
+}
+
+function drawDawn(g, w, h, t, dpr) {
+  const sky = g.createLinearGradient(0, 0, 0, h);
+  sky.addColorStop(0, "#2b2d5c");
+  sky.addColorStop(0.45, "#a45a7a");
+  sky.addColorStop(0.75, "#f4a261");
+  sky.addColorStop(1, "#f9d38a");
+  g.fillStyle = sky;
+  g.fillRect(0, 0, w, h);
+  // The sun, rising a little over a few minutes.
+  const rise = Math.min(1, t / 300);
+  g.fillStyle = "rgba(255, 236, 190, .95)";
+  g.beginPath();
+  g.arc(w * 0.3, h * (0.78 - rise * 0.12), Math.min(w, h) * 0.08, 0, Math.PI * 2);
+  g.fill();
+  const hills = [["#5b3a5e", 0.72, 0.05, 2.3], ["#3d2a4a", 0.8, 0.06, 1.6], ["#251a33", 0.9, 0.04, 3.1]];
+  for (const [color, top, amp, freq] of hills) {
+    g.fillStyle = color;
+    g.beginPath();
+    g.moveTo(0, h);
+    for (let x = 0; x <= w; x += 10) g.lineTo(x, h * top + Math.sin(x / w * Math.PI * freq + top * 9) * h * amp);
+    g.lineTo(w, h);
+    g.fill();
+  }
+  if (!AMB.things.length) {
+    for (let i = 0; i < 11; i++) {
+      AMB.things.push({ x: rand(-w * 0.2, w), y: rand(h * 0.12, h * 0.55), size: rand(7, 15) * dpr, speed: rand(25, 55) * dpr, phase: rand(0, 6) });
+    }
+  }
+  const dt = AMB.last ? Math.min(0.1, t - AMB.last) : 0;
+  AMB.last = t;
+  g.strokeStyle = "#1d1426";
+  g.lineWidth = 2.2 * dpr;
+  g.lineCap = "round";
+  for (const b of AMB.things) {
+    b.x += b.speed * dt;
+    if (b.x > w + 40 * dpr) { b.x = -40 * dpr; b.y = rand(h * 0.12, h * 0.55); }
+    const y = b.y + Math.sin(t * 0.7 + b.phase) * 8 * dpr;
+    const flap = Math.sin(t * 7 + b.phase) * 0.6;
+    g.beginPath();
+    g.moveTo(b.x - b.size, y - b.size * flap);
+    g.quadraticCurveTo(b.x - b.size * 0.4, y - b.size * 0.3, b.x, y);
+    g.quadraticCurveTo(b.x + b.size * 0.4, y - b.size * 0.3, b.x + b.size, y - b.size * flap);
+    g.stroke();
+  }
+}
+
 // ---------- recording ---------------------------------------------------
 
 const recordingOf = (url) => (S.lib.recordings || []).find((r) => r.url === url);
@@ -3050,6 +3576,7 @@ const L = {
   on: store("level") === "1",
   ctx: null,
   master: null,
+  analyser: null,
   gains: [null, null],
   known: new Map(),      // track id -> {lufs, peak}, or null while unknown
   pending: new Map(),    // track id -> promise of the lookup
@@ -3083,6 +3610,9 @@ function connectGraph() {
   try {
     const master = ctx.createGain();
     master.connect(ctx.destination);
+    L.analyser = ctx.createAnalyser();  // for the sound wave
+    L.analyser.fftSize = 2048;
+    master.connect(L.analyser);
     decks.forEach((d, i) => {
       const gain = ctx.createGain();
       ctx.createMediaElementSource(d).connect(gain).connect(master);
@@ -3095,6 +3625,93 @@ function connectGraph() {
   applyVolume();
   decks.forEach((d, i) => setDeckGain(i, d.dataset.trackId, false));
 }
+
+// ---------- sound wave ---------------------------------------------------
+
+// A line beside the song title that moves with the sound. It listens to
+// the radio relay's player (in an audio context of its own) and, with
+// volume levelling on, to the library's audio graph; anything else, it
+// rests flat.
+const WAVE = { ctx: null, radio: null, buf: new Float32Array(2048), raf: 0, scale: 1 };
+const calm = matchMedia("(prefers-reduced-motion: reduce)");
+
+// Route the relay's player through the analyser, once the context runs
+// (routed into a context the browser holds suspended, it would be silent).
+function waveListen() {
+  if (!WAVE.ctx) {
+    try {
+      WAVE.ctx = new AudioContext();
+    } catch {
+      return;
+    }
+    WAVE.ctx.addEventListener("statechange", routeRadio);
+  }
+  if (WAVE.ctx.state !== "running") WAVE.ctx.resume().catch(() => {});
+  routeRadio();
+}
+
+function routeRadio() {
+  const ctx = WAVE.ctx;
+  if (WAVE.radio || ctx.state !== "running") return;
+  try {
+    const an = ctx.createAnalyser();
+    an.fftSize = 2048;
+    ctx.createMediaElementSource(radioRelay).connect(an).connect(ctx.destination);
+    WAVE.radio = an;
+  } catch { /* plays as it is; the wave rests */ }
+}
+
+function waveSource() {
+  if (audio.paused || S.mode === "idle") return null;
+  if (S.mode === "radio") return audio === radioRelay ? WAVE.radio : null;
+  return L.master ? L.analyser : null;
+}
+
+function drawWave() {
+  WAVE.raf = 0;
+  const cv = $("#wave");
+  if (!cv) return;
+  cv.hidden = S.mode === "idle";
+  if (cv.hidden) return;
+  const dpr = window.devicePixelRatio || 1;
+  const w = Math.round(cv.clientWidth * dpr), h = Math.round(cv.clientHeight * dpr);
+  if (!w || !h) return;
+  if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+  const g = cv.getContext("2d");
+  g.clearRect(0, 0, w, h);
+  g.strokeStyle = getComputedStyle(cv).color;
+  g.lineWidth = 1.5 * dpr;
+  g.lineJoin = "round";
+  const an = calm.matches ? null : waveSource();
+  g.globalAlpha = an ? 1 : 0.4;
+  g.beginPath();
+  if (an) {
+    const buf = WAVE.buf;
+    an.getFloatTimeDomainData(buf);
+    let peak = 0;
+    for (let i = 0; i < buf.length; i++) peak = Math.max(peak, Math.abs(buf[i]));
+    // Quiet or loud, the line fills its space: the scale eases towards
+    // the level, so it doesn't jump on every beat.
+    const want = Math.min(12, 0.9 / Math.max(peak, 0.02));
+    WAVE.scale += (want - WAVE.scale) * 0.08;
+    for (let x = 0; x <= w; x += dpr) {
+      const v = buf[Math.floor((x / w) * (buf.length - 1))] * WAVE.scale;
+      const y = h / 2 - Math.max(-1, Math.min(1, v)) * (h / 2 - g.lineWidth);
+      x ? g.lineTo(x, y) : g.moveTo(x, y);
+    }
+  } else {
+    g.moveTo(0, h / 2);
+    g.lineTo(w, h / 2);
+  }
+  g.stroke();
+  if (an && !document.hidden) WAVE.raf = requestAnimationFrame(drawWave);
+}
+
+function waveWake() {
+  if (!WAVE.raf) WAVE.raf = requestAnimationFrame(drawWave);
+}
+document.addEventListener("visibilitychange", waveWake);
+calm.addEventListener("change", waveWake);
 
 function setLevelling(on) {
   L.on = on;
@@ -3425,7 +4042,7 @@ function unload(d) {
 }
 
 function stopRadio() {
-  if (radioEl.hasAttribute("src")) unload(radioEl);
+  for (const r of radios) if (r.hasAttribute("src")) unload(r);
 }
 
 // Start `track` on a deck: the other deck when it already holds the
@@ -3628,11 +4245,14 @@ function playStation(st, { via = "relay", autoplay = true } = {}) {
   S.pos = -1;
   S.extra = null;
   for (const d of decks) unload(d);
-  audio = radioEl;
   // A finder result (not saved yet) relays too, for its song titles and
   // so HLS stations play at all.
   S.radioSrc = via !== "relay" ? st.url : st.id ? `/radio/${st.id}`
     : st.preview ? `/radio/preview?u=${encodeURIComponent(st.url)}` : st.url;
+  const player = S.radioSrc.startsWith("/") ? radioRelay : radioDirect;
+  if (player !== radioEl) unload(radioEl);
+  radioEl = audio = player;
+  if (player === radioRelay) waveListen();
   if (!sameStation || S.radioSrc === st.url) S.radioTitle = null;
   if (autoplay) {
     audio.src = S.radioSrc;
@@ -3697,7 +4317,7 @@ function togglePlay() {
 // Pausing also stops a deck still playing out the end of the last track.
 function pauseAll() {
   endFade();
-  for (const d of [...decks, radioEl]) if (!d.paused) d.pause();
+  for (const d of [...decks, ...radios]) if (!d.paused) d.pause();
 }
 
 function previous() {
@@ -3861,10 +4481,12 @@ async function restoreSession() {
 
 // Listen on every player, but only act on the one in use.
 function onAudio(type, fn) {
-  for (const a of [...decks, radioEl]) {
+  for (const a of [...decks, ...radios]) {
     a.addEventListener(type, (e) => { if (e.target === audio) fn(e); });
   }
 }
+
+for (const type of ["playing", "pause", "emptied"]) onAudio(type, waveWake);
 
 let seeking = false;
 onAudio("timeupdate", () => {
@@ -3995,8 +4617,9 @@ const playVolume = () => Number(volume.value) * volMul.sleep * volMul.alarm;
 function applyVolume() {
   const v = playVolume();
   decks.forEach((d, i) => { d.volume = L.master ? 1 : v * fadeMul[i]; });
-  radioEl.volume = v;
+  for (const r of radios) r.volume = v;
   if (L.master) L.master.gain.value = v;
+  ambientLevel();  // the sleep timer fades it too
 }
 applyVolume();
 volume.addEventListener("input", () => {
@@ -4224,6 +4847,7 @@ function sleepTick() {
   const left = (SLEEP.at - Date.now()) / 1000;
   if (left <= 0) {
     pauseAll();
+    stopAmbientSound();
     setSleep(0);
     announce("Sleep timer: playback stopped");
     return;
