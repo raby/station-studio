@@ -33,6 +33,11 @@ const HELP = [
     ["The pencil on a station renames it, changes its link, gives it a logo, moves it up or down, or removes it."],
     "Recently played lists the last few stations you listened to, so one you tried is easy to find again.",
   ], { label: "Go to Stations", view: { type: "radio" } }],
+  ["schedule", "Switching station at set times", [
+    ["Under ", ["Schedule"], " on the Stations page, ", ["Add a switch"], " changes to a station or playlist at a time you choose, every week on the days you pick or ", ["Once"], " on a date."],
+    "For the news at five and then back to your station, add two: 17:00 to the news station, and 17:10 back to yours.",
+    "A switch only changes what's already playing; it doesn't start anything when Station Player is quiet.",
+  ], { label: "Go to Stations", view: { type: "radio" } }],
   ["tags", "Tagging stations", [
     ["Give your stations your own labels, like ", ["jazz"], ", ", ["chill"], " or ", ["Sunday morning"], ". Edit a station with the pencil and type its tags with commas between them, or click a tag you've used before to add it."],
     "Your tags appear as buttons above your stations. Click one to see only the stations with that tag, and All to see them all again.",
@@ -54,6 +59,7 @@ const HELP = [
   ], { label: "Go to Recordings", view: { type: "recordings" } }],
   ["clock", "Clock and alarms", [
     "Clock & alarms in the sidebar shows a big clock and your alarms. Wake up to any playlist or station, on the days you choose.",
+    ["Set ", ["Repeat"], " to ", ["Once"], " for an alarm that goes off on one date only. It turns itself off afterwards."],
     ["When an alarm goes off, press ", ["Snooze 9 min"], " for nine more minutes or ", ["Stop"], ". Night mode shows a dim clock for the bedside."],
     "Station Player has to be running and the computer awake at alarm time, so turn on the start-at-login switch in Settings › App.",
   ], { label: "Go to Clock & alarms", view: { type: "clock" } }],

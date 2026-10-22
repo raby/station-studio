@@ -264,3 +264,31 @@ def test_odd_answers_dont_break_logos():
     assert d.logo("https://img.example/a.png") is None
     with pytest.raises(DirectoryError):
         Directory(fetch=broken, servers=["one"]).search()
+
+
+def test_a_genre_button_can_stand_for_several_tags():
+    from station_player.directory import genre_tags
+    assert genre_tags("Techno / Trance") == ["techno", "trance"]
+    assert genre_tags("afrobeats") == ["afrobeat"]
+    assert genre_tags("asian / bhangra") == ["asian", "bhangra", "punjabi"]
+    assert genre_tags("jazz") == ["jazz"] and genre_tags("") == []
+
+
+def test_search_for_either_of_two_tags_merges_them_by_votes():
+    from urllib.parse import parse_qs, urlparse
+
+    class ByTag(FakeNet):
+        def __call__(self, url, user_agent, limit):
+            self.asked.append(url)
+            q = parse_qs(urlparse(url).query)
+            tag = q["tag"][0]
+            items = {"techno": [raw("T1", "https://s/t1", votes=50), raw("Both", "https://s/both", votes=5)],
+                     "trance": [raw("Tr1", "https://s/tr1", votes=80), raw("Both", "https://s/both", votes=5)]}[tag]
+            return api_answer(items[int(q["offset"][0]):][:int(q["limit"][0])])
+    net = ByTag()
+    d = Directory(fetch=net, servers=["one"])
+    page = d.search_page(tag="techno / trance", limit=2)
+    assert [s["name"] for s in page["stations"]] == ["Tr1", "T1", "Both"]
+    assert page["next"] == 2  # a tag filled its page, so there may be more
+    assert sorted(parse_qs(urlparse(u).query)["tag"][0] for u in net.asked) == ["techno", "trance"]
+    assert d.search_page(tag="techno / trance", limit=2, offset=2)["next"] is None

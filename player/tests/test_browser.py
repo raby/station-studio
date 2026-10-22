@@ -866,6 +866,54 @@ def test_clock_page_and_alarms(page, player):
     sync_api.expect(page.locator("#view h1")).to_have_text("Clock")
 
 
+def test_one_off_alarm_and_radio_schedule(page, player):
+    app = player[0]
+    page.locator(".nav-item[data-view=clock]").click()
+    page.locator("#btn-add-alarm").click()
+    page.locator("#alarm-time").fill("23:59")
+    sync_api.expect(page.locator("#alarm-date")).to_be_hidden()
+    page.locator("#alarm-repeat").select_option("once")
+    sync_api.expect(page.locator(".alarm-form .days")).to_be_hidden()
+    page.locator("#alarm-date").fill("2099-01-02")
+    page.get_by_role("button", name="Set alarm").click()
+    sync_api.expect(page.locator(".alarm-card .facts")).to_contain_text("Once, ")
+    (a,) = app.store.config.alarms
+    assert (a["date"], a["days"], a["action"]) == ("2099-01-02", [], "alarm")
+    # A one-off in the past isn't allowed.
+    page.locator(".alarm-card .alarm-edit").click()
+    page.locator("#alarm-date").fill("2001-01-01")
+    page.get_by_role("button", name="Save alarm").click()
+    sync_api.expect(page.locator(".alarm-form .form-msg")).to_have_text("That time has already gone by")
+    page.keyboard.press("Escape")
+
+    # The radio page's schedule: switches, kept apart from the alarms.
+    page.locator(".nav-item[data-view=radio]").click()
+    page.locator("#btn-add-switch").click()
+    page.locator("#alarm-time").fill("17:00")
+    page.locator("#alarm-label").fill("The news")
+    page.locator("#alarm-source").select_option(label="Test FM")
+    page.get_by_role("button", name="Add to schedule").click()
+    sync_api.expect(page.locator(".schedule .alarm-card .name")).to_have_text("The news")
+    sync_api.expect(page.locator(".schedule .alarm-card .facts")).to_have_text("Weekdays · Test FM")
+    switch = app.store.config.alarms[1]
+    assert (switch["action"], switch["time"], switch["source"]["kind"]) == ("switch", "17:00", "station")
+    page.locator(".nav-item[data-view=clock]").click()
+    sync_api.expect(page.locator(".alarm-card")).to_have_count(1)  # the switch isn't an alarm
+
+    # A switch only changes what's already playing.
+    station = page.evaluate("S.lib.stations[0].id")
+    command = {"cmd": "switch", "kind": "station", "id": station, "name": "Test FM", "label": "The news"}
+    app.remote_command(command)
+    page.wait_for_timeout(2500)
+    assert page.evaluate("S.mode") == "idle"
+    pid = next(iter(app.library.playlists))
+    app.remote_command({"cmd": "playlist", "id": pid})
+    page.wait_for_function("() => !audio.paused && S.mode === 'track'", timeout=5000)
+    app.remote_command(command)
+    page.wait_for_function("() => S.mode === 'radio' && S.station.name === 'Test FM'", timeout=5000)
+    sync_api.expect(page.locator(".toast").last).to_contain_text("Schedule: The news, switched to Test FM")
+
+
 def ring(app, label="Wake up"):
     """Set an alarm off now, as the server does at its time."""
     from datetime import datetime

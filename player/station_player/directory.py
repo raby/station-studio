@@ -40,6 +40,20 @@ MAX_OFFSET = 5000  # how far "Show more" goes
 LOGO_TYPES = ("image/png", "image/jpeg", "image/gif", "image/webp", "image/x-icon", "image/vnd.microsoft.icon")
 ORDERS = {"votes": "votes", "popular": "clickcount", "name": "name"}
 SOMAFM_LIST = "https://somafm.com/channels.json"
+# Genre buttons that stand for more than one of the directory's tags
+# ("techno / trance" asks for both). The directory matches part of a tag,
+# so "afrobeat" also finds "afrobeats".
+TAG_ALIASES = {"afrobeats": ("afrobeat",), "bhangra": ("bhangra", "punjabi"), "chart": ("chart", "top 40")}
+
+
+def genre_tags(tag: str) -> list[str]:
+    """The directory tags a genre stands for: "techno / trance" is both."""
+    out = []
+    for part in _text(tag, 80).lower().split("/"):
+        for t in TAG_ALIASES.get(part.strip(), (part.strip(),)):
+            if t and t not in out:
+                out.append(t[:50])
+    return out[:4]
 
 
 class DirectoryError(Exception):
@@ -237,9 +251,13 @@ class Directory:
         the offset that continues the list, or None at its end}."""
         limit = max(1, min(MAX_RESULTS, int(limit)))
         offset = max(0, min(MAX_OFFSET, int(offset)))
+        tags = genre_tags(tag)
+        if len(tags) > 1:
+            return self._search_tags(q, tags, country, order, limit, offset)
+        tag = tags[0] if tags else ""
         asked = limit * 2  # some are dropped below
         params = {
-            "name": _text(q, 100), "tag": _text(tag, 50).lower(), "countrycode": _text(country, 2).upper(),
+            "name": _text(q, 100), "tag": tag, "countrycode": _text(country, 2).upper(),
             "order": ORDERS.get(order, "votes"), "reverse": "false" if order == "name" else "true",
             "hidebroken": "true", "limit": str(asked), "offset": str(offset),
         }
@@ -259,6 +277,41 @@ class Directory:
         self._remember(found)
         more = used < len(raws) or len(raws) >= asked
         return {"stations": found, "next": offset + used if more and offset + used <= MAX_OFFSET else None}
+
+    def _search_tags(self, q: str, tags: list[str], country: str, order: str, limit: int, offset: int) -> dict:
+        """A search for any of several tags: each tag's page, merged in the
+        asked order. "Show more" moves every tag on by the same amount."""
+        raws = []
+        full = False
+        for tag in tags:
+            got = self._api("/json/stations/search", {
+                "name": _text(q, 100), "tag": tag, "countrycode": _text(country, 2).upper(),
+                "order": ORDERS.get(order, "votes"), "reverse": "false" if order == "name" else "true",
+                "hidebroken": "true", "limit": str(limit), "offset": str(offset),
+            })
+            raws += got
+            full = full or len(got) >= limit
+        key = ORDERS.get(order, "votes")
+
+        def rank(raw):
+            if key == "name":
+                return str(raw.get("name") or "").strip().lower()
+            try:
+                return -int(raw.get(key) or 0)
+            except (TypeError, ValueError):
+                return 0
+        raws.sort(key=rank)
+        found = []
+        seen = set()
+        for raw in raws:
+            st = clean_station(raw)
+            if st is None or st["url"] in seen:
+                continue
+            seen.add(st["url"])
+            found.append(st)
+        self._remember(found)
+        more = full and offset + limit <= MAX_OFFSET
+        return {"stations": found, "next": offset + limit if more else None}
 
     def find_logo(self, stream_url: str) -> tuple[bytes, str] | None:
         """The logo Radio Browser has for a stream address, if any."""

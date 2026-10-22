@@ -1355,7 +1355,7 @@ function radioView() {
       el("div", { class: "glyph big" }, icon("radio")),
       el("h2", {}, "No stations yet"),
       el("p", {}, "Find stations below, or add one with its stream link. Most stations list one on their website, often as a .pls or .m3u file.")),
-    el("div", { class: "settings" }, recentSection(), finderSection(), el("section", { class: "add-station" },
+    el("div", { class: "settings" }, scheduleSection(), recentSection(), finderSection(), el("section", { class: "add-station" },
       el("h2", {}, "Add a station by its link"),
       el("p", { class: "help" }, "Test checks the link plays, and fills in the name when the station sends one."),
       el("form", { class: "form-row", onsubmit: add }, name, url,
@@ -1372,6 +1372,28 @@ function radioView() {
       el("button", { type: "button", class: "btn", onclick: () => show({ type: "recordings" }) },
         ...iconLabel("record", "See your recordings")))),
   );
+}
+
+// Switches at set times: the news at five, then back to the music.
+function scheduleSection() {
+  const switches = alarmsList().filter(isSwitch);
+  const adding = C.editing === "new-switch";
+  const playing = S.station ? S.station : null;
+  const blank = { id: "", on: true, time: "17:00", label: "", days: [0, 1, 2, 3, 4], date: "", action: "switch",
+    source: playing ? { kind: "station", id: playing.id, name: playing.name } : null };
+  return el("section", { class: "alarms schedule" },
+    el("div", { class: "section-head" },
+      el("h2", {}, "Schedule"),
+      el("span", { class: "spacer" }),
+      el("button", {
+        type: "button", class: "btn", id: "btn-add-switch", disabled: alarmsList().length >= MAX_ALARMS || adding || null,
+        onclick: () => { C.editing = "new-switch"; renderView(); refocus("#alarm-time"); },
+      }, ...iconLabel("plus", "Add a switch"))),
+    el("p", { class: "help" },
+      "Switch station at set times, once or every week: the news at five, then back to your station at ten past. ",
+      "A switch only changes what's already playing; it doesn't start anything when Station Player is quiet."),
+    adding ? el("div", { class: "alarm-card new" }, alarmEditor(blank, true)) : null,
+    switches.length ? el("ul", { class: "alarm-list" }, [...switches].sort((x, y) => x.time.localeCompare(y.time)).map(alarmCard)) : null);
 }
 
 // Look up every saved station that has no logo yet, one at a time.
@@ -1495,8 +1517,9 @@ const FIND_COUNTRIES = ["GB", "IE", "US", "CA", "AU", "NZ", "DE", "FR", "NL", "B
   "NO", "DK", "FI", "PL", "CZ", "GR", "TR", "BR", "MX", "AR", "JM", "NG", "ZA", "KE", "IN", "JP", "KR"];
 
 // Genres to browse (the directory's most used tags are mostly one
-// country's, so these are picked by hand).
-const FIND_GENRES = ["jazz", "soul", "funk", "reggae", "hip hop", "house", "techno", "drum and bass", "ambient",
+// country's, so these are picked by hand). "a / b" finds either.
+const FIND_GENRES = ["techno / trance", "house / garage", "chart / pop", "asian / bhangra", "latin", "afrobeats",
+  "jazz", "soul", "funk", "reggae", "hip hop", "drum and bass", "ambient",
   "chillout", "electronic", "rock", "indie", "metal", "folk", "blues", "country", "classical", "oldies", "80s",
   "90s", "news", "talk"];
 
@@ -1869,12 +1892,23 @@ function recordingsView() {
 
 // ---------- clock and alarms ------------------------------------------------
 
-const MAX_ALARMS = 10;
+const MAX_ALARMS = 30;  // alarms and schedule switches together
 const SNOOZE_MINUTES = 9;
 const C = { editing: null, face: store("clock-face") || "digital", timer: null, draft: null };
 
 const alarmsList = () => (S.lib.config.alarms || []);
+// The list holds both: alarms ring, schedule switches change the station.
+const isSwitch = (a) => a.action === "switch";
 const pad2 = (n) => String(n).padStart(2, "0");
+const isoDay = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+// The day a clock time ("17:00") next comes round: today, or tomorrow.
+function nextDay(hm) {
+  const now = new Date();
+  const [h, m] = (hm || "00:00").split(":").map(Number);
+  const d = new Date(now.getFullYear(), now.getMonth(), now.getDate(), h, m);
+  if (d <= now) d.setDate(d.getDate() + 1);
+  return isoDay(d);
+}
 const hhmm = (d) => d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
 // "Weekdays", "Every day", "Sat, Sun"…
@@ -1886,11 +1920,18 @@ function daysText(days) {
   return days.map((d) => DAY_NAMES[d]).join(", ");
 }
 
+// "Weekdays", or "Once, Thu 23 Oct" for a one-off.
+function whenText(a) {
+  if (!a.date) return daysText(a.days);
+  const [y, m, d] = a.date.split("-").map(Number);
+  return `Once, ${new Date(y, m - 1, d).toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" })}`;
+}
+
 function nextAlarmText() {
   const n = S.lib.next_alarm;
   const snooze = S.lib.alarm_state && S.lib.alarm_state.snoozed_until;
   if (snooze) return `Snoozed until ${hhmm(new Date(snooze * 1000))}`;
-  if (!n) return alarmsList().some((a) => a.on) ? "" : "No alarms on";
+  if (!n) return alarmsList().some((a) => a.on && !isSwitch(a)) ? "" : "No alarms on";
   const at = new Date(n.at);
   const today = new Date();
   const tomorrow = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
@@ -1961,37 +2002,56 @@ setInterval(() => {
 }, 15000);
 
 function alarmEditor(a, isNew) {
+  const sw = isSwitch(a);
+  const what = sw ? "Switch" : "Alarm";
+  const addButton = sw ? "#btn-add-switch" : "#btn-add-alarm";
   const time = el("input", { type: "time", id: "alarm-time", value: a.time, required: true });
-  const label = el("input", { id: "alarm-label", value: a.label || "", placeholder: "Label (optional), e.g. Work", maxlength: 60 });
+  const label = el("input", { id: "alarm-label", value: a.label || "", maxlength: 60,
+    placeholder: sw ? "Label (optional), e.g. The news" : "Label (optional), e.g. Work" });
   const days = DAY_NAMES.map((name, i) => el("input", { type: "checkbox", value: i, checked: a.days.includes(i) || null }));
+  // Once: the next time this clock time comes round, unless a date was set.
+  const date = el("input", { type: "date", id: "alarm-date", value: a.date || nextDay(a.time) });
+  const repeat = el("select", { id: "alarm-repeat" },
+    el("option", { value: "weekly" }, "Every week"), el("option", { value: "once" }, "Once"));
+  repeat.value = a.date ? "once" : "weekly";
+  const dateField = el("label", { class: "field" }, "Date", date);
+  const daysField = el("fieldset", { class: "days" }, el("legend", {}, "Days"), ...days.map((d, i) => el("label", {}, d, DAY_NAMES[i])));
+  const showRepeat = () => { dateField.hidden = repeat.value !== "once"; daysField.hidden = repeat.value === "once"; };
+  repeat.addEventListener("change", showRepeat);
+  time.addEventListener("change", () => { if (!a.date && repeat.value === "once") date.value = nextDay(time.value); });
+  showRepeat();
   const source = el("select", { id: "alarm-source" },
     el("optgroup", { label: "Playlists" }, ...S.lib.playlists.map((p) => el("option", { value: `playlist:${p.id}` }, p.name))),
     el("optgroup", { label: "Radio" }, ...(S.lib.stations || []).map((st) => el("option", { value: `station:${st.id}` }, st.name))));
   if (a.source) source.value = `${a.source.kind}:${a.source.id}`;
   const msg = el("div", { class: "form-msg", role: "status" });
-  const close = () => { C.editing = null; renderView(); refocus(isNew ? "#btn-add-alarm" : `#view [data-alarm="${a.id}"] .alarm-edit`); };
+  const close = () => { C.editing = null; renderView(); refocus(isNew ? addButton : `#view [data-alarm="${a.id}"] .alarm-edit`); };
   const save = async (e) => {
     e.preventDefault();
-    const chosen = days.filter((d) => d.checked).map((d) => Number(d.value));
-    if (!chosen.length) { msg.textContent = "Choose at least one day"; return; }
+    const once = repeat.value === "once";
+    const chosen = once ? [] : days.filter((d) => d.checked).map((d) => Number(d.value));
+    if (!once && !chosen.length) { msg.textContent = "Choose at least one day"; return; }
+    if (once && !date.value) { msg.textContent = "Choose a date"; return; }
+    if (once && new Date(`${date.value}T${time.value}`) <= new Date()) { msg.textContent = "That time has already gone by"; return; }
     if (!source.value) { msg.textContent = "Choose something to play"; return; }
     const [kind, ...rest] = source.value.split(":");
     const name = source.selectedOptions[0] ? source.selectedOptions[0].textContent : "";
-    const updated = { ...a, on: true, time: time.value, label: label.value.trim(), days: chosen, source: { kind, id: rest.join(":"), name } };
+    const updated = { ...a, on: true, time: time.value, label: label.value.trim(), days: chosen, date: once ? date.value : "",
+      source: { kind, id: rest.join(":"), name } };
     const list = isNew ? [...alarmsList(), updated] : alarmsList().map((x) => (x.id === a.id ? updated : x));
-    if (await saveAlarms(list, `Alarm set for ${time.value}, ${daysText(chosen).toLowerCase()}`)) {
+    if (await saveAlarms(list, `${what} set for ${time.value}, ${whenText(updated).toLowerCase()}`)) {
       C.editing = null;
       renderView();
       const saved = alarmsList()[isNew ? alarmsList().length - 1 : alarmsList().findIndex((x) => x.id === a.id)];
-      refocus(saved ? `#view [data-alarm="${saved.id}"] .alarm-edit` : "#btn-add-alarm");
+      refocus(saved ? `#view [data-alarm="${saved.id}"] .alarm-edit` : addButton);
     }
   };
   const remove = async () => {
-    if (!confirm(`Delete the ${a.time} alarm${a.label ? ` (${a.label})` : ""}?`)) return;
-    if (await saveAlarms(alarmsList().filter((x) => x.id !== a.id), "Alarm deleted")) {
+    if (!confirm(`Delete the ${a.time} ${what.toLowerCase()}${a.label ? ` (${a.label})` : ""}?`)) return;
+    if (await saveAlarms(alarmsList().filter((x) => x.id !== a.id), `${what} deleted`)) {
       C.editing = null;
       renderView();
-      refocus("#btn-add-alarm");
+      refocus(addButton);
     }
   };
   return el("form", { class: "alarm-form", onsubmit: save,
@@ -1999,11 +2059,14 @@ function alarmEditor(a, isNew) {
     el("div", { class: "fields" },
       el("label", { class: "field" }, "Time", time),
       el("label", { class: "field grow" }, "Label", label),
-      el("label", { class: "field grow" }, "Play", source)),
-    el("fieldset", { class: "days" }, el("legend", {}, "Days"), ...days.map((d, i) => el("label", {}, d, DAY_NAMES[i]))),
+      el("label", { class: "field grow" }, sw ? "Switch to" : "Play", source)),
+    el("div", { class: "fields" },
+      el("label", { class: "field" }, "Repeat", repeat),
+      dateField),
+    daysField,
     msg,
     el("div", { class: "row" },
-      el("button", { class: "btn primary" }, isNew ? "Set alarm" : "Save alarm"),
+      el("button", { class: "btn primary" }, sw ? (isNew ? "Add to schedule" : "Save") : isNew ? "Set alarm" : "Save alarm"),
       el("button", { type: "button", class: "btn ghost", onclick: close }, "Cancel"),
       el("span", { class: "spacer" }),
       isNew ? null : el("button", { type: "button", class: "btn small danger", onclick: remove }, ...iconLabel("trash", "Delete"))));
@@ -2011,13 +2074,16 @@ function alarmEditor(a, isNew) {
 
 function alarmCard(a) {
   const editing = C.editing === a.id;
+  const what = isSwitch(a) ? "Switch" : "Alarm";
   const toggle = el("input", {
     type: "checkbox", checked: a.on || null, "data-key": `alarm-${a.id}`,
-    "aria-label": `Alarm at ${a.time}${a.label ? `, ${a.label}` : ""}`,
+    "aria-label": `${what} at ${a.time}${a.label ? `, ${a.label}` : ""}`,
     onchange: async (e) => {
       const on = e.target.checked;
-      const list = alarmsList().map((x) => (x.id === a.id ? { ...x, on } : x));
-      await saveAlarms(list, on ? `Alarm on for ${a.time}` : `Alarm at ${a.time} off`);
+      // A one-off whose time has gone by moves on to the next time round.
+      const stale = on && a.date && new Date(`${a.date}T${a.time}`) <= new Date();
+      const list = alarmsList().map((x) => (x.id === a.id ? { ...x, on, ...(stale ? { date: nextDay(a.time) } : {}) } : x));
+      await saveAlarms(list, on ? `${what} on for ${a.time}` : `${what} at ${a.time} off`);
       renderView();
       refocus(`#view input[data-key="alarm-${a.id}"]`);
     },
@@ -2026,10 +2092,10 @@ function alarmCard(a) {
     el("div", { class: "alarm-row" },
       el("div", { class: "alarm-time" }, a.time),
       el("div", { class: "info" },
-        el("div", { class: "name" }, a.label || "Alarm"),
-        el("div", { class: "facts" }, `${daysText(a.days)} · ${a.source ? a.source.name : ""}`)),
+        el("div", { class: "name" }, a.label || (isSwitch(a) ? `Switch to ${a.source ? a.source.name : ""}` : "Alarm")),
+        el("div", { class: "facts" }, `${whenText(a)} · ${a.source ? a.source.name : ""}`)),
       el("button", {
-        type: "button", class: "btn ghost icon-only alarm-edit", "aria-label": `Edit the ${a.time} alarm`,
+        type: "button", class: "btn ghost icon-only alarm-edit", "aria-label": `Edit the ${a.time} ${what.toLowerCase()}`,
         onclick: () => { C.editing = a.id; renderView(); refocus("#alarm-time"); },
       }, icon("edit")),
       el("label", { class: "check" }, toggle)),
@@ -2037,13 +2103,13 @@ function alarmCard(a) {
 }
 
 function clockView() {
-  const alarms = alarmsList();
+  const alarms = alarmsList().filter((a) => !isSwitch(a));
   const adding = C.editing === "new";
   const faceButton = (face, label) => el("button", {
     type: "button", class: "seg", "aria-pressed": String(C.face === face),
     onclick: () => { C.face = face; store("clock-face", face); renderView(); refocus(`#view .seg[aria-pressed="true"]`); },
   }, label);
-  const blank = { id: "", on: true, time: "07:00", label: "", days: [0, 1, 2, 3, 4], source: null };
+  const blank = { id: "", on: true, time: "07:00", label: "", days: [0, 1, 2, 3, 4], date: "", action: "alarm", source: null };
   queueMicrotask(tickClocks);
   return el("div", { class: "clock-page" },
     el("div", { class: "view-head" },
@@ -2065,7 +2131,7 @@ function clockView() {
         el("h2", {}, "Alarms"),
         el("span", { class: "spacer" }),
         el("button", {
-          type: "button", class: "btn primary", id: "btn-add-alarm", disabled: alarms.length >= MAX_ALARMS || adding || null,
+          type: "button", class: "btn primary", id: "btn-add-alarm", disabled: alarmsList().length >= MAX_ALARMS || adding || null,
           onclick: () => { C.editing = "new"; renderView(); refocus("#alarm-time"); },
         }, ...iconLabel("plus", "Add alarm"))),
       el("p", { class: "help" },
@@ -4226,6 +4292,20 @@ async function alarmGoesOff(req, fresh) {
   }, 250);
 }
 
+// A schedule switch: only when something is playing (and no alarm is
+// ringing), and not when it's playing already.
+async function scheduleSwitch(c) {
+  if (S.mode === "idle" || audio.paused || ALARM.seq != null) return;
+  const same = c.kind === "station" ? S.mode === "radio" && S.station && S.station.id === c.id
+    : S.mode === "track" && S.queueSource === c.id;
+  if (same) return;
+  if (await playSource(c.kind, c.id).catch(() => false)) {
+    toast(`Schedule: ${c.label ? `${c.label}, ` : ""}switched to ${c.name || "the next station"}`);
+  } else {
+    toast(`The schedule couldn't switch to ${c.name || "its station"}: it isn't in your stations any more.`, { error: true });
+  }
+}
+
 // ---------- phone remote ------------------------------------------------------
 
 // The phone's commands, picked up by checkInbox.
@@ -4241,6 +4321,7 @@ async function runCommand(c) {
   } else if (c.cmd === "playlist" || c.cmd === "station") await playSource(c.cmd, c.id);
   else if (c.cmd === "notice") toast(c.text, { error: true });
   else if (c.cmd === "sleep") setSleep(c.minutes);
+  else if (c.cmd === "switch") await scheduleSwitch(c);
   // snooze and stop_alarm: the server has acted on them already, and
   // checkInbox ends the alarm in whichever window is ringing.
   syncButtons();

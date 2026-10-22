@@ -572,7 +572,7 @@ class PlayerApp:
                 key = due.strftime("%Y-%m-%d %H:%M")
                 # A time the clocks skip (spring forward) goes off once they have.
                 late = timedelta(minutes=65 if _skipped(due) else 5)
-                if due.weekday() in alarm["days"] and timedelta(0) <= now - due < late and key not in fired:
+                if _goes_off_on(alarm, due) and timedelta(0) <= now - due < late and key not in fired:
                     due_now.append((alarm, key))
                     break
         if not due_now:
@@ -590,7 +590,29 @@ class PlayerApp:
             self._alarm_file.write_text(json.dumps(self._alarm_fired), encoding="utf-8")
         except OSError as exc:
             logger.warning("Could not save the alarm time: %s", exc)
-        alarm = due_now[0][0]
+        # One-off ones have had their day: they turn themselves off, as a
+        # phone's alarms do.
+        once = {alarm["id"] for alarm, _ in due_now if alarm.get("date")}
+        if once:
+            try:
+                with self._change(rescan=False) as cfg:
+                    cfg.alarms = [{**a, "on": False} if a["id"] in once else a for a in cfg.alarms]
+            except OSError as exc:
+                logger.warning("Could not turn off a one-off alarm: %s", exc)
+        # A schedule switch changes what's playing (the page ignores it
+        # when nothing is): the last one due wins.
+        switches = [alarm for alarm, _ in due_now if alarm.get("action") == "switch"]
+        if switches:
+            switch = switches[-1]
+            self.remote_commands.append({"cmd": "switch", "kind": switch["source"]["kind"], "id": switch["source"]["id"],
+                                         "name": switch["source"].get("name", ""), "label": switch.get("label", ""),
+                                         "at": time.time()})
+            del self.remote_commands[:-20]
+            logger.info("Schedule: switching to %s", switch["source"].get("name") or switch["source"]["id"])
+        rings = [alarm for alarm, _ in due_now if alarm.get("action") != "switch"]
+        if not rings:
+            return False
+        alarm = rings[0]
         self._snooze = None  # a new alarm takes over from a snoozed one
         self._ring({"alarm_id": alarm["id"], "label": alarm.get("label", ""),
                     "source": dict(alarm["source"])}, snoozed=False)
@@ -650,12 +672,17 @@ class PlayerApp:
         now = now or datetime.now()
         best: tuple[float, datetime, dict] | None = None
         for alarm in self.store.config.alarms:
-            if not alarm.get("on"):
+            if not alarm.get("on") or alarm.get("action") == "switch":
                 continue
             hour, minute = map(int, alarm["time"].split(":"))
-            for ahead in range(8):
+            if alarm.get("date"):
+                first = datetime.strptime(alarm["date"], "%Y-%m-%d")
+                days = [(first - now.replace(hour=0, minute=0, second=0, microsecond=0)).days]
+            else:
+                days = range(8)
+            for ahead in days:
                 due = (now + timedelta(days=ahead)).replace(hour=hour, minute=minute, second=0, microsecond=0)
-                if due > now and due.weekday() in alarm["days"]:
+                if due > now and _goes_off_on(alarm, due):
                     at = due.astimezone()
                     if best is None or at.timestamp() < best[0]:
                         best = (at.timestamp(), at, {"alarm_id": alarm["id"], "label": alarm.get("label", ""),
@@ -1198,6 +1225,13 @@ class PlayerApp:
                 raise LookupError("No such station")
             station = cfg.stations.pop(index)
             cfg.stations.insert(max(0, min(to, len(cfg.stations))), station)
+
+
+def _goes_off_on(alarm: dict, day: datetime) -> bool:
+    """Whether an alarm goes off on this day: its date, or one of its days."""
+    if alarm.get("date"):
+        return day.strftime("%Y-%m-%d") == alarm["date"]
+    return day.weekday() in alarm["days"]
 
 
 def _skipped(local: datetime) -> bool:

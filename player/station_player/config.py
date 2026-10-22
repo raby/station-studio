@@ -13,6 +13,7 @@ import secrets
 import threading
 import time
 from dataclasses import asdict, dataclass, field
+from datetime import date
 from pathlib import Path
 
 from station_player.logos import is_name as is_logo_name
@@ -142,9 +143,16 @@ def _stations(value) -> list[dict]:
     return out
 
 
-MAX_ALARMS = 10
+MAX_ALARMS = 30  # alarms and radio schedule switches together
 MAX_ALARM_LABEL = 60
 _ALARM_ID = re.compile(r"[0-9a-f]{8}")
+
+
+def _valid_date(text: str) -> bool:
+    try:
+        return re.fullmatch(r"\d{4}-\d{2}-\d{2}", text) is not None and bool(date.fromisoformat(text))
+    except ValueError:
+        return False
 
 
 def new_alarm_id() -> str:
@@ -158,10 +166,22 @@ def _clean_one_alarm(value, where: str = "The alarm") -> dict:
     when = value.get("time")
     if not isinstance(when, str) or not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", when):
         raise ValueError(f"{where} needs a time written as HH:MM, like 07:30")
+    # A date makes it go off once, on that day; otherwise every week on
+    # its days.
+    once = value.get("date") or ""
+    if not isinstance(once, str) or (once and not _valid_date(once)):
+        raise ValueError(f"{where} needs a date written as YYYY-MM-DD, like 2026-10-23")
     days = value.get("days")
-    if not isinstance(days, list) or not days or not all(
+    if once and not days:
+        days = []
+    elif not isinstance(days, list) or not days or not all(
             isinstance(d, int) and not isinstance(d, bool) and 0 <= d <= 6 for d in days):
         raise ValueError(f"{where} needs at least one day (0 is Monday, 6 is Sunday)")
+    # "alarm" rings (fading in, with Snooze); "switch" changes what's
+    # playing at that time, as the radio schedule does.
+    action = value.get("action") or "alarm"
+    if action not in ("alarm", "switch"):
+        raise ValueError(f"{where} must be an alarm or a schedule switch")
     source = value.get("source")
     if not (isinstance(source, dict) and source.get("kind") in ("playlist", "station")
             and isinstance(source.get("id"), str) and source["id"]):
@@ -174,7 +194,7 @@ def _clean_one_alarm(value, where: str = "The alarm") -> dict:
         raise ValueError(f"{where}'s label must be text")
     alarm_id = value.get("id")
     return {"id": alarm_id if isinstance(alarm_id, str) else "",
-            "on": bool(value.get("on")), "time": when, "days": sorted(set(days)),
+            "on": bool(value.get("on")), "time": when, "days": sorted(set(days)), "date": once, "action": action,
             "source": {"kind": source["kind"], "id": source["id"][:100],
                        "name": name[:200] if isinstance(name, str) else ""},
             "label": " ".join(label.split())[:MAX_ALARM_LABEL].strip()}

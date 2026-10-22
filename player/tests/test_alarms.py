@@ -57,7 +57,8 @@ def test_alarms_are_checked():
     out = clean_alarms([alarm(label="  Work   days  "), alarm("08:00", [6, 5, 5], id="0123abcd")])
     assert re.fullmatch(r"[0-9a-f]{8}", out[0]["id"]) and out[0]["label"] == "Work days"
     assert out[1]["id"] == "0123abcd" and out[1]["days"] == [5, 6]
-    assert set(out[0]) == {"id", "on", "time", "days", "source", "label"}
+    assert set(out[0]) == {"id", "on", "time", "days", "date", "action", "source", "label"}
+    assert (out[0]["date"], out[0]["action"]) == ("", "alarm")
     assert clean_alarms([alarm(label="x" * 99)])[0]["label"] == "x" * 60
     assert clean_alarms(None) == [] and clean_alarms([]) == []
     # Malformed or repeated ids get new ones.
@@ -67,13 +68,17 @@ def test_alarms_are_checked():
     assert all(re.fullmatch(r"[0-9a-f]{8}", i) for i in ids)
     for bad, words in ((alarm("7:30"), "HH:MM"), (alarm(days=[]), "day"), (alarm(days=[True]), "day"),
                        (alarm(days=[7]), "day"), ({**alarm(), "source": {"kind": "file", "id": "x"}}, "playlist"),
-                       (alarm(label=3), "label"), ("x", "set out")):
+                       (alarm(label=3), "label"), ("x", "set out"), (alarm(date="2026-02-30"), "YYYY-MM-DD"),
+                       (alarm(date="23/10/2026"), "YYYY-MM-DD"), (alarm(action="ring"), "schedule")):
         with pytest.raises(ValueError, match=words):
             clean_alarms([bad])
     with pytest.raises(ValueError, match="Alarm 2 needs a time"):
         clean_alarms([alarm(), alarm("25:00")])
-    with pytest.raises(ValueError, match="up to 10"):
-        clean_alarms([alarm()] * 11)
+    with pytest.raises(ValueError, match="up to 30"):
+        clean_alarms([alarm()] * 31)
+    # One-off: a date and no days.
+    once = clean_alarms([alarm(days=[], date="2026-10-23")])[0]
+    assert (once["date"], once["days"]) == ("2026-10-23", [])
     with pytest.raises(ValueError):
         clean_alarms({"time": "07:00"})
 
@@ -95,8 +100,8 @@ def test_old_single_alarm_is_migrated(tmp_path):
     assert not app.check_alarm(datetime(2026, 10, 12, 7, 31))
     assert app.check_alarm(datetime(2026, 10, 13, 7, 30))
     # Malformed alarms in a file are dropped; at most 10 are kept.
-    cfg = config_from_json({"alarms": [alarm("nope")] + [alarm()] * 12})
-    assert len(cfg.alarms) == 10 and len({a["id"] for a in cfg.alarms}) == 10
+    cfg = config_from_json({"alarms": [alarm("nope")] + [alarm()] * 32})
+    assert len(cfg.alarms) == 30 and len({a["id"] for a in cfg.alarms}) == 30
     assert config_from_json({"alarms": "x"}).alarms == []
 
 
@@ -144,6 +149,33 @@ def test_every_alarm_goes_off_once(app):
     fired = json.loads((app.store.home / "alarm-fired.json").read_text())
     assert set(fired) <= {"0000000a", "0000000b", "0000000c", "0000000d"}
     assert all(k >= "2026-10-11" for keys in fired.values() for k in keys)  # only recent times kept
+
+
+def test_a_one_off_alarm_goes_off_on_its_day_then_turns_off(app):
+    app.store.config.alarms = clean_alarms([alarm("17:00", [], date="2026-10-23", id="0000000a")])
+    assert app.next_alarm(datetime(2026, 10, 12, 9, 0))["at"].startswith("2026-10-23T17:00")  # over a week away
+    assert not app.check_alarm(datetime(2026, 10, 16, 17, 0))  # a Friday, but not that one
+    assert app.check_alarm(datetime(2026, 10, 23, 17, 0, 30))
+    assert app.store.config.alarms[0]["on"] is False
+    assert app.next_alarm(datetime(2026, 10, 23, 17, 1)) is None
+
+
+def test_a_schedule_switch_changes_the_station_without_ringing(app, monkeypatch):
+    opened = []
+    monkeypatch.setattr(app, "_open_window", lambda: opened.append(1))
+    news = {"kind": "station", "id": "news", "name": "BBC Radio 4"}
+    app.store.config.alarms = clean_alarms([
+        alarm("17:00", WEEKDAYS, action="switch", id="0000000a", source=news),
+        alarm("17:10", WEEKDAYS, action="switch", id="0000000b"),
+    ])
+    assert not app.check_alarm(datetime(2026, 10, 12, 17, 0, 10))  # nothing rang
+    assert opened == [] and app.alarm_state()["ringing"] is None
+    assert app.next_alarm(datetime(2026, 10, 12, 16, 0)) is None  # switches aren't alarms
+    (cmd,) = app.inbox()["commands"]
+    assert (cmd["cmd"], cmd["kind"], cmd["id"], cmd["name"]) == ("switch", "station", "news", "BBC Radio 4")
+    assert not app.check_alarm(datetime(2026, 10, 12, 17, 10, 5))
+    assert app.inbox()["commands"][0]["id"] == "abc"
+    assert app.inbox()["commands"] == []
 
 
 def test_state_shows_the_next_alarm_and_what_is_ringing(running):
