@@ -3877,7 +3877,9 @@ function appSection() {
         S.lib.config.own_window !== false, windowChange) : null,
       checkbox("updates", "Tell me when a new version is out (asks pypi.org once a day)",
         S.lib.config.check_updates !== false, updatesChange)),
-    el("h2", {}, "Studio tools"),
+    browser ? null : el("p", { class: "help" },
+      "Station Player opens in a browser tab. With Google Chrome, Microsoft Edge or Brave installed it opens in a window of its own instead."),
+    el("h2", { class: "spaced" }, "Studio tools"),
     el("p", { class: "help" },
       "For people who make a radio station: playlists exported from station-studio or iTunes, recording radio, ",
       "the Recordings page, and the play log for PRS and PPL. Off, Station Player is a simple radio and music player."),
@@ -3889,9 +3891,7 @@ function appSection() {
         } catch (err) {
           renderErrors(err.message);
         }
-      })),
-    browser ? null : el("p", { class: "help" },
-      "Station Player opens in a browser tab. With Google Chrome, Microsoft Edge or Brave installed it opens in a window of its own instead."));
+      })));
 }
 
 function playbackSection() {

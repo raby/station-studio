@@ -85,6 +85,9 @@ svg.i .f { fill: currentColor; stroke: none; }
 }
 .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 16px; padding: 0 8px 16px; letter-spacing: -.01em; }
 .brand img { width: 28px; height: 28px; border-radius: 7px; }
+.brand { flex-wrap: wrap; row-gap: 4px; }
+.brand-name { white-space: nowrap; }
+.settings h2.spaced { margin-top: 28px; }
 .studio-badge { font-size: 10px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--accent);
   border: 1px solid var(--accent); border-radius: 6px; padding: 1px 5px; }
 body.public .studio-only { display: none !important; }
