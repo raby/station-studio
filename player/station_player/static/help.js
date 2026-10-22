@@ -37,6 +37,11 @@ const HELP = [
     "The dial at the top of the Stations page is an old radio's tuner, with your stations along it. Click a name, or drag the needle along the dial and let go near a station; you'll hear static on the way.",
     "With the tuner selected, Left and Right tune to the station before or after. The line moving beside the song title at the bottom follows the sound.",
   ]],
+  ["globe", "The globe", [
+    ["Under Find stations, ", ["Globe"], " shows stations as dots on a world globe. Drag to turn it, scroll or pinch to zoom, and tap a dot to listen. The stations nearest the middle are listed underneath, with ", ["Add"], " to keep one."],
+    "Zoom in on a country and it finds more stations there. News shows only news and talk stations, so you can hop from London to Tokyo for the headlines.",
+    "With the globe selected, the arrow keys turn it, plus and minus zoom, and Enter plays the station in the middle.",
+  ]],
   ["ambient", "Ambient mode", [
     ["Ambient in the sidebar fills the screen with a calm scene and its sound: a ", ["Fish tank"], ", ", ["Waves"], " on a shore, or ", ["Birds"], " at dawn."],
     "It plays on its own or quietly under the radio, with its own volume. Set the sleep timer and it fades out with everything else.",

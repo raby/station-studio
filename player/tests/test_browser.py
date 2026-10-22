@@ -1640,3 +1640,78 @@ def test_alarm_greeting_follows_the_time_of_day(page):
     at = lambda h, m=0: page.evaluate(f"greeting(new Date(2026, 0, 1, {h}, {m}))")
     assert [at(7), at(12, 30), at(18, 25), at(23, 30), at(4)] == [
         "Good morning", "Good afternoon", "Good evening", "Hello", "Hello"]
+
+
+class GlobeNet(FakeDirectoryNet):
+    """Stations with positions: three worldwide, one more in Great Britain,
+    and news and talk ones."""
+
+    def __call__(self, url, user_agent, limit):
+        if "/json/stations/search" not in url:
+            return super().__call__(url, user_agent, limit)
+        self.asked.append(url)
+        q = parse_qs(urlparse(url).query)
+
+        def st(name, lat, lon, cc, votes, tags="pop"):
+            return {"stationuuid": f"uuid-{name}", "name": name, "url_resolved": f"http://127.0.0.1:9/{name.replace(' ', '')}",
+                    "favicon": "", "tags": tags, "countrycode": cc, "codec": "MP3", "bitrate": 128, "votes": votes,
+                    "geo_lat": lat, "geo_long": lon}
+        tag, cc = q.get("tag", [""])[0], q.get("countrycode", [""])[0]
+        if tag == "news":
+            items = [st("World Service", 51.52, -0.14, "GB", 90, "news")]
+        elif tag == "talk":
+            items = [st("Talk Tokyo", 35.7, 139.7, "JP", 30, "talk")]
+        elif cc == "GB":
+            items = [st("Manchester FM", 53.48, -2.24, "GB", 20), st("London FM", 51.5, -0.12, "GB", 80)]
+        else:
+            items = [st("London FM", 51.5, -0.12, "GB", 80), st("Tokyo FM", 35.68, 139.69, "JP", 70),
+                     st("New York FM", 40.71, -74.0, "US", 60), {"name": "Nowhere", "url_resolved": "http://127.0.0.1:9/x"}]
+        return json.dumps(items).encode(), "application/json"
+
+
+def test_globe(page, player):
+    app = player[0]
+    net = GlobeNet()
+    app.directory = Directory(fetch=net, servers=["api.example"], public=lambda host: True)
+    page.locator(".nav-item[data-view=radio]").click()
+    page.get_by_role("button", name="Globe", exact=True).click()
+    sync_api.expect(page.locator("#globe")).to_be_focused()
+    sync_api.expect(page.locator("#finder-tags")).to_be_hidden()
+    status = page.locator("#globe-status")
+    sync_api.expect(status).to_have_text("3 stations on the globe")
+    assert any("has_geo_info=true" in u and "countrycode" not in u for u in net.asked)
+    # Starts over home (en-US here), turning by itself.
+    lon = page.evaluate("G.lon")
+    assert -125 < lon < -60
+    page.wait_for_function(f"() => G.lon !== {lon}")
+    # Tap a dot: it plays, and comes first in the list.
+    page.evaluate("globeStop(); G.lon = 0; G.lat = 50; G.zoom = 2; globeDraw()")
+    spot = page.evaluate("""() => {
+        const cv = $('#globe'), v = globeView(cv), [x, y] = v.at(-0.12, 51.5), dpr = window.devicePixelRatio || 1;
+        return [x / dpr, y / dpr];
+    }""")
+    page.locator("#globe").click(position={"x": spot[0], "y": spot[1]})
+    page.wait_for_function("() => S.mode === 'radio' && S.station.name === 'London FM'")
+    sync_api.expect(page.locator("#globe-list .find-card").first.locator(".name")).to_have_text("London FM")
+    # Zoomed in, it finds more in the country in the middle.
+    page.locator("#globe").focus()
+    page.keyboard.press("+")
+    sync_api.expect(status).to_have_text("4 stations on the globe")
+    assert page.evaluate("G.zoom") == 3
+    assert any("countrycode=GB" in u for u in net.asked)
+    sync_api.expect(page.locator("#globe-list")).to_contain_text("Manchester FM")
+    page.keyboard.press("ArrowLeft")
+    assert page.evaluate("G.lon") == -4
+    # News and talk only.
+    page.get_by_role("button", name="News", exact=True).click()
+    sync_api.expect(status).to_have_text("2 news and talk stations on the globe")
+    assert any("tag=talk" in u for u in net.asked)
+    # The list comes back, and searching shows it too.
+    page.get_by_role("button", name="List", exact=True).click()
+    sync_api.expect(page.locator("#finder-tags")).to_be_visible()
+    sync_api.expect(page.locator("#globe")).to_have_count(0)
+    page.get_by_role("button", name="Globe", exact=True).click()
+    page.locator("#finder-q").fill("fm")
+    page.locator("#finder-q").press("Enter")
+    sync_api.expect(page.locator("#finder-results")).to_be_visible()
+    sync_api.expect(page.get_by_role("button", name="List", exact=True)).to_have_attribute("aria-pressed", "true")
