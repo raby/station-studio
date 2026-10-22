@@ -73,10 +73,15 @@ test.describe('§16.2.3 atomic edit', () => {
     await expect(page.getByTestId('input-genre')).toHaveValue('Night');
 
     // Persisted in the DB: the sidecar GET reflects the new genre.
-    const sidecar = await (
-      await request.get(`${API}/api/stations/ed3-edit/sidecar`)
-    ).json();
-    expect(sidecar.template.layout.flat_slots[0].genre).toBe('Night');
+    // The input already shows "Night" once typed, so poll until the save lands.
+    await expect
+      .poll(async () => {
+        const sidecar = await (
+          await request.get(`${API}/api/stations/ed3-edit/sidecar`)
+        ).json();
+        return sidecar.template.layout.flat_slots[0].genre;
+      })
+      .toBe('Night');
   });
 
   test('row_template chip shows the shared-block warning', async ({ page, request }) => {
