@@ -279,7 +279,7 @@ class PlayerApp:
             scanning = self._installed != self._generation
         stations = [{**s, "id": station_id(s["url"])} for s in config["stations"]]
         saved = {s["url"] for s in stations}
-        recent = [{**s, "saved": s["url"] in saved} for s in config["recent_stations"]]
+        recent = [{**s, "id": station_id(s["url"]), "saved": s["url"] in saved} for s in config["recent_stations"]]
         return {
             "version": __version__,
             "playlists": lib.playlist_summaries() + self.my_summaries(),
@@ -346,14 +346,20 @@ class PlayerApp:
     # ---- recording ---------------------------------------------------------------
 
     def record(self, sid: str, on: bool) -> None:
-        url = self.station_url(sid)
-        if url is None:
+        """Start or stop recording one of your stations, or one played lately
+        (so a station tried from Find stations can be recorded straight away)."""
+        with self._lock:
+            known = self.store.config.stations + self.store.config.recent_stations
+        # A recording keeps its station, even once that's left Recently played.
+        known = known + self.recorder.status()
+        st = next((s for s in known if station_id(s["url"]) == sid), None)
+        if st is None:
             raise LookupError("No such station")
+        url = st["url"]
         if on:
             if not self.store.config.studio:
                 raise ValueError("Recording is one of the studio tools: turn them on in Settings › App")
-            name = next((s["name"] for s in self.store.config.stations if s["url"] == url), url)
-            self.recorder.start(url, name)
+            self.recorder.start(url, st.get("name") or url)
         else:
             self.recorder.stop(url)
 

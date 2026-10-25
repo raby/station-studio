@@ -304,7 +304,9 @@ station.
 
 **Recently played** at the top of the Radio page lists the last 8
 stations you listened to, saved or not, so a station you tried from
-the finder is easy to find again (and Add). **Clear** empties it.
+the finder is easy to find again (and Add). **Record** is there too,
+so a station you've just found can be recorded without saving it
+first. **Clear** empties it.
 
 **Station logos** show on your stations, in the now-playing bar and in
 the computer's media controls (the Mac's Now Playing, Windows' media

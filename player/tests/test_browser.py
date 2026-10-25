@@ -1260,6 +1260,17 @@ def test_logos_recently_played_and_more_results(page, player):
     assert page.evaluate("navigator.mediaSession.metadata.artwork.length") == 1
     sync_api.expect(page.locator(".bar .seek")).to_be_hidden()
     sync_api.expect(page.locator("#finder-q")).to_have_value("sta")  # typing survived the update
+    # Record it straight from Recently played, without saving it first.
+    from station_player.recorder import Recorder
+    from test_recorder import FakeStream, Opener
+    app.recorder = Recorder(player[2] / "rec", opener=Opener(FakeStream(b"x", live=True)))
+    recent.get_by_role("button", name="Record Station 0").click()
+    sync_api.expect(recent.get_by_role("button", name="Stop recording Station 0")).to_be_visible()
+    sync_api.expect(recent).to_have_class(re.compile(r"\brec-on\b"))
+    sync_api.expect(page.locator("#rec-status")).to_contain_text("Recording Station 0")
+    recent.get_by_role("button", name="Stop recording Station 0").click()
+    sync_api.expect(recent.get_by_role("button", name="Record Station 0")).to_be_visible()
+    sync_api.expect(page.locator("#rec-status")).to_be_hidden()
     # Add it from Recently played: a saved station with the same logo.
     recent.get_by_role("button", name="Add Station 0 to your stations").click()
     card = page.locator(".card[data-url='http://127.0.0.1:9/s0']")

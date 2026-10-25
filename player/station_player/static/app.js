@@ -1465,6 +1465,11 @@ function recentSection() {
               if (live && !audio.paused) audio.pause(); else playStation(st);
             },
           }, ...iconLabel("play", "Listen")),
+          // Here too, so a station just tried from Find stations can be recorded straight away.
+          el("button", {
+            type: "button", class: "btn small rec-btn studio-only", "aria-label": `Record ${st.name}`,
+            onclick: () => toggleRecording(mine || { id: r.id, url: r.url, name: r.name }),
+          }, ...iconLabel("record", "Record")),
           mine ? null : el("button", {
             type: "button", class: "btn small primary add", "aria-label": `Add ${st.name} to your stations`,
             onclick: async (e) => {
@@ -1488,6 +1493,7 @@ function syncRecent() {
   const focused = old.contains(document.activeElement) ? document.activeElement.getAttribute("aria-label") : null;
   const fresh = recentSection();
   old.replaceWith(fresh);
+  syncRecordings();  // names the Record buttons for what's running
   if (focused) fresh.querySelector(`[aria-label="${CSS.escape(focused)}"]`)?.focus();
   syncRadioCards();
 }
@@ -3340,6 +3346,14 @@ function syncRecordings() {
     box.querySelector(`button[data-url="${CSS.escape(r.url)}"]`).lastChild.textContent = ` · ${fmtTime(r.seconds)}`;
   }
   box.hidden = active.length === 0;
+  for (const card of document.querySelectorAll("#view .recent-card[data-find]")) {
+    const running = isRunning(recordingOf(card.dataset.find));
+    card.classList.toggle("rec-on", running);
+    const btn = card.querySelector(".rec-btn");
+    const label = running ? "Stop recording" : "Record";
+    if (btn.textContent !== label) btn.replaceChildren(...iconLabel(running ? "stop" : "record", label));
+    btn.setAttribute("aria-label", `${label} ${card.querySelector(".name").textContent}`);
+  }
   for (const card of document.querySelectorAll("#view .card[data-url]")) {
     const r = recordingOf(card.dataset.url);
     const running = isRunning(r);

@@ -69,6 +69,7 @@ const HELP = [
   ], { label: "Go to In the car", view: { type: "settings", tab: "car" } }],
   ["record", "Recording radio", [
     ["Record on a station records it to a file, whether or not you're listening. Press it again to stop. A recording stops by itself after 12 hours."],
+    "A station you've just found plays at the top of the Radio page under Recently played, with its own Record button, so you can record it without saving it first.",
     ["Recordings in the sidebar lists everything you've recorded, with the songs it caught. Give one a label and tags with the pencil, ", ["Play"], " it, or add it to a playlist with +."],
   ], { label: "Go to Recordings", view: { type: "recordings" } }],
   ["clock", "Clock and alarms", [
