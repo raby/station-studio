@@ -280,7 +280,7 @@ function renderUpdate() {
     box.hidden = true;
     return;
   }
-  box.replaceChildren(
+  box.replaceChildren(...[  // (replaceChildren would show a null as "null")
     el("div", {}, `Station Player ${latest} is out.`),
     u && u.stage === "failed" && u.version === latest ? updateFailure(u) : null,
     el("div", { class: "row" },
@@ -288,7 +288,8 @@ function renderUpdate() {
       el("button", {
         type: "button", class: "btn small",
         onclick: () => { store("dismissed-update", latest); renderUpdate(); },
-      }, "Not now")));
+      }, "Not now")),
+  ].filter(Boolean));
   box.hidden = false;
 }
 

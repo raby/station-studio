@@ -361,6 +361,9 @@ def test_update_from_settings(page, player, monkeypatch):
     sync_api.expect(box).to_contain_text(f"You have Station Player {server_mod.__version__}")
     box.get_by_role("button", name="Check for updates").click()
     sync_api.expect(box).to_contain_text("Station Player 99.0.0 is out")
+    note = page.locator("#update")
+    sync_api.expect(note).to_contain_text("Station Player 99.0.0 is out")
+    assert "null" not in note.inner_text()  # nothing stray in the sidebar note
     # It didn't work: say why, and where to get it instead.
     box.get_by_role("button", name="Update to 99.0.0").click()
     sync_api.expect(box.locator(".update-failed")).to_contain_text("no network")
