@@ -7,7 +7,7 @@
    */
   import { onDestroy, onMount } from 'svelte';
   import { confirmDialog } from '$lib/confirm';
-  import { installApp, installOffer } from '$lib/install';
+  import { STATE_EVENT, UPDATE_EVENT } from '$lib/appEvents';
   import {
     getAppState,
     quitApp,
@@ -28,10 +28,22 @@
 
   let state: AppState | null = null;
   let error: string | null = null;
+  // Not now hides the notice for that version, as in Station Player.
+  const DISMISSED = 'station-studio:dismissed-update';
+  let dismissed: string | null = remembered();
   let stopped = false;
   let busy = false;
   let poll: ReturnType<typeof setInterval> | null = null;
   let refresh: ReturnType<typeof setInterval> | null = null;
+
+  onMount(() => {
+    window.addEventListener(STATE_EVENT, onState);
+    window.addEventListener(UPDATE_EVENT, onUpdate);
+    return () => {
+      window.removeEventListener(STATE_EVENT, onState);
+      window.removeEventListener(UPDATE_EVENT, onUpdate);
+    };
+  });
 
   onMount(async () => {
     state = await getAppState(fetchFn);
@@ -49,6 +61,31 @@
     if (poll) clearInterval(poll);
     if (refresh) clearInterval(refresh);
   });
+
+  // From the Settings page (see $lib/appEvents).
+  function remembered(): string | null {
+    try {
+      return localStorage.getItem(DISMISSED);
+    } catch {
+      return null; // private window: nothing remembered
+    }
+  }
+  function notNow(version: string): void {
+    dismissed = version;
+    try {
+      localStorage.setItem(DISMISSED, version);
+    } catch {
+      /* forget it next time */
+    }
+  }
+
+  function onState(e: Event): void {
+    const next = (e as CustomEvent<AppState>).detail;
+    if (next && !poll) state = next;
+  }
+  function onUpdate(): void {
+    if (!busy && !updating) update();
+  }
 
   function follow(): void {
     if (poll) return;
@@ -128,10 +165,14 @@
   <div class="app-bar" data-testid="app-bar">
     {#if updating && state.update}
       <span class="notice" role="status" data-testid="app-update-progress">{stageText(state.update)}</span>
-    {:else if state.latest && state.can_update}
+    {:else if state.latest && state.can_update && state.latest !== dismissed}
+      {@const latest = state.latest}
       <span class="notice" data-testid="app-update-notice">
-        Station Studio {state.latest} is out.
-        <button type="button" class="primary" on:click={update} disabled={busy} data-testid="app-update-now">Update now</button>
+        Station Studio {latest} is out.
+        <span class="row">
+          <button type="button" class="primary" on:click={update} disabled={busy} data-testid="app-update-now">Update now</button>
+          <button type="button" on:click={() => notNow(latest)} data-testid="app-update-later">Not now</button>
+        </span>
         {#if state.release_page}
           <a href={state.release_page} target="_blank" rel="noopener">What's new</a>
         {/if}
@@ -145,15 +186,6 @@
     {/if}
     {#if error}
       <span class="error" role="alert" data-testid="app-error">{error}</span>
-    {/if}
-    {#if $installOffer}
-      <div class="install" data-testid="app-install">
-        <button type="button" on:click={() => $installOffer && installApp($installOffer)} data-testid="app-install-button">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12" /><path d="M7 10l5 5 5-5" /><path d="M5 21h14" /></svg>
-          Install as an app
-        </button>
-        <span class="hint">Gives Station Studio its own icon in the Dock or taskbar.</span>
-      </div>
     {/if}
     <div class="foot">
       <span class="version" title={`Your stations and playlists are kept in ${state.home}`}>
@@ -194,6 +226,15 @@
     border: 1px solid var(--danger);
     color: var(--danger);
   }
+  .notice .row {
+    display: flex;
+    gap: 6px;
+  }
+  .notice .row button {
+    font-size: 13px;
+    padding: 4px 10px;
+    white-space: nowrap;
+  }
   .notice a,
   .error a {
     font-weight: 500;
@@ -221,31 +262,6 @@
   button.primary:hover:not(:disabled) {
     background: var(--accent-strong);
     border-color: var(--accent-strong);
-  }
-  .install {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-  .install button {
-    align-items: center;
-    display: inline-flex;
-    gap: 6px;
-    justify-content: center;
-  }
-  .install svg {
-    fill: none;
-    height: 14px;
-    stroke: currentColor;
-    stroke-linecap: round;
-    stroke-linejoin: round;
-    stroke-width: 2;
-    width: 14px;
-  }
-  .hint {
-    color: var(--muted);
-    font-size: 12px;
-    padding: 0 4px;
   }
   .quit {
     align-items: center;

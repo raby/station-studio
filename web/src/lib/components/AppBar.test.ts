@@ -3,8 +3,8 @@ import { render, cleanup, fireEvent, waitFor } from '@testing-library/svelte';
 import '@testing-library/jest-dom/vitest';
 import AppBar from './AppBar.svelte';
 import { answerConfirmDialog } from '$lib/confirm';
-import { startInstallSupport, _reset as resetInstall } from '$lib/install';
 import { stageText, waitForRestart, type AppState } from '$lib/desktopApp';
+import { announceAppState, requestUpdate } from '$lib/appEvents';
 
 function appState(over: Partial<AppState> = {}): AppState {
   return {
@@ -17,6 +17,9 @@ function appState(over: Partial<AppState> = {}): AppState {
     release_page: null,
     update: null,
     home: '/Users/rob/.station-studio',
+    settings: { own_window: true, check_updates: true },
+    login: false,
+    browser: 'Google Chrome',
     ...over,
   };
 }
@@ -63,6 +66,24 @@ describe('AppBar', () => {
     const notice = await findByTestId('app-update-notice');
     expect(notice).toHaveTextContent('Station Studio 1.7.0 is out.');
     expect(notice.querySelector('a')).toHaveAttribute('href', expect.stringContaining('studio-v1.7.0'));
+  });
+
+  it('Not now hides the notice for that version, and a newer one shows again', async () => {
+    localStorage.clear();
+    let latest = '1.7.0';
+    const fetchFn = vi.fn(async () => json(appState({ latest }))) as unknown as typeof fetch;
+    const first = render(AppBar, { props: { fetchFn } });
+    await fireEvent.click(await first.findByTestId('app-update-later'));
+    expect(first.queryByTestId('app-update-notice')).toBeNull();
+    first.unmount();
+    const again = render(AppBar, { props: { fetchFn } });
+    await again.findByTestId('app-bar');
+    expect(again.queryByTestId('app-update-notice')).toBeNull(); // remembered
+    again.unmount();
+    latest = '1.8.0';
+    const newer = render(AppBar, { props: { fetchFn } });
+    expect(await newer.findByTestId('app-update-notice')).toHaveTextContent('Station Studio 1.8.0 is out.');
+    localStorage.clear();
   });
 
   it('looks again now and then, so a new version turns up on an open page', async () => {
@@ -153,24 +174,6 @@ describe('AppBar', () => {
     expect((fetchFn as unknown as ReturnType<typeof vi.fn>).mock.calls.some(([u]) => u === '/api/app/quit')).toBe(true);
   });
 
-  it('offers Install as an app while the browser does', async () => {
-    resetInstall();
-    startInstallSupport(window);
-    const fetchFn = vi.fn(async () => json(appState()));
-    const { findByTestId, queryByTestId } = render(AppBar, { props: { fetchFn } });
-    await findByTestId('app-bar');
-    expect(queryByTestId('app-install')).toBeNull();
-    const prompt = vi.fn(async () => {});
-    const offer = Object.assign(new Event('beforeinstallprompt', { cancelable: true }), {
-      prompt,
-      userChoice: Promise.resolve({ outcome: 'accepted' }),
-    });
-    window.dispatchEvent(offer);
-    await fireEvent.click(await findByTestId('app-install-button'));
-    expect(prompt).toHaveBeenCalled();
-    await waitFor(() => expect(queryByTestId('app-install')).toBeNull());
-  });
-
   it('Quit cancelled does nothing', async () => {
     const fetchFn = vi.fn(async () => json(appState())) as unknown as typeof fetch;
     const { findByTestId, queryByTestId } = render(AppBar, { props: { fetchFn } });
@@ -209,5 +212,28 @@ describe('desktopApp helpers', () => {
       throw new Error('down');
     }) as unknown as typeof fetch;
     expect(await waitForRestart('1.7.0', { fetchFn, sleep: async () => {}, tries: 3 })).toBe('gone');
+  });
+});
+
+describe('AppBar and the Settings page', () => {
+  afterEach(() => cleanup());
+
+  it('shows news the Settings page announces', async () => {
+    const fetchFn = vi.fn(async () => json(appState())) as unknown as typeof fetch;
+    const { findByTestId, queryByTestId } = render(AppBar, { props: { fetchFn } });
+    await findByTestId('app-bar');
+    expect(queryByTestId('app-update-notice')).toBeNull();
+    announceAppState(appState({ latest: '1.9.0' }));
+    expect(await findByTestId('app-update-notice')).toHaveTextContent('Station Studio 1.9.0 is out.');
+  });
+
+  it('runs Update now when the Settings page asks', async () => {
+    const fetchFn = vi.fn(async (url: string) =>
+      url === '/api/app/update' ? json({ detail: 'refused' }, 400) : json(appState({ latest: '1.9.0' })),
+    ) as unknown as typeof fetch;
+    const { findByTestId } = render(AppBar, { props: { fetchFn } });
+    await findByTestId('app-update-notice');
+    requestUpdate();
+    expect(await findByTestId('app-error')).toHaveTextContent('refused');
   });
 });

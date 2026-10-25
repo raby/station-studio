@@ -58,6 +58,17 @@ def find_browser(platform: str | None = None, env=None, exists=None, which=None)
     return None
 
 
+def browser_name(exe: str | None) -> str | None:
+    if not exe:
+        return None
+    low = exe.lower()
+    for key, name in (("edge", "Microsoft Edge"), ("brave", "Brave"), ("vivaldi", "Vivaldi"),
+                      ("chromium", "Chromium"), ("chrome", "Google Chrome")):
+        if key in low:
+            return name
+    return "your browser"
+
+
 DEFAULT_URL = "http://127.0.0.1:8001/"
 
 
