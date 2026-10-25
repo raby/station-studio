@@ -122,6 +122,20 @@ describe('/sources — initial render', () => {
     expect(rows[1]).toHaveTextContent('reference');
   });
 
+  it('shows when each pool was last imported', async () => {
+    listSourcesMock.mockResolvedValue([
+      { id: 1, name: 'NIGHT', role: 'content', track_count: 1884, imported_at: '2026-10-25T14:30:00Z' },
+      { id: 2, name: 'OLD', role: 'content', track_count: 5, imported_at: null },
+    ]);
+    render(Page);
+    const cells = await screen.findAllByTestId('pool-row-imported');
+    const time = cells[0].querySelector('time');
+    expect(time).toHaveAttribute('datetime', '2026-10-25T14:30:00Z');
+    expect(time!.textContent).toMatch(/2026/);
+    expect(cells[0].textContent).toMatch(/ago|just now/);
+    expect(cells[1]).toHaveTextContent('—');
+  });
+
   it('surfaces a list error if listSources rejects', async () => {
     listSourcesMock.mockRejectedValueOnce(new FakeApiError(500, 'boom'));
     render(Page);

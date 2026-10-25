@@ -11,6 +11,7 @@ Generalised from weekly/app/services/exporter.py. Differences:
 from __future__ import annotations
 
 import logging
+import os
 import plistlib
 import re
 from collections import OrderedDict
@@ -365,12 +366,17 @@ def export_playlist(
 def _resolve_output_dir(db: Session) -> Path:
     """Resolve the configured disk-export directory to an absolute path.
 
-    Reads Config key 'playlist_output_dir' if set, else uses _DEFAULT_OUTPUT_DIR.
+    Reads Config key 'playlist_output_dir' if set, else
+    $STATION_STUDIO_EXPORT_DIR (the downloaded app sets it to the app-home's
+    `exports/`, where Station Player looks), else _DEFAULT_OUTPUT_DIR.
     User-supplied paths may be absolute, relative, or '~'-prefixed; all are
     normalised to an absolute Path.
     """
     row = db.query(Config).filter(Config.key == "playlist_output_dir").first()
-    raw = row.value if row and row.value else _DEFAULT_OUTPUT_DIR
+    raw = (
+        row.value if row and row.value
+        else os.environ.get("STATION_STUDIO_EXPORT_DIR", "").strip() or _DEFAULT_OUTPUT_DIR
+    )
     return Path(raw).expanduser().resolve()
 
 

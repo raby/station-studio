@@ -89,6 +89,9 @@ class SourceOut(BaseModel):
     # §14.35: "content" (default — engine samples from this pool) or
     # "reference" (declared for cross-reference but never sampled).
     role: Literal["content", "reference"] = "content"
+    # When the pool was last (re-)imported, ISO 8601 UTC with a trailing
+    # Z, so a weekly re-import can be seen to have landed.
+    imported_at: str | None = None
 
 
 class ImportRequest(BaseModel):

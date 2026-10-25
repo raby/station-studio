@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 from engine.database import make_engine, make_sessionmaker
@@ -72,7 +73,12 @@ def _verify_repo_layout(repo_root: Path, stations_dir: Path) -> None:
         )
 
 
-_verify_repo_layout(_REPO_ROOT, _STATIONS_DIR)
+# The downloaded Mac/Windows app (PyInstaller, `sys.frozen`) keeps its
+# Python modules inside an archive, so there's no `engine/` folder on
+# disk to find; module resolution is settled at build time there, and
+# bootstrap always sets STATION_STUDIO_STATIONS_DIR.
+if not getattr(sys, "frozen", False):
+    _verify_repo_layout(_REPO_ROOT, _STATIONS_DIR)
 
 
 def get_db():

@@ -1,0 +1,180 @@
+# Station Studio downloads for people without a terminal, Python or
+# Docker: a Mac .dmg (Apple Silicon and Intel) and a Windows setup .exe,
+# each carrying its own Python and the built web pages (PyInstaller; see
+# packaging/station-studio.spec).
+#
+# On pull requests that touch the app's packaging it builds and
+# smoke-tests them and keeps them as run artifacts, for trying before a
+# release. publish-studio-app.yml calls it with the release's tag to
+# attach them to that GitHub release.
+#
+# They aren't signed with a paid Apple or Microsoft certificate, so the
+# first open needs System Settings › Privacy & Security › Open Anyway on
+# a Mac, and More info › Run anyway on Windows (the release notes say so).
+
+name: Station Studio installers
+
+on:
+  pull_request:
+    paths:
+      - 'packaging/**'
+      - 'station_studio/desktop.py'
+      - 'station_studio/selfupdate.py'
+      - 'station_studio/updates.py'
+      - '.github/workflows/studio-installers.yml'
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      release_tag:
+        description: Attach the installers to this GitHub release
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write  # gh release upload, when called with a tag
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            label: Mac (Apple Silicon)
+            kind: mac
+            arch: apple-silicon
+          - os: macos-15-intel
+            label: Mac (Intel)
+            kind: mac
+            arch: intel
+          - os: windows-latest
+            label: Windows
+            kind: windows
+            arch: x64
+    defaults:
+      run:
+        shell: bash
+    env:
+      GH_TOKEN: ${{ github.token }}
+      STATION_STUDIO_HOME: ${{ github.workspace }}/smoke-home
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: web/package-lock.json
+
+      - name: build the web pages
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
+
+      - name: tools
+        run: python -m pip install . "pyinstaller>=6.10,<7" certifi
+
+      - name: read version
+        id: version
+        run: echo "version=$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml","rb"))["project"]["version"])')" >> "$GITHUB_OUTPUT"
+
+      - name: build the app
+        run: python -m PyInstaller --noconfirm --clean packaging/station-studio.spec --distpath build/dist --workpath build/work
+
+      - name: smoke-test the app
+        run: |
+          set -e
+          if [ "${{ matrix.kind }}" = mac ]; then
+            # The helper that runs the server (the app itself only hands over to it).
+            EXE="build/dist/Station Studio.app/Contents/MacOS/station-studio-server"
+          else
+            EXE="build/dist/Station Studio/Station Studio.exe"
+          fi
+          "$EXE" --no-browser --port 8001 &
+          PID=$!
+          trap 'kill $PID 2>/dev/null || true; echo "--- log"; cat "$STATION_STUDIO_HOME/station-studio.log" 2>/dev/null || true' EXIT
+          for i in $(seq 1 90); do
+            curl -sf http://127.0.0.1:8001/api/app >/dev/null && break
+            sleep 1
+          done
+          curl -sS http://127.0.0.1:8001/api/app | python -c "import json,sys; d=json.load(sys.stdin); assert d['app'] and d['can_update'] and d['version'] == '${{ steps.version.outputs.version }}', d; print('version', d['version'], d['kind'])"
+          curl -sS -o /dev/null -w '%{http_code} %{content_type}\n' http://127.0.0.1:8001/ | grep -q '^200 text/html'
+          curl -sS -o /dev/null -w '%{http_code} %{content_type}\n' http://127.0.0.1:8001/sources | grep -q '^200 text/html'
+          curl -sS http://127.0.0.1:8001/api/stations | python -c "import json,sys; s=[x['slug'] for x in json.load(sys.stdin)]; assert 'starter' in s, s; print('stations', s)"
+          # A playlist made and exported lands in the data folder's exports/.
+          curl -sSf -X POST -H 'Content-Type: application/json' -d '{"week":1,"seed":1}' http://127.0.0.1:8001/api/stations/starter/generate \
+            | python -c "import json,sys; print('playlist', json.load(sys.stdin)['playlist_id'])"
+          curl -sSf -X POST http://127.0.0.1:8001/api/playlists/1/export-to-disk
+          echo
+          test -f "$STATION_STUDIO_HOME/exports/starter/001.xml"
+          # The certificates bundled for https (the new-version check and updates).
+          if [ "${{ matrix.kind }}" = mac ]; then
+            test -f "build/dist/Station Studio.app/Contents/Resources/certifi/cacert.pem" \
+              || test -f "build/dist/Station Studio.app/Contents/Frameworks/certifi/cacert.pem"
+          fi
+          # Opened again while it runs: hands over and exits.
+          if [ "${{ matrix.kind }}" = mac ]; then
+            "build/dist/Station Studio.app/Contents/MacOS/Station Studio" --no-browser --port 8001
+          else
+            "$EXE" --no-browser --port 8001
+          fi
+          # Quit from the page stops it.
+          curl -sSf -X POST -H 'X-Station-Studio: 1' http://127.0.0.1:8001/api/app/quit
+          for i in $(seq 1 20); do kill -0 $PID 2>/dev/null || break; sleep 1; done
+          if kill -0 $PID 2>/dev/null; then echo "still running after Quit"; exit 1; fi
+          if [ "${{ matrix.kind }}" = mac ]; then
+            # With nothing running, the app starts the helper and exits.
+            "build/dist/Station Studio.app/Contents/MacOS/Station Studio" --no-browser --port 8002
+            curl -sf http://127.0.0.1:8002/api/app >/dev/null
+            curl -sSf -X POST -H 'X-Station-Studio: 1' http://127.0.0.1:8002/api/app/quit
+          fi
+          echo "smoke OK"
+
+      - name: make the .dmg
+        if: matrix.kind == 'mac'
+        run: |
+          set -e
+          mkdir -p build/dmg out
+          cp -R "build/dist/Station Studio.app" build/dmg/
+          ln -s /Applications build/dmg/Applications
+          # hdiutil sometimes finds the runner's disk busy: try again.
+          for i in 1 2 3; do
+            hdiutil create -volname "Station Studio" -srcfolder build/dmg -ov -format UDZO \
+              "out/StationStudio-${{ steps.version.outputs.version }}-mac-${{ matrix.arch }}.dmg" && break
+            sleep 10
+          done
+          test -f "out/StationStudio-${{ steps.version.outputs.version }}-mac-${{ matrix.arch }}.dmg"
+
+      - name: make the setup .exe
+        if: matrix.kind == 'windows'
+        env:
+          MSYS_NO_PATHCONV: '1'  # Git Bash would turn ISCC's /D… options into paths
+        run: |
+          set -e
+          ISCC="/c/Program Files (x86)/Inno Setup 6/ISCC.exe"
+          if [ ! -f "$ISCC" ]; then choco install innosetup -y --no-progress; fi
+          mkdir -p out
+          "$ISCC" /DVersion=${{ steps.version.outputs.version }} \
+            "/DSource=$(cygpath -w "$PWD/build/dist/Station Studio")" \
+            "/DOutput=$(cygpath -w "$PWD/out")" \
+            "$(cygpath -w "$PWD/packaging/windows/installer.iss")"
+          ls -la out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: station-studio-${{ matrix.kind }}-${{ matrix.arch }}
+          path: out/*
+          if-no-files-found: error
+
+      - name: attach to the release
+        if: inputs.release_tag != ''
+        run: gh release upload "${{ inputs.release_tag }}" out/* --clobber --repo "$GITHUB_REPOSITORY"

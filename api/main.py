@@ -191,6 +191,14 @@ app.include_router(meta.router)
 app.include_router(rules.router)
 
 
+@app.get("/api/app", include_in_schema=False)
+def app_state() -> dict:
+    """Started as a plain server (`serve`, Docker, `make dev`): no app
+    controls. The downloaded app (station_studio/desktop.py) puts its own
+    /api/app ahead of this one, with Quit and Update now."""
+    return {"service": "station-studio", "app": False}
+
+
 # §16.13 c2 — serve the SvelteKit SPA at / (catch-all under /api/*).
 #
 # Resolution order for the built static assets:

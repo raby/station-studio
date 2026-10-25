@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import shutil
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 
@@ -80,6 +81,17 @@ def _validate_import_path(raw: str) -> Path:
     return path
 
 
+def _utc_iso(dt: datetime | None) -> str | None:
+    """SQLite hands `imported_at` back without its timezone; it was
+    written in UTC, so say so (a bare ISO string reads as local time in
+    the browser)."""
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 @router.get("", response_model=list[SourceOut])
 def list_sources(db: Session = Depends(get_db)):
     rows = (
@@ -90,7 +102,10 @@ def list_sources(db: Session = Depends(get_db)):
         .all()
     )
     return [
-        SourceOut(id=sp.id, name=sp.name, track_count=count, role=sp.role)
+        SourceOut(
+            id=sp.id, name=sp.name, track_count=count, role=sp.role,
+            imported_at=_utc_iso(sp.imported_at),
+        )
         for sp, count in rows
     ]
 

@@ -484,3 +484,18 @@ def test_export_injects_column_override_missing_from_metadata(db):
     parsed = plistlib.loads(xml)
     t = list(parsed["Tracks"].values())[0]
     assert t["Artist"] == "RealArtist"
+
+
+def test_output_dir_falls_back_to_the_app_export_dir(db, tmp_path, monkeypatch):
+    """The downloaded app sets STATION_STUDIO_EXPORT_DIR to the app-home's
+    exports/; a directory chosen on the page (Config) still wins."""
+    from engine.exporter import _resolve_output_dir
+    from engine.models import Config
+
+    monkeypatch.delenv("STATION_STUDIO_EXPORT_DIR", raising=False)
+    assert _resolve_output_dir(db) == Path("out").resolve()
+    monkeypatch.setenv("STATION_STUDIO_EXPORT_DIR", str(tmp_path / "exports"))
+    assert _resolve_output_dir(db) == tmp_path / "exports"
+    db.add(Config(key="playlist_output_dir", value=str(tmp_path / "mine")))
+    db.commit()
+    assert _resolve_output_dir(db) == tmp_path / "mine"
