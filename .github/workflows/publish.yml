@@ -195,7 +195,7 @@ jobs:
         # contributor doing a manual bump) can match the SHA back
         # to a release. Update via:
         #   git ls-remote https://github.com/pypa/gh-action-pypi-publish.git release/v1
-        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b  # release/v1
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33  # v1.14.2 (twine that reads Metadata-Version 2.5)
         with:
           repository-url: https://test.pypi.org/legacy/
           # `skip-existing` is INTENTIONAL: re-running this workflow
@@ -375,7 +375,7 @@ jobs:
       - name: publish to pypi.org
         # t1-review 🟢-3: SHA-pinned (see test.pypi publish step
         # above for update procedure).
-        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b  # release/v1
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33  # v1.14.2 (twine that reads Metadata-Version 2.5)
         # No `skip-existing` here on purpose — re-publishing the
         # SAME version to real PyPI is almost always a mistake
         # (PyPI doesn't allow overwrite, but it lets you upload a
