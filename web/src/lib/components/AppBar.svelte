@@ -21,20 +21,32 @@
   export let reload: () => void = () => location.reload();
   export let sleep: ((ms: number) => Promise<void>) | undefined = undefined;
   export let closeWindow: () => void = () => window.close();
+  // How often to look again, so a new version's notice turns up on a
+  // page that's been open a while (the app checks GitHub once a day).
+  export let refreshEvery = 5 * 60 * 1000;
 
   let state: AppState | null = null;
   let error: string | null = null;
   let stopped = false;
   let busy = false;
   let poll: ReturnType<typeof setInterval> | null = null;
+  let refresh: ReturnType<typeof setInterval> | null = null;
 
   onMount(async () => {
     state = await getAppState(fetchFn);
     if (state?.update && state.update.stage !== 'failed') follow();
+    if (state) {
+      refresh = setInterval(async () => {
+        if (poll || stopped || busy) return;
+        const next = await getAppState(fetchFn);
+        if (next && !poll) state = next;
+      }, refreshEvery);
+    }
   });
 
   onDestroy(() => {
     if (poll) clearInterval(poll);
+    if (refresh) clearInterval(refresh);
   });
 
   function follow(): void {

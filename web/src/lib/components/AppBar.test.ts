@@ -64,6 +64,18 @@ describe('AppBar', () => {
     expect(notice.querySelector('a')).toHaveAttribute('href', expect.stringContaining('studio-v1.7.0'));
   });
 
+  it('looks again now and then, so a new version turns up on an open page', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    let latest: string | null = null;
+    const fetchFn = vi.fn(async () => json(appState({ latest }))) as unknown as typeof fetch;
+    const { findByTestId, queryByTestId } = render(AppBar, { props: { fetchFn, refreshEvery: 1000 } });
+    await findByTestId('app-bar');
+    expect(queryByTestId('app-update-notice')).toBeNull();
+    latest = '1.7.0';
+    await vi.advanceTimersByTimeAsync(1100);
+    expect(await findByTestId('app-update-notice')).toHaveTextContent('Station Studio 1.7.0 is out.');
+  });
+
   it('hides Update now where the app cannot update itself', async () => {
     const fetchFn = vi.fn(async () => json(appState({ kind: null, can_update: false, latest: '1.7.0' })));
     const { findByTestId, queryByTestId } = render(AppBar, { props: { fetchFn } });
