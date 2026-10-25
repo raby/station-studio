@@ -36,6 +36,12 @@ from station_studio.home import get_home
 logger = logging.getLogger(__name__)
 
 DEFAULT_PORT = 8001
+# station-studio://start starts Station Studio without opening a window:
+# the window asking (the installed app opened from the Dock while Station
+# Studio wasn't running, see web/static/offline.js) is already open. The
+# Mac app registers it in its Info.plist, the Windows setup in the
+# registry (packaging/).
+URL_SCHEME = "station-studio"
 # Sent with every request that changes something, so another website open
 # in the browser can't (browsers won't send a custom header cross-site
 # without a CORS go-ahead, which this server never gives).
@@ -307,7 +313,10 @@ def main(argv: list[str] | None = None) -> int:
     if argv is None:
         argv = sys.argv[1:]
     # Older macOS hands the app a process id.
-    args = parser.parse_args([a for a in argv if not a.startswith("-psn_")])
+    argv = [a for a in argv if not a.startswith("-psn_")]
+    if any(a.lower().startswith(f"{URL_SCHEME}:") for a in argv):
+        argv = [a for a in argv if not a.lower().startswith(f"{URL_SCHEME}:")] + ["--no-browser"]
+    args = parser.parse_args(argv)
 
     if selfupdate.bundled():
         _log_to_file()

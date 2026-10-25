@@ -1,6 +1,7 @@
 """Station Studio in a window of its own (station_studio/window.py)."""
 from __future__ import annotations
 
+import plistlib
 import subprocess
 from pathlib import Path
 
@@ -53,3 +54,43 @@ def test_desktop_uses_the_window(monkeypatch, tmp_path):
     monkeypatch.setenv("STATION_STUDIO_TAB", "1")
     desktop.open_browser("http://127.0.0.1:8001/")
     assert seen == [True, False]
+
+
+def test_installed_app_on_a_mac(tmp_path):
+    home = tmp_path
+    profile = home / ".station-studio" / "window"
+    assert window.installed_app_id(profile, home, "darwin") is None
+    shims = home / "Applications" / "Chrome Apps.localized"
+    # Apps the browser put in that profile itself, or another profile's
+    # Station Studio, are never taken for it.
+    for name, app_id, url, data in (("Google Chat", "chat", "https://chat.google.com/", str(profile)),
+                                    ("Other Studio", "other", window.DEFAULT_URL, "/elsewhere"),
+                                    ("Station Studio", "ours", window.DEFAULT_URL, str(profile))):
+        contents = shims / f"{name}.app" / "Contents"
+        contents.mkdir(parents=True)
+        with (contents / "Info.plist").open("wb") as fh:
+            plistlib.dump({"CrAppModeShortcutID": app_id, "CrAppModeShortcutURL": url,
+                           "CrAppModeUserDataDir": data}, fh)
+    (shims / "Broken.app" / "Contents").mkdir(parents=True)
+    (shims / "Broken.app" / "Contents" / "Info.plist").write_text("not a plist")
+    app_id = window.installed_app_id(profile, home, "darwin")
+    assert app_id == "ours"
+    cmd = window.window_command("/b", window.DEFAULT_URL, profile, app_id)
+    assert "--app-id=ours" in cmd and not any(a.startswith("--app=") for a in cmd)
+    # On another port the installed app (which opens the usual one) isn't used.
+    assert "--app=http://127.0.0.1:9000/" in window.window_command("/b", "http://127.0.0.1:9000/", profile, app_id)
+
+
+def test_installed_app_on_linux(tmp_path):
+    profile = tmp_path / ".station-studio" / "window"
+    apps = tmp_path / ".local/share/applications"
+    apps.mkdir(parents=True)
+    app_id = "ndclgahegldohknijikipmikgfefalhe"
+    (apps / "chrome-other-Default.desktop").write_text(
+        f"[Desktop Entry]\nName=Gmail\nExec=chrome --user-data-dir={profile} --app-id={'a' * 32}\n")
+    assert window.installed_app_id(profile, tmp_path, "linux") is None
+    (apps / f"chrome-{app_id}-Default.desktop").write_text(
+        f"[Desktop Entry]\nName=Station Studio\nExec=/opt/chrome --user-data-dir={profile} "
+        f"--profile-directory=Default --app-id={app_id}\n")
+    assert window.installed_app_id(profile, tmp_path, "linux") == app_id
+    assert window.installed_app_id(profile, tmp_path, "win32") is None

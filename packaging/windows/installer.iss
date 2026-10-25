@@ -49,6 +49,14 @@ Source: "{#Source}\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs 
 Name: "{userprograms}\Station Studio"; Filename: "{app}\Station Studio.exe"
 Name: "{userdesktop}\Station Studio"; Filename: "{app}\Station Studio.exe"; Tasks: desktopicon
 
+[Registry]
+; station-studio://start: the installed app's window asks for this when
+; Station Studio isn't running (see desktop.URL_SCHEME). Per user.
+Root: HKCU; Subkey: "Software\Classes\station-studio"; ValueType: string; ValueName: ""; ValueData: "URL:Station Studio"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\station-studio"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""
+Root: HKCU; Subkey: "Software\Classes\station-studio\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: """{app}\Station Studio.exe"",0"
+Root: HKCU; Subkey: "Software\Classes\station-studio\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\Station Studio.exe"" --no-browser"
+
 [Run]
 Filename: "{app}\Station Studio.exe"; Description: "Open Station Studio now"; Flags: nowait postinstall skipifsilent
 ; Updating from inside Station Studio runs this setup silently: start the

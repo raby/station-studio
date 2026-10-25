@@ -6,6 +6,16 @@ this project uses semantic versioning.
 
 ## [1.7.1] - 2026-10-25
 
+### Added
+
+- **Install as an app** at the foot of the sidebar (in Chrome, Edge or
+  Brave) gives Station Studio its own icon in the Dock or taskbar, as
+  Station Player has, with a Dock menu (New station, Source pools).
+  The window then opens as that app. Opened from the Dock while Station
+  Studio isn't running, the window starts it and waits, through the
+  `station-studio://start` link the Mac app and Windows setup register
+  (`web/static/`: manifest, service worker, offline page).
+
 ### Fixed
 
 - After **Quit**, the "Station Studio has stopped" screen covers the

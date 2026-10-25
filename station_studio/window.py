@@ -6,10 +6,17 @@ finds one, with its own browser profile in the data folder, so the
 window is separate from your browsing: closing the browser leaves Station
 Studio open, and closing Station Studio leaves your tabs alone. Without
 one of those browsers it opens in a normal browser tab.
+
+Installed as an app from that window (Install as an app, at the foot of
+the sidebar), it's a proper app in the browser's eyes: its own name, icon
+and menu in the Dock, Alt-Tab and the taskbar. From then on it's opened
+that way (`--app-id`).
 """
 from __future__ import annotations
 
 import os
+import plistlib
+import re
 import shutil
 import subprocess
 import sys
@@ -51,9 +58,50 @@ def find_browser(platform: str | None = None, env=None, exists=None, which=None)
     return None
 
 
-def window_command(exe: str, url: str, profile: Path) -> list[str]:
+DEFAULT_URL = "http://127.0.0.1:8001/"
+
+
+def installed_app_id(profile: Path, home: Path | None = None, platform: str | None = None) -> str | None:
+    """The id of Station Studio installed as an app from its own window,
+    or None. Found from the shortcut the browser makes for it (which names
+    its id, address and profile), so another app installed in that
+    profile (browsers add some of their own) is never mistaken for it."""
+    home = home or Path.home()
+    platform = platform or sys.platform
+    profile_text = str(profile)
+    if platform == "darwin":
+        # ~/Applications/Chrome Apps.localized/Station Studio.app (or Edge Apps…)
+        for info_path in home.glob("Applications/*.localized/*.app/Contents/Info.plist"):
+            try:
+                with info_path.open("rb") as fh:
+                    info = plistlib.load(fh)
+            except (OSError, plistlib.InvalidFileException, ValueError):
+                continue
+            app_id = info.get("CrAppModeShortcutID")
+            url = str(info.get("CrAppModeShortcutURL", ""))
+            data_dir = str(info.get("CrAppModeUserDataDir", ""))
+            if app_id and url.startswith(DEFAULT_URL) and profile_text in data_dir:
+                return str(app_id)
+        return None
+    if platform.startswith("linux"):
+        for entry in (home / ".local" / "share" / "applications").glob("*.desktop"):
+            try:
+                text = entry.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            found = re.search(r"--app-id=([a-p]{32})", text)
+            if found and f"--user-data-dir={profile_text}" in text.replace('"', "") \
+                    and re.search(r"^Name=Station Studio$", text, re.M):
+                return found.group(1)
+    return None
+
+
+def window_command(exe: str, url: str, profile: Path, app_id: str | None = None) -> list[str]:
+    # The installed app always opens the usual address, so it's only
+    # used when Station Studio is on it.
+    target = f"--app-id={app_id}" if app_id and url == DEFAULT_URL else f"--app={url}"
     return [
-        exe, f"--app={url}", f"--user-data-dir={profile}",
+        exe, target, f"--user-data-dir={profile}",
         "--no-first-run", "--no-default-browser-check", "--window-size=1280,860",
     ]
 
@@ -64,7 +112,8 @@ def open_ui(url: str, home: Path, own_window: bool = True, exe: str | None = Non
     browser tab. Returns "window" or "tab"."""
     exe = exe if exe is not None else (find_browser() if own_window else None)
     if own_window and exe:
-        cmd = window_command(exe, url, home / "window")
+        profile = home / "window"
+        cmd = window_command(exe, url, profile, installed_app_id(profile))
         try:
             proc = (run or _spawn)(cmd)
             if not _failed(proc):

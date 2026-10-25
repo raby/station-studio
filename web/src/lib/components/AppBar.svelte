@@ -7,6 +7,7 @@
    */
   import { onDestroy, onMount } from 'svelte';
   import { confirmDialog } from '$lib/confirm';
+  import { installApp, installOffer } from '$lib/install';
   import {
     getAppState,
     quitApp,
@@ -145,6 +146,15 @@
     {#if error}
       <span class="error" role="alert" data-testid="app-error">{error}</span>
     {/if}
+    {#if $installOffer}
+      <div class="install" data-testid="app-install">
+        <button type="button" on:click={() => $installOffer && installApp($installOffer)} data-testid="app-install-button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12" /><path d="M7 10l5 5 5-5" /><path d="M5 21h14" /></svg>
+          Install as an app
+        </button>
+        <span class="hint">Gives Station Studio its own icon in the Dock or taskbar.</span>
+      </div>
+    {/if}
     <div class="foot">
       <span class="version" title={`Your stations and playlists are kept in ${state.home}`}>
         Station Studio {state.version}
@@ -211,6 +221,31 @@
   button.primary:hover:not(:disabled) {
     background: var(--accent-strong);
     border-color: var(--accent-strong);
+  }
+  .install {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .install button {
+    align-items: center;
+    display: inline-flex;
+    gap: 6px;
+    justify-content: center;
+  }
+  .install svg {
+    fill: none;
+    height: 14px;
+    stroke: currentColor;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    stroke-width: 2;
+    width: 14px;
+  }
+  .hint {
+    color: var(--muted);
+    font-size: 12px;
+    padding: 0 4px;
   }
   .quit {
     align-items: center;

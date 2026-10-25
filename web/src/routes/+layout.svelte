@@ -19,7 +19,9 @@
    * nothing, no layout regression).
    */
   import '$lib/theme.css';
+  import { onMount } from 'svelte';
   import { page } from '$app/stores';
+  import { startInstallSupport } from '$lib/install';
   import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
   // Quit + Update now, only when opened as the downloaded app.
   import AppBar from '$lib/components/AppBar.svelte';
@@ -36,6 +38,9 @@
     { href: '/sources', label: 'Source pools', icon: 'folder', testid: 'sidebar-sources' },
     { href: '/stations/new', label: 'New station', icon: 'plus', testid: 'sidebar-new' },
   ];
+
+  // Its own Dock / taskbar icon, once installed as an app.
+  onMount(() => startInstallSupport());
 
   // Stations stays lit inside a station and its playlists.
   function current(href: string, path: string): boolean {
