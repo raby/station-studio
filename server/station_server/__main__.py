@@ -1,5 +1,6 @@
-"""`station-server` command: put a station-studio playlist on air.
+"""`station-server` command: the app, or put one playlist on air directly.
 
+    station-server                      # the app: stations, on air, play log
     station-server play week-12.xml --to shoutcast://my.server:8000
     station-server play week-12.xml --to icecast://source@my.server:8000/radio
     station-server play week-12.xml --to test.mp3        # record instead
@@ -22,6 +23,7 @@ from station_server.audio import FfmpegMissing, find_ffmpeg, has_mp3_encoder
 from station_server.channel import Channel
 from station_server.playlist import PlaylistError, load_queue
 from station_server.senders import SenderError, StreamInfo, sender_from_url
+from station_server.web import DEFAULT_PORT
 
 PASSWORD_ENV = "STATION_SERVER_PASSWORD"
 
@@ -29,7 +31,12 @@ PASSWORD_ENV = "STATION_SERVER_PASSWORD"
 def _parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="station-server", description="Broadcast station-studio playlists.")
     p.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
-    sub = p.add_subparsers(dest="command", required=True)
+    sub = p.add_subparsers(dest="command")
+
+    app = sub.add_parser("app", help="run the app and open its window (the default)")
+    app.add_argument("--port", type=int, default=DEFAULT_PORT, help=f"local port for the page (default {DEFAULT_PORT})")
+    app.add_argument("--no-window", action="store_true", help="don't open the window")
+    app.add_argument("-v", "--verbose", action="store_true")
 
     play = sub.add_parser("play", help="play a playlist to a server (or an MP3 file)")
     play.add_argument("xml", type=Path, help="station-studio export or iTunes XML")
@@ -151,14 +158,61 @@ def _play(args) -> int:
     return 0
 
 
+def _running(port: int) -> bool:
+    """Whether Station Server already answers on `port`."""
+    import json
+    import urllib.request
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/state", timeout=2) as resp:
+            return "stations" in json.loads(resp.read())
+    except (OSError, ValueError):
+        return False
+
+
+def _app(args) -> int:
+    from station_server.config import ConfigStore
+    from station_server.onair import ServerApp
+    from station_server.web import make_server
+    from station_server.window import open_ui
+
+    url = f"http://127.0.0.1:{args.port}/"
+    store = ConfigStore()
+    if _running(args.port):  # opened again: just show the window
+        if not args.no_window:
+            open_ui(url, store.home, store.config.open_window)
+        return 0
+    app = ServerApp(store)
+    try:
+        server = make_server(app, port=args.port)
+    except OSError as exc:
+        raise SystemExit(f"Port {args.port} is in use ({exc}); try --port")
+    app.resume()
+    print(f"Station Server {__version__} at {url}  (Ctrl+C quits)")
+
+    def stop(*_):
+        threading.Thread(target=lambda: (app.shutdown(), server.shutdown()), daemon=True).start()
+
+    signal.signal(signal.SIGINT, stop)
+    if hasattr(signal, "SIGTERM"):
+        signal.signal(signal.SIGTERM, stop)
+    if not args.no_window:
+        threading.Timer(0.3, open_ui, args=(url, store.home, store.config.open_window)).start()
+    server.serve_forever()
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    if args.command is None:
+        args = _parser().parse_args(["app", *(argv or [])])
     logging.basicConfig(
         level=logging.DEBUG if getattr(args, "verbose", False) else logging.INFO,
         format="%(asctime)s %(message)s", datefmt="%H:%M:%S",
     )
     if args.command == "check":
         return _check(args)
+    if args.command == "app":
+        return _app(args)
     return _play(args)
 
 

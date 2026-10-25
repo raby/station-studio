@@ -182,3 +182,65 @@ def test_level_gain_follows_tags_and_peak(tmp_path, monkeypatch):
     for tags, want in cases:
         monkeypatch.setattr(mod, "read_tags", lambda _p, t=tags: t)
         assert level_gain(track) == pytest.approx(want, abs=0.01)
+
+
+def _fake_queue(name, n, tmp_path):
+    from station_player.library import Track
+    from station_server.playlist import Queue
+    return Queue(name, [Track(id=f"{name}{i}", name=f"{name} {i}", path=tmp_path / f"{name}{i}.wav")
+                        for i in range(n)])
+
+
+@needs_ffmpeg
+def test_load_switches_at_the_next_track(tmp_path):
+    played = []
+    a, b = _fake_queue("A", 3, tmp_path), _fake_queue("B", 3, tmp_path)
+
+    def decoder(ffmpeg, path, gain_db=0.0, start=0.0):
+        played.append(path.stem)
+        if path.stem == "A0":
+            channel.load(b, where=lambda q: (2, 0.0))
+        if len(played) >= 3:
+            channel.stop()
+        yield bytes(CHUNK)
+
+    channel = Channel(a, FileSender(tmp_path / "out.mp3"), FFMPEG, pacer=Unpaced(), decoder=decoder, level=False)
+    channel.run()
+    assert played == ["A0", "B2", "B0"]
+
+
+@needs_ffmpeg
+def test_keep_going_sends_silence_when_nothing_plays(tmp_path):
+    import threading
+    queue = _fake_queue("A", 2, tmp_path)
+    tries = []
+
+    def decoder(ffmpeg, path, gain_db=0.0, start=0.0):
+        tries.append(path.stem)
+        return iter(())
+
+    out = tmp_path / "out.mp3"
+    sender = FileSender(out)
+    sender.connect()
+    channel = Channel(queue, sender, FFMPEG, pacer=Unpaced(), decoder=decoder, keep_going=True, level=False)
+    t = threading.Thread(target=channel.run)
+    t.start()
+    for _ in range(200):
+        if len(tries) > 2:
+            break
+        threading.Event().wait(0.05)
+    channel.stop()
+    t.join(10)
+    sender.close()
+    assert channel.stuck
+    assert len(tries) > 2  # went round again after the silence
+    assert out.stat().st_size > 0
+
+
+@needs_ffmpeg
+def test_without_keep_going_a_dead_playlist_stops(tmp_path):
+    queue = _fake_queue("A", 2, tmp_path)
+    channel = Channel(queue, FileSender(tmp_path / "out.mp3"), FFMPEG, pacer=Unpaced(),
+                      decoder=lambda *a, **k: iter(()), level=False)
+    with pytest.raises(RuntimeError):
+        channel.run()

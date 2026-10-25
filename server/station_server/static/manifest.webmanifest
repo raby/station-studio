@@ -1,0 +1,16 @@
+{
+  "id": "/",
+  "name": "Station Server",
+  "short_name": "Station Server",
+  "description": "Put station-studio playlists on air to SHOUTcast or Icecast",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0e1013",
+  "theme_color": "#0e1013",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
