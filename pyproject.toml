@@ -23,7 +23,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "station-studio"
-version = "1.5.0"
+version = "1.6.0"
 description = "Open-source playlist generator for hobbyist radio stations"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -168,6 +168,8 @@ exclude = [
     "/out",
     # Station Player ships as its own package (player/pyproject.toml).
     "/player",
+    # The Mac/Windows app recipe (PyInstaller + Inno Setup).
+    "/packaging",
 ]
 
 # §16.13 slice-review 🟡-4 / t3: register the `slow` marker so the

@@ -49,17 +49,55 @@ in-canvas authoring is on the roadmap — see DESIGN.md §16.2.3+.)
 
 ## Install
 
-Three install channels, all first-class. Pick whichever matches what
+Four install channels, all first-class. Pick whichever matches what
 you've got installed:
 
 | Channel | Prerequisites | Best for |
 |---|---|---|
+| **Download the app** | a Mac or Windows PC | Using it without a terminal |
 | **Docker** | docker | Trying it out, leaving it running on a NAS |
 | **Pip wheel** | Python 3.11+ | Local-only / BYO-music, no Node setup |
 | **Dev clone** | Python 3.11+, Node 22+, `make` | Hacking on Station Studio itself |
 
-All three serve the same UI + API and the same auto-seeded example
+All four serve the same UI + API and the same auto-seeded example
 stations. Pick one:
+
+### 0. Download the app (Mac or Windows, no terminal)
+
+From the newest **Station Studio** release on the
+[releases page](https://github.com/raby/station-studio/releases)
+(tags `studio-v…`), under Assets:
+
+- **Mac:** `StationStudio-<version>-mac-apple-silicon.dmg` (M-chip
+  Macs) or `-mac-intel.dmg`. Open it, drag Station Studio into
+  Applications and open it from there. The first time, macOS says it
+  can't check the app: System Settings › Privacy & Security › **Open
+  Anyway**.
+- **Windows:** `StationStudio-<version>-windows-setup.exe`. If Windows
+  says it protected your PC: **More info** › **Run anyway**. Installs
+  for you only (no administrator password) and adds Station Studio to
+  the Start menu, and the desktop if you tick it.
+
+Opening it opens <http://127.0.0.1:8001> in your browser; opening it
+again while it runs just opens the page again. The bar at the bottom
+right of the page has **Quit**, and **Update now** when a newer
+version is out (it downloads the new version from the release, checks
+it against GitHub's SHA-256 for that file, and restarts into it).
+
+Data lives in `~/.station-studio` (Windows:
+`%USERPROFILE%\.station-studio`), the same folder the pip install
+uses, and updating or uninstalling never touches it. Exports go in
+its `exports/` folder, where Station Player finds them. The app keeps
+a log there too (`station-studio.log`). Coming from Docker? Quit the
+app, `docker compose down`, then copy the volume across:
+
+```bash
+docker run --rm -v station-studio-data:/data -v ~/.station-studio:/dest \
+  alpine cp -a /data/. /dest/
+```
+
+With the pip wheel installed, `station-studio app` does the same from
+a terminal (opens the browser, Quit on the page; updates stay with pip).
 
 ### 1. Docker (no Python, no Node)
 

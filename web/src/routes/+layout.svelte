@@ -19,11 +19,15 @@
    * nothing, no layout regression).
    */
   import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
+  // Quit + Update now, only when opened as the downloaded app.
+  import AppBar from '$lib/components/AppBar.svelte';
 </script>
 
 <a href="#main-content" class="skip-link">Skip to main content</a>
 
 <slot />
+
+<AppBar />
 
 <ConfirmDialog />
 

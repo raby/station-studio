@@ -96,6 +96,29 @@ def serve(host: str, port: int) -> None:
 
 
 @main.command(
+    name="app",
+    help=(
+        "Open Station Studio in the browser, starting it first if it isn't "
+        "running. Like `serve`, plus a Quit button on the page. What the "
+        "downloaded Mac and Windows apps run."
+    ),
+)
+@click.option(
+    "--port",
+    type=int,
+    default=_DEFAULT_PORT,
+    show_default=True,
+    help="Port to use (always on 127.0.0.1).",
+)
+@click.option("--no-browser", is_flag=True, help="Don't open the browser.")
+@click.pass_context
+def app_cmd(ctx: click.Context, port: int, no_browser: bool) -> None:
+    from station_studio.desktop import main as desktop_main
+
+    ctx.exit(desktop_main(["--port", str(port), *(["--no-browser"] if no_browser else [])]))
+
+
+@main.command(
     name="import",
     help=(
         "Import an iTunes XML as a named pool. Reads PATH, creates a "

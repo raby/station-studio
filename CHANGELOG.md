@@ -4,6 +4,34 @@ All notable changes are listed here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses semantic versioning.
 
+## [1.6.0] - Unreleased
+
+### Added
+
+- **Station Studio as an app.** Mac `.dmg` (Apple Silicon + Intel)
+  and Windows setup `.exe` downloads that carry their own Python and
+  web pages, so no terminal, Python or Docker is needed
+  (`packaging/`, built by `.github/workflows/studio-installers.yml`,
+  released as `studio-v<version>` by
+  `.github/workflows/publish-studio-app.yml`). Opening the app starts
+  the server on 127.0.0.1:8001 and opens the browser; opening it
+  again just opens the page.
+- A bar on the page in the app with the version, **Quit**, and
+  **Update now** when a newer `studio-v` release is out (checked once
+  a day). The update is downloaded from the release, checked against
+  GitHub's SHA-256 for that file, then the Mac app is swapped in place
+  or the Windows setup runs silently, and the page reloads into the
+  new version. Data in `~/.station-studio` is never touched.
+- `station-studio app`: the same from a terminal (pip installs).
+- `GET /api/app` says whether the server is the app.
+
+### Changed
+
+- In the app, exports default to the app-home's `exports/` folder
+  (`STATION_STUDIO_EXPORT_DIR`), where Station Player looks, instead
+  of `out/` under wherever the process started. A folder set on the
+  page still wins; `serve` and Docker are unchanged.
+
 ## [1.5.0] - 2026-06-28
 
 First public PyPI release. Everything since the `0.1.0` seed
