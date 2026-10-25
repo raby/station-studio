@@ -9,6 +9,7 @@ import os
 import plistlib
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -17,7 +18,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from station_studio import __version__, desktop, selfupdate, updates
+from station_studio import __version__, appsettings, desktop, selfupdate, updates
 from station_studio.selfupdate import UpdateError, Updater
 
 NEXT = "99.0.0"
@@ -271,10 +272,13 @@ def test_only_the_downloaded_apps_update_and_only_to_newer():
 # ---------- the app's own routes ----------
 
 
-def make_app(kind="mac", latest=None, port=8001):
+def make_app(kind="mac", latest=None, port=8001, home=None, login=None):
     stops = []
+    home = home or Path(tempfile.mkdtemp())
+    login = login or appsettings.Login(home, "linux", command=["station-studio", "app", "--no-browser"])
     desk = desktop.DesktopState(port, lambda: stops.append(1), kind=kind,
-                                cache=Path(os.devnull), fetch_latest=lambda: latest)
+                                cache=Path(os.devnull), fetch_latest=lambda: latest,
+                                home=home, login=login, browser="Google Chrome")
     desk.latest = latest
     app = FastAPI()
 
@@ -450,3 +454,48 @@ def test_app_serves_and_quits_from_the_page(tmp_path):
         if proc.poll() is None:
             proc.kill()
             proc.wait()
+
+
+def test_settings_route_changes_the_app_settings(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    client, desk, _ = make_app(home=tmp_path)
+    state = client.get("/api/app").json()
+    assert state["settings"] == {"own_window": True, "check_updates": True}
+    assert state["login"] is False and state["browser"] == "Google Chrome"
+    assert client.post("/api/app/settings", json={"login": True}).status_code == 403
+    h = {desktop.API_HEADER: "1"}
+    state = client.post("/api/app/settings", json={"own_window": False, "login": True}, headers=h).json()
+    assert state["settings"] == {"own_window": False, "check_updates": True} and state["login"] is True
+    assert (tmp_path / "config" / "autostart" / "station-studio.desktop").exists()
+    state = client.post("/api/app/settings", json={"check_updates": False, "login": False}, headers=h).json()
+    assert state["settings"] == {"own_window": False, "check_updates": False} and state["login"] is False
+
+    def broken(on):
+        raise OSError("read-only")
+
+    monkeypatch.setattr(desk.login, "set", broken)
+    r = client.post("/api/app/settings", json={"login": True}, headers=h)
+    assert r.status_code == 400 and "read-only" in r.json()["detail"]
+
+
+def test_check_now_route_asks_github_even_with_daily_checks_off(tmp_path):
+    asked = []
+    client, desk, _ = make_app(home=tmp_path)
+    desk._fetch_latest = lambda: asked.append(1) or NEXT
+    desk.cache = tmp_path / "c.json"
+    appsettings.save(tmp_path, {"check_updates": False})
+    assert desk.check_for_updates() is None and not asked  # the daily look is off
+    assert client.post("/api/app/check").status_code == 403
+    state = client.post("/api/app/check", headers={desktop.API_HEADER: "1"}).json()
+    assert state["latest"] == NEXT and asked == [1]
+
+
+def test_open_browser_follows_the_own_window_setting(monkeypatch, tmp_path):
+    seen = []
+    monkeypatch.setattr(desktop, "get_home", lambda: tmp_path)
+    monkeypatch.setattr("station_studio.window.open_ui", lambda url, home, own_window, tab: seen.append(own_window) or "tab")
+    monkeypatch.delenv("STATION_STUDIO_TAB", raising=False)
+    desktop.open_browser("http://127.0.0.1:8001/")
+    appsettings.save(tmp_path, {"own_window": False})
+    desktop.open_browser("http://127.0.0.1:8001/")
+    assert seen == [True, False]

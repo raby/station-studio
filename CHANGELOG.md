@@ -4,6 +4,21 @@ All notable changes are listed here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses semantic versioning.
 
+## [1.8.0] - 2026-10-25
+
+### Added
+
+- **Settings** page (sidebar, under Setup), laid out like Station
+  Player's Settings › App: the version with **Check for updates** and
+  **Update now**, **Start Station Studio in the background when I log
+  in** (a LaunchAgent on a Mac, the Run key on Windows, an autostart
+  entry on Linux), **Open in a window of its own**, **Tell me when a new
+  version is out**, where your data is kept, and **Install as an app**
+  (moved here from the foot of the sidebar). The two switches are kept
+  in `app-settings.json` in the data folder.
+- **Help** page (sidebar, under Setup): getting started, source pools,
+  stations, making playlists, and the app itself.
+
 ## [1.7.1] - 2026-10-25
 
 ### Added

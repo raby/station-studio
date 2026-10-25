@@ -24,7 +24,19 @@ export interface AppState {
   release_page: string | null;
   update: UpdateStatus | null;
   home: string;
+  settings: AppSettings;
+  /** Starts when you log in; null where it can't. */
+  login: boolean | null;
+  /** The browser that draws its own window, or null when there isn't one. */
+  browser: string | null;
 }
+
+export interface AppSettings {
+  own_window: boolean;
+  check_updates: boolean;
+}
+
+export type SettingsChange = Partial<AppSettings> & { login?: boolean };
 
 /** The app's state, or null when this isn't the app (or it isn't answering). */
 export async function getAppState(fetchFn: typeof fetch = fetch): Promise<AppState | null> {
@@ -59,6 +71,15 @@ async function post(path: string, body: unknown, fetchFn: typeof fetch): Promise
 
 export async function startUpdate(version: string, fetchFn: typeof fetch = fetch): Promise<AppState> {
   return (await post('/api/app/update', { version }, fetchFn)).json();
+}
+
+export async function changeAppSettings(change: SettingsChange, fetchFn: typeof fetch = fetch): Promise<AppState> {
+  return (await post('/api/app/settings', change, fetchFn)).json();
+}
+
+/** Ask GitHub for the newest version now. */
+export async function checkNow(fetchFn: typeof fetch = fetch): Promise<AppState> {
+  return (await post('/api/app/check', {}, fetchFn)).json();
 }
 
 export async function quitApp(fetchFn: typeof fetch = fetch): Promise<void> {

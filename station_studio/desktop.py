@@ -30,7 +30,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from station_studio import __version__, selfupdate, updates
+from station_studio import __version__, appsettings, selfupdate, updates
 from station_studio.home import get_home
 
 logger = logging.getLogger(__name__)
@@ -132,8 +132,10 @@ def open_browser(url: str) -> None:
     STATION_STUDIO_TAB=1 always uses a tab."""
     from station_studio.window import open_ui
 
+    home = get_home()
+    own_window = appsettings.load(home)["own_window"] and not os.environ.get("STATION_STUDIO_TAB")
     try:
-        how = open_ui(url, get_home(), own_window=not os.environ.get("STATION_STUDIO_TAB"), tab=_browser_tab)
+        how = open_ui(url, home, own_window=own_window, tab=_browser_tab)
         logger.info("Opened %s in a %s", url, how)
     except Exception as exc:
         logger.warning("Could not open the browser at %s: %s", url, exc)
@@ -171,13 +173,20 @@ class DesktopState:
     updater and the newest version known."""
 
     def __init__(self, port: int, stop, kind: str | None = None, cache: Path | None = None,
-                 fetch_latest=None) -> None:
+                 fetch_latest=None, home: Path | None = None, login: appsettings.Login | None = None,
+                 browser: str | None | bool = False) -> None:
         self.port = port
         self._stop = stop
         self.kind = kind if kind is not None else selfupdate.install_kind()
-        self.cache = cache or get_home() / "update-check.json"
+        self.home = home or get_home()
+        self.cache = cache or self.home / "update-check.json"
         self._fetch_latest = fetch_latest
         self.latest: str | None = None
+        self.login = login or appsettings.Login()
+        if browser is False:
+            from station_studio.window import browser_name, find_browser
+            browser = browser_name(find_browser())
+        self.browser = browser
         self.updater = selfupdate.Updater(self.quit, port=port, kind=self.kind or "none")
 
     def quit(self) -> None:
@@ -186,8 +195,18 @@ class DesktopState:
         timer.daemon = True
         timer.start()
 
+    def settings(self) -> dict:
+        return appsettings.load(self.home)
+
+    def change(self, own_window: bool | None = None, check_updates: bool | None = None,
+               login: bool | None = None) -> None:
+        if login is not None:
+            self.login.set(login)
+        appsettings.save(self.home, {"own_window": own_window, "check_updates": check_updates})
+
     def check_for_updates(self, force: bool = False) -> str | None:
-        if not self.kind:
+        # Checking by hand (force) works even with the daily look turned off.
+        if not self.kind or not (force or self.settings()["check_updates"]):
             return None
         self.latest = updates.latest_version(self.cache, fetch=self._fetch_latest, force=force)
         return self.latest
@@ -213,7 +232,10 @@ class DesktopState:
             "latest": newer,
             "release_page": selfupdate.RELEASE_PAGE.format(version=newer) if newer else None,
             "update": self.updater.status(),
-            "home": str(get_home()),
+            "home": str(self.home),
+            "settings": self.settings(),
+            "login": self.login.enabled(),
+            "browser": self.browser,
         }
 
 
@@ -221,9 +243,16 @@ class UpdateRequest(BaseModel):
     version: str
 
 
+class SettingsRequest(BaseModel):
+    own_window: bool | None = None
+    check_updates: bool | None = None
+    login: bool | None = None
+
+
 def attach_routes(app, desk: DesktopState) -> None:
-    """Add /api/app (state), /api/app/update and /api/app/quit to the
-    FastAPI app, ahead of the page's catch-all route."""
+    """Add /api/app (state), /api/app/update, /api/app/settings,
+    /api/app/check and /api/app/quit to the FastAPI app, ahead of the
+    page's catch-all route."""
     router = APIRouter(tags=["app"])
 
     def guard(request: Request) -> None:
@@ -244,6 +273,21 @@ def attach_routes(app, desk: DesktopState) -> None:
             desk.updater.start(body.version)
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
+        return desk.state()
+
+    @router.post("/api/app/settings")
+    def app_settings(body: SettingsRequest, request: Request) -> dict:
+        guard(request)
+        try:
+            desk.change(body.own_window, body.check_updates, body.login)
+        except (ValueError, OSError) as exc:
+            raise HTTPException(400, f"Couldn't change that: {exc}") from exc
+        return desk.state()
+
+    @router.post("/api/app/check")
+    def app_check(request: Request) -> dict:
+        guard(request)
+        desk.check_for_updates(force=True)
         return desk.state()
 
     @router.post("/api/app/quit")

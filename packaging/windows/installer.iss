@@ -56,6 +56,8 @@ Root: HKCU; Subkey: "Software\Classes\station-studio"; ValueType: string; ValueN
 Root: HKCU; Subkey: "Software\Classes\station-studio"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""
 Root: HKCU; Subkey: "Software\Classes\station-studio\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: """{app}\Station Studio.exe"",0"
 Root: HKCU; Subkey: "Software\Classes\station-studio\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\Station Studio.exe"" --no-browser"
+; Start at login (Settings › App) adds itself here; uninstalling takes it away.
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: none; ValueName: "Station Studio"; Flags: uninsdeletevalue dontcreatekey
 
 [Run]
 Filename: "{app}\Station Studio.exe"; Description: "Open Station Studio now"; Flags: nowait postinstall skipifsilent

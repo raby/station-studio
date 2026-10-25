@@ -31,12 +31,18 @@
     radio: ['M16.24 7.76a6 6 0 0 1 0 8.48', 'M7.76 16.24a6 6 0 0 1 0-8.48', 'M19.07 4.93a10 10 0 0 1 0 14.14', 'M4.93 19.07a10 10 0 0 1 0-14.14'],
     folder: ['M3 7.5A2.5 2.5 0 0 1 5.5 5H9l2 2.5h7.5A2.5 2.5 0 0 1 21 10v6.5a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 16.5z'],
     plus: ['M12 5v14', 'M5 12h14'],
+    settings: ['M4 21v-7', 'M4 10V3', 'M12 21v-9', 'M12 8V3', 'M20 21v-5', 'M20 12V3', 'M1.5 14h5', 'M9.5 8h5', 'M17.5 16h5'],
+    help: ['M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3', 'M12 17h.01'],
   };
 
   const NAV = [
     { href: '/', label: 'Stations', icon: 'radio', testid: 'sidebar-stations' },
     { href: '/sources', label: 'Source pools', icon: 'folder', testid: 'sidebar-sources' },
     { href: '/stations/new', label: 'New station', icon: 'plus', testid: 'sidebar-new' },
+  ];
+  const SETUP = [
+    { href: '/settings', label: 'Settings', icon: 'settings', testid: 'sidebar-settings' },
+    { href: '/help', label: 'Help', icon: 'help', testid: 'sidebar-help' },
   ];
 
   // Its own Dock / taskbar icon, once installed as an app.
@@ -60,8 +66,10 @@
       </span>
       <span>Station Studio</span>
     </a>
+    {#each [{ items: NAV, label: '' }, { items: SETUP, label: 'Setup' }] as group}
+    {#if group.label}<h2 class="nav-head">{group.label}</h2>{/if}
     <ul class="nav-list">
-      {#each NAV as item}
+      {#each group.items as item}
         <li>
           <a
             class="nav-item"
@@ -71,6 +79,7 @@
           >
             <svg class="i" viewBox="0 0 24 24" aria-hidden="true">
               {#if item.icon === 'radio'}<circle cx="12" cy="12" r="2" />{/if}
+              {#if item.icon === 'help'}<circle class="ring" cx="12" cy="12" r="9" />{/if}
               {#each ICONS[item.icon] as d}<path {d} />{/each}
             </svg>
             <span>{item.label}</span>
@@ -78,6 +87,7 @@
         </li>
       {/each}
     </ul>
+    {/each}
     <div class="sidebar-foot">
       <AppBar />
     </div>
@@ -212,6 +222,18 @@
     fill: currentColor;
     stroke: none;
   }
+  svg.i circle.ring {
+    fill: none;
+    stroke: currentColor;
+  }
+  .nav-head {
+    color: var(--faint);
+    font-size: 11px;
+    font-weight: 650;
+    letter-spacing: 0.09em;
+    margin: 20px 10px 6px;
+    text-transform: uppercase;
+  }
   .sidebar-foot {
     margin-top: auto;
     padding-top: 16px;
@@ -240,6 +262,9 @@
     .nav-list {
       flex-direction: row;
       flex-wrap: wrap;
+    }
+    .nav-head {
+      display: none;
     }
     .sidebar-foot {
       flex-basis: 100%;
