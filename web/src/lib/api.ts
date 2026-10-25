@@ -1525,6 +1525,8 @@ export interface Source {
   /** §14.35 — `content` (engine samples) vs `reference` (cross-ref only). */
   role: 'content' | 'reference';
   track_count: number;
+  /** When it was last (re-)imported: ISO 8601 UTC, or null. */
+  imported_at?: string | null;
 }
 
 /**

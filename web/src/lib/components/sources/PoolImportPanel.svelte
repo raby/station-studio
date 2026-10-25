@@ -54,6 +54,8 @@
     type Source,
   } from '$lib/api';
   import { confirmDialog } from '$lib/confirm';
+  import { formatImportedAt, importedMessage } from '$lib/pools';
+  import { relativeTime } from '$lib/stations';
 
   export let scope: string[] | undefined = undefined;
   export let initialName: string | undefined = undefined;
@@ -278,9 +280,7 @@
         );
       }
 
-      successMessage = `Imported "${summary.name}" — ${summary.tracks_imported} track${
-        summary.tracks_imported === 1 ? '' : 's'
-      } (${summary.role}).`;
+      successMessage = importedMessage(summary);
       name = '';
       fileList = null;
       path = '';
@@ -460,7 +460,7 @@
     reimportFile = input.files?.[0] ?? null;
   }
 
-  const SOURCES_TABLE_COLS = 4;
+  const SOURCES_TABLE_COLS = 5;
 
   async function submitReimport(pool: Source) {
     reimportError = null;
@@ -851,6 +851,7 @@
             <th>Name</th>
             <th>Role</th>
             <th class="num">Tracks</th>
+            <th>Last imported</th>
             <th class="actions-col"><span class="sr-only">Actions</span></th>
           </tr>
         </thead>
@@ -862,6 +863,14 @@
                 <span class="role-tag role-{s.role}">{s.role}</span>
               </td>
               <td class="num">{s.track_count.toLocaleString()}</td>
+              <td class="imported" data-testid="pool-row-imported">
+                {#if s.imported_at}
+                  <time datetime={s.imported_at}>{formatImportedAt(s.imported_at)}</time>
+                  <span class="ago">{relativeTime(s.imported_at)}</span>
+                {:else}
+                  <span class="ago">—</span>
+                {/if}
+              </td>
               <td class="actions">
                 {#if reimportingId === s.id}
                   <button
@@ -1067,6 +1076,14 @@
   }
   .sources-list .name {
     font-weight: 500;
+  }
+  .sources-list .imported {
+    white-space: nowrap;
+  }
+  .sources-list .imported .ago {
+    color: var(--text-muted);
+    display: block;
+    font-size: 0.8rem;
   }
   .role-tag {
     display: inline-block;

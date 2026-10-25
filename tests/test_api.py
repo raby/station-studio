@@ -2267,6 +2267,25 @@ def test_list_sources_after_import(api):
     assert rows[0]["role"] == "content"  # §14.35 default surfaces on GET
 
 
+def test_list_sources_says_when_each_pool_was_last_imported(api):
+    """A weekly re-import replaces the pool: its Last imported time moves
+    on, in UTC with a trailing Z so the browser shows local time."""
+    import time
+    from datetime import datetime, timezone
+
+    client, _ = api
+    body = {"path": str(_FIXTURES / "tiny-library.xml"), "name": "tiny"}
+    assert client.post("/api/sources/import", json=body).status_code == 200
+    first = client.get("/api/sources").json()[0]["imported_at"]
+    assert first.endswith("Z")
+    stamp = datetime.strptime(first, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    assert abs((datetime.now(timezone.utc) - stamp).total_seconds()) < 60
+    time.sleep(1.1)
+    assert client.post("/api/sources/import", json=body).status_code == 200
+    rows = client.get("/api/sources").json()
+    assert len(rows) == 1 and rows[0]["imported_at"] > first
+
+
 def test_import_with_role_reference_persists_via_api(api):
     """§14.35: API accepts role='reference' and the GET surfaces it."""
     client, _ = api
