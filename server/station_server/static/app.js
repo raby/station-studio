@@ -4,6 +4,11 @@
 // carries the X-Station-Server header (see web.py).
 
 const $ = (sel) => document.querySelector(sel);
+// Inside the downloaded Mac app's own window (macwindow.py), not a browser.
+const NATIVE = Boolean(window.webkit?.messageHandlers?.stationApp) || /StationServerApp\//.test(navigator.userAgent);
+function tellApp(message) {
+  try { window.webkit.messageHandlers.stationApp.postMessage(message); return true; } catch { return false; }
+}
 const S = {
   state: null,
   view: { type: "station", id: null },
@@ -197,6 +202,20 @@ function renderUpdate() {
     return;
   }
   if (!latest || remember("dismissed-update") === latest) {
+    // A browser window or tab, once: the Mac app has a window of its own now.
+    if (S.state?.mac_app && !NATIVE && S.state.open_window && !remember("mac-window-offered")) {
+      const done = () => { remember("mac-window-offered", "1"); renderUpdate(); };
+      box.replaceChildren(
+        el("div", {}, "Station Server now has a window of its own."),
+        el("div", { class: "row" },
+          el("button", {
+            type: "button", class: "btn small primary",
+            onclick: async () => { done(); try { await api("/api/window", {}); } catch (e) { toast(e.message); } },
+          }, "Open it"),
+          el("button", { type: "button", class: "btn small", onclick: done }, "Not now")));
+      box.hidden = false;
+      return;
+    }
     box.hidden = true;
     return;
   }
@@ -710,12 +729,16 @@ function renderSettings() {
       updateSettings(),
       el("h2", {}, "App"),
       el("p", { class: "help" }, "Station Server runs in the background; this window is how you see it. Closing the window leaves the stations on air. Quit Station Server takes them off air."),
-      el("label", { class: "check", style: "display:flex;gap:8px;align-items:center" }, own, "Open in a window of its own (with Chrome, Edge or Brave)"),
-      el("h3", {}, "Its own icon in the Dock or taskbar"),
-      el("p", { class: "help" }, "Install Station Server as an app and it gets its own name and icon in the Dock, the taskbar and Alt-Tab, and opens that way from then on."),
-      S.installPrompt
-        ? btn("Install as app", "app", async () => { S.installPrompt.prompt(); await S.installPrompt.userChoice; S.installPrompt = null; render(); }, "btn primary")
-        : el("p", { class: "help" }, "Already installed, or your browser offers it from its menu (Install Station Server…)."),
+      el("label", { class: "check", style: "display:flex;gap:8px;align-items:center" }, own,
+        S.state?.mac_app ? "Open in Station Server's own window, not a browser tab" : "Open in a window of its own (with Chrome, Edge or Brave)"),
+      // The Mac app has its own Dock icon already.
+      S.state?.mac_app ? null : [
+        el("h3", {}, "Its own icon in the Dock or taskbar"),
+        el("p", { class: "help" }, "Install Station Server as an app and it gets its own name and icon in the Dock, the taskbar and Alt-Tab, and opens that way from then on."),
+        S.installPrompt
+          ? btn("Install as app", "app", async () => { S.installPrompt.prompt(); await S.installPrompt.userChoice; S.installPrompt = null; render(); }, "btn primary")
+          : el("p", { class: "help" }, "Already installed, or your browser offers it from its menu (Install Station Server…)."),
+      ],
       el("h3", {}, "ffmpeg"),
       el("p", { class: "help" }, S.state?.ffmpeg ? `Using ${S.state.ffmpeg}` : (S.state?.ffmpeg_error || "")),
     ),
@@ -739,6 +762,7 @@ function renderHelp() {
       el("h2", {}, "The week's clock"),
       p("Following the clock, the first track plays at the start of the week (Monday 00:00 unless you change it) and the rest follow by their lengths. A restart picks up where the station should be. A new week's export is picked up within a minute and starts after the playing track."),
       el("h2", {}, "Its own app, and new versions"),
+      p("On a Mac, the downloaded Station Server has a window of its own, like Apple Music: closing the window leaves the stations on air, clicking its Dock icon brings it back, and its menus have Go, Settings (⌘,) and Quit (⌘Q). Right-click its Dock icon for Add a station and Play log."),
       p("Settings › Install as app gives Station Server its own icon in the Dock or taskbar, with Add a station and Play log on its menu. Opened from there when Station Server isn't running, the window starts it."),
       p("When a new version is out, a note at the foot of the sidebar offers Update now. Station Server downloads it from its GitHub page, checks it's the genuine file and restarts; stations that were on air go back on air. Settings › Updates has Check for updates, and can stop it asking GitHub."),
       el("h2", {}, "If something goes wrong"),
@@ -759,16 +783,21 @@ $("#btn-quit").addEventListener("click", async () => {
   const live = (S.state?.stations || []).filter((s) => s.state === "on").length;
   if (live && !confirm(`Quit Station Server? ${live === 1 ? "The station goes" : `All ${live} stations go`} off air.`)) return;
   try { await api("/api/quit", {}); } catch { /* it's going */ }
+  if (NATIVE && tellApp("quit")) return;  // the Mac app's own window quits with it
   document.body.replaceChildren(el("div", { class: "goodbye" }, el("div", {},
     el("h1", {}, "Station Server has stopped"),
     el("p", {}, "Stations that were on air go back on air the next time it starts."))));
   clearInterval(pollTimer);
 });
-if ("serviceWorker" in navigator) {
+if ("serviceWorker" in navigator && !NATIVE) {
   // Opened from the Dock while Station Server isn't running, the window
   // shows a page that starts it (sw.js, offline.html).
   navigator.serviceWorker.register("/sw.js").catch(() => {});
 }
+// What the Mac app's menus call (macwindow.py `tell`).
+window.stationApp = {
+  go(type) { go({ type, id: null }); },
+};
 addEventListener("beforeinstallprompt", (e) => {
   e.preventDefault();
   S.installPrompt = e;

@@ -187,3 +187,15 @@ def test_two_stations_on_air_at_once(api, exports, icecast, tmp_path):
     # One off air leaves the other on.
     api(f"/api/stations/{ids[0]}/on", {"on": False})
     assert [s["state"] for s in api("/api/state")[1]["stations"]] == ["off", "on"]
+
+
+def test_window_route_opens_the_mac_apps_own_window(api, monkeypatch, tmp_path):
+    status, body = api("/api/window", {})
+    assert status == 409  # not the Mac app
+    assert api("/api/state")[1]["mac_app"] is False
+    import station_server.window as window
+    opened = []
+    monkeypatch.setattr(window, "mac_app_bundle", lambda: tmp_path / "Station Server.app")
+    monkeypatch.setattr(window, "open_ui", lambda url, home, own, app=None: opened.append(app))
+    assert api("/api/window", {})[0] == 200
+    assert wait_for(lambda: opened == [tmp_path / "Station Server.app"])

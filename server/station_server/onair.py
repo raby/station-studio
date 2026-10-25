@@ -23,6 +23,7 @@ from station_server.desktop import Login, bundled
 from station_server.playlist import PlaylistError, Queue, load_queue
 from station_server.schedule import WeekStart, running_order, track_seconds, where_now
 from station_server.senders import SenderError, StreamInfo, sender_from_url
+from station_server.window import mac_app_bundle
 
 logger = logging.getLogger(__name__)
 
@@ -269,6 +270,8 @@ class ServerApp:
             "open_window": self.config.open_window,
             "login": self.login.enabled(),
             "bundled": bundled(),
+            # The downloaded Mac app, which has a window of its own (macwindow.py).
+            "mac_app": mac_app_bundle() is not None,
             "stations": [self.runners[s.id].status() for s in self.config.stations],
         }
 

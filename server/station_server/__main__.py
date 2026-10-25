@@ -191,9 +191,9 @@ def _log_to_file(home: Path) -> None:
 
 
 def _hand_over(port: int, url: str) -> int:
-    """The Mac app itself starts its helper, which runs Station Server, and
-    exits: while the app's own process lives, macOS sends later clicks on
-    the app to it, so they'd do nothing."""
+    """The Mac app itself starts its helper, which runs Station Server, so
+    the stations stay on air with the window closed (and the app quit,
+    when the window is turned off)."""
     import subprocess
     import time
     from station_server.desktop import CHILD_ENV, app_executable
@@ -209,6 +209,23 @@ def _hand_over(port: int, url: str) -> int:
                 return 1
             time.sleep(0.5)
     return 0
+
+
+def _quit_server(url: str) -> None:
+    import urllib.request
+    from station_server.web import API_HEADER
+    req = urllib.request.Request(url + "api/quit", data=b"{}", method="POST",
+                                 headers={API_HEADER: "1", "Content-Type": "application/json"})
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    with opener.open(req, timeout=5):
+        pass
+
+
+def _own_mac_window(url: str) -> int:
+    """The Mac app is Station Server's window until Quit."""
+    from station_server import macwindow  # needs PyObjC, which only the Mac app carries
+    from station_server.window import mac_app_bundle
+    return macwindow.run(url, quit_server=lambda: _quit_server(url), bundle=mac_app_bundle())
 
 
 def _watch_for_updates(app, every: float = UPDATE_CHECK_EVERY, wait=None) -> None:
@@ -238,7 +255,9 @@ def _app(args) -> int:
     if bundled() and sys.platform == "darwin" and app_executable() != Path(sys.executable):
         code = _hand_over(args.port, url)
         if code == 0 and not args.no_window:
-            open_ui(url, store.home, store.config.open_window)
+            if store.config.open_window:
+                return _own_mac_window(url)
+            open_ui(url, store.home, False)  # a browser tab
         return code
     if _running(args.port):  # opened again: just show the window
         if not args.no_window:

@@ -41,10 +41,10 @@ exe = EXE(
     argv_emulation=MAC,  # station-server: links arrive as arguments
     icon=str(STATIC / ("icon.icns" if MAC else "icon.ico")),
 )
-# On the Mac, the app the Finder opens starts this helper and exits: while
-# a process macOS counts as the running app lives, later clicks on the app
-# go to it and do nothing. The helper runs Station Server; start at login
-# runs it too.
+# On the Mac, the app the Finder opens is Station Server's window, with its
+# Dock icon and menus (macwindow.py), and this helper runs Station Server,
+# so closing the window leaves the stations on air. Start at login runs
+# only the helper.
 helper = EXE(
     pyz,
     a.scripts,
@@ -67,8 +67,6 @@ if MAC:
             "CFBundleShortVersionString": VERSION,
             "CFBundleVersion": VERSION,
             "LSMinimumSystemVersion": "11.0",
-            # The UI is a browser window, so the app itself needs no Dock icon.
-            "LSUIElement": True,
             "NSHighResolutionCapable": True,
             # station-server://start, from the installed app's window when
             # Station Server isn't running (see __main__.URL_SCHEME).
