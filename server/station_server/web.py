@@ -23,6 +23,7 @@ from urllib.parse import parse_qs, quote, urlparse
 from station_player.setup import Picker, PickerBusy, PickerFailed, PickerUnavailable
 
 from station_server import __version__
+from station_server.selfupdate import Updater
 from station_server.onair import ServerApp
 from station_server.playlist import PlaylistError
 from station_server.senders import SenderError
@@ -162,6 +163,7 @@ def make_handler(app: ServerApp, picker: Picker, quit) -> type[BaseHTTPRequestHa
                 return self._json(app.check_server(data, data.get("id") or None))
             if path == "/api/settings":
                 app.config.open_window = bool(data.get("open_window", app.config.open_window))
+                app.config.check_updates = bool(data.get("check_updates", app.config.check_updates))
                 app.store.save()
                 if "login" in data:
                     app.login.set(bool(data["login"]))
@@ -173,6 +175,14 @@ def make_handler(app: ServerApp, picker: Picker, quit) -> type[BaseHTTPRequestHa
                     return self._error(HTTPStatus.CONFLICT, str(exc))
                 except (PickerUnavailable, PickerFailed) as exc:
                     return self._error(HTTPStatus.SERVICE_UNAVAILABLE, str(exc))
+            if path == "/api/update":
+                if app.updater is None:
+                    return self._error(HTTPStatus.BAD_REQUEST, "This Station Server can't update itself")
+                app.updater.start(str(data.get("version") or ""))
+                return self._json(app.state())
+            if path == "/api/update/check":
+                app.check_for_updates(force=True)
+                return self._json(app.state())
             if path == "/api/quit":
                 self._json({"ok": True})
                 threading.Thread(target=quit, daemon=True).start()
@@ -210,7 +220,7 @@ class _Server(ThreadingHTTPServer):
 
 
 def make_server(app: ServerApp, host: str = "127.0.0.1", port: int = DEFAULT_PORT,
-                picker: Picker | None = None) -> ThreadingHTTPServer:
+                picker: Picker | None = None, updater: Updater | None = None) -> ThreadingHTTPServer:
     holder: dict = {}
 
     def quit() -> None:
@@ -220,4 +230,5 @@ def make_server(app: ServerApp, host: str = "127.0.0.1", port: int = DEFAULT_POR
     server = _Server((host, port), make_handler(app, picker or Picker(), quit))
     server.daemon_threads = True
     holder["server"] = server
+    app.updater = updater or Updater(quit, port=port)
     return server

@@ -315,3 +315,19 @@ details.missing li { margin: 2px 0; }
 }
 .goodbye { display: grid; place-items: center; height: 100vh; text-align: center; color: var(--muted); }
 .goodbye h1 { color: var(--text); }
+
+/* Shown by sw.js when the window opens while Station Server isn't running. */
+body.offline { display: grid; place-items: center; min-height: 100vh; margin: 0; }
+.offline-box { text-align: center; max-width: 32em; padding: 24px; }
+.offline-box img { border-radius: 22px; box-shadow: var(--shadow); }
+.offline-box h1 { font-size: 24px; margin: 16px 0 4px; }
+.offline-box p { color: var(--muted); }
+
+/* A new version: at the foot of the sidebar, as in Station Player. */
+.update-note {
+  margin: 18px 2px 0; padding: 12px; border: 1px solid var(--accent); background: var(--accent-soft); border-radius: 10px;
+  font-size: 13px; display: flex; flex-direction: column; gap: 6px; align-items: flex-start;
+}
+.update-settings .row, .update-note .row { display: flex; gap: 8px; flex-wrap: wrap; }
+.update-settings .row { margin: 4px 0 12px; }
+.update-failed { color: var(--danger); }

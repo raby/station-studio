@@ -11,6 +11,7 @@ const S = {
   stateAt: 0,          // when `state` arrived (performance.now()), for the progress bar
   installPrompt: null,
   missingOpen: false,  // the list of tracks that can't be found, kept open across redraws
+  updating: null,      // how far an update has got, while this page follows it
 };
 
 // ---------- small helpers ---------------------------------------------------
@@ -171,6 +172,157 @@ function renderNav() {
     b.setAttribute("aria-current", b.dataset.view === S.view.type ? "true" : "false");
   }
   $("#version").textContent = S.state ? `version ${S.state.version}` : "";
+  renderUpdate();
+}
+
+// ---------- new versions --------------------------------------------------------
+// As in Station Player: a note at the foot of the sidebar until dismissed
+// for that version, and while updating, how far it's got.
+
+function remember(key, value) {
+  try {
+    if (value === undefined) return localStorage.getItem(`station-server:${key}`);
+    localStorage.setItem(`station-server:${key}`, value);
+  } catch { /* private window: forget it */ }
+  return null;
+}
+
+function renderUpdate() {
+  const box = $("#update");
+  const latest = S.state?.update;
+  const u = S.state?.updating || S.updating;
+  if (u && u.stage !== "failed") {
+    box.replaceChildren(el("div", {}, updateStageText(u)));
+    box.hidden = false;
+    return;
+  }
+  if (!latest || remember("dismissed-update") === latest) {
+    box.hidden = true;
+    return;
+  }
+  box.replaceChildren(...[
+    el("div", {}, `Station Server ${latest} is out.`),
+    u && u.stage === "failed" && u.version === latest ? updateFailure(u) : null,
+    el("div", { class: "row" },
+      S.state.can_update
+        ? el("button", { type: "button", class: "btn small primary", onclick: () => startUpdate(latest) }, "Update now")
+        : el("a", { class: "btn small primary", href: S.state.release_page, target: "_blank", rel: "noopener" }, "Download it"),
+      el("button", {
+        type: "button", class: "btn small",
+        onclick: () => { remember("dismissed-update", latest); renderUpdate(); },
+      }, "Not now")),
+  ].filter(Boolean));  // replaceChildren, unlike el(), would show a null
+  box.hidden = false;
+}
+
+function updateStageText(u) {
+  if (u.stage === "downloading") return `Downloading Station Server ${u.version}… ${u.percent || 0}%`;
+  if (u.stage === "installing") return `Installing Station Server ${u.version}…`;
+  return `Restarting Station Server… ${u.version} opens here by itself.`;
+}
+
+function updateFailure(u) {
+  return el("div", { class: "update-failed", role: "alert" }, u.error, " ",
+    el("a", { href: u.page, target: "_blank", rel: "noopener" }, "Download it yourself"), ".");
+}
+
+// Update now: Station Server downloads and installs the new version, quits,
+// and the new one starts (putting the stations that were on air back on
+// air); this page waits for it and reloads into it.
+async function startUpdate(version) {
+  const live = (S.state?.stations || []).filter((s) => s.state === "on").length;
+  if (live && !confirm(`Update now? ${live === 1 ? "The station goes" : `The ${live} stations go`} off air for a moment while Station Server restarts, then back on air.`)) return;
+  const from = S.state.version;
+  try {
+    setState(await api("/api/update", { version }));
+  } catch (err) {
+    toast(err.message);
+    return;
+  }
+  S.updating = S.state.updating;
+  renderUpdate();
+  syncUpdateSettings();
+  const until = Date.now() + 10 * 60 * 1000;
+  while (Date.now() < until) {
+    await new Promise((r) => setTimeout(r, 1000));
+    let state = null;
+    try {
+      const res = await fetch("/api/state", { cache: "no-store" });
+      if (res.ok) state = await res.json();
+    } catch { /* restarting */ }
+    if (!state) {
+      S.updating = { ...(S.updating || { version }), stage: "restarting" };
+      renderUpdate();
+      continue;
+    }
+    if (state.version !== from) {
+      location.reload();
+      return;
+    }
+    setState(state);
+    S.updating = state.updating;
+    renderUpdate();
+    syncUpdateSettings();
+    if (!state.updating || state.updating.stage === "failed") return;
+  }
+  S.updating = { version, stage: "failed", page: `https://github.com/raby/station-studio/releases/tag/server-v${version}`,
+    error: "Station Server didn't come back after updating. Open it again from Applications or the Start menu." };
+  renderUpdate();
+}
+
+const U = { checked: false };
+
+function updateSettings() {
+  const latest = S.state?.update;
+  const u = S.state?.updating || S.updating;
+  const busy = u && u.stage !== "failed";
+  const version = S.state?.version || "";
+  let line;
+  if (busy) line = updateStageText(u);
+  else if (latest) line = `Station Server ${latest} is out. You have ${version}.`;
+  else if (U.checked) line = `You have the newest version, ${version}.`;
+  else line = `You have Station Server ${version}.`;
+  const notices = el("input", { type: "checkbox", id: "check-updates" });
+  notices.checked = !!S.state?.check_updates;
+  notices.addEventListener("change", async () => {
+    try { setState(await api("/api/settings", { check_updates: notices.checked })); toast("Saved"); }
+    catch (e) { toast(e.message); notices.checked = !notices.checked; }
+  });
+  return el("div", { id: "update-settings", class: "update-settings" },
+    el("p", { role: "status" }, line),
+    u && u.stage === "failed" ? updateFailure(u) : null,
+    el("div", { class: "row" },
+      latest && !busy && S.state.can_update ? el("button", {
+        type: "button", class: "btn primary", id: "btn-update", onclick: () => startUpdate(latest),
+      }, `Update to ${latest}`) : null,
+      latest && !busy && !S.state.can_update
+        ? el("a", { class: "btn primary", href: S.state.release_page, target: "_blank", rel: "noopener" }, `Download ${latest}`) : null,
+      busy ? null : el("button", {
+        type: "button", class: "btn", id: "btn-check-update",
+        onclick: async (e) => {
+          e.currentTarget.disabled = true;
+          try {
+            setState(await api("/api/update/check", {}));
+            U.checked = true;
+            if (!S.state.update) toast("Station Server is up to date");
+          } catch (err) {
+            toast(err.message);
+          }
+          syncUpdateSettings();
+          renderUpdate();
+          $("#btn-update, #btn-check-update")?.focus();
+        },
+      }, "Check for updates")),
+    el("label", { class: "check", style: "display:flex;gap:8px;align-items:center" }, notices,
+      "Tell me when a new version is out (asks GitHub once a day)"),
+    el("p", { class: "help" }, S.state?.can_update
+      ? "Updating downloads the new version from Station Server's GitHub page, checks it's the genuine file, and restarts Station Server. Stations that were on air go back on air; your settings and play logs are kept."
+      : "This copy of Station Server was installed with pip, so update it the same way. The downloaded Mac and Windows apps update themselves."));
+}
+
+function syncUpdateSettings() {
+  const old = $("#update-settings");
+  if (old) old.replaceWith(updateSettings());
 }
 
 const STATE_WORDS = { off: "Off air", starting: "Going on air…", on: "On air", stopping: "Going off air…", error: "Problem" };
@@ -554,6 +706,8 @@ function renderSettings() {
       el("h2", {}, "Start when this computer starts"),
       el("label", { class: "check", style: "display:flex;gap:8px;align-items:center" }, login, "Start Station Server when I log in"),
       el("p", { class: "help" }, "Turn this on for the station's computer: after a restart, a power cut or Windows updates, Station Server starts in the background and the stations that were on air go back on air, with no window until you open one. On a Mac it is also started again if it ever stops unexpectedly. For a computer nobody logs in to, set Windows or macOS to log in automatically."),
+      el("h2", {}, "Updates"),
+      updateSettings(),
       el("h2", {}, "App"),
       el("p", { class: "help" }, "Station Server runs in the background; this window is how you see it. Closing the window leaves the stations on air. Quit Station Server takes them off air."),
       el("label", { class: "check", style: "display:flex;gap:8px;align-items:center" }, own, "Open in a window of its own (with Chrome, Edge or Brave)"),
@@ -584,6 +738,9 @@ function renderHelp() {
       p("Turn on Settings › Start Station Server when I log in. After a restart, a power cut or Windows updates, it starts in the background and the stations that were on air go back on air. Closing this window leaves them on air; Quit takes them off."),
       el("h2", {}, "The week's clock"),
       p("Following the clock, the first track plays at the start of the week (Monday 00:00 unless you change it) and the rest follow by their lengths. A restart picks up where the station should be. A new week's export is picked up within a minute and starts after the playing track."),
+      el("h2", {}, "Its own app, and new versions"),
+      p("Settings › Install as app gives Station Server its own icon in the Dock or taskbar, with Add a station and Play log on its menu. Opened from there when Station Server isn't running, the window starts it."),
+      p("When a new version is out, a note at the foot of the sidebar offers Update now. Station Server downloads it from its GitHub page, checks it's the genuine file and restarts; stations that were on air go back on air. Settings › Updates has Check for updates, and can stop it asking GitHub."),
       el("h2", {}, "If something goes wrong"),
       p("If the server goes away, the station keeps playing and reconnects every few seconds. A track whose file can't be read is skipped; if none can be, the station sends silence and the page says so. Tracks the playlist names but this computer can't find are listed under the station: add the folder they're in as a music folder."),
       p("ffmpeg does the decoding and encoding. The downloaded app has its own; otherwise install it (macOS: brew install ffmpeg; Windows: winget install ffmpeg)."),
@@ -607,6 +764,11 @@ $("#btn-quit").addEventListener("click", async () => {
     el("p", {}, "Stations that were on air go back on air the next time it starts."))));
   clearInterval(pollTimer);
 });
+if ("serviceWorker" in navigator) {
+  // Opened from the Dock while Station Server isn't running, the window
+  // shows a page that starts it (sw.js, offline.html).
+  navigator.serviceWorker.register("/sw.js").catch(() => {});
+}
 addEventListener("beforeinstallprompt", (e) => {
   e.preventDefault();
   S.installPrompt = e;
@@ -622,4 +784,10 @@ async function poll() {
 }
 let pollTimer = setInterval(poll, 2000);
 setInterval(tick, 250);
+// The Dock menu (manifest.webmanifest) opens /?view=new or /?view=log.
+const startView = new URLSearchParams(location.search).get("view");
+if (["new", "log", "settings", "help"].includes(startView)) {
+  S.view = { type: startView, id: null };
+  history.replaceState(null, "", "/");
+}
 poll().then(render);
