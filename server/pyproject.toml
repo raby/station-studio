@@ -1,0 +1,33 @@
+# Station Server — plays a station-studio playlist straight to a SHOUTcast
+# or Icecast server, replacing the iTunes + loopback cable + Winamp chain.
+# Standard library plus station-player (for reading playlists and tags) at
+# runtime; ffmpeg does the decoding and encoding.
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "station-server"
+version = "0.1.0"
+description = "Broadcast station-studio playlists to SHOUTcast or Icecast"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.11"
+authors = [
+    { name = "Raby Whyte", email = "rabywhyte@gmail.com" },
+]
+keywords = ["radio", "shoutcast", "icecast", "playout", "itunes", "playlist"]
+dependencies = ["station-player>=0.17"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+station-server = "station_server.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["station_server"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

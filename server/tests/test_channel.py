@@ -1,0 +1,184 @@
+import subprocess
+
+import pytest
+
+from conftest import FFMPEG, Unpaced, needs_ffmpeg, station_export, write_wav
+from station_server.audio import BYTES_PER_SECOND, CHUNK, decode
+from station_server.channel import Channel, Pacer, level_gain
+from station_server.playlist import load_queue
+from station_server.senders import FileSender, ShoutcastSender, StreamInfo
+
+
+class FakeClock:
+    def __init__(self):
+        self.now = 0.0
+        self.slept = []
+
+    def __call__(self):
+        return self.now
+
+    def sleep(self, secs):
+        self.slept.append(round(secs, 3))
+        self.now += secs
+
+
+def test_pacer_sends_a_head_start_then_real_time():
+    clock = FakeClock()
+    pacer = Pacer(lead=2.0, clock=clock, sleep=clock.sleep)
+    second = BYTES_PER_SECOND
+    for _ in range(3):
+        pacer.wait(second)  # 0s, 1s, 2s of audio ahead: no waiting yet
+    assert clock.slept == []
+    pacer.wait(second)  # 3s ahead with 2s allowed: wait 1s
+    assert clock.slept == [1.0]
+
+
+def test_pacer_does_not_burst_after_falling_behind():
+    clock = FakeClock()
+    pacer = Pacer(lead=0.0, clock=clock, sleep=clock.sleep)
+    pacer.wait(BYTES_PER_SECOND)
+    clock.now += 10  # the computer stalled for 10 seconds
+    pacer.wait(BYTES_PER_SECOND)  # catches up instead of racing
+    pacer.wait(BYTES_PER_SECOND)
+    assert clock.slept == [1.0]
+
+
+def test_pacer_knows_how_far_ahead_it_is():
+    clock = FakeClock()
+    pacer = Pacer(lead=2.0, clock=clock, sleep=clock.sleep)
+    assert pacer.ahead() == 0.0
+    pacer.wait(BYTES_PER_SECOND * 2)
+    assert pacer.ahead() == 2.0  # two seconds sent, none heard yet
+    clock.now += 1.5
+    assert pacer.ahead() == 0.5
+
+
+def test_title_waits_until_the_track_is_heard(tmp_path):
+    class Sender:
+        titles = []
+
+        def set_title(self, title):
+            self.titles.append(title)
+
+    queue = load_queue(station_export(tmp_path, [write_wav(tmp_path / "a.wav")]))
+    channel = Channel(queue, Sender(), "ffmpeg", pacer=Unpaced())
+    waits = []
+    channel.stop_event.wait = lambda secs: waits.append(secs) or False
+    channel._title_later("A - B", 1.5)
+    assert waits == [1.5] and Sender.titles == ["A - B"]
+    channel.stop_event.wait = lambda secs: True  # stopped while waiting
+    channel._title_later("C - D", 1.5)
+    assert Sender.titles == ["A - B"]
+
+
+def _duration(path) -> float:
+    out = subprocess.run(
+        [FFMPEG, "-hide_banner", "-i", str(path), "-f", "null", "-"],
+        capture_output=True, text=True,
+    ).stderr
+    t = out.rsplit("time=", 1)[1].split()[0]
+    h, m, s = t.split(":")
+    return int(h) * 3600 + int(m) * 60 + float(s)
+
+
+@needs_ffmpeg
+def test_decode_gives_cd_audio_in_chunks(tmp_path):
+    f = write_wav(tmp_path / "a.wav", seconds=0.5, rate=22050)  # resampled to 44.1k stereo
+    chunks = list(decode(FFMPEG, f))
+    assert all(len(c) == CHUNK for c in chunks[:-1])
+    assert abs(sum(map(len, chunks)) / BYTES_PER_SECOND - 0.5) < 0.01
+
+
+@needs_ffmpeg
+def test_decode_of_a_broken_file_just_ends(tmp_path):
+    bad = tmp_path / "bad.mp3"
+    bad.write_bytes(b"not audio at all")
+    assert list(decode(FFMPEG, bad)) == []
+
+
+@needs_ffmpeg
+def test_plays_the_week_gaplessly_to_a_file(tmp_path):
+    files = [write_wav(tmp_path / f"{i}.wav", seconds=1.0, freq=330 + 110 * i) for i in range(3)]
+    queue = load_queue(station_export(tmp_path, files))
+    out = tmp_path / "air.mp3"
+    sender = FileSender(out)
+    sender.connect()
+    seen = []
+    channel = Channel(queue, sender, FFMPEG, loop=False, pacer=Unpaced(),
+                      on_track=lambda now: seen.append(now.index))
+    channel.run()
+    sender.close()
+    assert seen == [0, 1, 2]
+    # One continuous MP3, as long as the three tracks together (no gaps).
+    assert abs(_duration(out) - 3.0) < 0.1
+    titles = out.with_suffix(".txt").read_text().splitlines()
+    assert [line.split("  ", 1)[1] for line in titles] == ["Artist 1 - Song 1", "Artist 2 - Song 2", "Artist 3 - Song 3"]
+
+
+@needs_ffmpeg
+def test_loops_and_starts_where_asked(tmp_path):
+    files = [write_wav(tmp_path / f"{i}.wav", seconds=0.2) for i in range(3)]
+    queue = load_queue(station_export(tmp_path, files))
+    sender = FileSender(tmp_path / "air.mp3")
+    sender.connect()
+    seen = []
+
+    def on_track(now):
+        seen.append(now.index)
+        if len(seen) == 5:
+            channel.stop()
+
+    channel = Channel(queue, sender, FFMPEG, start=2, pacer=Unpaced(), on_track=on_track)
+    channel.run()
+    sender.close()
+    assert seen == [2, 0, 1, 2, 0]
+
+
+@needs_ffmpeg
+def test_skips_unreadable_tracks_and_gives_up_if_none_play(tmp_path):
+    good = write_wav(tmp_path / "good.wav", seconds=0.3)
+    bad = tmp_path / "bad.mp3"
+    bad.write_bytes(b"not audio")
+    sender = FileSender(tmp_path / "air.mp3")
+    sender.connect()
+    queue = load_queue(station_export(tmp_path, [bad, good]))
+    Channel(queue, sender, FFMPEG, loop=False, pacer=Unpaced()).run()
+    assert abs(_duration(tmp_path / "air.mp3") - 0.3) < 0.1
+
+    queue = load_queue(station_export(tmp_path, [bad]))
+    with pytest.raises(RuntimeError, match="No track"):
+        Channel(queue, sender, FFMPEG, pacer=Unpaced()).run()
+    sender.close()
+
+
+@needs_ffmpeg
+def test_on_air_to_shoutcast(tmp_path, shoutcast):
+    files = [write_wav(tmp_path / f"{i}.wav", seconds=0.5) for i in range(2)]
+    queue = load_queue(station_export(tmp_path, files, titles=[("Inner City", "Good Life"), ("Ce Ce Peniston", "Finally")]))
+    sender = ShoutcastSender("127.0.0.1", shoutcast.port, "hackme", StreamInfo(name=queue.name))
+    sender.connect()
+    Channel(queue, sender, FFMPEG, loop=False, pacer=Unpaced()).run()
+    sender.close()
+    assert shoutcast.audio[:2] in (b"\xff\xfb", b"\xff\xfa", b"ID")  # an MP3 stream
+    for _ in range(50):  # titles are sent in the background
+        if len(shoutcast.titles) == 2:
+            break
+        shoutcast.got_title.wait(0.1)
+    assert sorted(shoutcast.titles) == ["Ce Ce Peniston - Finally", "Inner City - Good Life"]
+
+
+def test_level_gain_follows_tags_and_peak(tmp_path, monkeypatch):
+    from station_player.tags import Tags
+
+    from station_server import channel as mod
+
+    track = load_queue(station_export(tmp_path, [write_wav(tmp_path / "a.wav")])).tracks[0]
+    cases = [
+        (Tags(), 0.0),
+        (Tags(gain_db=-6.0, peak=1.0), -6.0),
+        (Tags(gain_db=15.0), 10.0),  # boost capped
+        (Tags(gain_db=8.0, peak=0.5), 6.02),  # held below full scale
+    ]
+    for tags, want in cases:
+        monkeypatch.setattr(mod, "read_tags", lambda _p, t=tags: t)
+        assert level_gain(track) == pytest.approx(want, abs=0.01)
