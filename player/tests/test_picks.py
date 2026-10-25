@@ -105,3 +105,15 @@ def test_server_relays_and_remembers_picked_stations(tmp_path):
     assert app.can_preview("http://radio/mix") and not app.can_preview("http://radio/other")
     app.station_played("Mix", "http://radio/mix")
     assert app.store.config.recent_stations[0]["url"] == "http://radio/mix"
+
+
+def test_shipped_pictures_need_no_download(tmp_path):
+    def offline(url, limit):
+        raise OSError("offline")
+
+    p = Picks(tmp_path, fetch=offline)
+    with_image = [x for x in p.current()["picks"] if "image" in x]
+    assert with_image
+    for pick in with_image:
+        body, ctype = p.image(pick["id"])
+        assert ctype == "image/png" and body.startswith(b"\x89PNG")
