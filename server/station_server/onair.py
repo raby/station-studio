@@ -260,6 +260,8 @@ class ServerApp:
             self.config.stations[i] = st
             runner = self.runners[sid]
             runner.station = st
+            if runner.state == "error":  # the old problem may be what was just fixed
+                runner.state, runner.error = "off", None
         else:
             self.config.stations.append(st)
             self.runners[st.id] = StationRunner(st, self.ffmpeg, self.store.home / "logs")

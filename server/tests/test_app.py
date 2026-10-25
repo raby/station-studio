@@ -141,3 +141,7 @@ def test_bad_server_goes_to_error(api, exports):
     api(f"/api/stations/{sid}/on", {"on": True})
     assert wait_for(lambda: api("/api/state")[1]["stations"][0]["state"] == "error")
     assert api("/api/state")[1]["stations"][0]["error"]
+    # Saving the station clears the old problem.
+    api(f"/api/stations/{sid}", {"server": "icecast://127.0.0.1:2/x"})
+    st = api("/api/state")[1]["stations"][0]
+    assert st["state"] == "off" and st["error"] is None
