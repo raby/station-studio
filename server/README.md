@@ -10,25 +10,36 @@ inside Station Server. Nothing else playing on the computer (a YouTube
 video, system sounds) can reach the broadcast, and one computer can run
 both stations.
 
-**Status: 0.2, one station on air from an app.** Station Server opens a
-window in station-player's style where you set up a station, put it on
-air and see what's playing. Running both stations on one box, and
-installers, come next. See the
+**Status: 0.3: an app you download and install, running as many stations
+as you like on one computer.** Each station has its own playlist, server
+and play log. See the
 [plan](https://claude.ai/artifact/RMcRHeFUDnw2BTvhGskcmd).
-
-## What you need
-
-- Python 3.11 or newer.
-- **ffmpeg** with its MP3 encoder (the normal builds have it).
-  macOS: `brew install ffmpeg`. Windows: `winget install ffmpeg`, then open
-  a new terminal. Or point Station Server at one with `--ffmpeg PATH` or
-  `$STATION_SERVER_FFMPEG`.
-- The music on this computer, and the playlist exported from
-  station-studio (or any iTunes / Music XML).
 
 ## Install
 
-From a checkout of this repo:
+**Download** (no Python or terminal needed): a Mac `.dmg` (Apple Silicon
+or Intel) or a Windows setup `.exe`, each with its own ffmpeg. Until
+there's a release they're built for every pull request that changes
+Station Server: open the pull request's *Checks* › **Station Server
+installers** run, and download from its *Artifacts*.
+
+- **Mac:** open the `.dmg` and drag Station Server to Applications. The
+  first time, macOS says it can't check the app: open System Settings ›
+  Privacy & Security and click **Open Anyway** (the app isn't signed with
+  a paid Apple certificate).
+- **Windows:** run the setup. If SmartScreen stops it, click **More info**
+  › **Run anyway**. It installs for you only, with no administrator
+  password, and adds Station Server to the Start menu.
+
+Then, on the station's computer, turn on **Settings › Start Station Server
+when I log in**, so that after a restart, a power cut or Windows updates it
+starts in the background and puts the stations that were on air back on
+air. On a Mac it's also started again if it ever stops unexpectedly.
+
+**From a checkout** (for development, or Linux): you need Python 3.11 or
+newer and **ffmpeg** with its MP3 encoder (macOS: `brew install ffmpeg`;
+Windows: `winget install ffmpeg`; or point Station Server at one with
+`--ffmpeg PATH` or `$STATION_SERVER_FFMPEG`).
 
 ```bash
 python -m venv .venv
@@ -38,6 +49,9 @@ python -m venv .venv
 Station Server reads playlists with station-player's code, so both are
 installed. Then run `.venv/bin/station-server` (Windows:
 `.venv\Scripts\station-server`).
+
+You'll also need the music on the computer, and the playlists exported from
+station-studio (or any iTunes / Music XML).
 
 ## The app
 
@@ -78,7 +92,12 @@ for PRS and PPL returns (the same format as station-player's).
 gives Station Server its own icon in the Dock or taskbar, and it opens that
 way from then on.
 
-Settings, passwords and play logs are kept in `~/.station-server`
+**Two stations on one computer.** Add a station for each; they run side
+by side, each with its own playlist, server, clock and play log, and go on
+and off air separately. Rebirth Classics to `shoutcast://…:8000` and
+Rebirth Radio to `shoutcast://…:8002`, say, from one PC.
+
+Settings, passwords, play logs and the log file `station-server.log` are kept in `~/.station-server`
 (`$STATION_SERVER_HOME` to change it); the settings file is readable by
 you only. `station-server app --port N` uses another port than 8770.
 

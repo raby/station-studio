@@ -543,9 +543,17 @@ function renderSettings() {
   own.addEventListener("change", async () => {
     try { setState(await api("/api/settings", { open_window: own.checked })); toast("Saved"); } catch (e) { toast(e.message); }
   });
+  const login = el("input", { type: "checkbox" });
+  login.checked = !!S.state?.login;
+  login.addEventListener("change", async () => {
+    try { setState(await api("/api/settings", { login: login.checked })); toast("Saved"); } catch (e) { toast(e.message); login.checked = !login.checked; }
+  });
   return el("div", { class: "settings" },
     el("div", { class: "view-head" }, el("div", {}, el("h1", {}, "Settings"))),
     el("section", {},
+      el("h2", {}, "Start when this computer starts"),
+      el("label", { class: "check", style: "display:flex;gap:8px;align-items:center" }, login, "Start Station Server when I log in"),
+      el("p", { class: "help" }, "Turn this on for the station's computer: after a restart, a power cut or Windows updates, Station Server starts in the background and the stations that were on air go back on air, with no window until you open one. On a Mac it is also started again if it ever stops unexpectedly. For a computer nobody logs in to, set Windows or macOS to log in automatically."),
       el("h2", {}, "App"),
       el("p", { class: "help" }, "Station Server runs in the background; this window is how you see it. Closing the window leaves the stations on air. Quit Station Server takes them off air."),
       el("label", { class: "check", style: "display:flex;gap:8px;align-items:center" }, own, "Open in a window of its own (with Chrome, Edge or Brave)"),
@@ -570,11 +578,16 @@ function renderHelp() {
       el("h2", {}, "Setting up a station"),
       p("Add a station, choose station-studio's exports folder for it (the newest week is played), enter the server's address, port and source password (the one Winamp used), and press Test connection. Then Save and Go on air."),
       p("A SHOUTcast server takes one source at a time: stop Winamp's SHOUTcast plugin before going on air, or the server refuses Station Server."),
+      el("h2", {}, "Two stations on one computer"),
+      p("Add a station for each. They run side by side, each with its own playlist, server, clock and play log, and go on and off air separately: for example Rebirth Classics to port 8000 and Rebirth Radio to port 8002 of the same server."),
+      el("h2", {}, "Running unattended"),
+      p("Turn on Settings › Start Station Server when I log in. After a restart, a power cut or Windows updates, it starts in the background and the stations that were on air go back on air. Closing this window leaves them on air; Quit takes them off."),
       el("h2", {}, "The week's clock"),
       p("Following the clock, the first track plays at the start of the week (Monday 00:00 unless you change it) and the rest follow by their lengths. A restart picks up where the station should be. A new week's export is picked up within a minute and starts after the playing track."),
       el("h2", {}, "If something goes wrong"),
       p("If the server goes away, the station keeps playing and reconnects every few seconds. A track whose file can't be read is skipped; if none can be, the station sends silence and the page says so. Tracks the playlist names but this computer can't find are listed under the station: add the folder they're in as a music folder."),
-      p("ffmpeg does the decoding and encoding. macOS: brew install ffmpeg. Windows: winget install ffmpeg."),
+      p("ffmpeg does the decoding and encoding. The downloaded app has its own; otherwise install it (macOS: brew install ffmpeg; Windows: winget install ffmpeg)."),
+      p("Station Server keeps a log, station-server.log, with its settings and play logs in the .station-server folder in your home folder."),
     ),
   );
 }

@@ -11,6 +11,7 @@ import pytest
 
 from conftest import FFMPEG, needs_ffmpeg, station_export, write_wav
 from station_server.config import ConfigStore
+from station_server.desktop import Login
 from station_server.onair import ServerApp
 from station_server.web import make_server
 
@@ -38,7 +39,8 @@ def exports(tmp_path):
 
 @pytest.fixture
 def api(tmp_path):
-    app = ServerApp(ConfigStore(tmp_path / "home"), ffmpeg=FFMPEG or "ffmpeg")
+    app = ServerApp(ConfigStore(tmp_path / "home"), ffmpeg=FFMPEG or "ffmpeg",
+                    login=Login(platform="linux", home=tmp_path / "user"))
     server = make_server(app, port=0)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     base = f"http://127.0.0.1:{server.server_address[1]}"
@@ -70,6 +72,13 @@ def test_page_and_guards(api):
     status, body = api("/api/state", headers={"Host": "evil.example"})
     assert status == 403
     assert api("/../config.json")[0] == 404
+
+
+def test_start_at_login_setting(api):
+    assert api("/api/state")[1]["login"] is False
+    assert api("/api/settings", {"login": True})[1]["login"] is True
+    assert api("/api/settings", {"open_window": False})[1]["login"] is True  # left alone
+    assert api("/api/settings", {"login": False})[1]["login"] is False
 
 
 def test_add_check_and_delete_a_station(api, exports):
@@ -151,3 +160,30 @@ def test_bad_server_goes_to_error(api, exports):
     api(f"/api/stations/{sid}", {"server": "icecast://127.0.0.1:2/x"})
     st = api("/api/state")[1]["stations"][0]
     assert st["state"] == "off" and st["error"] is None
+
+
+@needs_ffmpeg
+def test_two_stations_on_air_at_once(api, exports, icecast, tmp_path):
+    other = tmp_path / "exports" / "rebirth-radio"
+    other.mkdir()
+    files = [write_wav(tmp_path / "music2" / f"{i}.wav", seconds=0.6, freq=700 + 50 * i) for i in range(2)]
+    xml = station_export(tmp_path / "radio", files, name="Rebirth Radio 012",
+                         titles=[("Radio", f"Song {i}") for i in range(2)])
+    shutil.copy(xml, other / "012.xml")
+    ids = []
+    for name, folder, mount in (("Rebirth Classics", exports, "classics"), ("Rebirth Radio", other, "radio")):
+        status, body = api("/api/stations", {
+            "name": name, "playlist": str(folder), "start_mode": "top",
+            "server": f"icecast://localhost:{icecast.port}/{mount}", "password": "hackme",
+        })
+        ids.append(body["id"])
+    for sid in ids:
+        api(f"/api/stations/{sid}/on", {"on": True})
+    assert wait_for(lambda: [s["state"] for s in api("/api/state")[1]["stations"]] == ["on", "on"])
+    assert wait_for(lambda: any(t.startswith("Radio - ") for t in icecast.titles)
+                    and any(t.startswith("Artist - ") for t in icecast.titles))
+    mounts = {target for method, target, _ in icecast.requests if method == "PUT"}
+    assert mounts == {"/classics", "/radio"}
+    # One off air leaves the other on.
+    api(f"/api/stations/{ids[0]}/on", {"on": False})
+    assert [s["state"] for s in api("/api/state")[1]["stations"]] == ["off", "on"]
