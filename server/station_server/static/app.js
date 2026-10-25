@@ -269,7 +269,7 @@ function renderStation(s) {
 
   if (s.playlist && s.playlist.missing_count) {
     parts.push(el("details", { class: "missing", open: S.missingOpen, ontoggle: (e) => { S.missingOpen = e.target.open; } },
-      el("summary", {}, `${s.playlist.missing_count} tracks can't be found and are left out`),
+      el("summary", {}, s.playlist.missing_count === 1 ? "1 track can't be found and is left out" : `${s.playlist.missing_count} tracks can't be found and are left out`),
       el("ul", {}, s.playlist.missing.map((m) => el("li", {}, `${m.artist ? m.artist + " – " : ""}${m.title}`,
         el("span", { class: "help" }, `  ${m.location}`)))),
     ));
