@@ -31,7 +31,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlparse
 
-from station_player import __version__, loudness, myplaylists, qr, radio, remote, selfupdate, setup, updates
+from station_player import __version__, loudness, myplaylists, picks, qr, radio, remote, selfupdate, setup, updates
 from station_player.config import MAX_RECENT, clean_alarm, clean_alarms, clean_tags
 from station_player.directory import Directory, DirectoryError
 from station_player.logos import LogoStore
@@ -188,6 +188,7 @@ class PlayerApp:
         self.recorder = recorder or Recorder(user_agent=f"StationPlayer/{__version__}")
         # Finding stations in the Radio Browser directory.
         self.directory = Directory(user_agent=f"StationPlayer/{__version__}")
+        self.picks = picks.Picks(store.home)  # the Home page's suggestions
         self.logos = LogoStore(store.home / "logos")
         # which browser the player's own window uses (None: opens in a tab)
         self.window_browser = browser_name(find_browser())
@@ -1187,7 +1188,7 @@ class PlayerApp:
     def can_preview(self, url: str) -> bool:
         """Whether a station that isn't saved may be relayed: the finder
         listed it, or it's in Recently played."""
-        if self.directory.listed(url):
+        if self.directory.listed(url) or self.picks.lists(url):
             return True
         with self._lock:
             return any(s.get("url") == url for s in self.store.config.recent_stations)
@@ -1199,7 +1200,7 @@ class PlayerApp:
         with self._lock:
             saved = next((s for s in self.store.config.stations if s.get("url") == url), None)
             before = next((s for s in self.store.config.recent_stations if s.get("url") == url), None)
-        if saved is None and before is None and not self.directory.listed(url):
+        if saved is None and before is None and not self.directory.listed(url) and not self.picks.lists(url):
             raise ValueError("Not a station the player knows")
         entry = {"name": (saved or {}).get("name") or name or (before or {}).get("name") or url, "url": url}
         logo = (saved or {}).get("logo") or (before or {}).get("logo") or self._keep_logo(None, logo_url)
@@ -1413,6 +1414,22 @@ def make_handler(app: PlayerApp):
             path = urlparse(self.path).path
             if path == "/api/state":
                 return self._send_json(app.state())
+            if path == "/api/picks":
+                return self._send_json(app.picks.current())
+            if path == "/api/picks/image":
+                found = app.picks.image(parse_qs(urlparse(self.path).query).get("id", [""])[0])
+                if found is None:
+                    return self._error(HTTPStatus.NOT_FOUND, "No picture")
+                body, ctype = found
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", ctype)
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Cache-Control", "private, max-age=3600")
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.end_headers()
+                if not head_only:
+                    self.wfile.write(body)
+                return None
             if path.startswith("/api/playlists/") and path.endswith(".m3u"):
                 found = app.m3u(path[len("/api/playlists/"):-len(".m3u")])
                 if found is None:

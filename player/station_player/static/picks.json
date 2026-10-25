@@ -1,0 +1,36 @@
+{
+  "about": "What Station Player's Home page suggests under the title below. Edit this file on GitHub (player/station_player/static/picks.json): players pick up the change within the hour. Each pick needs a title and a station (its stream link). Optional: text, button (the button's words), image (a picture in the picks folder beside this file, e.g. picks/breakfast.png), from and to (24-hour local time; a pick with from 22:00 and to 06:00 runs overnight), days (mon tue wed thu fri sat sun), starts and ends (dates, YYYY-MM-DD). A pick with no times shows all day.",
+  "title": "From Rebirth",
+  "picks": [
+    {
+      "title": "Rebirth Radio",
+      "text": "Live from Rebirth: house, garage, jungle and more.",
+      "button": "Listen live",
+      "station": "https://sh.uk.audio-stream.com/proxy/adgerdes?mp=/stream"
+    },
+    {
+      "title": "Rebirth Classics",
+      "text": "Start the day with old skool classics.",
+      "button": "Play the breakfast mix",
+      "station": "http://81.150.147.206:8000",
+      "from": "06:00",
+      "to": "11:00"
+    },
+    {
+      "title": "Rebirth Classics",
+      "text": "Classics all afternoon, at work or on the move.",
+      "button": "Play the afternoon mix",
+      "station": "http://81.150.147.206:8000",
+      "from": "11:00",
+      "to": "18:00"
+    },
+    {
+      "title": "Rebirth Classics",
+      "text": "Wind down with the evening classics.",
+      "button": "Play the evening mix",
+      "station": "http://81.150.147.206:8000",
+      "from": "18:00",
+      "to": "06:00"
+    }
+  ]
+}

@@ -91,6 +91,8 @@ def page(browser, player):
     errors = []
     pg.on("pageerror", lambda e: errors.append(str(e)))
     pg.goto(player[1])
+    pg.wait_for_selector("#view .home")  # a new window opens on Home
+    pg.locator("#nav-folders .nav-item").first.click()
     pg.wait_for_selector("#view tbody tr")
     yield pg
     ctx.close()
@@ -397,6 +399,60 @@ def test_choose_the_stations_on_the_tuner(page, player):
     # Saved settings keep it.
     from station_player.config import config_from_json
     assert config_from_json(app.store.config.to_json()).stations[2]["tuner"] is False
+
+
+def test_home_and_discover(page, player):
+    import json as _json
+    from station_player.picks import Picks
+
+    app = player[0]
+    picks_feed = {"title": "From Rebirth", "picks": [
+        {"title": "Rebirth Classics", "text": "Old skool all day.", "button": "Play the mix", "station": "http://127.0.0.1:9/classics"},
+        {"title": "Never now", "station": "http://127.0.0.1:9/never", "ends": "2000-01-01"},
+    ]}
+    app.picks = Picks(player[2] / "picks", fetch=lambda url, limit: (_json.dumps(picks_feed).encode(), ""))
+    app.picks.refresh()
+    page.evaluate("HOME.fetched = 0")  # the window opened with the shipped picks
+    page.locator(".nav-item[data-view=home]").click()
+    sync_api.expect(page.locator("#view h1")).to_have_text(re.compile(r"^Good (morning|afternoon|evening|night)$"))
+    picks = page.locator("#home-picks")
+    sync_api.expect(picks.locator("h2")).to_have_text("From Rebirth")
+    sync_api.expect(picks.locator(".pick")).to_have_count(1)  # the other one ended long ago
+    sync_api.expect(page.locator(".home .tile", has_text="Test FM")).to_be_visible()
+    # A pick plays straight away, and joins Recently played.
+    picks.get_by_role("button", name="Play the mix: Rebirth Classics").click()
+    page.wait_for_function("() => S.mode === 'radio' && S.station.url === 'http://127.0.0.1:9/classics'")
+    page.wait_for_function("() => (S.lib.recent_stations || []).some(r => r.url === 'http://127.0.0.1:9/classics')")
+    # Times of day, by this computer's clock (overnight too).
+    assert page.evaluate("""() => [
+      pickNow({from: "06:00", to: "11:00"}, new Date(2026, 0, 5, 7, 30)),
+      pickNow({from: "06:00", to: "11:00"}, new Date(2026, 0, 5, 11, 0)),
+      pickNow({from: "18:00", to: "06:00"}, new Date(2026, 0, 5, 2, 0)),
+      pickNow({from: "18:00", to: "06:00"}, new Date(2026, 0, 5, 12, 0)),
+      pickNow({days: ["sat", "sun"]}, new Date(2026, 0, 5, 12, 0)),
+      pickNow({days: ["mon"]}, new Date(2026, 0, 5, 12, 0)),
+      pickNow({starts: "2026-01-06"}, new Date(2026, 0, 5, 12, 0)),
+    ]""") == [True, False, True, False, False, True, False]
+    # Home's way into the globe: news and talk.
+    page.get_by_role("button", name=re.compile("^News and talk around the world")).first.click()
+    sync_api.expect(page.locator("#view h1")).to_have_text("Discover")
+    sync_api.expect(page.locator(".nav-item[data-view=discover]")).to_have_attribute("aria-current", "true")
+    sync_api.expect(page.locator("#globe")).to_be_focused()
+    sync_api.expect(page.locator(".globe-kinds [data-kind=news]")).to_have_attribute("aria-pressed", "true")
+    # And to searching.
+    page.get_by_role("button", name=re.compile("^Search for a station")).click()
+    sync_api.expect(page.locator("#finder-q")).to_be_focused()
+    # The Radio page points here.
+    page.locator(".nav-item[data-view=radio]").click()
+    page.get_by_role("button", name="Open Discover").click()
+    sync_api.expect(page.locator("#view h1")).to_have_text("Discover")
+    # A reload stays put; a new window opens on Home.
+    page.reload()
+    sync_api.expect(page.locator("#view h1")).to_have_text("Discover")
+    other = page.context.new_page()
+    other.goto(player[1])
+    sync_api.expect(other.locator("#view .home")).to_be_visible()
+    other.close()
 
 
 def test_seeking_back_near_the_end_doesnt_start_the_next_track_early(page):
@@ -1210,7 +1266,7 @@ def test_find_stations(page, player):
     app = player[0]
     net = FakeDirectoryNet()
     app.directory = Directory(fetch=net, servers=["api.example"], public=lambda host: True)
-    page.locator(".nav-item[data-view=radio]").click()
+    page.locator(".nav-item[data-view=discover]").click()
     # Opens on the most popular stations, with genres to browse.
     results = page.locator("#finder-results .find-card")
     sync_api.expect(results).to_have_count(2)
@@ -1252,14 +1308,13 @@ def test_find_stations(page, player):
     assert any("/json/url/11111111-1111" in u for u in net.asked)
     # Add it to your stations.
     jazz.get_by_role("button", name="Add Jazz Cafe Radio to your stations").click()
-    sync_api.expect(page.locator(".card[data-url='http://127.0.0.1:9/jazz']")).to_be_visible()
     sync_api.expect(jazz.get_by_role("button", name="Jazz Cafe Radio is in your stations")).to_be_disabled()
     assert any(s["url"] == "http://127.0.0.1:9/jazz" and s["name"] == "Jazz Cafe Radio" for s in app.store.config.stations)
     sync_api.expect(page.locator("#finder-q")).to_have_value("cafe")  # still there after the redraw
 
 
 def test_find_stations_offline(page):
-    page.locator(".nav-item[data-view=radio]").click()
+    page.locator(".nav-item[data-view=discover]").click()
     sync_api.expect(page.locator("#finder-results .errors")).to_contain_text("Couldn't reach the station directory")
     sync_api.expect(page.locator("#finder-tags .chip").first).to_have_text("SomaFM")
 
@@ -1285,7 +1340,7 @@ def test_logos_recently_played_and_more_results(page, player):
     app = player[0]
     net = ManyStationsNet()
     app.directory = Directory(fetch=net, servers=["api.example"], public=lambda host: True)
-    page.locator(".nav-item[data-view=radio]").click()
+    page.locator(".nav-item[data-view=discover]").click()
     results = page.locator("#finder-results .find-card")
     sync_api.expect(results).to_have_count(40)
     sync_api.expect(page.locator("#recent")).to_be_hidden()  # nothing played yet
@@ -1317,17 +1372,19 @@ def test_logos_recently_played_and_more_results(page, player):
     # Listening puts it in Recently played, with its logo kept by the player.
     first = results.filter(has_text="Station 0").first
     first.get_by_role("button", name="Listen to Station 0").click()
-    recent = page.locator("#recent .recent-card")
-    sync_api.expect(recent).to_have_count(1)
-    sync_api.expect(recent.locator(".facts")).to_have_text("Not saved")
-    sync_api.expect(recent.locator("img.logo")).to_have_attribute("src", re.compile(r"^/logo/[0-9a-f]{16}\.png$"))
-    assert app.store.config.recent_stations[0]["url"] == "http://127.0.0.1:9/s0"
     # The logo shows in the now-playing bar and the system's media panel;
     # live radio has no seek bar.
     sync_api.expect(page.locator("#now-art")).to_have_attribute("src", re.compile(r"/api/directory/logo\?u="))
     assert page.evaluate("navigator.mediaSession.metadata.artwork.length") == 1
     sync_api.expect(page.locator(".bar .seek")).to_be_hidden()
     sync_api.expect(page.locator("#finder-q")).to_have_value("sta")  # typing survived the update
+    page.wait_for_function("() => (S.lib.recent_stations || []).length === 1")
+    page.locator(".nav-item[data-view=radio]").click()
+    recent = page.locator("#recent .recent-card")
+    sync_api.expect(recent).to_have_count(1)
+    sync_api.expect(recent.locator(".facts")).to_have_text("Not saved")
+    sync_api.expect(recent.locator("img.logo")).to_have_attribute("src", re.compile(r"^/logo/[0-9a-f]{16}\.png$"))
+    assert app.store.config.recent_stations[0]["url"] == "http://127.0.0.1:9/s0"
     # Record it straight from Recently played, without saving it first.
     from station_player.recorder import Recorder
     from test_recorder import FakeStream, Opener
@@ -1524,7 +1581,7 @@ def test_desktop_icon_station_plays_before_the_library_is_read(browser, player):
         pg.goto(url)
         pg.wait_for_function("() => S.mode === 'radio' && S.station && S.station.name === 'Test FM'")
         app.state = original
-        pg.wait_for_selector("#view tbody tr")
+        pg.wait_for_selector("#view .home")
         assert pg.evaluate("S.mode") == "radio"  # resuming the last session didn't replace it
     finally:
         ctx.close()
@@ -1759,7 +1816,7 @@ def test_globe(page, player):
     app = player[0]
     net = GlobeNet()
     app.directory = Directory(fetch=net, servers=["api.example"], public=lambda host: True)
-    page.locator(".nav-item[data-view=radio]").click()
+    page.locator(".nav-item[data-view=discover]").click()
     page.get_by_role("button", name="Globe", exact=True).click()
     sync_api.expect(page.locator("#globe")).to_be_focused()
     sync_api.expect(page.locator("#finder-tags")).to_be_hidden()

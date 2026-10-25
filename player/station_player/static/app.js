@@ -33,6 +33,8 @@ const ICONS = {
   more: ["*c 5 12 1.7", "*c 12 12 1.7", "*c 19 12 1.7"],
   minus: ["M5 12h14"],
   globe: ["c 12 12 9", "M3 12h18", "M12 3a14 14 0 0 1 0 18", "M12 3a14 14 0 0 0 0 18"],
+  home: ["M3.5 11L12 4l8.5 7", "M5.5 9.5V20h13V9.5", "M10 20v-5.5h4V20"],
+  mic: ["M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z", "M5.5 11a6.5 6.5 0 0 0 13 0", "M12 17.5V21"],
   plus: ["M12 5v14", "M5 12h14"],
   folder: ["M3 7.5A2.5 2.5 0 0 1 5.5 5H9l2 2.5h7.5A2.5 2.5 0 0 1 21 10v6.5a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 16.5z"],
   list: ["M9 6h12", "M9 12h12", "M9 18h12", "*c 4.5 6 1.3", "*c 4.5 12 1.3", "*c 4.5 18 1.3"],
@@ -402,6 +404,7 @@ async function show(view) {
   editingStation = null;
   renderErrors();
   if (view.type !== "search") store("view", JSON.stringify(view));
+  if (view.type !== "search") try { sessionStorage.setItem("sp.view", JSON.stringify(view)); } catch { /* private window */ }
   if (view.type === "playlist" || view.type === "search") {
     let detail = null;
     try {
@@ -441,6 +444,8 @@ function renderView() {
     renderNav();
   }
   if ((S.view.type === "playlist" || S.view.type === "search") && S.detail) root.replaceChildren(playlistView(S.detail));
+  else if (S.view.type === "home") root.replaceChildren(homeView());
+  else if (S.view.type === "discover") root.replaceChildren(discoverView());
   else if (S.view.type === "radio") root.replaceChildren(radioView());
   else if (S.view.type === "recordings") root.replaceChildren(recordingsView());
   else if (S.view.type === "upnext") root.replaceChildren(upNextView());
@@ -1430,8 +1435,8 @@ function radioView() {
     cards.length ? el("div", { class: "cards" }, cards) : el("div", { class: "empty-state" },
       el("div", { class: "glyph big" }, icon("radio")),
       el("h2", {}, "No stations yet"),
-      el("p", {}, "Find stations below, or add one with its stream link. Most stations list one on their website, often as a .pls or .m3u file.")),
-    el("div", { class: "settings" }, scheduleSection(), recentSection(), finderSection(), el("section", { class: "add-station" },
+      el("p", {}, "Find stations in Discover, or add one with its stream link below. Most stations list one on their website, often as a .pls or .m3u file.")),
+    el("div", { class: "settings" }, scheduleSection(), recentSection(), discoverLink(), el("section", { class: "add-station" },
       el("h2", {}, "Add a station by its link"),
       el("p", { class: "help" }, "Test checks the link plays, and fills in the name when the station sends one."),
       el("form", { class: "form-row", onsubmit: add }, name, url,
@@ -1448,6 +1453,163 @@ function radioView() {
       el("button", { type: "button", class: "btn", onclick: () => show({ type: "recordings" }) },
         ...iconLabel("record", "See your recordings")))),
   );
+}
+
+// ---------- Home and Discover ----------------------------------------------
+// Home is where a new window opens: what's on now from Rebirth (picks.py),
+// stations played lately, your stations, the globe and your music.
+
+const HOME = { picks: null, fetched: 0, timer: null };
+const PICK_DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+
+// Whether a pick shows now, by this computer's clock.
+function pickNow(p, now = new Date()) {
+  const date = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`;
+  if (p.starts && date < p.starts) return false;
+  if (p.ends && date > p.ends) return false;
+  if (p.days && !p.days.includes(PICK_DAYS[(now.getDay() + 6) % 7])) return false;
+  if (!p.from) return true;
+  const t = `${pad2(now.getHours())}:${pad2(now.getMinutes())}`;
+  return p.from <= p.to ? t >= p.from && t < p.to : t >= p.from || t < p.to;  // overnight
+}
+
+async function loadPicks() {
+  HOME.fetched = Date.now();
+  try { HOME.picks = await api("/api/picks"); } catch { HOME.picks = HOME.picks || { title: "", picks: [] }; }
+  syncHome();
+}
+
+function syncHome() {
+  const old = $("#home-picks");
+  if (old) old.replaceWith(picksSection());
+}
+
+function greeting(now = new Date()) {
+  const h = now.getHours();
+  return h < 5 ? "Good night" : h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening";
+}
+
+const savedStation = (url) => (S.lib.stations || []).find((x) => x.url === url);
+
+function picksSection() {
+  const shown = (HOME.picks ? HOME.picks.picks : []).filter((p) => pickNow(p));
+  if (!shown.length) return el("section", { id: "home-picks", hidden: true });
+  return el("section", { id: "home-picks", class: "home-section" },
+    el("h2", {}, HOME.picks.title || "Picks"),
+    el("div", { class: "pick-row" }, shown.map((p) => {
+      const mine = savedStation(p.station);
+      const art = p.image
+        ? el("img", { class: "pick-image", alt: "", src: `/api/picks/image?id=${encodeURIComponent(p.id)}` })
+        : stationArt(mine || {}, "glyph big");
+      if (p.image) art.addEventListener("error", () => art.replaceWith(stationArt(mine || {}, "glyph big")));
+      return el("article", { class: "pick tile-live", "data-url": p.station },
+        el("div", { class: "pick-art" }, art),
+        el("div", { class: "pick-body" },
+          el("h3", {}, p.title),
+          p.text ? el("p", {}, p.text) : null,
+          el("button", {
+            type: "button", class: "btn primary listen", "aria-label": `${p.button}: ${p.title}`,
+            onclick: () => playStation(mine || { name: p.name, url: p.station, preview: true }),
+          }, ...iconLabel("play", p.button))));
+    })));
+}
+
+// A square button with a station's logo that plays it.
+function stationTile(st) {
+  return el("button", {
+    type: "button", class: "tile tile-live", "data-url": st.url, title: `Listen to ${st.name}`,
+    onclick: () => {
+      const live = S.mode === "radio" && S.station && S.station.url === st.url;
+      if (live && !audio.paused) audio.pause(); else playStation(st);
+    },
+  }, el("div", { class: "tile-art" }, stationArt(st, "glyph big")), el("span", { class: "tile-name" }, st.name));
+}
+
+function homeView() {
+  if (!HOME.picks || Date.now() - HOME.fetched > 10 * 60 * 1000) queueMicrotask(loadPicks);
+  // Picks change with the time of day: look again every minute.
+  clearInterval(HOME.timer);
+  HOME.timer = setInterval(() => { if (S.view.type === "home") syncHome(); else clearInterval(HOME.timer); }, 60 * 1000);
+  queueMicrotask(syncRadioCards);
+  const recent = (S.lib.recent_stations || []).map((r) => savedStation(r.url) || { name: r.name, url: r.url, logo: r.logo, preview: true });
+  const stations = S.lib.stations || [];
+  const music = [...myPlaylists(), ...S.lib.playlists.filter((p) => p.kind !== "mine")].slice(0, 8);
+  const section = (title, items, more) => items.length ? el("section", { class: "home-section" },
+    el("div", { class: "section-head" }, el("h2", {}, title), el("span", { class: "spacer" }), more || null),
+    el("div", { class: "tile-row" }, items)) : null;
+  const seeAll = (label, view) => el("button", { type: "button", class: "btn small ghost", onclick: () => show(view) }, label);
+  return el("div", { class: "home" },
+    el("div", { class: "view-head" }, el("h1", {}, greeting())),
+    picksSection(),
+    section("Recently played", recent.slice(0, 8).map(stationTile)),
+    section("Your stations", stations.map(stationTile), seeAll("All stations", { type: "radio" })),
+    el("section", { class: "home-section" },
+      el("div", { class: "section-head" }, el("h2", {}, "Discover"), el("span", { class: "spacer" }),
+        seeAll("Open Discover", { type: "discover" })),
+      discoverTiles()),
+    music.length
+      ? section("Your music", music.map((p) => el("button", {
+        type: "button", class: "tile music-tile", title: p.name, onclick: () => show({ type: "playlist", id: p.id }),
+      }, el("div", { class: "tile-art" }, el("div", { class: "glyph big" }, icon(p.kind === "folder" ? "folder" : "music"))),
+        el("span", { class: "tile-name" }, p.name), el("span", { class: "tile-sub" }, `${p.count} tracks`))))
+      : el("section", { class: "home-section" },
+        el("h2", {}, "Your music"),
+        el("p", { class: "help" }, "Play the music on this computer too: add your music folder, or playlists from station-studio or iTunes."),
+        el("button", { type: "button", class: "btn", onclick: () => { show({ type: "welcome" }); focusHeading(); } },
+          ...iconLabel("plus", "Add music"))));
+}
+
+// The ways into Discover: the globe with news and talk, or with music, or a search.
+function discoverTiles() {
+  const tile = (glyph, title, text, go) => el("button", { type: "button", class: "discover-tile", onclick: go },
+    el("div", { class: "glyph big" }, icon(glyph)),
+    el("span", { class: "discover-title" }, title),
+    el("span", { class: "discover-text" }, text));
+  return el("div", { class: "discover-tiles" },
+    tile("mic", "News and talk around the world", "Spin the globe to hear the news where it happens, in every language.",
+      () => openDiscover("news")),
+    tile("music", "Music around the world", "Turn the globe to a country and hear its music, or pick a genre.",
+      () => openDiscover("music")),
+    tile("search", "Search for a station", "By name, genre or country, from thousands of stations.",
+      () => openDiscover(null)));
+}
+
+async function openDiscover(kind) {
+  if (kind) {
+    G.kind = kind;
+    store("globe-kind", kind);
+    F.view = "globe";
+    store("finder-view", "globe");
+  } else {
+    F.view = "list";
+    store("finder-view", "list");
+  }
+  if (S.view.type === "discover") {
+    const finder = $(".finder");
+    if (finder) finder.replaceWith(finderSection());
+  } else {
+    await show({ type: "discover" });
+  }
+  if (kind) $("#globe")?.focus();
+  else $("#finder-q")?.focus();
+}
+
+function discoverView() {
+  return el("div", { class: "discover" },
+    el("div", { class: "view-head" }, el("h1", {}, "Discover")),
+    el("p", { class: "help lead" },
+      "Radio from all over the world. Turn the globe to hear the news, talk or music where it's made, or search by name. ",
+      "Listen first, then Add the ones you like to your stations."),
+    discoverTiles(),
+    el("div", { class: "settings" }, finderSection()));
+}
+
+// On the Radio page: the finder lives on Discover now.
+function discoverLink() {
+  return el("section", { class: "discover-link" },
+    el("h2", {}, "Find more stations"),
+    el("p", { class: "help" }, "News, talk and music from around the world on the globe, or search thousands of stations by name."),
+    el("button", { type: "button", class: "btn", onclick: () => show({ type: "discover" }) }, ...iconLabel("globe", "Open Discover")));
 }
 
 // Switches at set times: the news at five, then back to the music.
@@ -1709,6 +1871,10 @@ function syncRadioCards() {
     const song = card.querySelector(".song");
     song.textContent = live && S.radioTitle ? `Now playing: ${S.radioTitle}` : "";
     song.hidden = !song.textContent;
+  }
+  for (const tile of document.querySelectorAll("#view .tile-live[data-url]")) {
+    const live = S.mode === "radio" && S.station && S.station.url === tile.dataset.url;
+    tile.classList.toggle("live", Boolean(live && !audio.paused));
   }
   for (const card of document.querySelectorAll("#view .find-card[data-find]")) {
     const live = S.mode === "radio" && S.station && S.station.url === card.dataset.find;
@@ -5638,12 +5804,14 @@ setInterval(reportStatus, 1000);
   }
   if (!S.lib.scanning) await restoreSession();
   if (showToken === 0) {  // the user hasn't opened something while it scanned
-    const view = readJSON("view");
-    const known = view && !["search", "welcome"].includes(view.type) && (view.type !== "playlist" || S.lib.playlists.some((p) => p.id === view.id));
-    const first = S.lib.playlists[0];
-    const newcomer = !(S.lib.sources || []).length;
-    await show(known && !(newcomer && view.type === "settings") ? view
-      : first ? { type: "playlist", id: first.id } : newcomer ? { type: "welcome" } : { type: "settings" });
+    // A new window opens on Home; reloading stays where it was.
+    let view = null;
+    try { view = JSON.parse(sessionStorage.getItem("sp.view") || "null"); } catch { /* none */ }
+    const known = view && view.type && !["search", "welcome"].includes(view.type)
+      && (view.type !== "playlist" || S.lib.playlists.some((p) => p.id === view.id));
+    // The very first time, with no music added yet: the welcome screen.
+    const firstRun = !(S.lib.sources || []).length && !readJSON("view");
+    await show(known ? view : firstRun ? { type: "welcome" } : { type: "home" });
   }
   // A file opened just now (which may be why this window opened) plays;
   // an old request doesn't replay when the player is reopened later.
