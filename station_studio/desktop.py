@@ -113,12 +113,22 @@ def port_free(port: int) -> bool:
     return True
 
 
+def _browser_tab(url: str) -> None:
+    if sys.platform == "darwin":
+        subprocess.run(["open", url], check=False, timeout=30)
+    else:
+        webbrowser.open(url)
+
+
 def open_browser(url: str) -> None:
+    """Show Station Studio: in a window of its own when Chrome, Edge or
+    Brave is installed (as Station Player does), else a browser tab.
+    STATION_STUDIO_TAB=1 always uses a tab."""
+    from station_studio.window import open_ui
+
     try:
-        if sys.platform == "darwin":
-            subprocess.run(["open", url], check=False, timeout=30)
-        else:
-            webbrowser.open(url)
+        how = open_ui(url, get_home(), own_window=not os.environ.get("STATION_STUDIO_TAB"), tab=_browser_tab)
+        logger.info("Opened %s in a %s", url, how)
     except Exception as exc:
         logger.warning("Could not open the browser at %s: %s", url, exc)
 
