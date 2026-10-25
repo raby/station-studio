@@ -137,10 +137,18 @@ jobs:
           import json, sys
           d = json.load(sys.stdin)
           assert d['bundled'] and d['version'] == '${{ steps.version.outputs.version }}', d
+          assert d['can_update'], d  # Update now works in the downloaded app
           assert d['ffmpeg'] and not d['ffmpeg_error'] and 'ffmpeg' in d['ffmpeg'] and 'Station Server' in d['ffmpeg'], d
           print('version', d['version'], 'ffmpeg', d['ffmpeg'])"
           curl -sS -o /dev/null -w '%{http_code} %{content_type}\n' http://127.0.0.1:8771/ | grep -q '^200 text/html'
           curl -sS -o /dev/null -w '%{http_code} %{content_type}\n' http://127.0.0.1:8771/app.js | grep -q '^200 text/javascript'
+          # What lets the Dock window start Station Server when it isn't running.
+          curl -sS -o /dev/null -w '%{http_code} %{content_type}\n' http://127.0.0.1:8771/sw.js | grep -q '^200 text/javascript'
+          curl -sS -o /dev/null -w '%{http_code} %{content_type}\n' http://127.0.0.1:8771/offline.html | grep -q '^200 text/html'
+          if [ "${{ matrix.kind }}" = mac ]; then
+            /usr/libexec/PlistBuddy -c 'Print :CFBundleURLTypes:0:CFBundleURLSchemes:0' \
+              "build/dist/Station Server.app/Contents/Info.plist" | grep -qx station-server
+          fi
           if [ "${{ matrix.kind }}" = mac ]; then
             # The app itself, opened while Station Server runs, hands over and exits...
             "build/dist/Station Server.app/Contents/MacOS/Station Server" app --no-window --port 8771

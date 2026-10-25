@@ -165,3 +165,18 @@ def test_the_dock_window_can_start_it(call):
     manifest = json.loads((STATIC_DIR / "manifest.webmanifest").read_text())
     assert [s["url"] for s in manifest["shortcuts"]] == ["/?view=new", "/?view=log"]
     assert manifest["launch_handler"] == {"client_mode": "focus-existing"}
+
+
+def test_turning_notices_off_clears_the_one_showing(call):
+    call.app.latest = "99.0.0"
+    assert call("/api/state")[1]["update"] == "99.0.0"
+    status, state = call("/api/settings", {"check_updates": False})
+    assert status == 200 and state["update"] is None
+
+
+def test_start_at_login_not_from_the_disk_image(tmp_path):
+    login = Login(platform="mac", home=tmp_path, python="/Volumes/Station Server/Station Server.app/Contents/MacOS/x")
+    with pytest.raises(ValueError, match="Applications folder"):
+        login.set(True)
+    login.set(False)
+    assert login.enabled() is False

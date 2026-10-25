@@ -164,6 +164,8 @@ def make_handler(app: ServerApp, picker: Picker, quit) -> type[BaseHTTPRequestHa
             if path == "/api/settings":
                 app.config.open_window = bool(data.get("open_window", app.config.open_window))
                 app.config.check_updates = bool(data.get("check_updates", app.config.check_updates))
+                if not app.config.check_updates:
+                    app.latest = None  # no more notices until checked by hand
                 app.store.save()
                 if "login" in data:
                     app.login.set(bool(data["login"]))
