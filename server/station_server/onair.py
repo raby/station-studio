@@ -45,6 +45,16 @@ def _local(ts: float) -> datetime:
     return datetime.fromtimestamp(ts).astimezone()
 
 
+def _playlist_info(q: Queue) -> dict:
+    return {
+        "name": q.name, "tracks": len(q.tracks),
+        "missing": [{"title": t.name, "artist": t.artist, "location": str(t.location or "")}
+                    for t in q.missing[:50]],
+        "missing_count": len(q.missing),
+        "hours": round(sum(track_seconds(t) for t in q.tracks) / 3600, 1),
+    }
+
+
 class StationRunner:
     """One station, on air or not."""
 
@@ -177,20 +187,19 @@ class StationRunner:
             "server": getattr(self.sender, "describe", None),
             "connected": bool(self.sender and self.sender.connected),
             "playlist": None,
+            "file": str(self.xml) if self.xml else None,
             "now": None,
             "order": [],
             "stuck": bool(self.channel and self.channel.stuck),
         }
-        q = self.queue
-        if q:
-            out["playlist"] = {
-                "name": q.name, "file": str(self.xml), "tracks": len(q.tracks),
-                "missing": [{"title": t.name, "artist": t.artist, "location": str(t.location or "")}
-                            for t in q.missing[:50]],
-                "missing_count": len(q.missing),
-                "hours": round(sum(track_seconds(t) for t in q.tracks) / 3600, 1),
-            }
         ch = self.channel
+        # On air, the playlist is the one playing; a new week waiting for the
+        # end of the track is shown as next.
+        playing = ch.queue if ch and self.state == "on" else self.queue
+        if playing:
+            out["playlist"] = _playlist_info(playing)
+            if self.queue is not None and self.queue is not playing:
+                out["playlist"]["next"] = _playlist_info(self.queue)
         now = ch.now if ch and self.state == "on" else None
         if now and ch:
             t = now.track

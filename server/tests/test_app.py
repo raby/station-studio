@@ -103,7 +103,7 @@ def test_on_air_titles_play_log_and_resume(api, exports, icecast, monkeypatch):
     assert icecast.got_audio.wait(10) and icecast.got_title.wait(10)
     assert icecast.titles[0] == "Artist - Track 0"
     st = api("/api/state")[1]["stations"][0]
-    assert st["playlist"]["file"].endswith("012.xml") and st["order"][0]["title"].startswith("Track")
+    assert st["file"].endswith("012.xml") and st["order"][0]["title"].startswith("Track")
     # The test connection doesn't knock the station off the server.
     status, check = api("/api/check/server", {"id": sid, "server": f"icecast://localhost:{icecast.port}/classics"})
     assert status == 200 and check["on_air"] is True
@@ -131,7 +131,13 @@ def test_a_new_week_is_picked_up(api, exports, icecast, monkeypatch):
     runner = api.app.runners[sid]
     assert wait_for(lambda: runner.state == "on")
     shutil.copy(exports / "012.xml", exports / "013.xml")
-    assert wait_for(lambda: runner.channel.queue is runner.queue and runner.xml.name == "013.xml")
+    assert wait_for(lambda: runner.xml.name == "013.xml")
+    # Until the playing track ends the page shows 013 as next.
+    st = runner.status()
+    if runner.channel.queue is not runner.queue:
+        assert st["playlist"]["next"]["name"] == runner.queue.name
+    assert wait_for(lambda: runner.channel.queue is runner.queue)
+    assert "next" not in runner.status()["playlist"]
 
 
 def test_bad_server_goes_to_error(api, exports):

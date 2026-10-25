@@ -261,6 +261,7 @@ function renderStation(s) {
   if (s.playlist) {
     facts.push(el("span", {}, "Playlist ", el("b", {}, s.playlist.name)));
     facts.push(el("span", {}, `${s.playlist.tracks} tracks · ${s.playlist.hours} hours`));
+    if (s.playlist.next) facts.push(el("span", { class: "ok" }, "Next: ", el("b", {}, s.playlist.next.name), " after this track"));
   }
   facts.push(el("span", {}, st.start_mode === "clock"
     ? `Week starts ${DAYS[st.week_start.day]} ${st.week_start.time}` : "Starts from track 1"));
