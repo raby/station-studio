@@ -122,6 +122,10 @@
     padding: 18px 12px 14px;
     position: sticky;
     top: 0;
+    /* Sticky makes the sidebar its own layer; keep that layer above the
+       page so the app's full-window "Station Studio has stopped" screen
+       (in AppBar, inside the sidebar) covers the station cards. */
+    z-index: 20;
   }
   .brand {
     align-items: center;

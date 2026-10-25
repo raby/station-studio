@@ -4,6 +4,18 @@ All notable changes are listed here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses semantic versioning.
 
+## [1.7.1] - 2026-10-25
+
+### Fixed
+
+- After **Quit**, the "Station Studio has stopped" screen covers the
+  whole window again instead of showing behind the station cards.
+
+### Changed
+
+- GitHub Actions workflows use the Node 24 versions of the standard
+  actions, clearing the "Node.js 20 is deprecated" warnings.
+
 ## [1.7.0] - 2026-10-25
 
 ### Changed
