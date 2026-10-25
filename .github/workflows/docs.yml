@@ -42,8 +42,8 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           # §16.15 c1-review R4 — matches publish.yml + ci.yml
           # (3.12 = Dockerfile runtime base). If ci.yml bumps to a
@@ -141,8 +141,8 @@ jobs:
           python -c "import json; json.load(open('player/station_player/static/picks.json'))"
           cp player/station_player/static/picks.json site/feed/picks.json
           if [ -d player/station_player/static/picks ]; then cp -R player/station_player/static/picks site/feed/picks; fi
-      - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/configure-pages@v6
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: site/
 
@@ -159,4 +159,4 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5

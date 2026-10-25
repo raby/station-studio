@@ -94,7 +94,7 @@ jobs:
       # `permissions:` block AND scopes to an `environment:`,
       # GITHUB_TOKEN is filtered to ONLY what's listed here — the
       # repo's default workflow permissions don't apply. Without
-      # this, actions/checkout@v4 fails with "Repository not
+      # this, actions/checkout@v5 fails with "Repository not
       # found" because the token has zero contents access. The
       # previous workflow split didn't hit this because the
       # `build` job (with checkout) had no environment scoping and
@@ -102,9 +102,9 @@ jobs:
       contents: read
       id-token: write  # required for trusted publishing OIDC handshake
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.12'  # matches Dockerfile runtime base
           # t1-review 🟢-2: pip cache. setup-python's `cache: pip`
@@ -117,7 +117,7 @@ jobs:
             requirements-dev.txt
             pyproject.toml
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: '22'      # matches Dockerfile web-build stage
           cache: 'npm'
@@ -210,7 +210,7 @@ jobs:
     needs: build-and-publish-testpypi
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
 
@@ -334,7 +334,7 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
 

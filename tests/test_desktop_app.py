@@ -378,6 +378,18 @@ def test_starts_when_nothing_runs(monkeypatch):
     assert calls == [(8124, False)]
 
 
+def test_station_studio_link_starts_it_without_a_window(monkeypatch):
+    # The installed app's window, opened from the Dock while Station
+    # Studio wasn't running, asks for station-studio://start.
+    calls = []
+    monkeypatch.setattr(desktop, "running_instance", lambda base: None)
+    monkeypatch.setattr(desktop, "port_free", lambda port: True)
+    monkeypatch.setattr(desktop, "serve", lambda port, show: calls.append((port, show)) or 0)
+    assert desktop.main(["station-studio://start"]) == 0
+    assert desktop.main(["--port", "8126", "STATION-STUDIO://start"]) == 0
+    assert calls == [(desktop.DEFAULT_PORT, False), (8126, False)]
+
+
 def test_port_taken_by_something_else(monkeypatch, capsys):
     monkeypatch.setattr(desktop, "running_instance", lambda base: None)
     monkeypatch.setattr(desktop, "port_free", lambda port: False)

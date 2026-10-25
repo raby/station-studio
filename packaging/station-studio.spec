@@ -58,6 +58,7 @@ exe = EXE(
     exclude_binaries=True,
     name=NAME,
     console=False,  # no terminal window: the browser is the UI
+    argv_emulation=MAC,  # station-studio: links arrive as arguments
     icon=str(HERE / ("icon.icns" if MAC else "icon.ico")),
 )
 # On the Mac, the app the Finder opens only hands over to this helper and
@@ -89,5 +90,9 @@ if MAC:
             # The UI is the browser, so the app itself needs no Dock icon.
             "LSUIElement": True,
             "NSHighResolutionCapable": True,
+            # station-studio://start, from the installed app's window when
+            # Station Studio isn't running (see desktop.URL_SCHEME).
+            "CFBundleURLTypes": [{"CFBundleURLName": "io.github.raby.StationStudio",
+                                  "CFBundleURLSchemes": ["station-studio"]}],
         },
     )

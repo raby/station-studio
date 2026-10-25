@@ -3,6 +3,7 @@ import { render, cleanup, fireEvent, waitFor } from '@testing-library/svelte';
 import '@testing-library/jest-dom/vitest';
 import AppBar from './AppBar.svelte';
 import { answerConfirmDialog } from '$lib/confirm';
+import { startInstallSupport, _reset as resetInstall } from '$lib/install';
 import { stageText, waitForRestart, type AppState } from '$lib/desktopApp';
 
 function appState(over: Partial<AppState> = {}): AppState {
@@ -150,6 +151,24 @@ describe('AppBar', () => {
     expect(await findByTestId('app-stopped')).toHaveTextContent('Station Studio has stopped');
     expect(closeWindow).toHaveBeenCalled(); // its own window closes; a tab keeps the notice
     expect((fetchFn as unknown as ReturnType<typeof vi.fn>).mock.calls.some(([u]) => u === '/api/app/quit')).toBe(true);
+  });
+
+  it('offers Install as an app while the browser does', async () => {
+    resetInstall();
+    startInstallSupport(window);
+    const fetchFn = vi.fn(async () => json(appState()));
+    const { findByTestId, queryByTestId } = render(AppBar, { props: { fetchFn } });
+    await findByTestId('app-bar');
+    expect(queryByTestId('app-install')).toBeNull();
+    const prompt = vi.fn(async () => {});
+    const offer = Object.assign(new Event('beforeinstallprompt', { cancelable: true }), {
+      prompt,
+      userChoice: Promise.resolve({ outcome: 'accepted' }),
+    });
+    window.dispatchEvent(offer);
+    await fireEvent.click(await findByTestId('app-install-button'));
+    expect(prompt).toHaveBeenCalled();
+    await waitFor(() => expect(queryByTestId('app-install')).toBeNull());
   });
 
   it('Quit cancelled does nothing', async () => {
