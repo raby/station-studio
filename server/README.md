@@ -78,6 +78,28 @@ station-server play week-12.xml --to icecast://source@my.server:8000/classics
 While it plays, the window shows each track as it starts. Type `s` and
 Enter to skip a track; Ctrl+C stops.
 
+### Trying it on a Mac with your own Icecast
+
+No station needed: run Icecast on the same Mac and listen in station-player.
+
+```bash
+brew install ffmpeg icecast
+mkdir -p "$(brew --prefix)/var/log/icecast"      # Homebrew doesn't make it
+icecast -c "$(brew --prefix)/etc/icecast.xml"    # leave running; Ctrl+C stops
+```
+
+http://localhost:8000 shows Icecast's status page. Its source password is
+`hackme` until you change `<source-password>` (and `<admin-password>`) in
+that `icecast.xml`. In a second terminal:
+
+```bash
+.venv/bin/station-server play ~/.station-studio/exports/rebirth-classics/012.xml \
+  --to icecast://localhost:8000/classics --password hackme --name "Rebirth Classics"
+```
+
+Then add the station `http://localhost:8000/classics` in station-player.
+The title changes with each track, and the status page shows the stream.
+
 ### Trying it next to Winamp
 
 Only one source can feed a stream at a time. To compare without taking the
