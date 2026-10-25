@@ -18,6 +18,14 @@ this project uses semantic versioning.
   in `app-settings.json` in the data folder.
 - **Help** page (sidebar, under Setup): getting started, source pools,
   stations, making playlists, and the app itself.
+- **Not now** on the new-version note in the sidebar hides it until the
+  next version, as in Station Player. Turning off new-version notices
+  hides the one showing.
+
+### Fixed
+
+- Start at login refuses to point at a copy still on the disk image
+  (move it to Applications first), which would be gone after a restart.
 
 ## [1.7.1] - 2026-10-25
 

@@ -68,6 +68,24 @@ describe('AppBar', () => {
     expect(notice.querySelector('a')).toHaveAttribute('href', expect.stringContaining('studio-v1.7.0'));
   });
 
+  it('Not now hides the notice for that version, and a newer one shows again', async () => {
+    localStorage.clear();
+    let latest = '1.7.0';
+    const fetchFn = vi.fn(async () => json(appState({ latest }))) as unknown as typeof fetch;
+    const first = render(AppBar, { props: { fetchFn } });
+    await fireEvent.click(await first.findByTestId('app-update-later'));
+    expect(first.queryByTestId('app-update-notice')).toBeNull();
+    first.unmount();
+    const again = render(AppBar, { props: { fetchFn } });
+    await again.findByTestId('app-bar');
+    expect(again.queryByTestId('app-update-notice')).toBeNull(); // remembered
+    again.unmount();
+    latest = '1.8.0';
+    const newer = render(AppBar, { props: { fetchFn } });
+    expect(await newer.findByTestId('app-update-notice')).toHaveTextContent('Station Studio 1.8.0 is out.');
+    localStorage.clear();
+  });
+
   it('looks again now and then, so a new version turns up on an open page', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     let latest: string | null = null;

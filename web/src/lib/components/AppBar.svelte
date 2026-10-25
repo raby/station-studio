@@ -28,6 +28,9 @@
 
   let state: AppState | null = null;
   let error: string | null = null;
+  // Not now hides the notice for that version, as in Station Player.
+  const DISMISSED = 'station-studio:dismissed-update';
+  let dismissed: string | null = remembered();
   let stopped = false;
   let busy = false;
   let poll: ReturnType<typeof setInterval> | null = null;
@@ -60,6 +63,22 @@
   });
 
   // From the Settings page (see $lib/appEvents).
+  function remembered(): string | null {
+    try {
+      return localStorage.getItem(DISMISSED);
+    } catch {
+      return null; // private window: nothing remembered
+    }
+  }
+  function notNow(version: string): void {
+    dismissed = version;
+    try {
+      localStorage.setItem(DISMISSED, version);
+    } catch {
+      /* forget it next time */
+    }
+  }
+
   function onState(e: Event): void {
     const next = (e as CustomEvent<AppState>).detail;
     if (next && !poll) state = next;
@@ -146,10 +165,14 @@
   <div class="app-bar" data-testid="app-bar">
     {#if updating && state.update}
       <span class="notice" role="status" data-testid="app-update-progress">{stageText(state.update)}</span>
-    {:else if state.latest && state.can_update}
+    {:else if state.latest && state.can_update && state.latest !== dismissed}
+      {@const latest = state.latest}
       <span class="notice" data-testid="app-update-notice">
-        Station Studio {state.latest} is out.
-        <button type="button" class="primary" on:click={update} disabled={busy} data-testid="app-update-now">Update now</button>
+        Station Studio {latest} is out.
+        <span class="row">
+          <button type="button" class="primary" on:click={update} disabled={busy} data-testid="app-update-now">Update now</button>
+          <button type="button" on:click={() => notNow(latest)} data-testid="app-update-later">Not now</button>
+        </span>
         {#if state.release_page}
           <a href={state.release_page} target="_blank" rel="noopener">What's new</a>
         {/if}
@@ -202,6 +225,15 @@
     background: var(--danger-soft);
     border: 1px solid var(--danger);
     color: var(--danger);
+  }
+  .notice .row {
+    display: flex;
+    gap: 6px;
+  }
+  .notice .row button {
+    font-size: 13px;
+    padding: 4px 10px;
+    white-space: nowrap;
   }
   .notice a,
   .error a {
