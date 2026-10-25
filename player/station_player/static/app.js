@@ -263,26 +263,82 @@ function renderErrors(extra) {
   box.hidden = all.length === 0 && !goneLine;
 }
 
-// "A new version is out", until dismissed for that version.
+// "A new version is out", until dismissed for that version; while
+// updating, how far it's got.
 function renderUpdate() {
   const box = $("#update");
   const latest = S.lib.update;
+  const u = S.lib.updating;
+  if (u && u.stage !== "failed") {
+    box.replaceChildren(el("div", {}, updateStageText(u)));
+    box.hidden = false;
+    return;
+  }
   if (!latest || store("dismissed-update") === latest) {
     box.hidden = true;
     return;
   }
   box.replaceChildren(
     el("div", {}, `Station Player ${latest} is out.`),
-    S.lib.bundled
-      ? el("div", {}, "To update, ", el("a", {
-        href: `https://github.com/raby/station-studio/releases/tag/player-v${latest}`, target: "_blank", rel: "noopener",
-      }, "download it"), " and install it over this one.")
-      : el("div", {}, "To update, run ", el("code", {}, "pipx upgrade station-player"), " and restart it."),
-    el("button", {
-      type: "button", class: "btn small",
-      onclick: () => { store("dismissed-update", latest); renderUpdate(); },
-    }, "Dismiss"));
+    u && u.stage === "failed" && u.version === latest ? updateFailure(u) : null,
+    el("div", { class: "row" },
+      el("button", { type: "button", class: "btn small primary", onclick: () => startUpdate(latest) }, "Update now"),
+      el("button", {
+        type: "button", class: "btn small",
+        onclick: () => { store("dismissed-update", latest); renderUpdate(); },
+      }, "Not now")));
   box.hidden = false;
+}
+
+function updateStageText(u) {
+  if (u.stage === "downloading") return `Downloading Station Player ${u.version}… ${u.percent || 0}%`;
+  if (u.stage === "installing") return `Installing Station Player ${u.version}…`;
+  return `Restarting Station Player… ${u.version} opens here by itself.`;
+}
+
+function updateFailure(u) {
+  return el("div", { class: "update-failed", role: "alert" }, u.error, " ",
+    el("a", { href: u.page, target: "_blank", rel: "noopener" }, "Download it yourself"), ".");
+}
+
+// Update now: the player downloads and installs the new version, quits,
+// and the new one starts; this page waits for it and reloads into it.
+async function startUpdate(version) {
+  if (activeRecordings().length && !confirm("Updating stops your recordings (what's recorded so far is saved). Update now?")) return;
+  const from = S.lib.version;
+  try {
+    await loadState(await api("/api/update", { version }, { quiet: true }));
+  } catch (err) {
+    toast(err.message, { error: true });
+    return;
+  }
+  announce(`Updating Station Player to ${version}`);
+  if (S.view.type === "settings") renderView();
+  const until = Date.now() + 10 * 60 * 1000;
+  while (Date.now() < until) {
+    await new Promise((r) => setTimeout(r, 1000));
+    let state = null;
+    try {
+      const res = await fetch("/api/state");
+      if (res.ok) state = await res.json();
+    } catch { /* restarting */ }
+    if (!state) {
+      S.lib.updating = { ...(S.lib.updating || { version }), stage: "restarting" };
+      renderUpdate();
+      continue;
+    }
+    if (state.version !== from) {
+      location.reload();
+      return;
+    }
+    S.lib.updating = state.updating;
+    renderUpdate();
+    if (S.view.type === "settings") syncUpdateSettings();
+    if (!state.updating || state.updating.stage === "failed") return;
+  }
+  S.lib.updating = { version, stage: "failed", page: `https://github.com/raby/station-studio/releases/tag/player-v${version}`,
+    error: "Station Player didn't come back after updating. Open it again from Applications or the Start menu." };
+  renderUpdate();
 }
 
 // Run a settings action from a button; failures show in the error box.
@@ -1370,7 +1426,7 @@ function radioView() {
       }, ...iconLabel("search", "Find logos")) : null),
     counts.size ? el("div", { class: "tag-filter", id: "station-tags", role: "group", "aria-label": "Show stations tagged" },
       chip("All", ""), ...[...counts.keys()].sort((a, b) => a.localeCompare(b)).map((t) => chip(`${t} (${counts.get(t)})`, t))) : null,
-    visible.length > 1 ? tuner(visible) : null,
+    visible.filter(onTuner).length > 1 ? tuner(visible.filter(onTuner)) : null,
     cards.length ? el("div", { class: "cards" }, cards) : el("div", { class: "empty-state" },
       el("div", { class: "glyph big" }, icon("radio")),
       el("h2", {}, "No stations yet"),
@@ -1465,6 +1521,11 @@ function recentSection() {
               if (live && !audio.paused) audio.pause(); else playStation(st);
             },
           }, ...iconLabel("play", "Listen")),
+          // Here too, so a station just tried from Find stations can be recorded straight away.
+          el("button", {
+            type: "button", class: "btn small rec-btn studio-only", "aria-label": `Record ${st.name}`,
+            onclick: () => toggleRecording(mine || { id: r.id, url: r.url, name: r.name }),
+          }, ...iconLabel("record", "Record")),
           mine ? null : el("button", {
             type: "button", class: "btn small primary add", "aria-label": `Add ${st.name} to your stations`,
             onclick: async (e) => {
@@ -1488,6 +1549,7 @@ function syncRecent() {
   const focused = old.contains(document.activeElement) ? document.activeElement.getAttribute("aria-label") : null;
   const fresh = recentSection();
   old.replaceWith(fresh);
+  syncRecordings();  // names the Record buttons for what's running
   if (focused) fresh.querySelector(`[aria-label="${CSS.escape(focused)}"]`)?.focus();
   syncRadioCards();
 }
@@ -3340,6 +3402,14 @@ function syncRecordings() {
     box.querySelector(`button[data-url="${CSS.escape(r.url)}"]`).lastChild.textContent = ` · ${fmtTime(r.seconds)}`;
   }
   box.hidden = active.length === 0;
+  for (const card of document.querySelectorAll("#view .recent-card[data-find]")) {
+    const running = isRunning(recordingOf(card.dataset.find));
+    card.classList.toggle("rec-on", running);
+    const btn = card.querySelector(".rec-btn");
+    const label = running ? "Stop recording" : "Record";
+    if (btn.textContent !== label) btn.replaceChildren(...iconLabel(running ? "stop" : "record", label));
+    btn.setAttribute("aria-label", `${label} ${card.querySelector(".name").textContent}`);
+  }
   for (const card of document.querySelectorAll("#view .card[data-url]")) {
     const r = recordingOf(card.dataset.url);
     const running = isRunning(r);
@@ -3754,6 +3824,7 @@ function alarmPage() {
 const SETTINGS_TABS = [
   ["music", "Music", "music", musicPage],
   ["playback", "Playback", "headphones", () => playbackSection()],
+  ["radio", "Radio", "radio", () => tunerSettings()],
   ["alarm", "Alarm & sleep", "clock", alarmPage],
   ["remote", "Phone remote", "phone", () => remoteSection()],
   ["car", "In the car", "car", () => carSection()],
@@ -3877,6 +3948,7 @@ function appSection() {
         S.lib.config.own_window !== false, windowChange) : null,
       checkbox("updates", "Tell me when a new version is out (asks pypi.org once a day)",
         S.lib.config.check_updates !== false, updatesChange)),
+    updateSettings(),
     browser ? null : el("p", { class: "help" },
       "Station Player opens in a browser tab. With Google Chrome, Microsoft Edge or Brave installed it opens in a window of its own instead."),
     el("h2", { class: "spaced" }, "Studio tools"),
@@ -3892,6 +3964,71 @@ function appSection() {
           renderErrors(err.message);
         }
       })));
+}
+
+// Settings › App: this version, Check for updates, and Update to the new one.
+function updateSettings() {
+  const latest = S.lib.update;
+  const u = S.lib.updating;
+  const busy = u && u.stage !== "failed";
+  let line;
+  if (busy) line = updateStageText(u);
+  else if (latest) line = `Station Player ${latest} is out. You have ${S.lib.version}.`;
+  else if (U.checked) line = `You have the newest version, ${S.lib.version}.`;
+  else line = `You have Station Player ${S.lib.version}.`;
+  return el("div", { id: "update-settings", class: "update-settings" },
+    el("p", { role: "status" }, line),
+    u && u.stage === "failed" ? updateFailure(u) : null,
+    el("div", { class: "row" },
+      latest && !busy ? el("button", {
+        type: "button", class: "btn primary", id: "btn-update", onclick: () => startUpdate(latest),
+      }, `Update to ${latest}`) : null,
+      busy ? null : el("button", {
+        type: "button", class: "btn", id: "btn-check-update",
+        onclick: async (e) => {
+          e.currentTarget.disabled = true;
+          try {
+            await loadState(await api("/api/update/check", {}, { quiet: true }));
+            U.checked = true;
+            if (!S.lib.update) toast("Station Player is up to date");
+          } catch (err) {
+            toast(err.message, { error: true });
+          }
+          syncUpdateSettings();
+          $("#btn-update, #btn-check-update")?.focus();
+        },
+      }, "Check for updates")),
+    el("p", { class: "help" }, S.lib.bundled
+      ? "Updating downloads the new version from Station Player's GitHub page, checks it's the genuine file, and restarts Station Player. Your stations, playlists and settings are kept."
+      : "Updating runs pip to install the new version, then restarts Station Player. Your stations, playlists and settings are kept."));
+}
+const U = { checked: false };
+
+function syncUpdateSettings() {
+  const old = $("#update-settings");
+  if (old) old.replaceWith(updateSettings());
+}
+
+// Which of your stations sit on the Radio page's tuner dial.
+const onTuner = (st) => st.tuner !== false;
+function tunerSettings() {
+  const stations = S.lib.stations || [];
+  const change = (st) => async (on) => {
+    try {
+      await loadState(await api("/api/stations/update", { url: st.url, tuner: on }, { quiet: true }));
+      toast(on ? `${st.name} is on the tuner` : `${st.name} is off the tuner`);
+    } catch (err) {
+      renderErrors(err.message);
+    }
+  };
+  return el("section", {},
+    el("h2", {}, "On the tuner"),
+    el("p", { class: "help" },
+      "The dial across the top of the Radio page. Tick the stations you want on it; the rest still have their cards below it. ",
+      "They sit in the order of your stations: change it with Up and Down when you edit a station. The tuner shows once two or more are ticked."),
+    stations.length
+      ? el("div", { class: "checks tuner-checks" }, stations.map((st, i) => checkbox(`tuner-${i}`, st.name, onTuner(st), change(st))))
+      : el("p", { class: "help" }, "Add stations on the Radio page first."));
 }
 
 function playbackSection() {

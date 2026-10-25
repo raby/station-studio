@@ -255,6 +255,7 @@ def main(argv: list[str] | None = None) -> int:
                         help="start Station Player in the background when you log in, then exit")
     parser.add_argument("--remove-shortcuts", action="store_true",
                         help="remove the shortcuts and the start-at-login entry, then exit")
+    parser.add_argument("--after-update", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--version", action="version", version=f"station-player {__version__}")
     if argv is None:
         argv = sys.argv[1:]
@@ -389,6 +390,12 @@ def main(argv: list[str] | None = None) -> int:
         logging.info("Station Player %s started on %s", __version__, url)
     if not args.no_browser:
         _show(url, store)
+    elif args.after_update:
+        # Started by an update: the open page reloads into this version;
+        # with none open, show one.
+        reopen = threading.Timer(15, lambda: app.page_open() or app.show_window())
+        reopen.daemon = True
+        reopen.start()
     try:
         server.serve_forever()
     except KeyboardInterrupt:

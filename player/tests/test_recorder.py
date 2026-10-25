@@ -192,6 +192,27 @@ def test_record_endpoints(tmp_path, monkeypatch):
         server.server_close()
 
 
+def test_record_a_station_only_played_lately(tmp_path):
+    """One tried from Find stations can be recorded without saving it first."""
+    from station_player.config import ConfigStore
+    from station_player.server import PlayerApp, station_id
+
+    store = ConfigStore(tmp_path / "home")
+    store.config.studio = True
+    store.config.recent_stations = [{"name": "Found FM", "url": "http://radio/found"}]
+    app = PlayerApp(store, recorder=Recorder(tmp_path / "rec", opener=Opener(FakeStream(b"x", live=True))))
+    sid = station_id("http://radio/found")
+    assert next(s for s in app.state()["recent_stations"])["id"] == sid
+    app.record(sid, True)
+    assert only(app.recorder)["name"] == "Found FM"
+    # Dropping off Recently played doesn't stop it being stopped.
+    store.config.recent_stations.clear()
+    app.record(sid, False)
+    wait_until(lambda: only(app.recorder)["done"])
+    assert "http://radio/found" not in [s["url"] for s in store.config.stations]  # not saved
+    with pytest.raises(LookupError):
+        app.record(station_id("http://radio/never"), True)
+
 def test_playlist_links_are_not_recorded(tmp_path):
     rec = Recorder(tmp_path, opener=Opener(FakeStream(b"#EXTM3U\n", ctype="audio/x-mpegurl")))
     rec.start("http://radio/x", "HLS FM")

@@ -45,8 +45,11 @@ has downloads that carry everything they need, Python included:
   that ticked) and in Open With for audio files. Uninstall it from
   Settings › Apps.
 
-To update, download the new version and install it the same way, over
-the old one; the player says when one is out. An older copy still
+To update, press **Update now** when the player says a new version is
+out (or Settings › App › Check for updates). From 0.16.0 on it
+downloads the new version itself, checks the file against the SHA-256
+GitHub publishes for it, installs it and restarts. Downloading and
+installing over the old one by hand works too. An older copy still
 running in the background (or a pipx install's) quits when the new one
 opens, and start at login moves over to the downloaded app. These builds are made by
 `.github/workflows/player-installers.yml` from
@@ -304,7 +307,9 @@ station.
 
 **Recently played** at the top of the Radio page lists the last 8
 stations you listened to, saved or not, so a station you tried from
-the finder is easy to find again (and Add). **Clear** empties it.
+the finder is easy to find again (and Add). **Record** is there too,
+so a station you've just found can be recorded without saving it
+first. **Clear** empties it.
 
 **Station logos** show on your stations, in the now-playing bar and in
 the computer's media controls (the Mac's Now Playing, Windows' media
@@ -339,7 +344,7 @@ login*) and the computer awake; if no player window is open, one opens.
 with your stations along it: click a name, or drag the needle and let
 go near a station (with a hiss of static on the way); Left and Right
 tune to the next one. A line beside the song title moves with the
-sound.
+sound. Settings › Radio picks which of your stations are on it.
 
 **Ambient** in the sidebar fills the screen with a calm scene and its
 own sound, made as it plays: a fish tank, waves on a shore, or birds at
@@ -395,9 +400,25 @@ on the phone.
 ## New versions
 
 Once a day Station Player asks pypi.org for the newest version number
-(nothing else is sent). When there's a newer one, the sidebar says so;
-update with `pipx upgrade station-player` and restart it. Turn this off
-under Settings › App.
+(nothing else is sent). When there's a newer one, the sidebar says so,
+with **Update now**; Settings › App also has **Check for updates**.
+
+Updating keeps your stations, playlists and settings:
+
+- **Mac app:** downloads the new .dmg from the GitHub release, checks
+  its SHA-256 against GitHub's, copies the new app out of it, then quits
+  and swaps the new app in where the old one was (putting the old one
+  back if that fails) and starts it. The app has to be somewhere it can
+  replace itself, like Applications.
+- **Windows app:** downloads the setup .exe the same way, checks it, and
+  runs it silently; it installs over the old version and starts the new
+  one.
+- **pipx or pip:** runs pip to install the new version, then starts it,
+  and it takes over from the old one.
+
+The open window reloads into the new version by itself. Recordings
+running at the time are stopped and saved first. Turn the daily check
+off under Settings › App.
 
 ## A note on Station Studio's example stations
 

@@ -144,6 +144,8 @@ def _stations(value) -> list[dict]:
             tags = clean_tags(v.get("tags"))
             if tags:
                 st["tags"] = tags
+            if v.get("tuner") is False:  # left off the Radio page's tuner dial
+                st["tuner"] = False
             out.append(st)
     return out
 

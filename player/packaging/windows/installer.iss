@@ -48,6 +48,8 @@ Name: "{userdesktop}\Station Player"; Filename: "{app}\Station Player.exe"; Task
 
 [Run]
 Filename: "{app}\Station Player.exe"; Description: "Open Station Player now"; Flags: nowait postinstall skipifsilent
+; Updating from inside Station Player runs this setup silently: start the new version again.
+Filename: "{app}\Station Player.exe"; Parameters: "--no-browser --after-update"; Flags: nowait; Check: WizardSilent
 
 [UninstallRun]
 ; Takes Station Player out of Open With and start-at-login.
