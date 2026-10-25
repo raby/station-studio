@@ -12,6 +12,12 @@
 # until cancelled), use "Re-run failed jobs" on the run: the draft is kept
 # and the release is published once they pass.
 #
+# Tick "Also publish to PyPI" to put the same version on pypi.org
+# (`pipx install station-server`). Run again with the box ticked for a
+# version already released and it only does the PyPI step. PyPI needs a
+# one-time trusted publisher: project station-server, repository
+# raby/station-studio, workflow publish-server.yml, environment pypi-server.
+#
 # Tags are `server-v*`: `v*` is Station Studio's PyPI release, `studio-v*`
 # its app, `player-v*` Station Player's.
 
@@ -19,6 +25,11 @@ name: Publish Station Server
 
 on:
   workflow_dispatch:
+    inputs:
+      pypi:
+        description: Also publish to PyPI (needs the one-time trusted-publisher setup)
+        type: boolean
+        default: false
 
 concurrency:
   group: publish-server
@@ -32,6 +43,7 @@ jobs:
       contents: write  # create the draft release
     outputs:
       version: ${{ steps.version.outputs.version }}
+      exists: ${{ steps.version.outputs.exists }}
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -50,20 +62,42 @@ jobs:
             echo "ERROR: server/pyproject.toml says $VERSION but server/station_server/__init__.py says $PKG." >&2
             exit 1
           fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           if gh release view "server-v$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            if [ "${{ inputs.pypi }}" = true ]; then
+              echo "server-v$VERSION is already released: only publishing it to PyPI."
+              echo "exists=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
             echo "ERROR: release server-v$VERSION already exists. Bump the version first (or, for a draft left by a failed run, re-run that run's failed jobs)." >&2
             exit 1
           fi
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "exists=false" >> "$GITHUB_OUTPUT"
 
       - name: tests
+        if: steps.version.outputs.exists != 'true'
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg
           python -m pip install pytest
           cd server && python -m pytest -q
 
+      - name: build wheel + sdist
+        if: steps.version.outputs.exists != 'true'
+        run: |
+          python -m pip install build
+          python -m build server --outdir dist
+
+      - name: smoke-install the wheel in a clean venv
+        if: steps.version.outputs.exists != 'true'
+        run: |
+          python -m venv /tmp/smoke
+          /tmp/smoke/bin/pip install ./player dist/*.whl  # the player from this commit, as PyPI will have it
+          /tmp/smoke/bin/station-server --version | grep -qx "station-server ${{ steps.version.outputs.version }}"
+          /tmp/smoke/bin/python -c "import station_server.web as w; assert (w.STATIC_DIR / 'sw.js').is_file()"
+
       - name: create the draft release
+        if: steps.version.outputs.exists != 'true'
         run: |
           VERSION=${{ steps.version.outputs.version }}
           cat > notes.md <<NOTES
@@ -78,8 +112,10 @@ jobs:
 
           Your stations, settings and play logs are kept in the \`.station-server\` folder in your home folder, which updating and uninstalling leave alone.
 
+          **Install with pipx** instead (needs Python 3.11+ and ffmpeg): \`pipx install station-server\`, then \`station-server\`.
+
           NOTES
-          gh release create "server-v$VERSION" \
+          gh release create "server-v$VERSION" dist/* \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "Station Server $VERSION" \
@@ -89,6 +125,7 @@ jobs:
   installers:
     name: Mac and Windows downloads
     needs: release
+    if: needs.release.outputs.exists != 'true'
     permissions:
       contents: write  # attach them to the release
     uses: ./.github/workflows/server-installers.yml
@@ -98,6 +135,7 @@ jobs:
   publish:
     name: publish the release
     needs: [release, installers]
+    if: needs.release.outputs.exists != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -115,3 +153,41 @@ jobs:
             echo "$FILES" | grep -qx "$f" || { echo "ERROR: $f is missing" >&2; exit 1; }
           done
           gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest=false
+
+  pypi:
+    name: publish to pypi.org
+    # After the GitHub release is out, so pip users and app users get a
+    # version at the same time.
+    if: always() && inputs.pypi && needs.release.result == 'success' && (needs.publish.result == 'success' || needs.publish.result == 'skipped')
+    needs: [release, publish]
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi-server
+      url: https://pypi.org/project/station-server/
+    permissions:
+      contents: read
+      id-token: write  # trusted publishing
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: download the released files
+        # The wheel and sdist attached to the GitHub release (releases
+        # before 0.4.1 have none: those are built from their tag).
+        run: |
+          TAG="server-v${{ needs.release.outputs.version }}"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir dist \
+            --pattern '*.whl' --pattern '*.tar.gz' || true
+          if ! ls dist/*.whl >/dev/null 2>&1; then
+            rm -rf dist src
+            git clone --quiet --depth 1 --branch "$TAG" "https://github.com/$GITHUB_REPOSITORY.git" src
+            python -m pip install build
+            python -m build src/server --outdir dist
+          fi
+          ls -la dist
+
+      - name: publish
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33  # v1.14.2 (twine 7, reads Metadata-Version 2.5)
