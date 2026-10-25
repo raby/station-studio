@@ -37,7 +37,11 @@ when I log in**, so that after a restart, a power cut or Windows updates it
 starts in the background and puts the stations that were on air back on
 air. On a Mac it's also started again if it ever stops unexpectedly.
 
-**From a checkout** (for development, or Linux): you need Python 3.11 or
+**With pipx** (Linux, or if you'd rather): `pipx install station-server`,
+then run `station-server`; `pipx upgrade station-server` updates it. You
+need Python 3.11 or newer and ffmpeg (below).
+
+**From a checkout** (for development): you need Python 3.11 or
 newer and **ffmpeg** with its MP3 encoder (macOS: `brew install ffmpeg`;
 Windows: `winget install ffmpeg`; or point Station Server at one with
 `--ffmpeg PATH` or `$STATION_SERVER_FFMPEG`).
@@ -227,7 +231,9 @@ Bump the version in `server/pyproject.toml` and
 `server/station_server/__init__.py`, merge, then run Actions ›
 **Publish Station Server** on main. It tests, makes a draft
 `server-v<version>` release, builds the Mac and Windows downloads onto
-it, and publishes it once they're all there.
+it, and publishes it once they're all there. Tick **Also publish to
+PyPI** to put the same version on pypi.org as well (or run it again with
+the box ticked for a version already released).
 
 ## Development
 
