@@ -793,3 +793,8 @@ svg.analogue.huge { width: min(62vh, 78vw); height: auto; }
 .ambient-volume { display: flex; align-items: center; gap: 8px; }
 .ambient-volume input { width: 120px; }
 .ambient-controls .btn { color: inherit; background: rgba(255, 255, 255, .12); border-color: rgba(255, 255, 255, .25); }
+.update-settings { margin-top: 14px; }
+.update-settings .row, .update-note .row { display: flex; gap: 8px; flex-wrap: wrap; }
+.update-failed { color: var(--danger); }
+/* Room between the station cards and Schedule below them. */
+.cards + .settings { margin-top: 44px; }

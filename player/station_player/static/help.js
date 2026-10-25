@@ -36,6 +36,7 @@ const HELP = [
   ["tuner", "The tuner", [
     "The dial at the top of the Stations page is an old radio's tuner, with your stations along it. Click a name, or drag the needle along the dial and let go near a station; you'll hear static on the way.",
     "With the tuner selected, Left and Right tune to the station before or after. The line moving beside the song title at the bottom follows the sound.",
+    "To choose which stations are on the dial, go to Settings › Radio and tick the ones you want.",
   ]],
   ["globe", "The globe", [
     ["Under Find stations, ", ["Globe"], " shows stations as dots on a world globe. Drag to turn it, scroll or pinch to zoom, and tap a dot to listen. The stations nearest the middle are listed underneath, with ", ["Add"], " to keep one."],
@@ -98,7 +99,7 @@ const HELP = [
     ["Tracks greyed out: their music files have moved. In ", ["Settings › Music"], ", press ", ["Find them…"], " and choose the folder the music is in now."],
     ["A station won't play: edit it and press ", ["Test"], ". Stations change their links from time to time; Find stations usually has the new one."],
     "The window says it can't reach the player: Station Player was quit. Open it again from its icon.",
-    "Updates: when a new version is out, the sidebar says so and how to get it. If you downloaded Station Player, download the new version and install it the same way, over the old one.",
+    ["Updates: when a new version is out, the sidebar says so. Press ", ["Update now"], " and Station Player downloads it, installs it and restarts, keeping your stations and settings. Settings › App has ", ["Check for updates"], " too."],
   ]],
 ];
 

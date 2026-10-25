@@ -31,7 +31,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlparse
 
-from station_player import __version__, loudness, myplaylists, qr, radio, remote, setup, updates
+from station_player import __version__, loudness, myplaylists, qr, radio, remote, selfupdate, setup, updates
 from station_player.config import MAX_RECENT, clean_alarm, clean_alarms, clean_tags
 from station_player.directory import Directory, DirectoryError
 from station_player.logos import LogoStore
@@ -193,6 +193,8 @@ class PlayerApp:
         self.window_browser = browser_name(find_browser())
         self.latest_version: str | None = None
         self._update_lock = threading.Lock()
+        self.checked_by_hand = False
+        self.updater = None  # a selfupdate.Updater, once serving (see make_server)
         self._lock = threading.RLock()
         self._scan_lock = threading.Lock()  # one disk scan at a time
         self._generation = 0
@@ -296,7 +298,9 @@ class PlayerApp:
             "window_browser": self.window_browser,
             "remote": self.remote_info(),
             "update": self.latest_version
-            if config["check_updates"] and updates.is_newer(self.latest_version, __version__) else None,
+            if (config["check_updates"] or self.checked_by_hand) and updates.is_newer(self.latest_version, __version__)
+            else None,
+            "updating": self.updater.status() if self.updater else None,
             "sources": _source_summaries(lib, config),
             "missing": lib.missing_count(),
             "next_alarm": self.next_alarm(),
@@ -959,6 +963,23 @@ class PlayerApp:
         worker.start()
         return worker
 
+    def check_now(self, fetch=None) -> str | None:
+        """Settings' Check for updates: asks PyPI now, even with the daily
+        check turned off. Returns the newest version (None if unknown)."""
+        kwargs = {"fetch": fetch} if fetch else {}
+        with self._update_lock:
+            self.latest_version = updates.latest_version(self.store.home / "update-check.json", force=True, **kwargs)
+            self.checked_by_hand = True
+            return self.latest_version
+
+    def start_update(self, version: str) -> None:
+        """Update to `version`, which must be the newest one known. Raises ValueError."""
+        if self.updater is None:
+            raise ValueError("Station Player can't update itself here")
+        if version != self.latest_version:
+            raise ValueError("Check for updates first")
+        self.updater.start(version)
+
     def keep_checking_for_updates(self) -> threading.Thread:
         """Check now and then daily: it may run at login for weeks."""
         def loop():
@@ -1193,9 +1214,12 @@ class PlayerApp:
             cfg.recent_stations.clear()
         self._prune_logos()
 
-    def update_station(self, url: str, name=None, new_url=None, tags=None) -> None:
-        """Rename a station, change its address and/or its tags (None
-        leaves each as it is). Raises LookupError for an unknown station."""
+    def update_station(self, url: str, name=None, new_url=None, tags=None, tuner=None) -> None:
+        """Rename a station, change its address, its tags and/or whether
+        it's on the tuner (None leaves each as it is). Raises LookupError
+        for an unknown station."""
+        if tuner is not None and not isinstance(tuner, bool):
+            raise ValueError("tuner must be true or false")
         if name is not None:
             name = str(name).strip()
             if not name:
@@ -1230,6 +1254,10 @@ class PlayerApp:
                     station["tags"] = _same_spelling(clean_tags(tags), [s for s in cfg.stations if s is not station])
                 else:
                     station.pop("tags", None)
+            if tuner is True:
+                station.pop("tuner", None)
+            elif tuner is False:
+                station["tuner"] = False
 
     def move_station(self, url: str, to) -> None:
         if not isinstance(to, int) or isinstance(to, bool):
@@ -1682,7 +1710,7 @@ def make_handler(app: PlayerApp):
                 elif path == "/api/stations/update":
                     try:
                         app.update_station(str(data.get("url", "")), data.get("name"), data.get("new_url"),
-                                           data.get("tags"))
+                                           data.get("tags"), data.get("tuner"))
                     except LookupError:
                         return self._error(HTTPStatus.NOT_FOUND, "No such station")
                 elif path == "/api/stations/move":
@@ -1818,6 +1846,10 @@ def make_handler(app: PlayerApp):
                 elif path == "/api/directory/clicked":
                     app.directory.clicked(str(data.get("uuid", "")))
                     return self._send_json({"ok": True})
+                elif path == "/api/update/check":
+                    app.check_now()
+                elif path == "/api/update":
+                    app.start_update(str(data.get("version", "")))
                 elif path == "/api/quit":
                     self._send_json({"ok": True})
                     app.recorder.stop_all()  # close recordings cleanly
@@ -1850,5 +1882,12 @@ class _Server(ThreadingHTTPServer):
 def make_server(app: PlayerApp, host: str = "127.0.0.1", port: int = 8765) -> ThreadingHTTPServer:
     server = _Server((host, port), make_handler(app))
     server.daemon_threads = True
+
+    def quit() -> None:
+        app.recorder.stop_all()  # close recordings cleanly
+        threading.Thread(target=server.shutdown, daemon=True).start()
+
+    if app.updater is None:
+        app.updater = selfupdate.Updater(quit, port=server.server_address[1])
     return server
 

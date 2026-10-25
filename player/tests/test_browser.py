@@ -6,6 +6,7 @@ import math
 import re
 import os
 import struct
+import subprocess
 import threading
 import time
 import wave
@@ -323,12 +324,79 @@ def test_new_version_notice(page, player):
     page.reload()
     note = page.locator("#update")
     note.wait_for(state="visible")
-    assert "99.0.0" in note.inner_text() and "pipx upgrade station-player" in note.inner_text()
-    note.locator("button").click()
+    assert "99.0.0" in note.inner_text()
+    sync_api.expect(note.get_by_role("button", name="Update now")).to_be_visible()
+    note.get_by_role("button", name="Not now").click()
     assert note.is_hidden()
     page.reload()
     page.wait_for_selector("#view tbody tr")
     assert note.is_hidden()  # dismissed for this version
+
+
+def test_update_from_settings(page, player, monkeypatch):
+    import station_player.server as server_mod
+    from station_player import updates
+    from station_player.selfupdate import Updater
+
+    app = player[0]
+    monkeypatch.setattr(updates, "_fetch_latest", lambda: "99.0.0")
+    runs = []
+
+    def run(cmd, **kwargs):
+        runs.append(cmd)
+        if "pip" in cmd:
+            return subprocess.CompletedProcess(cmd, run.code, "", "ERROR: no network")
+        return subprocess.CompletedProcess(cmd, 0, "99.0.0\n", "")
+
+    def launch(cmd):
+        # What starting the new version looks like from the page.
+        monkeypatch.setattr(server_mod, "__version__", "99.0.0")
+
+    run.code = 1
+    app.updater = Updater(lambda: None, kind="pip", run=run, launch=launch)
+    open_settings(page, "app")
+    box = page.locator("#update-settings")
+    sync_api.expect(box).to_contain_text(f"You have Station Player {server_mod.__version__}")
+    box.get_by_role("button", name="Check for updates").click()
+    sync_api.expect(box).to_contain_text("Station Player 99.0.0 is out")
+    # It didn't work: say why, and where to get it instead.
+    box.get_by_role("button", name="Update to 99.0.0").click()
+    sync_api.expect(box.locator(".update-failed")).to_contain_text("no network")
+    assert box.get_by_role("link", name="Download it yourself").get_attribute("href").endswith("/player-v99.0.0")
+    # It works: the page reloads into the new version.
+    run.code = 0
+    page.evaluate("window.notReloaded = true")
+    box.get_by_role("button", name="Update to 99.0.0").click()
+    page.wait_for_function("() => !window.notReloaded && S.lib && S.lib.version === '99.0.0'", timeout=15000)
+    assert runs[-2][-1] == "station-player==99.0.0"
+
+
+def test_choose_the_stations_on_the_tuner(page, player):
+    app = player[0]
+    app.store.config.stations = [{"name": f"Station {i}", "url": f"http://127.0.0.1:9/{i}"} for i in range(4)]
+    page.reload()
+    page.locator(".nav-item[data-view=radio]").click()
+    dial = page.locator(".tuner")
+    sync_api.expect(dial).to_contain_text("Station 1")
+    open_settings(page, "radio")
+    page.get_by_label("Station 1").uncheck()
+    sync_api.expect(page.get_by_label("Station 1")).to_be_focused()
+    assert app.store.config.stations[1]["tuner"] is False
+    page.locator(".nav-item[data-view=radio]").click()
+    sync_api.expect(dial).not_to_contain_text("Station 1")
+    sync_api.expect(page.locator(".card", has_text="Station 1")).to_be_visible()  # its card stays
+    # Fewer than two on it: no tuner at all.
+    open_settings(page, "radio")
+    page.get_by_label("Station 2").uncheck()
+    page.get_by_label("Station 3").uncheck()
+    page.locator(".nav-item[data-view=radio]").click()
+    sync_api.expect(dial).to_have_count(0)
+    open_settings(page, "radio")
+    page.get_by_label("Station 1").check()
+    assert "tuner" not in app.store.config.stations[1]
+    # Saved settings keep it.
+    from station_player.config import config_from_json
+    assert config_from_json(app.store.config.to_json()).stations[2]["tuner"] is False
 
 
 def test_seeking_back_near_the_end_doesnt_start_the_next_track_early(page):
@@ -1524,10 +1592,10 @@ def test_downloaded_app_shows_how_to_update_it(page, player):
     page.reload()
     note = page.locator("#update")
     note.wait_for(state="visible")
-    assert "pipx" not in note.inner_text()
-    assert note.get_by_role("link", name="download it").get_attribute("href").endswith("/player-v99.0.0")
+    sync_api.expect(note.get_by_role("button", name="Update now")).to_be_visible()
     # The installer made its shortcuts, so Settings doesn't offer to.
     open_settings(page, "app")
+    sync_api.expect(page.locator("#update-settings")).to_contain_text("checks it's the genuine file")
     sync_api.expect(page.locator("#view")).to_contain_text("Start Station Player in the background")
     sync_api.expect(page.get_by_text("Add Station Player to")).to_have_count(0)
 

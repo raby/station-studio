@@ -41,9 +41,10 @@ def _fetch_latest(url: str = PYPI_URL) -> str | None:
     return version if parse_version(version) else None
 
 
-def latest_version(cache: Path, fetch=None, now: float | None = None) -> str | None:
-    """The newest release, from a cache under a day old, else from PyPI.
-    Network trouble is quiet: the last known answer (or None) is kept."""
+def latest_version(cache: Path, fetch=None, now: float | None = None, force: bool = False) -> str | None:
+    """The newest release, from a cache under a day old (unless `force`),
+    else from PyPI. Network trouble is quiet: the last known answer (or
+    None) is kept."""
     now = time.time() if now is None else now
     fetch = fetch or _fetch_latest
     cached: dict = {}
@@ -55,7 +56,7 @@ def latest_version(cache: Path, fetch=None, now: float | None = None) -> str | N
         pass
     checked = cached.get("checked")
     known = cached.get("latest") if parse_version(cached.get("latest")) else None
-    if isinstance(checked, (int, float)) and 0 <= now - checked < CHECK_EVERY:
+    if not force and isinstance(checked, (int, float)) and 0 <= now - checked < CHECK_EVERY:
         return known
     try:
         latest = fetch()
