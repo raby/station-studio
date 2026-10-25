@@ -57,14 +57,13 @@ def server_version(url: str) -> str | None:
         return None
 
 
-# A tenth of a second of silence, played without a click (see selfTest).
+# A moment of silence (16-bit, 44.1 kHz), played without a click (see selfTest).
 SELF_TEST = """(() => {
-  const rate = 8000, n = 800, buf = new ArrayBuffer(44 + n), v = new DataView(buf);
+  const rate = 44100, n = rate * 2 * 0.3, buf = new ArrayBuffer(44 + n), v = new DataView(buf);
   const text = (o, t) => [...t].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)));
   text(0, "RIFF"); v.setUint32(4, 36 + n, true); text(8, "WAVEfmt "); v.setUint32(16, 16, true);
-  v.setUint16(20, 1, true); v.setUint16(22, 1, true); v.setUint32(24, rate, true); v.setUint32(28, rate, true);
-  v.setUint16(32, 1, true); v.setUint16(34, 8, true); text(36, "data"); v.setUint32(40, n, true);
-  for (let i = 0; i < n; i++) v.setUint8(44 + i, 128);
+  v.setUint16(20, 1, true); v.setUint16(22, 1, true); v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true);
+  v.setUint16(32, 2, true); v.setUint16(34, 16, true); text(36, "data"); v.setUint32(40, n, true);
   window.__selfTest = "pending";
   new Audio(URL.createObjectURL(new Blob([buf], { type: "audio/wav" }))).play()
     .then(() => { window.__selfTest = "played"; }, (e) => { window.__selfTest = "blocked: " + e.name; });
