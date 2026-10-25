@@ -9,6 +9,14 @@
       "station": "https://sh.uk.audio-stream.com/proxy/adgerdes?mp=/stream"
     },
     {
+      "title": "Rebirth Radio mix by Bluebird",
+      "text": "A test pick: a fresh mix from Bluebird, with a picture.",
+      "button": "Play Bluebird's mix",
+      "station": "https://sh.uk.audio-stream.com/proxy/adgerdes?mp=/stream",
+      "name": "Rebirth Radio",
+      "image": "picks/bluebird.png"
+    },
+    {
       "title": "Rebirth Classics",
       "text": "Start the day with old skool classics.",
       "button": "Play the breakfast mix",
