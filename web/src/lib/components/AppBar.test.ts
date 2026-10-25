@@ -131,10 +131,12 @@ describe('AppBar', () => {
 
   it('Quit asks first, then says Station Studio has stopped', async () => {
     const fetchFn = vi.fn(async (url: string) => (url === '/api/app/quit' ? json({ ok: true }) : json(appState()))) as unknown as typeof fetch;
-    const { findByTestId } = render(AppBar, { props: { fetchFn } });
+    const closeWindow = vi.fn();
+    const { findByTestId } = render(AppBar, { props: { fetchFn, closeWindow } });
     await fireEvent.click(await findByTestId('app-quit'));
     answerConfirmDialog(true);
     expect(await findByTestId('app-stopped')).toHaveTextContent('Station Studio has stopped');
+    expect(closeWindow).toHaveBeenCalled(); // its own window closes; a tab keeps the notice
     expect((fetchFn as unknown as ReturnType<typeof vi.fn>).mock.calls.some(([u]) => u === '/api/app/quit')).toBe(true);
   });
 

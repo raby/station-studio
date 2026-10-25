@@ -4,7 +4,17 @@ All notable changes are listed here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses semantic versioning.
 
-## [1.6.0] - Unreleased
+## [1.6.1] - 2026-10-25
+
+### Changed
+
+- The app opens in a window of its own (no tabs or address bar) when
+  Chrome, Edge or Brave is installed, as Station Player does, with its
+  own browser profile in the data folder's `window/`. Otherwise it opens
+  a browser tab as before; `STATION_STUDIO_TAB=1` always uses a tab.
+  Quit closes that window.
+
+## [1.6.0] - 2026-10-25
 
 ### Added
 

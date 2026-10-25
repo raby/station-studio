@@ -20,6 +20,7 @@
   export let fetchFn: typeof fetch = (...args) => fetch(...args);
   export let reload: () => void = () => location.reload();
   export let sleep: ((ms: number) => Promise<void>) | undefined = undefined;
+  export let closeWindow: () => void = () => window.close();
 
   let state: AppState | null = null;
   let error: string | null = null;
@@ -89,6 +90,13 @@
     try {
       await quitApp(fetchFn);
       stopped = true;
+      // In Station Studio's own window, close it too (a browser tab
+      // won't let a page close it, and keeps the stopped notice).
+      try {
+        closeWindow();
+      } catch {
+        /* the notice stays */
+      }
     } catch (e) {
       error = (e as Error).message;
     }
