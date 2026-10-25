@@ -37,7 +37,7 @@ from station_player.directory import Directory, DirectoryError
 from station_player.logos import LogoStore
 from station_player.playlog import PlayLog
 from station_player.recorder import Recorder
-from station_player.window import browser_name, find_browser
+from station_player.window import browser_name, find_browser, mac_app_bundle
 from station_player.config import ConfigStore
 from station_player.desktop import Desktop
 from station_player.library import AUDIO_EXTENSIONS, OPENED_ID, Library, _short_hash, name_key
@@ -192,6 +192,8 @@ class PlayerApp:
         self.logos = LogoStore(store.home / "logos")
         # which browser the player's own window uses (None: opens in a tab)
         self.window_browser = browser_name(find_browser())
+        # the downloaded Mac app, whose own window shows the player instead
+        self.mac_app = mac_app_bundle() is not None
         self.latest_version: str | None = None
         self._update_lock = threading.Lock()
         self.checked_by_hand = False
@@ -297,6 +299,7 @@ class PlayerApp:
             "recordings": self.recorder.status(),
             "recordings_folder": str(self.recorder.folder),
             "window_browser": self.window_browser,
+            "mac_app": self.mac_app,
             "remote": self.remote_info(),
             "update": self.latest_version
             if (config["check_updates"] or self.checked_by_hand) and updates.is_newer(self.latest_version, __version__)
@@ -1414,6 +1417,8 @@ def make_handler(app: PlayerApp):
             path = urlparse(self.path).path
             if path == "/api/state":
                 return self._send_json(app.state())
+            if path == "/api/ping":  # the Mac app's window checking the player is still there
+                return self._send_json({"version": __version__})
             if path == "/api/picks":
                 return self._send_json(app.picks.current())
             if path == "/api/picks/image":
@@ -1867,6 +1872,12 @@ def make_handler(app: PlayerApp):
                     app.check_now()
                 elif path == "/api/update":
                     app.start_update(str(data.get("version", "")))
+                elif path == "/api/window":
+                    # A page in a browser asking for the Mac app's own window.
+                    if not app.show_window:
+                        return self._error(HTTPStatus.CONFLICT, "Station Player can't open its window from here")
+                    threading.Thread(target=app.show_window, daemon=True).start()
+                    return self._send_json({"ok": True})
                 elif path == "/api/quit":
                     self._send_json({"ok": True})
                     app.recorder.stop_all()  # close recordings cleanly

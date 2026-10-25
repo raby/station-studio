@@ -330,10 +330,64 @@ def test_mac_app_always_hands_over_to_its_helper(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "_start_detached", lambda *a: (started.append(a), True)[1])
     monkeypatch.setattr(cli, "open_ui", lambda url, home, own_window=True: shown.append(url))
     monkeypatch.setattr(cli, "make_server", lambda app, port: pytest.fail("the app itself must not serve"))
-    # A station-player: link (no window) and a click in the Finder (window).
+    windows = []
+    monkeypatch.setattr(cli, "_own_mac_window", lambda url: windows.append(url) or 0)
+    # A station-player: link (no window) and a click in the Finder (the app's own window).
     assert cli.main(["station-player://start"]) == 0
     assert cli.main([]) == 0
-    assert len(started) == 2 and shown == ["http://127.0.0.1:8765/"]
+    assert len(started) == 2 and windows == ["http://127.0.0.1:8765/"] and shown == []
+
+
+def _mac_app(monkeypatch, tmp_path):
+    monkeypatch.setattr(cli, "bundled", lambda: True)
+    monkeypatch.setattr(cli.sys, "platform", "darwin")
+    monkeypatch.setattr(cli, "app_executable", lambda: tmp_path / "station-player-server")
+    monkeypatch.setattr(cli, "_log_to_file", lambda: None)
+    monkeypatch.setattr(cli, "_outdated_instance", lambda url: False)
+    monkeypatch.setattr(cli, "make_server", lambda app, port: pytest.fail("the app itself must not serve"))
+
+
+def test_mac_app_window_hands_files_and_stations_to_the_running_player(monkeypatch, tmp_path):
+    _mac_app(monkeypatch, tmp_path)
+    song = tmp_path / "song.mp3"
+    song.write_bytes(b"x")
+    sent, windows = [], []
+    monkeypatch.setattr(cli, "_running_instance", lambda url: True)
+    monkeypatch.setattr(cli, "_start_detached", lambda *a: pytest.fail("one is running already"))
+    monkeypatch.setattr(cli, "_send_open", lambda url, files: sent.append(("open", files)) or True)
+    monkeypatch.setattr(cli, "_send_station", lambda url, station: sent.append(("station", station)) or True)
+    monkeypatch.setattr(cli, "_own_mac_window", lambda url: windows.append(url) or 0)
+    assert cli.main([str(song), "--station", "https://radio.example/live"]) == 0
+    assert sent == [("open", [str(song)]), ("station", "https://radio.example/live")]
+    assert windows == ["http://127.0.0.1:8765/"]  # shown even though a page was open to play them
+
+
+def test_mac_app_without_its_own_window_opens_a_tab(monkeypatch, tmp_path):
+    from station_player.config import ConfigStore
+    store = ConfigStore()
+    store.config.own_window = False
+    store.save()
+    _mac_app(monkeypatch, tmp_path)
+    shown = []
+    monkeypatch.setattr(cli, "_running_instance", lambda url: True)
+    monkeypatch.setattr(cli, "_own_mac_window", lambda url: pytest.fail("the setting is off"))
+    monkeypatch.setattr(cli, "open_ui", lambda url, home, own_window=True: shown.append(own_window))
+    assert cli.main([]) == 0
+    assert shown == [False]
+
+
+def test_files_dropped_on_the_open_mac_app_are_played_or_added(monkeypatch, tmp_path):
+    song = tmp_path / "song.mp3"
+    song.write_bytes(b"x")
+    music = tmp_path / "Music"
+    music.mkdir()
+    write_wav(music / "a.wav")
+    added, opened = [], []
+    monkeypatch.setattr(cli, "_send_sources", lambda url, sources: added.extend(sources))
+    monkeypatch.setattr(cli, "_send_open", lambda url, files: opened.extend(files) or True)
+    cli._open_with("http://127.0.0.1:8765/", [str(song), str(music), str(tmp_path / "gone.mp3")])
+    assert opened == [str(song)]
+    assert ("music", str(music)) in added
 
 
 def test_an_older_copy_makes_way_for_this_one(monkeypatch):

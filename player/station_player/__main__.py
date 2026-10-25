@@ -16,7 +16,7 @@ from pathlib import Path
 
 from station_player import __version__, updates
 from station_player.config import ConfigStore, get_home
-from station_player.window import open_ui
+from station_player.window import mac_app_bundle, open_ui
 from station_player.desktop import URL_SCHEME, Desktop, app_executable, bundled
 from station_player.library import AUDIO_EXTENSIONS
 from station_player.server import API_HEADER, PlayerApp, make_server
@@ -231,6 +231,28 @@ def _log_to_file() -> None:
     logging.basicConfig(level=logging.INFO, handlers=[handler], force=True)
 
 
+def _open_with(url: str, paths: list[str]) -> None:
+    """Files dropped on the Mac app while it's open: added or played as
+    they would be from the command line."""
+    sources: list[tuple[str, str]] = []
+    for raw in paths:
+        result = _classify(raw)
+        if isinstance(result, str):
+            logging.warning("Skipped %s: %s", raw, result)
+        else:
+            sources.extend(result)
+    _send_sources(url, sources)
+    opened = [path for kind, path in sources if kind == "open"]
+    if opened:
+        _send_open(url, opened)
+
+
+def _own_mac_window(url: str) -> int:
+    from station_player import macwindow  # needs PyObjC, which only the Mac app carries
+    return macwindow.run(url, quit_server=lambda: _quit_instance(url),
+                         open_files=lambda paths: _open_with(url, paths), bundle=mac_app_bundle())
+
+
 def _show(url: str, store: ConfigStore | None = None) -> None:
     store = store or ConfigStore()
     open_ui(url, store.home, own_window=store.config.own_window)
@@ -319,6 +341,20 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Replacing the older Station Player running on {url}")
         logging.info("Replacing the older Station Player running on %s", url)
         running = not _quit_instance(url)
+
+    if _app_on_mac() and not args.no_browser and ConfigStore().config.own_window:
+        # The Mac app is the player's window: the player runs in its helper
+        # (started now if need be), and this shows it until it quits.
+        if running:
+            _send_sources(url, sources)
+            if opened:
+                _send_open(url, opened)
+            if args.station:
+                _send_station(url, args.station)
+        elif not _start_detached(args.port, args.sources, url, args.station):
+            return 1
+        return _own_mac_window(url)
+
     if running:
         print(f"Station Player is already running on {url}")
         return hand_over()
