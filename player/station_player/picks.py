@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import re
 import threading
 import time
@@ -129,7 +130,11 @@ class Picks:
             data = clean(raw, self.url)
             try:
                 self._cache.parent.mkdir(parents=True, exist_ok=True)
-                self._cache.write_text(json.dumps(raw), encoding="utf-8")
+                # Whole or not at all: a half-written file would lose the
+                # last good list to the shipped one on the next start.
+                tmp = self._cache.with_suffix(".tmp")
+                tmp.write_text(json.dumps(raw), encoding="utf-8")
+                os.replace(tmp, self._cache)
             except OSError:
                 pass
             with self._lock:
