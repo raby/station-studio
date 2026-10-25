@@ -340,6 +340,9 @@ table.tracks { width: 100%; border-collapse: collapse; }
 }
 .toast svg.i { color: var(--ok); width: 17px; height: 17px; }
 .toast.error svg.i { color: var(--danger); }
+/* the Mac app's window, offered to a browser window left from before */
+.toast.mac-window { flex-wrap: wrap; pointer-events: auto; max-width: 380px; }
+.toast.mac-window span { flex: 1 1 100%; }
 .toast.leaving { opacity: 0; transform: translateY(6px); transition: opacity .25s, transform .25s; }
 @keyframes toast-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 

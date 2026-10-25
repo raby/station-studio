@@ -36,11 +36,11 @@ exe = EXE(
     argv_emulation=MAC,  # files from Open With, station-player: links
     icon=str(STATIC / ("icon.icns" if MAC else "icon.ico")),
 )
-# On the Mac, the app the Finder opens only hands over to this helper and
-# exits: a process macOS counts as the running app would swallow the next
-# click on the app. The helper runs the player; it takes no Apple events,
-# so macOS never counts it as the app. Login, desktop icons and the
-# station-player: link run it too.
+# On the Mac, the app the Finder opens is the player's window and this
+# helper beside it runs the player, so the player carries on (alarms,
+# recordings, start at login) with no window open. The helper takes no
+# Apple events, so macOS never counts it as the app. Login, desktop icons
+# and the station-player: link run it.
 helper = EXE(
     pyz,
     a.scripts,
@@ -63,8 +63,8 @@ if MAC:
             "CFBundleShortVersionString": VERSION,
             "CFBundleVersion": VERSION,
             "LSMinimumSystemVersion": "11.0",
-            # The UI is a browser window, so the app itself needs no Dock icon.
-            "LSUIElement": True,
+            # The app is the player's window (macwindow.py), with its Dock
+            # icon and menu bar; the helper beside it has neither.
             "NSHighResolutionCapable": True,
             "CFBundleURLTypes": [{"CFBundleURLName": "io.github.raby.StationPlayer",
                                   "CFBundleURLSchemes": ["station-player"]}],

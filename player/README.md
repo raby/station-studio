@@ -98,7 +98,18 @@ time Station Player starts.
 
 ### Its own window
 
-With Google Chrome, Microsoft Edge or Brave installed, Station Player
+The Mac app (the .dmg download, from 0.18.0) is a Mac app of its own:
+its window is drawn by the engine Safari uses, so no other browser is
+needed, and it has its own Dock icon and menu bar. Like Music, closing
+the window keeps the music playing; clicking Station Player in the Dock
+brings it back, **Quit** (⌘Q) stops it, and right-clicking the Dock
+icon offers **Play / Pause** and **Next**. The player itself runs in the
+app's background helper, which is what starts at login, so alarms and
+recordings carry on with the window closed. If you installed Station
+Player as an app from Chrome with an earlier version, remove that one
+from the Dock (and from `~/Applications/Chrome Apps`) and keep this one.
+
+Elsewhere (Windows, and pipx installs): with Google Chrome, Microsoft Edge or Brave installed, Station Player
 opens in a plain window of its own, with no tabs or address bar, kept
 separate from your browsing. Without one of them it opens in a browser
 tab. Turn the window off under **Settings › App**.

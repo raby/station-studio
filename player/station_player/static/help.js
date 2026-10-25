@@ -10,6 +10,7 @@ const HELP = [
     "Station Player opens on Home: what's on now from Rebirth (it changes with the time of day), the stations you played lately, your stations, and your music. Click a tile to play it.",
     "Close the window and open it again and the same track is ready, paused at the same point.",
     ["To open it like any other app, turn on the shortcut in ", ["Settings › App"], ". Turn on ", ["Start Station Player in the background when I log in"], " too and it opens instantly, and alarms work."],
+    ["The Mac app works like Music: closing its window keeps the music playing, clicking Station Player in the Dock brings the window back, and ", ["Quit"], " (⌘Q) stops it. Right-click its Dock icon for ", ["Play / Pause"], " and ", ["Next"], "."],
   ], { label: "Add music", view: { type: "welcome" } }],
   ["music", "Playing music", [
     ["Double-click a track to play from there, or press ", ["Play"], " for the whole playlist. Shuffle and repeat sit beside the play button."],

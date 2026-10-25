@@ -66,7 +66,10 @@ jobs:
           python-version: '3.12'
 
       - name: tools
-        run: python -m pip install "pyinstaller>=6.10,<7" certifi
+        run: |
+          python -m pip install "pyinstaller>=6.10,<7" certifi
+          # The Mac app's own window (macwindow.py); Quartz only for the check below.
+          if [ "${{ matrix.kind }}" = mac ]; then python -m pip install pyobjc-framework-WebKit pyobjc-framework-Quartz; fi
 
       - name: read version
         id: version
@@ -110,6 +113,61 @@ jobs:
             pkill -f station-player-server || true
           fi
           echo "smoke OK"
+
+      - name: try the Mac app's own window
+        if: matrix.kind == 'mac'
+        run: |
+          set -e
+          pkill -f station-player-server || true
+          APP="build/dist/Station Player.app"
+          REPORT="$RUNNER_TEMP/selftest.json"
+          rm -f "$REPORT"
+          plutil -extract LSUIElement raw "$APP/Contents/Info.plist" 2>/dev/null && { echo "the app must have a Dock icon"; exit 1; } || true
+          system_profiler SPAudioDataType | grep -E "^ {8}[^ ].*:$|Output Channels" || echo "no sound devices"
+          # Opened the way the Finder opens it, so macOS knows it as the app.
+          # A music folder with one track, which the check plays.
+          MUSIC="$RUNNER_TEMP/Music"
+          mkdir -p "$MUSIC"
+          python -c "import math, struct, sys, wave; w = wave.open(sys.argv[1], 'wb'); w.setnchannels(2); w.setsampwidth(2); w.setframerate(44100); w.writeframes(b''.join(struct.pack('<hh', v, v) for v in (int(3000 * math.sin(i / 20)) for i in range(44100 * 3)))); w.close()" "$MUSIC/tone.wav"
+          open --env "STATION_PLAYER_SELFTEST=$REPORT" --env "STATION_PLAYER_HOME=$STATION_PLAYER_HOME" "$APP" --args "$MUSIC"
+          trap 'pkill -f "Station Player.app/Contents/MacOS/Station Player" || true; pkill -f station-player-server || true; echo "--- log"; cat "$STATION_PLAYER_HOME/station-player.log" 2>/dev/null || true' EXIT
+          for i in $(seq 1 120); do [ -s "$REPORT" ] && break; sleep 1; done
+          echo "page: $(cat "$REPORT" 2>/dev/null)"
+          python - "$REPORT" <<'PY'
+          import json, sys
+          import Quartz
+          report = json.load(open(sys.argv[1]))
+          assert report["native"] and report["bridge"], report
+          assert report["autoplay"] == "played", report  # a track, with no click first
+          print("sound without a click:", report["autoplay"])
+          assert "StationPlayerApp/" in report["agent"], report
+          assert not report["serviceWorker"], report
+          wins = Quartz.CGWindowListCopyWindowInfo(Quartz.kCGWindowListOptionOnScreenOnly, Quartz.kCGNullWindowID)
+          ours = [w for w in wins if w.get("kCGWindowOwnerName") == "Station Player" and w.get("kCGWindowLayer") == 0]
+          print("windows:", [dict(w.get("kCGWindowBounds")) for w in ours])
+          assert ours, "no Station Player window on screen"
+          b = ours[0]["kCGWindowBounds"]
+          open(sys.argv[1] + ".rect", "w").write("%d,%d,%d,%d" % (b["X"], b["Y"], b["Width"], b["Height"]))
+          PY
+          screencapture -x -R"$(cat "$REPORT.rect")" "$RUNNER_TEMP/window.png"
+          mkdir -p shots
+          sips -Z 1200 -s format jpeg -s formatOptions 60 "$RUNNER_TEMP/window.png" --out "shots/window-${{ matrix.arch }}.jpg" >/dev/null
+          sips -Z 420 -s format jpeg -s formatOptions 30 "$RUNNER_TEMP/window.png" --out "$RUNNER_TEMP/small.jpg" >/dev/null
+          echo "screenshot-base64-start"; base64 -i "$RUNNER_TEMP/small.jpg" | tr -d '\n'; echo; echo "screenshot-base64-end"
+          # Quit as the menu's Quit does: the player stops and the window app exits.
+          osascript -e 'tell application id "io.github.raby.StationPlayer" to quit'
+          for i in $(seq 1 30); do pgrep -f "Station Player.app/Contents/MacOS/Station Player" >/dev/null || break; sleep 1; done
+          if pgrep -f "Station Player.app/Contents/MacOS/Station Player" >/dev/null; then echo "the app didn't quit"; exit 1; fi
+          if curl -sf http://127.0.0.1:8765/api/state >/dev/null; then echo "the player kept running after Quit"; exit 1; fi
+          echo "own window OK"
+
+      - uses: actions/upload-artifact@v6
+        if: always() && matrix.kind == 'mac'
+        with:
+          name: station-player-window-${{ matrix.arch }}
+          path: shots/*
+          retention-days: 7
+          if-no-files-found: ignore
 
       - name: make the .dmg
         if: matrix.kind == 'mac'

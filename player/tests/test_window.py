@@ -113,3 +113,29 @@ def test_installed_app_on_linux(tmp_path):
     (apps / f"chrome-{app_id}-Default.desktop").write_text(
         f"[Desktop Entry]\nName=Station Player\nExec=/opt/chrome --user-data-dir={profile} --profile-directory=Default --app-id={app_id}\n")
     assert window.installed_app_id(profile, tmp_path, "linux") == app_id
+
+
+def test_the_mac_app_bundle_is_found_only_in_the_mac_app():
+    exe = "/Applications/Station Player.app/Contents/MacOS/station-player-server"
+    assert window.mac_app_bundle("darwin", exe, True) == Path("/Applications/Station Player.app")
+    assert window.mac_app_bundle("darwin", exe, False) is None  # pipx
+    assert window.mac_app_bundle("win32", exe, True) is None
+    assert window.mac_app_bundle("darwin", "/usr/local/bin/python3", True) is None
+
+
+def test_in_the_mac_app_its_own_window_opens(tmp_path):
+    ran = []
+    app = Path("/Applications/Station Player.app")
+    assert window.open_ui("http://127.0.0.1:8765/", tmp_path, exe="/chrome", run=ran.append, app=app) == "window"
+    assert ran == [["/usr/bin/open", str(app)]]
+
+
+def test_download_names_and_free_paths(tmp_path):
+    assert window.download_name('attachment; filename="play log.csv"', "http://x/api/log.csv") == "play log.csv"
+    assert window.download_name("attachment; filename=../../evil.sh", "http://x/a") == "evil.sh"
+    assert window.download_name(None, "http://x/api/playlists/abc.m3u?x=1") == "abc.m3u"
+    assert window.download_name(None, "http://x/") == "download"
+    (tmp_path / "a.csv").write_text("")
+    (tmp_path / "a 2.csv").write_text("")
+    assert window.free_path(tmp_path, "a.csv") == tmp_path / "a 3.csv"
+    assert window.free_path(tmp_path, "b.csv") == tmp_path / "b.csv"

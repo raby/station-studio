@@ -3,6 +3,8 @@
 // ---------- small helpers ----------------------------------------------
 
 const $ = (sel) => document.querySelector(sel);
+// In the downloaded Mac app's own window (see "the Mac app's own window").
+const NATIVE = Boolean(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.stationApp);
 
 function el(tag, attrs = {}, ...children) {
   const node = document.createElement(tag);
@@ -4111,12 +4113,14 @@ function appSection() {
     el("div", { class: "checks" },
       d && d.supported && !d.bundled ? checkbox("shortcut", where, d.shortcut, desktopChange("shortcut")) : null,
       d && d.supported ? checkbox("login", "Start Station Player in the background when I log in", d.login, desktopChange("login")) : null,
-      browser ? checkbox("window", `Open in a window of its own (using ${browser}), not a browser tab`,
-        S.lib.config.own_window !== false, windowChange) : null,
+      S.lib.mac_app ? checkbox("window", "Open in Station Player's own window, not a browser tab",
+        S.lib.config.own_window !== false, windowChange)
+        : browser ? checkbox("window", `Open in a window of its own (using ${browser}), not a browser tab`,
+          S.lib.config.own_window !== false, windowChange) : null,
       checkbox("updates", "Tell me when a new version is out (asks pypi.org once a day)",
         S.lib.config.check_updates !== false, updatesChange)),
     updateSettings(),
-    browser ? null : el("p", { class: "help" },
+    browser || S.lib.mac_app ? null : el("p", { class: "help" },
       "Station Player opens in a browser tab. With Google Chrome, Microsoft Edge or Brave installed it opens in a window of its own instead."),
     el("h2", { class: "spaced" }, "Studio tools"),
     el("p", { class: "help" },
@@ -5133,7 +5137,7 @@ function setArt(src) {
 // In its own app window the system already shows "Station Player"
 // before the title, so it isn't repeated there.
 function appTitle(what) {
-  const ownWindow = matchMedia("(display-mode: standalone), (display-mode: minimal-ui)").matches;
+  const ownWindow = NATIVE || matchMedia("(display-mode: standalone), (display-mode: minimal-ui)").matches;
   return ownWindow ? what : `${what} · Station Player`;
 }
 
@@ -5376,6 +5380,7 @@ async function quitApp() {
   clearTimeout(titleTimer);
   clearTimeout(recTimer);
   titleToken++;  // a poll already in flight must not schedule another
+  if (NATIVE) { tellApp("quit"); return; }  // the Mac app closes along with it
   const heading = el("h1", { tabindex: "-1" }, "Station Player has stopped");
   document.body.replaceChildren(el("main", { class: "stopped" },
     heading,
@@ -5491,6 +5496,52 @@ if ("mediaSession" in navigator) {
   ms.setActionHandler("previoustrack", previous);
 }
 
+// ---------- the Mac app's own window -----------------------------------------
+
+// The downloaded Mac app shows the player in a window of its own
+// (macwindow.py), which listens for a few words from the page and calls
+// window.stationApp for its menus and Dock menu.
+function tellApp(what) {
+  if (NATIVE) window.webkit.messageHandlers.stationApp.postMessage(what);
+}
+window.stationApp = {
+  // Before ⌘Q: keep the place to carry on from next time; the answer is
+  // how many recordings Quit would stop.
+  beforeQuit() {
+    saveSession();
+    flushMeter();
+    return activeRecordings().length;
+  },
+  command(cmd) {
+    if (launch.ready) runCommand({ cmd });
+  },
+  show(type) {
+    if (launch.ready) show({ type });
+  },
+};
+
+// Since 0.18 the Mac app has that window: a browser window left over from
+// before (or opened by hand) offers it, once.
+function offerMacWindow() {
+  if (NATIVE || !S.lib || !S.lib.mac_app || S.lib.config.own_window === false || store("mac-window-offered")) return;
+  store("mac-window-offered", "1");
+  const box = $("#toasts");
+  if (!box) return;
+  const note = el("div", { class: "toast mac-window", role: "status" },
+    el("span", {}, "Station Player now has a window of its own, with its own Dock icon. Open it, then close this browser window."),
+    el("button", {
+      type: "button", class: "btn small primary",
+      onclick: async () => {
+        note.remove();
+        saveSession();
+        audio.pause();  // carries on in the new window
+        try { await api("/api/window", {}, { quiet: true }); } catch (err) { toast(err.message, { error: true }); }
+      },
+    }, "Open it"),
+    el("button", { type: "button", class: "btn small", onclick: () => note.remove() }, "Not now"));
+  box.append(note);
+}
+
 // ---------- installing as an app ------------------------------------------
 
 // The browser offers to install the player as an app (see the App
@@ -5502,8 +5553,9 @@ addEventListener("beforeinstallprompt", (e) => {
   if (S.view.type === "settings") renderView();
 });
 // Opened from the Dock or taskbar while the player isn't running, the
-// window shows a page that starts it (sw.js, offline.html).
-if ("serviceWorker" in navigator) {
+// window shows a page that starts it (sw.js, offline.html). The Mac app
+// starts the player itself.
+if ("serviceWorker" in navigator && !NATIVE) {
   navigator.serviceWorker.register("/sw.js").catch(() => {});
 }
 addEventListener("appinstalled", () => {
@@ -5699,6 +5751,7 @@ async function alarmGoesOff(req, fresh) {
   ALARM.seq = req.seq;
   await leaveNight({ restoreFocus: false });  // the alarm screen can't show over a full-screen clock
   showAlarmScreen(req);
+  tellApp("show");  // the Mac app's window may be closed (hidden) while the music plays
   const start = Date.now();
   ALARM.timer = setInterval(() => {
     volMul.alarm = Math.min(1, 0.02 + (Date.now() - start) / 1000 / ALARM_FADE);
@@ -5820,4 +5873,5 @@ setInterval(reportStatus, 1000);
   setInterval(() => { if ($("#view")) checkInbox(); }, 1000);
   launch.ready = true;
   if (launch.todo) await runLaunch(launch.todo);
+  offerMacWindow();
 })();

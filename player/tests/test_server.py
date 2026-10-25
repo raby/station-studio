@@ -109,6 +109,26 @@ def test_redirects_to_other_schemes_are_refused():
     assert handler.redirect_request(req, None, 302, "Found", {}, "https://ok/x") is not None
 
 
+def test_ping_and_the_mac_app_window(running, monkeypatch):
+    from station_player import __version__
+    app, port, _, _ = running
+    resp, data = request(port, "GET", "/api/ping")
+    assert resp.status == 200 and json.loads(data) == {"version": __version__}
+    assert json.loads(request(port, "GET", "/api/state")[1])["mac_app"] is False
+    # A browser page asking for the Mac app's window.
+    resp, _ = request(port, "POST", "/api/window", {}, {"X-Station-Player": "1"})
+    assert resp.status == 409  # nothing to open it with here
+    opened = []
+    app.show_window = lambda: opened.append(1)
+    resp, _ = request(port, "POST", "/api/window", {}, {"X-Station-Player": "1"})
+    assert resp.status == 200
+    for _ in range(50):
+        if opened:
+            break
+        time.sleep(0.02)
+    assert opened == [1]
+
+
 def test_state_and_playlist_and_ui(running):
     _, port, _, _ = running
     resp, data = request(port, "GET", "/api/state")
