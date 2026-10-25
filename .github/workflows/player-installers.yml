@@ -123,6 +123,7 @@ jobs:
           REPORT="$RUNNER_TEMP/selftest.json"
           rm -f "$REPORT"
           plutil -extract LSUIElement raw "$APP/Contents/Info.plist" 2>/dev/null && { echo "the app must have a Dock icon"; exit 1; } || true
+          system_profiler SPAudioDataType | grep -E "^ {8}[^ ].*:$|Output Channels" || echo "no sound devices"
           STATION_PLAYER_SELFTEST="$REPORT" "$APP/Contents/MacOS/Station Player" &
           WIN=$!
           trap 'kill $WIN 2>/dev/null || true; pkill -f station-player-server || true; echo "--- log"; cat "$STATION_PLAYER_HOME/station-player.log" 2>/dev/null || true' EXIT
@@ -133,7 +134,10 @@ jobs:
           import Quartz
           report = json.load(open(sys.argv[1]))
           assert report["native"] and report["bridge"], report
-          assert report["autoplay"] == "played", report
+          # Allowed to play unasked: GitHub's Macs may have no sound output to
+          # play to (NotSupportedError), but WebKit's refusal would be NotAllowedError.
+          assert report["autoplay"] == "played" or not report["autoplay"].endswith("NotAllowedError"), report
+          print("sound without a click:", report["autoplay"])
           assert "StationPlayerApp/" in report["agent"], report
           assert not report["serviceWorker"], report
           wins = Quartz.CGWindowListCopyWindowInfo(Quartz.kCGWindowListOptionOnScreenOnly, Quartz.kCGNullWindowID)
