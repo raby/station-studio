@@ -166,15 +166,41 @@ def _play(args) -> int:
     return 0
 
 
-def _running(port: int) -> bool:
-    """Whether Station Server already answers on `port`."""
+def _running_state(port: int) -> dict | None:
+    """What the Station Server answering on `port` says of itself, or None."""
     import json
     import urllib.request
     try:
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/state", timeout=2) as resp:
-            return "stations" in json.loads(resp.read())
+            state = json.loads(resp.read())
     except (OSError, ValueError):
-        return False
+        return None
+    return state if isinstance(state, dict) and "stations" in state else None
+
+
+def _running(port: int) -> bool:
+    """Whether Station Server already answers on `port`."""
+    return _running_state(port) is not None
+
+
+def _replace_older(port: int, url: str) -> None:
+    """An older Station Server still running (started at login, or left
+    from before the new app was dragged in) makes way for this one; its
+    stations go back on air when this one starts."""
+    import time
+    from station_server.updates import is_newer
+    state = _running_state(port)
+    if not state or not is_newer(__version__, str(state.get("version", ""))):
+        return
+    logging.info("Replacing the older Station Server %s running on %s", state.get("version"), url)
+    try:
+        _quit_server(url)
+    except OSError as exc:
+        logging.warning("Could not ask the older Station Server to quit: %s", exc)
+        return
+    end = time.time() + 15
+    while _running(port) and time.time() < end:
+        time.sleep(0.3)
 
 
 def _log_to_file(home: Path) -> None:
@@ -191,9 +217,9 @@ def _log_to_file(home: Path) -> None:
 
 
 def _hand_over(port: int, url: str) -> int:
-    """The Mac app itself starts its helper, which runs Station Server, and
-    exits: while the app's own process lives, macOS sends later clicks on
-    the app to it, so they'd do nothing."""
+    """The Mac app itself starts its helper, which runs Station Server, so
+    the stations stay on air with the window closed (and the app quit,
+    when the window is turned off)."""
     import subprocess
     import time
     from station_server.desktop import CHILD_ENV, app_executable
@@ -202,13 +228,30 @@ def _hand_over(port: int, url: str) -> int:
                          stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                          start_new_session=True,
                          env={**os.environ, CHILD_ENV: "1", "PYINSTALLER_RESET_ENVIRONMENT": "1"})
-        end = time.time() + 60  # the first start of a new download is slow while macOS checks it
+        end = time.time() + 90  # the first start of a new download is slow while macOS checks it
         while not _running(port):
             if time.time() > end:
                 logging.error("Station Server did not start")
                 return 1
             time.sleep(0.5)
     return 0
+
+
+def _quit_server(url: str) -> None:
+    import urllib.request
+    from station_server.web import API_HEADER
+    req = urllib.request.Request(url + "api/quit", data=b"{}", method="POST",
+                                 headers={API_HEADER: "1", "Content-Type": "application/json"})
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    with opener.open(req, timeout=5):
+        pass
+
+
+def _own_mac_window(url: str) -> int:
+    """The Mac app is Station Server's window until Quit."""
+    from station_server import macwindow  # needs PyObjC, which only the Mac app carries
+    from station_server.window import mac_app_bundle
+    return macwindow.run(url, quit_server=lambda: _quit_server(url), bundle=mac_app_bundle())
 
 
 def _watch_for_updates(app, every: float = UPDATE_CHECK_EVERY, wait=None) -> None:
@@ -235,10 +278,14 @@ def _app(args) -> int:
     store = ConfigStore()
     if bundled() or os.environ.get(CHILD_ENV):
         _log_to_file(store.home)
+    if bundled():
+        _replace_older(args.port, url)
     if bundled() and sys.platform == "darwin" and app_executable() != Path(sys.executable):
         code = _hand_over(args.port, url)
         if code == 0 and not args.no_window:
-            open_ui(url, store.home, store.config.open_window)
+            if store.config.open_window:
+                return _own_mac_window(url)
+            open_ui(url, store.home, False)  # a browser tab
         return code
     if _running(args.port):  # opened again: just show the window
         if not args.no_window:

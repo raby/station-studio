@@ -93,7 +93,13 @@ keeps trying rather than dropping off the server.
 **Play log.** Every track played is logged; download a date range as CSV
 for PRS and PPL returns (the same format as station-player's).
 
-**Dock and taskbar icon.** In the app window, Settings → *Install as app*
+**The Mac app.** The downloaded Mac app is an app of its own, like Apple
+Music: its own window (no Chrome needed), Dock icon and menus (Go,
+Settings ⌘,, Check for Updates, Quit ⌘Q). Closing the window leaves the
+stations on air; clicking the Dock icon brings it back, and right-clicking
+it has Add a station and Play log. ⌘Q asks first when a station is on air.
+
+**Dock and taskbar icon.** Elsewhere, in the app window, Settings → *Install as app*
 gives Station Server its own icon in the Dock or taskbar, with Add a
 station and Play log on its menu, and it opens that way from then on.
 Opened from there while Station Server isn't running, the window starts it

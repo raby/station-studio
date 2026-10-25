@@ -185,6 +185,16 @@ def make_handler(app: ServerApp, picker: Picker, quit) -> type[BaseHTTPRequestHa
             if path == "/api/update/check":
                 app.check_for_updates(force=True)
                 return self._json(app.state())
+            if path == "/api/window":
+                # A browser window asking for the Mac app's own window.
+                from station_server.window import mac_app_bundle, open_ui
+                bundle = mac_app_bundle()
+                if bundle is None:
+                    return self._error(HTTPStatus.CONFLICT, "Only the Mac app has a window of its own")
+                url = f"http://127.0.0.1:{self.server.server_address[1]}/"
+                threading.Thread(target=open_ui, args=(url, app.store.home, True), kwargs={"app": bundle},
+                                 daemon=True).start()
+                return self._json({"ok": True})
             if path == "/api/quit":
                 self._json({"ok": True})
                 threading.Thread(target=quit, daemon=True).start()
