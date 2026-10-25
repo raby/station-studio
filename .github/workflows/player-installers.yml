@@ -125,7 +125,11 @@ jobs:
           plutil -extract LSUIElement raw "$APP/Contents/Info.plist" 2>/dev/null && { echo "the app must have a Dock icon"; exit 1; } || true
           system_profiler SPAudioDataType | grep -E "^ {8}[^ ].*:$|Output Channels" || echo "no sound devices"
           # Opened the way the Finder opens it, so macOS knows it as the app.
-          open --env "STATION_PLAYER_SELFTEST=$REPORT" --env "STATION_PLAYER_HOME=$STATION_PLAYER_HOME" "$APP"
+          # A music folder with one track, which the check plays.
+          MUSIC="$RUNNER_TEMP/Music"
+          mkdir -p "$MUSIC"
+          python -c "import math, struct, sys, wave; w = wave.open(sys.argv[1], 'wb'); w.setnchannels(2); w.setsampwidth(2); w.setframerate(44100); w.writeframes(b''.join(struct.pack('<hh', v, v) for v in (int(3000 * math.sin(i / 20)) for i in range(44100 * 3)))); w.close()" "$MUSIC/tone.wav"
+          open --env "STATION_PLAYER_SELFTEST=$REPORT" --env "STATION_PLAYER_HOME=$STATION_PLAYER_HOME" "$APP" --args "$MUSIC"
           trap 'pkill -f "Station Player.app/Contents/MacOS/Station Player" || true; pkill -f station-player-server || true; echo "--- log"; cat "$STATION_PLAYER_HOME/station-player.log" 2>/dev/null || true' EXIT
           for i in $(seq 1 120); do [ -s "$REPORT" ] && break; sleep 1; done
           echo "page: $(cat "$REPORT" 2>/dev/null)"
@@ -134,9 +138,7 @@ jobs:
           import Quartz
           report = json.load(open(sys.argv[1]))
           assert report["native"] and report["bridge"], report
-          # Allowed to play unasked: GitHub's Macs may have no sound output to
-          # play to (NotSupportedError), but WebKit's refusal would be NotAllowedError.
-          assert report["autoplay"] == "played" or not report["autoplay"].endswith("NotAllowedError"), report
+          assert report["autoplay"] == "played", report  # a track, with no click first
           print("sound without a click:", report["autoplay"])
           assert "StationPlayerApp/" in report["agent"], report
           assert not report["serviceWorker"], report

@@ -57,18 +57,27 @@ def server_version(url: str) -> str | None:
         return None
 
 
-# A moment of silence (16-bit, 44.1 kHz), played without a click (see selfTest).
-SELF_TEST = """(() => {
-  const rate = 44100, n = rate * 2 * 0.3, buf = new ArrayBuffer(44 + n), v = new DataView(buf);
-  const text = (o, t) => [...t].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)));
-  text(0, "RIFF"); v.setUint32(4, 36 + n, true); text(8, "WAVEfmt "); v.setUint32(16, 16, true);
-  v.setUint16(20, 1, true); v.setUint16(22, 1, true); v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true);
-  v.setUint16(32, 2, true); v.setUint16(34, 16, true); text(36, "data"); v.setUint32(40, n, true);
+# Plays the first track in the library (the build's check adds a folder
+# with one), without a click (see selfTest).
+SELF_TEST = """(async () => {
   window.__selfTest = "pending";
-  new Audio(URL.createObjectURL(new Blob([buf], { type: "audio/wav" }))).play()
-    .then(() => { window.__selfTest = "played"; }, (e) => { window.__selfTest = "blocked: " + e.name; });
-  return 1;
-})()"""
+  try {
+    let st = {};
+    for (let i = 0; i < 40; i++) {
+      st = await (await fetch("/api/state")).json();
+      if (!st.scanning && (st.playlists || []).length) break;
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    const pl = (st.playlists || [])[0];
+    if (!pl) { window.__selfTest = "no music"; return; }
+    const d = await (await fetch("/api/playlists/" + encodeURIComponent(pl.id))).json();
+    const a = new Audio("/audio/" + d.tracks[0].id);
+    await a.play();
+    window.__selfTest = "played";
+  } catch (e) {
+    window.__selfTest = "blocked: " + e.name;
+  }
+})(), 1"""
 SELF_TEST_RESULT = """JSON.stringify({
   native: typeof NATIVE !== "undefined" && NATIVE, bridge: typeof window.stationApp === "object",
   title: document.title, sidebar: Boolean(document.querySelector("nav, .sidebar, #sidebar")),
@@ -394,7 +403,7 @@ class AppDelegate(AppKit.NSObject):
     def selfTest(self, report: str):
         """For the build's own check (player-installers.yml): what the page
         sees of the app, and whether it may play sound unasked."""
-        self.js(SELF_TEST, lambda first: AppHelper.callLater(2, self.js, SELF_TEST_RESULT, lambda result: Path(report).write_text(
+        self.js(SELF_TEST, lambda first: AppHelper.callLater(12, self.js, SELF_TEST_RESULT, lambda result: Path(report).write_text(
             str(result), encoding="utf-8")))
 
     def webViewWebContentProcessDidTerminate_(self, view):
