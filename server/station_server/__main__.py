@@ -38,6 +38,8 @@ def _parser() -> argparse.ArgumentParser:
     app.add_argument("--no-window", action="store_true", help="don't open the window")
     app.add_argument("-v", "--verbose", action="store_true")
 
+    sub.add_parser("remove-login", help="stop starting Station Server at login (the uninstaller runs this)")
+
     play = sub.add_parser("play", help="play a playlist to a server (or an MP3 file)")
     play.add_argument("xml", type=Path, help="station-studio export or iTunes XML")
     play.add_argument("--to", required=True, metavar="URL",
@@ -169,14 +171,56 @@ def _running(port: int) -> bool:
         return False
 
 
+def _log_to_file(home: Path) -> None:
+    """The downloaded app and the login start have no terminal: keep a log."""
+    import logging.handlers
+    try:
+        home.mkdir(parents=True, exist_ok=True)
+        handler = logging.handlers.RotatingFileHandler(
+            home / "station-server.log", maxBytes=2_000_000, backupCount=2, encoding="utf-8")
+    except OSError:
+        return
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    logging.basicConfig(level=logging.INFO, handlers=[handler], force=True)
+
+
+def _hand_over(port: int, url: str) -> int:
+    """The Mac app itself starts its helper, which runs Station Server, and
+    exits: while the app's own process lives, macOS sends later clicks on
+    the app to it, so they'd do nothing."""
+    import subprocess
+    import time
+    from station_server.desktop import CHILD_ENV, app_executable
+    if not _running(port):
+        subprocess.Popen([str(app_executable()), "app", "--no-window", "--port", str(port)],
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         start_new_session=True,
+                         env={**os.environ, CHILD_ENV: "1", "PYINSTALLER_RESET_ENVIRONMENT": "1"})
+        end = time.time() + 60  # the first start of a new download is slow while macOS checks it
+        while not _running(port):
+            if time.time() > end:
+                logging.error("Station Server did not start")
+                return 1
+            time.sleep(0.5)
+    return 0
+
+
 def _app(args) -> int:
     from station_server.config import ConfigStore
+    from station_server.desktop import CHILD_ENV, app_executable, bundled
     from station_server.onair import ServerApp
     from station_server.web import make_server
     from station_server.window import open_ui
 
     url = f"http://127.0.0.1:{args.port}/"
     store = ConfigStore()
+    if bundled() or os.environ.get(CHILD_ENV):
+        _log_to_file(store.home)
+    if bundled() and sys.platform == "darwin" and app_executable() != Path(sys.executable):
+        code = _hand_over(args.port, url)
+        if code == 0 and not args.no_window:
+            open_ui(url, store.home, store.config.open_window)
+        return code
     if _running(args.port):  # opened again: just show the window
         if not args.no_window:
             open_ui(url, store.home, store.config.open_window)
@@ -187,6 +231,7 @@ def _app(args) -> int:
     except OSError as exc:
         raise SystemExit(f"Port {args.port} is in use ({exc}); try --port")
     app.resume()
+    logging.info("Station Server %s at %s", __version__, url)
     print(f"Station Server {__version__} at {url}  (Ctrl+C quits)")
 
     def stop(*_):
@@ -209,6 +254,10 @@ def main(argv: list[str] | None = None) -> int:
         level=logging.DEBUG if getattr(args, "verbose", False) else logging.INFO,
         format="%(asctime)s %(message)s", datefmt="%H:%M:%S",
     )
+    if args.command == "remove-login":
+        from station_server.desktop import Login
+        Login().set(False)
+        return 0
     if args.command == "check":
         return _check(args)
     if args.command == "app":

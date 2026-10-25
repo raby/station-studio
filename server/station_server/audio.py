@@ -11,6 +11,7 @@ import logging
 import os
 import shutil
 import subprocess
+import sys
 import threading
 from collections.abc import Callable, Iterator
 from pathlib import Path
@@ -36,15 +37,32 @@ class FfmpegMissing(Exception):
     pass
 
 
+def bundled_ffmpeg() -> Path | None:
+    """The ffmpeg inside the downloaded app (see packaging/station-server.spec)."""
+    base = getattr(sys, "_MEIPASS", None)
+    if not base:
+        return None
+    exe = Path(base) / "ffmpeg" / ("ffmpeg.exe" if sys.platform == "win32" else "ffmpeg")
+    return exe if exe.is_file() else None
+
+
+# Where Homebrew puts ffmpeg: an app opened from the Finder doesn't get the
+# terminal's PATH, so look there too.
+_MORE_PLACES = ("/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg")
+
+
 def find_ffmpeg(explicit: str | None = None) -> str:
     """The ffmpeg to use: given on the command line, then $STATION_SERVER_FFMPEG,
-    then whatever is on PATH."""
+    then the one inside the downloaded app, then whatever is on PATH."""
     for candidate in (explicit, os.environ.get(ENV_VAR, "").strip() or None):
         if candidate:
             if Path(candidate).expanduser().is_file():
                 return str(Path(candidate).expanduser())
             raise FfmpegMissing(f"ffmpeg not found at {candidate}")
-    found = shutil.which("ffmpeg")
+    inside = bundled_ffmpeg()
+    if inside:
+        return str(inside)
+    found = shutil.which("ffmpeg") or next((p for p in _MORE_PLACES if os.path.isfile(p)), None)
     if not found:
         raise FfmpegMissing(
             "ffmpeg not found. Install it (macOS: brew install ffmpeg; "

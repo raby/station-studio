@@ -19,6 +19,7 @@ from station_server import __version__
 from station_server.audio import FfmpegMissing, find_ffmpeg, has_mp3_encoder
 from station_server.channel import Channel, NowPlaying
 from station_server.config import Config, ConfigStore, Station, clean_station, newest_week
+from station_server.desktop import Login, bundled
 from station_server.playlist import PlaylistError, Queue, load_queue
 from station_server.schedule import WeekStart, running_order, track_seconds, where_now
 from station_server.senders import SenderError, StreamInfo, sender_from_url
@@ -215,8 +216,9 @@ class StationRunner:
 
 
 class ServerApp:
-    def __init__(self, store: ConfigStore, ffmpeg: str | None = None) -> None:
+    def __init__(self, store: ConfigStore, ffmpeg: str | None = None, login: Login | None = None) -> None:
         self.store = store
+        self.login = login or Login()
         self.ffmpeg_error: str | None = None
         if ffmpeg is None:
             try:
@@ -249,6 +251,8 @@ class ServerApp:
             "ffmpeg_error": self.ffmpeg_error,
             "warnings": self.store.warnings,
             "open_window": self.config.open_window,
+            "login": self.login.enabled(),
+            "bundled": bundled(),
             "stations": [self.runners[s.id].status() for s in self.config.stations],
         }
 

@@ -163,6 +163,8 @@ def make_handler(app: ServerApp, picker: Picker, quit) -> type[BaseHTTPRequestHa
             if path == "/api/settings":
                 app.config.open_window = bool(data.get("open_window", app.config.open_window))
                 app.store.save()
+                if "login" in data:
+                    app.login.set(bool(data["login"]))
                 return self._json(app.state())
             if path == "/api/pick":
                 try:

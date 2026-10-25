@@ -1,0 +1,193 @@
+# Station Server downloads for people without a terminal: a Mac .dmg
+# (Apple Silicon and Intel) and a Windows setup .exe, each carrying its
+# own Python and its own ffmpeg (PyInstaller; see
+# server/packaging/station-server.spec).
+#
+# On pull requests that touch the server it builds and smoke-tests them
+# and keeps them as run artifacts, for trying before a release.
+#
+# ffmpeg comes from BtbN/FFmpeg-Builds (Windows, the LGPL build) and
+# ffmpeg.martin-riedl.de (Mac); its licence goes in the app beside it.
+#
+# They aren't signed with a paid Apple or Microsoft certificate, so the
+# first open needs System Settings › Privacy & Security › Open Anyway on
+# a Mac, and More info › Run anyway on Windows.
+
+name: Station Server installers
+
+on:
+  pull_request:
+    paths:
+      - 'server/**'
+      - '.github/workflows/server-installers.yml'
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      release_tag:
+        description: Attach the installers to this GitHub release
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write  # gh release upload, when called with a tag
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            label: Mac (Apple Silicon)
+            kind: mac
+            arch: apple-silicon
+            ffmpeg: arm64
+          - os: macos-15-intel
+            label: Mac (Intel)
+            kind: mac
+            arch: intel
+            ffmpeg: amd64
+          - os: windows-latest
+            label: Windows
+            kind: windows
+            arch: x64
+    defaults:
+      run:
+        shell: bash
+    env:
+      GH_TOKEN: ${{ github.token }}
+      STATION_SERVER_HOME: ${{ github.workspace }}/smoke-home
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: tools
+        run: python -m pip install "pyinstaller>=6.10,<7" ./player
+
+      - name: read version
+        id: version
+        run: echo "version=$(python -c 'import tomllib; print(tomllib.load(open("server/pyproject.toml","rb"))["project"]["version"])')" >> "$GITHUB_OUTPUT"
+
+      - name: get ffmpeg (Mac)
+        if: matrix.kind == 'mac'
+        run: |
+          set -e
+          mkdir -p server/packaging/ffmpeg build/ffmpeg
+          curl -fsSL --retry 3 -o build/ffmpeg/ffmpeg.zip \
+            "https://ffmpeg.martin-riedl.de/redirect/latest/macos/${{ matrix.ffmpeg }}/release/ffmpeg.zip"
+          unzip -o build/ffmpeg/ffmpeg.zip -d build/ffmpeg
+          cp build/ffmpeg/ffmpeg server/packaging/ffmpeg/ffmpeg
+          chmod +x server/packaging/ffmpeg/ffmpeg
+          server/packaging/ffmpeg/ffmpeg -hide_banner -version | head -1
+          server/packaging/ffmpeg/ffmpeg -hide_banner -encoders | grep -q libmp3lame
+          {
+            echo "Station Server uses ffmpeg, from https://ffmpeg.org, built by https://ffmpeg.martin-riedl.de."
+            echo "It is licensed under the GNU GPL version 3; its source is at https://ffmpeg.org/download.html."
+            echo
+            server/packaging/ffmpeg/ffmpeg -hide_banner -version
+          } > server/packaging/ffmpeg/LICENSE.txt
+
+      - name: get ffmpeg (Windows)
+        if: matrix.kind == 'windows'
+        run: |
+          set -e
+          mkdir -p server/packaging/ffmpeg build/ffmpeg
+          asset=$(gh release view latest --repo BtbN/FFmpeg-Builds --json assets --jq '.assets[].name' \
+            | grep -E '^ffmpeg-n[0-9.]+-latest-win64-lgpl-[0-9.]+\.zip$' | sort -V | tail -1)
+          echo "using $asset"
+          gh release download latest --repo BtbN/FFmpeg-Builds --pattern "$asset" --dir build/ffmpeg
+          unzip -q -o "build/ffmpeg/$asset" -d build/ffmpeg
+          dir="build/ffmpeg/${asset%.zip}"
+          cp "$dir/bin/ffmpeg.exe" server/packaging/ffmpeg/ffmpeg.exe
+          server/packaging/ffmpeg/ffmpeg.exe -hide_banner -encoders | grep -q libmp3lame
+          {
+            echo "Station Server uses ffmpeg, from https://ffmpeg.org, built by https://github.com/BtbN/FFmpeg-Builds."
+            echo "It is licensed under the GNU LGPL; its source is at https://ffmpeg.org/download.html."
+            echo
+            cat "$dir/LICENSE.txt"
+          } > server/packaging/ffmpeg/LICENSE.txt
+
+      - name: build the app
+        run: python -m PyInstaller --noconfirm --clean server/packaging/station-server.spec --distpath build/dist --workpath build/work
+
+      - name: smoke-test the app
+        run: |
+          set -e
+          if [ "${{ matrix.kind }}" = mac ]; then
+            EXE="build/dist/Station Server.app/Contents/MacOS/station-server-helper"
+          else
+            EXE="build/dist/Station Server/Station Server.exe"
+          fi
+          "$EXE" app --no-window --port 8771 &
+          PID=$!
+          trap 'kill $PID 2>/dev/null || true; echo "--- log"; cat "$STATION_SERVER_HOME/station-server.log" 2>/dev/null || true' EXIT
+          for i in $(seq 1 60); do
+            curl -sf http://127.0.0.1:8771/api/state >/dev/null && break
+            sleep 1
+          done
+          # Its own ffmpeg, with the MP3 encoder, and the version built.
+          curl -sS http://127.0.0.1:8771/api/state | python -c "
+          import json, sys
+          d = json.load(sys.stdin)
+          assert d['bundled'] and d['version'] == '${{ steps.version.outputs.version }}', d
+          assert d['ffmpeg'] and not d['ffmpeg_error'] and 'ffmpeg' in d['ffmpeg'] and 'Station Server' in d['ffmpeg'], d
+          print('version', d['version'], 'ffmpeg', d['ffmpeg'])"
+          curl -sS -o /dev/null -w '%{http_code} %{content_type}\n' http://127.0.0.1:8771/ | grep -q '^200 text/html'
+          curl -sS -o /dev/null -w '%{http_code} %{content_type}\n' http://127.0.0.1:8771/app.js | grep -q '^200 text/javascript'
+          if [ "${{ matrix.kind }}" = mac ]; then
+            # The app itself, opened while Station Server runs, hands over and exits...
+            "build/dist/Station Server.app/Contents/MacOS/Station Server" app --no-window --port 8771
+            kill $PID; sleep 2
+            # ...and with none running, starts the helper and exits.
+            "build/dist/Station Server.app/Contents/MacOS/Station Server" app --no-window --port 8772
+            curl -sf http://127.0.0.1:8772/api/state >/dev/null
+            pkill -f station-server-helper || true
+          fi
+          echo "smoke OK"
+
+      - name: make the .dmg
+        if: matrix.kind == 'mac'
+        run: |
+          set -e
+          mkdir -p build/dmg out
+          cp -R "build/dist/Station Server.app" build/dmg/
+          ln -s /Applications build/dmg/Applications
+          # hdiutil sometimes finds the runner's disk busy: try again.
+          for i in 1 2 3; do
+            hdiutil create -volname "Station Server" -srcfolder build/dmg -ov -format UDZO \
+              "out/StationServer-${{ steps.version.outputs.version }}-mac-${{ matrix.arch }}.dmg" && break
+            sleep 10
+          done
+          test -f "out/StationServer-${{ steps.version.outputs.version }}-mac-${{ matrix.arch }}.dmg"
+
+      - name: make the setup .exe
+        if: matrix.kind == 'windows'
+        env:
+          MSYS_NO_PATHCONV: '1'  # Git Bash would turn ISCC's /D… options into paths
+        run: |
+          set -e
+          ISCC="/c/Program Files (x86)/Inno Setup 6/ISCC.exe"
+          if [ ! -f "$ISCC" ]; then choco install innosetup -y --no-progress; fi
+          mkdir -p out
+          "$ISCC" /DVersion=${{ steps.version.outputs.version }} \
+            "/DSource=$(cygpath -w "$PWD/build/dist/Station Server")" \
+            "/DOutput=$(cygpath -w "$PWD/out")" \
+            "$(cygpath -w "$PWD/server/packaging/windows/installer.iss")"
+          ls -la out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: station-server-${{ matrix.kind }}-${{ matrix.arch }}
+          path: out/*
+          if-no-files-found: error
+
+      - name: attach to the release
+        if: inputs.release_tag != ''
+        run: gh release upload "${{ inputs.release_tag }}" out/* --clobber --repo "$GITHUB_REPOSITORY"
