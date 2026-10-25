@@ -53,6 +53,15 @@ def find_ffmpeg(explicit: str | None = None) -> str:
     return found
 
 
+def silence(seconds: float) -> Iterator[bytes]:
+    """Digital silence, in CHUNK-sized pieces."""
+    left = int(seconds * BYTES_PER_SECOND) // 4 * 4
+    while left > 0:
+        n = min(CHUNK, left)
+        yield bytes(n)
+        left -= n
+
+
 def has_mp3_encoder(ffmpeg: str) -> bool:
     out = subprocess.run(
         [ffmpeg, "-hide_banner", "-encoders"],
@@ -61,13 +70,18 @@ def has_mp3_encoder(ffmpeg: str) -> bool:
     return "libmp3lame" in out
 
 
-def decode(ffmpeg: str, path: Path, gain_db: float = 0.0) -> Iterator[bytes]:
+def decode(ffmpeg: str, path: Path, gain_db: float = 0.0, start: float = 0.0) -> Iterator[bytes]:
     """Raw PCM for one file, in CHUNK-sized pieces (the last may be short).
 
-    `gain_db` is applied while decoding (volume levelling). If ffmpeg can't
-    read the file the iterator simply ends early; the caller moves on.
+    `gain_db` is applied while decoding (volume levelling); `start` skips
+    that many seconds into the file (picking up mid-track after a restart).
+    If ffmpeg can't read the file the iterator simply ends early; the
+    caller moves on.
     """
-    args = [ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-i", str(path), "-vn"]
+    args = [ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error"]
+    if start > 0:
+        args += ["-ss", f"{start:.3f}"]
+    args += ["-i", str(path), "-vn"]
     if gain_db:
         args += ["-af", f"volume={gain_db:.2f}dB"]
     args += PCM_ARGS + ["pipe:1"]

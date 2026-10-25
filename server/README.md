@@ -10,9 +10,10 @@ inside Station Server. Nothing else playing on the computer (a YouTube
 video, system sounds) can reach the broadcast, and one computer can run
 both stations.
 
-**Status: proof of concept (0.1).** A command-line tool to try side by
-side with the Winamp setup. The background service, web page, second
-station on one box and installers come next. See the
+**Status: 0.2, one station on air from an app.** Station Server opens a
+window in station-player's style where you set up a station, put it on
+air and see what's playing. Running both stations on one box, and
+installers, come next. See the
 [plan](https://claude.ai/artifact/RMcRHeFUDnw2BTvhGskcmd).
 
 ## What you need
@@ -38,7 +39,50 @@ Station Server reads playlists with station-player's code, so both are
 installed. Then run `.venv/bin/station-server` (Windows:
 `.venv\Scripts\station-server`).
 
-## Try it
+## The app
+
+```bash
+.venv/bin/station-server
+```
+
+opens Station Server in a window of its own (with Chrome, Edge or Brave;
+otherwise a browser tab). It keeps running in the background: closing the
+window doesn't take a station off air, and running the command again just
+opens the window. **Quit** in the sidebar stops it.
+
+1. **Add a station.** Give it a name and its playlist: a station-studio
+   export, or better its exports folder
+   (`~/.station-studio/exports/rebirth-classics`), so the newest week is
+   played and next week's is picked up by itself at the end of a track.
+2. **Server.** SHOUTcast or Icecast, the address and port, and the source
+   password. **Test connection** checks them without going on air.
+3. **Go on air.** The station page shows the track playing, the running
+   order with the time each track goes out, and any tracks whose files
+   can't be found.
+
+**Joining the week by the clock.** The playlist's first track is pinned to
+the start of the week (Monday 00:00 unless you change it), and the
+tracks' lengths say when each of the others airs. Go on air on Wednesday
+afternoon, or restart after a power cut, and the station joins where the
+clock says, part way into a track. Choose *From the top* to start at
+track 1 instead. A playlist shorter than a week loops.
+
+A station that was on air when the app quit goes back on air when it
+starts. If no track in the playlist can be read, it sends silence and
+keeps trying rather than dropping off the server.
+
+**Play log.** Every track played is logged; download a date range as CSV
+for PRS and PPL returns (the same format as station-player's).
+
+**Dock and taskbar icon.** In the app window, Settings → *Install as app*
+gives Station Server its own icon in the Dock or taskbar, and it opens that
+way from then on.
+
+Settings, passwords and play logs are kept in `~/.station-server`
+(`$STATION_SERVER_HOME` to change it); the settings file is readable by
+you only. `station-server app --port N` uses another port than 8770.
+
+## From the command line
 
 Check that ffmpeg is found and the playlist's music is all there:
 
@@ -90,7 +134,11 @@ icecast -c "$(brew --prefix)/etc/icecast.xml"    # leave running; Ctrl+C stops
 
 http://localhost:8000 shows Icecast's status page. Its source password is
 `hackme` until you change `<source-password>` (and `<admin-password>`) in
-that `icecast.xml`. In a second terminal:
+that `icecast.xml`. In a second terminal run `.venv/bin/station-server`,
+add a station with the playlist folder
+`~/.station-studio/exports/rebirth-classics`, server **Icecast**,
+`localhost`, port `8000`, mount `/classics`, password `hackme`, and go on
+air. Or from the command line:
 
 ```bash
 .venv/bin/station-server play ~/.station-studio/exports/rebirth-classics/012.xml \
@@ -107,7 +155,7 @@ station off air, send Station Server to a spare stream: a second DNAS on
 another port, stream 2 on a DNAS 2.x (`?sid=2`, set up in its config), or a
 test Icecast mount. Listen to both in station-player.
 
-## Options
+## Command-line options
 
 | Option | What it does |
 | --- | --- |

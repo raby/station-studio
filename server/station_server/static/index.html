@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Station Server</title>
+  <link rel="icon" href="/icon.png">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <meta name="theme-color" content="#0e1013" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#f6f5f2" media="(prefers-color-scheme: light)">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar" aria-label="Stations">
+      <div class="brand"><img src="/icon.png" alt=""><span class="brand-name">Station Server<span class="sub" id="version"></span></span></div>
+      <nav>
+        <h2 id="stations-head">Stations</h2>
+        <ul id="nav-stations" class="nav-list" aria-labelledby="stations-head"></ul>
+        <ul class="nav-list">
+          <li><button type="button" class="nav-item" data-view="new"><span data-icon="plus"></span><span>Add a station</span></button></li>
+        </ul>
+        <h2>Station Server</h2>
+        <ul class="nav-list">
+          <li><button type="button" class="nav-item" data-view="log"><span data-icon="log"></span><span>Play log</span></button></li>
+          <li><button type="button" class="nav-item" data-view="settings"><span data-icon="settings"></span><span>Settings</span></button></li>
+          <li><button type="button" class="nav-item" data-view="help"><span data-icon="help"></span><span>Help</span></button></li>
+          <li><button type="button" class="nav-item" id="btn-quit"><span data-icon="power"></span><span>Quit Station Server</span></button></li>
+        </ul>
+      </nav>
+    </aside>
+    <main class="main" id="main" tabindex="-1">
+      <div id="errors" class="errors" role="alert" hidden></div>
+      <section id="view"></section>
+    </main>
+  </div>
+  <div id="toast" class="toast" role="status" hidden></div>
+  <script src="/app.js"></script>
+</body>
+</html>
