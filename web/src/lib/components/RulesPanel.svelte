@@ -250,7 +250,7 @@
     margin: 0 0 0.25rem;
   }
   .hint {
-    color: #666;
+    color: var(--muted);
     font-size: 0.9rem;
     margin-top: 0;
   }
@@ -260,7 +260,7 @@
   }
   .rule-row {
     padding: 0.75rem 0;
-    border-bottom: 1px solid #eee;
+    border-bottom: 1px solid var(--border);
   }
   .rule-head {
     display: flex;
@@ -278,17 +278,17 @@
     letter-spacing: 0.03em;
   }
   .badge.override {
-    background: #e8f5e9;
-    color: #2e7d32;
-    border: 1px solid #a5d6a7;
+    background: var(--panel-2);
+    color: var(--ok);
+    border: 1px solid var(--ok);
   }
   .badge.default {
-    background: #f4f4f4;
+    background: var(--panel-2);
     color: var(--text-muted);
-    border: 1px solid #ddd;
+    border: 1px solid var(--border);
   }
   .rule-desc {
-    color: #555;
+    color: var(--muted);
     font-size: 0.85rem;
     margin: 0.25rem 0 0.5rem;
   }
@@ -301,7 +301,7 @@
   input[type='number'] {
     width: 7rem;
     padding: 0.35rem;
-    border: 1px solid #ccc;
+    border: 1px solid var(--border);
     border-radius: 4px;
     font-variant-numeric: tabular-nums;
   }
@@ -311,8 +311,8 @@
   }
   .save {
     padding: 0.35rem 0.9rem;
-    background: #2c7a7b;
-    color: white;
+    background: var(--accent);
+    color: var(--accent-text);
     border: none;
     border-radius: 4px;
     cursor: pointer;
@@ -323,8 +323,8 @@
   }
   .reset {
     padding: 0.35rem 0.7rem;
-    background: white;
-    border: 1px solid #ccc;
+    background: var(--panel);
+    border: 1px solid var(--border);
     border-radius: 4px;
     cursor: pointer;
     font-size: 0.85rem;
@@ -334,7 +334,7 @@
     cursor: not-allowed;
   }
   .error {
-    color: crimson;
+    color: var(--danger);
   }
   .row-error {
     font-size: 0.85rem;

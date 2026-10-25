@@ -106,16 +106,16 @@
      users perceive the migration as no-change; SR users get
      the new aria-live region. */
   .error-banner {
-    background: #fee;
-    border: 1px solid #ffcdd2;
+    background: var(--panel-2);
+    border: 1px solid var(--danger);
     border-radius: 3px;
-    color: #b71c1c;
+    color: var(--danger);
     font-size: 0.85rem;
     margin: 0.25rem 0 1rem;
     padding: 0.4rem 0.6rem;
   }
   .error-banner strong {
-    color: #b71c1c;
+    color: var(--danger);
   }
 
   /* §16.5 c4-review R1 — compact mode strips the bordered box

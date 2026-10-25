@@ -124,13 +124,13 @@
     <p>Open it again from your Applications folder, Launchpad or the Start menu.</p>
   </div>
 {:else if state}
-  <aside class="app-bar" aria-label="Station Studio app" data-testid="app-bar">
+  <div class="app-bar" data-testid="app-bar">
     {#if updating && state.update}
       <span class="notice" role="status" data-testid="app-update-progress">{stageText(state.update)}</span>
     {:else if state.latest && state.can_update}
       <span class="notice" data-testid="app-update-notice">
         Station Studio {state.latest} is out.
-        <button type="button" on:click={update} disabled={busy} data-testid="app-update-now">Update now</button>
+        <button type="button" class="primary" on:click={update} disabled={busy} data-testid="app-update-now">Update now</button>
         {#if state.release_page}
           <a href={state.release_page} target="_blank" rel="noopener">What's new</a>
         {/if}
@@ -145,51 +145,89 @@
     {#if error}
       <span class="error" role="alert" data-testid="app-error">{error}</span>
     {/if}
-    <span class="version" title={`Your stations and playlists are kept in ${state.home}`}>
-      Station Studio {state.version}
-    </span>
-    <button type="button" class="quit" on:click={quit} disabled={updating} data-testid="app-quit">Quit</button>
-  </aside>
+    <div class="foot">
+      <span class="version" title={`Your stations and playlists are kept in ${state.home}`}>
+        Station Studio {state.version}
+      </span>
+      <button type="button" class="quit" on:click={quit} disabled={updating} data-testid="app-quit">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18.36 6.64a9 9 0 1 1-12.73 0" /><path d="M12 2v10" /></svg>
+        Quit
+      </button>
+    </div>
+  </div>
 {/if}
 
 <style>
+  /* Sits at the foot of the sidebar (see +layout.svelte). */
   .app-bar {
-    align-items: center;
-    background: #fff;
-    border: 1px solid #d0d7de;
-    border-radius: 6px;
-    bottom: 0.75rem;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
     display: flex;
-    flex-wrap: wrap;
-    font-family: system-ui, sans-serif; /* as the pages use */
-    font-size: 0.85rem;
-    gap: 0.5rem 0.75rem;
-    max-width: calc(100vw - 1.5rem);
-    padding: 0.4rem 0.6rem;
-    position: fixed;
-    right: 0.75rem;
-    z-index: 900;
+    flex-direction: column;
+    font-size: 13px;
+    gap: 8px;
   }
-  .version {
-    color: var(--text-muted);
+  .notice,
+  .error {
+    border-radius: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 10px 12px;
   }
   .notice {
-    color: #0b4f9c;
+    background: var(--accent-soft);
+    border: 1px solid var(--accent);
+    color: var(--text);
     font-weight: 600;
   }
   .error {
-    color: #b42318;
+    background: var(--danger-soft);
+    border: 1px solid var(--danger);
+    color: var(--danger);
+  }
+  .notice a,
+  .error a {
+    font-weight: 500;
+  }
+  .foot {
+    align-items: center;
+    display: flex;
+    gap: 8px;
+    justify-content: space-between;
+    padding: 0 4px 0 8px;
+  }
+  .version {
+    color: var(--muted);
   }
   button {
-    cursor: pointer;
-    font: inherit;
-    padding: 0.15rem 0.6rem;
+    font-size: 13px;
+    padding: 4px 10px;
+  }
+  button.primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--accent-text);
+    font-weight: 650;
+  }
+  button.primary:hover:not(:disabled) {
+    background: var(--accent-strong);
+    border-color: var(--accent-strong);
+  }
+  .quit {
+    align-items: center;
+    display: inline-flex;
+    gap: 5px;
+  }
+  .quit svg {
+    fill: none;
+    height: 14px;
+    stroke: currentColor;
+    stroke-linecap: round;
+    stroke-width: 2;
+    width: 14px;
   }
   .stopped {
     align-items: center;
-    font-family: system-ui, sans-serif;
-    background: #fff;
+    background: var(--bg);
     display: flex;
     flex-direction: column;
     inset: 0;

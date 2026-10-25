@@ -425,7 +425,7 @@
           class="visualise-link"
           data-testid="visualise-station"
         >
-          🗺 Visualise template
+          Visualise template
         </a>
         <!--
           §16.10 — per-station rule editor. Standalone route (mirrors
@@ -437,14 +437,14 @@
           class="rules-link"
           data-testid="rules-station"
         >
-          ⚙ Rules
+          Rules
         </a>
         <a
           href="/stations/{encodeURIComponent(slug)}/edit"
           class="edit-link"
           data-testid="edit-station"
         >
-          Edit station →
+          Edit station
         </a>
         <!-- §16.2.8 — Fork affordance. Click toggles an inline form
              instead of routing to a separate page (keeps operator in
@@ -456,7 +456,7 @@
           disabled={forking || generating}
           on:click={openForkForm}
         >
-          Fork station →
+          Fork station
         </button>
         <button
           type="button"
@@ -465,7 +465,7 @@
           disabled={deleting || generating}
           on:click={nukeStation}
         >
-          Delete station →
+          Delete station
         </button>
       </div>
       {#if forkOpen}
@@ -855,7 +855,7 @@
     margin-bottom: 1rem;
   }
   .crumbs a {
-    color: #666;
+    color: var(--muted);
     text-decoration: none;
   }
   .crumbs a:hover {
@@ -871,100 +871,66 @@
   }
   .station-header {
     display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 2rem;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+  .station-header h1 {
+    margin-bottom: 0.1rem;
   }
   .header-actions {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 0.5rem;
-    flex-shrink: 0;
   }
-  /* Visualise link — peer of edit-link but visually softer (read-only
-     surface today; §16.2.3+ promotes it to primary). */
-  .visualise-link {
-    display: inline-block;
-    padding: 0.5rem 1rem;
-    background: white;
-    color: #2c7a7b;
-    border: 1px solid #2c7a7b;
+  /* Station Player-style buttons: Edit is the main one, Delete is red
+     text so it's hard to misclick (DESIGN.md §16.3 D7). */
+  .visualise-link,
+  .rules-link,
+  .edit-link,
+  .fork,
+  .nuke {
+    align-items: center;
+    background: var(--panel-2);
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    color: var(--text);
+    cursor: pointer;
+    display: inline-flex;
+    font-size: 14px;
+    font-weight: 550;
+    min-height: 36px;
+    padding: 7px 14px;
     text-decoration: none;
-    border-radius: 4px;
-    font-size: 0.9rem;
     white-space: nowrap;
   }
-  .visualise-link:hover {
-    background: #e6fffa;
+  .visualise-link:hover,
+  .rules-link:hover,
+  .fork:hover:not(:disabled) {
+    background: var(--panel-3);
+    border-color: var(--faint);
+    color: var(--text);
   }
-  /* Rules link mirrors the visualise-link's outlined-teal treatment —
-     both are safe, navigational, secondary to Edit (§16.10). */
-  .rules-link {
-    display: inline-block;
-    padding: 0.5rem 1rem;
-    background: white;
-    color: #2c7a7b;
-    border: 1px solid #2c7a7b;
-    text-decoration: none;
-    border-radius: 4px;
-    font-size: 0.9rem;
-    white-space: nowrap;
-  }
-  .rules-link:hover {
-    background: #e6fffa;
-  }
-  /* Edit link mirrors the trace viewer's `.button` styling — safe = filled,
-     paired with the .nuke destructive button on its right (§16.7 D1). */
   .edit-link {
-    display: inline-block;
-    padding: 0.5rem 1rem;
-    background: #2c3e50;
-    color: white;
-    text-decoration: none;
-    border-radius: 4px;
-    font-size: 0.9rem;
-    white-space: nowrap;
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--accent-text);
+    font-weight: 650;
   }
   .edit-link:hover {
-    background: #1a252f;
+    background: var(--accent-strong);
+    border-color: var(--accent-strong);
+    color: var(--accent-text);
   }
   .nuke {
-    /* Distinct from the per-row .link-btn delete: this is a properly
-       red destructive button so it's hard to misclick from anything
-       else (DESIGN.md §16.3 D7). At least 1rem of gap from the
-       title via the .station-header flex `gap`. */
-    padding: 0.5rem 1rem;
-    background: white;
-    color: #c0392b;
-    border: 1px solid #c0392b;
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 0.9rem;
-    white-space: nowrap;
+    color: var(--danger);
+    margin-left: auto;
   }
   .nuke:hover:not(:disabled) {
-    background: #c0392b;
-    color: white;
+    background: var(--danger-soft);
+    border-color: var(--danger);
   }
-  .nuke:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-  /* §16.2.8 — Fork button + inline form. Same shell as .nuke
-     visually but neutral color (no destructive accent). */
-  .fork {
-    padding: 0.5rem 1rem;
-    background: white;
-    color: var(--text, #333);
-    border: 1px solid var(--border, #ccc);
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 0.9rem;
-    white-space: nowrap;
-  }
-  .fork:hover:not(:disabled) {
-    background: var(--bg-hover, #f0f0f0);
-  }
+  .nuke:disabled,
   .fork:disabled {
     opacity: 0.5;
     cursor: not-allowed;
@@ -1019,10 +985,10 @@
     gap: 1rem;
   }
   .card {
-    border: 1px solid #eee;
+    border: 1px solid var(--border);
     border-radius: 6px;
     padding: 0.75rem 1rem;
-    background: #fafafa;
+    background: var(--panel);
   }
   .card h3 {
     margin: 0 0 0.5rem;
@@ -1045,7 +1011,7 @@
     display: inline-block;
     margin-top: 0.6rem;
     font-size: 0.85rem;
-    color: #2c7a7b;
+    color: var(--accent);
     text-decoration: none;
   }
   .card-link:hover {
@@ -1053,7 +1019,7 @@
   }
   .pill {
     display: inline-block;
-    background: #eef;
+    background: var(--panel-2);
     border-radius: 999px;
     padding: 0.05rem 0.45rem;
     font-size: 0.75rem;
@@ -1077,7 +1043,7 @@
     gap: 0.5rem;
     align-items: baseline;
     padding: 0.2rem 0;
-    border-bottom: 1px solid #f0f0f0;
+    border-bottom: 1px solid var(--border);
   }
   .pool-name {
     font-weight: 500;
@@ -1088,20 +1054,20 @@
   }
   .pool-count {
     margin-left: auto;
-    color: #555;
+    color: var(--muted);
     font-variant-numeric: tabular-nums;
   }
   .pool-missing {
     margin-left: auto;
-    color: #c0392b;
+    color: var(--danger);
     font-size: 0.78rem;
     text-decoration: underline;
   }
   .pool-missing:hover {
-    color: #8b1e10;
+    color: var(--danger);
   }
   .pool-list li.missing .pool-name {
-    color: #c0392b;
+    color: var(--danger);
   }
   .cursor-pos {
     margin-left: auto;
@@ -1110,56 +1076,56 @@
   .stale-hint {
     margin: 0.5rem 0 0;
     padding: 0.4rem 0.6rem;
-    background: #fff8e1;
-    border: 1px solid #f0c36d;
+    background: var(--panel-2);
+    border: 1px solid var(--warn);
     border-radius: 4px;
     font-size: 0.82rem;
   }
   .generate {
     margin: 1rem 0 1.5rem;
     padding: 0.75rem 1rem;
-    background: #fafafa;
-    border: 1px solid #eee;
+    background: var(--panel);
+    border: 1px solid var(--border);
     border-radius: 6px;
   }
   .cta {
     font-size: 1.1rem;
     padding: 0.75rem 1.5rem;
-    background: #2c7a7b;
-    color: white;
+    background: var(--accent);
+    color: var(--accent-text);
     border: none;
     border-radius: 4px;
     cursor: pointer;
   }
   .cta:hover:not(:disabled) {
-    background: #285e61;
+    background: var(--accent);
   }
   .primary {
     padding: 0.5rem 1rem;
-    background: #2c7a7b;
-    color: white;
+    background: var(--accent);
+    color: var(--accent-text);
     border: none;
     border-radius: 4px;
     cursor: pointer;
   }
   .primary:hover:not(:disabled) {
-    background: #285e61;
+    background: var(--accent);
   }
   .replace {
     padding: 0.5rem 1rem;
-    background: #c0392b;
-    color: white;
+    background: var(--danger);
+    color: var(--accent-text);
     border: none;
     border-radius: 4px;
     cursor: pointer;
   }
   .replace:hover:not(:disabled) {
-    background: #962d22;
+    background: var(--danger);
   }
   .ghost {
     padding: 0.5rem 0.75rem;
-    background: white;
-    border: 1px solid #ccc;
+    background: var(--panel);
+    border: 1px solid var(--border);
     border-radius: 4px;
     cursor: pointer;
   }
@@ -1172,7 +1138,7 @@
   }
   .advanced summary {
     font-size: 0.85rem;
-    color: #555;
+    color: var(--muted);
     cursor: pointer;
   }
   .advanced-body {
@@ -1186,11 +1152,11 @@
     display: flex;
     flex-direction: column;
     font-size: 0.85rem;
-    color: #555;
+    color: var(--muted);
   }
   .advanced-body input[type='number'] {
     padding: 0.4rem;
-    border: 1px solid #ccc;
+    border: 1px solid var(--border);
     border-radius: 4px;
     width: 7rem;
     font-variant-numeric: tabular-nums;
@@ -1203,13 +1169,13 @@
   td {
     padding: 0.4rem 0.75rem;
     text-align: left;
-    border-bottom: 1px solid #eee;
+    border-bottom: 1px solid var(--border);
   }
   th {
     font-weight: 600;
     font-size: 0.85rem;
-    color: #555;
-    border-bottom: 2px solid #ddd;
+    color: var(--muted);
+    border-bottom: 2px solid var(--border);
   }
   .num {
     text-align: right;
@@ -1218,12 +1184,12 @@
   .mono {
     font-family: ui-monospace, monospace;
     font-size: 0.85rem;
-    color: #666;
+    color: var(--muted);
   }
   .link-btn {
     background: none;
     border: none;
-    color: #c0392b;
+    color: var(--danger);
     cursor: pointer;
     font-size: 0.85rem;
     padding: 0;
@@ -1236,11 +1202,11 @@
   }
   /* §16.5 c4 — `.error` retired; styling now via ErrorBanner. */
   .hint {
-    color: #666;
+    color: var(--muted);
     font-size: 0.9rem;
   }
   code {
-    background: #f4f4f4;
+    background: var(--panel-2);
     padding: 0.1em 0.3em;
     border-radius: 3px;
   }
@@ -1274,7 +1240,7 @@
       width: 1px;
     }
     .playlists-table tr {
-      border: 1px solid #e4e4e4;
+      border: 1px solid var(--border);
       border-radius: 4px;
       margin-bottom: 0.75rem;
       padding: 0.6rem;
@@ -1288,7 +1254,7 @@
       display: inline-block;
       min-width: 5rem;
       font-size: 0.75rem;
-      color: #666;
+      color: var(--muted);
       font-weight: 600;
       text-transform: uppercase;
       margin-right: 0.5rem;

@@ -185,7 +185,7 @@
     color: var(--text-muted, #666);
     padding: 0 0.1rem;
   }
-  .chip-remove:hover:not([disabled]) { color: black; }
+  .chip-remove:hover:not([disabled]) { color: var(--text); }
   .chip-remove[disabled] { cursor: not-allowed; opacity: 0.5; }
   .add-row {
     display: flex;
@@ -204,7 +204,7 @@
   .add-button {
     padding: 0.3rem 0.75rem;
     border: 1px solid var(--border, #ccc);
-    background: white;
+    background: var(--panel);
     border-radius: 4px;
     cursor: pointer;
     font-size: 0.85rem;
@@ -218,7 +218,7 @@
     border-radius: 4px;
     max-height: 180px;
     overflow-y: auto;
-    background: white;
+    background: var(--panel);
   }
   .suggestion {
     width: 100%;

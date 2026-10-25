@@ -424,7 +424,7 @@
   }
   .act:hover:not([disabled]) {
     background: var(--bg-hover, #f0f0f0);
-    color: black;
+    color: var(--text);
   }
   .act[disabled] {
     opacity: 0.35;

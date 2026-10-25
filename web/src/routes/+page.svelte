@@ -49,18 +49,21 @@
 </svelte:head>
 
 <main id="main-content" tabindex="-1">
-  <h1>Station Studio</h1>
-  <p class="sub">
-    Playlist-generator authoring tool. See <code>DESIGN.md</code> for the full spec.
-  </p>
-
-  <header class="section-head">
-    <h2>Stations</h2>
+  <header class="view-head">
+    <div>
+      <div class="kicker">Station Studio</div>
+      <h1>Stations</h1>
+      <p class="sub">Each station builds its playlists from your source pools, by its own rules.</p>
+    </div>
     <div class="header-actions">
-      <a href="/sources" class="link-secondary" data-testid="nav-sources">
-        Source pools →
+      <a href="/sources" class="btn" data-testid="nav-sources">
+        <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H9l2 2.5h7.5A2.5 2.5 0 0 1 21 10v6.5a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 16.5z" /></svg>
+        Source pools
       </a>
-      <a href="/stations/new" class="button">+ new station</a>
+      <a href="/stations/new" class="btn primary" data-testid="new-station">
+        <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14" /><path d="M5 12h14" /></svg>
+        New station
+      </a>
     </div>
   </header>
 
@@ -73,7 +76,7 @@
     <p>
       No stations yet. Bootstrap Rebirth Classics with
       <code>python -m scripts.bootstrap_classics</code>, or use
-      <a href="/stations/new">+ new station</a> above.
+      <a href="/stations/new">New station</a> above.
     </p>
   {:else}
     <!-- §16.12 controls: search + filter chips + sort. -->
@@ -147,13 +150,18 @@
         No stations match the current search / filters.
       </p>
     {:else}
-      <ul data-testid="station-list">
+      <ul class="cards" data-testid="station-list">
         {#each visible as s (s.slug)}
           {@const lastGen = lastGeneratedLabel(s)}
-          <li data-testid="station-row" data-slug={s.slug}>
+          <li class="card" data-testid="station-row" data-slug={s.slug}>
             <div class="row-main">
-              <a href="/stations/{s.slug}">{s.name}</a>
-              <span class="slug">{s.slug}</span>
+              <span class="glyph" aria-hidden="true">
+                <svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="2" /><path d="M16.24 7.76a6 6 0 0 1 0 8.48" /><path d="M7.76 16.24a6 6 0 0 1 0-8.48" /><path d="M19.07 4.93a10 10 0 0 1 0 14.14" /><path d="M4.93 19.07a10 10 0 0 1 0-14.14" /></svg>
+              </span>
+              <div class="names">
+                <a class="name" href="/stations/{s.slug}">{s.name}</a>
+                <span class="slug">{s.slug}</span>
+              </div>
               <span class="cadence-tag">{s.cadence}</span>
             </div>
             <div class="row-meta">
@@ -176,150 +184,222 @@
 
 <style>
   main {
-    font-family: system-ui, sans-serif;
-    max-width: 720px;
+    max-width: 1100px;
     margin: 2rem auto;
     padding: 0 1rem;
   }
+  .view-head {
+    align-items: flex-end;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    justify-content: space-between;
+    margin-bottom: 18px;
+  }
+  .kicker {
+    color: var(--accent);
+    font-size: 12px;
+    font-weight: 650;
+    letter-spacing: 0.08em;
+    margin-bottom: 4px;
+    text-transform: uppercase;
+  }
   h1 {
-    margin-bottom: 0.25rem;
+    font-size: 28px;
+    margin: 0 0 4px;
   }
   .sub {
-    color: #666;
-    margin-top: 0;
-  }
-  .section-head {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    margin-top: 2rem;
-  }
-  .section-head h2 {
+    color: var(--muted);
     margin: 0;
   }
   .header-actions {
     display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .btn {
     align-items: center;
-    gap: 1rem;
-  }
-  .link-secondary {
-    color: #2563eb;
+    background: var(--panel-2);
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    color: var(--text);
+    display: inline-flex;
+    font-weight: 550;
+    gap: 7px;
+    min-height: 36px;
+    padding: 7px 14px;
     text-decoration: none;
-    font-size: 0.9rem;
+    white-space: nowrap;
   }
-  .link-secondary:hover {
-    text-decoration: underline;
+  .btn:hover {
+    background: var(--panel-3);
+    border-color: var(--faint);
+    color: var(--text);
   }
-  .button {
-    display: inline-block;
-    padding: 0.35rem 0.8rem;
-    background: #2c3e50;
-    color: white;
-    text-decoration: none;
-    border-radius: 4px;
-    font-size: 0.85rem;
+  .btn.primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--accent-text);
+    font-weight: 650;
   }
-  .button:hover {
-    background: #1a252f;
+  .btn.primary:hover {
+    background: var(--accent-strong);
+    border-color: var(--accent-strong);
+  }
+  svg.i {
+    fill: none;
+    flex: none;
+    height: 17px;
+    stroke: currentColor;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    stroke-width: 2;
+    width: 17px;
+  }
+  svg.i circle {
+    fill: currentColor;
+    stroke: none;
   }
   .controls {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
     display: flex;
     flex-direction: column;
-    gap: 0.4rem;
-    margin: 1rem 0;
-    padding: 0.75rem;
-    background: #fafafa;
-    border: 1px solid #eee;
-    border-radius: 6px;
+    gap: 8px;
+    margin: 0 0 18px;
+    padding: 14px 16px;
   }
   .search {
-    padding: 0.4rem 0.6rem;
-    border: 1px solid #ccc;
-    border-radius: 4px;
-    font: inherit;
-    font-size: 0.9rem;
+    max-width: 360px;
+    width: 100%;
   }
   .control-row {
-    display: flex;
     align-items: center;
-    gap: 0.3rem;
+    display: flex;
     flex-wrap: wrap;
+    gap: 6px;
   }
   .control-label {
-    color: #666;
-    font-size: 0.8rem;
-    width: 4.5rem;
+    color: var(--faint);
     flex-shrink: 0;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    width: 6rem;
   }
   .chip {
-    padding: 0.15rem 0.55rem;
-    background: white;
-    border: 1px solid #ccc;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
     border-radius: 999px;
-    cursor: pointer;
-    font: inherit;
-    font-size: 0.8rem;
-    color: #555;
+    color: var(--muted);
+    font-size: 13px;
+    font-weight: 500;
+    padding: 3px 11px;
   }
-  .chip:hover {
-    background: #f0f0f0;
+  .chip:hover:not(:disabled) {
+    background: var(--panel-3);
+    color: var(--text);
   }
-  .chip.active {
-    background: #2c7a7b;
-    color: white;
-    border-color: #2c7a7b;
+  .chip.active,
+  .chip.active:hover:not(:disabled) {
+    background: var(--accent-soft);
+    border-color: var(--accent);
+    color: var(--text);
+    font-weight: 600;
   }
-  ul {
+  .cards {
+    display: grid;
+    gap: 14px;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
     list-style: none;
+    margin: 0;
     padding: 0;
   }
-  li {
-    padding: 0.6rem 0;
-    border-bottom: 1px solid #eee;
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 16px;
+    position: relative;
+    transition:
+      border-color 0.15s,
+      box-shadow 0.15s;
+  }
+  .card:hover {
+    border-color: var(--border-strong);
+    box-shadow: var(--shadow-sm);
   }
   .row-main {
+    align-items: flex-start;
     display: flex;
-    align-items: baseline;
-    gap: 0.5rem;
+    gap: 12px;
   }
-  .row-main a {
+  .glyph {
+    align-items: center;
+    background: var(--accent-soft);
+    border-radius: 10px;
+    color: var(--accent);
+    display: inline-flex;
+    flex: none;
+    height: 40px;
+    justify-content: center;
+    width: 40px;
+  }
+  .names {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-width: 0;
+  }
+  .name {
+    color: var(--text);
+    font-size: 15px;
+    font-weight: 650;
     text-decoration: none;
-    font-weight: 500;
+  }
+  /* The whole card opens the station. */
+  .name::after {
+    content: '';
+    inset: 0;
+    position: absolute;
+  }
+  .name:hover {
+    color: var(--accent);
   }
   .slug {
-    color: var(--text-muted);
-    font-family: ui-monospace, monospace;
-    font-size: 0.85rem;
+    color: var(--muted);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .cadence-tag {
-    margin-left: auto;
-    font-size: 0.72rem;
-    color: #555;
-    background: #eee;
-    padding: 0.05rem 0.4rem;
-    border-radius: 3px;
-  }
-  .row-meta {
-    margin-top: 0.2rem;
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    padding: 1px 6px;
+    text-transform: uppercase;
   }
   .last-gen {
-    font-size: 0.8rem;
-    color: #666;
+    color: var(--muted);
+    font-size: 13px;
   }
   .last-gen.muted {
-    color: var(--text-muted);
-    font-style: italic;
+    color: var(--faint);
   }
   .empty-filtered {
-    color: var(--text-muted);
-    font-style: italic;
+    color: var(--muted);
   }
   .error {
-    color: crimson;
-  }
-  code {
-    background: #f4f4f4;
-    padding: 0.1em 0.3em;
-    border-radius: 3px;
+    color: var(--danger);
   }
 </style>

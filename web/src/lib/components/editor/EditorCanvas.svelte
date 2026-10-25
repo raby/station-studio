@@ -520,7 +520,7 @@
     font-style: italic;
   }
   code {
-    background: #f4f4f4;
+    background: var(--panel-2);
     padding: 0.1em 0.3em;
     border-radius: 3px;
   }
@@ -542,14 +542,14 @@
   .add-section button {
     padding: 0.3rem 0.7rem;
     border: 1px solid var(--border, #ccc);
-    background: white;
+    background: var(--panel);
     border-radius: 4px;
     cursor: pointer;
     font-size: 0.85rem;
   }
   .add-section button.primary {
     background: var(--accent, #2c7a7b);
-    color: white;
+    color: var(--accent-text);
     border-color: var(--accent, #2c7a7b);
   }
   .add-section .err {
