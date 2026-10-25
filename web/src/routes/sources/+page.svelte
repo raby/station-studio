@@ -79,7 +79,7 @@
     margin: 0 0 0.5rem;
   }
   .sub {
-    color: #666;
+    color: var(--muted);
     margin-bottom: 2rem;
   }
 </style>

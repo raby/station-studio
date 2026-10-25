@@ -645,8 +645,8 @@
   /* The submit button is only on <StationForm>, not in <LayoutFieldset>. */
   :global(.station-form button[type='submit']) {
     padding: 0.5rem 1.1rem;
-    background: #2c3e50;
-    color: white;
+    background: var(--accent);
+    color: var(--accent-text);
     border: none;
     border-radius: 4px;
     font-size: 0.95rem;
@@ -662,7 +662,7 @@
     gap: 1rem;
     margin-top: 1.5rem;
   }
-  .ghost-link { color: #666; text-decoration: none; font-size: 0.9rem; }
+  .ghost-link { color: var(--muted); text-decoration: none; font-size: 0.9rem; }
   .ghost-link:hover { text-decoration: underline; }
 
   /* §16.5 c3 — `.error` retired; banner-style copy now lives in
@@ -671,9 +671,9 @@
      because it sits next to a single input, not above the whole
      form. */
   .field-error {
-    color: #b71c1c;
-    background: #fff5f5;
-    border-left: 3px solid #b71c1c;
+    color: var(--danger);
+    background: var(--panel);
+    border-left: 3px solid var(--danger);
     padding: 0.25rem 0.5rem;
     margin: 0.25rem 0 0;
     font-size: 0.85rem;
@@ -682,10 +682,10 @@
 
   /* ---- disclosures (JSON preview + diff) ---------------------------- */
   .disclosure {
-    border: 1px solid #e4e4e4;
+    border: 1px solid var(--border);
     border-radius: 4px;
     margin: 1rem 0;
-    background: #fafafa;
+    background: var(--panel);
   }
   .disclosure summary {
     padding: 0.5rem 0.75rem;
@@ -693,16 +693,16 @@
     user-select: none;
     font-size: 0.9rem;
   }
-  .disclosure summary:hover { background: #f0f0f0; }
+  .disclosure summary:hover { background: var(--panel-2); }
   .disclosure-body {
     padding: 0.5rem 0.75rem;
-    border-top: 1px solid #e4e4e4;
-    background: white;
+    border-top: 1px solid var(--border);
+    background: var(--panel);
   }
   .disclosure-body h4 {
     margin: 0.75rem 0 0.25rem;
     font-size: 0.85rem;
-    color: #555;
+    color: var(--muted);
     text-transform: uppercase;
     letter-spacing: 0.04em;
   }
@@ -712,8 +712,8 @@
   .json {
     margin: 0;
     padding: 0.75rem;
-    background: #fafafa;
-    border: 1px solid #e4e4e4;
+    background: var(--panel);
+    border: 1px solid var(--border);
     border-radius: 3px;
     font-family: ui-monospace, monospace;
     font-size: 0.8rem;
@@ -732,7 +732,7 @@
     font-family: ui-monospace, monospace;
   }
   .diff-list dt {
-    color: #555;
+    color: var(--muted);
     white-space: nowrap;
   }
   .diff-list dd {
@@ -740,15 +740,15 @@
     word-break: break-all;
   }
   .diff-list .before {
-    color: #b71c1c;
+    color: var(--danger);
     text-decoration: line-through;
   }
   .diff-list .arrow {
-    color: #666;
+    color: var(--muted);
     margin: 0 0.4rem;
   }
   .diff-list .after {
-    color: #1b5e20;
+    color: var(--ok);
   }
 
   /* ---- pills next to "what's changing" ----------------------------- */
@@ -763,13 +763,13 @@
     text-transform: uppercase;
   }
   .dirty-pill {
-    background: #fff5f5;
-    color: #b71c1c;
-    border: 1px solid #fed7d7;
+    background: var(--panel);
+    color: var(--danger);
+    border: 1px solid var(--danger);
   }
   .clean-pill {
-    background: #f4f4f4;
+    background: var(--panel-2);
     color: var(--text-muted);
-    border: 1px solid #e4e4e4;
+    border: 1px solid var(--border);
   }
 </style>

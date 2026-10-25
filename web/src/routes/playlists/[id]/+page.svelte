@@ -1069,10 +1069,10 @@
   .crumbs {
     font-size: 0.85rem;
     margin-bottom: 1rem;
-    color: #666;
+    color: var(--muted);
   }
   .crumbs a {
-    color: #666;
+    color: var(--muted);
     text-decoration: none;
   }
   .crumbs a:hover {
@@ -1095,7 +1095,7 @@
     font-size: 0.9rem;
   }
   dl.meta dt {
-    color: #666;
+    color: var(--muted);
   }
   dl.meta dd {
     margin: 0;
@@ -1114,19 +1114,19 @@
   .week-nav-link {
     display: inline-block;
     padding: 0.25rem 0.6rem;
-    background: #f4f4f4;
-    border: 1px solid #e0e0e0;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
     border-radius: 3px;
-    color: #2c3e50;
+    color: var(--accent);
     text-decoration: none;
     font-variant-numeric: tabular-nums;
   }
   .week-nav-link:hover {
-    background: #e8e8e8;
+    background: var(--panel-2);
   }
   .week-nav-link.disabled {
     color: var(--text-muted);
-    background: #fafafa;
+    background: var(--panel);
     cursor: not-allowed;
   }
 
@@ -1140,13 +1140,13 @@
     font-size: 0.85rem;
   }
   .version-picker label {
-    color: #666;
+    color: var(--muted);
   }
   .version-picker select {
     padding: 0.25rem 0.5rem;
-    border: 1px solid #ccc;
+    border: 1px solid var(--border);
     border-radius: 3px;
-    background: white;
+    background: var(--panel);
     font: inherit;
     font-size: 0.85rem;
     font-variant-numeric: tabular-nums;
@@ -1159,7 +1159,7 @@
      the station page. */
   .compare-link {
     margin-left: auto;
-    color: #2c3e50;
+    color: var(--accent);
     text-decoration: none;
     font-weight: 500;
   }
@@ -1171,16 +1171,16 @@
      semantics). */
   .rollback-btn {
     padding: 0.25rem 0.6rem;
-    background: white;
-    border: 1px solid #c0392b;
-    color: #c0392b;
+    background: var(--panel);
+    border: 1px solid var(--danger);
+    color: var(--danger);
     border-radius: 3px;
     cursor: pointer;
     font: inherit;
     font-size: 0.85rem;
   }
   .rollback-btn:hover:not(:disabled) {
-    background: #fdf3f1;
+    background: var(--panel-2);
   }
   .rollback-btn:disabled {
     opacity: 0.6;
@@ -1196,7 +1196,7 @@
     font-size: 0.85rem;
   }
   .tags-label {
-    color: #555;
+    color: var(--muted);
     flex-shrink: 0;
   }
 
@@ -1208,8 +1208,8 @@
   .button {
     display: inline-block;
     padding: 0.4rem 0.9rem;
-    background: #2c3e50;
-    color: white;
+    background: var(--accent);
+    color: var(--accent-text);
     text-decoration: none;
     border-radius: 4px;
     font-size: 0.9rem;
@@ -1218,7 +1218,7 @@
     font-family: inherit;
   }
   .button:hover:not(:disabled) {
-    background: #1a252f;
+    background: var(--accent);
   }
   .button:disabled {
     opacity: 0.5;
@@ -1235,7 +1235,7 @@
     gap: 0.4rem;
     margin: 0 0 1rem;
     font-size: 0.85rem;
-    color: #555;
+    color: var(--muted);
     cursor: pointer;
   }
   .archive-toggle input[type='checkbox'] {
@@ -1252,13 +1252,13 @@
     margin-bottom: 0.25rem;
   }
   .hint {
-    color: #666;
+    color: var(--muted);
     font-size: 0.85rem;
     margin-top: 0;
   }
 
   section.row {
-    border: 1px solid #e4e4e4;
+    border: 1px solid var(--border);
     border-radius: 4px;
     margin-bottom: 0.75rem;
     overflow: hidden;
@@ -1299,12 +1299,12 @@
     align-items: baseline;
     gap: 0.75rem;
     padding: 0.5rem 0.75rem;
-    background: #f7f7f7;
+    background: var(--panel-2);
     cursor: pointer;
     user-select: none;
   }
   section.row header:hover {
-    background: #efefef;
+    background: var(--panel-2);
   }
   .caret {
     font-size: 0.8rem;
@@ -1328,13 +1328,13 @@
   td {
     padding: 0.25rem 0.75rem;
     text-align: left;
-    border-bottom: 1px solid #f1f1f1;
+    border-bottom: 1px solid var(--border);
   }
   th {
     font-weight: 600;
     font-size: 0.8rem;
-    color: #555;
-    background: #fafafa;
+    color: var(--muted);
+    background: var(--panel);
   }
   .num {
     text-align: right;
@@ -1354,7 +1354,7 @@
   }
 
   .error {
-    color: crimson;
+    color: var(--danger);
   }
 
   /* ---- §16.8 filter bar ---------------------------------------------- */
@@ -1365,8 +1365,8 @@
     flex-wrap: wrap;
     margin: 0.5rem 0 1rem;
     padding: 0.5rem 0.75rem;
-    background: #fafafa;
-    border: 1px solid #e4e4e4;
+    background: var(--panel);
+    border: 1px solid var(--border);
     border-radius: 4px;
     font-size: 0.9rem;
   }
@@ -1374,44 +1374,44 @@
     flex: 1 1 14rem;
     min-width: 12rem;
     padding: 0.4rem 0.6rem;
-    border: 1px solid #ccc;
+    border: 1px solid var(--border);
     border-radius: 3px;
     font: inherit;
   }
   .filters select {
     padding: 0.4rem 0.6rem;
-    border: 1px solid #ccc;
+    border: 1px solid var(--border);
     border-radius: 3px;
     font: inherit;
-    background: white;
+    background: var(--panel);
   }
   .filters .counter {
     margin-left: auto;
-    color: #666;
+    color: var(--muted);
     font-size: 0.85rem;
     font-variant-numeric: tabular-nums;
   }
   .clear-btn {
     padding: 0.3rem 0.7rem;
-    background: white;
-    border: 1px solid #ccc;
+    background: var(--panel);
+    border: 1px solid var(--border);
     border-radius: 3px;
     cursor: pointer;
     font: inherit;
     font-size: 0.85rem;
   }
   .clear-btn:hover {
-    background: #f4f4f4;
+    background: var(--panel-2);
   }
 
   .empty-filter {
     margin: 1rem 0;
     padding: 1.25rem;
-    background: #fafafa;
-    border: 1px solid #e4e4e4;
+    background: var(--panel);
+    border: 1px solid var(--border);
     border-radius: 4px;
     text-align: center;
-    color: #666;
+    color: var(--muted);
   }
   .empty-filter .clear-btn {
     margin-left: 0.5rem;
@@ -1422,7 +1422,7 @@
     margin-left: 0.5rem;
     padding: 0 0.35rem;
     background: transparent;
-    border: 1px solid #d8d8d8;
+    border: 1px solid var(--border);
     border-radius: 3px;
     color: var(--text-muted);
     font: inherit;
@@ -1431,24 +1431,24 @@
     vertical-align: baseline;
   }
   .excluded-toggle:hover {
-    background: #f4f4f4;
-    color: #555;
+    background: var(--panel-2);
+    color: var(--muted);
   }
   .excluded-row > td {
     /* Strip the default row border so the sub-table reads as a
        continuation of the slot above, not a separate row. */
     border-bottom: none;
-    background: #fafafa;
+    background: var(--panel);
     padding: 0.4rem 0.5rem 0.6rem;
   }
   .excluded-table {
     font-size: 0.82rem;
-    background: white;
-    border: 1px solid #ececec;
+    background: var(--panel);
+    border: 1px solid var(--border);
     border-radius: 3px;
   }
   .excluded-table th {
-    background: #f4f4f4;
+    background: var(--panel-2);
     font-size: 0.72rem;
   }
   .excluded-table td,

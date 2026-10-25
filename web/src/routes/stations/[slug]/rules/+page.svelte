@@ -41,13 +41,13 @@
     margin-bottom: 1rem;
   }
   .crumbs a {
-    color: #666;
+    color: var(--muted);
     text-decoration: none;
   }
   .crumbs a:hover {
     text-decoration: underline;
   }
   .error {
-    color: crimson;
+    color: var(--danger);
   }
 </style>

@@ -2629,7 +2629,7 @@
   }
   .retry-modal__actions button.primary {
     background: var(--accent, #3a80c0);
-    color: #fff;
+    color: var(--accent-text);
     border: 1px solid var(--accent, #3a80c0);
   }
   .retry-modal__actions button[disabled] {
@@ -2671,7 +2671,7 @@
   .staged-save {
     padding: 0.4rem 0.9rem;
     background: var(--accent, #2c7a7b);
-    color: white;
+    color: var(--accent-text);
     border: none;
     border-radius: 4px;
     cursor: pointer;
@@ -2708,23 +2708,23 @@
   }
   .export {
     padding: 0.4rem 0.9rem;
-    background: #2c3e50;
-    color: white;
+    background: var(--accent);
+    color: var(--accent-text);
     border: none;
     border-radius: 4px;
     cursor: pointer;
     font-size: 0.85rem;
   }
   .export:hover {
-    background: #1a252f;
+    background: var(--accent);
   }
   .export-msg {
-    color: #2e7d32;
+    color: var(--ok);
     font-size: 0.85rem;
   }
   .conflict {
-    background: #fff8e1;
-    border: 1px solid #f0c36d;
+    background: var(--panel-2);
+    border: 1px solid var(--warn);
     border-radius: 4px;
     padding: 0.6rem 0.9rem;
     margin: 0.5rem 0;
@@ -2740,7 +2740,7 @@
     margin-bottom: 1rem;
   }
   .crumbs a {
-    color: #666;
+    color: var(--muted);
     text-decoration: none;
   }
   .crumbs a:hover {
@@ -2755,15 +2755,15 @@
     margin-top: 0.1rem;
   }
   .sidecar-warning {
-    background: #fff8e1;
-    border: 1px solid #f0c36d;
+    background: var(--panel-2);
+    border: 1px solid var(--warn);
     border-radius: 4px;
     padding: 0.75rem 1rem;
     margin: 1rem 0;
     font-size: 0.9rem;
   }
   .sidecar-warning pre {
-    background: #fffaf0;
+    background: var(--panel);
     padding: 0.4rem 0.6rem;
     border-radius: 3px;
     overflow-x: auto;
@@ -2771,10 +2771,10 @@
     margin: 0.5rem 0;
   }
   .error {
-    color: crimson;
+    color: var(--danger);
   }
   code {
-    background: #f4f4f4;
+    background: var(--panel-2);
     padding: 0.1em 0.3em;
     border-radius: 3px;
   }

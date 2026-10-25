@@ -143,32 +143,32 @@
   .crumbs {
     font-size: 0.85rem;
     margin-bottom: 1rem;
-    color: #666;
+    color: var(--muted);
   }
   .crumbs a {
-    color: #666;
+    color: var(--muted);
     text-decoration: none;
   }
   .crumbs a:hover { text-decoration: underline; }
   h1 { margin: 0; }
-  .sub { color: #666; }
+  .sub { color: var(--muted); }
   code {
-    background: #f4f4f4;
+    background: var(--panel-2);
     padding: 0.1em 0.3em;
     border-radius: 3px;
     font-size: 0.85em;
   }
   .error {
-    color: crimson;
-    background: #fff5f5;
-    border: 1px solid #fed7d7;
+    color: var(--danger);
+    background: var(--panel);
+    border: 1px solid var(--danger);
     padding: 0.5rem 0.75rem;
     border-radius: 4px;
   }
 
   .advanced-guard {
-    background: #fffbeb;
-    border: 1px solid #fde68a;
+    background: var(--panel-2);
+    border: 1px solid var(--warn);
     border-radius: 6px;
     padding: 1rem 1.25rem;
     margin: 1rem 0;
@@ -176,11 +176,11 @@
   .advanced-guard h2 {
     margin-top: 0;
     font-size: 1.1rem;
-    color: #92400e;
+    color: var(--warn);
   }
   .advanced-guard pre {
-    background: #1f2937;
-    color: #e5e7eb;
+    background: var(--accent);
+    color: var(--accent-text);
     padding: 0.75rem;
     border-radius: 4px;
     overflow-x: auto;

@@ -1,0 +1,216 @@
+/* Station Studio's look, shared with Station Player
+   (player/station_player/static/style.css): dark by default, light when
+   the computer is set to light, amber accent. Components use these
+   tokens instead of literal colours. */
+:root {
+  --bg: #0e1013;
+  --panel: #15181d;
+  --panel-2: #1c2026;
+  --panel-3: #262b33;
+  --border: #2c313a;
+  --border-strong: #3b414c;
+  --text: #eef0f3;
+  --muted: #a3aab5;
+  --faint: #8a919d;
+  --accent: #f5a524;
+  --accent-strong: #ffbb52;
+  --accent-soft: rgba(245, 165, 36, 0.13);
+  --accent-text: #1b1204;
+  --danger: #ff7a70;
+  --danger-soft: rgba(255, 122, 112, 0.12);
+  --warn: #f2c94c;
+  --warn-soft: rgba(242, 201, 76, 0.12);
+  --ok: #43d08f;
+  --ok-soft: rgba(67, 208, 143, 0.12);
+  --info: #7cb4ff;
+  --info-soft: rgba(124, 180, 255, 0.12);
+  --row-hover: rgba(255, 255, 255, 0.04);
+  --row-active: rgba(245, 165, 36, 0.1);
+  --shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.25);
+  --radius: 12px;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color-scheme: dark;
+
+  /* Older names still used by some components. */
+  --text-muted: var(--muted);
+  --error: var(--danger);
+  --bg-subtle: var(--panel-2);
+  --bg-hover: var(--row-hover);
+  --surface: var(--panel);
+  --chip-bg: var(--panel-3);
+  --focus: var(--accent);
+  --color-focus: var(--accent);
+  --color-panel-bg: var(--panel);
+  --color-panel-border: var(--border);
+  --color-text-muted: var(--muted);
+  --color-row-hover: var(--row-hover);
+  --color-row-bg: var(--panel-2);
+  --bg-info: var(--info-soft);
+  --border-info: var(--info);
+  --bg-bar-track: var(--panel-3);
+  --diff-add: var(--ok);
+  --diff-rem: var(--danger);
+  --diff-warn: var(--warn);
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f6f5f2;
+    --panel: #ffffff;
+    --panel-2: #f3f2ee;
+    --panel-3: #e8e6e0;
+    --border: #e2e0da;
+    --border-strong: #cfccc4;
+    --text: #1c1c1a;
+    --muted: #5f5d58;
+    --faint: #6f6c66;
+    --accent: #9a4f06;
+    --accent-strong: #803f04;
+    --accent-soft: rgba(196, 109, 0, 0.1);
+    --accent-text: #ffffff;
+    --danger: #b3301f;
+    --danger-soft: rgba(194, 55, 43, 0.08);
+    --warn: #8a6100;
+    --warn-soft: rgba(176, 140, 0, 0.12);
+    --ok: #1a7f50;
+    --ok-soft: rgba(29, 143, 90, 0.1);
+    --info: #1f5fbf;
+    --info-soft: rgba(31, 95, 191, 0.08);
+    --row-hover: rgba(0, 0, 0, 0.035);
+    --row-active: rgba(196, 109, 0, 0.09);
+    --shadow: 0 12px 32px rgba(40, 30, 10, 0.14);
+    --shadow-sm: 0 2px 8px rgba(40, 30, 10, 0.08);
+    color-scheme: light;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+html,
+body {
+  margin: 0;
+}
+body {
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.5 system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+::selection {
+  background: var(--accent-soft);
+}
+a {
+  color: var(--accent);
+}
+a:hover {
+  color: var(--accent-strong);
+}
+h1,
+h2,
+h3 {
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+}
+h1 {
+  font-size: 26px;
+  letter-spacing: -0.02em;
+}
+code,
+pre,
+kbd {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+}
+code {
+  background: var(--panel-2);
+  border-radius: 5px;
+  padding: 0.05em 0.35em;
+}
+pre code {
+  background: none;
+  padding: 0;
+}
+hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+
+/* Fields and buttons look like Station Player's wherever a page didn't
+   style them itself (page styles are scoped, so they win). */
+input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='color']),
+select,
+textarea {
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  color: var(--text);
+  font: inherit;
+  padding: 6px 10px;
+}
+input::placeholder,
+textarea::placeholder {
+  color: var(--faint);
+}
+input:not([type='checkbox']):not([type='radio']):not([type='range']):focus,
+select:focus,
+textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+  outline: none;
+}
+input[type='checkbox'],
+input[type='radio'],
+input[type='range'] {
+  accent-color: var(--accent);
+}
+button {
+  background: var(--panel-2);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 550;
+  padding: 6px 13px;
+  transition:
+    background 0.12s,
+    border-color 0.12s;
+}
+button:hover:not(:disabled) {
+  background: var(--panel-3);
+  border-color: var(--faint);
+}
+button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+table {
+  border-collapse: collapse;
+}
+th {
+  color: var(--faint);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-align: left;
+  text-transform: uppercase;
+}
+th,
+td {
+  border-bottom: 1px solid var(--border);
+}
+tbody tr:hover {
+  background: var(--row-hover);
+}
+input[type='file']::file-selector-button {
+  background: var(--panel-2);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  margin-right: 10px;
+  padding: 3px 10px;
+}

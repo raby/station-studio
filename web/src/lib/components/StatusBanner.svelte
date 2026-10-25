@@ -55,16 +55,16 @@
      green from §16.6 (`.disk-status.success`) so the migration
      of disk-export-status is byte-equivalent for sighted users. */
   .status-banner {
-    background: #e8f5e9;
-    border: 1px solid #c8e6c9;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
     border-radius: 3px;
-    color: #1b5e20;
+    color: var(--ok);
     font-size: 0.85rem;
     margin: 0.25rem 0 1rem;
     padding: 0.4rem 0.6rem;
   }
   .status-banner strong {
-    color: #1b5e20;
+    color: var(--ok);
   }
 
   /* Compact: strip the box, keep the colour + aria-live. */

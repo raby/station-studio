@@ -15,7 +15,7 @@ test.describe('landing page', () => {
   test('§16.5 c1 — landing page passes axe-core WCAG audit', async ({ page }) => {
     await page.goto('/');
     await expect(
-      page.getByRole('heading', { name: 'Station Studio' }),
+      page.getByRole('heading', { name: 'Stations', level: 1 }),
     ).toBeVisible();
     await assertNoA11yViolations(page);
   });
@@ -37,12 +37,12 @@ test.describe('landing page', () => {
     await page.setViewportSize({ width: 375, height: 812 });
     await page.goto('/');
     await expect(
-      page.getByRole('heading', { name: 'Station Studio' }),
+      page.getByRole('heading', { name: 'Stations', level: 1 }),
     ).toBeVisible();
     await assertNoA11yViolations(page);
   });
 
-  test('shows the heading and the + new station button', async ({ page }) => {
+  test('shows the heading and the New station button', async ({ page }) => {
     // Note: this used to also assert the empty-state hint ("No stations
     // yet" / "Bootstrap Rebirth Classics"), but that copy is only visible
     // when the DB has 0 or 1 stations. As the suite grew (generate.spec.ts
@@ -50,8 +50,8 @@ test.describe('landing page', () => {
     // an empty DB became flaky. The empty-state hint is now exercised in
     // the Vitest layer (landing.test.ts) where the API response is mocked.
     await page.goto('/');
-    await expect(page.getByRole('heading', { name: 'Station Studio' })).toBeVisible();
-    await expect(page.getByRole('link', { name: /\+ new station/ })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Stations', level: 1 })).toBeVisible();
+    await expect(page.getByTestId('new-station')).toBeVisible();
   });
 
   test('lists stations after one is created via the API', async ({ page, request }) => {

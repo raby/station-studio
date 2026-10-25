@@ -108,10 +108,10 @@
   @media (max-width: 40rem) {
     .narrow-screen-notice {
       display: block;
-      background: #f5f7fa;
-      border: 1px solid #d4dae3;
+      background: var(--panel);
+      border: 1px solid var(--border);
       border-radius: 6px;
-      color: #3a3f4b;
+      color: var(--text);
       margin: 2rem auto;
       max-width: 90%;
       padding: 1.25rem 1rem;
@@ -132,9 +132,9 @@
   /* 44x44 minimum target per WCAG 2.5.5 — `min-height/width`
      guarantees the hit area even if the visible text is short. */
   .back-link {
-    background: #2c3e50;
+    background: var(--accent);
     border-radius: 4px;
-    color: #fff;
+    color: var(--accent-text);
     display: inline-block;
     font-size: 0.95rem;
     min-height: 44px;
@@ -143,6 +143,6 @@
     text-decoration: none;
   }
   .back-link:hover {
-    background: #1a252f;
+    background: var(--accent);
   }
 </style>

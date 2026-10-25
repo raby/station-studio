@@ -137,7 +137,7 @@
     z-index: 1000;
   }
   .dialog {
-    background: #fff;
+    background: var(--panel);
     border-radius: 8px;
     padding: 1.5rem;
     max-width: 32rem;
@@ -150,7 +150,7 @@
   }
   .body {
     margin: 0 0 1.25rem;
-    color: #374151;
+    color: var(--text);
     line-height: 1.5;
     /* Caller copy may include line breaks for readability. */
     white-space: pre-line;
@@ -162,32 +162,32 @@
   }
   .button {
     padding: 0.5rem 1rem;
-    border: 1px solid #c4c4c8;
+    border: 1px solid var(--border-strong);
     border-radius: 4px;
-    background: #fff;
+    background: var(--panel);
     cursor: pointer;
     font: inherit;
   }
   .button:hover {
-    background: #f3f4f6;
+    background: var(--panel-2);
   }
   .button:focus-visible {
-    outline: 2px solid #2563eb;
+    outline: 2px solid var(--accent);
     outline-offset: 2px;
   }
   .button.primary {
-    background: #2563eb;
-    color: #fff;
-    border-color: #2563eb;
+    background: var(--accent);
+    color: var(--accent-text);
+    border-color: var(--accent);
   }
   .button.primary:hover {
-    background: #1d4fd1;
+    background: var(--accent);
   }
   .button.primary.danger {
-    background: #dc2626;
-    border-color: #dc2626;
+    background: var(--danger);
+    border-color: var(--danger);
   }
   .button.primary.danger:hover {
-    background: #b91c1c;
+    background: var(--danger);
   }
 </style>

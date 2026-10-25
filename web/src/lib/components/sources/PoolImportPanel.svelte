@@ -963,8 +963,8 @@
   }
 
   .add-section {
-    background: #f7f7f8;
-    border: 1px solid #e4e4e7;
+    background: var(--panel);
+    border: 1px solid var(--border);
     border-radius: 6px;
     padding: 1.25rem;
     margin-bottom: 2rem;
@@ -986,7 +986,7 @@
   .field input[type='text'],
   .field select {
     padding: 0.5rem 0.6rem;
-    border: 1px solid #c4c4c8;
+    border: 1px solid var(--border-strong);
     border-radius: 4px;
     font: inherit;
   }
@@ -994,14 +994,14 @@
     font: inherit;
   }
   .hint {
-    color: #666;
+    color: var(--muted);
     font-size: 0.85rem;
     margin: 0;
   }
   .mode-toggle {
     display: flex;
     gap: 0.5rem;
-    border-bottom: 1px solid #d4d4d8;
+    border-bottom: 1px solid var(--border);
     padding-bottom: 0.5rem;
   }
   .mode-tab {
@@ -1011,50 +1011,50 @@
     border-radius: 4px 4px 0 0;
     cursor: pointer;
     font: inherit;
-    color: #666;
+    color: var(--muted);
   }
   .mode-tab.active {
-    color: #111;
-    border-color: #d4d4d8;
-    border-bottom-color: #f7f7f8;
-    background: #f7f7f8;
+    color: var(--text);
+    border-color: var(--border);
+    border-bottom-color: var(--border);
+    background: var(--panel);
     margin-bottom: -1px;
   }
 
   .button {
     padding: 0.5rem 1rem;
-    border: 1px solid #c4c4c8;
+    border: 1px solid var(--border-strong);
     border-radius: 4px;
-    background: #fff;
+    background: var(--panel);
     cursor: pointer;
     font: inherit;
   }
   .button.primary {
-    background: #2563eb;
-    color: #fff;
-    border-color: #2563eb;
+    background: var(--accent);
+    color: var(--accent-text);
+    border-color: var(--accent);
   }
   .button.primary:disabled {
-    background: #9ab3e8;
-    border-color: #9ab3e8;
+    background: var(--accent);
+    border-color: var(--accent);
     cursor: wait;
   }
   .button.primary:hover:not(:disabled) {
-    background: #1d4fd1;
+    background: var(--accent);
   }
 
   .error {
-    color: #b91c1c;
-    background: #fef2f2;
-    border: 1px solid #fecaca;
+    color: var(--danger);
+    background: var(--panel);
+    border: 1px solid var(--danger);
     padding: 0.5rem 0.75rem;
     border-radius: 4px;
     margin: 0;
   }
   .success {
-    color: #166534;
-    background: #f0fdf4;
-    border: 1px solid #bbf7d0;
+    color: var(--ok);
+    background: var(--panel-2);
+    border: 1px solid var(--ok);
     padding: 0.5rem 0.75rem;
     border-radius: 4px;
     margin: 0;
@@ -1068,7 +1068,7 @@
   .sources-list td {
     text-align: left;
     padding: 0.55rem 0.6rem;
-    border-bottom: 1px solid #eee;
+    border-bottom: 1px solid var(--border);
   }
   .sources-list .num {
     text-align: right;
@@ -1093,12 +1093,12 @@
     font-weight: 500;
   }
   .role-content {
-    background: #dbeafe;
-    color: #1e40af;
+    background: var(--accent-soft);
+    color: var(--accent);
   }
   .role-reference {
-    background: #fef3c7;
-    color: #92400e;
+    background: var(--warn-soft);
+    color: var(--warn);
   }
 
   /* ===== c3 batch UI ===== */
@@ -1115,14 +1115,14 @@
     background: none;
     border: none;
     padding: 0;
-    color: #2563eb;
+    color: var(--accent);
     cursor: pointer;
     font: inherit;
     font-size: 0.9rem;
     text-decoration: underline;
   }
   .link-button:disabled {
-    color: #9ab3e8;
+    color: var(--accent);
     cursor: wait;
   }
 
@@ -1140,28 +1140,28 @@
     gap: 0.6rem;
   }
   .batch-row {
-    border: 1px solid #e4e4e7;
+    border: 1px solid var(--border);
     border-radius: 4px;
     padding: 0.5rem;
-    background: #fff;
+    background: var(--panel);
   }
   .batch-row[data-row-status='imported'] {
-    background: #f0fdf4;
-    border-color: #bbf7d0;
+    background: var(--panel-2);
+    border-color: var(--ok);
   }
   .batch-row[data-row-status='failed'] {
-    background: #fef2f2;
-    border-color: #fecaca;
+    background: var(--panel);
+    border-color: var(--danger);
   }
   .batch-row[data-row-status='uploading'] {
-    background: #fef3c7;
-    border-color: #fde68a;
+    background: var(--warn-soft);
+    border-color: var(--warn);
   }
   /* §16.25.t2 — user-initiated cancel; muted grey, not error-red. */
   .batch-row[data-row-status='cancelled'] {
-    background: #f9fafb;
-    border-color: #d4d4d8;
-    color: #6b7280;
+    background: var(--panel);
+    border-color: var(--border);
+    color: var(--muted);
   }
   .batch-row-fields {
     display: grid;
@@ -1172,7 +1172,7 @@
   .batch-row-fields input[type='text'],
   .batch-row-fields select {
     padding: 0.35rem 0.5rem;
-    border: 1px solid #c4c4c8;
+    border: 1px solid var(--border-strong);
     border-radius: 4px;
     font: inherit;
   }
@@ -1188,24 +1188,24 @@
     text-transform: lowercase;
   }
   .status-pending {
-    background: #f3f4f6;
-    color: #4b5563;
+    background: var(--panel-2);
+    color: var(--muted);
   }
   .status-uploading {
-    background: #fde68a;
-    color: #92400e;
+    background: var(--warn);
+    color: var(--warn);
   }
   .status-imported {
-    background: #bbf7d0;
-    color: #166534;
+    background: var(--ok-soft);
+    color: var(--ok);
   }
   .status-failed {
-    background: #fecaca;
-    color: #991b1b;
+    background: var(--danger-soft);
+    color: var(--danger);
   }
   .status-cancelled {
-    background: #e5e7eb;
-    color: #4b5563;
+    background: var(--panel-2);
+    color: var(--muted);
   }
   /* §16.25.t2 — Cancel button sits next to Import / Import N pools
      during submission. `submit-row` lays them out as a flex row so
@@ -1217,22 +1217,22 @@
   }
   .remove-row {
     background: transparent;
-    border: 1px solid #d4d4d8;
+    border: 1px solid var(--border);
     border-radius: 4px;
     padding: 0.1rem 0.5rem;
     cursor: pointer;
-    color: #6b7280;
+    color: var(--muted);
     font-size: 1.1rem;
     line-height: 1;
   }
   .remove-row:hover:not(:disabled) {
-    background: #fef2f2;
-    color: #b91c1c;
+    background: var(--panel);
+    color: var(--danger);
   }
   .row-error {
     margin: 0.4rem 0 0;
     padding-left: 0.25rem;
-    color: #991b1b;
+    color: var(--danger);
     font-size: 0.85rem;
   }
 
@@ -1259,29 +1259,29 @@
     font: inherit;
     font-size: 0.82rem;
     padding: 0.25rem 0.6rem;
-    border: 1px solid #d4d4d8;
-    background: #fff;
+    border: 1px solid var(--border);
+    background: var(--panel);
     border-radius: 4px;
     cursor: pointer;
     margin-left: 0.25rem;
   }
   .row-button:hover:not(:disabled) {
-    background: #f3f4f6;
+    background: var(--panel-2);
   }
   .row-button.danger {
-    color: #991b1b;
-    border-color: #fecaca;
+    color: var(--danger);
+    border-color: var(--danger);
   }
   .row-button.danger:hover:not(:disabled) {
-    background: #fef2f2;
+    background: var(--panel);
   }
   .row-button:disabled {
-    color: #9ca3af;
+    color: var(--faint);
     cursor: wait;
   }
   .reimport-row td {
-    background: #fefce8;
-    border-top: 1px solid #fef08a;
+    background: var(--panel-2);
+    border-top: 1px solid var(--warn);
     padding: 0.75rem 0.75rem;
   }
   .reimport-form {
@@ -1295,7 +1295,7 @@
   }
   .reimport-path-input {
     padding: 0.4rem 0.5rem;
-    border: 1px solid #c4c4c8;
+    border: 1px solid var(--border-strong);
     border-radius: 4px;
     font: inherit;
     max-width: 32rem;

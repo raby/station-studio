@@ -199,7 +199,7 @@
     position: absolute;
     transform: translate(0.6em, -0.7em);
     background: var(--chip-color, #ccc);
-    color: white;
+    color: var(--accent-text);
     padding: 0 0.3em;
     border-radius: 8px;
   }

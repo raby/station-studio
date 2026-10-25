@@ -4,6 +4,26 @@ All notable changes are listed here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses semantic versioning.
 
+## [1.7.0] - 2026-10-25
+
+### Changed
+
+- **A fresh look, matching Station Player.** Dark by default (light
+  when the computer is set to light), with the amber accent, a sidebar
+  (Stations, Source pools, New station) and the stations shown as
+  cards. Colours come from `web/src/lib/theme.css`; pages use its
+  tokens instead of fixed colours. On a phone the sidebar becomes a
+  bar along the top.
+- In the app, the version, **Quit** and **Update now** sit at the foot
+  of the sidebar instead of floating over the page.
+
+### Fixed
+
+- The new-version notice turns up on a page that's been open a while
+  (the page looks again every 5 minutes), not only after a reload.
+- A version check that fails (offline, GitHub down) is tried again
+  within the hour instead of waiting a day.
+
 ## [1.6.1] - 2026-10-25
 
 ### Changed

@@ -361,8 +361,8 @@
     display: inline-flex;
     align-items: center;
     gap: 0.35rem;
-    background: #e7f1f8;
-    border: 1px solid #b6d2e6;
+    background: var(--panel-2);
+    border: 1px solid var(--accent);
     border-radius: 999px;
     padding: 0.2rem 0.55rem;
     font-size: 0.85rem;
@@ -372,13 +372,13 @@
     border: none;
     background: transparent;
     cursor: pointer;
-    color: #555;
+    color: var(--muted);
     font-size: 1rem;
     line-height: 1;
     padding: 0 0.1rem;
   }
   .chip-remove:hover:not(:disabled) {
-    color: #c00;
+    color: var(--danger);
   }
   .chip-remove:disabled {
     opacity: 0.5;
@@ -400,14 +400,14 @@
   .add-input input {
     flex: 1;
     padding: 0.35rem 0.5rem;
-    border: 1px solid #ccc;
+    border: 1px solid var(--border);
     border-radius: 4px;
     font-size: 0.9rem;
   }
   .add-button {
     padding: 0.35rem 0.75rem;
-    background: #2c7a7b;
-    color: white;
+    background: var(--accent);
+    color: var(--accent-text);
     border: none;
     border-radius: 4px;
     cursor: pointer;
@@ -421,14 +421,14 @@
     list-style: none;
     padding: 0;
     margin: 0;
-    border: 1px solid #ddd;
+    border: 1px solid var(--border);
     border-radius: 4px;
     max-height: 12rem;
     overflow-y: auto;
-    background: white;
+    background: var(--panel);
   }
   .suggestions li + li {
-    border-top: 1px solid #eee;
+    border-top: 1px solid var(--border);
   }
   .suggestion {
     width: 100%;
@@ -443,7 +443,7 @@
     gap: 0.5rem;
   }
   .suggestion:hover:not(:disabled) {
-    background: #f4f8fb;
+    background: var(--panel);
   }
   .suggestion:disabled {
     opacity: 0.5;
@@ -465,8 +465,8 @@
   }
   .save {
     padding: 0.35rem 0.9rem;
-    background: #2c7a7b;
-    color: white;
+    background: var(--accent);
+    color: var(--accent-text);
     border: none;
     border-radius: 4px;
     cursor: pointer;
@@ -477,8 +477,8 @@
   }
   .reset {
     padding: 0.35rem 0.7rem;
-    background: white;
-    border: 1px solid #ccc;
+    background: var(--panel);
+    border: 1px solid var(--border);
     border-radius: 4px;
     cursor: pointer;
     font-size: 0.85rem;
@@ -488,7 +488,7 @@
     cursor: not-allowed;
   }
   .error {
-    color: crimson;
+    color: var(--danger);
     font-size: 0.85rem;
     margin: 0;
   }

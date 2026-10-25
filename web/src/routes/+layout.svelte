@@ -18,16 +18,70 @@
    * don't carry it just degrade to the no-op (skip-link does
    * nothing, no layout regression).
    */
+  import '$lib/theme.css';
+  import { page } from '$app/stores';
   import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
   // Quit + Update now, only when opened as the downloaded app.
   import AppBar from '$lib/components/AppBar.svelte';
+
+  // Sidebar icons, drawn like Station Player's (its ICONS table).
+  const ICONS: Record<string, string[]> = {
+    radio: ['M16.24 7.76a6 6 0 0 1 0 8.48', 'M7.76 16.24a6 6 0 0 1 0-8.48', 'M19.07 4.93a10 10 0 0 1 0 14.14', 'M4.93 19.07a10 10 0 0 1 0-14.14'],
+    folder: ['M3 7.5A2.5 2.5 0 0 1 5.5 5H9l2 2.5h7.5A2.5 2.5 0 0 1 21 10v6.5a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 16.5z'],
+    plus: ['M12 5v14', 'M5 12h14'],
+  };
+
+  const NAV = [
+    { href: '/', label: 'Stations', icon: 'radio', testid: 'sidebar-stations' },
+    { href: '/sources', label: 'Source pools', icon: 'folder', testid: 'sidebar-sources' },
+    { href: '/stations/new', label: 'New station', icon: 'plus', testid: 'sidebar-new' },
+  ];
+
+  // Stations stays lit inside a station and its playlists.
+  function current(href: string, path: string): boolean {
+    if (href === '/stations/new') return path === href;
+    if (href === '/') return path === '/' || (path.startsWith('/stations/') && path !== '/stations/new') || path.startsWith('/playlists/');
+    return path === href || path.startsWith(href + '/');
+  }
 </script>
 
 <a href="#main-content" class="skip-link">Skip to main content</a>
 
-<slot />
+<div class="shell">
+  <nav class="sidebar" aria-label="Station Studio">
+    <a class="brand" href="/">
+      <span class="logo" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="2.2" />{#each ICONS.radio as d}<path {d} />{/each}</svg>
+      </span>
+      <span>Station Studio</span>
+    </a>
+    <ul class="nav-list">
+      {#each NAV as item}
+        <li>
+          <a
+            class="nav-item"
+            href={item.href}
+            aria-current={current(item.href, $page.url.pathname) ? 'page' : undefined}
+            data-testid={item.testid}
+          >
+            <svg class="i" viewBox="0 0 24 24" aria-hidden="true">
+              {#if item.icon === 'radio'}<circle cx="12" cy="12" r="2" />{/if}
+              {#each ICONS[item.icon] as d}<path {d} />{/each}
+            </svg>
+            <span>{item.label}</span>
+          </a>
+        </li>
+      {/each}
+    </ul>
+    <div class="sidebar-foot">
+      <AppBar />
+    </div>
+  </nav>
 
-<AppBar />
+  <div class="content">
+    <slot />
+  </div>
+</div>
 
 <ConfirmDialog />
 
@@ -50,16 +104,141 @@
      this comment can shrink. */
   :global(:root) {
     --mobile-breakpoint: 40rem;
-    /* §16.26 — WCAG AA-compliant muted text color. #595959 yields
-       a contrast ratio of 4.54:1 on white (#fff), passing the
-       4.5:1 minimum for normal text. The previous practice of
-       hard-coding #888 / #999 / #aaa (ratios 3.54 / 2.85 / 2.32)
-       failed axe-core scans across landing, station-detail,
-       trace-viewer, and wizard pages. Components reference this
-       via `color: var(--text-muted);` for any de-emphasized
-       text — slugs, last-generated timestamps, "empty" hints,
-       chip captions, etc. */
-    --text-muted: #595959;
+    /* Colours live in $lib/theme.css (Station Player's palette). */
+  }
+
+  .shell {
+    display: grid;
+    grid-template-columns: 232px minmax(0, 1fr);
+    min-height: 100vh;
+  }
+  .sidebar {
+    background: var(--panel);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    overflow-y: auto;
+    padding: 18px 12px 14px;
+    position: sticky;
+    top: 0;
+  }
+  .brand {
+    align-items: center;
+    color: var(--text);
+    display: flex;
+    font-size: 16px;
+    font-weight: 700;
+    gap: 10px;
+    letter-spacing: -0.01em;
+    padding: 0 8px 18px;
+    text-decoration: none;
+  }
+  .brand:hover {
+    color: var(--text);
+  }
+  .logo {
+    align-items: center;
+    background: var(--accent);
+    border-radius: 8px;
+    color: var(--accent-text);
+    display: inline-flex;
+    height: 30px;
+    justify-content: center;
+    width: 30px;
+  }
+  .logo svg {
+    fill: none;
+    height: 20px;
+    stroke: currentColor;
+    stroke-linecap: round;
+    stroke-width: 2.2;
+    width: 20px;
+  }
+  .logo circle {
+    fill: currentColor;
+    stroke: none;
+  }
+  .nav-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  .nav-item {
+    align-items: center;
+    border-radius: 8px;
+    color: var(--muted);
+    display: flex;
+    gap: 10px;
+    min-height: 36px;
+    padding: 7px 10px;
+    text-decoration: none;
+  }
+  .nav-item:hover {
+    background: var(--row-hover);
+    color: var(--text);
+  }
+  .nav-item[aria-current='page'] {
+    background: var(--accent-soft);
+    color: var(--text);
+    font-weight: 600;
+  }
+  .nav-item[aria-current='page'] svg {
+    color: var(--accent);
+  }
+  svg.i {
+    fill: none;
+    flex: none;
+    height: 17px;
+    stroke: currentColor;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    stroke-width: 2;
+    width: 17px;
+  }
+  svg.i circle {
+    fill: currentColor;
+    stroke: none;
+  }
+  .sidebar-foot {
+    margin-top: auto;
+    padding-top: 16px;
+  }
+  .content {
+    min-width: 0;
+    padding: 8px 24px 48px;
+  }
+  /* Narrow screens: the sidebar becomes a bar across the top. */
+  @media (max-width: 40rem) {
+    .shell {
+      display: block;
+    }
+    .sidebar {
+      border-bottom: 1px solid var(--border);
+      border-right: 0;
+      flex-flow: row wrap;
+      gap: 6px 10px;
+      height: auto;
+      padding: 10px 12px;
+      position: static;
+    }
+    .brand {
+      padding: 0 4px;
+    }
+    .nav-list {
+      flex-direction: row;
+      flex-wrap: wrap;
+    }
+    .sidebar-foot {
+      flex-basis: 100%;
+      padding-top: 4px;
+    }
+    .content {
+      padding: 0 4px 32px;
+    }
   }
 
   /* §16.5 c1 — skip-link: visually hidden until focused, then
@@ -67,9 +246,9 @@
      focus-restorable" pattern (clip: rect(0,0,0,0) rather than
      `display: none`) so the element stays in the tab order. */
   .skip-link {
-    background: #000;
+    background: var(--accent);
     border-radius: 4px;
-    color: #fff;
+    color: var(--accent-text);
     font-weight: 600;
     left: 0.5rem;
     padding: 0.5rem 0.75rem;
@@ -82,7 +261,7 @@
      is only reachable by keyboard anyway) and folds it into
      the same focus-ring contract as every other element. */
   .skip-link:focus-visible {
-    outline: 3px solid #fff;
+    outline: 3px solid var(--border);
     outline-offset: 2px;
     top: 0.5rem;
   }
@@ -100,9 +279,9 @@
      when the user navigates via keyboard (not pointer click), so
      it doesn't add noise to mouse interactions while giving
      keyboard users a clear indicator across every element.
-     Contrast #0066cc on white = 5.0:1, AA-passing for non-text. */
+     The amber accent passes 3:1 for non-text on both themes. */
   :global(*:focus-visible) {
-    outline: 3px solid #0066cc;
+    outline: 3px solid var(--accent);
     outline-offset: 2px;
   }
   /* §16.5 c1-review R1 — skip-link target `<main id="main-content">`

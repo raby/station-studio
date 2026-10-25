@@ -315,10 +315,10 @@
   .crumbs {
     font-size: 0.85rem;
     margin-bottom: 1rem;
-    color: #666;
+    color: var(--muted);
   }
   .crumbs a {
-    color: #666;
+    color: var(--muted);
     text-decoration: none;
   }
   .crumbs a:hover {
@@ -340,8 +340,8 @@
     gap: 1rem;
     margin: 0.75rem 0 1.5rem;
     padding: 0.5rem 0.75rem;
-    background: #fafafa;
-    border: 1px solid #e4e4e4;
+    background: var(--panel);
+    border: 1px solid var(--border);
     border-radius: 4px;
     font-size: 0.9rem;
   }
@@ -349,37 +349,37 @@
     display: flex;
     align-items: center;
     gap: 0.4rem;
-    color: #555;
+    color: var(--muted);
   }
   .picker-strip select {
     padding: 0.25rem 0.5rem;
-    border: 1px solid #ccc;
+    border: 1px solid var(--border);
     border-radius: 3px;
-    background: white;
+    background: var(--panel);
     font: inherit;
     font-size: 0.85rem;
     font-variant-numeric: tabular-nums;
   }
   .summary {
-    color: #444;
+    color: var(--text);
     font-variant-numeric: tabular-nums;
   }
   .show-all-toggle {
     margin-left: auto;
-    color: #555;
+    color: var(--muted);
     cursor: pointer;
   }
   .show-all-toggle input {
     margin: 0 0.25rem 0 0;
   }
   .empty {
-    color: #666;
+    color: var(--muted);
     font-style: italic;
     padding: 2rem;
     text-align: center;
   }
   .error {
-    color: crimson;
+    color: var(--danger);
   }
   table {
     border-collapse: collapse;
@@ -390,23 +390,23 @@
   td {
     padding: 0.25rem 0.6rem;
     text-align: left;
-    border-bottom: 1px solid #f1f1f1;
+    border-bottom: 1px solid var(--border);
   }
   th {
     font-weight: 600;
     font-size: 0.75rem;
-    color: #555;
-    background: #fafafa;
-    border-bottom: 2px solid #e4e4e4;
+    color: var(--muted);
+    background: var(--panel);
+    border-bottom: 2px solid var(--border);
   }
   th.side.from {
-    background: rgba(255, 245, 230, 0.6);
+    background: var(--panel-2);
   }
   th.side.to {
-    background: rgba(230, 245, 255, 0.6);
+    background: var(--panel-2);
   }
   tr.row-changed > td {
-    background: rgba(255, 250, 200, 0.5);
+    background: var(--warn-soft);
   }
   tr.row-unchanged {
     color: var(--text-muted);

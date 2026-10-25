@@ -978,7 +978,7 @@
     right: 0;
     height: 100vh;
     width: 320px;
-    background: white;
+    background: var(--panel);
     border-left: 1px solid var(--border, #ddd);
     box-shadow: -2px 0 10px rgba(0, 0, 0, 0.05);
     padding: 1rem;
@@ -1012,7 +1012,7 @@
     padding: 0 0.4rem;
   }
   .close:hover {
-    color: black;
+    color: var(--text);
   }
   dl {
     display: grid;
@@ -1049,8 +1049,8 @@
     color: var(--text-muted, #555);
   }
   .shared-warning {
-    background: #fff8e1;
-    border: 1px solid #f0c36d;
+    background: var(--panel-2);
+    border: 1px solid var(--warn);
     border-radius: 4px;
     padding: 0.5rem 0.6rem;
     font-size: 0.82rem;
@@ -1086,7 +1086,7 @@
     margin-top: 0.25rem;
     padding: 0.4rem 1rem;
     background: var(--accent, #2c7a7b);
-    color: white;
+    color: var(--accent-text);
     border: none;
     border-radius: 4px;
     cursor: pointer;
@@ -1123,8 +1123,8 @@
     margin: 0.2rem 0 0;
   }
   .macro-warning {
-    background: #eaf6f6;
-    border-color: #80cbc4;
+    background: var(--panel-2);
+    border-color: var(--accent);
   }
 
   /* §16.2.5 c2 — Move + Structural panels share the retype panel's
@@ -1162,13 +1162,13 @@
   }
   .delete-row .delete:hover {
     background: var(--error, #c0392b);
-    color: white;
+    color: var(--accent-text);
   }
   /* c2 review #3 — armed state: button is filled red until the
      operator confirms (or the 3s window expires). */
   .delete-row .delete.armed {
     background: var(--error, #c0392b);
-    color: white;
+    color: var(--accent-text);
     font-weight: 600;
   }
 </style>

@@ -79,9 +79,10 @@ def latest_version(cache: Path, fetch=None, now: float | None = None, force: boo
         return known
     try:
         latest = fetch()
-    except Exception as exc:  # offline, proxy, GitHub down: try again tomorrow
+    except Exception as exc:  # offline, proxy, GitHub down: try again next time
         logger.info("Couldn't check for a new version: %s", exc)
-        latest = known
+        return known  # not cached as checked, so the next hourly look retries
+    logger.info("Newest Station Studio release: %s", latest)
     try:
         cache.parent.mkdir(parents=True, exist_ok=True)
         cache.write_text(json.dumps({"checked": now, "latest": latest}), encoding="utf-8")

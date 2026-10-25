@@ -141,7 +141,7 @@
   }
   .pill {
     padding: 0.15rem 0.55rem;
-    background: white;
+    background: var(--panel);
     border: 1px solid var(--border, #ccc);
     border-radius: 999px;
     cursor: pointer;
@@ -154,7 +154,7 @@
   }
   .pill.active {
     background: var(--accent, #2c7a7b);
-    color: white;
+    color: var(--accent-text);
     border-color: var(--accent, #2c7a7b);
   }
   .pill:focus-visible {

@@ -66,8 +66,12 @@ def test_latest_version_is_asked_once_a_day(tmp_path):
     def offline():
         raise OSError("no network")
 
-    # Offline: keep what was known, quietly.
+    # Offline: keep what was known, quietly, and try again next time
+    # rather than waiting a day.
     assert updates.latest_version(cache, fetch=offline, force=True) == "1.7.0"
+    later = 1000 + 2 * updates.CHECK_EVERY + 2  # a day after the last good check
+    assert updates.latest_version(cache, fetch=offline, now=later) == "1.7.0"
+    assert updates.latest_version(cache, fetch=lambda: "1.8.0", now=later + 3600) == "1.8.0"
 
 
 # ---------- selfupdate: fetching and checking the download ----------
