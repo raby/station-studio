@@ -94,3 +94,29 @@ def test_installed_app_on_linux(tmp_path):
         f"--profile-directory=Default --app-id={app_id}\n")
     assert window.installed_app_id(profile, tmp_path, "linux") == app_id
     assert window.installed_app_id(profile, tmp_path, "win32") is None
+
+
+def test_the_mac_app_bundle_is_found_only_in_the_mac_app():
+    exe = "/Applications/Station Studio.app/Contents/MacOS/station-studio-server"
+    assert window.mac_app_bundle("darwin", exe, True) == Path("/Applications/Station Studio.app")
+    assert window.mac_app_bundle("darwin", exe, False) is None  # pipx
+    assert window.mac_app_bundle("win32", exe, True) is None
+    assert window.mac_app_bundle("darwin", "/usr/local/bin/python3", True) is None
+
+
+def test_in_the_mac_app_its_own_window_opens(tmp_path):
+    ran = []
+    app = Path("/Applications/Station Studio.app")
+    assert window.open_ui("http://127.0.0.1:8001/", tmp_path, exe="/chrome", run=ran.append, app=app) == "window"
+    assert ran == [["/usr/bin/open", str(app)]]
+
+
+def test_download_names_and_free_paths(tmp_path):
+    assert window.download_name('attachment; filename="Week 1.xml"', "http://x/api/export") == "Week 1.xml"
+    assert window.download_name("attachment; filename=../../evil.sh", "http://x/a") == "evil.sh"
+    assert window.download_name(None, "http://x/api/traces/abc.json?x=1") == "abc.json"
+    assert window.download_name(None, "http://x/") == "download"
+    (tmp_path / "a.xml").write_text("")
+    (tmp_path / "a 2.xml").write_text("")
+    assert window.free_path(tmp_path, "a.xml") == tmp_path / "a 3.xml"
+    assert window.free_path(tmp_path, "b.xml") == tmp_path / "b.xml"

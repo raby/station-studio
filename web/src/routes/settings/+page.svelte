@@ -122,7 +122,7 @@
             Start Station Studio in the background when I log in
           </label>
         {/if}
-        {#if state.browser}
+        {#if state.browser || state.mac_app}
           <label>
             <input
               type="checkbox"
@@ -135,7 +135,11 @@
                   `Own window turned ${e.currentTarget.checked ? 'on' : 'off'}. This applies the next time Station Studio opens.`,
                 )}
             />
-            Open in a window of its own (using {state.browser}), not a browser tab
+            {#if state.mac_app}
+              Open in Station Studio's own window, not a browser tab
+            {:else}
+              Open in a window of its own (using {state.browser}), not a browser tab
+            {/if}
           </label>
         {/if}
         {#if state.kind}
@@ -156,7 +160,7 @@
         {/if}
       </div>
 
-      {#if !state.browser}
+      {#if !state.browser && !state.mac_app}
         <p class="help">
           Station Studio opens in a browser tab. With Google Chrome, Microsoft Edge or Brave installed it opens in a
           window of its own instead.

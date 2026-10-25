@@ -10,18 +10,22 @@
   import { STATE_EVENT, UPDATE_EVENT } from '$lib/appEvents';
   import {
     getAppState,
+    openAppWindow,
     quitApp,
     stageText,
     startUpdate,
     waitForRestart,
     type AppState,
   } from '$lib/desktopApp';
+  import { isNative, tellApp } from '$lib/native';
 
   // Injectable for tests.
   export let fetchFn: typeof fetch = (...args) => fetch(...args);
   export let reload: () => void = () => location.reload();
   export let sleep: ((ms: number) => Promise<void>) | undefined = undefined;
   export let closeWindow: () => void = () => window.close();
+  // Inside the Mac app's own window (see $lib/native).
+  export let native: boolean = isNative();
   // How often to look again, so a new version's notice turns up on a
   // page that's been open a while (the app checks GitHub once a day).
   export let refreshEvery = 5 * 60 * 1000;
@@ -31,6 +35,9 @@
   // Not now hides the notice for that version, as in Station Player.
   const DISMISSED = 'station-studio:dismissed-update';
   let dismissed: string | null = remembered();
+  // The Mac app's own window is offered once to a browser window or tab.
+  const OFFERED = 'station-studio:mac-window-offered';
+  let offered = remembered(OFFERED) !== null;
   let stopped = false;
   let busy = false;
   let poll: ReturnType<typeof setInterval> | null = null;
@@ -63,9 +70,9 @@
   });
 
   // From the Settings page (see $lib/appEvents).
-  function remembered(): string | null {
+  function remembered(key = DISMISSED): string | null {
     try {
-      return localStorage.getItem(DISMISSED);
+      return localStorage.getItem(key);
     } catch {
       return null; // private window: nothing remembered
     }
@@ -76,6 +83,23 @@
       localStorage.setItem(DISMISSED, version);
     } catch {
       /* forget it next time */
+    }
+  }
+
+  function offerDone(): void {
+    offered = true;
+    try {
+      localStorage.setItem(OFFERED, '1');
+    } catch {
+      /* offered again next time */
+    }
+  }
+  async function openWindow(): Promise<void> {
+    offerDone();
+    try {
+      await openAppWindow(fetchFn);
+    } catch (e) {
+      error = (e as Error).message;
     }
   }
 
@@ -139,6 +163,8 @@
     if (!ok) return;
     try {
       await quitApp(fetchFn);
+      // The Mac app's own window quits with it.
+      if (native && tellApp('quit')) return;
       stopped = true;
       // In Station Studio's own window, close it too (a browser tab
       // won't let a page close it, and keeps the stopped notice).
@@ -176,6 +202,15 @@
         {#if state.release_page}
           <a href={state.release_page} target="_blank" rel="noopener">What's new</a>
         {/if}
+      </span>
+    {/if}
+    {#if state.mac_app && !native && state.settings.own_window && !offered}
+      <span class="notice" data-testid="app-window-offer">
+        Station Studio now has a window of its own.
+        <span class="row">
+          <button type="button" class="primary" on:click={openWindow} data-testid="app-window-open">Open it</button>
+          <button type="button" on:click={offerDone} data-testid="app-window-later">Not now</button>
+        </span>
       </span>
     {/if}
     {#if failed}

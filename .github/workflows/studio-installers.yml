@@ -19,6 +19,8 @@ on:
     paths:
       - 'packaging/**'
       - 'station_studio/desktop.py'
+      - 'station_studio/macwindow.py'
+      - 'station_studio/window.py'
       - 'station_studio/selfupdate.py'
       - 'station_studio/updates.py'
       - '.github/workflows/studio-installers.yml'
@@ -81,7 +83,10 @@ jobs:
           npm run build
 
       - name: tools
-        run: python -m pip install . "pyinstaller>=6.10,<7" certifi
+        run: |
+          python -m pip install . "pyinstaller>=6.10,<7" certifi
+          # The Mac app's own window (macwindow.py); Quartz only for the check below.
+          if [ "${{ matrix.kind }}" = mac ]; then python -m pip install pyobjc-framework-WebKit pyobjc-framework-Quartz; fi
 
       - name: read version
         id: version
@@ -138,6 +143,52 @@ jobs:
             curl -sSf -X POST -H 'X-Station-Studio: 1' http://127.0.0.1:8002/api/app/quit
           fi
           echo "smoke OK"
+
+      - name: try the Mac app's own window
+        if: matrix.kind == 'mac'
+        run: |
+          set -e
+          APP="build/dist/Station Studio.app"
+          REPORT="$RUNNER_TEMP/selftest.json"
+          rm -f "$REPORT"
+          plutil -extract LSUIElement raw "$APP/Contents/Info.plist" 2>/dev/null && { echo "the app must have a Dock icon"; exit 1; } || true
+          # Opened the way the Finder opens it, so macOS knows it as the app.
+          open --env "STATION_STUDIO_SELFTEST=$REPORT" --env "STATION_STUDIO_HOME=$STATION_STUDIO_HOME" "$APP"
+          trap 'pkill -f "Station Studio.app/Contents/MacOS/Station Studio" || true; pkill -f station-studio-server || true; echo "--- log"; cat "$STATION_STUDIO_HOME/station-studio.log" 2>/dev/null || true' EXIT
+          for i in $(seq 1 120); do [ -s "$REPORT" ] && break; sleep 1; done
+          echo "page: $(cat "$REPORT" 2>/dev/null)"
+          python - "$REPORT" <<'PY'
+          import json, sys
+          import Quartz
+          report = json.load(open(sys.argv[1]))
+          assert report["native"] and report["bridge"], report
+          assert report["sidebar"], report
+          assert "StationStudioApp/" in report["agent"], report
+          assert not report["serviceWorker"], report
+          wins = Quartz.CGWindowListCopyWindowInfo(Quartz.kCGWindowListOptionOnScreenOnly, Quartz.kCGNullWindowID)
+          ours = [w for w in wins if w.get("kCGWindowOwnerName") == "Station Studio" and w.get("kCGWindowLayer") == 0]
+          print("windows:", [dict(w.get("kCGWindowBounds")) for w in ours])
+          assert ours, "no Station Studio window on screen"
+          b = ours[0]["kCGWindowBounds"]
+          open(sys.argv[1] + ".rect", "w").write("%d,%d,%d,%d" % (b["X"], b["Y"], b["Width"], b["Height"]))
+          PY
+          screencapture -x -R"$(cat "$REPORT.rect")" "$RUNNER_TEMP/window.png"
+          mkdir -p shots
+          sips -Z 1200 -s format jpeg -s formatOptions 60 "$RUNNER_TEMP/window.png" --out "shots/window-${{ matrix.arch }}.jpg" >/dev/null
+          # Quit as the menu's Quit does: Station Studio stops and the window app exits.
+          osascript -e 'tell application id "io.github.raby.StationStudio" to quit'
+          for i in $(seq 1 30); do pgrep -f "Station Studio.app/Contents/MacOS/Station Studio" >/dev/null || break; sleep 1; done
+          if pgrep -f "Station Studio.app/Contents/MacOS/Station Studio" >/dev/null; then echo "the app didn't quit"; exit 1; fi
+          if curl -sf http://127.0.0.1:8001/api/app >/dev/null; then echo "Station Studio kept running after Quit"; exit 1; fi
+          echo "own window OK"
+
+      - uses: actions/upload-artifact@v6
+        if: always() && matrix.kind == 'mac'
+        with:
+          name: station-studio-window-${{ matrix.arch }}
+          path: shots/*
+          retention-days: 7
+          if-no-files-found: ignore
 
       - name: make the .dmg
         if: matrix.kind == 'mac'

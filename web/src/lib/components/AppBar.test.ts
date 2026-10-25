@@ -174,6 +174,48 @@ describe('AppBar', () => {
     expect((fetchFn as unknown as ReturnType<typeof vi.fn>).mock.calls.some(([u]) => u === '/api/app/quit')).toBe(true);
   });
 
+  it("Quit in the Mac app's own window quits the app too", async () => {
+    const fetchFn = vi.fn(async (url: string) => (url === '/api/app/quit' ? json({ ok: true }) : json(appState({ mac_app: true })))) as unknown as typeof fetch;
+    const postMessage = vi.fn();
+    (window as unknown as { webkit: unknown }).webkit = { messageHandlers: { stationApp: { postMessage } } };
+    try {
+      const { findByTestId } = render(AppBar, { props: { fetchFn, native: true } });
+      await fireEvent.click(await findByTestId('app-quit'));
+      answerConfirmDialog(true);
+      await waitFor(() => expect(postMessage).toHaveBeenCalledWith('quit'));
+    } finally {
+      delete (window as unknown as { webkit?: unknown }).webkit;
+    }
+  });
+
+  it("offers the Mac app's own window once to a browser window", async () => {
+    localStorage.removeItem('station-studio:mac-window-offered');
+    const fetchFn = vi.fn(async (url: string) =>
+      url === '/api/app/window' ? json({ ok: true }) : json(appState({ mac_app: true })),
+    ) as unknown as typeof fetch;
+    const { findByTestId, queryByTestId } = render(AppBar, { props: { fetchFn } });
+    await fireEvent.click(await findByTestId('app-window-open'));
+    expect(queryByTestId('app-window-offer')).toBeNull();
+    const calls = (fetchFn as unknown as ReturnType<typeof vi.fn>).mock.calls;
+    await waitFor(() => expect(calls.some(([u, init]) => u === '/api/app/window' && init?.method === 'POST')).toBe(true));
+    cleanup();
+    const again = render(AppBar, { props: { fetchFn } });
+    expect(await again.findByTestId('app-bar')).toBeInTheDocument();
+    expect(again.queryByTestId('app-window-offer')).toBeNull();
+  });
+
+  it("doesn't offer the window inside it, or with own window off", async () => {
+    localStorage.removeItem('station-studio:mac-window-offered');
+    const inside = render(AppBar, { props: { fetchFn: vi.fn(async () => json(appState({ mac_app: true }))), native: true } });
+    expect(await inside.findByTestId('app-bar')).toBeInTheDocument();
+    expect(inside.queryByTestId('app-window-offer')).toBeNull();
+    cleanup();
+    const off = appState({ mac_app: true, settings: { own_window: false, check_updates: true } });
+    const tab = render(AppBar, { props: { fetchFn: vi.fn(async () => json(off)) } });
+    expect(await tab.findByTestId('app-bar')).toBeInTheDocument();
+    expect(tab.queryByTestId('app-window-offer')).toBeNull();
+  });
+
   it('Quit cancelled does nothing', async () => {
     const fetchFn = vi.fn(async () => json(appState())) as unknown as typeof fetch;
     const { findByTestId, queryByTestId } = render(AppBar, { props: { fetchFn } });

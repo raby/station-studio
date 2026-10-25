@@ -56,6 +56,7 @@
       lines: [
         ['When a new version is out, ', { b: 'Update now' }, ' appears at the foot of the sidebar. Your stations, pools and playlists are kept.'],
         [{ b: 'Settings' }, ' has Check for updates, ', { b: 'Start Station Studio in the background when I log in' }, ', and whether it opens in a window of its own.'],
+        [{ b: 'On a Mac' }, ', the downloaded Station Studio has a window of its own, like Apple Music: closing the window leaves Station Studio running, clicking its Dock icon brings it back, and its menus have Go, Settings (⌘,) and Quit (⌘Q). Right-click its Dock icon for New station and Source pools.'],
         [{ b: 'Install Station Studio as an app' }, ' (in Settings, with Chrome, Edge or Brave) gives it its own icon in the Dock or taskbar. Right-click that icon for New station and Source pools.'],
         [{ b: 'Quit' }, ' at the foot of the sidebar stops Station Studio until you open it again.'],
       ],

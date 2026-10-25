@@ -4,6 +4,23 @@ All notable changes are listed here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses semantic versioning.
 
+## [1.9.0] - 2026-10-25
+
+### Added
+
+- **A real Mac app.** The downloaded Mac app shows Station Studio in a
+  window of its own (WebKit, no Chrome needed), with its own Dock icon
+  and menus: About, Settings (⌘,), Check for Updates, Edit, Go
+  (Stations ⌘1, Source pools ⌘2, New station ⌘N), Window and Help.
+  Closing the window leaves Station Studio running, and clicking its
+  Dock icon brings the window back, as with Apple Music. ⌘Q (or Quit at
+  the foot of the sidebar) stops Station Studio. Downloads go to your
+  Downloads folder and links to other sites open in your browser.
+- A Station Studio already open in a Chrome window or browser tab says
+  once that Station Studio now has a window of its own, with **Open
+  it**. Turning off **Open in Station Studio's own window** in Settings
+  goes back to the browser.
+
 ## [1.8.0] - 2026-10-25
 
 ### Added

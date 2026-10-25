@@ -11,9 +11,13 @@ Installed as an app from that window (Install as an app, at the foot of
 the sidebar), it's a proper app in the browser's eyes: its own name, icon
 and menu in the Dock, Alt-Tab and the taskbar. From then on it's opened
 that way (`--app-id`).
+
+The downloaded Mac app needs none of that: it has a window of its own
+(macwindow.py), so opening Station Studio there means opening the app.
 """
 from __future__ import annotations
 
+import email.message
 import os
 import plistlib
 import re
@@ -22,6 +26,7 @@ import subprocess
 import sys
 import webbrowser
 from pathlib import Path
+from urllib.parse import urlparse
 
 _MAC_APPS = ("Google Chrome", "Microsoft Edge", "Brave Browser", "Chromium", "Vivaldi")
 _LINUX_NAMES = ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser",
@@ -117,10 +122,33 @@ def window_command(exe: str, url: str, profile: Path, app_id: str | None = None)
     ]
 
 
+def mac_app_bundle(platform: str | None = None, executable: str | None = None,
+                   frozen: bool | None = None) -> Path | None:
+    """The downloaded Station Studio.app this runs from, whose own window
+    shows Station Studio (see macwindow.py); None anywhere else."""
+    platform = platform or sys.platform
+    frozen = bool(getattr(sys, "frozen", False)) if frozen is None else frozen
+    if platform != "darwin" or not frozen:
+        return None
+    exe = Path(executable or sys.executable)
+    if len(exe.parents) < 3 or exe.parent.name != "MacOS" or exe.parents[2].suffix != ".app":
+        return None
+    return exe.parents[2]
+
+
 def open_ui(url: str, home: Path, own_window: bool = True, exe: str | None = None, run=None,
-            tab=webbrowser.open) -> str:
+            tab=webbrowser.open, app: Path | None = None) -> str:
     """Show Station Studio: in its own window when possible, else a
     browser tab. Returns "window" or "tab"."""
+    app = app if app is not None else (mac_app_bundle() if own_window else None)
+    if own_window and app:
+        # Opens the app, or brings its window back if it's running.
+        try:
+            proc = (run or _spawn)(["/usr/bin/open", str(app)])
+            if not _failed(proc, wait=10):
+                return "window"
+        except OSError:
+            pass
     exe = exe if exe is not None else (find_browser() if own_window else None)
     if own_window and exe:
         profile = home / "window"
@@ -156,3 +184,28 @@ def _spawn(cmd: list[str]) -> subprocess.Popen:
     # The downloaded app's own libraries mustn't leak into the browser.
     env = {k: v for k, v in os.environ.items() if k not in ("DYLD_LIBRARY_PATH", "LD_LIBRARY_PATH")}
     return subprocess.Popen(cmd, env=env, **kwargs)
+
+
+# ---- for the Mac app's window (macwindow.py), which saves downloads itself ----
+
+def download_name(disposition: str | None, url: str) -> str:
+    """The file name a download is saved under: the server's, else the
+    last part of the address."""
+    if disposition:
+        msg = email.message.Message()
+        msg["Content-Disposition"] = disposition
+        name = msg.get_filename()
+        if name:
+            return Path(name).name
+    return Path(urlparse(url).path).name or "download"
+
+
+def free_path(folder: Path, name: str) -> Path:
+    """`folder/name`, or `name 2`, `name 3`… when that's taken."""
+    target = folder / name
+    stem, suffix = Path(name).stem, Path(name).suffix
+    n = 2
+    while target.exists():
+        target = folder / f"{stem} {n}{suffix}"
+        n += 1
+    return target

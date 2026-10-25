@@ -29,6 +29,8 @@ export interface AppState {
   login: boolean | null;
   /** The browser that draws its own window, or null when there isn't one. */
   browser: string | null;
+  /** The downloaded Mac app, which has a window of its own (macwindow.py). */
+  mac_app?: boolean;
 }
 
 export interface AppSettings {
@@ -80,6 +82,11 @@ export async function changeAppSettings(change: SettingsChange, fetchFn: typeof 
 /** Ask GitHub for the newest version now. */
 export async function checkNow(fetchFn: typeof fetch = fetch): Promise<AppState> {
   return (await post('/api/app/check', {}, fetchFn)).json();
+}
+
+/** Ask the Mac app to show its own window. */
+export async function openAppWindow(fetchFn: typeof fetch = fetch): Promise<void> {
+  await post('/api/app/window', {}, fetchFn);
 }
 
 export async function quitApp(fetchFn: typeof fetch = fetch): Promise<void> {

@@ -416,6 +416,64 @@ def test_downloaded_app_replaces_an_older_copy(monkeypatch):
     assert quits == ["http://127.0.0.1:8001/"] and served == [8001]
 
 
+def _mac_app(monkeypatch, tmp_path, running):
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(desktop, "_log_to_file", lambda: None)
+    monkeypatch.setattr(desktop, "_mac_app_itself", lambda: True)
+    monkeypatch.setattr(desktop, "get_home", lambda: tmp_path)
+    monkeypatch.delenv("STATION_STUDIO_TAB", raising=False)
+    monkeypatch.setattr(desktop, "running_instance", lambda base: running)
+    monkeypatch.setattr(desktop, "serve", lambda *a: pytest.fail("the app itself must not serve"))
+    windows, helpers = [], []
+    monkeypatch.setattr(desktop, "_own_mac_window", lambda base: windows.append(base) or 0)
+    monkeypatch.setattr(desktop, "_start_mac_helper", helpers.append)
+    monkeypatch.setattr(desktop, "wait_for", lambda base, s: True)
+    return windows, helpers
+
+
+def test_mac_app_is_station_studios_own_window(monkeypatch, tmp_path):
+    windows, helpers = _mac_app(monkeypatch, tmp_path, None)
+    assert desktop.main([]) == 0
+    assert helpers == [desktop.DEFAULT_PORT] and windows == ["http://127.0.0.1:8001/"]
+
+
+def test_mac_app_window_shows_the_copy_already_running(monkeypatch, tmp_path):
+    windows, helpers = _mac_app(monkeypatch, tmp_path, {"service": "station-studio", "app": True,
+                                                        "version": __version__})
+    assert desktop.main([]) == 0
+    assert helpers == [] and windows == ["http://127.0.0.1:8001/"]
+
+
+def test_mac_app_without_its_own_window_opens_the_browser(monkeypatch, tmp_path):
+    windows, helpers = _mac_app(monkeypatch, tmp_path, {"service": "station-studio", "app": True,
+                                                        "version": __version__})
+    appsettings.save(tmp_path, {"own_window": False})
+    shown = []
+    monkeypatch.setattr(desktop, "open_browser", shown.append)
+    assert desktop.main([]) == 0
+    assert windows == [] and shown == ["http://127.0.0.1:8001/"]
+    # A station-studio: link starts it with no window at all.
+    appsettings.save(tmp_path, {"own_window": True})
+    assert desktop.main(["station-studio://start"]) == 0 and windows == []
+
+
+def test_window_route_opens_the_mac_apps_own_window(monkeypatch):
+    client, desk, _ = make_app()
+    h = {desktop.API_HEADER: "1"}
+    assert client.get("/api/app").json()["mac_app"] is False
+    assert client.post("/api/app/window", headers=h).status_code == 409
+    opened = []
+    monkeypatch.setattr(desktop, "open_browser", opened.append)
+    desk.mac_app = True
+    assert client.post("/api/app/window").status_code == 403
+    assert client.post("/api/app/window", headers=h).json() == {"ok": True}
+    for _ in range(50):
+        if opened:
+            break
+        time.sleep(0.02)
+    assert opened == ["http://127.0.0.1:8001/"]
+
+
 def test_cli_app_subcommand_hands_over(monkeypatch):
     from click.testing import CliRunner
 
