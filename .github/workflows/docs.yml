@@ -132,6 +132,15 @@ jobs:
         run: |
           cp -R player/car site/car
           test -f site/car/index.html && test -f site/car/car.js && test -f site/car/icon-512.png
+      - name: add the Station Player Home page picks
+        # player/station_player/static/picks.json (and its pictures in
+        # picks/): what Station Player's Home page suggests. Players fetch
+        # it from here, so a change shows up without a new version.
+        run: |
+          mkdir -p site/feed
+          python -c "import json; json.load(open('player/station_player/static/picks.json'))"
+          cp player/station_player/static/picks.json site/feed/picks.json
+          if [ -d player/station_player/static/picks ]; then cp -R player/station_player/static/picks site/feed/picks; fi
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

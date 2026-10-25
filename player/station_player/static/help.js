@@ -7,7 +7,8 @@ const HELP = [
     "Station Player plays your music, the playlists Station Studio makes and internet radio, all in one window.",
     ["Add music in the sidebar shows the music it found on your computer. Click ", ["Add"], " beside a folder, or choose one yourself with ", ["Add a music folder"], "."],
     "Each music folder appears under Folders in the sidebar as a playlist of its own. Station Studio's weekly playlists appear by themselves once Station Studio has exported them.",
-    "Close the window and open it again and you're back where you left off: the same playlist and track, paused at the same point.",
+    "Station Player opens on Home: what's on now from Rebirth (it changes with the time of day), the stations you played lately, your stations, and your music. Click a tile to play it.",
+    "Close the window and open it again and the same track is ready, paused at the same point.",
     ["To open it like any other app, turn on the shortcut in ", ["Settings › App"], ". Turn on ", ["Start Station Player in the background when I log in"], " too and it opens instantly, and alarms work."],
   ], { label: "Add music", view: { type: "welcome" } }],
   ["music", "Playing music", [
@@ -27,7 +28,7 @@ const HELP = [
   ]],
   ["radio", "Radio", [
     "Stations in the sidebar lists your radio stations. Rebirth Radio and Rebirth Classics are there to start with.",
-    ["Find stations searches thousands of stations from around the world by name, genre or country. ", ["Listen"], " tries one, and ", ["Add"], " keeps it. A station you add while browsing a genre is tagged with that genre."],
+    ["Discover in the sidebar finds new stations: turn the globe to hear the news, talk or music from anywhere in the world, or search thousands of stations by name, genre or country. ", ["Listen"], " tries one, and ", ["Add"], " keeps it. A station you add while browsing a genre is tagged with that genre."],
     "When a station sends the name of the song it's playing, you'll see it on the station and in the bar at the bottom.",
     ["To add a station by its web address, paste its stream link under ", ["Add a station by its link"], ". ", ["Test"], " checks it plays first."],
     ["The pencil on a station renames it, changes its link, gives it a logo, moves it up or down, or removes it."],

@@ -258,9 +258,27 @@ read again on later scans.
   minutes to an hour and a half (fading out over the last 20 seconds),
   or at the end of the track playing.
 
+## Home
+
+Station Player opens on **Home**: a greeting, what's on now from
+Rebirth, the stations you played lately, your stations, ways into
+Discover, and your music. Click a tile to play it.
+
+The Rebirth picks come from
+[`station_player/static/picks.json`](station_player/static/picks.json),
+which is published with the docs on GitHub Pages. Edit it on GitHub and
+every player picks up the change within the hour, with no new version.
+Each pick has a title and a station (its stream link), and can have a
+line of text, the button's words, a picture (in `static/picks/`), times
+of day (`from` and `to`, 24-hour local time; `22:00` to `06:00` runs
+overnight), days of the week, and first and last dates. The player asks
+for the file at most once an hour, keeps the last good copy, and uses
+the copy it shipped with until then.
+
 ## Finding radio stations
 
-**Find stations** on the Radio page searches
+**Discover** in the sidebar has the globe (with News and Music) and
+**Find stations**, which searches
 [Radio Browser](https://www.radio-browser.info), a free community
 directory of tens of thousands of stations. It opens on the most popular
 stations in your country (from your computer's language settings; choose
