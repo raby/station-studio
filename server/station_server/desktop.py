@@ -89,6 +89,10 @@ class Login:
 
     def set(self, on: bool) -> None:
         cmd = launch_command(True, self.platform, self.python)
+        if on and (cmd[0].startswith("/Volumes/") or "/AppTranslocation/" in cmd[0]):
+            # The disk image, or where macOS put a download not yet moved
+            # out of it: gone after the next restart.
+            raise ValueError("Move Station Server into your Applications folder first, then turn this on from there")
         if self.platform == "windows":
             if on:
                 self._reg().set(APP_NAME, subprocess.list2cmdline(cmd))

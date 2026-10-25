@@ -6,4 +6,4 @@ with each track's title. No sound card is involved, so nothing else
 playing on the computer reaches the broadcast.
 """
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"

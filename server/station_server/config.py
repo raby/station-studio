@@ -111,6 +111,7 @@ def clean_station(data: dict, existing: Station | None = None) -> Station:
 class Config:
     stations: list[Station] = field(default_factory=list)
     open_window: bool = True
+    check_updates: bool = True  # look for a new version once a day
 
     def station(self, sid: str) -> Station | None:
         return next((s for s in self.stations if s.id == sid), None)
@@ -142,7 +143,8 @@ class ConfigStore:
             logger.warning(message)
             self.warnings.append(message)
             return Config()
-        cfg = Config(open_window=bool(data.get("open_window", True)))
+        cfg = Config(open_window=bool(data.get("open_window", True)),
+                     check_updates=bool(data.get("check_updates", True)))
         for raw in data.get("stations") or []:
             if not isinstance(raw, dict):
                 continue
@@ -157,6 +159,7 @@ class ConfigStore:
             self.home.mkdir(parents=True, exist_ok=True)
             data = {
                 "open_window": self.config.open_window,
+                "check_updates": self.config.check_updates,
                 "stations": [s.to_json() for s in self.config.stations],
             }
             tmp = self.path.with_suffix(".tmp")

@@ -10,18 +10,19 @@ inside Station Server. Nothing else playing on the computer (a YouTube
 video, system sounds) can reach the broadcast, and one computer can run
 both stations.
 
-**Status: 0.3: an app you download and install, running as many stations
-as you like on one computer.** Each station has its own playlist, server
+**Status: 0.4: an app you download and install, running as many stations
+as you like on one computer, that updates itself.** Each station has its own playlist, server
 and play log. See the
 [plan](https://claude.ai/artifact/RMcRHeFUDnw2BTvhGskcmd).
 
 ## Install
 
 **Download** (no Python or terminal needed): a Mac `.dmg` (Apple Silicon
-or Intel) or a Windows setup `.exe`, each with its own ffmpeg. Until
-there's a release they're built for every pull request that changes
-Station Server: open the pull request's *Checks* › **Station Server
-installers** run, and download from its *Artifacts*.
+or Intel) or a Windows setup `.exe`, each with its own ffmpeg. They're on
+each `server-v…` release of this repository. They're also built for
+every pull request that changes Station Server: open the pull request's
+*Checks* › **Station Server installers** run, and download from its
+*Artifacts*.
 
 - **Mac:** open the `.dmg` and drag Station Server to Applications. The
   first time, macOS says it can't check the app: open System Settings ›
@@ -89,8 +90,17 @@ keeps trying rather than dropping off the server.
 for PRS and PPL returns (the same format as station-player's).
 
 **Dock and taskbar icon.** In the app window, Settings → *Install as app*
-gives Station Server its own icon in the Dock or taskbar, and it opens that
-way from then on.
+gives Station Server its own icon in the Dock or taskbar, with Add a
+station and Play log on its menu, and it opens that way from then on.
+Opened from there while Station Server isn't running, the window starts it
+(through the `station-server://` link the app registers) and waits.
+
+**New versions.** As in Station Player and Station Studio, a note at the
+foot of the sidebar says when a new version is out, and Settings ›
+Updates has *Check for updates* and *Update now*: the downloaded app
+fetches the new version from its GitHub release, checks it's the genuine
+file, and restarts; stations that were on air go back on air. It asks
+GitHub once a day; turn that off in Settings.
 
 **Two stations on one computer.** Add a station for each; they run side
 by side, each with its own playlist, server, clock and play log, and go on
@@ -210,6 +220,14 @@ playlist XML ─► each track decoded by ffmpeg ─► mixer (gapless, levelled
   audio is first sent.
 - **Dropped connection.** If the server goes away, Station Server keeps
   playing and reconnects every 5 seconds. A track it can't read is skipped.
+
+## Releasing
+
+Bump the version in `server/pyproject.toml` and
+`server/station_server/__init__.py`, merge, then run Actions ›
+**Publish Station Server** on main. It tests, makes a draft
+`server-v<version>` release, builds the Mac and Windows downloads onto
+it, and publishes it once they're all there.
 
 ## Development
 

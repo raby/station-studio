@@ -15,7 +15,7 @@ from pathlib import Path
 
 from station_player.playlog import PlayLog
 
-from station_server import __version__
+from station_server import __version__, selfupdate, updates
 from station_server.audio import FfmpegMissing, find_ffmpeg, has_mp3_encoder
 from station_server.channel import Channel, NowPlaying
 from station_server.config import Config, ConfigStore, Station, clean_station, newest_week
@@ -233,6 +233,8 @@ class ServerApp:
         for st in self.config.stations:
             self.runners[st.id] = StationRunner(st, self.ffmpeg, self.store.home / "logs")
         self.started = time.time()
+        self.updater: selfupdate.Updater | None = None  # set by web.make_server
+        self.latest: str | None = None  # the newest release, once looked up
 
     @property
     def config(self) -> Config:
@@ -244,9 +246,23 @@ class ServerApp:
             if st.on_air:
                 self.runners[st.id].start()
 
+    def check_for_updates(self, force: bool = False, fetch=None) -> str | None:
+        """Look for a new version: at most once a day unless `force`, and
+        not at all with Settings › Tell me when a new version is out off."""
+        if force or self.config.check_updates:
+            self.latest = updates.latest_version(self.store.home / "update-check.json", fetch=fetch, force=force)
+        return self.latest
+
     def state(self) -> dict:
+        latest = self.latest if updates.is_newer(self.latest, __version__) else None
+        kind = self.updater.kind if self.updater else selfupdate.install_kind()
         return {
             "version": __version__,
+            "update": latest,
+            "updating": self.updater.status() if self.updater else None,
+            "can_update": kind in ("mac", "windows"),
+            "release_page": selfupdate.RELEASE_PAGE.format(version=latest) if latest else None,
+            "check_updates": self.config.check_updates,
             "ffmpeg": self.ffmpeg,
             "ffmpeg_error": self.ffmpeg_error,
             "warnings": self.store.warnings,

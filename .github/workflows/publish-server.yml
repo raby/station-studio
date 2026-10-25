@@ -1,0 +1,117 @@
+# Station Server release: the Mac and Windows downloads.
+#
+# Run it from the Actions tab ("Publish Station Server" → Run workflow) on
+# main, after bumping the version in server/pyproject.toml and
+# server/station_server/__init__.py. It runs the server's tests, makes a
+# DRAFT GitHub release `server-v<version>`, builds the downloads onto it
+# (server-installers.yml), and only then publishes the release. The app's
+# new-version notice and Update now only ever see published releases, so
+# nobody is offered a version whose download isn't there.
+#
+# If a download job fails (the Apple Silicon runner sometimes sits queued
+# until cancelled), use "Re-run failed jobs" on the run: the draft is kept
+# and the release is published once they pass.
+#
+# Tags are `server-v*`: `v*` is Station Studio's PyPI release, `studio-v*`
+# its app, `player-v*` Station Player's.
+
+name: Publish Station Server
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: publish-server
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: test, draft GitHub release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # create the draft release
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: read version
+        id: version
+        run: |
+          VERSION=$(python -c 'import tomllib; print(tomllib.load(open("server/pyproject.toml","rb"))["project"]["version"])')
+          PKG=$(python -c 'import re; print(re.search(r"__version__ = \"(.+)\"", open("server/station_server/__init__.py").read())[1])')
+          if [ "$VERSION" != "$PKG" ]; then
+            echo "ERROR: server/pyproject.toml says $VERSION but server/station_server/__init__.py says $PKG." >&2
+            exit 1
+          fi
+          if gh release view "server-v$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "ERROR: release server-v$VERSION already exists. Bump the version first (or, for a draft left by a failed run, re-run that run's failed jobs)." >&2
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: tests
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          python -m pip install pytest
+          cd server && python -m pytest -q
+
+      - name: create the draft release
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          cat > notes.md <<NOTES
+          Station Server $VERSION: puts station-studio's weekly playlists on air to SHOUTcast or Icecast, with no iTunes, loopback cable or Winamp.
+
+          **Download** (the files are below, under Assets):
+
+          - **Mac:** \`StationServer-$VERSION-mac-apple-silicon.dmg\` (Macs from 2020 on with an M chip), or \`-mac-intel.dmg\` for older Macs. Open it and drag Station Server into Applications, then open it from there. The first time, macOS says it can't check the app: open System Settings › Privacy & Security, scroll down and press **Open Anyway**.
+          - **Windows:** \`StationServer-$VERSION-windows-setup.exe\`. If Windows says it protected your PC, press **More info**, then **Run anyway**. It installs just for you, with no administrator password, and adds Station Server to the Start menu.
+
+          Each carries its own ffmpeg. When a newer version is out, Station Server offers **Update now**; stations that were on air go back on air after it restarts.
+
+          Your stations, settings and play logs are kept in the \`.station-server\` folder in your home folder, which updating and uninstalling leave alone.
+
+          NOTES
+          gh release create "server-v$VERSION" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "Station Server $VERSION" \
+            --notes-file notes.md \
+            --draft
+
+  installers:
+    name: Mac and Windows downloads
+    needs: release
+    permissions:
+      contents: write  # attach them to the release
+    uses: ./.github/workflows/server-installers.yml
+    with:
+      release_tag: server-v${{ needs.release.outputs.version }}
+
+  publish:
+    name: publish the release
+    needs: [release, installers]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: check every download is there, then publish
+        run: |
+          set -e
+          TAG="server-v${{ needs.release.outputs.version }}"
+          V="${{ needs.release.outputs.version }}"
+          FILES=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')
+          echo "$FILES"
+          for f in "StationServer-$V-mac-apple-silicon.dmg" "StationServer-$V-mac-intel.dmg" "StationServer-$V-windows-setup.exe"; do
+            echo "$FILES" | grep -qx "$f" || { echo "ERROR: $f is missing" >&2; exit 1; }
+          done
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest=false

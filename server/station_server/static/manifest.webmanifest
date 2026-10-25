@@ -12,5 +12,20 @@
     { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
     { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" },
     { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "launch_handler": { "client_mode": "focus-existing" },
+  "shortcuts": [
+    {
+      "name": "Add a station",
+      "short_name": "Add a station",
+      "url": "/?view=new",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "Play log",
+      "short_name": "Play log",
+      "url": "/?view=log",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    }
   ]
 }

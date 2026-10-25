@@ -26,6 +26,12 @@ from station_server.senders import SenderError, StreamInfo, sender_from_url
 from station_server.web import DEFAULT_PORT
 
 PASSWORD_ENV = "STATION_SERVER_PASSWORD"
+# station-server://start starts Station Server without opening a window:
+# the window asking (the installed app opened from the Dock while Station
+# Server wasn't running, see static/offline.js) is already open. The Mac
+# app registers it in its Info.plist, the Windows setup in the registry.
+URL_SCHEME = "station-server"
+UPDATE_CHECK_EVERY = 60 * 60  # looks hourly; GitHub is asked at most daily
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -205,6 +211,19 @@ def _hand_over(port: int, url: str) -> int:
     return 0
 
 
+def _watch_for_updates(app, every: float = UPDATE_CHECK_EVERY, wait=None) -> None:
+    """Keep the new-version notice current while Station Server runs
+    (a station computer can run for weeks)."""
+    wait = wait or threading.Event().wait
+    while True:
+        try:
+            app.check_for_updates()
+        except Exception:  # never let the check stop Station Server
+            logging.exception("Checking for a new version failed")
+        if wait(every):
+            return
+
+
 def _app(args) -> int:
     from station_server.config import ConfigStore
     from station_server.desktop import CHILD_ENV, app_executable, bundled
@@ -240,13 +259,24 @@ def _app(args) -> int:
     signal.signal(signal.SIGINT, stop)
     if hasattr(signal, "SIGTERM"):
         signal.signal(signal.SIGTERM, stop)
+    threading.Thread(target=_watch_for_updates, args=(app,), name="update-check", daemon=True).start()
     if not args.no_window:
         threading.Timer(0.3, open_ui, args=(url, store.home, store.config.open_window)).start()
     server.serve_forever()
     return 0
 
 
+def _from_link(argv: list[str]) -> list[str]:
+    """Opened through a station-server: link (or by an older macOS, with a
+    process id): start in the background, with no window."""
+    argv = [a for a in argv if not a.startswith("-psn_")]
+    if any(a.lower().startswith(f"{URL_SCHEME}:") for a in argv):
+        argv = ["app", "--no-window"]
+    return argv
+
+
 def main(argv: list[str] | None = None) -> int:
+    argv = _from_link(sys.argv[1:] if argv is None else argv)
     args = _parser().parse_args(argv)
     if args.command is None:
         args = _parser().parse_args(["app", *(argv or [])])

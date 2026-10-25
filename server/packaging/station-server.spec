@@ -38,6 +38,7 @@ exe = EXE(
     exclude_binaries=True,
     name=NAME,
     console=False,  # no terminal window: Station Server's own window is the UI
+    argv_emulation=MAC,  # station-server: links arrive as arguments
     icon=str(STATIC / ("icon.icns" if MAC else "icon.ico")),
 )
 # On the Mac, the app the Finder opens starts this helper and exits: while
@@ -69,5 +70,9 @@ if MAC:
             # The UI is a browser window, so the app itself needs no Dock icon.
             "LSUIElement": True,
             "NSHighResolutionCapable": True,
+            # station-server://start, from the installed app's window when
+            # Station Server isn't running (see __main__.URL_SCHEME).
+            "CFBundleURLTypes": [{"CFBundleURLName": "io.github.raby.StationServer",
+                                  "CFBundleURLSchemes": ["station-server"]}],
         },
     )
