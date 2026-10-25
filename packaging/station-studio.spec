@@ -57,14 +57,14 @@ exe = EXE(
     [],
     exclude_binaries=True,
     name=NAME,
-    console=False,  # no terminal window: the browser is the UI
+    console=False,  # no terminal window: on the Mac it's Station Studio's own window (macwindow.py)
     argv_emulation=MAC,  # station-studio: links arrive as arguments
     icon=str(HERE / ("icon.icns" if MAC else "icon.ico")),
 )
-# On the Mac, the app the Finder opens only hands over to this helper and
-# exits: a process macOS counts as the running app would swallow the next
-# click on the app. The helper runs the server; it takes no Apple events,
-# so macOS never counts it as the app. Updates restart it too.
+# On the Mac, the app the Finder opens is Station Studio's window, with
+# its Dock icon and menus; this helper runs the server, so closing the
+# window leaves Station Studio running and Start at login starts only the
+# helper. Updates restart it too.
 helper = EXE(
     pyz,
     a.scripts,
@@ -87,8 +87,6 @@ if MAC:
             "CFBundleShortVersionString": VERSION,
             "CFBundleVersion": VERSION,
             "LSMinimumSystemVersion": "11.0",
-            # The UI is the browser, so the app itself needs no Dock icon.
-            "LSUIElement": True,
             "NSHighResolutionCapable": True,
             # station-studio://start, from the installed app's window when
             # Station Studio isn't running (see desktop.URL_SCHEME).

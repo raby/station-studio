@@ -78,9 +78,14 @@ From the newest **Station Studio** release on the
   for you only (no administrator password) and adds Station Studio to
   the Start menu, and the desktop if you tick it.
 
-Opening it opens <http://127.0.0.1:8001> in a window of its own (when
-Chrome, Edge or Brave is installed; otherwise a browser tab); opening it
-again while it runs just opens it again. The bar at the bottom
+On a Mac, Station Studio is an app of its own, like Apple Music: its
+own window, Dock icon and menus (Go, Settings ⌘,, Check for Updates,
+Quit ⌘Q). Closing the window leaves Station Studio running; clicking
+its Dock icon brings the window back, and right-clicking it has New
+station and Source pools. On Windows, opening it opens
+<http://127.0.0.1:8001> in a window of its own (when Chrome, Edge or
+Brave is installed; otherwise a browser tab); opening it again while
+it runs just opens it again. The bar at the bottom
 right of the page has **Quit**, and **Update now** when a newer
 version is out (it downloads the new version from the release, checks
 it against GitHub's SHA-256 for that file, and restarts into it).

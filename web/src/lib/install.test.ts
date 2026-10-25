@@ -30,6 +30,15 @@ describe('install as an app', () => {
     expect(get(installOffer)).toBeNull();
   });
 
+  it("registers no service worker in the Mac app's own window", () => {
+    const register = vi.fn(async () => ({}));
+    const win = Object.assign(fakeWindow({ register }), {
+      webkit: { messageHandlers: { stationApp: { postMessage: vi.fn() } } },
+    }) as unknown as Window;
+    startInstallSupport(win);
+    expect(register).not.toHaveBeenCalled();
+  });
+
   it('works where there are no service workers', () => {
     expect(() => startInstallSupport(fakeWindow())).not.toThrow();
   });

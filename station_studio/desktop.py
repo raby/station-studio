@@ -126,16 +126,21 @@ def _browser_tab(url: str) -> None:
         webbrowser.open(url)
 
 
+def own_window() -> bool:
+    """Whether Station Studio opens in a window of its own (Settings ›
+    App); STATION_STUDIO_TAB=1 always uses a browser tab."""
+    return appsettings.load(get_home())["own_window"] and not os.environ.get("STATION_STUDIO_TAB")
+
+
 def open_browser(url: str) -> None:
-    """Show Station Studio: in a window of its own when Chrome, Edge or
-    Brave is installed (as Station Player does), else a browser tab.
-    STATION_STUDIO_TAB=1 always uses a tab."""
+    """Show Station Studio: in the Mac app's own window, or in a window
+    of its own when Chrome, Edge or Brave is installed (as Station Player
+    does), else a browser tab."""
     from station_studio.window import open_ui
 
     home = get_home()
-    own_window = appsettings.load(home)["own_window"] and not os.environ.get("STATION_STUDIO_TAB")
     try:
-        how = open_ui(url, home, own_window=own_window, tab=_browser_tab)
+        how = open_ui(url, home, own_window=own_window(), tab=_browser_tab)
         logger.info("Opened %s in a %s", url, how)
     except Exception as exc:
         logger.warning("Could not open the browser at %s: %s", url, exc)
@@ -155,10 +160,16 @@ def _log_to_file() -> None:
 
 
 def _mac_app_itself() -> bool:
-    """The downloaded Mac app (not its helper): it only ever hands over,
-    since while it lives macOS sends later clicks on the app to it rather
-    than starting it again."""
+    """The downloaded Mac app (not its helper): Station Studio's window,
+    while the helper beside it runs Station Studio."""
     return selfupdate.bundled() and sys.platform == "darwin" and Path(sys.executable).name != selfupdate.MAC_HELPER
+
+
+def _own_mac_window(base: str) -> int:
+    from station_studio import macwindow  # needs PyObjC, which only the Mac app carries
+    from station_studio.window import mac_app_bundle
+
+    return macwindow.run(base, quit_server=lambda: quit_instance(base), bundle=mac_app_bundle())
 
 
 def _start_mac_helper(port: int) -> None:
@@ -187,6 +198,9 @@ class DesktopState:
             from station_studio.window import browser_name, find_browser
             browser = browser_name(find_browser())
         self.browser = browser
+        from station_studio.window import mac_app_bundle
+        # the downloaded Mac app, whose own window shows Station Studio instead
+        self.mac_app = mac_app_bundle() is not None
         self.updater = selfupdate.Updater(self.quit, port=port, kind=self.kind or "none")
 
     def quit(self) -> None:
@@ -238,6 +252,7 @@ class DesktopState:
             "settings": self.settings(),
             "login": self.login.enabled(),
             "browser": self.browser,
+            "mac_app": self.mac_app,
         }
 
 
@@ -253,8 +268,8 @@ class SettingsRequest(BaseModel):
 
 def attach_routes(app, desk: DesktopState) -> None:
     """Add /api/app (state), /api/app/update, /api/app/settings,
-    /api/app/check and /api/app/quit to the FastAPI app, ahead of the
-    page's catch-all route."""
+    /api/app/check, /api/app/window and /api/app/quit to the FastAPI app,
+    ahead of the page's catch-all route."""
     router = APIRouter(tags=["app"])
 
     def guard(request: Request) -> None:
@@ -291,6 +306,15 @@ def attach_routes(app, desk: DesktopState) -> None:
         guard(request)
         desk.check_for_updates(force=True)
         return desk.state()
+
+    @router.post("/api/app/window")
+    def app_window(request: Request) -> dict:
+        # A browser window asking for the Mac app's own window.
+        guard(request)
+        if not desk.mac_app:
+            raise HTTPException(409, "Only the Mac app has a window of its own")
+        threading.Thread(target=open_browser, args=(f"http://127.0.0.1:{desk.port}/",), daemon=True).start()
+        return {"ok": True}
 
     @router.post("/api/app/quit")
     def app_quit(request: Request) -> dict:
@@ -376,6 +400,18 @@ def main(argv: list[str] | None = None) -> int:
         logger.info("Replacing the older Station Studio %s running on %s", state.get("version"), base)
         if quit_instance(base):
             state = None
+    if _mac_app_itself() and show and own_window():
+        # The Mac app is Station Studio's window: Station Studio runs in
+        # its helper (started now if need be), and this shows it until Quit.
+        if state is None:
+            _start_mac_helper(args.port)
+            # Generous: the first start of a newly downloaded app is slow
+            # while macOS checks it, more so on older Macs.
+            if not wait_for(base, 90):
+                logger.error("Station Studio did not start; see the log above")
+                return 1
+        return _own_mac_window(base)
+
     if state:
         if not state.get("app"):
             logger.info("A Station Studio started another way (serve or Docker) is already on %s", base)

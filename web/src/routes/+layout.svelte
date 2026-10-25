@@ -20,8 +20,10 @@
    */
   import '$lib/theme.css';
   import { onMount } from 'svelte';
+  import { goto } from '$app/navigation';
   import { page } from '$app/stores';
   import { startInstallSupport } from '$lib/install';
+  import { exposeToApp } from '$lib/native';
   import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
   // Quit + Update now, only when opened as the downloaded app.
   import AppBar from '$lib/components/AppBar.svelte';
@@ -47,6 +49,8 @@
 
   // Its own Dock / taskbar icon, once installed as an app.
   onMount(() => startInstallSupport());
+  // The Mac app's menus (Go, Settings, Help) move between pages.
+  onMount(() => exposeToApp({ go: (path) => void goto(path) }));
 
   // Stations stays lit inside a station and its playlists.
   function current(href: string, path: string): boolean {

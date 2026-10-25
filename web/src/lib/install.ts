@@ -6,6 +6,7 @@
  * the window shows a page that starts it (static/sw.js, offline.html).
  */
 import { writable, type Readable } from 'svelte/store';
+import { isNative } from './native';
 
 interface InstallPrompt extends Event {
   prompt(): Promise<void>;
@@ -22,6 +23,9 @@ let started = false;
 export function startInstallSupport(win: Window = window): void {
   if (started) return;
   started = true;
+  // The Mac app's own window is already an app, and opens without the
+  // server's help, so it needs neither.
+  if (isNative(win)) return;
   win.addEventListener('beforeinstallprompt', (e) => {
     e.preventDefault();
     offer.set(e as InstallPrompt);
