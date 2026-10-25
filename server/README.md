@@ -148,6 +148,12 @@ air. Or from the command line:
 Then add the station `http://localhost:8000/classics` in station-player.
 The title changes with each track, and the status page shows the stream.
 
+No music to hand? `python server/tools/make_test_station.py` makes a
+folder of short test songs and a week's station-studio export in
+`~/station-server-test`, and prints the exports folder to use as the
+playlist. `--week 13` adds next week's, to watch the switch-over;
+`--missing` adds a song whose file isn't there.
+
 ### Trying it next to Winamp
 
 Only one source can feed a stream at a time. To compare without taking the
