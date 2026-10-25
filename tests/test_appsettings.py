@@ -87,3 +87,12 @@ def test_login_where_it_cant(tmp_path):
     with pytest.raises(ValueError):
         login.set(True)
     assert appsettings.Login(tmp_path, "sunos5", command=["x"]).enabled() is None
+
+
+def test_login_not_from_the_disk_image(tmp_path):
+    login = appsettings.Login(tmp_path, "darwin",
+                              command=["/Volumes/Station Studio/Station Studio.app/Contents/MacOS/station-studio-server"])
+    with pytest.raises(ValueError, match="Applications folder"):
+        login.set(True)
+    login.set(False)  # turning it off always works
+    assert login.enabled() is False

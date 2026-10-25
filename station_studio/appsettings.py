@@ -85,6 +85,8 @@ class Login:
     def set(self, on: bool) -> None:
         if not self.supported:
             raise ValueError("Start at login isn't available here")
+        if on and _not_installed(self.command[0]):
+            raise ValueError("move Station Studio into your Applications folder first, then turn this on from there")
         if self.platform == "darwin":
             agent = self._mac_agent()
             if not on:
@@ -124,6 +126,12 @@ class Login:
 
     def _key(self):
         return self._run_key or _RunKey()
+
+
+def _not_installed(program: str) -> bool:
+    """Run from the disk image (or from where macOS put a download it
+    hasn't been moved out of), which is gone after the next restart."""
+    return program.startswith("/Volumes/") or "/AppTranslocation/" in program
 
 
 def _desktop_quote(arg: str) -> str:

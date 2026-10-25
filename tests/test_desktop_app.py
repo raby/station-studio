@@ -490,6 +490,15 @@ def test_check_now_route_asks_github_even_with_daily_checks_off(tmp_path):
     assert state["latest"] == NEXT and asked == [1]
 
 
+def test_turning_notices_off_clears_the_one_showing(tmp_path):
+    client, desk, _ = make_app(home=tmp_path)
+    desk.latest = NEXT
+    h = {desktop.API_HEADER: "1"}
+    assert client.get("/api/app").json()["latest"] == NEXT
+    state = client.post("/api/app/settings", json={"check_updates": False}, headers=h).json()
+    assert state["latest"] is None
+
+
 def test_open_browser_follows_the_own_window_setting(monkeypatch, tmp_path):
     seen = []
     monkeypatch.setattr(desktop, "get_home", lambda: tmp_path)

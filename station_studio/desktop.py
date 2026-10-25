@@ -203,6 +203,8 @@ class DesktopState:
         if login is not None:
             self.login.set(login)
         appsettings.save(self.home, {"own_window": own_window, "check_updates": check_updates})
+        if check_updates is False:
+            self.latest = None  # no more notices until checked by hand
 
     def check_for_updates(self, force: bool = False) -> str | None:
         # Checking by hand (force) works even with the daily look turned off.
