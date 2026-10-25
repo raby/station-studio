@@ -68,3 +68,21 @@ def test_mac_app_started_at_login_shows_nothing(monkeypatch, tmp_path):
     shown, tabs = _mac_app(monkeypatch, tmp_path)
     assert cli.main(["station-server://start"]) == 0
     assert shown == [] and tabs == []
+
+
+def test_an_older_copy_running_makes_way(monkeypatch):
+    states = [{"version": "0.4.0", "stations": []}]
+    quits = []
+    monkeypatch.setattr(cli, "_running_state", lambda port: states[0] if states else None)
+    monkeypatch.setattr(cli, "_quit_server", lambda url: quits.append(url) or states.clear())
+    cli._replace_older(8770, "http://127.0.0.1:8770/")
+    assert quits == ["http://127.0.0.1:8770/"]
+
+
+def test_the_same_or_a_newer_copy_is_left_alone(monkeypatch):
+    quits = []
+    monkeypatch.setattr(cli, "_quit_server", lambda url: quits.append(url))
+    for version in (cli.__version__, "99.0.0"):
+        monkeypatch.setattr(cli, "_running_state", lambda port, v=version: {"version": v, "stations": []})
+        cli._replace_older(8770, "http://127.0.0.1:8770/")
+    assert quits == []
