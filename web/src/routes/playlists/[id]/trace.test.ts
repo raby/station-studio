@@ -74,7 +74,7 @@ const {
     getVersionsMock: vi.fn(),
     exportPlaylistToDiskMock: vi.fn(),
     // No Station Server set up unless a test says so (mockResolvedValueOnce).
-    stationServerSettingsMock: vi.fn(async () => ({ address: '', has_code: false, stations: {} })),
+    stationServerSettingsMock: vi.fn(async (..._args: unknown[]) => ({ address: '', has_code: false, stations: {} })),
     sendToStationServerMock: vi.fn(),
     gotoMock: vi.fn(),
     FakeApiError,

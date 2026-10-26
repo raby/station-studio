@@ -43,14 +43,14 @@ describe('On Station Server', () => {
     const fetchFn = vi.fn(async (url: string) =>
       url.endsWith('/status') ? json({ configured: false, connected: false, error: null, stations: [] })
         : json({ address: '', has_code: false, stations: {} }));
-    const { queryByTestId } = render(Panel, { props: { slug: 'cls', name: 'Classics', playlists, fetchFn } });
+    const { queryByTestId } = render(Panel, { props: { slug: 'cls', name: 'Classics', playlists, fetchFn: fetchFn as unknown as typeof fetch } });
     await waitFor(() => expect(fetchFn).toHaveBeenCalledTimes(2));
     expect(queryByTestId('station-server-panel')).toBeNull();
   });
 
   it("shows what's on air and the weeks it has", async () => {
     const { fetchFn } = server([station()]);
-    const { findByTestId, queryByTestId } = render(Panel, { props: { slug: 'cls', name: 'Classics', playlists, fetchFn } });
+    const { findByTestId, queryByTestId } = render(Panel, { props: { slug: 'cls', name: 'Classics', playlists, fetchFn: fetchFn as unknown as typeof fetch } });
     const facts = await findByTestId('ss-facts');
     expect(facts).toHaveTextContent('On air · Ghost Town by The Specials');
     expect(facts).toHaveTextContent('11, 12, 13');
@@ -59,7 +59,7 @@ describe('On Station Server', () => {
 
   it('warns when next week is missing and sends it', async () => {
     const { fetchFn, calls } = server([station({ next: null, weeks: ['011.xml', '012.xml'] })]);
-    const { findByTestId } = render(Panel, { props: { slug: 'cls', name: 'Classics', playlists, fetchFn } });
+    const { findByTestId } = render(Panel, { props: { slug: 'cls', name: 'Classics', playlists, fetchFn: fetchFn as unknown as typeof fetch } });
     expect(await findByTestId('ss-missing')).toHaveTextContent('nothing after week 12');
     await fireEvent.click(await findByTestId('ss-send-missing'));
     expect(await findByTestId('ss-sent')).toHaveTextContent('Rebirth Classics, week 13: 412 tracks found');
@@ -68,7 +68,7 @@ describe('On Station Server', () => {
 
   it('chooses the station it sends to, and sending on export', async () => {
     const { fetchFn, calls } = server([station()], { station: '', auto: false });
-    const { findByTestId } = render(Panel, { props: { slug: 'cls', name: 'Classics', playlists, fetchFn } });
+    const { findByTestId } = render(Panel, { props: { slug: 'cls', name: 'Classics', playlists, fetchFn: fetchFn as unknown as typeof fetch } });
     const select = (await findByTestId('ss-target')) as HTMLSelectElement;
     select.value = 'abc';
     await fireEvent.change(select);
@@ -82,7 +82,7 @@ describe('On Station Server', () => {
       url.endsWith('/status')
         ? json({ configured: true, connected: false, error: "Couldn't reach Station Server at 10.0.0.5", stations: [] })
         : json({ address: '10.0.0.5', has_code: true, stations: {} }));
-    const { findByTestId } = render(Panel, { props: { slug: 'cls', name: 'Classics', playlists, fetchFn } });
+    const { findByTestId } = render(Panel, { props: { slug: 'cls', name: 'Classics', playlists, fetchFn: fetchFn as unknown as typeof fetch } });
     expect(await findByTestId('ss-unreachable')).toHaveTextContent("Couldn't reach Station Server");
   });
 });

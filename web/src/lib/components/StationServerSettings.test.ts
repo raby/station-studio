@@ -21,7 +21,7 @@ describe('Settings › Station Server', () => {
       return json({ configured: true, connected: true, error: null, server: 'Station Server', version: '0.13.0',
         stations: [{ id: 'a', name: 'Rebirth Radio', state: 'off', now: null, week: null, next: null, weeks: [] }] });
     });
-    const { getByTestId, findByTestId } = render(Settings, { props: { fetchFn } });
+    const { getByTestId, findByTestId } = render(Settings, { props: { fetchFn: fetchFn as unknown as typeof fetch } });
     await waitFor(() => expect(fetchFn).toHaveBeenCalled());
     await fireEvent.input(getByTestId('station-server-address'), { target: { value: '10.0.0.5:8772' } });
     await fireEvent.input(getByTestId('station-server-code'), { target: { value: 'k7m2-9qxr-4hpt' } });
@@ -36,7 +36,7 @@ describe('Settings › Station Server', () => {
       url === '/api/station-server'
         ? json({ address: '10.0.0.5', has_code: true, stations: {} })
         : json({ configured: true, connected: false, error: "That isn't the link code", stations: [] }));
-    const { findByTestId } = render(Settings, { props: { fetchFn } });
+    const { findByTestId } = render(Settings, { props: { fetchFn: fetchFn as unknown as typeof fetch } });
     await fireEvent.click(await findByTestId('station-server-test'));
     expect(await findByTestId('station-server-error')).toHaveTextContent("That isn't the link code");
   });
