@@ -19,7 +19,7 @@ change only that repository's contents):
     now.js, now.css       what those two pages share
     .nojekyll             served as they are
 
-The page files are Station Server's own (static/site/); they're published
+The page files are Station Server's own (static/website/); they're published
 with the feeds, so a new version of Station Server brings new pages.
 """
 from __future__ import annotations
@@ -46,7 +46,7 @@ REFRESH_SECONDS = 3600  # published at least this often while on air
 LOW_SECONDS = 2 * 3600  # ... or sooner, when this little is left of what was published
 CHECK_SECONDS = 20  # how often it compares what's on air with what was published
 SOON_SECONDS = 120  # what's on changed: published after at most this, so a burst of skips is one publish
-SITE_DIR = Path(__file__).parent / "static" / "site"
+SITE_DIR = Path(__file__).parent / "static" / "website"
 SITE_FILES = ("index.html", "widget.html", "now.js", "now.css")
 _REPO_RE = re.compile(r"^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$")
 

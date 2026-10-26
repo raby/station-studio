@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>On air</title>
+<link rel="stylesheet" href="now.css">
+</head>
+<body class="widget">
+<div id="station"><p class="empty" style="padding:12px">Loading…</p></div>
+<script src="now.js"></script>
+<script>
+  // widget.html?station=<slug>[&next=5][&recent=5][&theme=dark|light][&accent=d9480f]
+  NowFeed.theme();
+  const p = NowFeed.params;
+  const num = (k, d) => (p.has(k) ? Math.max(0, parseInt(p.get(k), 10) || 0) : d);
+  const go = (slug) => NowFeed.show(document.getElementById("station"), [slug], { next: num("next", 5), recent: num("recent", 5) });
+  if (p.get("station")) go(p.get("station"));
+  else NowFeed.get("stations.json").then((s) => go(s.stations[0].slug));
+</script>
+</body>
+</html>
