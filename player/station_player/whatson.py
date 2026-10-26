@@ -36,8 +36,10 @@ def clean_feed_url(value) -> str:
 def view(feed: dict | None, now: datetime, ahead: int = 3, back: int = 3) -> dict:
     """{state: on|live|off|unknown, now, next[], recent[]} from a feed at
     `now`. Songs are {at, title, artist}; a show is {at, show}."""
-    if not feed or not feed.get("on_air"):
-        return {"state": "off", "now": None, "next": [], "recent": (feed or {}).get("recent", [])[:back]}
+    if not feed:  # not published yet, or not reachable: say nothing rather than "Off air"
+        return {"state": "unknown", "now": None, "next": [], "recent": []}
+    if not feed.get("on_air"):
+        return {"state": "off", "now": None, "next": [], "recent": (feed.get("recent") or [])[:back]}
     try:
         if now - datetime.fromisoformat(feed["updated"]) > STALE:
             return {"state": "unknown", "now": None, "next": [], "recent": []}

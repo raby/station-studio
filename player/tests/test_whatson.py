@@ -42,7 +42,8 @@ def test_whats_on_comes_from_the_clock():
 def test_live_off_air_and_shows():
     assert view(feed(live={"presenter": "Dave"}), NOW) == {
         "state": "live", "now": {"live": "Dave"}, "next": [], "recent": feed()["recent"]}
-    assert view(feed(on_air=False), NOW)["state"] == "off" and view(None, NOW)["state"] == "off"
+    assert view(feed(on_air=False), NOW)["state"] == "off"
+    assert view(None, NOW)["state"] == "unknown"  # no feed fetched: not "Off air"
     f = feed()
     f["items"][1] = {"at": f["items"][1]["at"], "seconds": 3600, "show": "Saturday Night Mix"}
     assert view(f, NOW)["next"][0] == {"at": f["items"][1]["at"], "show": "Saturday Night Mix"}
