@@ -1022,7 +1022,7 @@ class ServerApp:
                 add("Live shows", "ok", f"Ports {ports} are free; presenters can connect while it's on air. {where}")
             else:
                 add("Live shows", "fail", f"Port {st.live_port} or {st.live_port + 1} is in use by another program: "
-                    "choose another live shows port in Edit")
+                    "choose another port in Edit › Live shows")
         add("Start at login", "ok" if self.login.enabled() else "warn",
             "On" if self.login.enabled() else "Off: after a restart or power cut the station stays off air "
             "until someone opens Station Server (Settings › Start-up)")
