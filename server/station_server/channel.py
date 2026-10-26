@@ -1,9 +1,13 @@
 """One station on air: plays its queue in real time into an encoder and a sender.
 
 The flow is decode (per track) -> mixer -> pacer -> one encoder -> sender.
-For now the mixer just joins tracks end to end with no gap, applying each
-track's volume levelling. It is the seam where crossfades, clock trimming
-and a live input will go later.
+The mixer joins tracks end to end with no gap, or crossfades them, applying
+each track's volume levelling, and plays a jingle every few songs. It is
+the seam where a live input will go later.
+
+A crossfade holds back the last few seconds of each track (the tail) and
+mixes them under the start of the next. Each song so starts a crossfade
+early, which the clock allows for (schedule.step_seconds).
 """
 from __future__ import annotations
 
@@ -18,7 +22,7 @@ from dataclasses import dataclass
 from station_player.library import Track
 from station_player.tags import read_tags
 
-from station_server.audio import BYTES_PER_SECOND, Encoder, decode, silence
+from station_server.audio import BYTES_PER_SECOND, CHUNK, Encoder, decode, mix, silence
 from station_server.playlist import Queue, now_playing
 
 logger = logging.getLogger(__name__)
@@ -121,6 +125,10 @@ class Channel:
         keep_going: bool = False,
         after: Callable[[], tuple[Queue, int, float]] | None = None,
         fallback: Callable[[], tuple[Queue, Callable[[], tuple[Queue, int, float]]] | None] | None = None,
+        crossfade: float = 0.0,
+        jingle: Callable[[], Track | None] | None = None,
+        jingle_every: int = 4,
+        jingle_title: str = "",
     ) -> None:
         """`offset` starts the first track that many seconds in. `on_track`
         is called as each track starts, `on_played` as it ends with the
@@ -130,7 +138,10 @@ class Channel:
         With `after`, `queue` is played once (a show) and `after()` then
         says what to play next: (queue, track index, seconds in).
         `fallback()`, when no track can be read, gives something to play
-        once instead of silence, and what to try after it (as `after`)."""
+        once instead of silence, and what to try after it (as `after`).
+        `crossfade` is in seconds (0 for none). `jingle()`, if given, picks
+        a jingle to play after every `jingle_every` playlist songs (not in
+        a show or the fallback), with `jingle_title` as the title."""
         self.queue = queue
         self.sender = sender
         self.ffmpeg = ffmpeg
@@ -152,6 +163,14 @@ class Channel:
         self._fallback = fallback
         self._fallback_after: Callable | None = None
         self.now: NowPlaying | None = None
+        # Whole frames, so a crossfade never splits a sample.
+        self.crossfade_bytes = int(max(0.0, crossfade) * BYTES_PER_SECOND) // 4 * 4
+        self._tail = b""  # the end of the last track, still to be mixed under the next
+        self._jingle = jingle
+        self.jingle_every = max(1, jingle_every)
+        self.jingle_title = jingle_title
+        self.jingle: Track | None = None  # the jingle playing, if one is
+        self._songs = 0  # playlist songs played since the last jingle
         self.stuck = False  # nothing in the playlist could be read
         # Titles waiting to go to the server: (title, when it's heard, as time.monotonic()).
         self._titles: queues.Queue[tuple[str, float]] = queues.Queue()
@@ -236,6 +255,7 @@ class Channel:
                             index, offset = pending if pending else (0, 0.0)
                             continue
                         logger.error("no track in the playlist can be played; sending silence")
+                        self._flush(encoder)
                         for chunk in silence(STUCK_SILENCE_SECONDS):
                             if self.stop_event.is_set() or self._next is not None:
                                 break
@@ -243,6 +263,8 @@ class Channel:
                             encoder.write(chunk)
                         failures = 0
                 offset = 0.0
+                if self._jingle_due():
+                    self._play_jingle(encoder)
                 pending = self._take_next()
                 if pending is not None:
                     index, offset = pending
@@ -256,6 +278,7 @@ class Channel:
                     continue
                 if index >= len(self.queue.tracks):
                     if not self.loop:
+                        self._flush(encoder)
                         break
                     index = 0
         finally:
@@ -292,7 +315,35 @@ class Channel:
         if self._on_track:
             self._on_track(now)
         self._skip.clear()
+        played = self._stream(track, gain, offset, encoder, hold=self.crossfade_bytes)
+        if played and self._after is None:
+            self._songs += 1
+        if self._on_played and played:
+            self._on_played(now, played / BYTES_PER_SECOND)
+        if not played and not self.stop_event.is_set() and not self._skip.is_set():
+            logger.warning("skipped %s: no audio could be read from %s", title, track.path)
+            return False
+        return True
+
+    def _stream(self, track: Track, gain: float, offset: float, encoder: Encoder, hold: int) -> int:
+        """Decode `track` into the encoder, in real time, mixing the last
+        track's tail under its start and holding back its own last `hold`
+        bytes as the next tail. Returns how many bytes of it played."""
+        tail, self._tail = self._tail, b""
+        done = 0  # how much of the tail is mixed in
+        held = bytearray()
         played = 0
+
+        def out(data: bytes) -> None:
+            held.extend(data)
+            if len(held) > hold:
+                n = len(held) - hold
+                for i in range(0, n, CHUNK):  # paced a chunk at a time
+                    piece = bytes(held[i:min(i + CHUNK, n)])
+                    self.pacer.wait(len(piece))
+                    encoder.write(piece)
+                del held[:n]
+
         # Once measured, the silence at either end is left out.
         measured = getattr(track, "measured", None)
         if measured is not None:
@@ -304,16 +355,59 @@ class Channel:
             for chunk in chunks:
                 if self.stop_event.is_set() or self._skip.is_set():
                     break
-                self.pacer.wait(len(chunk))
-                encoder.write(chunk)
                 played += len(chunk)
+                if done < len(tail):
+                    n = min(len(tail) - done, len(chunk) // 4 * 4)
+                    chunk = mix(tail[done:done + n], chunk, done, len(tail))
+                    done += n
+                out(chunk)
         finally:
             close = getattr(chunks, "close", None)
             if close:
                 close()
-        if self._on_played and played:
-            self._on_played(now, played / BYTES_PER_SECOND)
-        if not played and not self.stop_event.is_set() and not self._skip.is_set():
-            logger.warning("skipped %s: no audio could be read from %s", title, track.path)
-            return False
-        return True
+        if not played:  # nothing read: the tail waits for the next track
+            if not self.stop_event.is_set():
+                self._tail = tail
+            return 0
+        if self.stop_event.is_set():
+            return played
+        if done < len(tail):  # a track shorter than the crossfade
+            out(mix(tail[done:], b"", done, len(tail)))
+        self._tail = bytes(held)
+        return played
+
+    def _flush(self, encoder: Encoder) -> None:
+        """Play out the held tail, fading, before silence or the end."""
+        tail, self._tail = self._tail, b""
+        for i in range(0, len(tail), CHUNK):
+            piece = mix(tail[i:i + CHUNK], b"", i, len(tail))
+            self.pacer.wait(len(piece))
+            encoder.write(piece)
+
+    def _jingle_due(self) -> bool:
+        with self._lock:
+            show_waiting = self._next is not None and self._next[2] is not None
+        return (self._jingle is not None and self._songs >= self.jingle_every and self._after is None
+                and not show_waiting and not self.stop_event.is_set() and not self._skip.is_set())
+
+    def _play_jingle(self, encoder: Encoder) -> None:
+        """A jingle between songs: crossfaded in from the song, played to
+        its end, and not in the play log."""
+        self._songs = 0
+        try:
+            track = self._jingle() if self._jingle else None
+        except Exception:
+            logger.exception("couldn't pick a jingle")
+            track = None
+        if track is None or track.path is None:
+            return
+        gain = level(track)[0] if self.level else 0.0
+        logger.info("jingle: %s", track.path.name)
+        if self.jingle_title:
+            self._titles.put((self.jingle_title, time.monotonic() + self.pacer.ahead()))
+        self.jingle = track
+        try:
+            if not self._stream(track, gain, 0.0, encoder, hold=0):
+                logger.warning("skipped the jingle %s: no audio could be read", track.path.name)
+        finally:
+            self.jingle = None

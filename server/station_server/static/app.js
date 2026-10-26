@@ -441,9 +441,10 @@ function renderStation(s) {
     parts.push(el("div", { class: "panel now" },
       el("div", { class: "glyph big" }, icon("radio")),
       n.show ? el("div", { class: "show-kicker" }, `Show: ${n.show}`) : null,
-      el("div", { class: "title" }, n.title),
-      el("div", { class: "artist" }, [n.artist, n.album].filter(Boolean).join(" · ") || " "),
-      el("div", { class: "meter" },
+      n.jingle ? el("div", { class: "show-kicker" }, "Jingle") : null,
+      el("div", { class: "title" }, n.jingle || n.title),
+      el("div", { class: "artist" }, n.jingle ? `After ${n.title}` : [n.artist, n.album].filter(Boolean).join(" · ") || " "),
+      n.jingle ? null : el("div", { class: "meter" },
         el("span", { id: "now-elapsed" }, clock(n.elapsed)),
         el("div", { class: "bar" }, el("div", { id: "now-bar", style: `width:${Math.min(100, 100 * n.elapsed / (n.seconds || 1))}%` })),
         el("span", {}, clock(n.seconds)),
@@ -473,6 +474,8 @@ function renderStation(s) {
   facts.push(el("span", {}, st.start_mode === "clock"
     ? `Week starts ${DAYS[st.week_start.day]} ${st.week_start.time}` : "Starts from track 1"));
   facts.push(el("span", {}, `MP3 ${st.bitrate} kbps`));
+  if (st.crossfade) facts.push(el("span", {}, `Crossfade ${st.crossfade} s`));
+  if (st.jingles) facts.push(el("span", {}, `A jingle every ${st.jingle_every} songs`));
   parts.push(el("div", { class: "facts" }, facts));
   if (s.shows && s.shows.length) {
     parts.push(el("div", { class: "facts" }, el("span", {}, "Shows"),
@@ -625,6 +628,9 @@ function formValues(st) {
     time: st?.week_start?.time || "00:00",
     shows: (st?.shows || []).map((sh) => ({ ...sh, days: [...sh.days] })),
     fallback: st?.fallback || "",
+    crossfade: String(st?.crossfade || 0),
+    jingles: st?.jingles || "",
+    jingle_every: String(st?.jingle_every || 4),
   };
 }
 
@@ -647,6 +653,9 @@ function formPayload(v) {
     week_start: { day: Number(v.day), time: v.time },
     shows: v.shows,
     fallback: v.fallback,
+    crossfade: Number(v.crossfade),
+    jingles: v.jingles,
+    jingle_every: Number(v.jingle_every),
   };
 }
 
@@ -702,6 +711,7 @@ function renderForm(view) {
   const testMsg = el("div", { class: "form-msg", role: "status" });
   const formMsg = el("div", { class: "form-msg", role: "status" });
   const fallbackMsg = el("div", { class: "form-msg", role: "status" });
+  const jinglesMsg = el("div", { class: "form-msg", role: "status" });
 
   async function pick(kind, into = (path) => { v.playlist = path; }, msg = playlistMsg) {
     try {
@@ -851,6 +861,9 @@ function renderForm(view) {
       el("fieldset", {}, el("legend", {}, "Playback"),
         el("div", { class: "grid" }, check("level", "Even out the volume (ReplayGain / Sound Check in the files, or measured)")),
         el("p", { class: "help" }, "Station Server measures each track once, in the background: how loud it is, for tracks without volume tags, and where its sound starts and ends, so the silence at either end is left out and songs follow on without dead air."),
+        el("div", { class: "grid" }, select("crossfade", "Crossfade between songs",
+          [["0", "Off: one straight after the other"], ...[1, 2, 3, 4, 5, 6, 8, 10].map((n) => [String(n), `${n} seconds`])])),
+        el("p", { class: "help" }, "With a crossfade, the end of each song fades out under the start of the next. A track that fades out by itself sounds best with 2 to 4 seconds."),
         el("div", { class: "radio-row" },
           radio("start_mode", "clock", "Follow the week's clock"),
           radio("start_mode", "top", "Always start from track 1")),
@@ -858,6 +871,15 @@ function renderForm(view) {
           select("day", "The week starts on", DAYS.map((d, i) => [String(i), d]), true),
           text("time", "at", { type: "time", narrow: true })),
         el("p", { class: "help" }, "Following the clock, the first track plays at the start of the week and the rest follow by their lengths, so after a restart the station picks up where it should be."),
+      ),
+      el("fieldset", {}, el("legend", {}, "Jingles"),
+        el("div", { class: "grid" },
+          text("jingles", "Folder of jingles", { placeholder: "~/Music/Jingles (blank for none)" }),
+          select("jingle_every", "Play one after every", Array.from({ length: 20 }, (_, i) => [String(i + 1), i ? `${i + 1} songs` : "song"]), true)),
+        el("div", { class: "actions", style: "margin-top:8px" },
+          btn("Choose folder…", "folder", () => pick("folder", (p) => { v.jingles = p; }, jinglesMsg), "btn small")),
+        el("p", { class: "help" }, "Station idents and jingles, played between songs in a shuffled order, each once before any plays again. Not during shows, and not in the play log. The week's clock allows for them, and for the crossfade."),
+        jinglesMsg,
       ),
       el("fieldset", {}, el("legend", {}, "Shows"),
         el("p", { class: "help" }, "Shows go out at set times: a recording, a playlist, or a folder of recordings played in name order. When a show ends, the music comes back where the week's clock says, so the running order's times stay right."),
@@ -1085,6 +1107,9 @@ function renderHelp() {
       p("Next week's export can be made any time: it waits, and goes on at the start of its week (the station's page says when). A week exported late, after its week has begun, goes on within a minute, after the playing track. Exporting the week on air again picks up the changes the same way."),
       el("h2", {}, "Levels and gaps"),
       p("With Even out the volume on, each track is played at about the same loudness: from its ReplayGain or Sound Check tags, or, for a track without them, from measuring it. Station Server measures every track once, in the background and gently (the coming tracks first), and remembers the results. Measuring also finds the silence at the start and end of each track, which is then left out, so songs follow on without dead air. Until a track has been measured it plays as it is."),
+      el("h2", {}, "Crossfades and jingles"),
+      p("Edit › Playback › Crossfade fades the end of each song out under the start of the next, over 1 to 10 seconds (Off plays them one straight after the other). Edit › Jingles plays one of a folder of jingles or station idents after every few songs, in a shuffled order, each once before any plays again. The song before fades out under the jingle; the next song starts as the jingle ends. Jingles aren't played during shows and don't go in the play log; while one plays, the server shows the station's name as the title."),
+      p("The week's clock allows for both, so the running order's times and a restart still land in the right place."),
       el("h2", {}, "Keeping an eye on it"),
       p("On air, a station's page shows how many are listening (as the server counts them: listeners to a relay aren't included), and Listen plays the broadcast exactly as it goes to the server."),
       p("Settings › Alerts tells you, on your phone or by email, when a station has been off air for a few minutes, and again when it's back. Settings › Phone access lets a phone or another computer on the same network see the stations, listen, and put them on or off air, with a password."),

@@ -1,8 +1,8 @@
 """Decoding and encoding, done by ffmpeg.
 
 Every track is decoded to the same raw format (PCM below), so the mixer can
-join them with no gap and, later, crossfade, trim to the clock or switch to
-a live input. One encoder runs for the whole broadcast: starting a new one
+join them with no gap or crossfade them (mix), and later switch to a live
+input. One encoder runs for the whole broadcast: starting a new one
 per track would leave a gap, or a reconnect, between songs.
 """
 from __future__ import annotations
@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import sys
 import threading
+from array import array
 from collections.abc import Callable, Iterator
 from pathlib import Path
 
@@ -78,6 +79,28 @@ def silence(seconds: float) -> Iterator[bytes]:
         n = min(CHUNK, left)
         yield bytes(n)
         left -= n
+
+
+def mix(tail: bytes, head: bytes, done: int, total: int) -> bytes:
+    """A crossfade, a piece at a time: `tail` (the end of one track, `done`
+    bytes into a fade `total` bytes long) fading out under `head` (the
+    start of the next) at full volume. `head` may be shorter (a very short
+    track): the rest of the tail fades out over silence."""
+    t = array("h")
+    t.frombytes(tail)
+    h = array("h")
+    h.frombytes(head[:len(tail)].ljust(len(tail), b"\0"))
+    if sys.byteorder == "big":
+        t.byteswap()
+        h.byteswap()
+    first, frames = done // 4, max(1, total // 4)
+    out = array("h", h)
+    for i in range(len(t)):
+        v = h[i] + int(t[i] * (1.0 - (first + i // 2) / frames))
+        out[i] = 32767 if v > 32767 else -32768 if v < -32768 else v
+    if sys.byteorder == "big":
+        out.byteswap()
+    return out.tobytes() + head[len(tail):]
 
 
 def has_mp3_encoder(ffmpeg: str) -> bool:

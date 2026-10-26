@@ -86,6 +86,13 @@ def track_seconds(track: Track) -> float:
     return GUESS_SECONDS
 
 
+def step_seconds(track: Track) -> float:
+    """How far the clock moves on for a track: its length, less the
+    crossfade into the next and plus its share of the jingles (see the
+    runner's `step_adjust`)."""
+    return max(1.0, track_seconds(track) + getattr(track, "step_adjust", 0.0))
+
+
 def position(lengths: list[float], since_start: float) -> tuple[int, float]:
     """(track index, seconds into it) for a point `since_start` seconds into
     the week, looping a playlist shorter than that."""
@@ -106,7 +113,7 @@ def where_now(tracks: list[Track], week: WeekStart, now: datetime) -> tuple[int,
     is real elapsed time, so a clock change mid-week doesn't jump an hour."""
     anchor = week.latest(now.replace(tzinfo=None)).astimezone()
     since = (now - anchor).total_seconds()
-    return position([track_seconds(t) for t in tracks], since)
+    return position([step_seconds(t) for t in tracks], since)
 
 
 def running_order(tracks: list[Track], index: int, started: datetime, count: int = 40,
@@ -123,7 +130,7 @@ def running_order(tracks: list[Track], index: int, started: datetime, count: int
                 break
             i = 0
         t = tracks[i]
-        secs = track_seconds(t)
+        secs = step_seconds(t)
         out.append({
             "index": i,
             "at": at.isoformat(timespec="seconds"),
@@ -214,7 +221,7 @@ def plan(tracks: list[Track], index: int, started: datetime, now: datetime,
     horizon = now + timedelta(days=8)
     while len(out) < count and n and t < horizon:
         track = tracks[index % n]
-        length = max(0.0, track_seconds(track) - offset)
+        length = max(0.0, step_seconds(track) - offset)
         end = t + timedelta(seconds=length)
         upcoming = sorted(((at, show, slen) for show, slen in shows for at in show.starts(t, end)),
                           key=lambda x: x[0])

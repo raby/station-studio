@@ -13,6 +13,7 @@ station is on air the computer is kept from sleeping.
 from __future__ import annotations
 
 import logging
+import random
 import re
 import socket
 import threading
@@ -105,6 +106,42 @@ def source_queue(name: str, source: str, station: Station, key: str) -> Queue:
     return Queue(name, tracks)
 
 
+class JingleBag:
+    """The station's jingles, each played once, in a shuffled order, before
+    any plays again. The folder is looked at again each time round, and
+    each jingle is measured (`measure`: Analyser.want) to level it with
+    the songs."""
+
+    def __init__(self, station: Station, shuffle=random.shuffle, measure=None) -> None:
+        self.station = station
+        self._shuffle = shuffle
+        self._measure = measure
+        self._bag: list[Track] = []
+        self._last: Track | None = None
+        self.seconds = 0.0  # how long a jingle lasts, on average
+
+    def load(self) -> list[Track]:
+        tracks = source_queue("Jingles", self.station.jingles, self.station, "jingle").tracks
+        if self._measure:
+            self._measure(tracks)
+        self.seconds = sum(track_seconds(t) for t in tracks) / len(tracks)
+        return tracks
+
+    def __call__(self) -> Track | None:
+        if not self._bag:
+            try:
+                self._bag = list(self.load())
+            except (PlaylistError, OSError) as exc:
+                logger.warning("%s: no jingles: %s", self.station.name, exc)
+                return None
+            self._shuffle(self._bag)
+            # Not the same one twice running, across the shuffle.
+            if len(self._bag) > 1 and self._last is not None and self._bag[-1].path == self._last.path:
+                self._bag.insert(0, self._bag.pop())
+        self._last = self._bag.pop()
+        return self._last
+
+
 def _local(ts: float) -> datetime:
     return datetime.fromtimestamp(ts).astimezone()
 
@@ -151,6 +188,7 @@ class StationRunner:
         self.show_on: tuple[Show, datetime, float] | None = None
         self._interrupted = 0  # the song a show cut into
         self._show_lengths: dict[str, tuple[float, float]] = {}  # source -> (mtime, seconds)
+        self.jingles: JingleBag | None = None
 
     # ---- control --------------------------------------------------------
 
@@ -275,9 +313,26 @@ class StationRunner:
         xml, self.upcoming = playlist_file(self.station, self.weeks)
         queue = load_queue(xml, self.station.music_folders, self.station.remaps)
         self.xml, self._xml_mtime = xml, xml.stat().st_mtime
+        self._step(queue)
+        return queue
+
+    def _step(self, queue: Queue) -> None:
+        """Tell the clock how a crossfade and the jingles move each song on
+        (schedule.step_seconds): each song's crossfade starts the next one
+        early, and every few songs a jingle comes between."""
+        st = self.station
+        adjust = -st.crossfade
+        if self.jingles is not None:
+            try:
+                if not self.jingles.seconds:
+                    self.jingles.load()
+                # A jingle shorter than the crossfade still takes the crossfade's time.
+                adjust += max(self.jingles.seconds, st.crossfade) / st.jingle_every
+            except (PlaylistError, OSError):
+                pass
         for t in queue.tracks:
             track_seconds(t)  # learn lengths now, not while on air
-        return queue
+            t.step_adjust = adjust
 
     def _run(self) -> None:
         """Go on air, and keep going back on air after any problem a retry
@@ -329,6 +384,7 @@ class StationRunner:
         if not self.target:
             raise ValueError("Set the station's test stream first" if self.rehearsal
                              else "Set the station's server first")
+        self.jingles = JingleBag(st, measure=self.analyser.want if self.analyser else None) if st.jingles else None
         try:
             self.queue = self._load()
             self.fallback_queue = None
@@ -385,7 +441,8 @@ class StationRunner:
         self.channel = Channel(
             queue, self.sender, self.ffmpeg, bitrate=st.bitrate, start=index, offset=offset,
             level=st.level, on_played=self._played, keep_going=True, after=after,
-            fallback=self._fallback,
+            fallback=self._fallback, crossfade=st.crossfade, jingle=self.jingles,
+            jingle_every=st.jingle_every, jingle_title=st.name,
         )
         threading.Thread(target=self._watch, args=(done,), daemon=True).start()
         threading.Thread(target=self._show_clock, args=(done, self.show_on), daemon=True).start()
@@ -507,6 +564,8 @@ class StationRunner:
                 "gain_db": round(now.gain_db, 1),
                 "levelled_by": now.levelled_by,
             }
+            if ch.jingle is not None:
+                out["now"]["jingle"] = ch.jingle.name
             show_on = self.show_on if ch.in_show else None
             if show_on:
                 out["now"]["show"] = show_on[0].name
@@ -799,6 +858,14 @@ class ServerApp:
                 add("Fallback", "fail", str(exc))
         else:
             add("Fallback", "warn", "None set: if the music can't be read, the station sends silence")
+        if st.jingles:
+            try:
+                bag = JingleBag(st)
+                found = bag.load()
+                add("Jingles", "ok", f"{len(found)} jingles, about {bag.seconds:.0f} s each, "
+                    f"one after every {st.jingle_every} songs")
+            except (PlaylistError, OSError) as exc:
+                add("Jingles", "fail", str(exc))
         for show in runner.shows():
             if not runner.show_length(show):
                 add(f"Show: {show.name}", "fail", f"{show.source} can't be found or played")
