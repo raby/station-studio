@@ -60,10 +60,12 @@ def _fetch_latest(url: str = RELEASES_API) -> str | None:
         return newest_release(json.loads(resp.read(5_000_000)))
 
 
-def latest_version(cache: Path, fetch=None, now: float | None = None, force: bool = False) -> str | None:
+def latest_version(cache: Path, fetch=None, now: float | None = None, force: bool = False,
+                   quiet: bool = True) -> str | None:
     """The newest release, from a cache under a day old (unless `force`),
     else from GitHub. Network trouble is quiet: the last known answer (or
-    None) is kept."""
+    None) is kept. With `quiet` off it raises instead, so a check asked
+    for by hand can say it couldn't, rather than that all is up to date."""
     now = time.time() if now is None else now
     fetch = fetch or _fetch_latest
     cached: dict = {}
@@ -80,7 +82,9 @@ def latest_version(cache: Path, fetch=None, now: float | None = None, force: boo
     try:
         latest = fetch()
     except Exception as exc:  # offline, proxy, GitHub down: try again next time
-        logger.info("Couldn't check for a new version: %s", exc)
+        logger.warning("Couldn't check for a new version: %s", exc)
+        if not quiet:
+            raise
         return known  # not cached as checked, so the next hourly look retries
     logger.info("Newest Station Server release: %s", latest)
     try:

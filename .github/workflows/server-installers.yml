@@ -70,7 +70,7 @@ jobs:
 
       - name: tools
         run: |
-          python -m pip install "pyinstaller>=6.10,<7" ./player
+          python -m pip install "pyinstaller>=6.10,<7" certifi ./player
           # The Mac app's own window (macwindow.py); Quartz only for the check below.
           if [ "${{ matrix.kind }}" = mac ]; then python -m pip install pyobjc-framework-WebKit pyobjc-framework-Quartz; fi
 
@@ -143,6 +143,11 @@ jobs:
           assert d['can_update'], d  # Update now works in the downloaded app
           assert d['ffmpeg'] and not d['ffmpeg_error'] and 'ffmpeg' in d['ffmpeg'] and 'Station Server' in d['ffmpeg'], d
           print('version', d['version'], 'ffmpeg', d['ffmpeg'])"
+          # It can reach GitHub over https (the Mac app needs its own certificates):
+          # anything but a certificate failure will do, a rate limit included.
+          CHECK=$(curl -sS -X POST -H 'X-Station-Server: 1' -H 'Content-Type: application/json' -d '{}' \
+            http://127.0.0.1:8771/api/update/check)
+          if echo "$CHECK" | grep -qi certificate; then echo "update check: $CHECK"; exit 1; fi
           curl -sS -o /dev/null -w '%{http_code} %{content_type}\n' http://127.0.0.1:8771/ | grep -q '^200 text/html'
           curl -sS -o /dev/null -w '%{http_code} %{content_type}\n' http://127.0.0.1:8771/app.js | grep -q '^200 text/javascript'
           # What lets the Dock window start Station Server when it isn't running.
