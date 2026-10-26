@@ -10,10 +10,12 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
+from station_player.library import AUDIO_EXTENSIONS, Track
 from station_player.playlog import PlayLog
+from station_player.tags import read_tags
 
 from station_server import __version__, selfupdate, updates
 from station_server.audio import FfmpegMissing, find_ffmpeg, has_mp3_encoder
@@ -21,7 +23,7 @@ from station_server.channel import Channel, NowPlaying
 from station_server.config import Config, ConfigStore, Station, clean_station, newest_week
 from station_server.desktop import Login, bundled
 from station_server.playlist import PlaylistError, Queue, load_queue
-from station_server.schedule import WeekStart, running_order, track_seconds, where_now
+from station_server.schedule import Show, WeekStart, plan, position, track_seconds, where_now
 from station_server.senders import SenderError, StreamInfo, sender_from_url
 from station_server.window import mac_app_bundle
 
@@ -41,6 +43,30 @@ def playlist_file(station: Station) -> Path:
             raise PlaylistError(f"No exported playlists in {p}")
         return found
     return p
+
+
+def show_queue(show: Show, station: Station) -> Queue:
+    """What a show plays: one recording, a playlist, or a folder of
+    recordings in name order."""
+    p = Path(show.source).expanduser()
+    if p.is_dir():
+        files = sorted((f for f in p.iterdir() if f.suffix.lower() in AUDIO_EXTENSIONS and f.is_file()),
+                       key=lambda f: f.name.lower())
+    elif p.suffix.lower() in AUDIO_EXTENSIONS and p.is_file():
+        files = [p]
+    elif p.is_file():
+        queue = load_queue(p, station.music_folders, station.remaps)
+        return Queue(show.name, queue.tracks, queue.missing)
+    else:
+        raise PlaylistError(f"{show.name}: {p} isn't there")
+    tracks = []
+    for i, f in enumerate(files):
+        tags = read_tags(f)
+        tracks.append(Track(id=f"show-{show.id}-{i}", name=tags.title or f.stem, artist=tags.artist,
+                            album=tags.album or show.name, duration_ms=tags.duration_ms, path=f, location=f))
+    if not tracks:
+        raise PlaylistError(f"{show.name}: no recordings in {p}")
+    return Queue(show.name, tracks)
 
 
 def _local(ts: float) -> datetime:
@@ -74,6 +100,10 @@ class StationRunner:
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
         self._stopped = threading.Event()
+        # The show on air: (show, when listeners heard it start, its length).
+        self.show_on: tuple[Show, datetime, float] | None = None
+        self._interrupted = 0  # the song a show cut into
+        self._show_lengths: dict[str, tuple[float, float]] = {}  # source -> (mtime, seconds)
 
     # ---- control --------------------------------------------------------
 
@@ -111,6 +141,89 @@ class StationRunner:
             return 0, 0.0
         return where_now(queue.tracks, WeekStart.parse(self.station.week_start), datetime.now().astimezone())
 
+    def _resume(self, at: datetime, interrupted: int) -> tuple[int, float]:
+        """Where the music comes back after a show ending at `at`: where the
+        clock says, or (from the top) the song after the one interrupted."""
+        if self.station.start_mode != "clock" or not self.queue:
+            return interrupted + 1, 0.0
+        return where_now(self.queue.tracks, WeekStart.parse(self.station.week_start), at)
+
+    def shows(self) -> list[Show]:
+        out = []
+        for raw in self.station.shows:
+            try:
+                out.append(Show.parse(raw))
+            except ValueError:
+                continue
+        return out
+
+    def show_length(self, show: Show) -> float:
+        """How long a show runs, remembered while its file is unchanged."""
+        p = Path(show.source).expanduser()
+        try:
+            mtime = p.stat().st_mtime
+        except OSError:
+            return 0.0
+        known = self._show_lengths.get(show.source)
+        if known and known[0] == mtime:
+            return known[1]
+        try:
+            length = sum(track_seconds(t) for t in show_queue(show, self.station).tracks)
+        except (PlaylistError, OSError):
+            length = 0.0
+        self._show_lengths[show.source] = (mtime, length)
+        return length
+
+    def _heard_now(self) -> datetime:
+        """The time listeners are hearing: audio is sent a little ahead."""
+        ahead = self.channel.pacer.ahead() if self.channel else 0.0
+        return datetime.now().astimezone() + timedelta(seconds=ahead)
+
+    def _after_show(self, interrupted: int):
+        def after() -> tuple[Queue, int, float]:
+            self.show_on = None
+            index, offset = self._resume(self._heard_now(), interrupted)
+            logger.info("%s: back to the music", self.station.name)
+            return self.queue, index, offset
+        return after
+
+    def _show_now(self, now: datetime) -> tuple[Show, datetime, float] | None:
+        """A show that should be on air at `now` (after a restart, say)."""
+        best = None
+        for show in self.shows():
+            length = self.show_length(show)
+            for at in show.starts(now - timedelta(seconds=length), now + timedelta(microseconds=1)):
+                if best is None or at > best[1]:
+                    best = (show, at, length)
+        return best
+
+    def _start_show(self, show: Show, at: datetime) -> None:
+        try:
+            queue = show_queue(show, self.station)
+        except (PlaylistError, OSError) as exc:
+            logger.warning("%s: couldn't play %s: %s", self.station.name, show.name, exc)
+            return
+        ch = self.channel
+        interrupted = ch.now.index if ch and ch.now and not ch.in_show else 0
+        logger.info("%s: %s %s", self.station.name, show.name, "now" if show.on_time else "after this song")
+        self.show_on = (show, at, sum(track_seconds(t) for t in queue.tracks))
+        self._interrupted = interrupted
+        ch.insert(queue, self._after_show(interrupted), now=show.on_time)
+
+    def _show_clock(self, joined: tuple[Show, datetime, float] | None = None) -> None:
+        """Start each show at its time (allowing for the audio sent ahead)."""
+        fired: set[tuple[str, str]] = {(joined[0].id, joined[1].isoformat())} if joined else set()
+        last = self._heard_now()
+        while not self._stopped.wait(0.2):
+            heard = self._heard_now() + timedelta(seconds=0.1)
+            for show in self.shows():
+                for at in show.starts(last, heard):
+                    key = (show.id, at.isoformat())
+                    if key not in fired:
+                        fired.add(key)
+                        self._start_show(show, at)
+            last = max(last, heard)
+
     def _load(self) -> Queue:
         xml = playlist_file(self.station)
         queue = load_queue(xml, self.station.music_folders, self.station.remaps)
@@ -135,12 +248,26 @@ class StationRunner:
             logger.warning("%s couldn't go on air: %s", st.name, exc)
             return
         index, offset = self._where(self.queue)
+        queue, after = self.queue, None
+        joining = self._show_now(datetime.now().astimezone())
+        if joining:  # back on air part-way through a show
+            show, at, length = joining
+            try:
+                queue = show_queue(show, st)
+                elapsed = (datetime.now().astimezone() - at).total_seconds()
+                index, offset = position([track_seconds(t) for t in queue.tracks], elapsed)
+                after = self._after_show(0)
+                self.show_on = joining
+                logger.info("%s: joining %s part-way", st.name, show.name)
+            except (PlaylistError, OSError) as exc:
+                logger.warning("%s: couldn't play %s: %s", st.name, show.name, exc)
+                queue = self.queue
         self.channel = Channel(
-            self.queue, self.sender, self.ffmpeg, bitrate=st.bitrate, start=index, offset=offset,
-            level=st.level, on_played=self._played, keep_going=True,
+            queue, self.sender, self.ffmpeg, bitrate=st.bitrate, start=index, offset=offset,
+            level=st.level, on_played=self._played, keep_going=True, after=after,
         )
-        watcher = threading.Thread(target=self._watch, daemon=True)
-        watcher.start()
+        threading.Thread(target=self._watch, daemon=True).start()
+        threading.Thread(target=self._show_clock, args=(self.show_on,), daemon=True).start()
         self.state = "on"
         logger.info("%s on air to %s", st.name, self.sender.describe)
         try:
@@ -175,7 +302,8 @@ class StationRunner:
                 continue
             logger.info("%s: switching to %s after this track", self.station.name, queue.name)
             self.queue = queue
-            if self.channel:
+            # During a show the new week simply comes in after it.
+            if self.channel and self.show_on is None:
                 self.channel.load(queue, where=self._where)
 
     # ---- for the page ---------------------------------------------------
@@ -197,7 +325,7 @@ class StationRunner:
         ch = self.channel
         # On air, the playlist is the one playing; a new week waiting for the
         # end of the track is shown as next.
-        playing = ch.queue if ch and self.state == "on" else self.queue
+        playing = ch.queue if ch and self.state == "on" and not ch.in_show else self.queue
         if playing:
             out["playlist"] = _playlist_info(playing)
             if self.queue is not None and self.queue is not playing:
@@ -212,7 +340,19 @@ class StationRunner:
                 "seconds": round(track_seconds(t), 1),
                 "gain_db": round(now.gain_db, 1),
             }
-            out["order"] = running_order(ch.queue.tracks, now.index, _local(now.started), count=30)
+            show_on = self.show_on if ch.in_show else None
+            if show_on:
+                out["now"]["show"] = show_on[0].name
+                # When it really started (a show after the song starts late).
+                began = _local(now.started) - timedelta(seconds=sum(track_seconds(t) for t in ch.queue.tracks[:now.index]))
+                show_on = (show_on[0], began, show_on[2])
+            shows = [(show, self.show_length(show)) for show in self.shows()]
+            if self.queue and self.queue.tracks:
+                out["order"] = plan(
+                    self.queue.tracks, now.index if not show_on else self._interrupted, _local(now.started),
+                    datetime.now().astimezone(), shows, self._resume, count=30, show_playing=show_on)
+        out["shows"] = [{**show.to_json(), "label": show.label(), "seconds": round(self.show_length(show), 1)}
+                        for show in self.shows()]
         return out
 
 

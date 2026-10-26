@@ -9,11 +9,19 @@ the time each track goes out.
 
 A week that runs short loops; one that runs long is cut at the end of
 the week by the next week's start.
+
+Shows are pinned to times: "Saturday 20:00, Saturday Night Mix". At that
+time the show (a recording, a playlist or a folder of recordings) plays
+once through, straight away or after the playing song, and then the
+music comes back where the clock says, as if it had played all along, so
+the times in the running order stay true.
 """
 from __future__ import annotations
 
+import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 from station_player.library import Track
 from station_player.tags import read_tags
@@ -120,4 +128,111 @@ def running_order(tracks: list[Track], index: int, started: datetime, count: int
         })
         at += timedelta(seconds=secs)
         i += 1
+    return out
+
+
+@dataclass(frozen=True)
+class Show:
+    id: str
+    name: str
+    source: str  # a recording, a playlist XML, or a folder of recordings
+    days: tuple[int, ...]  # 0 = Monday; all seven for every day
+    hour: int
+    minute: int
+    on_time: bool = True  # cut the playing song at the time; else start after it
+
+    @classmethod
+    def parse(cls, data) -> "Show":
+        """From settings; raises ValueError with a message for the page."""
+        if not isinstance(data, dict):
+            raise ValueError("A show must be an object")
+        name = str(data.get("name") or "").strip()[:80] or "Show"
+        source = str(data.get("source") or "").strip()
+        if not source:
+            raise ValueError(f"Choose the recording or playlist for {name}")
+        try:
+            hour, minute = (int(x) for x in str(data.get("time", "")).split(":"))
+        except ValueError:
+            raise ValueError(f"Give {name} a time like 20:00") from None
+        if not (0 <= hour <= 23 and 0 <= minute <= 59):
+            raise ValueError(f"Give {name} a time like 20:00")
+        raw_days = data.get("days")
+        days = sorted({int(d) for d in raw_days if str(d).isdigit() and 0 <= int(d) <= 6}) \
+            if isinstance(raw_days, list) else []
+        if not days:
+            raise ValueError(f"Choose the days {name} goes out")
+        sid = str(data.get("id") or "").strip()[:20] or uuid.uuid4().hex[:8]
+        return cls(sid, name, source, tuple(days), hour, minute, bool(data.get("on_time", True)))
+
+    def to_json(self) -> dict:
+        return {"id": self.id, "name": self.name, "source": self.source, "days": list(self.days),
+                "time": f"{self.hour:02d}:{self.minute:02d}", "on_time": self.on_time}
+
+    def label(self) -> str:
+        days = "Every day" if len(self.days) == 7 else (
+            "Weekdays" if self.days == (0, 1, 2, 3, 4) else ", ".join(DAYS[d][:3] for d in self.days))
+        return f"{days} {self.hour:02d}:{self.minute:02d}"
+
+    def starts(self, after: datetime, before: datetime) -> list[datetime]:
+        """When it starts between `after` (inclusive) and `before`, as
+        timezone-aware local times. The times are wall-clock times, so a
+        20:00 show stays at 20:00 across the clocks changing."""
+        out = []
+        day: date = (after - timedelta(days=1)).date()
+        while day <= before.date():
+            if day.weekday() in self.days:
+                at = datetime(day.year, day.month, day.day, self.hour, self.minute).astimezone()
+                if after <= at < before:
+                    out.append(at)
+            day += timedelta(days=1)
+        return out
+
+
+def plan(tracks: list[Track], index: int, started: datetime, now: datetime,
+         shows: list[tuple[Show, float]], resume: Callable[[datetime, int], tuple[int, float]],
+         count: int = 30, show_playing: tuple[Show, datetime, float] | None = None) -> list[dict]:
+    """The running order from the track playing (`index`, heard from
+    `started`), with each show at its time (`shows`: each with its length
+    in seconds) and the music after it from `resume(time, index of the
+    song the show interrupted)`. `show_playing`, when a show is on now:
+    (show, when it started, its length)."""
+    out: list[dict] = []
+    n = len(tracks)
+    offset = 0.0
+    if show_playing:
+        show, at, length = show_playing
+        out.append({"show": show.name, "at": at.isoformat(timespec="seconds"), "seconds": round(length, 1)})
+        t = at + timedelta(seconds=length)
+        index, offset = resume(t, index)
+    else:
+        t = started
+    horizon = now + timedelta(days=8)
+    while len(out) < count and n and t < horizon:
+        track = tracks[index % n]
+        length = max(0.0, track_seconds(track) - offset)
+        end = t + timedelta(seconds=length)
+        upcoming = sorted(((at, show, slen) for show, slen in shows for at in show.starts(t, end)),
+                          key=lambda x: x[0])
+        row = {"index": index % n, "at": t.isoformat(timespec="seconds"), "title": track.name,
+               "artist": track.artist, "seconds": round(length, 1)}
+        if offset >= 1:
+            row["from"] = round(offset, 1)
+        if upcoming:
+            at, show, slen = upcoming[0]
+            if show.on_time:
+                row["seconds"] = round((at - t).total_seconds(), 1)
+                row["cut"] = True
+            else:
+                at = end
+            if row["seconds"] > 0:  # a show on the hour cuts nothing
+                out.append(row)
+            if len(out) >= count:
+                break
+            out.append({"show": show.name, "at": at.isoformat(timespec="seconds"), "seconds": round(slen, 1)})
+            t = at + timedelta(seconds=slen)
+            index, offset = resume(t, index % n)
+            continue
+        out.append(row)
+        t = end
+        index, offset = (index + 1) % n, 0.0
     return out

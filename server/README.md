@@ -86,6 +86,18 @@ afternoon, or restart after a power cut, and the station joins where the
 clock says, part way into a track. Choose *From the top* to start at
 track 1 instead. A playlist shorter than a week loops.
 
+**Shows at set times.** In a station's Edit page, *Shows* pins a show to
+times in the week: "Saturday Night Mix, Saturday 20:00" or "The News,
+weekdays 09:00". A show is a recording, a station-studio (or iTunes)
+playlist, or a folder of recordings played in name order. It starts
+exactly on time, cutting the song playing, or after that song ends. When
+it finishes, the music comes back where the week's clock says, as if it
+had played all along, so the times in the running order stay right; the
+running order shows the shows at their times. Restart part-way through a
+show and it joins the show where it should be. Show times are wall-clock
+times, so a 20:00 show stays at 20:00 when the clocks change. A new
+week's playlist waits until a show has finished.
+
 A station that was on air when the app quit goes back on air when it
 starts. If no track in the playlist can be read, it sends silence and
 keeps trying rather than dropping off the server.

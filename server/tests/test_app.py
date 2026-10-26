@@ -199,3 +199,59 @@ def test_window_route_opens_the_mac_apps_own_window(api, monkeypatch, tmp_path):
     monkeypatch.setattr(window, "open_ui", lambda url, home, own, app=None: opened.append(app))
     assert api("/api/window", {})[0] == 200
     assert wait_for(lambda: opened == [tmp_path / "Station Server.app"])
+
+
+def test_shows_are_saved_and_checked(api, exports):
+    show = {"name": "Saturday Night Mix", "source": "/music/mix.mp3", "days": [5], "time": "20:00"}
+    status, body = api("/api/stations", {"name": "X", "playlist": str(exports), "shows": [show]})
+    assert status == 200
+    st = body["stations"][0]
+    assert st["station"]["shows"][0]["time"] == "20:00" and st["shows"][0]["label"] == "Sat 20:00"
+    status, err = api("/api/stations", {"name": "Y", "shows": [{**show, "days": []}]})
+    assert status == 400 and "days" in err["error"]
+
+
+@needs_ffmpeg
+def test_a_show_goes_out_then_the_music_returns(api, exports, icecast, tmp_path):
+    from datetime import datetime
+
+    from station_server.schedule import Show
+    recording = write_wav(tmp_path / "shows" / "Saturday Night Mix.wav", seconds=1.5, freq=880)
+    status, body = api("/api/stations", {
+        "name": "Rebirth Classics", "playlist": str(exports), "start_mode": "top",
+        "server": f"icecast://localhost:{icecast.port}/classics", "password": "hackme",
+    })
+    sid = body["id"]
+    api(f"/api/stations/{sid}/on", {"on": True})
+    runner = api.app.runners[sid]
+    assert wait_for(lambda: runner.state == "on" and runner.channel.now)
+    now = datetime.now().astimezone()
+    runner._start_show(Show("mix", "Saturday Night Mix", str(recording), (now.weekday(),), now.hour, now.minute), now)
+    assert wait_for(lambda: (runner.status()["now"] or {}).get("show") == "Saturday Night Mix")
+    order = runner.status()["order"]
+    assert order[0]["show"] == "Saturday Night Mix" and order[1]["title"].startswith("Track")
+    assert wait_for(lambda: "Saturday Night Mix" in icecast.titles)
+    assert wait_for(lambda: not runner.channel.in_show and runner.show_on is None)
+    assert wait_for(lambda: icecast.titles[-1].startswith("Artist - Track"))
+
+
+@needs_ffmpeg
+def test_back_on_air_part_way_through_a_show(api, exports, icecast, tmp_path, monkeypatch):
+    from datetime import datetime
+
+    from station_server.onair import StationRunner
+    recording = write_wav(tmp_path / "shows" / "Long Show.wav", seconds=2.0, freq=660)
+    now = datetime.now().astimezone()
+    status, body = api("/api/stations", {
+        "name": "Rebirth Classics", "playlist": str(exports),
+        "server": f"icecast://localhost:{icecast.port}/classics", "password": "hackme",
+        "shows": [{"name": "Long Show", "source": str(recording), "days": [now.weekday()],
+                   "time": now.strftime("%H:%M")}],
+    })
+    monkeypatch.setattr(StationRunner, "show_length", lambda self, show: 3600.0)  # an hour-long show
+    sid = body["id"]
+    api(f"/api/stations/{sid}/on", {"on": True})
+    runner = api.app.runners[sid]
+    assert wait_for(lambda: runner.state == "on" and runner.channel.now)
+    assert runner.channel.in_show and runner.status()["now"]["show"] == "Long Show"
+    assert wait_for(lambda: "Long Show" in icecast.titles)

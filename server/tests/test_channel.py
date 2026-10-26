@@ -244,3 +244,43 @@ def test_without_keep_going_a_dead_playlist_stops(tmp_path):
                       decoder=lambda *a, **k: iter(()), level=False)
     with pytest.raises(RuntimeError):
         channel.run()
+
+
+@needs_ffmpeg
+def test_a_show_plays_once_then_the_music_comes_back(tmp_path):
+    played = []
+    music, show = _fake_queue("A", 4, tmp_path), _fake_queue("S", 2, tmp_path)
+
+    def decoder(ffmpeg, path, gain_db=0.0, start=0.0):
+        played.append(path.stem)
+        if path.stem == "A0":
+            channel.insert(show, after=lambda: (music, 2, 0.0), now=True)
+        if path.stem == "S0":
+            assert channel.in_show
+        if len(played) >= 5:
+            channel.stop()
+        yield bytes(CHUNK)
+
+    channel = Channel(music, FileSender(tmp_path / "out.mp3"), FFMPEG, pacer=Unpaced(), decoder=decoder, level=False)
+    channel.run()
+    assert played == ["A0", "S0", "S1", "A2", "A3"]
+    assert not channel.in_show
+
+
+@needs_ffmpeg
+def test_an_unreadable_show_just_ends(tmp_path):
+    played = []
+    music, show = _fake_queue("A", 3, tmp_path), _fake_queue("S", 1, tmp_path)
+
+    def decoder(ffmpeg, path, gain_db=0.0, start=0.0):
+        played.append(path.stem)
+        if path.stem == "S0":
+            return  # nothing readable
+        if len(played) >= 3:
+            channel.stop()
+        yield bytes(CHUNK)
+
+    channel = Channel(show, FileSender(tmp_path / "out.mp3"), FFMPEG, pacer=Unpaced(), decoder=decoder,
+                      level=False, keep_going=True, after=lambda: (music, 1, 0.0))
+    channel.run()
+    assert played == ["S0", "A1", "A2"] and not channel.stuck
