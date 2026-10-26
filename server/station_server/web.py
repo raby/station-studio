@@ -77,6 +77,15 @@ class _Guesses:
             self._wrong.setdefault(who, []).append(self._clock())
 
 
+def _state(app: ServerApp, remote: bool) -> dict:
+    """What the page shows. Another device isn't told the Station Studio
+    link code."""
+    state = {**app.state(), "remote_view": remote}
+    if remote and state.get("studio"):
+        state["studio"] = {k: v for k, v in state["studio"].items() if k != "code"}
+    return state
+
+
 def make_handler(app: ServerApp, picker: Picker, quit, remote: bool = False,
                  guesses: _Guesses | None = None) -> type[BaseHTTPRequestHandler]:
     guesses = guesses or _Guesses()
@@ -178,7 +187,7 @@ def make_handler(app: ServerApp, picker: Picker, quit, remote: bool = False,
             url = urlparse(self.path)
             path = url.path
             if path == "/api/state":
-                return self._json({**app.state(), "remote_view": remote})
+                return self._json(_state(app, remote))
             if path == "/api/diagnostics":
                 return self._send(app.diagnostics().encode("utf-8"), "text/plain; charset=utf-8")
             m = _STATION_RE.match(path)
@@ -330,7 +339,7 @@ def make_handler(app: ServerApp, picker: Picker, quit, remote: bool = False,
                 app.delete_station(sid)
             else:
                 return self._error(HTTPStatus.NOT_FOUND, "Not found")
-            return self._json({**app.state(), "remote_view": remote})
+            return self._json(_state(app, remote))
 
     return Handler
 
@@ -429,4 +438,7 @@ def make_server(app: ServerApp, host: str = "127.0.0.1", port: int = DEFAULT_POR
     app.updater = updater or Updater(quit, port=port)
     app.remote = RemoteAccess(app, picker, quit, host=remote_host)
     app.remote.apply()
+    from station_server.studiolink import StudioLink  # it builds on this module
+    app.studio = StudioLink(app, host=remote_host)
+    app.studio.apply()
     return server

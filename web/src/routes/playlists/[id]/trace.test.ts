@@ -24,6 +24,8 @@ const {
   getStationPlaylistsMock,
   getVersionsMock,
   exportPlaylistToDiskMock,
+  stationServerSettingsMock,
+  sendToStationServerMock,
   gotoMock,
   FakeApiError,
   pageStore,
@@ -71,6 +73,9 @@ const {
     getStationPlaylistsMock: vi.fn(),
     getVersionsMock: vi.fn(),
     exportPlaylistToDiskMock: vi.fn(),
+    // No Station Server set up unless a test says so (mockResolvedValueOnce).
+    stationServerSettingsMock: vi.fn(async () => ({ address: '', has_code: false, stations: {} })),
+    sendToStationServerMock: vi.fn(),
     gotoMock: vi.fn(),
     FakeApiError,
     pageStore,
@@ -86,6 +91,9 @@ vi.mock('$lib/api', () => ({
   getStationPlaylists: (...args: unknown[]) => getStationPlaylistsMock(...args),
   getVersions: (...args: unknown[]) => getVersionsMock(...args),
   exportPlaylistToDisk: (...args: unknown[]) => exportPlaylistToDiskMock(...args),
+  getStationServerSettings: (...args: unknown[]) => stationServerSettingsMock(...args),
+  sendToStationServer: (...args: unknown[]) => sendToStationServerMock(...args),
+  errorText: (e: unknown) => (e instanceof Error ? e.message : String(e)),
   ApiError: FakeApiError,
 }));
 
@@ -458,6 +466,43 @@ expect(exportPlaylistToDiskMock).toHaveBeenCalledWith(7, null, false);
     // banner reads "Wrote: Wrote to /abs/..." — the path regex
     // still passes, but the SR + visual UX is broken.
     expect(status.textContent).not.toMatch(/Wrote:\s*Wrote/);
+  });
+
+  it("Send to Station Server is hidden for a station that doesn't send there", async () => {
+    seedAllResolved();
+    render(Page);
+    await screen.findByTestId('export-to-disk');
+    expect(screen.queryByTestId('send-to-station-server')).toBeNull();
+  });
+
+  it('sends the week to Station Server and shows its answer', async () => {
+    stationServerSettingsMock.mockResolvedValueOnce({
+      address: '10.0.0.5', has_code: true, stations: { cls: { station: 'abc', auto: false } },
+    });
+    sendToStationServerMock.mockResolvedValueOnce({
+      station: 'Rebirth Classics', week: '003.xml', replaced: false, tracks: 410, missing_count: 2,
+      missing: [{ artist: 'Madness', title: 'One Step Beyond', location: '/x.mp3' }, { artist: null, title: 'Untitled', location: '/y.mp3' }],
+      when: 'later', goes_on: null,
+    });
+    seedAllResolved();
+    render(Page);
+    await fireEvent.click(await screen.findByTestId('send-to-station-server'));
+    expect(sendToStationServerMock).toHaveBeenCalledWith(7);
+    const status = await screen.findByTestId('station-server-sent');
+    expect(status).toHaveTextContent(
+      "Sent: Rebirth Classics, week 3: 410 tracks found on the station's computer, 2 not found (Madness – One Step Beyond; Untitled). It waits for its week.",
+    );
+  });
+
+  it('Export to disk shows when the week also went to Station Server, or why not', async () => {
+    seedAllResolved();
+    exportPlaylistToDiskMock.mockResolvedValueOnce({
+      path: '/abs/out/cls/003.xml', bytes: 2048, station_server_error: "Couldn't reach Station Server at 10.0.0.5",
+    });
+    render(Page);
+    await fireEvent.click(await screen.findByTestId('export-to-disk'));
+    expect(await screen.findByTestId('station-server-error')).toHaveTextContent("Couldn't reach Station Server");
+    expect(await screen.findByTestId('disk-export-status')).toHaveTextContent('003.xml');
   });
 
   it('renders sub-KB sizes as raw bytes (S1 from §16.6 review)', async () => {

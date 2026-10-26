@@ -69,6 +69,7 @@ const ICONS = {
   bell: ["M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9", "M13.73 21a2 2 0 0 1-3.46 0"],
   phone: ["r 6 2 12 20 2.5", "M11 18h2"],
   clock: ["c 12 12 9", "M12 7v5l3 2"],
+  link: ["M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71", "M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"],
   mic: ["r 9 2 6 12 3", "M19 10v1a7 7 0 0 1-14 0v-1", "M12 18v4", "M8 22h8"],
 };
 const SVG = "http://www.w3.org/2000/svg";
@@ -1065,6 +1066,7 @@ const SETTINGS_TABS = [
   ["startup", "Start-up", "power"],
   ["alerts", "Alerts", "bell"],
   ["phone", "Phone access", "phone"],
+  ["studio", "Station Studio", "link"],
   ["updates", "Updates", "refresh"],
   ["app", "App", "app"],
 ];
@@ -1088,6 +1090,7 @@ function renderSettings() {
     ],
     alerts: () => [alertsSettings()],
     phone: () => [phoneSettings()],
+    studio: () => [studioSettings()],
     updates: () => [updateSettings()],
     app: () => [
       el("p", { class: "help" }, "Station Server runs in the background; this window is how you see it. Closing the window leaves the stations on air. Quit Station Server takes them off air."),
@@ -1208,6 +1211,51 @@ function phoneSettings() {
   );
 }
 
+// Settings › Station Studio: Station Studio sends each week here, with a
+// link code (studiolink.py).
+function studioSettings() {
+  const l = S.state?.studio || {};
+  const msg = el("div", { class: "form-msg", role: "status" });
+  const on = el("input", { type: "checkbox" });
+  on.checked = !!l.enabled;
+  const port = el("input", { type: "text", value: String(l.port || 8772), autocomplete: "off" });
+  const redraw = () => { const old = $("#studio-settings"); if (old) old.replaceWith(studioSettings()); };
+  async function save(body, done = "Saved") {
+    try {
+      setState(await api("/api/settings", body));
+      toast(done);
+      redraw();
+    } catch (e) { msg.textContent = e.message; if ("studio_link" in body) on.checked = !on.checked; }
+  }
+  on.addEventListener("change", () => save({ studio_link: on.checked, studio_port: port.value }));
+  const newCode = () => {
+    if (confirm("Make a new link code? Station Studio can't send weeks until you enter the new code there.")) {
+      save({ studio_new_code: true }, "New link code made");
+    }
+  };
+  const last = l.last;
+  return el("div", { id: "studio-settings", class: "form" },
+    el("p", { class: "help" }, "Station Studio can send each week's playlist straight to this computer, with no exporting or copying by hand, and show what's on air. Station Server keeps each week in the station's folder of weeks, where it waits for the start of its week, as an exported week does. Station Studio can be on this computer or another one on the network."),
+    el("label", { class: "check", style: "display:flex;gap:8px;align-items:center" }, on, "Let Station Studio send weeks to this computer"),
+    el("div", { class: "grid" }, el("label", { class: "narrow" }, "Port", port)),
+    el("div", { class: "actions" }, btn("Save port", "check", () => save({ studio_port: port.value }), "btn small")),
+    msg,
+    l.error ? el("div", { class: "errors" }, l.error) : null,
+    l.running ? [
+      el("h3", {}, "In Station Studio"),
+      el("p", {}, "Open Settings › Station Server and enter this computer's address, ",
+        l.addresses.length ? l.addresses.flatMap((a, i) => [i ? " or " : "", el("b", {}, a)]) : el("b", {}, `127.0.0.1:${l.port}`),
+        l.addresses.length ? [" (with Station Studio on this computer, ", el("b", {}, `127.0.0.1:${l.port}`), ")"] : null,
+        ", and the link code ", el("b", { class: "code" }, l.code),
+        ". Then, on each station's page in Station Studio, choose the station here it sends to."),
+      el("div", { class: "actions" }, btn("Make a new link code", "refresh", newCode, "btn small")),
+      last ? el("p", { class: "help" }, `Last week received ${dayTime(last.at)}: ${last.week} for ${last.station}, ${last.tracks} tracks`,
+        last.missing_count ? el("span", { class: "warn" }, ` (${last.missing_count} can't be found on this computer)`) : "") : null,
+    ] : null,
+    el("p", { class: "help" }, "The first time, Windows or macOS may ask whether Station Server may accept connections: allow it, on private networks. Only Station Studio with the code can send. For Station Studio outside this network, use a VPN such as Tailscale on both."),
+  );
+}
+
 async function copyDiagnostics() {
   try {
     const res = await fetch("/api/diagnostics", { cache: "no-store" });
@@ -1244,7 +1292,7 @@ function renderHelp() {
       h2("Setting up a station"),
       p("Add a station. Its settings are in tabs:"),
       list(
-        "Station: its name, station-studio's exports folder for it (each week is played in turn), the music folders, and a fallback to play if the music can't be read.",
+        "Station: its name, station-studio's exports folder for it (each week is played in turn; leave it blank if Station Studio sends the weeks), the music folders, and a fallback to play if the music can't be read.",
         "Server: the server's address, port and source password (the ones in Winamp's SHOUTcast plugin), and a spare test stream to rehearse on. Test connection checks them.",
         "Playback: evening out the volume, the crossfade, when the week starts, and jingles.",
         "Shows: recordings or playlists that go out at set times.",
@@ -1260,6 +1308,13 @@ function renderHelp() {
         el("li", {}, "When it sounds right: stop Winamp's SHOUTcast plugin (and close iTunes), then press Go live. Listeners hear a short gap."),
         el("li", {}, "Keep Winamp and iTunes installed, closed, for a week or two. To go back: Take off air here, then start Winamp's plugin again.")),
       p("If going on air says something else is already sending to the server, Winamp's plugin (or another copy of Station Server) is still connected: a server takes one source at a time."),
+      h2("Weeks straight from Station Studio"),
+      p("Instead of exporting each week to a shared folder, Station Studio can send it here over the network. Turn on Settings › Station Studio: it shows this computer's address and a link code. In Station Studio, enter them in Settings › Station Server, then on each station's page choose the station here it sends to."),
+      list(
+        "Send to Station Server on a week's page sends it; or tick Also send each week when I export it to disk, on the station's page.",
+        "Each week is checked and kept in the station's folder of weeks (Station Server makes one if the station has none), where it waits for its week like an exported week. Sending the week on air again replaces it within a minute, after the playing song.",
+        "Station Studio is told how many of the week's songs this computer has, and lists any it can't find.",
+        "The station's page in Station Studio shows whether it's on air here, the song playing, the weeks it has, and warns when it has nothing after this week."),
       h2("Two stations on one computer"),
       p("Add a station for each. They run side by side, each with its own playlist, server, clock and play log, and go on and off air separately: for example Rebirth Classics to port 8000 and Rebirth Radio to port 8002 of the same server, or each to a different server altogether. The sidebar shows each one's state, a microphone while a presenter is live, and headphones on the one you're listening to: Listen plays one station at a time, and Stop listening at the foot of the station list stops it from any page. If both take live shows, each needs its own live shows port, like 8010 and 8020."),
     ],
@@ -1317,7 +1372,11 @@ function renderHelp() {
       p("When a new version is out, a note at the foot of the sidebar offers Update now. Station Server downloads it from its GitHub page, checks it's the genuine file and restarts; stations that were on air go back on air. Settings › Updates has Check for updates, and can stop it asking GitHub."),
     ],
     new: () => [
-      el("h2", {}, "0.12.1: tabs"),
+      el("h2", {}, "0.13: Station Studio link"),
+      list(
+        "Station Studio sends each week straight here, with a link code: no shared folder.",
+        "Station Studio's station page shows what's on air here, the weeks it has, and warns when next week is missing."),
+      h2("0.12.1: tabs"),
       list("A station's settings, Settings and Help are in tabs, like Station Player's."),
       h2("0.12: live shows"),
       list(
@@ -1345,6 +1404,7 @@ function renderHelp() {
       el("h2", {}, "If something goes wrong"),
       p("If the server goes away, the station keeps playing and reconnects every few seconds. A track whose file can't be read is skipped. If none can be (the music's drive is missing, say), the station plays its fallback, a folder of jingles or songs set in Edit › Station, and then tries the playlist again; with no fallback it sends silence. The page says which. Tracks the playlist names but this computer can't find are listed under the station: add the folder they're in as a music folder."),
       p("Go live says something else is sending to the server? Winamp's plugin is probably still connected: stop it, then press Go live again. A presenter can't connect? Check the Ready check's Live shows row, the router's port forwarding and their password; after 5 wrong passwords in 5 minutes their address is kept out for a few minutes."),
+      p("Station Studio can't reach Station Server? Check Settings › Station Studio is on, that Station Studio has the address it shows (with the port) and the current link code, and that the firewall lets Station Server accept connections on private networks. After 5 wrong codes, that address is kept out for a few minutes."),
       p("ffmpeg does the decoding and encoding. The downloaded app has its own; otherwise install it (macOS: brew install ffmpeg; Windows: winget install ffmpeg)."),
       p("Station Server keeps a log, station-server.log, with its settings, play logs and recordings in the .station-server folder in your home folder."),
       p("Asking for help? Copy diagnostics puts the version, each station's state and the end of the log on the clipboard, with passwords taken out, ready to paste into a message."),

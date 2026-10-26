@@ -4,6 +4,23 @@ All notable changes are listed here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses semantic versioning.
 
+## [1.10.0] - 2026-10-26
+
+### Added
+
+- **Send weeks straight to Station Server.** Settings › Station Server
+  takes Station Server's address and link code (from its Settings ›
+  Station Studio), with **Test**. Each station's page chooses the
+  Station Server station it sends to; **Send to Station Server** on a
+  week's page sends it, and **Also send each week when I export it to
+  disk** sends each week as it's exported. Station Server answers with
+  how many of the week's songs it has, any it can't find, and when the
+  week goes on air. No shared folder is needed.
+- **On Station Server**, on each station's page: whether it's on air
+  there, the song playing, the week playing and the next, the weeks it
+  has, and a warning (with **Send week N now**) when it has nothing
+  after this week.
+
 ## [1.9.0] - 2026-10-25
 
 ### Added

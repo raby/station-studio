@@ -605,6 +605,10 @@ export interface DiskExportResponse {
   path: string;
   /** Size of the file on disk, in bytes. */
   bytes: number;
+  /** When the station sends each week to Station Server: its answer… */
+  station_server?: StationServerSent;
+  /** …or why the week couldn't be sent (the file was still written). */
+  station_server_error?: string;
 }
 
 /**
@@ -1778,3 +1782,104 @@ export const applyBatch = async (
   }
   return json<SidecarMutationResponse>(res);
 };
+
+
+// ---- Station Server link (api/routers/stationserver.py) ----------------
+
+/** Which Station Server station a Studio station feeds, and whether
+ *  Export to disk also sends the week there. */
+export interface StationServerTarget {
+  station: string;
+  auto: boolean;
+}
+
+export interface StationServerSettings {
+  /** As typed, e.g. `192.168.1.20:8772`. Empty until set. */
+  address: string;
+  /** The link code is kept but never sent back to the page. */
+  has_code: boolean;
+  stations: Record<string, StationServerTarget>;
+}
+
+/** One of Station Server's stations, as its link describes it
+ *  (server/station_server/studiolink.py `link_status`). */
+export interface StationServerStation {
+  id: string;
+  name: string;
+  /** `playing`, `stopped`, `starting`, … */
+  state: string;
+  rehearsal?: boolean;
+  now: { title: string | null; artist: string | null } | null;
+  /** The presenter's name while a live show is on. */
+  live?: string | null;
+  /** The week on air, e.g. `012.xml`. */
+  week: string | null;
+  /** The week after, and when it goes on (local ISO time). */
+  next: { week: string; at: string } | null;
+  weeks: string[];
+  problem?: string | null;
+}
+
+export interface StationServerStatus {
+  configured: boolean;
+  connected: boolean;
+  error: string | null;
+  server?: string;
+  version?: string;
+  stations: StationServerStation[];
+}
+
+/** Station Server's answer to a week sent. */
+export interface StationServerSent {
+  station: string;
+  week: string;
+  replaced: boolean;
+  tracks: number;
+  missing_count: number;
+  missing: { artist: string | null; title: string | null; location: string }[];
+  hours?: number;
+  /** `now` (on air now), `next` (at `goes_on`), `later` or `old` (before the week on air). */
+  when: 'now' | 'next' | 'later' | 'old';
+  goes_on: string | null;
+}
+
+/** The server's own words from an ApiError (FastAPI's `detail`), else its message. */
+export function errorText(e: unknown): string {
+  if (e instanceof ApiError) {
+    const body = e.body as { detail?: unknown } | undefined;
+    if (body && typeof body.detail === 'string') return body.detail;
+  }
+  return e instanceof Error ? e.message : String(e);
+}
+
+export const getStationServerSettings = (fetch_ = fetch): Promise<StationServerSettings> =>
+  fetch_('/api/station-server').then((r) => json<StationServerSettings>(r));
+
+export const saveStationServerSettings = (
+  change: { address?: string; code?: string },
+  fetch_ = fetch,
+): Promise<StationServerSettings> =>
+  fetch_('/api/station-server', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(change),
+  }).then((r) => json<StationServerSettings>(r));
+
+export const getStationServerStatus = (fetch_ = fetch): Promise<StationServerStatus> =>
+  fetch_('/api/station-server/status').then((r) => json<StationServerStatus>(r));
+
+export const setStationServerTarget = (
+  slug: string,
+  target: StationServerTarget,
+  fetch_ = fetch,
+): Promise<StationServerSettings> =>
+  fetch_(`/api/station-server/stations/${encodeURIComponent(slug)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(target),
+  }).then((r) => json<StationServerSettings>(r));
+
+export const sendToStationServer = (id: number, fetch_ = fetch): Promise<StationServerSent> =>
+  fetch_(`/api/playlists/${id}/send-to-station-server`, { method: 'POST' }).then((r) =>
+    json<StationServerSent>(r),
+  );

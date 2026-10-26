@@ -194,6 +194,7 @@ def _clean_presenters(given, before: list[dict]) -> list[dict]:
 
 SMTP_SECURITY = ("starttls", "ssl", "none")
 REMOTE_PORT = 8771
+STUDIO_PORT = 8772
 
 
 @dataclass
@@ -262,6 +263,10 @@ class Config:
     remote: bool = False
     remote_password: str = ""
     remote_port: int = REMOTE_PORT
+    # Station Studio sends each week here, with this code (studiolink.py).
+    studio_link: bool = False
+    studio_code: str = ""
+    studio_port: int = STUDIO_PORT
 
     def station(self, sid: str) -> Station | None:
         return next((s for s in self.stations if s.id == sid), None)
@@ -306,9 +311,12 @@ class ConfigStore:
         cfg = Config(open_window=bool(data.get("open_window", True)),
                      check_updates=bool(data.get("check_updates", True)),
                      remote=bool(data.get("remote", False)),
-                     remote_password=str(data.get("remote_password") or ""))
+                     remote_password=str(data.get("remote_password") or ""),
+                     studio_link=bool(data.get("studio_link", False)),
+                     studio_code=str(data.get("studio_code") or ""))
         try:
             cfg.remote_port = clean_port(data.get("remote_port", REMOTE_PORT))
+            cfg.studio_port = clean_port(data.get("studio_port", STUDIO_PORT))
             cfg.alerts = clean_alerts(data.get("alerts") or {})
         except ValueError as exc:
             self.warnings.append(f"Some settings were left out: {exc}")
@@ -331,6 +339,9 @@ class ConfigStore:
                 "remote": self.config.remote,
                 "remote_password": self.config.remote_password,
                 "remote_port": self.config.remote_port,
+                "studio_link": self.config.studio_link,
+                "studio_code": self.config.studio_code,
+                "studio_port": self.config.studio_port,
                 "stations": [s.to_json() for s in self.config.stations],
             }
             tmp = self.path.with_suffix(".tmp")

@@ -51,6 +51,17 @@
       ],
     },
     {
+      id: 'station-server',
+      title: 'Sending weeks to Station Server',
+      lines: [
+        ['Station Server plays the station on its own computer. Station Studio can send each week straight to it over the network, with no shared folder.'],
+        ['In Station Server, turn on ', { b: 'Settings › Station Studio' }, '. It shows its address and a link code: enter both in Station Studio’s ', { b: 'Settings › Station Server' }, ', and press ', { b: 'Test' }, '.'],
+        ['On each station’s page, under ', { b: 'On Station Server' }, ', choose the station there it sends to. Tick ', { b: 'Also send each week when I export it to disk' }, ' to send each week as you export it, or use ', { b: 'Send to Station Server' }, ' on a week’s page.'],
+        ['Station Server says how many of the week’s songs it has, lists any it can’t find, and says when the week goes on air. The station’s page shows what’s on air there, the weeks it has, and warns when it has nothing after this week.'],
+      ],
+      link: { href: '/settings', label: 'Go to Settings' },
+    },
+    {
       id: 'app',
       title: 'The app',
       lines: [
