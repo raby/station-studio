@@ -187,7 +187,7 @@ def _clean_presenters(given, before: list[dict]) -> list[dict]:
         if not name:
             raise ValueError("Give each presenter a name")
         if not password:
-            raise ValueError(f"Give {name} a password")
+            raise ValueError(f"Give presenter {name} a password")
         out.append({"id": str(p.get("id") or "") or uuid.uuid4().hex[:8], "name": name, "password": password})
     return out
 

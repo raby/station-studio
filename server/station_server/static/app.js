@@ -68,6 +68,7 @@ const ICONS = {
   headphones: ["M3 18v-6a9 9 0 0 1 18 0v6", "M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3z", "M3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"],
   bell: ["M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9", "M13.73 21a2 2 0 0 1-3.46 0"],
   phone: ["r 6 2 12 20 2.5", "M11 18h2"],
+  clock: ["c 12 12 9", "M12 7v5l3 2"],
   mic: ["r 9 2 6 12 3", "M19 10v1a7 7 0 0 1-14 0v-1", "M12 18v4", "M8 22h8"],
 };
 const SVG = "http://www.w3.org/2000/svg";
@@ -99,6 +100,34 @@ function icon(name) {
 const iconLabel = (name, label) => [icon(name), el("span", {}, label)];
 const btn = (label, iconName, onclick, cls = "btn") =>
   el("button", { type: "button", class: cls, onclick }, iconName ? iconLabel(iconName, label) : label);
+
+// Pages of a view as tabs along the top, as in Station Player's settings.
+// `tabs` is [[id, label, icon]]; the arrow keys move between them.
+function tabBar(label, tabs, current, open) {
+  const ids = tabs.map((t) => t[0]);
+  return el("div", {
+    class: "tabs", role: "tablist", "aria-label": label,
+    onkeydown: (e) => {
+      const at = ids.indexOf(current);
+      let to = null;
+      if (e.key === "ArrowRight") to = (at + 1) % ids.length;
+      else if (e.key === "ArrowLeft") to = (at - 1 + ids.length) % ids.length;
+      else if (e.key === "Home") to = 0;
+      else if (e.key === "End") to = ids.length - 1;
+      if (to === null) return;
+      e.preventDefault();
+      open(ids[to]);
+      $(`#tab-${ids[to]}`)?.focus();
+    },
+  }, tabs.map(([id, words, glyph]) => el("button", {
+    type: "button", role: "tab", class: "tab", id: `tab-${id}`, "aria-controls": "tab-page",
+    "aria-selected": String(id === current), tabindex: id === current ? "0" : "-1",
+    onclick: () => open(id),
+  }, ...iconLabel(glyph, words))));
+}
+
+const tabPage = (current, ...children) =>
+  el("div", { role: "tabpanel", id: "tab-page", "aria-labelledby": `tab-${current}` }, ...children);
 
 function clock(secs) {
   secs = Math.max(0, Math.round(secs || 0));
@@ -703,6 +732,14 @@ function buildTestServer(v) {
   return buildServer({ ...v, host: v.t_host || v.host, port: v.t_port || v.port, sid: v.t_sid || "1", mount: v.t_mount || v.mount });
 }
 
+const STATION_TABS = [
+  ["station", "Station", "tower"],
+  ["server", "Server", "radio"],
+  ["playback", "Playback", "headphones"],
+  ["shows", "Shows", "clock"],
+  ["live", "Live shows", "mic"],
+];
+
 function renderForm(view) {
   const editing = S.view.type === "edit";
   const s = editing ? stationById(S.view.id) : null;
@@ -740,7 +777,7 @@ function renderForm(view) {
   const playlistMsg = el("div", { class: "form-msg", role: "status" });
   const serverMsg = el("div", { class: "form-msg", role: "status" });
   const testMsg = el("div", { class: "form-msg", role: "status" });
-  const formMsg = el("div", { class: "form-msg", role: "status" });
+  const formMsg = el("div", { class: "form-msg", id: "form-msg", role: "status" });
   const fallbackMsg = el("div", { class: "form-msg", role: "status" });
   const jinglesMsg = el("div", { class: "form-msg", role: "status" });
 
@@ -820,9 +857,17 @@ function renderForm(view) {
       setState(r);
       const id = editing ? s.station.id : r.id;
       const runner = stationById(id);
-      toast(runner && runner.state === "on" ? "Saved. Shows apply straight away; other changes the next time it goes on air." : "Saved");
+      toast(runner && runner.state === "on" ? "Saved. Shows and presenters apply straight away; other changes the next time it goes on air." : "Saved");
       go({ type: "station", id });
-    } catch (e) { formMsg.textContent = e.message; }
+    } catch (e) {
+      // Show the tab the problem is on.
+      const on = [[/presenter|live/i, "live"], [/show/i, "shows"], [/server|stream|bitrate|password/i, "server"],
+        [/crossfade|jingle|week/i, "playback"]].find(([re]) => re.test(e.message));
+      if (on && on[1] !== tab) {
+        openTab(on[1]);
+        $("#form-msg").textContent = e.message;
+      } else formMsg.textContent = e.message;
+    }
   }
   async function remove() {
     if (!confirm(`Delete ${s.station.name}? It goes off air, and its settings are removed (its play log is kept).`)) return;
@@ -838,11 +883,13 @@ function renderForm(view) {
   }
 
   const isIce = v.kind === "icecast";
-  view.replaceChildren(el("div", {},
-    el("div", { class: "view-head" }, el("div", {},
-      el("div", { class: "kicker" }, editing ? "Edit station" : "New station"),
-      el("h1", {}, editing ? s.station.name : "Add a station"))),
-    el("form", { class: "form", onsubmit: (e) => { e.preventDefault(); save(); } },
+  const tab = STATION_TABS.some((t) => t[0] === S.view.tab) ? S.view.tab : "station";
+  function openTab(id) {
+    S.view.tab = id;
+    redraw();
+  }
+  const pages = {
+    station: () => [
       el("fieldset", {}, el("legend", {}, "Station"),
         el("div", { class: "grid" }, text("name", "Name", { placeholder: "Rebirth Classics" }), text("genre", "Genre", { placeholder: "Vintage Oldies / Club Classics" })),
         el("div", { class: "grid" }, text("url", "Website", { placeholder: "https://www.rebirthclassics.uk" })),
@@ -872,6 +919,8 @@ function renderForm(view) {
         el("p", { class: "help" }, "If none of the playlist's music can be read (its drive is missing, say), this plays instead of silence, then the playlist is tried again. Keep it on this computer's own disk."),
         fallbackMsg,
       ),
+    ],
+    server: () => [
       el("fieldset", {}, el("legend", {}, "Server"),
         el("div", { class: "grid" },
           select("kind", "Type", [["shoutcast", "SHOUTcast"], ["icecast", "Icecast"]], true),
@@ -899,6 +948,8 @@ function renderForm(view) {
         el("div", { class: "actions" }, btn("Test the test stream", "refresh", () => checkServer(true), "btn small")),
         testMsg,
       ),
+    ],
+    playback: () => [
       el("fieldset", {}, el("legend", {}, "Playback"),
         el("div", { class: "grid" }, check("level", "Even out the volume (ReplayGain / Sound Check in the files, or measured)")),
         el("p", { class: "help" }, "Station Server measures each track once, in the background: how loud it is, for tracks without volume tags, and where its sound starts and ends, so the silence at either end is left out and songs follow on without dead air."),
@@ -922,6 +973,19 @@ function renderForm(view) {
         el("p", { class: "help" }, "Station idents and jingles, played between songs in a shuffled order, each once before any plays again. Not during shows or the fallback, and not in the play log. The week's clock allows for them, and for the crossfade."),
         jinglesMsg,
       ),
+    ],
+    shows: () => [
+      el("fieldset", {}, el("legend", {}, "Shows"),
+        el("p", { class: "help" }, "Shows go out at set times: a recording, a playlist, or a folder of recordings played in name order. When a show ends, the music comes back where the week's clock says, so the running order's times stay right."),
+        v.shows.map(showRow),
+        el("div", { class: "actions" }, btn("Add a show", "plus", () => {
+          v.shows.push({ name: "", time: "20:00", days: [5], source: "", on_time: true });
+          redraw();
+        }, "btn small")),
+        showsMsg,
+      ),
+    ],
+    live: () => [
       el("fieldset", {}, el("legend", {}, "Live shows"),
         el("div", { class: "grid" }, check("live", "Let presenters go live from their own encoder (BUTT, Mixxx, Winamp)")),
         el("div", { class: "grid" },
@@ -937,15 +1001,15 @@ function renderForm(view) {
         el("div", { class: "grid" }, check("record_live", "Keep a recording of each live show (about 60 MB an hour at 128 kbps)")),
         el("p", { class: "help" }, "While the station is on air, a presenter's encoder connects to this computer as if it were the station's server, and they're live: the song fades out under them, and when they disconnect the music comes back where the week's clock says. In BUTT or Mixxx choose Icecast, with this computer's address, the port, mount /live, user source and their password; or SHOUTcast, with the address, port and password. From outside this network, forward the port and the one above it on the router to this computer."),
       ),
-      el("fieldset", {}, el("legend", {}, "Shows"),
-        el("p", { class: "help" }, "Shows go out at set times: a recording, a playlist, or a folder of recordings played in name order. When a show ends, the music comes back where the week's clock says, so the running order's times stay right."),
-        v.shows.map(showRow),
-        el("div", { class: "actions" }, btn("Add a show", "plus", () => {
-          v.shows.push({ name: "", time: "20:00", days: [5], source: "", on_time: true });
-          redraw();
-        }, "btn small")),
-        showsMsg,
-      ),
+    ],
+  };
+  view.replaceChildren(el("div", {},
+    el("div", { class: "view-head" }, el("div", {},
+      el("div", { class: "kicker" }, editing ? "Edit station" : "New station"),
+      el("h1", {}, editing ? s.station.name : "Add a station"))),
+    el("form", { class: "form", onsubmit: (e) => { e.preventDefault(); save(); } },
+      tabBar("Station settings", STATION_TABS, tab, openTab),
+      tabPage(tab, pages[tab]()),
       formMsg,
       el("div", { class: "actions" },
         el("button", { type: "submit", class: "btn primary" }, "Save"),
@@ -980,6 +1044,14 @@ function renderLog() {
   );
 }
 
+const SETTINGS_TABS = [
+  ["startup", "Start-up", "power"],
+  ["alerts", "Alerts", "bell"],
+  ["phone", "Phone access", "phone"],
+  ["updates", "Updates", "refresh"],
+  ["app", "App", "app"],
+];
+
 function renderSettings() {
   const own = el("input", { type: "checkbox" });
   own.checked = !!S.state?.open_window;
@@ -991,19 +1063,16 @@ function renderSettings() {
   login.addEventListener("change", async () => {
     try { setState(await api("/api/settings", { login: login.checked })); toast("Saved"); } catch (e) { toast(e.message); login.checked = !login.checked; }
   });
-  return el("div", { class: "settings" },
-    el("div", { class: "view-head" }, el("div", {}, el("h1", {}, "Settings"))),
-    el("section", {},
+  const pages = {
+    startup: () => [
       el("h2", {}, "Start when this computer starts"),
       el("label", { class: "check", style: "display:flex;gap:8px;align-items:center" }, login, "Start Station Server when I log in"),
       el("p", { class: "help" }, "Turn this on for the station's computer: after a restart, a power cut or Windows updates, Station Server starts in the background and the stations that were on air go back on air, with no window until you open one. On a Mac it is also started again if it ever stops unexpectedly. For a computer nobody logs in to, set Windows or macOS to log in automatically."),
-      el("h2", {}, "Alerts"),
-      alertsSettings(),
-      el("h2", {}, "Phone access"),
-      phoneSettings(),
-      el("h2", {}, "Updates"),
-      updateSettings(),
-      el("h2", {}, "App"),
+    ],
+    alerts: () => [alertsSettings()],
+    phone: () => [phoneSettings()],
+    updates: () => [updateSettings()],
+    app: () => [
       el("p", { class: "help" }, "Station Server runs in the background; this window is how you see it. Closing the window leaves the stations on air. Quit Station Server takes them off air."),
       el("label", { class: "check", style: "display:flex;gap:8px;align-items:center" }, own,
         S.state?.mac_app ? "Open in Station Server's own window, not a browser tab" : "Open in a window of its own (with Chrome, Edge or Brave)"),
@@ -1017,7 +1086,13 @@ function renderSettings() {
       ],
       el("h3", {}, "ffmpeg"),
       el("p", { class: "help" }, S.state?.ffmpeg ? `Using ${S.state.ffmpeg}` : (S.state?.ffmpeg_error || "")),
-    ),
+    ],
+  };
+  const tab = SETTINGS_TABS.some((t) => t[0] === S.view.tab) ? S.view.tab : "startup";
+  return el("div", { class: "settings" },
+    el("div", { class: "view-head" }, el("div", {}, el("h1", {}, "Settings"))),
+    tabBar("Settings pages", SETTINGS_TABS, tab, (id) => { S.view.tab = id; render(); }),
+    tabPage(tab, el("section", {}, pages[tab]())),
   );
 }
 
@@ -1132,62 +1207,138 @@ async function copyDiagnostics() {
   }
 }
 
+const HELP_TABS = [
+  ["start", "Getting started", "play"],
+  ["onair", "On air", "radio"],
+  ["live", "Live shows", "mic"],
+  ["unattended", "Unattended", "power"],
+  ["new", "What's new", "bell"],
+  ["trouble", "Problems", "alert"],
+];
+
 function renderHelp() {
   const p = (...t) => el("p", { class: "help" }, ...t);
-  return el("div", { class: "settings" },
-    el("div", { class: "view-head" }, el("div", {}, el("h1", {}, "Help"))),
-    el("section", {},
+  const h2 = (t) => el("h2", { class: "spaced" }, t);
+  const list = (...items) => el("ul", { class: "help steps" }, items.map((i) => el("li", {}, i)));
+  const pages = {
+    start: () => [
       el("h2", {}, "What it does"),
       p("Station Server plays a station-studio playlist in real time and sends it straight to your SHOUTcast or Icecast server with each song's title. It replaces iTunes playing out of the headphone jack, the loopback cable, and Winamp with its SHOUTcast plugin. Nothing else playing on this computer reaches the broadcast, and one computer can run several stations."),
-      el("h2", {}, "Setting up a station"),
-      p("Add a station, choose station-studio's exports folder for it (the newest week is played), enter the server's address, port and source password (the one Winamp used), and press Test connection. Then Save and Go on air."),
-      p("A SHOUTcast server takes one source at a time: stop Winamp's SHOUTcast plugin before going on air, or the server refuses Station Server."),
-      el("h2", {}, "Switching over from Winamp"),
+      h2("Setting up a station"),
+      p("Add a station. Its settings are in tabs:"),
+      list(
+        "Station: its name, station-studio's exports folder for it (each week is played in turn), the music folders, and a fallback to play if the music can't be read.",
+        "Server: the server's address, port and source password (the ones in Winamp's SHOUTcast plugin), and a spare test stream to rehearse on. Test connection checks them.",
+        "Playback: evening out the volume, the crossfade, when the week starts, and jingles.",
+        "Shows: recordings or playlists that go out at set times.",
+        "Live shows: presenters going live from their own encoder."),
+      p("Then Save and Go on air. A SHOUTcast server takes one source at a time: stop Winamp's SHOUTcast plugin before going on air, or the server refuses Station Server."),
+      h2("Switching over from Winamp"),
       el("ol", { class: "help steps" },
-        el("li", {}, "On the station's computer, install Station Server, copy the music onto it, and turn on Settings › Start Station Server when I log in."),
-        el("li", {}, "Add the station: its exports folder, the music folders, and the live server's address, port and source password (the ones in Winamp's SHOUTcast plugin). Under Test stream, enter a spare stream: another port of the server, or stream 2 of a SHOUTcast 2 server."),
-        el("li", {}, "Set up Settings › Alerts, and a fallback folder in Edit."),
+        el("li", {}, "On the station's computer, install Station Server, copy the music onto it, and turn on Settings › Start-up › Start Station Server when I log in."),
+        el("li", {}, "Add the station: its exports folder and music folders, and in Edit › Server the live server's address, port and source password. Under Test stream, enter a spare stream: another port of the server, or stream 2 of a SHOUTcast 2 server."),
+        el("li", {}, "Set up Settings › Alerts, and a fallback folder in Edit › Station."),
         el("li", {}, "Press Ready check on the station's page and fix anything marked ✕."),
         el("li", {}, "Press Rehearse. The station plays to the test stream while Winamp carries on as normal. Press Listen, or open the test stream in a player, and check the songs, their titles and the levels. Nothing goes in the play log."),
         el("li", {}, "When it sounds right: stop Winamp's SHOUTcast plugin (and close iTunes), then press Go live. Listeners hear a short gap."),
         el("li", {}, "Keep Winamp and iTunes installed, closed, for a week or two. To go back: Take off air here, then start Winamp's plugin again.")),
       p("If going on air says something else is already sending to the server, Winamp's plugin (or another copy of Station Server) is still connected: a server takes one source at a time."),
-      el("h2", {}, "Two stations on one computer"),
-      p("Add a station for each. They run side by side, each with its own playlist, server, clock and play log, and go on and off air separately: for example Rebirth Classics to port 8000 and Rebirth Radio to port 8002 of the same server."),
+      h2("Two stations on one computer"),
+      p("Add a station for each. They run side by side, each with its own playlist, server, clock and play log, and go on and off air separately: for example Rebirth Classics to port 8000 and Rebirth Radio to port 8002 of the same server. Each needs its own live shows port too, like 8010 and 8020."),
+    ],
+    onair: () => [
+      el("h2", {}, "The station's page"),
+      list(
+        "The pill at the top says whether it's on air, rehearsing, trying again or off. Below it: the song playing (or the show, or the presenter), how many are listening, how much it was levelled by, the playlist and next week's.",
+        "The running order shows what's coming and when, with shows in their places.",
+        "Skip fades the song out over at most 2 seconds and plays the next. Listen plays the broadcast exactly as it goes to the server.",
+        "Ready check runs through everything the station needs (ffmpeg, the playlist, the server, the test stream, the fallback, jingles, live shows, start at login, alerts) and says what to fix.",
+        "Rehearse plays the station to the test stream, so you can listen before going live; Go live switches it to the real server. A rehearsal doesn't go in the play log."),
+      p("The listener count is as the server counts them: listeners to a relay (such as a hosted SHOUTcast account relaying the station) aren't included."),
+      h2("The week's clock"),
+      p("Following the clock, the first track plays at the start of the week (Monday 00:00 unless you change it in Edit › Playback) and the rest follow by their lengths. A restart picks up where the station should be."),
+      p("Next week's export can be made any time: it waits, and goes on at the start of its week (the station's page says when). A week exported late, after its week has begun, goes on within a minute, after the playing track. Exporting the week on air again picks up the changes the same way."),
+      h2("Levels and gaps"),
+      p("With Even out the volume on, each track is played at about the same loudness: from its ReplayGain or Sound Check tags, or, for a track without them, from measuring it. Station Server measures every track once, in the background and gently (the coming tracks first), and remembers the results. Measuring also finds the silence at the start and end of each track, which is then left out, so songs follow on without dead air. Until a track has been measured it plays as it is."),
+      h2("Crossfades and jingles"),
+      p("Edit › Playback › Crossfade fades the end of each song out under the start of the next, over 1 to 10 seconds (Off plays them one straight after the other). A track that fades out by itself sounds best with 2 to 4 seconds."),
+      p("Edit › Playback › Jingles plays one of a folder of jingles or station idents after every few songs, in a shuffled order, each once before any plays again. The song before fades out under the jingle; the next song starts as the jingle ends. Jingles aren't played during shows, live shows or the fallback and don't go in the play log; while one plays, the server shows the station's name as the title."),
+      p("The week's clock allows for both, so the running order's times and a restart still land in the right place."),
+      h2("Shows at set times"),
+      p("Edit › Shows pins a show to times in the week, like Saturday 20:00. A show is a recording, a playlist, or a folder of recordings played in name order. It starts exactly on time (cutting the song playing) or after that song. When it ends, the music comes back where the week's clock says, so the running order's times stay right. After a restart part-way through a show, the station joins the show where it should be. Shows apply as soon as you save, even on air."),
+      h2("The play log"),
+      p("Every track each station plays is logged, live shows included. Play log downloads a station's plays between two dates as a spreadsheet, ready for a PRS for Music or PPL return. Plays under 30 seconds aren't counted."),
+    ],
+    live: () => [
+      el("h2", {}, "Setting up"),
+      p("Turn on Edit › Live shows and set a port (8010 unless you choose another). Add each presenter with their own password: their name shows on the station's page when they're live, and goes in the play log and the recording's name, whatever their encoder calls itself. One can be removed without giving the others a new password. A shared password works too, for anyone you haven't added. Presenters you add apply straight away, even on air."),
+      p("While the station is on air, a presenter's encoder connects to this computer as if it were the station's server. The song playing fades out under them and they're live, with the song titles their encoder sends. When they disconnect, the music fades back in where the week's clock says. A show due while they're live is left out. One presenter at a time: a second is turned away."),
+      h2("The presenter's encoder"),
+      list(
+        "BUTT: Settings › Main › Server › Add. Type Icecast, Address this computer's address, Port 8010, Password their password, Mountpoint live, User source. (Or Type SHOUTcast, with the address, port and password.)",
+        "Mixxx: Options › Live Broadcasting. Type Icecast 2, the same details, Login source.",
+        "Winamp's SHOUTcast plugin: the address, port and password."),
+      p("Presenters at home connect over the internet: on the router at the station, forward the port and the one above it (8010 and 8011) to this computer, as for the SHOUTcast server, and give presenters the station's internet address. Allow Station Server through the firewall when Windows or macOS asks. The Ready check shows the address to use on this network."),
+      h2("Their volume"),
+      p("With Even out presenters' volume on (Edit › Live shows), a presenter who's too quiet or too loud is brought towards the music's loudness as they go, lifting a quiet one by up to about 18 dB. It adds about 2 seconds' delay, so the music keeps playing until their sound is ready and the hand-over has no gap."),
+      h2("While they're live"),
+      p("The station's page shows who's live, the title they've sent, since when and where from. End live show takes them off air; their encoder will try to reconnect, so they're kept off for two minutes. It works from Phone access too. If a presenter's connection drops, the music comes back after 10 seconds. Too many wrong passwords from one address keep it out for 5 minutes."),
+      p("What they play goes in the play log by the titles their encoder sends (or as one Live show entry if it sends none). Each show is recorded, exactly as their encoder sent it, in Station Server's recordings folder (the Ready check says where; about 60 MB an hour at 128 kbps); turn that off in Edit › Live shows."),
+    ],
+    unattended: () => [
       el("h2", {}, "Running unattended"),
-      p("Turn on Settings › Start Station Server when I log in. After a restart, a power cut or Windows updates, it starts in the background and the stations that were on air go back on air. Closing this window leaves them on air; Quit takes them off."),
+      p("Turn on Settings › Start-up › Start Station Server when I log in. After a restart, a power cut or Windows updates, it starts in the background and the stations that were on air go back on air. Closing this window leaves them on air; Quit takes them off."),
       p("While a station is on air the computer doesn't go to sleep by itself (the screen can still turn off). If the server can't be reached, or the music's drive isn't there yet, the station shows Trying again… and keeps trying until it's on air; it does the same if the broadcast ever fails."),
       p("For a computer nobody is at, after a power cut: set it to switch itself back on when the power returns (a setting in the BIOS, often called Restore on AC power loss), and let Windows sign in by itself, since Station Server starts when you sign in. Also check Windows Update's active hours, so restarts happen when it suits you."),
-      el("h2", {}, "The week's clock"),
-      p("Following the clock, the first track plays at the start of the week (Monday 00:00 unless you change it) and the rest follow by their lengths. A restart picks up where the station should be."),
-      p("Next week's export can be made any time: it waits, and goes on at the start of its week (the station's page says when). A week exported late, after its week has begun, goes on within a minute, after the playing track. Exporting the week on air again picks up the changes the same way."),
-      el("h2", {}, "Levels and gaps"),
-      p("With Even out the volume on, each track is played at about the same loudness: from its ReplayGain or Sound Check tags, or, for a track without them, from measuring it. Station Server measures every track once, in the background and gently (the coming tracks first), and remembers the results. Measuring also finds the silence at the start and end of each track, which is then left out, so songs follow on without dead air. Until a track has been measured it plays as it is."),
-      el("h2", {}, "Crossfades and jingles"),
-      p("Edit › Playback › Crossfade fades the end of each song out under the start of the next, over 1 to 10 seconds (Off plays them one straight after the other). Edit › Jingles plays one of a folder of jingles or station idents after every few songs, in a shuffled order, each once before any plays again. The song before fades out under the jingle; the next song starts as the jingle ends. Jingles aren't played during shows or the fallback and don't go in the play log; while one plays, the server shows the station's name as the title. Skip fades the song out over at most 2 seconds, however long the crossfade."),
-      p("The week's clock allows for both, so the running order's times and a restart still land in the right place."),
-      el("h2", {}, "Live shows"),
-      p("Turn on Edit › Live shows and set a port (8010 unless you choose another). Add each presenter with their own password, so their name shows when they're live and goes in the play log and the recording's name; a shared password works too, for anyone you haven't added. Their volume is evened out to match the music unless you turn that off. While the station is on air, a presenter's encoder connects to this computer as if it were the station's server: the song playing fades out under them and they're live, with the song titles their encoder sends. When they disconnect, the music fades back in where the week's clock says. A show due while they're live is left out."),
-      p("In BUTT: Settings › Main › Server › Add. Type Icecast, Address this computer's address, Port 8010, Password their password, Mountpoint live, User source. (Or Type SHOUTcast, with the address, port and password.) In Mixxx: Options › Live Broadcasting, Type Icecast 2, the same details, Login source. Winamp's SHOUTcast plugin works too, with the address, port and password."),
-      p("Presenters at home connect over the internet: on the router at the station, forward the port and the one above it (8010 and 8011) to this computer, as for the SHOUTcast server, and give presenters the station's internet address. Allow Station Server through the firewall when Windows or macOS asks. The Ready check shows the address to use on this network."),
-      p("End live show takes a presenter off air; their encoder will try to reconnect, so they're kept off for two minutes. If a presenter's connection drops, the music comes back after 10 seconds. What they play goes in the play log by the titles their encoder sends (or as one Live show entry if it sends none), and each show is recorded, exactly as their encoder sent it, in Station Server's recordings folder (the Ready check says where); turn that off in Edit › Live shows."),
-      el("h2", {}, "Keeping an eye on it"),
-      p("On air, a station's page shows how many are listening (as the server counts them: listeners to a relay aren't included), and Listen plays the broadcast exactly as it goes to the server."),
-      p("Settings › Alerts tells you, on your phone or by email, when a station has been off air for a few minutes, and again when it's back. Settings › Phone access lets a phone or another computer on the same network see the stations, listen, and put them on or off air, with a password."),
-      el("h2", {}, "Shows at set times"),
-      p("In a station's Edit page, Shows pins a show to times in the week, like Saturday 20:00. A show is a recording, a playlist, or a folder of recordings played in name order. It starts exactly on time (cutting the song playing) or after that song. When it ends, the music comes back where the week's clock says, so the running order's times stay right. After a restart part-way through a show, the station joins the show where it should be."),
-      el("h2", {}, "Its own app, and new versions"),
+      h2("Alerts"),
+      p("Settings › Alerts tells you, on your phone (with the free ntfy app) or by email, when a station has been off air, can't reach its server, or is playing silence or its fallback for a few minutes, and again when it's back. Send a test checks it reaches you. Station Server can't tell anyone if the computer itself is off or offline: a free outside uptime check of the stream covers that."),
+      h2("Phone access"),
+      p("Settings › Phone access lets a phone or another computer on the same network see the stations, listen, put them on or off air and end a live show, with a password. Changing settings stays on this computer."),
+      h2("Its own app, and new versions"),
       p("On a Mac, the downloaded Station Server has a window of its own, like Apple Music: closing the window leaves the stations on air, clicking its Dock icon brings it back, and its menus have Go, Settings (⌘,) and Quit (⌘Q). Right-click its Dock icon for Add a station and Play log."),
-      p("Settings › Install as app gives Station Server its own icon in the Dock or taskbar, with Add a station and Play log on its menu. Opened from there when Station Server isn't running, the window starts it."),
+      p("Settings › App › Install as app gives Station Server its own icon in the Dock or taskbar, with Add a station and Play log on its menu. Opened from there when Station Server isn't running, the window starts it."),
       p("When a new version is out, a note at the foot of the sidebar offers Update now. Station Server downloads it from its GitHub page, checks it's the genuine file and restarts; stations that were on air go back on air. Settings › Updates has Check for updates, and can stop it asking GitHub."),
+    ],
+    new: () => [
+      el("h2", {}, "0.12: live shows"),
+      list(
+        "Presenters go live from BUTT, Mixxx or Winamp, connecting to this computer: the song fades out under them and the music comes back when they leave.",
+        "Each presenter has their own password, which names them on the page, in the play log and on the recording.",
+        "Presenters' volume is evened out to match the music.",
+        "Each live show is recorded; End live show takes a presenter off air."),
+      h2("0.11: crossfades and jingles"),
+      list(
+        "A crossfade between songs, of 1 to 10 seconds.",
+        "Jingles or idents after every few songs, shuffled.",
+        "Skip fades out quickly, whatever the crossfade."),
+      h2("0.10: the switch-over kit"),
+      list(
+        "Ready check: everything a station needs, with what to fix.",
+        "Rehearse on a test stream while Winamp carries on, then Go live.",
+        "It notices Winamp (or anything else) still sending to the server."),
+      h2("0.9: keeping an eye on it"),
+      list(
+        "The listener count, and Listen to hear the broadcast itself.",
+        "Alerts to your phone or email when a station is off air.",
+        "Phone access from a phone on the same network."),
+      p("Settings and Help are now in tabs, like Station Player's."),
+    ],
+    trouble: () => [
       el("h2", {}, "If something goes wrong"),
-      p("If the server goes away, the station keeps playing and reconnects every few seconds. A track whose file can't be read is skipped. If none can be (the music's drive is missing, say), the station plays its fallback, a folder of jingles or songs set in Edit, and then tries the playlist again; with no fallback it sends silence. The page says which. Tracks the playlist names but this computer can't find are listed under the station: add the folder they're in as a music folder."),
+      p("If the server goes away, the station keeps playing and reconnects every few seconds. A track whose file can't be read is skipped. If none can be (the music's drive is missing, say), the station plays its fallback, a folder of jingles or songs set in Edit › Station, and then tries the playlist again; with no fallback it sends silence. The page says which. Tracks the playlist names but this computer can't find are listed under the station: add the folder they're in as a music folder."),
+      p("Can't go live from Winamp's place? Winamp's plugin is probably still connected: stop it, then press Go live. A presenter can't connect? Check the Ready check's Live shows row, the router's port forwarding, and their password; after 5 wrong passwords their address is kept out for 5 minutes."),
       p("ffmpeg does the decoding and encoding. The downloaded app has its own; otherwise install it (macOS: brew install ffmpeg; Windows: winget install ffmpeg)."),
-      p("Station Server keeps a log, station-server.log, with its settings and play logs in the .station-server folder in your home folder."),
+      p("Station Server keeps a log, station-server.log, with its settings, play logs and recordings in the .station-server folder in your home folder."),
       p("Asking for help? Copy diagnostics puts the version, each station's state and the end of the log on the clipboard, with passwords taken out, ready to paste into a message."),
       el("div", { class: "actions" }, btn("Copy diagnostics", "copy", copyDiagnostics, "btn")),
       S.diagnostics ? el("textarea", { class: "diagnostics", readonly: true, rows: 12 }, S.diagnostics) : null,
-    ),
+    ],
+  };
+  const tab = HELP_TABS.some((t) => t[0] === S.view.tab) ? S.view.tab : "start";
+  return el("div", { class: "settings" },
+    el("div", { class: "view-head" }, el("div", {}, el("h1", {}, "Help"))),
+    tabBar("Help pages", HELP_TABS, tab, (id) => { S.view.tab = id; render(); }),
+    tabPage(tab, el("section", {}, pages[tab]())),
   );
 }
 
@@ -1214,7 +1365,7 @@ if ("serviceWorker" in navigator && !NATIVE) {
 }
 // What the Mac app's menus call (macwindow.py `tell`).
 window.stationApp = {
-  go(type) { go({ type, id: null }); },
+  go(type, tab) { go({ type, id: null, tab }); },
 };
 addEventListener("beforeinstallprompt", (e) => {
   e.preventDefault();

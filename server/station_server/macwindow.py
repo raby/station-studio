@@ -168,7 +168,7 @@ class AppDelegate(AppKit.NSObject):
             _item(f"About {NAME}", "orderFrontStandardAboutPanel:"),
             None,
             _item("Settings…", "openSettings:", ",", cmd, self),
-            _item("Check for Updates…", "openSettings:", "", None, self),
+            _item("Check for Updates…", "openUpdates:", "", None, self),
             None,
             _item(f"Hide {NAME}", "hide:", "h", cmd),
             _item("Hide Others", "hideOtherApplications:", "h", cmd | opt),
@@ -269,6 +269,10 @@ class AppDelegate(AppKit.NSObject):
     # The page's views (app.js `go`), as its sidebar has them.
     def openSettings_(self, sender):
         self.go("settings")
+
+    def openUpdates_(self, sender):
+        self.show()
+        self.tell('go("settings", "updates")')
 
     def openHelp_(self, sender):
         self.go("help")
