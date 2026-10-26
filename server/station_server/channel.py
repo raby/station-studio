@@ -214,8 +214,9 @@ class Channel:
         """Put a presenter on air straight away, the music fading out under
         them, until they disconnect; then whatever `after()` says.
         `on_title(title, started, seconds)` is called for each song title
-        they sent once it's over (for the play log); `title` goes to the
-        server until they send one."""
+        they sent once it's over (for the play log), or with None for the
+        whole show if they sent none; `title` goes to the server until
+        they send one."""
         with self._lock:
             self._live_next = (source, after, title)
             self._on_live_title = on_title
@@ -430,6 +431,7 @@ class Channel:
         self.live = source
         heard = time.monotonic() + self.pacer.ahead()
         current, began = source.title or title, time.time() + self.pacer.ahead()
+        show_began, titled = began, bool(source.title)
         if current:
             self._titles.put((current, heard))
         logger.info("live: on air")
@@ -454,14 +456,19 @@ class Channel:
                 self.pacer.wait(len(chunk))
                 encoder.write(chunk)
                 if source.title and source.title != current:
+                    titled = True
                     now = time.time() + self.pacer.ahead()
                     if current and current != title and self._on_live_title:
                         self._on_live_title(current, began, now - began)
                     current, began = source.title, now
                     self._titles.put((current, time.monotonic() + self.pacer.ahead()))
         finally:
-            if current and current != title and self._on_live_title and not self.stop_event.is_set():
-                self._on_live_title(current, began, time.time() + self.pacer.ahead() - began)
+            if self._on_live_title:
+                end = time.time() + self.pacer.ahead()
+                if titled and current:
+                    self._on_live_title(current, began, end - began)
+                elif not titled:  # no titles: the show as a whole, for the play log
+                    self._on_live_title(None, show_began, end - show_began)
             self.live = None
             self._skip.clear()
             logger.info("live: off air, back to the music")

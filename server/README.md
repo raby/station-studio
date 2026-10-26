@@ -181,7 +181,10 @@ above as a SHOUTcast v1 server would, so a presenter's existing settings
 work: Icecast with mount `/live`, user `source` and the presenters'
 password, or SHOUTcast with the password. When one connects, the song
 playing fades out under them and they're on air, with the titles their
-encoder sends (to the play log too, as album "Live"). When they
+encoder sends (to the play log too, as album "Live", or as one "Live
+show" entry if it sends none), and the show is recorded exactly as their
+encoder sent it, to `~/.station-server/recordings/<station>/` (turn that
+off in the same place). When they
 disconnect, or nothing arrives for 10 seconds, the music comes back where
 the week's clock says. One presenter at a time; *End live show* takes
 them off and keeps their encoder from reconnecting for two minutes; a

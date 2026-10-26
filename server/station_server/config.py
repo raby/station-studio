@@ -82,6 +82,7 @@ class Station:
     live: bool = False
     live_port: int = 8010
     live_password: str = ""
+    record_live: bool = True  # keep a recording of each live show
 
     def to_json(self, secrets: bool = True) -> dict:
         data = asdict(self)
@@ -133,6 +134,7 @@ def clean_station(data: dict, existing: Station | None = None) -> Station:
     if not 1 <= st.jingle_every <= 20:
         raise ValueError("Play a jingle after every 1 to 20 songs")
     st.live = bool(st.live)
+    st.record_live = bool(st.record_live)
     try:
         st.live_port = int(st.live_port or 8010)
     except (TypeError, ValueError):

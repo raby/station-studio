@@ -168,6 +168,7 @@ class StationRunner:
         self.station = station
         self.ffmpeg = ffmpeg
         self.playlog = PlayLog(log_dir / f"{station.id}.jsonl")
+        self.recordings_root = log_dir.parent / "recordings"
         self.weeks = weeks
         self.awake = awake
         self.analyser = analyser
@@ -194,6 +195,7 @@ class StationRunner:
         self.jingles: JingleBag | None = None
         self.live_input: LiveInput | None = None  # presenters connect here, on air with live shows on
         self.live_error: str | None = None  # why it couldn't listen
+        self._live_presenter = ""
 
     # ---- control --------------------------------------------------------
 
@@ -484,7 +486,8 @@ class StationRunner:
         self.live_error = None
         if not st.live:
             return
-        live = LiveInput(st.live_port, st.live_password, self.ffmpeg, on_source=self._go_live)
+        live = LiveInput(st.live_port, st.live_password, self.ffmpeg, on_source=self._go_live,
+                         record_dir=self.recordings_folder() if st.record_live else None)
         try:
             live.start()
         except OSError as exc:
@@ -494,6 +497,11 @@ class StationRunner:
             return
         self.live_input = live
 
+    def recordings_folder(self) -> Path:
+        """Where this station's live shows are recorded: a folder named after it."""
+        name = "".join(c for c in self.station.name if c.isalnum() or c in " -_'&.").strip() or self.station.id
+        return self.recordings_root / name
+
     def _go_live(self, source: LiveSource) -> bool:
         """A presenter has connected: on air, the music fading out under them."""
         ch = self.channel
@@ -502,6 +510,7 @@ class StationRunner:
         interrupted = self._interrupted if ch.in_show else (ch.now.index if ch.now else 0)
         self.show_on = None
         name = source.presenter or "Live"
+        self._live_presenter = source.presenter
         logger.info("%s: %s is live", self.station.name, name)
         ch.go_live(source, after=self._after_show(interrupted), on_title=self._live_played,
                    title=f"{self.station.name}: {name}" if source.presenter else f"{self.station.name}: Live")
@@ -513,13 +522,17 @@ class StationRunner:
         if self.live_input:
             self.live_input.end(block_seconds=END_LIVE_BLOCK_SECONDS)
 
-    def _live_played(self, title: str, started: float, seconds: float) -> None:
-        """A song a presenter played (by the title their encoder sent), for the play log."""
+    def _live_played(self, title: str | None, started: float, seconds: float) -> None:
+        """A song a presenter played (by the title their encoder sent), or
+        their whole show if it sent none, for the play log."""
         if self.rehearsal:
             return
-        artist, sep, name = title.partition(" - ")
-        if not sep:
-            artist, name = "", title
+        if title is None:
+            artist, name = self._live_presenter, "Live show"
+        else:
+            artist, sep, name = title.partition(" - ")
+            if not sep:
+                artist, name = "", title
         self.playlog.add(_local(started), seconds, {
             "title": name.strip(), "artist": artist.strip(), "album": "Live", "duration_ms": None, "path": None,
         })
@@ -637,6 +650,7 @@ class StationRunner:
         live = ch.live if ch and self.state == "on" else None
         if live is not None:
             out["live"] = {"presenter": live.presenter, "title": live.title, "address": live.address,
+                           "recording": str(live.recording) if live.recording else None,
                            "since": _local(live.since).isoformat(timespec="seconds"),
                            "elapsed": round(time.time() - live.since)}
         now = ch.now if ch and self.state == "on" else None
@@ -971,6 +985,8 @@ class ServerApp:
             here = next(iter(lan_addresses()), "this computer's address")
             where = (f"Presenters connect to {here} port {st.live_port}. From outside this network, forward "
                      f"ports {ports} on the router to this computer.")
+            if st.record_live:
+                where += f" Shows are recorded to {runner.recordings_folder()}."
             if runner.live_input is not None:
                 add("Live shows", "ok", f"Listening for presenters. {where}")
             elif runner.state == "on" and runner.live_error:

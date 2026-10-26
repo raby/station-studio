@@ -257,6 +257,9 @@ def test_a_presenter_goes_live_on_air_and_hands_back(api, exports, icecast, monk
     runner = api.app.runners[sid]
     entries = runner.playlog.entries(date.today(), date.today())
     assert any(e.get("title") == "SOS" and e.get("artist") == "Abba" and e.get("album") == "Live" for e in entries)
+    recorded = list(runner.recordings_folder().glob("* DJ Rob.mp3"))
+    assert runner.recordings_folder().name == "Rebirth Classics" and len(recorded) == 1
+    assert recorded[0].stat().st_size > 30_000  # about 3 s at 128 kbps
     # End live show: off, and kept off.
     api(f"/api/stations/{sid}/endlive", {})
     assert runner.live_input.blocked_until > time.monotonic()
@@ -275,3 +278,49 @@ def test_shoutcast_headers_however_they_end():
     assert _read_headers(Conn([]), b"icy-name:A\r\nicy-br:128\r\n\r\nAUDIO") == (b"icy-name:A\r\nicy-br:128", b"AUDIO")
     assert _read_headers(Conn([b"icy-br:128\n\nAUDIO"]), b"icy-name:A\n") == (b"icy-name:A\nicy-br:128", b"AUDIO")
     assert _read_headers(Conn([]), b"\r\nAUDIO") == (b"", b"AUDIO")
+
+
+@needs_ffmpeg
+def test_each_show_is_recorded(tmp_path):
+    li = LiveInput(free_ports(), "letmein", FFMPEG, on_source=lambda s: True, host="127.0.0.1",
+                   record_dir=tmp_path / "recordings")
+    li.start()
+    try:
+        conn, reply = icecast_source(li.port, name="DJ Rob/../x")
+        audio = mp3(1.0)
+        conn.sendall(audio)
+        assert wait_for(lambda: li.source is not None)
+        source = li.source
+        conn.close()
+        drain(source)
+        assert source.recording.parent == tmp_path / "recordings" and source.recording.suffix == ".mp3"
+        assert "/" not in source.recording.name[17:] and source.recording.read_bytes() == audio
+    finally:
+        li.stop()
+    # A presenter turned away leaves no recording behind.
+    refused = LiveInput(free_ports(), "letmein", FFMPEG, on_source=lambda s: False, host="127.0.0.1",
+                        record_dir=tmp_path / "refused")
+    refused.start()
+    try:
+        conn, reply = icecast_source(refused.port)
+        assert b"403" in reply
+        conn.close()
+        assert not list((tmp_path / "refused").glob("*"))
+    finally:
+        refused.stop()
+
+
+def test_titles_from_old_encoders_in_latin_1():
+    from station_server.live import _query
+    assert _query("song=Beyonc%C3%A9")["song"] == "Beyoncé"  # UTF-8
+    assert _query("song=Beyonc%E9&pass=x")["song"] == "Beyoncé"  # Latin-1
+
+
+def test_a_show_without_titles_is_logged_as_a_whole():
+    ch = channel_of({"A": (1000, 0.2)}, crossfade=0)
+    logged = []
+    voice = steady(50, 0.5)
+    ch.go_live(FakeSource([voice[i:i + CHUNK] for i in range(0, len(voice), CHUNK)]),
+               after=lambda: (ch.queue, 0, 0.0), on_title=lambda *a: logged.append(a), title="R: DJ")
+    ch._take_live(Recorder())
+    assert len(logged) == 1 and logged[0][0] is None and logged[0][2] >= 0

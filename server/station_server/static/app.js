@@ -446,6 +446,7 @@ function renderStation(s) {
       el("div", { class: "show-kicker" }, `Live${l.presenter ? `: ${l.presenter}` : ""}`),
       el("div", { class: "title" }, l.title || "A presenter is live"),
       el("div", { class: "artist" }, `On air since ${hhmm(l.since)}, from ${l.address}. The music comes back where the week's clock says when they finish.`),
+      l.recording ? el("div", { class: "artist" }, `Recording to ${l.recording}`) : null,
     ));
   } else if (on && s.now) {
     const n = s.now;
@@ -652,6 +653,7 @@ function formValues(st) {
     live_port: String(st?.live_port || 8010),
     live_password: "",
     has_live_password: !!st?.has_live_password,
+    record_live: st ? st.record_live !== false : true,
   };
 }
 
@@ -680,6 +682,7 @@ function formPayload(v) {
     live: v.live,
     live_port: Number(v.live_port),
     live_password: v.live_password,
+    record_live: v.record_live,
   };
 }
 
@@ -910,6 +913,7 @@ function renderForm(view) {
         el("div", { class: "grid" },
           text("live_port", "Port", { narrow: true, placeholder: "8010" }),
           text("live_password", "Presenters' password", { type: "password", placeholder: v.has_live_password ? "unchanged" : "" })),
+        el("div", { class: "grid" }, check("record_live", "Keep a recording of each live show (about 60 MB an hour at 128 kbps)")),
         el("p", { class: "help" }, "While the station is on air, a presenter's encoder connects to this computer as if it were the station's server, and they're live: the song fades out under them, and when they disconnect the music comes back where the week's clock says. In BUTT or Mixxx choose Icecast, with this computer's address, the port, mount /live, user source and the password; or SHOUTcast, with the address, port and password. From outside this network, forward the port and the one above it on the router to this computer."),
       ),
       el("fieldset", {}, el("legend", {}, "Shows"),
@@ -1145,7 +1149,7 @@ function renderHelp() {
       p("Turn on Edit › Live shows and set a port (8010 unless you choose another) and a password for presenters. While the station is on air, a presenter's encoder connects to this computer as if it were the station's server: the song playing fades out under them and they're live, with the song titles their encoder sends. When they disconnect, the music fades back in where the week's clock says. A show due while they're live is left out."),
       p("In BUTT: Settings › Main › Server › Add. Type Icecast, Address this computer's address, Port 8010, Password the presenters' password, Mountpoint live, User source. (Or Type SHOUTcast, with the address, port and password.) In Mixxx: Options › Live Broadcasting, Type Icecast 2, the same details, Login source. Winamp's SHOUTcast plugin works too, with the address, port and password."),
       p("Presenters at home connect over the internet: on the router at the station, forward the port and the one above it (8010 and 8011) to this computer, as for the SHOUTcast server, and give presenters the station's internet address. Allow Station Server through the firewall when Windows or macOS asks. The Ready check shows the address to use on this network."),
-      p("End live show takes a presenter off air; their encoder will try to reconnect, so they're kept off for two minutes. If a presenter's connection drops, the music comes back after 10 seconds. What they play goes in the play log by the titles their encoder sends."),
+      p("End live show takes a presenter off air; their encoder will try to reconnect, so they're kept off for two minutes. If a presenter's connection drops, the music comes back after 10 seconds. What they play goes in the play log by the titles their encoder sends (or as one Live show entry if it sends none), and each show is recorded, exactly as their encoder sent it, in Station Server's recordings folder (the Ready check says where); turn that off in Edit › Live shows."),
       el("h2", {}, "Keeping an eye on it"),
       p("On air, a station's page shows how many are listening (as the server counts them: listeners to a relay aren't included), and Listen plays the broadcast exactly as it goes to the server."),
       p("Settings › Alerts tells you, on your phone or by email, when a station has been off air for a few minutes, and again when it's back. Settings › Phone access lets a phone or another computer on the same network see the stations, listen, and put them on or off air, with a password."),

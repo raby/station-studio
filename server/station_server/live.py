@@ -9,7 +9,8 @@ Icecast server would, so a presenter's existing settings work:
   the audio to port P+1, as it does to a SHOUTcast server.
 
 Song titles the encoder sends (Icecast's /admin/metadata or SHOUTcast's
-/admin.cgi, both on port P) go out with the broadcast.
+/admin.cgi, both on port P) go out with the broadcast. Each show can be
+kept as a recording: exactly what the encoder sent, saved as it arrives.
 
 What arrives is decoded by ffmpeg to the same PCM as the music, and the
 channel (channel.py) plays it in place of the playlist until the presenter
@@ -26,6 +27,8 @@ import subprocess
 import threading
 import time
 from collections.abc import Callable
+from datetime import datetime
+from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from station_server import __version__
@@ -36,6 +39,8 @@ logger = logging.getLogger(__name__)
 # The encoder's stream type -> ffmpeg's name for it, when it says.
 _FORMATS = {"audio/mpeg": "mp3", "audio/mp3": "mp3", "audio/aac": "aac", "audio/aacp": "aac",
             "application/ogg": "ogg", "audio/ogg": "ogg", "audio/opus": "ogg", "audio/flac": "flac"}
+# A recording's file extension, by the same.
+_EXTENSIONS = {"mp3": ".mp3", "aac": ".aac", "ogg": ".ogg", "flac": ".flac"}
 _MAX_HEADER = 16384
 _HELLO_SECONDS = 10.0  # to send its request or password
 _MAX_CONNECTIONS = 32  # at once; more are turned away
@@ -52,8 +57,8 @@ class LiveSource:
     """One presenter's connection: their audio, decoded, waiting to be played."""
 
     def __init__(self, ffmpeg: str, content_type: str = "", presenter: str = "", address: str = "",
-                 decoder: Callable[..., subprocess.Popen] | None = None) -> None:
-        self.presenter = presenter
+                 decoder: Callable[..., subprocess.Popen] | None = None, record_dir: Path | None = None) -> None:
+        self.presenter = presenter[:100]
         self.address = address
         self.since = time.time()
         self.title = ""  # the song title the encoder last sent
@@ -68,9 +73,31 @@ class LiveSource:
         fmt = _FORMATS.get(content_type.split(";")[0].strip().lower())
         if fmt:
             args += ["-f", fmt]
+        self.recording: Path | None = None
+        self._file = None
+        if record_dir is not None:
+            self._start_recording(record_dir, _EXTENSIONS.get(fmt or "mp3", ".mp3"))
         args += ["-i", "pipe:0", "-vn"] + PCM_ARGS + ["pipe:1"]
         self._proc = (decoder or _popen)(args)
         threading.Thread(target=self._read, name="live-decode", daemon=True).start()
+
+    def _start_recording(self, folder: Path, ext: str) -> None:
+        who = "".join(c for c in self.presenter if c.isalnum() or c in " -_'&.").strip() or "Live"
+        path = folder / f"{datetime.now():%Y-%m-%d %H%M} {who}{ext}"
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+            self._file = path.open("wb")
+            self.recording = path
+        except OSError as exc:
+            logger.warning("live: can't record the show to %s: %s", path, exc)
+
+    def _stop_recording(self) -> None:
+        f, self._file = self._file, None
+        if f is not None:
+            try:
+                f.close()
+            except OSError:
+                pass
 
     # ---- the connection side ----------------------------------------------
 
@@ -78,6 +105,13 @@ class LiveSource:
         """Audio from the encoder. False once the source is closed."""
         if self._closed:
             return False
+        f = self._file
+        if f is not None:
+            try:
+                f.write(data)
+            except (OSError, ValueError) as exc:  # the disk is full, say: stop recording, not the show
+                logger.warning("live: recording stopped: %s", exc)
+                self._stop_recording()
         try:
             self._proc.stdin.write(data)
             self._proc.stdin.flush()
@@ -87,6 +121,7 @@ class LiveSource:
 
     def finish(self) -> None:
         """The encoder has disconnected: play out what's left."""
+        self._stop_recording()
         try:
             self._proc.stdin.close()
         except (OSError, ValueError):
@@ -98,6 +133,7 @@ class LiveSource:
     def close(self) -> None:
         """Take them off air now (End live show, or off air)."""
         self._closed = True
+        self._stop_recording()
         for fn in self._on_close:
             try:
                 fn()
@@ -200,7 +236,7 @@ class LiveInput:
 
     def __init__(self, port: int, password: str, ffmpeg: str,
                  on_source: Callable[[LiveSource], bool], on_title: Callable[[LiveSource], None] | None = None,
-                 host: str = "0.0.0.0", decoder=None) -> None:
+                 host: str = "0.0.0.0", decoder=None, record_dir: Path | None = None) -> None:
         self.port = port
         self.password = password
         self.ffmpeg = ffmpeg
@@ -208,6 +244,7 @@ class LiveInput:
         self._on_title = on_title
         self._host = host
         self._decoder = decoder
+        self.record_dir = record_dir  # where each show is recorded, or None for no recordings
         self.source: LiveSource | None = None
         self.blocked_until = 0.0  # End live show: the presenter can't come straight back
         self._guesses = _Guesses()
@@ -301,7 +338,7 @@ class LiveInput:
             name, _, value = line.partition(":")
             headers[name.strip().lower()] = value.strip()
         url = urlsplit(target)
-        query = {k: v[0] for k, v in parse_qs(url.query).items()}
+        query = _query(url.query)
         given = _basic_password(headers.get("authorization", ""))
         if method == "GET" and url.path in ("/admin/metadata", "/admin.cgi", "/admin/metadata.xsl"):
             if not self._right(given or query.get("pass", ""), who):
@@ -356,7 +393,8 @@ class LiveInput:
         with self._lock:
             if self.source is not None:
                 return None
-            source = LiveSource(self.ffmpeg, content_type, presenter, who, decoder=self._decoder)
+            source = LiveSource(self.ffmpeg, content_type, presenter, who, decoder=self._decoder,
+                                record_dir=self.record_dir)
             self.source = source
         try:
             ok = self._on_source(source)
@@ -367,6 +405,8 @@ class LiveInput:
             with self._lock:
                 self.source = None
             source.close()
+            if source.recording is not None:  # nothing was recorded
+                source.recording.unlink(missing_ok=True)
             return None
         logger.info("live: %s connected from %s", presenter or "a presenter", who)
         return source
@@ -427,6 +467,16 @@ def port_free(port: int) -> bool:
         except OSError:
             return False
     return True
+
+
+def _query(qs: str) -> dict[str, str]:
+    """A URL's query: UTF-8 as a modern encoder sends it, else Latin-1 as
+    older SHOUTcast encoders do."""
+    try:
+        parsed = parse_qs(qs, encoding="utf-8", errors="strict")
+    except UnicodeDecodeError:
+        parsed = parse_qs(qs, encoding="latin-1")
+    return {k: v[0] for k, v in parsed.items()}
 
 
 def _read_headers(conn: socket.socket, data: bytes) -> tuple[bytes, bytes]:
