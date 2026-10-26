@@ -27,7 +27,7 @@ def test_asks_at_most_once_a_day_and_keeps_the_last_answer(tmp_path):
     assert updates.latest_version(cache, fetch, now=1000) == "0.4.0"
     assert updates.latest_version(cache, fetch, now=1000 + 3600) == "0.4.0"
     assert len(calls) == 1
-    # A day later PyPI is asked again; if it can't be reached, the last
+    # A day later GitHub is asked again; if it can't be reached, the last
     # known answer stands and the next try is a day after that.
     assert updates.latest_version(cache, lambda: 1 / 0, now=1000 + updates.CHECK_EVERY) == "0.4.0"
     assert json.loads(cache.read_text())["checked"] == 1000 + updates.CHECK_EVERY
@@ -35,7 +35,7 @@ def test_asks_at_most_once_a_day_and_keeps_the_last_answer(tmp_path):
     assert updates.latest_version(cache, fetch, now=5) == "0.4.0"
 
 
-def test_reads_the_version_from_pypi_json(monkeypatch):
+def test_reads_the_newest_player_release_from_github(monkeypatch):
     class Resp:
         def __init__(self, body):
             self.body = body
@@ -49,12 +49,15 @@ def test_reads_the_version_from_pypi_json(monkeypatch):
         def __exit__(self, *a):
             return False
 
+    releases = [{"tag_name": t} for t in ("server-v9.0.0", "studio-v5.0.0", "player-v0.18.0", "player-v0.19.0")]
+    releases += [{"tag_name": "player-v1.0.0", "draft": True}, {"tag_name": "player-v0.20.0", "prerelease": True},
+                 {"tag_name": "player-v<b>"}]
     seen = []
     monkeypatch.setattr(updates.urllib.request, "urlopen",
-                        lambda req, timeout: seen.append(req.full_url) or Resp(b'{"info": {"version": "1.2.3"}}'))
-    assert real_fetch() == "1.2.3"
-    assert seen == [updates.PYPI_URL]
-    monkeypatch.setattr(updates.urllib.request, "urlopen", lambda req, timeout: Resp(b'{"info": {"version": "<b>"}}'))
+                        lambda req, timeout: seen.append(req.full_url) or Resp(json.dumps(releases).encode()))
+    assert real_fetch() == "0.19.0"
+    assert seen == [updates.RELEASES_API]
+    monkeypatch.setattr(updates.urllib.request, "urlopen", lambda req, timeout: Resp(b'{"message": "rate limited"}'))
     assert real_fetch() is None
 
 

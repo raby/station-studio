@@ -4161,7 +4161,7 @@ function appSection() {
         S.lib.config.own_window !== false, windowChange)
         : browser ? checkbox("window", `Open in a window of its own (using ${browser}), not a browser tab`,
           S.lib.config.own_window !== false, windowChange) : null,
-      checkbox("updates", "Tell me when a new version is out (asks pypi.org once a day)",
+      checkbox("updates", "Tell me when a new version is out (asks GitHub once a day)",
         S.lib.config.check_updates !== false, updatesChange)),
     updateSettings(),
     browser || S.lib.mac_app ? null : el("p", { class: "help" },
