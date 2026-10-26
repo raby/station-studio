@@ -190,6 +190,10 @@ def make_handler(app: ServerApp, picker: Picker, quit, remote: bool = False,
                 return self._json(_state(app, remote))
             if path == "/api/diagnostics":
                 return self._send(app.diagnostics().encode("utf-8"), "text/plain; charset=utf-8")
+            if path == "/api/qr.svg":  # a link for a phone to scan (Settings › Internet)
+                from station_player.qr import svg
+                text = parse_qs(url.query).get("text", [""])[0][:300]
+                return self._send(svg(text).encode("utf-8"), "image/svg+xml")
             m = _STATION_RE.match(path)
             if m and m.group(2) == "listen.mp3":
                 return self._listen(m.group(1))
@@ -288,6 +292,20 @@ def make_handler(app: ServerApp, picker: Picker, quit, remote: bool = False,
                 if app.feed is not None:
                     app.feed.publish_now()
                 return self._json(app.state())
+            if path == "/api/internet/check":
+                from station_server.netcheck import CheckError
+                try:
+                    app.check_internet()
+                except CheckError as exc:
+                    return self._error(HTTPStatus.BAD_GATEWAY, str(exc))
+                return self._json(app.state())
+            if path == "/api/internet/router":
+                port = data.get("port")
+                app.router(str(data.get("action") or "look"), int(port) if port else None)
+                return self._json(app.state())
+            if path == "/api/internet/duckdns":
+                app.duckdns.update_now()
+                return self._json(app.state())
             if path == "/api/alerts/test":
                 return self._json({"sent": app.test_alert(), **app.state()})
             if path == "/api/pick":
@@ -341,6 +359,8 @@ def make_handler(app: ServerApp, picker: Picker, quit, remote: bool = False,
                 app.restart(sid)
             elif action == "delete":
                 app.delete_station(sid)
+            elif action == "listeners":
+                app.set_listener_cap(sid, int(data.get("max") or 0))
             else:
                 return self._error(HTTPStatus.NOT_FOUND, "Not found")
             return self._json(_state(app, remote))
@@ -448,4 +468,5 @@ def make_server(app: ServerApp, host: str = "127.0.0.1", port: int = DEFAULT_POR
     from station_server.feed import FeedPublisher
     app.feed = FeedPublisher(app)
     app.feed.apply()
+    app.duckdns.apply()
     return server

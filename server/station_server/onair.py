@@ -30,8 +30,9 @@ from station_server.analysis import Analyser
 from station_server.audio import FfmpegMissing, find_ffmpeg, has_mp3_encoder
 from station_server.awake import KeepAwake
 from station_server.channel import Channel, NowPlaying
+from station_server import netcheck, upnp
 from station_server.config import (Config, ConfigStore, Station, clean_alerts, clean_port, clean_station, newest_week,
-                                   serve_port)
+                                   serve_max, serve_port)
 from station_server.desktop import Login, bundled
 from station_server.listen import Listeners, Tap
 from station_server.live import LiveInput, LiveSource, lan_addresses, port_free
@@ -742,6 +743,10 @@ class ServerApp:
         self.remote = None  # web.RemoteAccess, set by web.make_server
         self.studio = None  # studiolink.StudioLink, set by web.make_server
         self.feed = None  # feed.FeedPublisher, set by web.make_server
+        self.duckdns = netcheck.DuckDns(self)
+        self._net_lock = threading.Lock()
+        self._net_checking = False
+        self.router_state: dict | None = None  # the router's port forwarding, when last looked at
         self.alerts = alerts.Watcher(self)
         self._stopped = threading.Event()
         self._watching = False
@@ -793,6 +798,14 @@ class ServerApp:
             if data["feed"] and not (cfg.feed_repo and cfg.feed_token):
                 raise ValueError("Give the GitHub repository and its token first")
             cfg.feed = bool(data["feed"])
+        if "duckdns_name" in data:
+            cfg.duckdns_name = netcheck.clean_duckdns(data["duckdns_name"])
+            if not cfg.duckdns_name:
+                cfg.duckdns_token = ""
+        if str(data.get("duckdns_token") or "").strip():  # blank keeps the token
+            cfg.duckdns_token = str(data["duckdns_token"]).strip()
+        if cfg.duckdns_name and not cfg.duckdns_token:
+            raise ValueError("Give the DuckDNS token too (it's on duckdns.org once signed in)")
         if "remote" in data:
             if data["remote"] and not cfg.remote_password:
                 raise ValueError("Set a password first")
@@ -810,6 +823,77 @@ class ServerApp:
             self.studio.apply()
         if self.feed is not None and any(k in data for k in ("feed", "feed_repo", "feed_token")):
             self.feed.apply()
+        if any(k in data for k in ("duckdns_name", "duckdns_token")):
+            self.duckdns.apply()
+
+    # ---- streaming from this computer: Settings › Internet -----------------
+
+    def streaming_here(self) -> list[dict]:
+        """The stations streaming from this computer (live server, not test)."""
+        out = []
+        for st in self.config.stations:
+            port = serve_port(st.server)
+            if port is not None:
+                out.append({"id": st.id, "name": st.name, "port": port, "bitrate": st.bitrate,
+                            "max": serve_max(st.server)})
+        return out
+
+    def internet(self) -> dict:
+        """What Settings › Internet shows: the last check, the stations
+        streaming from here with a suggested cap, the router and DuckDNS."""
+        check = self.config.net_check or {}
+        here = self.streaming_here()
+        if check.get("upload_mbps"):
+            here = netcheck.suggest(float(check["upload_mbps"]), here)
+        name = self.config.duckdns_name
+        return {
+            "check": check or None, "checking": self._net_checking, "stations": here,
+            "router": self.router_state,
+            "duckdns": {"name": name, "has_token": bool(self.config.duckdns_token),
+                        "host": f"{name}.duckdns.org" if name else None, "last": self.duckdns.last},
+        }
+
+    def check_internet(self, upload=netcheck.upload_mbps, address=netcheck.public_address) -> dict:
+        """Measure the upload and find the public address (about 10 s)."""
+        with self._net_lock:
+            if self._net_checking:
+                raise ValueError("A check is already running")
+            self._net_checking = True
+        try:
+            mbps = upload()
+            self.config.net_check = {"upload_mbps": mbps, "address": address(),
+                                     "at": _local(time.time()).isoformat(timespec="seconds")}
+            self.store.save()
+        finally:
+            self._net_checking = False
+        return self.internet()
+
+    def router(self, action: str, port: int | None = None, find=upnp.find_gateway) -> dict:
+        """The router's port forwarding (UPnP): look, open or close a port."""
+        ports = [s["port"] for s in self.streaming_here()]
+        if action in ("open", "close") and port not in ports:
+            raise ValueError("That port isn't a station streaming from this computer")
+        try:
+            gw = find()
+            if action == "open":
+                gw.forward(port)
+            elif action == "close":
+                gw.unforward(port)
+            self.router_state = {"found": True, "error": None, "address": gw.external_address(),
+                                 "here": gw.local_address(), "ports": {str(p): gw.mapping(p) for p in ports}}
+        except upnp.UpnpError as exc:
+            self.router_state = {"found": False, "error": str(exc), "address": None, "here": None, "ports": {}}
+        return self.internet()
+
+    def set_listener_cap(self, sid: str, most: int) -> None:
+        """Most listeners for a station streaming from here (Use N)."""
+        st = self._runner(sid).station
+        if serve_port(st.server) is None:
+            raise ValueError("That station isn't streaming from this computer")
+        if not 1 <= int(most) <= 500:
+            raise ValueError("Allow between 1 and 500 listeners")
+        st.server = f"serve://:{serve_port(st.server)}?max={int(most)}"
+        self.store.save()
 
     def test_alert(self) -> list[str]:
         """Settings › Alerts › Send a test: returns where it went."""
@@ -845,6 +929,7 @@ class ServerApp:
             "remote": self.remote.status() if self.remote else None,
             "studio": self.studio.status() if self.studio else None,
             "feed": self.feed.status() if self.feed else None,
+            "internet": self.internet(),
             "ffmpeg": self.ffmpeg,
             "ffmpeg_error": self.ffmpeg_error,
             "warnings": self.store.warnings,
@@ -1030,6 +1115,18 @@ class ServerApp:
                 add(label, "warn", f"{exc} Do that just before Go live; the rest can be checked then.")
             except (SenderError, OSError, ValueError) as exc:
                 add(label, "fail", str(exc))
+        if serve_port(st.server) is not None:
+            mine = next((x for x in self.internet()["stations"] if x["id"] == st.id), None)
+            if mine is None or "suggested" not in mine:
+                add("Internet", "warn", "Not checked: Settings › Internet measures the upload and suggests how "
+                    "many listeners this computer can take")
+            elif mine["max"] > mine["suggested"]:
+                add("Internet", "warn", f"Up to {mine['max']} listeners are allowed, but the upload "
+                    f"({self.config.net_check['upload_mbps']} Mbps) suits about {mine['suggested']}: lower it in "
+                    "Settings › Internet, or they may stutter")
+            else:
+                add("Internet", "ok", f"Upload {self.config.net_check['upload_mbps']} Mbps suits about "
+                    f"{mine['suggested']} listeners; up to {mine['max']} are allowed")
         if st.fallback:
             try:
                 fb = source_queue("Fallback", st.fallback, st, "fallback")
@@ -1114,7 +1211,7 @@ class ServerApp:
         cfg = self.config
         secrets = {p for s in cfg.stations for p in (s.password, s.test_password) if p}
         secrets |= {x for x in (cfg.alerts.smtp_password, cfg.remote_password, cfg.alerts.ntfy, cfg.studio_code,
-                                cfg.feed_token) if x}
+                                cfg.feed_token, cfg.duckdns_token) if x}
         secrets |= {p for s in cfg.stations for p in [s.live_password] + [x["password"] for x in s.presenters] if p}
         for secret in secrets:
             text = text.replace(secret, "********")
@@ -1129,5 +1226,6 @@ class ServerApp:
             self.studio.stop()
         if self.feed is not None:
             self.feed.stop()
+        self.duckdns.stop()
         for runner in self.runners.values():
             runner.stop()

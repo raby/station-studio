@@ -292,9 +292,17 @@ connect straight to it:
 - past the most listeners, the next is turned away (503); one whose
   connection can't keep up is let go
 
-From outside the network, forward the port on the router to this
-computer. Each listener takes the bitrate from the connection's upload:
-Help › Streaming has a table of how many a connection can take.
+**Settings › Internet** helps listeners outside the network reach it:
+
+- *Check my internet* sends test data to Cloudflare's free speed test
+  (`speed.cloudflare.com`) for about 10 seconds and suggests each
+  station's cap: 70% of the upload, shared by bitrate
+- it forwards each station's port on the router where the router allows
+  it (UPnP), or says how to by hand
+- a free DuckDNS name is kept pointing at the connection, every five
+  minutes (the token is never shown to the page or in diagnostics)
+- a QR code of each station's outside address, to try from a phone on
+  mobile data
 
 ## From the command line
 

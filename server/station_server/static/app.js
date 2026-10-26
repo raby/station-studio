@@ -1090,6 +1090,7 @@ const SETTINGS_TABS = [
   ["phone", "Phone access", "phone"],
   ["studio", "Station Studio", "link"],
   ["website", "Website", "globe"],
+  ["internet", "Internet", "tower"],
   ["updates", "Updates", "refresh"],
   ["app", "App", "app"],
 ];
@@ -1115,6 +1116,7 @@ function renderSettings() {
     phone: () => [phoneSettings()],
     studio: () => [studioSettings()],
     website: () => [websiteSettings()],
+    internet: () => [internetSettings()],
     updates: () => [updateSettings()],
     app: () => [
       el("p", { class: "help" }, "Station Server runs in the background; this window is how you see it. Closing the window leaves the stations on air. Quit Station Server takes them off air."),
@@ -1282,6 +1284,91 @@ function studioSettings() {
 
 // Settings › Website: what's playing, published to a GitHub Pages site for
 // the station's website and Station Player (feed.py).
+// Settings › Internet: streaming from this computer (netcheck.py, upnp.py).
+function internetSettings() {
+  const n = S.state?.internet || {};
+  const check = n.check;
+  const here = n.stations || [];
+  const router = n.router;
+  const dd = n.duckdns || {};
+  // Each part's messages show beside its buttons.
+  const checkMsg = el("div", { class: "form-msg", role: "status" });
+  const routerMsg = el("div", { class: "form-msg", role: "status" });
+  const ddMsg = el("div", { class: "form-msg", role: "status" });
+  const redraw = () => { const old = $("#internet-settings"); if (old) old.replaceWith(internetSettings()); };
+  async function post(path, body, done, busyText, msg = checkMsg) {
+    msg.className = "form-msg ok";
+    msg.textContent = busyText || "";
+    try {
+      setState(await api(path, body));
+      if (done) toast(done);
+      redraw();
+    } catch (e) { msg.className = "form-msg"; msg.textContent = e.message; }
+  }
+  const ddName = el("input", { type: "text", value: dd.name || "", placeholder: "rebirth", autocomplete: "off", spellcheck: "false" });
+  const ddToken = el("input", { type: "password", value: "", autocomplete: "off",
+    placeholder: dd.has_token ? "Kept (type a new one to change it)" : "the token from duckdns.org" });
+  const outside = dd.host || check?.address;
+  const portState = (port) => {
+    const to = router?.ports?.[String(port)];
+    if (!router || !router.found) return null;
+    return to ? el("span", { class: "ok" }, to === router.here ? "Forwarded to this computer" : `Forwarded to ${to}, not this computer`)
+      : el("span", { class: "warn" }, "Not forwarded");
+  };
+  return el("div", { id: "internet-settings", class: "form" },
+    el("p", { class: "help" }, "For stations streaming from this computer (Edit › Server › This computer): how many listeners this internet connection can take, and how listeners outside this network reach it."),
+    here.length ? null : el("p", { class: "help" }, "No station streams from this computer yet: choose This computer in a station's Edit › Server."),
+    el("fieldset", {}, el("legend", {}, "How many listeners"),
+      el("p", { class: "help" }, "Checking sends test data to Cloudflare's free speed test for about 10 seconds, to measure how fast this connection uploads. Each listener takes the station's bitrate from that; some is left for everything else."),
+      el("div", { class: "actions" }, btn(n.checking ? "Checking…" : "Check my internet", "refresh",
+        () => post("/api/internet/check", {}, "Checked", "Checking: about 10 seconds…"), "btn small")),
+      checkMsg,
+      check ? el("p", {}, "Upload ", el("b", {}, `${check.upload_mbps} Mbps`),
+        check.address ? [" · seen from outside as ", el("b", {}, check.address)] : "",
+        el("span", { class: "help" }, ` · checked ${dayTime(check.at)}`)) : null,
+      here.length ? el("table", { class: "help-table" },
+        el("tr", {}, el("th", {}, "Station"), el("th", {}, "Port"), el("th", {}, "Allowed"), el("th", {}, "Suggested"), el("th", {}, "")),
+        here.map((s) => el("tr", {},
+          el("td", {}, s.name), el("td", {}, String(s.port)), el("td", {}, String(s.max)),
+          el("td", {}, s.suggested === undefined ? "–" : String(s.suggested)),
+          el("td", {}, s.suggested !== undefined && s.suggested > 0 && s.suggested !== s.max
+            ? btn(`Use ${s.suggested}`, "check", () => post(`/api/stations/${s.id}/listeners`, { max: s.suggested }, `${s.name}: up to ${s.suggested} listeners`), "btn small")
+            : null)))) : null,
+      here.length > 1 ? el("p", { class: "help" }, "The stations share the upload, in proportion to their bitrates.") : null),
+    here.length ? el("fieldset", {}, el("legend", {}, "The router"),
+      el("p", { class: "help" }, "Listeners outside this network reach this computer through the router, once it forwards each station's port here. Most routers let Station Server do that itself (UPnP)."),
+      el("div", { class: "actions" }, btn("Look at the router", "refresh", () => post("/api/internet/router", { action: "look" }, null, "Asking the router…", routerMsg), "btn small")),
+      routerMsg,
+      router && !router.found ? el("div", { class: "errors" }, router.error) : null,
+      router && router.found ? el("p", {}, "Router's address: ", el("b", {}, router.address || "unknown"), " · this computer: ", el("b", {}, router.here || "unknown")) : null,
+      router && router.found ? here.map((s) => el("div", { class: "form-row" },
+        el("b", {}, `${s.name}, port ${s.port}:`), portState(s.port),
+        router.ports?.[String(s.port)]
+          ? btn("Close the port", "stop", () => post("/api/internet/router", { action: "close", port: s.port }, `Port ${s.port} closed`, "", routerMsg), "btn small")
+          : btn(`Open port ${s.port}`, "check", () => post("/api/internet/router", { action: "open", port: s.port }, `Port ${s.port} forwarded here`, "", routerMsg), "btn small"))) : null,
+      el("p", { class: "help" }, "If the router won't, open its settings (often http://192.168.1.1 or http://192.168.0.1) and forward TCP ", here.map((s) => s.port).join(" and "), " to this computer. Give this computer a fixed address there first (a DHCP reservation), so the forward keeps pointing at it.")) : null,
+    here.length ? el("fieldset", {}, el("legend", {}, "An address that stays the same"),
+      el("p", { class: "help" }, "A home connection's address can change now and then, which breaks listeners' links. DuckDNS (free) gives it a name, like rebirth.duckdns.org, and Station Server keeps the name pointing at it."),
+      el("ol", { class: "help steps" },
+        el("li", {}, "Sign in at duckdns.org (with Google, GitHub or similar) and add a name."),
+        el("li", {}, "Enter the name and the token shown at the top of that page here, and Save.")),
+      el("div", { class: "grid" }, el("label", {}, "DuckDNS name", ddName), el("label", {}, "Token", ddToken)),
+      el("div", { class: "actions" },
+        btn("Save", "check", () => post("/api/settings", { duckdns_name: ddName.value, duckdns_token: ddToken.value }, "Saved", "", ddMsg), "btn small"),
+        dd.name && dd.has_token ? btn("Update now", "refresh", () => post("/api/internet/duckdns", {}, null, "", ddMsg), "btn small") : null),
+      ddMsg,
+      dd.last ? el("p", { class: dd.last.ok ? "help" : "errors" }, dd.last.ok ? `${dd.host} updated ${dayTime(new Date(dd.last.at * 1000).toISOString())}` : dd.last.error) : null) : null,
+    here.length && outside ? el("fieldset", {}, el("legend", {}, "Try it from a phone"),
+      el("p", { class: "help" }, "Turn Wi-Fi off on the phone, so it uses mobile data like a listener would, then scan a code or open the address."),
+      el("div", { class: "qr-row" }, here.map((s) => {
+        const link = `http://${outside}:${s.port}/`;
+        return el("div", { class: "qr" },
+          el("img", { src: `/api/qr.svg?text=${encodeURIComponent(link)}`, alt: `QR code for ${link}`, width: 140, height: 140 }),
+          el("b", {}, s.name), el("code", { class: "code" }, link));
+      }))) : null,
+  );
+}
+
 function websiteSettings() {
   const f = S.state?.feed || {};
   const msg = el("div", { class: "form-msg", role: "status" });
@@ -1469,6 +1556,7 @@ function renderHelp() {
         "A listener whose connection can't keep up is let go, rather than holding up the others.",
         "Taking the station off air ends everyone's stream, as a server would."),
       h2("Listeners from outside this network"),
+      p("Settings › Internet does most of this: it measures the upload and suggests how many listeners to allow, opens the port on the router where the router lets it (UPnP), keeps a free DuckDNS name pointing at this connection, and shows a code to scan with a phone. By hand:"),
       list(
         "On the router, forward the port (TCP) to this computer. Give the computer a fixed address on the network first (the router's DHCP reservation), so the forward keeps pointing at it.",
         "Listeners use the router's public address and the port, like http://81.150.147.206:8000/. If the address changes now and then, a free dynamic DNS name (DuckDNS, say) keeps one name pointing at it.",
@@ -1480,10 +1568,15 @@ function renderHelp() {
         el("tr", {}, el("th", {}, "Upload"), el("th", {}, "64 kbps"), el("th", {}, "128 kbps"), el("th", {}, "192 kbps")),
         ...[5, 10, 20, 50].map((mbps) => el("tr", {}, el("td", {}, `${mbps} Mbps`),
           ...[64, 128, 192].map((kbps) => el("td", {}, String(Math.floor(mbps * 1000 * 0.7 / kbps))))))),
-      p("Set Most listeners a little under that; when it's full, the next listener is turned away rather than everyone stuttering. For more listeners than the connection can take, send to a hosted SHOUTcast or Icecast server instead."),
+      p("Settings › Internet measures it for you. Set Most listeners a little under that; when it's full, the next listener is turned away rather than everyone stuttering. For more listeners than the connection can take, send to a hosted SHOUTcast or Icecast server instead."),
     ],
     new: () => [
-      el("h2", {}, "0.15: streaming from this computer"),
+      el("h2", {}, "0.16: Settings › Internet"),
+      list(
+        "Check my internet measures the upload and suggests how many listeners each station streaming from this computer can take, with Use to set it.",
+        "Opens each station's port on the router (UPnP), keeps a free DuckDNS name pointing at this connection, and shows a code to scan from a phone on mobile data.",
+        "The Ready check says when a station allows more listeners than the upload suits."),
+      h2("0.15: streaming from this computer"),
       list(
         "Station Server can be the station's server: choose This computer in Edit › Server, and listeners connect straight to it. No DNAS, Icecast or hosting needed (Help › Streaming)."),
       h2("0.14: on your website"),
