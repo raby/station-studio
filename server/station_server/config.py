@@ -267,6 +267,10 @@ class Config:
     studio_link: bool = False
     studio_code: str = ""
     studio_port: int = STUDIO_PORT
+    # What's playing, published to the station's website (feed.py).
+    feed: bool = False
+    feed_repo: str = ""  # owner/name of a GitHub repository served by GitHub Pages
+    feed_token: str = ""
 
     def station(self, sid: str) -> Station | None:
         return next((s for s in self.stations if s.id == sid), None)
@@ -313,7 +317,10 @@ class ConfigStore:
                      remote=bool(data.get("remote", False)),
                      remote_password=str(data.get("remote_password") or ""),
                      studio_link=bool(data.get("studio_link", False)),
-                     studio_code=str(data.get("studio_code") or ""))
+                     studio_code=str(data.get("studio_code") or ""),
+                     feed=bool(data.get("feed", False)),
+                     feed_repo=str(data.get("feed_repo") or ""),
+                     feed_token=str(data.get("feed_token") or ""))
         try:
             cfg.remote_port = clean_port(data.get("remote_port", REMOTE_PORT))
             cfg.studio_port = clean_port(data.get("studio_port", STUDIO_PORT))
@@ -342,6 +349,9 @@ class ConfigStore:
                 "studio_link": self.config.studio_link,
                 "studio_code": self.config.studio_code,
                 "studio_port": self.config.studio_port,
+                "feed": self.config.feed,
+                "feed_repo": self.config.feed_repo,
+                "feed_token": self.config.feed_token,
                 "stations": [s.to_json() for s in self.config.stations],
             }
             tmp = self.path.with_suffix(".tmp")

@@ -46,6 +46,7 @@ function el(tag, attrs = {}, ...children) {
 // The same line icons as station-player (24x24, stroked).
 const ICONS = {
   plus: ["M12 5v14", "M5 12h14"],
+  globe: ["c 12 12 10", "M2 12h20", "M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"],
   radio: ["c 12 12 2", "M16.24 7.76a6 6 0 0 1 0 8.48", "M7.76 16.24a6 6 0 0 1 0-8.48", "M19.07 4.93a10 10 0 0 1 0 14.14", "M4.93 19.07a10 10 0 0 1 0-14.14"],
   tower: ["M12 10l-4 11", "M12 10l4 11", "M9.6 16.5h4.8", "*c 12 8 1.6", "M8.5 4.5a5 5 0 0 0 0 7", "M15.5 4.5a5 5 0 0 1 0 7"],
   settings: ["M4 21v-7", "M4 10V3", "M12 21v-9", "M12 8V3", "M20 21v-5", "M20 12V3", "M1.5 14h5", "M9.5 8h5", "M17.5 16h5"],
@@ -1067,6 +1068,7 @@ const SETTINGS_TABS = [
   ["alerts", "Alerts", "bell"],
   ["phone", "Phone access", "phone"],
   ["studio", "Station Studio", "link"],
+  ["website", "Website", "globe"],
   ["updates", "Updates", "refresh"],
   ["app", "App", "app"],
 ];
@@ -1091,6 +1093,7 @@ function renderSettings() {
     alerts: () => [alertsSettings()],
     phone: () => [phoneSettings()],
     studio: () => [studioSettings()],
+    website: () => [websiteSettings()],
     updates: () => [updateSettings()],
     app: () => [
       el("p", { class: "help" }, "Station Server runs in the background; this window is how you see it. Closing the window leaves the stations on air. Quit Station Server takes them off air."),
@@ -1256,6 +1259,62 @@ function studioSettings() {
   );
 }
 
+// Settings › Website: what's playing, published to a GitHub Pages site for
+// the station's website and Station Player (feed.py).
+function websiteSettings() {
+  const f = S.state?.feed || {};
+  const msg = el("div", { class: "form-msg", role: "status" });
+  const on = el("input", { type: "checkbox" });
+  on.checked = !!f.enabled;
+  const repo = el("input", { type: "text", value: f.repo || "", placeholder: "raby/rebirth-now", autocomplete: "off", spellcheck: "false" });
+  const token = el("input", { type: "password", value: "", autocomplete: "off",
+    placeholder: f.has_token ? "Kept (type a new one to change it)" : "github_pat_…" });
+  const redraw = () => { const old = $("#website-settings"); if (old) old.replaceWith(websiteSettings()); };
+  async function post(path, body, done) {
+    try {
+      setState(await api(path, body));
+      toast(done);
+      redraw();
+    } catch (e) { msg.textContent = e.message; if ("feed" in body) on.checked = !on.checked; }
+  }
+  const fields = () => ({ feed_repo: repo.value, feed_token: token.value });
+  on.addEventListener("change", () => post("/api/settings", { ...fields(), feed: on.checked },
+    on.checked ? "Publishing to the website" : "Stopped publishing"));
+  const copy = async (text) => {
+    try { await navigator.clipboard.writeText(text); toast("Copied"); } catch { toast(text); }
+  };
+  const last = f.last;
+  return el("div", { id: "website-settings", class: "form" },
+    el("p", { class: "help" }, "Shows what each station is playing, what's coming up and what's just played, on the station's website and in Station Player. Station Server publishes it to a small website of its own on GitHub Pages (free), which your website shows in an embedded box. It's published about once an hour, and straight away when something changes (a live show, a skip, going off air), and works out the song on now from the times."),
+    el("fieldset", {},
+      el("legend", {}, "Setting it up"),
+      el("ol", { class: "help steps" },
+        el("li", {}, "On GitHub, make a new public repository, such as rebirth-now, ticking Add a README."),
+        el("li", {}, "In its Settings › Pages, choose Deploy from a branch, main, / (root), and Save."),
+        el("li", {}, "Make a fine-grained token (GitHub › Settings › Developer settings › Fine-grained tokens) for that repository only, with Contents: Read and write. Give it a long expiry, or none."),
+        el("li", {}, "Enter the repository and the token below, and turn publishing on."))),
+    el("div", { class: "grid" },
+      el("label", {}, "GitHub repository", repo),
+      el("label", {}, "Token", token)),
+    el("label", { class: "check", style: "display:flex;gap:8px;align-items:center" }, on, "Publish what's playing to the website"),
+    el("div", { class: "actions" },
+      btn("Save", "check", () => post("/api/settings", fields(), "Saved"), "btn small"),
+      f.enabled ? btn("Publish now", "refresh", () => post("/api/feed/publish", {}, "Publishing"), "btn small") : null),
+    msg,
+    f.error ? el("div", { class: "errors" }, f.error) : null,
+    f.enabled && f.url ? el("fieldset", {},
+      el("legend", {}, "On your website"),
+      el("p", {}, "The page with every station: ", el("a", { href: f.url, target: "_blank", rel: "noopener" }, f.url),
+        last ? el("span", { class: "help" }, ` · last published ${dayTime(last.at)}`) : null),
+      el("p", { class: "help" }, "On Wix: Add › Embed code › Embed a site, and give it a station's address below. Make the box about 340 wide and 520 tall. Add &theme=dark for a dark box, or &next=3&recent=3 for shorter lists."),
+      (f.stations || []).map((s) => {
+        const url = `${f.url}widget.html?station=${s.slug}`;
+        return el("div", { class: "form-row" }, el("b", {}, s.name), el("code", { class: "code" }, url),
+          btn("Copy", "copy", () => copy(url), "btn small"));
+      })) : null,
+  );
+}
+
 async function copyDiagnostics() {
   try {
     const res = await fetch("/api/diagnostics", { cache: "no-store" });
@@ -1338,6 +1397,9 @@ function renderHelp() {
       p("The week's clock allows for both, so the running order's times and a restart still land in the right place."),
       h2("Shows at set times"),
       p("Edit › Shows pins a show to times in the week, like Saturday 20:00. A show is a recording, a playlist, or a folder of recordings played in name order. It starts exactly on time (cutting the song playing) or after that song. When it ends, the music comes back where the week's clock says, so the running order's times stay right. After a restart part-way through a show, the station joins the show where it should be. Shows apply as soon as you save, even on air."),
+      h2("On your website"),
+      p("Settings › Website shows each station's song on now, what's coming up (with times) and what's just played on your website, in a box you embed (on Wix: Add › Embed code › Embed a site). Station Server publishes it to a small free GitHub Pages site of its own: Settings › Website has the steps, and the address to give your website for each station. While a presenter is live, the box shows their name; off air, it says so."),
+      p("It's published about once an hour, and within a couple of minutes of anything changing what's on (a skip, a restart, a show, a live show, going off or on air). The box works out the song on now from the times, so it stays right in between. A rehearsal isn't shown. The page with every station is at the site's own address."),
       h2("The play log"),
       p("Every track each station plays is logged, live shows included. Play log downloads a station's plays between two dates as a spreadsheet, ready for a PRS for Music or PPL return. Plays under 30 seconds aren't counted."),
     ],
@@ -1372,7 +1434,10 @@ function renderHelp() {
       p("When a new version is out, a note at the foot of the sidebar offers Update now. Station Server downloads it from its GitHub page, checks it's the genuine file and restarts; stations that were on air go back on air. Settings › Updates has Check for updates, and can stop it asking GitHub."),
     ],
     new: () => [
-      el("h2", {}, "0.13: Station Studio link"),
+      el("h2", {}, "0.14: on your website"),
+      list(
+        "Settings › Website publishes each station's now playing, coming up and just played to a GitHub Pages site, with a box to embed on your website."),
+      h2("0.13: Station Studio link"),
       list(
         "Station Studio sends each week straight here, with a link code: no shared folder.",
         "Station Studio's station page shows what's on air here, the weeks it has, and warns when next week is missing."),
@@ -1405,6 +1470,7 @@ function renderHelp() {
       p("If the server goes away, the station keeps playing and reconnects every few seconds. A track whose file can't be read is skipped. If none can be (the music's drive is missing, say), the station plays its fallback, a folder of jingles or songs set in Edit › Station, and then tries the playlist again; with no fallback it sends silence. The page says which. Tracks the playlist names but this computer can't find are listed under the station: add the folder they're in as a music folder."),
       p("Go live says something else is sending to the server? Winamp's plugin is probably still connected: stop it, then press Go live again. A presenter can't connect? Check the Ready check's Live shows row, the router's port forwarding and their password; after 5 wrong passwords in 5 minutes their address is kept out for a few minutes."),
       p("Station Studio can't reach Station Server? Check Settings › Station Studio is on, that Station Studio has the address it shows (with the port) and the current link code, and that the firewall lets Station Server accept connections on private networks. After 5 wrong codes, that address is kept out for a few minutes."),
+      p("The website not changing? Settings › Website says if GitHub turned the token down (it may have expired: make a new one) or couldn't be reached. The site itself takes a minute or two to change after each publish. If the address says Not found, turn on GitHub Pages in the repository's Settings › Pages (Deploy from a branch, main)."),
       p("ffmpeg does the decoding and encoding. The downloaded app has its own; otherwise install it (macOS: brew install ffmpeg; Windows: winget install ffmpeg)."),
       p("Station Server keeps a log, station-server.log, with its settings, play logs and recordings in the .station-server folder in your home folder."),
       p("Asking for help? Copy diagnostics puts the version, each station's state and the end of the log on the clipboard, with passwords taken out, ready to paste into a message."),

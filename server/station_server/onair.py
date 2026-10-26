@@ -640,6 +640,22 @@ class StationRunner:
 
     # ---- for the page ---------------------------------------------------
 
+    def coming(self, count: int) -> list[dict]:
+        """The running order from what's on air now (schedule.plan): the
+        song or show playing, then the next `count` - 1, each with its time."""
+        ch = self.channel
+        now = ch.now if ch and self.state == "on" else None
+        if not (now and self.queue and self.queue.tracks):
+            return []
+        show_on = self.show_on if ch.in_show else None
+        if show_on:
+            # When it really started (a show after the song starts late).
+            began = _local(now.started) - timedelta(seconds=sum(step_seconds(t) for t in ch.queue.tracks[:now.index]))
+            show_on = (show_on[0], began, show_on[2])
+        shows = [(show, self.show_length(show)) for show in self.shows()]
+        return plan(self.queue.tracks, now.index if not show_on else self._interrupted, _local(now.started),
+                    datetime.now().astimezone(), shows, self._resume, count=count, show_playing=show_on)
+
     def status(self) -> dict:
         st = self.station
         out = {
@@ -692,17 +708,9 @@ class StationRunner:
             }
             if ch.jingle is not None:
                 out["now"]["jingle"] = ch.jingle.name
-            show_on = self.show_on if ch.in_show else None
-            if show_on:
-                out["now"]["show"] = show_on[0].name
-                # When it really started (a show after the song starts late).
-                began = _local(now.started) - timedelta(seconds=sum(step_seconds(t) for t in ch.queue.tracks[:now.index]))
-                show_on = (show_on[0], began, show_on[2])
-            shows = [(show, self.show_length(show)) for show in self.shows()]
-            if self.queue and self.queue.tracks:
-                out["order"] = plan(
-                    self.queue.tracks, now.index if not show_on else self._interrupted, _local(now.started),
-                    datetime.now().astimezone(), shows, self._resume, count=30, show_playing=show_on)
+            if ch.in_show and self.show_on:
+                out["now"]["show"] = self.show_on[0].name
+            out["order"] = self.coming(30)
         out["shows"] = [{**show.to_json(), "label": show.label(), "seconds": round(self.show_length(show), 1)}
                         for show in self.shows()]
         return out
@@ -732,6 +740,7 @@ class ServerApp:
         self.updater: selfupdate.Updater | None = None  # set by web.make_server
         self.remote = None  # web.RemoteAccess, set by web.make_server
         self.studio = None  # studiolink.StudioLink, set by web.make_server
+        self.feed = None  # feed.FeedPublisher, set by web.make_server
         self.alerts = alerts.Watcher(self)
         self._stopped = threading.Event()
         self._watching = False
@@ -774,6 +783,15 @@ class ServerApp:
             cfg.studio_code = new_code()
         if "studio_link" in data:
             cfg.studio_link = bool(data["studio_link"])
+        if "feed_repo" in data:
+            from station_server.feed import clean_repo
+            cfg.feed_repo = clean_repo(str(data["feed_repo"] or ""))
+        if str(data.get("feed_token") or "").strip():  # blank keeps the token
+            cfg.feed_token = str(data["feed_token"]).strip()
+        if "feed" in data:
+            if data["feed"] and not (cfg.feed_repo and cfg.feed_token):
+                raise ValueError("Give the GitHub repository and its token first")
+            cfg.feed = bool(data["feed"])
         if "remote" in data:
             if data["remote"] and not cfg.remote_password:
                 raise ValueError("Set a password first")
@@ -789,6 +807,8 @@ class ServerApp:
             self.remote.apply()
         if self.studio is not None and any(k in data for k in ("studio_link", "studio_port", "studio_new_code")):
             self.studio.apply()
+        if self.feed is not None and any(k in data for k in ("feed", "feed_repo", "feed_token")):
+            self.feed.apply()
 
     def test_alert(self) -> list[str]:
         """Settings › Alerts › Send a test: returns where it went."""
@@ -823,6 +843,7 @@ class ServerApp:
             "alerts": {**self.config.alerts.to_json(secrets=False), "last": self.alerts.last},
             "remote": self.remote.status() if self.remote else None,
             "studio": self.studio.status() if self.studio else None,
+            "feed": self.feed.status() if self.feed else None,
             "ffmpeg": self.ffmpeg,
             "ffmpeg_error": self.ffmpeg_error,
             "warnings": self.store.warnings,
@@ -1060,6 +1081,8 @@ class ServerApp:
             f"Start at login: {'on' if self.login.enabled() else 'off'}"
             f" · keeping the computer awake: {'yes' if self.awake.held else 'no'}",
             f"Station Studio link: {'on, port %s' % self.config.studio_port if self.config.studio_link else 'off'}",
+            f"Website feed: {'on, ' + self.config.feed_repo if self.config.feed else 'off'}"
+            + (f" · {self.feed.error}" if self.feed and self.feed.error else ""),
             "",
         ]
         for st in self.config.stations:
@@ -1080,7 +1103,8 @@ class ServerApp:
         text = "\n".join(out)
         cfg = self.config
         secrets = {p for s in cfg.stations for p in (s.password, s.test_password) if p}
-        secrets |= {x for x in (cfg.alerts.smtp_password, cfg.remote_password, cfg.alerts.ntfy, cfg.studio_code) if x}
+        secrets |= {x for x in (cfg.alerts.smtp_password, cfg.remote_password, cfg.alerts.ntfy, cfg.studio_code,
+                                cfg.feed_token) if x}
         secrets |= {p for s in cfg.stations for p in [s.live_password] + [x["password"] for x in s.presenters] if p}
         for secret in secrets:
             text = text.replace(secret, "********")
@@ -1093,5 +1117,7 @@ class ServerApp:
             self.remote.stop()
         if self.studio is not None:
             self.studio.stop()
+        if self.feed is not None:
+            self.feed.stop()
         for runner in self.runners.values():
             runner.stop()
