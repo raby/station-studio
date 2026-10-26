@@ -82,8 +82,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p "$RUNNER_TEMP/ffmpeg"
-          gh release download latest --repo BtbN/FFmpeg-Builds \
-            --pattern 'ffmpeg-master-latest-linux64-lgpl.tar.xz' --dir "$RUNNER_TEMP/ffmpeg"
+          # BtbN rebuilds its "latest" release now and then, and it's missing
+          # for a few minutes while it does: try again rather than fail.
+          for try in 1 2 3 4 5 6 7 8; do
+            gh release download latest --repo BtbN/FFmpeg-Builds --clobber \
+              --pattern 'ffmpeg-master-latest-linux64-lgpl.tar.xz' --dir "$RUNNER_TEMP/ffmpeg" && break
+            echo "BtbN's latest ffmpeg isn't there just now; trying again in 30 s"
+            sleep 30
+          done
           tar -xf "$RUNNER_TEMP/ffmpeg/ffmpeg-master-latest-linux64-lgpl.tar.xz" -C "$RUNNER_TEMP/ffmpeg"
           echo "$RUNNER_TEMP/ffmpeg/ffmpeg-master-latest-linux64-lgpl/bin" >> "$GITHUB_PATH"
 

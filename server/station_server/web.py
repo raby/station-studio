@@ -33,6 +33,7 @@ from station_player.setup import Picker, PickerBusy, PickerFailed, PickerUnavail
 
 from station_server import __version__
 from station_server.listen import TooManyListeners
+from station_server.live import lan_addresses
 from station_server.onair import ServerApp
 from station_server.playlist import PlaylistError
 from station_server.selfupdate import Updater
@@ -51,7 +52,7 @@ _STATIC_TYPES = {
 }
 _STATION_RE = re.compile(r"^/api/stations/([0-9a-zA-Z_-]+)(?:/([a-z0-9.]+))?$")
 # What another device may do, with phone access on.
-_REMOTE_ACTIONS = {"on", "skip", "restart"}
+_REMOTE_ACTIONS = {"on", "skip", "restart", "endlive"}
 _REMOTE_REALM = 'Basic realm="Station Server", charset="UTF-8"'
 
 
@@ -321,6 +322,8 @@ def make_handler(app: ServerApp, picker: Picker, quit, remote: bool = False,
                 return self._json({"checks": app.ready_check(sid)})
             elif action == "skip":
                 app.skip(sid)
+            elif action == "endlive":
+                app.end_live(sid)
             elif action == "restart":
                 app.restart(sid)
             elif action == "delete":
@@ -341,24 +344,6 @@ class _Server(ThreadingHTTPServer):
         def server_bind(self):
             self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
             super().server_bind()
-
-
-def lan_addresses() -> list[str]:
-    """This computer's address on the local network, for Settings to show."""
-    found = []
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-            s.connect(("192.0.2.1", 9))  # picks the route out; sends nothing
-            found.append(s.getsockname()[0])
-    except OSError:
-        pass
-    try:
-        for addr in socket.gethostbyname_ex(socket.gethostname())[2]:
-            if addr not in found:
-                found.append(addr)
-    except OSError:
-        pass
-    return [a for a in found if not a.startswith("127.")]
 
 
 class RemoteAccess:

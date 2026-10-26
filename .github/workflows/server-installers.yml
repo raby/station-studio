@@ -102,10 +102,19 @@ jobs:
         run: |
           set -e
           mkdir -p server/packaging/ffmpeg build/ffmpeg
-          asset=$(gh release view latest --repo BtbN/FFmpeg-Builds --json assets --jq '.assets[].name' \
-            | grep -E '^ffmpeg-n[0-9.]+-latest-win64-lgpl-[0-9.]+\.zip$' | sort -V | tail -1)
+          # BtbN rebuilds its "latest" release now and then, and it's missing
+          # for a few minutes while it does: try again rather than fail.
+          for try in 1 2 3 4 5 6 7 8; do
+            asset=$(gh release view latest --repo BtbN/FFmpeg-Builds --json assets --jq '.assets[].name' \
+              | grep -E '^ffmpeg-n[0-9.]+-latest-win64-lgpl-[0-9.]+\.zip$' | sort -V | tail -1) || true
+            if [ -n "$asset" ] && gh release download latest --repo BtbN/FFmpeg-Builds --clobber \
+                --pattern "$asset" --dir build/ffmpeg; then
+              break
+            fi
+            echo "BtbN's latest ffmpeg isn't there just now; trying again in 30 s"
+            sleep 30
+          done
           echo "using $asset"
-          gh release download latest --repo BtbN/FFmpeg-Builds --pattern "$asset" --dir build/ffmpeg
           unzip -q -o "build/ffmpeg/$asset" -d build/ffmpeg
           dir="build/ffmpeg/${asset%.zip}"
           cp "$dir/bin/ffmpeg.exe" server/packaging/ffmpeg/ffmpeg.exe
