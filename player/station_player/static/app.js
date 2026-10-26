@@ -3038,7 +3038,7 @@ function clockView() {
 let alarmScreenReturn = null;
 
 // By the computer's own clock: an evening alarm doesn't say good morning.
-function greeting(now = new Date()) {
+function alarmGreeting(now = new Date()) {
   const h = now.getHours();
   if (h >= 5 && h < 12) return "Good morning";
   if (h >= 12 && h < 18) return "Good afternoon";
@@ -3052,7 +3052,7 @@ function showAlarmScreen(req) {
   box.replaceChildren(
     el("div", { class: "alarm-inner" },
       clockFace("huge"),
-      el("h2", { id: "alarm-screen-title" }, req.label || (req.snoozed ? "Alarm (snoozed)" : greeting())),
+      el("h2", { id: "alarm-screen-title" }, req.label || (req.snoozed ? "Alarm (snoozed)" : alarmGreeting())),
       el("p", { class: "alarm-playing" }, req.source && req.source.name ? `Playing ${req.source.name}` : ""),
       el("div", { class: "alarm-actions" },
         el("button", { type: "button", class: "btn big primary", id: "btn-snooze", onclick: () => snoozeAlarm() },
