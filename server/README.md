@@ -254,6 +254,27 @@ working.
 Phone access never shows the link code, and Copy diagnostics leaves it
 out.
 
+## On your website
+
+**Settings › Website** publishes what each station is playing, what's
+coming up (with times) and what's just played to a GitHub Pages site of
+the station's own, for its website and Station Player:
+
+1. Make a public GitHub repository (say `rebirth-now`) and turn on
+   GitHub Pages for it (Settings › Pages › Deploy from a branch, `main`).
+2. Make a fine-grained token for that repository only, with
+   *Contents: Read and write*.
+3. Enter both in Settings › Website and turn publishing on.
+
+Station Server writes `stations.json`, a `<station>.json` feed for each
+station (the next six hours, the presenter if one is live, the songs just
+played; no file paths or addresses), a page with every station, and
+`widget.html?station=<slug>` to embed in a website (Wix: *Embed a site*;
+`&theme=dark`, `&next=3`, `&recent=3` to taste). A feed is published about
+once an hour and within two minutes of what's on changing (a skip, a
+show, a live show, going off air); the pages work out the song on now
+from the times.
+
 ## From the command line
 
 Check that ffmpeg is found and the playlist's music is all there:

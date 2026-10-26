@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>On air now</title>
+<link rel="stylesheet" href="now.css">
+</head>
+<body>
+<main class="page">
+  <h1>On air now</h1>
+  <div id="stations" class="stations"><p class="empty">Loading…</p></div>
+</main>
+<script src="now.js"></script>
+<script>
+  NowFeed.theme();
+  NowFeed.get("stations.json").then((s) =>
+    NowFeed.show(document.getElementById("stations"), s.stations.map((x) => x.slug), { next: 40, recent: 10 }));
+</script>
+</body>
+</html>

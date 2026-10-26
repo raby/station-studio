@@ -284,6 +284,10 @@ def make_handler(app: ServerApp, picker: Picker, quit, remote: bool = False,
             if path == "/api/settings":
                 app.save_settings(data)
                 return self._json(app.state())
+            if path == "/api/feed/publish":
+                if app.feed is not None:
+                    app.feed.publish_now()
+                return self._json(app.state())
             if path == "/api/alerts/test":
                 return self._json({"sent": app.test_alert(), **app.state()})
             if path == "/api/pick":
@@ -441,4 +445,7 @@ def make_server(app: ServerApp, host: str = "127.0.0.1", port: int = DEFAULT_POR
     from station_server.studiolink import StudioLink  # it builds on this module
     app.studio = StudioLink(app, host=remote_host)
     app.studio.apply()
+    from station_server.feed import FeedPublisher
+    app.feed = FeedPublisher(app)
+    app.feed.apply()
     return server
