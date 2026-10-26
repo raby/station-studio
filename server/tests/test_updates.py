@@ -97,13 +97,26 @@ def call(tmp_path, monkeypatch):
 def test_check_for_updates_asks_now(call, monkeypatch):
     seen = {}
 
-    def latest(cache, fetch=None, now=None, force=False):
-        seen["force"] = force
+    def latest(cache, fetch=None, now=None, force=False, quiet=True):
+        seen["force"], seen["quiet"] = force, quiet
         return "99.0.0"
 
     monkeypatch.setattr(updates, "latest_version", latest)
     status, state = call("/api/update/check", {})
-    assert status == 200 and state["update"] == "99.0.0" and seen["force"] is True
+    assert status == 200 and state["update"] == "99.0.0" and seen["force"] is True and seen["quiet"] is False
+
+
+def test_a_check_that_cant_reach_github_says_so(call, monkeypatch):
+    import ssl
+    import urllib.error
+
+    def offline():
+        raise urllib.error.URLError(ssl.SSLCertVerificationError("certificate verify failed"))
+
+    monkeypatch.setattr(updates, "_fetch_latest", offline)
+    status, body = call("/api/update/check", {})
+    assert status == 502 and "Couldn't check for a new version" in body["error"]
+    assert "certificate verify failed" in body["error"]
 
 
 def test_turning_off_new_version_notices_is_saved(call, tmp_path):

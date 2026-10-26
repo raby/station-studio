@@ -185,7 +185,11 @@ def make_handler(app: ServerApp, picker: Picker, quit) -> type[BaseHTTPRequestHa
                 app.updater.start(str(data.get("version") or ""))
                 return self._json(app.state())
             if path == "/api/update/check":
-                app.check_for_updates(force=True)
+                try:
+                    app.check_for_updates(force=True)
+                except Exception as exc:
+                    reason = getattr(exc, "reason", None) or exc
+                    return self._error(HTTPStatus.BAD_GATEWAY, f"Couldn't check for a new version: {reason}")
                 return self._json(app.state())
             if path == "/api/window":
                 # A browser window asking for the Mac app's own window.

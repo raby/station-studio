@@ -464,9 +464,11 @@ class ServerApp:
 
     def check_for_updates(self, force: bool = False, fetch=None) -> str | None:
         """Look for a new version: at most once a day unless `force`, and
-        not at all with Settings › Tell me when a new version is out off."""
+        not at all with Settings › Tell me when a new version is out off.
+        A forced check (Check for updates) raises if GitHub can't be asked."""
         if force or self.config.check_updates:
-            self.latest = updates.latest_version(self.store.home / "update-check.json", fetch=fetch, force=force)
+            self.latest = updates.latest_version(self.store.home / "update-check.json", fetch=fetch,
+                                                 force=force, quiet=not force)
         return self.latest
 
     def state(self) -> dict:
