@@ -106,6 +106,20 @@ afternoon, or restart after a power cut, and the station joins where the
 clock says, part way into a track. Choose *From the top* to start at
 track 1 instead. A playlist shorter than a week loops.
 
+**Levels and gaps.** With *Even out the volume* on, tracks are played at
+about the same loudness: from their ReplayGain or Sound Check tags, or for
+tracks without them, from measuring them (EBU R128). Station Server
+measures each track once, in the background at low priority, coming tracks
+first, and remembers the results in `analysis.json`. Measuring also finds
+the silence at the start and end of each track, which is left out so songs
+follow on without dead air (the week's clock uses the trimmed lengths).
+
+**Fallback.** In a station's Edit page, *Fallback* names a folder of
+jingles or songs (or a playlist) that plays instead of silence when none of
+the playlist's music can be read, for example when its drive isn't there.
+The playlist is tried again after each pass, and comes back as soon as it
+can be read.
+
 **Shows at set times.** In a station's Edit page, *Shows* pins a show to
 times in the week: "Saturday Night Mix, Saturday 20:00" or "The News,
 weekdays 09:00". A show is a recording, a station-studio (or iTunes)

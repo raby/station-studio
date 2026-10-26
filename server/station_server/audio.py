@@ -88,11 +88,14 @@ def has_mp3_encoder(ffmpeg: str) -> bool:
     return "libmp3lame" in out
 
 
-def decode(ffmpeg: str, path: Path, gain_db: float = 0.0, start: float = 0.0) -> Iterator[bytes]:
+def decode(ffmpeg: str, path: Path, gain_db: float = 0.0, start: float = 0.0,
+           length: float | None = None) -> Iterator[bytes]:
     """Raw PCM for one file, in CHUNK-sized pieces (the last may be short).
 
     `gain_db` is applied while decoding (volume levelling); `start` skips
-    that many seconds into the file (picking up mid-track after a restart).
+    that many seconds into the file (silence at the start, or picking up
+    mid-track after a restart) and `length` stops after that many seconds
+    (before the silence at the end).
     If ffmpeg can't read the file the iterator simply ends early; the
     caller moves on.
     """
@@ -100,6 +103,8 @@ def decode(ffmpeg: str, path: Path, gain_db: float = 0.0, start: float = 0.0) ->
     if start > 0:
         args += ["-ss", f"{start:.3f}"]
     args += ["-i", str(path), "-vn"]
+    if length is not None:
+        args += ["-t", f"{max(0.0, length):.3f}"]
     if gain_db:
         args += ["-af", f"volume={gain_db:.2f}dB"]
     args += PCM_ARGS + ["pipe:1"]

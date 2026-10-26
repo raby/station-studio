@@ -413,7 +413,8 @@ function renderStation(s) {
       s.retry_in != null ? `Trying again in ${s.retry_in} s.` : "Trying again…",
       el("span", { class: "help" }, " It keeps trying until it's on air or you take it off air.")));
   } else if (s.error) parts.push(el("div", { class: "errors" }, s.error));
-  if (s.stuck) parts.push(el("div", { class: "errors" }, "None of the playlist's tracks can be read, so the station is sending silence. Check the music folders in Edit."));
+  if (s.on_fallback) parts.push(el("div", { class: "errors" }, "None of the playlist's tracks can be read, so the station is playing the fallback. Check the music folders in Edit; the playlist is tried again after the fallback."));
+  else if (s.stuck) parts.push(el("div", { class: "errors" }, "None of the playlist's tracks can be read, so the station is sending silence. Check the music folders in Edit, or set a fallback there."));
 
   if (on && s.now) {
     const n = s.now;
@@ -434,7 +435,9 @@ function renderStation(s) {
   if (on) {
     facts.push(el("span", { class: s.connected ? "ok" : "warn" },
       s.connected ? `Connected to ${s.server}` : `Reconnecting to ${s.server}…`));
-    if (s.now && s.now.gain_db) facts.push(el("span", {}, "Levelled ", el("b", {}, `${s.now.gain_db > 0 ? "+" : ""}${s.now.gain_db} dB`)));
+    if (s.now && s.now.gain_db) facts.push(el("span", {}, "Levelled ", el("b", {}, `${s.now.gain_db > 0 ? "+" : ""}${s.now.gain_db} dB`),
+      s.now.levelled_by === "measured" ? " (measured)" : ""));
+    if (s.measuring) facts.push(el("span", {}, `Measuring tracks: ${s.measuring} to go`));
   }
   if (s.playlist) {
     facts.push(el("span", {}, "Playlist ", el("b", {}, s.playlist.name)));
@@ -529,6 +532,7 @@ function formValues(st) {
     day: String(st?.week_start?.day ?? 0),
     time: st?.week_start?.time || "00:00",
     shows: (st?.shows || []).map((sh) => ({ ...sh, days: [...sh.days] })),
+    fallback: st?.fallback || "",
   };
 }
 
@@ -548,6 +552,7 @@ function formPayload(v) {
     start_mode: v.start_mode,
     week_start: { day: Number(v.day), time: v.time },
     shows: v.shows,
+    fallback: v.fallback,
   };
 }
 
@@ -588,6 +593,7 @@ function renderForm(view) {
   const playlistMsg = el("div", { class: "form-msg", role: "status" });
   const serverMsg = el("div", { class: "form-msg", role: "status" });
   const formMsg = el("div", { class: "form-msg", role: "status" });
+  const fallbackMsg = el("div", { class: "form-msg", role: "status" });
 
   async function pick(kind, into = (path) => { v.playlist = path; }, msg = playlistMsg) {
     try {
@@ -689,13 +695,22 @@ function renderForm(view) {
           btn("Choose folder…", "folder", () => pick("folder"), "btn small"),
           btn("Choose file…", "file", () => pick("file"), "btn small"),
           btn("Check playlist", "check", checkPlaylist, "btn small")),
-        el("p", { class: "help" }, "Choose station-studio's exports folder for this station and the newest week is played, switching to the next week's as soon as it's exported."),
+        el("p", { class: "help" }, "Choose station-studio's exports folder for this station and each week is played in turn: next week's export waits for the start of its week."),
         playlistMsg,
         el("div", { class: "grid" },
           el("label", {}, "Music folders (one per line), searched for tracks that have moved",
             bind("music_folders", el("textarea", { rows: 2 }, v.music_folders))),
           el("label", {}, "Path rewrites (one per line: from = to)",
             bind("remaps", el("textarea", { rows: 2, placeholder: "/Users/rob/Music = D:/Music" }, v.remaps)))),
+      ),
+      el("fieldset", {}, el("legend", {}, "Fallback"),
+        el("div", { class: "grid" }, text("fallback", "Play this if the playlist can't be read",
+          { placeholder: "A folder of jingles or songs, or a playlist" })),
+        el("div", { class: "actions", style: "margin-top:8px" },
+          btn("Choose folder…", "folder", () => pick("folder", (p) => { v.fallback = p; }, fallbackMsg), "btn small"),
+          btn("Choose file…", "file", () => pick("file", (p) => { v.fallback = p; }, fallbackMsg), "btn small")),
+        el("p", { class: "help" }, "If none of the playlist's music can be read (its drive is missing, say), this plays instead of silence, then the playlist is tried again. Keep it on this computer's own disk."),
+        fallbackMsg,
       ),
       el("fieldset", {}, el("legend", {}, "Server"),
         el("div", { class: "grid" },
@@ -714,7 +729,8 @@ function renderForm(view) {
         serverMsg,
       ),
       el("fieldset", {}, el("legend", {}, "Playback"),
-        el("div", { class: "grid" }, check("level", "Even out the volume (uses ReplayGain / Sound Check in the files)")),
+        el("div", { class: "grid" }, check("level", "Even out the volume (ReplayGain / Sound Check in the files, or measured)")),
+        el("p", { class: "help" }, "Station Server measures each track once, in the background: how loud it is, for tracks without volume tags, and where its sound starts and ends, so the silence at either end is left out and songs follow on without dead air."),
         el("div", { class: "radio-row" },
           radio("start_mode", "clock", "Follow the week's clock"),
           radio("start_mode", "top", "Always start from track 1")),
@@ -838,6 +854,8 @@ function renderHelp() {
       el("h2", {}, "The week's clock"),
       p("Following the clock, the first track plays at the start of the week (Monday 00:00 unless you change it) and the rest follow by their lengths. A restart picks up where the station should be."),
       p("Next week's export can be made any time: it waits, and goes on at the start of its week (the station's page says when). A week exported late, after its week has begun, goes on within a minute, after the playing track. Exporting the week on air again picks up the changes the same way."),
+      el("h2", {}, "Levels and gaps"),
+      p("With Even out the volume on, each track is played at about the same loudness: from its ReplayGain or Sound Check tags, or, for a track without them, from measuring it. Station Server measures every track once, in the background and gently (the coming tracks first), and remembers the results. Measuring also finds the silence at the start and end of each track, which is then left out, so songs follow on without dead air. Until a track has been measured it plays as it is."),
       el("h2", {}, "Shows at set times"),
       p("In a station's Edit page, Shows pins a show to times in the week, like Saturday 20:00. A show is a recording, a playlist, or a folder of recordings played in name order. It starts exactly on time (cutting the song playing) or after that song. When it ends, the music comes back where the week's clock says, so the running order's times stay right. After a restart part-way through a show, the station joins the show where it should be."),
       el("h2", {}, "Its own app, and new versions"),
@@ -845,7 +863,7 @@ function renderHelp() {
       p("Settings › Install as app gives Station Server its own icon in the Dock or taskbar, with Add a station and Play log on its menu. Opened from there when Station Server isn't running, the window starts it."),
       p("When a new version is out, a note at the foot of the sidebar offers Update now. Station Server downloads it from its GitHub page, checks it's the genuine file and restarts; stations that were on air go back on air. Settings › Updates has Check for updates, and can stop it asking GitHub."),
       el("h2", {}, "If something goes wrong"),
-      p("If the server goes away, the station keeps playing and reconnects every few seconds. A track whose file can't be read is skipped; if none can be, the station sends silence and the page says so. Tracks the playlist names but this computer can't find are listed under the station: add the folder they're in as a music folder."),
+      p("If the server goes away, the station keeps playing and reconnects every few seconds. A track whose file can't be read is skipped. If none can be (the music's drive is missing, say), the station plays its fallback, a folder of jingles or songs set in Edit, and then tries the playlist again; with no fallback it sends silence. The page says which. Tracks the playlist names but this computer can't find are listed under the station: add the folder they're in as a music folder."),
       p("ffmpeg does the decoding and encoding. The downloaded app has its own; otherwise install it (macOS: brew install ffmpeg; Windows: winget install ffmpeg)."),
       p("Station Server keeps a log, station-server.log, with its settings and play logs in the .station-server folder in your home folder."),
       p("Asking for help? Copy diagnostics puts the version, each station's state and the end of the log on the clipboard, with passwords taken out, ready to paste into a message."),

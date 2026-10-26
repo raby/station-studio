@@ -62,6 +62,9 @@ class Station:
     # Shows at set times (schedule.Show.to_json()): a recording or playlist
     # that interrupts the music, which then carries on by the clock.
     shows: list[dict] = field(default_factory=list)
+    # Played instead of silence when none of the playlist can be read (the
+    # music drive is missing, say): a folder of jingles or songs, or a playlist.
+    fallback: str = ""
 
     def to_json(self, secrets: bool = True) -> dict:
         data = asdict(self)
@@ -85,7 +88,7 @@ def clean_station(data: dict, existing: Station | None = None) -> Station:
             continue  # the page never sees the password; blank keeps it
         setattr(st, key, value)
     st.name = str(st.name or "").strip()[:80] or "New station"
-    for key in ("playlist", "server", "password", "genre", "url"):
+    for key in ("playlist", "server", "password", "genre", "url", "fallback"):
         st.__dict__[key] = str(getattr(st, key) or "").strip()
     st.music_folders = [str(p).strip() for p in st.music_folders or [] if str(p).strip()]
     st.remaps = [
