@@ -32,8 +32,8 @@ every pull request that changes Station Server: open the pull request's
   › **Run anyway**. It installs for you only, with no administrator
   password, and adds Station Server to the Start menu.
 
-Then, on the station's computer, turn on **Settings › Start Station Server
-when I log in**, so that after a restart, a power cut or Windows updates it
+Then, on the station's computer, turn on **Settings › Start-up › Start Station
+Server when I log in**, so that after a restart, a power cut or Windows updates it
 starts in the background and puts the stations that were on air back on
 air. On a Mac it's also started again if it ever stops unexpectedly.
 
@@ -166,7 +166,7 @@ week's playlist waits until a show has finished.
 
 **Crossfades and jingles.** *Edit › Playback › Crossfade* fades the end
 of each song out under the start of the next, over 1 to 10 seconds (off
-by default). *Edit › Jingles* names a folder of jingles or station idents,
+by default). *Edit › Playback › Jingles* names a folder of jingles or station idents,
 one played after every few songs (4 unless you change it), shuffled, each
 once before any plays again. The song before fades out under the jingle,
 and the next song starts as it ends. Jingles aren't played during shows
@@ -182,7 +182,7 @@ work: Icecast with mount `/live`, user `source` and their password, or
 SHOUTcast with the password. Each presenter can have their own password,
 so their name is shown, logged and used for the recording (a shared
 password works too). Their volume is evened out towards the music's
-loudness as it comes (about 2 seconds' delay, which the hand-over hides;
+loudness as it comes (2 to 3 seconds' delay, which the hand-over hides;
 it can be turned off). When one connects, the song
 playing fades out under them and they're on air, with the titles their
 encoder sends (to the play log too, as album "Live", or as one "Live

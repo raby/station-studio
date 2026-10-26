@@ -105,6 +105,10 @@ const btn = (label, iconName, onclick, cls = "btn") =>
 // `tabs` is [[id, label, icon]]; the arrow keys move between them.
 function tabBar(label, tabs, current, open) {
   const ids = tabs.map((t) => t[0]);
+  const choose = (id) => {
+    open(id);
+    $(`#tab-${id}`)?.focus();  // the page was redrawn: stay on the tab
+  };
   return el("div", {
     class: "tabs", role: "tablist", "aria-label": label,
     onkeydown: (e) => {
@@ -116,13 +120,12 @@ function tabBar(label, tabs, current, open) {
       else if (e.key === "End") to = ids.length - 1;
       if (to === null) return;
       e.preventDefault();
-      open(ids[to]);
-      $(`#tab-${ids[to]}`)?.focus();
+      choose(ids[to]);
     },
   }, tabs.map(([id, words, glyph]) => el("button", {
     type: "button", role: "tab", class: "tab", id: `tab-${id}`, "aria-controls": "tab-page",
     "aria-selected": String(id === current), tabindex: id === current ? "0" : "-1",
-    onclick: () => open(id),
+    onclick: () => choose(id),
   }, ...iconLabel(glyph, words))));
 }
 
@@ -464,8 +467,8 @@ function renderStation(s) {
       s.retry_in != null ? `Trying again in ${s.retry_in} s.` : "Trying again…",
       el("span", { class: "help" }, " It keeps trying until it's on air or you take it off air.")));
   } else if (s.error) parts.push(el("div", { class: "errors" }, s.error));
-  if (s.on_fallback) parts.push(el("div", { class: "errors" }, "None of the playlist's tracks can be read, so the station is playing the fallback. Check the music folders in Edit; the playlist is tried again after the fallback."));
-  else if (s.stuck) parts.push(el("div", { class: "errors" }, "None of the playlist's tracks can be read, so the station is sending silence. Check the music folders in Edit, or set a fallback there."));
+  if (s.on_fallback) parts.push(el("div", { class: "errors" }, "None of the playlist's tracks can be read, so the station is playing the fallback. Check the music folders in Edit › Station; the playlist is tried again after the fallback."));
+  else if (s.stuck) parts.push(el("div", { class: "errors" }, "None of the playlist's tracks can be read, so the station is sending silence. Check the music folders in Edit › Station, or set a fallback there."));
 
   if (on && s.live_input && s.live_input.error) parts.push(el("div", { class: "errors" }, s.live_input.error));
   if (on && s.live) {
@@ -860,11 +863,14 @@ function renderForm(view) {
       toast(runner && runner.state === "on" ? "Saved. Shows and presenters apply straight away; other changes the next time it goes on air." : "Saved");
       go({ type: "station", id });
     } catch (e) {
-      // Show the tab the problem is on.
-      const on = [[/presenter|live/i, "live"], [/show/i, "shows"], [/server|stream|bitrate|password/i, "server"],
-        [/crossfade|jingle|week/i, "playback"]].find(([re]) => re.test(e.message));
-      if (on && on[1] !== tab) {
-        openTab(on[1]);
+      // Show the tab the problem is on: a show's or presenter's name, or what it's about.
+      const named = (list) => list.some((x) => x.name && e.message.includes(x.name.trim()));
+      const on = named(v.presenters) ? "live" : named(v.shows) ? "shows"
+        : [[/presenter|live/i, "live"], [/show/i, "shows"], [/server|stream|bitrate|password/i, "server"],
+          [/crossfade|jingle|week/i, "playback"], [/playlist|fallback|folder|name/i, "station"]]
+          .find(([re]) => re.test(e.message))?.[1];
+      if (on && on !== tab) {
+        openTab(on);
         $("#form-msg").textContent = e.message;
       } else formMsg.textContent = e.message;
     }
@@ -1244,7 +1250,7 @@ function renderHelp() {
         el("li", {}, "Keep Winamp and iTunes installed, closed, for a week or two. To go back: Take off air here, then start Winamp's plugin again.")),
       p("If going on air says something else is already sending to the server, Winamp's plugin (or another copy of Station Server) is still connected: a server takes one source at a time."),
       h2("Two stations on one computer"),
-      p("Add a station for each. They run side by side, each with its own playlist, server, clock and play log, and go on and off air separately: for example Rebirth Classics to port 8000 and Rebirth Radio to port 8002 of the same server. Each needs its own live shows port too, like 8010 and 8020."),
+      p("Add a station for each. They run side by side, each with its own playlist, server, clock and play log, and go on and off air separately: for example Rebirth Classics to port 8000 and Rebirth Radio to port 8002 of the same server. If both take live shows, each needs its own live shows port, like 8010 and 8020."),
     ],
     onair: () => [
       el("h2", {}, "The station's page"),
@@ -1271,7 +1277,7 @@ function renderHelp() {
     ],
     live: () => [
       el("h2", {}, "Setting up"),
-      p("Turn on Edit › Live shows and set a port (8010 unless you choose another). Add each presenter with their own password: their name shows on the station's page when they're live, and goes in the play log and the recording's name, whatever their encoder calls itself. One can be removed without giving the others a new password. A shared password works too, for anyone you haven't added. Presenters you add apply straight away, even on air."),
+      p("Turn on Edit › Live shows and set a port (8010 unless you choose another). Add each presenter with their own password: their name shows on the station's page when they're live, and goes in the play log and the recording's name, whatever their encoder calls itself. One can be removed without giving the others a new password. A shared password works too, for anyone you haven't added. Presenters you add or change can go live straight away, even while the station is on air."),
       p("While the station is on air, a presenter's encoder connects to this computer as if it were the station's server. The song playing fades out under them and they're live, with the song titles their encoder sends. When they disconnect, the music fades back in where the week's clock says. A show due while they're live is left out. One presenter at a time: a second is turned away."),
       h2("The presenter's encoder"),
       list(
@@ -1280,9 +1286,9 @@ function renderHelp() {
         "Winamp's SHOUTcast plugin: the address, port and password."),
       p("Presenters at home connect over the internet: on the router at the station, forward the port and the one above it (8010 and 8011) to this computer, as for the SHOUTcast server, and give presenters the station's internet address. Allow Station Server through the firewall when Windows or macOS asks. The Ready check shows the address to use on this network."),
       h2("Their volume"),
-      p("With Even out presenters' volume on (Edit › Live shows), a presenter who's too quiet or too loud is brought towards the music's loudness as they go, lifting a quiet one by up to about 18 dB. It adds about 2 seconds' delay, so the music keeps playing until their sound is ready and the hand-over has no gap."),
+      p("With Even out presenters' volume on (Edit › Live shows), a presenter who's too quiet or too loud is brought towards the music's loudness as they go, lifting a quiet one by up to about 18 dB. It adds 2 to 3 seconds' delay, so the music keeps playing until their sound is ready and the hand-over has no gap."),
       h2("While they're live"),
-      p("The station's page shows who's live, the title they've sent, since when and where from. End live show takes them off air; their encoder will try to reconnect, so they're kept off for two minutes. It works from Phone access too. If a presenter's connection drops, the music comes back after 10 seconds. Too many wrong passwords from one address keep it out for 5 minutes."),
+      p("The station's page shows who's live, the title they've sent, since when and where from. End live show takes them off air; their encoder will try to reconnect, so they're kept off for two minutes. It works from Phone access too. If a presenter's connection drops, the music comes back after 10 seconds. After 5 wrong passwords in 5 minutes, that address is kept out for a few minutes."),
       p("What they play goes in the play log by the titles their encoder sends (or as one Live show entry if it sends none). Each show is recorded, exactly as their encoder sent it, in Station Server's recordings folder (the Ready check says where; about 60 MB an hour at 128 kbps); turn that off in Edit › Live shows."),
     ],
     unattended: () => [
@@ -1300,7 +1306,9 @@ function renderHelp() {
       p("When a new version is out, a note at the foot of the sidebar offers Update now. Station Server downloads it from its GitHub page, checks it's the genuine file and restarts; stations that were on air go back on air. Settings › Updates has Check for updates, and can stop it asking GitHub."),
     ],
     new: () => [
-      el("h2", {}, "0.12: live shows"),
+      el("h2", {}, "0.12.1: tabs"),
+      list("A station's settings, Settings and Help are in tabs, like Station Player's."),
+      h2("0.12: live shows"),
       list(
         "Presenters go live from BUTT, Mixxx or Winamp, connecting to this computer: the song fades out under them and the music comes back when they leave.",
         "Each presenter has their own password, which names them on the page, in the play log and on the recording.",
@@ -1321,12 +1329,11 @@ function renderHelp() {
         "The listener count, and Listen to hear the broadcast itself.",
         "Alerts to your phone or email when a station is off air.",
         "Phone access from a phone on the same network."),
-      p("Settings and Help are now in tabs, like Station Player's."),
     ],
     trouble: () => [
       el("h2", {}, "If something goes wrong"),
       p("If the server goes away, the station keeps playing and reconnects every few seconds. A track whose file can't be read is skipped. If none can be (the music's drive is missing, say), the station plays its fallback, a folder of jingles or songs set in Edit › Station, and then tries the playlist again; with no fallback it sends silence. The page says which. Tracks the playlist names but this computer can't find are listed under the station: add the folder they're in as a music folder."),
-      p("Can't go live from Winamp's place? Winamp's plugin is probably still connected: stop it, then press Go live. A presenter can't connect? Check the Ready check's Live shows row, the router's port forwarding, and their password; after 5 wrong passwords their address is kept out for 5 minutes."),
+      p("Go live says something else is sending to the server? Winamp's plugin is probably still connected: stop it, then press Go live again. A presenter can't connect? Check the Ready check's Live shows row, the router's port forwarding and their password; after 5 wrong passwords in 5 minutes their address is kept out for a few minutes."),
       p("ffmpeg does the decoding and encoding. The downloaded app has its own; otherwise install it (macOS: brew install ffmpeg; Windows: winget install ffmpeg)."),
       p("Station Server keeps a log, station-server.log, with its settings, play logs and recordings in the .station-server folder in your home folder."),
       p("Asking for help? Copy diagnostics puts the version, each station's state and the end of the log on the clipboard, with passwords taken out, ready to paste into a message."),
