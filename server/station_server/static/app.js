@@ -1241,17 +1241,17 @@ function studioSettings() {
     el("div", { class: "actions" }, btn("Save port", "check", () => save({ studio_port: port.value }), "btn small")),
     msg,
     l.error ? el("div", { class: "errors" }, l.error) : null,
-    l.running ? [
-      el("h3", {}, "In Station Studio"),
+    l.running ? el("fieldset", {},
+      el("legend", {}, "In Station Studio"),
       el("p", {}, "Open Settings › Station Server and enter this computer's address, ",
         l.addresses.length ? l.addresses.flatMap((a, i) => [i ? " or " : "", el("b", {}, a)]) : el("b", {}, `127.0.0.1:${l.port}`),
         l.addresses.length ? [" (with Station Studio on this computer, ", el("b", {}, `127.0.0.1:${l.port}`), ")"] : null,
         ", and the link code ", el("b", { class: "code" }, l.code),
         ". Then, on each station's page in Station Studio, choose the station here it sends to."),
       el("div", { class: "actions" }, btn("Make a new link code", "refresh", newCode, "btn small")),
-      last ? el("p", { class: "help" }, `Last week received ${dayTime(last.at)}: ${last.week} for ${last.station}, ${last.tracks} tracks`,
+      last ? el("p", { class: "help" }, `Last week received ${dayTime(last.at)}: week ${parseInt(last.week, 10)} for ${last.station}, ${last.tracks} tracks`,
         last.missing_count ? el("span", { class: "warn" }, ` (${last.missing_count} can't be found on this computer)`) : "") : null,
-    ] : null,
+    ) : null,
     el("p", { class: "help" }, "The first time, Windows or macOS may ask whether Station Server may accept connections: allow it, on private networks. Only Station Studio with the code can send. For Station Studio outside this network, use a VPN such as Tailscale on both."),
   );
 }

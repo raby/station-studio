@@ -105,7 +105,9 @@ def receive_week(app: ServerApp, sid: str, name: str, body: bytes) -> dict:
         raise LinkRefused(f"{name} isn't a week's file name, like 013.xml")
     folder = weeks_folder(app, sid, make=True)
     st = app.config.station(sid)
-    incoming = folder / f".incoming-{name}"  # not a week until it's checked (weeks.py ignores it)
+    # Not a week until it's checked (weeks.py ignores it); its own name, so
+    # two sends of the same week at once can't mix.
+    incoming = folder / f".incoming-{secrets.token_hex(4)}-{name}"
     try:
         incoming.write_bytes(body)
         try:

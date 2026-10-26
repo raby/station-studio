@@ -77,7 +77,7 @@
   <p class="help first">
     Send each week straight to the computer that plays the station, without a shared folder. In Station Server
     (on that computer), open Settings › Station Studio, turn on <em>Let Station Studio send weeks to this
-    computer</em>, and copy the address and link code it shows into here. Then choose which station each of yours
+    computer</em>, and enter the address and link code it shows here. Then choose which station each of yours
     sends to, on its page.
   </p>
 

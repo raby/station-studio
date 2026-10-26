@@ -36,6 +36,7 @@
   onMount(refresh);
 
   async function refresh(): Promise<void> {
+    error = null;
     try {
       const [settings, got] = await Promise.all([
         getStationServerSettings(fetchFn),
@@ -58,6 +59,7 @@
       target = settings.stations[slug] ?? { station: '', auto: false };
     } catch (e) {
       error = errorText(e);
+      target = { ...target }; // put the choice that didn't take back on the page
     } finally {
       busy = false;
     }
@@ -169,6 +171,7 @@
           <dt>Weeks it has</dt>
           <dd>{held.length ? held.join(', ') : 'None yet'}</dd>
         </dl>
+        <button type="button" class="small" on:click={refresh} disabled={busy} data-testid="ss-refresh">Refresh</button>
 
         {#if there.problem}
           <p class="warn" role="alert" data-testid="ss-problem">{there.problem}</p>
@@ -253,6 +256,11 @@
     color: var(--accent-text);
     font-weight: 650;
     margin-left: 8px;
+  }
+  button.small {
+    font-size: 13px;
+    margin-top: 10px;
+    padding: 3px 10px;
   }
   .warn {
     border-left: 3px solid var(--warn);
