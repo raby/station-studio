@@ -403,3 +403,4 @@ body.remote [data-view="new"], body.remote [data-view="settings"], body.remote #
 .nav-mark { display: inline-flex; color: var(--accent); }
 .nav-mark svg.i { width: 15px; height: 15px; }
 .nav-listening { color: var(--accent); }
+.code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; letter-spacing: .04em; }

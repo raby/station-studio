@@ -21,6 +21,7 @@ from engine.generator import generate
 from engine.exporter import (
     export_playlist, export_playlist_to_disk, prune_export_directory,
 )
+from engine import stationserver
 from engine.trace_diff import compute_trace_diff
 from api.deps import get_db
 from api.schemas import (
@@ -267,7 +268,15 @@ def export_to_disk(
         )
     except ValueError as e:
         raise HTTPException(404, str(e))
-    return {"path": str(path), "bytes": path.stat().st_size}
+    out = {"path": str(path), "bytes": path.stat().st_size}
+    # A station set to send each week to Station Server sends the week it
+    # just wrote (the current version only: an old version stays on disk).
+    if v is None and stationserver.target(db, p.station.slug)["auto"]:
+        try:
+            out["station_server"] = stationserver.send_week(db, playlist_id, path.read_bytes())
+        except stationserver.LinkError as e:
+            out["station_server_error"] = str(e)
+    return out
 
 
 @router.post("/api/playlists/export/prune")

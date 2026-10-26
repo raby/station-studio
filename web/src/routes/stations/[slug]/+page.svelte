@@ -20,6 +20,7 @@
   } from '$lib/api';
   import ProgressIndicator from '$lib/components/ProgressIndicator.svelte';
   import PoolImportPanel from '$lib/components/sources/PoolImportPanel.svelte';
+  import StationServerPanel from '$lib/components/StationServerPanel.svelte';
   import ErrorBanner from '$lib/components/ErrorBanner.svelte';
   import { confirmDialog } from '$lib/confirm';
   import { page } from '$app/stores';
@@ -652,6 +653,8 @@
         />
       </section>
     {/if}
+
+    <StationServerPanel {slug} name={station?.name ?? slug} {playlists} />
 
     <h2>Playlists</h2>
 

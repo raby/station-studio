@@ -16,6 +16,7 @@
   } from '$lib/desktopApp';
   import { installApp, installOffer } from '$lib/install';
   import { announceAppState, requestUpdate } from '$lib/appEvents';
+  import StationServerSettings from '$lib/components/StationServerSettings.svelte';
 
   export let fetchFn: typeof fetch = (...args) => fetch(...args);
 
@@ -195,6 +196,8 @@
       <p class="error" role="alert" data-testid="settings-error">{error}</p>
     {/if}
   </section>
+
+  <StationServerSettings {fetchFn} />
 </main>
 
 <style>

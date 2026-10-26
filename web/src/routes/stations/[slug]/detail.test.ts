@@ -108,6 +108,12 @@ vi.mock('$lib/api', () => ({
   // tests that need to drive panel behaviour — e.g. verifying the
   // c5-review 🟡-1 `on:changed` → refreshOverview wiring — override
   // these via the `setPanelHelpers` escape hatch below.
+  // The page's <StationServerPanel> stays hidden: no Station Server set up.
+  getStationServerSettings: async () => ({ address: '', has_code: false, stations: {} }),
+  getStationServerStatus: async () => ({ configured: false, connected: false, error: null, stations: [] }),
+  setStationServerTarget: vi.fn(),
+  sendToStationServer: vi.fn(),
+  errorText: (e: unknown) => String(e),
   listSources: (...args: unknown[]) => panelListSourcesMock(...args),
   uploadSource: (...args: unknown[]) => panelUploadSourceMock(...args),
   importSourceByPath: (...args: unknown[]) => panelImportByPathMock(...args),
@@ -949,8 +955,10 @@ describe('station detail — §16.19 overview', () => {
     render(Page);
 
     // Wait for both initial fetches (overview + panel.listSources).
+    // (Both the overview card and the panel list a `pool-row`, so wait
+    // on the panel's delete button, which only the panel has.)
     await screen.findByTestId('overview-pool-import');
-    await screen.findByTestId('pool-row');
+    await screen.findByTestId('pool-row-delete');
     expect(getStationOverviewMock).toHaveBeenCalledTimes(1);
 
     // Click delete inside the panel, confirm.

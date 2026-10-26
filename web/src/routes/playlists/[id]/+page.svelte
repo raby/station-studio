@@ -6,18 +6,23 @@
     getStationPlaylists,
     getVersions,
     exportPlaylistToDisk,
+    errorText,
+    getStationServerSettings,
+    sendToStationServer,
     rollbackPlaylist,
     setVersionTags,
     ApiError,
   } from '$lib/api';
   import type {
     Playlist, PlaylistSummary, Trace, TraceSlot, Station, VersionSummary,
+    StationServerTarget,
   } from '$lib/api';
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
   import ChipMultiInput from '$lib/components/editor/ChipMultiInput.svelte';
   import ErrorBanner from '$lib/components/ErrorBanner.svelte';
   import StatusBanner from '$lib/components/StatusBanner.svelte';
+  import { sentText } from '$lib/stationServer';
 
   let trace: Trace | null = null;
   let playlist: Playlist | null = null;
@@ -31,6 +36,13 @@
   let diskExporting = false;
   let diskExportStatus: string | null = null;
   let diskExportError: string | null = null;
+
+  // Send to Station Server (engine/stationserver.py): shown once this
+  // station has a Station Server station to send to (its page sets it).
+  let serverTarget: StationServerTarget | null = null;
+  let sending = false;
+  let sendStatus: string | null = null;
+  let sendError: string | null = null;
 
   // Filter state (DESIGN.md §16.8). Three independent inputs that AND
   // together (D3); empty string = no constraint, not wildcard.
@@ -177,13 +189,14 @@
       // non-fatal (matches stationPlaylists pattern): the dropdown
       // just won't render. .catch inside Promise.all so a flaky
       // /versions endpoint doesn't poison the others.
-      const [p, s, list, vlist] = await Promise.all([
+      const [p, s, list, vlist, links] = await Promise.all([
         getPlaylist(playlistId),
         getStation(t.station),
         getStationPlaylists(t.station).catch(() => [] as PlaylistSummary[]),
         getVersions(playlistId).catch(
           () => ({ playlist_id: playlistId, current_v: 0, versions: [] }),
         ),
+        getStationServerSettings().catch(() => null),
       ]);
       if (myGen !== loadGeneration) return;
 
@@ -196,6 +209,7 @@
       playlist = p;
       station = s;
       stationPlaylists = list;
+      serverTarget = links?.stations?.[t.station]?.station ? links.stations[t.station] : null;
       versions = vlist.versions;
       currentV = vlist.current_v;
       sourceColours = Object.fromEntries(sources.map((src) => [src.name, src.colour]));
@@ -526,10 +540,32 @@
       // would render "Wrote: Wrote to ..." (caught in live
       // verification).
       diskExportStatus = `${r.path} (${formatBytes(r.bytes)})`;
+      // A station set to send each week also sent it to Station Server.
+      if (r.station_server) {
+        sendStatus = sentText(r.station_server);
+        sendError = null;
+      } else if (r.station_server_error) {
+        sendError = r.station_server_error;
+        sendStatus = null;
+      }
     } catch (e) {
       diskExportError = e instanceof ApiError ? e.message : String(e);
     } finally {
       diskExporting = false;
+    }
+  }
+
+  async function sendToServer() {
+    if (!playlist) return;
+    sending = true;
+    sendStatus = null;
+    sendError = null;
+    try {
+      sendStatus = sentText(await sendToStationServer(playlist.id));
+    } catch (e) {
+      sendError = errorText(e);
+    } finally {
+      sending = false;
     }
   }
 
@@ -799,6 +835,18 @@
       >
         {diskExporting ? 'Writing…' : 'Export to disk'}
       </button>
+      {#if serverTarget && exportVersion == null}
+        <button
+          type="button"
+          class="button"
+          data-testid="send-to-station-server"
+          disabled={sending || diskExporting}
+          on:click={sendToServer}
+          title="Send this week straight to Station Server, on the station's computer"
+        >
+          {sending ? 'Sending…' : 'Send to Station Server'}
+        </button>
+      {/if}
     </div>
     <!--
       §16.4.t6 archival opt-in. Renders only when there's >=1
@@ -844,6 +892,15 @@
       severity="polite"
       prefix="Disk export"
       testId="disk-export-error"
+    />
+    {#if sendStatus}
+      <StatusBanner message={sendStatus} prefix="Sent" testId="station-server-sent" />
+    {/if}
+    <ErrorBanner
+      message={sendError}
+      severity="polite"
+      prefix="Station Server"
+      testId="station-server-error"
     />
 
     <h2>Your working</h2>

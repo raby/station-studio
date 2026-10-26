@@ -731,6 +731,7 @@ class ServerApp:
         self.started = time.time()
         self.updater: selfupdate.Updater | None = None  # set by web.make_server
         self.remote = None  # web.RemoteAccess, set by web.make_server
+        self.studio = None  # studiolink.StudioLink, set by web.make_server
         self.alerts = alerts.Watcher(self)
         self._stopped = threading.Event()
         self._watching = False
@@ -766,6 +767,13 @@ class ServerApp:
             cfg.remote_password = password
         if "remote_port" in data:
             cfg.remote_port = clean_port(data["remote_port"])
+        if "studio_port" in data:
+            cfg.studio_port = clean_port(data["studio_port"])
+        if data.get("studio_new_code") or (data.get("studio_link") and not cfg.studio_code):
+            from station_server.studiolink import new_code
+            cfg.studio_code = new_code()
+        if "studio_link" in data:
+            cfg.studio_link = bool(data["studio_link"])
         if "remote" in data:
             if data["remote"] and not cfg.remote_password:
                 raise ValueError("Set a password first")
@@ -779,6 +787,8 @@ class ServerApp:
             self.login.set(bool(data["login"]))
         if self.remote is not None and any(k in data for k in ("remote", "remote_password", "remote_port")):
             self.remote.apply()
+        if self.studio is not None and any(k in data for k in ("studio_link", "studio_port", "studio_new_code")):
+            self.studio.apply()
 
     def test_alert(self) -> list[str]:
         """Settings › Alerts › Send a test: returns where it went."""
@@ -812,6 +822,7 @@ class ServerApp:
             "check_updates": self.config.check_updates,
             "alerts": {**self.config.alerts.to_json(secrets=False), "last": self.alerts.last},
             "remote": self.remote.status() if self.remote else None,
+            "studio": self.studio.status() if self.studio else None,
             "ffmpeg": self.ffmpeg,
             "ffmpeg_error": self.ffmpeg_error,
             "warnings": self.store.warnings,
@@ -1048,6 +1059,7 @@ class ServerApp:
             f"ffmpeg: {self.ffmpeg or self.ffmpeg_error}",
             f"Start at login: {'on' if self.login.enabled() else 'off'}"
             f" · keeping the computer awake: {'yes' if self.awake.held else 'no'}",
+            f"Station Studio link: {'on, port %s' % self.config.studio_port if self.config.studio_link else 'off'}",
             "",
         ]
         for st in self.config.stations:
@@ -1068,7 +1080,8 @@ class ServerApp:
         text = "\n".join(out)
         cfg = self.config
         secrets = {p for s in cfg.stations for p in (s.password, s.test_password) if p}
-        secrets |= {x for x in (cfg.alerts.smtp_password, cfg.remote_password, cfg.alerts.ntfy) if x}
+        secrets |= {x for x in (cfg.alerts.smtp_password, cfg.remote_password, cfg.alerts.ntfy, cfg.studio_code) if x}
+        secrets |= {p for s in cfg.stations for p in [s.live_password] + [x["password"] for x in s.presenters] if p}
         for secret in secrets:
             text = text.replace(secret, "********")
         return re.sub(r"(://[^/@\s]*?:)[^/@\s]*@", r"\1********@", text)
@@ -1078,5 +1091,7 @@ class ServerApp:
         self._stopped.set()
         if self.remote is not None:
             self.remote.stop()
+        if self.studio is not None:
+            self.studio.stop()
         for runner in self.runners.values():
             runner.stop()

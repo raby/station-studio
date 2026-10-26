@@ -92,7 +92,10 @@ opens the window. **Quit** in the sidebar stops it.
    in turn. Next week's export can be made any time: it waits for the start
    of its week (the station page says when) and goes on at the end of the
    track playing then. A week exported late goes on within a minute, and
-   exporting the week on air again picks up the changes.
+   exporting the week on air again picks up the changes. Or let Station
+   Studio send the weeks: turn on **Settings › Station Studio**, and
+   enter the address and link code it shows in Station Studio's
+   Settings › Station Server (see *Weeks from Station Studio* below).
 2. **Server.** SHOUTcast or Icecast, the address and port, and the source
    password. **Test connection** checks them without going on air.
 3. **Go on air.** The station page shows the track playing, the running
@@ -229,6 +232,27 @@ Rebirth Radio to `shoutcast://…:8002`, say, from one PC.
 Settings, passwords, play logs and the log file `station-server.log` are kept in `~/.station-server`
 (`$STATION_SERVER_HOME` to change it); the settings file is readable by
 you only. `station-server app --port N` uses another port than 8770.
+
+## Weeks from Station Studio
+
+With **Settings › Station Studio** on, Station Server listens on a link
+port (8772 unless changed) for Station Studio, on this computer or
+another on the network (or over a VPN such as Tailscale). Every request
+carries the link code shown there; after 5 wrong codes an address is kept
+out for a few minutes, and **Make a new link code** stops the old one
+working.
+
+- `PUT /api/link/stations/<id>/weeks/<NNN>.xml` sends a week (Station
+  Studio's iTunes XML). It's checked, then kept in the station's folder of
+  weeks, where it goes on air like an exported week; a station with no
+  playlist yet gets a folder of its own (`~/.station-server/weeks/<id>`).
+  The answer has the tracks found and missing on this computer and when
+  the week goes on (`now`, `next`, `later` or `old`).
+- `GET /api/link` lists the stations: on air or not, what's playing, the
+  week on air, the next week and when, and the weeks held.
+
+Phone access never shows the link code, and Copy diagnostics leaves it
+out.
 
 ## From the command line
 
