@@ -37,6 +37,23 @@ when I log in**, so that after a restart, a power cut or Windows updates it
 starts in the background and puts the stations that were on air back on
 air. On a Mac it's also started again if it ever stops unexpectedly.
 
+**Running unattended.** While a station is on air the computer is kept from
+going to sleep by itself (the screen can still turn off). If the server
+can't be reached, or the music's drive isn't there yet (the computer was
+quicker than the router after a power cut), the station shows *Trying
+again…* and keeps trying, after 15 seconds and then less often, until it's
+on air; the same if the broadcast ever fails. For a computer nobody is at:
+
+- set it to switch itself back on when the power returns (in the BIOS,
+  often *Restore on AC power loss*);
+- let Windows sign in by itself, since Station Server starts when you sign
+  in;
+- check Windows Update's *active hours*, so restarts happen when it suits.
+
+**Help › Copy diagnostics** copies the version, each station's state and
+the end of the log, with passwords taken out, to paste into a message
+when asking for help.
+
 **With pipx** (Linux, or if you'd rather): `pipx install station-server`,
 then run `station-server`; `pipx upgrade station-server` updates it. You
 need Python 3.11 or newer and ffmpeg (below).
@@ -71,8 +88,11 @@ opens the window. **Quit** in the sidebar stops it.
 
 1. **Add a station.** Give it a name and its playlist: a station-studio
    export, or better its exports folder
-   (`~/.station-studio/exports/rebirth-classics`), so the newest week is
-   played and next week's is picked up by itself at the end of a track.
+   (`~/.station-studio/exports/rebirth-classics`), so each week is played
+   in turn. Next week's export can be made any time: it waits for the start
+   of its week (the station page says when) and goes on at the end of the
+   track playing then. A week exported late goes on within a minute, and
+   exporting the week on air again picks up the changes.
 2. **Server.** SHOUTcast or Icecast, the address and port, and the source
    password. **Test connection** checks them without going on air.
 3. **Go on air.** The station page shows the track playing, the running

@@ -5,7 +5,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
-from datetime import date
+from datetime import date, datetime, timedelta
 
 import pytest
 
@@ -128,7 +128,7 @@ def test_on_air_titles_play_log_and_resume(api, exports, icecast, monkeypatch):
 
 
 @needs_ffmpeg
-def test_a_new_week_is_picked_up(api, exports, icecast, monkeypatch):
+def test_a_new_week_waits_for_its_week_to_begin(api, exports, icecast, monkeypatch):
     import station_server.onair as onair
     monkeypatch.setattr(onair, "WATCH_SECONDS", 0.2)
     status, body = api("/api/stations", {
@@ -139,27 +139,107 @@ def test_a_new_week_is_picked_up(api, exports, icecast, monkeypatch):
     api(f"/api/stations/{sid}/on", {"on": True})
     runner = api.app.runners[sid]
     assert wait_for(lambda: runner.state == "on")
+    assert runner.xml.name == "012.xml"
+    # Next week exported ahead: it waits for the week to begin, and says when.
     shutil.copy(exports / "012.xml", exports / "013.xml")
+    assert wait_for(lambda: (runner.status()["next_week"] or {}).get("name") == "013")
+    time.sleep(0.5)
+    assert runner.xml.name == "012.xml"
+    # A week later (as far as the station knows) it goes on, at the end of the track.
+    weeks = api.app.weeks
+    with weeks._lock:
+        since = datetime.fromisoformat(weeks._state[sid]["since"]) - timedelta(days=7)
+        weeks._state[sid]["since"] = since.isoformat()
     assert wait_for(lambda: runner.xml.name == "013.xml")
-    # Until the playing track ends the page shows 013 as next.
     st = runner.status()
     if runner.channel.queue is not runner.queue:
         assert st["playlist"]["next"]["name"] == runner.queue.name
     assert wait_for(lambda: runner.channel.queue is runner.queue)
-    assert "next" not in runner.status()["playlist"]
+    assert "next" not in runner.status()["playlist"] and runner.status()["next_week"] is None
 
 
-def test_bad_server_goes_to_error(api, exports):
-    status, body = api("/api/stations", {"name": "X", "playlist": str(exports),
-                                         "server": "icecast://127.0.0.1:1/x", "password": "pw"})
+@needs_ffmpeg
+def test_an_edited_week_goes_on_straight_away(api, exports, icecast, monkeypatch):
+    import os
+    import station_server.onair as onair
+    monkeypatch.setattr(onair, "WATCH_SECONDS", 0.2)
+    status, body = api("/api/stations", {
+        "name": "Rebirth Classics", "playlist": str(exports), "start_mode": "top",
+        "server": f"icecast://localhost:{icecast.port}/classics", "password": "hackme",
+    })
     sid = body["id"]
     api(f"/api/stations/{sid}/on", {"on": True})
+    runner = api.app.runners[sid]
+    assert wait_for(lambda: runner.state == "on")
+    before = runner.queue
+    later = (exports / "012.xml").stat().st_mtime + 5
+    os.utime(exports / "012.xml", (later, later))  # exported again
+    assert wait_for(lambda: runner.queue is not before)
+    assert runner.xml.name == "012.xml"
+
+
+def test_no_server_set_is_a_problem_to_fix(api, exports):
+    status, body = api("/api/stations", {"name": "X", "playlist": str(exports)})
+    api(f"/api/stations/{body['id']}/on", {"on": True})
     assert wait_for(lambda: api("/api/state")[1]["stations"][0]["state"] == "error")
-    assert api("/api/state")[1]["stations"][0]["error"]
-    # Saving the station clears the old problem.
-    api(f"/api/stations/{sid}", {"server": "icecast://127.0.0.1:2/x"})
+    assert "server" in api("/api/state")[1]["stations"][0]["error"]
+
+
+@needs_ffmpeg
+def test_keeps_trying_until_the_server_is_there(api, exports, icecast, monkeypatch):
+    import station_server.onair as onair
+    monkeypatch.setattr(onair, "RETRY_SECONDS", 0.3)
+    status, body = api("/api/stations", {"name": "X", "playlist": str(exports), "start_mode": "top",
+                                         "server": "icecast://127.0.0.1:1/x", "password": "hackme"})
+    sid = body["id"]
+    api(f"/api/stations/{sid}/on", {"on": True})
+    assert wait_for(lambda: api("/api/state")[1]["stations"][0]["state"] == "waiting")
     st = api("/api/state")[1]["stations"][0]
-    assert st["state"] == "off" and st["error"] is None
+    assert st["error"] and st["retry_in"] is not None
+    assert api.app.awake.held  # still on air, as far as the computer's sleep goes
+    # The server comes back (here: the address is put right); the next try gets on air.
+    api(f"/api/stations/{sid}", {"server": f"icecast://localhost:{icecast.port}/x"})
+    assert wait_for(lambda: api("/api/state")[1]["stations"][0]["state"] == "on")
+    assert icecast.got_audio.wait(10)
+    assert api("/api/state")[1]["stations"][0]["error"] is None
+    api(f"/api/stations/{sid}/on", {"on": False})
+    assert api("/api/state")[1]["stations"][0]["state"] == "off" and not api.app.awake.held
+
+
+@needs_ffmpeg
+def test_waits_for_the_music_drive(api, exports, icecast, monkeypatch, tmp_path):
+    import station_server.onair as onair
+    monkeypatch.setattr(onair, "RETRY_SECONDS", 0.3)
+    later = tmp_path / "drive" / "rebirth-classics"
+    status, body = api("/api/stations", {"name": "X", "playlist": str(later), "start_mode": "top",
+                                         "server": f"icecast://localhost:{icecast.port}/x", "password": "hackme"})
+    sid = body["id"]
+    api(f"/api/stations/{sid}/on", {"on": True})
+    assert wait_for(lambda: api("/api/state")[1]["stations"][0]["state"] == "waiting")
+    shutil.copytree(exports, later)  # the drive is mounted
+    assert wait_for(lambda: api("/api/state")[1]["stations"][0]["state"] == "on")
+
+
+@needs_ffmpeg
+def test_back_on_air_after_the_broadcast_fails(api, exports, icecast, monkeypatch):
+    import station_server.onair as onair
+    monkeypatch.setattr(onair, "RETRY_SECONDS", 0.3)
+    runs = []
+
+    class Breaks(onair.Channel):
+        def run(self):
+            runs.append(1)
+            if len(runs) == 1:
+                raise BrokenPipeError("the encoder stopped")
+            super().run()
+
+    monkeypatch.setattr(onair, "Channel", Breaks)
+    status, body = api("/api/stations", {"name": "X", "playlist": str(exports), "start_mode": "top",
+                                         "server": f"icecast://localhost:{icecast.port}/x", "password": "hackme"})
+    sid = body["id"]
+    api(f"/api/stations/{sid}/on", {"on": True})
+    assert wait_for(lambda: len(runs) == 2 and api("/api/state")[1]["stations"][0]["state"] == "on")
+    assert icecast.got_audio.wait(10)
 
 
 @needs_ffmpeg
@@ -257,3 +337,12 @@ def test_back_on_air_part_way_through_a_show(api, exports, icecast, tmp_path, mo
     assert wait_for(lambda: runner.state == "on" and runner.channel.now)
     assert runner.channel.in_show and runner.status()["now"]["show"] == "Long Show"
     assert wait_for(lambda: "Long Show" in icecast.titles)
+
+
+def test_diagnostics_leave_out_passwords(api, exports):
+    api("/api/stations", {"name": "Rebirth Classics", "playlist": str(exports),
+                          "server": "icecast://source:s3cret@127.0.0.1:1/x", "password": "hunter22"})
+    status, text = api("/api/diagnostics")
+    text = text.decode()
+    assert status == 200 and "Station Server" in text and "Rebirth Classics: off" in text
+    assert "hunter22" not in text and "s3cret" not in text

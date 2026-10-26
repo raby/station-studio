@@ -107,6 +107,8 @@ def make_handler(app: ServerApp, picker: Picker, quit) -> type[BaseHTTPRequestHa
             path = url.path
             if path == "/api/state":
                 return self._json(app.state())
+            if path == "/api/diagnostics":
+                return self._send(app.diagnostics().encode("utf-8"), "text/plain; charset=utf-8")
             m = _STATION_RE.match(path)
             if m and m.group(2) == "playlog.csv":
                 qs = parse_qs(url.query)

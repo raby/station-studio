@@ -136,11 +136,12 @@ class Encoder:
             + PCM_ARGS + ["-i", "pipe:0",
                           "-c:a", "libmp3lame", "-b:a", f"{bitrate}k",
                           "-flush_packets", "1", "-f", "mp3", "pipe:1"],
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             creationflags=_NO_WINDOW,
         )
         self._reader = threading.Thread(target=self._read, name="encoder-out", daemon=True)
         self._reader.start()
+        threading.Thread(target=self._read_errors, name="encoder-err", daemon=True).start()
 
     def _read(self) -> None:
         assert self._proc.stdout is not None
@@ -152,6 +153,14 @@ class Encoder:
                 self._on_data(data)
             except Exception:  # a sender bug must not stall the encoder
                 logger.exception("sending encoded audio failed")
+
+    def _read_errors(self) -> None:
+        """Put what the encoder complains about in the log, so a failure says why."""
+        assert self._proc.stderr is not None
+        for line in self._proc.stderr:
+            text = line.decode(errors="replace").strip()
+            if text:
+                logger.warning("encoder: %s", text)
 
     def write(self, pcm: bytes) -> None:
         assert self._proc.stdin is not None

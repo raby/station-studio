@@ -253,7 +253,7 @@ table.tracks { width: 100%; border-collapse: collapse; }
 .brand .sub { display: block; font-size: 11px; font-weight: 500; color: var(--faint); letter-spacing: 0; }
 .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--faint); flex: none; }
 .dot.on { background: var(--danger); box-shadow: 0 0 0 3px var(--danger-soft); }
-.dot.starting, .dot.stopping { background: var(--accent); }
+.dot.starting, .dot.stopping, .dot.waiting { background: var(--accent); }
 .dot.error { background: var(--danger); opacity: .55; }
 .nav-item .dot { margin: 0 4px 0 3px; }
 .sidebar .spacer { flex: 1; }
@@ -265,7 +265,7 @@ table.tracks { width: 100%; border-collapse: collapse; }
 }
 .status-pill.on { background: var(--danger); color: #fff; }
 .status-pill.on .dot { background: #fff; box-shadow: none; animation: pulse 1.6s ease-in-out infinite; }
-.status-pill.starting, .status-pill.stopping { background: var(--accent-soft); color: var(--accent); }
+.status-pill.starting, .status-pill.stopping, .status-pill.waiting { background: var(--accent-soft); color: var(--accent); }
 .status-pill.error { background: var(--danger-soft); color: var(--danger); }
 @keyframes pulse { 50% { opacity: .35; } }
 @media (prefers-reduced-motion: reduce) { .status-pill.on .dot { animation: none; } }
@@ -341,3 +341,9 @@ body.offline { display: grid; place-items: center; min-height: 100vh; margin: 0;
 .show-edit .days { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 10px; }
 .form label.check.day { flex: none; min-width: 0; }
 .now:has(.show-kicker) .glyph { grid-row: span 4; }
+
+/* Help › Copy diagnostics, when there's no clipboard to copy to */
+textarea.diagnostics {
+  width: 100%; margin-top: 10px; font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: var(--text); background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 10px;
+}
