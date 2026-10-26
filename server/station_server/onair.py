@@ -53,6 +53,8 @@ RETRY_SECONDS = 15.0
 RETRY_MOST_SECONDS = 120.0
 # After End live show, the presenter's encoder can't reconnect for this long.
 END_LIVE_BLOCK_SECONDS = 120.0
+# A presenter who connects but sends no audio for this long is let go.
+LIVE_FIRST_AUDIO_SECONDS = 15.0
 
 
 def playlist_file(station: Station, weeks: WeekPicker | None = None, remember: bool = True,
@@ -487,7 +489,8 @@ class StationRunner:
         if not st.live:
             return
         live = LiveInput(st.live_port, st.live_password, self.ffmpeg, on_source=self._go_live,
-                         record_dir=self.recordings_folder() if st.record_live else None)
+                         record_dir=self.recordings_folder() if st.record_live else None, level=st.live_level,
+                         presenters={p["password"]: p["name"] for p in st.presenters})
         try:
             live.start()
         except OSError as exc:
@@ -496,6 +499,17 @@ class StationRunner:
             logger.warning("%s: %s", st.name, self.live_error)
             return
         self.live_input = live
+
+    def update_live_input(self) -> None:
+        """Presenters and passwords changed while on air: they apply to the
+        next presenter to connect (a new port waits for the next time on air)."""
+        st, live = self.station, self.live_input
+        if live is None or not st.live or st.live_port != live.port:
+            return
+        live.password = st.live_password
+        live.presenters = {p["password"]: p["name"] for p in st.presenters}
+        live.level = st.live_level
+        live.record_dir = self.recordings_folder() if st.record_live else None
 
     def recordings_folder(self) -> Path:
         """Where this station's live shows are recorded: a folder named after it."""
@@ -507,13 +521,25 @@ class StationRunner:
         ch = self.channel
         if ch is None or self.state != "on":
             return False
-        interrupted = self._interrupted if ch.in_show else (ch.now.index if ch.now else 0)
-        self.show_on = None
         name = source.presenter or "Live"
         self._live_presenter = source.presenter
-        logger.info("%s: %s is live", self.station.name, name)
-        ch.go_live(source, after=self._after_show(interrupted), on_title=self._live_played,
-                   title=f"{self.station.name}: {name}" if source.presenter else f"{self.station.name}: Live")
+        title = f"{self.station.name}: {name}" if source.presenter else f"{self.station.name}: Live"
+
+        def hand_over() -> None:
+            # The music carries on until their audio is actually coming
+            # through, so the hand-over has no gap.
+            if not source.has_audio.wait(LIVE_FIRST_AUDIO_SECONDS) or source.ended.is_set():
+                logger.warning("%s: %s connected but sent no audio", self.station.name, name)
+                source.close()
+                return
+            if self.channel is not ch or self.state != "on":
+                source.close()
+                return
+            interrupted = self._interrupted if ch.in_show else (ch.now.index if ch.now else 0)
+            self.show_on = None
+            logger.info("%s: %s is live", self.station.name, name)
+            ch.go_live(source, after=self._after_show(interrupted), on_title=self._live_played, title=title)
+        threading.Thread(target=hand_over, name="live-hand-over", daemon=True).start()
         return True
 
     def end_live(self) -> None:
@@ -822,6 +848,7 @@ class ServerApp:
             self.config.stations[i] = st
             runner = self.runners[sid]
             runner.station = st
+            runner.update_live_input()
             if runner.state == "error":  # the old problem may be what was just fixed
                 runner.state, runner.error = "off", None
         else:

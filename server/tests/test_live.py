@@ -214,6 +214,72 @@ def test_the_settings():
             clean_station(bad)
 
 
+def test_presenters_have_their_own_passwords():
+    st = clean_station({"live": True, "presenters": [{"name": "DJ Rob", "password": "rob1"},
+                                                     {"name": " ", "password": ""}]})  # an empty row is dropped
+    assert [p["name"] for p in st.presenters] == ["DJ Rob"] and st.presenters[0]["id"]
+    rob = st.presenters[0]["id"]
+    hidden = st.to_json(secrets=False)["presenters"]
+    assert hidden == [{"id": rob, "name": "DJ Rob", "password": "", "has_password": True}]
+    # Saved from the page: a blank password keeps theirs; a new presenter needs one.
+    again = clean_station({"live": True, "presenters": hidden + [{"name": "Sue", "password": "sue2"}]}, st)
+    assert [(p["name"], p["password"]) for p in again.presenters] == [("DJ Rob", "rob1"), ("Sue", "sue2")]
+    for bad in ([{"name": "Sue", "password": ""}], [{"name": "", "password": "x"}],
+                [{"name": "A", "password": "same"}, {"name": "B", "password": "same"}]):
+        with pytest.raises(ValueError):
+            clean_station({"live": True, "presenters": bad})
+    with pytest.raises(ValueError):  # not the shared password either
+        clean_station({"live": True, "live_password": "same", "presenters": [{"name": "A", "password": "same"}]})
+
+
+@needs_ffmpeg
+def test_a_presenters_own_password_names_them():
+    sources = []
+    li = LiveInput(free_ports(), "", FFMPEG, on_source=lambda s: sources.append(s) or True, host="127.0.0.1",
+                   presenters={"rob1": "DJ Rob", "sue2": "Sue"})
+    li.start()
+    try:
+        conn, reply = icecast_source(li.port, password="", name="Anyone")  # no shared password: no way in
+        assert b"401" in reply.split(b"\r\n")[0]
+        conn.close()
+        s = socket.create_connection(("127.0.0.1", li.port + 1), timeout=5)
+        s.sendall(b"sue2\r\n")
+        assert s.recv(100).startswith(b"OK2")
+        s.sendall(b"icy-name:Whatever BUTT says\r\n\r\n" + mp3(0.5))
+        assert wait_for(lambda: sources)
+        assert sources[0].presenter == "Sue"  # by her password, not her encoder's name
+        s.close()
+        drain(sources[0])
+    finally:
+        li.stop()
+
+
+@needs_ffmpeg
+def test_presenters_volume_is_evened_out(tmp_path):
+    from station_server.live import LEVEL_FILTER, LiveSource
+    seen = []
+
+    def decoder(args):
+        seen.append(args)
+        return subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+    quiet = subprocess.run([FFMPEG, "-v", "error", "-f", "lavfi", "-i", "sine=frequency=440:duration=6",
+                            "-af", "volume=-30dB", "-ac", "2", "-b:a", "128k", "-f", "mp3", "-"],
+                           capture_output=True, check=True).stdout
+    levels = {}
+    for level in (False, True):
+        source = LiveSource(FFMPEG, "audio/mpeg", decoder=decoder, level=level)
+        source.feed(quiet)
+        source.finish()
+        pcm = bytearray()
+        end = time.time() + 15
+        while not source.ended.is_set() and time.time() < end:
+            pcm += source.read(0.2) or b""
+        tail = samples(bytes(pcm[len(pcm) // 2:]))  # once the leveller has settled
+        levels[level] = max(abs(x) for x in tail)
+    assert LEVEL_FILTER in seen[1] and LEVEL_FILTER not in seen[0]
+    assert levels[False] < 1500 and levels[True] > 4 * levels[False]  # a quiet presenter brought up
+
+
 def test_two_stations_cant_share_a_live_port(api):  # noqa: F811
     api("/api/stations", {"name": "A", "live": True, "live_port": 8010, "live_password": "x"})
     status, body = api("/api/stations", {"name": "B", "live": True, "live_port": 8011, "live_password": "x"})
@@ -235,9 +301,11 @@ def test_a_presenter_goes_live_on_air_and_hands_back(api, exports, icecast, monk
     station = lambda: api("/api/state")[1]["stations"][0]  # noqa: E731
     assert wait_for(lambda: station().get("live_input", {}).get("listening"))
     assert wait_for(lambda: icecast.titles)
-    encoder = subprocess.Popen([FFMPEG, "-v", "error", "-re", "-f", "lavfi", "-i", "sine=frequency=500:duration=3",
+    # A presenter added while on air can go live straight away, named by their password.
+    api(f"/api/stations/{sid}", {"presenters": [{"name": "DJ Rob", "password": "rob1"}]})
+    encoder = subprocess.Popen([FFMPEG, "-v", "error", "-re", "-f", "lavfi", "-i", "sine=frequency=500:duration=8",
                                 "-ac", "2", "-c:a", "libmp3lame", "-b:a", "128k", "-content_type", "audio/mpeg",
-                                "-ice_name", "DJ Rob", "-f", "mp3", f"icecast://source:letmein@127.0.0.1:{port}/live"])
+                                "-ice_name", "BUTT", "-f", "mp3", f"icecast://source:rob1@127.0.0.1:{port}/live"])
     try:
         assert wait_for(lambda: station().get("live"))
         assert station()["live"]["presenter"] == "DJ Rob"

@@ -178,8 +178,12 @@ encoder (BUTT, Mixxx, Winamp's SHOUTcast plugin). While the station is on
 air, Station Server listens on the live shows port (8010 unless you
 choose another) as an Icecast server would, and on that port and the one
 above as a SHOUTcast v1 server would, so a presenter's existing settings
-work: Icecast with mount `/live`, user `source` and the presenters'
-password, or SHOUTcast with the password. When one connects, the song
+work: Icecast with mount `/live`, user `source` and their password, or
+SHOUTcast with the password. Each presenter can have their own password,
+so their name is shown, logged and used for the recording (a shared
+password works too). Their volume is evened out towards the music's
+loudness as it comes (about 2 seconds' delay, which the hand-over hides;
+it can be turned off). When one connects, the song
 playing fades out under them and they're on air, with the titles their
 encoder sends (to the play log too, as album "Live", or as one "Live
 show" entry if it sends none), and the show is recorded exactly as their

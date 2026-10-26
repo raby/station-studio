@@ -51,18 +51,24 @@ QUIET_SECONDS = 10.0
 # is let go, so they don't drift further and further behind.
 MOST_BUFFERED_SECONDS = 4.0
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+# Evening out a presenter's volume, as it comes: towards the loudness the
+# songs are levelled to (about -18 LUFS), up by at most 18 dB, peaks kept
+# below full scale. It looks 1.5 s ahead, which the hand-over absorbs.
+LEVEL_FILTER = "dynaudnorm=f=200:g=15:p=0.9:m=8:r=0.15:b=1"
 
 
 class LiveSource:
     """One presenter's connection: their audio, decoded, waiting to be played."""
 
     def __init__(self, ffmpeg: str, content_type: str = "", presenter: str = "", address: str = "",
-                 decoder: Callable[..., subprocess.Popen] | None = None, record_dir: Path | None = None) -> None:
+                 decoder: Callable[..., subprocess.Popen] | None = None, record_dir: Path | None = None,
+                 level: bool = False) -> None:
         self.presenter = presenter[:100]
         self.address = address
         self.since = time.time()
         self.title = ""  # the song title the encoder last sent
         self.ended = threading.Event()  # the connection has gone and its audio is all played
+        self.has_audio = threading.Event()  # some of their audio is decoded and ready
         self._closed = False
         self._lock = threading.Condition()
         self._pcm: collections.deque[bytes] = collections.deque()
@@ -77,7 +83,7 @@ class LiveSource:
         self._file = None
         if record_dir is not None:
             self._start_recording(record_dir, _EXTENSIONS.get(fmt or "mp3", ".mp3"))
-        args += ["-i", "pipe:0", "-vn"] + PCM_ARGS + ["pipe:1"]
+        args += ["-i", "pipe:0", "-vn"] + (["-af", LEVEL_FILTER] if level else []) + PCM_ARGS + ["pipe:1"]
         self._proc = (decoder or _popen)(args)
         threading.Thread(target=self._read, name="live-decode", daemon=True).start()
 
@@ -157,6 +163,7 @@ class LiveSource:
                     self._pcm.append(chunk)
                     self._buffered += len(chunk)
                     self._last_audio = time.monotonic()
+                    self.has_audio.set()
                     # Running behind: let the oldest go.
                     while self._buffered > MOST_BUFFERED_SECONDS * BYTES_PER_SECOND:
                         self._buffered -= len(self._pcm.popleft())
@@ -230,21 +237,26 @@ class LiveInput:
     """The live input of one station: ports P and P+1 (see above).
 
     `on_source(source)` is called when a presenter connects with the right
-    password; it says whether they go on air. `on_title(source)` when the
+    password (the shared one, or a presenter's own: `presenters` maps each
+    presenter's password to their name, shown and logged in place of what
+    their encoder calls itself); it says whether they go on air. `on_title(source)` when the
     encoder sends a new song title.
     """
 
     def __init__(self, port: int, password: str, ffmpeg: str,
                  on_source: Callable[[LiveSource], bool], on_title: Callable[[LiveSource], None] | None = None,
-                 host: str = "0.0.0.0", decoder=None, record_dir: Path | None = None) -> None:
+                 host: str = "0.0.0.0", decoder=None, record_dir: Path | None = None, level: bool = False,
+                 presenters: dict[str, str] | None = None) -> None:
         self.port = port
         self.password = password
+        self.presenters = dict(presenters or {})
         self.ffmpeg = ffmpeg
         self._on_source = on_source
         self._on_title = on_title
         self._host = host
         self._decoder = decoder
         self.record_dir = record_dir  # where each show is recorded, or None for no recordings
+        self.level = level  # even out presenters' volume
         self.source: LiveSource | None = None
         self.blocked_until = 0.0  # End live show: the presenter can't come straight back
         self._guesses = _Guesses()
@@ -320,12 +332,17 @@ class LiveInput:
             except OSError:
                 pass
 
-    def _right(self, given: str, who: str) -> bool:
-        if self.password and hmac.compare_digest(given.encode(), self.password.encode()):
-            return True
-        self._guesses.wrong(who)
-        logger.warning("live input: wrong password from %s", who)
-        return False
+    def _right(self, given: str, who: str) -> str | None:
+        """Who the password belongs to: a presenter's name, "" for the
+        shared password, or None (and a wrong guess) if it's no one's."""
+        found = None
+        for password, name in [(self.password, "")] + list(self.presenters.items()):
+            if password and hmac.compare_digest(given.encode(), password.encode()):
+                found = name
+        if found is None:
+            self._guesses.wrong(who)
+            logger.warning("live input: wrong password from %s", who)
+        return found
 
     def _http(self, conn: socket.socket, who: str) -> None:
         """Port P: an Icecast source (SOURCE or PUT), or a title update."""
@@ -341,7 +358,7 @@ class LiveInput:
         query = _query(url.query)
         given = _basic_password(headers.get("authorization", ""))
         if method == "GET" and url.path in ("/admin/metadata", "/admin.cgi", "/admin/metadata.xsl"):
-            if not self._right(given or query.get("pass", ""), who):
+            if self._right(given or query.get("pass", ""), who) is None:
                 conn.sendall(b"HTTP/1.0 401 Unauthorized\r\nWWW-Authenticate: Basic realm=\"Live\"\r\n\r\n")
                 return
             self._title(query.get("song", ""))
@@ -353,11 +370,12 @@ class LiveInput:
             body = f"Station Server {__version__}: a live input, for a presenter's encoder.\r\n".encode()
             conn.sendall(b"HTTP/1.0 404 Not Found\r\nContent-Type: text/plain\r\n\r\n" + body)
             return
-        if not self._right(given, who):
+        named = self._right(given, who)
+        if named is None:
             conn.sendall(b"HTTP/1.0 401 Unauthorized\r\nWWW-Authenticate: Basic realm=\"Live\"\r\n\r\n")
             return
         source = self._open(who, headers.get("content-type", "audio/mpeg"),
-                            headers.get("ice-name") or headers.get("icy-name") or "")
+                            named or headers.get("ice-name") or headers.get("icy-name") or "")
         if source is None:
             conn.sendall(b"HTTP/1.0 403 Forbidden\r\n\r\nSomeone is live already, or the station isn't on air\r\n")
             return
@@ -370,7 +388,8 @@ class LiveInput:
         password = line.decode("latin-1").strip()
         if ":#" in password:  # SHOUTcast 2 style: password:#stream
             password = password.split(":#")[0]
-        if not self._right(password, who):
+        named = self._right(password, who)
+        if named is None:
             conn.sendall(b"invalid password\r\n")
             return
         if self.blocked_until > time.monotonic() or self.source is not None:
@@ -382,7 +401,7 @@ class LiveInput:
         for h in head.decode("latin-1").splitlines():
             name, _, value = h.partition(":")
             headers[name.strip().lower()] = value.strip()
-        source = self._open(who, headers.get("content-type", "audio/mpeg"), headers.get("icy-name", ""))
+        source = self._open(who, headers.get("content-type", "audio/mpeg"), named or headers.get("icy-name", ""))
         if source is None:
             return
         self._stream(conn, source, rest)
@@ -394,7 +413,7 @@ class LiveInput:
             if self.source is not None:
                 return None
             source = LiveSource(self.ffmpeg, content_type, presenter, who, decoder=self._decoder,
-                                record_dir=self.record_dir)
+                                record_dir=self.record_dir, level=self.level)
             self.source = source
         try:
             ok = self._on_source(source)

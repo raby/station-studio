@@ -81,8 +81,11 @@ class Station:
     # (Icecast; SHOUTcast to it and the one above) with this password.
     live: bool = False
     live_port: int = 8010
-    live_password: str = ""
+    live_password: str = ""  # shared by all presenters (optional, with presenters' own)
+    # Presenters with their own password: {"id", "name", "password"}.
+    presenters: list[dict] = field(default_factory=list)
     record_live: bool = True  # keep a recording of each live show
+    live_level: bool = True  # even out presenters' volume
 
     def to_json(self, secrets: bool = True) -> dict:
         data = asdict(self)
@@ -93,6 +96,8 @@ class Station:
             data["has_test_password"] = bool(self.test_password)
             data["live_password"] = ""
             data["has_live_password"] = bool(self.live_password)
+            data["presenters"] = [{"id": p["id"], "name": p["name"], "password": "",
+                                   "has_password": bool(p["password"])} for p in self.presenters]
         return data
 
 
@@ -135,14 +140,19 @@ def clean_station(data: dict, existing: Station | None = None) -> Station:
         raise ValueError("Play a jingle after every 1 to 20 songs")
     st.live = bool(st.live)
     st.record_live = bool(st.record_live)
+    st.live_level = bool(st.live_level)
     try:
         st.live_port = int(st.live_port or 8010)
     except (TypeError, ValueError):
         raise ValueError("The live shows port is a number, like 8010") from None
     if not 1024 <= st.live_port <= 65534:
         raise ValueError("The live shows port is between 1024 and 65534")
-    if st.live and not st.live_password:
-        raise ValueError("Set a password for presenters going live")
+    st.presenters = _clean_presenters(st.presenters, existing.presenters if existing else [])
+    if st.live and not st.live_password and not st.presenters:
+        raise ValueError("Set a password for presenters going live, or add presenters with their own")
+    passwords = [p["password"] for p in st.presenters] + ([st.live_password] if st.live_password else [])
+    if len(set(passwords)) != len(passwords):
+        raise ValueError("Each presenter needs a different password (and different from the shared one)")
     st.public = bool(st.public)
     st.level = bool(st.level)
     st.on_air = bool(st.on_air)
@@ -159,6 +169,27 @@ def clean_station(data: dict, existing: Station | None = None) -> Station:
         raise ValueError("The test stream must be a different stream from the live one")
     st.id = existing.id if existing else (str(data.get("id") or "") or uuid.uuid4().hex[:10])
     return st
+
+
+def _clean_presenters(given, before: list[dict]) -> list[dict]:
+    """Presenters from the page: a blank password keeps the one they had."""
+    if not isinstance(given, list):
+        raise ValueError("Presenters must be a list")
+    had = {p.get("id"): p.get("password", "") for p in before if isinstance(p, dict)}
+    out = []
+    for p in given:
+        if not isinstance(p, dict):
+            continue
+        name = str(p.get("name") or "").strip()[:60]
+        password = str(p.get("password") or "").strip() or had.get(p.get("id"), "")
+        if not name and not password:
+            continue  # an empty row
+        if not name:
+            raise ValueError("Give each presenter a name")
+        if not password:
+            raise ValueError(f"Give {name} a password")
+        out.append({"id": str(p.get("id") or "") or uuid.uuid4().hex[:8], "name": name, "password": password})
+    return out
 
 
 SMTP_SECURITY = ("starttls", "ssl", "none")

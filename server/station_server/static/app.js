@@ -653,7 +653,9 @@ function formValues(st) {
     live_port: String(st?.live_port || 8010),
     live_password: "",
     has_live_password: !!st?.has_live_password,
+    presenters: (st?.presenters || []).map((p) => ({ id: p.id, name: p.name, password: "", has_password: !!p.has_password })),
     record_live: st ? st.record_live !== false : true,
+    live_level: st ? st.live_level !== false : true,
   };
 }
 
@@ -682,7 +684,9 @@ function formPayload(v) {
     live: v.live,
     live_port: Number(v.live_port),
     live_password: v.live_password,
+    presenters: v.presenters.map((p) => ({ id: p.id, name: p.name, password: p.password })),
     record_live: v.record_live,
+    live_level: v.live_level,
   };
 }
 
@@ -747,6 +751,16 @@ function renderForm(view) {
     } catch (e) { msg.className = "form-msg"; msg.textContent = e.message; }
   }
   const showsMsg = el("div", { class: "form-msg", role: "status" });
+  function presenterRow(p, i) {
+    const field = (label, input, cls) => el("label", { class: cls || null }, label, input);
+    const name = el("input", { type: "text", value: p.name || "", placeholder: "DJ Rob", autocomplete: "off" });
+    name.addEventListener("input", () => { p.name = name.value; });
+    const password = el("input", { type: "password", value: p.password || "", placeholder: p.has_password ? "unchanged" : "", autocomplete: "new-password" });
+    password.addEventListener("input", () => { p.password = password.value; });
+    return el("div", { class: "grid" }, field("Presenter", name), field("Their password", password),
+      el("div", { class: "actions", style: "align-self:end" },
+        btn("Remove", "trash", () => { v.presenters.splice(i, 1); redraw(); }, "btn small ghost")));
+  }
   function showRow(sh, i) {
     const field = (label, input, cls) => el("label", { class: cls || null }, label, input);
     const name = el("input", { type: "text", value: sh.name || "", placeholder: "Saturday Night Mix", autocomplete: "off" });
@@ -912,9 +926,16 @@ function renderForm(view) {
         el("div", { class: "grid" }, check("live", "Let presenters go live from their own encoder (BUTT, Mixxx, Winamp)")),
         el("div", { class: "grid" },
           text("live_port", "Port", { narrow: true, placeholder: "8010" }),
-          text("live_password", "Presenters' password", { type: "password", placeholder: v.has_live_password ? "unchanged" : "" })),
+          text("live_password", "Shared password (optional)", { type: "password", placeholder: v.has_live_password ? "unchanged" : "" })),
+        el("p", { class: "help" }, "Give each presenter their own password: their name is shown and logged when they're live, and one can be removed without telling the others a new password. A shared password still works for anyone you haven't added."),
+        v.presenters.map(presenterRow),
+        el("div", { class: "actions" }, btn("Add a presenter", "plus", () => {
+          v.presenters.push({ id: "", name: "", password: "", has_password: false });
+          redraw();
+        }, "btn small")),
+        el("div", { class: "grid" }, check("live_level", "Even out presenters' volume, to match the music")),
         el("div", { class: "grid" }, check("record_live", "Keep a recording of each live show (about 60 MB an hour at 128 kbps)")),
-        el("p", { class: "help" }, "While the station is on air, a presenter's encoder connects to this computer as if it were the station's server, and they're live: the song fades out under them, and when they disconnect the music comes back where the week's clock says. In BUTT or Mixxx choose Icecast, with this computer's address, the port, mount /live, user source and the password; or SHOUTcast, with the address, port and password. From outside this network, forward the port and the one above it on the router to this computer."),
+        el("p", { class: "help" }, "While the station is on air, a presenter's encoder connects to this computer as if it were the station's server, and they're live: the song fades out under them, and when they disconnect the music comes back where the week's clock says. In BUTT or Mixxx choose Icecast, with this computer's address, the port, mount /live, user source and their password; or SHOUTcast, with the address, port and password. From outside this network, forward the port and the one above it on the router to this computer."),
       ),
       el("fieldset", {}, el("legend", {}, "Shows"),
         el("p", { class: "help" }, "Shows go out at set times: a recording, a playlist, or a folder of recordings played in name order. When a show ends, the music comes back where the week's clock says, so the running order's times stay right."),
@@ -1146,8 +1167,8 @@ function renderHelp() {
       p("Edit › Playback › Crossfade fades the end of each song out under the start of the next, over 1 to 10 seconds (Off plays them one straight after the other). Edit › Jingles plays one of a folder of jingles or station idents after every few songs, in a shuffled order, each once before any plays again. The song before fades out under the jingle; the next song starts as the jingle ends. Jingles aren't played during shows or the fallback and don't go in the play log; while one plays, the server shows the station's name as the title. Skip fades the song out over at most 2 seconds, however long the crossfade."),
       p("The week's clock allows for both, so the running order's times and a restart still land in the right place."),
       el("h2", {}, "Live shows"),
-      p("Turn on Edit › Live shows and set a port (8010 unless you choose another) and a password for presenters. While the station is on air, a presenter's encoder connects to this computer as if it were the station's server: the song playing fades out under them and they're live, with the song titles their encoder sends. When they disconnect, the music fades back in where the week's clock says. A show due while they're live is left out."),
-      p("In BUTT: Settings › Main › Server › Add. Type Icecast, Address this computer's address, Port 8010, Password the presenters' password, Mountpoint live, User source. (Or Type SHOUTcast, with the address, port and password.) In Mixxx: Options › Live Broadcasting, Type Icecast 2, the same details, Login source. Winamp's SHOUTcast plugin works too, with the address, port and password."),
+      p("Turn on Edit › Live shows and set a port (8010 unless you choose another). Add each presenter with their own password, so their name shows when they're live and goes in the play log and the recording's name; a shared password works too, for anyone you haven't added. Their volume is evened out to match the music unless you turn that off. While the station is on air, a presenter's encoder connects to this computer as if it were the station's server: the song playing fades out under them and they're live, with the song titles their encoder sends. When they disconnect, the music fades back in where the week's clock says. A show due while they're live is left out."),
+      p("In BUTT: Settings › Main › Server › Add. Type Icecast, Address this computer's address, Port 8010, Password their password, Mountpoint live, User source. (Or Type SHOUTcast, with the address, port and password.) In Mixxx: Options › Live Broadcasting, Type Icecast 2, the same details, Login source. Winamp's SHOUTcast plugin works too, with the address, port and password."),
       p("Presenters at home connect over the internet: on the router at the station, forward the port and the one above it (8010 and 8011) to this computer, as for the SHOUTcast server, and give presenters the station's internet address. Allow Station Server through the firewall when Windows or macOS asks. The Ready check shows the address to use on this network."),
       p("End live show takes a presenter off air; their encoder will try to reconnect, so they're kept off for two minutes. If a presenter's connection drops, the music comes back after 10 seconds. What they play goes in the play log by the titles their encoder sends (or as one Live show entry if it sends none), and each show is recorded, exactly as their encoder sent it, in Station Server's recordings folder (the Ready check says where); turn that off in Edit › Live shows."),
       el("h2", {}, "Keeping an eye on it"),
