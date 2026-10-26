@@ -1288,6 +1288,8 @@ function stationCard(st, i, count) {
   const name = el("input", { value: st.name, "aria-label": "Station name", required: true });
   const url = el("input", { value: st.url, "aria-label": "Stream URL", required: true });
   const tags = el("input", { value: (st.tags || []).join(", "), "aria-label": "Tags", placeholder: "jazz, late night", autocomplete: "off" });
+  const feed = el("input", { value: st.feed || "", "aria-label": "What's on feed", type: "url", autocomplete: "off",
+    placeholder: "https://…/rebirth-classics.json" });
   const suggest = el("div", { class: "tag-row tag-suggest" });
   const syncSuggest = () => {
     const have = splitTags(tags.value).map((t) => t.toLowerCase());
@@ -1310,7 +1312,8 @@ function stationCard(st, i, count) {
     if (url.value.trim() !== st.url) body.new_url = url.value;
     const newTags = splitTags(tags.value);
     if (newTags.join("\n") !== (st.tags || []).join("\n")) body.tags = newTags;
-    if (!body.name && !body.new_url && !body.tags) { close(); return; }
+    if (feed.value.trim() !== (st.feed || "")) body.feed = feed.value;
+    if (!body.name && !body.new_url && !body.tags && body.feed === undefined) { close(); return; }
     try {
       await loadState(await api("/api/stations/update", body, { quiet: true }));
       editingStation = null;
@@ -1349,6 +1352,7 @@ function stationCard(st, i, count) {
           onclick: () => { editingStation = st.url; renderView(); const n = document.querySelector(`#view .card[data-url="${CSS.escape(st.url)}"] input`); if (n) n.focus(); },
         }, icon("edit"))),
       el("div", { class: "song", hidden: true }),
+      st.feed ? el("div", { class: "whatson", "data-station": st.id, hidden: true }) : null,
       el("div", { class: "rec", hidden: true }, el("span", { class: "rec-text" }),
         el("button", { type: "button", class: "btn small rec-play", hidden: true }, ...iconLabel("play", "Play"))),
       el("div", { class: "row" },
@@ -1362,6 +1366,8 @@ function stationCard(st, i, count) {
       el("label", {}, "Stream URL", url),
       el("label", {}, "Tags", el("span", { class: "help" }, "Your own labels, with commas between them"), tags),
       suggest,
+      el("label", {}, "What's on", el("span", { class: "help" },
+        "Optional: the feed its Station Server publishes (Settings › Website), for on now, next and just played"), feed),
       logoEditor(st, result, name, url),
       result,
       el("div", { class: "row" },
@@ -1425,6 +1431,7 @@ function radioView() {
 
   queueMicrotask(syncRadioCards);
   queueMicrotask(syncRecordings);
+  if (stations.some((st) => st.feed)) queueMicrotask(refreshWhatsOn);
   const visible = stations.filter((st) => !stationTag || (st.tags || []).includes(stationTag));
   return el("div", {},
     el("div", { class: "view-head" }, el("h1", {}, "Radio"), el("div", { class: "spacer" }),
@@ -1862,6 +1869,41 @@ function staticHiss(level) {
   }
 }
 
+// What's on stations with a feed from their Station Server (whatson.py):
+// on now, next and just played, asked for every 30 seconds.
+const WHATSON = {};
+
+const whatText = (i) => (i.show ? i.show : [i.title, i.artist].filter(Boolean).join(" – "));
+
+async function refreshWhatsOn() {
+  if (document.hidden) return;
+  const fed = (S.lib?.stations || []).filter((st) => st.feed);
+  await Promise.all(fed.map(async (st) => {
+    try { WHATSON[st.id] = await api(`/api/whatson?station=${st.id}`, undefined, { quiet: true }); } catch { delete WHATSON[st.id]; }
+  }));
+  for (const id of Object.keys(WHATSON)) if (!fed.some((st) => st.id === id)) delete WHATSON[id];
+  syncRadioCards();
+  if (S.mode === "radio") updateNow();
+}
+setInterval(refreshWhatsOn, 30_000);
+
+function paintWhatsOn(box, live) {
+  const w = WHATSON[box.dataset.station];
+  const lines = [];
+  if (w?.state === "live") lines.push(el("div", {}, el("b", {}, "Live now: "), w.now.live));
+  else if (w?.state === "off") lines.push(el("div", { class: "off" }, "Off air"));
+  else if (w?.state === "on") {
+    if (!live) lines.push(el("div", {}, el("b", {}, "On now: "), whatText(w.now)));
+    if (live) lines.push(el("div", { class: "off" }, "Coming up:"));
+    for (const n of w.next.slice(0, live ? 3 : 1)) {
+      lines.push(el("div", {}, el("b", {}, `${live ? "" : "Next "}${hhmm(new Date(n.at))} `), whatText(n)));
+    }
+    if (live && w.recent.length) lines.push(el("div", { class: "off" }, "Just played: ", w.recent.slice(0, 2).map(whatText).join(", ")));
+  }
+  box.replaceChildren(...lines);
+  box.hidden = !lines.length;
+}
+
 function syncRadioCards() {
   syncTuner();
   if ($("#globe")) globeDraw();  // rings the station playing
@@ -1874,6 +1916,8 @@ function syncRadioCards() {
     const song = card.querySelector(".song");
     song.textContent = live && S.radioTitle ? `Now playing: ${S.radioTitle}` : "";
     song.hidden = !song.textContent;
+    const whatson = card.querySelector(".whatson");
+    if (whatson) paintWhatsOn(whatson, live);
   }
   for (const tile of document.querySelectorAll("#view .tile-live[data-url]")) {
     const live = S.mode === "radio" && S.station && S.station.url === tile.dataset.url;
@@ -5060,6 +5104,7 @@ function playStation(st, { via = "relay", autoplay = true } = {}) {
   syncButtons();
   pollTitle();
   saveQueue();
+  if (st.feed) refreshWhatsOn();
 }
 
 let titleTimer = null;
@@ -5147,7 +5192,10 @@ function updateNow() {
   const t = current();
   if (S.mode === "radio") {
     title.replaceChildren(el("span", { class: "live-badge" }, "LIVE"), S.station.name);
-    sub.textContent = S.radioTitle || "Internet radio";
+    const w = S.station.id && WHATSON[S.station.id];
+    const next = w?.state === "on" && w.next[0];
+    const on = S.radioTitle || (w?.state === "on" ? whatText(w.now) : w?.state === "live" ? `Live: ${w.now.live}` : null);
+    sub.textContent = [on || "Internet radio", next ? `Next ${hhmm(new Date(next.at))}: ${whatText(next)}` : null].filter(Boolean).join("  ·  ");
     document.title = appTitle(S.radioTitle || S.station.name);
   } else if (S.mode === "track" && t) {
     title.textContent = t.name;

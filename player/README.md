@@ -13,7 +13,9 @@ It plays three kinds of thing:
   ogg/opus, aiff). Each folder shows up as its own playlist.
 - **Internet radio**: any stream URL, including `.pls` and `.m3u` links.
   Rebirth Radio and Rebirth Classics are set up out of the box. When a station sends the name
-  of the song it's playing, Station Player shows it. **Test** checks a
+  of the song it's playing, Station Player shows it. A station run by Station Server can also show
+  what's on now, next and just played, from the feed its Station Server
+  publishes (the pencil › *What's on*). **Test** checks a
   link plays before you add it; the pencil on a station renames it,
   changes its link, moves it up or down or removes it.
 

@@ -212,6 +212,10 @@ table.tracks { width: 100%; border-collapse: collapse; }
 .card .row .btn { white-space: nowrap; }
 .card .row .spacer { flex: 1; }
 .card .song { font-size: 13px; color: var(--accent); font-weight: 600; }
+.card .whatson { font-size: 13px; color: var(--text); display: grid; gap: 2px; min-width: 0; }
+.card .whatson > div { overflow-wrap: anywhere; }
+.card .whatson b { color: var(--muted); font-weight: 600; font-variant-numeric: tabular-nums; }
+.card .whatson .off { color: var(--muted); }
 .card .edit { display: flex; flex-direction: column; gap: 8px; }
 .card .edit label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
 .card .edit input { width: 100%; }

@@ -31,6 +31,7 @@ const HELP = [
     "Stations in the sidebar lists your radio stations. Rebirth Radio and Rebirth Classics are there to start with.",
     ["Discover in the sidebar finds new stations: turn the globe to hear the news, talk or music from anywhere in the world, or search thousands of stations by name, genre or country. ", ["Listen"], " tries one, and ", ["Add"], " keeps it. A station you add while browsing a genre is tagged with that genre."],
     "When a station sends the name of the song it's playing, you'll see it on the station and in the bar at the bottom.",
+    ["A station run by Station Server can also say what's on now, what's next and what's just played, even before you listen. Edit it with the pencil and give ", ["What's on"], " the feed address from its Station Server (Settings › Website): it shows on the station, and the next song shows in the bar at the bottom."],
     ["To add a station by its web address, paste its stream link under ", ["Add a station by its link"], ". ", ["Test"], " checks it plays first."],
     ["The pencil on a station renames it, changes its link, gives it a logo, moves it up or down, or removes it."],
     "Recently played lists the last few stations you listened to, so one you tried is easy to find again.",
