@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import math
+import queue as queues
 import threading
 import time
 from collections.abc import Callable, Iterator
@@ -137,6 +138,8 @@ class Channel:
         self._after = after
         self.now: NowPlaying | None = None
         self.stuck = False  # nothing in the playlist could be read
+        # Titles waiting to go to the server: (title, when it's heard, as time.monotonic()).
+        self._titles: queues.Queue[tuple[str, float]] = queues.Queue()
 
     def skip(self) -> None:
         """Move on to the next track straight away."""
@@ -182,6 +185,7 @@ class Channel:
 
     def run(self) -> None:
         encoder = Encoder(self.ffmpeg, self.sender.send, bitrate=self.bitrate)
+        threading.Thread(target=self._send_titles, name="titles", daemon=True).start()
         index, offset = self.start, self.offset
         failures = 0
         try:
@@ -222,10 +226,19 @@ class Channel:
         finally:
             encoder.close()
 
-    def _title_later(self, title: str, delay: float) -> None:
-        if delay and self.stop_event.wait(delay):
-            return
-        self.sender.set_title(title)
+    def _send_titles(self) -> None:
+        """Send each title when its track is heard, one at a time and in
+        order, so two quick skips can't leave the older title showing. A
+        slow server holds up only the titles, never the audio."""
+        while not self.stop_event.is_set():
+            try:
+                title, due = self._titles.get(timeout=0.5)
+            except queues.Empty:
+                continue
+            delay = due - time.monotonic()
+            if delay > 0 and self.stop_event.wait(delay):
+                return
+            self.sender.set_title(title)
 
     def _play(self, index: int, offset: float, encoder: Encoder) -> bool:
         """Play one track; False when none of its audio could be read."""
@@ -238,9 +251,8 @@ class Channel:
         logger.info("[%d/%d] %s%s", index + 1, len(self.queue.tracks), title,
                     f" (from {offset:.0f}s)" if offset >= 1 else "")
         # The audio sent ahead of the clock hasn't been heard yet, so the
-        # title waits that long. It goes over the network in its own thread:
-        # a slow server must never hold up the audio.
-        threading.Thread(target=self._title_later, args=(title, ahead), daemon=True).start()
+        # title waits that long.
+        self._titles.put((title, time.monotonic() + ahead))
         self.now = now
         if self._on_track:
             self._on_track(now)

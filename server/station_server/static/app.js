@@ -57,6 +57,7 @@ const ICONS = {
   refresh: ["M21 12a9 9 0 1 1-2.64-6.36L21 8", "M21 3v5h-5"],
   download: ["M12 3v12", "M7 10l5 5 5-5", "M5 21h14"],
   app: ["r 3 4 18 16 2.5", "M3 9h18"],
+  copy: ["r 9 9 12 12 2", "M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"],
   alert: ["M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z", "M12 9v4", "M12 17h.01"],
 };
 const SVG = "http://www.w3.org/2000/svg";
@@ -95,6 +96,7 @@ function clock(secs) {
   return h ? `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}` : `${m}:${String(s).padStart(2, "0")}`;
 }
 const hhmm = (iso) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+const dayTime = (iso) => new Date(iso).toLocaleString([], { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
 let toastTimer = null;
@@ -344,7 +346,7 @@ function syncUpdateSettings() {
   if (old) old.replaceWith(updateSettings());
 }
 
-const STATE_WORDS = { off: "Off air", starting: "Going on air…", on: "On air", stopping: "Going off air…", error: "Problem" };
+const STATE_WORDS = { off: "Off air", starting: "Going on air…", on: "On air", waiting: "Trying again…", stopping: "Going off air…", error: "Problem" };
 
 function go(view) {
   S.view = view;
@@ -391,7 +393,7 @@ function renderWelcome() {
 function renderStation(s) {
   const st = s.station;
   const on = s.state === "on";
-  const busy = s.state === "starting" || s.state === "stopping";
+  const busy = s.state === "starting" || s.state === "stopping" || s.state === "waiting";
   const head = el("div", { class: "view-head" },
     el("div", {},
       el("div", { class: `status-pill ${s.state}` }, el("span", { class: "dot" }), STATE_WORDS[s.state]),
@@ -406,7 +408,11 @@ function renderStation(s) {
     btn("Edit", "edit", () => go({ type: "edit", id: st.id }), "btn ghost"),
   );
   const parts = [head];
-  if (s.error) parts.push(el("div", { class: "errors" }, s.error));
+  if (s.state === "waiting") {
+    parts.push(el("div", { class: "errors" }, `Can't go on air: ${s.error}. `,
+      s.retry_in != null ? `Trying again in ${s.retry_in} s.` : "Trying again…",
+      el("span", { class: "help" }, " It keeps trying until it's on air or you take it off air.")));
+  } else if (s.error) parts.push(el("div", { class: "errors" }, s.error));
   if (s.stuck) parts.push(el("div", { class: "errors" }, "None of the playlist's tracks can be read, so the station is sending silence. Check the music folders in Edit."));
 
   if (on && s.now) {
@@ -434,6 +440,9 @@ function renderStation(s) {
     facts.push(el("span", {}, "Playlist ", el("b", {}, s.playlist.name)));
     facts.push(el("span", {}, `${s.playlist.tracks} tracks · ${s.playlist.hours} hours`));
     if (s.playlist.next) facts.push(el("span", { class: "ok" }, "Next: ", el("b", {}, s.playlist.next.name), " after this track"));
+  }
+  if (s.next_week && !(s.playlist && s.playlist.next)) {
+    facts.push(el("span", {}, "Next week ", el("b", {}, s.next_week.name), ` from ${dayTime(s.next_week.at)}`));
   }
   facts.push(el("span", {}, st.start_mode === "clock"
     ? `Week starts ${DAYS[st.week_start.day]} ${st.week_start.time}` : "Starts from track 1"));
@@ -794,6 +803,22 @@ function renderSettings() {
   );
 }
 
+async function copyDiagnostics() {
+  try {
+    const res = await fetch("/api/diagnostics", { cache: "no-store" });
+    const text = await res.text();
+    try {
+      await navigator.clipboard.writeText(text);
+      toast("Copied. Paste it into your message.");
+    } catch {
+      S.diagnostics = text;  // no clipboard here: show it to copy by hand
+      render();
+    }
+  } catch {
+    toast("Couldn't reach Station Server");
+  }
+}
+
 function renderHelp() {
   const p = (...t) => el("p", { class: "help" }, ...t);
   return el("div", { class: "settings" },
@@ -808,8 +833,11 @@ function renderHelp() {
       p("Add a station for each. They run side by side, each with its own playlist, server, clock and play log, and go on and off air separately: for example Rebirth Classics to port 8000 and Rebirth Radio to port 8002 of the same server."),
       el("h2", {}, "Running unattended"),
       p("Turn on Settings › Start Station Server when I log in. After a restart, a power cut or Windows updates, it starts in the background and the stations that were on air go back on air. Closing this window leaves them on air; Quit takes them off."),
+      p("While a station is on air the computer doesn't go to sleep by itself (the screen can still turn off). If the server can't be reached, or the music's drive isn't there yet, the station shows Trying again… and keeps trying until it's on air; it does the same if the broadcast ever fails."),
+      p("For a computer nobody is at, after a power cut: set it to switch itself back on when the power returns (a setting in the BIOS, often called Restore on AC power loss), and let Windows sign in by itself, since Station Server starts when you sign in. Also check Windows Update's active hours, so restarts happen when it suits you."),
       el("h2", {}, "The week's clock"),
-      p("Following the clock, the first track plays at the start of the week (Monday 00:00 unless you change it) and the rest follow by their lengths. A restart picks up where the station should be. A new week's export is picked up within a minute and starts after the playing track."),
+      p("Following the clock, the first track plays at the start of the week (Monday 00:00 unless you change it) and the rest follow by their lengths. A restart picks up where the station should be."),
+      p("Next week's export can be made any time: it waits, and goes on at the start of its week (the station's page says when). A week exported late, after its week has begun, goes on within a minute, after the playing track. Exporting the week on air again picks up the changes the same way."),
       el("h2", {}, "Shows at set times"),
       p("In a station's Edit page, Shows pins a show to times in the week, like Saturday 20:00. A show is a recording, a playlist, or a folder of recordings played in name order. It starts exactly on time (cutting the song playing) or after that song. When it ends, the music comes back where the week's clock says, so the running order's times stay right. After a restart part-way through a show, the station joins the show where it should be."),
       el("h2", {}, "Its own app, and new versions"),
@@ -820,6 +848,9 @@ function renderHelp() {
       p("If the server goes away, the station keeps playing and reconnects every few seconds. A track whose file can't be read is skipped; if none can be, the station sends silence and the page says so. Tracks the playlist names but this computer can't find are listed under the station: add the folder they're in as a music folder."),
       p("ffmpeg does the decoding and encoding. The downloaded app has its own; otherwise install it (macOS: brew install ffmpeg; Windows: winget install ffmpeg)."),
       p("Station Server keeps a log, station-server.log, with its settings and play logs in the .station-server folder in your home folder."),
+      p("Asking for help? Copy diagnostics puts the version, each station's state and the end of the log on the clipboard, with passwords taken out, ready to paste into a message."),
+      el("div", { class: "actions" }, btn("Copy diagnostics", "copy", copyDiagnostics, "btn")),
+      S.diagnostics ? el("textarea", { class: "diagnostics", readonly: true, rows: 12 }, S.diagnostics) : null,
     ),
   );
 }

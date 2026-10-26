@@ -1,4 +1,6 @@
 import subprocess
+import threading
+import time
 
 import pytest
 
@@ -53,7 +55,7 @@ def test_pacer_knows_how_far_ahead_it_is():
     assert pacer.ahead() == 0.5
 
 
-def test_title_waits_until_the_track_is_heard(tmp_path):
+def test_titles_wait_until_heard_and_go_in_order(tmp_path):
     class Sender:
         titles = []
 
@@ -62,13 +64,19 @@ def test_title_waits_until_the_track_is_heard(tmp_path):
 
     queue = load_queue(station_export(tmp_path, [write_wav(tmp_path / "a.wav")]))
     channel = Channel(queue, Sender(), "ffmpeg", pacer=Unpaced())
-    waits = []
-    channel.stop_event.wait = lambda secs: waits.append(secs) or False
-    channel._title_later("A - B", 1.5)
-    assert waits == [1.5] and Sender.titles == ["A - B"]
-    channel.stop_event.wait = lambda secs: True  # stopped while waiting
-    channel._title_later("C - D", 1.5)
-    assert Sender.titles == ["A - B"]
+    now = time.monotonic()
+    channel._titles.put(("A - B", now + 0.3))
+    channel._titles.put(("C - D", now + 0.1))  # skipped straight on: still after A - B
+    worker = threading.Thread(target=channel._send_titles, daemon=True)
+    worker.start()
+    time.sleep(0.15)
+    assert Sender.titles == []  # A - B isn't heard yet
+    time.sleep(0.4)
+    assert Sender.titles == ["A - B", "C - D"]
+    channel._titles.put(("E - F", time.monotonic() + 5))
+    channel.stop()  # stopped while waiting: never sent
+    worker.join(2)
+    assert not worker.is_alive() and Sender.titles == ["A - B", "C - D"]
 
 
 def _duration(path) -> float:
