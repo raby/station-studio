@@ -58,6 +58,7 @@ def api(tmp_path):
             return exc.code, json.loads(exc.read())
 
     call.app = app
+    call.base = base
     yield call
     app.shutdown()
     server.shutdown()

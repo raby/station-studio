@@ -24,13 +24,14 @@ from station_player.library import AUDIO_EXTENSIONS, Track
 from station_player.playlog import PlayLog
 from station_player.tags import read_tags
 
-from station_server import __version__, selfupdate, updates
+from station_server import __version__, alerts, selfupdate, updates
 from station_server.analysis import Analyser
 from station_server.audio import FfmpegMissing, find_ffmpeg, has_mp3_encoder
 from station_server.awake import KeepAwake
 from station_server.channel import Channel, NowPlaying
-from station_server.config import Config, ConfigStore, Station, clean_station, newest_week
+from station_server.config import Config, ConfigStore, Station, clean_alerts, clean_port, clean_station, newest_week
 from station_server.desktop import Login, bundled
+from station_server.listen import Listeners, Tap
 from station_server.playlist import PlaylistError, Queue, load_queue
 from station_server.schedule import Show, WeekStart, plan, position, track_seconds, where_now
 from station_server.senders import SenderError, StreamInfo, sender_from_url
@@ -40,6 +41,8 @@ from station_server.window import mac_app_bundle
 logger = logging.getLogger(__name__)
 
 WATCH_SECONDS = 60.0
+# How often the server is asked how many are listening.
+COUNT_SECONDS = 60.0
 # Going on air again after a problem: first after this many seconds, then
 # twice as long each time it fails again, up to the most.
 RETRY_SECONDS = 15.0
@@ -130,6 +133,8 @@ class StationRunner:
         self.upcoming: tuple[Path, datetime] | None = None  # the next week and when it goes on
         self.channel: Channel | None = None
         self.sender = None
+        self.listeners = Listeners()  # the page's Listen button
+        self.audience: dict | None = None  # how many are listening, from the server
         self.queue: Queue | None = None
         self.xml: Path | None = None
         self._xml_mtime = 0.0
@@ -331,7 +336,7 @@ class StationRunner:
             self.queue = self.fallback_queue = fallback[0]
             self.xml = None
         info = StreamInfo(name=st.name, genre=st.genre, url=st.url, public=st.public, bitrate=st.bitrate)
-        self.sender = sender_from_url(st.server, info, st.password or None)
+        self.sender = Tap(sender_from_url(st.server, info, st.password or None), self.listeners)
         self.sender.connect()
         done = threading.Event()  # this go on air is over: the helpers stop
         try:
@@ -339,6 +344,8 @@ class StationRunner:
         finally:
             done.set()
             self.sender.close()
+            self.listeners.end()
+            self.audience = None
 
     def _on_air(self, done: threading.Event) -> None:
         st = self.station
@@ -368,11 +375,30 @@ class StationRunner:
         )
         threading.Thread(target=self._watch, args=(done,), daemon=True).start()
         threading.Thread(target=self._show_clock, args=(done, self.show_on), daemon=True).start()
+        threading.Thread(target=self._count, args=(done, self.sender), daemon=True).start()
         if self._stopped.is_set():  # taken off air while connecting
             self.channel.stop()
         self.state, self.error = "on", None
         logger.info("%s on air to %s", st.name, self.sender.describe)
         self.channel.run()
+
+    def _count(self, done: threading.Event, sender, first: float = 5.0) -> None:
+        """Ask the server how many are listening, now and then."""
+        wait = first
+        while not done.wait(wait):
+            wait = COUNT_SECONDS
+            try:
+                counts = sender.count_listeners()
+            except Exception as exc:  # an older server, a relay, a firewall: no count
+                logger.debug("%s: no listener count: %s", self.station.name, exc)
+                counts = None
+            if not done.is_set():
+                self.audience = {**counts, "at": _local(time.time()).isoformat(timespec="seconds")} if counts else None
+
+    def playing_fallback(self) -> bool:
+        ch = self.channel
+        return bool(ch and self.state == "on" and (
+            ch.on_fallback or (self.fallback_queue is not None and ch.queue is self.fallback_queue)))
 
     def _fallback(self):
         """The station's fallback, to play once instead of silence, and then
@@ -435,8 +461,9 @@ class StationRunner:
             "now": None,
             "order": [],
             "stuck": bool(self.channel and self.channel.stuck),
-            "on_fallback": bool(self.channel and self.state == "on" and (
-                self.channel.on_fallback or (self.fallback_queue is not None and self.channel.queue is self.fallback_queue))),
+            "on_fallback": self.playing_fallback(),
+            "listening": self.listeners.count,
+            "audience": self.audience if self.state == "on" else None,
             "measuring": self.analyser.pending() if self.analyser and self.state == "on" else 0,
         }
         ch = self.channel
@@ -496,6 +523,10 @@ class ServerApp:
             self.runners[st.id] = self._new_runner(st)
         self.started = time.time()
         self.updater: selfupdate.Updater | None = None  # set by web.make_server
+        self.remote = None  # web.RemoteAccess, set by web.make_server
+        self.alerts = alerts.Watcher(self)
+        self._stopped = threading.Event()
+        self._watching = False
         self.latest: str | None = None  # the newest release, once looked up
 
     def _new_runner(self, st: Station) -> StationRunner:
@@ -507,10 +538,51 @@ class ServerApp:
         return self.store.config
 
     def resume(self) -> None:
-        """Put back on air the stations that were on air when the app closed."""
+        """Put back on air the stations that were on air when the app closed,
+        and start watching them for alerts."""
         for st in self.config.stations:
             if st.on_air:
                 self.runners[st.id].start()
+        if not self._watching:
+            self._watching = True
+            threading.Thread(target=self.alerts.run, args=(self._stopped,), name="alerts", daemon=True).start()
+
+    def save_settings(self, data: dict) -> None:
+        """Settings › the app's own settings (not a station's)."""
+        cfg = self.config
+        if "alerts" in data:
+            cfg.alerts = clean_alerts(data["alerts"] if isinstance(data["alerts"], dict) else {}, cfg.alerts)
+        if "remote_password" in data and str(data["remote_password"] or ""):
+            password = str(data["remote_password"])
+            if len(password) < 8:
+                raise ValueError("Use a password of at least 8 characters")
+            cfg.remote_password = password
+        if "remote_port" in data:
+            cfg.remote_port = clean_port(data["remote_port"])
+        if "remote" in data:
+            if data["remote"] and not cfg.remote_password:
+                raise ValueError("Set a password first")
+            cfg.remote = bool(data["remote"])
+        cfg.open_window = bool(data.get("open_window", cfg.open_window))
+        cfg.check_updates = bool(data.get("check_updates", cfg.check_updates))
+        if not cfg.check_updates:
+            self.latest = None  # no more notices until checked by hand
+        self.store.save()
+        if "login" in data:
+            self.login.set(bool(data["login"]))
+        if self.remote is not None and any(k in data for k in ("remote", "remote_password", "remote_port")):
+            self.remote.apply()
+
+    def test_alert(self) -> list[str]:
+        """Settings › Alerts › Send a test: returns where it went."""
+        cfg = self.config.alerts
+        if not (cfg.ntfy or cfg.email_to):
+            raise ValueError("Set up a phone notification or an email first, and save")
+        errors = alerts.send(cfg, "Station Server test alert",
+                             "This is how Station Server tells you a station is off air.")
+        if errors:
+            raise OSError("; ".join(errors))
+        return [w for w, on in (("your phone", cfg.ntfy), (cfg.email_to, cfg.email_to)) if on]
 
     def check_for_updates(self, force: bool = False, fetch=None) -> str | None:
         """Look for a new version: at most once a day unless `force`, and
@@ -531,6 +603,8 @@ class ServerApp:
             "can_update": kind in ("mac", "windows"),
             "release_page": selfupdate.RELEASE_PAGE.format(version=latest) if latest else None,
             "check_updates": self.config.check_updates,
+            "alerts": {**self.config.alerts.to_json(secrets=False), "last": self.alerts.last},
+            "remote": self.remote.status() if self.remote else None,
             "ffmpeg": self.ffmpeg,
             "ffmpeg_error": self.ffmpeg_error,
             "warnings": self.store.warnings,
@@ -654,12 +728,17 @@ class ServerApp:
         except OSError:
             out.append("(no log)")
         text = "\n".join(out)
-        secrets = {s.password for s in self.config.stations if s.password}
+        cfg = self.config
+        secrets = {s.password for s in cfg.stations if s.password}
+        secrets |= {x for x in (cfg.alerts.smtp_password, cfg.remote_password, cfg.alerts.ntfy) if x}
         for secret in secrets:
             text = text.replace(secret, "********")
         return re.sub(r"(://[^/@\s]*?:)[^/@\s]*@", r"\1********@", text)
 
     def shutdown(self) -> None:
         """Stop every station, remembering which were on air."""
+        self._stopped.set()
+        if self.remote is not None:
+            self.remote.stop()
         for runner in self.runners.values():
             runner.stop()

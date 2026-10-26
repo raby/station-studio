@@ -17,7 +17,12 @@ const S = {
   installPrompt: null,
   missingOpen: false,  // the list of tracks that can't be found, kept open across redraws
   updating: null,      // how far an update has got, while this page follows it
+  listening: null,     // the station whose broadcast this page is playing (Listen)
+  alertsForm: null,    // Settings › Alerts while it's being changed
 };
+// Seen from a phone or another computer (Settings › Phone access): only
+// watching, listening and on/off air.
+const remoteView = () => !!S.state?.remote_view;
 
 // ---------- small helpers ---------------------------------------------------
 
@@ -59,6 +64,9 @@ const ICONS = {
   app: ["r 3 4 18 16 2.5", "M3 9h18"],
   copy: ["r 9 9 12 12 2", "M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"],
   alert: ["M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z", "M12 9v4", "M12 17h.01"],
+  headphones: ["M3 18v-6a9 9 0 0 1 18 0v6", "M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3z", "M3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"],
+  bell: ["M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9", "M13.73 21a2 2 0 0 1-3.46 0"],
+  phone: ["r 6 2 12 20 2.5", "M11 18h2"],
 };
 const SVG = "http://www.w3.org/2000/svg";
 function icon(name) {
@@ -179,6 +187,7 @@ function renderNav() {
     b.setAttribute("aria-current", b.dataset.view === S.view.type ? "true" : "false");
   }
   $("#version").textContent = S.state ? `version ${S.state.version}` : "";
+  document.body.classList.toggle("remote", remoteView());
   renderUpdate();
 }
 
@@ -198,6 +207,7 @@ function renderUpdate() {
   const box = $("#update");
   const latest = S.state?.update;
   const u = S.state?.updating || S.updating;
+  if (remoteView()) { box.hidden = true; return; }
   if (u && u.stage !== "failed") {
     box.replaceChildren(el("div", {}, updateStageText(u)));
     box.hidden = false;
@@ -369,7 +379,7 @@ function render() {
   if (t === "new" || t === "edit") return renderForm(view);  // the form keeps its own state
   view.dataset.form = "";
   if (t === "log") return view.replaceChildren(renderLog());
-  if (t === "settings") return view.replaceChildren(renderSettings());
+  if (t === "settings" && !remoteView()) return view.replaceChildren(renderSettings());
   if (t === "help") return view.replaceChildren(renderHelp());
   if (!S.state) return;
   let st = S.view.id && stationById(S.view.id);
@@ -405,7 +415,9 @@ function renderStation(s) {
       ? btn("Take off air", "stop", () => setOnAir(st.id, false), "btn")
       : btn("Go on air", "play", () => setOnAir(st.id, true), "btn primary"),
     on ? btn("Skip", "next", () => post(`/api/stations/${st.id}/skip`, "Skipped")) : null,
-    btn("Edit", "edit", () => go({ type: "edit", id: st.id }), "btn ghost"),
+    on ? btn(S.listening === st.id ? "Stop listening" : "Listen", S.listening === st.id ? "stop" : "headphones",
+      () => listen(S.listening === st.id ? null : st.id), S.listening === st.id ? "btn primary" : "btn") : null,
+    remoteView() ? null : btn("Edit", "edit", () => go({ type: "edit", id: st.id }), "btn ghost"),
   );
   const parts = [head];
   if (s.state === "waiting") {
@@ -435,6 +447,9 @@ function renderStation(s) {
   if (on) {
     facts.push(el("span", { class: s.connected ? "ok" : "warn" },
       s.connected ? `Connected to ${s.server}` : `Reconnecting to ${s.server}…`));
+    if (s.audience) facts.push(el("span", { title: `Most at once: ${s.audience.peak}` },
+      el("b", {}, `${s.audience.listeners}`), s.audience.max ? ` of ${s.audience.max}` : "",
+      s.audience.listeners === 1 ? " listener" : " listeners"));
     if (s.now && s.now.gain_db) facts.push(el("span", {}, "Levelled ", el("b", {}, `${s.now.gain_db > 0 ? "+" : ""}${s.now.gain_db} dB`),
       s.now.levelled_by === "measured" ? " (measured)" : ""));
     if (s.measuring) facts.push(el("span", {}, `Measuring tracks: ${s.measuring} to go`));
@@ -509,6 +524,39 @@ async function post(path, message) {
     if (message) toast(message);
     render();
   } catch (e) { toast(e.message); }
+}
+
+// Listen: the broadcast as it goes to the server (about two seconds ahead
+// of what listeners hear). One <audio> outside the view, which redraws.
+function listen(id) {
+  let audio = $("#listen-audio");
+  if (!audio) {
+    audio = el("audio", { id: "listen-audio", preload: "none" });
+    audio.addEventListener("error", () => {
+      if (!S.listening) return;
+      S.listening = null;
+      toast("Listening stopped: the station went off air or Station Server can't be reached");
+      render();
+    });
+    document.body.append(audio);
+  }
+  S.listening = id;
+  if (id) {
+    audio.src = `/api/stations/${id}/listen.mp3?at=${Date.now()}`;
+    audio.play().catch((e) => { S.listening = null; toast(`Can't play it here: ${e.message}`); render(); });
+  } else {
+    audio.pause();
+    audio.removeAttribute("src");
+    audio.load();
+  }
+  render();
+}
+
+// A station listened to that goes off air stops being listened to.
+function checkListening() {
+  if (!S.listening) return;
+  const s = stationById(S.listening);
+  if (!s || s.state !== "on") listen(null);
 }
 
 // ---------- the station form ------------------------------------------------------
@@ -799,6 +847,10 @@ function renderSettings() {
       el("h2", {}, "Start when this computer starts"),
       el("label", { class: "check", style: "display:flex;gap:8px;align-items:center" }, login, "Start Station Server when I log in"),
       el("p", { class: "help" }, "Turn this on for the station's computer: after a restart, a power cut or Windows updates, Station Server starts in the background and the stations that were on air go back on air, with no window until you open one. On a Mac it is also started again if it ever stops unexpectedly. For a computer nobody logs in to, set Windows or macOS to log in automatically."),
+      el("h2", {}, "Alerts"),
+      alertsSettings(),
+      el("h2", {}, "Phone access"),
+      phoneSettings(),
       el("h2", {}, "Updates"),
       updateSettings(),
       el("h2", {}, "App"),
@@ -816,6 +868,101 @@ function renderSettings() {
       el("h3", {}, "ffmpeg"),
       el("p", { class: "help" }, S.state?.ffmpeg ? `Using ${S.state.ffmpeg}` : (S.state?.ffmpeg_error || "")),
     ),
+  );
+}
+
+// Settings › Alerts: who is told when a station is off air (alerts.py).
+function alertsSettings() {
+  const a = S.state?.alerts || {};
+  if (!S.alertsForm) S.alertsForm = { ...a, smtp_password: "", after_minutes: String(a.after_minutes ?? 3), smtp_port: String(a.smtp_port ?? 587) };
+  const v = S.alertsForm;
+  const msg = el("div", { class: "form-msg", role: "status" });
+  const field = (key, label, attrs = {}) => {
+    const input = el("input", { type: attrs.type || "text", value: v[key] ?? "", placeholder: attrs.placeholder || null, autocomplete: "off" });
+    input.addEventListener("input", () => { v[key] = input.value; });
+    return el("label", { class: attrs.narrow ? "narrow" : null }, label, input);
+  };
+  const security = el("select", {}, [["starttls", "STARTTLS (usually port 587)"], ["ssl", "SSL/TLS (usually port 465)"], ["none", "None"]]
+    .map(([val, words]) => el("option", { value: val }, words)));
+  security.value = v.smtp_security || "starttls";
+  security.addEventListener("change", () => { v.smtp_security = security.value; });
+  const backOn = el("input", { type: "checkbox" });
+  backOn.checked = v.back_on !== false;
+  backOn.addEventListener("change", () => { v.back_on = backOn.checked; });
+  const redraw = () => { const old = $("#alerts-settings"); if (old) old.replaceWith(alertsSettings()); };
+  async function save(quiet) {
+    try {
+      setState(await api("/api/settings", { alerts: { ...v, after_minutes: Number(v.after_minutes), smtp_port: Number(v.smtp_port) } }));
+      S.alertsForm = null;
+      if (!quiet) { toast("Saved"); redraw(); }
+      return true;
+    } catch (e) { msg.textContent = e.message; return false; }
+  }
+  async function test() {
+    if (!(await save(true))) return;
+    msg.className = "form-msg ok";
+    msg.textContent = "Sending…";
+    try {
+      const r = await api("/api/alerts/test", {});
+      setState(r);
+      msg.textContent = `Sent to ${r.sent.join(" and ")}. If it doesn't arrive in a minute, check the settings (and the spam folder).`;
+    } catch (e) { msg.className = "form-msg"; msg.textContent = e.message; }
+  }
+  const topic = () => { v.ntfy = `https://ntfy.sh/station-${Math.random().toString(36).slice(2, 8)}${Math.random().toString(36).slice(2, 8)}`; redraw(); };
+  const last = a.last;
+  return el("div", { id: "alerts-settings", class: "form" },
+    el("p", { class: "help" }, "If a station you've put on air goes off air, can't reach its server, or is playing silence or its fallback, and that lasts a few minutes (Station Server keeps trying to put it right first), you're told: on your phone, by email, or both. You're told again when it's back."),
+    el("fieldset", {}, el("legend", {}, "Phone notification"),
+      el("div", { class: "grid" }, field("ntfy", "ntfy topic", { placeholder: "https://ntfy.sh/your-own-topic-name" })),
+      el("div", { class: "actions" }, btn("Make up a topic name", "refresh", topic, "btn small")),
+      el("p", { class: "help" }, "Install the free ntfy app (iPhone or Android), tap +, and subscribe to the same topic name. Anyone who knows the name can read the alerts, so use one that's hard to guess.")),
+    el("fieldset", {}, el("legend", {}, "Email"),
+      el("div", { class: "grid" }, field("email_to", "Send to", { placeholder: "you@example.com" }), field("email_from", "From (optional)", { placeholder: "station@example.com" })),
+      el("div", { class: "grid" }, field("smtp_host", "Mail server", { placeholder: "smtp.gmail.com" }), field("smtp_port", "Port", { narrow: true }),
+        el("label", {}, "Security", security)),
+      el("div", { class: "grid" }, field("smtp_user", "User name", { placeholder: "usually your email address" }),
+        field("smtp_password", "Password", { type: "password", placeholder: a.has_smtp_password ? "unchanged" : "" })),
+      el("p", { class: "help" }, "Your email provider's outgoing (SMTP) server. For Gmail or Outlook, make an app password in your account's security settings and use that, not your usual password.")),
+    el("div", { class: "grid" }, field("after_minutes", "Alert after (minutes)", { narrow: true }),
+      el("label", { class: "check" }, backOn, "Tell me when it's back on air too")),
+    msg,
+    el("div", { class: "actions" }, btn("Save", "check", () => save(false), "btn primary"), btn("Send a test", "bell", test, "btn")),
+    last ? el("p", { class: "help" }, `Last alert ${dayTime(last.at)}: ${last.title}`,
+      last.errors && last.errors.length ? el("span", { class: "warn" }, ` (not sent: ${last.errors.join("; ")})`) : "") : null,
+    el("p", { class: "help" }, "Station Server can't tell anyone if the computer itself is off or has lost its internet connection. A free outside check of the stream (an uptime monitor) covers that."),
+  );
+}
+
+// Settings › Phone access: a second address for phones and other computers
+// on the same network, with a password (web.py RemoteAccess).
+function phoneSettings() {
+  const r = S.state?.remote || {};
+  const msg = el("div", { class: "form-msg", role: "status" });
+  const on = el("input", { type: "checkbox" });
+  on.checked = !!r.enabled;
+  const password = el("input", { type: "password", autocomplete: "new-password", placeholder: r.has_password ? "unchanged" : "at least 8 characters" });
+  const port = el("input", { type: "text", value: String(r.port || 8771), autocomplete: "off" });
+  const redraw = () => { const old = $("#phone-settings"); if (old) old.replaceWith(phoneSettings()); };
+  async function save(body) {
+    try {
+      setState(await api("/api/settings", body));
+      toast("Saved");
+      redraw();
+    } catch (e) { msg.textContent = e.message; if ("remote" in body) on.checked = !on.checked; }
+  }
+  on.addEventListener("change", () => save({ remote: on.checked, ...(password.value ? { remote_password: password.value } : {}), remote_port: port.value }));
+  return el("div", { id: "phone-settings", class: "form" },
+    el("p", { class: "help" }, "See the stations from your phone or another computer on the same network (Wi-Fi), listen, and put them on or off air. Changing settings stays on this computer."),
+    el("div", { class: "grid" },
+      el("label", {}, "Password", password),
+      el("label", { class: "narrow" }, "Port", port)),
+    el("div", { class: "actions" }, btn("Save password and port", "check", () => save({ remote_password: password.value, remote_port: port.value }), "btn small")),
+    el("label", { class: "check", style: "display:flex;gap:8px;align-items:center" }, on, "Let phones and other computers on this network in"),
+    msg,
+    r.error ? el("div", { class: "errors" }, r.error) : null,
+    r.running && r.addresses.length ? el("p", {}, "On your phone, open ", r.addresses.flatMap((a, i) => [i ? " or " : "", el("b", {}, a)]),
+      " and enter the password (any user name). Then use Add to Home Screen to keep it.") : null,
+    el("p", { class: "help" }, "The first time, Windows or macOS may ask whether Station Server may accept connections: allow it, on private networks. It isn't reachable from the internet; for that, use a VPN such as Tailscale on both."),
   );
 }
 
@@ -856,6 +1003,9 @@ function renderHelp() {
       p("Next week's export can be made any time: it waits, and goes on at the start of its week (the station's page says when). A week exported late, after its week has begun, goes on within a minute, after the playing track. Exporting the week on air again picks up the changes the same way."),
       el("h2", {}, "Levels and gaps"),
       p("With Even out the volume on, each track is played at about the same loudness: from its ReplayGain or Sound Check tags, or, for a track without them, from measuring it. Station Server measures every track once, in the background and gently (the coming tracks first), and remembers the results. Measuring also finds the silence at the start and end of each track, which is then left out, so songs follow on without dead air. Until a track has been measured it plays as it is."),
+      el("h2", {}, "Keeping an eye on it"),
+      p("On air, a station's page shows how many are listening (as the server counts them: listeners to a relay aren't included), and Listen plays the broadcast exactly as it goes to the server."),
+      p("Settings › Alerts tells you, on your phone or by email, when a station has been off air for a few minutes, and again when it's back. Settings › Phone access lets a phone or another computer on the same network see the stations, listen, and put them on or off air, with a password."),
       el("h2", {}, "Shows at set times"),
       p("In a station's Edit page, Shows pins a show to times in the week, like Saturday 20:00. A show is a recording, a playlist, or a folder of recordings played in name order. It starts exactly on time (cutting the song playing) or after that song. When it ends, the music comes back where the week's clock says, so the running order's times stay right. After a restart part-way through a show, the station joins the show where it should be."),
       el("h2", {}, "Its own app, and new versions"),
@@ -907,6 +1057,7 @@ addEventListener("beforeinstallprompt", (e) => {
 async function poll() {
   try {
     setState(await api("/api/state"));
+    checkListening();
     if (S.view.type !== "new" && S.view.type !== "edit" && S.view.type !== "log" && S.view.type !== "settings") render();
     else renderNav();
   } catch { /* the server is restarting, or gone; try again */ }

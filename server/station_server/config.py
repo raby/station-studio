@@ -116,14 +116,89 @@ def clean_station(data: dict, existing: Station | None = None) -> Station:
     return st
 
 
+SMTP_SECURITY = ("starttls", "ssl", "none")
+REMOTE_PORT = 8771
+
+
+@dataclass
+class Alerts:
+    """Who is told when a station goes off air (alerts.py)."""
+    after_minutes: int = 3  # off air this long before anyone is told
+    back_on: bool = True  # and told again when it's back
+    ntfy: str = ""  # a phone notification: an ntfy topic, https://ntfy.sh/<topic>
+    email_to: str = ""  # an email, sent through this mail server
+    email_from: str = ""
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_security: str = "starttls"
+    smtp_user: str = ""
+    smtp_password: str = ""
+
+    def to_json(self, secrets: bool = True) -> dict:
+        data = asdict(self)
+        if not secrets:
+            data["smtp_password"] = ""
+            data["has_smtp_password"] = bool(self.smtp_password)
+        return data
+
+
+def clean_alerts(data: dict, existing: Alerts | None = None) -> Alerts:
+    a = Alerts(**asdict(existing)) if existing else Alerts()
+    names = {f.name for f in fields(Alerts)}
+    for key, value in (data or {}).items():
+        if key not in names:
+            continue
+        if key == "smtp_password" and value in (None, ""):
+            continue  # the page never sees it; blank keeps it
+        setattr(a, key, value)
+    for key in ("ntfy", "email_to", "email_from", "smtp_host", "smtp_user", "smtp_password"):
+        setattr(a, key, str(getattr(a, key) or "").strip())
+    try:
+        a.after_minutes = int(a.after_minutes)
+        a.smtp_port = int(a.smtp_port or 0)
+    except (TypeError, ValueError):
+        raise ValueError("Minutes and the mail server's port are numbers") from None
+    if not 1 <= a.after_minutes <= 120:
+        raise ValueError("Alert after between 1 and 120 minutes")
+    if a.smtp_host and not 1 <= a.smtp_port <= 65535:
+        raise ValueError("The mail server's port is a number like 587")
+    a.back_on = bool(a.back_on)
+    if a.smtp_security not in SMTP_SECURITY:
+        a.smtp_security = "starttls"
+    if a.ntfy and not re.match(r"^https?://[^/\s]+/[\w-]{1,64}$", a.ntfy):
+        raise ValueError("The phone notification topic is a link like https://ntfy.sh/your-topic-name")
+    if a.email_to and not a.smtp_host:
+        raise ValueError("To send emails, enter the mail server too")
+    for addr in (a.email_to, a.email_from):
+        if addr and not re.match(r"^[^@\s,]+@[^@\s,]+$", addr):
+            raise ValueError(f"{addr} isn't an email address")
+    return a
+
+
 @dataclass
 class Config:
     stations: list[Station] = field(default_factory=list)
     open_window: bool = True
     check_updates: bool = True  # look for a new version once a day
+    alerts: Alerts = field(default_factory=Alerts)
+    # Phones and other computers on the network may see the stations and
+    # put them on or off air, with this password (web.RemoteAccess).
+    remote: bool = False
+    remote_password: str = ""
+    remote_port: int = REMOTE_PORT
 
     def station(self, sid: str) -> Station | None:
         return next((s for s in self.stations if s.id == sid), None)
+
+
+def clean_port(value) -> int:
+    try:
+        port = int(value)
+    except (TypeError, ValueError):
+        raise ValueError("The port is a number like 8771") from None
+    if not 1024 <= port <= 65535:
+        raise ValueError("The port is a number from 1024 to 65535")
+    return port
 
 
 class ConfigStore:
@@ -153,7 +228,14 @@ class ConfigStore:
             self.warnings.append(message)
             return Config()
         cfg = Config(open_window=bool(data.get("open_window", True)),
-                     check_updates=bool(data.get("check_updates", True)))
+                     check_updates=bool(data.get("check_updates", True)),
+                     remote=bool(data.get("remote", False)),
+                     remote_password=str(data.get("remote_password") or ""))
+        try:
+            cfg.remote_port = clean_port(data.get("remote_port", REMOTE_PORT))
+            cfg.alerts = clean_alerts(data.get("alerts") or {})
+        except ValueError as exc:
+            self.warnings.append(f"Some settings were left out: {exc}")
         for raw in data.get("stations") or []:
             if not isinstance(raw, dict):
                 continue
@@ -169,6 +251,10 @@ class ConfigStore:
             data = {
                 "open_window": self.config.open_window,
                 "check_updates": self.config.check_updates,
+                "alerts": self.config.alerts.to_json(),
+                "remote": self.config.remote,
+                "remote_password": self.config.remote_password,
+                "remote_port": self.config.remote_port,
                 "stations": [s.to_json() for s in self.config.stations],
             }
             tmp = self.path.with_suffix(".tmp")

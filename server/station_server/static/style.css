@@ -347,3 +347,18 @@ textarea.diagnostics {
   width: 100%; margin-top: 10px; font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   color: var(--text); background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 10px;
 }
+
+/* ---- phone access: a station's page on a phone ---- */
+body.remote [data-view="new"], body.remote [data-view="settings"], body.remote #btn-quit { display: none; }
+@media (max-width: 720px) {
+  .app { grid-template-columns: 1fr; grid-template-rows: auto 1fr; height: auto; min-height: 100vh; }
+  .sidebar { grid-row: 1; border-right: 0; border-bottom: 1px solid var(--border); padding: 12px 10px; }
+  .sidebar nav { display: flex; flex-wrap: wrap; gap: 2px 6px; align-items: center; }
+  .sidebar h2 { display: none; }
+  .nav-list { flex-direction: row; flex-wrap: wrap; }
+  .nav-item { width: auto; }
+  .brand { padding-bottom: 8px; }
+  .main { grid-row: 2; padding: 18px 16px 32px; overflow: visible; }
+  .view-head h1 { font-size: 23px; }
+  .tracks .artist, .tracks th:nth-child(3) { display: none; }
+}
