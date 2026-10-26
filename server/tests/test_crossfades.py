@@ -28,11 +28,21 @@ def steady(value: int, seconds: float) -> bytes:
 
 def test_mix_fades_the_tail_under_the_head():
     tail, head = struct.pack("<4h", 1000, 1000, 1000, 1000), struct.pack("<4h", 10, 10, 32767, -5)
-    assert samples(mix(tail, head, 0, 8)) == [1010, 1010, 32767, 495]  # clipped, not wrapped
+    # The tail fades on a curve: halfway through it's at a quarter.
+    assert samples(mix(tail, head, 0, 8)) == [1010, 1010, 32767, 245]  # full scale, not wrapped
     # The second half of the same fade, and a head longer than the tail.
-    assert samples(mix(tail, head + struct.pack("<2h", 7, 7), 4, 8)) == [510, 510, 32767, -5, 7, 7]
+    assert samples(mix(tail, head + struct.pack("<2h", 7, 7), 4, 8)) == [260, 260, 32767, -5, 7, 7]
     # A head shorter than the tail: the tail fades out over silence.
-    assert samples(mix(tail, b"", 0, 8)) == [1000, 1000, 500, 500]
+    assert samples(mix(tail, b"", 0, 8)) == [1000, 1000, 250, 250]
+
+
+def test_two_loud_songs_are_eased_not_clipped():
+    loud = struct.pack("<4h", 20000, -20000, 30000, -30000)
+    out = samples(mix(loud, loud, 0, 16))
+    assert out[0] == -out[1] and 24576 < out[0] < 32767  # 40000 rounded off below full scale
+    assert out[2] < 32767 and out[2] >= 30000  # never quieter than the incoming song itself
+    quiet = struct.pack("<2h", 30000, -30000)
+    assert samples(mix(struct.pack("<2h", 0, 0), quiet, 0, 4)) == [30000, -30000]  # untouched
 
 
 class Recorder:
@@ -67,7 +77,7 @@ def test_a_crossfade_overlaps_the_songs():
     half = BYTES_PER_SECOND // 4  # samples in half a second
     assert len(out) == 3 * half  # 1.5 s: the two songs overlap by half a second
     assert set(out[:half]) == {1000}  # A alone
-    assert out[half] == 1010 and abs(out[half + half // 2] - 510) <= 2  # A fading out under B
+    assert out[half] == 1010 and abs(out[half + half // 2] - 260) <= 2  # A fading out under B
     assert out[2 * half] == 10 and abs(out[-1]) <= 1  # B alone, faded out at the very end
 
 
@@ -89,6 +99,20 @@ def test_a_song_shorter_than_the_crossfade_and_one_that_cant_be_read():
     ch._decode = lambda *a, **k: iter(())
     assert not ch._play(2, 0.0, enc)
     assert ch._tail == tail  # still waiting for a track that plays
+
+
+def test_skipping_fades_out_quickly_whatever_the_crossfade():
+    ch = channel_of({"A": (1000, 6.0)}, crossfade=5)
+    decode = ch._decode
+
+    def skip_soon(*a, **k):
+        for i, chunk in enumerate(decode(*a, **k)):
+            if i == 55:
+                ch.skip()
+            yield chunk
+    ch._decode = skip_soon
+    ch._play(0, 0.0, Recorder())
+    assert len(ch._tail) == 2 * BYTES_PER_SECOND  # two seconds, not five
 
 
 def test_skipping_fades_out_and_stopping_doesnt():
@@ -155,6 +179,26 @@ def test_no_jingle_in_a_show_or_after_a_skip(tmp_path):
                       jingle_every=1)
     channel.run()
     assert played == ["A0", "S0", "S1", "S2", "A1", "A2", "J"]
+
+
+def test_no_jingle_while_the_fallback_plays(tmp_path):
+    write_wav(tmp_path / "jingles" / "a.wav", seconds=0.2)
+    runner = StationRunner(Station(name="R", jingles=str(tmp_path / "jingles")), None, tmp_path)
+    runner.jingles = JingleBag(runner.station)
+    assert runner._jingle().path.stem == "a"
+    runner.playing_fallback = lambda: True
+    assert runner._jingle() is None
+
+
+def test_a_show_is_timed_allowing_for_the_crossfade(tmp_path):
+    from station_server.schedule import Show
+    for n in "ab":
+        write_wav(tmp_path / "show" / f"{n}.wav", seconds=20.0)
+    show = Show.parse({"name": "Mix", "days": [5], "time": "20:00", "source": str(tmp_path / "show")})
+    runner = StationRunner(Station(name="R"), None, tmp_path)
+    assert runner.show_length(show) == pytest.approx(40, abs=0.5)
+    runner.station.crossfade = 3.0
+    assert runner.show_length(show) == pytest.approx(34, abs=0.5)  # each song's end overlaps what follows
 
 
 def test_jingles_are_shuffled_and_none_repeats_until_all_have_played(tmp_path):

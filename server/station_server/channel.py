@@ -103,6 +103,9 @@ class NowPlaying:
 # silence before trying the playlist again, so the server keeps the
 # station up rather than dropping listeners.
 STUCK_SILENCE_SECONDS = 30.0
+# Skipping fades the song out over at most this long, however long the
+# crossfade, so Skip still moves on straight away.
+SKIP_FADE_SECONDS = 2.0
 
 
 class Channel:
@@ -373,7 +376,10 @@ class Channel:
             return played
         if done < len(tail):  # a track shorter than the crossfade
             out(mix(tail[done:], b"", done, len(tail)))
-        self._tail = bytes(held)
+        keep = len(held)
+        if self._skip.is_set():
+            keep = min(keep, int(SKIP_FADE_SECONDS * BYTES_PER_SECOND))
+        self._tail = bytes(held[:keep // 4 * 4])  # whole frames
         return played
 
     def _flush(self, encoder: Encoder) -> None:

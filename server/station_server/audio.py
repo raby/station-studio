@@ -81,11 +81,28 @@ def silence(seconds: float) -> Iterator[bytes]:
         left -= n
 
 
+# Above this, what the fading tail adds is eased towards full scale instead
+# of clipped. The incoming song itself is never changed.
+_KNEE = 24576
+
+
+def _soft(v: int, head: int) -> int:
+    base = max(_KNEE, head)
+    if v <= base:
+        return v
+    room, excess = 32767 - base, v - base
+    return base + room * excess // (excess + room) if room > 0 else 32767
+
+
 def mix(tail: bytes, head: bytes, done: int, total: int) -> bytes:
     """A crossfade, a piece at a time: `tail` (the end of one track, `done`
     bytes into a fade `total` bytes long) fading out under `head` (the
     start of the next) at full volume. `head` may be shorter (a very short
-    track): the rest of the tail fades out over silence."""
+    track): the rest of the tail fades out over silence.
+
+    The tail fades on a curve, quickly at first, so the two songs aren't
+    both loud for long, and where they add up past full scale the peaks are
+    rounded off softly (no harsh clipping)."""
     t = array("h")
     t.frombytes(tail)
     h = array("h")
@@ -96,8 +113,13 @@ def mix(tail: bytes, head: bytes, done: int, total: int) -> bytes:
     first, frames = done // 4, max(1, total // 4)
     out = array("h", h)
     for i in range(len(t)):
-        v = h[i] + int(t[i] * (1.0 - (first + i // 2) / frames))
-        out[i] = 32767 if v > 32767 else -32768 if v < -32768 else v
+        g = 1.0 - (first + i // 2) / frames
+        v = h[i] + int(t[i] * g * g)
+        if v > _KNEE:
+            v = _soft(v, h[i])
+        elif v < -_KNEE:
+            v = -_soft(-v, -h[i])
+        out[i] = v
     if sys.byteorder == "big":
         out.byteswap()
     return out.tobytes() + head[len(tail):]

@@ -34,7 +34,7 @@ from station_server.config import Config, ConfigStore, Station, clean_alerts, cl
 from station_server.desktop import Login, bundled
 from station_server.listen import Listeners, Tap
 from station_server.playlist import PlaylistError, Queue, load_queue
-from station_server.schedule import Show, WeekStart, plan, position, track_seconds, where_now
+from station_server.schedule import Show, WeekStart, plan, position, step_seconds, track_seconds, where_now
 from station_server.senders import IN_USE, InUse, SenderError, StreamInfo, sender_from_url, someone_sending
 from station_server.weeks import WeekPicker
 from station_server.window import mac_app_bundle
@@ -187,7 +187,7 @@ class StationRunner:
         # The show on air: (show, when listeners heard it start, its length).
         self.show_on: tuple[Show, datetime, float] | None = None
         self._interrupted = 0  # the song a show cut into
-        self._show_lengths: dict[str, tuple[float, float]] = {}  # source -> (mtime, seconds)
+        self._show_lengths: dict[str, tuple[tuple, float]] = {}  # source -> ((mtime, crossfade), seconds)
         self.jingles: JingleBag | None = None
 
     # ---- control --------------------------------------------------------
@@ -249,15 +249,24 @@ class StationRunner:
             mtime = p.stat().st_mtime
         except OSError:
             return 0.0
+        key = (mtime, self.station.crossfade)
         known = self._show_lengths.get(show.source)
-        if known and known[0] == mtime:
+        if known and known[0] == key:
             return known[1]
         try:
-            length = sum(track_seconds(t) for t in show_queue(show, self.station).tracks)
+            length = sum(step_seconds(t) for t in self._show_queue(show).tracks)
         except (PlaylistError, OSError):
             length = 0.0
-        self._show_lengths[show.source] = (mtime, length)
+        self._show_lengths[show.source] = (key, length)
         return length
+
+    def _show_queue(self, show: Show) -> Queue:
+        """A show's queue, its tracks timed allowing for the crossfade (each
+        one's end overlaps the next, or the music after the show)."""
+        queue = show_queue(show, self.station)
+        for t in queue.tracks:
+            t.step_adjust = -self.station.crossfade
+        return queue
 
     def _heard_now(self) -> datetime:
         """The time listeners are hearing: audio is sent a little ahead."""
@@ -284,14 +293,14 @@ class StationRunner:
 
     def _start_show(self, show: Show, at: datetime) -> None:
         try:
-            queue = show_queue(show, self.station)
+            queue = self._show_queue(show)
         except (PlaylistError, OSError) as exc:
             logger.warning("%s: couldn't play %s: %s", self.station.name, show.name, exc)
             return
         ch = self.channel
         interrupted = ch.now.index if ch and ch.now and not ch.in_show else 0
         logger.info("%s: %s %s", self.station.name, show.name, "now" if show.on_time else "after this song")
-        self.show_on = (show, at, sum(track_seconds(t) for t in queue.tracks))
+        self.show_on = (show, at, sum(step_seconds(t) for t in queue.tracks))
         self._interrupted = interrupted
         ch.insert(queue, self._after_show(interrupted), now=show.on_time)
 
@@ -429,9 +438,9 @@ class StationRunner:
         if joining:  # back on air part-way through a show
             show, at, length = joining
             try:
-                queue = show_queue(show, st)
+                queue = self._show_queue(show)
                 elapsed = (datetime.now().astimezone() - at).total_seconds()
-                index, offset = position([track_seconds(t) for t in queue.tracks], elapsed)
+                index, offset = position([step_seconds(t) for t in queue.tracks], elapsed)
                 after = self._after_show(0)
                 self.show_on = joining
                 logger.info("%s: joining %s part-way", st.name, show.name)
@@ -441,7 +450,7 @@ class StationRunner:
         self.channel = Channel(
             queue, self.sender, self.ffmpeg, bitrate=st.bitrate, start=index, offset=offset,
             level=st.level, on_played=self._played, keep_going=True, after=after,
-            fallback=self._fallback, crossfade=st.crossfade, jingle=self.jingles,
+            fallback=self._fallback, crossfade=st.crossfade, jingle=self._jingle if self.jingles else None,
             jingle_every=st.jingle_every, jingle_title=st.name,
         )
         threading.Thread(target=self._watch, args=(done,), daemon=True).start()
@@ -465,6 +474,13 @@ class StationRunner:
                 counts = None
             if not done.is_set():
                 self.audience = {**counts, "at": _local(time.time()).isoformat(timespec="seconds")} if counts else None
+
+    def _jingle(self) -> Track | None:
+        """The next jingle, but none while the fallback plays instead of the
+        playlist (the fallback may well be jingles itself)."""
+        if self.jingles is None or self.playing_fallback():
+            return None
+        return self.jingles()
 
     def playing_fallback(self) -> bool:
         ch = self.channel
@@ -570,7 +586,7 @@ class StationRunner:
             if show_on:
                 out["now"]["show"] = show_on[0].name
                 # When it really started (a show after the song starts late).
-                began = _local(now.started) - timedelta(seconds=sum(track_seconds(t) for t in ch.queue.tracks[:now.index]))
+                began = _local(now.started) - timedelta(seconds=sum(step_seconds(t) for t in ch.queue.tracks[:now.index]))
                 show_on = (show_on[0], began, show_on[2])
             shows = [(show, self.show_length(show)) for show in self.shows()]
             if self.queue and self.queue.tracks:
