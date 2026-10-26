@@ -214,8 +214,19 @@ function renderNav() {
         type: "button", class: "nav-item", "aria-current": current ? "true" : null,
         title: STATE_WORDS[s.state],
         onclick: () => go({ type: "station", id: s.station.id }),
-      }, el("span", {}, s.station.name), el("span", { class: `dot ${s.state}`, "aria-label": STATE_WORDS[s.state] })),
+      }, el("span", {}, s.station.name),
+      s.live ? el("span", { class: "nav-mark", title: `Live: ${s.live.presenter || "a presenter"}` }, icon("mic")) : null,
+      S.listening === s.station.id ? el("span", { class: "nav-mark", title: "Listening" }, icon("headphones")) : null,
+      el("span", { class: `dot ${s.state}`, "aria-label": STATE_WORDS[s.state] })),
     ));
+  }
+  // Listening to one station while looking at another (or at Settings):
+  // the way to stop it is always here.
+  const heard = S.listening && stationById(S.listening);
+  if (heard) {
+    list.append(el("li", {}, el("button", {
+      type: "button", class: "nav-item nav-listening", title: `Stop listening to ${heard.station.name}`, onclick: () => listen(null),
+    }, icon("stop"), el("span", {}, "Stop listening"))));
   }
   for (const b of document.querySelectorAll(".nav-item[data-view]")) {
     b.setAttribute("aria-current", b.dataset.view === S.view.type ? "true" : "false");
@@ -1250,7 +1261,7 @@ function renderHelp() {
         el("li", {}, "Keep Winamp and iTunes installed, closed, for a week or two. To go back: Take off air here, then start Winamp's plugin again.")),
       p("If going on air says something else is already sending to the server, Winamp's plugin (or another copy of Station Server) is still connected: a server takes one source at a time."),
       h2("Two stations on one computer"),
-      p("Add a station for each. They run side by side, each with its own playlist, server, clock and play log, and go on and off air separately: for example Rebirth Classics to port 8000 and Rebirth Radio to port 8002 of the same server. If both take live shows, each needs its own live shows port, like 8010 and 8020."),
+      p("Add a station for each. They run side by side, each with its own playlist, server, clock and play log, and go on and off air separately: for example Rebirth Classics to port 8000 and Rebirth Radio to port 8002 of the same server, or each to a different server altogether. The sidebar shows each one's state, a microphone while a presenter is live, and headphones on the one you're listening to: Listen plays one station at a time, and Stop listening at the foot of the station list stops it from any page. If both take live shows, each needs its own live shows port, like 8010 and 8020."),
     ],
     onair: () => [
       el("h2", {}, "The station's page"),
