@@ -173,7 +173,9 @@ function setState(state) {
 // Stored as one URL (see senders.py); the form shows its parts.
 
 function parseServer(url) {
-  const out = { kind: "shoutcast", host: "", port: "8000", sid: "1", mount: "/stream", user: "source" };
+  const out = { kind: "shoutcast", host: "", port: "8000", sid: "1", mount: "/stream", user: "source", max: "20" };
+  const sv = /^serve:\/\/[^:/?]*:(\d+)(?:\?(.*))?$/i.exec(url || "");
+  if (sv) return { ...out, kind: "serve", port: sv[1], max: new URLSearchParams(sv[2] || "").get("max") || "20" };
   const m = /^(shoutcast|icecast):\/\/(?:([^@/]*)@)?([^:/?]+)(?::(\d+))?([^?]*)(?:\?(.*))?$/i.exec(url || "");
   if (!m) return out;
   out.kind = m[1].toLowerCase();
@@ -189,6 +191,7 @@ function parseServer(url) {
 }
 
 function buildServer(p) {
+  if (p.kind === "serve") return p.port ? `serve://:${p.port}?max=${p.max || 20}` : "";
   if (!p.host) return "";
   if (p.kind === "icecast") {
     const user = p.user && p.user !== "source" ? `${encodeURIComponent(p.user)}@` : "";
@@ -196,6 +199,12 @@ function buildServer(p) {
     return `icecast://${user}${p.host}:${p.port}${mount}`;
   }
   return `shoutcast://${p.host}:${p.port}${p.sid && p.sid !== "1" ? `?sid=${p.sid}` : ""}`;
+}
+
+// "serve://:8000?max=20" as people say it.
+function serverLabel(url) {
+  const p = parseServer(url);
+  return p.kind === "serve" && url ? `This computer, port ${p.port}` : url;
 }
 
 // ---------- sidebar -----------------------------------------------------------
@@ -457,7 +466,7 @@ function renderStation(s) {
       el("div", { class: `status-pill ${s.state}${rehearsing ? " rehearsal" : ""}` }, el("span", { class: "dot" }),
         rehearsing ? (on ? "Rehearsal" : `Rehearsal: ${STATE_WORDS[s.state]}`) : STATE_WORDS[s.state]),
       el("h1", {}, st.name),
-      el("div", { class: "meta" }, (rehearsing ? `Test stream: ${st.test_server}` : st.server) || "No server set"),
+      el("div", { class: "meta" }, (rehearsing ? `Test stream: ${serverLabel(st.test_server)}` : serverLabel(st.server)) || "No server set"),
     ),
     el("div", { class: "spacer" }),
     rehearsing ? btn("Go live", "play", () => goLive(st), "btn primary") : null,
@@ -512,7 +521,8 @@ function renderStation(s) {
   const facts = [];
   if (on) {
     facts.push(el("span", { class: s.connected ? "ok" : "warn" },
-      s.connected ? `Connected to ${s.server}` : `Reconnecting to ${s.server}…`));
+      parseServer(rehearsing ? st.test_server : st.server).kind === "serve" ? `Streaming from ${s.server}`
+        : s.connected ? `Connected to ${s.server}` : `Reconnecting to ${s.server}…`));
     if (s.audience) facts.push(el("span", { title: `Most at once: ${s.audience.peak}` },
       el("b", {}, `${s.audience.listeners}`), s.audience.max ? ` of ${s.audience.max}` : "",
       s.audience.listeners === 1 ? " listener" : " listeners"));
@@ -593,7 +603,10 @@ async function setOnAir(id, on, rehearse = false) {
 }
 
 async function goLive(st) {
-  if (!confirm(`Go live on ${st.server}?\n\nStop Winamp's SHOUTcast plugin first (and iTunes): the server takes one source at a time. Listeners hear a short gap while the station switches over.`)) return;
+  const here = parseServer(st.server).kind === "serve";
+  if (!confirm(here
+    ? `Go live from this computer, port ${parseServer(st.server).port}?\n\nIf the SHOUTcast DNAS or Icecast runs on this computer on that port, stop it first. Listeners reconnect to Station Server instead.`
+    : `Go live on ${st.server}?\n\nStop Winamp's SHOUTcast plugin first (and iTunes): the server takes one source at a time. Listeners hear a short gap while the station switches over.`)) return;
   setOnAir(st.id, true, false);
 }
 
@@ -861,9 +874,11 @@ function renderForm(view) {
     msg.textContent = "Connecting…";
     try {
       const r = await api("/api/check/server", { ...formPayload(v), id: s?.station.id, test });
-      msg.textContent = r.on_air
-        ? `This station is on air to ${r.server} now, so the connection works.`
-        : `Connected to ${r.server}: the server accepted the password.`;
+      msg.textContent = (test ? buildTestServer(v) : buildServer(v)).startsWith("serve:")
+        ? (r.on_air ? `Streaming from ${r.server} now.` : `Port ${test ? v.t_port || v.port : v.port} is free on this computer: listeners can connect once it's on air.`)
+        : r.on_air
+          ? `This station is on air to ${r.server} now, so the connection works.`
+          : `Connected to ${r.server}: the server accepted the password.`;
     } catch (e) { msg.className = "form-msg"; msg.textContent = e.message; }
   }
   async function save() {
@@ -902,6 +917,7 @@ function renderForm(view) {
   }
 
   const isIce = v.kind === "icecast";
+  const isServe = v.kind === "serve";
   const tab = STATION_TABS.some((t) => t[0] === S.view.tab) ? S.view.tab : "station";
   function openTab(id) {
     S.view.tab = id;
@@ -942,29 +958,34 @@ function renderForm(view) {
     server: () => [
       el("fieldset", {}, el("legend", {}, "Server"),
         el("div", { class: "grid" },
-          select("kind", "Type", [["shoutcast", "SHOUTcast"], ["icecast", "Icecast"]], true),
-          text("host", "Address", { placeholder: "81.150.147.206" }),
+          select("kind", "Type", [["serve", "This computer"], ["shoutcast", "SHOUTcast"], ["icecast", "Icecast"]], true),
+          isServe ? null : text("host", "Address", { placeholder: "81.150.147.206" }),
           text("port", "Port", { narrow: true, placeholder: "8000" }),
-          isIce ? text("mount", "Mount", { narrow: true, placeholder: "/classics" }) : text("sid", "Stream", { narrow: true, placeholder: "1" })),
+          isServe ? text("max", "Most listeners", { narrow: true, placeholder: "20" })
+            : isIce ? text("mount", "Mount", { narrow: true, placeholder: "/classics" }) : text("sid", "Stream", { narrow: true, placeholder: "1" })),
         el("div", { class: "grid" },
           isIce ? text("user", "User", { narrow: true }) : null,
-          text("password", "Source password", { type: "password", placeholder: v.has_password ? "unchanged" : "" }),
+          isServe ? null : text("password", "Source password", { type: "password", placeholder: v.has_password ? "unchanged" : "" }),
           select("bitrate", "MP3 bitrate", [["64", "64 kbps"], ["96", "96 kbps"], ["128", "128 kbps"], ["192", "192 kbps"], ["256", "256 kbps"], ["320", "320 kbps"]], true)),
-        el("p", { class: "help" }, isIce
-          ? "Icecast 2.4 or later. The mount is the stream's name on the server, like /classics."
-          : "SHOUTcast 1.9 or 2.x. Use the listener port, the one in the station's link; Station Server connects to the port above it, as Winamp does. Stream is 1 unless the server runs several."),
-        el("div", { class: "actions" }, btn("Test connection", "refresh", () => checkServer(false), "btn small")),
+        el("p", { class: "help" }, isServe
+          ? `Station Server is the server: listeners connect straight to this computer on this port, as they would to a SHOUTcast DNAS, so a DNAS's old links keep working on the same port. From outside this network, forward the port on the router to this computer. Each listener takes about ${v.bitrate || 128} kbps of the internet connection's upload: Help › Streaming from this computer has a guide to how many it can take.`
+          : isIce
+            ? "Icecast 2.4 or later. The mount is the stream's name on the server, like /classics."
+            : "SHOUTcast 1.9 or 2.x. Use the listener port, the one in the station's link; Station Server connects to the port above it, as Winamp does. Stream is 1 unless the server runs several."),
+        el("div", { class: "actions" }, btn(isServe ? "Check the port" : "Test connection", "refresh", () => checkServer(false), "btn small")),
         serverMsg,
         el("h3", {}, "Test stream (optional)"),
-        el("p", { class: "help" }, isIce
-          ? "A spare mount to rehearse on before going live, like /test. Leave the address blank for the same server."
-          : "A spare stream to rehearse on before going live: another port of the same server, or stream 2 of a SHOUTcast 2 server. Leave the address blank for the same server."),
+        el("p", { class: "help" }, isServe
+          ? "A spare port to rehearse on before going live, like 8100: listen with the Listen button, or a player on this network."
+          : isIce
+            ? "A spare mount to rehearse on before going live, like /test. Leave the address blank for the same server."
+            : "A spare stream to rehearse on before going live: another port of the same server, or stream 2 of a SHOUTcast 2 server. Leave the address blank for the same server."),
         el("div", { class: "grid" },
-          text("t_host", "Address", { placeholder: v.host || "same as live" }),
-          text("t_port", "Port", { narrow: true, placeholder: v.port || "8000" }),
-          isIce ? text("t_mount", "Mount", { narrow: true, placeholder: "/test" }) : text("t_sid", "Stream", { narrow: true, placeholder: "1" }),
-          text("test_password", "Password", { type: "password", placeholder: v.has_test_password ? "unchanged" : "same as live" })),
-        el("div", { class: "actions" }, btn("Test the test stream", "refresh", () => checkServer(true), "btn small")),
+          isServe ? null : text("t_host", "Address", { placeholder: v.host || "same as live" }),
+          text("t_port", "Port", { narrow: true, placeholder: isServe ? "8100" : v.port || "8000" }),
+          isServe ? null : isIce ? text("t_mount", "Mount", { narrow: true, placeholder: "/test" }) : text("t_sid", "Stream", { narrow: true, placeholder: "1" }),
+          isServe ? null : text("test_password", "Password", { type: "password", placeholder: v.has_test_password ? "unchanged" : "same as live" })),
+        el("div", { class: "actions" }, btn(isServe ? "Check the test port" : "Test the test stream", "refresh", () => checkServer(true), "btn small")),
         testMsg,
       ),
     ],
@@ -1340,6 +1361,7 @@ const HELP_TABS = [
   ["start", "Getting started", "play"],
   ["onair", "On air", "radio"],
   ["live", "Live shows", "mic"],
+  ["stream", "Streaming", "tower"],
   ["unattended", "Unattended", "power"],
   ["new", "What's new", "bell"],
   ["trouble", "Problems", "alert"],
@@ -1357,7 +1379,7 @@ function renderHelp() {
       p("Add a station. Its settings are in tabs:"),
       list(
         "Station: its name, station-studio's exports folder for it (each week is played in turn; leave it blank if Station Studio sends the weeks), the music folders, and a fallback to play if the music can't be read.",
-        "Server: the server's address, port and source password (the ones in Winamp's SHOUTcast plugin), and a spare test stream to rehearse on. Test connection checks them.",
+        "Server: the server's address, port and source password (the ones in Winamp's SHOUTcast plugin), and a spare test stream to rehearse on. Test connection checks them. Or choose This computer, and Station Server is the server itself (Help › Streaming).",
         "Playback: evening out the volume, the crossfade, when the week starts, and jingles.",
         "Shows: recordings or playlists that go out at set times.",
         "Live shows: presenters going live from their own encoder."),
@@ -1438,8 +1460,33 @@ function renderHelp() {
       p("Settings › App › Install as app gives Station Server its own icon in the Dock or taskbar, with Add a station and Play log on its menu. Opened from there when Station Server isn't running, the window starts it."),
       p("When a new version is out, a note at the foot of the sidebar offers Update now. Station Server downloads it from its GitHub page, checks it's the genuine file and restarts; stations that were on air go back on air. Settings › Updates has Check for updates, and can stop it asking GitHub."),
     ],
+    stream: () => [
+      el("h2", {}, "Streaming from this computer"),
+      p("Station Server can be the station's server itself: listeners connect straight to this computer, with no SHOUTcast DNAS, Icecast or hosting needed. In Edit › Server, choose This computer as the type, a port (8000 keeps a DNAS's old links working) and the most listeners to allow, then go on air."),
+      list(
+        "Any address on the port plays the station (/, /;, /stream), with song titles for players that show them. A browser opening it gets a small page with a player.",
+        "It answers like a SHOUTcast or Icecast server (/7.html, /stats, /status-json.xsl, /listen.pls), so listener counts, alerts and station directories work.",
+        "A listener whose connection can't keep up is let go, rather than holding up the others.",
+        "Taking the station off air ends everyone's stream, as a server would."),
+      h2("Listeners from outside this network"),
+      list(
+        "On the router, forward the port (TCP) to this computer. Give the computer a fixed address on the network first (the router's DHCP reservation), so the forward keeps pointing at it.",
+        "Listeners use the router's public address and the port, like http://81.150.147.206:8000/. If the address changes now and then, a free dynamic DNS name (DuckDNS, say) keeps one name pointing at it.",
+        "Windows and macOS may ask whether Station Server may accept connections: allow it.",
+        "Check from a phone on mobile data, not the same Wi-Fi."),
+      h2("How many listeners"),
+      p("Each listener takes the stream's bitrate from the internet connection's upload, and the rest of the house needs some too. Measure the upload at speedtest.net, then roughly:"),
+      el("table", { class: "help-table" },
+        el("tr", {}, el("th", {}, "Upload"), el("th", {}, "64 kbps"), el("th", {}, "128 kbps"), el("th", {}, "192 kbps")),
+        ...[5, 10, 20, 50].map((mbps) => el("tr", {}, el("td", {}, `${mbps} Mbps`),
+          ...[64, 128, 192].map((kbps) => el("td", {}, String(Math.floor(mbps * 1000 * 0.7 / kbps))))))),
+      p("Set Most listeners a little under that; when it's full, the next listener is turned away rather than everyone stuttering. For more listeners than the connection can take, send to a hosted SHOUTcast or Icecast server instead."),
+    ],
     new: () => [
-      el("h2", {}, "0.14: on your website"),
+      el("h2", {}, "0.15: streaming from this computer"),
+      list(
+        "Station Server can be the station's server: choose This computer in Edit › Server, and listeners connect straight to it. No DNAS, Icecast or hosting needed (Help › Streaming)."),
+      h2("0.14: on your website"),
       list(
         "Settings › Website publishes each station's now playing, coming up and just played to a GitHub Pages site, with a box to embed on your website."),
       h2("0.13: Station Studio link"),

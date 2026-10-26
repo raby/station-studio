@@ -163,12 +163,31 @@ def clean_station(data: dict, existing: Station | None = None) -> Station:
         raise ValueError("Shows must be a list")
     st.shows = [Show.parse(x).to_json() for x in st.shows]
     for addr in (st.server, st.test_server):
-        if addr and not re.match(r"^(shoutcast|icecast)://", addr, re.I):
-            raise ValueError("The server address starts shoutcast:// or icecast://")
+        if addr and not re.match(r"^(shoutcast|icecast|serve)://", addr, re.I):
+            raise ValueError("The server address starts shoutcast://, icecast:// or serve://")
+        if addr and addr.lower().startswith("serve://"):
+            _check_serve(addr, st)
     if st.test_server and st.test_server == st.server:
         raise ValueError("The test stream must be a different stream from the live one")
     st.id = existing.id if existing else (str(data.get("id") or "") or uuid.uuid4().hex[:10])
     return st
+
+
+def serve_port(addr: str) -> int | None:
+    """The port of a serve:// address (streaming from this computer)."""
+    m = re.match(r"^serve://[^:/?]*:(\d+)", addr or "", re.I)
+    return int(m.group(1)) if m else None
+
+
+def _check_serve(addr: str, st: Station) -> None:
+    port = serve_port(addr)
+    if port is None or not 1024 <= port <= 65535:
+        raise ValueError("Stream on a port between 1024 and 65535, like 8000")
+    if st.live and port in (st.live_port, st.live_port + 1):
+        raise ValueError(f"Port {port} is the live shows port: stream on another one")
+    m = re.search(r"[?&]max=(\d+)", addr)
+    if m and not 1 <= int(m.group(1)) <= 500:
+        raise ValueError("Allow between 1 and 500 listeners")
 
 
 def _clean_presenters(given, before: list[dict]) -> list[dict]:
