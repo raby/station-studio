@@ -26,10 +26,13 @@ DEFAULT_STATIONS = [
     {
         "name": "Rebirth Radio",
         "url": "https://sh.uk.audio-stream.com/proxy/adgerdes?mp=/stream",
+        # What's on, from Rebirth's Station Server (Settings › Website).
+        "feed": "https://raby.github.io/rebirth-now/rebirth-radio.json",
     },
     {
         "name": "Rebirth Classics",
         "url": "http://81.150.147.206:8000",
+        "feed": "https://raby.github.io/rebirth-now/rebirth-classics.json",
     },
 ]
 # Settings from before the player kept track of which built-in stations it
@@ -146,6 +149,9 @@ def _stations(value) -> list[dict]:
                 st["tags"] = tags
             if v.get("tuner") is False:  # left off the Radio page's tuner dial
                 st["tuner"] = False
+            feed = v.get("feed")  # what's on, from its Station Server (whatson.py); "" once taken off
+            if isinstance(feed, str) and (not feed or feed.startswith(("http://", "https://"))):
+                st["feed"] = feed
             out.append(st)
     return out
 
@@ -276,6 +282,12 @@ def config_from_json(data: dict) -> Config:
             cfg.stations.append(dict(st))
         offered.append(st["url"])
     cfg.defaults_offered = offered
+    # A built-in station given a what's-on feed since: yours gets it too,
+    # unless you took it off.
+    for st in cfg.stations:
+        default = next((d for d in DEFAULT_STATIONS if d["url"] == st["url"] and d.get("feed")), None)
+        if default and "feed" not in st:
+            st["feed"] = default["feed"]
     cfg.recent_stations = _stations(data.get("recent_stations"))[:MAX_RECENT]
     if isinstance(data.get("check_updates"), bool):
         cfg.check_updates = data["check_updates"]

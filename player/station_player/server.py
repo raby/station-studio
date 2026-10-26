@@ -42,6 +42,8 @@ from station_player.config import ConfigStore
 from station_player.desktop import Desktop
 from station_player.library import AUDIO_EXTENSIONS, OPENED_ID, Library, _short_hash, name_key
 from station_player.tags import MAX_ART_BYTES, TagCache, folder_cover, image_type, read_art
+from station_player.whatson import Feeds, clean_feed_url
+from station_player.whatson import view as whatson_view
 
 logger = logging.getLogger(__name__)
 
@@ -203,6 +205,7 @@ class PlayerApp:
         self._generation = 0
         self._installed = -1
         self._titles: dict[str, str | None] = {}  # station url -> song
+        self.feeds = Feeds()  # stations' what's-on feeds (whatson.py)
         # Files opened with "Open With" this session, and the latest
         # request for the page to play one.
         self.opened: list[Path] = []
@@ -1030,6 +1033,15 @@ class PlayerApp:
 
     # ---- radio -----------------------------------------------------------
 
+    def whats_on(self, sid: str) -> dict:
+        """What's on one of your stations, from its what's-on feed: see
+        whatson.view. LookupError for an unknown station, or one without a feed."""
+        with self._lock:
+            st = next((s for s in self.store.config.stations if station_id(s["url"]) == sid), None)
+        if st is None or not st.get("feed"):
+            raise LookupError("That station has no what's-on feed")
+        return whatson_view(self.feeds.get(st["feed"]), datetime.now().astimezone())
+
     def station_url(self, sid: str) -> str | None:
         with self._lock:
             for s in self.store.config.stations:
@@ -1218,16 +1230,18 @@ class PlayerApp:
             cfg.recent_stations.clear()
         self._prune_logos()
 
-    def update_station(self, url: str, name=None, new_url=None, tags=None, tuner=None) -> None:
-        """Rename a station, change its address, its tags and/or whether
-        it's on the tuner (None leaves each as it is). Raises LookupError
-        for an unknown station."""
+    def update_station(self, url: str, name=None, new_url=None, tags=None, tuner=None, feed=None) -> None:
+        """Rename a station, change its address, its tags, whether it's on
+        the tuner and/or its what's-on feed (None leaves each as it is).
+        Raises LookupError for an unknown station."""
         if tuner is not None and not isinstance(tuner, bool):
             raise ValueError("tuner must be true or false")
         if name is not None:
             name = str(name).strip()
             if not name:
                 raise ValueError("Station name is empty")
+        if feed is not None:
+            feed = clean_feed_url(feed)
         resolved = None
         if new_url is not None:
             new_url = str(new_url).strip()
@@ -1262,6 +1276,8 @@ class PlayerApp:
                 station.pop("tuner", None)
             elif tuner is False:
                 station["tuner"] = False
+            if feed is not None:
+                station["feed"] = feed
 
     def move_station(self, url: str, to) -> None:
         if not isinstance(to, int) or isinstance(to, bool):
@@ -1511,6 +1527,11 @@ def make_handler(app: PlayerApp):
                                         "folder": str(app.recorder.folder)})
             if path.startswith("/api/directory/"):
                 return self._serve_directory(path, head_only)
+            if path == "/api/whatson":
+                try:
+                    return self._send_json(app.whats_on(parse_qs(urlparse(self.path).query).get("station", [""])[0]))
+                except LookupError as exc:
+                    return self._error(HTTPStatus.NOT_FOUND, str(exc))
             if path == "/api/nowplaying":
                 q = parse_qs(urlparse(self.path).query)
                 sid, preview = q.get("station", [""])[0], q.get("u", [""])[0]
@@ -1732,7 +1753,7 @@ def make_handler(app: PlayerApp):
                 elif path == "/api/stations/update":
                     try:
                         app.update_station(str(data.get("url", "")), data.get("name"), data.get("new_url"),
-                                           data.get("tags"), data.get("tuner"))
+                                           data.get("tags"), data.get("tuner"), data.get("feed"))
                     except LookupError:
                         return self._error(HTTPStatus.NOT_FOUND, "No such station")
                 elif path == "/api/stations/move":

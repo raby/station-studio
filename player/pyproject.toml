@@ -9,7 +9,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "station-player"
-version = "0.18.0"
+version = "0.19.0"
 description = "Local music and radio player for station-studio playlists"
 readme = "README.md"
 license = { file = "LICENSE" }
