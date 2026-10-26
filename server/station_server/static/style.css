@@ -410,3 +410,5 @@ body.remote [data-view="new"], body.remote [data-view="settings"], body.remote #
 .qr-row { display: flex; flex-wrap: wrap; gap: 20px; }
 .qr { display: grid; gap: 6px; justify-items: start; }
 .qr img { border-radius: 8px; background: #fff; }
+
+.inline-link { color: inherit; font-weight: 600; text-decoration: underline; }

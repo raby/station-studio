@@ -521,8 +521,15 @@ function renderStation(s) {
   const facts = [];
   if (on) {
     facts.push(el("span", { class: s.connected ? "ok" : "warn" },
-      parseServer(rehearsing ? st.test_server : st.server).kind === "serve" ? `Streaming from ${s.server}`
+      s.serving ? `Streaming from ${s.server}`
         : s.connected ? `Connected to ${s.server}` : `Reconnecting to ${s.server}…`));
+    if (s.changed) facts.push(el("span", { class: "warn" }, "New server settings apply when it next goes on air: ",
+      el("a", { href: "#", class: "inline-link", onclick: async (e) => {
+        e.preventDefault();
+        if (confirm("Switch over now? The station goes off air for a moment and comes back on with the new server settings.")) {
+          try { setState(await api(`/api/stations/${st.id}/restart`, {})); } catch (err) { toast(err.message); }
+        }
+      } }, "switch over now")));
     if (s.audience) facts.push(el("span", { title: `Most at once: ${s.audience.peak}` },
       el("b", {}, `${s.audience.listeners}`), s.audience.max ? ` of ${s.audience.max}` : "",
       s.audience.listeners === 1 ? " listener" : " listeners"));
@@ -888,8 +895,13 @@ function renderForm(view) {
       setState(r);
       const id = editing ? s.station.id : r.id;
       const runner = stationById(id);
-      toast(runner && runner.state === "on" ? "Saved. Shows and presenters apply straight away; other changes the next time it goes on air." : "Saved");
       go({ type: "station", id });
+      if (runner && runner.changed) {
+        if (confirm("Switch over now? The station goes off air for a moment and comes back on with the new server settings.")) {
+          setState(await api(`/api/stations/${id}/restart`, {}));
+          toast("Switching over…");
+        } else toast("Saved. The new server settings apply the next time it goes on air.");
+      } else toast(runner && runner.state === "on" ? "Saved. Shows and presenters apply straight away; other changes the next time it goes on air." : "Saved");
     } catch (e) {
       // Show the tab the problem is on: a show's or presenter's name, or what it's about.
       const named = (list) => list.some((x) => x.name && e.message.includes(x.name.trim()));
@@ -1575,7 +1587,8 @@ function renderHelp() {
       list(
         "Check my internet measures the upload and suggests how many listeners each station streaming from this computer can take, with Use to set it.",
         "Opens each station's port on the router (UPnP), keeps a free DuckDNS name pointing at this connection, and shows a code to scan from a phone on mobile data.",
-        "The Ready check says when a station allows more listeners than the upload suits."),
+        "The Ready check says when a station allows more listeners than the upload suits.",
+        "Changing a station's server while it's on air offers to switch over straight away, and the status line shows where it's really streaming until then."),
       h2("0.15: streaming from this computer"),
       list(
         "Station Server can be the station's server: choose This computer in Edit › Server, and listeners connect straight to it. No DNAS, Icecast or hosting needed (Help › Streaming)."),

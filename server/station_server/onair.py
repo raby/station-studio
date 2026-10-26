@@ -38,7 +38,7 @@ from station_server.listen import Listeners, Tap
 from station_server.live import LiveInput, LiveSource, lan_addresses, port_free
 from station_server.playlist import PlaylistError, Queue, load_queue
 from station_server.schedule import Show, WeekStart, plan, position, step_seconds, track_seconds, where_now
-from station_server.senders import IN_USE, InUse, SenderError, StreamInfo, sender_from_url, someone_sending
+from station_server.senders import IN_USE, InUse, SenderError, ServeSender, StreamInfo, sender_from_url, someone_sending
 from station_server.weeks import WeekPicker
 from station_server.window import mac_app_bundle
 
@@ -183,6 +183,7 @@ class StationRunner:
         self.upcoming: tuple[Path, datetime] | None = None  # the next week and when it goes on
         self.channel: Channel | None = None
         self.sender = None
+        self.sent_as: tuple | None = None
         self.rehearsal = False  # on air to the test stream, not the live one
         self.listeners = Listeners()  # the page's Listen button
         self.audience: dict | None = None  # how many are listening, from the server
@@ -424,6 +425,7 @@ class StationRunner:
         info = StreamInfo(name=st.name, genre=st.genre, url=st.url, public=st.public, bitrate=st.bitrate)
         password = (st.test_password or st.password) if self.rehearsal else st.password
         sender = sender_from_url(self.target, info, password or None)
+        self.sent_as = self._stream_settings()
         try:
             sender.connect()
         except (SenderError, OSError) as exc:
@@ -611,6 +613,13 @@ class StationRunner:
         """Where it goes on air: the live server, or the test stream."""
         return self.station.test_server if self.rehearsal else self.station.server
 
+    def _stream_settings(self) -> tuple:
+        """What the stream was started with: a change to any of these
+        applies only when it next goes on air."""
+        st = self.station
+        password = (st.test_password or st.password) if self.rehearsal else st.password
+        return (self.target, st.name, st.genre, st.url, st.public, st.bitrate, password)
+
     def _played(self, now: NowPlaying, seconds: float) -> None:
         if self.rehearsal:  # not on air for real: not for the play log
             return
@@ -669,6 +678,8 @@ class StationRunner:
             "next_week": {"name": self.upcoming[0].stem, "at": self.upcoming[1].isoformat(timespec="minutes")}
             if self.upcoming else None,
             "server": getattr(self.sender, "describe", None),
+            "serving": isinstance(getattr(self.sender, "_sender", self.sender), ServeSender),
+            "changed": self.state == "on" and self.sent_as is not None and self.sent_as != self._stream_settings(),
             "connected": bool(self.sender and self.sender.connected),
             "playlist": None,
             "file": str(self.xml) if self.xml else None,
