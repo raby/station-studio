@@ -8,7 +8,9 @@ so a server restart never stops the playout.
 from __future__ import annotations
 
 import base64
+import json
 import logging
+import re
 import socket
 import threading
 import time
@@ -189,6 +191,24 @@ class ShoutcastSender(_Sender):
         with urllib.request.urlopen(req, timeout=self.timeout) as resp:
             resp.read()
 
+    def count_listeners(self) -> dict:
+        """How many are listening, from the server's 7.html (DNAS 1.9 and 2.x):
+        current, status, peak, max, unique, bitrate, title."""
+        req = urllib.request.Request(f"http://{self.host}:{self.port}/7.html?sid={self.sid}",
+                                     headers={"User-Agent": ADMIN_USER_AGENT})
+        with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+            text = resp.read(65536).decode("latin-1")
+        return parse_7html(text)
+
+
+def parse_7html(text: str) -> dict:
+    fields = re.sub(r"<[^>]*>", "", text).strip().split(",", 6)
+    try:
+        current, peak, most = int(fields[0]), int(fields[2]), int(fields[3])
+    except (IndexError, ValueError):
+        raise ValueError("the server's listener count couldn't be read") from None
+    return {"listeners": current, "peak": peak, "max": most}
+
 
 class IcecastSender(_Sender):
     """An Icecast 2.4+ server, as a source on one mount (HTTP PUT)."""
@@ -245,6 +265,26 @@ class IcecastSender(_Sender):
         with urllib.request.urlopen(req, timeout=self.timeout) as resp:
             resp.read()
 
+    def count_listeners(self) -> dict:
+        """How many are listening to this mount, from status-json.xsl."""
+        req = urllib.request.Request(f"http://{self.host}:{self.port}/status-json.xsl",
+                                     headers={"User-Agent": USER_AGENT})
+        with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+            data = json.loads(resp.read(2_000_000))
+        return parse_icestats(data, self.mount)
+
+
+def parse_icestats(data, mount: str) -> dict:
+    sources = (data.get("icestats") or {}).get("source") if isinstance(data, dict) else None
+    if isinstance(sources, dict):
+        sources = [sources]
+    for src in sources or []:
+        url = str(src.get("listenurl") or "")
+        if urllib.parse.urlsplit(url).path == mount:
+            return {"listeners": int(src.get("listeners") or 0), "peak": int(src.get("listener_peak") or 0),
+                    "max": None}
+    raise ValueError(f"the server doesn't list {mount}")
+
 
 class FileSender:
     """Writes the broadcast to an MP3 file instead, to hear exactly what
@@ -274,6 +314,9 @@ class FileSender:
             secs = int(time.monotonic() - self._started)
             self._titles.write(f"{secs // 3600:02d}:{secs // 60 % 60:02d}:{secs % 60:02d}  {title}\n")
             self._titles.flush()
+
+    def count_listeners(self) -> None:
+        return None
 
     def close(self) -> None:
         for fh in (self._fh, self._titles):

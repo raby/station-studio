@@ -120,6 +120,27 @@ the playlist's music can be read, for example when its drive isn't there.
 The playlist is tried again after each pass, and comes back as soon as it
 can be read.
 
+**Keeping an eye on it.** On air, a station's page shows how many are
+listening (from the SHOUTcast server's `7.html` or Icecast's
+`status-json.xsl`; listeners to a relay aren't counted), and *Listen*
+plays the broadcast exactly as it goes to the server.
+
+*Settings › Alerts* tells you when a station you've put on air has been off
+air, unable to reach its server, or playing silence or its fallback for a
+few minutes (3 unless you change it), and again when it's back: as a phone
+notification through [ntfy](https://ntfy.sh) (install the app and subscribe
+to the same topic), by email through your mail server, or both. *Send a
+test* checks the settings. Station Server can't send anything if the
+computer itself is off or offline, so an outside check of the stream is
+still worth having.
+
+*Settings › Phone access* opens a second address (port 8771 unless you
+change it) to phones and other computers on the same network, behind a
+password: they can see the stations, listen, and put them on or off air,
+skip and restart. Settings and editing stay on the station's computer.
+Allow Station Server through the firewall when Windows or macOS asks. For
+use away from the network, use a VPN such as Tailscale.
+
 **Shows at set times.** In a station's Edit page, *Shows* pins a show to
 times in the week: "Saturday Night Mix, Saturday 20:00" or "The News,
 weekdays 09:00". A show is a recording, a station-studio (or iTunes)

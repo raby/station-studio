@@ -1,3 +1,4 @@
+import json
 import math
 import plistlib
 import shutil
@@ -193,6 +194,13 @@ class FakeIcecast:
             k, _, v = line.partition(":")
             headers[k.strip().lower()] = v.strip()
         self.requests.append((method, target, headers))
+        if target == "/status-json.xsl":  # public, as on a real server
+            body = json.dumps({"icestats": {"source": {"listenurl": f"http://localhost:{self.port}/classics",
+                                                       "listeners": 3, "listener_peak": 5}}}).encode()
+            conn.sendall(b"HTTP/1.0 200 OK\r\nContent-Type: application/json\r\nContent-Length: "
+                         + str(len(body)).encode() + b"\r\n\r\n" + body)
+            conn.close()
+            return
         if headers.get("authorization") != self.auth:
             conn.sendall(b"HTTP/1.1 401 Authentication Required\r\n\r\n")
             conn.close()

@@ -5,15 +5,24 @@ websites in the same browser driving it: requests must carry a localhost
 Host header (blocks DNS rebinding), and every state-changing request must
 carry the `X-Station-Server` header, which a cross-origin page can't send
 without a CORS preflight this server never approves.
+
+With Settings › Phone access on, a second server (`RemoteAccess`) answers
+other devices on the network, on its own port, behind a password. From
+there the stations can be watched, listened to and put on or off air;
+everything else is left to the station's own computer.
 """
 from __future__ import annotations
 
+import base64
+import hmac
 import json
 import logging
+import queue as queues
 import re
 import socket
 import sys
 import threading
+import time
 from datetime import date
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -23,9 +32,10 @@ from urllib.parse import parse_qs, quote, urlparse
 from station_player.setup import Picker, PickerBusy, PickerFailed, PickerUnavailable
 
 from station_server import __version__
-from station_server.selfupdate import Updater
+from station_server.listen import TooManyListeners
 from station_server.onair import ServerApp
 from station_server.playlist import PlaylistError
+from station_server.selfupdate import Updater
 from station_server.senders import SenderError
 
 logger = logging.getLogger(__name__)
@@ -39,10 +49,37 @@ _STATIC_TYPES = {
     ".css": "text/css; charset=utf-8", ".png": "image/png", ".ico": "image/x-icon",
     ".webmanifest": "application/manifest+json", ".svg": "image/svg+xml",
 }
-_STATION_RE = re.compile(r"^/api/stations/([0-9a-zA-Z_-]+)(?:/([a-z.]+))?$")
+_STATION_RE = re.compile(r"^/api/stations/([0-9a-zA-Z_-]+)(?:/([a-z0-9.]+))?$")
+# What another device may do, with phone access on.
+_REMOTE_ACTIONS = {"on", "skip", "restart"}
+_REMOTE_REALM = 'Basic realm="Station Server", charset="UTF-8"'
 
 
-def make_handler(app: ServerApp, picker: Picker, quit) -> type[BaseHTTPRequestHandler]:
+class _Guesses:
+    """Slows down anyone guessing the phone access password: after a few
+    wrong ones from an address, it's turned away for a while."""
+
+    def __init__(self, most: int = 5, minutes: float = 5.0, clock=time.monotonic) -> None:
+        self.most, self.seconds, self._clock = most, minutes * 60, clock
+        self._lock = threading.Lock()
+        self._wrong: dict[str, list[float]] = {}
+
+    def blocked(self, who: str) -> bool:
+        with self._lock:
+            now = self._clock()
+            recent = [t for t in self._wrong.get(who, []) if now - t < self.seconds]
+            self._wrong[who] = recent
+            return len(recent) >= self.most
+
+    def wrong(self, who: str) -> None:
+        with self._lock:
+            self._wrong.setdefault(who, []).append(self._clock())
+
+
+def make_handler(app: ServerApp, picker: Picker, quit, remote: bool = False,
+                 guesses: _Guesses | None = None) -> type[BaseHTTPRequestHandler]:
+    guesses = guesses or _Guesses()
+
     class Handler(BaseHTTPRequestHandler):
         server_version = f"StationServer/{__version__}"
 
@@ -61,6 +98,40 @@ def make_handler(app: ServerApp, picker: Picker, quit) -> type[BaseHTTPRequestHa
             logger.debug("%s - %s", self.address_string(), fmt % args)
 
         # ---- helpers ----------------------------------------------------
+
+        def _allowed(self) -> bool:
+            """Whether to answer at all; sends the refusal when not."""
+            if not remote:
+                if self._host_ok():
+                    return True
+                self._error(HTTPStatus.FORBIDDEN, "Bad host")
+                return False
+            who = self.client_address[0]
+            if guesses.blocked(who):
+                self._error(HTTPStatus.TOO_MANY_REQUESTS, "Too many wrong passwords. Try again in a few minutes.")
+                return False
+            expected = app.config.remote_password
+            given = ""
+            auth = self.headers.get("Authorization") or ""
+            if auth.lower().startswith("basic "):
+                try:
+                    given = base64.b64decode(auth[6:].strip()).decode("utf-8").partition(":")[2]
+                except ValueError:
+                    given = ""
+            if app.config.remote and expected and hmac.compare_digest(given.encode(), expected.encode()):
+                return True
+            if given:
+                guesses.wrong(who)
+                logger.warning("phone access: wrong password from %s", who)
+            self.send_response(HTTPStatus.UNAUTHORIZED)
+            self.send_header("WWW-Authenticate", _REMOTE_REALM)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            body = b"Station Server needs its phone access password.\n"
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            if self.command != "HEAD":
+                self.wfile.write(body)
+            return False
 
         def _host_ok(self) -> bool:
             try:
@@ -101,15 +172,17 @@ def make_handler(app: ServerApp, picker: Picker, quit) -> type[BaseHTTPRequestHa
             self.do_GET()
 
         def do_GET(self):
-            if not self._host_ok():
-                return self._error(HTTPStatus.FORBIDDEN, "Bad host")
+            if not self._allowed():
+                return None
             url = urlparse(self.path)
             path = url.path
             if path == "/api/state":
-                return self._json(app.state())
+                return self._json({**app.state(), "remote_view": remote})
             if path == "/api/diagnostics":
                 return self._send(app.diagnostics().encode("utf-8"), "text/plain; charset=utf-8")
             m = _STATION_RE.match(path)
+            if m and m.group(2) == "listen.mp3":
+                return self._listen(m.group(1))
             if m and m.group(2) == "playlog.csv":
                 qs = parse_qs(url.query)
                 try:
@@ -135,14 +208,49 @@ def make_handler(app: ServerApp, picker: Picker, quit) -> type[BaseHTTPRequestHa
                 return self._error(HTTPStatus.NOT_FOUND, "Not found")
             return self._send(target.read_bytes(), ctype)
 
+        def _listen(self, sid: str):
+            """The broadcast as it goes out, for as long as the page plays it."""
+            runner = app.runners.get(sid)
+            if runner is None:
+                return self._error(HTTPStatus.NOT_FOUND, "No such station")
+            if runner.state != "on":
+                return self._error(HTTPStatus.CONFLICT, "The station isn't on air")
+            if self.command == "HEAD":
+                return self._send(b"", "audio/mpeg")
+            try:
+                q = runner.listeners.open()
+            except TooManyListeners as exc:
+                return self._error(HTTPStatus.SERVICE_UNAVAILABLE, str(exc))
+            self.close_connection = True
+            try:
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", "audio/mpeg")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Connection", "close")
+                self.end_headers()
+                while True:
+                    chunk = q.get(timeout=30)
+                    if chunk is None:
+                        break
+                    self.wfile.write(chunk)
+            except (OSError, queues.Empty):
+                pass  # the listener went, or the audio stopped
+            finally:
+                runner.listeners.close(q)
+            return None
+
         # ---- POST -------------------------------------------------------
 
         def do_POST(self):
-            if not self._host_ok():
-                return self._error(HTTPStatus.FORBIDDEN, "Bad host")
+            if not self._allowed():
+                return None
             if self.headers.get(API_HEADER) != "1":
                 return self._error(HTTPStatus.FORBIDDEN, f"Missing {API_HEADER} header")
             path = urlparse(self.path).path
+            if remote:
+                m = _STATION_RE.match(path)
+                if not m or m.group(2) not in _REMOTE_ACTIONS:
+                    return self._error(HTTPStatus.FORBIDDEN, "That can only be done on the station's computer")
             try:
                 data = self._body()
                 return self._post(path, data)
@@ -164,14 +272,10 @@ def make_handler(app: ServerApp, picker: Picker, quit) -> type[BaseHTTPRequestHa
             if path == "/api/check/server":
                 return self._json(app.check_server(data, data.get("id") or None))
             if path == "/api/settings":
-                app.config.open_window = bool(data.get("open_window", app.config.open_window))
-                app.config.check_updates = bool(data.get("check_updates", app.config.check_updates))
-                if not app.config.check_updates:
-                    app.latest = None  # no more notices until checked by hand
-                app.store.save()
-                if "login" in data:
-                    app.login.set(bool(data["login"]))
+                app.save_settings(data)
                 return self._json(app.state())
+            if path == "/api/alerts/test":
+                return self._json({"sent": app.test_alert(), **app.state()})
             if path == "/api/pick":
                 try:
                     return self._json(picker.pick(str(data.get("kind", "folder"))))
@@ -221,7 +325,7 @@ def make_handler(app: ServerApp, picker: Picker, quit) -> type[BaseHTTPRequestHa
                 app.delete_station(sid)
             else:
                 return self._error(HTTPStatus.NOT_FOUND, "Not found")
-            return self._json(app.state())
+            return self._json({**app.state(), "remote_view": remote})
 
     return Handler
 
@@ -237,16 +341,95 @@ class _Server(ThreadingHTTPServer):
             super().server_bind()
 
 
+def lan_addresses() -> list[str]:
+    """This computer's address on the local network, for Settings to show."""
+    found = []
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("192.0.2.1", 9))  # picks the route out; sends nothing
+            found.append(s.getsockname()[0])
+    except OSError:
+        pass
+    try:
+        for addr in socket.gethostbyname_ex(socket.gethostname())[2]:
+            if addr not in found:
+                found.append(addr)
+    except OSError:
+        pass
+    return [a for a in found if not a.startswith("127.")]
+
+
+class RemoteAccess:
+    """The second server, for phones and other computers on the network,
+    running while Settings › Phone access is on."""
+
+    def __init__(self, app: ServerApp, picker: Picker, quit, host: str = "0.0.0.0") -> None:
+        self.app, self.picker, self.quit, self.host = app, picker, quit, host
+        self._lock = threading.Lock()
+        self._server: ThreadingHTTPServer | None = None
+        self.error: str | None = None
+
+    @property
+    def port(self) -> int | None:
+        return self._server.server_address[1] if self._server else None
+
+    def apply(self) -> None:
+        """Start, stop or move it to match the settings."""
+        cfg = self.app.config
+        want = cfg.remote and bool(cfg.remote_password)
+        with self._lock:
+            if self._server and (not want or self._server.server_address[1] != cfg.remote_port):
+                self._stop()
+            if want and not self._server:
+                try:
+                    server = _Server((self.host, cfg.remote_port), make_handler(self.app, self.picker, self.quit,
+                                                                                remote=True))
+                except OSError as exc:
+                    self.error = f"Port {cfg.remote_port} is in use or not allowed ({exc.strerror or exc})"
+                    logger.warning("phone access: %s", self.error)
+                    return
+                server.daemon_threads = True
+                self._server, self.error = server, None
+                threading.Thread(target=server.serve_forever, name="phone-access", daemon=True).start()
+                logger.info("phone access on, port %s", cfg.remote_port)
+            elif not want:
+                self.error = None
+
+    def stop(self) -> None:
+        with self._lock:
+            self._stop()
+
+    def _stop(self) -> None:
+        if self._server:
+            self._server.shutdown()
+            self._server.server_close()
+            self._server = None
+            logger.info("phone access off")
+
+    def status(self) -> dict:
+        cfg = self.app.config
+        port = self.port
+        return {
+            "enabled": cfg.remote, "port": cfg.remote_port, "has_password": bool(cfg.remote_password),
+            "running": port is not None, "error": self.error,
+            "addresses": [f"http://{a}:{port}/" for a in lan_addresses()] if port else [],
+        }
+
+
 def make_server(app: ServerApp, host: str = "127.0.0.1", port: int = DEFAULT_PORT,
-                picker: Picker | None = None, updater: Updater | None = None) -> ThreadingHTTPServer:
+                picker: Picker | None = None, updater: Updater | None = None,
+                remote_host: str = "0.0.0.0") -> ThreadingHTTPServer:
     holder: dict = {}
 
     def quit() -> None:
         app.shutdown()
         holder["server"].shutdown()
 
-    server = _Server((host, port), make_handler(app, picker or Picker(), quit))
+    picker = picker or Picker()
+    server = _Server((host, port), make_handler(app, picker, quit))
     server.daemon_threads = True
     holder["server"] = server
     app.updater = updater or Updater(quit, port=port)
+    app.remote = RemoteAccess(app, picker, quit, host=remote_host)
+    app.remote.apply()
     return server
