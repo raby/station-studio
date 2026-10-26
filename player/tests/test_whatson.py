@@ -69,6 +69,19 @@ def test_feeds_are_fetched_once_a_minute_and_kept_when_a_fetch_fails():
     assert calls[0].startswith(url + "?t=")
 
 
+def test_feeds_use_the_apps_certificates(monkeypatch):
+    from station_player import whatson
+    seen = {}
+
+    def urlopen(req, timeout=None, context=None):
+        seen["context"] = context
+        raise OSError("offline")
+
+    monkeypatch.setattr(whatson.urllib.request, "urlopen", urlopen)
+    assert Feeds().get("https://raby.github.io/rebirth-now/x.json") is None
+    assert seen["context"] is whatson.tls_context()
+
+
 def test_feed_addresses():
     assert clean_feed_url(" https://x/y.json ") == "https://x/y.json" and clean_feed_url(None) == ""
     with pytest.raises(ValueError):

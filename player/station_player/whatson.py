@@ -16,6 +16,7 @@ import urllib.request
 from datetime import datetime, timedelta
 
 from station_player import __version__
+from station_player.radio import tls_context
 
 logger = logging.getLogger(__name__)
 
@@ -67,10 +68,15 @@ def _song(item: dict) -> dict:
     return {"at": item.get("at"), "title": item.get("title"), "artist": item.get("artist")}
 
 
+def _urlopen(req, timeout):
+    # The Mac app's Python has no certificates of its own (radio.tls_context)
+    return urllib.request.urlopen(req, timeout=timeout, context=tls_context())
+
+
 class Feeds:
     """Fetches stations' feeds, each at most once a minute."""
 
-    def __init__(self, opener=urllib.request.urlopen, clock=time.monotonic) -> None:
+    def __init__(self, opener=_urlopen, clock=time.monotonic) -> None:
         self._open, self._clock = opener, clock
         self._lock = threading.Lock()
         self._cache: dict[str, tuple[float, dict | None]] = {}
