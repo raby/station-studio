@@ -1025,10 +1025,10 @@ class ServerApp:
                     "choose another live shows port in Edit")
         add("Start at login", "ok" if self.login.enabled() else "warn",
             "On" if self.login.enabled() else "Off: after a restart or power cut the station stays off air "
-            "until someone opens Station Server (Settings)")
+            "until someone opens Station Server (Settings › Start-up)")
         alerts_to = [w for w, on in (("phone", self.config.alerts.ntfy), ("email", self.config.alerts.email_to)) if on]
         add("Alerts", "ok" if alerts_to else "warn",
-            f"To your {' and '.join(alerts_to)}" if alerts_to else "Off: nobody is told if it goes off air (Settings)")
+            f"To your {' and '.join(alerts_to)}" if alerts_to else "Off: nobody is told if it goes off air (Settings › Alerts)")
         return out
 
     def playlog_csv(self, sid: str, first: date, last: date) -> tuple[str, int, str]:
