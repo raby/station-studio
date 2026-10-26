@@ -148,6 +148,11 @@ jobs:
           CHECK=$(curl -sS -X POST -H 'X-Station-Server: 1' -H 'Content-Type: application/json' -d '{}' \
             http://127.0.0.1:8771/api/update/check)
           if echo "$CHECK" | grep -qi certificate; then echo "update check: $CHECK"; exit 1; fi
+          # The certificates bundled for https, as station-studio and station-player check.
+          if [ "${{ matrix.kind }}" = mac ]; then
+            test -f "build/dist/Station Server.app/Contents/Resources/certifi/cacert.pem" \
+              || test -f "build/dist/Station Server.app/Contents/Frameworks/certifi/cacert.pem"
+          fi
           curl -sS -o /dev/null -w '%{http_code} %{content_type}\n' http://127.0.0.1:8771/ | grep -q '^200 text/html'
           curl -sS -o /dev/null -w '%{http_code} %{content_type}\n' http://127.0.0.1:8771/app.js | grep -q '^200 text/javascript'
           # What lets the Dock window start Station Server when it isn't running.
