@@ -430,8 +430,8 @@ on the phone.
 
 ## New versions
 
-Once a day Station Player asks pypi.org for the newest version number
-(nothing else is sent). When there's a newer one, the sidebar says so,
+Once a day Station Player asks GitHub for the newest Station Player
+release (nothing else is sent). When there's a newer one, the sidebar says so,
 with **Update now**; Settings › App also has **Check for updates**.
 
 Updating keeps your stations, playlists and settings:
@@ -474,8 +474,9 @@ install chromium`).
 Bump `version` in `player/pyproject.toml` and merge to main, then run
 **Actions → Publish Station Player → Run workflow**. It tests, builds,
 smoke-installs the wheel and creates a `player-v<version>` GitHub
-release with the files attached. Tick *Also publish to PyPI* to upload
-the same files to pypi.org (one-time setup is described at the top of
+release with the files attached, then uploads the same files to pypi.org
+for `pipx install station-player` (untick *Also publish to PyPI* to skip
+that; the one-time setup is described at the top of
 `.github/workflows/publish-player.yml`).
 
 The server is `station_player/server.py` (standard library

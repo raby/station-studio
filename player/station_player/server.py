@@ -1040,7 +1040,11 @@ class PlayerApp:
             st = next((s for s in self.store.config.stations if station_id(s["url"]) == sid), None)
         if st is None or not st.get("feed"):
             raise LookupError("That station has no what's-on feed")
-        return whatson_view(self.feeds.get(st["feed"]), datetime.now().astimezone())
+        try:  # a widget address saved before 0.19.1 reads as its feed
+            url = clean_feed_url(st["feed"])
+        except ValueError:
+            raise LookupError("That station has no what's-on feed")
+        return whatson_view(self.feeds.get(url), datetime.now().astimezone())
 
     def station_url(self, sid: str) -> str | None:
         with self._lock:

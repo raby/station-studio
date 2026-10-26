@@ -42,7 +42,8 @@ def test_whats_on_comes_from_the_clock():
 def test_live_off_air_and_shows():
     assert view(feed(live={"presenter": "Dave"}), NOW) == {
         "state": "live", "now": {"live": "Dave"}, "next": [], "recent": feed()["recent"]}
-    assert view(feed(on_air=False), NOW)["state"] == "off" and view(None, NOW)["state"] == "off"
+    assert view(feed(on_air=False), NOW)["state"] == "off"
+    assert view(None, NOW)["state"] == "unknown"  # no feed fetched: not "Off air"
     f = feed()
     f["items"][1] = {"at": f["items"][1]["at"], "seconds": 3600, "show": "Saturday Night Mix"}
     assert view(f, NOW)["next"][0] == {"at": f["items"][1]["at"], "show": "Saturday Night Mix"}
@@ -69,10 +70,27 @@ def test_feeds_are_fetched_once_a_minute_and_kept_when_a_fetch_fails():
     assert calls[0].startswith(url + "?t=")
 
 
+def test_feeds_use_the_apps_certificates(monkeypatch):
+    from station_player import whatson
+    seen = {}
+
+    def urlopen(req, timeout=None, context=None):
+        seen["context"] = context
+        raise OSError("offline")
+
+    monkeypatch.setattr(whatson.urllib.request, "urlopen", urlopen)
+    assert Feeds().get("https://raby.github.io/rebirth-now/x.json") is None
+    assert seen["context"] is whatson.tls_context()
+
+
 def test_feed_addresses():
     assert clean_feed_url(" https://x/y.json ") == "https://x/y.json" and clean_feed_url(None) == ""
     with pytest.raises(ValueError):
         clean_feed_url("ftp://x/y.json")
+    # The widget's address, copied from Station Server by mistake: its feed instead
+    assert clean_feed_url("https://raby.github.io/rebirth-now/widget.html?station=rebirth-classics&theme=dark") == (
+        "https://raby.github.io/rebirth-now/rebirth-classics.json")
+    assert clean_feed_url("https://x/widget.html?station=../a") == "https://x/widget.html?station=../a"
 
 
 def test_a_built_in_station_given_a_feed_passes_it_on(monkeypatch):

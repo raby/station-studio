@@ -8,7 +8,7 @@
 #
 #   pipx install https://github.com/raby/station-studio/releases/download/player-v0.1.0/station_player-0.1.0-py3-none-any.whl
 #
-# Tick "Also publish to PyPI" to push the same files to pypi.org so
+# "Also publish to PyPI" (on unless unticked) pushes the same files to pypi.org so
 # `pipx install station-player` works. That uses trusted publishing and
 # needs a one-time setup on pypi.org (Account → Publishing → add a
 # pending publisher): project station-player, owner raby, repo
@@ -32,7 +32,7 @@ on:
       pypi:
         description: Also publish to PyPI (needs the one-time trusted-publisher setup)
         type: boolean
-        default: false
+        default: true
 
 concurrency:
   group: publish-player
@@ -144,7 +144,7 @@ jobs:
   pypi:
     name: publish to pypi.org
     # After the downloads are attached: the player's new-version notice
-    # (which asks PyPI) sends people who downloaded it to the release.
+    # (which asks GitHub) sends people who downloaded it to the release.
     if: always() && inputs.pypi && needs.release.result == 'success' && needs.installers.result != 'failure' && needs.installers.result != 'cancelled'
     needs: [release, installers]
     runs-on: ubuntu-latest

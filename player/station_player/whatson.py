@@ -9,13 +9,16 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta
 
 from station_player import __version__
+from station_player.radio import tls_context
 
 logger = logging.getLogger(__name__)
 
@@ -25,18 +28,28 @@ MOST_BYTES = 2 * 1024 * 1024
 
 
 def clean_feed_url(value) -> str:
-    """'' or an http(s) address; raises ValueError for anything else."""
+    """'' or an http(s) address; raises ValueError for anything else. A
+    station's widget address (Station Server › Settings › Website), copied
+    by mistake, becomes that station's feed: .../widget.html?station=x → .../x.json."""
     url = str(value or "").strip()
     if url and not url.startswith(("http://", "https://")):
         raise ValueError("The what's-on feed must be an http:// or https:// address")
+    parts = urllib.parse.urlsplit(url)
+    if parts.path.endswith("/widget.html"):
+        station = urllib.parse.parse_qs(parts.query).get("station", [""])[0]
+        if re.fullmatch(r"[a-z0-9-]+", station):
+            path = parts.path[: -len("widget.html")] + f"{station}.json"
+            url = urllib.parse.urlunsplit((parts.scheme, parts.netloc, path, "", ""))
     return url
 
 
 def view(feed: dict | None, now: datetime, ahead: int = 3, back: int = 3) -> dict:
     """{state: on|live|off|unknown, now, next[], recent[]} from a feed at
     `now`. Songs are {at, title, artist}; a show is {at, show}."""
-    if not feed or not feed.get("on_air"):
-        return {"state": "off", "now": None, "next": [], "recent": (feed or {}).get("recent", [])[:back]}
+    if not feed:  # not published yet, or not reachable: say nothing rather than "Off air"
+        return {"state": "unknown", "now": None, "next": [], "recent": []}
+    if not feed.get("on_air"):
+        return {"state": "off", "now": None, "next": [], "recent": (feed.get("recent") or [])[:back]}
     try:
         if now - datetime.fromisoformat(feed["updated"]) > STALE:
             return {"state": "unknown", "now": None, "next": [], "recent": []}
@@ -67,10 +80,15 @@ def _song(item: dict) -> dict:
     return {"at": item.get("at"), "title": item.get("title"), "artist": item.get("artist")}
 
 
+def _urlopen(req, timeout):
+    # The Mac app's Python has no certificates of its own (radio.tls_context)
+    return urllib.request.urlopen(req, timeout=timeout, context=tls_context())
+
+
 class Feeds:
     """Fetches stations' feeds, each at most once a minute."""
 
-    def __init__(self, opener=urllib.request.urlopen, clock=time.monotonic) -> None:
+    def __init__(self, opener=_urlopen, clock=time.monotonic) -> None:
         self._open, self._clock = opener, clock
         self._lock = threading.Lock()
         self._cache: dict[str, tuple[float, dict | None]] = {}

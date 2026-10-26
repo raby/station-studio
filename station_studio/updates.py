@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 REPO = "raby/station-studio"
 TAG_PREFIX = "studio-v"
-RELEASES_API = f"https://api.github.com/repos/{REPO}/releases?per_page=50"
+RELEASES_API = f"https://api.github.com/repos/{REPO}/releases?per_page=100"
 CHECK_EVERY = 24 * 60 * 60
 _TIMEOUT = 10
 _VERSION_RE = re.compile(r"^\d+(\.\d+){0,3}$")  # final releases only

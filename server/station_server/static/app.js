@@ -1306,11 +1306,16 @@ function websiteSettings() {
       el("legend", {}, "On your website"),
       el("p", {}, "The page with every station: ", el("a", { href: f.url, target: "_blank", rel: "noopener" }, f.url),
         last ? el("span", { class: "help" }, ` · last published ${dayTime(last.at)}`) : null),
-      el("p", { class: "help" }, "On Wix: Add › Embed code › Embed a site, and give it a station's address below. Make the box about 340 wide and 520 tall. Add &theme=dark for a dark box, or &next=3&recent=3 for shorter lists."),
-      (f.stations || []).map((s) => {
+      el("p", { class: "help" }, "On Wix: Add › Embed code › Embed a site, and give it a station's widget address below. Make the box about 340 wide and 520 tall. Add &theme=dark for a dark box, or &next=3&recent=3 for shorter lists."),
+      (f.stations || []).flatMap((s) => {
         const url = `${f.url}widget.html?station=${s.slug}`;
-        return el("div", { class: "form-row" }, el("b", {}, s.name), el("code", { class: "code" }, url),
-          btn("Copy", "copy", () => copy(url), "btn small"));
+        const feed = `${f.url}${s.slug}.json`;
+        return [
+          el("div", { class: "form-row" }, el("b", {}, s.name), el("code", { class: "code" }, url),
+            btn("Copy", "copy", () => copy(url), "btn small")),
+          el("div", { class: "form-row help" }, "For Station Player's What's on box:",
+            el("code", { class: "code" }, feed), btn("Copy", "copy", () => copy(feed), "btn small")),
+        ];
       })) : null,
   );
 }
@@ -1398,7 +1403,7 @@ function renderHelp() {
       h2("Shows at set times"),
       p("Edit › Shows pins a show to times in the week, like Saturday 20:00. A show is a recording, a playlist, or a folder of recordings played in name order. It starts exactly on time (cutting the song playing) or after that song. When it ends, the music comes back where the week's clock says, so the running order's times stay right. After a restart part-way through a show, the station joins the show where it should be. Shows apply as soon as you save, even on air."),
       h2("On your website"),
-      p("Settings › Website shows each station's song on now, what's coming up (with times) and what's just played on your website, in a box you embed (on Wix: Add › Embed code › Embed a site). Station Server publishes it to a small free GitHub Pages site of its own: Settings › Website has the steps, and the address to give your website for each station. While a presenter is live, the box shows their name; off air, it says so."),
+      p("Settings › Website shows each station's song on now, what's coming up (with times) and what's just played on your website, in a box you embed (on Wix: Add › Embed code › Embed a site). Station Server publishes it to a small free GitHub Pages site of its own: Settings › Website has the steps, and the address to give your website for each station. While a presenter is live, the box shows their name; off air, it says so. Station Player shows it on the station's card too: paste the station's feed address (Settings › Website, under its widget address) into the station's What's on box."),
       p("It's published about once an hour, and within a couple of minutes of anything changing what's on (a skip, a restart, a show, a live show, going off or on air). The box works out the song on now from the times, so it stays right in between. A rehearsal isn't shown. The page with every station is at the site's own address."),
       h2("The play log"),
       p("Every track each station plays is logged, live shows included. Play log downloads a station's plays between two dates as a spreadsheet, ready for a PRS for Music or PPL return. Plays under 30 seconds aren't counted."),
