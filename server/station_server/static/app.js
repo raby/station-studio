@@ -413,6 +413,7 @@ function renderStation(s) {
     const n = s.now;
     parts.push(el("div", { class: "panel now" },
       el("div", { class: "glyph big" }, icon("radio")),
+      n.show ? el("div", { class: "show-kicker" }, `Show: ${n.show}`) : null,
       el("div", { class: "title" }, n.title),
       el("div", { class: "artist" }, [n.artist, n.album].filter(Boolean).join(" · ") || " "),
       el("div", { class: "meter" },
@@ -438,6 +439,11 @@ function renderStation(s) {
     ? `Week starts ${DAYS[st.week_start.day]} ${st.week_start.time}` : "Starts from track 1"));
   facts.push(el("span", {}, `MP3 ${st.bitrate} kbps`));
   parts.push(el("div", { class: "facts" }, facts));
+  if (s.shows && s.shows.length) {
+    parts.push(el("div", { class: "facts" }, el("span", {}, "Shows"),
+      s.shows.map((sh) => el("span", { class: "show-chip" }, el("b", {}, sh.label), ` ${sh.name}`,
+        sh.seconds ? ` (${clock(sh.seconds)})` : el("span", { class: "warn" }, " (can't be found)")))));
+  }
 
   if (s.playlist && s.playlist.missing_count) {
     parts.push(el("details", { class: "missing", open: S.missingOpen, ontoggle: (e) => { S.missingOpen = e.target.open; } },
@@ -452,11 +458,11 @@ function renderStation(s) {
     parts.push(el("table", { class: "tracks" },
       el("thead", {}, el("tr", {}, el("th", { class: "time" }, "Time"), el("th", { class: "title" }, "Title"),
         el("th", {}, "Artist"), el("th", { class: "dur" }, "Length"))),
-      el("tbody", {}, s.order.map((r, i) => el("tr", { class: i === 0 ? "playing" : null },
+      el("tbody", {}, s.order.map((r, i) => el("tr", { class: [i === 0 ? "playing" : "", r.show ? "show" : ""].join(" ").trim() || null },
         el("td", { class: "time" }, hhmm(r.at)),
-        el("td", { class: "title" }, r.title),
-        el("td", { class: "artist" }, r.artist || ""),
-        el("td", { class: "dur" }, clock(r.seconds)),
+        el("td", { class: "title" }, r.show || r.title, r.from ? el("span", { class: "help" }, ` from ${clock(r.from)}`) : null),
+        el("td", { class: "artist" }, r.show ? "Show" : (r.artist || "")),
+        el("td", { class: "dur", title: r.cut ? "Cut short for the show" : null }, clock(r.seconds), r.cut ? " ✂" : ""),
       ))),
     ));
   } else if (!on && !busy && !s.error) {
@@ -513,6 +519,7 @@ function formValues(st) {
     start_mode: st?.start_mode || "clock",
     day: String(st?.week_start?.day ?? 0),
     time: st?.week_start?.time || "00:00",
+    shows: (st?.shows || []).map((sh) => ({ ...sh, days: [...sh.days] })),
   };
 }
 
@@ -531,6 +538,7 @@ function formPayload(v) {
     level: v.level,
     start_mode: v.start_mode,
     week_start: { day: Number(v.day), time: v.time },
+    shows: v.shows,
   };
 }
 
@@ -572,11 +580,43 @@ function renderForm(view) {
   const serverMsg = el("div", { class: "form-msg", role: "status" });
   const formMsg = el("div", { class: "form-msg", role: "status" });
 
-  async function pick(kind) {
+  async function pick(kind, into = (path) => { v.playlist = path; }, msg = playlistMsg) {
     try {
       const r = await api("/api/pick", { kind });
-      if (r.path) { v.playlist = r.path; redraw(); }
-    } catch (e) { playlistMsg.className = "form-msg"; playlistMsg.textContent = e.message; }
+      if (r.path) { into(r.path); redraw(); }
+    } catch (e) { msg.className = "form-msg"; msg.textContent = e.message; }
+  }
+  const showsMsg = el("div", { class: "form-msg", role: "status" });
+  function showRow(sh, i) {
+    const field = (label, input, cls) => el("label", { class: cls || null }, label, input);
+    const name = el("input", { type: "text", value: sh.name || "", placeholder: "Saturday Night Mix", autocomplete: "off" });
+    name.addEventListener("input", () => { sh.name = name.value; });
+    const time = el("input", { type: "time", value: sh.time || "20:00" });
+    time.addEventListener("input", () => { sh.time = time.value; });
+    const source = el("input", { type: "text", value: sh.source || "", placeholder: "~/Music/Shows/Saturday Night Mix.mp3", autocomplete: "off" });
+    source.addEventListener("input", () => { sh.source = source.value; });
+    const when = el("select", {}, el("option", { value: "1" }, "Exactly on time (cuts the song playing)"),
+      el("option", { value: "0" }, "After the song playing ends"));
+    when.value = sh.on_time === false ? "0" : "1";
+    when.addEventListener("change", () => { sh.on_time = when.value === "1"; });
+    const days = DAYS.map((d, n) => {
+      const box = el("input", { type: "checkbox" });
+      box.checked = sh.days.includes(n);
+      box.addEventListener("change", () => {
+        sh.days = box.checked ? [...new Set([...sh.days, n])].sort() : sh.days.filter((x) => x !== n);
+      });
+      return el("label", { class: "check day" }, box, d.slice(0, 3));
+    });
+    return el("div", { class: "show-edit" },
+      el("div", { class: "grid" }, field("Show", name), field("Time", time, "narrow"), field("Starts", when)),
+      el("div", { class: "days" }, days),
+      el("div", { class: "grid" }, field("Recording, playlist or folder of recordings", source)),
+      el("div", { class: "actions" },
+        btn("Choose file…", "file", () => pick("file", (p) => { sh.source = p; }, showsMsg), "btn small"),
+        btn("Choose folder…", "folder", () => pick("folder", (p) => { sh.source = p; }, showsMsg), "btn small"),
+        el("div", { class: "spacer" }),
+        btn("Remove", "trash", () => { v.shows.splice(i, 1); redraw(); }, "btn small ghost")),
+    );
   }
   async function checkPlaylist() {
     playlistMsg.className = "form-msg ok";
@@ -605,7 +645,7 @@ function renderForm(view) {
       setState(r);
       const id = editing ? s.station.id : r.id;
       const runner = stationById(id);
-      toast(runner && runner.state === "on" ? "Saved. Changes take effect the next time it goes on air." : "Saved");
+      toast(runner && runner.state === "on" ? "Saved. Shows apply straight away; other changes the next time it goes on air." : "Saved");
       go({ type: "station", id });
     } catch (e) { formMsg.textContent = e.message; }
   }
@@ -673,6 +713,15 @@ function renderForm(view) {
           select("day", "The week starts on", DAYS.map((d, i) => [String(i), d]), true),
           text("time", "at", { type: "time", narrow: true })),
         el("p", { class: "help" }, "Following the clock, the first track plays at the start of the week and the rest follow by their lengths, so after a restart the station picks up where it should be."),
+      ),
+      el("fieldset", {}, el("legend", {}, "Shows"),
+        el("p", { class: "help" }, "Shows go out at set times: a recording, a playlist, or a folder of recordings played in name order. When a show ends, the music comes back where the week's clock says, so the running order's times stay right."),
+        v.shows.map(showRow),
+        el("div", { class: "actions" }, btn("Add a show", "plus", () => {
+          v.shows.push({ name: "", time: "20:00", days: [5], source: "", on_time: true });
+          redraw();
+        }, "btn small")),
+        showsMsg,
       ),
       formMsg,
       el("div", { class: "actions" },
@@ -761,6 +810,8 @@ function renderHelp() {
       p("Turn on Settings › Start Station Server when I log in. After a restart, a power cut or Windows updates, it starts in the background and the stations that were on air go back on air. Closing this window leaves them on air; Quit takes them off."),
       el("h2", {}, "The week's clock"),
       p("Following the clock, the first track plays at the start of the week (Monday 00:00 unless you change it) and the rest follow by their lengths. A restart picks up where the station should be. A new week's export is picked up within a minute and starts after the playing track."),
+      el("h2", {}, "Shows at set times"),
+      p("In a station's Edit page, Shows pins a show to times in the week, like Saturday 20:00. A show is a recording, a playlist, or a folder of recordings played in name order. It starts exactly on time (cutting the song playing) or after that song. When it ends, the music comes back where the week's clock says, so the running order's times stay right. After a restart part-way through a show, the station joins the show where it should be."),
       el("h2", {}, "Its own app, and new versions"),
       p("On a Mac, the downloaded Station Server has a window of its own, like Apple Music: closing the window leaves the stations on air, clicking its Dock icon brings it back, and its menus have Go, Settings (⌘,) and Quit (⌘Q). Right-click its Dock icon for Add a station and Play log."),
       p("Settings › Install as app gives Station Server its own icon in the Dock or taskbar, with Add a station and Play log on its menu. Opened from there when Station Server isn't running, the window starts it."),

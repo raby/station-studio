@@ -17,7 +17,7 @@ import uuid
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 
-from station_server.schedule import WeekStart
+from station_server.schedule import Show, WeekStart
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +59,9 @@ class Station:
     start_mode: str = "clock"
     week_start: dict = field(default_factory=lambda: WeekStart().to_json())
     on_air: bool = False  # was on air when last closed: goes back on air at start-up
+    # Shows at set times (schedule.Show.to_json()): a recording or playlist
+    # that interrupts the music, which then carries on by the clock.
+    shows: list[dict] = field(default_factory=list)
 
     def to_json(self, secrets: bool = True) -> dict:
         data = asdict(self)
@@ -101,6 +104,9 @@ def clean_station(data: dict, existing: Station | None = None) -> Station:
     if st.start_mode not in START_MODES:
         st.start_mode = "clock"
     st.week_start = WeekStart.parse(st.week_start).to_json()
+    if not isinstance(st.shows, list):
+        raise ValueError("Shows must be a list")
+    st.shows = [Show.parse(x).to_json() for x in st.shows]
     if st.server and not re.match(r"^(shoutcast|icecast)://", st.server, re.I):
         raise ValueError("The server address starts shoutcast:// or icecast://")
     st.id = existing.id if existing else (str(data.get("id") or "") or uuid.uuid4().hex[:10])

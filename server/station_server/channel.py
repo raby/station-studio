@@ -108,12 +108,15 @@ class Channel:
         on_track: Callable[[NowPlaying], None] | None = None,
         on_played: Callable[[NowPlaying, float], None] | None = None,
         keep_going: bool = False,
+        after: Callable[[], tuple[Queue, int, float]] | None = None,
     ) -> None:
         """`offset` starts the first track that many seconds in. `on_track`
         is called as each track starts, `on_played` as it ends with the
         seconds actually played. With `keep_going`, a playlist where no
         track can be read sends silence and tries again, instead of
-        raising RuntimeError (the app wants that; the command line not)."""
+        raising RuntimeError (the app wants that; the command line not).
+        With `after`, `queue` is played once (a show) and `after()` then
+        says what to play next: (queue, track index, seconds in)."""
         self.queue = queue
         self.sender = sender
         self.ffmpeg = ffmpeg
@@ -130,7 +133,8 @@ class Channel:
         self.stop_event = threading.Event()
         self._skip = threading.Event()
         self._lock = threading.Lock()
-        self._next: tuple[Queue, Callable[[Queue], tuple[int, float]]] | None = None
+        self._next: tuple[Queue, Callable[[Queue], tuple[int, float]], Callable | None] | None = None
+        self._after = after
         self.now: NowPlaying | None = None
         self.stuck = False  # nothing in the playlist could be read
 
@@ -148,16 +152,31 @@ class Channel:
         straight away with `now`. `where`, if given, picks the track and
         offset at the moment of the switch instead (to follow the clock)."""
         with self._lock:
-            self._next = (queue, where or (lambda q: (index, offset)))
+            self._next = (queue, where or (lambda q: (index, offset)), None)
         if now:
             self._skip.set()
+
+    def insert(self, queue: Queue, after: Callable[[], tuple[Queue, int, float]], now: bool = True,
+               offset: float = 0.0) -> None:
+        """Play `queue` once through (a show), straight away or when the
+        playing track ends, then whatever `after()` says: (queue, track
+        index, seconds in)."""
+        with self._lock:
+            self._next = (queue, lambda q: (0, offset), after)
+        if now:
+            self._skip.set()
+
+    @property
+    def in_show(self) -> bool:
+        """Playing something once through (see insert)."""
+        return self._after is not None
 
     def _take_next(self) -> tuple[int, float] | None:
         with self._lock:
             pending, self._next = self._next, None
         if pending is None:
             return None
-        self.queue, where = pending
+        self.queue, where, self._after = pending
         index, offset = where(self.queue)
         return index % len(self.queue.tracks), offset
 
@@ -172,7 +191,8 @@ class Channel:
                     self.stuck = False
                 else:
                     failures += 1
-                    if failures >= len(self.queue.tracks):
+                    # A show that can't be read just ends: the music comes back.
+                    if failures >= len(self.queue.tracks) and self._after is None:
                         if not self.keep_going:
                             raise RuntimeError("No track in the playlist could be played; stopping")
                         self.stuck = True
@@ -190,6 +210,11 @@ class Channel:
                     failures = 0
                     continue
                 index += 1
+                if index >= len(self.queue.tracks) and self._after is not None:
+                    after, self._after = self._after, None  # the show is over
+                    self.queue, index, offset = after()
+                    index %= len(self.queue.tracks)
+                    continue
                 if index >= len(self.queue.tracks):
                     if not self.loop:
                         break

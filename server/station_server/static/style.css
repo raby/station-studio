@@ -331,3 +331,13 @@ body.offline { display: grid; place-items: center; min-height: 100vh; margin: 0;
 .update-settings .row, .update-note .row { display: flex; gap: 8px; flex-wrap: wrap; }
 .update-settings .row { margin: 4px 0 12px; }
 .update-failed { color: var(--danger); }
+
+/* Shows */
+.tracks tr.show td { color: var(--accent); font-weight: 600; }
+.tracks tr.show td.artist { font-weight: 500; }
+.show-kicker { grid-column: 2; font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); }
+.show-chip b { color: var(--text); }
+.show-edit { border-top: 1px solid var(--border); padding-top: 12px; margin-top: 12px; }
+.show-edit .days { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 10px; }
+.form label.check.day { flex: none; min-width: 0; }
+.now:has(.show-kicker) .glyph { grid-row: span 4; }
