@@ -51,6 +51,10 @@ class Station:
     # Where to send it: shoutcast://host:port[?sid=N] or icecast://[user@]host:port/mount.
     server: str = ""
     password: str = ""
+    # A spare stream to rehearse on before going live (a spare port, or
+    # stream 2 of a SHOUTcast 2 server), and its password if different.
+    test_server: str = ""
+    test_password: str = ""
     genre: str = ""
     url: str = ""
     public: bool = False
@@ -71,6 +75,8 @@ class Station:
         if not secrets:
             data["password"] = ""
             data["has_password"] = bool(self.password)
+            data["test_password"] = ""
+            data["has_test_password"] = bool(self.test_password)
         return data
 
 
@@ -84,11 +90,11 @@ def clean_station(data: dict, existing: Station | None = None) -> Station:
     for key, value in data.items():
         if key not in _FIELDS or key == "id":
             continue
-        if key == "password" and value in (None, "") and existing is not None:
+        if key in ("password", "test_password") and value in (None, "") and existing is not None:
             continue  # the page never sees the password; blank keeps it
         setattr(st, key, value)
     st.name = str(st.name or "").strip()[:80] or "New station"
-    for key in ("playlist", "server", "password", "genre", "url", "fallback"):
+    for key in ("playlist", "server", "password", "test_server", "test_password", "genre", "url", "fallback"):
         st.__dict__[key] = str(getattr(st, key) or "").strip()
     st.music_folders = [str(p).strip() for p in st.music_folders or [] if str(p).strip()]
     st.remaps = [
@@ -110,8 +116,11 @@ def clean_station(data: dict, existing: Station | None = None) -> Station:
     if not isinstance(st.shows, list):
         raise ValueError("Shows must be a list")
     st.shows = [Show.parse(x).to_json() for x in st.shows]
-    if st.server and not re.match(r"^(shoutcast|icecast)://", st.server, re.I):
-        raise ValueError("The server address starts shoutcast:// or icecast://")
+    for addr in (st.server, st.test_server):
+        if addr and not re.match(r"^(shoutcast|icecast)://", addr, re.I):
+            raise ValueError("The server address starts shoutcast:// or icecast://")
+    if st.test_server and st.test_server == st.server:
+        raise ValueError("The test stream must be a different stream from the live one")
     st.id = existing.id if existing else (str(data.get("id") or "") or uuid.uuid4().hex[:10])
     return st
 

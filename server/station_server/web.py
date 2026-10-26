@@ -316,7 +316,9 @@ def make_handler(app: ServerApp, picker: Picker, quit, remote: bool = False,
             if action is None:
                 app.save_station(data, sid)
             elif action == "on":
-                app.set_on_air(sid, bool(data.get("on")))
+                app.set_on_air(sid, bool(data.get("on")), rehearse=bool(data.get("rehearse")))
+            elif action == "check":
+                return self._json({"checks": app.ready_check(sid)})
             elif action == "skip":
                 app.skip(sid)
             elif action == "restart":
