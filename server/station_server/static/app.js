@@ -1353,6 +1353,9 @@ function internetSettings() {
       routerMsg,
       router && !router.found ? el("div", { class: "errors" }, router.error) : null,
       router && router.found ? el("p", {}, "Router's address: ", el("b", {}, router.address || "unknown"), " · this computer: ", el("b", {}, router.here || "unknown")) : null,
+      router && router.found && router.address && check?.address && router.address !== check.address
+        ? el("div", { class: "errors" }, `The router's address (${router.address}) isn't the one the internet sees (${check.address}): the internet provider shares one address between several customers, so a forwarded port won't reach here from outside. Ask the provider for a public IP address (often free, or a small charge), or send to a hosted server instead (Help › Streaming).`)
+        : null,
       router && router.found ? here.map((s) => el("div", { class: "form-row" },
         el("b", {}, `${s.name}, port ${s.port}:`), portState(s.port),
         router.ports?.[String(s.port)]
@@ -1466,6 +1469,73 @@ const HELP_TABS = [
   ["trouble", "Problems", "alert"],
 ];
 
+// Help diagrams: our own fixed SVG, coloured from the theme (.dg-* in style.css).
+const DG = {
+  box: (x, y, w, h, title, sub, cls = "") => `<g class="dg-node ${cls}"><rect x="${x}" y="${y}" width="${w}" height="${h}" rx="10"/>`
+    + `<text x="${x + w / 2}" y="${y + (sub ? h / 2 - 3 : h / 2 + 5)}" class="dg-title">${title}</text>`
+    + (sub ? `<text x="${x + w / 2}" y="${y + h / 2 + 15}" class="dg-sub">${sub}</text>` : "") + "</g>",
+  arrow: (x1, y1, x2, y2, label, dy = -8, cls = "") => `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" class="dg-line ${cls}" marker-end="url(#dg-arrow)"/>`
+    + (label ? `<text x="${(x1 + x2) / 2}" y="${(y1 + y2) / 2 + dy}" class="dg-label">${label}</text>` : ""),
+};
+function diagram(height, body, caption) {
+  const fig = el("figure", { class: "diagram" });
+  fig.innerHTML = `<svg viewBox="0 0 720 ${height}" role="img" aria-label="${caption}"><defs><marker id="dg-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="dg-head"/></marker></defs>${body}</svg>`;
+  fig.append(el("figcaption", {}, caption));
+  return fig;
+}
+const DIAGRAMS = {
+  journey: () => diagram(250,
+    DG.box(10, 30, 120, 56, "Music", "this week's playlist")
+    + DG.arrow(130, 58, 180, 58)
+    + DG.box(180, 22, 160, 72, "Station Server", "this computer, port 8000", "dg-accent")
+    + DG.arrow(340, 58, 420, 58, "port 8000", -10)
+    + DG.box(420, 30, 120, 56, "Router", "81.150.147.206")
+    + DG.arrow(540, 58, 580, 58)
+    + DG.box(580, 30, 130, 56, "Internet", "listeners anywhere")
+    + DG.arrow(260, 94, 260, 168)
+    + `<text x="268" y="135" class="dg-label dg-left">same Wi-Fi: straight here</text>`
+    + DG.box(170, 168, 180, 56, "Listeners at home", "192.168.1.20:8000")
+    + DG.box(510, 168, 200, 56, "Phones, speakers, website", "rebirth.duckdns.org:8000")
+    + DG.arrow(645, 86, 645, 168),
+    "Station Server is the server: it plays the music and sends it to every listener itself. Listeners outside come in through the router."),
+  forward: () => diagram(200,
+    DG.box(10, 20, 170, 60, "A listener asks for", "rebirth.duckdns.org:8000")
+    + DG.arrow(180, 50, 260, 50, "DuckDNS")
+    + DG.box(260, 20, 170, 60, "81.150.147.206:8000", "the router's address")
+    + DG.arrow(430, 50, 520, 50, "port forward")
+    + DG.box(520, 20, 190, 60, "192.168.1.20:8000", "this computer", "dg-accent")
+    + `<text x="345" y="120" class="dg-sub">The router only knows where to send it because port 8000 is forwarded to this computer:</text>`
+    + `<text x="345" y="142" class="dg-sub">Open port in Settings › Internet does that (UPnP), or set it in the router's own settings.</text>`
+    + `<text x="345" y="170" class="dg-sub">DuckDNS just turns the name into the router's address, and follows it when it changes.</text>`,
+    "From a name to this computer: DuckDNS finds the router, the port forward finds this computer."),
+  upload: () => {
+    const w = 700, share = 0.7;
+    let body = `<rect x="10" y="30" width="${w}" height="44" rx="8" class="dg-track"/>`
+      + `<rect x="10" y="30" width="${w * share}" height="44" rx="8" class="dg-fill"/>`;
+    for (let i = 1; i < 14; i++) body += `<line x1="${10 + i * w * share / 14}" y1="34" x2="${10 + i * w * share / 14}" y2="70" class="dg-tick"/>`;
+    body += `<text x="${10 + w * share / 2}" y="57" class="dg-title dg-on-fill">Listeners: 128 kbps each</text>`
+      + `<text x="${10 + w * share + w * (1 - share) / 2}" y="57" class="dg-title">Rest of the house</text>`
+      + `<text x="10" y="20" class="dg-sub dg-left">10 Mbps upload</text>`
+      + `<text x="${10 + w * share / 2}" y="100" class="dg-sub">70%: 7,000 kbps ÷ 128 kbps = about 54 listeners</text>`
+      + `<text x="${10 + w * share + w * (1 - share) / 2}" y="100" class="dg-sub">30% kept free</text>`;
+    return diagram(120, body, "Every listener takes the stream's bitrate from the upload, all the time they're listening.");
+  },
+  choose: () => diagram(220,
+    `<text x="10" y="22" class="dg-sub dg-left">This computer (free; listeners limited by the upload)</text>`
+    + DG.box(10, 34, 170, 52, "Station Server", "", "dg-accent")
+    + DG.arrow(180, 60, 300, 60, "one stream each")
+    + DG.box(300, 34, 130, 52, "Router")
+    + DG.arrow(430, 60, 560, 60, "54 listeners")
+    + DG.box(560, 34, 150, 52, "Listeners")
+    + `<text x="10" y="134" class="dg-sub dg-left">A hosted SHOUTcast or Icecast server (a monthly fee; hundreds or thousands of listeners)</text>`
+    + DG.box(10, 146, 170, 52, "Station Server", "", "dg-accent")
+    + DG.arrow(180, 172, 300, 172, "one stream")
+    + DG.box(300, 146, 130, 52, "Hosted server")
+    + DG.arrow(430, 172, 560, 172, "any number")
+    + DG.box(560, 146, 150, 52, "Listeners"),
+    "Both work from the same Station Server: Edit › Server › Type switches between them."),
+};
+
 function renderHelp() {
   const p = (...t) => el("p", { class: "help" }, ...t);
   const h2 = (t) => el("h2", { class: "spaced" }, t);
@@ -1561,30 +1631,54 @@ function renderHelp() {
     ],
     stream: () => [
       el("h2", {}, "Streaming from this computer"),
-      p("Station Server can be the station's server itself: listeners connect straight to this computer, with no SHOUTcast DNAS, Icecast or hosting needed. In Edit › Server, choose This computer as the type, a port (8000 keeps a DNAS's old links working) and the most listeners to allow, then go on air."),
+      p("Station Server can be the station's server itself: listeners connect straight to this computer, with no SHOUTcast DNAS, Icecast or hosting needed, and nothing to pay."),
+      DIAGRAMS.journey(),
+      h2("Setting it up, step by step"),
+      el("ol", { class: "help steps" }, [
+        "Edit › Server: choose This computer as the type, a port (8000 keeps a DNAS's old links working) and the most listeners to allow. Check the port says whether it's free.",
+        "Go on air (or Rehearse first). Listen, or open http://this-computer's-address:8000/ on a phone on the same Wi-Fi: it plays. The Ready check shows the address.",
+        "Settings › Internet › Check my internet: it measures the upload and suggests how many listeners to allow. Use sets it.",
+        "Settings › Internet › Look at the router, then Open port. If the router won't, forward the port by hand (below).",
+        "Optional: a DuckDNS name, so listeners have an address that doesn't change.",
+        "Scan the code on Settings › Internet with a phone on mobile data (Wi-Fi off). If it plays, the world can hear it.",
+        "Give listeners the address, and put it in the website's player and station directories.",
+      ].map((t) => el("li", {}, t))),
+      h2("Ports and the router"),
+      p("At home, every device shares the router's one internet address. When a listener outside connects to that address, the router needs to know which computer to send them to: that's a port forward."),
+      DIAGRAMS.forward(),
       list(
-        "Any address on the port plays the station (/, /;, /stream), with song titles for players that show them. A browser opening it gets a small page with a player.",
-        "It answers like a SHOUTcast or Icecast server (/7.html, /stats, /status-json.xsl, /listen.pls), so listener counts, alerts and station directories work.",
-        "A listener whose connection can't keep up is let go, rather than holding up the others.",
-        "Taking the station off air ends everyone's stream, as a server would."),
-      h2("Listeners from outside this network"),
-      p("Settings › Internet does most of this: it measures the upload and suggests how many listeners to allow, opens the port on the router where the router lets it (UPnP), keeps a free DuckDNS name pointing at this connection, and shows a code to scan with a phone. By hand:"),
-      list(
-        "On the router, forward the port (TCP) to this computer. Give the computer a fixed address on the network first (the router's DHCP reservation), so the forward keeps pointing at it.",
-        "Listeners use the router's public address and the port, like http://81.150.147.206:8000/. If the address changes now and then, a free dynamic DNS name (DuckDNS, say) keeps one name pointing at it.",
-        "Windows and macOS may ask whether Station Server may accept connections: allow it.",
-        "Check from a phone on mobile data, not the same Wi-Fi."),
+        "Most routers let Station Server set it up (UPnP): Settings › Internet › Open port. Close the port takes it away again.",
+        "By hand: open the router's settings (often http://192.168.1.1 or http://192.168.0.1; the address is on a sticker on the router), find Port forwarding (sometimes Virtual servers or NAT), and forward TCP 8000 (the station's port) to this computer's address.",
+        "First give this computer a fixed address on the network (DHCP reservation, in the same settings), so the forward keeps pointing at it after a restart.",
+        "Two stations streaming from here use two ports, like 8000 and 8002: forward both."),
+      h2("A name that stays the same"),
+      p("A home connection's address can change now and then (after the router restarts, say), which would break listeners' links. DuckDNS is free: sign in at duckdns.org, add a name like rebirth, and enter the name and token in Settings › Internet. Station Server tells DuckDNS this connection's address every few minutes, so http://rebirth.duckdns.org:8000/ always reaches the station."),
       h2("How many listeners"),
-      p("Each listener takes the stream's bitrate from the internet connection's upload, and the rest of the house needs some too. Measure the upload at speedtest.net, then roughly:"),
+      p("Each listener takes the stream's bitrate from the internet connection's upload, for as long as they listen, and the rest of the house needs some too. Download speed doesn't matter here: it's the upload."),
+      DIAGRAMS.upload(),
       el("table", { class: "help-table" },
         el("tr", {}, el("th", {}, "Upload"), el("th", {}, "64 kbps"), el("th", {}, "128 kbps"), el("th", {}, "192 kbps")),
         ...[5, 10, 20, 50].map((mbps) => el("tr", {}, el("td", {}, `${mbps} Mbps`),
           ...[64, 128, 192].map((kbps) => el("td", {}, String(Math.floor(mbps * 1000 * 0.7 / kbps))))))),
-      p("Settings › Internet measures it for you. Set Most listeners a little under that; when it's full, the next listener is turned away rather than everyone stuttering. For more listeners than the connection can take, send to a hosted SHOUTcast or Icecast server instead."),
+      p("Settings › Internet measures it for you. Set Most listeners a little under that; when it's full, the next listener is turned away rather than everyone stuttering. A lower bitrate (Edit › Server) fits more listeners."),
+      h2("This computer or a hosted server?"),
+      DIAGRAMS.choose(),
+      p("Streaming from this computer is free and needs nothing else, and suits a station whose listeners fit in the upload. For more, send to a hosted SHOUTcast or Icecast server: Station Server sends it one stream and the host copies it to everyone. Switching is one setting, and old links keep working if the host uses the same address and port."),
+      h2("When it doesn't work"),
+      list(
+        "Plays on the Wi-Fi but not on mobile data: the port isn't forwarded, or is forwarded to another computer. Look at the router in Settings › Internet.",
+        "Mac, \"macOS isn't letting Station Server reach the router\": System Settings › Privacy & Security › Local Network, turn on Station Server.",
+        "Windows: when it asks whether Station Server may use the network, allow Private and Public. Otherwise Windows Security › Firewall › Allow an app through the firewall.",
+        "\"No router on this network offers UPnP\": turn on UPnP in the router's settings, or forward the port by hand.",
+        "The router's address isn't the one the internet sees: the internet provider shares one address between customers (CGNAT), so nothing outside can reach in. Ask the provider for a public IP address, or use a hosted server.",
+        "\"Port 8000 is in use\": another program (an old DNAS, say) has it. Close that, or choose another port.",
+        "Listeners turned away: the station is full. Settings › Internet suggests how many the upload can take."),
     ],
     new: () => [
       el("h2", {}, "0.16.2"),
-      list("On a Mac, Look at the router says when macOS needs Station Server allowed in System Settings › Privacy & Security › Local Network, and the app now asks for it."),
+      list("Help › Streaming is rewritten, with diagrams: how listeners reach the station, ports and the router, DuckDNS, how many listeners, this computer or a hosted server, and what to do when it doesn't work.",
+        "On a Mac, Look at the router says when macOS needs Station Server allowed in System Settings › Privacy & Security › Local Network, and the app now asks for it.",
+        "Settings › Internet warns when the internet provider shares one address between customers, so a forwarded port can't work."),
       h2("0.16.1"),
       list("Check my internet finds this connection's outside address a second way, if Cloudflare's speed test page doesn't give it."),
       h2("0.16: Settings › Internet"),
