@@ -68,6 +68,10 @@ if MAC:
             "CFBundleVersion": VERSION,
             "LSMinimumSystemVersion": "11.0",
             "NSHighResolutionCapable": True,
+            # macOS 15+ asks before the app reaches other devices on the
+            # network: the router (port forwarding) and the station's DNAS.
+            "NSLocalNetworkUsageDescription": "Station Server talks to your router to open each station's port "
+                                              "for listeners, and to stream servers on this network.",
             # station-server://start, from the installed app's window when
             # Station Server isn't running (see __main__.URL_SCHEME).
             "CFBundleURLTypes": [{"CFBundleURLName": "io.github.raby.StationServer",

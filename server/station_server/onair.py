@@ -892,7 +892,7 @@ class ServerApp:
                 gw.unforward(port)
             self.router_state = {"found": True, "error": None, "address": gw.external_address(),
                                  "here": gw.local_address(), "ports": {str(p): gw.mapping(p) for p in ports}}
-        except upnp.UpnpError as exc:
+        except (upnp.UpnpError, OSError) as exc:
             self.router_state = {"found": False, "error": str(exc), "address": None, "here": None, "ports": {}}
         return self.internet()
 

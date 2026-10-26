@@ -1583,7 +1583,9 @@ function renderHelp() {
       p("Settings › Internet measures it for you. Set Most listeners a little under that; when it's full, the next listener is turned away rather than everyone stuttering. For more listeners than the connection can take, send to a hosted SHOUTcast or Icecast server instead."),
     ],
     new: () => [
-      el("h2", {}, "0.16.1"),
+      el("h2", {}, "0.16.2"),
+      list("On a Mac, Look at the router says when macOS needs Station Server allowed in System Settings › Privacy & Security › Local Network, and the app now asks for it."),
+      h2("0.16.1"),
       list("Check my internet finds this connection's outside address a second way, if Cloudflare's speed test page doesn't give it."),
       h2("0.16: Settings › Internet"),
       list(
