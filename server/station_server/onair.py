@@ -30,7 +30,8 @@ from station_server.analysis import Analyser
 from station_server.audio import FfmpegMissing, find_ffmpeg, has_mp3_encoder
 from station_server.awake import KeepAwake
 from station_server.channel import Channel, NowPlaying
-from station_server.config import Config, ConfigStore, Station, clean_alerts, clean_port, clean_station, newest_week
+from station_server.config import (Config, ConfigStore, Station, clean_alerts, clean_port, clean_station, newest_week,
+                                   serve_port)
 from station_server.desktop import Login, bundled
 from station_server.listen import Listeners, Tap
 from station_server.live import LiveInput, LiveSource, lan_addresses, port_free
@@ -1009,6 +1010,15 @@ class ServerApp:
             try:
                 r = self._try_server(st, test)
                 counts = r.get("counts")
+                port = serve_port(st.test_server if test else st.server)
+                if port is not None:  # streaming from this computer
+                    here = next(iter(lan_addresses()), "this computer's address")
+                    detail = (f"Streaming from this computer, {counts['listeners']} listening" if r["on_air"]
+                              else f"Port {port} is free on this computer")
+                    detail += (f". Listeners on this network: http://{here}:{port}/ . From outside it, forward "
+                               f"port {port} on the router to this computer.")
+                    add(label, "ok", detail)
+                    continue
                 if r["on_air"]:
                     detail = f"On air to {r['server']} now" + (f", {counts['listeners']} listening" if counts else "")
                 else:

@@ -275,6 +275,27 @@ once an hour and within two minutes of what's on changing (a skip, a
 show, a live show, going off air); the pages work out the song on now
 from the times.
 
+## Streaming from this computer
+
+Station Server can be the station's server itself, with no SHOUTcast DNAS,
+Icecast or hosting: in Edit › Server choose **This computer**, a port and
+the most listeners to allow (stored as `serve://:8000?max=20`). Listeners
+connect straight to it:
+
+- any path on the port plays the stream (`/`, `/;`, `/stream`), so a DNAS's
+  old links keep working on the same port; song titles go to players that
+  ask for them (ICY metadata), and a few seconds are sent at once so
+  players start straight away
+- `/7.html`, `/stats`, `/currentsong`, `/status-json.xsl`, `/listen.pls`
+  and `/listen.m3u` answer as SHOUTcast and Icecast do; a browser opening
+  `/` gets a small page with a player
+- past the most listeners, the next is turned away (503); one whose
+  connection can't keep up is let go
+
+From outside the network, forward the port on the router to this
+computer. Each listener takes the bitrate from the connection's upload:
+Help › Streaming has a table of how many a connection can take.
+
 ## From the command line
 
 Check that ffmpeg is found and the playlist's music is all there:
@@ -310,6 +331,12 @@ For stream 2 on a DNAS 2.x add `?sid=2`: `shoutcast://host:8002?sid=2`.
 
 ```bash
 station-server play week-12.xml --to icecast://source@my.server:8000/classics
+```
+
+**This computer**, with listeners connecting straight to it (no password):
+
+```bash
+station-server play week-12.xml --to serve://:8000?max=20
 ```
 
 While it plays, the window shows each track as it starts. Type `s` and

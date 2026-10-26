@@ -1,4 +1,5 @@
-"""Where the encoded stream goes: a SHOUTcast or Icecast server, or a file.
+"""Where the encoded stream goes: a SHOUTcast or Icecast server, listeners
+straight from this computer (stream.py), or a file.
 
 Every sender has the same three calls: `connect`, `send` (encoded audio) and
 `set_title` (now playing). A sender that loses its server keeps quiet,
@@ -20,6 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from station_server import __version__
+from station_server.stream import PortInUse, StreamServer
 
 logger = logging.getLogger(__name__)
 
@@ -299,6 +301,8 @@ IN_USE = ("Something else is already sending to {server}, probably Winamp's SHOU
 def someone_sending(sender) -> bool:
     """Whether a source is on the server now (asked before connecting, or
     after being refused, so the page can say why)."""
+    if isinstance(sender, ServeSender):  # this computer: nothing else sends to it
+        return False
     try:
         counts = sender.count_listeners()
     except Exception:  # an older server, or none there: can't tell
@@ -346,11 +350,42 @@ class FileSender:
         self.connected = False
 
 
+class ServeSender:
+    """Station Server is the server: listeners connect to it (stream.py)."""
+
+    def __init__(self, port: int, info: StreamInfo, most: int = 20, host: str = "") -> None:
+        self.server = StreamServer(port, name=info.name, genre=info.genre, url=info.url, public=info.public,
+                                   bitrate=info.bitrate, most=most, host=host, content_type=info.content_type)
+        self.describe = f"this computer, port {port}"
+        self.connected = False
+
+    def connect(self) -> None:
+        try:
+            self.server.start()
+        except PortInUse as exc:
+            raise SenderError(str(exc)) from exc
+        self.connected = True
+
+    def send(self, data: bytes) -> None:
+        self.server.publish(data)
+
+    def set_title(self, title: str) -> None:
+        self.server.set_title(title)
+
+    def count_listeners(self) -> dict:
+        return self.server.counts()
+
+    def close(self) -> None:
+        self.server.stop()
+        self.connected = False
+
+
 def sender_from_url(url: str, info: StreamInfo, password: str | None = None):
     """Build a sender from `--to`:
 
     - shoutcast://[:password@]host:port[?sid=2]
     - icecast://[source[:password]@]host:port/mount
+    - serve://[address]:port[?max=20] (listeners connect to this computer)
     - anything else is a file path (record to MP3)
 
     A password given separately (the --password option or
@@ -359,6 +394,11 @@ def sender_from_url(url: str, info: StreamInfo, password: str | None = None):
     """
     parsed = urllib.parse.urlsplit(url)
     scheme = parsed.scheme.lower()
+    if scheme == "serve":
+        if not parsed.port:
+            raise ValueError(f"{url}: give the port to stream on, e.g. serve://:8000")
+        most = int(urllib.parse.parse_qs(parsed.query).get("max", ["20"])[0])
+        return ServeSender(parsed.port, info, most=most, host=parsed.hostname or "")
     if scheme not in ("shoutcast", "icecast"):
         return FileSender(Path(url))
     if not parsed.hostname or not parsed.port:
