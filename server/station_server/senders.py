@@ -33,6 +33,10 @@ class SenderError(Exception):
     """The server refused us (wrong password, mount in use, not a server)."""
 
 
+class InUse(SenderError):
+    """Another source (Winamp, say) is on the server: it takes one at a time."""
+
+
 @dataclass
 class StreamInfo:
     """What the server shows about the station."""

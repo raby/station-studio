@@ -34,7 +34,7 @@ from station_server.desktop import Login, bundled
 from station_server.listen import Listeners, Tap
 from station_server.playlist import PlaylistError, Queue, load_queue
 from station_server.schedule import Show, WeekStart, plan, position, track_seconds, where_now
-from station_server.senders import IN_USE, SenderError, StreamInfo, sender_from_url, someone_sending
+from station_server.senders import IN_USE, InUse, SenderError, StreamInfo, sender_from_url, someone_sending
 from station_server.weeks import WeekPicker
 from station_server.window import mac_app_bundle
 
@@ -84,7 +84,9 @@ def source_queue(name: str, source: str, station: Station, key: str) -> Queue:
     (a show, or the fallback)."""
     p = Path(source).expanduser()
     if p.is_dir():
-        files = sorted((f for f in p.rglob("*") if f.suffix.lower() in AUDIO_EXTENSIONS and f.is_file()),
+        # Not hidden files: a Mac leaves "._song.mp3" beside each song on some drives.
+        files = sorted((f for f in p.rglob("*") if f.suffix.lower() in AUDIO_EXTENSIONS and f.is_file()
+                        and not any(part.startswith(".") for part in f.relative_to(p).parts)),
                        key=lambda f: [part.lower() for part in f.relative_to(p).parts])[:MAX_FOLDER_TRACKS]
     elif p.suffix.lower() in AUDIO_EXTENSIONS and p.is_file():
         files = [p]
@@ -347,7 +349,7 @@ class StationRunner:
             sender.connect()
         except (SenderError, OSError) as exc:
             if someone_sending(sender):  # Winamp, say, still on the server
-                raise SenderError(IN_USE.format(server=sender.describe)) from exc
+                raise InUse(IN_USE.format(server=sender.describe)) from exc
             raise
         self.sender = Tap(sender, self.listeners)
         done = threading.Event()  # this go on air is over: the helpers stop
@@ -733,7 +735,7 @@ class ServerApp:
             return {"server": runner.sender.describe, "on_air": True, "counts": counts}
         sender = sender_from_url(addr, StreamInfo(name=st.name), password or None)
         if someone_sending(sender):
-            raise SenderError(IN_USE.format(server=sender.describe))
+            raise InUse(IN_USE.format(server=sender.describe))
         sender.connect()
         sender.close()
         try:
@@ -785,6 +787,8 @@ class ServerApp:
                 if not counts:
                     detail += " (its listener count can't be read, so the page won't show one)"
                 add(label, "ok", detail)
+            except InUse as exc:  # Winamp still live there: expected until the switch-over
+                add(label, "warn", f"{exc} Do that just before Go live; the rest can be checked then.")
             except (SenderError, OSError, ValueError) as exc:
                 add(label, "fail", str(exc))
         if st.fallback:

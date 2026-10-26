@@ -135,5 +135,15 @@ def test_a_fallback_folder_includes_its_subfolders(tmp_path):
     write_wav(tmp_path / "music" / "B Artist" / "Album" / "1.wav", seconds=0.3)
     write_wav(tmp_path / "music" / "A Artist" / "2.wav", seconds=0.3)
     (tmp_path / "music" / "notes.txt").write_text("not music")
+    (tmp_path / "music" / "A Artist" / "._2.wav").write_bytes(b"Mac metadata, not audio")
     queue = source_queue("Fallback", str(tmp_path / "music"), Station(), "fallback")
     assert [t.path.name for t in queue.tracks] == ["2.wav", "1.wav"]
+
+
+def test_winamp_live_is_a_note_in_the_ready_check_not_a_failure(api, exports, icecast, spare):  # noqa: F811
+    sid = add_station(api, exports, icecast, spare)
+    icecast.mounts.add("/classics")  # Winamp on the live server while rehearsing
+    checks = {c["name"]: c for c in api(f"/api/stations/{sid}/check", {})[1]["checks"]}
+    assert checks["Live server"]["status"] == "warn" and "already sending" in checks["Live server"]["detail"]
+    assert checks["Test stream"]["status"] == "ok"
+    assert not [r for r in icecast.requests if r[0] == "PUT"]
