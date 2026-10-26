@@ -233,8 +233,9 @@ class FeedPublisher:
                 self._published.clear()
                 self._site_done = False
                 self.error = None
+            if want:
+                self._stop.clear()  # also keeps a thread that was told to stop just now
             if want and not (self._thread and self._thread.is_alive()):
-                self._stop.clear()
                 self._thread = threading.Thread(target=self._run, name="feed", daemon=True)
                 self._thread.start()
             elif not want:

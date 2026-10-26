@@ -201,3 +201,15 @@ def test_settings_keep_the_token_secret(api, tmp_path):  # noqa: F811
     assert api.app.config.feed_token == "ghp_secret123"
     assert "ghp_secret123" not in api.app.diagnostics()
     assert api("/api/settings", {"feed_repo": "not a repo"})[0] == 400
+
+
+def test_turned_off_and_straight_back_on_keeps_publishing():
+    cfg = SimpleNamespace(feed=True, feed_repo="raby/rebirth-now", feed_token="tok", stations=[])
+    pub = FeedPublisher(SimpleNamespace(config=cfg, runners={}), pages=lambda r, t: SimpleNamespace(repo=r, token=t))
+    pub.apply()
+    cfg.feed = False
+    pub.apply()
+    cfg.feed = True
+    pub.apply()  # before the thread has noticed it was stopped
+    assert pub.pages is not None and not pub._stop.is_set()
+    pub.stop()
