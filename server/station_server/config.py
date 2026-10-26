@@ -173,6 +173,12 @@ def clean_station(data: dict, existing: Station | None = None) -> Station:
     return st
 
 
+def serve_max(addr: str) -> int:
+    """The most listeners a serve:// address allows."""
+    m = re.search(r"[?&]max=(\d+)", addr or "")
+    return int(m.group(1)) if m else 20
+
+
 def serve_port(addr: str) -> int | None:
     """The port of a serve:// address (streaming from this computer)."""
     m = re.match(r"^serve://[^:/?]*:(\d+)", addr or "", re.I)
@@ -290,6 +296,11 @@ class Config:
     feed: bool = False
     feed_repo: str = ""  # owner/name of a GitHub repository served by GitHub Pages
     feed_token: str = ""
+    # Streaming from this computer (netcheck.py): a DuckDNS name kept
+    # pointing at this connection, and the last internet check.
+    duckdns_name: str = ""
+    duckdns_token: str = ""
+    net_check: dict = field(default_factory=dict)
 
     def station(self, sid: str) -> Station | None:
         return next((s for s in self.stations if s.id == sid), None)
@@ -339,7 +350,10 @@ class ConfigStore:
                      studio_code=str(data.get("studio_code") or ""),
                      feed=bool(data.get("feed", False)),
                      feed_repo=str(data.get("feed_repo") or ""),
-                     feed_token=str(data.get("feed_token") or ""))
+                     feed_token=str(data.get("feed_token") or ""),
+                     duckdns_name=str(data.get("duckdns_name") or ""),
+                     duckdns_token=str(data.get("duckdns_token") or ""),
+                     net_check=data.get("net_check") if isinstance(data.get("net_check"), dict) else {})
         try:
             cfg.remote_port = clean_port(data.get("remote_port", REMOTE_PORT))
             cfg.studio_port = clean_port(data.get("studio_port", STUDIO_PORT))
@@ -371,6 +385,9 @@ class ConfigStore:
                 "feed": self.config.feed,
                 "feed_repo": self.config.feed_repo,
                 "feed_token": self.config.feed_token,
+                "duckdns_name": self.config.duckdns_name,
+                "duckdns_token": self.config.duckdns_token,
+                "net_check": self.config.net_check,
                 "stations": [s.to_json() for s in self.config.stations],
             }
             tmp = self.path.with_suffix(".tmp")

@@ -407,3 +407,8 @@ body.remote [data-view="new"], body.remote [data-view="settings"], body.remote #
 .help-table { border-collapse: collapse; margin: 8px 0 12px; font-size: 13px; color: var(--muted); }
 .help-table th, .help-table td { padding: 4px 14px 4px 0; text-align: left; border-bottom: 1px solid var(--border); }
 .help-table th { color: var(--text); font-weight: 600; }
+.qr-row { display: flex; flex-wrap: wrap; gap: 20px; }
+.qr { display: grid; gap: 6px; justify-items: start; }
+.qr img { border-radius: 8px; background: #fff; }
+
+.inline-link { color: inherit; font-weight: 600; text-decoration: underline; }

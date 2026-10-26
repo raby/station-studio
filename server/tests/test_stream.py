@@ -181,3 +181,13 @@ def test_connections_holding_back_their_request_are_limited(server, monkeypatch)
         s.close()
     wait_for(lambda: server._waiting == 0)
     assert get(server.port, "/currentsong")[1] == ""
+
+
+def test_a_server_change_on_air_waits_for_a_switch_over(tmp_path):
+    from station_server.onair import StationRunner
+    runner = StationRunner(Station(name="Classics", server="icecast://localhost:8000/classics"), None, tmp_path)
+    runner.state, runner.sent_as = "on", runner._stream_settings()
+    runner.sender = sender_from_url("serve://:8100", StreamInfo(name="Classics"))
+    assert runner.status()["changed"] is False and runner.status()["serving"] is True
+    runner.station = clean_station({"name": "Classics", "server": "serve://:8100?max=20"})
+    assert runner.status()["changed"] is True  # the page offers to switch over
