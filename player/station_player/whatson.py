@@ -9,9 +9,11 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta
 
@@ -26,10 +28,18 @@ MOST_BYTES = 2 * 1024 * 1024
 
 
 def clean_feed_url(value) -> str:
-    """'' or an http(s) address; raises ValueError for anything else."""
+    """'' or an http(s) address; raises ValueError for anything else. A
+    station's widget address (Station Server › Settings › Website), copied
+    by mistake, becomes that station's feed: .../widget.html?station=x → .../x.json."""
     url = str(value or "").strip()
     if url and not url.startswith(("http://", "https://")):
         raise ValueError("The what's-on feed must be an http:// or https:// address")
+    parts = urllib.parse.urlsplit(url)
+    if parts.path.endswith("/widget.html"):
+        station = urllib.parse.parse_qs(parts.query).get("station", [""])[0]
+        if re.fullmatch(r"[a-z0-9-]+", station):
+            path = parts.path[: -len("widget.html")] + f"{station}.json"
+            url = urllib.parse.urlunsplit((parts.scheme, parts.netloc, path, "", ""))
     return url
 
 

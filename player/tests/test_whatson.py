@@ -87,6 +87,10 @@ def test_feed_addresses():
     assert clean_feed_url(" https://x/y.json ") == "https://x/y.json" and clean_feed_url(None) == ""
     with pytest.raises(ValueError):
         clean_feed_url("ftp://x/y.json")
+    # The widget's address, copied from Station Server by mistake: its feed instead
+    assert clean_feed_url("https://raby.github.io/rebirth-now/widget.html?station=rebirth-classics&theme=dark") == (
+        "https://raby.github.io/rebirth-now/rebirth-classics.json")
+    assert clean_feed_url("https://x/widget.html?station=../a") == "https://x/widget.html?station=../a"
 
 
 def test_a_built_in_station_given_a_feed_passes_it_on(monkeypatch):
