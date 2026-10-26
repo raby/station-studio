@@ -1,5 +1,6 @@
 """Live shows: a presenter's encoder connects, goes on air in place of the music, and hands back."""
 import base64
+import random
 import socket
 import subprocess
 import threading
@@ -18,19 +19,17 @@ from test_crossfades import Recorder, channel_of, samples, steady
 
 
 def free_ports() -> int:
-    """A port P with P+1 free too."""
-    for _ in range(50):
-        with socket.socket() as s:
-            s.bind(("127.0.0.1", 0))
-            p = s.getsockname()[1]
-        if p < 65534:
-            try:
-                with socket.socket() as a, socket.socket() as b:
-                    a.bind(("127.0.0.1", p))
-                    b.bind(("127.0.0.1", p + 1))
-                return p
-            except OSError:
-                continue
+    """A port P with P+1 free too, below the range the system hands out for
+    outgoing connections (so another test's connection can't take it)."""
+    for _ in range(200):
+        p = random.randrange(20000, 30000)
+        try:
+            with socket.socket() as a, socket.socket() as b:
+                a.bind(("", p))
+                b.bind(("", p + 1))
+            return p
+        except OSError:
+            continue
     raise RuntimeError("no free ports")
 
 
