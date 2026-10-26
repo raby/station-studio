@@ -167,6 +167,7 @@ def test_on_air_to_shoutcast(tmp_path, shoutcast):
     sender.connect()
     Channel(queue, sender, FFMPEG, loop=False, pacer=Unpaced()).run()
     sender.close()
+    assert shoutcast.got_audio.wait(5)  # the server reads it on its own thread
     assert shoutcast.audio[:2] in (b"\xff\xfb", b"\xff\xfa", b"ID")  # an MP3 stream
     for _ in range(50):  # titles are sent in the background
         if len(shoutcast.titles) == 2:

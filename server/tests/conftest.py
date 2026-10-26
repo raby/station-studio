@@ -168,6 +168,7 @@ class FakeIcecast:
         self.titles: list[str] = []
         self.got_audio = threading.Event()
         self.got_title = threading.Event()
+        self.mounts: set[str] = set()  # mounts with a source on them now
         self._sock = socket.socket()
         self._sock.bind(("127.0.0.1", 0))
         self._sock.listen(5)
@@ -195,8 +196,9 @@ class FakeIcecast:
             headers[k.strip().lower()] = v.strip()
         self.requests.append((method, target, headers))
         if target == "/status-json.xsl":  # public, as on a real server
-            body = json.dumps({"icestats": {"source": {"listenurl": f"http://localhost:{self.port}/classics",
-                                                       "listeners": 3, "listener_peak": 5}}}).encode()
+            sources = [{"listenurl": f"http://localhost:{self.port}{m}", "listeners": 3, "listener_peak": 5}
+                       for m in sorted(self.mounts)]
+            body = json.dumps({"icestats": {"source": sources} if sources else {}}).encode()
             conn.sendall(b"HTTP/1.0 200 OK\r\nContent-Type: application/json\r\nContent-Length: "
                          + str(len(body)).encode() + b"\r\n\r\n" + body)
             conn.close()
@@ -206,13 +208,23 @@ class FakeIcecast:
             conn.close()
             return
         if method == "PUT":
+            if target in self.mounts:  # as Icecast: one source per mount
+                conn.sendall(b"HTTP/1.1 403 Mountpoint in use\r\n\r\n")
+                conn.close()
+                return
+            self.mounts.add(target)
             conn.sendall(b"HTTP/1.1 100 Continue\r\n\r\n")
-            while True:
-                data = f.read1(65536)
-                if not data:
-                    return
-                self.audio += data
-                self.got_audio.set()
+            try:
+                while True:
+                    data = f.read1(65536)
+                    if not data:
+                        return
+                    self.audio += data
+                    self.got_audio.set()
+            except OSError:
+                return
+            finally:
+                self.mounts.discard(target)
         qs = parse_qs(urlsplit(target).query)
         if urlsplit(target).path == "/admin/metadata":
             self.titles.append(qs["song"][0])

@@ -267,6 +267,19 @@ table.tracks { width: 100%; border-collapse: collapse; }
 .status-pill.on .dot { background: #fff; box-shadow: none; animation: pulse 1.6s ease-in-out infinite; }
 .status-pill.starting, .status-pill.stopping, .status-pill.waiting { background: var(--accent-soft); color: var(--accent); }
 .status-pill.error { background: var(--danger-soft); color: var(--danger); }
+.status-pill.on.rehearsal { background: var(--ok); }
+
+/* Ready check */
+.checks { padding: 14px 18px; margin-bottom: 18px; }
+.checks-head { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+.checks-head .spacer { flex: 1; }
+.checks ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; font-size: 13px; color: var(--muted); }
+.checks li b { color: var(--text); font-weight: 600; }
+.checks .mark { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 99px; margin-right: 8px;
+  font-size: 11px; font-weight: 700; color: #fff; }
+.checks .ok .mark { background: var(--ok); }
+.checks .warn .mark { background: var(--accent); }
+.checks .fail .mark { background: var(--danger); }
 @keyframes pulse { 50% { opacity: .35; } }
 @media (prefers-reduced-motion: reduce) { .status-pill.on .dot { animation: none; } }
 
@@ -362,3 +375,5 @@ body.remote [data-view="new"], body.remote [data-view="settings"], body.remote #
   .view-head h1 { font-size: 23px; }
   .tracks .artist, .tracks th:nth-child(3) { display: none; }
 }
+
+ol.help.steps { padding-left: 20px; display: grid; gap: 6px; }

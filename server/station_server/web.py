@@ -316,7 +316,9 @@ def make_handler(app: ServerApp, picker: Picker, quit, remote: bool = False,
             if action is None:
                 app.save_station(data, sid)
             elif action == "on":
-                app.set_on_air(sid, bool(data.get("on")))
+                app.set_on_air(sid, bool(data.get("on")), rehearse=bool(data.get("rehearse")))
+            elif action == "check":
+                return self._json({"checks": app.ready_check(sid)})
             elif action == "skip":
                 app.skip(sid)
             elif action == "restart":
@@ -368,6 +370,9 @@ class RemoteAccess:
         self._lock = threading.Lock()
         self._server: ThreadingHTTPServer | None = None
         self.error: str | None = None
+        # This computer's addresses, looked up at most once a minute: the
+        # page asks every 2 seconds, and a lookup can take seconds.
+        self._addresses: tuple[float, list[str]] = (0.0, [])
 
     @property
     def port(self) -> int | None:
@@ -406,13 +411,20 @@ class RemoteAccess:
             self._server = None
             logger.info("phone access off")
 
+    def addresses(self) -> list[str]:
+        at, found = self._addresses
+        if time.monotonic() - at > 60 or not found:
+            found = lan_addresses()
+            self._addresses = (time.monotonic(), found)
+        return found
+
     def status(self) -> dict:
         cfg = self.app.config
         port = self.port
         return {
             "enabled": cfg.remote, "port": cfg.remote_port, "has_password": bool(cfg.remote_password),
             "running": port is not None, "error": self.error,
-            "addresses": [f"http://{a}:{port}/" for a in lan_addresses()] if port else [],
+            "addresses": [f"http://{a}:{port}/" for a in self.addresses()] if port else [],
         }
 
 

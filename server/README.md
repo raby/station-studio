@@ -120,6 +120,17 @@ the playlist's music can be read, for example when its drive isn't there.
 The playlist is tried again after each pass, and comes back as soon as it
 can be read.
 
+**Switching over.** A station can have a *test stream* (Edit › Server): a
+spare port, stream 2 of a SHOUTcast 2 server, or a spare Icecast mount.
+*Rehearse* plays the station there while Winamp carries on, without
+touching the play log or sending alerts; *Go live* then switches it to the
+live server. *Ready check* on the station's page checks everything it
+needs in one go: ffmpeg, the playlist and how many tracks are found, the
+live and test servers and their passwords, the fallback, the shows, start
+at login and alerts. If another source (Winamp's SHOUTcast plugin, say) is
+already on the server, Station Server says so rather than knocking it off.
+Help › Switching over from Winamp walks through it.
+
 **Keeping an eye on it.** On air, a station's page shows how many are
 listening (from the SHOUTcast server's `7.html` or Icecast's
 `status-json.xsl`; listeners to a relay aren't counted), and *Listen*

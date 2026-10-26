@@ -34,13 +34,15 @@ from station_server.desktop import Login, bundled
 from station_server.listen import Listeners, Tap
 from station_server.playlist import PlaylistError, Queue, load_queue
 from station_server.schedule import Show, WeekStart, plan, position, track_seconds, where_now
-from station_server.senders import SenderError, StreamInfo, sender_from_url
+from station_server.senders import IN_USE, InUse, SenderError, StreamInfo, sender_from_url, someone_sending
 from station_server.weeks import WeekPicker
 from station_server.window import mac_app_bundle
 
 logger = logging.getLogger(__name__)
 
 WATCH_SECONDS = 60.0
+# A show's or the fallback's folder plays at most this many files.
+MAX_FOLDER_TRACKS = 5000
 # How often the server is asked how many are listening.
 COUNT_SECONDS = 60.0
 # Going on air again after a problem: first after this many seconds, then
@@ -77,12 +79,15 @@ def show_queue(show: Show, station: Station) -> Queue:
 
 
 def source_queue(name: str, source: str, station: Station, key: str) -> Queue:
-    """One recording, a playlist, or a folder of recordings in name order,
-    as a queue (a show, or the fallback)."""
+    """One recording, a playlist, or a folder of recordings in name order
+    (including those in folders inside it, like Artist/Album), as a queue
+    (a show, or the fallback)."""
     p = Path(source).expanduser()
     if p.is_dir():
-        files = sorted((f for f in p.iterdir() if f.suffix.lower() in AUDIO_EXTENSIONS and f.is_file()),
-                       key=lambda f: f.name.lower())
+        # Not hidden files: a Mac leaves "._song.mp3" beside each song on some drives.
+        files = sorted((f for f in p.rglob("*") if f.suffix.lower() in AUDIO_EXTENSIONS and f.is_file()
+                        and not any(part.startswith(".") for part in f.relative_to(p).parts)),
+                       key=lambda f: [part.lower() for part in f.relative_to(p).parts])[:MAX_FOLDER_TRACKS]
     elif p.suffix.lower() in AUDIO_EXTENSIONS and p.is_file():
         files = [p]
     elif p.is_file():
@@ -133,6 +138,7 @@ class StationRunner:
         self.upcoming: tuple[Path, datetime] | None = None  # the next week and when it goes on
         self.channel: Channel | None = None
         self.sender = None
+        self.rehearsal = False  # on air to the test stream, not the live one
         self.listeners = Listeners()  # the page's Listen button
         self.audience: dict | None = None  # how many are listening, from the server
         self.queue: Queue | None = None
@@ -320,8 +326,9 @@ class StationRunner:
         self.channel = None
         if not self.ffmpeg:
             raise FfmpegMissing("ffmpeg isn't installed (see Help)")
-        if not st.server:
-            raise ValueError("Set the station's server first")
+        if not self.target:
+            raise ValueError("Set the station's test stream first" if self.rehearsal
+                             else "Set the station's server first")
         try:
             self.queue = self._load()
             self.fallback_queue = None
@@ -336,8 +343,15 @@ class StationRunner:
             self.queue = self.fallback_queue = fallback[0]
             self.xml = None
         info = StreamInfo(name=st.name, genre=st.genre, url=st.url, public=st.public, bitrate=st.bitrate)
-        self.sender = Tap(sender_from_url(st.server, info, st.password or None), self.listeners)
-        self.sender.connect()
+        password = (st.test_password or st.password) if self.rehearsal else st.password
+        sender = sender_from_url(self.target, info, password or None)
+        try:
+            sender.connect()
+        except (SenderError, OSError) as exc:
+            if someone_sending(sender):  # Winamp, say, still on the server
+                raise InUse(IN_USE.format(server=sender.describe)) from exc
+            raise
+        self.sender = Tap(sender, self.listeners)
         done = threading.Event()  # this go on air is over: the helpers stop
         try:
             self._on_air(done)
@@ -416,7 +430,14 @@ class StationRunner:
             return (self.queue, *self._resume(self._heard_now(), -1))
         return queue, after
 
+    @property
+    def target(self) -> str:
+        """Where it goes on air: the live server, or the test stream."""
+        return self.station.test_server if self.rehearsal else self.station.server
+
     def _played(self, now: NowPlaying, seconds: float) -> None:
+        if self.rehearsal:  # not on air for real: not for the play log
+            return
         t = now.track
         self.playlog.add(_local(now.started + now.offset), seconds, {
             "title": t.name, "artist": t.artist, "album": t.album,
@@ -450,6 +471,7 @@ class StationRunner:
         out = {
             "station": st.to_json(secrets=False),
             "state": self.state,
+            "rehearsal": self.rehearsal,
             "error": self.error,
             "retry_in": round(max(0.0, self.retry_at - time.time())) if self.retry_at else None,
             "next_week": {"name": self.upcoming[0].stem, "at": self.upcoming[1].isoformat(timespec="minutes")}
@@ -649,13 +671,22 @@ class ServerApp:
         self.weeks.forget(sid)
         self.store.save()
 
-    def set_on_air(self, sid: str, on: bool) -> None:
+    def set_on_air(self, sid: str, on: bool, rehearse: bool = False) -> None:
+        """On or off air; `rehearse` goes on air to the test stream instead
+        (not remembered at restart, not in the play log, no alerts). Going
+        live from a rehearsal switches over."""
         runner = self._runner(sid)
         if on:
+            if rehearse and not runner.station.test_server:
+                raise ValueError("Set a test stream in Edit › Server first")
+            if runner.rehearsal != rehearse and runner.state in ("starting", "on", "waiting"):
+                runner.stop()
+            runner.rehearsal = rehearse
             runner.start()
         else:
             runner.stop()
-        runner.station.on_air = on
+            runner.rehearsal = False
+        runner.station.on_air = on and not rehearse
         self.store.save()
 
     def restart(self, sid: str) -> None:
@@ -678,20 +709,106 @@ class ServerApp:
         }
 
     def check_server(self, data: dict, sid: str | None = None) -> dict:
-        """Connect to the server in `data` and leave again. Uses the saved
-        password when none is typed. A station already on air there isn't
-        disturbed (a SHOUTcast server would refuse a second source)."""
+        """Connect to the server in `data` (its test stream, with `test`)
+        and leave again. Uses the saved password when none is typed."""
         existing = self.config.station(sid) if sid else None
         st = clean_station(data, existing)
-        if not st.server:
-            raise ValueError("Enter the server address")
-        runner = self.runners.get(sid or "")
-        if runner and runner.state == "on" and st.server == runner.station.server:
-            return {"server": runner.sender.describe, "on_air": True}
-        sender = sender_from_url(st.server, StreamInfo(name=st.name), st.password or None)
+        test = bool(data.get("test"))
+        if not (st.test_server if test else st.server):
+            raise ValueError("Enter the test stream's address" if test else "Enter the server address")
+        return self._try_server(st, test)
+
+    def _try_server(self, st: Station, test: bool = False) -> dict:
+        """Can this station go on air there? A station already on air there
+        isn't disturbed, and nor is another source (Winamp, say): a server
+        takes one source at a time, so that's reported instead."""
+        addr = st.test_server if test else st.server
+        password = (st.test_password or st.password) if test else st.password
+        runner = self.runners.get(st.id)
+        if runner and runner.state == "on" and runner.target == addr:
+            counts = runner.audience
+            if counts is None:
+                try:
+                    counts = runner.sender.count_listeners()
+                except Exception:  # an older server or a firewall: no counts
+                    counts = None
+            return {"server": runner.sender.describe, "on_air": True, "counts": counts}
+        sender = sender_from_url(addr, StreamInfo(name=st.name), password or None)
+        if someone_sending(sender):
+            raise InUse(IN_USE.format(server=sender.describe))
         sender.connect()
         sender.close()
-        return {"server": sender.describe, "on_air": False}
+        try:
+            counts = sender.count_listeners()
+        except Exception:  # an older server or a firewall: no counts
+            counts = None
+        return {"server": sender.describe, "on_air": False, "counts": counts}
+
+    def ready_check(self, sid: str) -> list[dict]:
+        """Everything a station needs to run by itself, checked in one go
+        (the station page's Ready check): each is ok, warn or fail."""
+        runner = self._runner(sid)
+        st = runner.station
+        out: list[dict] = []
+
+        def add(name: str, status: str, detail: str) -> None:
+            out.append({"name": name, "status": status, "detail": detail})
+
+        add("ffmpeg", "ok" if self.ffmpeg else "fail", self.ffmpeg or self.ffmpeg_error or "not found")
+        try:
+            xml, upcoming = playlist_file(st, self.weeks, remember=False)
+            queue = load_queue(xml, st.music_folders, st.remaps)
+            hours = sum(track_seconds(t) for t in queue.tracks) / 3600
+            found = len(queue.tracks)
+            if not found:
+                add("Playlist", "fail", f"{xml.name}: none of its {len(queue.missing)} tracks can be found. "
+                    "Add the folder the music is in under Music folders.")
+            elif queue.missing:
+                add("Playlist", "warn", f"{queue.name}: {found} tracks, {hours:.1f} hours; {len(queue.missing)} can't "
+                    "be found and will be left out (listed on the station page).")
+            else:
+                add("Playlist", "ok", f"{queue.name}: all {found} tracks found, {hours:.1f} hours")
+            if upcoming:
+                add("Next week", "ok", f"{upcoming[0].stem} goes on {upcoming[1]:%A %d %B %H:%M}")
+        except (PlaylistError, OSError) as exc:
+            add("Playlist", "fail", str(exc))
+        for label, test in (("Live server", False), ("Test stream", True)):
+            if not (st.test_server if test else st.server):
+                if not test:
+                    add(label, "fail", "Not set: enter it in Edit › Server")
+                continue
+            try:
+                r = self._try_server(st, test)
+                counts = r.get("counts")
+                if r["on_air"]:
+                    detail = f"On air to {r['server']} now" + (f", {counts['listeners']} listening" if counts else "")
+                else:
+                    detail = f"{r['server']} accepted the password"
+                if not counts:
+                    detail += " (its listener count can't be read, so the page won't show one)"
+                add(label, "ok", detail)
+            except InUse as exc:  # Winamp still live there: expected until the switch-over
+                add(label, "warn", f"{exc} Do that just before Go live; the rest can be checked then.")
+            except (SenderError, OSError, ValueError) as exc:
+                add(label, "fail", str(exc))
+        if st.fallback:
+            try:
+                fb = source_queue("Fallback", st.fallback, st, "fallback")
+                add("Fallback", "ok", f"{len(fb.tracks)} tracks")
+            except (PlaylistError, OSError) as exc:
+                add("Fallback", "fail", str(exc))
+        else:
+            add("Fallback", "warn", "None set: if the music can't be read, the station sends silence")
+        for show in runner.shows():
+            if not runner.show_length(show):
+                add(f"Show: {show.name}", "fail", f"{show.source} can't be found or played")
+        add("Start at login", "ok" if self.login.enabled() else "warn",
+            "On" if self.login.enabled() else "Off: after a restart or power cut the station stays off air "
+            "until someone opens Station Server (Settings)")
+        alerts_to = [w for w, on in (("phone", self.config.alerts.ntfy), ("email", self.config.alerts.email_to)) if on]
+        add("Alerts", "ok" if alerts_to else "warn",
+            f"To your {' and '.join(alerts_to)}" if alerts_to else "Off: nobody is told if it goes off air (Settings)")
+        return out
 
     def playlog_csv(self, sid: str, first: date, last: date) -> tuple[str, int, str]:
         runner = self._runner(sid)
@@ -729,7 +846,7 @@ class ServerApp:
             out.append("(no log)")
         text = "\n".join(out)
         cfg = self.config
-        secrets = {s.password for s in cfg.stations if s.password}
+        secrets = {p for s in cfg.stations for p in (s.password, s.test_password) if p}
         secrets |= {x for x in (cfg.alerts.smtp_password, cfg.remote_password, cfg.alerts.ntfy) if x}
         for secret in secrets:
             text = text.replace(secret, "********")

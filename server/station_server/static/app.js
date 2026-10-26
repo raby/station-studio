@@ -19,6 +19,7 @@ const S = {
   updating: null,      // how far an update has got, while this page follows it
   listening: null,     // the station whose broadcast this page is playing (Listen)
   alertsForm: null,    // Settings › Alerts while it's being changed
+  checks: {},          // each station's last Ready check: { busy, at, checks }
 };
 // Seen from a phone or another computer (Settings › Phone access): only
 // watching, listening and on/off air.
@@ -404,22 +405,29 @@ function renderStation(s) {
   const st = s.station;
   const on = s.state === "on";
   const busy = s.state === "starting" || s.state === "stopping" || s.state === "waiting";
+  const rehearsing = s.rehearsal && (on || busy);
   const head = el("div", { class: "view-head" },
     el("div", {},
-      el("div", { class: `status-pill ${s.state}` }, el("span", { class: "dot" }), STATE_WORDS[s.state]),
+      el("div", { class: `status-pill ${s.state}${rehearsing ? " rehearsal" : ""}` }, el("span", { class: "dot" }),
+        rehearsing ? (on ? "Rehearsal" : `Rehearsal: ${STATE_WORDS[s.state]}`) : STATE_WORDS[s.state]),
       el("h1", {}, st.name),
-      el("div", { class: "meta" }, st.server || "No server set"),
+      el("div", { class: "meta" }, (rehearsing ? `Test stream: ${st.test_server}` : st.server) || "No server set"),
     ),
     el("div", { class: "spacer" }),
+    rehearsing ? btn("Go live", "play", () => goLive(st), "btn primary") : null,
     on || busy
-      ? btn("Take off air", "stop", () => setOnAir(st.id, false), "btn")
+      ? btn(rehearsing ? "Stop rehearsal" : "Take off air", "stop", () => setOnAir(st.id, false), "btn")
       : btn("Go on air", "play", () => setOnAir(st.id, true), "btn primary"),
+    !on && !busy && st.test_server ? btn("Rehearse", "radio", () => setOnAir(st.id, true, true), "btn") : null,
     on ? btn("Skip", "next", () => post(`/api/stations/${st.id}/skip`, "Skipped")) : null,
     on ? btn(S.listening === st.id ? "Stop listening" : "Listen", S.listening === st.id ? "stop" : "headphones",
       () => listen(S.listening === st.id ? null : st.id), S.listening === st.id ? "btn primary" : "btn") : null,
+    remoteView() ? null : btn("Ready check", "check", () => readyCheck(st.id), "btn ghost"),
     remoteView() ? null : btn("Edit", "edit", () => go({ type: "edit", id: st.id }), "btn ghost"),
   );
   const parts = [head];
+  const rc = S.checks[st.id];
+  if (rc) parts.push(renderChecks(st.id, rc));
   if (s.state === "waiting") {
     parts.push(el("div", { class: "errors" }, `Can't go on air: ${s.error}. `,
       s.retry_in != null ? `Trying again in ${s.retry_in} s.` : "Trying again…",
@@ -511,11 +519,44 @@ function tick() {
   if (b) b.style.width = `${Math.min(100, 100 * elapsed / (s.now.seconds || 1))}%`;
 }
 
-async function setOnAir(id, on) {
+async function setOnAir(id, on, rehearse = false) {
   try {
-    setState(await api(`/api/stations/${id}/on`, { on }));
+    setState(await api(`/api/stations/${id}/on`, { on, rehearse }));
     render();
   } catch (e) { toast(e.message); }
+}
+
+async function goLive(st) {
+  if (!confirm(`Go live on ${st.server}?\n\nStop Winamp's SHOUTcast plugin first (and iTunes): the server takes one source at a time. Listeners hear a short gap while the station switches over.`)) return;
+  setOnAir(st.id, true, false);
+}
+
+// Ready check: everything the station needs to run by itself, in one go.
+async function readyCheck(id) {
+  S.checks[id] = { busy: true, checks: S.checks[id]?.checks || [] };
+  render();
+  try {
+    const r = await api(`/api/stations/${id}/check`, {});
+    S.checks[id] = { busy: false, at: new Date(), checks: r.checks };
+  } catch (e) {
+    S.checks[id] = { busy: false, at: new Date(), checks: [{ name: "Ready check", status: "fail", detail: e.message }] };
+  }
+  render();
+}
+
+function renderChecks(id, rc) {
+  const marks = { ok: "✓", warn: "!", fail: "✕" };
+  const fails = rc.checks.filter((c) => c.status === "fail").length;
+  const warns = rc.checks.filter((c) => c.status === "warn").length;
+  const summary = rc.busy ? "Checking…" : fails ? `${fails} thing${fails > 1 ? "s" : ""} to fix before going live`
+    : warns ? "Ready to go live, with notes" : "Ready to go live";
+  return el("div", { class: "panel checks" },
+    el("div", { class: "checks-head" }, el("b", {}, summary),
+      rc.at && !rc.busy ? el("span", { class: "help" }, ` · checked ${rc.at.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`) : null,
+      el("div", { class: "spacer" }),
+      btn("Close", null, () => { delete S.checks[id]; render(); }, "btn small ghost")),
+    el("ul", {}, rc.checks.map((c) => el("li", { class: c.status },
+      el("span", { class: "mark", "aria-label": c.status }, marks[c.status]), el("b", {}, c.name), " ", c.detail))));
 }
 
 async function post(path, message) {
@@ -574,6 +615,9 @@ function formValues(st) {
     ...srv,
     password: "",
     has_password: !!st?.has_password,
+    ...testStreamValues(st?.test_server),
+    test_password: "",
+    has_test_password: !!st?.has_test_password,
     bitrate: String(st?.bitrate || 128),
     level: st ? !!st.level : true,
     start_mode: st?.start_mode || "clock",
@@ -595,6 +639,8 @@ function formPayload(v) {
     }).filter((r) => r && r.from && r.to),
     server: buildServer(v),
     password: v.password,
+    test_server: buildTestServer(v),
+    test_password: v.test_password,
     bitrate: Number(v.bitrate),
     level: v.level,
     start_mode: v.start_mode,
@@ -602,6 +648,19 @@ function formPayload(v) {
     shows: v.shows,
     fallback: v.fallback,
   };
+}
+
+// The test stream: the same kind of server as the live one, usually the
+// same address with a spare port or stream number.
+function testStreamValues(url) {
+  if (!url) return { t_host: "", t_port: "", t_sid: "", t_mount: "" };
+  const t = parseServer(url);
+  return { t_host: t.host, t_port: t.port, t_sid: t.sid === "1" ? "" : t.sid, t_mount: t.kind === "icecast" ? t.mount : "" };
+}
+
+function buildTestServer(v) {
+  if (!v.t_host && !v.t_port && !v.t_sid && !v.t_mount) return "";
+  return buildServer({ ...v, host: v.t_host || v.host, port: v.t_port || v.port, sid: v.t_sid || "1", mount: v.t_mount || v.mount });
 }
 
 function renderForm(view) {
@@ -640,6 +699,7 @@ function renderForm(view) {
   };
   const playlistMsg = el("div", { class: "form-msg", role: "status" });
   const serverMsg = el("div", { class: "form-msg", role: "status" });
+  const testMsg = el("div", { class: "form-msg", role: "status" });
   const formMsg = el("div", { class: "form-msg", role: "status" });
   const fallbackMsg = el("div", { class: "form-msg", role: "status" });
 
@@ -691,15 +751,16 @@ function renderForm(view) {
       if (r.missing_count) playlistMsg.className = "form-msg";
     } catch (e) { playlistMsg.className = "form-msg"; playlistMsg.textContent = e.message; }
   }
-  async function checkServer() {
-    serverMsg.className = "form-msg ok";
-    serverMsg.textContent = "Connecting…";
+  async function checkServer(test) {
+    const msg = test ? testMsg : serverMsg;
+    msg.className = "form-msg ok";
+    msg.textContent = "Connecting…";
     try {
-      const r = await api("/api/check/server", { ...formPayload(v), id: s?.station.id });
-      serverMsg.textContent = r.on_air
+      const r = await api("/api/check/server", { ...formPayload(v), id: s?.station.id, test });
+      msg.textContent = r.on_air
         ? `This station is on air to ${r.server} now, so the connection works.`
         : `Connected to ${r.server}: the server accepted the password.`;
-    } catch (e) { serverMsg.className = "form-msg"; serverMsg.textContent = e.message; }
+    } catch (e) { msg.className = "form-msg"; msg.textContent = e.message; }
   }
   async function save() {
     try {
@@ -773,8 +834,19 @@ function renderForm(view) {
         el("p", { class: "help" }, isIce
           ? "Icecast 2.4 or later. The mount is the stream's name on the server, like /classics."
           : "SHOUTcast 1.9 or 2.x. Use the listener port, the one in the station's link; Station Server connects to the port above it, as Winamp does. Stream is 1 unless the server runs several."),
-        el("div", { class: "actions" }, btn("Test connection", "refresh", checkServer, "btn small")),
+        el("div", { class: "actions" }, btn("Test connection", "refresh", () => checkServer(false), "btn small")),
         serverMsg,
+        el("h3", {}, "Test stream (optional)"),
+        el("p", { class: "help" }, isIce
+          ? "A spare mount to rehearse on before going live, like /test. Leave the address blank for the same server."
+          : "A spare stream to rehearse on before going live: another port of the same server, or stream 2 of a SHOUTcast 2 server. Leave the address blank for the same server."),
+        el("div", { class: "grid" },
+          text("t_host", "Address", { placeholder: v.host || "same as live" }),
+          text("t_port", "Port", { narrow: true, placeholder: v.port || "8000" }),
+          isIce ? text("t_mount", "Mount", { narrow: true, placeholder: "/test" }) : text("t_sid", "Stream", { narrow: true, placeholder: "1" }),
+          text("test_password", "Password", { type: "password", placeholder: v.has_test_password ? "unchanged" : "same as live" })),
+        el("div", { class: "actions" }, btn("Test the test stream", "refresh", () => checkServer(true), "btn small")),
+        testMsg,
       ),
       el("fieldset", {}, el("legend", {}, "Playback"),
         el("div", { class: "grid" }, check("level", "Even out the volume (ReplayGain / Sound Check in the files, or measured)")),
@@ -992,6 +1064,16 @@ function renderHelp() {
       el("h2", {}, "Setting up a station"),
       p("Add a station, choose station-studio's exports folder for it (the newest week is played), enter the server's address, port and source password (the one Winamp used), and press Test connection. Then Save and Go on air."),
       p("A SHOUTcast server takes one source at a time: stop Winamp's SHOUTcast plugin before going on air, or the server refuses Station Server."),
+      el("h2", {}, "Switching over from Winamp"),
+      el("ol", { class: "help steps" },
+        el("li", {}, "On the station's computer, install Station Server, copy the music onto it, and turn on Settings › Start Station Server when I log in."),
+        el("li", {}, "Add the station: its exports folder, the music folders, and the live server's address, port and source password (the ones in Winamp's SHOUTcast plugin). Under Test stream, enter a spare stream: another port of the server, or stream 2 of a SHOUTcast 2 server."),
+        el("li", {}, "Set up Settings › Alerts, and a fallback folder in Edit."),
+        el("li", {}, "Press Ready check on the station's page and fix anything marked ✕."),
+        el("li", {}, "Press Rehearse. The station plays to the test stream while Winamp carries on as normal. Press Listen, or open the test stream in a player, and check the songs, their titles and the levels. Nothing goes in the play log."),
+        el("li", {}, "When it sounds right: stop Winamp's SHOUTcast plugin (and close iTunes), then press Go live. Listeners hear a short gap."),
+        el("li", {}, "Keep Winamp and iTunes installed, closed, for a week or two. To go back: Take off air here, then start Winamp's plugin again.")),
+      p("If going on air says something else is already sending to the server, Winamp's plugin (or another copy of Station Server) is still connected: a server takes one source at a time."),
       el("h2", {}, "Two stations on one computer"),
       p("Add a station for each. They run side by side, each with its own playlist, server, clock and play log, and go on and off air separately: for example Rebirth Classics to port 8000 and Rebirth Radio to port 8002 of the same server."),
       el("h2", {}, "Running unattended"),

@@ -33,6 +33,10 @@ class SenderError(Exception):
     """The server refused us (wrong password, mount in use, not a server)."""
 
 
+class InUse(SenderError):
+    """Another source (Winamp, say) is on the server: it takes one at a time."""
+
+
 @dataclass
 class StreamInfo:
     """What the server shows about the station."""
@@ -207,7 +211,7 @@ def parse_7html(text: str) -> dict:
         current, peak, most = int(fields[0]), int(fields[2]), int(fields[3])
     except (IndexError, ValueError):
         raise ValueError("the server's listener count couldn't be read") from None
-    return {"listeners": current, "peak": peak, "max": most}
+    return {"listeners": current, "peak": peak, "max": most, "source": fields[1].strip() == "1"}
 
 
 class IcecastSender(_Sender):
@@ -282,8 +286,24 @@ def parse_icestats(data, mount: str) -> dict:
         url = str(src.get("listenurl") or "")
         if urllib.parse.urlsplit(url).path == mount:
             return {"listeners": int(src.get("listeners") or 0), "peak": int(src.get("listener_peak") or 0),
-                    "max": None}
-    raise ValueError(f"the server doesn't list {mount}")
+                    "max": None, "source": True}
+    if not isinstance(data, dict) or "icestats" not in data:
+        raise ValueError("the server's listener count couldn't be read")
+    return {"listeners": 0, "peak": 0, "max": None, "source": False}  # nothing on the mount
+
+
+IN_USE = ("Something else is already sending to {server}, probably Winamp's SHOUTcast plugin "
+          "(or another copy of Station Server). Stop it first: a server takes one source at a time.")
+
+
+def someone_sending(sender) -> bool:
+    """Whether a source is on the server now (asked before connecting, or
+    after being refused, so the page can say why)."""
+    try:
+        counts = sender.count_listeners()
+    except Exception:  # an older server, or none there: can't tell
+        return False
+    return bool(counts and counts.get("source"))
 
 
 class FileSender:

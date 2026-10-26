@@ -20,16 +20,17 @@ from station_server.senders import parse_7html, parse_icestats
 
 def test_listener_counts_from_shoutcast_and_icecast():
     assert parse_7html("<html><body>12,1,40,32,10,128,Artist - Song, with a comma</body></html>") == {
-        "listeners": 12, "peak": 40, "max": 32}
+        "listeners": 12, "peak": 40, "max": 32, "source": True}
     with pytest.raises(ValueError):
         parse_7html("<html><body>Invalid resource</body></html>")
     stats = {"icestats": {"source": [
         {"listenurl": "http://radio.example:8000/radio", "listeners": 7, "listener_peak": 9},
         {"listenurl": "http://radio.example:8000/classics", "listeners": 2, "listener_peak": 4},
     ]}}
-    assert parse_icestats(stats, "/classics") == {"listeners": 2, "peak": 4, "max": None}
+    assert parse_icestats(stats, "/classics") == {"listeners": 2, "peak": 4, "max": None, "source": True}
+    assert parse_icestats(stats, "/other")["source"] is False  # nothing on that mount
     with pytest.raises(ValueError):
-        parse_icestats(stats, "/other")
+        parse_icestats({"error": "x"}, "/other")
 
 
 # ---- Listen ---------------------------------------------------------------
