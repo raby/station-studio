@@ -146,6 +146,32 @@ def test_the_router_forwards_a_port(router):
         upnp.find_gateway(discover=lambda: [])
 
 
+def test_a_mac_that_blocks_the_local_network_says_how_to_allow_it(monkeypatch):
+    import errno
+    import urllib.error
+    monkeypatch.setattr(upnp.sys, "platform", "darwin")
+
+    class Blocked:
+        def setsockopt(self, *a):
+            pass
+
+        def settimeout(self, t):
+            pass
+
+        def sendto(self, data, to):
+            raise OSError(errno.EHOSTUNREACH, "No route to host")
+
+        def close(self):
+            pass
+    with pytest.raises(upnp.UpnpError, match="Local Network"):
+        upnp.discover(sock_factory=Blocked)
+
+    def refused(url, timeout):
+        raise urllib.error.URLError(OSError(errno.EHOSTUNREACH, "No route to host"))
+    with pytest.raises(upnp.UpnpError, match="Local Network"):
+        upnp.find_gateway(discover=lambda: ["http://192.168.1.1:5000/rootDesc.xml"], opener=refused)
+
+
 def test_settings_internet_end_to_end(tmp_path, router):
     app = ServerApp(ConfigStore(tmp_path))
     st = app.save_station({"name": "Rebirth Classics", "server": "serve://:8000?max=80"})
