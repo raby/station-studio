@@ -30,18 +30,27 @@ MAX_BOOST_DB = 10.0
 
 def level_gain(track: Track) -> float:
     """The volume change for a track from its ReplayGain / Sound Check tags,
-    held back so the loudest sample stays below full scale. 0 when the file
-    carries no levelling information (measuring comes in a later version)."""
+    or else from measuring it (analysis.py), held back so the loudest
+    sample stays below full scale. 0 when neither is known yet."""
+    return level(track)[0]
+
+
+def level(track: Track) -> tuple[float, str | None]:
+    """(gain in dB, where it came from: "tags", "measured" or None)."""
     if track.path is None:
-        return 0.0
+        return 0.0, None
     tags = read_tags(track.path)
-    if tags.gain_db is None:
-        return 0.0
-    gain = min(tags.gain_db, MAX_BOOST_DB)
-    if tags.peak and tags.peak > 0:
-        headroom = -20 * math.log10(tags.peak)
+    gain_db, peak, source = tags.gain_db, tags.peak, "tags"
+    if gain_db is None:
+        measured = getattr(track, "measured", None)
+        if measured is None or measured.gain_db is None:
+            return 0.0, None
+        gain_db, peak, source = measured.gain_db, measured.peak, "measured"
+    gain = min(gain_db, MAX_BOOST_DB)
+    if peak and peak > 0:
+        headroom = -20 * math.log10(peak)
         gain = min(gain, headroom)
-    return gain
+    return gain, source
 
 
 class Pacer:
@@ -83,6 +92,7 @@ class NowPlaying:
     started: float  # when listeners heard (or will hear) the track's start, as time.time()
     gain_db: float = 0.0
     offset: float = 0.0  # seconds into the track it started from (after a restart)
+    levelled_by: str | None = None  # "tags" or "measured"
 
 
 # When no track in the playlist can be read, the station sends this much
@@ -110,6 +120,7 @@ class Channel:
         on_played: Callable[[NowPlaying, float], None] | None = None,
         keep_going: bool = False,
         after: Callable[[], tuple[Queue, int, float]] | None = None,
+        fallback: Callable[[], tuple[Queue, Callable[[], tuple[Queue, int, float]]] | None] | None = None,
     ) -> None:
         """`offset` starts the first track that many seconds in. `on_track`
         is called as each track starts, `on_played` as it ends with the
@@ -117,7 +128,9 @@ class Channel:
         track can be read sends silence and tries again, instead of
         raising RuntimeError (the app wants that; the command line not).
         With `after`, `queue` is played once (a show) and `after()` then
-        says what to play next: (queue, track index, seconds in)."""
+        says what to play next: (queue, track index, seconds in).
+        `fallback()`, when no track can be read, gives something to play
+        once instead of silence, and what to try after it (as `after`)."""
         self.queue = queue
         self.sender = sender
         self.ffmpeg = ffmpeg
@@ -136,6 +149,8 @@ class Channel:
         self._lock = threading.Lock()
         self._next: tuple[Queue, Callable[[Queue], tuple[int, float]], Callable | None] | None = None
         self._after = after
+        self._fallback = fallback
+        self._fallback_after: Callable | None = None
         self.now: NowPlaying | None = None
         self.stuck = False  # nothing in the playlist could be read
         # Titles waiting to go to the server: (title, when it's heard, as time.monotonic()).
@@ -169,6 +184,18 @@ class Channel:
         if now:
             self._skip.set()
 
+    def _play_fallback(self, queue: Queue, after: Callable[[], tuple[Queue, int, float]]) -> None:
+        """Play `queue` once through instead of silence, then try `after()`."""
+        with self._lock:
+            if self._next is None:  # a new week or a show waiting goes first
+                self._fallback_after = after
+                self._next = (queue, lambda q: (0, 0.0), after)
+
+    @property
+    def on_fallback(self) -> bool:
+        """Playing the fallback, because nothing in the playlist could be read."""
+        return self._after is not None and self._after is self._fallback_after
+
     @property
     def in_show(self) -> bool:
         """Playing something once through (see insert)."""
@@ -200,6 +227,14 @@ class Channel:
                         if not self.keep_going:
                             raise RuntimeError("No track in the playlist could be played; stopping")
                         self.stuck = True
+                        fallback = self._fallback() if self._fallback else None
+                        if fallback is not None:
+                            logger.error("no track in the playlist can be played; playing the fallback")
+                            self._play_fallback(*fallback)
+                            failures = 0
+                            pending = self._take_next()
+                            index, offset = pending if pending else (0, 0.0)
+                            continue
                         logger.error("no track in the playlist can be played; sending silence")
                         for chunk in silence(STUCK_SILENCE_SECONDS):
                             if self.stop_event.is_set() or self._next is not None:
@@ -244,9 +279,9 @@ class Channel:
         """Play one track; False when none of its audio could be read."""
         track = self.queue.tracks[index]
         assert track.path is not None
-        gain = level_gain(track) if self.level else 0.0
+        gain, levelled_by = level(track) if self.level else (0.0, None)
         ahead = self.pacer.ahead()
-        now = NowPlaying(index, track, time.time() + ahead - offset, gain, offset)
+        now = NowPlaying(index, track, time.time() + ahead - offset, gain, offset, levelled_by)
         title = now_playing(track)
         logger.info("[%d/%d] %s%s", index + 1, len(self.queue.tracks), title,
                     f" (from {offset:.0f}s)" if offset >= 1 else "")
@@ -258,7 +293,13 @@ class Channel:
             self._on_track(now)
         self._skip.clear()
         played = 0
-        chunks = self._decode(self.ffmpeg, track.path, gain_db=gain, start=offset)
+        # Once measured, the silence at either end is left out.
+        measured = getattr(track, "measured", None)
+        if measured is not None:
+            chunks = self._decode(self.ffmpeg, track.path, gain_db=gain, start=measured.start + offset,
+                                  length=measured.end - measured.start - offset)
+        else:
+            chunks = self._decode(self.ffmpeg, track.path, gain_db=gain, start=offset)
         try:
             for chunk in chunks:
                 if self.stop_event.is_set() or self._skip.is_set():

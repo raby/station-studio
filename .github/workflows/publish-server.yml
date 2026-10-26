@@ -74,11 +74,22 @@ jobs:
           fi
           echo "exists=false" >> "$GITHUB_OUTPUT"
 
+      - name: get ffmpeg
+        if: steps.version.outputs.exists != 'true'
+        # A static build, as in ci.yml (apt's mirror can hang).
+        timeout-minutes: 10
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/ffmpeg"
+          gh release download latest --repo BtbN/FFmpeg-Builds \
+            --pattern 'ffmpeg-master-latest-linux64-lgpl.tar.xz' --dir "$RUNNER_TEMP/ffmpeg"
+          tar -xf "$RUNNER_TEMP/ffmpeg/ffmpeg-master-latest-linux64-lgpl.tar.xz" -C "$RUNNER_TEMP/ffmpeg"
+          echo "$RUNNER_TEMP/ffmpeg/ffmpeg-master-latest-linux64-lgpl/bin" >> "$GITHUB_PATH"
+
       - name: tests
         if: steps.version.outputs.exists != 'true'
         run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg
           python -m pip install pytest
           cd server && python -m pytest -q
 

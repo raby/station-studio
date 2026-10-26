@@ -292,3 +292,47 @@ def test_an_unreadable_show_just_ends(tmp_path):
                       level=False, keep_going=True, after=lambda: (music, 1, 0.0))
     channel.run()
     assert played == ["S0", "A1", "A2"] and not channel.stuck
+
+
+@needs_ffmpeg
+def test_the_fallback_plays_instead_of_silence(tmp_path):
+    played = []
+    music, jingles = _fake_queue("A", 2, tmp_path), _fake_queue("J", 2, tmp_path)
+    during = []
+
+    def decoder(ffmpeg, path, gain_db=0.0, start=0.0):
+        played.append(path.stem)
+        if path.stem.startswith("A"):
+            return  # the music drive is gone
+        during.append(channel.on_fallback)
+        if len(played) >= 7:
+            channel.stop()
+        yield bytes(CHUNK)
+
+    channel = Channel(music, FileSender(tmp_path / "out.mp3"), FFMPEG, pacer=Unpaced(), decoder=decoder,
+                      level=False, keep_going=True, fallback=lambda: (jingles, lambda: (music, 0, 0.0)))
+    channel.run()
+    # Both songs fail, the jingles play, then the songs are tried again.
+    assert played == ["A0", "A1", "J0", "J1", "A0", "A1", "J0"]
+    assert all(during)
+
+
+@needs_ffmpeg
+def test_a_measured_track_leaves_out_its_silence(tmp_path):
+    from station_server.analysis import Measured
+    calls = []
+    music = _fake_queue("A", 1, tmp_path)
+    music.tracks[0].measured = Measured(lufs=-12.0, peak_db=-1.0, start=1.25, end=181.25)
+
+    def decoder(ffmpeg, path, gain_db=0.0, start=0.0, length=None):
+        calls.append((round(gain_db, 2), start, length))
+        channel.stop()
+        yield bytes(CHUNK)
+
+    channel = Channel(music, FileSender(tmp_path / "out.mp3"), FFMPEG, pacer=Unpaced(), decoder=decoder,
+                      offset=10.0)
+    channel.run()
+    # Picked up 10 s in: 10 s after the sound starts, to where it ends.
+    # Measured at -12 LUFS, so 6 dB down to -18 (no tags on the test file).
+    assert calls == [(-6.0, 11.25, 170.0)]
+    assert channel.now.levelled_by == "measured"

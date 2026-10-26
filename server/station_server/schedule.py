@@ -67,7 +67,12 @@ class WeekStart:
 
 
 def track_seconds(track: Track) -> float:
-    """How long a track plays: from the playlist, else the file, else a guess."""
+    """How long a track plays: once measured, from where its sound starts
+    to where it ends (see analysis.py); else from the playlist, else the
+    file, else a guess."""
+    measured = getattr(track, "measured", None)
+    if measured is not None:
+        return max(0.0, measured.end - measured.start)
     if track.duration_ms:
         return track.duration_ms / 1000
     if track.path is not None:

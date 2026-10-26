@@ -25,6 +25,7 @@ from station_player.playlog import PlayLog
 from station_player.tags import read_tags
 
 from station_server import __version__, selfupdate, updates
+from station_server.analysis import Analyser
 from station_server.audio import FfmpegMissing, find_ffmpeg, has_mp3_encoder
 from station_server.awake import KeepAwake
 from station_server.channel import Channel, NowPlaying
@@ -69,7 +70,13 @@ def playlist_file(station: Station, weeks: WeekPicker | None = None, remember: b
 def show_queue(show: Show, station: Station) -> Queue:
     """What a show plays: one recording, a playlist, or a folder of
     recordings in name order."""
-    p = Path(show.source).expanduser()
+    return source_queue(show.name, show.source, station, f"show-{show.id}")
+
+
+def source_queue(name: str, source: str, station: Station, key: str) -> Queue:
+    """One recording, a playlist, or a folder of recordings in name order,
+    as a queue (a show, or the fallback)."""
+    p = Path(source).expanduser()
     if p.is_dir():
         files = sorted((f for f in p.iterdir() if f.suffix.lower() in AUDIO_EXTENSIONS and f.is_file()),
                        key=lambda f: f.name.lower())
@@ -77,17 +84,17 @@ def show_queue(show: Show, station: Station) -> Queue:
         files = [p]
     elif p.is_file():
         queue = load_queue(p, station.music_folders, station.remaps)
-        return Queue(show.name, queue.tracks, queue.missing)
+        return Queue(name, queue.tracks, queue.missing)
     else:
-        raise PlaylistError(f"{show.name}: {p} isn't there")
+        raise PlaylistError(f"{name}: {p} isn't there")
     tracks = []
     for i, f in enumerate(files):
         tags = read_tags(f)
-        tracks.append(Track(id=f"show-{show.id}-{i}", name=tags.title or f.stem, artist=tags.artist,
-                            album=tags.album or show.name, duration_ms=tags.duration_ms, path=f, location=f))
+        tracks.append(Track(id=f"{key}-{i}", name=tags.title or f.stem, artist=tags.artist,
+                            album=tags.album or name, duration_ms=tags.duration_ms, path=f, location=f))
     if not tracks:
-        raise PlaylistError(f"{show.name}: no recordings in {p}")
-    return Queue(show.name, tracks)
+        raise PlaylistError(f"{name}: no recordings in {p}")
+    return Queue(name, tracks)
 
 
 def _local(ts: float) -> datetime:
@@ -108,15 +115,18 @@ class StationRunner:
     """One station, on air or not."""
 
     def __init__(self, station: Station, ffmpeg: str | None, log_dir: Path,
-                 weeks: WeekPicker | None = None, awake: KeepAwake | None = None) -> None:
+                 weeks: WeekPicker | None = None, awake: KeepAwake | None = None,
+                 analyser: Analyser | None = None) -> None:
         self.station = station
         self.ffmpeg = ffmpeg
         self.playlog = PlayLog(log_dir / f"{station.id}.jsonl")
         self.weeks = weeks
         self.awake = awake
+        self.analyser = analyser
         self.state = "off"  # off | starting | on | waiting (to try again) | stopping | error
         self.error: str | None = None
         self.retry_at: float | None = None  # when it tries again, as time.time()
+        self.fallback_queue: Queue | None = None  # on air with the fallback: the playlist can't be read
         self.upcoming: tuple[Path, datetime] | None = None  # the next week and when it goes on
         self.channel: Channel | None = None
         self.sender = None
@@ -163,7 +173,7 @@ class StationRunner:
     # ---- the station thread ---------------------------------------------
 
     def _where(self, queue: Queue) -> tuple[int, float]:
-        if self.station.start_mode != "clock":
+        if self.station.start_mode != "clock" or queue is self.fallback_queue:
             return 0, 0.0
         return where_now(queue.tracks, WeekStart.parse(self.station.week_start), datetime.now().astimezone())
 
@@ -307,7 +317,19 @@ class StationRunner:
             raise FfmpegMissing("ffmpeg isn't installed (see Help)")
         if not st.server:
             raise ValueError("Set the station's server first")
-        self.queue = self._load()
+        try:
+            self.queue = self._load()
+            self.fallback_queue = None
+        except PlaylistError as exc:
+            # The playlist can't be read at all (its drive isn't there, say):
+            # go on air with the fallback, and switch to the playlist when it
+            # can be read (_watch).
+            fallback = self._fallback()
+            if fallback is None:
+                raise
+            logger.error("%s: %s; playing the fallback until it can be read", st.name, exc)
+            self.queue = self.fallback_queue = fallback[0]
+            self.xml = None
         info = StreamInfo(name=st.name, genre=st.genre, url=st.url, public=st.public, bitrate=st.bitrate)
         self.sender = sender_from_url(st.server, info, st.password or None)
         self.sender.connect()
@@ -321,6 +343,9 @@ class StationRunner:
     def _on_air(self, done: threading.Event) -> None:
         st = self.station
         index, offset = self._where(self.queue)
+        if self.analyser:  # measure the tracks coming up first
+            self.analyser.want(self.queue.tracks[index:] + self.queue.tracks[:index])
+            index, offset = self._where(self.queue)  # with the lengths now known
         queue, after = self.queue, None
         self.show_on = None
         joining = self._show_now(datetime.now().astimezone())
@@ -339,6 +364,7 @@ class StationRunner:
         self.channel = Channel(
             queue, self.sender, self.ffmpeg, bitrate=st.bitrate, start=index, offset=offset,
             level=st.level, on_played=self._played, keep_going=True, after=after,
+            fallback=self._fallback,
         )
         threading.Thread(target=self._watch, args=(done,), daemon=True).start()
         threading.Thread(target=self._show_clock, args=(done, self.show_on), daemon=True).start()
@@ -347,6 +373,22 @@ class StationRunner:
         self.state, self.error = "on", None
         logger.info("%s on air to %s", st.name, self.sender.describe)
         self.channel.run()
+
+    def _fallback(self):
+        """The station's fallback, to play once instead of silence, and then
+        the playlist again, where the clock says by then."""
+        st = self.station
+        if not st.fallback:
+            return None
+        try:
+            queue = source_queue("Fallback", st.fallback, st, "fallback")
+        except (PlaylistError, OSError) as exc:
+            logger.warning("%s: couldn't play the fallback: %s", st.name, exc)
+            return None
+
+        def after() -> tuple[Queue, int, float]:
+            return (self.queue, *self._resume(self._heard_now(), -1))
+        return queue, after
 
     def _played(self, now: NowPlaying, seconds: float) -> None:
         t = now.track
@@ -368,7 +410,9 @@ class StationRunner:
                 logger.warning("%s: couldn't read the new playlist: %s", self.station.name, exc)
                 continue
             logger.info("%s: switching to %s after this track", self.station.name, queue.name)
-            self.queue = queue
+            if self.analyser:
+                self.analyser.want(queue.tracks)
+            self.queue, self.fallback_queue = queue, None
             # During a show the new week simply comes in after it.
             if self.channel and self.show_on is None:
                 self.channel.load(queue, where=self._where)
@@ -391,6 +435,9 @@ class StationRunner:
             "now": None,
             "order": [],
             "stuck": bool(self.channel and self.channel.stuck),
+            "on_fallback": bool(self.channel and self.state == "on" and (
+                self.channel.on_fallback or (self.fallback_queue is not None and self.channel.queue is self.fallback_queue))),
+            "measuring": self.analyser.pending() if self.analyser and self.state == "on" else 0,
         }
         ch = self.channel
         # On air, the playlist is the one playing; a new week waiting for the
@@ -409,6 +456,7 @@ class StationRunner:
                 "elapsed": round(max(0.0, time.time() - now.started), 1),
                 "seconds": round(track_seconds(t), 1),
                 "gain_db": round(now.gain_db, 1),
+                "levelled_by": now.levelled_by,
             }
             show_on = self.show_on if ch.in_show else None
             if show_on:
@@ -442,6 +490,7 @@ class ServerApp:
         self.ffmpeg = ffmpeg
         self.weeks = WeekPicker(self.store.home / "weeks.json")
         self.awake = KeepAwake()
+        self.analyser = Analyser(self.ffmpeg, self.store.home / "analysis.json")
         self.runners: dict[str, StationRunner] = {}
         for st in self.config.stations:
             self.runners[st.id] = self._new_runner(st)
@@ -450,7 +499,8 @@ class ServerApp:
         self.latest: str | None = None  # the newest release, once looked up
 
     def _new_runner(self, st: Station) -> StationRunner:
-        return StationRunner(st, self.ffmpeg, self.store.home / "logs", weeks=self.weeks, awake=self.awake)
+        return StationRunner(st, self.ffmpeg, self.store.home / "logs", weeks=self.weeks, awake=self.awake,
+                             analyser=self.analyser)
 
     @property
     def config(self) -> Config:

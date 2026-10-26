@@ -346,3 +346,25 @@ def test_diagnostics_leave_out_passwords(api, exports):
     text = text.decode()
     assert status == 200 and "Station Server" in text and "Rebirth Classics: off" in text
     assert "hunter22" not in text and "s3cret" not in text
+
+
+@needs_ffmpeg
+def test_the_fallback_goes_on_air_until_the_music_is_back(api, exports, icecast, monkeypatch, tmp_path):
+    import station_server.onair as onair
+    monkeypatch.setattr(onair, "WATCH_SECONDS", 0.2)
+    jingles = tmp_path / "jingles"
+    write_wav(jingles / "Station ID.wav", seconds=0.6, freq=990)
+    music = tmp_path / "music"
+    music.rename(tmp_path / "music-away")  # the music drive isn't there
+    status, body = api("/api/stations", {
+        "name": "Rebirth Classics", "playlist": str(exports), "start_mode": "top", "fallback": str(jingles),
+        "server": f"icecast://localhost:{icecast.port}/classics", "password": "hackme",
+    })
+    sid = body["id"]
+    api(f"/api/stations/{sid}/on", {"on": True})
+    runner = api.app.runners[sid]
+    assert wait_for(lambda: runner.state == "on" and runner.status()["on_fallback"])
+    assert wait_for(lambda: "Station ID" in icecast.titles)
+    (tmp_path / "music-away").rename(music)  # the drive is back
+    assert wait_for(lambda: any(t.startswith("Artist - Track") for t in icecast.titles))
+    assert wait_for(lambda: not runner.status()["on_fallback"])
