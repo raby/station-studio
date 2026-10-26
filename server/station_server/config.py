@@ -39,6 +39,9 @@ def studio_exports() -> Path:
     return base / "exports"
 
 
+MAX_CROSSFADE = 10.0
+
+
 @dataclass
 class Station:
     id: str = ""
@@ -69,6 +72,11 @@ class Station:
     # Played instead of silence when none of the playlist can be read (the
     # music drive is missing, say): a folder of jingles or songs, or a playlist.
     fallback: str = ""
+    # Seconds each song fades out under the next (0: none, end to end).
+    crossfade: float = 0.0
+    # A folder of jingles (idents), one played after every `jingle_every` songs.
+    jingles: str = ""
+    jingle_every: int = 4
 
     def to_json(self, secrets: bool = True) -> dict:
         data = asdict(self)
@@ -94,7 +102,8 @@ def clean_station(data: dict, existing: Station | None = None) -> Station:
             continue  # the page never sees the password; blank keeps it
         setattr(st, key, value)
     st.name = str(st.name or "").strip()[:80] or "New station"
-    for key in ("playlist", "server", "password", "test_server", "test_password", "genre", "url", "fallback"):
+    for key in ("playlist", "server", "password", "test_server", "test_password", "genre", "url", "fallback",
+                "jingles"):
         st.__dict__[key] = str(getattr(st, key) or "").strip()
     st.music_folders = [str(p).strip() for p in st.music_folders or [] if str(p).strip()]
     st.remaps = [
@@ -107,6 +116,15 @@ def clean_station(data: dict, existing: Station | None = None) -> Station:
         raise ValueError("Bitrate must be a number of kbps") from None
     if not 32 <= st.bitrate <= 320:
         raise ValueError("Bitrate must be between 32 and 320 kbps")
+    try:
+        st.crossfade = round(float(st.crossfade or 0), 1)
+        st.jingle_every = int(st.jingle_every)
+    except (TypeError, ValueError):
+        raise ValueError("The crossfade and how often jingles play are numbers") from None
+    if not 0 <= st.crossfade <= MAX_CROSSFADE:
+        raise ValueError(f"The crossfade is between 0 (none) and {MAX_CROSSFADE:.0f} seconds")
+    if not 1 <= st.jingle_every <= 20:
+        raise ValueError("Play a jingle after every 1 to 20 songs")
     st.public = bool(st.public)
     st.level = bool(st.level)
     st.on_air = bool(st.on_air)

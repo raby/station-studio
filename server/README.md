@@ -164,6 +164,15 @@ show and it joins the show where it should be. Show times are wall-clock
 times, so a 20:00 show stays at 20:00 when the clocks change. A new
 week's playlist waits until a show has finished.
 
+**Crossfades and jingles.** *Edit › Playback › Crossfade* fades the end
+of each song out under the start of the next, over 1 to 10 seconds (off
+by default). *Edit › Jingles* names a folder of jingles or station idents,
+one played after every few songs (4 unless you change it), shuffled, each
+once before any plays again. The song before fades out under the jingle,
+and the next song starts as it ends. Jingles aren't played during shows
+or the fallback, don't go in the play log, are levelled like the songs, and send the
+station's name as the title. The week's clock allows for both.
+
 A station that was on air when the app quit goes back on air when it
 starts. If no track in the playlist can be read, it sends silence and
 keeps trying rather than dropping off the server.
@@ -295,12 +304,16 @@ test Icecast mount. Listen to both in station-player.
 ## How it works
 
 ```
-playlist XML ─► each track decoded by ffmpeg ─► mixer (gapless, levelled)
+playlist XML ─► each track decoded by ffmpeg ─► mixer (gapless or crossfaded,
+             levelled, jingles)
              ─► held to real time ─► one MP3 encoder ─► SHOUTcast / Icecast
 ```
 
 - **Gapless.** Tracks are joined as raw audio before one encoder, so there's
-  no gap and no reconnect between songs.
+  no gap and no reconnect between songs. A crossfade holds back each song's
+  last few seconds and mixes them, fading, under the start of the next.
+  Where the two add up past full scale the peaks are eased, not clipped.
+  Skip fades out over at most 2 seconds.
 - **Volume levelling** uses the ReplayGain or iTunes Sound Check values in
   each file (read by station-player), never boosting more than 10 dB or past
   the track's peak. Files without them play as they are for now.
