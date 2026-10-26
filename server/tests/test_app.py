@@ -216,7 +216,7 @@ def test_a_show_goes_out_then_the_music_returns(api, exports, icecast, tmp_path)
     from datetime import datetime
 
     from station_server.schedule import Show
-    recording = write_wav(tmp_path / "shows" / "Saturday Night Mix.wav", seconds=1.5, freq=880)
+    recording = write_wav(tmp_path / "shows" / "Saturday Night Mix.wav", seconds=5, freq=880)
     status, body = api("/api/stations", {
         "name": "Rebirth Classics", "playlist": str(exports), "start_mode": "top",
         "server": f"icecast://localhost:{icecast.port}/classics", "password": "hackme",
