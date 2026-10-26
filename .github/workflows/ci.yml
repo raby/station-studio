@@ -64,9 +64,18 @@ jobs:
           python-version: '3.12'
       - name: install
         # ffmpeg does the decoding and encoding; the end-to-end tests need it.
+        # A static build from BtbN/FFmpeg-Builds (as in the Windows app), not
+        # apt, whose mirror has hung these jobs for half an hour at a time.
+        timeout-minutes: 10
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg
+          mkdir -p "$RUNNER_TEMP/ffmpeg"
+          gh release download latest --repo BtbN/FFmpeg-Builds \
+            --pattern 'ffmpeg-master-latest-linux64-lgpl.tar.xz' --dir "$RUNNER_TEMP/ffmpeg"
+          tar -xf "$RUNNER_TEMP/ffmpeg/ffmpeg-master-latest-linux64-lgpl.tar.xz" -C "$RUNNER_TEMP/ffmpeg"
+          echo "$RUNNER_TEMP/ffmpeg/ffmpeg-master-latest-linux64-lgpl/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/ffmpeg/ffmpeg-master-latest-linux64-lgpl/bin/ffmpeg" -hide_banner -encoders | grep -q libmp3lame
           python -m pip install pytest
       - name: pytest
         working-directory: server
