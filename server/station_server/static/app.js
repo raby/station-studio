@@ -1336,7 +1336,7 @@ function internetSettings() {
         () => post("/api/internet/check", {}, "Checked", "Checking: about 10 seconds…"), "btn small")),
       checkMsg,
       check ? el("p", {}, "Upload ", el("b", {}, `${check.upload_mbps} Mbps`),
-        check.address ? [" · seen from outside as ", el("b", {}, check.address)] : "",
+        check.address ? [" · seen from outside as ", el("b", {}, check.address)] : " · its address outside couldn't be found",
         el("span", { class: "help" }, ` · checked ${dayTime(check.at)}`)) : null,
       here.length ? el("table", { class: "help-table" },
         el("tr", {}, el("th", {}, "Station"), el("th", {}, "Port"), el("th", {}, "Allowed"), el("th", {}, "Suggested"), el("th", {}, "")),
@@ -1583,7 +1583,9 @@ function renderHelp() {
       p("Settings › Internet measures it for you. Set Most listeners a little under that; when it's full, the next listener is turned away rather than everyone stuttering. For more listeners than the connection can take, send to a hosted SHOUTcast or Icecast server instead."),
     ],
     new: () => [
-      el("h2", {}, "0.16: Settings › Internet"),
+      el("h2", {}, "0.16.1"),
+      list("Check my internet finds this connection's outside address a second way, if Cloudflare's speed test page doesn't give it."),
+      h2("0.16: Settings › Internet"),
       list(
         "Check my internet measures the upload and suggests how many listeners each station streaming from this computer can take, with Use to set it.",
         "Opens each station's port on the router (UPnP), keeps a free DuckDNS name pointing at this connection, and shows a code to scan from a phone on mobile data.",

@@ -48,8 +48,18 @@ def test_listeners_from_the_upload():
 
 
 def test_public_address():
-    assert netcheck.public_address(lambda req, timeout: io.BytesIO(b'{"clientIp": "81.150.147.206"}')) == "81.150.147.206"
-    assert netcheck.public_address(lambda req, timeout: io.BytesIO(b'{"clientIp": "<b>"}')) is None
+    def site(trace, meta):
+        def opener(req, timeout):
+            body = trace if req.full_url == netcheck.TRACE_URL else meta
+            if body is None:
+                raise OSError("refused")
+            return io.BytesIO(body)
+        return opener
+    trace = b"fl=123\nh=speed.cloudflare.com\nip=81.150.147.206\nts=1\n"
+    assert netcheck.public_address(site(trace, None)) == "81.150.147.206"
+    assert netcheck.public_address(site(None, b'{"clientIp": "81.150.147.206"}')) == "81.150.147.206"
+    assert netcheck.public_address(site(b"ip=<b>\n", b'{"clientIp": "<b>"}')) is None
+    assert netcheck.public_address(site(None, None)) is None
 
 
 def test_duckdns_names_and_updates():

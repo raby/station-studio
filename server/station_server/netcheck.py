@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 
 UP_URL = "https://speed.cloudflare.com/__up"
 META_URL = "https://speed.cloudflare.com/meta"
+TRACE_URL = "https://speed.cloudflare.com/cdn-cgi/trace"  # plain text, ip=...
 DUCKDNS_URL = "https://www.duckdns.org/update"
 USER_AGENT = f"station-server/{__version__}"
 # Upload sizes tried in turn, bigger while each is quick, for about 10 s at most.
@@ -68,14 +69,26 @@ def upload_mbps(opener=_open, clock=time.monotonic, sizes=SIZES) -> float:
 
 def public_address(opener=_open) -> str | None:
     """The address the internet sees this computer at (its router's)."""
-    req = urllib.request.Request(META_URL, headers={"User-Agent": USER_AGENT})
-    try:
-        with opener(req, timeout=10) as resp:
-            data = json.loads(resp.read(65536))
-    except (OSError, ValueError):
-        return None
-    ip = data.get("clientIp") if isinstance(data, dict) else None
-    return ip if isinstance(ip, str) and re.fullmatch(r"[0-9a-fA-F.:]{3,45}", ip) else None
+    for url in (TRACE_URL, META_URL):
+        req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+        try:
+            with opener(req, timeout=10) as resp:
+                text = resp.read(65536).decode("utf-8", "replace")
+        except OSError as exc:
+            logger.info("Address from %s: %s", url, exc)
+            continue
+        if url == TRACE_URL:
+            m = re.search(r"(?m)^ip=(\S+)$", text)
+            ip = m.group(1) if m else None
+        else:
+            try:
+                data = json.loads(text)
+            except ValueError:
+                continue
+            ip = data.get("clientIp") if isinstance(data, dict) else None
+        if isinstance(ip, str) and re.fullmatch(r"[0-9a-fA-F.:]{3,45}", ip):
+            return ip
+    return None
 
 
 def listeners_for(mbps: float, kbps: int) -> int:
