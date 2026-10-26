@@ -240,7 +240,9 @@ def test_back_on_air_part_way_through_a_show(api, exports, icecast, tmp_path, mo
     from datetime import datetime
 
     from station_server.onair import StationRunner
-    recording = write_wav(tmp_path / "shows" / "Long Show.wav", seconds=2.0, freq=660)
+    # Joining part-way seeks up to a minute in (the show started on this minute), so the
+    # recording must outlast that or the show is over before the station is on air.
+    recording = write_wav(tmp_path / "shows" / "Long Show.wav", seconds=70, freq=660, rate=8000)
     now = datetime.now().astimezone()
     status, body = api("/api/stations", {
         "name": "Rebirth Classics", "playlist": str(exports),
