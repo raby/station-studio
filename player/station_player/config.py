@@ -26,10 +26,13 @@ DEFAULT_STATIONS = [
     {
         "name": "Rebirth Radio",
         "url": "https://sh.uk.audio-stream.com/proxy/adgerdes?mp=/stream",
+        # What's on, from Rebirth's Station Server (Settings › Website).
+        "feed": "https://raby.github.io/rebirth-now/rebirth-radio.json",
     },
     {
         "name": "Rebirth Classics",
         "url": "http://81.150.147.206:8000",
+        "feed": "https://raby.github.io/rebirth-now/rebirth-classics.json",
     },
 ]
 # Settings from before the player kept track of which built-in stations it

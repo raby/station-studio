@@ -114,7 +114,8 @@ def test_whats_on_through_the_player(running):  # noqa: F811
     assert request(port, "POST", "/api/stations/update", {"url": "https://classics.example/live", "feed": "nope"},
                    h)[0].status == 400
     assert ConfigStore(app.store.home).config.stations[-1]["feed"].endswith("/c.json")
-    other = next(s for s in json.loads(request(port, "GET", "/api/state")[1])["stations"] if not s.get("feed"))
+    request(port, "POST", "/api/stations", {"name": "Jazz", "url": "https://jazz.example/live"}, h)
+    other = next(s for s in json.loads(request(port, "GET", "/api/state")[1])["stations"] if s["name"] == "Jazz")
     assert request(port, "GET", f"/api/whatson?station={other['id']}")[0].status == 404
     site.shutdown()
     site.server_close()
