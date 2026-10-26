@@ -33,6 +33,7 @@ from station_server.channel import Channel, NowPlaying
 from station_server.config import Config, ConfigStore, Station, clean_alerts, clean_port, clean_station, newest_week
 from station_server.desktop import Login, bundled
 from station_server.listen import Listeners, Tap
+from station_server.live import LiveInput, LiveSource, lan_addresses, port_free
 from station_server.playlist import PlaylistError, Queue, load_queue
 from station_server.schedule import Show, WeekStart, plan, position, step_seconds, track_seconds, where_now
 from station_server.senders import IN_USE, InUse, SenderError, StreamInfo, sender_from_url, someone_sending
@@ -50,6 +51,8 @@ COUNT_SECONDS = 60.0
 # twice as long each time it fails again, up to the most.
 RETRY_SECONDS = 15.0
 RETRY_MOST_SECONDS = 120.0
+# After End live show, the presenter's encoder can't reconnect for this long.
+END_LIVE_BLOCK_SECONDS = 120.0
 
 
 def playlist_file(station: Station, weeks: WeekPicker | None = None, remember: bool = True,
@@ -189,6 +192,8 @@ class StationRunner:
         self._interrupted = 0  # the song a show cut into
         self._show_lengths: dict[str, tuple[tuple, float]] = {}  # source -> ((mtime, crossfade), seconds)
         self.jingles: JingleBag | None = None
+        self.live_input: LiveInput | None = None  # presenters connect here, on air with live shows on
+        self.live_error: str | None = None  # why it couldn't listen
 
     # ---- control --------------------------------------------------------
 
@@ -298,6 +303,9 @@ class StationRunner:
             logger.warning("%s: couldn't play %s: %s", self.station.name, show.name, exc)
             return
         ch = self.channel
+        if ch is not None and ch.live is not None:
+            logger.info("%s: %s not played: a presenter is live", self.station.name, show.name)
+            return
         interrupted = ch.now.index if ch and ch.now and not ch.in_show else 0
         logger.info("%s: %s %s", self.station.name, show.name, "now" if show.on_time else "after this song")
         self.show_on = (show, at, sum(step_seconds(t) for t in queue.tracks))
@@ -460,7 +468,61 @@ class StationRunner:
             self.channel.stop()
         self.state, self.error = "on", None
         logger.info("%s on air to %s", st.name, self.sender.describe)
-        self.channel.run()
+        self._listen_live()
+        try:
+            self.channel.run()
+        finally:
+            if self.live_input:
+                self.live_input.stop()
+                self.live_input = None
+
+    # ---- live shows -------------------------------------------------------
+
+    def _listen_live(self) -> None:
+        """With live shows on, listen for a presenter while on air."""
+        st = self.station
+        self.live_error = None
+        if not st.live:
+            return
+        live = LiveInput(st.live_port, st.live_password, self.ffmpeg, on_source=self._go_live)
+        try:
+            live.start()
+        except OSError as exc:
+            self.live_error = (f"Presenters can't go live: port {st.live_port} or {st.live_port + 1} "
+                               f"is in use by another program ({exc.strerror or exc})")
+            logger.warning("%s: %s", st.name, self.live_error)
+            return
+        self.live_input = live
+
+    def _go_live(self, source: LiveSource) -> bool:
+        """A presenter has connected: on air, the music fading out under them."""
+        ch = self.channel
+        if ch is None or self.state != "on":
+            return False
+        interrupted = self._interrupted if ch.in_show else (ch.now.index if ch.now else 0)
+        self.show_on = None
+        name = source.presenter or "Live"
+        logger.info("%s: %s is live", self.station.name, name)
+        ch.go_live(source, after=self._after_show(interrupted), on_title=self._live_played,
+                   title=f"{self.station.name}: {name}" if source.presenter else f"{self.station.name}: Live")
+        return True
+
+    def end_live(self) -> None:
+        """Take the presenter off air. Their encoder will try to reconnect,
+        so they're kept off for a couple of minutes."""
+        if self.live_input:
+            self.live_input.end(block_seconds=END_LIVE_BLOCK_SECONDS)
+
+    def _live_played(self, title: str, started: float, seconds: float) -> None:
+        """A song a presenter played (by the title their encoder sent), for the play log."""
+        if self.rehearsal:
+            return
+        artist, sep, name = title.partition(" - ")
+        if not sep:
+            artist, name = "", title
+        self.playlog.add(_local(started), seconds, {
+            "title": name.strip(), "artist": artist.strip(), "album": "Live", "duration_ms": None, "path": None,
+        })
 
     def _count(self, done: threading.Event, sender, first: float = 5.0) -> None:
         """Ask the server how many are listening, now and then."""
@@ -569,6 +631,14 @@ class StationRunner:
             out["playlist"] = _playlist_info(playing)
             if self.queue is not None and self.queue is not playing:
                 out["playlist"]["next"] = _playlist_info(self.queue)
+        if st.live:
+            out["live_input"] = {"port": st.live_port, "listening": self.live_input is not None,
+                                 "error": self.live_error if self.state == "on" else None}
+        live = ch.live if ch and self.state == "on" else None
+        if live is not None:
+            out["live"] = {"presenter": live.presenter, "title": live.title, "address": live.address,
+                           "since": _local(live.since).isoformat(timespec="seconds"),
+                           "elapsed": round(time.time() - live.since)}
         now = ch.now if ch and self.state == "on" else None
         if now and ch:
             t = now.track
@@ -725,6 +795,14 @@ class ServerApp:
         if sid and existing is None:
             raise KeyError(sid)
         st = clean_station(data, existing)
+        if st.live:
+            taken = {8770} | ({self.config.remote_port} if self.config.remote else set())
+            for other in self.config.stations:
+                if other.id != st.id and other.live:
+                    taken |= {other.live_port, other.live_port + 1}
+            if {st.live_port, st.live_port + 1} & taken:
+                raise ValueError(f"Live shows port {st.live_port} (or the one above) is used by another station "
+                                 "or by Station Server: choose another")
         if existing:
             i = self.config.stations.index(existing)
             self.config.stations[i] = st
@@ -771,6 +849,9 @@ class ServerApp:
 
     def skip(self, sid: str) -> None:
         self._runner(sid).skip()
+
+    def end_live(self, sid: str) -> None:
+        self._runner(sid).end_live()
 
     def check_playlist(self, data: dict) -> dict:
         """What the playlist settings in `data` would play (before saving)."""
@@ -885,6 +966,20 @@ class ServerApp:
         for show in runner.shows():
             if not runner.show_length(show):
                 add(f"Show: {show.name}", "fail", f"{show.source} can't be found or played")
+        if st.live:
+            ports = f"{st.live_port} and {st.live_port + 1}"
+            here = next(iter(lan_addresses()), "this computer's address")
+            where = (f"Presenters connect to {here} port {st.live_port}. From outside this network, forward "
+                     f"ports {ports} on the router to this computer.")
+            if runner.live_input is not None:
+                add("Live shows", "ok", f"Listening for presenters. {where}")
+            elif runner.state == "on" and runner.live_error:
+                add("Live shows", "fail", runner.live_error)
+            elif all(port_free(p) for p in (st.live_port, st.live_port + 1)):
+                add("Live shows", "ok", f"Ports {ports} are free; presenters can connect while it's on air. {where}")
+            else:
+                add("Live shows", "fail", f"Port {st.live_port} or {st.live_port + 1} is in use by another program: "
+                    "choose another live shows port in Edit")
         add("Start at login", "ok" if self.login.enabled() else "warn",
             "On" if self.login.enabled() else "Off: after a restart or power cut the station stays off air "
             "until someone opens Station Server (Settings)")

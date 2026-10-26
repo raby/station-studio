@@ -354,6 +354,8 @@ body.offline { display: grid; place-items: center; min-height: 100vh; margin: 0;
 .show-edit .days { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 10px; }
 .form label.check.day { flex: none; min-width: 0; }
 .now:has(.show-kicker) .glyph { grid-row: span 4; }
+.now.live .show-kicker { color: var(--danger); }
+.now.live .glyph { color: var(--danger); }
 
 /* Help › Copy diagnostics, when there's no clipboard to copy to */
 textarea.diagnostics {

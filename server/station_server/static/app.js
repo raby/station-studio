@@ -68,6 +68,7 @@ const ICONS = {
   headphones: ["M3 18v-6a9 9 0 0 1 18 0v6", "M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3z", "M3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"],
   bell: ["M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9", "M13.73 21a2 2 0 0 1-3.46 0"],
   phone: ["r 6 2 12 20 2.5", "M11 18h2"],
+  mic: ["r 9 2 6 12 3", "M19 10v1a7 7 0 0 1-14 0v-1", "M12 18v4", "M8 22h8"],
 };
 const SVG = "http://www.w3.org/2000/svg";
 function icon(name) {
@@ -419,7 +420,8 @@ function renderStation(s) {
       ? btn(rehearsing ? "Stop rehearsal" : "Take off air", "stop", () => setOnAir(st.id, false), "btn")
       : btn("Go on air", "play", () => setOnAir(st.id, true), "btn primary"),
     !on && !busy && st.test_server ? btn("Rehearse", "radio", () => setOnAir(st.id, true, true), "btn") : null,
-    on ? btn("Skip", "next", () => post(`/api/stations/${st.id}/skip`, "Skipped")) : null,
+    on && s.live ? btn("End live show", "stop", () => endLive(st.id, s.live), "btn") : null,
+    on && !s.live ? btn("Skip", "next", () => post(`/api/stations/${st.id}/skip`, "Skipped")) : null,
     on ? btn(S.listening === st.id ? "Stop listening" : "Listen", S.listening === st.id ? "stop" : "headphones",
       () => listen(S.listening === st.id ? null : st.id), S.listening === st.id ? "btn primary" : "btn") : null,
     remoteView() ? null : btn("Ready check", "check", () => readyCheck(st.id), "btn ghost"),
@@ -436,7 +438,16 @@ function renderStation(s) {
   if (s.on_fallback) parts.push(el("div", { class: "errors" }, "None of the playlist's tracks can be read, so the station is playing the fallback. Check the music folders in Edit; the playlist is tried again after the fallback."));
   else if (s.stuck) parts.push(el("div", { class: "errors" }, "None of the playlist's tracks can be read, so the station is sending silence. Check the music folders in Edit, or set a fallback there."));
 
-  if (on && s.now) {
+  if (on && s.live_input && s.live_input.error) parts.push(el("div", { class: "errors" }, s.live_input.error));
+  if (on && s.live) {
+    const l = s.live;
+    parts.push(el("div", { class: "panel now live" },
+      el("div", { class: "glyph big" }, icon("mic")),
+      el("div", { class: "show-kicker" }, `Live${l.presenter ? `: ${l.presenter}` : ""}`),
+      el("div", { class: "title" }, l.title || "A presenter is live"),
+      el("div", { class: "artist" }, `On air since ${hhmm(l.since)}, from ${l.address}. The music comes back where the week's clock says when they finish.`),
+    ));
+  } else if (on && s.now) {
     const n = s.now;
     parts.push(el("div", { class: "panel now" },
       el("div", { class: "glyph big" }, icon("radio")),
@@ -459,7 +470,7 @@ function renderStation(s) {
     if (s.audience) facts.push(el("span", { title: `Most at once: ${s.audience.peak}` },
       el("b", {}, `${s.audience.listeners}`), s.audience.max ? ` of ${s.audience.max}` : "",
       s.audience.listeners === 1 ? " listener" : " listeners"));
-    if (s.now && s.now.gain_db) facts.push(el("span", {}, "Levelled ", el("b", {}, `${s.now.gain_db > 0 ? "+" : ""}${s.now.gain_db} dB`),
+    if (s.now && s.now.gain_db && !s.live) facts.push(el("span", {}, "Levelled ", el("b", {}, `${s.now.gain_db > 0 ? "+" : ""}${s.now.gain_db} dB`),
       s.now.levelled_by === "measured" ? " (measured)" : ""));
     if (s.measuring) facts.push(el("span", {}, `Measuring tracks: ${s.measuring} to go`));
   }
@@ -476,6 +487,7 @@ function renderStation(s) {
   facts.push(el("span", {}, `MP3 ${st.bitrate} kbps`));
   if (st.crossfade) facts.push(el("span", {}, `Crossfade ${st.crossfade} s`));
   if (st.jingles) facts.push(el("span", {}, `A jingle every ${st.jingle_every} songs`));
+  if (on && s.live_input && s.live_input.listening && !s.live) facts.push(el("span", {}, "Presenters can go live on port ", el("b", {}, `${s.live_input.port}`)));
   parts.push(el("div", { class: "facts" }, facts));
   if (s.shows && s.shows.length) {
     parts.push(el("div", { class: "facts" }, el("span", {}, "Shows"),
@@ -491,7 +503,7 @@ function renderStation(s) {
     ));
   }
 
-  if (on && s.order.length) {
+  if (on && s.order.length && !s.live) {
     parts.push(el("h2", { class: "section" }, "Running order"));
     parts.push(el("table", { class: "tracks" },
       el("thead", {}, el("tr", {}, el("th", { class: "time" }, "Time"), el("th", { class: "title" }, "Title"),
@@ -520,6 +532,11 @@ function tick() {
   const e = $("#now-elapsed"), b = $("#now-bar");
   if (e) e.textContent = clock(Math.min(elapsed, s.now.seconds));
   if (b) b.style.width = `${Math.min(100, 100 * elapsed / (s.now.seconds || 1))}%`;
+}
+
+async function endLive(id, live) {
+  if (!confirm(`Take ${live.presenter || "the presenter"} off air? The music comes back, and their encoder can't reconnect for two minutes.`)) return;
+  await post(`/api/stations/${id}/endlive`, "Live show ended");
 }
 
 async function setOnAir(id, on, rehearse = false) {
@@ -631,6 +648,10 @@ function formValues(st) {
     crossfade: String(st?.crossfade || 0),
     jingles: st?.jingles || "",
     jingle_every: String(st?.jingle_every || 4),
+    live: !!st?.live,
+    live_port: String(st?.live_port || 8010),
+    live_password: "",
+    has_live_password: !!st?.has_live_password,
   };
 }
 
@@ -656,6 +677,9 @@ function formPayload(v) {
     crossfade: Number(v.crossfade),
     jingles: v.jingles,
     jingle_every: Number(v.jingle_every),
+    live: v.live,
+    live_port: Number(v.live_port),
+    live_password: v.live_password,
   };
 }
 
@@ -880,6 +904,13 @@ function renderForm(view) {
           btn("Choose folder…", "folder", () => pick("folder", (p) => { v.jingles = p; }, jinglesMsg), "btn small")),
         el("p", { class: "help" }, "Station idents and jingles, played between songs in a shuffled order, each once before any plays again. Not during shows or the fallback, and not in the play log. The week's clock allows for them, and for the crossfade."),
         jinglesMsg,
+      ),
+      el("fieldset", {}, el("legend", {}, "Live shows"),
+        el("div", { class: "grid" }, check("live", "Let presenters go live from their own encoder (BUTT, Mixxx, Winamp)")),
+        el("div", { class: "grid" },
+          text("live_port", "Port", { narrow: true, placeholder: "8010" }),
+          text("live_password", "Presenters' password", { type: "password", placeholder: v.has_live_password ? "unchanged" : "" })),
+        el("p", { class: "help" }, "While the station is on air, a presenter's encoder connects to this computer as if it were the station's server, and they're live: the song fades out under them, and when they disconnect the music comes back where the week's clock says. In BUTT or Mixxx choose Icecast, with this computer's address, the port, mount /live, user source and the password; or SHOUTcast, with the address, port and password. From outside this network, forward the port and the one above it on the router to this computer."),
       ),
       el("fieldset", {}, el("legend", {}, "Shows"),
         el("p", { class: "help" }, "Shows go out at set times: a recording, a playlist, or a folder of recordings played in name order. When a show ends, the music comes back where the week's clock says, so the running order's times stay right."),
@@ -1110,6 +1141,11 @@ function renderHelp() {
       el("h2", {}, "Crossfades and jingles"),
       p("Edit › Playback › Crossfade fades the end of each song out under the start of the next, over 1 to 10 seconds (Off plays them one straight after the other). Edit › Jingles plays one of a folder of jingles or station idents after every few songs, in a shuffled order, each once before any plays again. The song before fades out under the jingle; the next song starts as the jingle ends. Jingles aren't played during shows or the fallback and don't go in the play log; while one plays, the server shows the station's name as the title. Skip fades the song out over at most 2 seconds, however long the crossfade."),
       p("The week's clock allows for both, so the running order's times and a restart still land in the right place."),
+      el("h2", {}, "Live shows"),
+      p("Turn on Edit › Live shows and set a port (8010 unless you choose another) and a password for presenters. While the station is on air, a presenter's encoder connects to this computer as if it were the station's server: the song playing fades out under them and they're live, with the song titles their encoder sends. When they disconnect, the music fades back in where the week's clock says. A show due while they're live is left out."),
+      p("In BUTT: Settings › Main › Server › Add. Type Icecast, Address this computer's address, Port 8010, Password the presenters' password, Mountpoint live, User source. (Or Type SHOUTcast, with the address, port and password.) In Mixxx: Options › Live Broadcasting, Type Icecast 2, the same details, Login source. Winamp's SHOUTcast plugin works too, with the address, port and password."),
+      p("Presenters at home connect over the internet: on the router at the station, forward the port and the one above it (8010 and 8011) to this computer, as for the SHOUTcast server, and give presenters the station's internet address. Allow Station Server through the firewall when Windows or macOS asks. The Ready check shows the address to use on this network."),
+      p("End live show takes a presenter off air; their encoder will try to reconnect, so they're kept off for two minutes. If a presenter's connection drops, the music comes back after 10 seconds. What they play goes in the play log by the titles their encoder sends."),
       el("h2", {}, "Keeping an eye on it"),
       p("On air, a station's page shows how many are listening (as the server counts them: listeners to a relay aren't included), and Listen plays the broadcast exactly as it goes to the server."),
       p("Settings › Alerts tells you, on your phone or by email, when a station has been off air for a few minutes, and again when it's back. Settings › Phone access lets a phone or another computer on the same network see the stations, listen, and put them on or off air, with a password."),

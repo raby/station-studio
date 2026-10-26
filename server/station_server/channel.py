@@ -2,8 +2,8 @@
 
 The flow is decode (per track) -> mixer -> pacer -> one encoder -> sender.
 The mixer joins tracks end to end with no gap, or crossfades them, applying
-each track's volume levelling, and plays a jingle every few songs. It is
-the seam where a live input will go later.
+each track's volume levelling, and plays a jingle every few songs. A
+presenter going live (live.py) takes over from the music until they finish.
 
 A crossfade holds back the last few seconds of each track (the tail) and
 mixes them under the start of the next. Each song so starts a crossfade
@@ -174,6 +174,9 @@ class Channel:
         self.jingle_title = jingle_title
         self.jingle: Track | None = None  # the jingle playing, if one is
         self._songs = 0  # playlist songs played since the last jingle
+        self._live_next: tuple | None = None  # a presenter waiting to go on air
+        self.live = None  # the presenter on air (a live.LiveSource), if one is
+        self._on_live_title: Callable[[str, float, float], None] | None = None
         self.stuck = False  # nothing in the playlist could be read
         # Titles waiting to go to the server: (title, when it's heard, as time.monotonic()).
         self._titles: queues.Queue[tuple[str, float]] = queues.Queue()
@@ -205,6 +208,18 @@ class Channel:
             self._next = (queue, lambda q: (0, offset), after)
         if now:
             self._skip.set()
+
+    def go_live(self, source, after: Callable[[], tuple[Queue, int, float]],
+                on_title: Callable[[str, float, float], None] | None = None, title: str = "") -> None:
+        """Put a presenter on air straight away, the music fading out under
+        them, until they disconnect; then whatever `after()` says.
+        `on_title(title, started, seconds)` is called for each song title
+        they sent once it's over (for the play log); `title` goes to the
+        server until they send one."""
+        with self._lock:
+            self._live_next = (source, after, title)
+            self._on_live_title = on_title
+        self._skip.set()
 
     def _play_fallback(self, queue: Queue, after: Callable[[], tuple[Queue, int, float]]) -> None:
         """Play `queue` once through instead of silence, then try `after()`."""
@@ -239,6 +254,12 @@ class Channel:
         failures = 0
         try:
             while not self.stop_event.is_set():
+                live = self._take_live(encoder)
+                if live is not None:  # a presenter went live: then the music, where `after` says
+                    self.queue, index, offset = live
+                    index %= len(self.queue.tracks)
+                    failures = 0
+                    continue
                 if self._play(index, offset, encoder):
                     failures = 0
                     self.stuck = False
@@ -260,12 +281,14 @@ class Channel:
                         logger.error("no track in the playlist can be played; sending silence")
                         self._flush(encoder)
                         for chunk in silence(STUCK_SILENCE_SECONDS):
-                            if self.stop_event.is_set() or self._next is not None:
+                            if self.stop_event.is_set() or self._next is not None or self._live_next:
                                 break
                             self.pacer.wait(len(chunk))
                             encoder.write(chunk)
                         failures = 0
                 offset = 0.0
+                if self._live_next is not None:
+                    continue  # the presenter goes on before anything else
                 if self._jingle_due():
                     self._play_jingle(encoder)
                 pending = self._take_next()
@@ -381,6 +404,67 @@ class Channel:
             keep = min(keep, int(SKIP_FADE_SECONDS * BYTES_PER_SECOND))
         self._tail = bytes(held[:keep // 4 * 4])  # whole frames
         return played
+
+    def _take_live(self, encoder: Encoder) -> tuple[Queue, int, float] | None:
+        """Play the presenter waiting to go on air, if there is one, and
+        say what to play after them."""
+        with self._lock:
+            pending, self._live_next = self._live_next, None
+        if pending is None or self.stop_event.is_set():
+            return None
+        source, after, title = pending
+        self._play_live(source, title, encoder)
+        with self._lock:
+            self._next = None  # a show or new week waiting: the clock sorts it out
+        self._after = None
+        self._songs = 0
+        return after()
+
+    def _play_live(self, source, title: str, encoder: Encoder) -> None:
+        """The presenter's audio, in real time, until they disconnect. The
+        song playing fades out under their start. If their audio is slow to
+        arrive, silence fills in rather than the stream stopping."""
+        from station_server.live import QUIET_SECONDS
+        tail, self._tail = self._tail, b""
+        done = 0
+        self.live = source
+        heard = time.monotonic() + self.pacer.ahead()
+        current, began = source.title or title, time.time() + self.pacer.ahead()
+        if current:
+            self._titles.put((current, heard))
+        logger.info("live: on air")
+        self._skip.clear()
+        try:
+            while not self.stop_event.is_set() and not source.ended.is_set():
+                chunk = source.read(0.05)
+                if chunk is None:
+                    if source.ended.is_set():
+                        break
+                    if source.quiet() > QUIET_SECONDS:
+                        logger.warning("live: nothing from the presenter for %.0f s; back to the music", QUIET_SECONDS)
+                        source.close()
+                        break
+                    if self.pacer.ahead() > 0.3:
+                        continue
+                    chunk = bytes(CHUNK)  # running dry: silence until their audio catches up
+                if done < len(tail):
+                    n = min(len(tail) - done, len(chunk) // 4 * 4)
+                    chunk = mix(tail[done:done + n], chunk, done, len(tail))
+                    done += n
+                self.pacer.wait(len(chunk))
+                encoder.write(chunk)
+                if source.title and source.title != current:
+                    now = time.time() + self.pacer.ahead()
+                    if current and current != title and self._on_live_title:
+                        self._on_live_title(current, began, now - began)
+                    current, began = source.title, now
+                    self._titles.put((current, time.monotonic() + self.pacer.ahead()))
+        finally:
+            if current and current != title and self._on_live_title and not self.stop_event.is_set():
+                self._on_live_title(current, began, time.time() + self.pacer.ahead() - began)
+            self.live = None
+            self._skip.clear()
+            logger.info("live: off air, back to the music")
 
     def _flush(self, encoder: Encoder) -> None:
         """Play out the held tail, fading, before silence or the end."""

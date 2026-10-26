@@ -77,6 +77,11 @@ class Station:
     # A folder of jingles (idents), one played after every `jingle_every` songs.
     jingles: str = ""
     jingle_every: int = 4
+    # Live shows (live.py): a presenter's encoder connects to this port
+    # (Icecast; SHOUTcast to it and the one above) with this password.
+    live: bool = False
+    live_port: int = 8010
+    live_password: str = ""
 
     def to_json(self, secrets: bool = True) -> dict:
         data = asdict(self)
@@ -85,6 +90,8 @@ class Station:
             data["has_password"] = bool(self.password)
             data["test_password"] = ""
             data["has_test_password"] = bool(self.test_password)
+            data["live_password"] = ""
+            data["has_live_password"] = bool(self.live_password)
         return data
 
 
@@ -98,12 +105,12 @@ def clean_station(data: dict, existing: Station | None = None) -> Station:
     for key, value in data.items():
         if key not in _FIELDS or key == "id":
             continue
-        if key in ("password", "test_password") and value in (None, "") and existing is not None:
+        if key in ("password", "test_password", "live_password") and value in (None, "") and existing is not None:
             continue  # the page never sees the password; blank keeps it
         setattr(st, key, value)
     st.name = str(st.name or "").strip()[:80] or "New station"
     for key in ("playlist", "server", "password", "test_server", "test_password", "genre", "url", "fallback",
-                "jingles"):
+                "jingles", "live_password"):
         st.__dict__[key] = str(getattr(st, key) or "").strip()
     st.music_folders = [str(p).strip() for p in st.music_folders or [] if str(p).strip()]
     st.remaps = [
@@ -125,6 +132,15 @@ def clean_station(data: dict, existing: Station | None = None) -> Station:
         raise ValueError(f"The crossfade is between 0 (none) and {MAX_CROSSFADE:.0f} seconds")
     if not 1 <= st.jingle_every <= 20:
         raise ValueError("Play a jingle after every 1 to 20 songs")
+    st.live = bool(st.live)
+    try:
+        st.live_port = int(st.live_port or 8010)
+    except (TypeError, ValueError):
+        raise ValueError("The live shows port is a number, like 8010") from None
+    if not 1024 <= st.live_port <= 65534:
+        raise ValueError("The live shows port is between 1024 and 65534")
+    if st.live and not st.live_password:
+        raise ValueError("Set a password for presenters going live")
     st.public = bool(st.public)
     st.level = bool(st.level)
     st.on_air = bool(st.on_air)

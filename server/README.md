@@ -173,6 +173,21 @@ and the next song starts as it ends. Jingles aren't played during shows
 or the fallback, don't go in the play log, are levelled like the songs, and send the
 station's name as the title. The week's clock allows for both.
 
+**Live shows.** *Edit › Live shows* lets presenters go live from their own
+encoder (BUTT, Mixxx, Winamp's SHOUTcast plugin). While the station is on
+air, Station Server listens on the live shows port (8010 unless you
+choose another) as an Icecast server would, and on that port and the one
+above as a SHOUTcast v1 server would, so a presenter's existing settings
+work: Icecast with mount `/live`, user `source` and the presenters'
+password, or SHOUTcast with the password. When one connects, the song
+playing fades out under them and they're on air, with the titles their
+encoder sends (to the play log too, as album "Live"). When they
+disconnect, or nothing arrives for 10 seconds, the music comes back where
+the week's clock says. One presenter at a time; *End live show* takes
+them off and keeps their encoder from reconnecting for two minutes; a
+show due while they're live is left out. For presenters at home, forward
+the port and the one above it on the station's router to this computer.
+
 A station that was on air when the app quit goes back on air when it
 starts. If no track in the playlist can be read, it sends silence and
 keeps trying rather than dropping off the server.
