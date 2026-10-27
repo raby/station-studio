@@ -1678,7 +1678,7 @@ function renderHelp() {
       list(
         "Plays on the Wi-Fi but not on mobile data: the port isn't forwarded, or is forwarded to another computer. Look at the router in Settings › Internet.",
         "The outside address (or the DuckDNS name) is refused from inside the house, but works on mobile data: many routers can't loop back to themselves. That's fine for listeners; at home, use this computer's own address (the Ready check shows it).",
-        "Mac, \"macOS hasn't let Station Server reach the router yet\": macOS should ask whether Station Server may find devices on your local network; choose Allow and look again. It's then listed, turned on, in System Settings › Privacy & Security › Local Network. If it doesn't ask, quit Station Server and open it again from Applications.",
+        "Mac, \"macOS isn't letting Station Server reach the router\": quit Station Server and open it again from Applications, and choose Allow if macOS asks about your local network. If it's listed in System Settings › Privacy & Security › Local Network, turn it on. The router keeps the forward, so this is only needed once.",
         "Windows: when it asks whether Station Server may use the network, allow Private and Public. Otherwise Windows Security › Firewall › Allow an app through the firewall.",
         "\"No router on this network offers UPnP\": turn on UPnP in the router's settings, or forward the port by hand.",
         "The router's address isn't the one the internet sees: the internet provider shares one address between customers (CGNAT), so nothing outside can reach in. Ask the provider for a public IP address, or use a hosted server.",
@@ -1686,8 +1686,10 @@ function renderHelp() {
         "Listeners turned away: the station is full. Settings › Internet suggests how many the upload can take."),
     ],
     new: () => [
-      el("h2", {}, "0.16.6"),
-      list("On a Mac, Station Server gets macOS to ask whether it may find devices on your local network (choose Allow), so Look at the router keeps working after an update and at login, not only when opened from Applications."),
+      el("h2", {}, "0.16.7"),
+      list("On a Mac, Station Server starts as it did up to 0.16.3 again, so the window comes back after an update. If Look at the router is blocked, quit and open Station Server from Applications (once: the router keeps the forward). The window also gets macOS to ask about the local network."),
+      h2("0.16.6"),
+      list("On a Mac, Station Server gets macOS to ask whether it may find devices on your local network."),
       h2("0.16.5"),
       list("Settings › Internet › Try it from a phone shows two codes: one for a phone away from home (on mobile data, like a listener) and one for a phone on the same Wi-Fi as this computer, with why the internet address often doesn't play at home."),
       h2("0.16.4"),
