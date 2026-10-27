@@ -58,9 +58,9 @@ def test_listeners_hear_what_is_sent_and_slow_ones_are_dropped():
 
 def runner(name="Rebirth Classics", on_air=True, state="on", connected=True, error=None):
     return SimpleNamespace(
-        station=SimpleNamespace(name=name, on_air=on_air), state=state, error=error,
+        station=SimpleNamespace(name=name, on_air=on_air), state=state, error=error, rehearsal=False,
         sender=SimpleNamespace(connected=connected, describe="SHOUTcast 81.150.147.206:8000"),
-        channel=SimpleNamespace(stuck=False), playing_fallback=lambda: False)
+        channel=SimpleNamespace(stuck=False, live=None), playing_fallback=lambda: False)
 
 
 class Clock:
@@ -102,6 +102,54 @@ def test_an_alert_after_a_few_minutes_off_air_and_another_when_back():
     watcher.check()
     assert sent[1][0] == "Rebirth Classics is back on air" and "13 minutes" in sent[1][1]
     assert watcher.last["title"] == "Rebirth Classics is back on air"
+
+
+def test_told_when_a_presenter_goes_live_and_when_they_finish():
+    sent = []
+    r = runner()
+    cfg = Alerts(ntfy="https://ntfy.sh/x")
+    app = SimpleNamespace(config=SimpleNamespace(alerts=cfg), runners={"a": r})
+    clock = Clock()
+    watcher = alerts.Watcher(app, send=lambda c, title, msg: sent.append((title, msg)) or [], clock=clock)
+    r.channel.live = SimpleNamespace(presenter="DJ Wren", since=clock.now)
+    watcher.check()
+    r.channel.live = None
+    watcher.check()
+    assert sent == []  # off unless asked for
+    cfg.live_on = True
+    r.channel.live = SimpleNamespace(presenter="DJ Wren", since=clock.now)
+    watcher.check()
+    watcher.check()
+    assert [t for t, _ in sent] == ["Rebirth Classics: DJ Wren is live"]
+    clock.now += 45 * 60
+    r.channel.live = None
+    watcher.check()
+    assert sent[1][0] == "Rebirth Classics: DJ Wren has finished" and "45 minutes" in sent[1][1]
+    # A reconnect while they're live isn't the end of the show.
+    r.channel.live = SimpleNamespace(presenter="", since=clock.now)
+    watcher.check()
+    assert sent[2][0] == "Rebirth Classics: A presenter is live"
+    r.state = "waiting"
+    watcher.check()
+    r.state = "on"
+    watcher.check()
+    assert len(sent) == 3
+    r.channel.live = None
+    watcher.check()
+    assert len(sent) == 4
+    # Not for a rehearsal, and no "finished" for a show it never said began.
+    r.rehearsal = True
+    r.channel.live = SimpleNamespace(presenter="DJ Wren", since=clock.now)
+    watcher.check()
+    r.rehearsal = False
+    cfg.live_on = False
+    r.channel.live = SimpleNamespace(presenter="DJ Wren", since=clock.now + 1)
+    watcher.check()
+    cfg.live_on = True
+    r.channel.live = None
+    watcher.check()
+    assert len(sent) == 4
+    assert clean_alerts({"live_on": 1}).live_on is True and clean_alerts({}).live_on is False
 
 
 def test_no_alert_for_a_station_taken_off_air_or_with_nowhere_to_send():

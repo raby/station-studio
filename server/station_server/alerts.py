@@ -9,7 +9,9 @@ retry or a reconnect to fix it by itself), an alert goes out:
   and subscribe to the same topic), and/or
 - as an email, through the mail server given.
 
-Another goes out when the station is back. Station Server can't send an
+Another goes out when the station is back. With Settings › Alerts' Tell
+me when a presenter goes live on, one also goes out when a presenter goes
+live, and when they finish (not in a rehearsal). Station Server can't send an
 alert if the computer itself is off or has no internet, so an outside
 check of the stream is still worth having.
 """
@@ -107,6 +109,11 @@ def send_email(cfg: Alerts, title: str, message: str, smtp=None) -> None:
         smtp.send_message(msg)
 
 
+def _minutes(seconds: float) -> str:
+    n = max(1, round(seconds / 60))
+    return f"{n} minute{'s' if n != 1 else ''}"
+
+
 def _hhmm(ts: float) -> str:
     return datetime.fromtimestamp(ts).strftime("%H:%M")
 
@@ -120,6 +127,7 @@ class Watcher:
         self._clock = clock
         self._since: dict[str, float] = {}  # station id -> when its problem began
         self._told: dict[str, float] = {}  # station id -> when it began, for those alerted
+        self._lives: dict[str, tuple[float, str, bool]] = {}  # station id -> (since, presenter, told) while one is live
         self.last: dict | None = None  # the last alert, for Settings
 
     def check(self) -> None:
@@ -127,6 +135,10 @@ class Watcher:
         now = self._clock()
         for sid, runner in list(self.app.runners.items()):
             name = runner.station.name
+            try:
+                self._presenter(cfg, sid, runner, now)
+            except Exception:  # never in the way of the off-air alerts
+                logger.exception("checking %s for a presenter failed", name)
             found = problem(runner)
             if found:
                 since = self._since.setdefault(sid, now)
@@ -140,13 +152,38 @@ class Watcher:
             self._since.pop(sid, None)
             began = self._told.pop(sid, None)
             if began is not None and cfg.back_on and runner.station.on_air:
-                minutes = max(1, round((now - began) / 60))
-                self._alert(cfg, f"{name} is back on air",
-                            f"{name} is back on air, after {minutes} minute{'s' if minutes != 1 else ''}.")
+                self._alert(cfg, f"{name} is back on air", f"{name} is back on air, after {_minutes(now - began)}.")
         for sid in list(self._since):
             if sid not in self.app.runners:
                 self._since.pop(sid, None)
                 self._told.pop(sid, None)
+        for sid in list(self._lives):
+            if sid not in self.app.runners:
+                self._lives.pop(sid, None)
+
+    def _presenter(self, cfg: Alerts, sid: str, runner, now: float) -> None:
+        """Tell them when a presenter goes live on this station, and when
+        they finish (if Settings › Alerts asks for it). Not for rehearsals,
+        and not while the station is reconnecting: a presenter is only
+        finished once it's back on air without them."""
+        if runner.state != "on" or runner.rehearsal:
+            return
+        ch = runner.channel
+        live = getattr(ch, "live", None)
+        was = self._lives.get(sid)
+        name = runner.station.name
+        if live is not None and (was is None or was[0] != live.since):
+            told = bool(cfg.live_on)
+            self._lives[sid] = (live.since, live.presenter, told)
+            if told:
+                who = live.presenter or "A presenter"
+                self._alert(cfg, f"{name}: {who} is live", f"{who} went live on {name} at {_hhmm(live.since)}.")
+        elif live is None and was is not None:
+            self._lives.pop(sid, None)
+            if cfg.live_on and was[2]:  # only after telling them it began
+                who = was[1] or "The presenter"
+                self._alert(cfg, f"{name}: {who} has finished",
+                            f"{who} finished on {name} at {_hhmm(now)}, after {_minutes(now - was[0])}.")
 
     def _alert(self, cfg: Alerts, title: str, message: str) -> None:
         logger.warning("alert: %s", message)
