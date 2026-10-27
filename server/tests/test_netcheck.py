@@ -235,3 +235,16 @@ def test_the_router_search_also_asks_the_router_directly(monkeypatch):
     assert upnp.discover(timeout=2, addresses=["127.0.0.9"]) == ["http://127.0.0.1:5000/rootDesc.xml"]
     answer.close()
     assert all(upnp._private(ip) for ip in upnp.lan_addresses())
+
+
+def test_internet_gives_the_home_network_address_for_a_phone_on_the_wifi(tmp_path):
+    app = ServerApp(ConfigStore(tmp_path))
+    assert app.internet()["lan"] is None  # nothing streams from here
+    app.save_station({"name": "Rebirth Classics", "server": "serve://:8000"})
+    calls = []
+    assert app.lan_address(find=lambda: calls.append(1) or ["192.168.0.124"], wait=True) == "192.168.0.124"
+    assert app.lan_address(find=lambda: calls.append(1) or ["10.0.0.9"], wait=True) == "192.168.0.124"  # kept a minute
+    assert len(calls) == 1
+    app.router_state = {"found": True, "here": "192.168.0.50"}
+    assert app.lan_address() == "192.168.0.50"  # what the router saw wins
+    assert app.internet()["lan"] == "192.168.0.50"
