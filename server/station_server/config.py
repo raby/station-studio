@@ -59,6 +59,10 @@ class Station:
     # stream 2 of a SHOUTcast 2 server), and its password if different.
     test_server: str = ""
     test_password: str = ""
+    # A second server the live stream also goes to (a hosted SHOUTcast
+    # account, say, while this computer serves listeners too), and its password.
+    also_server: str = ""
+    also_password: str = ""
     genre: str = ""
     url: str = ""
     public: bool = False
@@ -95,6 +99,8 @@ class Station:
             data["has_password"] = bool(self.password)
             data["test_password"] = ""
             data["has_test_password"] = bool(self.test_password)
+            data["also_password"] = ""
+            data["has_also_password"] = bool(self.also_password)
             data["live_password"] = ""
             data["has_live_password"] = bool(self.live_password)
             data["presenters"] = [{"id": p["id"], "name": p["name"], "password": "",
@@ -112,11 +118,12 @@ def clean_station(data: dict, existing: Station | None = None) -> Station:
     for key, value in data.items():
         if key not in _FIELDS or key == "id":
             continue
-        if key in ("password", "test_password", "live_password") and value in (None, "") and existing is not None:
+        if key in ("password", "test_password", "also_password", "live_password") and value in (None, "") and existing is not None:
             continue  # the page never sees the password; blank keeps it
         setattr(st, key, value)
     st.name = str(st.name or "").strip()[:80] or "New station"
-    for key in ("playlist", "server", "password", "test_server", "test_password", "genre", "url", "fallback",
+    for key in ("playlist", "server", "password", "test_server", "test_password", "also_server", "also_password",
+                "genre", "url", "fallback",
                 "jingles", "live_password"):
         st.__dict__[key] = str(getattr(st, key) or "").strip()
     st.music_folders = [str(p).strip() for p in st.music_folders or [] if str(p).strip()]
@@ -170,6 +177,13 @@ def clean_station(data: dict, existing: Station | None = None) -> Station:
             _check_serve(addr, st)
     if st.test_server and st.test_server == st.server:
         raise ValueError("The test stream must be a different stream from the live one")
+    if st.also_server:
+        if not re.match(r"^(shoutcast|icecast)://", st.also_server, re.I):
+            raise ValueError("The second server is a SHOUTcast or Icecast server")
+        if same_server(st.also_server, st.server) or same_server(st.also_server, st.test_server):
+            raise ValueError("The second server must be a different stream from the live one and the test one")
+        if not st.also_password:
+            raise ValueError("Enter the second server's source password")
     st.id = existing.id if existing else (str(data.get("id") or "") or uuid.uuid4().hex[:10])
     return st
 
