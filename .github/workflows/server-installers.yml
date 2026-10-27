@@ -259,6 +259,37 @@ jobs:
             "$(cygpath -w "$PWD/server/packaging/windows/installer.iss")"
           ls -la out
 
+      - name: install it, run it and uninstall it (Windows)
+        if: matrix.kind == 'windows'
+        env:
+          MSYS_NO_PATHCONV: '1'
+        run: |
+          set -e
+          # As a person would, and as Update now does: a silent install for
+          # this user, which then starts the installed app in the background.
+          "out/StationServer-${{ steps.version.outputs.version }}-windows-setup.exe" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG=install.log
+          APP="$(cygpath -u "$LOCALAPPDATA")/Programs/Station Server"
+          test -f "$APP/Station Server.exe"
+          test -f "$(cygpath -u "$APPDATA")/Microsoft/Windows/Start Menu/Programs/Station Server.lnk"
+          for i in $(seq 1 60); do
+            curl -sf http://127.0.0.1:8770/api/state >/dev/null && break
+            sleep 1
+          done
+          curl -sS http://127.0.0.1:8770/api/state | python -c "
+          import json, sys
+          d = json.load(sys.stdin)
+          assert d['version'] == '${{ steps.version.outputs.version }}' and d['ffmpeg'] and not d['ffmpeg_error'], d
+          print('installed', d['version'])"
+          # Uninstalling stops it and takes it away again.
+          "$APP/unins000.exe" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+          for i in $(seq 1 30); do
+            [ ! -f "$APP/Station Server.exe" ] && break
+            sleep 1
+          done
+          test ! -f "$APP/Station Server.exe"
+          ! curl -sf http://127.0.0.1:8770/api/state >/dev/null
+          echo "install OK"
+
       - uses: actions/upload-artifact@v6
         with:
           name: station-server-${{ matrix.kind }}-${{ matrix.arch }}

@@ -174,3 +174,8 @@ def test_an_ipv6_address_is_tested_not_crashed_on():
                              connect=lambda *a, **k: socket.socket(), fetch=fetch,
                              make_sender=lambda *a: (_ for _ in ()).throw(ValueError("password")))
     assert seen[0] == "http://[::1]:8000/" and ("Server", "ok") in names(r)
+
+
+def test_localhost_is_dialled_as_ipv4():
+    from station_server.senders import dial
+    assert dial("LocalHost") == "127.0.0.1" and dial("stream.example.com") == "stream.example.com"

@@ -51,10 +51,10 @@ def launch_command(background: bool = True, platform: str | None = None,
     tail = ["app", *(["--no-window"] if background else [])]
     if python is None and bundled():
         return [str(app_executable()), *tail]
-    exe = Path(python or sys.executable)
-    if (platform or current_platform()) == "windows" and exe.with_name("pythonw.exe").exists():
-        exe = exe.with_name("pythonw.exe")  # no console window
-    return [str(exe), "-P", "-m", "station_server", *tail]
+    exe = python or sys.executable
+    if (platform or current_platform()) == "windows" and Path(exe).with_name("pythonw.exe").exists():
+        exe = str(Path(exe).with_name("pythonw.exe"))  # no console window
+    return [exe, "-P", "-m", "station_server", *tail]
 
 
 class Login:

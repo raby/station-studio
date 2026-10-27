@@ -31,6 +31,14 @@ ADMIN_USER_AGENT = f"Mozilla/5.0 ({USER_AGENT})"
 RETRY_SECONDS = 5.0
 
 
+def dial(host: str) -> str:
+    """The address to connect to for `host`. "localhost" is 127.0.0.1: on
+    Windows it's tried as ::1 first, which a server listening only on IPv4
+    (Icecast and the DNAS, by default) refuses after about two seconds,
+    every time, before 127.0.0.1 is tried."""
+    return "127.0.0.1" if host.lower() == "localhost" else host
+
+
 class SenderError(Exception):
     """The server refused us (wrong password, mount in use, not a server)."""
 
@@ -162,7 +170,7 @@ class ShoutcastSender(_Sender):
         self.describe = f"SHOUTcast {host}:{port}" + (f" stream {sid}" if sid != 1 else "")
 
     def _open(self) -> socket.socket:
-        sock = socket.create_connection((self.host, self.port + 1), timeout=self.timeout)
+        sock = socket.create_connection((dial(self.host), self.port + 1), timeout=self.timeout)
         try:
             secret = self.password if self.sid == 1 else f"{self.password}:#{self.sid}"
             sock.sendall(secret.encode("utf-8") + b"\r\n")
@@ -191,7 +199,7 @@ class ShoutcastSender(_Sender):
             "sid": self.sid, "pass": self.admin_password, "mode": "updinfo", "song": title,
         })
         req = urllib.request.Request(
-            f"http://{self.host}:{self.port}/admin.cgi?{query}",
+            f"http://{dial(self.host)}:{self.port}/admin.cgi?{query}",
             headers={"User-Agent": ADMIN_USER_AGENT},
         )
         with urllib.request.urlopen(req, timeout=self.timeout) as resp:
@@ -200,7 +208,7 @@ class ShoutcastSender(_Sender):
     def count_listeners(self) -> dict:
         """How many are listening, from the server's 7.html (DNAS 1.9 and 2.x):
         current, status, peak, max, unique, bitrate, title."""
-        req = urllib.request.Request(f"http://{self.host}:{self.port}/7.html?sid={self.sid}",
+        req = urllib.request.Request(f"http://{dial(self.host)}:{self.port}/7.html?sid={self.sid}",
                                      headers={"User-Agent": ADMIN_USER_AGENT})
         with urllib.request.urlopen(req, timeout=self.timeout) as resp:
             text = resp.read(65536).decode("latin-1")
@@ -231,7 +239,7 @@ class IcecastSender(_Sender):
         return f"Basic {token}"
 
     def _open(self) -> socket.socket:
-        sock = socket.create_connection((self.host, self.port), timeout=self.timeout)
+        sock = socket.create_connection((dial(self.host), self.port), timeout=self.timeout)
         try:
             i = self.info
             lines = [
@@ -265,7 +273,7 @@ class IcecastSender(_Sender):
             "mount": self.mount, "mode": "updinfo", "song": title, "charset": "UTF-8",
         })
         req = urllib.request.Request(
-            f"http://{self.host}:{self.port}/admin/metadata?{query}",
+            f"http://{dial(self.host)}:{self.port}/admin/metadata?{query}",
             headers={"User-Agent": USER_AGENT, "Authorization": self._auth()},
         )
         with urllib.request.urlopen(req, timeout=self.timeout) as resp:
@@ -273,7 +281,7 @@ class IcecastSender(_Sender):
 
     def count_listeners(self) -> dict:
         """How many are listening to this mount, from status-json.xsl."""
-        req = urllib.request.Request(f"http://{self.host}:{self.port}/status-json.xsl",
+        req = urllib.request.Request(f"http://{dial(self.host)}:{self.port}/status-json.xsl",
                                      headers={"User-Agent": USER_AGENT})
         with urllib.request.urlopen(req, timeout=self.timeout) as resp:
             data = json.loads(resp.read(2_000_000))

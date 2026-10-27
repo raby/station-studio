@@ -1,5 +1,6 @@
 """The window: the Mac app's own, else a browser's."""
 import sys
+from pathlib import Path
 
 from station_server import __main__ as cli
 from station_server.window import download_name, free_path, mac_app_bundle, open_ui
@@ -9,7 +10,7 @@ APP = "/Applications/Station Server.app"
 
 def test_only_the_downloaded_mac_app_has_a_window_of_its_own():
     exe = f"{APP}/Contents/MacOS/Station Server"
-    assert str(mac_app_bundle("darwin", exe, True)) == APP
+    assert mac_app_bundle("darwin", exe, True) == Path(APP)
     assert mac_app_bundle("darwin", exe, False) is None  # pip install
     assert mac_app_bundle("win32", exe, True) is None
     assert mac_app_bundle("darwin", "/usr/local/bin/python3", True) is None
