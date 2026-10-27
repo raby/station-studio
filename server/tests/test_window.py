@@ -1,6 +1,8 @@
 """The window: the Mac app's own, else a browser's."""
 import sys
 
+import pytest
+
 from station_server import __main__ as cli
 from station_server.window import download_name, free_path, mac_app_bundle, open_ui
 
@@ -44,7 +46,9 @@ def _mac_app(monkeypatch, tmp_path, open_window=True):
     monkeypatch.setattr(sys, "platform", "darwin")
     monkeypatch.setattr(desktop, "app_executable", lambda: tmp_path / "station-server-helper")
     monkeypatch.setattr(cli, "_log_to_file", lambda home: None)
-    monkeypatch.setattr(cli, "_hand_over", lambda port, url: 0)
+    monkeypatch.setattr(cli, "_hand_over", lambda port, url, stay=False: 0)
+    import station_server.desktop as desktop_mod
+    monkeypatch.setattr(desktop_mod.Login, "refresh", lambda self: None)
     shown, tabs = [], []
     monkeypatch.setattr(cli, "_own_mac_window", lambda url: shown.append(url) or 0)
     import station_server.window as window
@@ -86,3 +90,19 @@ def test_the_same_or_a_newer_copy_is_left_alone(monkeypatch):
         monkeypatch.setattr(cli, "_running_state", lambda port, v=version: {"version": v, "stations": []})
         cli._replace_older(8770, "http://127.0.0.1:8770/")
     assert quits == []
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="a shell script stands in for the helper")
+def test_the_mac_app_in_the_background_stays_with_its_helper(monkeypatch, tmp_path):
+    """Its exit is the helper's: Quit (0) ends start at login, a crash doesn't."""
+    import signal
+    from station_server import desktop
+    helper = tmp_path / "station-server-helper"
+    helper.write_text("#!/bin/sh\nexit 3\n")
+    helper.chmod(0o755)
+    monkeypatch.setattr(desktop, "app_executable", lambda: helper)
+    monkeypatch.setattr(cli, "_running", lambda port: False)
+    monkeypatch.setattr(signal, "signal", lambda *a: None)
+    assert cli._hand_over(8799, "http://127.0.0.1:8799/", stay=True) == 3
+    helper.write_text("#!/bin/sh\nexit 0\n")
+    assert cli._hand_over(8799, "http://127.0.0.1:8799/", stay=True) == 0

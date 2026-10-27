@@ -175,10 +175,17 @@ jobs:
             # The app itself, opened while Station Server runs, hands over and exits...
             "build/dist/Station Server.app/Contents/MacOS/Station Server" app --no-window --port 8771
             kill $PID; sleep 2
-            # ...and with none running, starts the helper and exits.
-            "build/dist/Station Server.app/Contents/MacOS/Station Server" app --no-window --port 8772
+            # ...and with none running, starts the helper and stays on as its
+            # parent (so macOS lets it reach the local network)...
+            "build/dist/Station Server.app/Contents/MacOS/Station Server" app --no-window --port 8772 &
+            APP_PID=$!
+            for i in $(seq 1 60); do curl -sf http://127.0.0.1:8772/api/state >/dev/null && break; sleep 1; done
             curl -sf http://127.0.0.1:8772/api/state >/dev/null
-            pkill -f station-server-helper || true
+            kill -0 $APP_PID
+            # ...and ending it (as logging out does) ends the helper too.
+            kill $APP_PID; wait $APP_PID || true
+            for i in $(seq 1 15); do pgrep -f "station-server-helper app --no-window --port 8772" >/dev/null || break; sleep 1; done
+            if pgrep -f "station-server-helper app --no-window --port 8772"; then echo "the helper outlived the app"; exit 1; fi
           fi
           echo "smoke OK"
 
@@ -215,7 +222,15 @@ jobs:
           mkdir -p shots
           sips -Z 1200 -s format jpeg -s formatOptions 60 "$RUNNER_TEMP/window.png" --out "shots/window-${{ matrix.arch }}.jpg" >/dev/null
           # Quit as the menu's Quit does (nothing on air, so no question): Station Server stops and the window app exits.
-          osascript -e 'tell application id "io.github.raby.StationServer" to quit'
+          # The window app, not the one quietly running Station Server's helper.
+          python - <<'PY'
+          import AppKit
+          apps = AppKit.NSRunningApplication.runningApplicationsWithBundleIdentifier_("io.github.raby.StationServer")
+          print("apps:", [(a.processIdentifier(), a.activationPolicy()) for a in apps])
+          shown = [a for a in apps if a.activationPolicy() == AppKit.NSApplicationActivationPolicyRegular]
+          assert len(shown) == 1 and len(apps) == 2, "expected the window app and the one in the background"
+          shown[0].terminate()
+          PY
           for i in $(seq 1 30); do pgrep -f "Station Server.app/Contents/MacOS/Station Server" >/dev/null || break; sleep 1; done
           if pgrep -f "Station Server.app/Contents/MacOS/Station Server" >/dev/null; then echo "the app didn't quit"; exit 1; fi
           if curl -sf http://127.0.0.1:8770/api/state >/dev/null; then echo "Station Server kept running after Quit"; exit 1; fi

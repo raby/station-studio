@@ -30,7 +30,7 @@ import urllib.request
 from pathlib import Path
 
 from station_server import __version__, updates
-from station_server.desktop import CHILD_ENV, MAC_HELPER, bundled
+from station_server.desktop import CHILD_ENV, bundled
 
 logger = logging.getLogger(__name__)
 
@@ -187,8 +187,9 @@ def windows_setup_command(setup: Path, log: Path) -> list[str]:
 
 
 def mac_relaunch_command(app: Path, port: int) -> list[str]:
-    # The helper inside the app serves; the page that's open reloads into it.
-    return [str(app / "Contents" / "MacOS" / MAC_HELPER), "app", "--no-window", "--port", str(port)]
+    # Through the app (see __main__._hand_over), which starts its helper and
+    # stays with it; the page that's open reloads into it.
+    return ["/usr/bin/open", "-g", "-n", "-a", str(app), "--args", "app", "--no-window", "--port", str(port)]
 
 
 def _detached(cmd: list[str]) -> None:

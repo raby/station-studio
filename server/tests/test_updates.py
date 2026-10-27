@@ -34,9 +34,10 @@ def test_downloads_match_the_installer_names():
 
 
 def test_the_new_mac_app_starts_in_the_background(tmp_path):
-    cmd = selfupdate.mac_relaunch_command(tmp_path / "Station Server.app", 8770)
-    assert cmd[0].endswith("Contents/MacOS/station-server-helper")
-    assert cmd[1:] == ["app", "--no-window", "--port", "8770"]
+    app = tmp_path / "Station Server.app"
+    cmd = selfupdate.mac_relaunch_command(app, 8770)
+    # through the app, so macOS lets its helper reach the local network
+    assert cmd == ["/usr/bin/open", "-g", "-n", "-a", str(app), "--args", "app", "--no-window", "--port", "8770"]
 
 
 def make_app(tmp_path, **config):
