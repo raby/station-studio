@@ -1797,7 +1797,7 @@ function renderHelp() {
     ],
     new: () => [
       el("h2", {}, "0.18: presenter alerts"),
-      list("Settings › Alerts › Tell me when a presenter goes live: a phone notification or email when a presenter goes live on a station, with their name, and another when they finish, saying how long they were on.",
+      list("Settings › Alerts › Tell me when a presenter goes live: a phone notification or email when a presenter goes live on a station, with their name, and another when they finish, saying how long they were on (not for rehearsals).",
         "On Windows, a server at localhost (Icecast or a DNAS on the same computer) no longer takes about two seconds for every connection and title update."),
       h2("0.17.1"),
       list("Settings › Internet: a DuckDNS name saved without its token no longer stops other settings saving, a new name is sent to DuckDNS straight away, and Use never suggests more than the 500 listeners a station can allow.",

@@ -125,10 +125,30 @@ def test_told_when_a_presenter_goes_live_and_when_they_finish():
     r.channel.live = None
     watcher.check()
     assert sent[1][0] == "Rebirth Classics: DJ Wren has finished" and "45 minutes" in sent[1][1]
-    r.rehearsal = True
+    # A reconnect while they're live isn't the end of the show.
     r.channel.live = SimpleNamespace(presenter="", since=clock.now)
     watcher.check()
-    assert sent[2][0] == "Rebirth Classics: A presenter is live" and "test stream" in sent[2][1]
+    assert sent[2][0] == "Rebirth Classics: A presenter is live"
+    r.state = "waiting"
+    watcher.check()
+    r.state = "on"
+    watcher.check()
+    assert len(sent) == 3
+    r.channel.live = None
+    watcher.check()
+    assert len(sent) == 4
+    # Not for a rehearsal, and no "finished" for a show it never said began.
+    r.rehearsal = True
+    r.channel.live = SimpleNamespace(presenter="DJ Wren", since=clock.now)
+    watcher.check()
+    r.rehearsal = False
+    cfg.live_on = False
+    r.channel.live = SimpleNamespace(presenter="DJ Wren", since=clock.now + 1)
+    watcher.check()
+    cfg.live_on = True
+    r.channel.live = None
+    watcher.check()
+    assert len(sent) == 4
     assert clean_alerts({"live_on": 1}).live_on is True and clean_alerts({}).live_on is False
 
 
