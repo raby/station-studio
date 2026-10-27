@@ -2,8 +2,8 @@
 #
 # Trigger: a semver-shaped tag (`v0.1.0`, `v1.2.3`) — pushed via
 # `git tag v0.1.0 && git push origin v0.1.0`. Also dispatchable
-# manually (`workflow_dispatch`) for test-pypi-only rehearsals
-# without touching real PyPI.
+# manually (`workflow_dispatch`): a test-pypi-only rehearsal, or with
+# "Also publish to pypi.org" ticked, a real release of pyproject's version.
 #
 # Three jobs, gated in sequence:
 #
@@ -15,7 +15,7 @@
 #   2. smoke-testpypi  — pipx-install from test.pypi and curl-smoke the
 #                        serve endpoint. Confirms a real installable
 #                        artifact, not just "the upload succeeded."
-#   3. publish-pypi    — only on tag push (not workflow_dispatch), only
+#   3. publish-pypi    — only on tag push (or a manual run with the PyPI box ticked), only
 #                        after the test-pypi smoke is green. Re-downloads
 #                        the wheel FROM test.pypi (NOT from local
 #                        artifact storage) so the bits pushed to real
@@ -55,14 +55,17 @@ on:
   push:
     tags:
       - 'v*'
-  # t1-review 🟡-1: workflow_dispatch is IMPLICITLY test-only. The
-  # publish-pypi job below gates on `github.event_name == 'push'`,
-  # so a manual run never touches real PyPI regardless of any
-  # input. Previous revision had a `test_only` boolean input that
-  # didn't gate anything — confusing the user into thinking
-  # `test_only=false` would force a real publish. Removed; the
-  # tag-driven push is the ONLY path to real PyPI, full stop.
+  # A manual run is test.pypi only unless "Also publish to pypi.org"
+  # is ticked, which the publish-pypi job really does gate on (an
+  # earlier `test_only` input gated nothing and was removed). Ticked,
+  # it publishes pyproject.toml's version, as a v* tag push would:
+  # the way to release when tags can't be pushed from where you are.
   workflow_dispatch:
+    inputs:
+      pypi:
+        description: Also publish to pypi.org after the test.pypi smoke (the version in pyproject.toml), as a v* tag push does
+        type: boolean
+        default: false
 
 # t1-review 🟢-1: serialize publish runs. Two near-simultaneous
 # tag pushes (or a tag + a manual dispatch) would otherwise race
@@ -78,6 +81,8 @@ jobs:
   build-and-publish-testpypi:
     name: build wheel + publish to test.pypi.org
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     # §v1.5.0-release-blocker: merged the previous `build` +
     # `publish-testpypi` jobs to drop the upload-artifact step
     # (account-wide GH Actions storage quota was blocking releases).
@@ -122,6 +127,11 @@ jobs:
           node-version: '22'      # matches Dockerfile web-build stage
           cache: 'npm'
           cache-dependency-path: web/package-lock.json
+
+      - name: the version (pyproject.toml's)
+        id: version
+        run: |
+          echo "version=$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml","rb"))["project"]["version"])')" >> "$GITHUB_OUTPUT"
 
       - name: tag → pyproject version parity check
         # CATCH: forgot to bump pyproject.toml before tagging.
@@ -245,7 +255,7 @@ jobs:
         # so the smoke doesn't race the index.
         run: |
           set -e
-          TAG_VERSION="${GITHUB_REF#refs/tags/v}"
+          TAG_VERSION="${{ needs.build-and-publish-testpypi.outputs.version }}"
           python -m venv /tmp/smoke
           mkdir -p /tmp/ss-dist
           for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
@@ -321,12 +331,12 @@ jobs:
 
   publish-pypi:
     name: publish to pypi.org
-    # Only on tag-push (not workflow_dispatch), only after test.pypi
-    # is green. The two gates together mean: a real PyPI release
-    # is ALWAYS preceded by a successful real-pip-install smoke on
-    # test.pypi within the same workflow run.
-    if: github.event_name == 'push'
-    needs: smoke-testpypi
+    # Only on tag-push, or a manual run with "Also publish to pypi.org"
+    # ticked; only after test.pypi is green. The two gates together
+    # mean: a real PyPI release is ALWAYS preceded by a successful
+    # real-pip-install smoke on test.pypi within the same workflow run.
+    if: github.event_name == 'push' || inputs.pypi
+    needs: [build-and-publish-testpypi, smoke-testpypi]
     runs-on: ubuntu-latest
     environment:
       name: pypi
@@ -363,7 +373,7 @@ jobs:
         #                version so a stale test.pypi cached index
         #                can't sneak through an older release.
         run: |
-          TAG_VERSION="${GITHUB_REF#refs/tags/v}"
+          TAG_VERSION="${{ needs.build-and-publish-testpypi.outputs.version }}"
           mkdir -p dist
           python -m pip download \
             --no-deps \
