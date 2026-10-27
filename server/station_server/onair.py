@@ -38,7 +38,8 @@ from station_server.listen import Listeners, Tap
 from station_server.live import LiveInput, LiveSource, lan_addresses, port_free
 from station_server.playlist import PlaylistError, Queue, load_queue
 from station_server.schedule import Show, WeekStart, plan, position, step_seconds, track_seconds, where_now
-from station_server.senders import IN_USE, InUse, SenderError, ServeSender, StreamInfo, sender_from_url, someone_sending
+from station_server.senders import (IN_USE, Alongside, Both, InUse, SenderError, ServeSender, StreamInfo, sender_from_url,
+                                    someone_sending)
 from station_server.weeks import WeekPicker
 from station_server.window import mac_app_bundle
 
@@ -183,6 +184,7 @@ class StationRunner:
         self.upcoming: tuple[Path, datetime] | None = None  # the next week and when it goes on
         self.channel: Channel | None = None
         self.sender = None
+        self.also = None  # the second server (Alongside), while on air with one
         self.sent_as: tuple | None = None
         self.rehearsal = False  # on air to the test stream, not the live one
         self.listeners = Listeners()  # the page's Listen button
@@ -432,6 +434,15 @@ class StationRunner:
             if someone_sending(sender):  # Winamp, say, still on the server
                 raise InUse(IN_USE.format(server=sender.describe)) from exc
             raise
+        self.also = None
+        if st.also_server and not self.rehearsal:
+            # The second server: it connects (and reconnects) by itself, and
+            # can't hold up or take down the main broadcast.
+            try:
+                self.also = Alongside(sender_from_url(st.also_server, info, st.also_password or None))
+                sender = Both(sender, self.also)
+            except ValueError as exc:
+                logger.warning("%s: not sending to the second server: %s", st.name, exc)
         self.sender = Tap(sender, self.listeners)
         done = threading.Event()  # this go on air is over: the helpers stop
         try:
@@ -611,7 +622,13 @@ class StationRunner:
     def on_air_to(self, addr: str) -> bool:
         """On air now to `addr`: where it went on air, which a server saved
         since (and not yet switched over to) isn't."""
-        return self.state == "on" and bool(self.sent_as) and same_server(self.sent_as[0], addr)
+        if not (self.state == "on" and self.sent_as):
+            return False
+        if same_server(self.sent_as[0], addr):
+            return True
+        # Or to the second server it went on air with, while connected there.
+        also = getattr(self, "also", None)
+        return bool(also and also.connected and self.sent_as[-1] and same_server(self.sent_as[-1][0], addr))
 
     @property
     def target(self) -> str:
@@ -623,7 +640,8 @@ class StationRunner:
         applies only when it next goes on air."""
         st = self.station
         password = (st.test_password or st.password) if self.rehearsal else st.password
-        return (self.target, st.name, st.genre, st.url, st.public, st.bitrate, password)
+        also = "" if self.rehearsal else (st.also_server, st.also_password)
+        return (self.target, st.name, st.genre, st.url, st.public, st.bitrate, password, also)
 
     def _played(self, now: NowPlaying, seconds: float) -> None:
         if self.rehearsal:  # not on air for real: not for the play log
@@ -674,6 +692,8 @@ class StationRunner:
 
     def status(self) -> dict:
         st = self.station
+        inner = getattr(self.sender, "_sender", self.sender)
+        also = self.also if self.state == "on" else None
         out = {
             "station": st.to_json(secrets=False),
             "state": self.state,
@@ -683,9 +703,10 @@ class StationRunner:
             "next_week": {"name": self.upcoming[0].stem, "at": self.upcoming[1].isoformat(timespec="minutes")}
             if self.upcoming else None,
             "server": getattr(self.sender, "describe", None),
-            "serving": isinstance(getattr(self.sender, "_sender", self.sender), ServeSender),
+            "serving": isinstance(getattr(inner, "main", inner), ServeSender),
             "changed": self.state == "on" and self.sent_as is not None and self.sent_as != self._stream_settings(),
             "connected": bool(self.sender and self.sender.connected),
+            "also": {"server": also.describe, "connected": also.connected, "problem": also.problem} if also else None,
             "playlist": None,
             "file": str(self.xml) if self.xml else None,
             "now": None,
@@ -1086,10 +1107,14 @@ class ServerApp:
         sid = data.get("id") or None
         existing = self.config.station(sid) if sid else None
         test = bool(data.get("test"))
+        also = bool(data.get("also"))
         saved = None
         # The saved password goes only to the server it was saved for, not
         # to whatever address is typed in its place.
-        if existing and same_server(addr, existing.test_server if test else existing.server):
+        if existing and also:
+            if same_server(addr, existing.also_server):
+                saved = existing.also_password
+        elif existing and same_server(addr, existing.test_server if test else existing.server):
             saved = (existing.test_password or existing.password) if test else existing.password
         typed = bool(password)
         password = password or saved or ""
@@ -1122,6 +1147,25 @@ class ServerApp:
         except Exception:  # an older server or a firewall: no counts
             counts = None
         return {"server": sender.describe, "on_air": False, "counts": counts}
+
+    def _try_also(self, runner: StationRunner) -> tuple[str, str]:
+        """The Ready check's line for the second server: (status, detail)."""
+        st = runner.station
+        also = runner.also if runner.state == "on" and not runner.rehearsal else None
+        if also is not None:
+            if also.connected:
+                return "ok", f"Sending to {also.describe} too"
+            why = f": {also.problem}" if also.problem else ""
+            return "fail", f"Can't reach {also.describe}{why}. The station stays on air and keeps trying."
+        try:
+            sender = sender_from_url(st.also_server, StreamInfo(name=st.name), st.also_password or None)
+            if someone_sending(sender):
+                return "warn", f"{IN_USE.format(server=sender.describe)} Do that just before Go live."
+            sender.connect()
+            sender.close()
+            return "ok", f"{sender.describe} accepted the password; the live stream goes there too"
+        except (SenderError, OSError, ValueError) as exc:
+            return "fail", str(exc)
 
     def ready_check(self, sid: str) -> list[dict]:
         """Everything a station needs to run by itself, checked in one go
@@ -1179,6 +1223,8 @@ class ServerApp:
                 add(label, "warn", f"{exc} Do that just before Go live; the rest can be checked then.")
             except (SenderError, OSError, ValueError) as exc:
                 add(label, "fail", str(exc))
+        if st.also_server:
+            add("Second server", *self._try_also(runner))
         if serve_port(st.server) is not None:
             mine = next((x for x in self.internet()["stations"] if x["id"] == st.id), None)
             if mine is None or "suggested" not in mine:
@@ -1273,7 +1319,7 @@ class ServerApp:
             out.append("(no log)")
         text = "\n".join(out)
         cfg = self.config
-        secrets = {p for s in cfg.stations for p in (s.password, s.test_password) if p}
+        secrets = {p for s in cfg.stations for p in (s.password, s.test_password, s.also_password) if p}
         secrets |= {x for x in (cfg.alerts.smtp_password, cfg.remote_password, cfg.alerts.ntfy, cfg.studio_code,
                                 cfg.feed_token, cfg.duckdns_token) if x}
         secrets |= {p for s in cfg.stations for p in [s.live_password] + [x["password"] for x in s.presenters] if p}

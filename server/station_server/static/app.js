@@ -207,6 +207,20 @@ function serverLabel(url) {
   return p.kind === "serve" && url ? `This computer, port ${p.port}` : url;
 }
 
+// The second server: a SHOUTcast or Icecast server the live stream also
+// goes to, like a hosted account, whatever the main server is.
+function alsoValues(url) {
+  const a = parseServer(url);
+  return { a_kind: url ? a.kind : "shoutcast", a_host: url ? a.host : "", a_port: url ? a.port : "",
+    a_sid: a.sid, a_mount: a.mount, a_user: a.user };
+}
+
+function buildAlso(v) {
+  if (!v.a_host) return "";
+  return buildServer({ kind: v.a_kind, host: v.a_host, port: v.a_port || "8000", sid: v.a_sid || "1",
+    mount: v.a_mount || "/stream", user: v.a_user });
+}
+
 // ---------- sidebar -----------------------------------------------------------
 
 function stationById(id) {
@@ -523,6 +537,9 @@ function renderStation(s) {
     facts.push(el("span", { class: s.connected ? "ok" : "warn" },
       s.serving ? `Streaming from ${s.server}`
         : s.connected ? `Connected to ${s.server}` : `Reconnecting to ${s.server}…`));
+    if (s.also) facts.push(el("span", { class: s.also.connected ? "ok" : "warn" },
+      s.also.connected ? `Also sending to ${s.also.server}`
+        : `Trying to reach ${s.also.server}${s.also.problem ? ` (${s.also.problem})` : ""}…`));
     if (s.changed) facts.push(el("span", { class: "warn" }, "New server settings apply when it next goes on air: ",
       el("a", { href: "#", class: "inline-link", onclick: async (e) => {
         e.preventDefault();
@@ -714,6 +731,9 @@ function formValues(st) {
     ...testStreamValues(st?.test_server),
     test_password: "",
     has_test_password: !!st?.has_test_password,
+    ...alsoValues(st?.also_server),
+    also_password: "",
+    has_also_password: !!st?.has_also_password,
     bitrate: String(st?.bitrate || 128),
     level: st ? !!st.level : true,
     start_mode: st?.start_mode || "clock",
@@ -747,6 +767,8 @@ function formPayload(v) {
     password: v.password,
     test_server: buildTestServer(v),
     test_password: v.test_password,
+    also_server: buildAlso(v),
+    also_password: v.also_password,
     bitrate: Number(v.bitrate),
     level: v.level,
     start_mode: v.start_mode,
@@ -823,6 +845,7 @@ function renderForm(view) {
   const playlistMsg = el("div", { class: "form-msg", role: "status" });
   const serverMsg = el("div", { class: "form-msg", role: "status" });
   const testMsg = el("div", { class: "form-msg", role: "status" });
+  const alsoMsg = el("div", { class: "form-msg", role: "status" });
   const formMsg = el("div", { class: "form-msg", id: "form-msg", role: "status" });
   const fallbackMsg = el("div", { class: "form-msg", role: "status" });
   const jinglesMsg = el("div", { class: "form-msg", role: "status" });
@@ -906,6 +929,17 @@ function renderForm(view) {
           ? `This station is on air to ${r.server} now, so the connection works.`
           : `Connected to ${r.server}: the server accepted the password.`;
     } catch (e) { msg.className = "form-msg"; msg.textContent = e.message; }
+  }
+  async function checkAlso() {
+    alsoMsg.className = "form-msg ok";
+    const addr = buildAlso(v);
+    if (!addr) { alsoMsg.className = "form-msg"; alsoMsg.textContent = "Enter the second server's address"; return; }
+    alsoMsg.textContent = "Connecting…";
+    try {
+      const r = await api("/api/check/diagnose", { server: addr, password: v.also_password, id: s?.station.id, also: true });
+      alsoMsg.className = "form-msg";
+      alsoMsg.replaceChildren(diagnosisList(r));
+    } catch (e) { alsoMsg.className = "form-msg"; alsoMsg.textContent = e.message; }
   }
   async function save() {
     try {
@@ -1018,6 +1052,18 @@ function renderForm(view) {
           isServe ? null : text("test_password", "Password", { type: "password", placeholder: v.has_test_password ? "unchanged" : "same as live" })),
         el("div", { class: "actions" }, btn(isServe ? "Check the test port" : "Test the test stream", "refresh", () => checkServer(true), "btn small")),
         testMsg,
+        el("h3", {}, "Also send to (optional)"),
+        el("p", { class: "help" }, "A second server the live stream goes to at the same time, like a hosted SHOUTcast account, so listeners can tune in there as well. If it can't be reached, the station stays on air and keeps trying it. Not used when rehearsing. Leave the address blank for none."),
+        el("div", { class: "grid" },
+          select("a_kind", "Type", [["shoutcast", "SHOUTcast"], ["icecast", "Icecast"]], true),
+          text("a_host", "Address", { placeholder: "sh.uk.audio-stream.com" }),
+          text("a_port", "Port", { narrow: true, placeholder: "8000" }),
+          v.a_kind === "icecast" ? text("a_mount", "Mount", { narrow: true, placeholder: "/stream" }) : text("a_sid", "Stream", { narrow: true, placeholder: "1" })),
+        el("div", { class: "grid" },
+          v.a_kind === "icecast" ? text("a_user", "User", { narrow: true }) : null,
+          text("also_password", "Source password", { type: "password", placeholder: v.has_also_password ? "unchanged" : "" })),
+        el("div", { class: "actions" }, btn("Test the second server", "refresh", checkAlso, "btn small")),
+        alsoMsg,
       ),
     ],
     playback: () => [
@@ -1734,6 +1780,7 @@ function renderHelp() {
       h2("This computer or a hosted server?"),
       DIAGRAMS.choose(),
       p("Streaming from this computer is free and needs nothing else, and suits a station whose listeners fit in the upload. For more, send to a hosted SHOUTcast or Icecast server: Station Server sends it one stream and the host copies it to everyone. Switching is one setting, and old links keep working if the host uses the same address and port."),
+      p("Or both: Edit › Server › Also send to sends the same live stream to a hosted server as well, so listeners can use either link. If the hosted server can't be reached, this computer's stream carries on."),
       h2("When it doesn't work"),
       list(
         "Plays on the Wi-Fi but not on mobile data: the port isn't forwarded, or is forwarded to another computer. Look at the router in Settings › Internet.",
@@ -1796,7 +1843,10 @@ function renderHelp() {
         "“The listener count can't be read”: the server's status page is private. Station Server still streams; it just can't show how many are listening."),
     ],
     new: () => [
-      el("h2", {}, "0.18: presenter alerts"),
+      el("h2", {}, "0.19: a second server"),
+      list("Edit › Server › Also send to: the live stream goes to a second SHOUTcast or Icecast server at the same time, like a hosted account, while this computer (or the main server) carries on as before. Test the second server checks its address and password.",
+        "If the second server can't be reached, the station stays on air and keeps trying it every few seconds; the station page and the Ready check say why. Rehearsals don't go there."),
+      h2("0.18: presenter alerts"),
       list("Settings › Alerts › Tell me when a presenter goes live: a phone notification or email when a presenter goes live on a station, with their name, and another when they finish, saying how long they were on (not for rehearsals).",
         "On Windows, a server at localhost (Icecast or a DNAS on the same computer) no longer takes about two seconds for every connection and title update."),
       h2("0.17.1"),

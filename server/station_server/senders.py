@@ -17,6 +17,7 @@ import threading
 import time
 import urllib.parse
 import urllib.request
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -73,6 +74,7 @@ class _Sender:
         self._next_try = 0.0
         self._title: str | None = None
         self.connected = False
+        self.problem = ""  # why the last try to connect failed, for the page
 
     # ---- subclass hooks -------------------------------------------------
 
@@ -101,9 +103,11 @@ class _Sender:
                     self._sock = self._open()
                 except (OSError, SenderError) as exc:
                     self._next_try = self._clock() + RETRY_SECONDS
+                    self.problem = str(exc)
                     logger.warning("can't reach %s (%s); retrying in %.0fs", self.describe, exc, RETRY_SECONDS)
                     return
                 self.connected = True
+                self.problem = ""
                 logger.info("reconnected to %s", self.describe)
                 if self._title:
                     threading.Thread(target=self._title_quietly, args=(self._title,), daemon=True).start()
@@ -151,6 +155,103 @@ class _Sender:
                 break
             reply += part
         return reply
+
+
+class Alongside:
+    """A second destination for the same broadcast, sent to from its own
+    thread, so one that's slow or can't be reached never holds up the
+    main one (which listeners and the clock follow). It reconnects by
+    itself; if it falls behind, the oldest audio waiting for it is dropped."""
+
+    WAITING = 1_000_000  # bytes held while it catches up (about a minute at 128 kbps)
+
+    def __init__(self, sender) -> None:
+        self.sender = sender
+        self.describe = sender.describe
+        self._waiting: deque[bytes] = deque()
+        self._held = 0
+        self._ready = threading.Condition()
+        self._stop = False
+        self._thread = threading.Thread(target=self._run, name="second-server", daemon=True)
+        self._thread.start()
+
+    @property
+    def connected(self) -> bool:
+        return self.sender.connected
+
+    @property
+    def problem(self) -> str:
+        return getattr(self.sender, "problem", "")
+
+    def send(self, data: bytes) -> None:
+        with self._ready:
+            if self._stop:
+                return
+            self._waiting.append(data)
+            self._held += len(data)
+            while self._held > self.WAITING and len(self._waiting) > 1:
+                self._held -= len(self._waiting.popleft())  # it's behind: the oldest goes
+            self._ready.notify()
+
+    def set_title(self, title: str) -> None:
+        threading.Thread(target=self.sender.set_title, args=(title,), name="second-server-title",
+                         daemon=True).start()
+
+    def count_listeners(self):
+        return self.sender.count_listeners()
+
+    def close(self) -> None:
+        """Stop sending. Doesn't wait long for a server that's slow to
+        answer: the thread hangs up when it's done with it."""
+        with self._ready:
+            self._stop = True
+            self._waiting.clear()  # whatever is waiting isn't sent now
+            self._held = 0
+            self._ready.notify()
+        self._thread.join(timeout=2)
+
+    def _run(self) -> None:
+        try:
+            while True:
+                with self._ready:
+                    while not self._waiting and not self._stop:
+                        self._ready.wait()
+                    if self._stop:
+                        return
+                    data = self._waiting.popleft()
+                    self._held -= len(data)
+                try:
+                    self.sender.send(data)
+                except Exception:  # never let it stop the thread
+                    logger.exception("sending to %s failed", self.describe)
+        finally:
+            self.sender.close()
+
+
+class Both:
+    """The main sender and a second destination (Alongside) as one: the
+    main one is what the station's state, describe and counts come from."""
+
+    def __init__(self, main, also: Alongside) -> None:
+        self.main = main
+        self.also = also
+
+    def send(self, data: bytes) -> None:
+        self.main.send(data)
+        self.also.send(data)
+
+    def set_title(self, title: str) -> None:
+        self.main.set_title(title)
+        self.also.set_title(title)
+
+    def close(self) -> None:
+        try:
+            self.main.close()
+        finally:
+            self.also.close()
+
+    def __getattr__(self, name):
+        return getattr(self.main, name)
 
 
 class ShoutcastSender(_Sender):
