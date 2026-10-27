@@ -17,7 +17,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import signal
 import subprocess
 import threading
 import time
@@ -459,7 +458,7 @@ class AppDelegate(AppKit.NSObject):
         bundle = self.opts.get("bundle")
         if bundle:
             # Once this one has gone, so macOS opens the new app rather than this.
-            subprocess.Popen(["/bin/sh", "-c", 'sleep 1; /usr/bin/open "$0"', str(bundle)],
+            subprocess.Popen(["/bin/sh", "-c", 'sleep 1; /usr/bin/open -n "$0"', str(bundle)],
                              stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                              stderr=subprocess.DEVNULL, start_new_session=True)
         self.leaving = True
@@ -498,23 +497,11 @@ class AppDelegate(AppKit.NSObject):
         AppHelper.callAfter(_app().replyToApplicationShouldTerminate_, True)
 
 
-def run(url: str, quit_server, bundle: Path | None = None) -> int:
-    """Show Station Server at `url` in the app's own window until it
-    quits. `quit_server()` stops Station Server."""
-    app = AppKit.NSApplication.sharedApplication()
-    app.setActivationPolicy_(AppKit.NSApplicationActivationPolicyRegular)
-    delegate = AppDelegate.alloc().initWithURL_options_(url, {"quit_server": quit_server, "bundle": bundle})
-    app.setDelegate_(delegate)
-    AppHelper.runEventLoop()
-    return 0
-
-
 def ask_for_local_network() -> None:
     """Get macOS to ask whether Station Server may find devices on the local
     network. It asks only for some kinds of connection (not the plain ones
-    the helper makes), and until it has asked, the helper can't reach the
-    router. So the app makes one of those, to the router, and ignores the
-    answer: once allowed, the helper can reach it too."""
+    the helper makes), so the window makes one of those, to the router, and
+    ignores the answer: once allowed, the helper can reach the router too."""
     from station_server import upnp
     routers = {a.rsplit(".", 1)[0] + ".1" for a in upnp.lan_addresses()}
     try:
@@ -532,53 +519,12 @@ def ask_for_local_network() -> None:
         session.dataTaskWithRequest_completionHandler_(req, lambda data, resp, err: None).resume()
 
 
-class HelperParent(AppKit.NSObject):
-    """The app started in the background, which stays on as the helper's
-    parent (see __main__._hand_over)."""
-
-    def initWithProc_(self, proc):
-        self = objc.super(HelperParent, self).init()
-        if self is None:
-            return None
-        self.proc = proc
-        self.stopping = False
-        return self
-
-    def applicationShouldTerminate_(self, app):
-        # Logging out (or a quit sent to it): stop Station Server, and this
-        # ends with it.
-        self.stopping = True
-        try:
-            self.proc.terminate()
-        except OSError:
-            pass
-        return _TERMINATE_LATER
-
-
-def stay_with(proc) -> int:
-    """Stay on, with no Dock icon or window, until the helper `proc` stops,
-    answering macOS as an app does, so logging out doesn't wait on it."""
+def run(url: str, quit_server, bundle: Path | None = None) -> int:
+    """Show Station Server at `url` in the app's own window until it
+    quits. `quit_server()` stops Station Server."""
     app = AppKit.NSApplication.sharedApplication()
-    app.setActivationPolicy_(AppKit.NSApplicationActivationPolicyProhibited)
-    delegate = HelperParent.alloc().initWithProc_(proc)
+    app.setActivationPolicy_(AppKit.NSApplicationActivationPolicyRegular)
+    delegate = AppDelegate.alloc().initWithURL_options_(url, {"quit_server": quit_server, "bundle": bundle})
     app.setDelegate_(delegate)
-
-    def watch():
-        code = proc.wait()
-        # Quit is 0; a crash isn't, so start at login starts it again.
-        os._exit(0 if code == 0 or delegate.stopping else (code if code > 0 else 1))
-
-    def tick():  # lets Python's signal handlers (launchctl stopping it) run
-        AppHelper.callLater(1.0, tick)
-
-    # The helper asks (upnp.ask_mac_app) when macOS blocks it from the router.
-    signal.signal(signal.SIGUSR1, lambda *_: AppHelper.callAfter(ask_for_local_network))
-    try:
-        ask_for_local_network()
-    except Exception as exc:  # noqa: BLE001 - only a nudge for macOS
-        logger.info("Could not ask about the local network: %s", exc)
-
-    threading.Thread(target=watch, daemon=True).start()
-    tick()
     AppHelper.runEventLoop()
     return 0

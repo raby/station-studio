@@ -216,78 +216,25 @@ def _log_to_file(home: Path) -> None:
     logging.basicConfig(level=logging.INFO, handlers=[handler], force=True)
 
 
-def _wait_until_running(port: int) -> int:
-    import time
-    end = time.time() + 90  # the first start of a new download is slow while macOS checks it
-    while not _running(port):
-        if time.time() > end:
-            logging.error("Station Server did not start")
-            return 1
-        time.sleep(0.5)
-    return 0
-
-
-def _hand_over(port: int, url: str, stay: bool = False) -> int:
+def _hand_over(port: int, url: str) -> int:
     """The Mac app itself starts its helper, which runs Station Server, so
-    the stations stay on air with the window closed.
-
-    macOS lets the helper reach the local network (the router, a server on
-    this network) only while the app that started it is still running. So
-    the window starts the app once more in the background (`open`, so macOS
-    knows it's Station Server), and that one (`stay`) starts the helper and
-    stays with it, quietly, until it stops; start at login runs that one too."""
+    the stations stay on air with the window closed (and the app quit,
+    when the window is turned off)."""
     import subprocess
+    import time
     from station_server.desktop import CHILD_ENV, app_executable
-    from station_server.upnp import ASK_ENV
-    from station_server.window import mac_app_bundle
-    if _running(port):
-        return 0
-    if not stay:
-        bundle = mac_app_bundle()
-        if bundle is not None:
-            try:
-                subprocess.run(["/usr/bin/open", "-g", "-n", "-a", str(bundle), "--args",
-                                "app", "--no-window", "--port", str(port)], check=True, timeout=30,
-                               stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                return _wait_until_running(port)
-            except (OSError, subprocess.SubprocessError) as exc:
-                logging.warning("Could not start Station Server through the app (%s): starting the helper", exc)
-    _no_dock_icon()
-    if stay and hasattr(signal, "SIGUSR1"):
-        signal.signal(signal.SIGUSR1, signal.SIG_IGN)  # the helper's ask, until there's an answer for it
-    proc = subprocess.Popen([str(app_executable()), "app", "--no-window", "--port", str(port)],
-                            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                            start_new_session=not stay,
-                            env={**os.environ, CHILD_ENV: "1", "PYINSTALLER_RESET_ENVIRONMENT": "1",
-                                 **({ASK_ENV: str(os.getpid())} if stay else {})})
-    if not stay:
-        return _wait_until_running(port)
-
-    def pass_on(signum, _frame):  # logging out, or launchctl stopping it
-        try:
-            proc.send_signal(signum)
-        except OSError:
-            pass
-    for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
-        signal.signal(sig, pass_on)
-    try:
-        from station_server import macwindow  # needs PyObjC, which only the Mac app carries
-    except ImportError:
-        pass
-    else:
-        return macwindow.stay_with(proc)
-    code = proc.wait()
-    return code if code >= 0 else 1  # Quit is 0; a crash isn't, so start at login starts it again
-
-
-def _no_dock_icon() -> None:
-    """The app started in the background shows nothing in the Dock."""
-    try:
-        import AppKit  # only the Mac app carries PyObjC
-        AppKit.NSApplication.sharedApplication().setActivationPolicy_(
-            AppKit.NSApplicationActivationPolicyProhibited)
-    except Exception:  # noqa: BLE001 - nothing to hide outside the Mac app
-        pass
+    if not _running(port):
+        subprocess.Popen([str(app_executable()), "app", "--no-window", "--port", str(port)],
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         start_new_session=True,
+                         env={**os.environ, CHILD_ENV: "1", "PYINSTALLER_RESET_ENVIRONMENT": "1"})
+        end = time.time() + 90  # the first start of a new download is slow while macOS checks it
+        while not _running(port):
+            if time.time() > end:
+                logging.error("Station Server did not start")
+                return 1
+            time.sleep(0.5)
+    return 0
 
 
 def _quit_server(url: str) -> None:
@@ -333,10 +280,11 @@ def _app(args) -> int:
         _log_to_file(store.home)
     if bundled():
         _replace_older(args.port, url)
-    if bundled() and sys.platform == "darwin" and app_executable() != Path(sys.executable):
+    if bundled() and sys.platform == "darwin":
         from station_server.desktop import Login
-        Login().refresh()  # one an older version made ran the helper itself
-        code = _hand_over(args.port, url, stay=args.no_window)
+        Login().refresh()  # one 0.16.4 to 0.16.6 made started the app, not its helper
+    if bundled() and sys.platform == "darwin" and app_executable() != Path(sys.executable):
+        code = _hand_over(args.port, url)
         if code == 0 and not args.no_window:
             if store.config.open_window:
                 return _own_mac_window(url)

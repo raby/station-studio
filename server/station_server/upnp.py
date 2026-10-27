@@ -7,12 +7,10 @@ forwarded by hand in the router's settings (Help › Streaming says how).
 from __future__ import annotations
 
 import errno
-import os
 import ipaddress
 import logging
 import re
 import select
-import signal
 import socket
 import sys
 import time
@@ -40,37 +38,15 @@ class UpnpError(Exception):
 
 # macOS 15 and later ask before an app talks to other devices on the
 # network; until it's allowed, every attempt fails with "No route to host".
-MAC_PERMISSION = ("macOS hasn't let Station Server reach the router yet. It should now ask whether Station Server "
-                  "may find devices on your local network: choose Allow, then Look at the router again. If it "
-                  "doesn't ask, open System Settings › Privacy & Security › Local Network and turn Station Server "
-                  "on, or quit Station Server and open it again from Applications. A VPN can also be in the way. "
-                  "Otherwise forward the port by hand (Help › Streaming)")
-# Set by the Mac app for the helper it starts: the app's process id. macOS
-# asks about the local network only for the kind of connection the app can
-# make, so the helper asks the app to make one (macwindow.stay_with).
-ASK_ENV = "STATION_SERVER_ASKS"
-
-
-def ask_mac_app(environ=os.environ, getppid=os.getppid, kill=os.kill) -> bool:
-    """Ask the Mac app that started this helper to get macOS to ask."""
-    try:
-        parent = int(environ.get(ASK_ENV, ""))
-    except ValueError:
-        return False
-    if parent <= 1 or getppid() != parent:  # only the app that set it, still there
-        return False
-    try:
-        kill(parent, signal.SIGUSR1)
-    except OSError:
-        return False
-    return True
-
-
+MAC_PERMISSION = ("macOS isn't letting Station Server reach the router. Quit Station Server and open it again "
+                  "from Applications, and choose Allow if macOS asks about your local network; if Station Server "
+                  "is listed in System Settings › Privacy & Security › Local Network, turn it on. A VPN can also "
+                  "be in the way. Otherwise forward the port by hand (Help › Streaming). The router keeps the "
+                  "forward, so this is needed only once")
 def _blocked(exc: OSError) -> str:
     if isinstance(getattr(exc, "reason", None), OSError):  # urlopen wraps it
         exc = exc.reason
     if sys.platform == "darwin" and exc.errno in (errno.EHOSTUNREACH, errno.EPERM, errno.EACCES):
-        ask_mac_app()
         return MAC_PERMISSION
     return f"The router can't be reached: {exc}"
 

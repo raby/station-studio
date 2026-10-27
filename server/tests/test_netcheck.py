@@ -1,8 +1,6 @@
 """Settings › Internet: upload speed, listener caps, the router and DuckDNS (netcheck.py, upnp.py)."""
 import io
 import json
-import signal
-import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -250,16 +248,3 @@ def test_internet_gives_the_home_network_address_for_a_phone_on_the_wifi(tmp_pat
     app.router_state = {"found": True, "here": "192.168.0.50"}
     assert app.lan_address() == "192.168.0.50"  # what the router saw wins
     assert app.internet()["lan"] == "192.168.0.50"
-
-
-@pytest.mark.skipif(sys.platform == "win32", reason="no SIGUSR1 on Windows")
-def test_the_helper_asks_the_mac_app_that_started_it_to_get_macos_to_ask():
-    sent = []
-    kill = lambda pid, sig: sent.append((pid, sig))
-    assert upnp.ask_mac_app({upnp.ASK_ENV: "4321"}, getppid=lambda: 4321, kill=kill)
-    assert sent == [(4321, signal.SIGUSR1)]
-    # not when started some other way, or once that app has gone
-    assert not upnp.ask_mac_app({}, getppid=lambda: 4321, kill=kill)
-    assert not upnp.ask_mac_app({upnp.ASK_ENV: "4321"}, getppid=lambda: 1, kill=kill)
-    assert not upnp.ask_mac_app({upnp.ASK_ENV: "1"}, getppid=lambda: 1, kill=kill)
-    assert len(sent) == 1
