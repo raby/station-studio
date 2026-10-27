@@ -13,6 +13,7 @@ import os
 import re
 import threading
 import time
+import urllib.parse
 import uuid
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
@@ -177,6 +178,32 @@ def serve_max(addr: str) -> int:
     """The most listeners a serve:// address allows."""
     m = re.search(r"[?&]max=(\d+)", addr or "")
     return int(m.group(1)) if m else 20
+
+
+def with_serve_max(addr: str, most: int) -> str:
+    """A serve:// address with its listener cap set to `most`, the rest kept."""
+    if re.search(r"[?&]max=\d*", addr):
+        return re.sub(r"([?&])max=\d*", rf"\g<1>max={most}", addr, count=1)
+    return f"{addr}{'&' if '?' in addr else '?'}max={most}"
+
+
+def same_server(a: str, b: str) -> bool:
+    """Whether two server addresses are the same place to send to, however
+    they're written: a password in one, ?sid=1 left out, a capital letter."""
+    try:
+        pa, pb = urllib.parse.urlsplit(a or ""), urllib.parse.urlsplit(b or "")
+        if not (pa.scheme and pb.scheme):
+            return False
+
+        def key(p):
+            q = urllib.parse.parse_qs(p.query)
+            user = p.username or ("source" if p.scheme.lower() == "icecast" else "")
+            sid = q.get("sid", ["1"])[0] if p.scheme.lower() == "shoutcast" else ""
+            path = p.path.rstrip("/") if p.scheme.lower() == "icecast" else ""
+            return (p.scheme.lower(), (p.hostname or "").lower(), p.port, path, user, sid)
+        return key(pa) == key(pb)
+    except ValueError:  # a port that isn't a number
+        return (a or "") == (b or "")
 
 
 def serve_port(addr: str) -> int | None:

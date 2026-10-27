@@ -125,8 +125,15 @@ class AppDelegate(AppKit.NSObject):
         self.buildWindow()
         self.show()
         threading.Thread(target=self.watch, name="watch-server", daemon=True).start()
+        # Off the main thread: finding the router can take seconds, and the
+        # window shouldn't wait for it.
+        threading.Thread(target=self.askAboutNetwork, name="local-network", daemon=True).start()
+
+    @objc.python_method
+    def askAboutNetwork(self):
         try:
-            ask_for_local_network()
+            with objc.autorelease_pool():
+                ask_for_local_network()
         except Exception as exc:  # noqa: BLE001 - only a nudge for macOS
             logger.info("Could not ask about the local network: %s", exc)
 

@@ -248,3 +248,41 @@ def test_internet_gives_the_home_network_address_for_a_phone_on_the_wifi(tmp_pat
     app.router_state = {"found": True, "here": "192.168.0.50"}
     assert app.lan_address() == "192.168.0.50"  # what the router saw wins
     assert app.internet()["lan"] == "192.168.0.50"
+
+
+def test_a_duckdns_name_without_its_token_isnt_half_saved(tmp_path):
+    app = ServerApp(ConfigStore(tmp_path))
+    with pytest.raises(ValueError, match="token"):
+        app.save_settings({"duckdns_name": "rebirth"})
+    assert app.config.duckdns_name == ""
+    app.save_settings({"check_updates": False})  # other settings still save
+
+
+def test_a_new_duckdns_name_is_sent_straight_away(tmp_path):
+    app = ServerApp(ConfigStore(tmp_path))
+    sent = []
+    app.duckdns._update = lambda name, token: sent.append(name)
+
+    def wait_for(name):
+        for _ in range(300):
+            if name in sent and app.duckdns.last:
+                return
+            time.sleep(0.01)
+        raise AssertionError(sent)
+    app.save_settings({"duckdns_name": "oldname", "duckdns_token": "t"})
+    wait_for("oldname")
+    app.save_settings({"duckdns_name": "newname"})  # the updater is waiting its few minutes
+    assert app.duckdns.last is None  # not "updated" for a name never sent
+    wait_for("newname")
+    app.save_settings({"duckdns_name": ""})
+    app.save_settings({"duckdns_name": "again", "duckdns_token": "t"})  # straight back on
+    wait_for("again")
+    app.shutdown()
+
+
+def test_use_never_offers_more_than_a_station_can_allow(tmp_path):
+    assert netcheck.suggest(100, [{"id": "a", "name": "R", "port": 8000, "bitrate": 64, "max": 20}])[0]["suggested"] == 500
+    app = ServerApp(ConfigStore(tmp_path))
+    st = app.save_station({"name": "Rebirth Classics", "server": "serve://192.168.1.20:8000?max=20"})
+    app.set_listener_cap(st.id, 54)
+    assert app.config.station(st.id).server == "serve://192.168.1.20:8000?max=54"  # the host kept

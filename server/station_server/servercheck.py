@@ -115,6 +115,7 @@ def diagnose(url: str, password: str | None, on_air: bool = False, resolve=socke
                                               "numbers like 81.150.147.206) and its port."))
         return result
     host, kind = parsed.hostname, scheme
+    web = f"[{host}]" if ":" in host else host  # an IPv6 address, in a link
     label = KINDS[kind]
     if kind == "icecast" and parsed.path.strip() in ("", "/"):
         steps.append(_step("Address", "fail", "Enter the mount, the part after the port in Icecast's "
@@ -139,11 +140,11 @@ def diagnose(url: str, password: str | None, on_air: bool = False, resolve=socke
         return result
 
     try:
-        status, headers, body = fetch(f"http://{host}:{port}/")
-    except OSError as exc:
+        status, headers, body = fetch(f"http://{web}:{port}/")
+    except (OSError, ValueError) as exc:
         status, headers, body = 0, {}, ""
         steps.append(_step("Server", "warn", f"It didn't answer as a web page ({exc})"))
-    stats = _icecast_stats(host, port, fetch) if kind == "icecast" else None
+    stats = _icecast_stats(web, port, fetch) if kind == "icecast" else None
     found_kind, name = identify(status, headers, body, stats) if status else (None, "")
     result["server"] = name or None
     if found_kind and found_kind != kind:

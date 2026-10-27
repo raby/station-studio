@@ -136,3 +136,41 @@ def test_a_mistyped_port_or_a_non_web_service():
     finally:
         srv.close()
     assert ("Server", "warn") in names(r)  # reported, not a crash
+
+
+def test_the_saved_password_is_used_however_the_address_is_written(tmp_path, icecast):
+    app = ServerApp(ConfigStore(tmp_path))
+    st = app.save_station({"name": "Rebirth Radio", "server": f"icecast://source@127.0.0.1:{icecast.port}/radio",
+                           "password": "hackme"})
+    r = app.diagnose_server({"server": f"icecast://127.0.0.1:{icecast.port}/radio", "id": st.id})
+    assert ("Password", "ok") in names(r)
+
+
+def test_same_server():
+    from station_server.config import same_server
+    assert same_server("shoutcast://:pw@Host:8000?sid=1", "shoutcast://host:8000")
+    assert not same_server("shoutcast://host:8000?sid=2", "shoutcast://host:8000")
+    assert same_server("icecast://source@h:8000/radio", "icecast://h:8000/radio/")
+    assert not same_server("icecast://dj@h:8000/radio", "icecast://h:8000/radio")
+    assert not same_server("icecast://h:8000/radio", "icecast://h:8000/classics")
+    assert not same_server("", "icecast://h:8000/radio") and not same_server("icecast://h:80o0/r", "icecast://h:8000/r")
+
+
+def test_a_server_saved_on_air_isnt_taken_as_the_one_on_air():
+    from station_server.onair import StationRunner as Runner
+    runner = Runner.__new__(Runner)
+    runner.state, runner.sent_as = "on", ("icecast://a:8000/radio", "Rebirth")
+    assert runner.on_air_to("icecast://a:8000/radio")
+    assert not runner.on_air_to("icecast://b:8000/radio")  # saved since, not switched over to
+
+
+def test_an_ipv6_address_is_tested_not_crashed_on():
+    seen = []
+
+    def fetch(url, timeout=6):
+        seen.append(url)
+        return 200, {"Server": "Icecast 2.4.4"}, ""
+    r = servercheck.diagnose("icecast://[::1]:8000/radio", "x", resolve=lambda *a: [(0, 0, 0, "", ("::1", 8000))],
+                             connect=lambda *a, **k: socket.socket(), fetch=fetch,
+                             make_sender=lambda *a: (_ for _ in ()).throw(ValueError("password")))
+    assert seen[0] == "http://[::1]:8000/" and ("Server", "ok") in names(r)

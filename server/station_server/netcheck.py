@@ -34,6 +34,7 @@ MOST_SECONDS = 12.0
 # Listeners get this share of the upload; the rest is for everything else.
 SHARE = 0.7
 DUCKDNS_EVERY = 5 * 60
+MOST_LISTENERS = 500  # the most a station streaming from here can allow
 
 
 class CheckError(Exception):
@@ -103,7 +104,8 @@ def suggest(mbps: float, stations: list[dict]) -> list[dict]:
     out = []
     for s in stations:
         share = mbps * s["bitrate"] / total_kbps
-        out.append({**s, "suggested": listeners_for(share, s["bitrate"])})
+        # No more than Edit › Server allows (500), so Use N always works.
+        out.append({**s, "suggested": min(MOST_LISTENERS, listeners_for(share, s["bitrate"]))})
     return out
 
 
@@ -138,37 +140,48 @@ class DuckDns:
     def __init__(self, app, update=duckdns_update) -> None:
         self.app = app
         self._update = update
-        self._stop = threading.Event()
+        self._stop = threading.Event()  # each thread has its own
+        self._wake = threading.Event()  # update now: the name or token changed
         self._thread: threading.Thread | None = None
+        self._sent_for: tuple | None = None  # the name and token `last` is about
         self.last: dict | None = None  # {"at", "ok", "error"}
 
     def apply(self) -> None:
         cfg = self.app.config
-        if cfg.duckdns_name and cfg.duckdns_token:
-            self._stop.clear()  # also keeps a thread that was told to stop
-            if not (self._thread and self._thread.is_alive()):
-                self._thread = threading.Thread(target=self._run, name="duckdns", daemon=True)
+        key = (cfg.duckdns_name, cfg.duckdns_token)
+        if all(key):
+            if key != self._sent_for:
+                self.last = None  # it was about the old name
+            if self._thread and self._thread.is_alive() and not self._stop.is_set():
+                self._wake.set()
+            else:  # a stopping thread is left to finish; a new one takes over
+                self._stop = threading.Event()
+                self._thread = threading.Thread(target=self._run, args=(self._stop,), name="duckdns", daemon=True)
                 self._thread.start()
         else:
-            self._stop.set()
+            self.stop()
             self.last = None
 
     def stop(self) -> None:
         self._stop.set()
+        self._wake.set()
 
     def update_now(self) -> dict:
         cfg = self.app.config
+        key = (cfg.duckdns_name, cfg.duckdns_token)
         try:
-            self._update(cfg.duckdns_name, cfg.duckdns_token)
-            self.last = {"at": time.time(), "ok": True, "error": None}
+            self._update(*key)
+            last = {"at": time.time(), "ok": True, "error": None}
         except CheckError as exc:
             logger.warning("DuckDNS: %s", exc)
-            self.last = {"at": time.time(), "ok": False, "error": str(exc)}
-        return self.last
+            last = {"at": time.time(), "ok": False, "error": str(exc)}
+        if (cfg.duckdns_name, cfg.duckdns_token) == key:  # not changed meanwhile
+            self.last, self._sent_for = last, key
+        return last
 
-    def _run(self) -> None:
-        while not self._stop.is_set():
+    def _run(self, stop: threading.Event) -> None:
+        while not stop.is_set():
             if self.app.config.duckdns_name and self.app.config.duckdns_token:
                 self.update_now()
-            if self._stop.wait(DUCKDNS_EVERY):
-                return
+            self._wake.wait(DUCKDNS_EVERY)
+            self._wake.clear()
