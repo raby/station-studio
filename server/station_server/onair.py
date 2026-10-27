@@ -32,7 +32,7 @@ from station_server.awake import KeepAwake
 from station_server.channel import Channel, NowPlaying
 from station_server import netcheck, upnp
 from station_server.config import (Config, ConfigStore, Station, clean_alerts, clean_port, clean_station, newest_week,
-                                   serve_max, serve_port)
+                                   same_server, serve_max, serve_port, with_serve_max)
 from station_server.desktop import Login, bundled
 from station_server.listen import Listeners, Tap
 from station_server.live import LiveInput, LiveSource, lan_addresses, port_free
@@ -608,6 +608,11 @@ class StationRunner:
             return (self.queue, *self._resume(self._heard_now(), -1))
         return queue, after
 
+    def on_air_to(self, addr: str) -> bool:
+        """On air now to `addr`: where it went on air, which a server saved
+        since (and not yet switched over to) isn't."""
+        return self.state == "on" and bool(self.sent_as) and same_server(self.sent_as[0], addr)
+
     @property
     def target(self) -> str:
         """Where it goes on air: the live server, or the test stream."""
@@ -811,14 +816,13 @@ class ServerApp:
             if data["feed"] and not (cfg.feed_repo and cfg.feed_token):
                 raise ValueError("Give the GitHub repository and its token first")
             cfg.feed = bool(data["feed"])
-        if "duckdns_name" in data:
-            cfg.duckdns_name = netcheck.clean_duckdns(data["duckdns_name"])
-            if not cfg.duckdns_name:
-                cfg.duckdns_token = ""
-        if str(data.get("duckdns_token") or "").strip():  # blank keeps the token
-            cfg.duckdns_token = str(data["duckdns_token"]).strip()
-        if cfg.duckdns_name and not cfg.duckdns_token:
+        # Checked before anything changes, so a name without its token isn't
+        # left half-saved (and blocking every later save).
+        dd_name = netcheck.clean_duckdns(data["duckdns_name"]) if "duckdns_name" in data else cfg.duckdns_name
+        dd_token = "" if not dd_name else (str(data.get("duckdns_token") or "").strip() or cfg.duckdns_token)
+        if dd_name and not dd_token:
             raise ValueError("Give the DuckDNS token too (it's on duckdns.org once signed in)")
+        cfg.duckdns_name, cfg.duckdns_token = dd_name, dd_token
         if "remote" in data:
             if data["remote"] and not cfg.remote_password:
                 raise ValueError("Set a password first")
@@ -931,7 +935,7 @@ class ServerApp:
             raise ValueError("That station isn't streaming from this computer")
         if not 1 <= int(most) <= 500:
             raise ValueError("Allow between 1 and 500 listeners")
-        st.server = f"serve://:{serve_port(st.server)}?max={int(most)}"
+        st.server = with_serve_max(st.server, int(most))
         self.store.save()
 
     def test_alert(self) -> list[str]:
@@ -1085,12 +1089,12 @@ class ServerApp:
         saved = None
         # The saved password goes only to the server it was saved for, not
         # to whatever address is typed in its place.
-        if existing and addr == (existing.test_server if test else existing.server):
+        if existing and same_server(addr, existing.test_server if test else existing.server):
             saved = (existing.test_password or existing.password) if test else existing.password
         typed = bool(password)
         password = password or saved or ""
         runner = self.runners.get(sid) if sid else None
-        on_air = bool(runner and runner.state == "on" and runner.target == addr and (not typed or password == saved))
+        on_air = bool(runner and runner.on_air_to(addr) and (not typed or password == saved))
         return servercheck.diagnose(addr, password, on_air=on_air)
 
     def _try_server(self, st: Station, test: bool = False) -> dict:
@@ -1100,7 +1104,7 @@ class ServerApp:
         addr = st.test_server if test else st.server
         password = (st.test_password or st.password) if test else st.password
         runner = self.runners.get(st.id)
-        if runner and runner.state == "on" and runner.target == addr:
+        if runner and runner.on_air_to(addr):
             counts = runner.audience
             if counts is None:
                 try:
