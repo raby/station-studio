@@ -430,3 +430,6 @@ body.remote [data-view="new"], body.remote [data-view="settings"], body.remote #
 .dg-on-fill { fill: var(--accent-text); }
 .dg-left { text-anchor: start; }
 .settings ol.help.steps { list-style: decimal; padding-left: 22px; }
+.phone-test { display: grid; gap: 6px; align-content: start; }
+.phone-test h4 { margin: 0; font-size: 1rem; }
+.phone-tests { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 24px; align-items: start; }

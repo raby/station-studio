@@ -1321,6 +1321,13 @@ function internetSettings() {
   const ddToken = el("input", { type: "password", value: "", autocomplete: "off",
     placeholder: dd.has_token ? "Kept (type a new one to change it)" : "the token from duckdns.org" });
   const outside = dd.host || check?.address;
+  const lan = n.lan;
+  const qrs = (host) => el("div", { class: "qr-row" }, here.map((s) => {
+    const link = `http://${host}:${s.port}/`;
+    return el("div", { class: "qr" },
+      el("img", { src: `/api/qr.svg?text=${encodeURIComponent(link)}`, alt: `QR code for ${link}`, width: 140, height: 140 }),
+      el("b", {}, s.name), el("code", { class: "code" }, link));
+  }));
   const portState = (port) => {
     const to = router?.ports?.[String(port)];
     if (!router || !router.found) return null;
@@ -1373,14 +1380,17 @@ function internetSettings() {
         dd.name && dd.has_token ? btn("Update now", "refresh", () => post("/api/internet/duckdns", {}, null, "", ddMsg), "btn small") : null),
       ddMsg,
       dd.last ? el("p", { class: dd.last.ok ? "help" : "errors" }, dd.last.ok ? `${dd.host} updated ${dayTime(new Date(dd.last.at * 1000).toISOString())}` : dd.last.error) : null) : null,
-    here.length && outside ? el("fieldset", {}, el("legend", {}, "Try it from a phone"),
-      el("p", { class: "help" }, "Turn Wi-Fi off on the phone, so it uses mobile data like a listener would, then scan a code or open the address."),
-      el("div", { class: "qr-row" }, here.map((s) => {
-        const link = `http://${outside}:${s.port}/`;
-        return el("div", { class: "qr" },
-          el("img", { src: `/api/qr.svg?text=${encodeURIComponent(link)}`, alt: `QR code for ${link}`, width: 140, height: 140 }),
-          el("b", {}, s.name), el("code", { class: "code" }, link));
-      }))) : null,
+    here.length && (outside || lan) ? el("fieldset", {}, el("legend", {}, "Try it from a phone"),
+      el("p", { class: "help" }, "A station has two addresses, and which one plays depends on where the phone is."),
+      el("div", { class: "phone-tests" }, outside ? el("div", { class: "phone-test" },
+        el("h4", {}, "Away from home, like a listener"),
+        el("p", { class: "help" }, "Turn Wi-Fi off on the phone so it uses mobile data, then scan the code. This is the address to give listeners."),
+        qrs(outside)) : null,
+      lan ? el("div", { class: "phone-test" },
+        el("h4", {}, "At home, on this computer’s Wi-Fi"),
+        el("p", { class: "help" }, "Leave Wi-Fi on and scan this code instead. ",
+          outside ? "The away-from-home address often won't play on your own Wi-Fi: most home routers don't let a phone inside the house reach the house's own internet address. That's normal, and listeners elsewhere aren't affected." : "This only works on this network; listeners on the internet need the router set up first."),
+        qrs(lan)) : null)) : null,
   );
 }
 
@@ -1640,7 +1650,7 @@ function renderHelp() {
         "Settings › Internet › Check my internet: it measures the upload and suggests how many listeners to allow. Use sets it.",
         "Settings › Internet › Look at the router, then Open port. If the router won't, forward the port by hand (below).",
         "Optional: a DuckDNS name, so listeners have an address that doesn't change.",
-        "Scan the code on Settings › Internet with a phone on mobile data (Wi-Fi off). If it plays, the world can hear it.",
+        "Scan the “Away from home” code on Settings › Internet with a phone on mobile data (Wi-Fi off). If it plays, the world can hear it.",
         "Give listeners the address, and put it in the website's player and station directories.",
       ].map((t) => el("li", {}, t))),
       h2("Ports and the router"),
@@ -1676,7 +1686,9 @@ function renderHelp() {
         "Listeners turned away: the station is full. Settings › Internet suggests how many the upload can take."),
     ],
     new: () => [
-      el("h2", {}, "0.16.4"),
+      el("h2", {}, "0.16.5"),
+      list("Settings › Internet › Try it from a phone shows two codes: one for a phone away from home (on mobile data, like a listener) and one for a phone on the same Wi-Fi as this computer, with why the internet address often doesn't play at home."),
+      h2("0.16.4"),
       list("On a Mac, Station Server always starts through the app (opened, at login and after an update), which stays on quietly in the background, so macOS lets it reach the router and servers on this network. Start at login set up by an older version is updated by itself."),
       h2("0.16.3"),
       list("Look at the router searches out of this computer's own network even with a VPN on, and also asks the router directly, so more routers are found."),
