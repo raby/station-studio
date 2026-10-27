@@ -266,6 +266,12 @@ def _hand_over(port: int, url: str, stay: bool = False) -> int:
             pass
     for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         signal.signal(sig, pass_on)
+    try:
+        from station_server import macwindow  # needs PyObjC, which only the Mac app carries
+    except ImportError:
+        pass
+    else:
+        return macwindow.stay_with(proc)
     code = proc.wait()
     return code if code >= 0 else 1  # Quit is 0; a crash isn't, so start at login starts it again
 

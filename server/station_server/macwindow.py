@@ -502,3 +502,48 @@ def run(url: str, quit_server, bundle: Path | None = None) -> int:
     app.setDelegate_(delegate)
     AppHelper.runEventLoop()
     return 0
+
+
+class HelperParent(AppKit.NSObject):
+    """The app started in the background, which stays on as the helper's
+    parent (see __main__._hand_over)."""
+
+    def initWithProc_(self, proc):
+        self = objc.super(HelperParent, self).init()
+        if self is None:
+            return None
+        self.proc = proc
+        self.stopping = False
+        return self
+
+    def applicationShouldTerminate_(self, app):
+        # Logging out (or a quit sent to it): stop Station Server, and this
+        # ends with it.
+        self.stopping = True
+        try:
+            self.proc.terminate()
+        except OSError:
+            pass
+        return _TERMINATE_LATER
+
+
+def stay_with(proc) -> int:
+    """Stay on, with no Dock icon or window, until the helper `proc` stops,
+    answering macOS as an app does, so logging out doesn't wait on it."""
+    app = AppKit.NSApplication.sharedApplication()
+    app.setActivationPolicy_(AppKit.NSApplicationActivationPolicyProhibited)
+    delegate = HelperParent.alloc().initWithProc_(proc)
+    app.setDelegate_(delegate)
+
+    def watch():
+        code = proc.wait()
+        # Quit is 0; a crash isn't, so start at login starts it again.
+        os._exit(0 if code == 0 or delegate.stopping else (code if code > 0 else 1))
+
+    def tick():  # lets Python's signal handlers (launchctl stopping it) run
+        AppHelper.callLater(1.0, tick)
+
+    threading.Thread(target=watch, daemon=True).start()
+    tick()
+    AppHelper.runEventLoop()
+    return 0
