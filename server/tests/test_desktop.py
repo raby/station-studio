@@ -73,3 +73,24 @@ def test_ffmpeg_inside_the_app_comes_first(monkeypatch, tmp_path):
     monkeypatch.delenv(audio.ENV_VAR, raising=False)
     monkeypatch.setattr(sys, "_MEIPASS", str(tmp_path), raising=False)
     assert audio.find_ffmpeg() == str(inside)
+
+
+def test_mac_start_at_login_runs_the_app_which_stays_with_its_helper(monkeypatch, tmp_path):
+    import plistlib
+    from station_server import desktop
+    macos = tmp_path / "Station Server.app" / "Contents" / "MacOS"
+    macos.mkdir(parents=True)
+    (macos / desktop.MAC_HELPER).write_text("")
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(sys, "executable", str(macos / desktop.MAC_HELPER))  # asked from the helper
+    assert launch_command() == [str(macos / "Station Server"), "app", "--no-window"]
+    # an agent an older version wrote (running the helper itself) is written again
+    login = Login(platform="mac", home=tmp_path / "user")
+    agent = login._agent()
+    agent.parent.mkdir(parents=True)
+    with agent.open("wb") as fh:
+        plistlib.dump({"Label": desktop.APP_ID, "ProgramArguments": [str(macos / desktop.MAC_HELPER), "app", "--no-window"]}, fh)
+    login.refresh()
+    with agent.open("rb") as fh:
+        assert plistlib.load(fh)["ProgramArguments"] == [str(macos / "Station Server"), "app", "--no-window"]

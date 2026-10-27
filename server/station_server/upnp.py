@@ -38,9 +38,9 @@ class UpnpError(Exception):
 
 # macOS 15 and later ask before an app talks to other devices on the
 # network; until it's allowed, every attempt fails with "No route to host".
-MAC_PERMISSION = ("macOS isn't letting Station Server reach the router. If Station Server is listed in System "
-                  "Settings › Privacy & Security › Local Network, turn it on; a VPN can also be in the way. Otherwise "
-                  "forward the port by hand (Help › Streaming)")
+MAC_PERMISSION = ("macOS isn't letting Station Server reach the router. Quit Station Server and open it again "
+                  "from Applications; if it's listed in System Settings › Privacy & Security › Local Network, turn "
+                  "it on. A VPN can also be in the way. Otherwise forward the port by hand (Help › Streaming)")
 
 
 def _blocked(exc: OSError) -> str:

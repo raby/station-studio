@@ -46,10 +46,21 @@ def app_executable() -> Path:
     return helper if sys.platform == "darwin" and helper.exists() else exe
 
 
+def mac_app_main() -> Path:
+    """The Mac app's own program (Contents/MacOS/Station Server), which
+    macOS knows as Station Server: started this way, the helper it runs is
+    allowed what the app is allowed (the local network, say), where the
+    helper started by itself is a nameless program macOS quietly refuses."""
+    return Path(sys.executable).with_name(APP_NAME)
+
+
 def launch_command(background: bool = True, platform: str | None = None,
                    python: str | None = None) -> list[str]:
     tail = ["app", *(["--no-window"] if background else [])]
     if python is None and bundled():
+        exe = Path(sys.executable)
+        if sys.platform == "darwin" and (exe.name == MAC_HELPER or exe.with_name(MAC_HELPER).exists()):
+            return [str(mac_app_main()), *tail]  # it stays on as the helper's parent
         return [str(app_executable()), *tail]
     exe = Path(python or sys.executable)
     if (platform or current_platform()) == "windows" and exe.with_name("pythonw.exe").exists():
@@ -86,6 +97,22 @@ class Login:
             return self._autostart().is_file()
         except OSError:
             return False
+
+    def refresh(self) -> None:
+        """Start at login made by an older version (on the Mac, it ran the
+        helper itself): written again as this version would."""
+        if self.platform != "mac" or not self.enabled():
+            return
+        try:
+            with self._agent().open("rb") as fh:
+                current = plistlib.load(fh).get("ProgramArguments")
+        except (OSError, ValueError, plistlib.InvalidFileException):
+            return
+        if current != launch_command(True, self.platform, self.python):
+            try:
+                self.set(True)
+            except (OSError, ValueError):
+                pass
 
     def set(self, on: bool) -> None:
         cmd = launch_command(True, self.platform, self.python)
