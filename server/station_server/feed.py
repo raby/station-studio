@@ -37,6 +37,8 @@ import urllib.request
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
+from station_player.logos import feed_name
+
 from station_server import __version__
 
 logger = logging.getLogger(__name__)
@@ -89,7 +91,10 @@ def _row(row: dict) -> dict:
     return item
 
 
-def station_feed(runner, hours: float = FEED_HOURS, now: datetime | None = None) -> dict:
+_READ = object()
+
+
+def station_feed(runner, hours: float = FEED_HOURS, now: datetime | None = None, picture=_READ) -> dict:
     """A station's feed: on air or not, the presenter if one is live, the
     running order from what's on now for the next `hours` (each song or
     show with when it starts and how long it is), and the songs just
@@ -114,11 +119,12 @@ def station_feed(runner, hours: float = FEED_HOURS, now: datetime | None = None)
                        "artist": e.get("artist")})
         if len(recent) >= RECENT:
             break
-    picture = _logo(runner)
+    if picture is _READ:  # (picture, type) or None: the station's logo
+        picture = _logo(runner)
     return {
         "station": st.name,
         "slug": slug(st.name),
-        "logo": logo_file(st.name, picture[1]) if picture else None,
+        "logo": feed_name(slug(st.name), picture[1]) if picture else None,
         "updated": now.isoformat(timespec="seconds"),
         "on_air": on,
         "live": {"presenter": live.presenter or "Live show",
@@ -132,12 +138,6 @@ def station_feed(runner, hours: float = FEED_HOURS, now: datetime | None = None)
 def _logo(runner) -> tuple[bytes, str] | None:
     get = getattr(runner, "logo", None)
     return get() if callable(get) else None
-
-
-def logo_file(name: str, ctype: str) -> str:
-    """Where a station's logo is published, beside its feed: rebirth-radio-logo.png."""
-    ext = {"image/jpeg": "jpg", "image/x-icon": "ico"}.get(ctype, ctype.split("/")[-1])
-    return f"{slug(name)}-logo.{ext}"
 
 
 def on_now(feed: dict, at: datetime) -> tuple | None:
@@ -263,6 +263,12 @@ class FeedPublisher:
         self._stop.set()
         self._wake.set()
 
+    def publish_station(self, name: str) -> None:
+        """One station's feed, straight away (its logo changed, say)."""
+        with self._lock:
+            self._published.pop(slug(name), None)
+        self._wake.set()
+
     def publish_now(self) -> None:
         """Settings › Website › Publish now: every station, straight away."""
         with self._lock:
@@ -333,9 +339,9 @@ class FeedPublisher:
                 runner = self.app.runners.get(st.id)
                 if runner is None:
                     continue
-                feed = station_feed(runner, now=now)
+                picture = _logo(runner)  # read once: the feed names the very file published
+                feed = station_feed(runner, now=now, picture=picture)
                 name = feed["slug"]
-                picture = _logo(runner)
                 if picture:  # before the feed that names it; unchanged, it isn't sent again
                     wrote += pages.put(feed["logo"], picture[0], f"{st.name}: logo")
                 if not self.due(name, feed, now):

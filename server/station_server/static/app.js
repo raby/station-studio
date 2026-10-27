@@ -1888,7 +1888,7 @@ function renderHelp() {
     new: () => [
       el("h2", {}, "0.20: station logos"),
       list("Edit › Station › Logo: give a station a logo. It shows on the station page, on the stream's own page when this computer streams it (and as its icon in a browser tab), and on your website's now/next page (Settings › Website).",
-        "Station Player 0.20 picks the logo up by itself: from the now/next feed for stations that have one, or from Find logo for a station streamed from this computer."),
+        "Station Player 0.20 picks the logo up by itself for stations with a now/next feed, and Find logo there fetches it from a station this computer streams."),
       h2("0.19.1"),
       list("Presenter alerts: “has finished” now waits until the presenter has been gone for two minutes, so an encoder reconnecting, or the station reconnecting, no longer sends “finished” and then “is live” again. A presenter taking over from another sends one of each, and a show still live when the station is taken off air is told as finished.",
         "Also send to: titles reach the second server in order. Changing its address asks for its password again. The Ready check and Test the second server always check the server that's saved, and a test of the main server is never mistaken for the second one."),

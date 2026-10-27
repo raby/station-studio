@@ -100,9 +100,11 @@ class _PinnedHTTPS(http.client.HTTPSConnection):
 
 
 def _fetch_public(url: str, user_agent: str, limit: int, resolve=socket.getaddrinfo,
-                  allowed=lambda ip: ip.is_global) -> tuple[bytes, str]:
-    """GET `url` from a host on the public internet only, connecting to
-    the very address that was checked; no redirects."""
+                  allowed=lambda ip: ip.is_global, server: str = "") -> tuple[bytes, str]:
+    """GET a picture at `url` from a host on the public internet only (or
+    any `allowed`), connecting to the very address that was checked; no
+    redirects. Anything but a picture isn't read (a radio server may answer
+    with its stream), nor is a reply from any server but `server` if given."""
     parts = urlparse(url)
     host, https = parts.hostname or "", parts.scheme == "https"
     port = parts.port or (443 if https else 80)
@@ -120,7 +122,12 @@ def _fetch_public(url: str, user_agent: str, limit: int, resolve=socket.getaddri
         resp = conn.getresponse()
         if resp.status != 200:
             raise OSError(f"HTTP {resp.status}")
-        return resp.read(limit + 1), resp.headers.get("Content-Type", "")
+        ctype = resp.headers.get("Content-Type", "")
+        if not ctype.lower().startswith("image/"):
+            raise OSError(f"not a picture ({ctype or 'no type'})")
+        if server and not resp.headers.get("Server", "").startswith(server):
+            raise OSError(f"not {server}")
+        return resp.read(limit + 1), ctype
     finally:
         conn.close()
 
@@ -456,21 +463,32 @@ class Directory:
         parts = urlparse(stream_url)
         if parts.scheme not in ("http", "https") or not parts.hostname:
             return None
-        return self.picture(f"{parts.scheme}://{parts.netloc}/logo")
+        # Wherever the stream is (at home too: the station was chosen to be
+        # played from there), but only Station Server's own /logo.
+        return self.picture(f"{parts.scheme}://{parts.netloc}/logo", fresh=True, anywhere=True,
+                            server="Station Server/")
 
-    def picture(self, url: str) -> tuple[bytes, str] | None:
+    def picture(self, url: str, fresh: bool = False, anywhere: bool = False,
+                server: str = "") -> tuple[bytes, str] | None:
         """A small picture from a public address (never this computer or the
-        local network); None if it isn't one."""
+        local network, unless `anywhere`); None if it isn't one. `fresh`
+        fetches it again rather than using the one fetched earlier."""
         if not url.startswith(("http://", "https://")):
             return None
-        with self._lock:
-            if url in self._logo_cache:
-                self._logo_cache.move_to_end(url)
-                return self._logo_cache[url]
-        if not self._public(urlparse(url).hostname or ""):
+        if not fresh:
+            with self._lock:
+                if url in self._logo_cache:
+                    self._logo_cache.move_to_end(url)
+                    return self._logo_cache[url]
+        if not anywhere and not self._public(urlparse(url).hostname or ""):
             return None
+        extra = {}
+        if anywhere:
+            extra["allowed"] = lambda ip: True
+        if server:
+            extra["server"] = server
         try:
-            body, ctype = self._logo_fetch(url, self.user_agent, MAX_LOGO_BYTES)
+            body, ctype = self._logo_fetch(url, self.user_agent, MAX_LOGO_BYTES, **extra)
         except (OSError, ValueError, http.client.HTTPException):
             return None
         ctype = ctype.split(";")[0].strip().lower()

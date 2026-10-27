@@ -18,7 +18,7 @@ authors = [
     { name = "Raby Whyte", email = "rabywhyte@gmail.com" },
 ]
 keywords = ["radio", "shoutcast", "icecast", "playout", "itunes", "playlist"]
-dependencies = ["station-player>=0.19"]
+dependencies = ["station-player>=0.20"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]

@@ -42,6 +42,16 @@ def sniff(data: bytes) -> str | None:
     return None
 
 
+# A station's logo published beside its what's-on feed by Station Server
+# (rebirth-radio-logo.png): the only kind of name a feed may give.
+FEED_NAME = re.compile(r"[a-z0-9-]+-logo\.(?:png|jpg|gif|webp|ico)")
+
+
+def feed_name(slug: str, ctype: str) -> str:
+    """The file a station's logo is published as, beside its feed."""
+    return f"{slug}-logo.{TYPES.get(ctype, 'png')}"
+
+
 def is_name(value) -> bool:
     return isinstance(value, str) and NAME.fullmatch(value) is not None
 

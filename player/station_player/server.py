@@ -34,6 +34,7 @@ from urllib.parse import parse_qs, quote, urljoin, urlparse
 from station_player import __version__, loudness, myplaylists, picks, qr, radio, remote, selfupdate, setup, updates
 from station_player.config import MAX_RECENT, clean_alarm, clean_alarms, clean_tags
 from station_player.directory import Directory, DirectoryError
+from station_player.logos import FEED_NAME as FEED_LOGO_NAME
 from station_player.logos import LogoStore
 from station_player.playlog import PlayLog
 from station_player.recorder import Recorder
@@ -168,11 +169,14 @@ class AlarmNotRinging(Exception):
     """Snooze asked for with no alarm ringing."""
 
 
+FEED_LOGO_RETRY_SECONDS = 600  # a feed's logo that couldn't be fetched is tried again after this
+
+
 def _feed_logo_address(feed_url: str, feed: dict | None) -> str | None:
     """Where the logo a what's-on feed names is: a plain file beside the
     feed (Station Server publishes rebirth-radio-logo.png), nothing else."""
     name = (feed or {}).get("logo")
-    if not isinstance(name, str) or not re.fullmatch(r"[a-z0-9-]+-logo\.(?:png|jpg|gif|webp|ico)", name):
+    if not isinstance(name, str) or not FEED_LOGO_NAME.fullmatch(name):
         return None
     return urljoin(feed_url, name)
 
@@ -215,7 +219,8 @@ class PlayerApp:
         self._installed = -1
         self._titles: dict[str, str | None] = {}  # station url -> song
         self.feeds = Feeds()  # stations' what's-on feeds (whatson.py)
-        self._feed_logo_tried: set[str] = set()  # stations whose feed was looked at for a logo
+        # Stations whose feed's logo was taken (inf), or when it last couldn't be
+        self._feed_logo_tried: dict[str, float] = {}
         # Files opened with "Open With" this session, and the latest
         # request for the page to play one.
         self.opened: list[Path] = []
@@ -1231,7 +1236,7 @@ class PlayerApp:
         except ValueError:
             return None
         address = _feed_logo_address(feed_url, self.feeds.get(feed_url)) if feed_url else None
-        return self.directory.picture(address) if address else None
+        return self.directory.picture(address, fresh=True) if address else None
 
     def _logo_from_feed(self, url: str, feed_url: str, feed: dict | None) -> None:
         """A station with a what's-on feed and no logo takes the one the feed
@@ -1241,13 +1246,16 @@ class PlayerApp:
         if address is None:
             return
         with self._lock:
-            if url in self._feed_logo_tried:
+            tried = self._feed_logo_tried.get(url)
+            if tried is not None and time.monotonic() - tried < FEED_LOGO_RETRY_SECONDS:
                 return
-            self._feed_logo_tried.add(url)
+            self._feed_logo_tried[url] = math.inf  # taken, or being fetched: not again
 
         def keep():
-            got = self.directory.picture(address)
-            if got is None:
+            got = self.directory.picture(address, fresh=True)
+            if got is None:  # not there yet, perhaps: try again later
+                with self._lock:
+                    self._feed_logo_tried[url] = time.monotonic()
                 return
             try:
                 name = self.logos.save(got[0])

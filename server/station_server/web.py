@@ -150,11 +150,12 @@ def make_handler(app: ServerApp, picker: Picker, quit, remote: bool = False,
                 return False
             return host in _ALLOWED_HOSTS
 
-        def _send(self, body: bytes, ctype: str, status=HTTPStatus.OK, extra: dict | None = None):
+        def _send(self, body: bytes, ctype: str, status=HTTPStatus.OK, extra: dict | None = None,
+                  cache: str = "no-store"):
             self.send_response(status)
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(body)))
-            self.send_header("Cache-Control", "no-store")
+            self.send_header("Cache-Control", cache)
             for k, v in (extra or {}).items():
                 self.send_header(k, v)
             self.end_headers()
@@ -202,7 +203,8 @@ def make_handler(app: ServerApp, picker: Picker, quit, remote: bool = False,
                 got = runner.logo() if runner else None
                 if got is None:
                     return self._error(HTTPStatus.NOT_FOUND, "No logo")
-                return self._send(got[0], got[1])
+                # The page asks for it as ?v=<its name>, which changes with the picture.
+                return self._send(got[0], got[1], cache="private, max-age=86400")
             if m and m.group(2) == "playlog.csv":
                 qs = parse_qs(url.query)
                 try:

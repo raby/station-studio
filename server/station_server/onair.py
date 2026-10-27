@@ -1059,7 +1059,7 @@ class ServerApp:
         self.store.save()
         self.logos.prune({s.logo for s in self.config.stations if s.logo})
         if self.feed is not None:  # the website and Station Player see it soon
-            self.feed.publish_now()
+            self.feed.publish_station(st.name)
 
     def delete_station(self, sid: str) -> None:
         runner = self._runner(sid)
@@ -1068,6 +1068,7 @@ class ServerApp:
         del self.runners[sid]
         self.weeks.forget(sid)
         self.store.save()
+        self.logos.prune({s.logo for s in self.config.stations if s.logo})
 
     def set_on_air(self, sid: str, on: bool, rehearse: bool = False) -> None:
         """On or off air; `rehearse` goes on air to the test stream instead
