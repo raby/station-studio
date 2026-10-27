@@ -645,6 +645,16 @@ function renderChecks(id, rc) {
       el("span", { class: "mark", "aria-label": c.status }, marks[c.status]), el("b", {}, c.name), " ", c.detail))));
 }
 
+// A server test, step by step (servercheck.py), in the Ready check's style.
+function diagnosisList(r) {
+  const marks = { ok: "✓", warn: "!", fail: "✕" };
+  const fail = r.steps.find((c) => c.status === "fail");
+  return el("div", { class: "checks diagnosis", role: "status" },
+    el("b", {}, fail ? `Not working yet: ${fail.name.toLowerCase()}` : r.steps.some((c) => c.status === "warn") ? "Works, with notes" : "Works: Station Server can go on air there"),
+    el("ul", {}, r.steps.map((c) => el("li", { class: c.status },
+      el("span", { class: "mark", "aria-label": c.status }, marks[c.status]), el("b", {}, c.name), " ", c.detail))));
+}
+
 async function post(path, message) {
   try {
     setState(await api(path, {}));
@@ -879,6 +889,15 @@ function renderForm(view) {
     const msg = test ? testMsg : serverMsg;
     msg.className = "form-msg ok";
     msg.textContent = "Connecting…";
+    const addr = test ? buildTestServer(v) : buildServer(v);
+    if (addr && !addr.startsWith("serve:")) {
+      try {
+        const r = await api("/api/check/diagnose", { server: addr, password: test ? v.test_password || v.password : v.password, id: s?.station.id, test });
+        msg.className = "form-msg";
+        msg.replaceChildren(diagnosisList(r));
+      } catch (e) { msg.className = "form-msg"; msg.textContent = e.message; }
+      return;
+    }
     try {
       const r = await api("/api/check/server", { ...formPayload(v), id: s?.station.id, test });
       msg.textContent = (test ? buildTestServer(v) : buildServer(v)).startsWith("serve:")
@@ -1474,6 +1493,7 @@ const HELP_TABS = [
   ["onair", "On air", "radio"],
   ["live", "Live shows", "mic"],
   ["stream", "Streaming", "tower"],
+  ["icecast", "Icecast & SHOUTcast", "globe"],
   ["unattended", "Unattended", "power"],
   ["new", "What's new", "bell"],
   ["trouble", "Problems", "alert"],
@@ -1545,6 +1565,42 @@ const DIAGRAMS = {
     + DG.box(560, 146, 150, 52, "Listeners"),
     "Both work from the same Station Server: Edit › Server › Type switches between them."),
 };
+
+// Help › Icecast & SHOUTcast: test any server, without a station or going
+// on air. Kept here so the page can redraw without losing what's typed.
+const TESTER = { kind: "icecast", host: "", port: "8000", mount: "/radio", sid: "1", password: "", busy: false, result: null, error: "" };
+
+function serverTester() {
+  const t = TESTER;
+  const box = el("div", { class: "tester" });
+  const input = (key, attrs = {}) => el("input", { value: t[key], autocomplete: "off", spellcheck: "false",
+    oninput: (e) => { t[key] = e.target.value; }, ...attrs });
+  async function run() {
+    t.busy = true; t.result = null; t.error = ""; fill();
+    try {
+      t.result = await api("/api/check/diagnose", { server: buildServer({ kind: t.kind, host: t.host.trim(), port: t.port.trim(), mount: t.mount.trim() || "/", sid: t.sid.trim() }), password: t.password });
+    } catch (e) { t.error = e.message; }
+    t.busy = false; fill();
+  }
+  function fill() {
+    const kind = el("select", { onchange: (e) => { t.kind = e.target.value; t.result = null; t.error = ""; fill(); } },
+      ["icecast", "shoutcast"].map((k) => el("option", { value: k, selected: t.kind === k }, k === "icecast" ? "Icecast" : "SHOUTcast")));
+    box.replaceChildren(...[
+      el("div", { class: "form" }, el("div", { class: "grid" },
+        el("label", {}, "Type", kind),
+        el("label", {}, "Address", input("host", { placeholder: "stream.example.com or 81.150.147.206" })),
+        el("label", {}, "Port", input("port", { inputmode: "numeric" })),
+        t.kind === "icecast" ? el("label", {}, "Mount", input("mount", { placeholder: "/radio" }))
+          : el("label", {}, "Stream number (DNAS 2)", input("sid", { inputmode: "numeric" })),
+        el("label", {}, "Source password", input("password", { type: "password" }))),
+      el("div", { class: "actions" }, btn(t.busy ? "Testing…" : "Test this server", "refresh", run, "btn small"))),
+      t.error ? el("div", { class: "errors" }, t.error) : null,
+      t.result ? diagnosisList(t.result) : null,
+    ].filter(Boolean));
+  }
+  fill();
+  return box;
+}
 
 function renderHelp() {
   const p = (...t) => el("p", { class: "help" }, ...t);
@@ -1685,8 +1741,62 @@ function renderHelp() {
         "\"Port 8000 is in use\": another program (an old DNAS, say) has it. Close that, or choose another port.",
         "Listeners turned away: the station is full. Settings › Internet suggests how many the upload can take."),
     ],
+    icecast: () => [
+      el("h2", {}, "Icecast and SHOUTcast"),
+      p("Both are free server programs that listeners connect to. Station Server sends the station to the server once, and the server sends a copy to every listener. Use one when there are more listeners than this computer's upload can take, when the station's computer shouldn't carry them, or when you already have a hosted account (like Rebirth Radio's SHOUTcast at ZoeNetworks). Otherwise, This computer is simpler (Help › Streaming)."),
+      DIAGRAMS.choose(),
+      h2("Test a server"),
+      p("Checks a server step by step without going on air: the address, the port, which kind of server it is, the password and the listener count, and says what to change when something's wrong. If something else (Winamp, say) is sending to it, the password isn't tried, so nothing is knocked off the air. A station's own server is tested the same way from Edit › Server › Test connection."),
+      serverTester(),
+      h2("Which is which"),
+      el("table", { class: "help-table" },
+        el("tr", {}, el("th", {}, ""), el("th", {}, "Icecast"), el("th", {}, "SHOUTcast DNAS")),
+        el("tr", {}, el("td", {}, "Cost"), el("td", {}, "Free and open source"), el("td", {}, "Free to run; often rented from a host")),
+        el("tr", {}, el("td", {}, "Runs on"), el("td", {}, "Mac, Windows, Linux (a Raspberry Pi will do)"), el("td", {}, "Windows, Linux, Mac")),
+        el("tr", {}, el("td", {}, "Several stations"), el("td", {}, "One mount each, like /classics and /radio, on one port"), el("td", {}, "DNAS 2: stream numbers 1, 2, 3… on one port")),
+        el("tr", {}, el("td", {}, "Station Server logs in with"), el("td", {}, "The source password (user name source)"), el("td", {}, "The source password, on the port above the listeners' one")),
+        el("tr", {}, el("td", {}, "Listeners open"), el("td", {}, "http://address:8000/radio"), el("td", {}, "http://address:8000/"))),
+      h2("Setting up Icecast yourself, free"),
+      el("ol", { class: "help steps" },
+        el("li", {}, el("b", {}, "Mac: "), "install Homebrew (brew.sh), then in Terminal: ", el("code", { class: "code" }, "brew install icecast"), ". Its settings are in /opt/homebrew/etc/icecast.xml (on an Intel Mac, /usr/local/etc/icecast.xml). Start it with ", el("code", { class: "code" }, "brew services start icecast"), ", which also starts it at login."),
+        el("li", {}, el("b", {}, "Windows: "), "download the Windows installer from icecast.org and install it. Its settings are icecast.xml in the folder it installed to; start Icecast from the Start menu (or install it as a service, so it starts with Windows)."),
+        el("li", {}, el("b", {}, "Linux or a Raspberry Pi: "), el("code", { class: "code" }, "sudo apt install icecast2"), " asks for the passwords as it installs; then ", el("code", { class: "code" }, "sudo systemctl enable --now icecast2"), "."),
+        el("li", {}, "Open http://localhost:8000/ on that computer: Icecast's status page shows it's running.")),
+      el("h3", {}, "The settings that matter in icecast.xml"),
+      el("table", { class: "help-table" },
+        ...[["<source-password>", "What Station Server (and any other source) logs in with. Change it from hackme."],
+          ["<admin-password>", "For Icecast's own admin pages. Make it different from the source password."],
+          ["<clients>", "The most listeners at once, across all mounts. Keep it within the upload (Settings › Internet suggests how many)."],
+          ["<sources>", "How many stations (mounts) can send at once."],
+          ["<port>", "In <listen-socket>: the port listeners and sources use, usually 8000."],
+          ["<hostname>", "The address listeners use, like your DuckDNS name, so Icecast's own links point to the right place."]]
+          .map(([k, v]) => el("tr", {}, el("td", {}, el("code", { class: "code" }, k)), el("td", {}, v)))),
+      p("Restart Icecast after changing them (on a Mac, brew services restart icecast)."),
+      el("h3", {}, "Then in Station Server"),
+      list("Edit › Server: Type Icecast, the address of the computer running Icecast (localhost if it's this one), port 8000, a mount such as /classics (each station its own), and the source password.",
+        "Test connection, then Rehearse or Go on air. Listeners open http://address:8000/classics.",
+        "For listeners outside, forward Icecast's port on that computer's router as in Help › Streaming, and give it a DuckDNS name."),
+      p("Icecast on a computer at home shares the same upload as This computer would, so it doesn't fit more listeners. For more, Icecast needs to run on a server with a big connection: a hosted Icecast account, or a cloud server (some providers have a free tier, such as Oracle Cloud's Always Free, though it takes some setting up)."),
+      h2("SHOUTcast"),
+      list("SHOUTcast takes the source one port above the listeners' port: with listeners on 8000, Station Server sends to 8001. Forward both on the router if it's at home.",
+        "A DNAS 2 server can carry several streams on one port: stream 1 for the station, stream 2 as its test stream, say. Set the stream number in Edit › Server.",
+        "A hosted account (like ZoeNetworks) gives the address, port and source password, and often a most-listeners limit. Enter those in Edit › Server; Test connection checks them."),
+      h2("When the test says…"),
+      list("“There's no server called…”: the address is misspelled, or the name has lapsed.",
+        "“Nothing answers on port…”: the server isn't running, or uses another port. On a hosted account, check the port in its control panel.",
+        "“No answer… within 6 seconds”: a firewall, or the router at the server's end isn't forwarding the port, or the address is wrong.",
+        "“This is SHOUTcast, not Icecast” (or the other way round): change the Type in Edit › Server.",
+        "“Port 8001 is closed”: SHOUTcast's source port isn't open or forwarded (for DNAS 2, check portlegacy= in its settings).",
+        "“The server refused the password”: it's the source password Station Server needs, not the admin one.",
+        "“Something is sending there now”: Winamp's SHOUTcast plugin or another Station Server is connected. A server takes one source at a time (per mount, on Icecast).",
+        "“The listener count can't be read”: the server's status page is private. Station Server still streams; it just can't show how many are listening."),
+    ],
     new: () => [
-      el("h2", {}, "0.16.7"),
+      el("h2", {}, "0.17: Icecast & SHOUTcast"),
+      list("Help › Icecast & SHOUTcast: what they are, setting up Icecast for free on a Mac, Windows or Linux, the icecast.xml settings that matter, and SHOUTcast's source port and stream numbers.",
+        "Test a server there, step by step, without a station or going on air: the address, the port, which kind of server it is, the source port, the password and the listener count, each saying what to change. Edit › Server › Test connection shows the same steps.",
+        "Nothing already sending to a server (Winamp, say) is knocked off by a test."),
+      h2("0.16.7"),
       list("On a Mac, Station Server starts as it did up to 0.16.3 again, so the window comes back after an update. If Look at the router is blocked, quit and open Station Server from Applications (once: the router keeps the forward). The window also gets macOS to ask about the local network."),
       h2("0.16.6"),
       list("On a Mac, Station Server gets macOS to ask whether it may find devices on your local network."),
@@ -1798,7 +1908,7 @@ async function poll() {
   try {
     setState(await api("/api/state"));
     checkListening();
-    if (S.view.type !== "new" && S.view.type !== "edit" && S.view.type !== "log" && S.view.type !== "settings") render();
+    if (!["new", "edit", "log", "settings", "help"].includes(S.view.type)) render();
     else renderNav();
   } catch { /* the server is restarting, or gone; try again */ }
 }

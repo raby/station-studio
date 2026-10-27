@@ -1072,6 +1072,22 @@ class ServerApp:
             raise ValueError("Enter the test stream's address" if test else "Enter the server address")
         return self._try_server(st, test)
 
+    def diagnose_server(self, data: dict) -> dict:
+        """Help › Icecast and SHOUTcast, and Edit › Server's Test connection:
+        the server at data["server"], step by step (servercheck.py). With a
+        station's `id`, its saved password is used when none is typed."""
+        from station_server import servercheck
+        addr = str(data.get("server") or "").strip()
+        password = str(data.get("password") or "")
+        sid = data.get("id") or None
+        existing = self.config.station(sid) if sid else None
+        test = bool(data.get("test"))
+        if existing and not password:
+            password = (existing.test_password or existing.password) if test else existing.password
+        runner = self.runners.get(sid) if sid else None
+        on_air = bool(runner and runner.state == "on" and runner.target == addr)
+        return servercheck.diagnose(addr, password, on_air=on_air)
+
     def _try_server(self, st: Station, test: bool = False) -> dict:
         """Can this station go on air there? A station already on air there
         isn't disturbed, and nor is another source (Winamp, say): a server
