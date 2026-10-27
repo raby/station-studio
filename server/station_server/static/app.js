@@ -1667,6 +1667,7 @@ function renderHelp() {
       h2("When it doesn't work"),
       list(
         "Plays on the Wi-Fi but not on mobile data: the port isn't forwarded, or is forwarded to another computer. Look at the router in Settings › Internet.",
+        "The outside address (or the DuckDNS name) is refused from inside the house, but works on mobile data: many routers can't loop back to themselves. That's fine for listeners; at home, use this computer's own address (the Ready check shows it).",
         "Mac, \"macOS isn't letting Station Server reach the router\": quit Station Server and open it again from Applications, and allow it if macOS asks. If it's listed in System Settings › Privacy & Security › Local Network, turn it on.",
         "Windows: when it asks whether Station Server may use the network, allow Private and Public. Otherwise Windows Security › Firewall › Allow an app through the firewall.",
         "\"No router on this network offers UPnP\": turn on UPnP in the router's settings, or forward the port by hand.",
