@@ -1816,7 +1816,7 @@ def make_handler(app: PlayerApp):
                     except DirectoryError as exc:
                         return self._error(HTTPStatus.BAD_GATEWAY, str(exc))
                     if not found:
-                        return self._error(HTTPStatus.NOT_FOUND, "No logo found for this station: choose a picture instead")
+                        return self._error(HTTPStatus.NOT_FOUND, "Found no logo for this station: choose a picture instead")
                 elif path == "/api/stations/remove":
                     app.remove_station(str(data.get("url", "")))
                 elif path == "/api/stations/update":
