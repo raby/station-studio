@@ -18,6 +18,7 @@ import time
 import urllib.parse
 import urllib.request
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -58,6 +59,7 @@ class StreamInfo:
     public: bool = False
     bitrate: int = 128
     content_type: str = "audio/mpeg"
+    logo: Callable[[], tuple[bytes, str] | None] | None = None  # (picture, type), for this computer's stream
 
 
 class _Sender:
@@ -481,7 +483,8 @@ class ServeSender:
 
     def __init__(self, port: int, info: StreamInfo, most: int = 20, host: str = "") -> None:
         self.server = StreamServer(port, name=info.name, genre=info.genre, url=info.url, public=info.public,
-                                   bitrate=info.bitrate, most=most, host=host, content_type=info.content_type)
+                                   bitrate=info.bitrate, most=most, host=host, content_type=info.content_type,
+                                   logo=info.logo)
         self.describe = f"this computer, port {port}"
         self.connected = False
 

@@ -1,5 +1,6 @@
 import base64
 import http.client
+import io
 import json
 import threading
 
@@ -9,6 +10,7 @@ from station_player.config import DEFAULT_STATIONS, ConfigStore
 from station_player.directory import Directory
 from station_player.logos import LogoStore, is_name, sniff
 from station_player.server import PlayerApp, make_server
+from station_player.whatson import Feeds
 
 PNG = bytes.fromhex(
     "89504e470d0a1a0a0000000d4948445200000001000000010806000000"
@@ -66,7 +68,7 @@ class Net:
     def __init__(self, stations=(), byurl=()):
         self.stations, self.byurl, self.asked = list(stations), list(byurl), []
 
-    def __call__(self, url, ua, limit):
+    def __call__(self, url, ua, limit, **kw):
         self.asked.append(url)
         if url.startswith("https://logo.example/fake"):
             return b"<html>not a picture</html>", "image/png"
@@ -81,7 +83,7 @@ def test_search_pages():
     from urllib.parse import parse_qs, urlparse
 
     class Paged(Net):
-        def __call__(self, url, ua, limit):
+        def __call__(self, url, ua, limit, **kw):
             self.asked.append(url)
             q = parse_qs(urlparse(url).query)
             start, count = int(q["offset"][0]), int(q["limit"][0])
@@ -124,6 +126,10 @@ def test_saving_the_same_picture_at_once(tmp_path):
     assert [p.name for p in (tmp_path / "logos").iterdir()] == names[:1]  # no temporary files left
 
 
+def offline(req, timeout=None):
+    raise OSError("offline")
+
+
 @pytest.fixture
 def served(tmp_path):
     app = PlayerApp(ConfigStore(tmp_path / "home"), scan=False)
@@ -131,6 +137,7 @@ def served(tmp_path):
     net = Net(stations=[raw("Listed", "https://s/listed", "https://logo.example/l.png")],
               byurl=[raw("Rebirth", "https://sh.uk.audio-stream.com/proxy/adgerdes?mp=/stream", "https://logo.example/r.png")])
     app.directory = Directory(fetch=net, servers=["one"], public=lambda h: True)
+    app.feeds = Feeds(opener=offline)  # no what's-on feeds unless a test gives some
     server = make_server(app, port=0)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     port = server.server_address[1]
@@ -203,3 +210,117 @@ def test_add_with_a_logo_and_set_one(served, monkeypatch):
     # Removing a station removes its logo file.
     call("/api/stations/remove", {"url": "https://s/listed"})
     assert not any((app.store.home / "logos").iterdir())
+
+
+def test_a_logo_from_the_stations_own_station_server(served, monkeypatch):
+    app, call = served
+    monkeypatch.setattr("station_player.server.resolve_stream_url", lambda u: u)
+    asked = []
+
+    def fetch(url, ua, limit, **kw):
+        asked.append((url, kw.get("server")))
+        if url == "http://digitalbluebird.duckdns.org:8110/logo":
+            return PNG, "image/png"
+        if url.endswith("/logo"):
+            raise OSError("HTTP 404")
+        return b"[]", "application/json"
+    app.directory = Directory(fetch=fetch, servers=["one"], public=lambda h: True)
+    call("/api/stations", {"name": "Digital Bluebird", "url": "http://digitalbluebird.duckdns.org:8110/"})
+    resp, _ = call("/api/stations/logo", {"url": "http://digitalbluebird.duckdns.org:8110/", "find": True})
+    assert resp.status == 200
+    st = next(s for s in app.store.config.stations if s["url"].startswith("http://digitalbluebird"))
+    assert is_name(st["logo"]) and app.logos.get(st["logo"])[0] == PNG
+    assert ("http://digitalbluebird.duckdns.org:8110/logo", "Station Server/") in asked  # only from Station Server
+    # A station played from this network can give its logo too; only a real picture is taken.
+    app.directory = Directory(fetch=lambda u, ua, n, **kw: (PNG, "image/png"), servers=["one"], public=lambda h: False)
+    assert app.directory.own_logo("http://192.168.1.20:8110/") == (PNG, "image/png")
+    app.directory = Directory(fetch=lambda u, ua, n, **kw: (b"<html>", "image/png"), servers=["one"])
+    assert app.directory.own_logo("http://radio.example:8000/") is None
+    assert app.directory.own_logo("file:///etc/passwd") is None
+
+
+def test_only_station_servers_pictures_are_read(tmp_path):
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    from station_player.directory import _fetch_public
+    read = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            kind, server = {"/logo": ("image/png", "Station Server/0.20.0"), "/other": ("image/png", "Icecast 2.4"),
+                            "/stream": ("audio/mpeg", "Station Server/0.19.1")}[self.path]
+            self.send_response(200)
+            self.send_header("Content-Type", kind)
+            self.send_header("Server", server)
+            self.end_headers()
+            try:
+                self.wfile.write(PNG if kind.startswith("image/") else b"\xff\xfb" * 100_000)
+                read.append(self.path)
+            except OSError:
+                pass
+
+        def version_string(self):
+            return ""
+
+        def log_message(self, *a):
+            pass
+
+        def send_header(self, name, value):
+            if name == "Server" and value == "":
+                return
+            super().send_header(name, value)
+
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{httpd.server_address[1]}"
+    anywhere = {"allowed": lambda ip: True, "server": "Station Server/"}
+    try:
+        assert _fetch_public(f"{base}/logo", "t", 1000, **anywhere) == (PNG, "image/png")
+        with pytest.raises(OSError, match="not Station Server"):
+            _fetch_public(f"{base}/other", "t", 1000, **anywhere)
+        with pytest.raises(OSError, match="not a picture"):  # an older Station Server answers with its stream
+            _fetch_public(f"{base}/stream", "t", 1000, **anywhere)
+        with pytest.raises(OSError, match="public internet"):
+            _fetch_public(f"{base}/logo", "t", 1000)
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def test_a_station_with_a_feed_takes_its_logo_by_itself(served):
+    app, call = served
+    feed_url = "https://raby.github.io/rebirth-now/rebirth-radio.json"
+    feed = {"station": "Rebirth Radio", "on_air": False, "logo": "rebirth-radio-logo.png", "recent": []}
+    app.feeds = Feeds(opener=lambda req, timeout=None: io.BytesIO(json.dumps(feed).encode()))
+    pictures = []
+
+    def fetch(url, ua, limit, **kw):
+        pictures.append(url)
+        return (PNG, "image/png") if url.endswith("-logo.png") else (b"[]", "application/json")
+    app.directory = Directory(fetch=fetch, servers=["one"], public=lambda h: True)
+    rebirth = next(s for s in app.store.config.stations if s.get("feed") == feed_url)
+    assert "logo" not in rebirth
+    from station_player.server import station_id
+    resp, _ = call(f"/api/whatson?station={station_id(rebirth['url'])}")
+    assert resp.status == 200
+    assert wait(lambda: is_name(next(s for s in app.store.config.stations if s["url"] == rebirth["url"]).get("logo")))
+    assert pictures == ["https://raby.github.io/rebirth-now/rebirth-radio-logo.png"]
+    # Once a session: a station whose logo was removed keeps it removed.
+    call("/api/stations/logo", {"url": rebirth["url"]})
+    call(f"/api/whatson?station={station_id(rebirth['url'])}")
+    assert len(pictures) == 1
+    # Find logo looks at the feed first; a name that isn't a plain logo file is ignored.
+    assert call("/api/stations/logo", {"url": rebirth["url"], "find": True})[0].status == 200
+    feed["logo"] = "../../evil.png"
+    app.feeds = Feeds(opener=lambda req, timeout=None: io.BytesIO(json.dumps(feed).encode()))
+    assert app._feed_logo(feed_url) is None
+
+
+def wait(cond, seconds=3.0):
+    import time
+    end = time.monotonic() + seconds
+    while not cond():
+        if time.monotonic() > end:
+            return False
+        time.sleep(0.02)
+    return True

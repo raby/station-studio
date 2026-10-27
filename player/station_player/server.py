@@ -29,11 +29,12 @@ from datetime import date, datetime, timedelta
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, quote, urlparse
+from urllib.parse import parse_qs, quote, urljoin, urlparse
 
 from station_player import __version__, loudness, myplaylists, picks, qr, radio, remote, selfupdate, setup, updates
 from station_player.config import MAX_RECENT, clean_alarm, clean_alarms, clean_tags
 from station_player.directory import Directory, DirectoryError
+from station_player.logos import FEED_NAME as FEED_LOGO_NAME
 from station_player.logos import LogoStore
 from station_player.playlog import PlayLog
 from station_player.recorder import Recorder
@@ -168,6 +169,18 @@ class AlarmNotRinging(Exception):
     """Snooze asked for with no alarm ringing."""
 
 
+FEED_LOGO_RETRY_SECONDS = 600  # a feed's logo that couldn't be fetched is tried again after this
+
+
+def _feed_logo_address(feed_url: str, feed: dict | None) -> str | None:
+    """Where the logo a what's-on feed names is: a plain file beside the
+    feed (Station Server publishes rebirth-radio-logo.png), nothing else."""
+    name = (feed or {}).get("logo")
+    if not isinstance(name, str) or not FEED_LOGO_NAME.fullmatch(name):
+        return None
+    return urljoin(feed_url, name)
+
+
 class PlayerApp:
     """Shared state for request handlers.
 
@@ -206,6 +219,8 @@ class PlayerApp:
         self._installed = -1
         self._titles: dict[str, str | None] = {}  # station url -> song
         self.feeds = Feeds()  # stations' what's-on feeds (whatson.py)
+        # Stations whose feed's logo was taken (inf), or when it last couldn't be
+        self._feed_logo_tried: dict[str, float] = {}
         # Files opened with "Open With" this session, and the latest
         # request for the page to play one.
         self.opened: list[Path] = []
@@ -1044,7 +1059,10 @@ class PlayerApp:
             url = clean_feed_url(st["feed"])
         except ValueError:
             raise LookupError("That station has no what's-on feed")
-        return whatson_view(self.feeds.get(url), datetime.now().astimezone())
+        feed = self.feeds.get(url)
+        if not st.get("logo"):
+            self._logo_from_feed(st["url"], url, feed)
+        return whatson_view(feed, datetime.now().astimezone())
 
     def station_url(self, sid: str) -> str | None:
         with self._lock:
@@ -1177,15 +1195,17 @@ class PlayerApp:
 
     def set_station_logo(self, url: str, image: bytes | None = None, find: bool = False) -> bool:
         """Give a saved station a logo: a picture chosen from a file
-        (`image`), the one Radio Browser has for it (`find`; False if it
-        has none), or none at all. LookupError for an unknown station."""
+        (`image`), one found for it (`find`: see find_logo; False if there's
+        none), or none at all. LookupError for an unknown station."""
         with self._lock:
-            if not any(s.get("url") == url for s in self.store.config.stations):
+            st = next((s for s in self.store.config.stations if s.get("url") == url), None)
+            if st is None:
                 raise LookupError("No such station")
+            feed = st.get("feed") or ""
         name = None
         try:
             if find:
-                got = self.directory.find_logo(url)  # network: outside the lock
+                got = self.find_logo(url, feed)  # network: outside the lock
                 if got is None:
                     return False
                 name = self.logos.save(got[0])
@@ -1203,6 +1223,51 @@ class PlayerApp:
                         st.pop("logo", None)
         self._prune_logos()
         return True
+
+    def find_logo(self, url: str, feed: str = "") -> tuple[bytes, str] | None:
+        """A station's logo: the one its Station Server publishes with its
+        what's-on feed, the one its own server gives (Station Server
+        streaming it), or Radio Browser's."""
+        return self._feed_logo(feed) or self.directory.own_logo(url) or self.directory.find_logo(url)
+
+    def _feed_logo(self, feed: str) -> tuple[bytes, str] | None:
+        try:
+            feed_url = clean_feed_url(feed)
+        except ValueError:
+            return None
+        address = _feed_logo_address(feed_url, self.feeds.get(feed_url)) if feed_url else None
+        return self.directory.picture(address, fresh=True) if address else None
+
+    def _logo_from_feed(self, url: str, feed_url: str, feed: dict | None) -> None:
+        """A station with a what's-on feed and no logo takes the one the feed
+        names (once a session), so a logo given in Station Server reaches
+        Station Player by itself."""
+        address = _feed_logo_address(feed_url, feed)
+        if address is None:
+            return
+        with self._lock:
+            tried = self._feed_logo_tried.get(url)
+            if tried is not None and time.monotonic() - tried < FEED_LOGO_RETRY_SECONDS:
+                return
+            self._feed_logo_tried[url] = math.inf  # taken, or being fetched: not again
+
+        def keep():
+            got = self.directory.picture(address, fresh=True)
+            if got is None:  # not there yet, perhaps: try again later
+                with self._lock:
+                    self._feed_logo_tried[url] = time.monotonic()
+                return
+            try:
+                name = self.logos.save(got[0])
+            except (OSError, ValueError) as exc:
+                logger.info("Couldn't keep %s's logo: %s", url, exc)
+                return
+            with self._change(rescan=False) as cfg:
+                for st in cfg.stations + cfg.recent_stations:
+                    if st.get("url") == url and not st.get("logo"):
+                        st["logo"] = name
+            self._prune_logos()
+        threading.Thread(target=keep, name="feed-logo", daemon=True).start()
 
     def can_preview(self, url: str) -> bool:
         """Whether a station that isn't saved may be relayed: the finder
@@ -1751,7 +1816,7 @@ def make_handler(app: PlayerApp):
                     except DirectoryError as exc:
                         return self._error(HTTPStatus.BAD_GATEWAY, str(exc))
                     if not found:
-                        return self._error(HTTPStatus.NOT_FOUND, "Radio Browser has no logo for this station")
+                        return self._error(HTTPStatus.NOT_FOUND, "Found no logo for this station: choose a picture instead")
                 elif path == "/api/stations/remove":
                     app.remove_station(str(data.get("url", "")))
                 elif path == "/api/stations/update":

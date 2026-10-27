@@ -476,6 +476,7 @@ function renderStation(s) {
   const busy = s.state === "starting" || s.state === "stopping" || s.state === "waiting";
   const rehearsing = s.rehearsal && (on || busy);
   const head = el("div", { class: "view-head" },
+    st.logo ? el("img", { class: "station-logo", alt: "", src: `/api/stations/${st.id}/logo?v=${st.logo}` }) : null,
     el("div", {},
       el("div", { class: `status-pill ${s.state}${rehearsing ? " rehearsal" : ""}` }, el("span", { class: "dot" }),
         rehearsing ? (on ? "Rehearsal" : `Rehearsal: ${STATE_WORDS[s.state]}`) : STATE_WORDS[s.state]),
@@ -847,6 +848,47 @@ function renderForm(view) {
   const testMsg = el("div", { class: "form-msg", role: "status" });
   const alsoMsg = el("div", { class: "form-msg", role: "status" });
   const formMsg = el("div", { class: "form-msg", id: "form-msg", role: "status" });
+  const logoMsg = el("div", { class: "form-msg", role: "status" });
+  // The station's logo: kept straight away, not with Save.
+  function logoBox() {
+    const box = el("fieldset", {}, el("legend", {}, "Logo"));
+    if (!editing) {
+      box.append(el("p", { class: "help" }, "Save the station first, then give it a logo here."));
+      return box;
+    }
+    const img = el("img", { class: "station-logo", alt: "" });
+    const show = (name) => {
+      img.hidden = !name;
+      if (name) img.src = `/api/stations/${s.station.id}/logo?v=${name}`;
+      none.hidden = !name;
+    };
+    const set = async (image, done) => {
+      logoMsg.className = "form-msg ok";
+      try {
+        const r = await api(`/api/stations/${s.station.id}/logo`, { image });
+        setState(r);
+        show(stationById(s.station.id)?.station.logo);
+        logoMsg.textContent = done;
+      } catch (e) { logoMsg.className = "form-msg"; logoMsg.textContent = e.message; }
+    };
+    const file = el("input", { type: "file", accept: "image/png,image/jpeg,image/gif,image/webp", hidden: true });
+    file.addEventListener("change", () => {
+      const f = file.files[0];
+      file.value = "";
+      if (!f) return;
+      if (f.size > 256 * 1024) { logoMsg.className = "form-msg"; logoMsg.textContent = "That picture is too big (the limit is 256 KB)"; return; }
+      const reader = new FileReader();
+      reader.onload = () => set(String(reader.result).split(",", 2)[1], "Logo saved.");
+      reader.readAsDataURL(f);
+    });
+    const none = btn("No logo", "trash", () => set(null, "Logo removed."), "btn small ghost");
+    box.append(
+      el("div", { class: "actions logo-row" }, img, btn("Choose picture…", "file", () => file.click(), "btn small"), none, file),
+      el("p", { class: "help" }, "A square PNG or JPG, up to 256 KB. Listeners see it on the stream's own page, on your website's now/next page (Settings › Website), and in Station Player, which picks it up from either."),
+      logoMsg);
+    show(s.station.logo);
+    return box;
+  }
   const fallbackMsg = el("div", { class: "form-msg", role: "status" });
   const jinglesMsg = el("div", { class: "form-msg", role: "status" });
 
@@ -995,6 +1037,7 @@ function renderForm(view) {
         el("div", { class: "grid" }, text("url", "Website", { placeholder: "https://www.rebirthclassics.uk" })),
         el("div", { class: "grid" }, check("public", "List the station in the server's directory")),
       ),
+      logoBox(),
       el("fieldset", {}, el("legend", {}, "Playlist"),
         el("div", { class: "grid" }, text("playlist", "Playlist or folder of weekly exports",
           { placeholder: "~/.station-studio/exports/rebirth-classics" })),
@@ -1843,7 +1886,10 @@ function renderHelp() {
         "“The listener count can't be read”: the server's status page is private. Station Server still streams; it just can't show how many are listening."),
     ],
     new: () => [
-      el("h2", {}, "0.19.1"),
+      el("h2", {}, "0.20: station logos"),
+      list("Edit › Station › Logo: give a station a logo. It shows on the station page, on the stream's own page when this computer streams it (and as its icon in a browser tab), and on your website's now/next page (Settings › Website).",
+        "Station Player 0.20 picks the logo up by itself for stations with a now/next feed, and Find logo there fetches it from a station this computer streams."),
+      h2("0.19.1"),
       list("Presenter alerts: “has finished” now waits until the presenter has been gone for two minutes, so an encoder reconnecting, or the station reconnecting, no longer sends “finished” and then “is live” again. A presenter taking over from another sends one of each, and a show still live when the station is taken off air is told as finished.",
         "Also send to: titles reach the second server in order. Changing its address asks for its password again. The Ready check and Test the second server always check the server that's saved, and a test of the main server is never mistaken for the second one."),
       h2("0.19: a second server"),

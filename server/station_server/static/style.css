@@ -438,3 +438,8 @@ body.remote [data-view="new"], body.remote [data-view="settings"], body.remote #
 .diagnosis > b { display: block; margin-bottom: 8px; color: var(--text); }
 .settings .diagnosis li { display: block; padding: 0; background: none; border: 0; border-radius: 0; margin: 0; word-break: normal; }
 .settings .diagnosis li span { flex: none; }
+
+/* A station's logo: Edit › Station, and beside its name on the station page */
+.station-logo { width: 64px; height: 64px; object-fit: contain; border-radius: 12px; background: var(--panel-2); }
+.logo-row { align-items: center; }
+.view-head .station-logo { width: 56px; height: 56px; flex: none; }

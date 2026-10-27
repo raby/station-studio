@@ -1240,7 +1240,7 @@ class FakeDirectoryNet:
     def __init__(self):
         self.asked = []
 
-    def __call__(self, url, user_agent, limit):
+    def __call__(self, url, user_agent, limit, **kw):
         self.asked.append(url)
         if url.startswith("https://logo.example/"):
             return PNG, "image/png"

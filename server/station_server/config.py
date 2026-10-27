@@ -18,6 +18,8 @@ import uuid
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 
+from station_player.logos import is_name as is_logo_name
+
 from station_server.schedule import Show, WeekStart
 
 logger = logging.getLogger(__name__)
@@ -65,6 +67,10 @@ class Station:
     also_password: str = ""
     genre: str = ""
     url: str = ""
+    # The station's logo: a picture kept in the logos folder, by its name
+    # (station_player.logos). Shown on its stream's page, in the now/next
+    # feed and, from either, in Station Player.
+    logo: str = ""
     public: bool = False
     bitrate: int = 128
     level: bool = True
@@ -127,6 +133,8 @@ def clean_station(data: dict, existing: Station | None = None) -> Station:
                 st.also_password = ""
         setattr(st, key, value)
     st.name = str(st.name or "").strip()[:80] or "New station"
+    if not is_logo_name(st.logo):
+        st.logo = ""
     for key in ("playlist", "server", "password", "test_server", "test_password", "also_server", "also_password",
                 "genre", "url", "fallback",
                 "jingles", "live_password"):

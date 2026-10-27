@@ -150,11 +150,12 @@ def make_handler(app: ServerApp, picker: Picker, quit, remote: bool = False,
                 return False
             return host in _ALLOWED_HOSTS
 
-        def _send(self, body: bytes, ctype: str, status=HTTPStatus.OK, extra: dict | None = None):
+        def _send(self, body: bytes, ctype: str, status=HTTPStatus.OK, extra: dict | None = None,
+                  cache: str = "no-store"):
             self.send_response(status)
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(body)))
-            self.send_header("Cache-Control", "no-store")
+            self.send_header("Cache-Control", cache)
             for k, v in (extra or {}).items():
                 self.send_header(k, v)
             self.end_headers()
@@ -197,6 +198,13 @@ def make_handler(app: ServerApp, picker: Picker, quit, remote: bool = False,
             m = _STATION_RE.match(path)
             if m and m.group(2) == "listen.mp3":
                 return self._listen(m.group(1))
+            if m and m.group(2) == "logo":
+                runner = app.runners.get(m.group(1))
+                got = runner.logo() if runner else None
+                if got is None:
+                    return self._error(HTTPStatus.NOT_FOUND, "No logo")
+                # The page asks for it as ?v=<its name>, which changes with the picture.
+                return self._send(got[0], got[1], cache="private, max-age=86400")
             if m and m.group(2) == "playlog.csv":
                 qs = parse_qs(url.query)
                 try:
@@ -361,6 +369,13 @@ def make_handler(app: ServerApp, picker: Picker, quit, remote: bool = False,
                 app.restart(sid)
             elif action == "delete":
                 app.delete_station(sid)
+            elif action == "logo":
+                image = data.get("image")
+                try:
+                    picture = base64.b64decode(image, validate=True) if image else None
+                except (TypeError, ValueError):
+                    raise ValueError("That picture couldn't be read") from None
+                app.set_logo(sid, picture)
             elif action == "listeners":
                 app.set_listener_cap(sid, int(data.get("max") or 0))
             else:
