@@ -143,6 +143,8 @@ class FakeShoutcast:
                         break
                     req += part
                 lines = req.decode().split("\r\n")
+                if len(lines[0].split(" ")) < 2:  # connected and left (a port check)
+                    continue
                 target = lines[0].split(" ")[1]
                 agent = next((l.split(":", 1)[1].strip() for l in lines if l.lower().startswith("user-agent:")), "")
                 qs = parse_qs(urlsplit(target).query)
@@ -186,7 +188,11 @@ class FakeIcecast:
     def _handle(self, conn: socket.socket) -> None:
         from urllib.parse import parse_qs, urlsplit
         f = conn.makefile("rb")
-        method, target, _ = f.readline().decode().split(" ", 2)
+        try:
+            method, target, _ = f.readline().decode().split(" ", 2)
+        except ValueError:  # connected and left (a port check)
+            conn.close()
+            return
         headers = {}
         while True:
             line = f.readline().decode().rstrip("\r\n")

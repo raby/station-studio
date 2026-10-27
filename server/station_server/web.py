@@ -285,6 +285,8 @@ def make_handler(app: ServerApp, picker: Picker, quit, remote: bool = False,
                 return self._json(app.check_playlist(data))
             if path == "/api/check/server":
                 return self._json(app.check_server(data, data.get("id") or None))
+            if path == "/api/check/diagnose":
+                return self._json(app.diagnose_server(data))
             if path == "/api/settings":
                 app.save_settings(data)
                 return self._json(app.state())
