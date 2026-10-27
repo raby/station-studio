@@ -17,7 +17,7 @@ import urllib.parse
 import urllib.request
 
 from station_server.senders import (ADMIN_USER_AGENT, IcecastSender, SenderError, ShoutcastSender, StreamInfo,
-                                    parse_icestats, sender_from_url)
+                                    dial, parse_icestats, sender_from_url)
 
 TIMEOUT = 6.0
 KINDS = {"icecast": "Icecast", "shoutcast": "SHOUTcast"}
@@ -115,7 +115,8 @@ def diagnose(url: str, password: str | None, on_air: bool = False, resolve=socke
                                               "numbers like 81.150.147.206) and its port."))
         return result
     host, kind = parsed.hostname, scheme
-    web = f"[{host}]" if ":" in host else host  # an IPv6 address, in a link
+    near = dial(host)  # localhost as 127.0.0.1, as going on air connects
+    web = f"[{near}]" if ":" in near else near  # an IPv6 address, in a link
     label = KINDS[kind]
     if kind == "icecast" and parsed.path.strip() in ("", "/"):
         steps.append(_step("Address", "fail", "Enter the mount, the part after the port in Icecast's "
@@ -133,7 +134,7 @@ def diagnose(url: str, password: str | None, on_air: bool = False, resolve=socke
         return result
 
     try:
-        connect((host, port), timeout=TIMEOUT).close()
+        connect((near, port), timeout=TIMEOUT).close()
         steps.append(_step("Port", "ok", f"Port {port} is open"))
     except OSError as exc:
         steps.append(_step("Port", "fail", _connect_problem(host, port, exc)))
@@ -163,7 +164,7 @@ def diagnose(url: str, password: str | None, on_air: bool = False, resolve=socke
 
     if kind == "shoutcast":
         try:
-            connect((host, port + 1), timeout=TIMEOUT).close()
+            connect((near, port + 1), timeout=TIMEOUT).close()
             steps.append(_step("Source port", "ok", f"Port {port + 1} is open (SHOUTcast takes sources one port up)"))
         except OSError as exc:
             steps.append(_step("Source port", "fail",

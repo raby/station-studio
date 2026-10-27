@@ -188,7 +188,7 @@ def windows_setup_command(setup: Path, log: Path) -> list[str]:
 
 def mac_relaunch_command(app: Path, port: int) -> list[str]:
     # The helper inside the app serves; the page that's open reloads into it.
-    return [str(app / "Contents" / "MacOS" / MAC_HELPER), "app", "--no-window", "--port", str(port)]
+    return [f"{app}/Contents/MacOS/{MAC_HELPER}", "app", "--no-window", "--port", str(port)]
 
 
 def _detached(cmd: list[str]) -> None:

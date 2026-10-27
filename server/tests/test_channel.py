@@ -151,8 +151,10 @@ def test_skips_unreadable_tracks_and_gives_up_if_none_play(tmp_path):
     sender.connect()
     queue = load_queue(station_export(tmp_path, [bad, good]))
     Channel(queue, sender, FFMPEG, loop=False, pacer=Unpaced()).run()
+    sender.close()  # all of it written, before it's measured
     assert abs(_duration(tmp_path / "air.mp3") - 0.3) < 0.1
 
+    sender.connect()
     queue = load_queue(station_export(tmp_path, [bad]))
     with pytest.raises(RuntimeError, match="No track"):
         Channel(queue, sender, FFMPEG, pacer=Unpaced()).run()
