@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import signal
 import subprocess
 import threading
 import time
@@ -125,6 +126,10 @@ class AppDelegate(AppKit.NSObject):
         self.buildWindow()
         self.show()
         threading.Thread(target=self.watch, name="watch-server", daemon=True).start()
+        try:
+            ask_for_local_network()
+        except Exception as exc:  # noqa: BLE001 - only a nudge for macOS
+            logger.info("Could not ask about the local network: %s", exc)
 
     @objc.python_method
     def buildWindow(self):
@@ -504,6 +509,29 @@ def run(url: str, quit_server, bundle: Path | None = None) -> int:
     return 0
 
 
+def ask_for_local_network() -> None:
+    """Get macOS to ask whether Station Server may find devices on the local
+    network. It asks only for some kinds of connection (not the plain ones
+    the helper makes), and until it has asked, the helper can't reach the
+    router. So the app makes one of those, to the router, and ignores the
+    answer: once allowed, the helper can reach it too."""
+    from station_server import upnp
+    routers = {a.rsplit(".", 1)[0] + ".1" for a in upnp.lan_addresses()}
+    try:
+        out = subprocess.run(["/sbin/route", "-n", "get", "default"], capture_output=True, text=True,
+                             timeout=5).stdout
+        routers |= {line.split(":", 1)[1].strip() for line in out.splitlines()
+                    if line.strip().startswith("gateway:") and upnp._private(line.split(":", 1)[1].strip())}
+    except (OSError, subprocess.SubprocessError):
+        pass
+    session = Foundation.NSURLSession.sharedSession()
+    for router in routers:
+        url = Foundation.NSURL.URLWithString_(f"http://{router}/")
+        req = Foundation.NSMutableURLRequest.requestWithURL_cachePolicy_timeoutInterval_(url, 1, 5.0)
+        req.setHTTPMethod_("HEAD")
+        session.dataTaskWithRequest_completionHandler_(req, lambda data, resp, err: None).resume()
+
+
 class HelperParent(AppKit.NSObject):
     """The app started in the background, which stays on as the helper's
     parent (see __main__._hand_over)."""
@@ -542,6 +570,13 @@ def stay_with(proc) -> int:
 
     def tick():  # lets Python's signal handlers (launchctl stopping it) run
         AppHelper.callLater(1.0, tick)
+
+    # The helper asks (upnp.ask_mac_app) when macOS blocks it from the router.
+    signal.signal(signal.SIGUSR1, lambda *_: AppHelper.callAfter(ask_for_local_network))
+    try:
+        ask_for_local_network()
+    except Exception as exc:  # noqa: BLE001 - only a nudge for macOS
+        logger.info("Could not ask about the local network: %s", exc)
 
     threading.Thread(target=watch, daemon=True).start()
     tick()
