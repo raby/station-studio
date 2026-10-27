@@ -238,6 +238,7 @@ def _hand_over(port: int, url: str, stay: bool = False) -> int:
     stays with it, quietly, until it stops; start at login runs that one too."""
     import subprocess
     from station_server.desktop import CHILD_ENV, app_executable
+    from station_server.upnp import ASK_ENV
     from station_server.window import mac_app_bundle
     if _running(port):
         return 0
@@ -252,10 +253,13 @@ def _hand_over(port: int, url: str, stay: bool = False) -> int:
             except (OSError, subprocess.SubprocessError) as exc:
                 logging.warning("Could not start Station Server through the app (%s): starting the helper", exc)
     _no_dock_icon()
+    if stay and hasattr(signal, "SIGUSR1"):
+        signal.signal(signal.SIGUSR1, signal.SIG_IGN)  # the helper's ask, until there's an answer for it
     proc = subprocess.Popen([str(app_executable()), "app", "--no-window", "--port", str(port)],
                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                             start_new_session=not stay,
-                            env={**os.environ, CHILD_ENV: "1", "PYINSTALLER_RESET_ENVIRONMENT": "1"})
+                            env={**os.environ, CHILD_ENV: "1", "PYINSTALLER_RESET_ENVIRONMENT": "1",
+                                 **({ASK_ENV: str(os.getpid())} if stay else {})})
     if not stay:
         return _wait_until_running(port)
 
