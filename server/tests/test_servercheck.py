@@ -103,3 +103,36 @@ def test_a_station_uses_its_saved_password_and_isnt_disturbed_on_air(tmp_path, i
     r = app.diagnose_server({"server": addr, "id": st.id})  # no password typed: the saved one
     assert ("Password", "ok") in names(r)
     assert app.diagnose_server({"server": addr, "password": "nope"})["ok"] is False
+
+
+def test_the_saved_password_only_goes_to_its_own_server(tmp_path, icecast):
+    app = ServerApp(ConfigStore(tmp_path))
+    addr = f"icecast://127.0.0.1:{icecast.port}/radio"
+    st = app.save_station({"name": "Rebirth Radio", "server": addr, "password": "hackme"})
+    other = f"icecast://127.0.0.1:{icecast.port}/other"  # typed in place of the saved address
+    r = app.diagnose_server({"server": other, "id": st.id})
+    assert ("Password", "fail") in names(r) and "Enter the source password" in r["steps"][-1]["detail"]
+
+
+def test_a_mistyped_port_or_a_non_web_service():
+    assert names(servercheck.diagnose("icecast://h:80o0/radio", "x")) == [("Address", "fail")]
+    srv = socket.socket()
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(5)
+    port = srv.getsockname()[1]
+
+    def ssh_like():
+        while True:
+            try:
+                conn, _ = srv.accept()
+            except OSError:
+                return
+            conn.sendall(b"SSH-2.0-OpenSSH_9.6\r\n")
+            conn.close()
+    import threading
+    threading.Thread(target=ssh_like, daemon=True).start()
+    try:
+        r = servercheck.diagnose(f"icecast://127.0.0.1:{port}/radio", "x")
+    finally:
+        srv.close()
+    assert ("Server", "warn") in names(r)  # reported, not a crash

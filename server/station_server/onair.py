@@ -1082,10 +1082,15 @@ class ServerApp:
         sid = data.get("id") or None
         existing = self.config.station(sid) if sid else None
         test = bool(data.get("test"))
-        if existing and not password:
-            password = (existing.test_password or existing.password) if test else existing.password
+        saved = None
+        # The saved password goes only to the server it was saved for, not
+        # to whatever address is typed in its place.
+        if existing and addr == (existing.test_server if test else existing.server):
+            saved = (existing.test_password or existing.password) if test else existing.password
+        typed = bool(password)
+        password = password or saved or ""
         runner = self.runners.get(sid) if sid else None
-        on_air = bool(runner and runner.state == "on" and runner.target == addr)
+        on_air = bool(runner and runner.state == "on" and runner.target == addr and (not typed or password == saved))
         return servercheck.diagnose(addr, password, on_air=on_air)
 
     def _try_server(self, st: Station, test: bool = False) -> dict:

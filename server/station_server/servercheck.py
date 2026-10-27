@@ -9,13 +9,15 @@ time, and the test shouldn't knock Winamp off the air.
 """
 from __future__ import annotations
 
+import http.client
 import json
 import socket
 import urllib.error
 import urllib.parse
 import urllib.request
 
-from station_server.senders import ADMIN_USER_AGENT, SenderError, ShoutcastSender, StreamInfo, sender_from_url
+from station_server.senders import (ADMIN_USER_AGENT, IcecastSender, SenderError, ShoutcastSender, StreamInfo,
+                                    parse_icestats, sender_from_url)
 
 TIMEOUT = 6.0
 KINDS = {"icecast": "Icecast", "shoutcast": "SHOUTcast"}
@@ -36,6 +38,8 @@ def _fetch(url: str, timeout: float = TIMEOUT) -> tuple[int, dict, str]:
     except urllib.error.HTTPError as exc:
         body = exc.read(65536).decode("latin-1") if exc.fp else ""
         return exc.code, dict(exc.headers or {}), body
+    except http.client.HTTPException as exc:  # not a web server at all (or cut off)
+        raise OSError(f"not a web page ({exc.__class__.__name__})") from exc
 
 
 def identify(status: int, headers: dict, body: str, stats=None) -> tuple[str | None, str]:
@@ -102,11 +106,15 @@ def diagnose(url: str, password: str | None, on_air: bool = False, resolve=socke
     result = {"steps": steps, "kind": None, "server": None, "ok": False}
     parsed = urllib.parse.urlsplit(url or "")
     scheme = parsed.scheme.lower()
-    if scheme not in KINDS or not parsed.hostname or not parsed.port:
+    try:
+        port = parsed.port
+    except ValueError:  # "80o0", or over 65535
+        port = None
+    if scheme not in KINDS or not parsed.hostname or not port:
         steps.append(_step("Address", "fail", "Enter the server's address (a name like stream.example.com, or "
                                               "numbers like 81.150.147.206) and its port."))
         return result
-    host, port, kind = parsed.hostname, parsed.port, scheme
+    host, kind = parsed.hostname, scheme
     label = KINDS[kind]
     if kind == "icecast" and parsed.path.strip() in ("", "/"):
         steps.append(_step("Address", "fail", "Enter the mount, the part after the port in Icecast's "
@@ -169,9 +177,11 @@ def diagnose(url: str, password: str | None, on_air: bool = False, resolve=socke
         sender = make_sender(url, StreamInfo(name="Station Server test"), password or None)
     except ValueError as exc:
         steps.append(_step("Password", "fail", "Enter the source password." if "password" in str(exc).lower()
-                           else str(exc)))
+                           else f"Check the address ({exc}): a stream number is a whole number, like 1 or 2."))
     counts = None
-    if sender is not None:
+    if isinstance(sender, IcecastSender) and stats is not None:  # fetched already
+        counts = parse_icestats(stats, sender.mount)
+    elif sender is not None:
         try:
             counts = sender.count_listeners()
         except Exception:  # noqa: BLE001 - a private stats page: no counts
