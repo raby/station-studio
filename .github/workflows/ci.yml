@@ -87,6 +87,60 @@ jobs:
         working-directory: server
         run: python -m pytest -q
 
+  server-desktop:
+    # The same tests on the computers stations actually run on.
+    name: station-server (pytest, ${{ matrix.label }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            label: Windows
+          - os: macos-14
+            label: Mac
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: install
+        timeout-minutes: 10
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          mkdir -p "$RUNNER_TEMP/ffmpeg"
+          if [ "$RUNNER_OS" = Windows ]; then
+            for try in 1 2 3 4 5 6 7 8; do
+              asset=$(gh release view latest --repo BtbN/FFmpeg-Builds --json assets --jq '.assets[].name' \
+                | grep -E '^ffmpeg-n[0-9.]+-latest-win64-lgpl-[0-9.]+\.zip$' | sort -V | tail -1) || true
+              if [ -n "$asset" ] && gh release download latest --repo BtbN/FFmpeg-Builds --clobber \
+                  --pattern "$asset" --dir "$RUNNER_TEMP/ffmpeg"; then
+                break
+              fi
+              echo "BtbN's latest ffmpeg isn't there just now; trying again in 30 s"
+              sleep 30
+            done
+            unzip -q -o "$RUNNER_TEMP/ffmpeg/$asset" -d "$RUNNER_TEMP/ffmpeg"
+            bin="$RUNNER_TEMP/ffmpeg/${asset%.zip}/bin"
+          else
+            curl -fsSL --retry 3 -o "$RUNNER_TEMP/ffmpeg/ffmpeg.zip" \
+              "https://ffmpeg.martin-riedl.de/redirect/latest/macos/arm64/release/ffmpeg.zip"
+            unzip -o "$RUNNER_TEMP/ffmpeg/ffmpeg.zip" -d "$RUNNER_TEMP/ffmpeg/bin"
+            chmod +x "$RUNNER_TEMP/ffmpeg/bin/ffmpeg"
+            bin="$RUNNER_TEMP/ffmpeg/bin"
+          fi
+          echo "$bin" >> "$GITHUB_PATH"
+          "$bin/ffmpeg" -hide_banner -encoders | grep -q libmp3lame
+          python -m pip install pytest
+      - name: pytest
+        working-directory: server
+        run: python -m pytest -q -p no:cacheprovider
+
   frontend-unit:
     name: frontend unit (vitest)
     runs-on: ubuntu-latest
