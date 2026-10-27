@@ -1675,7 +1675,9 @@ function renderHelp() {
         "Listeners turned away: the station is full. Settings › Internet suggests how many the upload can take."),
     ],
     new: () => [
-      el("h2", {}, "0.16.2"),
+      el("h2", {}, "0.16.3"),
+      list("Look at the router searches out of this computer's own network even with a VPN on, and also asks the router directly, so more routers are found."),
+      h2("0.16.2"),
       list("Help › Streaming is rewritten, with diagrams: how listeners reach the station, ports and the router, DuckDNS, how many listeners, this computer or a hosted server, and what to do when it doesn't work.",
         "On a Mac, Look at the router says when macOS needs Station Server allowed in System Settings › Privacy & Security › Local Network, and the app now asks for it.",
         "Settings › Internet warns when the internet provider shares one address between customers, so a forwarded port can't work."),

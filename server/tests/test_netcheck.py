@@ -217,3 +217,21 @@ def test_settings_internet_end_to_end(tmp_path, router):
     assert app.config.duckdns_token == "" and app.state()["internet"]["duckdns"]["last"] is None
     app.shutdown()
     assert clean_station({"name": "x", "server": "serve://:8000"}).server == "serve://:8000"
+
+
+def test_the_router_search_also_asks_the_router_directly(monkeypatch):
+    import socket
+    answer = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    answer.bind(("127.0.0.1", 0))
+    port = answer.getsockname()[1]
+    monkeypatch.setattr(upnp, "SSDP", ("239.255.255.250", port))
+
+    def reply():
+        data, sender = answer.recvfrom(4096)
+        assert data.startswith(b"M-SEARCH")
+        answer.sendto(b"HTTP/1.1 200 OK\r\nLOCATION: http://127.0.0.1:5000/rootDesc.xml\r\n\r\n", sender)
+    threading.Thread(target=reply, daemon=True).start()
+    # this computer at .9 on a network: the router is asked at .1, out of that network
+    assert upnp.discover(timeout=2, addresses=["127.0.0.9"]) == ["http://127.0.0.1:5000/rootDesc.xml"]
+    answer.close()
+    assert all(upnp._private(ip) for ip in upnp.lan_addresses())

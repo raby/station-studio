@@ -7,8 +7,10 @@ forwarded by hand in the router's settings (Help › Streaming says how).
 from __future__ import annotations
 
 import errno
+import ipaddress
 import logging
 import re
+import select
 import socket
 import sys
 import time
@@ -36,8 +38,9 @@ class UpnpError(Exception):
 
 # macOS 15 and later ask before an app talks to other devices on the
 # network; until it's allowed, every attempt fails with "No route to host".
-MAC_PERMISSION = ("macOS isn't letting Station Server reach the router: in System Settings › Privacy & Security "
-                  "› Local Network, turn on Station Server, then try again")
+MAC_PERMISSION = ("macOS isn't letting Station Server reach the router. If Station Server is listed in System "
+                  "Settings › Privacy & Security › Local Network, turn it on; a VPN can also be in the way. Otherwise "
+                  "forward the port by hand (Help › Streaming)")
 
 
 def _blocked(exc: OSError) -> str:
@@ -48,40 +51,90 @@ def _blocked(exc: OSError) -> str:
     return f"The router can't be reached: {exc}"
 
 
-def discover(timeout: float = 2.5, sock_factory=None) -> list[str]:
+def _private(ip: str) -> bool:
+    try:
+        return ipaddress.ip_address(ip).is_private and not ip.startswith("127.")
+    except ValueError:
+        return False
+
+
+def lan_addresses() -> list[str]:
+    """This computer's addresses on home networks (192.168.x.x and so on).
+    With a VPN on, the route to the internet can be a tunnel, so the search
+    goes out of each of these rather than wherever the system would send it."""
+    found: list[str] = []
+    probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        probe.connect(("192.0.2.1", 9))  # no packet is sent: this only picks a route
+        found.append(probe.getsockname()[0])
+    except OSError:
+        pass
+    finally:
+        probe.close()
+    try:
+        found += socket.gethostbyname_ex(socket.gethostname())[2]
+    except OSError:
+        pass
+    out = []
+    for ip in found:
+        if _private(ip) and ip not in out:
+            out.append(ip)
+    return out
+
+
+def discover(timeout: float = 2.5, sock_factory=None, addresses=None) -> list[str]:
     """The description URLs of the gateways that answer on this network."""
-    sock = (sock_factory or (lambda: socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)))()
+    make = sock_factory or (lambda: socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP))
+    here = lan_addresses() if addresses is None else addresses
+    socks = []
+    sent = None
     found: list[str] = []
     try:
-        sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 2)
-        sock.settimeout(0.5)
-        sent = None
-        for st in SEARCH_TARGETS:
-            msg = (f"M-SEARCH * HTTP/1.1\r\nHOST: {SSDP[0]}:{SSDP[1]}\r\nMAN: \"ssdp:discover\"\r\n"
-                   f"MX: 2\r\nST: {st}\r\n\r\n")
-            try:
-                sock.sendto(msg.encode(), SSDP)
-                sent = True
-            except OSError as exc:
-                sent = sent or exc
-        if isinstance(sent, OSError):  # nothing went out
-            raise UpnpError(_blocked(sent))
+        for addr in here or [None]:
+            sock = make()
+            socks.append(sock)
+            sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 2)
+            targets = [SSDP]
+            if addr:
+                try:  # out of this network's interface, not a VPN's
+                    sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF, socket.inet_aton(addr))
+                except OSError:
+                    pass
+                # most routers also answer when asked directly, at the usual .1
+                targets.append((addr.rsplit(".", 1)[0] + ".1", SSDP[1]))
+            sock.settimeout(0)
+            for st in SEARCH_TARGETS:
+                msg = (f"M-SEARCH * HTTP/1.1\r\nHOST: {SSDP[0]}:{SSDP[1]}\r\nMAN: \"ssdp:discover\"\r\n"
+                       f"MX: 2\r\nST: {st}\r\n\r\n")
+                for to in targets:
+                    try:
+                        sock.sendto(msg.encode(), to)
+                        sent = True
+                    except OSError as exc:
+                        sent = sent or exc
+        if isinstance(sent, OSError) or sent is None:  # nothing went out
+            raise UpnpError(_blocked(sent) if isinstance(sent, OSError) else "No network to search")
         end = time.monotonic() + timeout
         while time.monotonic() < end:
             try:
-                data, _ = sock.recvfrom(4096)
-            except TimeoutError:
-                continue
-            except OSError:  # Windows reports an unreachable answer this way
-                time.sleep(0.05)
-                continue
-            m = re.search(rb"(?im)^location:\s*(\S+)", data)
-            if m:
-                url = m.group(1).decode("latin-1")
-                if url.startswith("http://") and url not in found:
-                    found.append(url)
+                ready, _, _ = select.select(socks, [], [], 0.25)
+            except (OSError, ValueError):
+                break
+            for sock in ready:
+                try:
+                    data, _ = sock.recvfrom(4096)
+                except OSError:  # Windows reports an unreachable answer this way
+                    continue
+                m = re.search(rb"(?im)^location:\s*(\S+)", data)
+                if m:
+                    url = m.group(1).decode("latin-1")
+                    if url.startswith("http://") and url not in found:
+                        found.append(url)
+            if found and time.monotonic() > end - timeout + 1.0:
+                break  # the router answers within a second; others are rare
     finally:
-        sock.close()
+        for sock in socks:
+            sock.close()
     return found
 
 
