@@ -120,6 +120,11 @@ def clean_station(data: dict, existing: Station | None = None) -> Station:
             continue
         if key in ("password", "test_password", "also_password", "live_password") and value in (None, "") and existing is not None:
             continue  # the page never sees the password; blank keeps it
+        if key == "also_server" and existing is not None and not same_server(str(value or "").strip(),
+                                                                             existing.also_server):
+            # A different second server: its saved password isn't for this one.
+            if "also_password" not in data or data["also_password"] in (None, ""):
+                st.also_password = ""
         setattr(st, key, value)
     st.name = str(st.name or "").strip()[:80] or "New station"
     for key in ("playlist", "server", "password", "test_server", "test_password", "also_server", "also_password",

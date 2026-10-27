@@ -619,16 +619,16 @@ class StationRunner:
             return (self.queue, *self._resume(self._heard_now(), -1))
         return queue, after
 
-    def on_air_to(self, addr: str) -> bool:
+    def on_air_to(self, addr: str, also: bool = False) -> bool:
         """On air now to `addr`: where it went on air, which a server saved
-        since (and not yet switched over to) isn't."""
+        since (and not yet switched over to) isn't. With `also`, to the
+        second server it went on air with, and connected there."""
         if not (self.state == "on" and self.sent_as):
             return False
-        if same_server(self.sent_as[0], addr):
-            return True
-        # Or to the second server it went on air with, while connected there.
-        also = getattr(self, "also", None)
-        return bool(also and also.connected and self.sent_as[-1] and same_server(self.sent_as[-1][0], addr))
+        if also:
+            sent = self.sent_as[-1]
+            return bool(sent and self.also and self.also.connected and same_server(sent[0], addr))
+        return same_server(self.sent_as[0], addr)
 
     @property
     def target(self) -> str:
@@ -1119,7 +1119,7 @@ class ServerApp:
         typed = bool(password)
         password = password or saved or ""
         runner = self.runners.get(sid) if sid else None
-        on_air = bool(runner and runner.on_air_to(addr) and (not typed or password == saved))
+        on_air = bool(runner and runner.on_air_to(addr, also) and (not typed or password == saved))
         return servercheck.diagnose(addr, password, on_air=on_air)
 
     def _try_server(self, st: Station, test: bool = False) -> dict:
@@ -1151,7 +1151,9 @@ class ServerApp:
     def _try_also(self, runner: StationRunner) -> tuple[str, str]:
         """The Ready check's line for the second server: (status, detail)."""
         st = runner.station
-        also = runner.also if runner.state == "on" and not runner.rehearsal else None
+        # On air to it now: how that's going (not a server saved since).
+        sent = runner.sent_as[-1] if runner.state == "on" and runner.sent_as else None
+        also = runner.also if sent and same_server(sent[0], st.also_server) else None
         if also is not None:
             if also.connected:
                 return "ok", f"Sending to {also.describe} too"

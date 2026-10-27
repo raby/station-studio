@@ -1780,7 +1780,7 @@ function renderHelp() {
       h2("This computer or a hosted server?"),
       DIAGRAMS.choose(),
       p("Streaming from this computer is free and needs nothing else, and suits a station whose listeners fit in the upload. For more, send to a hosted SHOUTcast or Icecast server: Station Server sends it one stream and the host copies it to everyone. Switching is one setting, and old links keep working if the host uses the same address and port."),
-      p("Or both: Edit › Server › Also send to sends the same live stream to a hosted server as well, so listeners can use either link. If the hosted server can't be reached, this computer's stream carries on."),
+      p("Or both: Edit › Server › Also send to sends the same live stream to a hosted server as well, so listeners can use either link. If the hosted server can't be reached, the stream from this computer carries on regardless."),
       h2("When it doesn't work"),
       list(
         "Plays on the Wi-Fi but not on mobile data: the port isn't forwarded, or is forwarded to another computer. Look at the router in Settings › Internet.",
@@ -1843,7 +1843,10 @@ function renderHelp() {
         "“The listener count can't be read”: the server's status page is private. Station Server still streams; it just can't show how many are listening."),
     ],
     new: () => [
-      el("h2", {}, "0.19: a second server"),
+      el("h2", {}, "0.19.1"),
+      list("Presenter alerts: “has finished” now waits until the presenter has been gone for two minutes, so an encoder reconnecting, or the station reconnecting, no longer sends “finished” and then “is live” again. A presenter taking over from another sends one of each, and a show still live when the station is taken off air is told as finished.",
+        "Also send to: titles reach the second server in order. Changing its address asks for its password again. The Ready check and Test the second server always check the server that's saved, and a test of the main server is never mistaken for the second one."),
+      h2("0.19: a second server"),
       list("Edit › Server › Also send to: the live stream goes to a second SHOUTcast or Icecast server at the same time, like a hosted account, while this computer (or the main server) carries on as before. Test the second server checks its address and password.",
         "If the second server can't be reached, the station stays on air and keeps trying it every few seconds; the station page and the Ready check say why. Rehearsals don't go there."),
       h2("0.18: presenter alerts"),

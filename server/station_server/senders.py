@@ -172,8 +172,11 @@ class Alongside:
         self._held = 0
         self._ready = threading.Condition()
         self._stop = False
+        self._title: str | None = None  # the newest title, waiting to be sent
+        self._new_title = threading.Event()
         self._thread = threading.Thread(target=self._run, name="second-server", daemon=True)
         self._thread.start()
+        threading.Thread(target=self._titles, name="second-server-titles", daemon=True).start()
 
     @property
     def connected(self) -> bool:
@@ -194,11 +197,13 @@ class Alongside:
             self._ready.notify()
 
     def set_title(self, title: str) -> None:
-        threading.Thread(target=self.sender.set_title, args=(title,), name="second-server-title",
-                         daemon=True).start()
-
-    def count_listeners(self):
-        return self.sender.count_listeners()
+        """Sent from a thread of its own, in order; one waiting is replaced
+        by a newer one."""
+        with self._ready:
+            if self._stop:
+                return
+            self._title = title
+            self._new_title.set()
 
     def close(self) -> None:
         """Stop sending. Doesn't wait long for a server that's slow to
@@ -208,6 +213,7 @@ class Alongside:
             self._waiting.clear()  # whatever is waiting isn't sent now
             self._held = 0
             self._ready.notify()
+        self._new_title.set()
         self._thread.join(timeout=2)
 
     def _run(self) -> None:
@@ -226,6 +232,17 @@ class Alongside:
                     logger.exception("sending to %s failed", self.describe)
         finally:
             self.sender.close()
+
+    def _titles(self) -> None:
+        while True:
+            self._new_title.wait()
+            with self._ready:
+                if self._stop:
+                    return
+                title, self._title = self._title, None
+                self._new_title.clear()
+            if title is not None:
+                self.sender.set_title(title)  # never raises
 
 
 class Both:
