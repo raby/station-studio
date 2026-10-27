@@ -759,6 +759,7 @@ class ServerApp:
         self._net_checking = False
         self.router_state: dict | None = None  # the router's port forwarding, when last looked at
         self._lan: tuple[float, str | None] = (0.0, None)  # (when, this computer's home-network address)
+        self._lan_looking = False
         self.alerts = alerts.Watcher(self)
         self._stopped = threading.Event()
         self._watching = False
@@ -865,18 +866,30 @@ class ServerApp:
                         "host": f"{name}.duckdns.org" if name else None, "last": self.duckdns.last},
         }
 
-    def lan_address(self, find=upnp.lan_addresses) -> str | None:
+    def lan_address(self, find=upnp.lan_addresses, wait: bool = False) -> str | None:
         """This computer's address on the home network, for phones on the
         same Wi-Fi (the outside address often doesn't work from inside the
-        house). Looked up at most once a minute."""
+        house). Looked up at most once a minute, in the background, since
+        asking for the computer's own name can be slow."""
         known = (self.router_state or {}).get("here")
         if known:
             return known
         when, addr = self._lan
-        if not when or time.monotonic() - when > 60:
-            found = find()
-            addr = found[0] if found else None
-            self._lan = (time.monotonic(), addr)
+        if (not when or time.monotonic() - when > 60) and not self._lan_looking:
+            self._lan_looking = True
+
+            def look():
+                try:
+                    found = find()
+                except OSError:
+                    found = []
+                self._lan = (time.monotonic(), found[0] if found else None)
+                self._lan_looking = False
+            t = threading.Thread(target=look, daemon=True)
+            t.start()
+            if wait:
+                t.join()
+                return self._lan[1]
         return addr
 
     def check_internet(self, upload=netcheck.upload_mbps, address=netcheck.public_address) -> dict:

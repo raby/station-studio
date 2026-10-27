@@ -242,8 +242,8 @@ def test_internet_gives_the_home_network_address_for_a_phone_on_the_wifi(tmp_pat
     assert app.internet()["lan"] is None  # nothing streams from here
     app.save_station({"name": "Rebirth Classics", "server": "serve://:8000"})
     calls = []
-    assert app.lan_address(find=lambda: calls.append(1) or ["192.168.0.124"]) == "192.168.0.124"
-    assert app.lan_address(find=lambda: calls.append(1) or ["10.0.0.9"]) == "192.168.0.124"  # kept a minute
+    assert app.lan_address(find=lambda: calls.append(1) or ["192.168.0.124"], wait=True) == "192.168.0.124"
+    assert app.lan_address(find=lambda: calls.append(1) or ["10.0.0.9"], wait=True) == "192.168.0.124"  # kept a minute
     assert len(calls) == 1
     app.router_state = {"found": True, "here": "192.168.0.50"}
     assert app.lan_address() == "192.168.0.50"  # what the router saw wins
