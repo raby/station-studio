@@ -1,5 +1,6 @@
 import base64
 import http.client
+import io
 import json
 import threading
 
@@ -9,6 +10,7 @@ from station_player.config import DEFAULT_STATIONS, ConfigStore
 from station_player.directory import Directory
 from station_player.logos import LogoStore, is_name, sniff
 from station_player.server import PlayerApp, make_server
+from station_player.whatson import Feeds
 
 PNG = bytes.fromhex(
     "89504e470d0a1a0a0000000d4948445200000001000000010806000000"
@@ -124,6 +126,10 @@ def test_saving_the_same_picture_at_once(tmp_path):
     assert [p.name for p in (tmp_path / "logos").iterdir()] == names[:1]  # no temporary files left
 
 
+def offline(req, timeout=None):
+    raise OSError("offline")
+
+
 @pytest.fixture
 def served(tmp_path):
     app = PlayerApp(ConfigStore(tmp_path / "home"), scan=False)
@@ -131,6 +137,7 @@ def served(tmp_path):
     net = Net(stations=[raw("Listed", "https://s/listed", "https://logo.example/l.png")],
               byurl=[raw("Rebirth", "https://sh.uk.audio-stream.com/proxy/adgerdes?mp=/stream", "https://logo.example/r.png")])
     app.directory = Directory(fetch=net, servers=["one"], public=lambda h: True)
+    app.feeds = Feeds(opener=offline)  # no what's-on feeds unless a test gives some
     server = make_server(app, port=0)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     port = server.server_address[1]
@@ -203,3 +210,68 @@ def test_add_with_a_logo_and_set_one(served, monkeypatch):
     # Removing a station removes its logo file.
     call("/api/stations/remove", {"url": "https://s/listed"})
     assert not any((app.store.home / "logos").iterdir())
+
+
+def test_a_logo_from_the_stations_own_station_server(served, monkeypatch):
+    app, call = served
+    monkeypatch.setattr("station_player.server.resolve_stream_url", lambda u: u)
+    asked = []
+
+    def fetch(url, ua, limit):
+        asked.append(url)
+        if url == "http://digitalbluebird.duckdns.org:8110/logo":
+            return PNG, "image/png"
+        if url.endswith("/logo"):
+            raise OSError("HTTP 404")
+        return b"[]", "application/json"
+    app.directory = Directory(fetch=fetch, servers=["one"], public=lambda h: True)
+    call("/api/stations", {"name": "Digital Bluebird", "url": "http://digitalbluebird.duckdns.org:8110/"})
+    resp, _ = call("/api/stations/logo", {"url": "http://digitalbluebird.duckdns.org:8110/", "find": True})
+    assert resp.status == 200
+    st = next(s for s in app.store.config.stations if s["url"].startswith("http://digitalbluebird"))
+    assert is_name(st["logo"]) and app.logos.get(st["logo"])[0] == PNG
+    # Not on the local network, and only a real picture.
+    app.directory = Directory(fetch=lambda u, ua, n: (PNG, "image/png"), servers=["one"], public=lambda h: False)
+    assert app.directory.own_logo("http://192.168.1.20:8110/") is None
+    app.directory = Directory(fetch=lambda u, ua, n: (b"<html>", "image/png"), servers=["one"], public=lambda h: True)
+    assert app.directory.own_logo("http://radio.example:8000/") is None
+    assert app.directory.own_logo("file:///etc/passwd") is None
+
+
+def test_a_station_with_a_feed_takes_its_logo_by_itself(served):
+    app, call = served
+    feed_url = "https://raby.github.io/rebirth-now/rebirth-radio.json"
+    feed = {"station": "Rebirth Radio", "on_air": False, "logo": "rebirth-radio-logo.png", "recent": []}
+    app.feeds = Feeds(opener=lambda req, timeout=None: io.BytesIO(json.dumps(feed).encode()))
+    pictures = []
+
+    def fetch(url, ua, limit):
+        pictures.append(url)
+        return (PNG, "image/png") if url.endswith("-logo.png") else (b"[]", "application/json")
+    app.directory = Directory(fetch=fetch, servers=["one"], public=lambda h: True)
+    rebirth = next(s for s in app.store.config.stations if s.get("feed") == feed_url)
+    assert "logo" not in rebirth
+    from station_player.server import station_id
+    resp, _ = call(f"/api/whatson?station={station_id(rebirth['url'])}")
+    assert resp.status == 200
+    assert wait(lambda: is_name(next(s for s in app.store.config.stations if s["url"] == rebirth["url"]).get("logo")))
+    assert pictures == ["https://raby.github.io/rebirth-now/rebirth-radio-logo.png"]
+    # Once a session: a station whose logo was removed keeps it removed.
+    call("/api/stations/logo", {"url": rebirth["url"]})
+    call(f"/api/whatson?station={station_id(rebirth['url'])}")
+    assert len(pictures) == 1
+    # Find logo looks at the feed first; a name that isn't a plain logo file is ignored.
+    assert call("/api/stations/logo", {"url": rebirth["url"], "find": True})[0].status == 200
+    feed["logo"] = "../../evil.png"
+    app.feeds = Feeds(opener=lambda req, timeout=None: io.BytesIO(json.dumps(feed).encode()))
+    assert app._feed_logo(feed_url) is None
+
+
+def wait(cond, seconds=3.0):
+    import time
+    end = time.monotonic() + seconds
+    while not cond():
+        if time.monotonic() > end:
+            return False
+        time.sleep(0.02)
+    return True

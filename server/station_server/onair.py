@@ -22,6 +22,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from station_player.library import AUDIO_EXTENSIONS, Track
+from station_player.logos import LogoStore
 from station_player.playlog import PlayLog
 from station_player.tags import read_tags
 
@@ -185,6 +186,7 @@ class StationRunner:
         self.channel: Channel | None = None
         self.sender = None
         self.also = None  # the second server (Alongside), while on air with one
+        self.logos: LogoStore | None = None  # where the station's logo is kept (set by ServerApp)
         self.sent_as: tuple | None = None
         self.rehearsal = False  # on air to the test stream, not the live one
         self.listeners = Listeners()  # the page's Listen button
@@ -424,7 +426,8 @@ class StationRunner:
             logger.error("%s: %s; playing the fallback until it can be read", st.name, exc)
             self.queue = self.fallback_queue = fallback[0]
             self.xml = None
-        info = StreamInfo(name=st.name, genre=st.genre, url=st.url, public=st.public, bitrate=st.bitrate)
+        info = StreamInfo(name=st.name, genre=st.genre, url=st.url, public=st.public, bitrate=st.bitrate,
+                          logo=self.logo)
         password = (st.test_password or st.password) if self.rehearsal else st.password
         sender = sender_from_url(self.target, info, password or None)
         self.sent_as = self._stream_settings()
@@ -630,6 +633,11 @@ class StationRunner:
             return bool(sent and self.also and self.also.connected and same_server(sent[0], addr))
         return same_server(self.sent_as[0], addr)
 
+    def logo(self) -> tuple[bytes, str] | None:
+        """The station's logo as it is now: (picture, type), or None."""
+        name = self.station.logo
+        return self.logos.get(name) if name and self.logos else None
+
     @property
     def target(self) -> str:
         """Where it goes on air: the live server, or the test stream."""
@@ -772,6 +780,7 @@ class ServerApp:
         self.weeks = WeekPicker(self.store.home / "weeks.json")
         self.awake = KeepAwake()
         self.analyser = Analyser(self.ffmpeg, self.store.home / "analysis.json")
+        self.logos = LogoStore(self.store.home / "logos")
         self.runners: dict[str, StationRunner] = {}
         for st in self.config.stations:
             self.runners[st.id] = self._new_runner(st)
@@ -792,8 +801,10 @@ class ServerApp:
         self.latest: str | None = None  # the newest release, once looked up
 
     def _new_runner(self, st: Station) -> StationRunner:
-        return StationRunner(st, self.ffmpeg, self.store.home / "logs", weeks=self.weeks, awake=self.awake,
-                             analyser=self.analyser)
+        runner = StationRunner(st, self.ffmpeg, self.store.home / "logs", weeks=self.weeks, awake=self.awake,
+                               analyser=self.analyser)
+        runner.logos = self.logos
+        return runner
 
     @property
     def config(self) -> Config:
@@ -1038,6 +1049,17 @@ class ServerApp:
             self.runners[st.id] = self._new_runner(st)
         self.store.save()
         return st
+
+    def set_logo(self, sid: str, image: bytes | None) -> None:
+        """Edit › Station › Logo: a picture (PNG, JPEG, GIF or WebP, up to
+        256 KB), or None for no logo. It shows at once on the station's
+        stream page, and in the feed when it's next published."""
+        st = self._runner(sid).station
+        st.logo = self.logos.save(image) if image else ""
+        self.store.save()
+        self.logos.prune({s.logo for s in self.config.stations if s.logo})
+        if self.feed is not None:  # the website and Station Player see it soon
+            self.feed.publish_now()
 
     def delete_station(self, sid: str) -> None:
         runner = self._runner(sid)

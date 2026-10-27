@@ -1224,7 +1224,7 @@ function logoEditor(st, result, nameInput, urlInput) {
   return el("div", { class: "row logo-row" },
     stationArt(st),
     el("button", {
-      type: "button", class: "btn small", title: "Look this station up in Radio Browser",
+      type: "button", class: "btn small", title: "Ask the station's own Station Server, then Radio Browser",
       onclick: async (e) => {
         const btn = e.currentTarget;
         btn.disabled = true;
@@ -1436,7 +1436,7 @@ function radioView() {
   return el("div", {},
     el("div", { class: "view-head" }, el("h1", {}, "Radio"), el("div", { class: "spacer" }),
       stations.some((x) => !x.logo) ? el("button", {
-        type: "button", class: "btn", id: "btn-find-logos", title: "Look your stations up in Radio Browser",
+        type: "button", class: "btn", id: "btn-find-logos", title: "Ask each station's own Station Server, then Radio Browser",
         onclick: findAllLogos,
       }, ...iconLabel("search", "Find logos")) : null),
     counts.size ? el("div", { class: "tag-filter", id: "station-tags", role: "group", "aria-label": "Show stations tagged" },
@@ -1661,8 +1661,8 @@ async function findAllLogos(e) {
   if (state) await loadState(state);
   renderView();
   refocus("#btn-find-logos");
-  toast(found ? `Found ${plural(found, "logo")}${found < missing.length ? `; ${missing.length - found} not in Radio Browser (Edit a station to choose a picture)` : ""}`
-    : "Radio Browser has no logos for these stations. Edit a station to choose a picture.");
+  toast(found ? `Found ${plural(found, "logo")}${found < missing.length ? `; none found for ${missing.length - found} (Edit a station to choose a picture)` : ""}`
+    : "No logos found for these stations. Edit a station to choose a picture.");
 }
 
 // Stations listened to lately (saved or tried from the finder), newest first.

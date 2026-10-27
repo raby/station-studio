@@ -14,6 +14,7 @@ change only that repository's contents):
 
     stations.json         the stations, by name and slug
     <slug>.json           each station's feed (station_feed below)
+    <slug>-logo.png       each station's logo, if it has one (named in its feed)
     index.html            a page with every station: now, coming up, just played
     widget.html           one station, to embed in a website (?station=<slug>)
     now.js, now.css       what those two pages share
@@ -113,9 +114,11 @@ def station_feed(runner, hours: float = FEED_HOURS, now: datetime | None = None)
                        "artist": e.get("artist")})
         if len(recent) >= RECENT:
             break
+    picture = _logo(runner)
     return {
         "station": st.name,
         "slug": slug(st.name),
+        "logo": logo_file(st.name, picture[1]) if picture else None,
         "updated": now.isoformat(timespec="seconds"),
         "on_air": on,
         "live": {"presenter": live.presenter or "Live show",
@@ -124,6 +127,17 @@ def station_feed(runner, hours: float = FEED_HOURS, now: datetime | None = None)
         "items": items,
         "recent": recent,
     }
+
+
+def _logo(runner) -> tuple[bytes, str] | None:
+    get = getattr(runner, "logo", None)
+    return get() if callable(get) else None
+
+
+def logo_file(name: str, ctype: str) -> str:
+    """Where a station's logo is published, beside its feed: rebirth-radio-logo.png."""
+    ext = {"image/jpeg": "jpg", "image/x-icon": "ico"}.get(ctype, ctype.split("/")[-1])
+    return f"{slug(name)}-logo.{ext}"
 
 
 def on_now(feed: dict, at: datetime) -> tuple | None:
@@ -321,6 +335,9 @@ class FeedPublisher:
                     continue
                 feed = station_feed(runner, now=now)
                 name = feed["slug"]
+                picture = _logo(runner)
+                if picture:  # before the feed that names it; unchanged, it isn't sent again
+                    wrote += pages.put(feed["logo"], picture[0], f"{st.name}: logo")
                 if not self.due(name, feed, now):
                     continue
                 if pages.put(f"{name}.json", json.dumps(feed, ensure_ascii=False, indent=1).encode(),

@@ -46,13 +46,23 @@ const NowFeed = (() => {
     el("span", "title", i.title || "Unknown"), i.artist ? el("span", "artist", i.artist) : null,
   ]);
 
+  // The station's logo, published beside its feed (a plain file name).
+  function logo(feed) {
+    const name = feed?.logo;
+    if (!name || !/^[a-z0-9-]+-logo\.(png|jpg|gif|webp|ico)$/.test(name)) return null;
+    const img = el("img", "logo");
+    img.src = name;
+    img.alt = "";
+    return img;
+  }
+
   function renderStation(feed, opts = {}) {
     const v = view(feed);
     const next = opts.next ?? 5;
     const recent = opts.recent ?? 5;
     const badge = { on: "On air", live: "Live", off: "Off air", unknown: "On air" }[v.state];
     const box = el("section", "station",
-      el("header", "head", el("h2", null, feed?.station || ""), el("span", `badge ${v.state}`, badge)));
+      el("header", "head", logo(feed), el("h2", null, feed?.station || ""), el("span", `badge ${v.state}`, badge)));
     if (v.state === "live") {
       box.append(el("div", "now", el("div", "label", "Live now"), el("div", "big", v.now.live.presenter)));
     } else if (v.state === "on") {

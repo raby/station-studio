@@ -447,6 +447,23 @@ class Directory:
         with self._lock:
             if url not in self._logos:
                 return None
+        return self.picture(url)
+
+    def own_logo(self, stream_url: str) -> tuple[bytes, str] | None:
+        """The logo a station's own server gives at /logo (Station Server
+        does, when it streams the station itself), if it's a small picture
+        on the public internet."""
+        parts = urlparse(stream_url)
+        if parts.scheme not in ("http", "https") or not parts.hostname:
+            return None
+        return self.picture(f"{parts.scheme}://{parts.netloc}/logo")
+
+    def picture(self, url: str) -> tuple[bytes, str] | None:
+        """A small picture from a public address (never this computer or the
+        local network); None if it isn't one."""
+        if not url.startswith(("http://", "https://")):
+            return None
+        with self._lock:
             if url in self._logo_cache:
                 self._logo_cache.move_to_end(url)
                 return self._logo_cache[url]
@@ -457,7 +474,7 @@ class Directory:
         except (OSError, ValueError, http.client.HTTPException):
             return None
         ctype = ctype.split(";")[0].strip().lower()
-        if len(body) > MAX_LOGO_BYTES or ctype not in LOGO_TYPES:
+        if len(body) > MAX_LOGO_BYTES or ctype not in LOGO_TYPES or not sniff(body):
             return None
         with self._lock:
             self._logo_cache[url] = (body, ctype)

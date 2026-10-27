@@ -71,8 +71,9 @@ class StreamServer:
 
     def __init__(self, port: int, name: str = "Station Server", genre: str = "", url: str = "",
                  public: bool = False, bitrate: int = 128, most: int = 20, host: str = "",
-                 content_type: str = "audio/mpeg") -> None:
+                 content_type: str = "audio/mpeg", logo=None) -> None:
         self.port, self.host = port, host
+        self.logo = logo  # () -> (picture, type) or None: the station's logo, at /logo
         self.name, self.genre, self.url, self.public = name, genre, url, public
         self.bitrate, self.content_type = bitrate, content_type
         self.most = max(1, min(int(most or 1), MOST_LISTENERS))
@@ -252,11 +253,19 @@ class StreamServer:
             if path.endswith(".m3u"):
                 return 200, "audio/x-mpegurl", f"#EXTM3U\n#EXTINF:-1,{self.name}\n{url}\n".encode()
             return 200, "audio/x-scpls", f"[playlist]\nNumberOfEntries=1\nFile1={url}\nTitle1={self.name}\nLength1=-1\nVersion=2\n".encode()
-        if path == "/favicon.ico":
-            return 404, "text/plain", b"Not found\n"
+        if path in ("/logo", "/favicon.ico"):  # the station's logo, for Station Player and browsers
+            got = self._logo()
+            return (200, got[1], got[0]) if got else (404, "text/plain", b"Not found\n")
         if path == "/" and "text/html" in headers.get("accept", "") and "icy-metadata" not in headers:
             return 200, "text/html; charset=utf-8", self._html(c).encode()
         return None
+
+    def _logo(self):
+        try:
+            return self.logo() if self.logo else None
+        except Exception:  # never in the way of the stream
+            logger.exception("port %d: reading the logo failed", self.port)
+            return None
 
     def _host(self, headers: dict) -> str:
         return headers.get("host") or f"localhost:{self.port}"
@@ -267,7 +276,9 @@ class StreamServer:
             "<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width'>"
             f"<title>{e(self.name)}</title><style>body{{font:16px system-ui,sans-serif;max-width:32rem;margin:2rem auto;"
             "padding:0 1rem;background:#111;color:#eee}audio{width:100%}small{color:#999}</style></head><body>"
-            f"<h1>{e(self.name)}</h1><p>{e(self.title) or '&nbsp;'}</p>"
+            + ("<img src='/logo' alt='' style='width:96px;height:96px;object-fit:contain;border-radius:12px'>"
+               if self._logo() else "")
+            + f"<h1>{e(self.name)}</h1><p>{e(self.title) or '&nbsp;'}</p>"
             "<audio controls preload='none' src='/;'></audio>"
             f"<p><small>{c['listeners']} listening · {self.bitrate} kbps · "
             "<a href='/listen.pls' style='color:#aaa'>listen.pls</a> · "
