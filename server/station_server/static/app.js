@@ -1191,6 +1191,9 @@ function alertsSettings() {
   const backOn = el("input", { type: "checkbox" });
   backOn.checked = v.back_on !== false;
   backOn.addEventListener("change", () => { v.back_on = backOn.checked; });
+  const liveOn = el("input", { type: "checkbox" });
+  liveOn.checked = !!v.live_on;
+  liveOn.addEventListener("change", () => { v.live_on = liveOn.checked; });
   const redraw = () => { const old = $("#alerts-settings"); if (old) old.replaceWith(alertsSettings()); };
   async function save(quiet) {
     try {
@@ -1213,7 +1216,7 @@ function alertsSettings() {
   const topic = () => { v.ntfy = `https://ntfy.sh/station-${Math.random().toString(36).slice(2, 8)}${Math.random().toString(36).slice(2, 8)}`; redraw(); };
   const last = a.last;
   return el("div", { id: "alerts-settings", class: "form" },
-    el("p", { class: "help" }, "If a station you've put on air goes off air, can't reach its server, or is playing silence or its fallback, and that lasts a few minutes (Station Server keeps trying to put it right first), you're told: on your phone, by email, or both. You're told again when it's back."),
+    el("p", { class: "help" }, "If a station you've put on air goes off air, can't reach its server, or is playing silence or its fallback, and that lasts a few minutes (Station Server keeps trying to put it right first), you're told: on your phone, by email, or both. You're told again when it's back. It can also tell you when a presenter goes live."),
     el("fieldset", {}, el("legend", {}, "Phone notification"),
       el("div", { class: "grid" }, field("ntfy", "ntfy topic", { placeholder: "https://ntfy.sh/your-own-topic-name" })),
       el("div", { class: "actions" }, btn("Make up a topic name", "refresh", topic, "btn small")),
@@ -1227,6 +1230,7 @@ function alertsSettings() {
       el("p", { class: "help" }, "Your email provider's outgoing (SMTP) server. For Gmail or Outlook, make an app password in your account's security settings and use that, not your usual password.")),
     el("div", { class: "grid" }, field("after_minutes", "Alert after (minutes)", { narrow: true }),
       el("label", { class: "check" }, backOn, "Tell me when it's back on air too")),
+    el("label", { class: "check" }, liveOn, "Tell me when a presenter goes live, and when they finish"),
     msg,
     el("div", { class: "actions" }, btn("Save", "check", () => save(false), "btn primary"), btn("Send a test", "bell", test, "btn")),
     last ? el("p", { class: "help" }, `Last alert ${dayTime(last.at)}: ${last.title}`,
@@ -1687,7 +1691,7 @@ function renderHelp() {
       p("While a station is on air the computer doesn't go to sleep by itself (the screen can still turn off). If the server can't be reached, or the music's drive isn't there yet, the station shows Trying again… and keeps trying until it's on air; it does the same if the broadcast ever fails."),
       p("For a computer nobody is at, after a power cut: set it to switch itself back on when the power returns (a setting in the BIOS, often called Restore on AC power loss), and let Windows sign in by itself, since Station Server starts when you sign in. Also check Windows Update's active hours, so restarts happen when it suits you."),
       h2("Alerts"),
-      p("Settings › Alerts tells you, on your phone (with the free ntfy app) or by email, when a station has been off air, can't reach its server, or is playing silence or its fallback for a few minutes, and again when it's back. Send a test checks it reaches you. Station Server can't tell anyone if the computer itself is off or offline: a free outside uptime check of the stream covers that."),
+      p("Settings › Alerts tells you, on your phone (with the free ntfy app) or by email, when a station has been off air, can't reach its server, or is playing silence or its fallback for a few minutes, and again when it's back. Tick Tell me when a presenter goes live to hear when a live show starts and ends, too. Send a test checks it reaches you. Station Server can't tell anyone if the computer itself is off or offline: a free outside uptime check of the stream covers that."),
       h2("Phone access"),
       p("Settings › Phone access lets a phone or another computer on the same network see the stations, listen, put them on or off air and end a live show, with a password. Changing settings stays on this computer."),
       h2("Its own app, and new versions"),
@@ -1792,12 +1796,14 @@ function renderHelp() {
         "“The listener count can't be read”: the server's status page is private. Station Server still streams; it just can't show how many are listening."),
     ],
     new: () => [
+      el("h2", {}, "0.18: presenter alerts"),
+      list("Settings › Alerts › Tell me when a presenter goes live: a phone notification or email when a presenter goes live on a station, with their name, and another when they finish, saying how long they were on."),
       h2("0.17.1"),
       list("Settings › Internet: a DuckDNS name saved without its token no longer stops other settings saving, a new name is sent to DuckDNS straight away, and Use never suggests more than the 500 listeners a station can allow.",
         "Test connection: a station's saved password is used however its address is written, and a server saved while on air (not yet switched over to) has its password tested properly.",
         "Use keeps the rest of a station's server setting as it was, and the tester copes with IPv6 addresses.",
         "On a Mac, the window no longer waits while Station Server looks for the router at start-up."),
-      el("h2", {}, "0.17: Icecast & SHOUTcast"),
+      h2("0.17: Icecast & SHOUTcast"),
       list("Help › Icecast & SHOUTcast: what they are, setting up Icecast for free on a Mac, Windows or Linux, the icecast.xml settings that matter, and SHOUTcast's source port and stream numbers.",
         "Test a server there, step by step, without a station or going on air: the address, the port, which kind of server it is, the source port, the password and the listener count, each saying what to change. Edit › Server › Test connection shows the same steps.",
         "Nothing already sending to a server (Winamp, say) is knocked off by a test."),

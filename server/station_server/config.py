@@ -254,6 +254,7 @@ class Alerts:
     """Who is told when a station goes off air (alerts.py)."""
     after_minutes: int = 3  # off air this long before anyone is told
     back_on: bool = True  # and told again when it's back
+    live_on: bool = False  # told when a presenter goes live, and when they finish
     ntfy: str = ""  # a phone notification: an ntfy topic, https://ntfy.sh/<topic>
     email_to: str = ""  # an email, sent through this mail server
     email_from: str = ""
@@ -292,6 +293,7 @@ def clean_alerts(data: dict, existing: Alerts | None = None) -> Alerts:
     if a.smtp_host and not 1 <= a.smtp_port <= 65535:
         raise ValueError("The mail server's port is a number like 587")
     a.back_on = bool(a.back_on)
+    a.live_on = bool(a.live_on)
     if a.smtp_security not in SMTP_SECURITY:
         a.smtp_security = "starttls"
     if a.ntfy and not re.match(r"^https?://[^/\s]+/[\w-]{1,64}$", a.ntfy):
