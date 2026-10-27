@@ -111,44 +111,69 @@ def test_told_when_a_presenter_goes_live_and_when_they_finish():
     app = SimpleNamespace(config=SimpleNamespace(alerts=cfg), runners={"a": r})
     clock = Clock()
     watcher = alerts.Watcher(app, send=lambda c, title, msg: sent.append((title, msg)) or [], clock=clock)
-    r.channel.live = SimpleNamespace(presenter="DJ Wren", since=clock.now)
-    watcher.check()
+    gone = alerts.LIVE_GONE_SECONDS
+
+    def check(after=15):
+        clock.now += after
+        watcher.check()
+
+    def live(who):
+        r.channel.live = SimpleNamespace(presenter=who, since=clock.now)
+
+    live("DJ Wren")
+    check()
     r.channel.live = None
-    watcher.check()
+    check(gone)
     assert sent == []  # off unless asked for
     cfg.live_on = True
-    r.channel.live = SimpleNamespace(presenter="DJ Wren", since=clock.now)
-    watcher.check()
-    watcher.check()
+    live("DJ Wren")
+    check()
+    check()
     assert [t for t, _ in sent] == ["Rebirth Classics: DJ Wren is live"]
-    clock.now += 45 * 60
+    check(45 * 60)
+    # Their encoder reconnecting, or the station reconnecting under them,
+    # isn't the end of the show.
     r.channel.live = None
-    watcher.check()
-    assert sent[1][0] == "Rebirth Classics: DJ Wren has finished" and "45 minutes" in sent[1][1]
-    # A reconnect while they're live isn't the end of the show.
-    r.channel.live = SimpleNamespace(presenter="", since=clock.now)
-    watcher.check()
-    assert sent[2][0] == "Rebirth Classics: A presenter is live"
+    check()
     r.state = "waiting"
-    watcher.check()
+    check()
     r.state = "on"
-    watcher.check()
-    assert len(sent) == 3
+    live("DJ Wren")
+    check()
+    assert len(sent) == 1
     r.channel.live = None
-    watcher.check()
-    assert len(sent) == 4
+    check()
+    assert len(sent) == 1
+    check(gone)
+    assert sent[1][0] == "Rebirth Classics: DJ Wren has finished" and "46 minutes" in sent[1][1]
+    # Another presenter taking over: one finishes and the other begins.
+    live("")
+    check()
+    assert sent[2][0] == "Rebirth Classics: A presenter is live"
+    check(20 * 60)
+    live("DJ Robin")
+    check()
+    assert [t for t, _ in sent[3:]] == ["Rebirth Classics: The presenter has finished",
+                                         "Rebirth Classics: DJ Robin is live"]
+    assert "20 minutes" in sent[3][1]
+    # Taken off air: they've finished, once it's been a couple of minutes.
+    r.state = "off"
+    check(gone)
+    assert sent[5][0] == "Rebirth Classics: DJ Robin has finished"
+    check(gone)
+    assert len(sent) == 6
     # Not for a rehearsal, and no "finished" for a show it never said began.
-    r.rehearsal = True
-    r.channel.live = SimpleNamespace(presenter="DJ Wren", since=clock.now)
-    watcher.check()
+    r.state, r.rehearsal = "on", True
+    live("DJ Wren")
+    check()
     r.rehearsal = False
     cfg.live_on = False
-    r.channel.live = SimpleNamespace(presenter="DJ Wren", since=clock.now + 1)
-    watcher.check()
+    live("DJ Wren")
+    check()
     cfg.live_on = True
     r.channel.live = None
-    watcher.check()
-    assert len(sent) == 4
+    check(gone)
+    assert len(sent) == 6
     assert clean_alerts({"live_on": 1}).live_on is True and clean_alerts({}).live_on is False
 
 

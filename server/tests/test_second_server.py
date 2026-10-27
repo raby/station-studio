@@ -25,6 +25,11 @@ def test_the_second_server_setting():
     with pytest.raises(ValueError, match="password"):
         clean_station({"also_server": "shoutcast://h:8000"})
     assert clean_station({"also_server": ""}).also_server == ""
+    # A different second server doesn't get the saved password.
+    with pytest.raises(ValueError, match="password"):
+        clean_station({"also_server": "icecast://elsewhere:8000/x", "also_password": ""}, st)
+    moved = clean_station({"also_server": "shoutcast://SH.uk.audio-stream.com:8012?sid=1"}, st)
+    assert moved.also_password == "zoe"  # the same one, written differently
 
 
 class Slow:
@@ -85,6 +90,37 @@ def test_closing_doesnt_wait_for_a_stuck_second_server():
     slow.go.set()
     assert wait_for(lambda: slow.closed)
     assert b"too late" not in slow.got
+
+
+def test_titles_reach_the_second_server_in_order():
+    got = []
+    gate = threading.Event()
+
+    class Server(Slow):
+        def set_title(self, title):
+            gate.wait(5)
+            got.append(title)
+    also = Alongside(Server())
+    for title in ("one", "two", "three", "four"):
+        also.set_title(title)
+        time.sleep(0.01)
+    gate.set()
+    assert wait_for(lambda: got and got[-1] == "four")
+    assert got == sorted(got, key=["one", "two", "three", "four"].index) and len(got) <= 2
+    also.close()
+
+
+def test_the_second_server_isnt_taken_for_the_main_one():
+    from types import SimpleNamespace
+
+    from station_server.onair import StationRunner
+    runner = StationRunner.__new__(StationRunner)
+    runner.state, runner.also = "on", SimpleNamespace(connected=True)
+    runner.sent_as = ("serve://:8000?max=20", "x", ("shoutcast://zoe:8012", "pw"))
+    assert runner.on_air_to("shoutcast://zoe:8012", also=True)
+    assert not runner.on_air_to("shoutcast://zoe:8012")  # not the main server
+    runner.also.connected = False
+    assert not runner.on_air_to("shoutcast://zoe:8012", also=True)
 
 
 def test_why_it_cant_connect_is_kept_for_the_page():

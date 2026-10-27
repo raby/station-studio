@@ -34,6 +34,8 @@ from station_server.config import Alerts
 logger = logging.getLogger(__name__)
 
 CHECK_SECONDS = 15.0
+# A presenter gone this long has finished (less is a reconnect).
+LIVE_GONE_SECONDS = 120
 _TIMEOUT = 20
 
 
@@ -127,7 +129,7 @@ class Watcher:
         self._clock = clock
         self._since: dict[str, float] = {}  # station id -> when its problem began
         self._told: dict[str, float] = {}  # station id -> when it began, for those alerted
-        self._lives: dict[str, tuple[float, str, bool]] = {}  # station id -> (since, presenter, told) while one is live
+        self._lives: dict[str, tuple[float, str, bool, float]] = {}  # station id -> (since, presenter, told, last seen)
         self.last: dict | None = None  # the last alert, for Settings
 
     def check(self) -> None:
@@ -163,27 +165,39 @@ class Watcher:
 
     def _presenter(self, cfg: Alerts, sid: str, runner, now: float) -> None:
         """Tell them when a presenter goes live on this station, and when
-        they finish (if Settings › Alerts asks for it). Not for rehearsals,
-        and not while the station is reconnecting: a presenter is only
-        finished once it's back on air without them."""
-        if runner.state != "on" or runner.rehearsal:
-            return
-        ch = runner.channel
-        live = getattr(ch, "live", None)
+        they finish (if Settings › Alerts asks for it). Not for rehearsals.
+        A presenter is only finished once they've been gone for a couple of
+        minutes, so their encoder reconnecting, or the station reconnecting
+        under them, isn't taken as the end of the show; nor is the same
+        presenter coming straight back."""
+        live = None
+        if runner.state == "on" and not runner.rehearsal:
+            live = getattr(runner.channel, "live", None)
         was = self._lives.get(sid)
-        name = runner.station.name
-        if live is not None and (was is None or was[0] != live.since):
+        if live is not None:
+            who = live.presenter
+            if was is not None and was[1] == who:
+                self._lives[sid] = (was[0], who, was[2], now)  # still on
+                return
+            if was is not None:  # someone else took over
+                self._finished(cfg, runner, was)
             told = bool(cfg.live_on)
-            self._lives[sid] = (live.since, live.presenter, told)
+            self._lives[sid] = (live.since, who, told, now)
             if told:
-                who = live.presenter or "A presenter"
+                who = who or "A presenter"
+                name = runner.station.name
                 self._alert(cfg, f"{name}: {who} is live", f"{who} went live on {name} at {_hhmm(live.since)}.")
-        elif live is None and was is not None:
+        elif was is not None and now - was[3] >= LIVE_GONE_SECONDS:
             self._lives.pop(sid, None)
-            if cfg.live_on and was[2]:  # only after telling them it began
-                who = was[1] or "The presenter"
-                self._alert(cfg, f"{name}: {who} has finished",
-                            f"{who} finished on {name} at {_hhmm(now)}, after {_minutes(now - was[0])}.")
+            self._finished(cfg, runner, was)
+
+    def _finished(self, cfg: Alerts, runner, was: tuple[float, str, bool, float]) -> None:
+        since, who, told, last = was
+        if cfg.live_on and told:  # only after telling them it began
+            who = who or "The presenter"
+            name = runner.station.name
+            self._alert(cfg, f"{name}: {who} has finished",
+                        f"{who} finished on {name} at {_hhmm(last)}, after {_minutes(last - since)}.")
 
     def _alert(self, cfg: Alerts, title: str, message: str) -> None:
         logger.warning("alert: %s", message)
