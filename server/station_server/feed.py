@@ -34,7 +34,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from station_player.logos import feed_name
@@ -112,7 +112,8 @@ def station_feed(runner, hours: float = FEED_HOURS, now: datetime | None = None,
                 break
             items.append(_row(row))
     recent = []
-    for e in reversed(runner.playlog.entries(date.today() - timedelta(days=1), date.today())):
+    today = now.date()  # the feed's own clock, not the computer's, so `now` decides the window
+    for e in reversed(runner.playlog.entries(today - timedelta(days=1), today)):
         if (e.get("seconds") or 0) < 30:  # a skip
             continue
         recent.append({"at": e["at"].isoformat(timespec="seconds"), "title": e.get("title"),
