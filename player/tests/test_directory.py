@@ -339,4 +339,8 @@ def test_map_music_leaves_out_talk_or_finds_a_genre():
     assert "tag=techno" in net.asked[1] and "tag=trance" in net.asked[2] and "limit=250" in net.asked[1]
     d.map_stations(kind="nonsense")  # everything
     assert len(net.asked) == 4
+    # Sport: its own tags, merged.
+    d.map_stations(kind="sport")
+    asked = net.asked[4:]
+    assert [u.split("tag=")[1].split("&")[0] for u in asked] == ["sport", "sports", "football", "soccer"]
 

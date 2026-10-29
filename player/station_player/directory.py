@@ -39,6 +39,7 @@ MAX_OFFSET = 5000  # how far "Show more" goes
 MAP_WORLD = 500  # stations on the whole globe
 MAP_COUNTRY = 300  # more, once it's zoomed into one country
 NEWS_TAGS = ("news", "talk")
+SPORT_TAGS = ("sport", "sports", "football", "soccer")  # Radio Browser has all four in use
 SPOKEN = {"news", "talk", "sport", "sports", "information", "politics"}  # not music
 # Not SVG: it can carry script.
 LOGO_TYPES = ("image/png", "image/jpeg", "image/gif", "image/webp", "image/x-icon", "image/vnd.microsoft.icon")
@@ -345,13 +346,15 @@ class Directory:
     def map_stations(self, country: str = "", kind: str = "all", genre: str = "") -> list[dict]:
         """Stations the directory knows the position of, for the globe: the
         best liked worldwide, or in one country. `kind` "news" is news and
-        talk only; "music" leaves those out, or is one genre's. Kept ten
+        talk only, "sport" is sport only; "music" leaves those out, or is
+        one genre's. Kept ten
         minutes, since the globe asks again as it turns."""
         country = _text(country, 2).upper()
         if country and not country.isalpha():
             country = ""
-        kind = kind if kind in ("news", "music") else "all"
-        tags = genre_tags(genre) if kind == "music" else list(NEWS_TAGS) if kind == "news" else []
+        kind = kind if kind in ("news", "music", "sport") else "all"
+        tags = (genre_tags(genre) if kind == "music" else list(NEWS_TAGS) if kind == "news"
+                else list(SPORT_TAGS) if kind == "sport" else [])
         key = (country, kind, tuple(tags))
         with self._lock:
             got = self._maps.get(key)
