@@ -4252,6 +4252,12 @@ function appSection() {
           S.lib.config.own_window !== false, windowChange) : null,
       checkbox("updates", "Tell me when a new version is out (asks GitHub once a day)",
         S.lib.config.check_updates !== false, updatesChange)),
+    el("div", { class: "form-row" },
+      el("label", { for: "start-page" }, "Open on"),
+      el("select", {
+        id: "start-page",
+        onchange: (e) => { store("start-page", e.target.value); toast(`Station Player will open on ${e.target.selectedOptions[0].textContent}`); },
+      }, ...[["radio", "the Radio page"], ["home", "Home"]].map(([v, label]) => el("option", { value: v, selected: startPage() === v }, label)))),
     updateSettings(),
     browser || S.lib.mac_app ? null : el("p", { class: "help" },
       "Station Player opens in a browser tab. With Google Chrome, Microsoft Edge or Brave installed it opens in a window of its own instead."),
@@ -4269,6 +4275,9 @@ function appSection() {
         }
       })));
 }
+
+// Where a new window opens: the Radio page, or Home.
+const startPage = () => (store("start-page") === "home" ? "home" : "radio");
 
 // Settings › App: this version, Check for updates, and Update to the new one.
 function updateSettings() {
@@ -5995,14 +6004,15 @@ setInterval(reportStatus, 1000);
   }
   if (!S.lib.scanning) await restoreSession();
   if (showToken === 0) {  // the user hasn't opened something while it scanned
-    // A new window opens on Home; reloading stays where it was.
+    // A new window opens on the start page (Radio, unless Settings › App
+    // says Home); reloading stays where it was.
     let view = null;
     try { view = JSON.parse(sessionStorage.getItem("sp.view") || "null"); } catch { /* none */ }
     const known = view && view.type && !["search", "welcome"].includes(view.type)
       && (view.type !== "playlist" || S.lib.playlists.some((p) => p.id === view.id));
     // The very first time, with no music added yet: the welcome screen.
     const firstRun = !(S.lib.sources || []).length && !readJSON("view");
-    await show(known ? view : firstRun ? { type: "welcome" } : { type: "home" });
+    await show(known ? view : firstRun ? { type: "welcome" } : { type: startPage() });
   }
   // A file opened just now (which may be why this window opened) plays;
   // an old request doesn't replay when the player is reopened later.

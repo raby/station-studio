@@ -91,7 +91,7 @@ def page(browser, player):
     errors = []
     pg.on("pageerror", lambda e: errors.append(str(e)))
     pg.goto(player[1])
-    pg.wait_for_selector("#view .home")  # a new window opens on Home
+    pg.wait_for_function("() => S.view.type === 'radio'")  # a new window opens on the Radio page
     pg.locator("#nav-folders .nav-item").first.click()
     pg.wait_for_selector("#view tbody tr")
     yield pg
@@ -450,9 +450,16 @@ def test_home_and_discover(page, player):
     page.get_by_role("button", name="Open Discover").click()
     sync_api.expect(page.locator("#view h1")).to_have_text("Discover")
     sync_api.expect(page.locator("#globe")).to_be_visible()  # back on the globe after searching
-    # A reload stays put; a new window opens on Home.
+    # A reload stays put; a new window opens on the Radio page.
     page.reload()
     sync_api.expect(page.locator("#view h1")).to_have_text("Discover")
+    other = page.context.new_page()
+    other.goto(player[1])
+    other.wait_for_function("() => S.view.type === 'radio'")
+    other.close()
+    # Or on Home, if Settings › App says so.
+    open_settings(page, "app")
+    page.get_by_label("Open on").select_option("home")
     other = page.context.new_page()
     other.goto(player[1])
     sync_api.expect(other.locator("#view .home")).to_be_visible()
@@ -1621,7 +1628,7 @@ def test_desktop_icon_station_plays_before_the_library_is_read(browser, player):
         pg.goto(url)
         pg.wait_for_function("() => S.mode === 'radio' && S.station && S.station.name === 'Test FM'")
         app.state = original
-        pg.wait_for_selector("#view .home")
+        pg.wait_for_function("() => S.view.type === 'radio'")
         assert pg.evaluate("S.mode") == "radio"  # resuming the last session didn't replace it
     finally:
         ctx.close()

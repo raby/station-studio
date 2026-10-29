@@ -7,7 +7,7 @@ const HELP = [
     "Station Player plays your music, the playlists Station Studio makes and internet radio, all in one window.",
     ["Add music in the sidebar shows the music it found on your computer. Click ", ["Add"], " beside a folder, or choose one yourself with ", ["Add a music folder"], "."],
     "Each music folder appears under Folders in the sidebar as a playlist of its own. Station Studio's weekly playlists appear by themselves once Station Studio has exported them.",
-    "Station Player opens on Home: what's on now from Rebirth (it changes with the time of day), the stations you played lately, your stations, and your music. Click a tile to play it.",
+    "Station Player opens on the Radio page (Settings › App › Open on can make it Home instead). Home has what's on now from Rebirth (it changes with the time of day), the stations you played lately, your stations, and your music. Click a tile to play it.",
     "Close the window and open it again and the same track is ready, paused at the same point.",
     ["To open it like any other app, turn on the shortcut in ", ["Settings › App"], ". Turn on ", ["Start Station Player in the background when I log in"], " too and it opens instantly, and alarms work."],
     ["The Mac app works like Music: closing its window keeps the music playing, clicking Station Player in the Dock brings the window back, and ", ["Quit"], " (⌘Q) stops it. Right-click its Dock icon for ", ["Play / Pause"], " and ", ["Next"], "."],
