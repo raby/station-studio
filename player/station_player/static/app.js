@@ -403,6 +403,7 @@ async function show(view) {
   // Only the latest click may render: a slow response for an earlier
   // click must not replace the playlist the user has since opened.
   const token = ++showToken;
+  if (view.type === "discover" && S.view.type !== "discover" && !view.list) F.view = "globe";
   S.view = view;
   editingStation = null;
   renderErrors();
@@ -1518,21 +1519,26 @@ function picksSection() {
           el("h3", {}, p.title),
           p.text ? el("p", {}, p.text) : null,
           el("button", {
-            type: "button", class: "btn primary listen", "aria-label": `${p.button}: ${p.title}`,
-            onclick: () => playStation(mine || { name: p.name, url: p.station, preview: true }),
+            type: "button", class: "btn primary listen", "aria-label": `${p.button}: ${p.title}`, "data-label": p.button, "data-title": p.title,
+            onclick: () => {
+              if (stationLive(p.station)) audio.pause();
+              else playStation(mine || { name: p.name, url: p.station, preview: true });
+            },
           }, ...iconLabel("play", p.button))));
     })));
 }
 
-// A square button with a station's logo that plays it.
+// Whether the station at `url` is the one playing now (not paused).
+const stationLive = (url) => S.mode === "radio" && S.station && S.station.url === url && !audio.paused;
+
+// A square button with a station's logo that plays it, or pauses it
+// while it's playing.
 function stationTile(st) {
   return el("button", {
-    type: "button", class: "tile tile-live", "data-url": st.url, title: `Listen to ${st.name}`,
-    onclick: () => {
-      const live = S.mode === "radio" && S.station && S.station.url === st.url;
-      if (live && !audio.paused) audio.pause(); else playStation(st);
-    },
-  }, el("div", { class: "tile-art" }, stationArt(st, "glyph big")), el("span", { class: "tile-name" }, st.name));
+    type: "button", class: "tile tile-live", "data-url": st.url, "data-name": st.name, "aria-label": `Listen to ${st.name}`,
+    onclick: () => { if (stationLive(st.url)) audio.pause(); else playStation(st); },
+  }, el("div", { class: "tile-art" }, stationArt(st, "glyph big"), el("span", { class: "tile-play", "aria-hidden": "true" }, icon("play"))),
+  el("span", { class: "tile-name" }, st.name));
 }
 
 function homeView() {
@@ -1589,16 +1595,14 @@ async function openDiscover(kind) {
     G.kind = kind;
     store("globe-kind", kind);
     F.view = "globe";
-    store("finder-view", "globe");
   } else {
     F.view = "list";
-    store("finder-view", "list");
   }
   if (S.view.type === "discover") {
     const finder = $(".finder");
     if (finder) finder.replaceWith(finderSection());
   } else {
-    await show({ type: "discover" });
+    await show({ type: "discover", list: !kind });
   }
   if (kind) $("#globe")?.focus();
   else $("#finder-q")?.focus();
@@ -1838,7 +1842,9 @@ function syncTuner() {
 }
 
 // Static between stations: looped noise, band-limited like a radio's
-// speaker, louder the further the needle is from a station.
+// speaker, louder the further the needle is from a station, over the
+// low hum of an old valve set (mains hum's harmonics, which small
+// speakers can play) that's there all the way across.
 function staticHiss(level) {
   if (level > 0 && !TUNE.noise) {
     waveListen();
@@ -1858,13 +1864,28 @@ function staticHiss(level) {
     gain.gain.value = 0;
     src.connect(band).connect(gain).connect(ctx.destination);
     src.start();
-    TUNE.noise = { src, gain };
+    const humGain = ctx.createGain();
+    humGain.gain.value = 0;
+    humGain.connect(ctx.destination);
+    const hum = [[100, 0.6], [150, 0.3], [200, 0.15]].map(([hz, level]) => {
+      const osc = ctx.createOscillator();
+      osc.type = "triangle";
+      osc.frequency.value = hz;
+      const g = ctx.createGain();
+      g.gain.value = level;
+      osc.connect(g).connect(humGain);
+      osc.start();
+      return osc;
+    });
+    TUNE.noise = { src, gain, hum, humGain };
   }
   if (!TUNE.noise) return;
-  const { src, gain } = TUNE.noise;
-  gain.gain.setTargetAtTime(Math.min(1, level) * 0.25 * playVolume(), src.context.currentTime, 0.03);
+  const { src, gain, hum, humGain } = TUNE.noise;
+  const now = src.context.currentTime, vol = playVolume(), off = Math.min(1, level);
+  gain.gain.setTargetAtTime(off * 0.5 * vol, now, 0.03);
+  humGain.gain.setTargetAtTime(level > 0 ? (0.12 + 0.18 * off) * vol : 0, now, 0.03);
   if (level <= 0) {
-    src.stop(src.context.currentTime + 0.2);
+    for (const node of [src, ...hum]) node.stop(now + 0.2);
     TUNE.noise = null;
   }
 }
@@ -1920,8 +1941,22 @@ function syncRadioCards() {
     if (whatson) paintWhatsOn(whatson, live);
   }
   for (const tile of document.querySelectorAll("#view .tile-live[data-url]")) {
-    const live = S.mode === "radio" && S.station && S.station.url === tile.dataset.url;
-    tile.classList.toggle("live", Boolean(live && !audio.paused));
+    const live = Boolean(stationLive(tile.dataset.url));
+    tile.classList.toggle("live", live);
+    const badge = tile.querySelector(".tile-play");
+    if (badge && badge.dataset.live !== String(live)) {
+      badge.dataset.live = String(live);
+      badge.replaceChildren(icon(live ? "pause" : "play"));
+      tile.setAttribute("aria-label", `${live ? "Pause" : "Listen to"} ${tile.dataset.name}`);
+    }
+    const listen = tile.querySelector(".listen[data-label]");  // a pick's button
+    if (listen) {
+      const label = live ? "Pause" : listen.dataset.label;
+      if (listen.textContent !== label) {
+        listen.replaceChildren(...iconLabel(live ? "pause" : "play", label));
+        listen.setAttribute("aria-label", `${label}: ${listen.dataset.title}`);
+      }
+    }
   }
   for (const card of document.querySelectorAll("#view .find-card[data-find]")) {
     const live = S.mode === "radio" && S.station && S.station.url === card.dataset.find;
@@ -1939,7 +1974,8 @@ function syncRadioCards() {
 // Searches Radio Browser (radio-browser.info) through the player server.
 
 // `source`: "" for Radio Browser, "somafm" for SomaFM's own channel list.
-const F = { view: store("finder-view") === "globe" ? "globe" : "list",
+// Discover opens on the globe; List stays for the rest of that visit.
+const F = { view: "globe",
   q: "", draft: null, tag: "", country: homeCountry(), order: "votes", source: "", results: null, loading: false,
   error: "", token: 0, asked: false, next: null, more: false, typing: null };
 const FIND_COUNTRIES = ["GB", "IE", "US", "CA", "AU", "NZ", "DE", "FR", "NL", "BE", "ES", "PT", "IT", "CH", "AT", "SE",
@@ -2190,7 +2226,6 @@ function finderSection() {
 function finderView(view, focus = false) {
   if (F.view === view) return;
   F.view = view;
-  store("finder-view", view);
   const finder = $(".finder");
   if (!finder) return;
   for (const b of finder.querySelectorAll(".finder-views [data-view]")) b.setAttribute("aria-pressed", String(b.dataset.view === view));
@@ -2210,7 +2245,7 @@ function finderView(view, focus = false) {
 const G = { world: null, loading: null, stations: new Map(), countries: new Set(),
   kind: ["music", "news"].includes(store("globe-kind")) ? store("globe-kind") : "all", genre: store("globe-genre") || "",
   lon: 0, lat: 20, zoom: 1, spin: !matchMedia("(prefers-reduced-motion: reduce)").matches, picked: null, raf: 0, last: 0, pointers: new Map(), moved: 0,
-  pinch: 0, settle: 0, error: "", busy: 0, token: 0 };
+  pinch: 0, settle: 0, error: "", busy: 0, token: 0, hover: null };
 const GLOBE_MAX_ZOOM = 24;
 const GLOBE_NEAR = 2.5;  // zoomed in this far, it fetches the country in the middle too
 const RAD = Math.PI / 180;
@@ -2301,6 +2336,7 @@ function globeShow(kind, genre = G.genre) {
   G.stations.clear();
   G.countries.clear();
   G.picked = null;
+  G.hover = null;
   G.busy = 0;
   for (const b of document.querySelectorAll(".globe-kinds [data-kind]")) b.setAttribute("aria-pressed", String(b.dataset.kind === kind));
   const pick = $("#globe-genre");
@@ -2331,7 +2367,7 @@ function globeColours() {
   const css = getComputedStyle(document.documentElement);
   const v = (name) => css.getPropertyValue(name).trim();
   return { sea: v("--panel-2"), land: v("--panel-3"), edge: v("--border-strong"), dot: v("--accent"), live: v("--ok"),
-    text: v("--muted"), ring: v("--text") };
+    text: v("--muted"), ring: v("--text"), label: v("--panel") };
 }
 
 function globeDraw() {
@@ -2411,12 +2447,53 @@ function globeDraw() {
     g.arc(x, y, size + 4 * dpr, 0, Math.PI * 2);
     g.stroke();
   }
+  // What a dot is, before it plays: the one picked, and the one the mouse is over.
+  const named = new Set();
+  for (const st of [G.picked, G.hover]) {
+    if (!st || named.has(st.url) || !G.stations.has(st.url)) continue;
+    named.add(st.url);
+    const [x, y, f] = v.at(st.lon, st.lat);
+    if (f < 0) continue;
+    globeLabel(g, v, c, x, y - size - 8 * dpr,
+      st.name, st.countrycode ? countryName(st.countrycode) : "");
+  }
   g.restore();
   g.strokeStyle = c.edge;
   g.lineWidth = dpr;
   g.beginPath();
   g.arc(v.cx, v.cy, v.r, 0, Math.PI * 2);
   g.stroke();
+}
+
+// A station's name (and country) in a little box above its dot, kept on the canvas.
+function globeLabel(g, v, c, x, y, name, sub) {
+  const dpr = v.dpr, pad = 6 * dpr, line = 15 * dpr;
+  const title = name.length > 40 ? `${name.slice(0, 39)}…` : name;
+  g.font = `600 ${13 * dpr}px system-ui, sans-serif`;
+  const tw = g.measureText(title).width;
+  g.font = `${11 * dpr}px system-ui, sans-serif`;
+  const sw = sub ? g.measureText(sub).width : 0;
+  const bw = Math.max(tw, sw) + pad * 2, bh = line * (sub ? 2 : 1) + pad;
+  const bx = Math.max(2, Math.min(v.w - bw - 2, x - bw / 2));
+  const by = Math.max(2, y - bh);
+  g.fillStyle = c.label;
+  g.strokeStyle = c.edge;
+  g.lineWidth = dpr;
+  g.beginPath();
+  if (g.roundRect) g.roundRect(bx, by, bw, bh, 6 * dpr); else g.rect(bx, by, bw, bh);
+  g.fill();
+  g.stroke();
+  g.textAlign = "left";
+  g.textBaseline = "top";
+  g.fillStyle = c.ring;
+  g.font = `600 ${13 * dpr}px system-ui, sans-serif`;
+  g.fillText(title, bx + pad, by + pad / 2 + 1 * dpr);
+  if (sub) {
+    g.fillStyle = c.text;
+    g.font = `${11 * dpr}px system-ui, sans-serif`;
+    g.fillText(sub, bx + pad, by + pad / 2 + line + 1 * dpr);
+  }
+  g.textBaseline = "alphabetic";
 }
 
 // Turning by itself until it's touched; drawn again only when it moves.
@@ -2503,20 +2580,29 @@ function globeList() {
   const keep = document.activeElement && box.contains(document.activeElement)
     ? document.activeElement.closest(".find-card")?.dataset.find : null;
   box.replaceChildren(...shown.map(finderCard));
+  if (G.picked) box.firstChild?.classList.add("picked");
   if (keep) box.querySelector(`.find-card[data-find="${CSS.escape(keep)}"] .listen`)?.focus();
   syncRadioCards();
 }
 
-// Tapping a dot plays it.
+// Tapping a dot shows what it is, at the top of the list below; tapping
+// it again (or its Listen) plays it.
 function globePick(st) {
+  const again = G.picked?.url === st.url;
   G.picked = st;
-  const live = S.mode === "radio" && S.station && S.station.url === st.url && !audio.paused;
-  if (!live) {
+  const where = st.countrycode ? `, ${countryName(st.countrycode)}` : "";
+  if (!again) {
+    announce(`${st.name}${where}. Choose it again, or Listen, to play it.`);
+    globeDraw();
+    globeList();
+    return;
+  }
+  if (!stationLive(st.url)) {
     const mine = (S.lib.stations || []).find((x) => x.url === st.url);
     playStation(mine || { name: st.name, url: st.url, logo_url: st.logo, preview: true });
     if (st.uuid) api("/api/directory/clicked", { uuid: st.uuid }, { quiet: true }).catch(() => {});
   }
-  announce(`${st.name}${st.countrycode ? `, ${countryName(st.countrycode)}` : ""}`);
+  announce(`Playing ${st.name}${where}`);
   globeDraw();
   globeList();
 }
@@ -2538,7 +2624,7 @@ function globeHit(e) {
 function globeSection() {
   const cv = el("canvas", {
     id: "globe", class: "globe", tabindex: 0, role: "application", "aria-roledescription": "globe",
-    "aria-label": "World globe of stations. Drag to turn it, scroll or pinch to zoom, and tap a dot to listen. With the keyboard: arrow keys turn it, plus and minus zoom, Enter plays the station in the middle.",
+    "aria-label": "World globe of stations. Drag to turn it, scroll or pinch to zoom, tap a dot to see what it is, and tap it again to listen. With the keyboard: arrow keys turn it, plus and minus zoom, Enter picks the station in the middle, and Enter again plays it.",
     onpointerdown: (e) => {
       if (e.pointerType === "mouse" && e.button !== 0) return;
       cv.setPointerCapture(e.pointerId);
@@ -2550,7 +2636,9 @@ function globeSection() {
     onpointermove: (e) => {
       const was = G.pointers.get(e.pointerId);
       if (!was) {
-        cv.classList.toggle("over-dot", Boolean(globeHit(e)));
+        const over = e.pointerType === "mouse" ? globeHit(e) : null;
+        cv.classList.toggle("over-dot", Boolean(over));
+        if (over?.url !== G.hover?.url) { G.hover = over; globeDraw(); }
         return;
       }
       G.pointers.set(e.pointerId, [e.clientX, e.clientY]);
@@ -2576,6 +2664,7 @@ function globeSection() {
       if (st) globePick(st);
     },
     onpointercancel: (e) => { G.pointers.delete(e.pointerId); G.pinch = 0; },
+    onpointerleave: () => { if (G.hover) { G.hover = null; globeDraw(); } },
     onkeydown: (e) => {
       const step = 12 / G.zoom;
       const turn = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, step], ArrowDown: [0, -step] }[e.key];

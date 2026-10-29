@@ -449,6 +449,7 @@ def test_home_and_discover(page, player):
     page.locator(".nav-item[data-view=radio]").click()
     page.get_by_role("button", name="Open Discover").click()
     sync_api.expect(page.locator("#view h1")).to_have_text("Discover")
+    sync_api.expect(page.locator("#globe")).to_be_visible()  # back on the globe after searching
     # A reload stays put; a new window opens on Home.
     page.reload()
     sync_api.expect(page.locator("#view h1")).to_have_text("Discover")
@@ -456,6 +457,38 @@ def test_home_and_discover(page, player):
     other.goto(player[1])
     sync_api.expect(other.locator("#view .home")).to_be_visible()
     other.close()
+
+
+def test_home_tiles_and_picks_pause_while_playing(page, player, tone_station):
+    import json as _json
+    from station_player.picks import Picks
+
+    app = player[0]
+    app.store.config.stations = [{"name": "Tone FM", "url": f"{tone_station}?1"}]
+    feed = {"title": "From Rebirth", "picks": [{"title": "The mix", "button": "Play the mix", "station": f"{tone_station}?2"}]}
+    app.picks = Picks(player[2] / "picks", fetch=lambda url, limit: (_json.dumps(feed).encode(), ""))
+    app.picks.refresh()
+    page.evaluate("HOME.fetched = 0; loadState()")
+    page.locator(".nav-item[data-view=home]").click()
+    # A station's tile: Listen, then Pause.
+    tile = page.locator("#view .tile", has_text="Tone FM")
+    sync_api.expect(tile).to_have_attribute("aria-label", "Listen to Tone FM")
+    tile.click()
+    page.wait_for_function("() => S.mode === 'radio' && S.station.name === 'Tone FM' && !audio.paused", timeout=10000)
+    sync_api.expect(tile).to_have_attribute("aria-label", "Pause Tone FM")
+    sync_api.expect(tile).to_have_class(re.compile(r"\blive\b"))
+    tile.click()
+    page.wait_for_function("() => audio.paused")
+    sync_api.expect(tile).to_have_attribute("aria-label", "Listen to Tone FM")
+    # A pick's button turns to Pause while its station plays.
+    picks = page.locator("#home-picks")
+    picks.get_by_role("button", name="Play the mix: The mix").click()
+    page.wait_for_function("() => S.mode === 'radio' && S.station.url.endsWith('?2') && !audio.paused", timeout=10000)
+    pause = picks.get_by_role("button", name="Pause: The mix")
+    sync_api.expect(pause).to_have_text("Pause")
+    pause.click()
+    page.wait_for_function("() => audio.paused")
+    sync_api.expect(picks.get_by_role("button", name="Play the mix: The mix")).to_have_text("Play the mix")
 
 
 def test_seeking_back_near_the_end_doesnt_start_the_next_track_early(page):
@@ -1270,6 +1303,8 @@ def test_find_stations(page, player):
     net = FakeDirectoryNet()
     app.directory = Directory(fetch=net, servers=["api.example"], public=lambda host: True)
     page.locator(".nav-item[data-view=discover]").click()
+    sync_api.expect(page.locator("#globe")).to_be_visible()  # Discover opens on the globe
+    page.get_by_role("button", name="List", exact=True).click()
     # Opens on the most popular stations, with genres to browse.
     results = page.locator("#finder-results .find-card")
     sync_api.expect(results).to_have_count(2)
@@ -1318,6 +1353,7 @@ def test_find_stations(page, player):
 
 def test_find_stations_offline(page):
     page.locator(".nav-item[data-view=discover]").click()
+    page.get_by_role("button", name="List", exact=True).click()
     sync_api.expect(page.locator("#finder-results .errors")).to_contain_text("Couldn't reach the station directory")
     sync_api.expect(page.locator("#finder-tags .chip").first).to_have_text("SomaFM")
 
@@ -1344,6 +1380,7 @@ def test_logos_recently_played_and_more_results(page, player):
     net = ManyStationsNet()
     app.directory = Directory(fetch=net, servers=["api.example"], public=lambda host: True)
     page.locator(".nav-item[data-view=discover]").click()
+    page.get_by_role("button", name="List", exact=True).click()
     results = page.locator("#finder-results .find-card")
     sync_api.expect(results).to_have_count(40)
     sync_api.expect(page.locator("#recent")).to_be_hidden()  # nothing played yet
@@ -1823,8 +1860,8 @@ def test_globe(page, player):
     net = GlobeNet()
     app.directory = Directory(fetch=net, servers=["api.example"], public=lambda host: True)
     page.locator(".nav-item[data-view=discover]").click()
-    page.get_by_role("button", name="Globe", exact=True).click()
-    sync_api.expect(page.locator("#globe")).to_be_focused()
+    sync_api.expect(page.get_by_role("button", name="Globe", exact=True)).to_have_attribute("aria-pressed", "true")
+    page.locator("#globe").focus()
     sync_api.expect(page.locator("#finder-tags")).to_be_hidden()
     status = page.locator("#globe-status")
     sync_api.expect(status).to_have_text("3 stations on the globe")
@@ -1839,6 +1876,18 @@ def test_globe(page, player):
         const cv = $('#globe'), v = globeView(cv), [x, y] = v.at(-0.12, 51.5), dpr = window.devicePixelRatio || 1;
         return [x / dpr, y / dpr];
     }""")
+    # Hovering names a dot.
+    box = page.locator("#globe").bounding_box()
+    page.mouse.move(box["x"] + spot[0], box["y"] + spot[1])
+    page.wait_for_function("() => G.hover && G.hover.name === 'London FM'")
+    # Tap a dot: it shows what it is, first in the list, without playing.
+    page.locator("#globe").click(position={"x": spot[0], "y": spot[1]})
+    first = page.locator("#globe-list .find-card").first
+    sync_api.expect(first.locator(".name")).to_have_text("London FM")
+    sync_api.expect(first).to_have_class(re.compile(r"\bpicked\b"))
+    page.wait_for_timeout(300)
+    assert page.evaluate("S.mode !== 'radio' || !S.station || S.station.name !== 'London FM'")
+    # Tapped again, it plays.
     page.locator("#globe").click(position={"x": spot[0], "y": spot[1]})
     page.wait_for_function("() => S.mode === 'radio' && S.station.name === 'London FM'")
     sync_api.expect(page.locator("#globe-list .find-card").first.locator(".name")).to_have_text("London FM")
