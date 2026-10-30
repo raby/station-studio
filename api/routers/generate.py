@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from engine.models import Station, Playlist, PlaylistVersion
 from engine.persistence import (
-    finish_cursors, load_alias_map, plan_cursors,
+    finish_cursors, load_alias_map, plan_cursors, regeneration_seed,
     load_excluded_mix_ids, load_excluded_track_pids, load_pools,
     load_previous_playlist, max_mix_exclusion_window, rollback_playlist,
     RollbackError, save_playlist,
@@ -108,6 +108,12 @@ def generate_playlist(slug: str, payload: GenerateRequest, db: Session = Depends
     )
     named_cursor_positions = cursor_plan.positions
 
+    # rng='on' without a seed: regenerating reuses the week's own (same
+    # as /jobs/generate); a new week still needs one.
+    seed = payload.seed
+    if seed is None and template.rng == "on":
+        seed = regeneration_seed(db, station_id=station.id, week=payload.week)
+
     # §16.14.t5: resolve cross_pool_dedup_sources to a set of track
     # persistent_ids the weighted strategy must exclude. Empty set
     # when the rule isn't configured. The helper fails loud on a
@@ -125,7 +131,7 @@ def generate_playlist(slug: str, payload: GenerateRequest, db: Session = Depends
 
     try:
         result = generate(
-            template, pools, week=payload.week, seed=payload.seed,
+            template, pools, week=payload.week, seed=seed,
             excluded_mix_ids=excluded_mix_ids,
             alias_map=alias_map,
             previous_playlist=previous_playlist,

@@ -32,7 +32,7 @@ this project uses semantic versioning.
   week's page, the bar says which later weeks were made with the old
   rules and offers **Regenerate this week and the N after**. They're
   remade one at a time, in order, with progress; if one fails it
-  stops there and says which.
+  stops there and says which. When they're done, the page says so.
 
 ### Fixed
 
@@ -42,12 +42,15 @@ this project uses semantic versioning.
   them on again, so the week came out different and every later new
   week skipped ahead. Each generation now records the cursor positions
   it started from. Regenerating a week starts from those, and only the
-  latest week moves the live cursors. Weeks generated before this
-  version have no record: they still start from the live cursors, but
-  no longer move them. Previews of a past week use the same positions,
-  so they match.
+  latest week moves the live cursors. Previews of a past week use the
+  same positions, so they match. Weeks generated before this version
+  have no record, so a past one still starts from the live cursors (it
+  no longer moves them), and the latest one is moved on once more when
+  regenerated. From then on, every week is recorded.
 - Regenerating a week of an `rng: on` station without a seed reuses
-  the week's own seed. Before, the request failed.
+  the week's own seed (on both `/generate` and `/jobs/generate`); a week
+  made before the station was `rng: on` gets a fresh one. Before, the
+  request failed.
 
 ## [1.11.0] - 2026-10-30
 

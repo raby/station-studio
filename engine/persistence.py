@@ -5,6 +5,7 @@ between api/routers/generate.py and scripts/bootstrap_classics.py.
 """
 from __future__ import annotations
 
+import secrets
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -797,6 +798,29 @@ def load_cursor_positions(
     )
     persisted = {name: pos for (name, pos) in rows}
     return {name: persisted.get(name, init[name]) for name in init}
+
+
+def regeneration_seed(db: Session, *, station_id: int, week: int) -> int | None:
+    """The seed to regenerate an rng='on' week with when none is given.
+
+    The seed the week was generated with (its current version), so
+    unchanged rules give the same week and changed ones move only the
+    songs they touch. A week generated without one (the template was
+    rng='off' then) gets a fresh one: there's nothing to reproduce. A
+    week never generated gets None: a new week needs a seed chosen.
+    """
+    playlist = (
+        db.query(Playlist)
+        .filter(Playlist.station_id == station_id, Playlist.week == week)
+        .first()
+    )
+    if playlist is None:
+        return None
+    version = playlist.current_version()
+    for seed in (version.seed if version is not None else None, playlist.seed):
+        if seed is not None:
+            return seed
+    return secrets.randbelow(2**31)
 
 
 @dataclass(frozen=True)

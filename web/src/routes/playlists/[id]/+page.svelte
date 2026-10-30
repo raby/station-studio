@@ -202,6 +202,11 @@
   /** Which week is being remade, for the progress note. */
   let regenerateProgress: { week: number; done: number; of: number } | null = null;
 
+  /** Said once a run of regenerations finishes (the bar closes then, and
+   *  later weeks don't show here), until the page moves to another week. */
+  let regenerated: { text: string; at: string } | null = null;
+  $: if (regenerated && trace && regenerated.at !== `${trace.station}:${trace.week}`) regenerated = null;
+
   /** Remake these weeks with the saved rules, one at a time in order
    *  (each continues from the one before: last week's songs, cursors).
    *  The server starts each from the week's own seed and cursors, so
@@ -232,6 +237,12 @@
         }
       }
       await reloadWeek();
+      regenerated = {
+        text: weeks.length === 1
+          ? `Regenerated week ${weeks[0]} with the saved rules.`
+          : `Regenerated ${weekList(weeks)} with the saved rules.`,
+        at: `${slug}:${thisWeek}`,
+      };
     } catch (e) {
       regenerateError = errorText(e);
     } finally {
@@ -1172,6 +1183,9 @@
       Each song with the rule that put it there and why, in playing order.
       {#if editable}Click a song to change its rule.{/if}
     </p>
+    {#if regenerated}
+      <p class="hint" role="status" data-testid="song-regenerated">{regenerated.text}</p>
+    {/if}
     {#if !viewingCurrent}
       <p class="hint" data-testid="song-edit-older">
         This is an older version of the week. Switch to the current version to change rules.

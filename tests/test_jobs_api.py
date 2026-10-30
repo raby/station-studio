@@ -771,6 +771,34 @@ def test_regenerate_rng_on_without_a_seed_reuses_the_weeks_seed(jobs_api):
     assert "requires a seed" in snap["error"]["message"]
 
 
+def test_regenerate_rng_on_week_made_without_a_seed_gets_one(jobs_api):
+    """A week made while the station was rng='off' has no seed; after
+    switching to 'on', regenerating it without one picks a fresh one
+    rather than failing."""
+    client, Session, _store = jobs_api
+    _seed_station_with_pool(Session)
+    job_id = client.post("/api/stations/ts/jobs/generate", json={"week": 1}).json()["job_id"]
+    _wait_for_status(client, job_id, "done")
+    _rng_on_weighted(Session)
+
+    job_id = client.post("/api/stations/ts/jobs/generate", json={"week": 1}).json()["job_id"]
+    done = _wait_for_status(client, job_id, "done")["result"]
+    assert client.get(f"/api/playlists/{done['playlist_id']}/trace").json()["seed"] is not None
+
+
+def test_sync_regenerate_rng_on_without_a_seed_reuses_the_weeks_seed(jobs_api):
+    client, Session, _store = jobs_api
+    _seed_station_with_pool(Session)
+    _rng_on_weighted(Session)
+    first = client.post("/api/stations/ts/generate", json={"week": 1, "seed": 7})
+    assert first.status_code == 201, first.text
+    again = client.post("/api/stations/ts/generate", json={"week": 1})
+    assert again.status_code == 201, again.text
+    trace = client.get(f"/api/playlists/{again.json()['playlist_id']}/trace").json()
+    assert trace["seed"] == 7
+    assert client.post("/api/stations/ts/generate", json={"week": 2}).status_code == 400
+
+
 def test_preview_rng_on_week_never_generated_is_repeatable(jobs_api):
     client, Session, _store = jobs_api
     _seed_station_with_pool(Session)
