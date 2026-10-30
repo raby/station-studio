@@ -70,7 +70,9 @@ const {
   return {
     getPlaylistMock: vi.fn(),
     // Rejects by default: no Songs view, which is how most tests see the page.
-    getStationSidecarMock: vi.fn(() => Promise.reject(new Error('no sidecar'))),
+    getStationSidecarMock: vi.fn(
+      async (..._args: unknown[]): Promise<unknown> => { throw new Error('no sidecar'); },
+    ),
     getTraceMock: vi.fn(),
     getStationMock: vi.fn(),
     getStationPlaylistsMock: vi.fn(),
@@ -1510,7 +1512,9 @@ describe('trace viewer — Songs view', () => {
     getStationPlaylistsMock.mockResolvedValue([]);
     getVersionsMock.mockReset();
     getVersionsMock.mockResolvedValue({ playlist_id: 7, current_v: 1, versions: [] });
-    stationServerSettingsMock.mockResolvedValue(null);
+    stationServerSettingsMock.mockResolvedValue(
+      null as unknown as Awaited<ReturnType<typeof stationServerSettingsMock>>, // no Station Server link
+    );
     getStationSidecarMock.mockReset();
     getStationSidecarMock.mockRejectedValue(new Error('no sidecar'));
     setId('7');

@@ -32,23 +32,33 @@ export function ruleText(block: EngineBlock): string {
       text = block.size > 1 ? `${block.size} in a row from ${from}` : `Next from ${from}`;
       break;
     case 'sequential':
-      text = `Next in order from ${from}`;
+      text = block.size > 1 ? `Next ${block.size} in order from ${from}` : `Next in order from ${from}`;
       break;
     case 'weighted':
-      text = `Picked from ${from}, favouring songs not played lately`;
+      // Every song once before any repeats; no artist twice within the
+      // last `window` picks (10 unless the block says).
+      text = `Shuffled from ${from}, no artist twice in ${block.window ?? 10}`;
       break;
     case 'jingle':
       text = block.genre ? `Jingle from ${from}: ${block.genre}` : `Jingle from ${from}`;
       break;
     case 'mix':
       text = block.genre ? `Mix from ${from}: ${block.genre}` : `Mix from ${from}`;
+      if (block.exclusion_window) {
+        const w = block.exclusion_window;
+        text += `, not used in the last ${w} ${w === 1 ? 'week' : 'weeks'}`;
+      }
       break;
     case 'prev_ref':
       text =
         block.position !== undefined
           ? `Same as last week's song ${block.position}`
           : `Same as last week`;
-      if (block.fallback_genre) text += ` (else a ${block.fallback_genre} mix)`;
+      // A miss falls back to a mix of fallback_genre, or else a weighted
+      // pick from this block's source (engine/generator.py).
+      text += block.fallback_genre
+        ? ` (else a ${block.fallback_genre} mix)`
+        : ` (else shuffled from ${from})`;
       break;
     case 'archive_ref':
       text =
@@ -80,6 +90,10 @@ export interface SongRow {
   macroName: string | null;
   /** Compared with the saved week: a different song, a new one, or null. */
   change: 'changed' | 'added' | null;
+  /** The block's rule now differs from the one this song was picked with
+   *  (an older version of the week, or the template changed since). The
+   *  trace's own strategy and source are then the accurate account. */
+  ruleChanged: boolean;
 }
 
 export interface SongGroup {
@@ -127,6 +141,7 @@ export function songGroups(
       block,
       macroName,
       change: kind === 'changed' || kind === 'added' ? kind : null,
+      ruleChanged: block !== null && (block.strategy !== slot.strategy || block.source !== slot.source),
     };
     const last = groups[groups.length - 1];
     if (last && last.sectionId === sectionId) {

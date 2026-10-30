@@ -42,14 +42,18 @@ describe('ruleText', () => {
     [b({ strategy: 'window', size: 4 }), '4 in a row from NIGHT'],
     [b({ strategy: 'window', size: 1 }), 'Next from NIGHT'],
     [b({ strategy: 'sequential', cursor_id: 'n1' }), 'Next in order from NIGHT'],
-    [b({ strategy: 'weighted' }), 'Picked from NIGHT, favouring songs not played lately'],
+    [b({ strategy: 'sequential', cursor_id: 'n1', size: 4 }), 'Next 4 in order from NIGHT'],
+    [b({ strategy: 'weighted' }), 'Shuffled from NIGHT, no artist twice in 10'],
+    [b({ strategy: 'weighted', window: 25 }), 'Shuffled from NIGHT, no artist twice in 25'],
     [b({ strategy: 'jingle', source: 'JINGLES', genre: 'Daytime' }), 'Jingle from JINGLES: Daytime'],
     [b({ strategy: 'jingle', source: 'JINGLES' }), 'Jingle from JINGLES'],
     [b({ strategy: 'mix', genre: 'Disco' }), 'Mix from NIGHT: Disco'],
     [b({ strategy: 'mix' }), 'Mix from NIGHT'],
-    [b({ strategy: 'prev_ref', position: 3 }), "Same as last week's song 3"],
+    [b({ strategy: 'mix', genre: 'Disco', exclusion_window: 4 }), 'Mix from NIGHT: Disco, not used in the last 4 weeks'],
+    [b({ strategy: 'mix', genre: 'Disco', exclusion_window: 1 }), 'Mix from NIGHT: Disco, not used in the last 1 week'],
+    [b({ strategy: 'prev_ref', position: 3 }), "Same as last week's song 3 (else shuffled from NIGHT)"],
     [b({ strategy: 'prev_ref', position: 3, fallback_genre: 'Soul' }), "Same as last week's song 3 (else a Soul mix)"],
-    [b({ strategy: 'prev_ref' }), 'Same as last week'],
+    [b({ strategy: 'prev_ref' }), 'Same as last week (else shuffled from NIGHT)'],
     [b({ strategy: 'archive_ref', source: 'CHART', position: 7 }), 'Song 7 from the CHART archive'],
     [b({ strategy: 'archive_ref', source: 'CHART' }), 'From the CHART archive'],
     [b({ allowlist_sources: ['A', 'B'] }), 'Picked from NIGHT, only songs also in A or B'],
@@ -118,5 +122,14 @@ describe('songGroups', () => {
     expect(groups).toHaveLength(1);
     expect(groups[0]).toMatchObject({ sectionId: null, sectionName: 'Not in a section' });
     expect(groups[0].rows.every((r) => r.ref === null && r.block === null)).toBe(true);
+  });
+
+  it("notes a song whose block's rule has changed since it was picked", () => {
+    const { template, sidecar } = station('rebirth-radio');
+    const week = flatWeek(template, 3);
+    // An older week: slot 1 was picked by a sequential rule, now weighted.
+    week.slots[1] = { ...week.slots[1], strategy: 'sequential' };
+    const rows = songGroups(week, template, sidecar).flatMap((g) => g.rows);
+    expect(rows.map((r) => r.ruleChanged)).toEqual([false, true, false]);
   });
 });

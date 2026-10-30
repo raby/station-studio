@@ -90,4 +90,13 @@ describe('<SongList>', () => {
     expect(screen.getByTestId('song-rule')).toHaveTextContent('window from POP');
     expect(screen.getByTestId('song-section')).toHaveTextContent('Not in a section');
   });
+
+  it('shows the rule a song was actually picked with when the block has changed since', () => {
+    const older = slot(1, { strategy: 'jingle', source: 'JINGLES' }); // block 1 is a POP pick now
+    render(SongList, { props: { trace: week([slot(0), older]), template, sidecar } });
+    const rules = screen.getAllByTestId('song-rule');
+    expect(rules[1]).toHaveTextContent('jingle from JINGLES');
+    expect(rules[1]).toHaveTextContent('rule changed since');
+    expect(screen.getAllByTestId('song-rule-changed')).toHaveLength(1);
+  });
 });

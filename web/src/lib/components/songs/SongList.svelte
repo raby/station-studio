@@ -29,9 +29,11 @@
   const removed = $derived(removedCount(trace, saved));
 
   function rule(row: SongRow): string {
-    // No block found (a trace from before an edit, say): the trace's own
-    // strategy and source still say which rule it was.
-    return row.block ? ruleText(row.block) : `${row.slot.strategy} from ${row.slot.source}`;
+    // No block found, or the block's rule has changed since this song was
+    // picked: the trace's own strategy and source say what actually ran.
+    return row.block && !row.ruleChanged
+      ? ruleText(row.block)
+      : `${row.slot.strategy} from ${row.slot.source}`;
   }
 </script>
 
@@ -64,7 +66,8 @@
                 style:background={sourceColour(template, row.slot.source)}
                 aria-hidden="true"
               ></span>
-              {rule(row)}{#if row.macroName}<span class="macro">{' '}· {row.macroName}</span>{/if}
+              {rule(row)}{#if row.macroName}<span class="macro">{' '}· {row.macroName}</span>{/if}{#if row.ruleChanged}<span
+                  class="macro" data-testid="song-rule-changed">{' '}· rule changed since</span>{/if}
             </span>
             {#if row.change}
               <span class="change" data-testid="song-change">{row.change === 'added' ? 'new' : 'changed'}</span>
@@ -117,6 +120,12 @@
   }
   .songs li + li {
     border-top: 1px solid var(--border);
+  }
+  /* A week can be 2,000+ songs: skip laying out rows that are off
+     screen (they stay in the DOM, so find-in-page and focus still work). */
+  .songs li {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 4rem;
   }
   .song {
     display: grid;
