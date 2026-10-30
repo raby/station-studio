@@ -44,7 +44,19 @@ def test_hand_picked_sport_stations():
     assert got == [{"name": "talkSPORT", "lat": 51.5, "lon": -0.09, "find": "talkSPORT", "country": "GB"},
                    {"name": "Own", "station": "https://s/own"},
                    {"name": "Bad place", "find": "Bad place"}]
-    assert clean({"picks": []})["sport"] == []
+    assert clean({"picks": [], "sport": []})["sport"] == []
+    assert clean({"picks": []})["sport"] is None  # a list from before there was one
+
+
+def test_sport_falls_back_to_the_shipped_list(tmp_path):
+    shipped = tmp_path / "shipped.json"
+    shipped.write_text(json.dumps({"picks": [], "sport": [{"name": "talkSPORT", "lat": 51.5, "lon": -0.09}]}))
+    feeds = [{"picks": []}, {"picks": [], "sport": []}]  # the site's copy, before and after it had a sport list
+    p = Picks(tmp_path / "home", fetch=lambda url, limit: (json.dumps(feeds.pop(0)).encode(), ""), bundled=shipped)
+    p.refresh()
+    assert [s["name"] for s in p.sport()] == ["talkSPORT"]
+    p.refresh()
+    assert p.sport() == []  # emptied on purpose: none
 
 
 def test_the_shipped_picks_are_valid():

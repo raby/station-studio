@@ -118,7 +118,10 @@ def clean(data, base: str = FEED_URL) -> dict:
             if isinstance(p.get(key), str) and _DATE.fullmatch(p[key]):
                 pick[key] = p[key]
         picks.append(pick)
-    return {"title": _text(data.get("title"), 60), "picks": picks, "sport": clean_sport(data.get("sport"))}
+    # No "sport" at all (a list published before there was one): None, so
+    # the shipped list is used instead.
+    sport = clean_sport(data["sport"]) if "sport" in data else None
+    return {"title": _text(data.get("title"), 60), "picks": picks, "sport": sport}
 
 
 def _fetch(url: str, limit: int) -> tuple[bytes, str]:
@@ -139,6 +142,7 @@ class Picks:
         self._checked = 0.0
         self._busy = False
         self._data = self._read(self._cache) or self._read(bundled) or {"title": "", "picks": [], "sport": []}
+        self._shipped_sport = (self._read(bundled) or {}).get("sport") or []
 
     def _read(self, path: Path) -> dict | None:
         try:
@@ -188,13 +192,17 @@ class Picks:
         stream (so the player may relay it)."""
         with self._lock:
             return any(p["station"] == url for p in self._data["picks"]) \
-                or any(s.get("station") == url for s in self._data["sport"])
+                or any(s.get("station") == url for s in self._sport())
 
     def sport(self) -> list[dict]:
         """The hand-picked sport stations, as last fetched."""
         self.current()  # fetched again once an hour has gone
         with self._lock:
-            return [dict(s) for s in self._data["sport"]]
+            return [dict(s) for s in self._sport()]
+
+    def _sport(self) -> list[dict]:
+        sport = self._data["sport"]
+        return self._shipped_sport if sport is None else sport
 
     def image(self, pid: str) -> tuple[bytes, str] | None:
         with self._lock:
