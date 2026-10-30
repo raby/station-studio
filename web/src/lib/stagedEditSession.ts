@@ -50,11 +50,10 @@ export interface StagedEditState {
   /** The template and sidecar with the queue applied (the loaded ones
    *  when the queue is empty). */
   staged: { template: StationTemplate | null; sidecar: Sidecar | null };
-  /** Edits found from an earlier visit, waiting for acceptRecovered() or
-   *  discardRecovered(). `stale` means the station changed since they
-   *  were queued. Edits queued against the current version come back
-   *  without asking. */
-  recovered: { count: number; stale: boolean } | null;
+  /** Edits from an earlier visit, queued against an older version of the
+   *  station, waiting for acceptRecovered() or discardRecovered(). Edits
+   *  queued against the current version come back without asking. */
+  recovered: { count: number } | null;
 
   saving: boolean;
   saveError: string | null;
@@ -74,7 +73,8 @@ export interface StagedEditState {
 }
 
 export interface StagedEditSession extends Readable<StagedEditState> {
-  /** Load (or reload) the station, recover queued edits, preview. */
+  /** Load the station, recover queued edits, preview. Reloading (after a
+   *  conflict, say) keeps the queue and re-stamps it with the new version. */
   load(): Promise<void>;
   /** Queue an edit and refresh the edited preview. */
   stage(op: Edit): void;
@@ -181,7 +181,7 @@ export function createStagedEditSession(slug: string, opts: SessionOptions = {})
     }, debounceMs);
   }
 
-  async function previewOf(template: unknown, sidecar: unknown, gen: number): Promise<Trace | null | 'stale'> {
+  async function previewOf(template: unknown, sidecar: unknown, gen: number): Promise<Trace | 'stale'> {
     const out = await runPreview(slug, template, sidecar, s.week, {
       isCurrent: () => gen === generation,
       cancelIfStale: true,
@@ -250,14 +250,20 @@ export function createStagedEditSession(slug: string, opts: SessionOptions = {})
       return;
     }
     pendingRecovery = persisted.opLog.slice();
-    update({ recovered: { count: pendingRecovery.length, stale: true } });
+    update({ recovered: { count: pendingRecovery.length } });
   }
 
   async function load(): Promise<void> {
     update({ loading: true, loadError: null });
     try {
       await fetchStation();
-      recover();
+      if (s.opLog.length > 0) {
+        // A reload: the queue is this session's, not an earlier visit's.
+        // Keep it against the version just loaded.
+        persist();
+      } else {
+        recover();
+      }
       schedule(true);
     } catch (e) {
       update({ loadError: errorText(e) });
@@ -269,6 +275,9 @@ export function createStagedEditSession(slug: string, opts: SessionOptions = {})
   // ---- edits -----------------------------------------------------------
 
   function stage(op: Edit): void {
+    // Before the station has loaded there's no version to stamp the
+    // queue with, and persisting would clear what an earlier visit left.
+    if (s.template === null || s.sidecar === null) return;
     update({ saveError: null, conflict: false });
     setQueue([...s.opLog, op]);
     schedule(false);
@@ -283,10 +292,13 @@ export function createStagedEditSession(slug: string, opts: SessionOptions = {})
   async function save(): Promise<boolean> {
     if (s.opLog.length === 0 || s.saving) return false;
     update({ saving: true, saveError: null, conflict: false, failedAtIdx: 0 });
+    // What this save sends. Edits queued while it's on its way stay
+    // queued: they were made on top of these, which are now saved.
+    const sending = s.opLog;
     try {
       let result;
       try {
-        result = await applyBatch(slug, s.opLog, s.updatedAt);
+        result = await applyBatch(slug, sending, s.updatedAt);
       } catch (e) {
         if (e instanceof BlockPatchConflict) {
           update({ conflict: true });
@@ -297,7 +309,7 @@ export function createStagedEditSession(slug: string, opts: SessionOptions = {})
             failedAtIdx: at,
             saveError:
               at > 0
-                ? `Save failed at edit ${at} of ${s.opLog.length}: ${e.message}`
+                ? `Save failed at edit ${at} of ${sending.length}: ${e.message}`
                 : `Save failed: ${e.message}`,
           });
         } else {
@@ -328,7 +340,7 @@ export function createStagedEditSession(slug: string, opts: SessionOptions = {})
           // Keep the message above.
         }
       }
-      setQueue([]);
+      setQueue(s.opLog.slice(sending.length));
       schedule(true);
       return true;
     } finally {
@@ -349,6 +361,7 @@ export function createStagedEditSession(slug: string, opts: SessionOptions = {})
   }
 
   async function discard(): Promise<void> {
+    cancelRunning(); // a preview of the discarded edits mustn't land later
     setQueue([]);
     update({ saveError: null, conflict: false, failedAtIdx: 0, recovered: null });
     pendingRecovery = [];

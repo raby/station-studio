@@ -147,7 +147,7 @@ describe('createStagedEditSession', () => {
 
     const second = await ready();
     expect(get(second).opLog).toEqual([]);
-    expect(get(second).recovered).toEqual({ count: 1, stale: true });
+    expect(get(second).recovered).toEqual({ count: 1 });
     second.acceptRecovered();
     expect(get(second).opLog).toEqual([sizeEdit]);
     expect(JSON.parse(window.localStorage.getItem(stagedEditsKey('ts'))!).updatedAtSnapshot).toBe('ts-2');
@@ -265,6 +265,61 @@ describe('createStagedEditSession', () => {
     expect(cancelJobMock).toHaveBeenCalledWith('job-1');
     release();
     await vi.waitFor(() => expect(get(session).stagedTrace).toMatchObject({ size1: 7 }));
+    session.destroy();
+  });
+
+  // ---- review fixes ------------------------------------------------------
+
+  it('an edit queued while a save is on its way stays queued', async () => {
+    const session = await ready();
+    session.stage(sizeEdit);
+    let land: (v: unknown) => void = () => {};
+    applyBatchMock.mockImplementationOnce(() => new Promise((r) => { land = r; }));
+    const saving = session.save();
+    const later: Edit = { kind: 'patchBlock', address: { slot_index: 0 }, fields: { size: 3 } };
+    session.stage(later);
+    const saved = template();
+    saved.layout.flat_slots![1].size = 7;
+    land({ template: saved, sidecar: SIDECAR, updated_at: 'ts-2' });
+    expect(await saving).toBe(true);
+    expect(applyBatchMock).toHaveBeenCalledWith('ts', [sizeEdit], 'ts-1');
+    expect(get(session).opLog).toEqual([later]);
+    expect(JSON.parse(window.localStorage.getItem(stagedEditsKey('ts'))!)).toMatchObject({
+      opLog: [later], updatedAtSnapshot: 'ts-2',
+    });
+    session.destroy();
+  });
+
+  it('reloading keeps the queue and stamps it with the new version, without asking', async () => {
+    const session = await ready();
+    session.stage(sizeEdit);
+    getStationSidecarMock.mockImplementation(async () => loaded('ts-2'));
+    await session.load();
+    expect(get(session).opLog).toEqual([sizeEdit]);
+    expect(get(session).recovered).toBeNull();
+    expect(JSON.parse(window.localStorage.getItem(stagedEditsKey('ts'))!).updatedAtSnapshot).toBe('ts-2');
+    session.destroy();
+  });
+
+  it('an edit before the station has loaded is ignored and keeps what an earlier visit left', () => {
+    const left = { schemaVersion: STAGED_EDITS_SCHEMA_VERSION, opLog: [sizeEdit], updatedAtSnapshot: 'ts-1' };
+    window.localStorage.setItem(stagedEditsKey('ts'), JSON.stringify(left));
+    const session = createStagedEditSession('ts', { debounceMs: 0 });
+    session.stage({ kind: 'patchBlock', address: { slot_index: 0 }, fields: { size: 3 } });
+    expect(get(session).opLog).toEqual([]);
+    expect(JSON.parse(window.localStorage.getItem(stagedEditsKey('ts'))!)).toEqual(left);
+    session.destroy();
+  });
+
+  it('discard stops the preview of the discarded edits', async () => {
+    const session = await ready();
+    watchJobMock.mockImplementationOnce(async function* () {
+      await new Promise(() => {}); // never finishes
+    });
+    session.stage(sizeEdit);
+    await vi.waitFor(() => expect(startPreviewJobMock).toHaveBeenCalledTimes(2));
+    await session.discard();
+    expect(cancelJobMock).toHaveBeenCalledWith('job-2');
     session.destroy();
   });
 });
