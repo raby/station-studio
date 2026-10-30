@@ -221,6 +221,9 @@ test.describe('trace viewer', () => {
     await expect(page.getByTestId('song-edit-count')).toContainText('1 change');
     // A real preview of the edited rules replaces the list.
     await expect(page.getByTestId('song-rule').nth(1)).toContainText('Picked from A');
+    // The bar lists the change in plain words and says how many songs move.
+    await expect(page.getByTestId('song-edit-item')).toContainText('rule 2: Picked from A');
+    await expect(page.getByTestId('song-edit-moved')).toContainText('in week 1 change');
     await assertNoA11yViolations(page);
 
     await page.getByTestId('song-edit-save').click();

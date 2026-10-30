@@ -1723,6 +1723,69 @@ describe('trace viewer — changing a song\'s rule', () => {
     expect(startPreviewJobMock).not.toHaveBeenCalled();
   });
 
+  /** Pick the first song and change its rule window → pick. */
+  async function changeFirstRule(): Promise<void> {
+    await fireEvent.click((await screen.findAllByTestId('song-row'))[0]);
+    await screen.findByTestId('detail-panel');
+    await fireEvent.click(screen.getByTestId('retype-toggle'));
+    await fireEvent.change(screen.getByTestId('retype-strategy'), { target: { value: 'pick' } });
+    await fireEvent.click(screen.getByTestId('retype-apply'));
+    await screen.findByTestId('song-change');
+  }
+
+  it('moving to the next week keeps the changes and previews that week', async () => {
+    previewsSavedThenEdited();
+    render(Page);
+    await changeFirstRule();
+    const sidecarLoads = getStationSidecarMock.mock.calls.length;
+
+    getPlaylistMock.mockImplementation(async () => ({ ...stubPlaylist(), id: 8, week: 4 }));
+    getTraceMock.mockImplementation(async () => stubTrace({ week: 4 }));
+    await act(() => setId('8'));
+
+    await vi.waitFor(() => expect(startPreviewJobMock).toHaveBeenLastCalledWith(
+      'cls', expect.anything(), expect.anything(), 4,
+    ));
+    expect(screen.getByTestId('song-edit-count')).toHaveTextContent('1 change');
+    expect(screen.getByTestId('detail-panel')).toBeInTheDocument(); // the picked rule stays open
+    // The page loads the station for the new week; the session doesn't reload.
+    expect(getStationSidecarMock.mock.calls.length).toBe(sidecarLoads + 1);
+  });
+
+  it('lists each change in plain words with how many songs move, and undoes one', async () => {
+    previewsSavedThenEdited();
+    render(Page);
+    await changeFirstRule();
+    expect(screen.getByTestId('song-edit-item')).toHaveTextContent('The day, rule 1: Picked from A');
+    expect(await screen.findByTestId('song-edit-moved')).toHaveTextContent('1 of 3 songs in week 3 change.');
+
+    await fireEvent.click(screen.getByTestId('song-edit-undo'));
+    await vi.waitFor(() => expect(screen.queryByTestId('song-edit-bar')).toBeNull());
+    expect(screen.queryByTestId('song-change')).toBeNull();
+    expect(window.localStorage.getItem('stagedEdits:cls')).toBeNull();
+  });
+
+  it('switching to an older version shows that version, not the changes', async () => {
+    previewsSavedThenEdited();
+    getVersionsMock.mockResolvedValue({
+      playlist_id: 7, current_v: 2,
+      versions: [
+        { version_no: 1, trace_id: 'older', generated_at: 'a', seed: null, tags: [] },
+        { version_no: 2, trace_id: 'abc12345-trace-id', generated_at: 'b', seed: null, tags: [] },
+      ],
+    });
+    render(Page);
+    await changeFirstRule();
+
+    await act(() => setSearch('?v=1'));
+    expect(await screen.findByTestId('song-edit-older')).toBeInTheDocument();
+    await vi.waitFor(() => expect(screen.queryByTestId('song-change')).toBeNull());
+    expect(screen.getAllByTestId('song-row')[0]).toHaveTextContent('Track Mon-1');
+    expect(screen.queryByTestId('detail-panel')).toBeNull();
+    // The changes are still queued for the station.
+    expect(screen.getByTestId('song-edit-count')).toHaveTextContent('1 change');
+  });
+
   it('picking a song with nothing changed shows no edit bar', async () => {
     render(Page);
     await fireEvent.click((await screen.findAllByTestId('song-row'))[0]);

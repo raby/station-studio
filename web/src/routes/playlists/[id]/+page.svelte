@@ -32,7 +32,7 @@
   import SongList from '$lib/components/songs/SongList.svelte';
   import DetailPanel from '$lib/components/editor/DetailPanel.svelte';
   import { findSectionIdForRef, type ExpandedRef, type ParsedEditorSidecar } from '$lib/editor';
-  import { ruleKey, type SongRow } from '$lib/songList';
+  import { describeQueued, ruleKey, songsChanged, type SongRow } from '$lib/songList';
   import {
     createStagedEditSession,
     type StagedEditSession,
@@ -77,7 +77,8 @@
   /** The session's state, kept here by subscription. */
   let editState: StagedEditState | null = null;
   let unsubscribe: (() => void) | null = null;
-  let sessionFor = '';
+  /** The station the session is for. */
+  let sessionStation = '';
   /** The picked song's rule, kept by ref so it survives edits. */
   let selectedRef: ExpandedRef | null = null;
   let justSaved = false;
@@ -87,27 +88,29 @@
   $: viewingCurrent = requestedVersion == null || requestedVersion === currentV;
   $: editable = !!editorData && viewingCurrent;
 
-  function sessionFor_(t: Trace): string {
-    return `${t.station}:${t.week}`;
-  }
   function endSession(): void {
     unsubscribe?.();
     unsubscribe = null;
     session?.destroy();
     session = null;
     editState = null;
-    sessionFor = '';
+    sessionStation = '';
     selectedRef = null;
     justSaved = false;
   }
-  // A different station or week (prev/next, or a link) ends the session.
-  $: if (session && trace && sessionFor !== sessionFor_(trace)) endSession();
+  // Another station (a link) ends the session. Another week of the same
+  // station keeps it: the changes are for every week, so they carry over
+  // and are previewed on the new week, and the picked rule stays open.
+  $: if (session && trace) {
+    if (sessionStation !== trace.station) endSession();
+    else if (editState && editState.week !== trace.week) session.setWeek(trace.week);
+  }
   onDestroy(endSession);
 
   function startSession(t: Trace): void {
     session = createStagedEditSession(t.station, { week: t.week, previewOnlyWhenEdited: true });
     unsubscribe = session.subscribe((v) => (editState = v));
-    sessionFor = sessionFor_(t);
+    sessionStation = t.station;
     void session.load();
   }
 
@@ -152,8 +155,10 @@
   $: editing = editState && !editState.loading && editState.staged.template && editState.staged.sidecar
     ? editState
     : null;
+  // Not on an older version of the week: it shows what was picked then,
+  // and rules can only be changed from the current one.
   $: panelSelection = (() => {
-    if (!editing || !selectedRef) return null;
+    if (!editing || !selectedRef || !viewingCurrent) return null;
     const sidecar = editing.staged.sidecar!;
     const id = findSectionIdForRef(sidecar, selectedRef);
     const section = id ? sidecar.sections.find((x: { id: string }) => x.id === id) : undefined;
@@ -163,7 +168,16 @@
   // What the list shows: the week with the queued edits once that preview
   // is in, marked against the same week under the saved rules; otherwise
   // the week as generated.
-  $: showingEdits = !!editing && editing.opLog.length > 0 && editing.stagedTrace !== null;
+  // The queued changes in plain words, against the rules as saved.
+  $: queuedText = editState && editState.template && editState.sidecar && editState.opLog.length > 0
+    ? describeQueued(editState.opLog, editState.template, editState.sidecar)
+    : [];
+  function movedText(n: number, of: number): string {
+    if (n === 0) return `No songs in week ${trace?.week} change.`;
+    return `${n} of ${of} ${of === 1 ? 'song' : 'songs'} in week ${trace?.week} change.`;
+  }
+
+  $: showingEdits = viewingCurrent &&!!editing && editing.opLog.length > 0 && editing.stagedTrace !== null;
 
   /** Remake this week with the saved rules. rng='on' reuses the week's
    *  seed, so only songs the rule change touches should move. */
@@ -1132,8 +1146,18 @@
           <p data-testid="song-edit-count">
             <strong>{editState.opLog.length} {editState.opLog.length === 1 ? 'change' : 'changes'}</strong>
             to this station's rules, for every week, not just this one.
-            {#if editState.previewing}<span class="muted" data-testid="song-edit-previewing">Previewing week {trace.week}…</span>{/if}
+            {#if editState.previewing}<span class="muted" data-testid="song-edit-previewing">Previewing week {trace.week}…</span>
+            {:else if showingEdits && editing?.stagedTrace}<span class="muted" data-testid="song-edit-moved">{movedText(songsChanged(editing.stagedTrace, editing.savedTrace), editing.stagedTrace.slots.length)}</span>{/if}
           </p>
+          <ol class="queued" data-testid="song-edit-list">
+            {#each queuedText as text, i (i)}
+              <li data-testid="song-edit-item">
+                <span>{text}</span>
+                <button type="button" class="link" data-testid="song-edit-undo" disabled={editState.saving}
+                  on:click={() => session?.unstage(i)}>Undo</button>
+              </li>
+            {/each}
+          </ol>
           <div class="edit-actions">
             <button type="button" class="button" data-testid="song-edit-save" disabled={editState.saving} on:click={saveRules}>
               {editState.saving ? 'Saving…' : 'Save changes'}
@@ -1458,6 +1482,29 @@
   }
   .edit-bar .conflict {
     flex-basis: 100%;
+  }
+  /* Under the count and buttons; the bar is sticky, so a long queue
+     scrolls within it rather than covering the songs. */
+  .edit-bar .queued {
+    order: 1;
+    flex-basis: 100%;
+    max-height: 7.5rem;
+    overflow-y: auto;
+    margin: 0;
+    padding-left: 1.4rem;
+    font-size: 0.9em;
+  }
+  .edit-bar .queued li {
+    padding: 0.1rem 0;
+  }
+  .edit-bar .queued .link {
+    margin-left: 0.5rem;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--accent);
+    text-decoration: underline;
+    cursor: pointer;
   }
   .view-switch {
     display: inline-flex;

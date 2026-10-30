@@ -22,6 +22,16 @@ this project uses semantic versioning.
   **Regenerate this week** then remakes the week with the saved rules.
   Changes not yet saved are kept for the next visit. Older versions of
   a week are read-only.
+- The bar lists each unsaved change in plain words ("The day, rule 2:
+  Picked from A"), each with **Undo**, and says how many of the week's
+  songs it moves. Moving to another week keeps your changes and
+  previews them on that week.
+
+### Fixed
+
+- Changing a macro's settings (in the station editor or from a week)
+  now shows in the preview: the preview used to run with the macro's
+  songs unchanged until you saved.
 
 ## [1.10.1] - 2026-10-30
 
