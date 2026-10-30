@@ -4,6 +4,18 @@ All notable changes are listed here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses semantic versioning.
 
+## [1.14.1] - 2026-10-30
+
+### Fixed
+
+- **Buttons on a station's Rules page stay readable on hover.** Save
+  and Add went white on light grey (light mode) or dark on dark grey
+  (dark mode), contrast about 1.3:1: the app-wide hover style beat
+  theirs. The Station Server buttons only escaped by stylesheet order,
+  so they now set their own hover colour too. A new e2e check hovers
+  every accent button on every page, in light and dark, and fails
+  below 4.5:1 contrast.
+
 ## [1.14.0] - 2026-10-30
 
 ### Added

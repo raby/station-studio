@@ -321,6 +321,11 @@
     opacity: 0.5;
     cursor: not-allowed;
   }
+  /* Own hover colour: the app-wide button:hover (panel grey) would
+     otherwise win and leave white text on light grey. */
+  .save:hover:not(:disabled) {
+    background: var(--accent-strong);
+  }
   .reset {
     padding: 0.35rem 0.7rem;
     background: var(--panel);

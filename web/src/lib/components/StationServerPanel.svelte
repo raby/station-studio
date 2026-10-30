@@ -257,6 +257,13 @@
     font-weight: 650;
     margin-left: 8px;
   }
+  /* Own hover colour: the app-wide button:hover (panel grey) ties with
+     button.primary on specificity, so only stylesheet order kept this
+     from going white text on light grey. */
+  button.primary:hover:not(:disabled) {
+    background: var(--accent-strong);
+    border-color: var(--accent-strong);
+  }
   button.small {
     font-size: 13px;
     margin-top: 10px;
