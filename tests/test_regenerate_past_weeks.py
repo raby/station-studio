@@ -156,3 +156,35 @@ def test_stateless_templates_record_nothing(jobs_api):  # noqa: F811
     with Session() as db:
         assert db.query(PlaylistVersion.cursors).filter(PlaylistVersion.cursors.isnot(None)).count() == 0
         assert db.query(CursorState).count() == 0
+
+
+def test_rolling_back_a_week_keeps_where_its_cursors_started(four_weeks):
+    client, Session, station_id, before = four_weeks
+    _generate(client, "rb", 2, job=False)  # v2 of week 2
+    with Session() as db:
+        pid = db.query(Playlist.id).filter_by(station_id=station_id, week=2).scalar()
+    r = client.post(f"/api/playlists/{pid}/rollback", params={"to": 1})
+    assert r.status_code in (200, 201), r.text
+    with Session() as db:
+        newest = (
+            db.query(PlaylistVersion).filter_by(week=2)
+            .order_by(PlaylistVersion.version_no.desc()).first()
+        )
+    assert newest.version_no == 3 and newest.cursors == {"C1": 20}
+    # Regenerating it again still starts from there.
+    _generate(client, "rb", 2, job=False)
+    assert _tracks(Session, station_id, 2) == before[2]
+    assert _live(Session, station_id) == 80
+
+
+def test_deleting_the_latest_week_then_regenerating_the_one_before_rewinds_the_cursors(four_weeks):
+    """Week 4 deleted: week 3 is now the latest, so regenerating it puts
+    the live cursors back where a new week 4 should start."""
+    client, Session, station_id, before = four_weeks
+    with Session() as db:
+        pid = db.query(Playlist.id).filter_by(station_id=station_id, week=4).scalar()
+    assert client.delete(f"/api/playlists/{pid}").status_code == 204
+    _generate(client, "rb", 3, job=False)
+    assert _live(Session, station_id) == 60  # week 3 started at 40, +120 wraps to 60
+    _generate(client, "rb", 4, job=False)
+    assert _tracks(Session, station_id, 4) == before[4]

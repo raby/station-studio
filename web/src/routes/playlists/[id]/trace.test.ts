@@ -130,6 +130,7 @@ vi.mock('$app/navigation', () => ({
 }));
 
 import Page from './+page.svelte';
+import { JobStartConflict } from '$lib/api';
 
 // ---- fixtures -------------------------------------------------------------
 
@@ -1686,7 +1687,7 @@ describe('trace viewer — changing a song\'s rule', () => {
     const tracesBefore = getTraceMock.mock.calls.length;
     await fireEvent.click(screen.getByTestId('song-edit-regenerate'));
     await vi.waitFor(() => expect(getTraceMock.mock.calls.length).toBeGreaterThan(tracesBefore));
-    expect(startGenerateJobMock).toHaveBeenCalledWith('cls', 3, undefined); // rng off: no seed
+    expect(startGenerateJobMock).toHaveBeenCalledWith('cls', 3); // no seed: the server reuses the week's
     await vi.waitFor(() => expect(screen.queryByTestId('song-edit-bar')).toBeNull());
   });
 
@@ -1786,7 +1787,7 @@ describe('trace viewer — changing a song\'s rule', () => {
     await vi.waitFor(() => expect(getTraceMock.mock.calls.length).toBeGreaterThan(tracesBefore));
     expect(order).toEqual([3, 4, 5]);
     // No seed sent: the server reuses each week's own.
-    expect(startGenerateJobMock.mock.calls.map((c) => c[2])).toEqual([undefined, undefined, undefined]);
+    expect(startGenerateJobMock.mock.calls.map((c) => c.length)).toEqual([2, 2, 2]);
     await vi.waitFor(() => expect(screen.queryByTestId('song-edit-bar')).toBeNull());
     expect(await screen.findByTestId('song-regenerated')).toHaveTextContent('Regenerated weeks 3–5 with the saved rules.');
   });
@@ -1805,6 +1806,49 @@ describe('trace viewer — changing a song\'s rule', () => {
     })());
     await fireEvent.click(screen.getByTestId('song-edit-regenerate-later'));
     expect(await screen.findByTestId('song-edit-regenerate-error')).toHaveTextContent('week 4: pool A is empty');
+    expect(startGenerateJobMock.mock.calls.map((c) => c[1])).toEqual([3, 4]);
+  });
+
+  it("another generate already running for the station: waits for it, then does this week", async () => {
+    previewsSavedThenEdited();
+    getStationPlaylistsMock.mockResolvedValue([3].map((w) => weekSummary(w + 4, w)));
+    render(Page);
+    await changeAndSave();
+
+    let tries = 0;
+    startGenerateJobMock.mockImplementation(async (_s: unknown, week: unknown) => {
+      if (++tries === 1) throw new JobStartConflict('busy', 'other-job');
+      return { job_id: `gen-${week}`, status: 'running' };
+    });
+    const watched: string[] = [];
+    watchJobMock.mockImplementation((id: unknown) => (async function* () {
+      watched.push(id as string);
+      yield { status: 'done', result: { playlist_id: 99, trace_id: 'x', slot_count: 3 } };
+    })());
+    const tracesBefore = getTraceMock.mock.calls.length;
+    await fireEvent.click(screen.getByTestId('song-edit-regenerate'));
+    await vi.waitFor(() => expect(getTraceMock.mock.calls.length).toBeGreaterThan(tracesBefore));
+    // The other job was waited out, then this week's started and watched.
+    expect(watched).toEqual(['other-job', 'gen-3']);
+    expect(startGenerateJobMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('a later week that can\'t even start says which, and shows the weeks that did regenerate', async () => {
+    previewsSavedThenEdited();
+    getStationPlaylistsMock.mockResolvedValue([3, 4, 5].map((w) => weekSummary(w + 4, w)));
+    render(Page);
+    await changeAndSave();
+    startGenerateJobMock.mockImplementation(async (_s: unknown, week: unknown) => {
+      if (week === 4) throw new Error('pool A has no songs');
+      return { job_id: `gen-${week}`, status: 'running' };
+    });
+    watchJobMock.mockImplementation(() => (async function* () {
+      yield { status: 'done', result: { playlist_id: 7, trace_id: 'new', slot_count: 3 } };
+    })());
+    const tracesBefore = getTraceMock.mock.calls.length;
+    await fireEvent.click(screen.getByTestId('song-edit-regenerate-later'));
+    expect(await screen.findByTestId('song-edit-regenerate-error')).toHaveTextContent('week 4: pool A has no songs');
+    await vi.waitFor(() => expect(getTraceMock.mock.calls.length).toBeGreaterThan(tracesBefore));
     expect(startGenerateJobMock.mock.calls.map((c) => c[1])).toEqual([3, 4]);
   });
 
