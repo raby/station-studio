@@ -66,7 +66,8 @@ if MAC:
             "CFBundleDisplayName": NAME,
             "CFBundleShortVersionString": VERSION,
             "CFBundleVersion": VERSION,
-            "LSMinimumSystemVersion": "11.0",
+            # macOS 12: the bundled ffmpeg needs it (checked after each build).
+            "LSMinimumSystemVersion": "12.0",
             "NSHighResolutionCapable": True,
             # macOS 15+ asks before the app reaches other devices on the
             # network: the router (port forwarding) and the station's DNAS.

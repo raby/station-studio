@@ -100,7 +100,8 @@ jobs:
         include:
           - os: windows-latest
             label: Windows
-          - os: macos-14
+          # macOS 14 runners retire on 2 November 2026 (brownouts before).
+          - os: macos-15
             label: Mac
     defaults:
       run:

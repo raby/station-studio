@@ -18,6 +18,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
+from station_server.hostaddr import host_addresses
 
 logger = logging.getLogger(__name__)
 
@@ -71,10 +72,7 @@ def lan_addresses() -> list[str]:
         pass
     finally:
         probe.close()
-    try:
-        found += socket.gethostbyname_ex(socket.gethostname())[2]
-    except OSError:
-        pass
+    found += host_addresses()  # looked up in the background (see hostaddr)
     out = []
     for ip in found:
         if _private(ip) and ip not in out:
