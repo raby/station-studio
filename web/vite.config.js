@@ -9,6 +9,13 @@ const isTest = !!process.env.VITEST;
 
 export default defineConfig({
   plugins: [sveltekit()],
+  // The Mac app shows the UI in the system WebKit (macwindow.py) and
+  // supports macOS 11 (packaging/station-studio.spec), so the build
+  // must run on Safari 14. Vite 5's default target was this list;
+  // Vite 7's (baseline-widely-available) starts at Safari 16.
+  build: {
+    target: ['es2020', 'edge88', 'firefox78', 'chrome87', 'safari14'],
+  },
   server: {
     port: 5173,
     proxy: {
