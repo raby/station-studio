@@ -39,7 +39,8 @@ MAX_OFFSET = 5000  # how far "Show more" goes
 MAP_WORLD = 500  # stations on the whole globe
 MAP_COUNTRY = 300  # more, once it's zoomed into one country
 NEWS_TAGS = ("news", "talk")
-SPORT_TAGS = ("sport", "sports", "football", "soccer")  # Radio Browser has all four in use
+# Sport in the languages Radio Browser's stations are tagged in, not only English.
+SPORT_TAGS = ("sport", "sports", "football", "soccer", "deportes", "esportes", "cricket", "racing")
 SPOKEN = {"news", "talk", "sport", "sports", "information", "politics"}  # not music
 # Not SVG: it can carry script.
 LOGO_TYPES = ("image/png", "image/jpeg", "image/gif", "image/webp", "image/x-icon", "image/vnd.microsoft.icon")
@@ -248,6 +249,7 @@ class Directory:
         self._soma: tuple[float, list[dict]] | None = None  # (when, channels)
         self._streams: OrderedDict[str, None] = OrderedDict()  # stream addresses it handed out
         self._maps: OrderedDict[tuple, tuple[float, list[dict]]] = OrderedDict()  # globe dots, kept a while
+        self._named: OrderedDict[tuple, tuple[float, dict | None]] = OrderedDict()  # hand-picked stations found by name
 
     def _api(self, path: str, params: dict) -> list:
         query = urlencode({k: v for k, v in params.items() if v not in (None, "")})
@@ -343,19 +345,23 @@ class Directory:
         more = full and offset + limit <= MAX_OFFSET
         return {"stations": found, "next": offset + limit if more else None}
 
-    def map_stations(self, country: str = "", kind: str = "all", genre: str = "") -> list[dict]:
+    def map_stations(self, country: str = "", kind: str = "all", genre: str = "",
+                     extra: list[dict] | None = None) -> list[dict]:
         """Stations the directory knows the position of, for the globe: the
         best liked worldwide, or in one country. `kind` "news" is news and
         talk only, "sport" is sport only; "music" leaves those out, or is
         one genre's. Kept ten
-        minutes, since the globe asks again as it turns."""
+        minutes, since the globe asks again as it turns. `extra` (for
+        sport) is the hand-picked stations (picks.clean_sport), put first
+        wherever they're in view."""
         country = _text(country, 2).upper()
         if country and not country.isalpha():
             country = ""
         kind = kind if kind in ("news", "music", "sport") else "all"
         tags = (genre_tags(genre) if kind == "music" else list(NEWS_TAGS) if kind == "news"
                 else list(SPORT_TAGS) if kind == "sport" else [])
-        key = (country, kind, tuple(tags))
+        extra = extra if kind == "sport" and extra else []
+        key = (country, kind, tuple(tags), json.dumps(extra, sort_keys=True))
         with self._lock:
             got = self._maps.get(key)
             if got and time.monotonic() - got[0] < 600:
@@ -370,6 +376,9 @@ class Directory:
         if kind == "music" and not tags:
             raws = [r for r in raws if isinstance(r, dict) and not _spoken(r)]
         found, seen = [], set()
+        for st in self._hand_picked(extra, country):
+            seen.add(st["url"])
+            found.append(st)
         for st in sorted(filter(None, map(clean_station, raws)), key=lambda st: -st["votes"]):
             if "lat" not in st or st["url"] in seen:
                 continue
@@ -381,6 +390,50 @@ class Directory:
             while len(self._maps) > 40:
                 self._maps.popitem(last=False)
         return copy.deepcopy(found)
+
+    def _hand_picked(self, extra: list[dict], country: str) -> list[dict]:
+        """Hand-picked stations with a place on the globe: one with its own
+        link as given, one to find as the directory's best liked by that
+        name. Those that can't be found, or placed, are left out."""
+        found = []
+        for s in extra:
+            if country and s.get("country", country) != country:
+                continue
+            if s.get("station"):
+                st = {"uuid": "", "name": s["name"], "url": s["station"], "homepage": "", "logo": "", "tags": ["sport"],
+                      "country": "", "countrycode": s.get("country", ""), "codec": "", "bitrate": 0, "votes": 0,
+                      "hls": urlparse(s["station"]).path.endswith(".m3u8")}
+            else:
+                st = self._find_named(s["find"], s.get("country", ""))
+                if not st:
+                    continue
+            place = {"lat": s["lat"], "lon": s["lon"]} if "lat" in s else {k: st[k] for k in ("lat", "lon") if k in st}
+            if not place:
+                continue
+            found.append({**st, **place, "picked": True})
+        self._remember(found)
+        return found
+
+    def _find_named(self, name: str, country: str) -> dict | None:
+        """The best liked station by this name (in this country), kept an
+        hour, since the hand-picked list asks for the same ones again."""
+        key = (name.lower(), country)
+        with self._lock:
+            got = self._named.get(key)
+            if got and time.monotonic() - got[0] < 3600:
+                return copy.deepcopy(got[1])
+        try:
+            raws = self._api("/json/stations/search", {
+                "name": name, "countrycode": country, "order": "votes",
+                "reverse": "true", "hidebroken": "true", "limit": "5"})
+        except DirectoryError:
+            return None
+        st = next(filter(None, map(clean_station, raws)), None)
+        with self._lock:
+            self._named[key] = (time.monotonic(), st)
+            while len(self._named) > 100:
+                self._named.popitem(last=False)
+        return copy.deepcopy(st)
 
     def find_logo(self, stream_url: str) -> tuple[bytes, str] | None:
         """The logo Radio Browser has for a stream address, if any."""

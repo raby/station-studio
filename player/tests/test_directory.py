@@ -342,5 +342,30 @@ def test_map_music_leaves_out_talk_or_finds_a_genre():
     # Sport: its own tags, merged.
     d.map_stations(kind="sport")
     asked = net.asked[4:]
-    assert [u.split("tag=")[1].split("&")[0] for u in asked] == ["sport", "sports", "football", "soccer"]
+    assert [u.split("tag=")[1].split("&")[0] for u in asked] == [
+        "sport", "sports", "football", "soccer", "deportes", "esportes", "cricket", "racing"]
+
+
+def test_hand_picked_sport_stations_come_first():
+    def answer():
+        if "name=" in net.asked[-1]:
+            return api_answer([raw("talkSPORT", "https://s/talk", geo_lat=None, geo_long=None, votes=1)])
+        return api_answer([raw("Football FM", "https://s/fb", geo_lat=53.4, geo_long=-2.98, votes=99)])
+    net = FakeNet({"one": answer})
+    d = Directory(fetch=net, servers=["one"])
+    extra = [{"name": "talkSPORT", "find": "talkSPORT", "country": "GB", "lat": 51.5, "lon": -0.09},
+             {"name": "Own link", "station": "https://s/own.m3u8", "lat": 40.4, "lon": -3.7},
+             {"name": "Nowhere", "station": "https://s/none"},  # no place on the globe: left out
+             {"name": "Gone", "find": "Gone"}]  # found, but without a place: left out
+    found = d.map_stations(kind="sport", extra=extra)
+    assert [st["name"] for st in found] == ["talkSPORT", "Own link", "Football FM"]
+    assert found[0]["lat"] == 51.5 and found[0]["picked"] and found[1]["hls"]
+    assert d.listed("https://s/own.m3u8")  # may be previewed through the player
+    named = [u for u in net.asked if "name=" in u]
+    assert "name=talkSPORT" in named[0] and "countrycode=GB" in named[0]
+    # Kept an hour: asking for another country doesn't look them up again.
+    d.map_stations(country="gb", kind="sport", extra=extra)
+    assert len([u for u in net.asked if "name=" in u]) == len(named)
+    # Only sport takes them.
+    assert all(not st.get("picked") for st in d.map_stations(kind="music", extra=extra))
 

@@ -752,7 +752,7 @@ svg.analogue.huge { width: min(62vh, 78vw); height: auto; }
 /* The tuner: an old radio's dial with your stations along it. */
 .tuner { margin: 0 0 18px; }
 .tuner-dial {
-  position: relative; height: 150px; border-radius: var(--radius); cursor: ew-resize; touch-action: none;
+  position: relative; height: 116px; border-radius: var(--radius); cursor: ew-resize; touch-action: none;
   border: 1px solid var(--border); overflow: hidden; user-select: none;
   background:
     radial-gradient(120% 140% at 50% 120%, color-mix(in srgb, var(--accent) 22%, transparent), transparent 70%),
@@ -761,38 +761,37 @@ svg.analogue.huge { width: min(62vh, 78vw); height: auto; }
 }
 .tuner-dial:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .tuner-scale {
-  position: absolute; left: 4%; right: 4%; top: 96px; height: 14px;
+  position: absolute; left: 4%; right: 4%; top: 48px; height: 18px;
   background: repeating-linear-gradient(90deg, var(--faint) 0 1px, transparent 1px 1%) bottom / 100% 6px no-repeat;
   border-bottom: 1px solid var(--faint);
 }
 .tuner-mark {
-  position: absolute; top: 18px; transform: translateX(-50%); width: max-content; font-size: 13px; color: var(--muted);
+  position: absolute; top: -3px; transform: translateX(-50%); width: max-content; font-size: 13px; color: var(--muted);
   font-variant-numeric: tabular-nums; letter-spacing: .04em;
 }
-/* Stations sit on two rows above the scale, each with a line down to its spot. */
+/* Names take turns above and below the scale, each with a short line to its spot. */
 .tuner-names { position: absolute; inset: 0; pointer-events: none; }
-.tuner-line {
-  position: absolute; top: 76px; height: 34px; width: 1px; margin-left: -.5px; background: var(--faint);
-}
-.tuner-line.high { top: 42px; height: 68px; }
+.tuner-line { position: absolute; top: 36px; height: 12px; width: 1px; margin-left: -.5px; background: var(--faint); }
+.tuner-line.low { top: 66px; height: 14px; }
 .tuner-line.on { background: var(--accent); width: 2px; margin-left: -1px; }
 .tuner-name {
-  position: absolute; top: 46px; transform: translateX(-50%); pointer-events: auto; width: max-content;
-  display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 2px 8px 2px 3px;
-  border: 1px solid var(--border); border-radius: 15px; background: var(--panel); cursor: pointer;
+  position: absolute; top: 9px; transform: translateX(-50%); pointer-events: auto; width: max-content;
+  display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 2px 6px;
+  border: 0; border-radius: 6px; background: none; cursor: pointer;
   color: var(--muted); font: inherit; font-size: 15px; font-weight: 600;
 }
-.tuner-name.high { top: 12px; }
-.tuner-name .station-art, .tuner-name .station-art img, .tuner-name .glyph { width: 24px; height: 24px; border-radius: 50%; flex: none; }
+.tuner-name.low { top: auto; bottom: 9px; }
+.tuner-name .station-art, .tuner-name .station-art img, .tuner-name .glyph { width: 20px; height: 20px; border-radius: 5px; flex: none; }
 .tuner-name .station-art img { object-fit: cover; display: block; }
-.tuner-name .glyph svg { width: 14px; height: 14px; }
+.tuner-name .glyph { background: none; }
+.tuner-name .glyph svg { width: 15px; height: 15px; }
 .tuner-label { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.tuner-name:hover, .tuner-name.near { color: var(--text); border-color: var(--text); }
-.tuner-name.on { color: var(--accent); border-color: var(--accent); }
-/* Crowded: the logos alone, a little bigger, names on hover. */
+.tuner-name:hover, .tuner-name.near { color: var(--text); }
+.tuner-name.on { color: var(--accent); }
+/* Crowded: the logos alone, with the name of the one playing, near the needle or under the mouse. */
 .tuner-dial.logos-only .tuner-name:not(.on, .near, :hover) .tuner-label { display: none; }
 .tuner-dial.logos-only .tuner-name:not(.on, .near, :hover) { padding: 2px; }
-.tuner-dial.logos-only .tuner-name:is(.on, .near, :hover) { z-index: 1; max-width: none !important; }
+.tuner-dial.logos-only .tuner-name:is(.on, .near, :hover) { z-index: 1; max-width: none !important; background: var(--panel); }
 .tuner-needle {
   position: absolute; top: 6px; bottom: 6px; width: 3px; margin-left: -1.5px;
   border-radius: 2px; background: #ff5a36; box-shadow: 0 0 10px 2px rgba(255, 90, 54, .55);

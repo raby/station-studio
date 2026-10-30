@@ -231,7 +231,7 @@ def test_tuner_tunes_between_stations_and_the_wave_moves(page, player, tone_stat
     page.wait_for_function("() => S.station.name === 'One FM'")
     # Dragging the needle hisses between stations, and lets go on the nearest.
     box = tuner.bounding_box()
-    y = box["y"] + box["height"] * 0.8  # on the scale, below the stations
+    y = box["y"] + box["height"] * 0.5  # on the scale, between the names
     page.mouse.move(box["x"] + box["width"] * 0.2, y)
     page.mouse.down()
     page.mouse.move(box["x"] + box["width"] * 0.5, y, steps=5)
@@ -242,11 +242,13 @@ def test_tuner_tunes_between_stations_and_the_wave_moves(page, player, tone_stat
     # Paused, the wave lies flat.
     page.evaluate("pauseAll()")
     page.wait_for_function("() => waveSource() === null")
-    # Every station sits above the scale with its logo and a line down to its spot.
+    # Names take turns above and below the scale, each with its logo and a line to its spot.
     sync_api.expect(page.locator("#tuner .tuner-line")).to_have_count(3)
     sync_api.expect(page.locator("#tuner .tuner-name .glyph, #tuner .tuner-name .station-art")).to_have_count(3)
-    scale_top = page.locator(".tuner-scale").bounding_box()["y"]
-    assert all(b["y"] + b["height"] <= scale_top for b in (n.bounding_box() for n in page.locator(".tuner-name").all()))
+    scale = page.locator(".tuner-scale").bounding_box()
+    above, below, again = (n.bounding_box() for n in page.locator(".tuner-name").all())
+    assert above["y"] + above["height"] <= scale["y"] and below["y"] >= scale["y"] + scale["height"]
+    assert again["y"] + again["height"] <= scale["y"]
     sync_api.expect(tuner).not_to_have_class(re.compile("logos-only"))
     # Crowded, only the logos show, with the names to hover over.
     app.store.config.stations = [{"name": f"A long station name {i}", "url": f"{tone_station}?{i}"} for i in range(14)]
@@ -1869,13 +1871,15 @@ class GlobeNet(FakeDirectoryNet):
                     "favicon": "", "tags": tags, "countrycode": cc, "codec": "MP3", "bitrate": 128, "votes": votes,
                     "geo_lat": lat, "geo_long": lon}
         tag, cc = q.get("tag", [""])[0], q.get("countrycode", [""])[0]
-        if tag == "news":
+        if q.get("name"):  # the shipped hand-picked sport stations, looked up: none here
+            items = []
+        elif tag == "news":
             items = [st("World Service", 51.52, -0.14, "GB", 90, "news")]
         elif tag == "talk":
             items = [st("Talk Tokyo", 35.7, 139.7, "JP", 30, "talk")]
         elif tag == "football":
             items = [st("Football Live", 53.4, -2.98, "GB", 40, "football")]
-        elif tag in ("sport", "sports", "soccer"):
+        elif tag in ("sport", "sports", "soccer", "deportes", "esportes", "cricket", "racing"):
             items = []
         elif cc == "GB":
             items = [st("Manchester FM", 53.48, -2.24, "GB", 20), st("London FM", 51.5, -0.12, "GB", 80)]

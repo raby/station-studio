@@ -1763,14 +1763,14 @@ function tuner(stations) {
   };
   const scale = el("div", { class: "tuner-scale" },
     ...TUNER_MARKS.map((mhz, i) => place(el("span", { class: "tuner-mark" }, String(mhz)), (i / (TUNER_MARKS.length - 1)) * 100)));
-  // Every station sits above the scale with its logo, on one of two
-  // rows taken in turn, and a line down to its spot on the dial. When
-  // the names would touch (syncTunerFit), only the logos show.
+  // Names, each with its logo, take turns above and below the scale, so
+  // neighbours don't touch, with a short line to their spot on the dial.
+  // When names would still touch (syncTunerFit), only the logos show.
   const spot = (i) => ((i + 0.5) / n) * 100;
   const names = el("div", { class: "tuner-names" },
-    ...stations.map((st, i) => place(el("span", { class: i % 2 ? "tuner-line high" : "tuner-line", "data-url": st.url }), spot(i))),
+    ...stations.map((st, i) => place(el("span", { class: i % 2 ? "tuner-line low" : "tuner-line", "data-url": st.url }), spot(i))),
     ...stations.map((st, i) => place(el("button", {
-      type: "button", class: i % 2 ? "tuner-name high" : "tuner-name", tabindex: -1, "data-url": st.url, title: st.name, "aria-label": st.name,
+      type: "button", class: i % 2 ? "tuner-name low" : "tuner-name", tabindex: -1, "data-url": st.url, title: st.name, "aria-label": st.name,
       onclick: () => tuneTo(i),
     }, stationArt(st, "glyph"), el("span", { class: "tuner-label" }, st.name)), spot(i), Math.min(48, 200 / n))));
   const dial = el("div", {
@@ -1808,6 +1808,14 @@ function syncTunerFit() {
   const dial = $("#tuner");
   if (!dial) return;
   dial.classList.remove("logos-only");
+  // Names at the ends are moved in, so none hangs off the dial.
+  const box = dial.getBoundingClientRect();
+  for (const b of dial.querySelectorAll(".tuner-name")) {
+    b.style.marginLeft = "0px";
+    const r = b.getBoundingClientRect();
+    const shift = r.left < box.left + 4 ? box.left + 4 - r.left : r.right > box.right - 4 ? box.right - 4 - r.right : 0;
+    b.style.marginLeft = `${shift}px`;
+  }
   const rows = [[], []];
   dial.querySelectorAll(".tuner-name").forEach((b, i) => rows[i % 2].push(b.getBoundingClientRect()));
   const crowded = rows.some((row) => row.some((r, i) => i && r.left < row[i - 1].right + 4))

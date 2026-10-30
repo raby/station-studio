@@ -29,8 +29,22 @@ def test_clean_keeps_only_what_makes_sense():
                      "from": "06:00", "to": "10:00", "days": ["mon", "tue"], "starts": "2026-01-01"}
     # Only from and to together; pictures only from the picks' own site.
     assert second["id"] == "3" and "from" not in second and "image" not in second and second["button"] == "Listen"
-    assert clean([]) == {"title": "", "picks": []}
+    assert clean([]) == {"title": "", "picks": [], "sport": []}
     assert len(clean(feed(*[{"title": f"{i}", "station": "http://r/"} for i in range(50)]))["picks"]) == picks.MAX_PICKS
+
+
+def test_hand_picked_sport_stations():
+    got = clean({"picks": [], "sport": [
+        {"name": "talkSPORT", "country": "gb", "lat": 51.5, "lon": -0.09},
+        {"name": "Own", "station": "https://s/own", "find": "ignored"},
+        {"name": "  ", "station": "https://s/x"},  # no name
+        {"name": "Bad place", "lat": 120, "lon": 0, "country": "G1"},
+        "nonsense",
+    ]})["sport"]
+    assert got == [{"name": "talkSPORT", "lat": 51.5, "lon": -0.09, "find": "talkSPORT", "country": "GB"},
+                   {"name": "Own", "station": "https://s/own"},
+                   {"name": "Bad place", "find": "Bad place"}]
+    assert clean({"picks": []})["sport"] == []
 
 
 def test_the_shipped_picks_are_valid():

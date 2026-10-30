@@ -7,6 +7,9 @@ week; first and last dates), so the breakfast mix is offered in the
 morning. The player fetches the list at most once an hour and keeps the
 last good copy; until the first fetch it uses the copy it shipped with.
 Images come only from the same site as the list.
+
+The same file can list sport stations ("sport") that the globe's Sport
+switch always shows, picked by hand to add to what the directory has.
 """
 from __future__ import annotations
 
@@ -29,6 +32,7 @@ FEED_URL = "https://raby.github.io/station-studio/feed/picks.json"
 BUNDLED = Path(__file__).parent / "static" / "picks.json"
 REFRESH = 60 * 60
 MAX_PICKS = 20
+MAX_SPORT = 40
 MAX_FEED_BYTES = 200_000
 MAX_IMAGE_BYTES = 1_000_000
 _TIMEOUT = 15
@@ -45,11 +49,44 @@ def _url(value) -> str:
     return value.strip() if isinstance(value, str) and value.strip().startswith(("http://", "https://")) else ""
 
 
+def _place(s: dict) -> dict:
+    """{"lat", "lon"} when a sport entry says where it is, else {}."""
+    try:
+        lat, lon = float(s.get("lat")), float(s.get("lon"))
+    except (TypeError, ValueError):
+        return {}
+    return {"lat": round(lat, 4), "lon": round(lon, 4)} if -90 <= lat <= 90 and -180 <= lon <= 180 else {}
+
+
+def clean_sport(raw) -> list[dict]:
+    """The hand-picked sport stations: a name, and a stream link or the
+    name to look up in the station directory ("find", else the name), with
+    an optional country (two letters) and position."""
+    sport = []
+    for s in raw if isinstance(raw, list) else []:
+        if not isinstance(s, dict) or len(sport) >= MAX_SPORT:
+            continue
+        name = _text(s.get("name"), 80)
+        if not name:
+            continue
+        item = {"name": name, **_place(s)}
+        station = _url(s.get("station"))
+        if station:
+            item["station"] = station
+        else:
+            item["find"] = _text(s.get("find"), 80) or name
+        country = _text(s.get("country"), 2).upper()
+        if len(country) == 2 and country.isalpha():
+            item["country"] = country
+        sport.append(item)
+    return sport
+
+
 def clean(data, base: str = FEED_URL) -> dict:
     """The parts of a picks file the player uses, checked; anything odd
     is dropped rather than shown."""
     if not isinstance(data, dict):
-        return {"title": "", "picks": []}
+        return {"title": "", "picks": [], "sport": []}
     picks = []
     raw = data.get("picks")
     for i, p in enumerate(raw if isinstance(raw, list) else []):
@@ -81,7 +118,7 @@ def clean(data, base: str = FEED_URL) -> dict:
             if isinstance(p.get(key), str) and _DATE.fullmatch(p[key]):
                 pick[key] = p[key]
         picks.append(pick)
-    return {"title": _text(data.get("title"), 60), "picks": picks}
+    return {"title": _text(data.get("title"), 60), "picks": picks, "sport": clean_sport(data.get("sport"))}
 
 
 def _fetch(url: str, limit: int) -> tuple[bytes, str]:
@@ -101,7 +138,7 @@ class Picks:
         self._lock = threading.Lock()
         self._checked = 0.0
         self._busy = False
-        self._data = self._read(self._cache) or self._read(bundled) or {"title": "", "picks": []}
+        self._data = self._read(self._cache) or self._read(bundled) or {"title": "", "picks": [], "sport": []}
 
     def _read(self, path: Path) -> dict | None:
         try:
@@ -147,9 +184,17 @@ class Picks:
                 self._busy = False
 
     def lists(self, url: str) -> bool:
-        """Whether a pick plays this stream (so the player may relay it)."""
+        """Whether a pick, or a hand-picked sport station, plays this
+        stream (so the player may relay it)."""
         with self._lock:
-            return any(p["station"] == url for p in self._data["picks"])
+            return any(p["station"] == url for p in self._data["picks"]) \
+                or any(s.get("station") == url for s in self._data["sport"])
+
+    def sport(self) -> list[dict]:
+        """The hand-picked sport stations, as last fetched."""
+        self.current()  # fetched again once an hour has gone
+        with self._lock:
+            return [dict(s) for s in self._data["sport"]]
 
     def image(self, pid: str) -> tuple[bytes, str] | None:
         with self._lock:

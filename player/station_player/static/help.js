@@ -37,7 +37,7 @@ const HELP = [
     "Recently played lists the last few stations you listened to, so one you tried is easy to find again.",
   ], { label: "Go to Stations", view: { type: "radio" } }],
   ["tuner", "The tuner", [
-    "The dial at the top of the Stations page is an old radio's tuner, with your stations along the top, each with its logo and a line down to its spot on the dial. With lots of stations only the logos show; point at one to see its name. Click a station, or drag the needle along the dial and let go near a station; you'll hear static on the way.",
+    "The dial at the top of the Stations page is an old radio's tuner, with your stations along it, each with its logo and a short line to its spot on the dial. With lots of stations only the logos show; point at one to see its name. Click a station, or drag the needle along the dial and let go near a station; you'll hear static on the way.",
     "With the tuner selected, Left and Right tune to the station before or after. The line moving beside the song title at the bottom follows the sound.",
     "To choose which stations are on the dial, go to Settings › Radio and tick the ones you want.",
   ]],
