@@ -270,12 +270,8 @@ def test_ambient_mode(page):
         sync_api.expect(page.locator(f'#ambient .seg[data-scene="{key}"]')).to_have_attribute("aria-pressed", "true")
         page.wait_for_function("() => AMB.sound && AMB.ctx.state === 'running'")
         page.wait_for_timeout(300)  # a few frames drawn (a drawing error fails the test)
-        # The fish tank has no recording, so it makes its own sound;
-        # the others swap to theirs once it's loaded.
-        if key == "fish":
-            assert page.evaluate("AMB.sound.real") is False
-        else:
-            page.wait_for_function("() => AMB.sound.real", timeout=15000)
+        # Each scene swaps its made-up sound for its recording once loaded.
+        page.wait_for_function("() => AMB.sound.real", timeout=15000)
     assert page.evaluate("store('ambient-scene')") == "birds"
     # Its volume, and the sleep timer's fade, set the level.
     page.locator("#ambient input[type=range]").fill("0.2")
@@ -312,6 +308,8 @@ def test_ambient_plays_a_recording_when_there_is_one(page, tmp_path):
     # Round it goes: a second time through is lined up before the first ends.
     page.wait_for_function("() => AMB.sound.parts.length >= 1")
     # A scene without one keeps its made-up sound, and loses the credit.
+    page.route("**/ambient/fish.mp3", lambda r: r.fulfill(status=404))
+    page.evaluate("delete AMB.buffers.fish")
     page.locator('#ambient .seg[data-scene="fish"]').click()
     page.wait_for_function("() => AMB.sound && AMB.ctx.state === 'running'")
     page.wait_for_timeout(300)
