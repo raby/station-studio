@@ -16,11 +16,13 @@ this project uses semantic versioning.
 
 ### Changed
 
-- **The first change to a rule previews about twice as fast.** The week
-  under the saved rules, which a change is compared with, is now worked
-  out as soon as you open a song's rule, not after your first change.
-  A change made while it's still running waits for it instead of
-  starting over.
+- **The first change to a rule previews sooner.** The week under the
+  saved rules, which a change is compared with, is now worked out as
+  soon as you open a song's rule, not after your first change. If it's
+  done by the time you change something (usually: it takes a few
+  seconds on a 168-song week), your change needs one preview instead
+  of two. A change made while it's still running waits for it instead
+  of starting over.
 
 ## [1.12.0] - 2026-10-30
 
