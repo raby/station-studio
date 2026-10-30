@@ -1,5 +1,5 @@
 {
-  "about": "What Station Player's Home page suggests under the title below. Edit this file on GitHub (player/station_player/static/picks.json): players pick up the change within the hour. Each pick needs a title and a station (its stream link). Optional: text, button (the button's words), image (a picture in the picks folder beside this file, e.g. picks/breakfast.png), from and to (24-hour local time; a pick with from 22:00 and to 06:00 runs overnight), days (mon tue wed thu fri sat sun), starts and ends (dates, YYYY-MM-DD). A pick with no times shows all day.",
+  "about": "What Station Player's Home page suggests under the title below. Edit this file on GitHub (player/station_player/static/picks.json): players pick up the change within the hour. Each pick needs a title and a station (its stream link). Optional: text, button (the button's words), image (a picture in the picks folder beside this file, e.g. picks/breakfast.png), from and to (24-hour local time; a pick with from 22:00 and to 06:00 runs overnight), days (mon tue wed thu fri sat sun), starts and ends (dates, YYYY-MM-DD). A pick with no times shows all day. The sport list is the stations the globe's Sport switch always shows, as well as the ones the directory finds: each needs a name, and either a station (its stream link, with lat and lon for where it goes on the globe) or nothing else, so it's looked up by name in Radio Browser (find gives a different name to look up). country (two letters, like GB) keeps it to stations from there, and lat and lon place it.",
   "title": "From Rebirth",
   "picks": [
     {
@@ -39,6 +39,59 @@
       "station": "http://81.150.147.206:8000",
       "from": "18:00",
       "to": "06:00"
+    }
+  ],
+  "sport": [
+    {
+      "name": "talkSPORT",
+      "country": "GB",
+      "lat": 51.505,
+      "lon": -0.087
+    },
+    {
+      "name": "talkSPORT 2",
+      "country": "GB",
+      "lat": 51.505,
+      "lon": -0.087
+    },
+    {
+      "name": "BBC Radio 5 Live",
+      "country": "GB",
+      "lat": 53.472,
+      "lon": -2.297
+    },
+    {
+      "name": "BBC Radio 5 Sports Extra",
+      "find": "5 Sports Extra",
+      "country": "GB",
+      "lat": 53.472,
+      "lon": -2.297
+    },
+    {
+      "name": "ESPN Radio",
+      "country": "US",
+      "lat": 41.67,
+      "lon": -72.94
+    },
+    {
+      "name": "RMC",
+      "find": "RMC",
+      "country": "FR",
+      "lat": 48.86,
+      "lon": 2.35
+    },
+    {
+      "name": "Radio Marca",
+      "country": "ES",
+      "lat": 40.42,
+      "lon": -3.7
+    },
+    {
+      "name": "SEN",
+      "find": "SEN 1116",
+      "country": "AU",
+      "lat": -37.81,
+      "lon": 144.96
     }
   ]
 }
