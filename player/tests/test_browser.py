@@ -415,6 +415,11 @@ def test_choose_the_stations_on_the_tuner(page, player):
     sync_api.expect(dial).to_have_count(0)
     open_settings(page, "radio")
     page.get_by_label("Station 1").check()
+    sync_api.expect(page.get_by_label("Station 1")).to_be_focused()  # put back once it's saved
+    for _ in range(50):  # the save may still be on its way
+        if "tuner" not in app.store.config.stations[1]:
+            break
+        page.wait_for_timeout(100)
     assert "tuner" not in app.store.config.stations[1]
     # Saved settings keep it.
     from station_player.config import config_from_json
