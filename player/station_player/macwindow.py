@@ -40,7 +40,7 @@ AUTOSAVE = "Station Player window"  # where the window's place and size are kept
 FULL_MIN = (420, 480)
 # The mini player: the window shrunk to the player bar, floating on top.
 # Its first size; after that, wherever it was last left.
-MINI_SIZE = (520, 190)
+MINI_SIZE = (640, 250)
 MINI_MIN = (340, 200)  # with the title bar
 MINI_KEY = "Station Player mini player"
 

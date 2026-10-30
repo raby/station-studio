@@ -336,6 +336,9 @@ def test_mini_player_pops_out_and_back(page):
     page.wait_for_function("() => MINI.on && miniDoc && miniDoc.querySelector('.bar')")
     assert page.evaluate("document.querySelector('.bar')") is None
     page.wait_for_function("() => getComputedStyle(miniDoc.querySelector('.bar')).position === 'fixed'")
+    # It opens a good size, and the bar is scaled up to fill it.
+    assert page.evaluate("MINI.win.innerWidth") >= 600
+    assert float(page.evaluate("miniDoc.querySelector('.bar').style.zoom")) > 1
     # Its buttons still work, and what's playing shows there.
     page.evaluate("miniDoc.querySelector('#btn-play').click()")
     page.wait_for_function("() => !audio.paused")
@@ -344,6 +347,7 @@ def test_mini_player_pops_out_and_back(page):
     page.evaluate("miniDoc.querySelector('#btn-mini').click()")
     page.wait_for_function("() => !MINI.on && document.querySelector('.app > .bar')")
     sync_api.expect(btn).to_have_attribute("aria-label", "Pop out the player")
+    assert page.evaluate("$('.bar').style.zoom") == ""
     assert page.evaluate("!audio.paused")
     # Closing the little window puts it back too.
     btn.click()

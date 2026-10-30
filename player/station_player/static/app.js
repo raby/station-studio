@@ -6201,7 +6201,7 @@ async function popOutPlayer() {
   } else {
     let pip;
     try {
-      pip = await window.documentPictureInPicture.requestWindow({ width: 520, height: 200 });
+      pip = await window.documentPictureInPicture.requestWindow({ width: 640, height: 260 });
     } catch {
       toast("The player can't come out of this window", { error: true });
       return;
@@ -6220,10 +6220,12 @@ async function popOutPlayer() {
     });
     // Closing the little window puts the bar back.
     pip.addEventListener("pagehide", () => putBackPlayer());
+    pip.addEventListener("resize", fitMini);
     MINI.win = pip;
     miniDoc = doc;
     MINI.on = true;
   }
+  fitMini();
   syncMiniButton();
   announce("Mini player");
 }
@@ -6233,9 +6235,11 @@ function putBackPlayer({ fromApp = false } = {}) {
   MINI.on = false;
   if (NATIVE) {
     document.body.classList.remove("mini");
+    $(".bar").style.zoom = "";
     if (!fromApp) tellApp("full");
   } else {
     const bar = miniDoc && miniDoc.querySelector(".bar");
+    if (bar) bar.style.zoom = "";
     if (bar && MINI.spot) MINI.spot.replaceWith(bar);
     miniDoc = null;
     const pip = MINI.win;
@@ -6245,6 +6249,18 @@ function putBackPlayer({ fromApp = false } = {}) {
   syncMiniButton();
   refocus("#btn-mini");
 }
+
+// The bar grows with its window, so a big mini player has big buttons
+// (laid out for about 520 by 200, and up to three times that).
+const MINI_BASE = [520, 200];
+function fitMini() {
+  if (!MINI.on) return;
+  const view = MINI.win || window;
+  const bar = $(".bar");
+  const scale = Math.min(view.innerWidth / MINI_BASE[0], view.innerHeight / MINI_BASE[1]);
+  bar.style.zoom = String(Math.max(0.75, Math.min(3, scale)).toFixed(3));
+}
+window.addEventListener("resize", () => { if (NATIVE) fitMini(); });
 
 function syncMiniButton() {
   const btn = $("#btn-mini");
