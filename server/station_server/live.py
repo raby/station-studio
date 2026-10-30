@@ -521,10 +521,11 @@ def _linger(conn: socket.socket) -> None:
     """Let the other end read an answer given before it had finished
     talking: closing with its words still unread resets the connection,
     and on Windows the answer is lost with it."""
+    deadline = time.monotonic() + 1  # however slowly it trickles in
     try:
         conn.shutdown(socket.SHUT_WR)
         conn.settimeout(1)
-        while conn.recv(4096):
+        while time.monotonic() < deadline and conn.recv(4096):
             pass
     except OSError:
         pass

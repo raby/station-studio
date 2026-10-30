@@ -361,6 +361,7 @@ def test_mini_player_pops_out_and_back(page):
     page.evaluate("MINI.win.close()")
     page.wait_for_function("() => !MINI.on && document.querySelector('.app > .bar')")
     sync_api.expect(page.locator("#btn-play")).to_be_visible()
+    page.bring_to_front()  # the little window had the focus; later tests need it back here
 
 
 def test_mini_player_in_the_mac_app(browser, player):

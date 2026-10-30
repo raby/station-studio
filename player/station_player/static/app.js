@@ -3346,6 +3346,7 @@ function closeAmbient() {
   const box = $("#ambient");
   if (box.hidden) return;
   stopAmbientSound();
+  AMB.buffers = {};
   cancelAnimationFrame(AMB.raf);
   AMB.raf = 0;
   clearTimeout(AMB.hideTimer);
@@ -3497,6 +3498,7 @@ const AMBIENT_SOUNDS = {
       const s = ctx.currentTime;
       const heavy = 0.5 + 0.5 * Math.sin(s * 2 * Math.PI / 47);
       hiss.gain.setTargetAtTime(0.16 + heavy * 0.18, s, 1.5);
+      next = Math.max(next, s);  // after a stall (a hidden window), from now, not a pile at once
       while (next < s + 0.3) {
         if (Math.random() < 0.3) {
           const f = rand(1800, 3200);
@@ -3535,6 +3537,7 @@ const AMBIENT_SOUNDS = {
         b.f.frequency.setTargetAtTime(rand(350, 2400), s, 0.04);
         b.g.gain.setTargetAtTime(rand(0.05, 0.4), s, 0.05);
       }
+      next = Math.max(next, s);  // after a stall (a hidden window), from now, not a pile at once
       while (next < s + 0.3) {
         const f = rand(500, 1400);
         chirp(ctx, out, next, { from: f, to: f * rand(1.3, 2), length: rand(0.025, 0.07), level: rand(0.015, 0.05) });
@@ -3576,6 +3579,7 @@ const AMBIENT_SOUNDS = {
     return () => {
       const s = ctx.currentTime;
       for (const c of crickets) {
+        c.next = Math.max(c.next, s);
         while (c.next < s + 0.3) {
           if (c.next > c.rest) {
             for (let i = 0; i < 3; i++) {
@@ -3605,6 +3609,7 @@ const AMBIENT_SOUNDS = {
     return () => {
       const s = ctx.currentTime;
       roar.gain.setTargetAtTime(rand(0.35, 0.75), s, 0.12);
+      next = Math.max(next, s);  // after a stall (a hidden window), from now, not a pile at once
       while (next < s + 0.3) {
         const burst = Math.random() < 0.2 ? Math.floor(rand(3, 7)) : 1;
         for (let i = 0; i < burst; i++) {
@@ -3622,6 +3627,7 @@ const AMBIENT_SOUNDS = {
     parts.push(hum);
     let next = ctx.currentTime;
     return () => {
+      next = Math.max(next, ctx.currentTime);
       while (next < ctx.currentTime + 0.3) {
         const stream = Math.random() < 0.15;
         for (let i = 0; i < (stream ? 6 : 1); i++) {
@@ -3635,12 +3641,14 @@ const AMBIENT_SOUNDS = {
 };
 
 // The real recordings: ambient/sounds.json names a file for a scene, with
-// who recorded it and its licence. Each is fetched and decoded once.
+// who recorded it and its licence. Decoded, one is tens of megabytes, so
+// only the scene showing keeps its own.
 let ambientFiles = null;
 async function ambientRecording(ctx, key) {
   ambientFiles ??= fetch("/ambient/sounds.json").then((r) => (r.ok ? r.json() : {})).catch(() => ({}));
   const info = (await ambientFiles)[key];
   if (!info || !info.file) return null;
+  AMB.buffers = { [key]: AMB.buffers[key] };
   AMB.buffers[key] ??= fetch(`/ambient/${encodeURIComponent(info.file)}`)
     .then((r) => { if (!r.ok) throw new Error(r.statusText); return r.arrayBuffer(); })
     .then((b) => ctx.decodeAudioData(b));
@@ -3655,7 +3663,9 @@ function loopRecording(ctx, buffer, out, parts) {
   let at = ctx.currentTime + 0.05;
   let from = rand(0, buffer.duration / 2);
   return () => {
-    while (at < ctx.currentTime + 1) {
+    // A few seconds ahead, as a window out of sight ticks only now and then.
+    if (at < ctx.currentTime) at = ctx.currentTime;
+    while (at < ctx.currentTime + 4) {
       const src = ctx.createBufferSource();
       src.buffer = buffer;
       const env = ctx.createGain();
@@ -6189,23 +6199,27 @@ if ("mediaSession" in navigator) {
 // In Chrome and Edge it moves into a picture-in-picture window; in the Mac
 // app the window itself shrinks to the bar and floats (macwindow.py), and
 // grows back again.
-const MINI = { on: false, win: null, spot: null };
+const MINI = { on: false, win: null, spot: null, opening: false };
 const canMini = () => NATIVE || "documentPictureInPicture" in window;
 
 async function popOutPlayer() {
   if (MINI.on) return putBackPlayer();
+  if (MINI.opening) return;  // a second click while the window is coming
   if (NATIVE) {
     MINI.on = true;
     document.body.classList.add("mini");
     tellApp("mini");
   } else {
     let pip;
+    MINI.opening = true;
     try {
       // Small every time, not whatever size Chrome last had it at.
       pip = await window.documentPictureInPicture.requestWindow({ ...MINI_SIZE, preferInitialWindowPlacement: true });
     } catch {
       toast("The player can't come out of this window", { error: true });
       return;
+    } finally {
+      MINI.opening = false;
     }
     const bar = document.querySelector(".bar");
     const doc = pip.document;
