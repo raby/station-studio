@@ -43,6 +43,10 @@ _FORMATS = {"audio/mpeg": "mp3", "audio/mp3": "mp3", "audio/aac": "aac", "audio/
 _EXTENSIONS = {"mp3": ".mp3", "aac": ".aac", "ogg": ".ogg", "flac": ".flac"}
 _MAX_HEADER = 16384
 _HELLO_SECONDS = 10.0  # to send its request or password
+# Closing: how long, and how much, to read what an encoder sent after our
+# last word (see _close_gently).
+_CLOSE_SECONDS = 0.5
+_CLOSE_BYTES = 65536
 _MAX_CONNECTIONS = 32  # at once; more are turned away
 # A presenter whose audio stops arriving for this long is taken off air
 # (their connection has died without closing).
@@ -327,10 +331,7 @@ class LiveInput:
             logger.debug("live input: %s: %s", who, exc)
         finally:
             self._slots.release()
-            try:
-                conn.close()
-            except OSError:
-                pass
+            _close_gently(conn)
 
     def _right(self, given: str, who: str) -> str | None:
         """Who the password belongs to: a presenter's name, "" for the
@@ -514,6 +515,32 @@ def _read_headers(conn: socket.socket, data: bytes) -> tuple[bytes, bytes]:
         if not more:
             raise ValueError("closed before any audio")
         data += more
+
+
+def _close_gently(conn: socket.socket) -> None:
+    """Close so the encoder reads our reply before the connection ends.
+
+    Closing a socket with unread data in it resets the connection, and on
+    Windows a reset throws away a reply the encoder hasn't read yet: a
+    locked-out encoder got a dropped connection instead of "429 Too Many
+    Requests" (we answer that before reading its request). So: say we've
+    finished sending, read what's left (a little, briefly: an encoder may
+    still be sending audio), then close."""
+    try:
+        conn.shutdown(socket.SHUT_WR)
+        conn.settimeout(_CLOSE_SECONDS)
+        deadline, left = time.monotonic() + _CLOSE_SECONDS, _CLOSE_BYTES
+        while left > 0 and time.monotonic() < deadline:
+            more = conn.recv(min(left, 4096))
+            if not more:  # they closed too: a clean end
+                break
+            left -= len(more)
+    except OSError:
+        pass  # already gone, or a timeout: close anyway
+    try:
+        conn.close()
+    except OSError:
+        pass
 
 
 def _read_until(conn: socket.socket, end: bytes, data: bytes = b"") -> tuple[bytes, bytes]:
