@@ -117,9 +117,9 @@ def test_wrong_passwords_are_turned_away_then_locked_out(live):
 
 def test_a_locked_out_encoder_reads_the_429_before_the_connection_ends(live):
     # The 429 goes out before the request is read. Closing with the request
-    # still unread used to reset the connection, and Windows then drops the
-    # reply unread (WinError 10053): this test's sibling above failed about
-    # one CI run in three there. A clean close ends with b"" after the reply.
+    # still unread resets the connection, and Windows then drops the reply
+    # unread (WinError 10053): this test's sibling above failed about one CI
+    # run in three there until live._linger. A clean close ends with b"".
     for _ in range(5):
         s = socket.create_connection(("127.0.0.1", live.port + 1), timeout=5)
         s.sendall(b"guess\r\n")
