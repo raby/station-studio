@@ -322,4 +322,24 @@ describe('createStagedEditSession', () => {
     expect(cancelJobMock).toHaveBeenCalledWith('job-2');
     session.destroy();
   });
+
+  it('previewOnlyWhenEdited: no preview until an edit is queued, none after the queue empties', async () => {
+    const session = createStagedEditSession('ts', { debounceMs: 0, previewOnlyWhenEdited: true });
+    await session.load();
+    await new Promise((r) => setTimeout(r, 10));
+    expect(startPreviewJobMock).not.toHaveBeenCalled();
+    expect(get(session)).toMatchObject({ savedTrace: null, stagedTrace: null, previewing: false });
+
+    session.stage(sizeEdit);
+    await vi.waitFor(() => expect(get(session).stagedTrace).toMatchObject({ size1: 7 }));
+    expect(get(session).savedTrace).toMatchObject({ size1: 2 });
+
+    session.unstage(0);
+    expect(get(session).stagedTrace).toBeNull();
+    // The saved week's preview is still good: the next edit reuses it.
+    session.stage(sizeEdit);
+    await vi.waitFor(() => expect(get(session).stagedTrace).toMatchObject({ size1: 7 }));
+    expect(startPreviewJobMock).toHaveBeenCalledTimes(3);
+    session.destroy();
+  });
 });

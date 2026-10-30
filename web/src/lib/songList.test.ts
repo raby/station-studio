@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { Trace, TraceSlot } from './api';
 import type { EngineBlock, Sidecar, StationTemplate } from './editor';
-import { removedCount, ruleText, songGroups } from './songList';
+import { describeQueued, removedCount, ruleKey, ruleText, songGroups, songsChanged } from './songList';
 
 // The two real example stations: Rebirth Radio (flat slots, sections,
 // 200-song macros) and Rebirth Classics (a repeating row).
@@ -131,5 +131,53 @@ describe('songGroups', () => {
     week.slots[1] = { ...week.slots[1], strategy: 'sequential' };
     const rows = songGroups(week, template, sidecar).flatMap((g) => g.rows);
     expect(rows.map((r) => r.ruleChanged)).toEqual([false, true, false]);
+  });
+
+  it('songsChanged counts different, new and gone songs', () => {
+    const { template } = station('rebirth-radio');
+    const saved = flatWeek(template, 4);
+    const edited = trace([saved.slots[0], { ...saved.slots[1], track_id: 99 }, saved.slots[2]]);
+    expect(songsChanged(edited, saved)).toBe(2); // one different, one gone
+    expect(songsChanged(saved, saved)).toBe(0);
+    expect(songsChanged(edited, null)).toBe(0);
+  });
+
+  it('ruleKey: one rule per repeating-row block (every row), per flat slot, per macro', () => {
+    expect(ruleKey({ kind: 'atomic-ref', row_idx: 0, block_idx: 1 })).toBe(ruleKey({ kind: 'atomic-ref', row_idx: 4, block_idx: 1 }));
+    expect(ruleKey({ kind: 'atomic-ref', row_idx: 0, block_idx: 1 })).not.toBe(ruleKey({ kind: 'atomic-ref', row_idx: 0, block_idx: 0 }));
+    expect(ruleKey({ kind: 'atomic-ref', slot_index: 3 })).toBe('slot:3');
+    expect(ruleKey({ kind: 'macro-placeholder', macro_id: 'm', pick_in_macro: 1 })).toBe('macro:m');
+  });
+});
+
+describe('describeQueued', () => {
+  it('says which rule each change is to and what it does after it', () => {
+    const { template, sidecar } = station('rebirth-classics');
+    const section = sidecar.sections.find((s) => s.blocks.some((b) => b.kind === 'atomic' && b.block_idx === 1))!;
+    const at = section.blocks.findIndex((b) => b.kind === 'atomic' && b.block_idx === 1) + 1;
+    const lines = describeQueued([
+      { kind: 'retypeBlock', address: { block_idx: 1 }, newStrategy: 'pick', newSource: null, newFields: {} },
+      { kind: 'patchBlock', address: { block_idx: 1 }, fields: { allowlist_sources: ['X'] } },
+    ], template, sidecar);
+    const source = template.layout.row_template![1].source;
+    expect(lines).toEqual([
+      `${section.name}, rule ${at}: Picked from ${source}`,
+      // Each line is the rule after that change, on top of the ones before.
+      `${section.name}, rule ${at}: Picked from ${source}, only songs also in X`,
+    ]);
+  });
+
+  it("a macro by its name and section, with every song it makes", () => {
+    const { template, sidecar } = station('rebirth-radio');
+    const macro = sidecar.macros!.find((m) => m.id === 'weighted-1')!;
+    const [line] = describeQueued([{ kind: 'patchMacro', macroId: 'weighted-1', fields: { window: 3 } }], template, sidecar);
+    expect(line).toMatch(new RegExp(`^${macro.name} in .+: Shuffled from ${macro.spec.source}, no artist twice in 3$`));
+  });
+
+  it("other changes use the editor's wording", () => {
+    const { template, sidecar } = station('rebirth-radio');
+    const [line] = describeQueued(
+      [{ kind: 'renameSection', sectionId: sidecar.sections[0].id, name: 'Mornings' }], template, sidecar);
+    expect(line).toContain('Mornings');
   });
 });

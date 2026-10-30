@@ -97,12 +97,16 @@ export interface SessionOptions {
   week?: number;
   /** Wait this long after the last change before previewing. */
   debounceMs?: number;
+  /** Preview only while edits are queued (the week page, which already
+   *  shows the generated week). Otherwise a preview runs on load too. */
+  previewOnlyWhenEdited?: boolean;
 }
 
 const errorText = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
 export function createStagedEditSession(slug: string, opts: SessionOptions = {}): StagedEditSession {
   const debounceMs = opts.debounceMs ?? 500;
+  const onlyWhenEdited = opts.previewOnlyWhenEdited ?? false;
   let s: StagedEditState = {
     slug,
     loading: true,
@@ -174,6 +178,13 @@ export function createStagedEditSession(slug: string, opts: SessionOptions = {})
     if (destroyed) return;
     cancelRunning();
     if (savedChanged) update({ savedTrace: null });
+    if (onlyWhenEdited && s.opLog.length === 0) {
+      // Nothing to compare: the page shows the week as generated. The
+      // saved-week preview is kept for the next edit unless the saved
+      // station or the week changed (savedChanged cleared it above).
+      update({ stagedTrace: null, previewing: false, previewError: null });
+      return;
+    }
     const gen = generation;
     timer = setTimeout(() => {
       timer = null;

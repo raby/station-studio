@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
 import {
-  applyEdit, applyEdits, attributeOpsToSlot, describeOp, replayOpLog,
+  applyEdit, applyEdits, attributeOpsToSlot, describeOp, replayOpLog, resolveMacroAddresses,
   type BlockAddress, type Edit, type ReplayDeps,
 } from './edit-ops';
 import type { StationTemplate } from './editor';
@@ -1924,5 +1926,62 @@ describe('describeOp', () => {
       kind: 'structuralBlockEdit',
       edit: { op: 'remove', slot_index: 5 },
     })).toBe('Removed slot at position 5');
+  });
+});
+
+
+// ---- patchMacro fans out to the template (as the server does) ------------
+
+describe('resolveMacroAddresses — same as engine.editor_metadata.resolve_macro_addresses', () => {
+  // Python's answer for every macro in the three example stations that
+  // have macros: [first address, count] (each a contiguous run).
+  // Regenerate with resolve_macro_addresses if a station's sidecar changes.
+  const PYTHON: Record<string, Record<string, [number, number]>> = {"rebirth-radio":{"weighted-1":[1,200],"sequential-1":[217,95],"weighted-2":[313,201],"sequential-2":[530,96],"weighted-3":[627,200],"sequential-3":[843,97],"weighted-4":[941,200],"sequential-4":[1157,96],"weighted-5":[1254,200],"sequential-5":[1470,150],"sequential-6":[1620,120],"sequential-7":[1756,140],"sequential-8":[1896,160],"sequential-9":[2056,140]},"starter":{"weighted-1":[1,7],"weighted-2":[9,7],"weighted-3":[17,7],"weighted-4":[25,7],"weighted-5":[33,7],"weighted-6":[41,7],"weighted-7":[49,7],"weighted-8":[57,7],"weighted-9":[65,7],"weighted-10":[73,7],"weighted-11":[81,7],"weighted-12":[89,7],"weighted-13":[97,7],"weighted-14":[105,7],"weighted-15":[113,7],"weighted-16":[121,7],"weighted-17":[129,7],"weighted-18":[137,7],"weighted-19":[145,7],"weighted-20":[153,7],"weighted-21":[161,7]},"stateful-starter":{"sequential-1":[0,12],"sequential-2":[13,11],"sequential-3":[25,11],"sequential-4":[37,11],"sequential-5":[49,11],"sequential-6":[61,11],"sequential-7":[73,11],"sequential-8":[85,11],"sequential-9":[97,11],"sequential-10":[109,11],"sequential-11":[121,11],"sequential-12":[133,11],"sequential-13":[145,11],"sequential-14":[157,11],"sequential-15":[169,11],"sequential-16":[181,11],"sequential-17":[193,11],"sequential-18":[205,11],"sequential-19":[217,11],"sequential-20":[229,11],"sequential-21":[241,11],"sequential-22":[253,11],"sequential-23":[265,11],"sequential-24":[277,11],"sequential-25":[289,11],"sequential-26":[301,11],"sequential-27":[313,11],"sequential-28":[325,11]}};
+  const STATIONS = path.resolve(__dirname, '../../../stations');
+  for (const [slug, macros] of Object.entries(PYTHON)) {
+    it(slug, () => {
+      const sidecar = JSON.parse(fs.readFileSync(path.join(STATIONS, `${slug}.editor.json`), 'utf-8'));
+      for (const [id, [first, count]] of Object.entries(macros)) {
+        expect(resolveMacroAddresses(sidecar, id), id).toEqual(
+          Array.from({ length: count }, (_, i) => ({ slot_index: first + i })),
+        );
+      }
+    });
+  }
+
+  it('repeating rows: block_idx addresses, de-duplicated across sections', () => {
+    const sidecar = {
+      schema_version: 1, layout_order: ['a', 'b'],
+      macros: [{ id: 'm', repeat: 2, spec: { source: 'A', strategy: 'pick', size: 1 } }],
+      sections: [
+        { id: 'a', blocks: [{ kind: 'atomic', row_idx: 0, block_idx: 0 }, { kind: 'macro', ref: 'm' }] },
+        { id: 'b', blocks: [{ kind: 'atomic', row_idx: 1, block_idx: 0 }, { kind: 'macro', ref: 'm' }] },
+      ],
+    };
+    expect(resolveMacroAddresses(sidecar, 'm')).toEqual([{ block_idx: 1 }, { block_idx: 2 }]);
+  });
+
+  it('drift (a section whose blocks do not line up) resolves to nothing', () => {
+    const sidecar = {
+      schema_version: 1, layout_order: ['a'],
+      macros: [{ id: 'm', repeat: 2, spec: { source: 'A', strategy: 'pick', size: 1 } }],
+      sections: [{ id: 'a', blocks: [
+        { kind: 'atomic', slot_index: 0 }, { kind: 'macro', ref: 'm' }, { kind: 'atomic', slot_index: 9 },
+      ] }],
+    };
+    expect(resolveMacroAddresses(sidecar, 'm')).toEqual([]);
+    expect(resolveMacroAddresses(null, 'm')).toEqual([]);
+  });
+
+  it("applyEdit patchMacro changes the macro's template blocks and its spec", () => {
+    const template = makeFlatTemplate(); // slots 0-2
+    const sidecar = {
+      schema_version: 1, layout_order: ['a'],
+      macros: [{ id: 'm', repeat: 2, spec: { source: 'A', strategy: 'pick', size: 1 } }],
+      sections: [{ id: 'a', blocks: [{ kind: 'atomic', slot_index: 0 }, { kind: 'macro', ref: 'm' }] }],
+    };
+    const out = applyEdit(template, sidecar, { kind: 'patchMacro', macroId: 'm', fields: { size: 9 } });
+    expect(out.template.layout.flat_slots!.map((b) => b.size)).toEqual([1, 9, 9]);
+    expect((out.sidecar as typeof sidecar).macros[0].spec.size).toBe(9);
   });
 });

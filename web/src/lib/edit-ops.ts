@@ -238,8 +238,15 @@ export function applyEdit(
         sidecar,
       };
     case 'patchMacro':
+      // Like the server's PATCH /macros (and the batch save): the fields
+      // go into every template block the macro expands to, as well as
+      // the macro's spec. The engine reads the template, so without the
+      // fan-out a previewed macro edit changed nothing.
       return {
-        template,
+        template: resolveMacroAddresses(sidecar, op.macroId).reduce(
+          (t, address) => _patchBlock(t, address, op.fields),
+          template,
+        ),
         sidecar: _patchMacro(sidecar, op.macroId, op.fields),
       };
     case 'renameSection':
@@ -307,6 +314,61 @@ export function applyEdits(
   return { template, sidecar };
 }
 
+
+/**
+ * The template addresses a macro expands to: a port of
+ * `engine.editor_metadata.resolve_macro_addresses`. Each section is
+ * anchored by its first single block (its slot_index / block_idx minus
+ * the width of what comes before it); walking on from there, every
+ * reference to the macro covers `repeat` consecutive addresses. Repeating
+ * rows share block_idx, so addresses are de-duplicated. Sections with no
+ * single block can't be placed and are skipped; a section whose blocks
+ * don't line up (the server raises MacroResolutionError) gives nothing,
+ * so the preview shows no change rather than a wrong one.
+ */
+export function resolveMacroAddresses(sidecar: unknown, macroId: string): BlockAddress[] {
+  if (!_isSidecarLike(sidecar)) return [];
+  const sc = sidecar as {
+    sections?: { blocks?: Record<string, unknown>[] }[];
+    macros?: { id?: unknown; repeat?: unknown }[];
+  };
+  const repeatOf = new Map<unknown, number>();
+  for (const m of sc.macros ?? []) {
+    repeatOf.set(m?.id, typeof m?.repeat === 'number' ? m.repeat : 1);
+  }
+  const width = (b: Record<string, unknown>): number =>
+    b.kind === 'atomic' ? 1 : (repeatOf.get(b.ref) ?? 1);
+
+  const out: BlockAddress[] = [];
+  const seen = new Set<string>();
+  for (const section of sc.sections ?? []) {
+    const blocks = section?.blocks ?? [];
+    const anchorIdx = blocks.findIndex((b) => b?.kind === 'atomic');
+    if (anchorIdx === -1) continue; // all-macro section: can't be placed
+    const anchor = blocks[anchorIdx];
+    const flat = typeof anchor.slot_index === 'number';
+    const anchorPos = (flat ? anchor.slot_index : anchor.block_idx) as number;
+    if (typeof anchorPos !== 'number') continue;
+    let pos = anchorPos - blocks.slice(0, anchorIdx).reduce((n, b) => n + width(b), 0);
+    if (pos < 0) return []; // leading macros wider than the anchor: drift
+    for (const b of blocks) {
+      if (b.kind === 'atomic' && (flat ? b.slot_index : b.block_idx) !== pos) {
+        return []; // non-contiguous section: drift
+      }
+      const w = width(b);
+      if (b.kind === 'macro' && b.ref === macroId) {
+        for (let i = 0; i < w; i++) {
+          const key = `${flat ? 's' : 'b'}${pos + i}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          out.push(flat ? { slot_index: pos + i } : { block_idx: pos + i });
+        }
+      }
+      pos += w;
+    }
+  }
+  return out;
+}
 
 function _patchBlock(
   template: StationTemplate,

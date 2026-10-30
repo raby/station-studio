@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { createStation, importTinyPool, generate, API } from './fixtures';
+import { createStation, importTinyPool, generate, minimalTemplate, API } from './fixtures';
 import { assertNoA11yViolations } from './a11y';
 
 test.describe('trace viewer', () => {
@@ -188,5 +188,53 @@ test.describe('trace viewer', () => {
     // Remembered on the next visit.
     await page.reload();
     await expect(page.getByTestId('song-list')).toBeVisible();
+  });
+
+  test('Songs view: change a song\'s rule, preview, save, regenerate the week', async ({
+    page,
+    request,
+  }) => {
+    await importTinyPool(request, 'A');
+    const t = minimalTemplate('trv-edit');
+    t.layout.unit_labels = ['Mon', 'Tue'];
+    t.layout.row_start_offsets = [0, 0];
+    t.layout.row_template = [
+      { source: 'A', strategy: 'pick', size: 1 },
+      { source: 'A', strategy: 'window', size: 2 },
+    ] as typeof t.layout.row_template;
+    await createStation(request, 'trv-edit', 'Trace View Edit', 'A', t);
+    const { playlist_id } = await generate(request, 'trv-edit', 1);
+    await page.goto(`/playlists/${playlist_id}`);
+    await page.getByTestId('week-view-songs').click();
+
+    // Song 2 comes from the window rule (block 2 of each row).
+    const rows = page.getByTestId('song-row');
+    await expect(page.getByTestId('song-rule').nth(1)).toContainText('2 in a row from A');
+    await rows.nth(1).click();
+    await expect(page.getByTestId('detail-panel')).toBeVisible();
+    // Both rows' window songs are the same rule.
+    await expect(page.locator('[data-testid="song-row"].related')).toHaveCount(4);
+
+    await page.getByTestId('retype-toggle').click();
+    await page.getByTestId('retype-strategy').selectOption('pick');
+    await page.getByTestId('retype-apply').click();
+    await expect(page.getByTestId('song-edit-count')).toContainText('1 change');
+    // A real preview of the edited rules replaces the list.
+    await expect(page.getByTestId('song-rule').nth(1)).toContainText('Picked from A');
+    // The bar lists the change in plain words and says how many songs move.
+    await expect(page.getByTestId('song-edit-item')).toContainText('rule 2: Picked from A');
+    await expect(page.getByTestId('song-edit-moved')).toContainText('in week 1 change');
+    await assertNoA11yViolations(page);
+
+    await page.getByTestId('song-edit-save').click();
+    await expect(page.getByTestId('song-edit-saved')).toBeVisible();
+    // Saved, not yet regenerated: the week's window songs say their rule
+    // has changed since.
+    await expect(page.getByTestId('song-rule').nth(1)).toContainText('rule changed since');
+    await page.getByTestId('song-edit-regenerate').click();
+    await expect(page.getByTestId('song-edit-bar')).toHaveCount(0);
+    // The regenerated week was made with the saved rule.
+    await expect(page.getByTestId('song-rule').nth(1)).toContainText('Picked from A');
+    await expect(page.getByTestId('song-why').nth(1)).toContainText('pick from');
   });
 });

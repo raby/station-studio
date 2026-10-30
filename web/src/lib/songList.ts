@@ -8,12 +8,14 @@
  * section comes round every row, and the list keeps playing order.
  */
 import type { Trace, TraceSlot } from '$lib/api';
+import { applyEdit, describeOp, type Edit } from '$lib/edit-ops';
 import {
   classifySlots,
   findChipRef,
   findSectionIdForRef,
   lookupEngineBlock,
   lookupMacro,
+  type AtomicRef,
   type EngineBlock,
   type ExpandedRef,
   type Sidecar,
@@ -76,6 +78,18 @@ export function ruleText(block: EngineBlock): string {
     text += `, only songs also in ${block.allowlist_sources.join(' or ')}`;
   }
   return text;
+}
+
+/**
+ * Which rule made a song, as a key: songs with the same key change
+ * together when that rule is edited. A repeating row's block is one rule
+ * for every row (editing it edits each row), so the row isn't part of the
+ * key; a macro is one rule for all its songs.
+ */
+export function ruleKey(ref: ExpandedRef): string {
+  if (ref.kind === 'macro-placeholder') return `macro:${ref.macro_id}`;
+  if (ref.slot_index !== undefined) return `slot:${ref.slot_index}`;
+  return `block:${ref.block_idx}`;
 }
 
 export interface SongRow {
@@ -162,4 +176,60 @@ export function songGroups(
 export function removedCount(trace: Trace, saved: Trace | null): number {
   if (!saved) return 0;
   return classifySlots(saved, trace).filter((c) => c.kind === 'removed').length;
+}
+
+/** How many songs differ between the saved week and the edited one:
+ *  a different song, a new one, or one gone. */
+export function songsChanged(trace: Trace, saved: Trace | null): number {
+  if (!saved) return 0;
+  return classifySlots(saved, trace).filter((c) => c.kind !== 'unchanged').length;
+}
+
+function sectionName(sidecar: Sidecar, ref: ExpandedRef): string | null {
+  const id = findSectionIdForRef(sidecar, ref);
+  if (id === null) return null;
+  const section = sidecar.sections.find((s) => s.id === id);
+  return section ? (section.name ?? section.id) : null;
+}
+
+/** Where a block sits, as the operator sees it: "The day, rule 2". */
+function blockPlace(sidecar: Sidecar, ref: AtomicRef): string {
+  const id = findSectionIdForRef(sidecar, ref);
+  const section = id === null ? undefined : sidecar.sections.find((s) => s.id === id);
+  if (!section) {
+    return ref.slot_index !== undefined ? `Rule ${ref.slot_index + 1}` : `Rule ${(ref.block_idx ?? 0) + 1}`;
+  }
+  const at = section.blocks.findIndex((b) =>
+    b.kind === 'atomic' &&
+    (ref.slot_index !== undefined ? b.slot_index === ref.slot_index : b.block_idx === ref.block_idx));
+  return `${section.name ?? section.id}, rule ${at + 1}`;
+}
+
+/**
+ * Each queued change in plain words: which rule, and what it does once
+ * changed ("The day, rule 1: Picked from A"). Changes that aren't to a
+ * rule's settings (moves, splits) use the editor's own wording.
+ */
+export function describeQueued(opLog: Edit[], template: StationTemplate, sidecar: Sidecar): string[] {
+  let state: { template: StationTemplate; sidecar: unknown } = { template, sidecar };
+  return opLog.map((op) => {
+    state = applyEdit(state.template, state.sidecar, op);
+    const after = state.sidecar as Sidecar;
+    if (op.kind === 'patchMacro') {
+      const macro = lookupMacro(after, op.macroId);
+      if (!macro) return describeOp(op);
+      const name = macro.name ?? macro.id;
+      const where = sectionName(after, { kind: 'macro-placeholder', macro_id: macro.id, pick_in_macro: 1 });
+      return `${where ? `${name} in ${where}` : name}: ${ruleText(macro.spec)}`;
+    }
+    if (op.kind === 'patchBlock' || op.kind === 'retypeBlock') {
+      const ref: AtomicRef = op.address.slot_index !== undefined
+        ? { kind: 'atomic-ref', slot_index: op.address.slot_index }
+        : { kind: 'atomic-ref', row_idx: 0, block_idx: op.address.block_idx };
+      const block = lookupEngineBlock(ref, state.template.layout);
+      if (!block) return describeOp(op);
+      return `${blockPlace(after, ref)}: ${ruleText(block)}`;
+    }
+    return describeOp(op);
+  });
 }

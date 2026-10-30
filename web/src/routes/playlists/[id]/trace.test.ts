@@ -27,6 +27,10 @@ const {
   stationServerSettingsMock,
   sendToStationServerMock,
   getStationSidecarMock,
+  startPreviewJobMock,
+  watchJobMock,
+  applyBatchMock,
+  startGenerateJobMock,
   gotoMock,
   FakeApiError,
   pageStore,
@@ -73,6 +77,11 @@ const {
     getStationSidecarMock: vi.fn(
       async (..._args: unknown[]): Promise<unknown> => { throw new Error('no sidecar'); },
     ),
+    // Editing a song's rule (staged-edit session + regenerate).
+    startPreviewJobMock: vi.fn(async (..._args: unknown[]): Promise<unknown> => ({ job_id: 'pv', status: 'running' })),
+    watchJobMock: vi.fn((..._args: unknown[]): AsyncIterable<unknown> => (async function* () {})()),
+    applyBatchMock: vi.fn(async (..._args: unknown[]): Promise<unknown> => ({})),
+    startGenerateJobMock: vi.fn(async (..._args: unknown[]): Promise<unknown> => ({ job_id: 'gen', status: 'running' })),
     getTraceMock: vi.fn(),
     getStationMock: vi.fn(),
     getStationPlaylistsMock: vi.fn(),
@@ -89,7 +98,16 @@ const {
   };
 });
 
-vi.mock('$lib/api', () => ({
+vi.mock('$lib/api', async () => ({
+  // The real error classes and type guards (the staged-edit session uses
+  // BlockPatchConflict, SidecarBatchFailure, isPreviewResult); every
+  // network call below is a mock.
+  ...(await vi.importActual<typeof import('$lib/api')>('$lib/api')),
+  startPreviewJob: (...args: unknown[]) => startPreviewJobMock(...args),
+  watchJob: (...args: unknown[]) => watchJobMock(...args),
+  cancelJob: async () => undefined,
+  applyBatch: (...args: unknown[]) => applyBatchMock(...args),
+  startGenerateJob: (...args: unknown[]) => startGenerateJobMock(...args),
   getPlaylist: (...args: unknown[]) => getPlaylistMock(...args),
   getTrace: (...args: unknown[]) => getTraceMock(...args),
   getStation: (...args: unknown[]) => getStationMock(...args),
@@ -1560,5 +1578,230 @@ describe('trace viewer — Songs view', () => {
     await screen.findByText('Track Mon-1');
     expect(screen.queryByTestId('week-view')).toBeNull();
     expect(screen.queryByTestId('song-list')).toBeNull();
+  });
+});
+
+
+// ---- Songs view: click a song, change its rule, save, regenerate ----------
+
+describe('trace viewer — changing a song\'s rule', () => {
+  // Same two-block row as the Songs view tests: block 1 (window A) made
+  // every song in the stub week.
+  const template = (first: Record<string, unknown> = { source: 'A', strategy: 'window', size: 2 }) => ({
+    station: 'cls', name: 'Classics',
+    sources: [
+      { name: 'A', colour: '#c0392b', role: 'content' },
+      { name: 'B', colour: '#8e44ad', role: 'content' },
+    ],
+    layout: {
+      unit: 'day', unit_labels: [], row_start_offsets: [],
+      row_template: [first, { source: 'B', strategy: 'pick', size: 1 }],
+    },
+  });
+  const sidecar = () => ({
+    schema_version: 1,
+    sections: [{ id: 'day', name: 'The day', blocks: [
+      { kind: 'atomic', row_idx: 0, block_idx: 0 },
+      { kind: 'atomic', row_idx: 0, block_idx: 1 },
+    ] }],
+    macros: [],
+    layout_order: ['day'],
+  });
+  const editorData = () => ({ template: template(), sidecar: sidecar(), sidecar_error: null, updated_at: 'ts-1' });
+
+  /** Preview jobs finish with the stub week (the saved rules), then with
+   *  its first song swapped (the edited rules). */
+  function previewsSavedThenEdited() {
+    let n = 0;
+    startPreviewJobMock.mockImplementation(async () => ({ job_id: `pv-${++n}`, status: 'running' }));
+    watchJobMock.mockImplementation((id: unknown) => (async function* () {
+      const base = stubTrace();
+      // The edited rules' preview records the new strategy, as the engine would.
+      const edited = base.slots.map((x) => ({ ...x, strategy: 'pick' }));
+      const trace = id === 'pv-1' ? base : {
+        ...base,
+        slots: [{ ...edited[0], track_id: 999, track_name: 'Swapped In' }, ...edited.slice(1)],
+      };
+      yield { status: 'done', result: { trace, slot_count: trace.slots.length } };
+    })());
+  }
+
+  beforeEach(() => {
+    for (const m of [getPlaylistMock, getTraceMock, getStationMock, getStationPlaylistsMock, getVersionsMock,
+      getStationSidecarMock, startPreviewJobMock, watchJobMock, applyBatchMock, startGenerateJobMock]) m.mockReset();
+    getStationPlaylistsMock.mockResolvedValue([]);
+    getVersionsMock.mockResolvedValue({ playlist_id: 7, current_v: 1, versions: [] });
+    stationServerSettingsMock.mockResolvedValue(
+      null as unknown as Awaited<ReturnType<typeof stationServerSettingsMock>>,
+    );
+    getStationSidecarMock.mockImplementation(async () => editorData());
+    getTraceMock.mockImplementation(async () => stubTrace());
+    getPlaylistMock.mockImplementation(async () => stubPlaylist());
+    getStationMock.mockImplementation(async () => stubStation());
+    setId('7');
+    setSearch('');
+    try { window.localStorage.clear(); } catch { /* */ }
+    window.localStorage.setItem('weekView', 'songs');
+  });
+
+  it('pick a song, change its rule, see the week with the change, save, regenerate', async () => {
+    previewsSavedThenEdited();
+    render(Page);
+    const rows = await screen.findAllByTestId('song-row');
+    await fireEvent.click(rows[0]);
+
+    // The rule panel opens; every song from the same rule is marked.
+    await screen.findByTestId('detail-panel');
+    expect(rows.filter((r) => r.classList.contains('related'))).toHaveLength(3);
+
+    // Change the rule: window → pick.
+    await fireEvent.click(screen.getByTestId('retype-toggle'));
+    await fireEvent.change(screen.getByTestId('retype-strategy'), { target: { value: 'pick' } });
+    await fireEvent.click(screen.getByTestId('retype-apply'));
+    expect(await screen.findByTestId('song-edit-count')).toHaveTextContent('1 change');
+    expect(screen.getByTestId('song-edit-count')).toHaveTextContent('for every week');
+
+    // The week re-previews: the edited rules give a different first song.
+    const changed = await screen.findByTestId('song-change');
+    expect(changed).toHaveTextContent('changed');
+    expect(screen.getAllByTestId('song-row')[0]).toHaveTextContent('Swapped In');
+    expect(screen.getAllByTestId('song-rule')[0]).toHaveTextContent('Picked from A');
+
+    // Save: one batch, against the version loaded.
+    applyBatchMock.mockResolvedValueOnce({
+      template: template({ source: 'A', strategy: 'pick', size: 2 }), sidecar: sidecar(), updated_at: 'ts-2',
+    });
+    await fireEvent.click(screen.getByTestId('song-edit-save'));
+    expect(await screen.findByTestId('song-edit-saved')).toHaveTextContent('regenerate it');
+    expect(applyBatchMock).toHaveBeenCalledWith(
+      'cls',
+      [expect.objectContaining({ kind: 'retypeBlock', address: { block_idx: 0 }, newStrategy: 'pick' })],
+      'ts-1',
+    );
+
+    // Regenerate this week with the saved rules; the page reloads it.
+    watchJobMock.mockImplementation(() => (async function* () {
+      yield { status: 'done', result: { playlist_id: 7, trace_id: 'new', slot_count: 3 } };
+    })());
+    const tracesBefore = getTraceMock.mock.calls.length;
+    await fireEvent.click(screen.getByTestId('song-edit-regenerate'));
+    await vi.waitFor(() => expect(getTraceMock.mock.calls.length).toBeGreaterThan(tracesBefore));
+    expect(startGenerateJobMock).toHaveBeenCalledWith('cls', 3, undefined); // rng off: no seed
+    await vi.waitFor(() => expect(screen.queryByTestId('song-edit-bar')).toBeNull());
+  });
+
+  it('discard drops the change and shows the week as generated', async () => {
+    previewsSavedThenEdited();
+    render(Page);
+    await fireEvent.click((await screen.findAllByTestId('song-row'))[0]);
+    await screen.findByTestId('detail-panel');
+    await fireEvent.click(screen.getByTestId('retype-toggle'));
+    await fireEvent.change(screen.getByTestId('retype-strategy'), { target: { value: 'pick' } });
+    await fireEvent.click(screen.getByTestId('retype-apply'));
+    await screen.findByTestId('song-change');
+
+    await fireEvent.click(screen.getByTestId('song-edit-discard'));
+    await vi.waitFor(() => expect(screen.queryByTestId('song-edit-count')).toBeNull());
+    expect(screen.queryByTestId('song-change')).toBeNull();
+    expect(screen.getAllByTestId('song-row')[0]).toHaveTextContent('Track Mon-1');
+    expect(applyBatchMock).not.toHaveBeenCalled();
+  });
+
+  it('an older version of the week is read-only', async () => {
+    setSearch('?v=1');
+    getVersionsMock.mockResolvedValue({
+      playlist_id: 7, current_v: 2,
+      versions: [
+        { version_no: 1, trace_id: 'abc12345-trace-id', generated_at: 'a', seed: null, tags: [] },
+        { version_no: 2, trace_id: 'newer', generated_at: 'b', seed: null, tags: [] },
+      ],
+    });
+    render(Page);
+    expect(await screen.findByTestId('song-edit-older')).toHaveTextContent('older version');
+    await fireEvent.click(screen.getAllByTestId('song-row')[0]);
+    expect(screen.queryByTestId('detail-panel')).toBeNull();
+    expect(startPreviewJobMock).not.toHaveBeenCalled();
+  });
+
+  /** Pick the first song and change its rule window → pick. */
+  async function changeFirstRule(): Promise<void> {
+    await fireEvent.click((await screen.findAllByTestId('song-row'))[0]);
+    await screen.findByTestId('detail-panel');
+    await fireEvent.click(screen.getByTestId('retype-toggle'));
+    await fireEvent.change(screen.getByTestId('retype-strategy'), { target: { value: 'pick' } });
+    await fireEvent.click(screen.getByTestId('retype-apply'));
+    await screen.findByTestId('song-change');
+  }
+
+  it('moving to the next week keeps the changes and previews that week', async () => {
+    previewsSavedThenEdited();
+    render(Page);
+    await changeFirstRule();
+    const sidecarLoads = getStationSidecarMock.mock.calls.length;
+
+    getPlaylistMock.mockImplementation(async () => ({ ...stubPlaylist(), id: 8, week: 4 }));
+    getTraceMock.mockImplementation(async () => stubTrace({ week: 4 }));
+    await act(() => setId('8'));
+
+    await vi.waitFor(() => expect(startPreviewJobMock).toHaveBeenLastCalledWith(
+      'cls', expect.anything(), expect.anything(), 4,
+    ));
+    expect(screen.getByTestId('song-edit-count')).toHaveTextContent('1 change');
+    expect(screen.getByTestId('detail-panel')).toBeInTheDocument(); // the picked rule stays open
+    // The page loads the station for the new week; the session doesn't reload.
+    expect(getStationSidecarMock.mock.calls.length).toBe(sidecarLoads + 1);
+  });
+
+  it('lists each change in plain words with how many songs move, and undoes one', async () => {
+    previewsSavedThenEdited();
+    render(Page);
+    await changeFirstRule();
+    expect(screen.getByTestId('song-edit-item')).toHaveTextContent('The day, rule 1: Picked from A');
+    expect(await screen.findByTestId('song-edit-moved')).toHaveTextContent('1 of 3 songs in week 3 change.');
+
+    await fireEvent.click(screen.getByTestId('song-edit-undo'));
+    await vi.waitFor(() => expect(screen.queryByTestId('song-edit-bar')).toBeNull());
+    expect(screen.queryByTestId('song-change')).toBeNull();
+    expect(window.localStorage.getItem('stagedEdits:cls')).toBeNull();
+  });
+
+  it('switching to an older version shows that version, not the changes', async () => {
+    previewsSavedThenEdited();
+    getVersionsMock.mockResolvedValue({
+      playlist_id: 7, current_v: 2,
+      versions: [
+        { version_no: 1, trace_id: 'older', generated_at: 'a', seed: null, tags: [] },
+        { version_no: 2, trace_id: 'abc12345-trace-id', generated_at: 'b', seed: null, tags: [] },
+      ],
+    });
+    render(Page);
+    await changeFirstRule();
+
+    await act(() => setSearch('?v=1'));
+    expect(await screen.findByTestId('song-edit-older')).toBeInTheDocument();
+    await vi.waitFor(() => expect(screen.queryByTestId('song-change')).toBeNull());
+    expect(screen.getAllByTestId('song-row')[0]).toHaveTextContent('Track Mon-1');
+    expect(screen.queryByTestId('detail-panel')).toBeNull();
+    // The changes are still queued for the station.
+    expect(screen.getByTestId('song-edit-count')).toHaveTextContent('1 change');
+  });
+
+  it('picking a song with nothing changed shows no edit bar', async () => {
+    render(Page);
+    await fireEvent.click((await screen.findAllByTestId('song-row'))[0]);
+    await screen.findByTestId('detail-panel');
+    expect(screen.queryByTestId('song-edit-bar')).toBeNull();
+  });
+
+  it('changes left from an earlier visit show on arrival, without clicking a song', async () => {
+    previewsSavedThenEdited();
+    window.localStorage.setItem('stagedEdits:cls', JSON.stringify({
+      schemaVersion: 1,
+      opLog: [{ kind: 'retypeBlock', address: { block_idx: 0 }, newStrategy: 'pick', newSource: null, newFields: {} }],
+      updatedAtSnapshot: 'ts-1',
+    }));
+    render(Page);
+    expect(await screen.findByTestId('song-edit-count')).toHaveTextContent('1 change');
+    expect(await screen.findByTestId('song-change')).toHaveTextContent('changed');
   });
 });
