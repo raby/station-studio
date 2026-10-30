@@ -115,6 +115,26 @@ def test_wrong_passwords_are_turned_away_then_locked_out(live):
     assert not live.sources
 
 
+def test_a_locked_out_encoder_reads_the_429_before_the_connection_ends(live):
+    # The 429 goes out before the request is read. Closing with the request
+    # still unread resets the connection, and Windows then drops the reply
+    # unread (WinError 10053): this test's sibling above failed about one CI
+    # run in three there until live._linger. A clean close ends with b"".
+    for _ in range(5):
+        s = socket.create_connection(("127.0.0.1", live.port + 1), timeout=5)
+        s.sendall(b"guess\r\n")
+        s.recv(100)
+        s.close()
+    s = socket.create_connection(("127.0.0.1", live.port), timeout=5)
+    s.sendall(b"PUT /live HTTP/1.1\r\nAuthorization: Basic eA==\r\n\r\n")
+    time.sleep(0.2)  # the server replies and closes with the request unread
+    reply = b""
+    while chunk := s.recv(200):  # a reset raises ConnectionResetError here
+        reply += chunk
+    s.close()
+    assert reply.startswith(b"HTTP/1.0 429")
+
+
 def test_end_live_keeps_them_off_for_a_while(live):
     live.end(block_seconds=60)
     s = socket.create_connection(("127.0.0.1", live.port + 1), timeout=5)

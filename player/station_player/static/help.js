@@ -19,6 +19,7 @@ const HELP = [
     ["Up next: the ⋯ button on a track has ", ["Play next"], " and ", ["Add to queue"], ". Up next in the sidebar shows what's queued and lets you reorder it."],
     ["Settings › Playback has ", ["Crossfade"], " (one track fades into the next) and ", ["Volume levelling"], " (every track at about the same loudness)."],
     "The sleep timer beside the volume stops the music after a while, fading out gently.",
+    ["The ", ["Pop out the player"], " button at the right of the player bar takes the bar out into a small window of its own that stays on top of your other windows. Move it anywhere and make it bigger or smaller; ", ["Put the player back"], " (or closing it) brings it home. In the Mac app it's also View › Mini Player (⇧⌘M). It needs the Mac app, Chrome or Edge."],
     ["Installed as an app (", ["Install Station Player as an app"], " in Settings › App), right-click its icon in the Dock or taskbar for ", ["Play / Pause"], " and ", ["Next"], "."],
   ]],
   ["playlists", "Your own playlists", [
@@ -29,7 +30,7 @@ const HELP = [
   ]],
   ["radio", "Radio", [
     "Stations in the sidebar lists your radio stations. Rebirth Radio and Rebirth Classics are there to start with.",
-    ["Discover in the sidebar finds new stations: turn the globe to hear the news, talk or music from anywhere in the world, or search thousands of stations by name, genre or country. ", ["Listen"], " tries one, and ", ["Add"], " keeps it. A station you add while browsing a genre is tagged with that genre."],
+    ["Discover in the sidebar finds new stations: turn the globe to hear the news, talk, music or sport from anywhere in the world, or search thousands of stations by name, genre or country. ", ["Listen"], " tries one, and ", ["Add"], " keeps it. A station you add while browsing a genre is tagged with that genre."],
     "When a station sends the name of the song it's playing, you'll see it on the station and in the bar at the bottom.",
     ["A station run by Station Server can also say what's on now, what's next and what's just played, even before you listen. Edit it with the pencil and give ", ["What's on"], " the feed address from its Station Server (Settings › Website): it shows on the station, and the next song shows in the bar at the bottom."],
     ["To add a station by its web address, paste its stream link under ", ["Add a station by its link"], ". ", ["Test"], " checks it plays first."],
@@ -37,17 +38,18 @@ const HELP = [
     "Recently played lists the last few stations you listened to, so one you tried is easy to find again.",
   ], { label: "Go to Stations", view: { type: "radio" } }],
   ["tuner", "The tuner", [
-    "The dial at the top of the Stations page is an old radio's tuner, with your stations along it. Click a name, or drag the needle along the dial and let go near a station; you'll hear static on the way.",
+    "The dial at the top of the Stations page is an old radio's tuner, with your stations along it, each with its logo and a short line to its spot on the dial. With lots of stations only the logos show; point at one to see its name. Click a station, or drag the needle along the dial and let go near a station; you'll hear static on the way.",
     "With the tuner selected, Left and Right tune to the station before or after. The line moving beside the song title at the bottom follows the sound.",
     "To choose which stations are on the dial, go to Settings › Radio and tick the ones you want.",
   ]],
   ["globe", "The globe", [
     ["Under Find stations, ", ["Globe"], " shows stations as dots on a world globe. Discover opens on it. Drag to turn it, and scroll or pinch to zoom. Tap a dot to see its name and country, with the station first in the list underneath; tap it again, or its ", ["Listen"], ", to hear it. The stations nearest the middle are listed underneath, with ", ["Add"], " to keep one."],
-    ["Zoom in on a country and it finds more stations there. ", ["Music"], " leaves out news and talk, and can show just one genre, like techno or Afrobeats around the world. ", ["News"], " shows only news and talk stations, so you can hop from London to Tokyo for the headlines."],
+    ["Zoom in on a country and it finds more stations there. ", ["Music"], " leaves out news and talk, and can show just one genre, like techno or Afrobeats around the world. ", ["News"], " shows only news and talk stations, so you can hop from London to Tokyo for the headlines, and ", ["Sport"], " shows sport stations: football, cricket, racing and more."],
     "With the globe selected, the arrow keys turn it, plus and minus zoom, and Enter picks the station in the middle, and Enter again plays it.",
   ]],
   ["ambient", "Ambient mode", [
-    ["Ambient in the sidebar fills the screen with a calm scene and its sound: a ", ["Fish tank"], ", ", ["Waves"], " on a shore, or ", ["Birds"], " at dawn."],
+    ["Ambient in the sidebar fills the screen with a calm scene and its sound: ", ["Waves"], " on a shore, ", ["Rain"], " on the window, a ", ["Stream"], " in the woods, ", ["Birds"], " at dawn, a summer ", ["Night"], " with crickets, a log ", ["Fire"], ", or a ", ["Fish tank"], "."],
+    "Where Station Player has a real recording for a scene it plays that, with who recorded it shown underneath; otherwise it makes the sound itself as it plays.",
     "It plays on its own or quietly under the radio, with its own volume. Set the sleep timer and it fades out with everything else.",
     "Press Escape or Close to leave. The controls hide after a few seconds; move the mouse to bring them back.",
   ]],
