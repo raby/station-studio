@@ -1816,6 +1816,34 @@ describe('trace viewer — changing a song\'s rule', () => {
     expect(screen.queryByTestId('song-edit-regenerate-later')).toBeNull();
   });
 
+  it('a search stays while previewing a change; only changed songs on demand', async () => {
+    previewsSavedThenEdited();
+    render(Page);
+    const search = await screen.findByTestId('song-search');
+    await fireEvent.input(search, { target: { value: 'Track Mon-1' } });
+    expect(screen.getAllByTestId('song-row')).toHaveLength(1);
+    expect(screen.queryByTestId('song-only-changed')).toBeNull(); // nothing to compare yet
+
+    await fireEvent.click(screen.getByTestId('song-row'));
+    await screen.findByTestId('detail-panel');
+    await fireEvent.click(screen.getByTestId('retype-toggle'));
+    await fireEvent.change(screen.getByTestId('retype-strategy'), { target: { value: 'pick' } });
+    await fireEvent.click(screen.getByTestId('retype-apply'));
+    // The first song is swapped out in the preview, so nothing matches
+    // now; the search itself is kept.
+    expect(await screen.findByTestId('song-search-empty')).toBeInTheDocument();
+    expect(screen.getByTestId('song-search')).toHaveValue('Track Mon-1');
+
+    await fireEvent.click(screen.getByTestId('song-search-clear'));
+    expect(screen.getAllByTestId('song-row')).toHaveLength(3);
+    const only = screen.getByTestId('song-only-changed');
+    expect(only.closest('label')).toHaveTextContent('Only changed songs (1)');
+    await fireEvent.click(only);
+    expect(screen.getAllByTestId('song-row')).toHaveLength(1);
+    expect(screen.getByTestId('song-row')).toHaveTextContent('Swapped In');
+    expect(screen.getByTestId('song-shown')).toHaveTextContent('Showing 1 of 3');
+  });
+
   it('lists each change in plain words with how many songs move, and undoes one', async () => {
     previewsSavedThenEdited();
     render(Page);

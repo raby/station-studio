@@ -4,6 +4,24 @@ All notable changes are listed here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses semantic versioning.
 
+## [1.13.0] - 2026-10-30
+
+### Added
+
+- **Search in the Songs view.** One box finds songs by title, artist,
+  the rule in words ("NIGHT", "Shuffled"), the macro or the section;
+  every word has to match somewhere. While you're previewing a change,
+  **Only changed songs** shows just the ones that move. The search is
+  kept while the preview comes and goes.
+
+### Changed
+
+- **The first change to a rule previews about twice as fast.** The week
+  under the saved rules, which a change is compared with, is now worked
+  out as soon as you open a song's rule, not after your first change.
+  A change made while it's still running waits for it instead of
+  starting over.
+
 ## [1.12.0] - 2026-10-30
 
 ### Added

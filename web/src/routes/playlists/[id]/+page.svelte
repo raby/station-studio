@@ -1255,28 +1255,23 @@
       </div>
     {/if}
 
-    {#if showingEdits && editing && editing.stagedTrace}
-      <SongList
-        trace={editing.stagedTrace}
-        saved={editing.savedTrace}
-        template={editing.staged.template ?? editorData.template}
-        sidecar={editing.staged.sidecar ?? editorData.sidecar}
-        selected={selectedSong}
-        related={selectedRef ? ruleKey(selectedRef) : null}
-        onselect={pickSong}
-      />
-    {:else}
-      <!-- The week as generated, labelled with the station's rules as saved
-           now (after a save, songs made by a since-changed rule say so). -->
-      <SongList
-        {trace}
-        template={editing?.template ?? editorData.template}
-        sidecar={editing?.sidecar ?? editorData.sidecar}
-        selected={selectedSong}
-        related={selectedRef ? ruleKey(selectedRef) : null}
-        onselect={pickSong}
-      />
-    {/if}
+    <!-- One list, so a search survives switching between the week with
+         the queued changes (marked against the week as saved) and the
+         week as generated, labelled with the rules as saved now (after a
+         save, songs made by a since-changed rule say so). -->
+    <SongList
+      trace={showingEdits && editing?.stagedTrace ? editing.stagedTrace : trace}
+      saved={showingEdits && editing ? editing.savedTrace : null}
+      template={showingEdits && editing
+        ? (editing.staged.template ?? editorData.template)
+        : (editing?.template ?? editorData.template)}
+      sidecar={showingEdits && editing
+        ? (editing.staged.sidecar ?? editorData.sidecar)
+        : (editing?.sidecar ?? editorData.sidecar)}
+      selected={selectedSong}
+      related={selectedRef ? ruleKey(selectedRef) : null}
+      onselect={pickSong}
+    />
 
     </div>
 

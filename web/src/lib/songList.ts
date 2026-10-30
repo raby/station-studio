@@ -171,6 +171,45 @@ export function songGroups(
   return groups;
 }
 
+/** A song's rule in words: its rule now, or, when there's no block for
+ *  it or the rule has changed since the song was picked, what the trace
+ *  says actually ran. */
+export function rowRule(row: SongRow): string {
+  return row.block && !row.ruleChanged
+    ? ruleText(row.block)
+    : `${row.slot.strategy} from ${row.slot.source}`;
+}
+
+/**
+ * The songs matching a search, still in their runs (runs left empty are
+ * dropped). The words can be in the song, the artist, the rule as
+ * written ("NIGHT", "Shuffled"), the macro or the section; every word
+ * must match somewhere, in any order and case. `onlyChanged` keeps just
+ * the songs that differ from the saved week.
+ */
+export function filterGroups(
+  groups: SongGroup[],
+  query: string,
+  onlyChanged = false,
+): SongGroup[] {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  if (words.length === 0 && !onlyChanged) return groups;
+  return groups
+    .map((group) => ({
+      ...group,
+      rows: group.rows.filter((row) => {
+        if (onlyChanged && row.change === null) return false;
+        if (words.length === 0) return true;
+        const text = [
+          row.slot.track_name, row.slot.track_artist ?? '', rowRule(row),
+          row.macroName ?? '', group.sectionName,
+        ].join('\n').toLowerCase();
+        return words.every((w) => text.includes(w));
+      }),
+    }))
+    .filter((group) => group.rows.length > 0);
+}
+
 /** How many songs the saved week had that the edited week doesn't
  *  (shown as a note: removed songs have no row of their own). */
 export function removedCount(trace: Trace, saved: Trace | null): number {

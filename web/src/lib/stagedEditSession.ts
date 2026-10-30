@@ -97,12 +97,17 @@ export interface SessionOptions {
   week?: number;
   /** Wait this long after the last change before previewing. */
   debounceMs?: number;
-  /** Preview only while edits are queued (the week page, which already
-   *  shows the generated week). Otherwise a preview runs on load too. */
+  /** Preview the edits only while some are queued (the week page, which
+   *  already shows the generated week). The week under the saved rules,
+   *  which edits are compared with, is still worked out on load, so the
+   *  first edit needs only its own preview. */
   previewOnlyWhenEdited?: boolean;
 }
 
 const errorText = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+
+/** A saved-rules preview overtaken by a change to the station or week. */
+class StaleBaseline extends Error {}
 
 export function createStagedEditSession(slug: string, opts: SessionOptions = {}): StagedEditSession {
   const debounceMs = opts.debounceMs ?? 500;
@@ -132,8 +137,12 @@ export function createStagedEditSession(slug: string, opts: SessionOptions = {})
   let pendingRecovery: Edit[] = [];
   let generation = 0; // bumped whenever a running refresh's result would be out of date
   let timer: ReturnType<typeof setTimeout> | null = null;
-  let jobId: string | null = null;
+  let jobId: string | null = null; // the running preview of the edits
   let destroyed = false;
+  /** The week under the saved rules, being worked out for this week and
+   *  version of the station (`key`). Kept apart from the edits' preview:
+   *  an edit doesn't cancel it, it waits for it. */
+  let baseline: { key: string; promise: Promise<Trace>; jobId: string | null } | null = null;
 
   function update(patch: Partial<StagedEditState>): void {
     s = { ...s, ...patch };
@@ -172,17 +181,73 @@ export function createStagedEditSession(slug: string, opts: SessionOptions = {})
     }
   }
 
+  function dropBaseline(): void {
+    const id = baseline?.jobId ?? null;
+    baseline = null;
+    if (id !== null) {
+      void cancelJob(id).catch(() => {
+        // Idempotent; a network blip here is harmless.
+      });
+    }
+  }
+
+  /** The week under the saved rules: kept, in progress, or started now.
+   *  'stale' when the station or week changed while it ran. */
+  function savedWeek(): Promise<Trace | 'stale'> {
+    if (s.savedTrace !== null) return Promise.resolve(s.savedTrace);
+    const key = `${s.week}:${s.updatedAt}`;
+    if (baseline?.key !== key) {
+      dropBaseline();
+      const mine: { key: string; promise: Promise<Trace>; jobId: string | null } = {
+        key,
+        jobId: null,
+        promise: Promise.resolve(null as unknown as Trace),
+      };
+      const isCurrent = () => baseline === mine;
+      mine.promise = (async () => {
+        const out = await previewOf(s.template, s.sidecar, isCurrent, (id) => {
+          mine.jobId = id;
+        });
+        mine.jobId = null;
+        if (out === 'stale') throw new StaleBaseline();
+        if (isCurrent()) update({ savedTrace: out });
+        return out;
+      })();
+      // A failed one is tried again by the next preview that needs it.
+      mine.promise.catch(() => {
+        if (baseline === mine) baseline = null;
+      });
+      baseline = mine;
+    }
+    const current = baseline!;
+    return current.promise.then(
+      (t) => (baseline === current || s.savedTrace === t ? t : 'stale'),
+      (e) => {
+        if (e instanceof StaleBaseline) return 'stale';
+        throw e;
+      },
+    );
+  }
+
   /** Preview again after `debounceMs`. `savedChanged` also re-runs the
    *  saved week (after a load, save, discard or week change). */
   function schedule(savedChanged: boolean): void {
     if (destroyed) return;
     cancelRunning();
-    if (savedChanged) update({ savedTrace: null });
+    if (savedChanged) {
+      dropBaseline();
+      update({ savedTrace: null });
+    }
     if (onlyWhenEdited && s.opLog.length === 0) {
-      // Nothing to compare: the page shows the week as generated. The
-      // saved-week preview is kept for the next edit unless the saved
-      // station or the week changed (savedChanged cleared it above).
+      // Nothing to compare: the page shows the week as generated. Work
+      // out the week under the saved rules meanwhile, so the first edit
+      // shows sooner (kept until the saved station or the week changes).
       update({ stagedTrace: null, previewing: false, previewError: null });
+      if (s.template && s.sidecar) {
+        void savedWeek().catch(() => {
+          // Shown by the first edit's preview, which tries again.
+        });
+      }
       return;
     }
     const gen = generation;
@@ -192,15 +257,17 @@ export function createStagedEditSession(slug: string, opts: SessionOptions = {})
     }, debounceMs);
   }
 
-  async function previewOf(template: unknown, sidecar: unknown, gen: number): Promise<Trace | 'stale'> {
+  async function previewOf(
+    template: unknown,
+    sidecar: unknown,
+    isCurrent: () => boolean,
+    onStart: (id: string) => void,
+  ): Promise<Trace | 'stale'> {
     const out = await runPreview(slug, template, sidecar, s.week, {
-      isCurrent: () => gen === generation,
+      isCurrent,
       cancelIfStale: true,
-      onStart: (id) => {
-        jobId = id;
-      },
+      onStart,
     });
-    jobId = null;
     if (out.status === 'stale') return 'stale';
     if (out.status === 'done') {
       if (out.trace === null) throw new Error('preview returned an unexpected shape');
@@ -216,17 +283,15 @@ export function createStagedEditSession(slug: string, opts: SessionOptions = {})
     if (!s.template || !s.sidecar) return;
     update({ previewing: true, previewError: null });
     try {
-      let saved = s.savedTrace;
-      if (saved === null) {
-        const t = await previewOf(s.template, s.sidecar, gen);
-        if (t === 'stale' || gen !== generation) return;
-        saved = t;
-        update({ savedTrace: t });
-      }
+      const saved = await savedWeek();
+      if (saved === 'stale' || gen !== generation) return;
       if (s.opLog.length === 0) {
         update({ stagedTrace: saved });
       } else {
-        const t = await previewOf(s.staged.template, s.staged.sidecar, gen);
+        const t = await previewOf(s.staged.template, s.staged.sidecar, () => gen === generation, (id) => {
+          jobId = id;
+        });
+        jobId = null;
         if (t === 'stale' || gen !== generation) return;
         update({ stagedTrace: t });
       }
@@ -412,6 +477,7 @@ export function createStagedEditSession(slug: string, opts: SessionOptions = {})
   function destroy(): void {
     destroyed = true;
     cancelRunning();
+    dropBaseline();
   }
 
   return {
