@@ -6201,10 +6201,8 @@ async function popOutPlayer() {
   } else {
     let pip;
     try {
-      // Its own size from last time (Chrome would otherwise reopen it at
-      // whatever size it last had, however big).
-      const [width, height] = (store("mini-size") || "380x110").split("x").map(Number);
-      pip = await window.documentPictureInPicture.requestWindow({ width, height, preferInitialWindowPlacement: true });
+      // Small every time, not whatever size Chrome last had it at.
+      pip = await window.documentPictureInPicture.requestWindow({ ...MINI_SIZE, preferInitialWindowPlacement: true });
     } catch {
       toast("The player can't come out of this window", { error: true });
       return;
@@ -6255,14 +6253,14 @@ function putBackPlayer({ fromApp = false } = {}) {
 
 // Made bigger, the bar grows with its window, so a big mini player has
 // big buttons (laid out for 380 by 110, and up to twice that).
-const MINI_BASE = [380, 110];
+const MINI_SIZE = { width: 380, height: 110 };
+const MINI_BASE = [MINI_SIZE.width, MINI_SIZE.height];
 function fitMini() {
   if (!MINI.on) return;
   const view = MINI.win || window;
   const bar = $(".bar");
   const scale = Math.min(view.innerWidth / MINI_BASE[0], view.innerHeight / MINI_BASE[1]);
   bar.style.zoom = String(Math.max(1, Math.min(2, scale)).toFixed(3));
-  if (MINI.win && view.innerWidth > 100) store("mini-size", `${view.innerWidth}x${view.innerHeight}`);
 }
 window.addEventListener("resize", () => { if (NATIVE) fitMini(); });
 

@@ -343,10 +343,8 @@ def test_mini_player_pops_out_and_back(page):
     # It asks for a small window: one row, with only previous, play and next.
     assert page.evaluate("asked") == {"width": 380, "height": 110, "preferInitialWindowPlacement": True}
     assert page.evaluate("miniDoc.querySelector('#btn-shuffle').offsetParent") is None
-    # Bigger (as headless Chrome makes it), the bar scales up to fill it,
-    # and the size is kept for next time.
+    # Bigger (as headless Chrome makes it), the bar scales up to fill it.
     page.wait_for_function("() => parseFloat(miniDoc.querySelector('.bar').style.zoom) > 1")
-    assert page.evaluate("store('mini-size') === `${MINI.win.innerWidth}x${MINI.win.innerHeight}`")
     # Its buttons still work, and what's playing shows there.
     page.evaluate("miniDoc.querySelector('#btn-play').click()")
     page.wait_for_function("() => !audio.paused")
