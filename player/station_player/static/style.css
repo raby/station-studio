@@ -428,14 +428,22 @@ input[type="range"]:disabled { cursor: default; opacity: .5; }
 /* The mini player: the bar on its own, in a picture-in-picture window
    (body.mini-window) or the Mac app's window shrunk to it (body.mini). */
 body.mini .app > :not(.bar), body.mini > :not(.app):not(.toasts):not(#announce) { display: none !important; }
+/* One compact row: what's playing, previous / play / next, put back;
+   and a thin seek bar under it. */
 body.mini .bar, body.mini-window .bar {
-  position: fixed; inset: 0; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto auto;
-  align-content: center; gap: 6px; padding: 10px 14px; border-top: 0;
+  position: fixed; inset: 0; border-top: 0; padding: 8px 10px; align-content: center;
+  grid-template-columns: minmax(0, 1fr) auto auto; grid-template-areas: "now buttons back" "seek seek seek"; gap: 2px 6px;
 }
-body.mini .now, body.mini-window .now { justify-content: center; }
-body.mini .wave, body.mini-window .wave { display: none; }
-body.mini .volume, body.mini-window .volume { display: flex; justify-content: center; }
-body.mini .sleep, body.mini-window .sleep { display: none; }
+:is(body.mini, body.mini-window) :is(.controls, .volume) { display: contents; }
+:is(body.mini, body.mini-window) .now { grid-area: now; gap: 9px; }
+:is(body.mini, body.mini-window) .now-art { width: 40px; height: 40px; border-radius: 6px; }
+:is(body.mini, body.mini-window) .now-sub { font-size: 12px; }
+:is(body.mini, body.mini-window) .buttons { grid-area: buttons; gap: 2px; }
+:is(body.mini, body.mini-window) .seek { grid-area: seek; max-width: none; }
+:is(body.mini, body.mini-window) .seek.off { display: none; }
+:is(body.mini, body.mini-window) .icon.play { width: 38px; height: 38px; }
+:is(body.mini, body.mini-window) #btn-mini { grid-area: back; }
+:is(body.mini, body.mini-window) :is(.wave, .sleep, .time, #btn-shuffle, #btn-repeat, .volume > svg.i, #volume) { display: none; }
 body.mini-window { overflow: hidden; }
 #btn-mini { width: 32px; height: 32px; }
 #btn-mini svg.i { width: 18px; height: 18px; }

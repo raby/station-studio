@@ -40,8 +40,8 @@ AUTOSAVE = "Station Player window"  # where the window's place and size are kept
 FULL_MIN = (420, 480)
 # The mini player: the window shrunk to the player bar, floating on top.
 # Its first size; after that, wherever it was last left.
-MINI_SIZE = (640, 250)
-MINI_MIN = (340, 200)  # with the title bar
+MINI_SIZE = (380, 110)
+MINI_MIN = (300, 130)  # with the title bar
 MINI_KEY = "Station Player mini player"
 
 logger = logging.getLogger(__name__)
@@ -268,6 +268,8 @@ class AppDelegate(AppKit.NSObject):
         if not on:
             defaults.setObject_forKey_(Foundation.NSStringFromRect(win.frame()), MINI_KEY)
             win.setLevel_(AppKit.NSNormalWindowLevel)
+            win.setTitleVisibility_(AppKit.NSWindowTitleVisible)
+            win.setTitlebarAppearsTransparent_(False)
             win.setCollectionBehavior_(AppKit.NSWindowCollectionBehaviorFullScreenPrimary)
             win.setMinSize_(Foundation.NSMakeSize(*FULL_MIN))
             win.setFrame_display_animate_(self.full_frame, True, True)
@@ -283,6 +285,9 @@ class AppDelegate(AppKit.NSObject):
         win.setFrameAutosaveName_("")  # the mini size isn't the window's own
         win.setMinSize_(Foundation.NSMakeSize(*MINI_MIN))
         win.setLevel_(AppKit.NSFloatingWindowLevel)
+        # Just the close / minimise / zoom buttons above the bar, no title.
+        win.setTitleVisibility_(AppKit.NSWindowTitleHidden)
+        win.setTitlebarAppearsTransparent_(True)
         win.setCollectionBehavior_(AppKit.NSWindowCollectionBehaviorCanJoinAllSpaces
                                    | AppKit.NSWindowCollectionBehaviorFullScreenAuxiliary)
         saved = defaults.stringForKey_(MINI_KEY)

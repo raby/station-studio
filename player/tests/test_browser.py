@@ -330,15 +330,23 @@ def test_ambient_recordings_are_served(player):
 
 def test_mini_player_pops_out_and_back(page):
     # Chrome and Edge: the bar moves into a picture-in-picture window.
+    page.evaluate("""() => {
+        const ask = documentPictureInPicture.requestWindow.bind(documentPictureInPicture);
+        documentPictureInPicture.requestWindow = (o) => { window.asked = o; return ask(o); };
+    }""")
     btn = page.locator("#btn-mini")
     sync_api.expect(btn).to_have_attribute("aria-label", "Pop out the player")
     btn.click()
     page.wait_for_function("() => MINI.on && miniDoc && miniDoc.querySelector('.bar')")
     assert page.evaluate("document.querySelector('.bar')") is None
     page.wait_for_function("() => getComputedStyle(miniDoc.querySelector('.bar')).position === 'fixed'")
-    # It opens a good size, and the bar is scaled up to fill it.
-    assert page.evaluate("MINI.win.innerWidth") >= 600
-    assert float(page.evaluate("miniDoc.querySelector('.bar').style.zoom")) > 1
+    # It asks for a small window: one row, with only previous, play and next.
+    assert page.evaluate("asked") == {"width": 380, "height": 110, "preferInitialWindowPlacement": True}
+    assert page.evaluate("miniDoc.querySelector('#btn-shuffle').offsetParent") is None
+    # Bigger (as headless Chrome makes it), the bar scales up to fill it,
+    # and the size is kept for next time.
+    page.wait_for_function("() => parseFloat(miniDoc.querySelector('.bar').style.zoom) > 1")
+    assert page.evaluate("store('mini-size') === `${MINI.win.innerWidth}x${MINI.win.innerHeight}`")
     # Its buttons still work, and what's playing shows there.
     page.evaluate("miniDoc.querySelector('#btn-play').click()")
     page.wait_for_function("() => !audio.paused")
