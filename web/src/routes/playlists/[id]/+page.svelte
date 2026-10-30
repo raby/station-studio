@@ -8,6 +8,7 @@
     exportPlaylistToDisk,
     errorText,
     getStationServerSettings,
+    getStationSidecar,
     sendToStationServer,
     rollbackPlaylist,
     setVersionTags,
@@ -23,8 +24,34 @@
   import ErrorBanner from '$lib/components/ErrorBanner.svelte';
   import StatusBanner from '$lib/components/StatusBanner.svelte';
   import { sentText } from '$lib/stationServer';
+  import SongList from '$lib/components/songs/SongList.svelte';
+  import type { ParsedEditorSidecar } from '$lib/editor';
 
   let trace: Trace | null = null;
+  // The station's template + sidecar (sections, macros) for the Songs
+  // view. null when they couldn't be loaded: the Songs view isn't offered.
+  let editorData: ParsedEditorSidecar | null = null;
+
+  // Songs (each song with its rule and why) or the table by row. Kept in
+  // localStorage for every week page; the table stays the default.
+  const WEEK_VIEW_KEY = 'weekView';
+  function readWeekView(): 'songs' | 'table' {
+    try {
+      return window.localStorage.getItem(WEEK_VIEW_KEY) === 'songs' ? 'songs' : 'table';
+    } catch {
+      return 'table';
+    }
+  }
+  let view: 'songs' | 'table' = typeof window === 'undefined' ? 'table' : readWeekView();
+  function setView(next: 'songs' | 'table') {
+    view = next;
+    try {
+      window.localStorage.setItem(WEEK_VIEW_KEY, next);
+    } catch {
+      // Privacy mode or full: the choice just isn't remembered.
+    }
+  }
+  let selectedSong: number | null = null;
   let playlist: Playlist | null = null;
   let station: Station | null = null;
   let stationPlaylists: PlaylistSummary[] = [];
@@ -189,7 +216,7 @@
       // non-fatal (matches stationPlaylists pattern): the dropdown
       // just won't render. .catch inside Promise.all so a flaky
       // /versions endpoint doesn't poison the others.
-      const [p, s, list, vlist, links] = await Promise.all([
+      const [p, s, list, vlist, links, ed] = await Promise.all([
         getPlaylist(playlistId),
         getStation(t.station),
         getStationPlaylists(t.station).catch(() => [] as PlaylistSummary[]),
@@ -197,6 +224,8 @@
           () => ({ playlist_id: playlistId, current_v: 0, versions: [] }),
         ),
         getStationServerSettings().catch(() => null),
+        // Songs view only: failure just means no Songs view.
+        getStationSidecar(t.station).catch(() => null),
       ]);
       if (myGen !== loadGeneration) return;
 
@@ -214,6 +243,8 @@
       currentV = vlist.current_v;
       sourceColours = Object.fromEntries(sources.map((src) => [src.name, src.colour]));
       rowGroups = groupByRow(t.slots);
+      editorData = ed;
+      selectedSong = null;
     } catch (e) {
       if (myGen !== loadGeneration) return;
       error = e instanceof ApiError ? e.message : String(e);
@@ -904,6 +935,32 @@
     />
 
     <h2>Your working</h2>
+    {#if editorData}
+      <div class="view-switch" role="group" aria-label="Show the week as" data-testid="week-view">
+        <button
+          type="button"
+          aria-pressed={view === 'songs'}
+          data-testid="week-view-songs"
+          on:click={() => setView('songs')}
+        >Songs</button>
+        <button
+          type="button"
+          aria-pressed={view === 'table'}
+          data-testid="week-view-table"
+          on:click={() => setView('table')}
+        >Table</button>
+      </div>
+    {/if}
+    {#if view === 'songs' && editorData}
+    <p class="hint">Each song with the rule that put it there and why, in playing order.</p>
+    <SongList
+      {trace}
+      template={editorData.template}
+      sidecar={editorData.sidecar}
+      selected={selectedSong}
+      onselect={(row) => (selectedSong = row.position)}
+    />
+    {:else}
     <p class="hint">Each row below is one unit of the layout (a day for Classics). Click a row header to collapse it.</p>
 
     <!--
@@ -1113,10 +1170,33 @@
       </section>
     {/each}
     {/if}
+    {/if}
   {/if}
 </main>
 
 <style>
+  .view-switch {
+    display: inline-flex;
+    margin: 0 0 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  .view-switch button {
+    padding: 0.3rem 0.9rem;
+    border: 0;
+    background: var(--panel);
+    color: var(--text);
+    font: inherit;
+    cursor: pointer;
+  }
+  .view-switch button + button {
+    border-left: 1px solid var(--border);
+  }
+  .view-switch button[aria-pressed='true'] {
+    background: var(--accent);
+    color: var(--accent-text, white);
+  }
   main {
     font-family: system-ui, sans-serif;
     max-width: 1100px;

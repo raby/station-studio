@@ -26,6 +26,7 @@ const {
   exportPlaylistToDiskMock,
   stationServerSettingsMock,
   sendToStationServerMock,
+  getStationSidecarMock,
   gotoMock,
   FakeApiError,
   pageStore,
@@ -68,6 +69,10 @@ const {
   const setSearch = (s: string) => { currentSearch = s; notify(); };
   return {
     getPlaylistMock: vi.fn(),
+    // Rejects by default: no Songs view, which is how most tests see the page.
+    getStationSidecarMock: vi.fn(
+      async (..._args: unknown[]): Promise<unknown> => { throw new Error('no sidecar'); },
+    ),
     getTraceMock: vi.fn(),
     getStationMock: vi.fn(),
     getStationPlaylistsMock: vi.fn(),
@@ -92,6 +97,7 @@ vi.mock('$lib/api', () => ({
   getVersions: (...args: unknown[]) => getVersionsMock(...args),
   exportPlaylistToDisk: (...args: unknown[]) => exportPlaylistToDiskMock(...args),
   getStationServerSettings: (...args: unknown[]) => stationServerSettingsMock(...args),
+  getStationSidecar: (...args: unknown[]) => getStationSidecarMock(...args),
   sendToStationServer: (...args: unknown[]) => sendToStationServerMock(...args),
   errorText: (e: unknown) => (e instanceof Error ? e.message : String(e)),
   ApiError: FakeApiError,
@@ -1461,5 +1467,98 @@ describe('trace viewer — §16.4.t6 archive disk exports', () => {
       (screen.getByTestId('export-to-disk') as HTMLButtonElement).click();
     });
     expect(exportPlaylistToDiskMock).toHaveBeenCalledWith(7, 1, true);
+  });
+});
+
+
+// ---- Songs view: each song with its rule and why ------------------------
+
+describe('trace viewer — Songs view', () => {
+  // A two-block row; the stub trace's songs all say block 1, the first.
+  const editorData = () => ({
+    template: {
+      station: 'cls',
+      name: 'Classics',
+      sources: [
+        { name: 'A', colour: '#c0392b', role: 'content' },
+        { name: 'B', colour: '#8e44ad', role: 'content' },
+      ],
+      layout: {
+        unit: 'day', unit_labels: [], row_start_offsets: [],
+        row_template: [
+          { source: 'A', strategy: 'window', size: 2 },
+          { source: 'B', strategy: 'pick', size: 1 },
+        ],
+      },
+    },
+    sidecar: {
+      schema_version: 1,
+      sections: [{ id: 'day', name: 'The day', blocks: [
+        { kind: 'atomic', row_idx: 0, block_idx: 0 },
+        { kind: 'atomic', row_idx: 0, block_idx: 1 },
+      ] }],
+      macros: [],
+      layout_order: ['day'],
+    },
+    sidecar_error: null,
+    updated_at: 'ts-1',
+  });
+
+  beforeEach(() => {
+    getPlaylistMock.mockReset();
+    getTraceMock.mockReset();
+    getStationMock.mockReset();
+    getStationPlaylistsMock.mockReset();
+    getStationPlaylistsMock.mockResolvedValue([]);
+    getVersionsMock.mockReset();
+    getVersionsMock.mockResolvedValue({ playlist_id: 7, current_v: 1, versions: [] });
+    stationServerSettingsMock.mockResolvedValue(
+      null as unknown as Awaited<ReturnType<typeof stationServerSettingsMock>>, // no Station Server link
+    );
+    getStationSidecarMock.mockReset();
+    getStationSidecarMock.mockRejectedValue(new Error('no sidecar'));
+    setId('7');
+    setSearch('');
+    try { window.localStorage.clear(); } catch { /* */ }
+  });
+
+  it('switches to Songs: each song with its rule and the reason it was picked', async () => {
+    getStationSidecarMock.mockResolvedValueOnce(editorData());
+    renderPopulated();
+    await screen.findByText('Track Mon-1');
+    expect(screen.queryByTestId('song-list')).toBeNull(); // the table is the default
+
+    await fireEvent.click(screen.getByTestId('week-view-songs'));
+    const rows = await screen.findAllByTestId('song-row');
+    expect(rows).toHaveLength(3);
+    expect(rows[0]).toHaveTextContent('Track Mon-1');
+    expect(screen.getAllByTestId('song-rule')[0]).toHaveTextContent('2 in a row from A');
+    expect(screen.getAllByTestId('song-why')[0]).toHaveTextContent('first slot of row 1');
+    expect(screen.getAllByTestId('song-section')[0]).toHaveTextContent('The day');
+    expect(screen.queryByTestId('filter-bar')).toBeNull(); // the table's filters
+
+    await fireEvent.click(rows[1]);
+    expect(rows[1]).toHaveAttribute('aria-pressed', 'true');
+    expect(window.localStorage.getItem('weekView')).toBe('songs');
+  });
+
+  it('remembers Songs for the next week page, and Table switches back', async () => {
+    window.localStorage.setItem('weekView', 'songs');
+    getStationSidecarMock.mockResolvedValueOnce(editorData());
+    renderPopulated();
+    expect(await screen.findAllByTestId('song-row')).toHaveLength(3);
+    await fireEvent.click(screen.getByTestId('week-view-table'));
+    expect(screen.queryByTestId('song-list')).toBeNull();
+    expect(screen.getByTestId('filter-bar')).toBeInTheDocument();
+    expect(window.localStorage.getItem('weekView')).toBe('table');
+  });
+
+  it('without the station sidecar there is no Songs view, just the table', async () => {
+    window.localStorage.setItem('weekView', 'songs');
+    getStationSidecarMock.mockRejectedValueOnce(new Error('404'));
+    renderPopulated();
+    await screen.findByText('Track Mon-1');
+    expect(screen.queryByTestId('week-view')).toBeNull();
+    expect(screen.queryByTestId('song-list')).toBeNull();
   });
 });

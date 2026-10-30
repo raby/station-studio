@@ -168,4 +168,25 @@ test.describe('trace viewer', () => {
     await expect(page.getByTestId('filter-empty')).not.toBeVisible();
     await expect(counter).toHaveText(/showing\s+1\s+of\s+1/i);
   });
+
+  test('Songs view: each song with its rule and why, and it passes axe', async ({
+    page,
+    request,
+  }) => {
+    await importTinyPool(request, 'A');
+    await createStation(request, 'trv-songs', 'Trace View Songs');
+    const { playlist_id } = await generate(request, 'trv-songs', 1);
+    await page.goto(`/playlists/${playlist_id}`);
+
+    await page.getByTestId('week-view-songs').click();
+    const rows = page.getByTestId('song-row');
+    await expect(rows.first()).toBeVisible();
+    await expect(page.getByTestId('song-rule').first()).toContainText('from A');
+    await expect(page.getByTestId('song-why').first()).not.toBeEmpty();
+    await assertNoA11yViolations(page);
+
+    // Remembered on the next visit.
+    await page.reload();
+    await expect(page.getByTestId('song-list')).toBeVisible();
+  });
 });
