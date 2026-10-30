@@ -64,7 +64,7 @@ dependencies = [
 dev = [
     "pytest>=8.0",
     "httpx>=0.27",
-    "coverage>=7.0",
+    "coverage>=7.10",
     # §16.26 — `build` is what `make wheel` shells out to. Mirrored
     # in requirements-dev.txt; the parity guard at
     # scripts/check_deps_parity.py + the `make check-deps-parity`

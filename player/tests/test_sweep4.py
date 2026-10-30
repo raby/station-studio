@@ -148,6 +148,7 @@ def test_alarm_in_the_hour_the_clocks_skip(monkeypatch):
     import time as _time
     if not hasattr(_time, "tzset"):
         pytest.skip("needs time.tzset")
+    tz_before = os.environ.get("TZ")  # None when TZ isn't set (the usual case on a Mac)
     monkeypatch.setenv("TZ", "Europe/London")
     _time.tzset()
     try:
@@ -160,7 +161,7 @@ def test_alarm_in_the_hour_the_clocks_skip(monkeypatch):
     finally:
         monkeypatch.undo()
         _time.tzset()
-    assert os.environ.get("TZ") != "Europe/London"
+    assert os.environ.get("TZ") == tz_before  # put back as it was, even when it was Europe/London
 
 
 def test_alarm_just_before_midnight():

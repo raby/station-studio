@@ -321,6 +321,7 @@ class LiveInput:
             conn.settimeout(_HELLO_SECONDS)
             if self._guesses.blocked(who):
                 conn.sendall(b"HTTP/1.0 429 Too Many Requests\r\n\r\nToo many wrong passwords\r\n")
+                _linger(conn)
                 return
             handle(conn, who)
         except (OSError, ValueError) as exc:
@@ -514,6 +515,20 @@ def _read_headers(conn: socket.socket, data: bytes) -> tuple[bytes, bytes]:
         if not more:
             raise ValueError("closed before any audio")
         data += more
+
+
+def _linger(conn: socket.socket) -> None:
+    """Let the other end read an answer given before it had finished
+    talking: closing with its words still unread resets the connection,
+    and on Windows the answer is lost with it."""
+    deadline = time.monotonic() + 1  # however slowly it trickles in
+    try:
+        conn.shutdown(socket.SHUT_WR)
+        conn.settimeout(1)
+        while time.monotonic() < deadline and conn.recv(4096):
+            pass
+    except OSError:
+        pass
 
 
 def _read_until(conn: socket.socket, end: bytes, data: bytes = b"") -> tuple[bytes, bytes]:
