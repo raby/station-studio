@@ -4,6 +4,39 @@ All notable changes are listed here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses semantic versioning.
 
+## [1.12.0] - 2026-10-30
+
+### Added
+
+- **Regenerate the later weeks too.** After you save a rule change on a
+  week's page, the bar says which later weeks were made with the old
+  rules and offers **Regenerate this week and the N after**. They're
+  remade one at a time, in order, with progress; if one fails it
+  stops there and says which. When they're done, the page says so.
+
+### Fixed
+
+- **Regenerating a past week keeps its place in the station's
+  sequences.** On stations with persistent cursors, a regenerate used
+  to start from where the latest week left the cursors and then move
+  them on again, so the week came out different and every later new
+  week skipped ahead. Each generation now records the cursor positions
+  it started from. Regenerating a week starts from those, and only the
+  latest week moves the live cursors. Previews of a past week use the
+  same positions, so they match. Weeks generated before this version
+  have no record, so a past one still starts from the live cursors (it
+  no longer moves them), and the latest one is moved on once more when
+  regenerated. From then on, every week is recorded.
+- Regenerating a week of an `rng: on` station without a seed reuses
+  the week's own seed (on both `/generate` and `/jobs/generate`); a week
+  made before the station was `rng: on` uses its week number, as its
+  preview does, so the preview shows what regenerating gives. Before,
+  the request failed.
+- **Regenerate** on a week's page waits if another generate is already
+  running for the station (a week started from the station page, say)
+  and then does its own week. Before, it took that other job's finishing
+  as its own week being done.
+
 ## [1.11.0] - 2026-10-30
 
 ### Added

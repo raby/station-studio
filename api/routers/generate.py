@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from engine.models import Station, Playlist, PlaylistVersion
 from engine.persistence import (
-    advance_cursors, load_alias_map, load_cursor_positions,
+    finish_cursors, load_alias_map, plan_cursors, regeneration_seed,
     load_excluded_mix_ids, load_excluded_track_pids, load_pools,
     load_previous_playlist, max_mix_exclusion_window, rollback_playlist,
     RollbackError, save_playlist,
@@ -101,11 +101,18 @@ def generate_playlist(slug: str, payload: GenerateRequest, db: Session = Depends
     # §14.30: load persistent named-cursor positions when the template
     # opts in. Stateless templates ignore this — the generator falls
     # back to the §14.22 stateless computation.
-    named_cursor_positions = None
-    if template.cursor.persist:
-        named_cursor_positions = load_cursor_positions(
-            db, station_id=station.id, template=template,
-        )
+    # A past week starts from the positions it was generated with;
+    # only the latest week moves the live cursors (plan_cursors).
+    cursor_plan = plan_cursors(
+        db, station_id=station.id, template=template, week=payload.week,
+    )
+    named_cursor_positions = cursor_plan.positions
+
+    # rng='on' without a seed: regenerating reuses the week's own (same
+    # as /jobs/generate); a new week still needs one.
+    seed = payload.seed
+    if seed is None and template.rng == "on":
+        seed = regeneration_seed(db, station_id=station.id, week=payload.week)
 
     # §16.14.t5: resolve cross_pool_dedup_sources to a set of track
     # persistent_ids the weighted strategy must exclude. Empty set
@@ -124,7 +131,7 @@ def generate_playlist(slug: str, payload: GenerateRequest, db: Session = Depends
 
     try:
         result = generate(
-            template, pools, week=payload.week, seed=payload.seed,
+            template, pools, week=payload.week, seed=seed,
             excluded_mix_ids=excluded_mix_ids,
             alias_map=alias_map,
             previous_playlist=previous_playlist,
@@ -141,7 +148,10 @@ def generate_playlist(slug: str, payload: GenerateRequest, db: Session = Depends
         raise HTTPException(400, f"generation failed: {e}")
 
     try:
-        playlist = save_playlist(db, station, result, week=payload.week, template=template)
+        playlist = save_playlist(
+            db, station, result, week=payload.week, template=template,
+            cursor_positions=cursor_plan.positions,
+        )
         db.commit()
     except IntegrityError:
         db.rollback()
@@ -156,15 +166,16 @@ def generate_playlist(slug: str, payload: GenerateRequest, db: Session = Depends
     # WEEKLY_002 = generation 1, etc. Regenerating week W keeps the
     # same generation count → deterministic byte-equality with weekly's
     # stateful cursor model.
-    if template.cursor.persist:
-        advance_cursors(
+    if cursor_plan.moves_live:
+        finish_cursors(
             db,
+            plan=cursor_plan,
             station_id=station.id,
             template=template,
             pools=dict(pools),
             advance_step=cursor_advance_step,
             reset_cycle=cursor_reset_cycle,
-            generation_count=payload.week - 1,
+            week=payload.week,
         )
         db.commit()
 
