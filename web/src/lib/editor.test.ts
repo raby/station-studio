@@ -947,6 +947,28 @@ describe('findChipRef', () => {
     };
   }
 
+  it('uses the trace block, numbered from 1 like the engine, not the song number', () => {
+    // Block 0 plays two songs, so the third song (slot 3) is block 2's
+    // first and only song: the engine's trace says block 2.
+    const t: StationTemplate = {
+      station: 'ts', name: 'Test',
+      sources: [{ name: 'A', role: 'content' }],
+      layout: {
+        unit: 'slot', unit_labels: [], row_start_offsets: [],
+        flat_slots: [
+          { source: 'A', strategy: 'jingle', size: 2, genre: 'G' },
+          { source: 'A', strategy: 'jingle', size: 1, genre: 'G' },
+        ],
+      },
+    };
+    const sc: Sidecar = {
+      schema_version: 1,
+      sections: [{ id: 's', blocks: [{ kind: 'atomic', slot_index: 0 }, { kind: 'atomic', slot_index: 1 }] }],
+      layout_order: ['s'],
+    };
+    expect(findChipRef(t, sc, { slot: 2, row: 1, block: 1 })).toEqual({ kind: 'atomic-ref', slot_index: 0 });
+    expect(findChipRef(t, sc, { slot: 3, row: 1, block: 2 })).toEqual({ kind: 'atomic-ref', slot_index: 1 });
+  });
   it('case 1: flat_slots atomic — direct slot_index match', () => {
     const sc: Sidecar = {
       schema_version: 1,
@@ -959,7 +981,7 @@ describe('findChipRef', () => {
       }],
       layout_order: ['morning'],
     };
-    expect(findChipRef(flatTemplate(), sc, { slot: 1, row: 0, block: 1 }))
+    expect(findChipRef(flatTemplate(), sc, { slot: 2, row: 1, block: 2 }))
       .toEqual({ kind: 'atomic-ref', slot_index: 1 });
   });
 
@@ -976,7 +998,7 @@ describe('findChipRef', () => {
       }],
       layout_order: ['row'],
     };
-    expect(findChipRef(rowTemplate(), sc, { slot: 11, row: 1, block: 2 }))
+    expect(findChipRef(rowTemplate(), sc, { slot: 12, row: 2, block: 3 }))
       .toEqual({ kind: 'atomic-ref', row_idx: 1, block_idx: 2 });
   });
 
@@ -998,7 +1020,7 @@ describe('findChipRef', () => {
       }],
       layout_order: ['mixed'],
     };
-    expect(findChipRef(flatTemplate(), sc, { slot: 2, row: 0, block: 2 }))
+    expect(findChipRef(flatTemplate(), sc, { slot: 3, row: 1, block: 3 }))
       .toEqual({ kind: 'macro-placeholder', macro_id: 'jingles', pick_in_macro: 1 });
   });
 
@@ -1021,7 +1043,7 @@ describe('findChipRef', () => {
       }],
       layout_order: ['leading-macro'],
     };
-    expect(findChipRef(flatTemplate(), sc, { slot: 1, row: 0, block: 1 }))
+    expect(findChipRef(flatTemplate(), sc, { slot: 2, row: 1, block: 2 }))
       .toEqual({ kind: 'macro-placeholder', macro_id: 'm', pick_in_macro: 1 });
   });
 
@@ -1044,7 +1066,7 @@ describe('findChipRef', () => {
       }],
       layout_order: ['row-mixed'],
     };
-    expect(findChipRef(rowTemplate(), sc, { slot: 2, row: 0, block: 2 }))
+    expect(findChipRef(rowTemplate(), sc, { slot: 3, row: 1, block: 3 }))
       .toEqual({ kind: 'macro-placeholder', macro_id: 'm', pick_in_macro: 1 });
   });
 
@@ -1057,7 +1079,7 @@ describe('findChipRef', () => {
       }],
       layout_order: ['tiny'],
     };
-    expect(findChipRef(flatTemplate(), sc, { slot: 4, row: 0, block: 4 }))
+    expect(findChipRef(flatTemplate(), sc, { slot: 5, row: 1, block: 5 }))
       .toBeNull();
   });
 
@@ -1076,7 +1098,7 @@ describe('findChipRef', () => {
       }],
       layout_order: ['orphan', 'real'],
     };
-    expect(findChipRef(flatTemplate(), sc, { slot: 2, row: 0, block: 2 }))
+    expect(findChipRef(flatTemplate(), sc, { slot: 3, row: 1, block: 3 }))
       .toEqual({ kind: 'atomic-ref', slot_index: 2 });
   });
 
@@ -1097,7 +1119,7 @@ describe('findChipRef', () => {
       }],
       layout_order: ['drift'],
     };
-    expect(findChipRef(flatTemplate(), sc, { slot: 0, row: 0, block: 0 }))
+    expect(findChipRef(flatTemplate(), sc, { slot: 1, row: 1, block: 1 }))
       .toBeNull();
   });
 });
@@ -1304,7 +1326,8 @@ describe('aggregateBySection', () => {
   function tr(track_ids: Array<number>) {
     return {
       slots: track_ids.map((track_id, i) => ({
-        slot: i, row: 1, block: i, track_id,
+        // As the engine numbers them: from 1.
+        slot: i + 1, row: 1, block: i + 1, track_id,
       })),
     };
   }
