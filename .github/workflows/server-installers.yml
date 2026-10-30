@@ -20,6 +20,7 @@ on:
     paths:
       - 'server/**'
       - '.github/workflows/server-installers.yml'
+      - 'scripts/check_macos_minimum.sh'
   workflow_dispatch:
   workflow_call:
     inputs:
@@ -41,7 +42,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-14
+          # macOS 14 runners retire on 2 November 2026; the app is still
+          # built to run on macOS 11 (checked after the build).
+          - os: macos-15
             label: Mac (Apple Silicon)
             kind: mac
             arch: apple-silicon
@@ -128,6 +131,10 @@ jobs:
 
       - name: build the app
         run: python -m PyInstaller --noconfirm --clean server/packaging/station-server.spec --distpath build/dist --workpath build/work
+
+      - name: check it still runs on macOS 11
+        if: matrix.kind == 'mac'
+        run: scripts/check_macos_minimum.sh "build/dist/Station Server.app" 11.0
 
       - name: smoke-test the app
         run: |
