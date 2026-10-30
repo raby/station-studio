@@ -94,8 +94,13 @@ jobs:
           # The published checksum: a download that isn't that build stops here.
           want=$(awk '{print $1}' build/ffmpeg/ffmpeg.zip.sha256)
           got=$(shasum -a 256 build/ffmpeg/ffmpeg.zip | awk '{print $1}')
-          echo "ffmpeg.zip sha256 $got"
-          test -n "$want" && test "$want" = "$got"
+          echo "ffmpeg.zip sha256: published ${want:-(none)}, downloaded $got"
+          # Not `test -n … && test …`: under set -e a failing first test
+          # wouldn't stop the step.
+          if [ -z "$want" ] || [ "$want" != "$got" ]; then
+            echo "::error title=ffmpeg checksum::ffmpeg.zip isn't the published ${{ matrix.ffmpeg }} build"
+            exit 1
+          fi
           unzip -o build/ffmpeg/ffmpeg.zip -d build/ffmpeg
           cp build/ffmpeg/ffmpeg server/packaging/ffmpeg/ffmpeg
           chmod +x server/packaging/ffmpeg/ffmpeg

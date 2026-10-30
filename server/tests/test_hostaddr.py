@@ -36,7 +36,9 @@ def test_addresses_come_back_at_once_while_the_lookup_is_slow(slow_lookup):
         find()
         assert time.monotonic() - started < 1
     assert hostaddr.host_addresses() == []
-    assert len(calls) == 1  # one lookup, however often it's asked
+    _wait_for(lambda: len(calls) == 1)  # started in the background...
+    hostaddr.host_addresses()
+    assert len(calls) == 1  # ...and only once, however often it's asked
 
     release.set()
     for _ in range(100):
@@ -49,6 +51,43 @@ def test_addresses_come_back_at_once_while_the_lookup_is_slow(slow_lookup):
     assert len(calls) == 1
 
 
+def test_a_minute_on_the_addresses_are_looked_up_again_in_the_background(monkeypatch):
+    """A laptop moves between networks: the list is refreshed, and the
+    old one is given meanwhile rather than waiting."""
+    answers = iter([["192.168.1.5"], ["10.1.1.9"]])
+    calls = []
+    gate = threading.Event()
+
+    def lookup(name):
+        calls.append(name)
+        if len(calls) == 2:
+            gate.wait(5)
+        return (name, [], next(answers))
+
+    hostaddr._reset_for_tests()
+    monkeypatch.setattr(socket, "gethostbyname_ex", lookup)
+    hostaddr.host_addresses()
+    _wait_for(lambda: hostaddr.host_addresses() == ["192.168.1.5"])
+    assert len(calls) == 1  # fresh: not looked up again
+
+    hostaddr._at -= hostaddr.REFRESH_SECONDS + 1  # a minute later
+    started = time.monotonic()
+    assert hostaddr.host_addresses() == ["192.168.1.5"]  # the old list, at once
+    assert time.monotonic() - started < 1
+    _wait_for(lambda: len(calls) == 2)  # the refresh, in the background
+    gate.set()
+    _wait_for(lambda: hostaddr.host_addresses() == ["10.1.1.9"])
+    assert len(calls) == 2
+    hostaddr._reset_for_tests()
+
+
+def _wait_for(check, seconds: float = 2.0) -> None:
+    deadline = time.monotonic() + seconds
+    while not check():
+        assert time.monotonic() < deadline, "timed out"
+        time.sleep(0.01)
+
+
 def test_a_lookup_that_fails_gives_nothing(monkeypatch):
     def fail(name):
         raise socket.gaierror("no such name")
@@ -56,9 +95,6 @@ def test_a_lookup_that_fails_gives_nothing(monkeypatch):
     hostaddr._reset_for_tests()
     monkeypatch.setattr(socket, "gethostbyname_ex", fail)
     hostaddr.host_addresses()
-    for _ in range(100):
-        if hostaddr._found is not None:
-            break
-        time.sleep(0.01)
+    _wait_for(lambda: hostaddr._found is not None)
     assert hostaddr.host_addresses() == []
     hostaddr._reset_for_tests()

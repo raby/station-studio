@@ -29,7 +29,7 @@ limit=$(as_number "$min")
 checked=0
 too_new=0
 while IFS= read -r -d '' f; do
-  file -b "$f" | grep -q 'Mach-O' || continue
+  case "$(file -b "$f")" in *Mach-O*) ;; *) continue ;; esac
   checked=$((checked + 1))
   # Every architecture slice's minimum (a universal binary has several).
   mins=$(otool -l "$f" 2>/dev/null | awk '
@@ -48,6 +48,11 @@ while IFS= read -r -d '' f; do
 done < <(find "$app" -type f -print0)
 
 echo "checked $checked Mach-O files in $(basename "$app") against macOS $min"
+if [ "$checked" -eq 0 ]; then
+  # A wrong path, or `file` describing them differently: nothing was checked.
+  echo "no Mach-O files found in $app" >&2
+  exit 1
+fi
 if [ "$too_new" -gt 0 ]; then
   echo "$too_new would stop the app starting on macOS $min" >&2
   [ -n "${GITHUB_ACTIONS:-}" ] && echo "::error title=macOS $min check::$too_new files in $(basename "$app") need a newer macOS"
