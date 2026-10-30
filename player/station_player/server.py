@@ -17,6 +17,7 @@ import logging
 import math
 import re
 import socket
+import socketserver
 import subprocess
 import sys
 import threading
@@ -1996,9 +1997,14 @@ class _Server(ThreadingHTTPServer):
     if sys.platform == "win32":
         allow_reuse_address = False
 
-        def server_bind(self):
+    def server_bind(self):
+        if sys.platform == "win32":
             self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
-            super().server_bind()
+        # Not HTTPServer.server_bind: it also looks up socket.getfqdn(host),
+        # which for 0.0.0.0 can wait on mDNS for over a minute on some Macs.
+        # The name is never used.
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = str(self.server_address[0]), self.server_address[1]
 
 
 def make_server(app: PlayerApp, host: str = "127.0.0.1", port: int = 8765) -> ThreadingHTTPServer:
