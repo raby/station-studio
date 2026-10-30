@@ -18,6 +18,10 @@ this project uses semantic versioning.
 
 - Settings › Station Server no longer replaces an address you typed
   while your saved settings were still loading.
+- The Mac app keeps working back to macOS 11: the web UI is built for
+  Safari 14 again (Vite 7 would have needed Safari 16), and the
+  narrow-screen notice and the station form's Reset no longer use
+  functions that need Safari 15.4.
 
 ## [1.10.0] - 2026-10-26
 

@@ -71,6 +71,8 @@ _STATIC_TYPES = {
     ".webmanifest": "application/manifest+json",
     ".ico": "image/x-icon",
     ".json": "application/json",
+    ".mp3": "audio/mpeg",  # ambient mode's recordings
+    ".ogg": "audio/ogg",
 }
 # The UI only talks to this server; audio may come from radio stations.
 _CSP = (
@@ -1636,8 +1638,10 @@ def make_handler(app: PlayerApp):
                         q=q.get("q", ""), tag=q.get("tag", ""), country=q.get("country", ""),
                         order=q.get("order", "votes"), offset=offset))
                 if path == "/api/directory/map":
+                    kind = q.get("kind", "")
                     return self._send_json({"stations": app.directory.map_stations(
-                        country=q.get("country", ""), kind=q.get("kind", ""), genre=q.get("genre", ""))})
+                        country=q.get("country", ""), kind=kind, genre=q.get("genre", ""),
+                        extra=app.picks.sport() if kind == "sport" else None)})
                 if path == "/api/directory/somafm":
                     return self._send_json({"stations": app.directory.somafm()})
             except DirectoryError as exc:
