@@ -46,12 +46,16 @@ jobs:
       - name: install
         # Playwright drives the player page in Chromium (tests/test_browser.py).
         run: |
-          python -m pip install pytest playwright==1.56.0
+          # The annotate plugin turns each failing test into an annotation
+          # on the run and the PR (name + message), so a failure can be
+          # read without opening the full log.
+          python -m pip install pytest pytest-github-actions-annotate-failures==0.4.2 playwright==1.56.0
           python -m playwright install --with-deps chromium
       - name: pytest
         working-directory: player
         env:
           STATION_PLAYER_REQUIRE_BROWSER: '1'
+          PYTEST_RUN_PATH: player  # annotations point at player/tests/...
         run: python -m pytest -q
 
   server:
@@ -82,9 +86,11 @@ jobs:
           tar -xf "$RUNNER_TEMP/ffmpeg/ffmpeg-master-latest-linux64-lgpl.tar.xz" -C "$RUNNER_TEMP/ffmpeg"
           echo "$RUNNER_TEMP/ffmpeg/ffmpeg-master-latest-linux64-lgpl/bin" >> "$GITHUB_PATH"
           "$RUNNER_TEMP/ffmpeg/ffmpeg-master-latest-linux64-lgpl/bin/ffmpeg" -hide_banner -encoders | grep -q libmp3lame
-          python -m pip install pytest
+          python -m pip install pytest pytest-github-actions-annotate-failures==0.4.2
       - name: pytest
         working-directory: server
+        env:
+          PYTEST_RUN_PATH: server  # annotations point at server/tests/...
         run: python -m pytest -q
 
   server-desktop:
@@ -136,9 +142,11 @@ jobs:
           fi
           echo "$bin" >> "$GITHUB_PATH"
           "$bin/ffmpeg" -hide_banner -encoders | grep -q libmp3lame
-          python -m pip install pytest
+          python -m pip install pytest pytest-github-actions-annotate-failures==0.4.2
       - name: pytest
         working-directory: server
+        env:
+          PYTEST_RUN_PATH: server  # annotations point at server/tests/...
         run: python -m pytest -q -p no:cacheprovider
 
   frontend-unit:
