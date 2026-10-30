@@ -4,6 +4,21 @@ All notable changes are listed here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses semantic versioning.
 
+## [1.13.1] - 2026-10-30
+
+### Changed
+
+- **The rule panel speaks plainly** (on a week's page and in the
+  station editor). It opens with the rule in words ("Shuffled from POP,
+  no artist twice in 10"); says where it is ("Rule 2 of every day",
+  "Slot 4", "7 songs, one rule") with the template's address on hover;
+  names strategies the way you'd say them, engine name in brackets
+  ("Shuffled (weighted)"); and labels settings by what they do ("No
+  artist twice in", "Only songs also in", "Not reused for (weeks)").
+  Gone: "Atomic block", "row_idx=0, block_idx=1", "per-block positive
+  filter", "expanded blocks". On the week page the button that queues a
+  change says **Apply**, since the bar's **Save changes** is what saves.
+
 ## [1.13.0] - 2026-10-30
 
 ### Added

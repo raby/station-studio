@@ -33,6 +33,7 @@
     EDITABLE_FIELDS,
     lookupEngineBlock,
     lookupMacro,
+    strategyName,
     validateEditableField,
     type EditableFieldSpec,
     type EngineBlock,
@@ -45,6 +46,7 @@
   import type { StructuralBlockEdit } from '$lib/api';
   import { moveTargets as computeMoveTargets } from '$lib/drag-drop';
   import ChipMultiInput from './ChipMultiInput.svelte';
+  import { ruleText } from '$lib/songList';
 
   // c2 review #2: shared field-value union covering every editable
   // type the form can hold. `string | number | null` covers the
@@ -59,6 +61,9 @@
   export let selected: { ref: ExpandedRef; section: SidecarSection } | null = null;
   export let template: StationTemplate;
   export let sidecar: Sidecar;
+  /** The parameter form's button. The week page queues changes for its
+   *  own Save, so it says "Apply". */
+  export let saveLabel = 'Save';
 
   /**
    * §16.2.4 c2: dispatch contracts —
@@ -98,6 +103,9 @@
     structuralEdit: { edit: StructuralBlockEdit };
   }>();
 
+  /** What one row of a repeating-row station is ("day" for Classics). */
+  $: rowWord = template.layout.unit && template.layout.unit !== 'slot' ? template.layout.unit : 'row';
+
   // Resolve the spec under the selection.
   $: detail = (() => {
     if (selected === null) return null;
@@ -112,6 +120,9 @@
         address: ref.slot_index !== undefined
           ? `slot_index=${ref.slot_index}`
           : `row_idx=${ref.row_idx}, block_idx=${ref.block_idx}`,
+        place: ref.slot_index !== undefined
+          ? `Slot ${ref.slot_index + 1}`
+          : `Rule ${(ref.block_idx ?? 0) + 1} of every ${rowWord}`,
       };
     }
     const macro = lookupMacro(sidecar, ref.macro_id);
@@ -121,6 +132,7 @@
       block: macro?.spec ?? null,
       macro,
       address: `macro="${ref.macro_id}"`,
+      place: macro ? `${macro.repeat} ${macro.repeat === 1 ? 'song' : 'songs'}, one rule` : 'Group of songs',
     };
   })();
 
@@ -654,16 +666,16 @@
   <div
     class="detail-panel"
     role="dialog"
-    aria-label="Chip details"
+    aria-label="Rule details"
     data-testid="detail-panel"
     data-kind={detail.kind}
   >
     <header>
       <h2>
         {#if detail.kind === 'atomic'}
-          Atomic block
+          Rule
         {:else}
-          Macro: {detail.macro?.name ?? detail.macro?.id ?? '?'}
+          {detail.macro?.name ?? detail.macro?.id ?? 'Group of songs'}
         {/if}
       </h2>
       <button
@@ -675,32 +687,38 @@
       >×</button>
     </header>
 
+    {#if detail.block}
+      <p class="rule-words" data-testid="detail-rule">{ruleText(detail.block)}</p>
+    {/if}
+
     <dl>
       <dt>Section</dt>
       <dd data-testid="detail-section-name">
         {detail.section.name ?? detail.section.id}
       </dd>
 
-      <dt>Address</dt>
-      <dd class="mono" data-testid="detail-address">{detail.address}</dd>
-
-      {#if detail.kind === 'macro' && detail.macro}
-        <dt>Repeat</dt>
-        <dd data-testid="detail-repeat">{detail.macro.repeat}</dd>
-      {/if}
+      <dt>Place</dt>
+      <!-- The template's own address on hover, for anyone reading it. -->
+      <dd data-testid="detail-address" title={detail.address}>{detail.place}</dd>
 
       {#if detail.block}
         <!-- Identity: read-only for macros + the static form. Atomic
              blocks gain a retype affordance below (size is structural
              → §16.2.5). -->
-        <dt>Strategy</dt>
-        <dd data-testid="detail-strategy">{detail.block.strategy}</dd>
+        <dt>Picks</dt>
+        <dd data-testid="detail-strategy">{strategyName(detail.block.strategy)}</dd>
 
-        <dt>Source</dt>
+        <dt>From</dt>
         <dd data-testid="detail-source">{detail.block.source}</dd>
 
-        <dt>Size</dt>
-        <dd>{detail.block.size}</dd>
+        <dt>Songs</dt>
+        <dd data-testid="detail-size">
+          {#if detail.kind === 'macro' && detail.macro}
+            {detail.macro.repeat} × {detail.block.size}
+          {:else}
+            {detail.block.size}
+          {/if}
+        </dd>
 
         <!-- §16.2.4 c2: §16.2.3 listed each engine block field
              inline in this dl for MACROS only; the §16.2.4 macro
@@ -710,8 +728,8 @@
       {:else}
         <dt>Status</dt>
         <dd class="warn">
-          Engine block not found at this address — the sidecar may
-          reference a slot the template no longer has.
+          This rule isn't in the station any more: its layout changed
+          since this was opened. Reload the page.
         </dd>
       {/if}
     </dl>
@@ -720,28 +738,27 @@
          macros (macros: edit-once-applies-to-all per D1). -->
     {#if detail.block}
       <form class="edit-form" data-testid="edit-form" on:submit|preventDefault={onSave}>
-        <h3>Parameters</h3>
+        <h3>Settings</h3>
 
         {#if detail.kind === 'macro'}
           <p
             class="shared-warning macro-warning"
             data-testid="macro-fanout-warning"
           >
-            Saving here applies to <strong>all
-            {detail.macro?.repeat ?? '?'} expanded blocks</strong>
-            of this macro (edit-once-applies-to-all).
+            A change here applies to <strong>all
+            {detail.macro?.repeat ?? '?'} songs</strong> this rule makes.
           </p>
         {:else if isRowTemplateEdit}
           <p class="shared-warning" data-testid="shared-block-warning">
-            This block is part of the shared <strong>row template</strong> —
-            editing it changes <strong>every row</strong> that uses it.
+            This rule is in <strong>every {rowWord}</strong>: a change
+            here changes each one.
           </p>
         {/if}
 
         {#if editFields.length === 0}
           <p class="no-params" data-testid="no-params">
-            The <code>{detail.block.strategy}</code> strategy has no
-            editable parameters.
+            Nothing to set for this kind of rule. To change what it
+            does, change how it picks below.
           </p>
         {:else}
           {#each editFields as f (f.name)}
@@ -780,7 +797,7 @@
                     : template.sources}
                   testIdPrefix="input-{f.name}"
                   inputLabel={f.label}
-                  placeholder="Type a {f.sourceRoleFilter ?? 'source'} name + Enter"
+                  placeholder="Type a name, then Enter"
                   on:change={(e) => (editValues[f.name] = e.detail)}
                 />
               {:else}
@@ -804,7 +821,7 @@
             data-testid="detail-save"
             disabled={!dirty || hasErrors}
           >
-            Save
+            {saveLabel}
           </button>
 
           {#if saveStateError}
@@ -831,25 +848,25 @@
           on:click={() => (retypeOpen = !retypeOpen)}
           aria-expanded={retypeOpen}
         >
-          {retypeOpen ? '▾' : '▸'} Change strategy / source
+          {retypeOpen ? '▾' : '▸'} Change how it picks, or from where
         </button>
 
         {#if retypeOpen}
           <div class="retype-body">
             <label class="field" data-testid="retype-strategy-field">
-              <span class="field-label">Strategy</span>
+              <span class="field-label">Picks</span>
               <select
                 data-testid="retype-strategy"
                 bind:value={retypeStrategy}
               >
                 {#each strategyChoices as s (s)}
-                  <option value={s}>{s}</option>
+                  <option value={s}>{strategyName(s)}</option>
                 {/each}
               </select>
             </label>
 
             <label class="field" data-testid="retype-source-field">
-              <span class="field-label">Source</span>
+              <span class="field-label">From</span>
               <select
                 data-testid="retype-source"
                 bind:value={retypeSource}
@@ -862,7 +879,7 @@
 
             {#if retypeRequiredNew.length > 0}
               <p class="hint" data-testid="retype-required-hint">
-                The new strategy requires:
+                This kind of rule also needs:
               </p>
               {#each retypeRequiredNew as f (f.name)}
                 <label class="field" data-testid="retype-newfield-{f.name}">
@@ -896,7 +913,7 @@
               disabled={!retypeDirty || !retypeNewFieldsValid}
               on:click={onRetype}
             >
-              Retype
+              Change rule
             </button>
           </div>
         {/if}
@@ -933,9 +950,9 @@
            affordance and not exposed at the per-block level. -->
       {#if canStructural}
         <section class="structural" data-testid="structural-panel">
-          <h3>Structural</h3>
+          <h3>Size, or remove</h3>
           <label class="field" data-testid="structural-size-field">
-            <span class="field-label">Slot size (picks)</span>
+            <span class="field-label">Songs in this slot</span>
             <div class="size-row">
               <input
                 type="number"
@@ -961,9 +978,9 @@
               data-armed={deleteArmed}
               title={deleteArmed
                 ? 'Click again within 3 seconds to confirm'
-                : 'Remove this slot (the engine block + its sidecar chip)'}
+                : 'Remove this slot and its rule from the station'}
               on:click={onDelete}
-            >{deleteArmed ? 'Confirm delete?' : 'Delete slot'}</button>
+            >{deleteArmed ? 'Click again to remove' : 'Remove slot'}</button>
           </div>
         </section>
       {/if}
@@ -972,6 +989,10 @@
 {/if}
 
 <style>
+  .rule-words {
+    margin: 0 0 0.75rem;
+    font-weight: 600;
+  }
   .detail-panel {
     position: fixed;
     top: 0;
@@ -1027,10 +1048,6 @@
   }
   dd {
     margin: 0;
-  }
-  .mono {
-    font-family: ui-monospace, monospace;
-    font-size: 0.85rem;
   }
   .warn {
     color: var(--error, #c0392b);

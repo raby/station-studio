@@ -719,29 +719,29 @@ export interface EditableFieldSpec {
 // the parity test expects. Small duplication, big simplicity win.
 export const EDITABLE_FIELDS: Record<EngineBlock['strategy'], EditableFieldSpec[]> = {
   pick: [
-    { name: 'allowlist_sources', label: 'Allowlist sources (per-block positive filter)', type: 'string_list', required: false, sourceRoleFilter: 'reference' },
+    { name: 'allowlist_sources', label: 'Only songs also in', type: 'string_list', required: false, sourceRoleFilter: 'reference' },
   ],
   window: [
-    { name: 'allowlist_sources', label: 'Allowlist sources (per-block positive filter)', type: 'string_list', required: false, sourceRoleFilter: 'reference' },
+    { name: 'allowlist_sources', label: 'Only songs also in', type: 'string_list', required: false, sourceRoleFilter: 'reference' },
   ],
   sequential: [
-    { name: 'cursor_id', label: 'Cursor', type: 'string', required: true, enumFromCursors: true },
-    { name: 'allowlist_sources', label: 'Allowlist sources (per-block positive filter)', type: 'string_list', required: false, sourceRoleFilter: 'reference' },
+    { name: 'cursor_id', label: 'Place marker (cursor)', type: 'string', required: true, enumFromCursors: true },
+    { name: 'allowlist_sources', label: 'Only songs also in', type: 'string_list', required: false, sourceRoleFilter: 'reference' },
   ],
   jingle: [
     { name: 'genre', label: 'Genre', type: 'string', required: true },
   ],
   mix: [
     { name: 'genre', label: 'Genre', type: 'string', required: true },
-    { name: 'exclusion_window', label: 'Exclusion window (weeks)', type: 'int', required: false, min: 0 },
+    { name: 'exclusion_window', label: 'Not reused for (weeks)', type: 'int', required: false, min: 0 },
   ],
   weighted: [
-    { name: 'window', label: 'Artist-dedup window', type: 'int', required: false, min: 0 },
-    { name: 'allowlist_sources', label: 'Allowlist sources (per-block positive filter)', type: 'string_list', required: false, sourceRoleFilter: 'reference' },
+    { name: 'window', label: 'No artist twice in (songs)', type: 'int', required: false, min: 0 },
+    { name: 'allowlist_sources', label: 'Only songs also in', type: 'string_list', required: false, sourceRoleFilter: 'reference' },
   ],
   prev_ref: [
-    { name: 'position', label: 'Position (1-indexed)', type: 'int', required: true, min: 1 },
-    { name: 'fallback_genre', label: 'Fallback genre', type: 'string', required: false },
+    { name: 'position', label: "Last week's song number", type: 'int', required: true, min: 1 },
+    { name: 'fallback_genre', label: 'If it misses: a mix of genre', type: 'string', required: false },
   ],
   // §16.14.t6: archive_ref shares prev_ref's `position` field
   // (1-indexed). NO `fallback_genre` — archive_ref has no
@@ -749,9 +749,29 @@ export const EDITABLE_FIELDS: Record<EngineBlock['strategy'], EditableFieldSpec[
   // NO `allowlist_sources` — archive_ref samples from a reference
   // pool already (would be meaningless; parser rejects).
   archive_ref: [
-    { name: 'position', label: 'Position (1-indexed)', type: 'int', required: true, min: 1 },
+    { name: 'position', label: 'Song number in the archive', type: 'int', required: true, min: 1 },
   ],
 };
+
+
+/** A strategy as the operator would say it ("Shuffled" for weighted). */
+const STRATEGY_NAMES: Record<EngineBlock['strategy'], string> = {
+  pick: 'Pick',
+  window: 'In a row',
+  sequential: 'In order',
+  weighted: 'Shuffled',
+  jingle: 'Jingle',
+  mix: 'Mix',
+  prev_ref: 'Same as last week',
+  archive_ref: 'From an archive',
+};
+
+/** "Shuffled (weighted)": the plain name, with the engine's name for
+ *  anyone reading the station's template. */
+export function strategyName(strategy: string): string {
+  const plain = (STRATEGY_NAMES as Record<string, string>)[strategy];
+  return plain ? `${plain} (${strategy})` : strategy;
+}
 
 
 /** The editable-field specs for a block, by its strategy. Empty when

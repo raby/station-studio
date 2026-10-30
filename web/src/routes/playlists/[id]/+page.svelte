@@ -1277,6 +1277,7 @@
 
     {#if editing && panelSelection}
       <DetailPanel
+        saveLabel="Apply"
         selected={panelSelection}
         template={editing.staged.template ?? editorData.template}
         sidecar={editing.staged.sidecar ?? editorData.sidecar}
