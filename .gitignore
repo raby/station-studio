@@ -36,8 +36,9 @@ playwright-test.*.db-wal
 playwright-test.*.db-shm
 playwright-stations.*/
 
-# Coverage output
+# Coverage output (.coverage.* = per-process files before `coverage combine`)
 .coverage
+.coverage.*
 web/coverage/
 
 # Database backups (DESIGN.md §14.18). User-data; never repo content.

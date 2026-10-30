@@ -71,6 +71,8 @@ _STATIC_TYPES = {
     ".webmanifest": "application/manifest+json",
     ".ico": "image/x-icon",
     ".json": "application/json",
+    ".mp3": "audio/mpeg",  # ambient mode's recordings
+    ".ogg": "audio/ogg",
 }
 # The UI only talks to this server; audio may come from radio stations.
 _CSP = (
