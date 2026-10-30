@@ -8,6 +8,7 @@ import os
 import struct
 import subprocess
 import threading
+import urllib.request
 import time
 import wave
 from pathlib import Path
@@ -264,10 +265,13 @@ def test_ambient_mode(page):
     page.locator("#btn-ambient").click()
     box = page.locator("#ambient")
     sync_api.expect(box).to_be_visible()
-    for key in ["fish", "waves", "birds"]:
+    for key in ["fish", "waves", "rain", "stream", "night", "fire", "birds"]:
         page.locator(f'#ambient .seg[data-scene="{key}"]').click()
         sync_api.expect(page.locator(f'#ambient .seg[data-scene="{key}"]')).to_have_attribute("aria-pressed", "true")
         page.wait_for_function("() => AMB.sound && AMB.ctx.state === 'running'")
+        page.wait_for_timeout(300)  # a few frames drawn (a drawing error fails the test)
+        # No recordings ship yet, so each scene makes its own sound.
+        assert page.evaluate("AMB.sound.real") is False
     assert page.evaluate("store('ambient-scene')") == "birds"
     # Its volume, and the sleep timer's fade, set the level.
     page.locator("#ambient input[type=range]").fill("0.2")
@@ -289,6 +293,99 @@ def test_ambient_mode(page):
     page.evaluate("setSleep(0.001)")
     page.wait_for_function("() => AMB.sound === null", timeout=5000)
     page.locator("#btn-ambient-close").click()
+
+
+def test_ambient_plays_a_recording_when_there_is_one(page, tmp_path):
+    # A recording for Rain, as the app would ship it in static/ambient/.
+    rec = tone(tmp_path / "rain.wav", 2.0, 0.3, 300).read_bytes()
+    listing = {"rain": {"file": "rain.ogg", "title": "Rain on a roof", "by": "Someone", "licence": "CC0"}}
+    page.route("**/ambient/sounds.json", lambda r: r.fulfill(json=listing))
+    page.route("**/ambient/rain.ogg", lambda r: r.fulfill(body=rec, content_type="audio/ogg"))
+    page.locator("#btn-ambient").click()
+    page.locator('#ambient .seg[data-scene="rain"]').click()
+    page.wait_for_function("() => AMB.sound && AMB.sound.real")
+    sync_api.expect(page.locator("#ambient .ambient-credit")).to_have_text("Rain on a roof by Someone (CC0)")
+    # Round it goes: a second time through is lined up before the first ends.
+    page.wait_for_function("() => AMB.sound.parts.length >= 1")
+    # A scene without one keeps its made-up sound, and loses the credit.
+    page.locator('#ambient .seg[data-scene="fire"]').click()
+    page.wait_for_function("() => AMB.sound && AMB.ctx.state === 'running'")
+    page.wait_for_timeout(300)
+    assert page.evaluate("AMB.sound.real") is False
+    sync_api.expect(page.locator("#ambient .ambient-credit")).to_be_hidden()
+    page.locator("#btn-ambient-close").click()
+
+
+def test_ambient_recordings_are_served(player):
+    url = player[1] + "ambient/sounds.json"
+    with urllib.request.urlopen(url) as r:
+        assert r.headers["Content-Type"] == "application/json"
+        listing = json.load(r)
+    for info in listing.values():
+        with urllib.request.urlopen(player[1] + "ambient/" + info["file"]) as r:
+            assert r.headers["Content-Type"].startswith("audio/")
+
+
+def test_mini_player_pops_out_and_back(page):
+    # Chrome and Edge: the bar moves into a picture-in-picture window.
+    btn = page.locator("#btn-mini")
+    sync_api.expect(btn).to_have_attribute("aria-label", "Pop out the player")
+    btn.click()
+    page.wait_for_function("() => MINI.on && miniDoc && miniDoc.querySelector('.bar')")
+    assert page.evaluate("document.querySelector('.bar')") is None
+    page.wait_for_function("() => getComputedStyle(miniDoc.querySelector('.bar')).position === 'fixed'")
+    # Its buttons still work, and what's playing shows there.
+    page.evaluate("miniDoc.querySelector('#btn-play').click()")
+    page.wait_for_function("() => !audio.paused")
+    page.wait_for_function("() => miniDoc.querySelector('#now-title').textContent === 'One'")
+    assert page.evaluate("miniDoc.querySelector('#btn-mini').getAttribute('aria-label')") == "Put the player back"
+    page.evaluate("miniDoc.querySelector('#btn-mini').click()")
+    page.wait_for_function("() => !MINI.on && document.querySelector('.app > .bar')")
+    sync_api.expect(btn).to_have_attribute("aria-label", "Pop out the player")
+    assert page.evaluate("!audio.paused")
+    # Closing the little window puts it back too.
+    btn.click()
+    page.wait_for_function("() => MINI.on && miniDoc")
+    page.evaluate("MINI.win.close()")
+    page.wait_for_function("() => !MINI.on && document.querySelector('.app > .bar')")
+    sync_api.expect(page.locator("#btn-play")).to_be_visible()
+
+
+def test_mini_player_in_the_mac_app(browser, player):
+    # As in the Mac app's own window, which hears what the page says.
+    ctx = browser.new_context()
+    ctx.add_init_script("""
+        window.said = [];
+        window.webkit = { messageHandlers: { stationApp: { postMessage: (m) => window.said.push(m) } } };
+    """)
+    pg = ctx.new_page()
+    errors = []
+    pg.on("pageerror", lambda e: errors.append(str(e)))
+    pg.goto(player[1])
+    pg.wait_for_function("() => launch.ready")
+    btn = pg.locator("#btn-mini")
+    sync_api.expect(btn).to_have_attribute("aria-label", "Pop out the player")
+    btn.click()
+    assert pg.evaluate("said") == ["mini"]
+    sync_api.expect(pg.locator("body")).to_have_class(re.compile("mini"))
+    sync_api.expect(pg.locator(".sidebar")).to_be_hidden()
+    sync_api.expect(pg.locator("#btn-play")).to_be_visible()
+    sync_api.expect(btn).to_have_attribute("aria-label", "Put the player back")
+    btn.click()
+    assert pg.evaluate("said") == ["mini", "full"]
+    sync_api.expect(pg.locator(".sidebar")).to_be_visible()
+    # View › Mini Player in the menu bar, twice.
+    pg.evaluate("stationApp.mini()")
+    sync_api.expect(pg.locator("body")).to_have_class(re.compile("mini"))
+    pg.evaluate("stationApp.mini()")
+    assert pg.evaluate("said") == ["mini", "full", "mini", "full"]
+    # The window putting itself back says so; the page needn't answer.
+    pg.evaluate("stationApp.mini(true)")
+    pg.evaluate("stationApp.mini(false)")
+    assert pg.evaluate("said") == ["mini", "full", "mini", "full", "mini"]
+    sync_api.expect(pg.locator(".sidebar")).to_be_visible()
+    ctx.close()
+    assert not errors, errors
 
 
 def test_library_search(page):

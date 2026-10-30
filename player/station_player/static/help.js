@@ -19,6 +19,7 @@ const HELP = [
     ["Up next: the ⋯ button on a track has ", ["Play next"], " and ", ["Add to queue"], ". Up next in the sidebar shows what's queued and lets you reorder it."],
     ["Settings › Playback has ", ["Crossfade"], " (one track fades into the next) and ", ["Volume levelling"], " (every track at about the same loudness)."],
     "The sleep timer beside the volume stops the music after a while, fading out gently.",
+    ["The ", ["Pop out the player"], " button at the right of the player bar takes the bar out into a small window of its own that stays on top of your other windows. Move it anywhere and make it bigger or smaller; ", ["Put the player back"], " (or closing it) brings it home. In the Mac app it's also View › Mini Player (⇧⌘M). It needs the Mac app, Chrome or Edge."],
     ["Installed as an app (", ["Install Station Player as an app"], " in Settings › App), right-click its icon in the Dock or taskbar for ", ["Play / Pause"], " and ", ["Next"], "."],
   ]],
   ["playlists", "Your own playlists", [
@@ -47,7 +48,8 @@ const HELP = [
     "With the globe selected, the arrow keys turn it, plus and minus zoom, and Enter picks the station in the middle, and Enter again plays it.",
   ]],
   ["ambient", "Ambient mode", [
-    ["Ambient in the sidebar fills the screen with a calm scene and its sound: a ", ["Fish tank"], ", ", ["Waves"], " on a shore, or ", ["Birds"], " at dawn."],
+    ["Ambient in the sidebar fills the screen with a calm scene and its sound: ", ["Waves"], " on a shore, ", ["Rain"], " on the window, a ", ["Stream"], " in the woods, ", ["Birds"], " at dawn, a summer ", ["Night"], " with crickets, a log ", ["Fire"], ", or a ", ["Fish tank"], "."],
+    "Where Station Player has a real recording for a scene it plays that, with who recorded it shown underneath; otherwise it makes the sound itself as it plays.",
     "It plays on its own or quietly under the radio, with its own volume. Set the sleep timer and it fades out with everything else.",
     "Press Escape or Close to leave. The controls hide after a few seconds; move the mouse to bring them back.",
   ]],

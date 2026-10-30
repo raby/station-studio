@@ -425,6 +425,21 @@ input[type="range"]:disabled { cursor: default; opacity: .5; }
 }
 .settings section.add-station { margin-top: 28px; }
 
+/* The mini player: the bar on its own, in a picture-in-picture window
+   (body.mini-window) or the Mac app's window shrunk to it (body.mini). */
+body.mini .app > :not(.bar), body.mini > :not(.app):not(.toasts):not(#announce) { display: none !important; }
+body.mini .bar, body.mini-window .bar {
+  position: fixed; inset: 0; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto auto;
+  align-content: center; gap: 6px; padding: 10px 14px; border-top: 0;
+}
+body.mini .now, body.mini-window .now { justify-content: center; }
+body.mini .wave, body.mini-window .wave { display: none; }
+body.mini .volume, body.mini-window .volume { display: flex; justify-content: center; }
+body.mini .sleep, body.mini-window .sleep { display: none; }
+body.mini-window { overflow: hidden; }
+#btn-mini { width: 32px; height: 32px; }
+#btn-mini svg.i { width: 18px; height: 18px; }
+
 .sr-only {
   position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
   overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
@@ -814,6 +829,7 @@ svg.analogue.huge { width: min(62vh, 78vw); height: auto; }
 .ambient-volume { display: flex; align-items: center; gap: 8px; }
 .ambient-volume input { width: 120px; }
 .ambient-controls .btn { color: inherit; background: rgba(255, 255, 255, .12); border-color: rgba(255, 255, 255, .25); }
+.ambient-credit { flex-basis: 100%; margin: 0; text-align: center; font-size: 12px; opacity: .7; }
 .update-settings { margin-top: 14px; }
 .update-settings .row, .update-note .row { display: flex; gap: 8px; flex-wrap: wrap; }
 .update-failed { color: var(--danger); }
