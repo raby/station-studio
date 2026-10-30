@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 # Fail if anything in a built Mac app needs a newer macOS than we support.
 #
-#   scripts/check_macos_minimum.sh "build/dist/Station Studio.app" 11.0
+#   scripts/check_macos_minimum.sh "build/dist/Station Studio.app" [11.0]
 #
-# The apps say they run on macOS 11 (LSMinimumSystemVersion), but each
+# Without a version, the app's own LSMinimumSystemVersion (what it tells
+# macOS it runs on) is the limit, so the promise and the check can't drift
+# apart. Each app says what it needs (Studio and Player macOS 11, Server
+# macOS 12 for its ffmpeg), but each
 # executable and library carries its own minimum (LC_BUILD_VERSION
 # minos, or LC_VERSION_MIN_MACOSX on older binaries), set by whatever
 # built it: the runner's SDK, a wheel, a downloaded ffmpeg. Building on
@@ -12,8 +15,8 @@
 # lists any whose minimum is above the one given.
 set -euo pipefail
 
-app="${1:?usage: check_macos_minimum.sh APP_BUNDLE MIN_VERSION}"
-min="${2:?usage: check_macos_minimum.sh APP_BUNDLE MIN_VERSION}"
+app="${1:?usage: check_macos_minimum.sh APP_BUNDLE [MIN_VERSION]}"
+min="${2:-$(plutil -extract LSMinimumSystemVersion raw "$app/Contents/Info.plist")}"
 
 # "11.0" → 110000, "10.13" → 101300, for comparing.
 as_number() {
