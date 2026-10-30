@@ -27,7 +27,6 @@
     deleteSection,
     exportStationTemplate,
     getStationSidecar,
-    isPreviewResult,
     moveBlock,
     type Trace,
     patchBlock,
@@ -36,9 +35,7 @@
     reorderSections,
     retypeBlock,
     SidecarBatchFailure,
-    startPreviewJob,
     structuralBlockEdit,
-    watchJob,
     type BlockAddress,
     type BlockPatchResponse,
     type BlockRetypeResponse,
@@ -69,6 +66,28 @@
     type ExpandedRef, type Sidecar, type StationTemplate,
   } from '$lib/editor';
   import { applyEdits, attributeOpsToSlot, type Edit } from '$lib/edit-ops';
+  import {
+    COMPARE_NEXT_N_MAX,
+    prefKeys,
+    readCompareNextN,
+    readLivePreview,
+    readMacroPalette,
+    readPreviewWeek,
+    readShowDiff,
+    writeCompareNextN,
+    writeLivePreview,
+    writeMacroPalette,
+    writePreviewWeek,
+    writeShowDiff,
+  } from '$lib/stationPrefs';
+  import {
+    friendlyPreviewError,
+    readStagedEdits,
+    runPreview,
+    stagedEditsKey,
+    stagedEditsPayload,
+    writeStagedEdits,
+  } from '$lib/stagedEdits';
   import EditorCanvas from '$lib/components/editor/EditorCanvas.svelte';
   import MacroPalette from '$lib/components/editor/MacroPalette.svelte';
   import TracePane from '$lib/components/editor/TracePane.svelte';
@@ -354,252 +373,16 @@
     _lastHydratedSlug = slug;
   }
 
-  // §16.2.6 c2 — per-station localStorage key. The toggle's intent
-  // ("I'm exploring this station, show me previews") is most useful
-  // when scoped to the station; switching to a different station
-  // resets to the default OFF. Cross-station shared toggle was
-  // considered but deferred — operators typically edit one station
-  // at a time + the per-station shape mirrors viewMode persistence.
-  function _livePreviewKey(s: string): string {
-    return `livePreview:${s}`;
-  }
+  // Per-station preferences (live preview, macro palette, preview week,
+  // showDiff, compareNextN) live in $lib/stationPrefs, shared with the
+  // week page's song-list editor. Keys and fallbacks are unchanged.
 
-  function readLivePreview(s: string): boolean {
-    if (typeof window === 'undefined') return false;
-    try {
-      return window.localStorage.getItem(_livePreviewKey(s)) === 'on';
-    } catch {
-      return false;
-    }
-  }
-
-  function writeLivePreview(s: string, on: boolean): void {
-    if (typeof window === 'undefined') return;
-    try {
-      window.localStorage.setItem(_livePreviewKey(s), on ? 'on' : 'off');
-    } catch {
-      // localStorage quota / privacy-mode block — non-fatal, toggle
-      // state just doesn't persist across page reloads in those
-      // sessions.
-    }
-  }
-
-  // §16.2.4.t1 — per-station macro-palette-open localStorage. Mirrors
-  // the livePreview key shape so an operator's per-station UI mode
-  // persists across reloads. Failure-tolerant for the same reasons as
-  // readLivePreview / writeLivePreview.
-  function _macroPaletteKey(s: string): string {
-    return `macroPalette:${s}`;
-  }
-
-  function readMacroPalette(s: string): boolean {
-    if (typeof window === 'undefined') return false;
-    try {
-      return window.localStorage.getItem(_macroPaletteKey(s)) === 'on';
-    } catch {
-      return false;
-    }
-  }
-
-  function writeMacroPalette(s: string, on: boolean): void {
-    if (typeof window === 'undefined') return;
-    try {
-      window.localStorage.setItem(_macroPaletteKey(s), on ? 'on' : 'off');
-    } catch {
-      // localStorage quota / privacy-mode block — non-fatal.
-    }
-  }
-
-  // §16.2.6.t8 — per-station preview week localStorage. Same shape +
-  // failure handling as livePreview. Read defaults to 1 on absent /
-  // unparseable / out-of-range stored value (D2: client-side fallback;
-  // backend's strict-typed PreviewRequest.week is the authoritative
-  // bound). NaN / negative / non-integer stored values reset to 1.
-  function _previewWeekKey(s: string): string {
-    return `previewWeek:${s}`;
-  }
-
-  function readPreviewWeek(s: string): number {
-    if (typeof window === 'undefined') return 1;
-    try {
-      const raw = window.localStorage.getItem(_previewWeekKey(s));
-      if (raw === null) return 1;
-      const n = Number(raw);
-      if (!Number.isFinite(n) || n < 1) return 1;
-      return Math.floor(n);
-    } catch {
-      return 1;
-    }
-  }
-
-  function writePreviewWeek(s: string, week: number): void {
-    if (typeof window === 'undefined') return;
-    try {
-      window.localStorage.setItem(_previewWeekKey(s), String(week));
-    } catch {
-      // localStorage quota / privacy-mode block — non-fatal, week
-      // just doesn't persist across page reloads in those sessions.
-    }
-  }
-
-  // §16.2.7 c1 — `showDiff` per-station persistence. Same shape as
-  // _previewWeekKey / _livePreviewKey above (mirrors §16.2.6.t8 + c2
-  // localStorage conventions). Stored as "on"/"off" string; any other
-  // value reads as false (defensive against stale shapes).
-  function _showDiffKey(s: string): string {
-    return `showDiff:${s}`;
-  }
-
-  function readShowDiff(s: string): boolean {
-    if (typeof window === 'undefined') return false;
-    try {
-      return window.localStorage.getItem(_showDiffKey(s)) === 'on';
-    } catch {
-      return false;
-    }
-  }
-
-  function writeShowDiff(s: string, on: boolean): void {
-    if (typeof window === 'undefined') return;
-    try {
-      window.localStorage.setItem(_showDiffKey(s), on ? 'on' : 'off');
-    } catch {
-      // Same quota/privacy fallback as the helpers above.
-    }
-  }
-
-  // §16.2.7.t4 — `compareNextN` per-station persistence. Stored as
-  // the decimal string of the number. Defensive parse (Number.isFinite
-  // + clamp 0-COMPARE_NEXT_N_MAX) so a stale shape or hand-edited
-  // value can't crash the page. Mirrors readPreviewWeek + readShowDiff.
-  const COMPARE_NEXT_N_MAX = 5;
-  function _compareNextNKey(s: string): string {
-    return `compareNextN:${s}`;
-  }
-  function readCompareNextN(s: string): number {
-    if (typeof window === 'undefined') return 0;
-    try {
-      const raw = window.localStorage.getItem(_compareNextNKey(s));
-      if (raw === null) return 0;
-      const n = Number(raw);
-      if (!Number.isFinite(n) || n < 0) return 0;
-      return Math.min(COMPARE_NEXT_N_MAX, Math.floor(n));
-    } catch {
-      return 0;
-    }
-  }
-  function writeCompareNextN(s: string, n: number): void {
-    if (typeof window === 'undefined') return;
-    try {
-      window.localStorage.setItem(_compareNextNKey(s), String(n));
-    } catch {
-      // Same quota/privacy fallback.
-    }
-  }
-
-  // §16.2.6.t1 — staged-edit persistence + recovery. localStorage
-  // key + helpers. Design summary (DESIGN §16.2.6.t1 design pass):
-  //
-  //   - **Storage**: localStorage per-station — `stagedEdits:<slug>`.
-  //     Single-operator hobbyist scale; the realistic opLog upper
-  //     bound (~50 ops × few hundred bytes) fits well under
-  //     localStorage's ~5MB quota. IndexedDB's async API overkill
-  //     for the scope.
-  //   - **Shape**: `{ opLog, updatedAtSnapshot }` — the snapshot is
-  //     the `updated_at` token at stage-time. Reused on recovery to
-  //     detect "the station changed under me" drift.
-  //   - **Multi-tab**: cross-tab live sync SHIPPED in the
-  //     §16.2.6.t1-follow-up (`45894b8`). A `storage` event listener
-  //     (registered in onMount, removed in onDestroy) mirrors
-  //     `stagedEdits:<slug>` writes between tabs; last-write-wins,
-  //     but the loser SEES the change rather than shadowing it
-  //     with stale state until reload. §16.2.7.t3 extended the
-  //     same listener to also sync the `showDiff:<slug>` toggle.
-  //   - **Recovery UX**: silent if `updatedAtSnapshot === updatedAt`
-  //     (the staged edits apply against the same base they were
-  //     authored against). Otherwise window.confirm: cancel to
-  //     recover anyway, confirm to discard. Mirrors the toggle-off
-  //     prompt's interaction shape.
-  /** §16.2.6.t1 review L3 — bump on any breaking change to the
-   *  persisted Edit shape (added required fields on an existing
-   *  kind, etc.). Entries with a mismatched version drop silently
-   *  in `_readStagedEdits`, so an evolved frontend doesn't try to
-   *  replay an op whose semantics have shifted under it. */
-  const STAGED_EDITS_SCHEMA_VERSION = 1;
-
-  /** §16.2.6.t1 review L2 — known Edit kinds for recovery
-   *  filtering. If the persisted opLog has an entry whose `kind`
-   *  isn't in this set (a future build dropped the kind, the
-   *  persisted entry was hand-edited, etc.), it gets dropped
-   *  silently to avoid crashing `replayOpLog`'s exhaustiveness pin.
-   *  Keep in lockstep with the `Edit` union in `$lib/edit-ops`. */
-  const KNOWN_EDIT_KINDS: ReadonlySet<string> = new Set([
-    'patchBlock',
-    'patchMacro',
-    'renameSection',
-    'sectionCreate',
-    'sectionDelete',
-    'reorderSections',
-    'moveBlock',
-    'retypeBlock',
-    'structuralBlockEdit',
-  ]);
-
-  interface PersistedStagedEdits {
-    schemaVersion: number;
-    opLog: Edit[];
-    updatedAtSnapshot: string;
-  }
-  function _stagedEditsKey(s: string): string {
-    return `stagedEdits:${s}`;
-  }
-  function _readStagedEdits(s: string): PersistedStagedEdits | null {
-    if (typeof window === 'undefined') return null;
-    try {
-      const raw = window.localStorage.getItem(_stagedEditsKey(s));
-      if (raw === null) return null;
-      const parsed = JSON.parse(raw) as PersistedStagedEdits;
-      // Defensive: minimum shape sanity. A localStorage entry from a
-      // pre-t1 build, a schema-version mismatch, or a corrupted entry
-      // is dropped silently.
-      if (
-        !parsed ||
-        typeof parsed !== 'object' ||
-        parsed.schemaVersion !== STAGED_EDITS_SCHEMA_VERSION ||
-        !Array.isArray(parsed.opLog) ||
-        typeof parsed.updatedAtSnapshot !== 'string'
-      ) {
-        return null;
-      }
-      // L2 filter: drop entries whose `kind` isn't in the current
-      // known set. Today the Edit union only grows, but a future
-      // schema-version bump that removes a kind would crash
-      // replayOpLog without this guard.
-      const filtered = parsed.opLog.filter(
-        (op) =>
-          op !== null &&
-          typeof op === 'object' &&
-          KNOWN_EDIT_KINDS.has((op as { kind?: unknown }).kind as string),
-      );
-      return { ...parsed, opLog: filtered };
-    } catch {
-      return null;
-    }
-  }
-  function _writeStagedEdits(s: string, payload: PersistedStagedEdits | null): void {
-    if (typeof window === 'undefined') return;
-    try {
-      const key = _stagedEditsKey(s);
-      if (payload === null || payload.opLog.length === 0) {
-        window.localStorage.removeItem(key);
-      } else {
-        window.localStorage.setItem(key, JSON.stringify(payload));
-      }
-    } catch {
-      // localStorage quota / privacy-mode block — non-fatal. Worst
-      // case: staged edits stay in-memory only for this session.
-    }
-  }
+  // §16.2.6.t1 — staged-edit persistence + recovery: `stagedEdits:<slug>`
+  // in localStorage, `{ schemaVersion, opLog, updatedAtSnapshot }`. The
+  // read/write helpers (schema-version + known-kind filtering) live in
+  // $lib/stagedEdits, shared with the week page. Recovery is silent when
+  // the snapshot matches `updatedAt`, else window.confirm (confirm =
+  // discard). Cross-tab sync: the `storage` listener in onMount.
 
   /**
    * §16.2.6.t1 — write the current opLog + updatedAt token to
@@ -619,35 +402,11 @@
    * route through one of the above helpers.
    */
   function _persistOpLog(): void {
-    _writeStagedEdits(
-      slug,
-      opLog.length > 0 && updatedAt !== null
-        ? { schemaVersion: STAGED_EDITS_SCHEMA_VERSION, opLog, updatedAtSnapshot: updatedAt }
-        : null,
-    );
+    writeStagedEdits(slug, stagedEditsPayload(opLog, updatedAt));
   }
 
-  // §16.2.6 c2 review #1 fix #8: operator-facing error sanitiser.
-  // Backend's clean 400 messages ("invalid sidecar (grammar):
-  // missing required keys [layout_order]") are operator-readable +
-  // pass through. Internal exception strings (Python tracebacks,
-  // module-qualified class names, KeyError quotes) should NOT be
-  // exposed in the trace pane banner — they're confusing + leak
-  // internals. Heuristic: cap length at 200 chars + strip the
-  // common Python-y prefixes that escape from job_runner's error
-  // handler.
-  function _friendlyPreviewError(raw: string | undefined): string {
-    if (!raw) return 'preview failed';
-    let msg = raw;
-    // Strip module-qualified class prefix: "engine.editor_metadata.EditorMetadataError: foo" → "foo"
-    msg = msg.replace(/^[a-zA-Z_][\w.]*Error:\s*/, '');
-    // Strip leading "Traceback (most recent call last):" + the rest.
-    if (msg.startsWith('Traceback')) return 'preview failed (internal error)';
-    // Cap length. Long traceback fragments shouldn't dominate the
-    // banner; 200 chars holds the typical backend 400 message + room.
-    if (msg.length > 200) msg = msg.slice(0, 197) + '…';
-    return msg;
-  }
+  // Preview failures are worded by friendlyPreviewError ($lib/stagedEdits):
+  // server 400s pass through; Python prefixes and tracebacks don't.
 
   // §16.2.6.t3 — click-trace-row → jump-to-chip handler.
   // TracePane dispatches `select { slotIndex }` on row click / Enter / Space.
@@ -1044,36 +803,21 @@
     const myGen = savedTraceGeneration;
     savedTraceError = null;
     try {
-      const start = await startPreviewJob(
-        slug,
-        template as unknown as Record<string, unknown>,
-        sidecar as unknown as Record<string, unknown>,
-        previewWeek,
-      );
-      for await (const snap of watchJob(start.job_id)) {
-        if (myGen !== savedTraceGeneration) return;
-        if (snap.status === 'done') {
-          const r = snap.result;
-          if (isPreviewResult(r)) {
-            savedTrace = r.trace;
-          }
-          return;
-        }
-        if (snap.status === 'error') {
-          savedTraceError = _friendlyPreviewError(snap.error?.message);
-          return;
-        }
-        if (snap.status === 'cancelled') {
-          // Superseded server-side. The caller's await-then-schedule
-          // pattern (R2) prevents this in the normal flow; a manual
-          // cancel via cancelJob could still trip it. Leave savedTrace
-          // null so the next opportunity refires.
-          return;
-        }
+      // No cancelIfStale: a late saved-trace job just runs out (the
+      // generation check drops its result).
+      const out = await runPreview(slug, template, sidecar, previewWeek, {
+        isCurrent: () => myGen === savedTraceGeneration,
+      });
+      if (out.status === 'done') {
+        if (out.trace !== null) savedTrace = out.trace;
+      } else if (out.status === 'error') {
+        savedTraceError = friendlyPreviewError(out.message);
       }
+      // 'cancelled' (superseded server-side) leaves savedTrace null so
+      // the next opportunity refires; 'stale' and 'ended' do nothing.
     } catch (err) {
       if (myGen !== savedTraceGeneration) return;
-      savedTraceError = _friendlyPreviewError(
+      savedTraceError = friendlyPreviewError(
         err instanceof Error ? err.message : String(err),
       );
     }
@@ -1102,27 +846,14 @@
     week: number,
     snapshot: { template: Record<string, unknown>; sidecar: Record<string, unknown> },
   ): Promise<Trace | null> {
-    const start = await startPreviewJob(slug, snapshot.template, snapshot.sidecar, week);
-    for await (const snap of watchJob(start.job_id)) {
-      if (snap.status === 'done') {
-        const r = snap.result;
-        return isPreviewResult(r) ? r.trace : null;
-      }
-      if (snap.status === 'error') {
-        throw new Error(snap.error?.message ?? 'preview failed');
-      }
-      if (snap.status === 'cancelled') {
-        // §16.2.7.t4 review R1 — throw instead of returning null.
-        // Pre-fix the null return caused classifySlots(null, staged)
-        // to classify every staged slot as ADDED (the classifier's
-        // null-defensive contract treats null as zero-length). That
-        // produced wildly wrong summary counts when the server's
-        // POLICY_CANCEL_EXISTING superseded our preview (e.g. when
-        // _schedulePreview's debounced staged preview fires mid-
-        // aggregator). Throw → outer try/catch records {error} for
-        // that week → UI shows ⚠ instead of misleading counts.
-        throw new Error('preview superseded (cancelled server-side)');
-      }
+    const out = await runPreview(slug, snapshot.template, snapshot.sidecar, week);
+    if (out.status === 'done') return out.trace;
+    if (out.status === 'error') throw new Error(out.message ?? 'preview failed');
+    if (out.status === 'cancelled') {
+      // §16.2.7.t4 review R1 — throw, not null: classifySlots(null,
+      // staged) would count every staged slot as ADDED. The caller
+      // records {error} for the week and the UI shows ⚠.
+      throw new Error('preview superseded (cancelled server-side)');
     }
     return null;
   }
@@ -1215,73 +946,31 @@
       previewing = true;
       previewError = null;
       try {
-        // §16.2.6 c3: preview against the STAGED view, not the
-        // loaded view. With toggle ON + opLog empty, stagedTemplate
-        // === template so the body is identical to c2's behavior.
-        // With opLog non-empty, the operator's queued edits show
-        // up in the trace before they Save.
-        const start = await startPreviewJob(
-          slug,
-          stagedTemplate as unknown as Record<string, unknown>,
-          stagedSidecar as unknown as Record<string, unknown>,
-          previewWeek,
-        );
-        // Review #1 fix #1: a supersede or onDestroy that fired
-        // DURING the POST already bumped previewGeneration, but
-        // could only no-op-cancel because currentPreviewJobId was
-        // still null at the time. The just-spawned job is now
-        // orphaned server-side — explicitly cancel it before
-        // returning. Without this, the server runs the unwanted
-        // preview to completion (POLICY_CANCEL_EXISTING only
-        // supersedes when a NEW preview starts).
-        if (myGeneration !== previewGeneration) {
-          void cancelJob(start.job_id).catch(() => {
-            // Idempotent — 204 / 404 / network blip all fine.
-          });
-          return;
+        // §16.2.6 c3: preview the STAGED view (equal to the loaded one
+        // when nothing is queued). cancelIfStale (review #1 fix #1): a
+        // supersede or onDestroy during the POST could only no-op-cancel
+        // because the job id wasn't known yet, so cancel it here.
+        const out = await runPreview(slug, stagedTemplate, stagedSidecar, previewWeek, {
+          isCurrent: () => myGeneration === previewGeneration,
+          cancelIfStale: true,
+          onStart: (jobId) => { currentPreviewJobId = jobId; },
+        });
+        if (out.status === 'stale' || out.status === 'ended') return;
+        if (out.status === 'done') {
+          // Review #1 fix #13: an unexpected result shape is an error the
+          // banner names; the (possibly stale) trace stays visible.
+          if (out.trace !== null) previewTrace = out.trace;
+          else previewError = 'preview returned an unexpected shape';
+        } else if (out.status === 'error') {
+          previewError = friendlyPreviewError(out.message);
         }
-        currentPreviewJobId = start.job_id;
-        for await (const snap of watchJob(start.job_id)) {
-          if (myGeneration !== previewGeneration) return;
-          if (snap.status === 'done') {
-            // Discriminate via the hoisted type guard (§16.2.6 c3
-            // fold-in of c2 review #1 finding #12) — single
-            // source of truth for the PreviewResult / GenerateResponse
-            // discriminator.
-            const r = snap.result;
-            if (isPreviewResult(r)) {
-              previewTrace = r.trace;
-            } else {
-              // Review #1 fix #13: defensive narrow used to silently
-              // keep the previous trace + clear `previewing` — the
-              // operator saw stale data with no error indication. Now
-              // we surface the unexpected shape as a preview error so
-              // the banner names it; the (possibly stale) trace stays
-              // visible per the design's "frame of reference" rule.
-              previewError = 'preview returned an unexpected shape';
-            }
-            previewing = false;
-            currentPreviewJobId = null;
-            return;
-          }
-          if (snap.status === 'error') {
-            previewError = _friendlyPreviewError(snap.error?.message);
-            previewing = false;
-            currentPreviewJobId = null;
-            return;
-          }
-          if (snap.status === 'cancelled') {
-            // Superseded by a newer preview OR explicitly cancelled.
-            // Don't update previewTrace; let the supersede's eventual
-            // result land or leave the last-good trace visible.
-            previewing = false;
-            currentPreviewJobId = null;
-            return;
-          }
-        }
+        // 'cancelled': superseded or explicitly cancelled. Keep the
+        // last good trace; the superseding preview's result will land.
+        previewing = false;
+        currentPreviewJobId = null;
       } catch (err) {
         if (myGeneration !== previewGeneration) return;
-        previewError = _friendlyPreviewError(
+        previewError = friendlyPreviewError(
           err instanceof Error ? err.message : String(err),
         );
         previewing = false;
@@ -1439,7 +1128,7 @@
       // correctness bug). No localStorage write — the other tab
       // already wrote (the writing tab doesn't receive its own
       // storage event).
-      if (e.key === _showDiffKey(slug)) {
+      if (e.key === prefKeys.showDiff(slug)) {
         _applyShowDiffChange(e.newValue === 'on');
         return;
       }
@@ -1449,7 +1138,7 @@
       // owns the local-state + cache lifecycle so local + cross-tab
       // paths can't drift. The newValue parse mirrors readCompareNextN
       // (defensive against stale shapes — null/missing → 0).
-      if (e.key === _compareNextNKey(slug)) {
+      if (e.key === prefKeys.compareNextN(slug)) {
         const raw = e.newValue;
         const parsed = raw === null ? 0 : Number(raw);
         const next = Number.isFinite(parsed) ? parsed : 0;
@@ -1457,7 +1146,7 @@
         return;
       }
 
-      if (e.key !== _stagedEditsKey(slug)) return;
+      if (e.key !== stagedEditsKey(slug)) return;
       if (e.newValue === null) {
         // Other tab cleared the entry (Save, Discard, or
         // navigate-away). Drop our in-memory opLog to match.
@@ -1466,7 +1155,7 @@
       }
       // Other tab mutated the entry. Re-read with the same shape /
       // schemaVersion / known-kind defensive filters used at mount.
-      const persisted = _readStagedEdits(slug);
+      const persisted = readStagedEdits(slug);
       if (persisted === null) return;
       // M4 follow-up review: defensive copy of the parsed array so
       // a future contributor's in-place push on `opLog` doesn't
@@ -1511,7 +1200,7 @@
       if (livePreviewOn) {
         _recoverStagedEdits();
       } else {
-        _writeStagedEdits(slug, null);
+        writeStagedEdits(slug, null);
       }
       // If the operator's saved preference is "live preview ON",
       // fire one preview right after the sidecar lands so the trace
@@ -1526,7 +1215,7 @@
       // Clear any orphan localStorage entry so it doesn't
       // accumulate forever for a slug that no longer exists.
       if (e instanceof ApiError && e.status === 404) {
-        _writeStagedEdits(slug, null);
+        writeStagedEdits(slug, null);
       }
     } finally {
       loading = false;
@@ -1540,10 +1229,10 @@
   // different `updated_at` than the current sidecar. Confirm =
   // discard; cancel = recover anyway.
   function _recoverStagedEdits(): void {
-    const persisted = _readStagedEdits(slug);
+    const persisted = readStagedEdits(slug);
     if (persisted === null) return;
     if (persisted.opLog.length === 0) {
-      _writeStagedEdits(slug, null);
+      writeStagedEdits(slug, null);
       return;
     }
     const fresh = persisted.updatedAtSnapshot === updatedAt;
@@ -1561,7 +1250,7 @@
       `staged edits? (Cancel to recover them anyway.)`,
     );
     if (ok) {
-      _writeStagedEdits(slug, null);
+      writeStagedEdits(slug, null);
     } else {
       opLog = persisted.opLog;
       // Re-persist with the CURRENT updatedAt as the new snapshot —
