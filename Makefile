@@ -56,7 +56,11 @@ test: test-backend test-frontend-unit test-e2e
 # down, 90% leaves real headroom; the gate fires on a *regression*, not
 # on the resting state. Per-file enforcement happens at the Vitest layer.
 test-backend:
+	rm -f .coverage .coverage.*
 	$(PY) -m coverage run -m pytest
+	# One data file per process (patch = subprocess in .coveragerc):
+	# fold them into .coverage before the gate reads it.
+	$(PY) -m coverage combine -q
 	$(PY) -m coverage report --fail-under=90
 
 # Frontend: vitest with --coverage so the per-file lines threshold + aggregate
