@@ -18,7 +18,8 @@ and play log. See the
 ## Install
 
 **Download** (no Python or terminal needed): a Mac `.dmg` (Apple Silicon
-or Intel) or a Windows setup `.exe`, each with its own ffmpeg. They're on
+or Intel, macOS 12 or later) or a Windows setup `.exe`, each with its own
+ffmpeg. They're on
 each `server-v…` release of this repository. They're also built for
 every pull request that changes Station Server: open the pull request's
 *Checks* › **Station Server installers** run, and download from its
