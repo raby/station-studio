@@ -702,6 +702,61 @@ def test_preview_deterministic_seed_produces_identical_trace(jobs_api):
     assert trace_a["slots"] == trace_b["slots"]
 
 
+def _rng_on_weighted(Session: sessionmaker) -> dict:
+    """Make station 'ts' rng='on' with three weighted slots (the seed
+    decides which tracks come out). Returns the template."""
+    template = _template_for_3_slots()
+    template["rng"] = "on"
+    template["layout"]["flat_slots"] = [
+        {"source": "A", "strategy": "weighted", "size": 1} for _ in range(3)
+    ]
+    with Session() as db:
+        station = db.query(Station).filter_by(slug="ts").first()
+        station.template = template
+        db.commit()
+    return template
+
+
+def _preview_tracks(client, template: dict, week: int, seed: int | None = None) -> list:
+    from engine.editor_metadata import synthesize_trivial_sidecar
+    body = {"template": template, "sidecar": synthesize_trivial_sidecar(template), "week": week}
+    if seed is not None:
+        body["seed"] = seed
+    job_id = client.post("/api/stations/ts/jobs/preview", json=body).json()["job_id"]
+    final = _wait_for_status(client, job_id, "done")
+    return [s["track_id"] for s in final["result"]["trace"]["slots"]]
+
+
+def test_preview_rng_on_without_a_seed_reproduces_the_generated_week(jobs_api):
+    """The editor and the week page send no seed. For rng='on' the
+    engine needs one; the preview uses the seed the week was generated
+    with, so previewing the saved template gives the stored week."""
+    client, Session, _store = jobs_api
+    _seed_station_with_pool(Session)
+    template = _rng_on_weighted(Session)
+
+    job_id = client.post(
+        "/api/stations/ts/jobs/generate", json={"week": 1, "seed": 7},
+    ).json()["job_id"]
+    stored = _wait_for_status(client, job_id, "done")["result"]
+    stored_tracks = [e["track_id"] for e in client.get(
+        f"/api/playlists/{stored['playlist_id']}/trace").json()["slots"]]
+
+    # Guard: the week-number fallback (seed 1) would give other tracks,
+    # so a match below means the stored seed was used.
+    assert _preview_tracks(client, template, week=1, seed=1) != stored_tracks
+    assert _preview_tracks(client, template, week=1) == stored_tracks
+
+
+def test_preview_rng_on_week_never_generated_is_repeatable(jobs_api):
+    client, Session, _store = jobs_api
+    _seed_station_with_pool(Session)
+    template = _rng_on_weighted(Session)
+    first = _preview_tracks(client, template, week=2)
+    assert len(first) == 3
+    assert _preview_tracks(client, template, week=2) == first
+
+
 def test_preview_400_on_invalid_template(jobs_api):
     """Operator's in-memory template refers to a source pool that
     doesn't exist server-side. load_pools raises ValueError →
