@@ -111,6 +111,26 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
+      - name: (temporary) time the address lookups
+        run: |
+          python - <<'PY'
+          import socket, time
+          t = time.time(); name = socket.gethostname(); a = time.time() - t
+          t = time.time()
+          try:
+              got = socket.gethostbyname_ex(name)[2]
+          except OSError as e:
+              got = f"error {e}"
+          b = time.time() - t
+          t = time.time()
+          try:
+              with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+                  s.connect(("192.0.2.1", 9)); route = s.getsockname()[0]
+          except OSError as e:
+              route = f"error {e}"
+          c = time.time() - t
+          print(f"::warning title=address lookups::gethostname {name!r} {a:.2f}s; gethostbyname_ex {got} {b:.2f}s; route {route} {c:.2f}s")
+          PY
       - name: install
         timeout-minutes: 10
         env:
