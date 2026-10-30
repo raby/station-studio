@@ -47,6 +47,7 @@
   import { moveTargets as computeMoveTargets } from '$lib/drag-drop';
   import ChipMultiInput from './ChipMultiInput.svelte';
   import { ruleText } from '$lib/songList';
+  import { identicalRules } from '$lib/identicalRules';
 
   // c2 review #2: shared field-value union covering every editable
   // type the form can hold. `string | number | null` covers the
@@ -86,14 +87,17 @@
   // here + in EditorCanvas + in api.ts; now: only api.ts).
   const dispatch = createEventDispatcher<{
     close: void;
-    save: { ref: ExpandedRef; fields: Record<string, FieldValue> };
+    // `also` / `alsoMacroIds`: identical rules to change the same way
+    // (empty unless the operator ticked "Also change …").
+    save: { ref: ExpandedRef; fields: Record<string, FieldValue>; also: ExpandedRef[] };
     retype: {
       ref: ExpandedRef;
       newStrategy: string | null;
       newSource: string | null;
       newFields: Record<string, FieldValue>;
+      also: ExpandedRef[];
     };
-    macroSave: { macroId: string; fields: Record<string, FieldValue> };
+    macroSave: { macroId: string; fields: Record<string, FieldValue>; alsoMacroIds: string[] };
     // §16.2.5 c2: D6 dropdown-fallback for move; D5 structural edits.
     blockMove: {
       ref: ExpandedRef;
@@ -105,6 +109,19 @@
 
   /** What one row of a repeating-row station is ("day" for Classics). */
   $: rowWord = template.layout.unit && template.layout.unit !== 'slot' ? template.layout.unit : 'row';
+
+  // Rules exactly like this one, which a change can go to as well.
+  // Unticked for each new selection: changing several is a choice.
+  $: twins = selected === null ? null : identicalRules(template, sidecar, selected.ref);
+  $: twinCount = twins ? twins.refs.length + twins.macroIds.length : 0;
+  let alsoIdentical = false;
+  let twinsFor: unknown = null;
+  $: if (selected?.ref !== twinsFor) {
+    twinsFor = selected?.ref ?? null;
+    alsoIdentical = false;
+  }
+  $: alsoRefs = alsoIdentical && twins ? twins.refs : [];
+  $: alsoMacroIds = alsoIdentical && twins ? twins.macroIds : [];
 
   // Resolve the spec under the selection.
   $: detail = (() => {
@@ -406,10 +423,10 @@
           'cannot save: the selected macro is missing from the sidecar (stale view). Reload to refresh.';
         return;
       }
-      dispatch('macroSave', { macroId, fields });
+      dispatch('macroSave', { macroId, fields, alsoMacroIds });
       return;
     }
-    dispatch('save', { ref: selected.ref, fields });
+    dispatch('save', { ref: selected.ref, fields, also: alsoRefs });
   }
 
   /** §16.2.4 D2: dispatch a retype. The route handler does the API
@@ -453,6 +470,7 @@
       newStrategy,
       newSource,
       newFields,
+      also: alsoRefs,
     });
   }
 
@@ -734,6 +752,16 @@
       {/if}
     </dl>
 
+    {#if detail.block && twinCount > 0}
+      <label class="also-identical" data-testid="also-identical">
+        <input type="checkbox" bind:checked={alsoIdentical} data-testid="also-identical-input" />
+        <span>
+          Also change the {twinCount} other {twinCount === 1 ? 'rule' : 'rules'} just like this one
+          ({twins?.songs.toLocaleString()} {twins?.songs === 1 ? 'song' : 'songs'} a week)
+        </span>
+      </label>
+    {/if}
+
     <!-- §16.2.3 c1 + §16.2.4 c2: edit form serves atomic blocks AND
          macros (macros: edit-once-applies-to-all per D1). -->
     {#if detail.block}
@@ -989,6 +1017,19 @@
 {/if}
 
 <style>
+  .also-identical {
+    display: flex;
+    gap: 0.5rem;
+    align-items: flex-start;
+    margin: 0 0 0.75rem;
+    padding: 0.5rem 0.6rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--accent-soft);
+  }
+  .also-identical input {
+    margin-top: 0.2rem;
+  }
   .rule-words {
     margin: 0 0 0.75rem;
     font-weight: 600;
@@ -1107,6 +1148,11 @@
     border: none;
     border-radius: 4px;
     cursor: pointer;
+  }
+  /* The global button:hover (panel grey) would otherwise win and
+     leave white text on light grey. */
+  .save:hover:not(:disabled) {
+    background: var(--accent-strong);
   }
   .save:disabled {
     opacity: 0.5;

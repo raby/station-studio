@@ -17,6 +17,7 @@
    * direct URL or test.
    */
   import { onDestroy, onMount, tick } from 'svelte';
+  import { editsFromPanel, type PanelEvent } from '$lib/panelEdits';
   import { page } from '$app/stores';
   import {
     ApiError,
@@ -1424,9 +1425,25 @@
   // §16.2.3 c2 — DetailPanel save → PATCH → refetch. On 409 (someone
   // else changed the station) show a reload prompt; on other errors
   // show the message inline.
+  /** A change the operator asked to apply to identical rules too
+   *  ("Also change …" in the panel): every edit queued when live
+   *  preview is on, else saved together in one batch, all or nothing.
+   *  False when there's only the one rule (the handler carries on). */
+  async function handleWithIdentical(event: PanelEvent): Promise<boolean> {
+    const edits = editsFromPanel(event);
+    if (edits.length <= 1) return false;
+    if (livePreviewOn) {
+      for (const edit of edits) _interceptToOpLog(edit);
+      return true;
+    }
+    await withSaveLifecycle(() => applyBatch(slug, edits, updatedAt), 'saved');
+    return true;
+  }
+
   async function handleSave(
-    e: CustomEvent<{ ref: ExpandedRef; fields: Record<string, string | number | string[] | null> }>,
+    e: CustomEvent<{ ref: ExpandedRef; fields: Record<string, string | number | string[] | null>; also?: ExpandedRef[] }>,
   ) {
+    if (await handleWithIdentical({ type: 'save', detail: e.detail })) return;
     const address = refToAddress(e.detail.ref);
     if (address === null) {
       saveError = 'cannot edit this block (no storage address)';
@@ -1676,8 +1693,9 @@
 
   // §16.2.4 c2 — macro fan-out edit (PATCH /macros/{macro_id}).
   async function handleMacroSave(
-    e: CustomEvent<{ macroId: string; fields: Record<string, string | number | string[] | null> }>,
+    e: CustomEvent<{ macroId: string; fields: Record<string, string | number | string[] | null>; alsoMacroIds?: string[] }>,
   ) {
+    if (await handleWithIdentical({ type: 'macroSave', detail: e.detail })) return;
     // §16.2.6 c3b: intercept macro edits into the staging buffer
     // when live-preview is ON. Same shape as handleSave (empty-
     // fields skip + shallow-copy fields).
@@ -1704,8 +1722,10 @@
       newStrategy: string | null;
       newSource: string | null;
       newFields: Record<string, string | number | string[] | null>;
+      also?: ExpandedRef[];
     }>,
   ) {
+    if (await handleWithIdentical({ type: 'retype', detail: e.detail })) return;
     const address = refToAddress(e.detail.ref);
     if (address === null) {
       saveError = 'cannot retype this block (no storage address)';

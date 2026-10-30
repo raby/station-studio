@@ -38,7 +38,7 @@
     type StagedEditSession,
     type StagedEditState,
   } from '$lib/stagedEditSession';
-  import { editFromPanel, type PanelEvent } from '$lib/panelEdits';
+  import { editsFromPanel, type PanelEvent } from '$lib/panelEdits';
   import { readStagedEdits } from '$lib/stagedEdits';
 
   let trace: Trace | null = null;
@@ -139,9 +139,11 @@
   }
 
   function onPanel(event: PanelEvent): void {
-    const edit = editFromPanel(event);
-    if (edit !== null && session) {
-      session.stage(edit);
+    // The rule's own change, then the same to each identical rule the
+    // operator ticked.
+    const edits = editsFromPanel(event);
+    if (edits.length > 0 && session) {
+      for (const edit of edits) session.stage(edit);
       justSaved = false;
     }
   }

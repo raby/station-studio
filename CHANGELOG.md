@@ -4,6 +4,28 @@ All notable changes are listed here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses semantic versioning.
 
+## [1.14.0] - 2026-10-30
+
+### Added
+
+- **Change every identical rule at once.** When the rule you're
+  changing has exact copies elsewhere in the station (the starter has
+  21 identical "7 × weighted" macros, one per segment), the rule panel
+  offers **Also change the 20 other rules just like this one (N songs
+  a week)**. Tick it, and a settings change or a change of how it picks
+  goes to all of them. "Just like" means the same kind of rule with the
+  same settings: a macro matches macros, a single slot matches single
+  slots, and a slot inside a macro never matches. It's unticked each
+  time you pick a rule. On a week's page the changes queue together
+  (each listed, each undoable). In the station editor they queue with
+  live preview on; otherwise they save together in one batch, all or
+  nothing.
+
+### Fixed
+
+- The rule panel's Save / Apply / Change rule / Move buttons went
+  white-on-light-grey when hovered (the app-wide hover style won).
+
 ## [1.13.1] - 2026-10-30
 
 ### Changed

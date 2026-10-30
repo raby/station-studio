@@ -21,9 +21,11 @@ export function refToAddress(ref: ExpandedRef): BlockAddress | null {
   return null;
 }
 
-/** The panel's events, by name, with what each carries. */
+/** The panel's events, by name, with what each carries. `also` /
+ *  `alsoMacroIds`: the identical rules the operator asked to change
+ *  too (identicalRules). */
 export type PanelEvent =
-  | { type: 'save'; detail: { ref: ExpandedRef; fields: Record<string, FieldValue> } }
+  | { type: 'save'; detail: { ref: ExpandedRef; fields: Record<string, FieldValue>; also?: ExpandedRef[] } }
   | {
       type: 'retype';
       detail: {
@@ -31,9 +33,10 @@ export type PanelEvent =
         newStrategy: string | null;
         newSource: string | null;
         newFields: Record<string, FieldValue>;
+        also?: ExpandedRef[];
       };
     }
-  | { type: 'macroSave'; detail: { macroId: string; fields: Record<string, FieldValue> } }
+  | { type: 'macroSave'; detail: { macroId: string; fields: Record<string, FieldValue>; alsoMacroIds?: string[] } }
   | { type: 'blockMove'; detail: { ref: ExpandedRef; targetSectionId: string; targetIndex: number | null } }
   | { type: 'structuralEdit'; detail: { edit: StructuralBlockEdit } };
 
@@ -77,4 +80,33 @@ export function editFromPanel(event: PanelEvent): Edit | null {
     case 'structuralEdit':
       return { kind: 'structuralBlockEdit', edit: { ...event.detail.edit } };
   }
+}
+
+/**
+ * Every edit a panel event asks for: the rule's own (editFromPanel),
+ * then the same change to each identical rule the operator ticked, in
+ * place order. Empty when there's nothing to queue.
+ */
+export function editsFromPanel(event: PanelEvent): Edit[] {
+  const first = editFromPanel(event);
+  if (first === null) return [];
+  const rest: (Edit | null)[] = [];
+  switch (event.type) {
+    case 'save':
+      for (const ref of event.detail.also ?? []) {
+        rest.push(editFromPanel({ type: 'save', detail: { ref, fields: event.detail.fields } }));
+      }
+      break;
+    case 'retype':
+      for (const ref of event.detail.also ?? []) {
+        rest.push(editFromPanel({ type: 'retype', detail: { ...event.detail, ref, also: [] } }));
+      }
+      break;
+    case 'macroSave':
+      for (const macroId of event.detail.alsoMacroIds ?? []) {
+        rest.push(editFromPanel({ type: 'macroSave', detail: { macroId, fields: event.detail.fields } }));
+      }
+      break;
+  }
+  return [first, ...rest.filter((e): e is Edit => e !== null)];
 }
