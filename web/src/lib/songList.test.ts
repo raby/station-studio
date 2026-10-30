@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { Trace, TraceSlot } from './api';
 import type { EngineBlock, Sidecar, StationTemplate } from './editor';
-import { removedCount, ruleText, songGroups } from './songList';
+import { removedCount, ruleKey, ruleText, songGroups } from './songList';
 
 // The two real example stations: Rebirth Radio (flat slots, sections,
 // 200-song macros) and Rebirth Classics (a repeating row).
@@ -131,5 +131,12 @@ describe('songGroups', () => {
     week.slots[1] = { ...week.slots[1], strategy: 'sequential' };
     const rows = songGroups(week, template, sidecar).flatMap((g) => g.rows);
     expect(rows.map((r) => r.ruleChanged)).toEqual([false, true, false]);
+  });
+
+  it('ruleKey: one rule per repeating-row block (every row), per flat slot, per macro', () => {
+    expect(ruleKey({ kind: 'atomic-ref', row_idx: 0, block_idx: 1 })).toBe(ruleKey({ kind: 'atomic-ref', row_idx: 4, block_idx: 1 }));
+    expect(ruleKey({ kind: 'atomic-ref', row_idx: 0, block_idx: 1 })).not.toBe(ruleKey({ kind: 'atomic-ref', row_idx: 0, block_idx: 0 }));
+    expect(ruleKey({ kind: 'atomic-ref', slot_index: 3 })).toBe('slot:3');
+    expect(ruleKey({ kind: 'macro-placeholder', macro_id: 'm', pick_in_macro: 1 })).toBe('macro:m');
   });
 });

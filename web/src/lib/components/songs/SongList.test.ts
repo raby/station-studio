@@ -99,4 +99,10 @@ describe('<SongList>', () => {
     expect(rules[1]).toHaveTextContent('rule changed since');
     expect(screen.getAllByTestId('song-rule-changed')).toHaveLength(1);
   });
+
+  it('marks every song made by the related rule', () => {
+    render(SongList, { props: { trace: week([slot(0), slot(1), slot(2)]), template, sidecar, related: 'macro:pops' } });
+    const rows = screen.getAllByTestId('song-row');
+    expect(rows.map((r) => r.classList.contains('related'))).toEqual([false, true, true]);
+  });
 });

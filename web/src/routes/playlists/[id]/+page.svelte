@@ -12,6 +12,10 @@
     sendToStationServer,
     rollbackPlaylist,
     setVersionTags,
+    startGenerateJob,
+    watchJob,
+    isGenerateResult,
+    JobStartConflict,
     ApiError,
   } from '$lib/api';
   import type {
@@ -24,8 +28,18 @@
   import ErrorBanner from '$lib/components/ErrorBanner.svelte';
   import StatusBanner from '$lib/components/StatusBanner.svelte';
   import { sentText } from '$lib/stationServer';
+  import { onDestroy } from 'svelte';
   import SongList from '$lib/components/songs/SongList.svelte';
-  import type { ParsedEditorSidecar } from '$lib/editor';
+  import DetailPanel from '$lib/components/editor/DetailPanel.svelte';
+  import { findSectionIdForRef, type ExpandedRef, type ParsedEditorSidecar } from '$lib/editor';
+  import { ruleKey, type SongRow } from '$lib/songList';
+  import {
+    createStagedEditSession,
+    type StagedEditSession,
+    type StagedEditState,
+  } from '$lib/stagedEditSession';
+  import { editFromPanel, type PanelEvent } from '$lib/panelEdits';
+  import { readStagedEdits } from '$lib/stagedEdits';
 
   let trace: Trace | null = null;
   // The station's template + sidecar (sections, macros) for the Songs
@@ -52,6 +66,145 @@
     }
   }
   let selectedSong: number | null = null;
+
+  // ---- editing a song's rule (Songs view) --------------------------------
+  // A staged-edit session for this week, made the first time a song is
+  // picked: edits are queued and previewed for this week, and saved for
+  // every week in one go. Only on the current version of the week (an
+  // older version shows songs picked by rules that may since have
+  // changed; edits apply to today's rules).
+  let session: StagedEditSession | null = null;
+  /** The session's state, kept here by subscription. */
+  let editState: StagedEditState | null = null;
+  let unsubscribe: (() => void) | null = null;
+  let sessionFor = '';
+  /** The picked song's rule, kept by ref so it survives edits. */
+  let selectedRef: ExpandedRef | null = null;
+  let justSaved = false;
+  let regenerating = false;
+  let regenerateError: string | null = null;
+
+  $: viewingCurrent = requestedVersion == null || requestedVersion === currentV;
+  $: editable = !!editorData && viewingCurrent;
+
+  function sessionFor_(t: Trace): string {
+    return `${t.station}:${t.week}`;
+  }
+  function endSession(): void {
+    unsubscribe?.();
+    unsubscribe = null;
+    session?.destroy();
+    session = null;
+    editState = null;
+    sessionFor = '';
+    selectedRef = null;
+    justSaved = false;
+  }
+  // A different station or week (prev/next, or a link) ends the session.
+  $: if (session && trace && sessionFor !== sessionFor_(trace)) endSession();
+  onDestroy(endSession);
+
+  function startSession(t: Trace): void {
+    session = createStagedEditSession(t.station, { week: t.week, previewOnlyWhenEdited: true });
+    unsubscribe = session.subscribe((v) => (editState = v));
+    sessionFor = sessionFor_(t);
+    void session.load();
+  }
+
+  function pickSong(row: SongRow): void {
+    selectedSong = row.position;
+    selectedRef = row.ref;
+    if (editable && trace && !session) startSession(trace);
+  }
+
+  // Changes left unsaved on an earlier visit (here or in the station
+  // editor) show straight away, not only once a song is clicked.
+  $: if (editable && view === 'songs' && trace && !session && readStagedEdits(trace.station)) {
+    startSession(trace);
+  }
+
+  // The bar only when it has something to say.
+  $: showEditBar = !!editState && (
+    editState.recovered !== null || editState.opLog.length > 0 || justSaved ||
+    !!editState.loadError || !!editState.previewError || !!editState.saveError ||
+    editState.conflict || editState.failedAtIdx > 0 || !!regenerateError
+  );
+
+  function closePanel(): void {
+    selectedRef = null;
+    selectedSong = null;
+  }
+
+  function onPanel(event: PanelEvent): void {
+    const edit = editFromPanel(event);
+    if (edit !== null && session) {
+      session.stage(edit);
+      justSaved = false;
+    }
+  }
+
+  async function saveRules(): Promise<void> {
+    if (session && (await session.save())) justSaved = true;
+  }
+
+  // The panel needs the picked block's section, looked up in the edited
+  // sidecar so it follows moves; a block that has gone closes it.
+  $: editing = editState && !editState.loading && editState.staged.template && editState.staged.sidecar
+    ? editState
+    : null;
+  $: panelSelection = (() => {
+    if (!editing || !selectedRef) return null;
+    const sidecar = editing.staged.sidecar!;
+    const id = findSectionIdForRef(sidecar, selectedRef);
+    const section = id ? sidecar.sections.find((x: { id: string }) => x.id === id) : undefined;
+    return section ? { ref: selectedRef, section } : null;
+  })();
+
+  // What the list shows: the week with the queued edits once that preview
+  // is in, marked against the same week under the saved rules; otherwise
+  // the week as generated.
+  $: showingEdits = !!editing && editing.opLog.length > 0 && editing.stagedTrace !== null;
+
+  /** Remake this week with the saved rules. rng='on' reuses the week's
+   *  seed, so only songs the rule change touches should move. */
+  async function regenerateWeek(): Promise<void> {
+    if (!trace || regenerating) return;
+    regenerating = true;
+    regenerateError = null;
+    const rngOn = (station?.template as { rng?: string } | undefined)?.rng === 'on';
+    const seed = rngOn ? (trace.seed ?? Math.floor(Math.random() * 2 ** 31)) : undefined;
+    try {
+      let jobId: string;
+      try {
+        jobId = (await startGenerateJob(trace.station, trace.week, seed)).job_id;
+      } catch (e) {
+        if (!(e instanceof JobStartConflict)) throw e;
+        jobId = e.existing_job_id; // one already running for this station
+      }
+      for await (const snap of watchJob(jobId)) {
+        if (snap.status === 'done' && isGenerateResult(snap.result)) {
+          endSession();
+          if (requestedVersion != null) {
+            const url = new URL($page.url);
+            url.searchParams.delete('v');
+            await goto(url.pathname + url.search);
+          } else {
+            await loadAll(id, null);
+          }
+          return;
+        }
+        if (snap.status === 'error') {
+          regenerateError = snap.error ? snap.error.message : 'regeneration failed';
+          return;
+        }
+        if (snap.status === 'cancelled') return;
+      }
+    } catch (e) {
+      regenerateError = errorText(e);
+    } finally {
+      regenerating = false;
+    }
+  }
   let playlist: Playlist | null = null;
   let station: Station | null = null;
   let stationPlaylists: PlaylistSummary[] = [];
@@ -952,14 +1105,108 @@
       </div>
     {/if}
     {#if view === 'songs' && editorData}
-    <p class="hint">Each song with the rule that put it there and why, in playing order.</p>
-    <SongList
-      {trace}
-      template={editorData.template}
-      sidecar={editorData.sidecar}
-      selected={selectedSong}
-      onselect={(row) => (selectedSong = row.position)}
-    />
+    <p class="hint">
+      Each song with the rule that put it there and why, in playing order.
+      {#if editable}Click a song to change its rule.{/if}
+    </p>
+    {#if !viewingCurrent}
+      <p class="hint" data-testid="song-edit-older">
+        This is an older version of the week. Switch to the current version to change rules.
+      </p>
+    {/if}
+
+    <div class="songs-area" class:with-panel={!!(editing && panelSelection)}>
+    {#if editState && showEditBar}
+      <div class="edit-bar" role="region" aria-label="Rule changes" data-testid="song-edit-bar">
+        {#if editState.recovered}
+          <p>
+            {editState.recovered.count}
+            {editState.recovered.count === 1 ? 'unsaved change' : 'unsaved changes'} from an earlier
+            visit, made before this station last changed.
+          </p>
+          <div class="edit-actions">
+            <button type="button" data-testid="song-edit-keep" on:click={() => session?.acceptRecovered()}>Keep them</button>
+            <button type="button" data-testid="song-edit-drop-recovered" on:click={() => session?.discardRecovered()}>Discard them</button>
+          </div>
+        {:else if editState.opLog.length > 0}
+          <p data-testid="song-edit-count">
+            <strong>{editState.opLog.length} {editState.opLog.length === 1 ? 'change' : 'changes'}</strong>
+            to this station's rules, for every week, not just this one.
+            {#if editState.previewing}<span class="muted" data-testid="song-edit-previewing">Previewing week {trace.week}…</span>{/if}
+          </p>
+          <div class="edit-actions">
+            <button type="button" class="button" data-testid="song-edit-save" disabled={editState.saving} on:click={saveRules}>
+              {editState.saving ? 'Saving…' : 'Save changes'}
+            </button>
+            <button type="button" data-testid="song-edit-discard" disabled={editState.saving} on:click={() => session?.discard()}>Discard</button>
+          </div>
+        {:else if justSaved}
+          <p data-testid="song-edit-saved">
+            Saved. Week {trace.week} was made with the old rules: regenerate it to hear the change.
+          </p>
+          <div class="edit-actions">
+            <button type="button" class="button" data-testid="song-edit-regenerate" disabled={regenerating} on:click={regenerateWeek}>
+              {regenerating ? 'Regenerating…' : 'Regenerate this week'}
+            </button>
+          </div>
+        {/if}
+        <ErrorBanner message={editState.loadError} severity="polite" prefix="Couldn't load the station's rules" testId="song-edit-load-error" />
+        <ErrorBanner message={editState.previewError} severity="polite" prefix="Preview" testId="song-edit-preview-error" />
+        <ErrorBanner message={editState.saveError} severity="polite" prefix="Save" testId="song-edit-save-error" />
+        {#if editState.failedAtIdx > 0}
+          <button type="button" data-testid="song-edit-drop-failed" on:click={() => session?.dropFailed()}>
+            Drop that change and save the rest
+          </button>
+        {/if}
+        {#if editState.conflict}
+          <p class="conflict" data-testid="song-edit-conflict">
+            This station was changed somewhere else since you started.
+            <button type="button" on:click={() => session?.load()}>Reload it</button>
+            (your changes are kept).
+          </p>
+        {/if}
+        <ErrorBanner message={regenerateError} severity="polite" prefix="Regenerate" testId="song-edit-regenerate-error" />
+      </div>
+    {/if}
+
+    {#if showingEdits && editing && editing.stagedTrace}
+      <SongList
+        trace={editing.stagedTrace}
+        saved={editing.savedTrace}
+        template={editing.staged.template ?? editorData.template}
+        sidecar={editing.staged.sidecar ?? editorData.sidecar}
+        selected={selectedSong}
+        related={selectedRef ? ruleKey(selectedRef) : null}
+        onselect={pickSong}
+      />
+    {:else}
+      <!-- The week as generated, labelled with the station's rules as saved
+           now (after a save, songs made by a since-changed rule say so). -->
+      <SongList
+        {trace}
+        template={editing?.template ?? editorData.template}
+        sidecar={editing?.sidecar ?? editorData.sidecar}
+        selected={selectedSong}
+        related={selectedRef ? ruleKey(selectedRef) : null}
+        onselect={pickSong}
+      />
+    {/if}
+
+    </div>
+
+    {#if editing && panelSelection}
+      <DetailPanel
+        selected={panelSelection}
+        template={editing.staged.template ?? editorData.template}
+        sidecar={editing.staged.sidecar ?? editorData.sidecar}
+        on:close={closePanel}
+        on:save={(e) => onPanel({ type: 'save', detail: e.detail })}
+        on:retype={(e) => onPanel({ type: 'retype', detail: e.detail })}
+        on:macroSave={(e) => onPanel({ type: 'macroSave', detail: e.detail })}
+        on:blockMove={(e) => onPanel({ type: 'blockMove', detail: e.detail })}
+        on:structuralEdit={(e) => onPanel({ type: 'structuralEdit', detail: e.detail })}
+      />
+    {/if}
     {:else}
     <p class="hint">Each row below is one unit of the layout (a day for Classics). Click a row header to collapse it.</p>
 
@@ -1175,6 +1422,43 @@
 </main>
 
 <style>
+  /* The rule panel is a fixed 320px drawer on the right: while it's open,
+     keep the songs and the edit bar (Save) clear of it. */
+  @media (min-width: 60rem) {
+    .songs-area.with-panel {
+      margin-right: 340px;
+    }
+  }
+  .edit-bar {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem 1rem;
+    margin: 0 0 0.75rem;
+    padding: 0.6rem 0.9rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--panel);
+    box-shadow: var(--shadow-sm);
+  }
+  .edit-bar p {
+    margin: 0;
+    flex: 1 1 20rem;
+  }
+  .edit-actions {
+    display: flex;
+    gap: 0.5rem;
+  }
+  .edit-bar .muted {
+    margin-left: 0.5rem;
+    color: var(--muted);
+  }
+  .edit-bar .conflict {
+    flex-basis: 100%;
+  }
   .view-switch {
     display: inline-flex;
     margin: 0 0 0.75rem;

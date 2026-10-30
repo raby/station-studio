@@ -4,6 +4,25 @@ All notable changes are listed here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses semantic versioning.
 
+## [1.11.0] - 2026-10-30
+
+### Added
+
+- **Songs view on a week's page.** A Songs | Table switch (remembered)
+  lists the week in playing order under the station's section names.
+  Each song shows the rule that put it there in plain words ("Next in
+  order from NIGHT", "Shuffled from POP, no artist twice in 10") and
+  why the engine picked it. Songs from a macro say which; songs picked
+  by a rule that has since changed say so.
+- **Change a song's rule from the week.** Click a song: every song made
+  by the same rule is marked, and the rule panel opens. Change the
+  rule's settings, strategy or source, and the week is previewed with
+  the change, songs that differ marked against the week as saved. Save
+  applies it to every week (the bar says so); Discard drops it.
+  **Regenerate this week** then remakes the week with the saved rules.
+  Changes not yet saved are kept for the next visit. Older versions of
+  a week are read-only.
+
 ## [1.10.1] - 2026-10-30
 
 ### Changed

@@ -78,6 +78,18 @@ export function ruleText(block: EngineBlock): string {
   return text;
 }
 
+/**
+ * Which rule made a song, as a key: songs with the same key change
+ * together when that rule is edited. A repeating row's block is one rule
+ * for every row (editing it edits each row), so the row isn't part of the
+ * key; a macro is one rule for all its songs.
+ */
+export function ruleKey(ref: ExpandedRef): string {
+  if (ref.kind === 'macro-placeholder') return `macro:${ref.macro_id}`;
+  if (ref.slot_index !== undefined) return `slot:${ref.slot_index}`;
+  return `block:${ref.block_idx}`;
+}
+
 export interface SongRow {
   slot: TraceSlot;
   /** 1-based place in the week. */

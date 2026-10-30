@@ -10,7 +10,7 @@
    */
   import type { Trace } from '$lib/api';
   import { sourceColour, type Sidecar, type StationTemplate } from '$lib/editor';
-  import { removedCount, ruleText, songGroups, type SongRow } from '$lib/songList';
+  import { removedCount, ruleKey, ruleText, songGroups, type SongRow } from '$lib/songList';
 
   interface Props {
     trace: Trace;
@@ -20,10 +20,13 @@
     saved?: Trace | null;
     /** The selected song's position (1-based), if any. */
     selected?: number | null;
+    /** Mark every song made by the rule with this key (ruleKey), so the
+     *  page can show which songs a change to that rule touches. */
+    related?: string | null;
     onselect?: (row: SongRow) => void;
   }
 
-  let { trace, template, sidecar, saved = null, selected = null, onselect }: Props = $props();
+  let { trace, template, sidecar, saved = null, selected = null, related = null, onselect }: Props = $props();
 
   const groups = $derived(songGroups(trace, template, sidecar, saved));
   const removed = $derived(removedCount(trace, saved));
@@ -51,6 +54,7 @@
             class="song"
             class:selected={selected === row.position}
             class:changed={row.change !== null}
+            class:related={related !== null && row.ref !== null && ruleKey(row.ref) === related}
             aria-pressed={selected === row.position}
             data-testid="song-row"
             onclick={() => onselect?.(row)}
@@ -147,6 +151,9 @@
   }
   .song:hover {
     background: var(--row-hover);
+  }
+  .song.related {
+    background: var(--accent-soft);
   }
   .song.selected {
     background: var(--row-active);
