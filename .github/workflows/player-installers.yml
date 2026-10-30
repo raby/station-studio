@@ -19,6 +19,7 @@ on:
     paths:
       - 'player/**'
       - '.github/workflows/player-installers.yml'
+      - 'scripts/check_macos_minimum.sh'
   workflow_dispatch:
   workflow_call:
     inputs:
@@ -40,7 +41,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-14
+          # macOS 14 runners retire on 2 November 2026. The app still runs
+          # on the macOS its Info.plist says (checked after the build).
+          - os: macos-15
             label: Mac (Apple Silicon)
             kind: mac
             arch: apple-silicon
@@ -77,6 +80,10 @@ jobs:
 
       - name: build the app
         run: python -m PyInstaller --noconfirm --clean player/packaging/station-player.spec --distpath build/dist --workpath build/work
+
+      - name: check it runs on the macOS it says it does
+        if: matrix.kind == 'mac'
+        run: scripts/check_macos_minimum.sh "build/dist/Station Player.app"
 
       - name: smoke-test the app
         run: |

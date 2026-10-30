@@ -33,6 +33,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from station_server import __version__
 from station_server.audio import BYTES_PER_SECOND, CHUNK, PCM_ARGS
+from station_server.hostaddr import host_addresses
 
 logger = logging.getLogger(__name__)
 
@@ -468,12 +469,11 @@ def lan_addresses() -> list[str]:
             found.append(s.getsockname()[0])
     except OSError:
         pass
-    try:
-        for addr in socket.gethostbyname_ex(socket.gethostname())[2]:
-            if addr not in found:
-                found.append(addr)
-    except OSError:
-        pass
+    # Other networks' addresses, once the background lookup has them
+    # (it can take over a minute on some Macs; see hostaddr).
+    for addr in host_addresses():
+        if addr not in found:
+            found.append(addr)
     return [a for a in found if not a.startswith("127.")]
 
 

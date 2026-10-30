@@ -22,7 +22,7 @@ import secrets
 import socket
 import threading
 from http import HTTPStatus
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -84,7 +84,11 @@ class RemoteServer:
 
     def __init__(self, app, port: int, host: str = "0.0.0.0") -> None:
         self.app = app
-        self.httpd = ThreadingHTTPServer((host, port), _make_handler(app))
+        # Player's server class: no name lookup on bind (it can stall for a
+        # minute on a Mac). Imported here: station_player.server imports
+        # most of the player.
+        from station_player.server import _Server
+        self.httpd = _Server((host, port), _make_handler(app))
         self.httpd.daemon_threads = True
         self.port = self.httpd.server_address[1]
         self.thread = threading.Thread(target=self.httpd.serve_forever, name="phone-remote", daemon=True)

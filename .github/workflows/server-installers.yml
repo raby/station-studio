@@ -20,6 +20,7 @@ on:
     paths:
       - 'server/**'
       - '.github/workflows/server-installers.yml'
+      - 'scripts/check_macos_minimum.sh'
   workflow_dispatch:
   workflow_call:
     inputs:
@@ -41,16 +42,20 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-14
+          # macOS 14 runners retire on 2 November 2026. The app still runs
+          # on the macOS its Info.plist says (checked after the build).
+          - os: macos-15
             label: Mac (Apple Silicon)
             kind: mac
             arch: apple-silicon
-            ffmpeg: arm64
+            # ffmpeg 9.0.2 from ffmpeg.martin-riedl.de, pinned so a
+            # rebuild gets the same one (it needs macOS 12).
+            ffmpeg: arm64/1789931890_9.0.2
           - os: macos-15-intel
             label: Mac (Intel)
             kind: mac
             arch: intel
-            ffmpeg: amd64
+            ffmpeg: amd64/1789931006_9.0.2
           - os: windows-latest
             label: Windows
             kind: windows
@@ -83,8 +88,19 @@ jobs:
         run: |
           set -e
           mkdir -p server/packaging/ffmpeg build/ffmpeg
-          curl -fsSL --retry 3 -o build/ffmpeg/ffmpeg.zip \
-            "https://ffmpeg.martin-riedl.de/redirect/latest/macos/${{ matrix.ffmpeg }}/release/ffmpeg.zip"
+          url="https://ffmpeg.martin-riedl.de/download/macos/${{ matrix.ffmpeg }}/ffmpeg.zip"
+          curl -fsSL --retry 3 -o build/ffmpeg/ffmpeg.zip "$url"
+          curl -fsSL --retry 3 -o build/ffmpeg/ffmpeg.zip.sha256 "$url.sha256"
+          # The published checksum: a download that isn't that build stops here.
+          want=$(awk '{print $1}' build/ffmpeg/ffmpeg.zip.sha256)
+          got=$(shasum -a 256 build/ffmpeg/ffmpeg.zip | awk '{print $1}')
+          echo "ffmpeg.zip sha256: published ${want:-(none)}, downloaded $got"
+          # Not `test -n … && test …`: under set -e a failing first test
+          # wouldn't stop the step.
+          if [ -z "$want" ] || [ "$want" != "$got" ]; then
+            echo "::error title=ffmpeg checksum::ffmpeg.zip isn't the published ${{ matrix.ffmpeg }} build"
+            exit 1
+          fi
           unzip -o build/ffmpeg/ffmpeg.zip -d build/ffmpeg
           cp build/ffmpeg/ffmpeg server/packaging/ffmpeg/ffmpeg
           chmod +x server/packaging/ffmpeg/ffmpeg
@@ -128,6 +144,10 @@ jobs:
 
       - name: build the app
         run: python -m PyInstaller --noconfirm --clean server/packaging/station-server.spec --distpath build/dist --workpath build/work
+
+      - name: check it runs on the macOS it says it does
+        if: matrix.kind == 'mac'
+        run: scripts/check_macos_minimum.sh "build/dist/Station Server.app"
 
       - name: smoke-test the app
         run: |
