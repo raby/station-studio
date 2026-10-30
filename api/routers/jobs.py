@@ -54,7 +54,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from engine.editor_metadata import EditorMetadataError, validate_sidecar
 from engine.generator import GenerationResult, generate_stream
-from engine.models import Station
+from engine.models import Playlist, Station
 from engine.persistence import (
     advance_cursors, load_alias_map, load_cursor_positions,
     load_excluded_mix_ids, load_excluded_track_pids, load_pools,
@@ -433,6 +433,28 @@ def start_generate_job(
     return JobStartResponse(job_id=job_id, status="running")
 
 
+def _preview_seed(db: Session, station: Station, week: int) -> int:
+    """The seed for an rng='on' preview sent without one.
+
+    The seed the week was generated with (its current version), so a
+    preview of the saved template reproduces the stored week and an
+    edited preview differs from it only where the edit does. A week
+    never generated gets the week number: any fixed value keeps
+    repeated previews of that week comparable with each other.
+    """
+    playlist = (
+        db.query(Playlist)
+        .filter(Playlist.station_id == station.id, Playlist.week == week)
+        .first()
+    )
+    if playlist is not None:
+        version = playlist.current_version()
+        for seed in (version.seed if version is not None else None, playlist.seed):
+            if seed is not None:
+                return seed
+    return week
+
+
 @router.post(
     "/api/stations/{slug}/jobs/preview",
     response_model=JobStartResponse,
@@ -529,6 +551,10 @@ def start_preview_job(
     # Capture identity values that the worker closure needs.
     week = payload.week
     seed = payload.seed
+    if seed is None and parsed_template.rng == "on":
+        # The engine refuses rng='on' without a seed; the editor and the
+        # week page don't send one. See _preview_seed.
+        seed = _preview_seed(db, station, week)
 
     # ----- Closures -------------------------------------------------
     def stream_factory():
