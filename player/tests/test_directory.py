@@ -346,11 +346,23 @@ def test_map_music_leaves_out_talk_or_finds_a_genre():
         "sport", "sports", "football", "soccer", "deportes", "esportes", "cricket", "racing"]
 
 
+def test_sport_keeps_only_stations_tagged_for_sport():
+    # The directory's tag search matches part of a tag: "sport" finds "transport".
+    net = FakeNet({"one": lambda: api_answer([
+        raw("Talk Sport", "https://s/ts", geo_lat=51.5, geo_long=-0.1, tags="Sports News,talk"),
+        raw("Fútbol", "https://s/fb", geo_lat=40.4, geo_long=-3.7, tags="deportes,fútbol"),
+        raw("Transport FM", "https://s/tr", geo_lat=48.8, geo_long=2.3, tags="transport,traffic"),
+        raw("Jazz", "https://s/jazz", geo_lat=48.8, geo_long=2.3, tags="jazz,manouche"),
+    ])})
+    d = Directory(fetch=net, servers=["one"])
+    assert [st["name"] for st in d.map_stations(kind="sport")] == ["Talk Sport", "Fútbol"]
+
+
 def test_hand_picked_sport_stations_come_first():
     def answer():
         if "name=" in net.asked[-1]:
             return api_answer([raw("talkSPORT", "https://s/talk", geo_lat=None, geo_long=None, votes=1)])
-        return api_answer([raw("Football FM", "https://s/fb", geo_lat=53.4, geo_long=-2.98, votes=99)])
+        return api_answer([raw("Football FM", "https://s/fb", geo_lat=53.4, geo_long=-2.98, votes=99, tags="football")])
     net = FakeNet({"one": answer})
     d = Directory(fetch=net, servers=["one"])
     extra = [{"name": "talkSPORT", "find": "talkSPORT", "country": "GB", "lat": 51.5, "lon": -0.09},

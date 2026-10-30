@@ -206,6 +206,20 @@ def _spoken(raw: dict) -> bool:
     return any(w in SPOKEN for t in str(raw.get("tags") or "").lower().split(",") for w in t.split())
 
 
+# Words in a station's tags that make it a sport station. The directory's
+# tag search matches part of a tag ("sport" finds "transport"), so what it
+# finds for Sport is checked against these, whole words only.
+SPORT_WORDS = {"sport", "sports", "football", "soccer", "deportes", "deporte", "deportiva", "deportivo", "esportes",
+               "esporte", "esportivo", "futbol", "fútbol", "futebol", "calcio", "cricket", "racing", "rugby",
+               "golf", "tennis", "nfl", "nba", "nhl", "mlb", "baseball", "basketball", "hockey", "f1", "motorsport",
+               "boxing", "sportradio", "sporttalk"}
+
+
+def _sporty(raw: dict) -> bool:
+    """Whether a station's tags say it's a sport station."""
+    return any(w in SPORT_WORDS for t in str(raw.get("tags") or "").lower().split(",") for w in t.replace("-", " ").split())
+
+
 def clean_somafm(raw: dict) -> dict | None:
     """A SomaFM channel as a station (its 128k MP3 stream); None when it
     has no MP3 stream or no usable id."""
@@ -375,6 +389,8 @@ class Directory:
             })
         if kind == "music" and not tags:
             raws = [r for r in raws if isinstance(r, dict) and not _spoken(r)]
+        if kind == "sport":
+            raws = [r for r in raws if isinstance(r, dict) and _sporty(r)]
         found, seen = [], set()
         for st in self._hand_picked(extra, country):
             seen.add(st["url"])
