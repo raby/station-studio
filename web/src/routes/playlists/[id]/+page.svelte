@@ -9,6 +9,7 @@
     errorText,
     getStationServerSettings,
     getStationSidecar,
+    getStationRules,
     sendToStationServer,
     rollbackPlaylist,
     setVersionTags,
@@ -32,7 +33,9 @@
   import SongList from '$lib/components/songs/SongList.svelte';
   import DetailPanel from '$lib/components/editor/DetailPanel.svelte';
   import { findSectionIdForRef, type ExpandedRef, type ParsedEditorSidecar } from '$lib/editor';
-  import { describeQueued, ruleKey, songsChanged, type SongRow } from '$lib/songList';
+  import {
+    describeQueued, ruleDefaultsFrom, ruleKey, songsChanged, type RuleDefaults, type SongRow,
+  } from '$lib/songList';
   import {
     createStagedEditSession,
     type StagedEditSession,
@@ -170,7 +173,7 @@
   // the week as generated.
   // The queued changes in plain words, against the rules as saved.
   $: queuedText = editState && editState.template && editState.sidecar && editState.opLog.length > 0
-    ? describeQueued(editState.opLog, editState.template, editState.sidecar)
+    ? describeQueued(editState.opLog, editState.template, editState.sidecar, ruleDefaults)
     : [];
   function movedText(n: number, of: number): string {
     if (n === 0) return `No songs in week ${trace?.week} change.`;
@@ -282,6 +285,7 @@
   let playlist: Playlist | null = null;
   let station: Station | null = null;
   let stationPlaylists: PlaylistSummary[] = [];
+  let ruleDefaults: RuleDefaults = {};
   let error: string | null = null;
   let loading = true;
 
@@ -443,7 +447,7 @@
       // non-fatal (matches stationPlaylists pattern): the dropdown
       // just won't render. .catch inside Promise.all so a flaky
       // /versions endpoint doesn't poison the others.
-      const [p, s, list, vlist, links, ed] = await Promise.all([
+      const [p, s, list, vlist, links, ed, rules] = await Promise.all([
         getPlaylist(playlistId),
         getStation(t.station),
         getStationPlaylists(t.station).catch(() => [] as PlaylistSummary[]),
@@ -453,6 +457,9 @@
         getStationServerSettings().catch(() => null),
         // Songs view only: failure just means no Songs view.
         getStationSidecar(t.station).catch(() => null),
+        // The station's defaults for rule settings, for the rules in
+        // words; without them the engine's own defaults are said.
+        getStationRules(t.station).catch(() => null),
       ]);
       if (myGen !== loadGeneration) return;
 
@@ -471,6 +478,7 @@
       sourceColours = Object.fromEntries(sources.map((src) => [src.name, src.colour]));
       rowGroups = groupByRow(t.slots);
       editorData = ed;
+      ruleDefaults = ruleDefaultsFrom(rules?.rules ?? []);
       selectedSong = null;
     } catch (e) {
       if (myGen !== loadGeneration) return;
@@ -1285,6 +1293,7 @@
       selected={selectedSong}
       related={selectedRef ? ruleKey(selectedRef) : null}
       onselect={pickSong}
+      {ruleDefaults}
     />
 
     </div>
@@ -1292,6 +1301,7 @@
     {#if editing && panelSelection}
       <DetailPanel
         saveLabel="Apply"
+        {ruleDefaults}
         selected={panelSelection}
         template={editing.staged.template ?? editorData.template}
         sidecar={editing.staged.sidecar ?? editorData.sidecar}

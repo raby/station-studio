@@ -18,6 +18,12 @@ this project uses semantic versioning.
   Gone: "Atomic block", "row_idx=0, block_idx=1", "per-block positive
   filter", "expanded blocks". On the week page the button that queues a
   change says **Apply**, since the bar's **Save changes** is what saves.
+- A rule's number is the same in the panel ("Rule 2 of 3 in this
+  section") and in the list of queued changes ("Evening, rule 2").
+- Rules in words use the station's own defaults: a shuffled rule that
+  doesn't set its artist window says the station's
+  `artist_dedup_window`, not always 10, and a mix says the station's
+  `mix_exclusion_weeks`.
 
 ## [1.13.0] - 2026-10-30
 
