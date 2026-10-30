@@ -55,7 +55,6 @@ jobs:
         working-directory: player
         env:
           STATION_PLAYER_REQUIRE_BROWSER: '1'
-          PYTEST_RUN_PATH: player  # annotations point at player/tests/...
         run: python -m pytest -q
 
   server:
@@ -89,8 +88,6 @@ jobs:
           python -m pip install pytest pytest-github-actions-annotate-failures==0.4.2
       - name: pytest
         working-directory: server
-        env:
-          PYTEST_RUN_PATH: server  # annotations point at server/tests/...
         run: python -m pytest -q
 
   server-desktop:
@@ -145,8 +142,6 @@ jobs:
           python -m pip install pytest pytest-github-actions-annotate-failures==0.4.2
       - name: pytest
         working-directory: server
-        env:
-          PYTEST_RUN_PATH: server  # annotations point at server/tests/...
         run: python -m pytest -q -p no:cacheprovider
 
   frontend-unit:
