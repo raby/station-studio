@@ -1,7 +1,10 @@
 # Ambient recordings
 
 Ambient mode plays a real recording for a scene when `sounds.json` names
-one, and makes the scene's sound itself otherwise. Only free-licence
+one, and makes the scene's sound itself otherwise (the fish tank has none).
+The recordings here are CC0 from Freesound; `source` in `sounds.json` is
+each one's page. They were loudness-matched (ffmpeg `loudnorm=I=-22`) and
+made 112 kbit/s stereo MP3s, which every browser and the Mac app can play. Only free-licence
 recordings go here (CC0 or similar), each listed with where it came from:
 
 ```json
