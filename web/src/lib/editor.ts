@@ -1032,6 +1032,12 @@ export function findSectionIdForRef(
  *   - row_template: target position = `traceSlot.block`; the returned
  *     `AtomicRef` carries `traceSlot.row` as its `row_idx`.
  *
+ * `traceSlot` is numbered as the engine numbers it (engine/trace.py):
+ * `row` and `block` from 1, `block` being the block's place in
+ * flat_slots or in the row. The target position is `block - 1` in both
+ * layouts; `slot` counts songs and isn't used (a block of size N plays
+ * N songs, so song and block numbers drift apart).
+ *
  * Algorithm mirrors `engine.editor_metadata.resolve_macro_addresses`:
  *   1. Pre-pass per section: find the first atomic-anchor block,
  *      compute `section_start = anchor.pos - cumulative_width_before`
@@ -1071,7 +1077,11 @@ export function findChipRef(
   traceSlot: { slot: number; row: number; block: number },
 ): ExpandedRef | null {
   const isFlat = template.layout.flat_slots !== undefined;
-  const targetPos = isFlat ? traceSlot.slot : traceSlot.block;
+  // The engine numbers trace rows and blocks from 1 (engine/trace.py):
+  // `block` is the block's place in flat_slots, or in the row, plus one.
+  // Not `slot`: that counts songs, and a block of size N plays N.
+  const targetPos = traceSlot.block - 1;
+  const rowIdx = traceSlot.row - 1;
 
   const macrosById = new Map(
     (sidecar.macros ?? []).map((m) => [m.id, m] as const),
@@ -1117,7 +1127,7 @@ export function findChipRef(
         if (cursor === targetPos) {
           return isFlat
             ? { kind: 'atomic-ref', slot_index: cursor }
-            : { kind: 'atomic-ref', row_idx: traceSlot.row, block_idx: cursor };
+            : { kind: 'atomic-ref', row_idx: rowIdx, block_idx: cursor };
         }
         cursor += 1;
       } else {

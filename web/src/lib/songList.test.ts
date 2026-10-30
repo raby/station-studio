@@ -1,0 +1,122 @@
+import { describe, expect, it } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
+import type { Trace, TraceSlot } from './api';
+import type { EngineBlock, Sidecar, StationTemplate } from './editor';
+import { removedCount, ruleText, songGroups } from './songList';
+
+// The two real example stations: Rebirth Radio (flat slots, sections,
+// 200-song macros) and Rebirth Classics (a repeating row).
+const STATIONS = path.resolve(__dirname, '../../../stations');
+function station(slug: string): { template: StationTemplate; sidecar: Sidecar } {
+  return {
+    template: JSON.parse(fs.readFileSync(path.join(STATIONS, `${slug}.json`), 'utf-8')),
+    sidecar: JSON.parse(fs.readFileSync(path.join(STATIONS, `${slug}.editor.json`), 'utf-8')),
+  };
+}
+
+/** Song i (0-based) from block i of a flat station, numbered as the
+ *  engine numbers traces: slot, row and block from 1. */
+function slot(i: number, block: EngineBlock, over: Partial<TraceSlot> = {}): TraceSlot {
+  return {
+    slot: i + 1, unit: 'slot', row: 1, block: i + 1, source: block.source, strategy: block.strategy,
+    pool_index: i, track_id: 1000 + i, track_name: `Song ${i}`, track_artist: `Artist ${i}`,
+    reason: `${block.strategy} from '${block.source}'`, ...over,
+  };
+}
+
+function trace(slots: TraceSlot[], week = 1): Trace {
+  return { trace_id: 't', station: 's', week, rng: 'r', seed: null, generated_at: '', slots };
+}
+
+/** A week of a flat-slots station: one song per block, in order. */
+function flatWeek(template: StationTemplate, n?: number): Trace {
+  const blocks = template.layout.flat_slots!;
+  return trace(blocks.slice(0, n ?? blocks.length).map((b, i) => slot(i, b)));
+}
+
+describe('ruleText', () => {
+  const b = (over: Partial<EngineBlock>): EngineBlock => ({ source: 'NIGHT', strategy: 'pick', size: 1, ...over });
+  it.each([
+    [b({}), 'Picked from NIGHT'],
+    [b({ strategy: 'window', size: 4 }), '4 in a row from NIGHT'],
+    [b({ strategy: 'window', size: 1 }), 'Next from NIGHT'],
+    [b({ strategy: 'sequential', cursor_id: 'n1' }), 'Next in order from NIGHT'],
+    [b({ strategy: 'weighted' }), 'Picked from NIGHT, favouring songs not played lately'],
+    [b({ strategy: 'jingle', source: 'JINGLES', genre: 'Daytime' }), 'Jingle from JINGLES: Daytime'],
+    [b({ strategy: 'jingle', source: 'JINGLES' }), 'Jingle from JINGLES'],
+    [b({ strategy: 'mix', genre: 'Disco' }), 'Mix from NIGHT: Disco'],
+    [b({ strategy: 'mix' }), 'Mix from NIGHT'],
+    [b({ strategy: 'prev_ref', position: 3 }), "Same as last week's song 3"],
+    [b({ strategy: 'prev_ref', position: 3, fallback_genre: 'Soul' }), "Same as last week's song 3 (else a Soul mix)"],
+    [b({ strategy: 'prev_ref' }), 'Same as last week'],
+    [b({ strategy: 'archive_ref', source: 'CHART', position: 7 }), 'Song 7 from the CHART archive'],
+    [b({ strategy: 'archive_ref', source: 'CHART' }), 'From the CHART archive'],
+    [b({ allowlist_sources: ['A', 'B'] }), 'Picked from NIGHT, only songs also in A or B'],
+  ])('%o → %s', (block, text) => {
+    expect(ruleText(block)).toBe(text);
+  });
+});
+
+describe('songGroups', () => {
+  it('Rebirth Radio: songs in order, under section names, with their rules', () => {
+    const { template, sidecar } = station('rebirth-radio');
+    const week = flatWeek(template);
+    const groups = songGroups(week, template, sidecar);
+
+    expect(groups.flatMap((g) => g.rows).map((r) => r.position)).toEqual(week.slots.map((_, i) => i + 1));
+    expect(groups[0].sectionName).toBe(sidecar.sections[0].name);
+    // Each section's songs stay together: one run per section here.
+    expect(groups.map((g) => g.sectionId)).toEqual(sidecar.sections.map((s) => s.id));
+
+    const [first, second] = groups[0].rows;
+    expect(first.block).toEqual(template.layout.flat_slots![0]);
+    expect(first.ref).toEqual({ kind: 'atomic-ref', slot_index: 0 });
+    expect(first.macroName).toBeNull();
+    // Slot 1 is the first of the 200 × weighted macro.
+    expect(second.ref).toMatchObject({ kind: 'macro-placeholder', macro_id: 'weighted-1', pick_in_macro: 1 });
+    expect(second.macroName).toBe('200 × weighted');
+    expect(second.block?.strategy).toBe('weighted');
+  });
+
+  it('Rebirth Classics: a repeating row keeps playing order', () => {
+    const { template, sidecar } = station('rebirth-classics');
+    const row = template.layout.row_template!;
+    const slots: TraceSlot[] = [];
+    for (let r = 0; r < 3; r++) {
+      row.forEach((b, bi) => slots.push(slot(slots.length, b, { row: r + 1, block: bi + 1 })));
+    }
+    const groups = songGroups(trace(slots), template, sidecar);
+    const rows = groups.flatMap((g) => g.rows);
+    expect(rows.map((r) => r.slot.slot)).toEqual(slots.map((s) => s.slot));
+    expect(rows.every((r) => r.block !== null)).toBe(true);
+    expect(rows[1].block).toEqual(row[1]);
+    expect(groups[0].sectionName).toBe('Weekly cycle (7 days)');
+  });
+
+  it('marks songs that differ from the saved week, and counts removed ones', () => {
+    const { template, sidecar } = station('rebirth-radio');
+    const saved = flatWeek(template, 5);
+    const edited = trace([
+      ...saved.slots.slice(0, 2),
+      { ...saved.slots[2], track_id: 99, track_name: 'Other song' },
+      ...saved.slots.slice(3, 4),
+    ]);
+    const rows = songGroups(edited, template, sidecar, saved).flatMap((g) => g.rows);
+    expect(rows.map((r) => r.change)).toEqual([null, null, 'changed', null]);
+    expect(removedCount(edited, saved)).toBe(1);
+    expect(removedCount(edited, null)).toBe(0);
+
+    const longer = trace([...saved.slots, slot(5, template.layout.flat_slots![5])]);
+    expect(songGroups(longer, template, sidecar, saved).flatMap((g) => g.rows)[5].change).toBe('added');
+  });
+
+  it('songs outside every section go in their own run', () => {
+    const { template } = station('rebirth-radio');
+    const empty: Sidecar = { schema_version: 1, sections: [], macros: [], layout_order: [] };
+    const groups = songGroups(flatWeek(template, 3), template, empty);
+    expect(groups).toHaveLength(1);
+    expect(groups[0]).toMatchObject({ sectionId: null, sectionName: 'Not in a section' });
+    expect(groups[0].rows.every((r) => r.ref === null && r.block === null)).toBe(true);
+  });
+});
