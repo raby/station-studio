@@ -36,6 +36,13 @@ BRIDGE = "stationApp"  # the page's window.webkit.messageHandlers.stationApp
 # How long the player may be gone before the window gives up and quits
 # (an update restarts it, which takes a while on a slow Mac).
 GONE_FOR = 120
+AUTOSAVE = "Station Player window"  # where the window's place and size are kept
+FULL_MIN = (420, 480)
+# The mini player: the window shrunk to the player bar, floating on top.
+# Its first size; after that, wherever it was last left.
+MINI_SIZE = (380, 110)
+MINI_MIN = (300, 130)  # with the title bar
+MINI_KEY = "Station Player mini player"
 
 logger = logging.getLogger(__name__)
 _local = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -124,6 +131,7 @@ class AppDelegate(AppKit.NSObject):
         self.stopped = False  # the player has been stopped already
         self.version = None
         self.gone_since = None
+        self.full_frame = None  # while it's the mini player, the frame to go back to
         return self
 
     # ---- starting up ----------------------------------------------------------
@@ -142,12 +150,12 @@ class AppDelegate(AppKit.NSObject):
         win = AppKit.NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
             frame, mask, AppKit.NSBackingStoreBuffered, False)
         win.setTitle_(NAME)
-        win.setMinSize_(Foundation.NSMakeSize(420, 480))
+        win.setMinSize_(Foundation.NSMakeSize(*FULL_MIN))
         win.setReleasedWhenClosed_(False)  # closing only hides it (see windowShouldClose_)
         win.setCollectionBehavior_(AppKit.NSWindowCollectionBehaviorFullScreenPrimary)
         win.center()
         # Where it was left last time, and how big.
-        win.setFrameAutosaveName_("Station Player window")
+        win.setFrameAutosaveName_(AUTOSAVE)
         win.setDelegate_(self)
 
         config = WebKit.WKWebViewConfiguration.alloc().init()
@@ -205,6 +213,8 @@ class AppDelegate(AppKit.NSObject):
             _item("Previous", "playPrevious:", "", None, self),
         ])
         _submenu(bar, "View", [
+            _item("Mini Player", "toggleMini:", "m", cmd | shift, self),
+            None,
             _item("Enter Full Screen", "toggleFullScreen:", "f", cmd | ctrl),
         ])
         windows = _submenu(bar, "Window", [
@@ -241,6 +251,55 @@ class AppDelegate(AppKit.NSObject):
         # (or Window › Station Player) brings it back.
         window.orderOut_(None)
         return False
+
+    def toggleMini_(self, sender):
+        # The page moves its bar about, then says "mini" or "full".
+        self.show()
+        self.tell("mini()")
+
+    @objc.python_method
+    def setMini(self, on: bool):
+        """Shrink the window to the player bar, floating over other
+        windows (and on every desktop), or grow it back to where it was."""
+        win = self.window
+        if win is None or (self.full_frame is not None) == on:
+            return
+        defaults = Foundation.NSUserDefaults.standardUserDefaults()
+        if not on:
+            defaults.setObject_forKey_(Foundation.NSStringFromRect(win.frame()), MINI_KEY)
+            win.setLevel_(AppKit.NSNormalWindowLevel)
+            win.setTitleVisibility_(AppKit.NSWindowTitleVisible)
+            win.setTitlebarAppearsTransparent_(False)
+            win.setCollectionBehavior_(AppKit.NSWindowCollectionBehaviorFullScreenPrimary)
+            win.setMinSize_(Foundation.NSMakeSize(*FULL_MIN))
+            win.setFrame_display_animate_(self.full_frame, True, True)
+            self.full_frame = None
+            win.setFrameAutosaveName_(AUTOSAVE)
+            win.saveFrameUsingName_(AUTOSAVE)
+            return
+        if win.styleMask() & AppKit.NSWindowStyleMaskFullScreen:
+            win.toggleFullScreen_(None)  # out of full screen first, which takes a moment
+            AppHelper.callLater(1.0, self.setMini, True)
+            return
+        self.full_frame = win.frame()
+        win.setFrameAutosaveName_("")  # the mini size isn't the window's own
+        win.setMinSize_(Foundation.NSMakeSize(*MINI_MIN))
+        win.setLevel_(AppKit.NSFloatingWindowLevel)
+        # Just the close / minimise / zoom buttons above the bar, no title.
+        win.setTitleVisibility_(AppKit.NSWindowTitleHidden)
+        win.setTitlebarAppearsTransparent_(True)
+        win.setCollectionBehavior_(AppKit.NSWindowCollectionBehaviorCanJoinAllSpaces
+                                   | AppKit.NSWindowCollectionBehaviorFullScreenAuxiliary)
+        saved = defaults.stringForKey_(MINI_KEY)
+        frame = Foundation.NSRectFromString(saved) if saved else None
+        if frame is None or not any(Foundation.NSIntersectsRect(frame, s.visibleFrame()) for s in AppKit.NSScreen.screens()):
+            # Bottom right of the screen the window is on.
+            screen = (win.screen() or AppKit.NSScreen.mainScreen()).visibleFrame()
+            size = win.frameRectForContentRect_(Foundation.NSMakeRect(0, 0, *MINI_SIZE)).size
+            frame = Foundation.NSMakeRect(screen.origin.x + screen.size.width - size.width - 20,
+                                          screen.origin.y + 20, size.width, size.height)
+        win.setFrame_display_animate_(frame, True, True)
+        self.show()
 
     def applicationShouldHandleReopen_hasVisibleWindows_(self, app, visible):
         self.show()
@@ -298,6 +357,8 @@ class AppDelegate(AppKit.NSObject):
         body = message.body()
         if body == "show":  # the alarm going off, say
             self.show()
+        elif body in ("mini", "full"):  # the mini player, or back from it
+            self.setMini(body == "mini")
         elif body == "quit":  # Quit on the page, which has stopped the player
             self.stopped = True
             _app().terminate_(None)
@@ -394,6 +455,8 @@ class AppDelegate(AppKit.NSObject):
             self.download(str(response.response().URL().absoluteString()))
 
     def webView_didFinishNavigation_(self, view, navigation):
+        # A page loaded afresh shows everything, so the window does too.
+        self.setMini(False)
         report = os.environ.get("STATION_PLAYER_SELFTEST")
         if report and not getattr(self, "tested", False):
             self.tested = True

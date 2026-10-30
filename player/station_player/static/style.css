@@ -425,6 +425,30 @@ input[type="range"]:disabled { cursor: default; opacity: .5; }
 }
 .settings section.add-station { margin-top: 28px; }
 
+/* The mini player: the bar on its own, in a picture-in-picture window
+   (body.mini-window) or the Mac app's window shrunk to it (body.mini). */
+body.mini .app > :not(.bar), body.mini > :not(.app):not(.toasts):not(#announce) { display: none !important; }
+/* One compact row: what's playing, previous / play / next in the middle,
+   put back at the end;
+   and a thin seek bar under it. */
+body.mini .bar, body.mini-window .bar {
+  position: fixed; inset: 0; border-top: 0; padding: 8px 10px; align-content: center;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); grid-template-areas: "now buttons back" "seek seek seek"; gap: 2px 6px;
+}
+:is(body.mini, body.mini-window) :is(.controls, .volume) { display: contents; }
+:is(body.mini, body.mini-window) .now { grid-area: now; gap: 9px; }
+:is(body.mini, body.mini-window) .now-art { width: 40px; height: 40px; border-radius: 6px; }
+:is(body.mini, body.mini-window) .now-sub { font-size: 12px; }
+:is(body.mini, body.mini-window) .buttons { grid-area: buttons; gap: 2px; }
+:is(body.mini, body.mini-window) .seek { grid-area: seek; max-width: none; }
+:is(body.mini, body.mini-window) .seek.off { display: none; }
+:is(body.mini, body.mini-window) .icon.play { width: 38px; height: 38px; }
+:is(body.mini, body.mini-window) #btn-mini { grid-area: back; justify-self: end; }
+:is(body.mini, body.mini-window) :is(.wave, .sleep, .time, #btn-shuffle, #btn-repeat, .volume > svg.i, #volume) { display: none; }
+body.mini-window { overflow: hidden; }
+#btn-mini { width: 32px; height: 32px; }
+#btn-mini svg.i { width: 18px; height: 18px; }
+
 .sr-only {
   position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
   overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
@@ -814,6 +838,7 @@ svg.analogue.huge { width: min(62vh, 78vw); height: auto; }
 .ambient-volume { display: flex; align-items: center; gap: 8px; }
 .ambient-volume input { width: 120px; }
 .ambient-controls .btn { color: inherit; background: rgba(255, 255, 255, .12); border-color: rgba(255, 255, 255, .25); }
+.ambient-credit { flex-basis: 100%; margin: 0; text-align: center; font-size: 12px; opacity: .7; }
 .update-settings { margin-top: 14px; }
 .update-settings .row, .update-note .row { display: flex; gap: 8px; flex-wrap: wrap; }
 .update-failed { color: var(--danger); }
