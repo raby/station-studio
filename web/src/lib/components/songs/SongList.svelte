@@ -10,7 +10,7 @@
    */
   import type { Trace } from '$lib/api';
   import { sourceColour, type Sidecar, type StationTemplate } from '$lib/editor';
-  import { filterGroups, removedCount, rowRule, ruleKey, songGroups, type SongRow } from '$lib/songList';
+  import { filterGroups, removedCount, rowRule, ruleKey, songGroups, type RuleDefaults, type SongRow } from '$lib/songList';
 
   interface Props {
     trace: Trace;
@@ -24,9 +24,11 @@
      *  page can show which songs a change to that rule touches. */
     related?: string | null;
     onselect?: (row: SongRow) => void;
+    /** The station's defaults for settings a rule leaves out. */
+    ruleDefaults?: RuleDefaults;
   }
 
-  let { trace, template, sidecar, saved = null, selected = null, related = null, onselect }: Props = $props();
+  let { trace, template, sidecar, saved = null, selected = null, related = null, onselect, ruleDefaults = {} }: Props = $props();
 
   const allGroups = $derived(songGroups(trace, template, sidecar, saved));
   const removed = $derived(removedCount(trace, saved));
@@ -37,7 +39,7 @@
   const changedCount = $derived(allGroups.reduce((n, g) => n + g.rows.filter((r) => r.change !== null).length, 0));
   // "Only changed" applies while there's something to compare with.
   const filtering = $derived(!!query.trim() || (onlyChanged && saved !== null));
-  const groups = $derived(filterGroups(allGroups, query, onlyChanged && saved !== null));
+  const groups = $derived(filterGroups(allGroups, query, onlyChanged && saved !== null, ruleDefaults));
   const shown = $derived(groups.reduce((n, g) => n + g.rows.length, 0));
 
   function clear(): void {
@@ -99,7 +101,7 @@
                 style:background={sourceColour(template, row.slot.source)}
                 aria-hidden="true"
               ></span>
-              {rowRule(row)}{#if row.macroName}<span class="macro">{' '}· {row.macroName}</span>{/if}{#if row.ruleChanged}<span
+              {rowRule(row, ruleDefaults)}{#if row.macroName}<span class="macro">{' '}· {row.macroName}</span>{/if}{#if row.ruleChanged}<span
                   class="macro" data-testid="song-rule-changed">{' '}· rule changed since</span>{/if}
             </span>
             {#if row.change}

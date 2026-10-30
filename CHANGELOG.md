@@ -16,8 +16,8 @@ this project uses semantic versioning.
   goes to all of them. "Just like" means the same kind of rule with the
   same settings: a macro matches macros, a single slot matches single
   slots, and a slot inside a macro never matches. It's unticked each
-  time you pick a rule. On a week's page the changes queue together
-  (each listed, each undoable). In the station editor they queue with
+  time you pick a rule. On a week's page it's one change in the list
+  ("…, and the 20 rules just like it"), undone with one Undo. In the station editor they queue with
   live preview on; otherwise they save together in one batch, all or
   nothing.
 
@@ -40,6 +40,12 @@ this project uses semantic versioning.
   Gone: "Atomic block", "row_idx=0, block_idx=1", "per-block positive
   filter", "expanded blocks". On the week page the button that queues a
   change says **Apply**, since the bar's **Save changes** is what saves.
+- A rule's number is the same in the panel ("Rule 2 of 3 in this
+  section") and in the list of queued changes ("Evening, rule 2").
+- Rules in words use the station's own defaults: a shuffled rule that
+  doesn't set its artist window says the station's
+  `artist_dedup_window`, not always 10, and a mix says the station's
+  `mix_exclusion_weeks`.
 
 ## [1.13.0] - 2026-10-30
 
@@ -69,7 +75,7 @@ this project uses semantic versioning.
   week's page, the bar says which later weeks were made with the old
   rules and offers **Regenerate this week and the N after**. They're
   remade one at a time, in order, with progress; if one fails it
-  stops there and says which.
+  stops there and says which. When they're done, the page says so.
 
 ### Fixed
 
@@ -79,12 +85,15 @@ this project uses semantic versioning.
   them on again, so the week came out different and every later new
   week skipped ahead. Each generation now records the cursor positions
   it started from. Regenerating a week starts from those, and only the
-  latest week moves the live cursors. Weeks generated before this
-  version have no record: they still start from the live cursors, but
-  no longer move them. Previews of a past week use the same positions,
-  so they match.
+  latest week moves the live cursors. Previews of a past week use the
+  same positions, so they match. Weeks generated before this version
+  have no record, so a past one still starts from the live cursors (it
+  no longer moves them), and the latest one is moved on once more when
+  regenerated. From then on, every week is recorded.
 - Regenerating a week of an `rng: on` station without a seed reuses
-  the week's own seed. Before, the request failed.
+  the week's own seed (on both `/generate` and `/jobs/generate`); a week
+  made before the station was `rng: on` gets a fresh one. Before, the
+  request failed.
 
 ## [1.11.0] - 2026-10-30
 

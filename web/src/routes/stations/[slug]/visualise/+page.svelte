@@ -18,6 +18,7 @@
    */
   import { onDestroy, onMount, tick } from 'svelte';
   import { editsFromPanel, type PanelEvent } from '$lib/panelEdits';
+  import { ruleDefaultsFrom, type RuleDefaults } from '$lib/songList';
   import { page } from '$app/stores';
   import {
     ApiError,
@@ -28,6 +29,7 @@
     deleteSection,
     exportStationTemplate,
     getStationSidecar,
+    getStationRules,
     moveBlock,
     type Trace,
     patchBlock,
@@ -1077,7 +1079,16 @@
     sidecarError = s.sidecarError;
   }
 
+  /** The station's defaults for rule settings, for the rule panel's
+   *  rule in words. Not loaded: the engine's own defaults are said. */
+  let ruleDefaults: RuleDefaults = {};
+
   async function loadSidecar() {
+    void getStationRules(slug)
+      .then((r) => (ruleDefaults = ruleDefaultsFrom(r.rules)))
+      .catch(() => {
+        // Optional: only the wording of defaults depends on it.
+      });
     const r = await getStationSidecar(slug);
     _applySidecarState({
       template: r.template,
@@ -2157,6 +2168,7 @@
         <EditorCanvas
           {template}
           {sidecar}
+          {ruleDefaults}
           on:save={handleSave}
           on:macroSave={handleMacroSave}
           on:retype={handleRetype}

@@ -9,6 +9,7 @@
     errorText,
     getStationServerSettings,
     getStationSidecar,
+    getStationRules,
     sendToStationServer,
     rollbackPlaylist,
     setVersionTags,
@@ -32,7 +33,9 @@
   import SongList from '$lib/components/songs/SongList.svelte';
   import DetailPanel from '$lib/components/editor/DetailPanel.svelte';
   import { findSectionIdForRef, type ExpandedRef, type ParsedEditorSidecar } from '$lib/editor';
-  import { describeQueued, ruleKey, songsChanged, type SongRow } from '$lib/songList';
+  import {
+    queuedChanges, ruleDefaultsFrom, ruleKey, songsChanged, type RuleDefaults, type SongRow,
+  } from '$lib/songList';
   import {
     createStagedEditSession,
     type StagedEditSession,
@@ -170,10 +173,17 @@
   // What the list shows: the week with the queued edits once that preview
   // is in, marked against the same week under the saved rules; otherwise
   // the week as generated.
-  // The queued changes in plain words, against the rules as saved.
-  $: queuedText = editState && editState.template && editState.sidecar && editState.opLog.length > 0
-    ? describeQueued(editState.opLog, editState.template, editState.sidecar)
+  // The queued changes in plain words, against the rules as saved; a
+  // change that went to identical rules too is one line.
+  $: queued = editState && editState.template && editState.sidecar && editState.opLog.length > 0
+    ? queuedChanges(editState.opLog, editState.template, editState.sidecar, ruleDefaults)
     : [];
+
+  /** Undo one change: every queued edit it is, last first so the
+   *  places of the rest don't shift. */
+  function undoChange(indices: number[]): void {
+    for (const i of [...indices].reverse()) session?.unstage(i);
+  }
   function movedText(n: number, of: number): string {
     if (n === 0) return `No songs in week ${trace?.week} change.`;
     return `${n} of ${of} ${of === 1 ? 'song' : 'songs'} in week ${trace?.week} change.`;
@@ -203,6 +213,11 @@
 
   /** Which week is being remade, for the progress note. */
   let regenerateProgress: { week: number; done: number; of: number } | null = null;
+
+  /** Said once a run of regenerations finishes (the bar closes then, and
+   *  later weeks don't show here), until the page moves to another week. */
+  let regenerated: { text: string; at: string } | null = null;
+  $: if (regenerated && trace && regenerated.at !== `${trace.station}:${trace.week}`) regenerated = null;
 
   /** Remake these weeks with the saved rules, one at a time in order
    *  (each continues from the one before: last week's songs, cursors).
@@ -234,6 +249,12 @@
         }
       }
       await reloadWeek();
+      regenerated = {
+        text: weeks.length === 1
+          ? `Regenerated week ${weeks[0]} with the saved rules.`
+          : `Regenerated ${weekList(weeks)} with the saved rules.`,
+        at: `${slug}:${thisWeek}`,
+      };
     } catch (e) {
       regenerateError = errorText(e);
     } finally {
@@ -273,6 +294,7 @@
   let playlist: Playlist | null = null;
   let station: Station | null = null;
   let stationPlaylists: PlaylistSummary[] = [];
+  let ruleDefaults: RuleDefaults = {};
   let error: string | null = null;
   let loading = true;
 
@@ -434,7 +456,7 @@
       // non-fatal (matches stationPlaylists pattern): the dropdown
       // just won't render. .catch inside Promise.all so a flaky
       // /versions endpoint doesn't poison the others.
-      const [p, s, list, vlist, links, ed] = await Promise.all([
+      const [p, s, list, vlist, links, ed, rules] = await Promise.all([
         getPlaylist(playlistId),
         getStation(t.station),
         getStationPlaylists(t.station).catch(() => [] as PlaylistSummary[]),
@@ -444,6 +466,9 @@
         getStationServerSettings().catch(() => null),
         // Songs view only: failure just means no Songs view.
         getStationSidecar(t.station).catch(() => null),
+        // The station's defaults for rule settings, for the rules in
+        // words; without them the engine's own defaults are said.
+        getStationRules(t.station).catch(() => null),
       ]);
       if (myGen !== loadGeneration) return;
 
@@ -462,6 +487,7 @@
       sourceColours = Object.fromEntries(sources.map((src) => [src.name, src.colour]));
       rowGroups = groupByRow(t.slots);
       editorData = ed;
+      ruleDefaults = ruleDefaultsFrom(rules?.rules ?? []);
       selectedSong = null;
     } catch (e) {
       if (myGen !== loadGeneration) return;
@@ -1174,6 +1200,9 @@
       Each song with the rule that put it there and why, in playing order.
       {#if editable}Click a song to change its rule.{/if}
     </p>
+    {#if regenerated}
+      <p class="hint" role="status" data-testid="song-regenerated">{regenerated.text}</p>
+    {/if}
     {#if !viewingCurrent}
       <p class="hint" data-testid="song-edit-older">
         This is an older version of the week. Switch to the current version to change rules.
@@ -1195,17 +1224,19 @@
           </div>
         {:else if editState.opLog.length > 0}
           <p data-testid="song-edit-count">
-            <strong>{editState.opLog.length} {editState.opLog.length === 1 ? 'change' : 'changes'}</strong>
-            to this station's rules, for every week, not just this one.
+            <strong>{queued.length || editState.opLog.length} {(queued.length || editState.opLog.length) === 1 ? 'change' : 'changes'}</strong>
+            to {editState.opLog.length > queued.length && queued.length > 0
+              ? `${editState.opLog.length} of this station's rules`
+              : "this station's rules"}, for every week, not just this one.
             {#if editState.previewing}<span class="muted" data-testid="song-edit-previewing">Previewing week {trace.week}…</span>
             {:else if showingEdits && editing?.stagedTrace}<span class="muted" data-testid="song-edit-moved">{movedText(songsChanged(editing.stagedTrace, editing.savedTrace), editing.stagedTrace.slots.length)}</span>{/if}
           </p>
           <ol class="queued" data-testid="song-edit-list">
-            {#each queuedText as text, i (i)}
+            {#each queued as change (change.indices.join(','))}
               <li data-testid="song-edit-item">
-                <span>{text}</span>
+                <span>{change.text}</span>
                 <button type="button" class="link" data-testid="song-edit-undo" disabled={editState.saving}
-                  on:click={() => session?.unstage(i)}>Undo</button>
+                  on:click={() => undoChange(change.indices)}>Undo</button>
               </li>
             {/each}
           </ol>
@@ -1273,6 +1304,7 @@
       selected={selectedSong}
       related={selectedRef ? ruleKey(selectedRef) : null}
       onselect={pickSong}
+      {ruleDefaults}
     />
 
     </div>
@@ -1280,6 +1312,7 @@
     {#if editing && panelSelection}
       <DetailPanel
         saveLabel="Apply"
+        {ruleDefaults}
         selected={panelSelection}
         template={editing.staged.template ?? editorData.template}
         sidecar={editing.staged.sidecar ?? editorData.sidecar}

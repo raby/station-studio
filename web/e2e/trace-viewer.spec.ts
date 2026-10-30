@@ -264,8 +264,9 @@ test.describe('trace viewer', () => {
     await page.getByTestId('also-identical-input').check();
     await page.getByTestId('input-window').fill('3');
     await page.getByTestId('detail-save').click();
-    await expect(page.getByTestId('song-edit-count')).toContainText('2 changes');
-    await expect(page.getByTestId('song-edit-item')).toHaveCount(2);
+    await expect(page.getByTestId('song-edit-count')).toContainText("1 change to 2 of this station's rules");
+    await expect(page.getByTestId('song-edit-item')).toHaveCount(1);
+    await expect(page.getByTestId('song-edit-item')).toContainText('and the 1 rule just like it');
     await page.getByTestId('detail-save').hover(); // the button stays readable on hover
     await assertNoA11yViolations(page);
 

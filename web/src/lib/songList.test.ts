@@ -2,8 +2,9 @@ import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { Trace, TraceSlot } from './api';
+import type { Edit } from './edit-ops';
 import type { EngineBlock, Sidecar, StationTemplate } from './editor';
-import { describeQueued, filterGroups, removedCount, rowRule, ruleKey, ruleText, songGroups, songsChanged } from './songList';
+import { describeQueued, filterGroups, queuedChanges, removedCount, rowRule, ruleDefaultsFrom, ruleKey, ruleText, songGroups, songsChanged } from './songList';
 
 // The two real example stations: Rebirth Radio (flat slots, sections,
 // 200-song macros) and Rebirth Classics (a repeating row).
@@ -59,6 +60,23 @@ describe('ruleText', () => {
     [b({ allowlist_sources: ['A', 'B'] }), 'Picked from NIGHT, only songs also in A or B'],
   ])('%o → %s', (block, text) => {
     expect(ruleText(block)).toBe(text);
+  });
+});
+
+describe('ruleText with the station\'s defaults', () => {
+  const b = (over: Partial<EngineBlock>): EngineBlock => ({ source: 'NIGHT', strategy: 'pick', size: 1, ...over });
+  it('a setting the rule leaves out is the station\'s; one the rule sets wins', () => {
+    expect(ruleText(b({ strategy: 'weighted' }), { artistWindow: 25 })).toBe('Shuffled from NIGHT, no artist twice in 25');
+    expect(ruleText(b({ strategy: 'weighted', window: 4 }), { artistWindow: 25 })).toBe('Shuffled from NIGHT, no artist twice in 4');
+    expect(ruleText(b({ strategy: 'mix', genre: 'Disco' }), { mixExclusionWeeks: 6 }))
+      .toBe('Mix from NIGHT: Disco, not used in the last 6 weeks');
+    expect(ruleText(b({ strategy: 'mix', genre: 'Disco' }), { mixExclusionWeeks: 0 })).toBe('Mix from NIGHT: Disco');
+  });
+  it('ruleDefaultsFrom reads the two rules', () => {
+    expect(ruleDefaultsFrom([
+      { key: 'artist_dedup_window', value: 12 }, { key: 'mix_exclusion_weeks', value: 3 }, { key: 'x', value: ['a'] },
+    ])).toEqual({ artistWindow: 12, mixExclusionWeeks: 3 });
+    expect(ruleDefaultsFrom([])).toEqual({ artistWindow: undefined, mixExclusionWeeks: undefined });
   });
 });
 
@@ -215,5 +233,28 @@ describe('filterGroups', () => {
     const marked = songGroups(edited, template, sidecar, saved);
     expect(positions(filterGroups(marked, '', true))).toEqual([2, 5]);
     expect(positions(filterGroups(marked, 'Song 4', true))).toEqual([5]);
+  });
+});
+
+describe('queuedChanges', () => {
+  it('the same change to identical rules is one change, said once and undone together', () => {
+    const { template, sidecar } = station('rebirth-radio');
+    const ids = sidecar.macros!.slice(0, 3).map((m) => m.id);
+    const other: Edit = { kind: 'renameSection', sectionId: sidecar.sections[0].id, name: 'Mornings' };
+    const changes = queuedChanges([
+      ...ids.map((macroId) => ({ kind: 'patchMacro', macroId, fields: { window: 3 } }) as Edit),
+      other,
+    ], template, sidecar);
+    expect(changes.map((c) => c.indices)).toEqual([[0, 1, 2], [3]]);
+    expect(changes[0].text).toMatch(/, and the 2 rules just like it$/);
+    expect(changes[0].text).toContain(describeQueued([{ kind: 'patchMacro', macroId: ids[0], fields: { window: 3 } }], template, sidecar)[0]);
+  });
+
+  it('different settings, or the same rule twice, stay separate changes', () => {
+    const { template, sidecar } = station('rebirth-radio');
+    const [a, b] = sidecar.macros!.map((m) => m.id);
+    const edit = (macroId: string, window: number): Edit => ({ kind: 'patchMacro', macroId, fields: { window } });
+    expect(queuedChanges([edit(a, 3), edit(b, 4)], template, sidecar).map((c) => c.indices)).toEqual([[0], [1]]);
+    expect(queuedChanges([edit(a, 3), edit(a, 3)], template, sidecar).map((c) => c.indices)).toEqual([[0], [1]]);
   });
 });

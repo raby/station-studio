@@ -1788,6 +1788,7 @@ describe('trace viewer — changing a song\'s rule', () => {
     // No seed sent: the server reuses each week's own.
     expect(startGenerateJobMock.mock.calls.map((c) => c[2])).toEqual([undefined, undefined, undefined]);
     await vi.waitFor(() => expect(screen.queryByTestId('song-edit-bar')).toBeNull());
+    expect(await screen.findByTestId('song-regenerated')).toHaveTextContent('Regenerated weeks 3–5 with the saved rules.');
   });
 
   it('stops at a week that fails and says which', async () => {
@@ -1861,11 +1862,12 @@ describe('trace viewer — changing a song\'s rule', () => {
     await fireEvent.click(screen.getByTestId('retype-toggle'));
     await fireEvent.change(screen.getByTestId('retype-strategy'), { target: { value: 'pick' } });
     await fireEvent.click(screen.getByTestId('retype-apply'));
-    expect(await screen.findByTestId('song-edit-count')).toHaveTextContent('2 changes');
-    expect(screen.getAllByTestId('song-edit-item').map((li) => li.textContent)).toEqual([
-      expect.stringContaining('The day, rule 1: Picked from A'),
-      expect.stringContaining('The day, rule 3: Picked from A'),
-    ]);
+    // One change, to two rules: said once, undone together.
+    expect(await screen.findByTestId('song-edit-count')).toHaveTextContent("1 change to 2 of this station's rules");
+    expect(screen.getByTestId('song-edit-item'))
+      .toHaveTextContent('The day, rule 1: Picked from A, and the 1 rule just like it');
+    await fireEvent.click(screen.getByTestId('song-edit-undo'));
+    await vi.waitFor(() => expect(screen.queryByTestId('song-edit-count')).toBeNull());
   });
 
   it('lists each change in plain words with how many songs move, and undoes one', async () => {

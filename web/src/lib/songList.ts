@@ -22,8 +22,27 @@ import {
   type StationTemplate,
 } from '$lib/editor';
 
-/** What a rule does, in plain words: "Next in order from NIGHT". */
-export function ruleText(block: EngineBlock): string {
+/** The station's own defaults for settings a rule can leave out: the
+ *  artist window of a shuffled rule and the weeks a mix isn't reused
+ *  (its rules `artist_dedup_window` and `mix_exclusion_weeks`). */
+export interface RuleDefaults {
+  artistWindow?: number;
+  mixExclusionWeeks?: number;
+}
+
+/** RuleDefaults from the station's rules (GET /stations/{slug}/rules). */
+export function ruleDefaultsFrom(rules: { key: string; value: unknown }[]): RuleDefaults {
+  const int = (key: string): number | undefined => {
+    const v = rules.find((r) => r.key === key)?.value;
+    return typeof v === 'number' ? v : undefined;
+  };
+  return { artistWindow: int('artist_dedup_window'), mixExclusionWeeks: int('mix_exclusion_weeks') };
+}
+
+/** What a rule does, in plain words: "Next in order from NIGHT".
+ *  Settings the rule leaves out are the station's (`defaults`); the
+ *  engine's own artist window is 10. */
+export function ruleText(block: EngineBlock, defaults: RuleDefaults = {}): string {
   const from = block.source;
   let text: string;
   switch (block.strategy) {
@@ -39,15 +58,15 @@ export function ruleText(block: EngineBlock): string {
     case 'weighted':
       // Every song once before any repeats; no artist twice within the
       // last `window` picks (10 unless the block says).
-      text = `Shuffled from ${from}, no artist twice in ${block.window ?? 10}`;
+      text = `Shuffled from ${from}, no artist twice in ${block.window ?? defaults.artistWindow ?? 10}`;
       break;
     case 'jingle':
       text = block.genre ? `Jingle from ${from}: ${block.genre}` : `Jingle from ${from}`;
       break;
     case 'mix':
       text = block.genre ? `Mix from ${from}: ${block.genre}` : `Mix from ${from}`;
-      if (block.exclusion_window) {
-        const w = block.exclusion_window;
+      if (block.exclusion_window ?? defaults.mixExclusionWeeks) {
+        const w = (block.exclusion_window ?? defaults.mixExclusionWeeks)!;
         text += `, not used in the last ${w} ${w === 1 ? 'week' : 'weeks'}`;
       }
       break;
@@ -174,9 +193,9 @@ export function songGroups(
 /** A song's rule in words: its rule now, or, when there's no block for
  *  it or the rule has changed since the song was picked, what the trace
  *  says actually ran. */
-export function rowRule(row: SongRow): string {
+export function rowRule(row: SongRow, defaults: RuleDefaults = {}): string {
   return row.block && !row.ruleChanged
-    ? ruleText(row.block)
+    ? ruleText(row.block, defaults)
     : `${row.slot.strategy} from ${row.slot.source}`;
 }
 
@@ -191,6 +210,7 @@ export function filterGroups(
   groups: SongGroup[],
   query: string,
   onlyChanged = false,
+  defaults: RuleDefaults = {},
 ): SongGroup[] {
   const words = query.toLowerCase().split(/\s+/).filter(Boolean);
   if (words.length === 0 && !onlyChanged) return groups;
@@ -201,7 +221,7 @@ export function filterGroups(
         if (onlyChanged && row.change === null) return false;
         if (words.length === 0) return true;
         const text = [
-          row.slot.track_name, row.slot.track_artist ?? '', rowRule(row),
+          row.slot.track_name, row.slot.track_artist ?? '', rowRule(row, defaults),
           row.macroName ?? '', group.sectionName,
         ].join('\n').toLowerCase();
         return words.every((w) => text.includes(w));
@@ -231,17 +251,34 @@ function sectionName(sidecar: Sidecar, ref: ExpandedRef): string | null {
   return section ? (section.name ?? section.id) : null;
 }
 
-/** Where a block sits, as the operator sees it: "The day, rule 2". */
-function blockPlace(sidecar: Sidecar, ref: AtomicRef): string {
-  const id = findSectionIdForRef(sidecar, ref);
-  const section = id === null ? undefined : sidecar.sections.find((s) => s.id === id);
-  if (!section) {
-    return ref.slot_index !== undefined ? `Rule ${ref.slot_index + 1}` : `Rule ${(ref.block_idx ?? 0) + 1}`;
+/**
+ * Where a rule sits as the operator sees it: its section and its number
+ * there, counting the section's rules (single ones and macros) in
+ * order. The rule panel and the list of queued changes both use it, so
+ * a rule has one number. Null when no section holds it.
+ */
+export function rulePlace(
+  sidecar: Sidecar,
+  ref: ExpandedRef,
+): { sectionId: string; section: string; number: number; of: number } | null {
+  for (const section of sidecar.sections) {
+    const at = section.blocks.findIndex((b) =>
+      ref.kind === 'macro-placeholder'
+        ? b.kind === 'macro' && b.ref === ref.macro_id
+        : b.kind === 'atomic' &&
+          (ref.slot_index !== undefined ? b.slot_index === ref.slot_index : b.block_idx === ref.block_idx));
+    if (at !== -1) {
+      return { sectionId: section.id, section: section.name ?? section.id, number: at + 1, of: section.blocks.length };
+    }
   }
-  const at = section.blocks.findIndex((b) =>
-    b.kind === 'atomic' &&
-    (ref.slot_index !== undefined ? b.slot_index === ref.slot_index : b.block_idx === ref.block_idx));
-  return `${section.name ?? section.id}, rule ${at + 1}`;
+  return null;
+}
+
+/** "The day, rule 2" (or "Rule 3" outside any section). */
+function blockPlace(sidecar: Sidecar, ref: AtomicRef): string {
+  const place = rulePlace(sidecar, ref);
+  if (place) return `${place.section}, rule ${place.number}`;
+  return `Rule ${(ref.slot_index ?? ref.block_idx ?? 0) + 1}`;
 }
 
 /**
@@ -249,7 +286,12 @@ function blockPlace(sidecar: Sidecar, ref: AtomicRef): string {
  * changed ("The day, rule 1: Picked from A"). Changes that aren't to a
  * rule's settings (moves, splits) use the editor's own wording.
  */
-export function describeQueued(opLog: Edit[], template: StationTemplate, sidecar: Sidecar): string[] {
+export function describeQueued(
+  opLog: Edit[],
+  template: StationTemplate,
+  sidecar: Sidecar,
+  defaults: RuleDefaults = {},
+): string[] {
   let state: { template: StationTemplate; sidecar: unknown } = { template, sidecar };
   return opLog.map((op) => {
     state = applyEdit(state.template, state.sidecar, op);
@@ -259,7 +301,7 @@ export function describeQueued(opLog: Edit[], template: StationTemplate, sidecar
       if (!macro) return describeOp(op);
       const name = macro.name ?? macro.id;
       const where = sectionName(after, { kind: 'macro-placeholder', macro_id: macro.id, pick_in_macro: 1 });
-      return `${where ? `${name} in ${where}` : name}: ${ruleText(macro.spec)}`;
+      return `${where ? `${name} in ${where}` : name}: ${ruleText(macro.spec, defaults)}`;
     }
     if (op.kind === 'patchBlock' || op.kind === 'retypeBlock') {
       const ref: AtomicRef = op.address.slot_index !== undefined
@@ -267,8 +309,65 @@ export function describeQueued(opLog: Edit[], template: StationTemplate, sidecar
         : { kind: 'atomic-ref', row_idx: 0, block_idx: op.address.block_idx };
       const block = lookupEngineBlock(ref, state.template.layout);
       if (!block) return describeOp(op);
-      return `${blockPlace(after, ref)}: ${ruleText(block)}`;
+      return `${blockPlace(after, ref)}: ${ruleText(block, defaults)}`;
     }
     return describeOp(op);
+  });
+}
+
+/** One change as the operator made it: a line, and the queued edits it
+ *  is (several when it went to identical rules too). */
+export interface QueuedChange {
+  text: string;
+  /** Places in the queue, ascending. */
+  indices: number[];
+}
+
+/** Which rule an edit is to, for telling identical rules apart. */
+function changeTarget(op: Edit): string {
+  if (op.kind === 'patchMacro') return `macro:${op.macroId}`;
+  if (op.kind === 'patchBlock' || op.kind === 'retypeBlock') return JSON.stringify(op.address);
+  return '';
+}
+
+/** The same change, whichever rule it went to. */
+function changeSignature(op: Edit): string {
+  if (op.kind === 'patchMacro') return JSON.stringify({ ...op, macroId: null });
+  if (op.kind === 'patchBlock' || op.kind === 'retypeBlock') return JSON.stringify({ ...op, address: null });
+  return JSON.stringify(op);
+}
+
+/**
+ * The queue as the changes the operator made: consecutive edits making
+ * the same change to different rules (the panel's "Also change the
+ * rules just like this one") are one change, said once ("…, and the 20
+ * rules just like it") and undone together.
+ */
+export function queuedChanges(
+  opLog: Edit[],
+  template: StationTemplate,
+  sidecar: Sidecar,
+  defaults: RuleDefaults = {},
+): QueuedChange[] {
+  const lines = describeQueued(opLog, template, sidecar, defaults);
+  const groups: { first: string; sig: string; targets: Set<string>; indices: number[] }[] = [];
+  opLog.forEach((op, i) => {
+    const sig = changeSignature(op);
+    const target = changeTarget(op);
+    const last = groups[groups.length - 1];
+    // Only a different rule joins: the same edit twice is two changes.
+    if (last && last.sig === sig && target !== '' && !last.targets.has(target)) {
+      last.indices.push(i);
+      last.targets.add(target);
+    } else {
+      groups.push({ first: lines[i], sig, targets: new Set([target]), indices: [i] });
+    }
+  });
+  return groups.map(({ first, indices }) => {
+    const more = indices.length - 1;
+    return {
+      text: more === 0 ? first : `${first}, and the ${more} ${more === 1 ? 'rule' : 'rules'} just like it`,
+      indices,
+    };
   });
 }

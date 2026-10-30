@@ -46,7 +46,7 @@
   import type { StructuralBlockEdit } from '$lib/api';
   import { moveTargets as computeMoveTargets } from '$lib/drag-drop';
   import ChipMultiInput from './ChipMultiInput.svelte';
-  import { ruleText } from '$lib/songList';
+  import { rulePlace, ruleText, type RuleDefaults } from '$lib/songList';
   import { identicalRules } from '$lib/identicalRules';
 
   // c2 review #2: shared field-value union covering every editable
@@ -65,6 +65,9 @@
   /** The parameter form's button. The week page queues changes for its
    *  own Save, so it says "Apply". */
   export let saveLabel = 'Save';
+  /** The station's defaults for settings a rule leaves out (its rules
+   *  artist_dedup_window and mix_exclusion_weeks), for the rule in words. */
+  export let ruleDefaults: RuleDefaults = {};
 
   /**
    * §16.2.4 c2: dispatch contracts —
@@ -123,6 +126,14 @@
   $: alsoRefs = alsoIdentical && twins ? twins.refs : [];
   $: alsoMacroIds = alsoIdentical && twins ? twins.macroIds : [];
 
+  /** "Rule 2 of 5 in this section", numbered as the list of queued
+   *  changes numbers it; a repeating row's rule adds "every day". */
+  function placeText(ref: ExpandedRef, everyRow: boolean): string {
+    const place = rulePlace(sidecar, ref);
+    const where = place ? `Rule ${place.number} of ${place.of} in this section` : 'Not in a section';
+    return everyRow ? `${where}, every ${rowWord}` : where;
+  }
+
   // Resolve the spec under the selection.
   $: detail = (() => {
     if (selected === null) return null;
@@ -137,9 +148,7 @@
         address: ref.slot_index !== undefined
           ? `slot_index=${ref.slot_index}`
           : `row_idx=${ref.row_idx}, block_idx=${ref.block_idx}`,
-        place: ref.slot_index !== undefined
-          ? `Slot ${ref.slot_index + 1}`
-          : `Rule ${(ref.block_idx ?? 0) + 1} of every ${rowWord}`,
+        place: placeText(ref, ref.slot_index === undefined),
       };
     }
     const macro = lookupMacro(sidecar, ref.macro_id);
@@ -149,7 +158,7 @@
       block: macro?.spec ?? null,
       macro,
       address: `macro="${ref.macro_id}"`,
-      place: macro ? `${macro.repeat} ${macro.repeat === 1 ? 'song' : 'songs'}, one rule` : 'Group of songs',
+      place: placeText(ref, false),
     };
   })();
 
@@ -706,7 +715,7 @@
     </header>
 
     {#if detail.block}
-      <p class="rule-words" data-testid="detail-rule">{ruleText(detail.block)}</p>
+      <p class="rule-words" data-testid="detail-rule">{ruleText(detail.block, ruleDefaults)}</p>
     {/if}
 
     <dl>
@@ -785,8 +794,8 @@
 
         {#if editFields.length === 0}
           <p class="no-params" data-testid="no-params">
-            Nothing to set for this kind of rule. To change what it
-            does, change how it picks below.
+            Nothing to set for this kind of rule.{#if detail.kind === 'atomic'}
+              To change what it does, change how it picks below.{/if}
           </p>
         {:else}
           {#each editFields as f (f.name)}

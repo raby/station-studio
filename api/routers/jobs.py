@@ -56,7 +56,7 @@ from engine.editor_metadata import EditorMetadataError, validate_sidecar
 from engine.generator import GenerationResult, generate_stream
 from engine.models import Playlist, Station
 from engine.persistence import (
-    CursorPlan, finish_cursors, load_alias_map, plan_cursors,
+    CursorPlan, finish_cursors, load_alias_map, plan_cursors, regeneration_seed,
     load_excluded_mix_ids, load_excluded_track_pids, load_pools,
     load_previous_playlist, max_mix_exclusion_window, save_playlist,
 )
@@ -325,7 +325,7 @@ def start_generate_job(
     # the week's own, so only songs the rules changed should move (the
     # week page's Regenerate does this). A new week still needs one.
     if seed is None and template.rng == "on":
-        seed = _week_seed(db, station, week)
+        seed = regeneration_seed(db, station_id=station.id, week=week)
 
     # ----- Closures -------------------------------------------------
     # stream_factory must be parameterless (matches JobStore.start's
@@ -446,9 +446,15 @@ def start_generate_job(
     return JobStartResponse(job_id=job_id, status="running")
 
 
-def _week_seed(db: Session, station: Station, week: int) -> int | None:
-    """The seed the week was generated with (its current version), or
-    None for a week never generated."""
+def _preview_seed(db: Session, station: Station, week: int) -> int:
+    """The seed for an rng='on' preview sent without one.
+
+    The week's own seed, so a preview of the saved template reproduces
+    the stored week and an edited preview differs from it only where
+    the edit does. A week never generated gets the week number: any
+    fixed value keeps repeated previews of that week comparable with
+    each other.
+    """
     playlist = (
         db.query(Playlist)
         .filter(Playlist.station_id == station.id, Playlist.week == week)
@@ -459,20 +465,7 @@ def _week_seed(db: Session, station: Station, week: int) -> int | None:
         for seed in (version.seed if version is not None else None, playlist.seed):
             if seed is not None:
                 return seed
-    return None
-
-
-def _preview_seed(db: Session, station: Station, week: int) -> int:
-    """The seed for an rng='on' preview sent without one.
-
-    The week's own seed, so a preview of the saved template reproduces
-    the stored week and an edited preview differs from it only where
-    the edit does. A week never generated gets the week number: any
-    fixed value keeps repeated previews of that week comparable with
-    each other.
-    """
-    seed = _week_seed(db, station, week)
-    return week if seed is None else seed
+    return week
 
 
 @router.post(
