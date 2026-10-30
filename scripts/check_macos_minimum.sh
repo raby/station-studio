@@ -37,6 +37,8 @@ while IFS= read -r -d '' f; do
   for m in $mins; do
     if [ "$(as_number "$m")" -gt "$limit" ]; then
       echo "needs macOS $m: ${f#"$app"/}"
+      # On GitHub Actions, also as an annotation on the run.
+      [ -n "${GITHUB_ACTIONS:-}" ] && echo "::error title=Needs macOS $m::$(basename "$app")/${f#"$app"/}"
       too_new=$((too_new + 1))
     fi
   done
@@ -45,5 +47,6 @@ done < <(find "$app" -type f -print0)
 echo "checked $checked Mach-O files in $(basename "$app") against macOS $min"
 if [ "$too_new" -gt 0 ]; then
   echo "$too_new would stop the app starting on macOS $min" >&2
+  [ -n "${GITHUB_ACTIONS:-}" ] && echo "::error title=macOS $min check::$too_new files in $(basename "$app") need a newer macOS"
   exit 1
 fi
