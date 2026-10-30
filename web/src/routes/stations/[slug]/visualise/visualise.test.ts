@@ -1751,8 +1751,10 @@ describe('visualise +page.svelte — §16.2.6.t3 click-trace-row → jump-to-chi
           trace_id: 'pv-trace', station: 'viz-test', week: 1,
           rng: 'off', seed: null,
           generated_at: '2026-06-15T12:00:00Z',
+          // `s` is the block's 0-based place in flat_slots; the engine
+          // numbers trace slots, rows and blocks from 1.
           slots: slotIndices.map((s) => ({
-            slot: s, unit: 'slot', row: 0, block: s,
+            slot: s + 1, unit: 'slot', row: 1, block: s + 1,
             source: 'A', strategy: 'pick', pool_index: s + 1,
             track_id: 100 + s, track_name: `T${s}`,
             track_artist: null, reason: '', excluded: [],
@@ -1795,8 +1797,9 @@ describe('visualise +page.svelte — §16.2.6.t3 click-trace-row → jump-to-chi
    *  which Svelte routes to the page's `on:select={handleTraceSelect}`
    *  $on callback. */
   async function clickTraceRow(slot: number) {
+    // `slot` as in traceWithSlots (0-based); the row carries the engine's.
     const row = document.querySelector<HTMLElement>(
-      `[data-testid="trace-row"][data-slot-index="${slot}"]`,
+      `[data-testid="trace-row"][data-slot-index="${slot + 1}"]`,
     );
     if (row === null) {
       throw new Error(`trace-row for slot=${slot} not found in DOM`);
@@ -1810,8 +1813,8 @@ describe('visualise +page.svelte — §16.2.6.t3 click-trace-row → jump-to-chi
     await mountWithTraceRows([0]);
 
     // Inject a fake chip with the right data-ref-key. The default
-    // makeSidecar has atomic at slot_index=0; findChipRef maps
-    // {slot:0, row:0, block:0} → atomic:slot=0.
+    // makeSidecar has atomic at slot_index=0; findChipRef maps the
+    // engine's {slot:1, row:1, block:1} → atomic:slot=0.
     const fakeChip = document.createElement('button');
     fakeChip.setAttribute('data-ref-key', 'atomic:slot=0');
     fakeChip.classList.add('chip');
