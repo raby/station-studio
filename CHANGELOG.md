@@ -104,8 +104,13 @@ this project uses semantic versioning.
   regenerated. From then on, every week is recorded.
 - Regenerating a week of an `rng: on` station without a seed reuses
   the week's own seed (on both `/generate` and `/jobs/generate`); a week
-  made before the station was `rng: on` gets a fresh one. Before, the
-  request failed.
+  made before the station was `rng: on` uses its week number, as its
+  preview does, so the preview shows what regenerating gives. Before,
+  the request failed.
+- **Regenerate** on a week's page waits if another generate is already
+  running for the station (a week started from the station page, say)
+  and then does its own week. Before, it took that other job's finishing
+  as its own week being done.
 
 ## [1.11.0] - 2026-10-30
 
