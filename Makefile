@@ -77,8 +77,13 @@ install-e2e-browsers:
 	cd web && npx playwright install chromium
 
 clean-test:
-	rm -f .coverage playwright-test.*.db playwright-test.*.db-wal playwright-test.*.db-shm
+	rm -f .coverage
 	rm -rf web/test-results web/playwright-report
+	# e2e runs now use a folder in the OS temp dir and delete it themselves
+	# (web/playwright.config.ts). These clear what older runs left in the
+	# repo root.
+	rm -f playwright-test.*.db playwright-test.*.db-wal playwright-test.*.db-shm
+	rm -rf playwright-stations.*
 
 # §16.13 c4 — produce the installable wheel.
 #
@@ -337,9 +342,9 @@ prune-exports-confirm:
 # insurance.
 #
 # All three targets operate on $(DB_FILE) — `station_studio.db` by
-# default. To target a different DB file (e.g. a Playwright per-PID DB
-# for ad-hoc inspection) pass DB_FILE=...:
-#     make backup DB_FILE=playwright-test.12345.db
+# default. To target a different DB file (e.g. a Playwright run's DB,
+# kept in the OS temp dir until the run ends) pass DB_FILE=...:
+#     make backup DB_FILE=$TMPDIR/station-studio-e2e.12345/test.db
 #
 # DB_FILE does NOT auto-track $$STATION_STUDIO_DB_URL — they're
 # independent vars. Alembic targets read STATION_STUDIO_DB_URL via
