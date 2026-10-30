@@ -5,7 +5,6 @@ between api/routers/generate.py and scripts/bootstrap_classics.py.
 """
 from __future__ import annotations
 
-import secrets
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -800,27 +799,37 @@ def load_cursor_positions(
     return {name: persisted.get(name, init[name]) for name in init}
 
 
-def regeneration_seed(db: Session, *, station_id: int, week: int) -> int | None:
-    """The seed to regenerate an rng='on' week with when none is given.
-
-    The seed the week was generated with (its current version), so
-    unchanged rules give the same week and changed ones move only the
-    songs they touch. A week generated without one (the template was
-    rng='off' then) gets a fresh one: there's nothing to reproduce. A
-    week never generated gets None: a new week needs a seed chosen.
-    """
+def week_seed(db: Session, *, station_id: int, week: int) -> tuple[bool, int | None]:
+    """Whether the week has been generated, and the seed it was generated
+    with (its current version's), or None if it had none."""
     playlist = (
         db.query(Playlist)
         .filter(Playlist.station_id == station_id, Playlist.week == week)
         .first()
     )
     if playlist is None:
-        return None
+        return False, None
     version = playlist.current_version()
     for seed in (version.seed if version is not None else None, playlist.seed):
         if seed is not None:
-            return seed
-    return secrets.randbelow(2**31)
+            return True, seed
+    return True, None
+
+
+def regeneration_seed(db: Session, *, station_id: int, week: int) -> int | None:
+    """The seed to regenerate an rng='on' week with when none is given.
+
+    The seed the week was generated with, so unchanged rules give the
+    same week and changed ones move only the songs they touch. A week
+    generated without one (the template was rng='off' then) uses its
+    week number, the seed its preview uses too, so the preview shows what
+    regenerating gives. A week never generated gets None: a new week
+    needs a seed chosen.
+    """
+    generated, seed = week_seed(db, station_id=station_id, week=week)
+    if not generated:
+        return None
+    return week if seed is None else seed
 
 
 @dataclass(frozen=True)

@@ -54,9 +54,9 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from engine.editor_metadata import EditorMetadataError, validate_sidecar
 from engine.generator import GenerationResult, generate_stream
-from engine.models import Playlist, Station
+from engine.models import Station
 from engine.persistence import (
-    CursorPlan, finish_cursors, load_alias_map, plan_cursors, regeneration_seed,
+    CursorPlan, finish_cursors, load_alias_map, plan_cursors, regeneration_seed, week_seed,
     load_excluded_mix_ids, load_excluded_track_pids, load_pools,
     load_previous_playlist, max_mix_exclusion_window, save_playlist,
 )
@@ -455,17 +455,8 @@ def _preview_seed(db: Session, station: Station, week: int) -> int:
     fixed value keeps repeated previews of that week comparable with
     each other.
     """
-    playlist = (
-        db.query(Playlist)
-        .filter(Playlist.station_id == station.id, Playlist.week == week)
-        .first()
-    )
-    if playlist is not None:
-        version = playlist.current_version()
-        for seed in (version.seed if version is not None else None, playlist.seed):
-            if seed is not None:
-                return seed
-    return week
+    _generated, seed = week_seed(db, station_id=station.id, week=week)
+    return week if seed is None else seed
 
 
 @router.post(

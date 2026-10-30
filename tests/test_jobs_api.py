@@ -771,19 +771,23 @@ def test_regenerate_rng_on_without_a_seed_reuses_the_weeks_seed(jobs_api):
     assert "requires a seed" in snap["error"]["message"]
 
 
-def test_regenerate_rng_on_week_made_without_a_seed_gets_one(jobs_api):
+def test_regenerate_rng_on_week_made_without_a_seed_matches_its_preview(jobs_api):
     """A week made while the station was rng='off' has no seed; after
-    switching to 'on', regenerating it without one picks a fresh one
-    rather than failing."""
+    switching to 'on', regenerating it without one uses the week number,
+    the seed its preview uses, so the preview shows what it gives
+    (it used to fail)."""
     client, Session, _store = jobs_api
     _seed_station_with_pool(Session)
     job_id = client.post("/api/stations/ts/jobs/generate", json={"week": 1}).json()["job_id"]
     _wait_for_status(client, job_id, "done")
-    _rng_on_weighted(Session)
+    template = _rng_on_weighted(Session)
+    previewed = _preview_tracks(client, template, week=1)
 
     job_id = client.post("/api/stations/ts/jobs/generate", json={"week": 1}).json()["job_id"]
     done = _wait_for_status(client, job_id, "done")["result"]
-    assert client.get(f"/api/playlists/{done['playlist_id']}/trace").json()["seed"] is not None
+    trace = client.get(f"/api/playlists/{done['playlist_id']}/trace").json()
+    assert trace["seed"] == 1
+    assert [s["track_id"] for s in trace["slots"]] == previewed
 
 
 def test_sync_regenerate_rng_on_without_a_seed_reuses_the_weeks_seed(jobs_api):
