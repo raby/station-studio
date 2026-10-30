@@ -706,6 +706,7 @@ svg.analogue.huge { width: min(62vh, 78vw); height: auto; }
   background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
 }
 .find-card.live { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.find-card.picked:not(.live) { border-color: var(--text); }
 .station-art { flex: none; width: 42px; height: 42px; }
 .station-art .logo { width: 100%; height: 100%; border-radius: 11px; object-fit: contain; background: #fff; display: block; }
 .station-art .glyph { width: 100%; height: 100%; }
@@ -765,14 +766,14 @@ svg.analogue.huge { width: min(62vh, 78vw); height: auto; }
   border-bottom: 1px solid var(--faint);
 }
 .tuner-mark {
-  position: absolute; top: -2px; transform: translateX(-50%); width: max-content; font-size: 11px; color: var(--muted);
+  position: absolute; top: -3px; transform: translateX(-50%); width: max-content; font-size: 13px; color: var(--muted);
   font-variant-numeric: tabular-nums; letter-spacing: .04em;
 }
 .tuner-names { position: absolute; inset: 0; pointer-events: none; }
 .tuner-name {
   position: absolute; top: 10px; transform: translateX(-50%); pointer-events: auto; width: max-content;
   padding: 2px 6px; border: 0; border-radius: 6px; background: none; cursor: pointer;
-  color: var(--muted); font: inherit; font-size: 12px; font-weight: 600;
+  color: var(--muted); font: inherit; font-size: 15px; font-weight: 600;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .tuner-name.low { top: auto; bottom: 10px; }
@@ -833,6 +834,16 @@ svg.analogue.huge { width: min(62vh, 78vw); height: auto; }
 }
 .tile:hover { background: var(--panel-2); }
 .tile.live { border-color: var(--accent); }
+/* Play on a station's tile, or Pause while it's the one playing. */
+.tile-art { position: relative; }
+.tile-play {
+  position: absolute; right: -6px; bottom: -6px; display: grid; place-items: center; width: 28px; height: 28px;
+  border-radius: 50%; background: var(--accent); color: var(--accent-text); box-shadow: 0 1px 4px rgba(0, 0, 0, .35);
+  opacity: 0; transition: opacity .15s;
+}
+.tile-play svg { width: 14px; height: 14px; }
+.tile:hover .tile-play, .tile:focus-visible .tile-play, .tile.live .tile-play { opacity: 1; }
+@media (hover: none) { .tile-play { opacity: 1; } }
 .tile-art .station-art, .tile-art .station-art img, .tile-art .glyph.big { width: 64px; height: 64px; border-radius: 14px; }
 .tile-art .station-art img { object-fit: cover; display: block; }
 .tile-name { font-weight: 600; font-size: 13px; line-height: 1.3; overflow-wrap: anywhere;

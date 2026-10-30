@@ -112,8 +112,7 @@ def station_feed(runner, hours: float = FEED_HOURS, now: datetime | None = None,
                 break
             items.append(_row(row))
     recent = []
-    today = now.date()  # the feed's own clock, not the computer's, so `now` decides the window
-    for e in reversed(runner.playlog.entries(today - timedelta(days=1), today)):
+    for e in reversed(runner.playlog.entries(now.date() - timedelta(days=1), now.date())):
         if (e.get("seconds") or 0) < 30:  # a skip
             continue
         recent.append({"at": e["at"].isoformat(timespec="seconds"), "title": e.get("title"),

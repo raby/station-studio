@@ -7,7 +7,7 @@ const HELP = [
     "Station Player plays your music, the playlists Station Studio makes and internet radio, all in one window.",
     ["Add music in the sidebar shows the music it found on your computer. Click ", ["Add"], " beside a folder, or choose one yourself with ", ["Add a music folder"], "."],
     "Each music folder appears under Folders in the sidebar as a playlist of its own. Station Studio's weekly playlists appear by themselves once Station Studio has exported them.",
-    "Station Player opens on Home: what's on now from Rebirth (it changes with the time of day), the stations you played lately, your stations, and your music. Click a tile to play it.",
+    "Station Player opens on the Radio page (Settings › App › Open on can make it Home instead). Home has what's on now from Rebirth (it changes with the time of day), the stations you played lately, your stations, and your music. Click a tile to play it.",
     "Close the window and open it again and the same track is ready, paused at the same point.",
     ["To open it like any other app, turn on the shortcut in ", ["Settings › App"], ". Turn on ", ["Start Station Player in the background when I log in"], " too and it opens instantly, and alarms work."],
     ["The Mac app works like Music: closing its window keeps the music playing, clicking Station Player in the Dock brings the window back, and ", ["Quit"], " (⌘Q) stops it. Right-click its Dock icon for ", ["Play / Pause"], " and ", ["Next"], "."],
@@ -42,9 +42,9 @@ const HELP = [
     "To choose which stations are on the dial, go to Settings › Radio and tick the ones you want.",
   ]],
   ["globe", "The globe", [
-    ["Under Find stations, ", ["Globe"], " shows stations as dots on a world globe. Drag to turn it, scroll or pinch to zoom, and tap a dot to listen. The stations nearest the middle are listed underneath, with ", ["Add"], " to keep one."],
+    ["Under Find stations, ", ["Globe"], " shows stations as dots on a world globe. Discover opens on it. Drag to turn it, and scroll or pinch to zoom. Tap a dot to see its name and country, with the station first in the list underneath; tap it again, or its ", ["Listen"], ", to hear it. The stations nearest the middle are listed underneath, with ", ["Add"], " to keep one."],
     ["Zoom in on a country and it finds more stations there. ", ["Music"], " leaves out news and talk, and can show just one genre, like techno or Afrobeats around the world. ", ["News"], " shows only news and talk stations, so you can hop from London to Tokyo for the headlines."],
-    "With the globe selected, the arrow keys turn it, plus and minus zoom, and Enter plays the station in the middle.",
+    "With the globe selected, the arrow keys turn it, plus and minus zoom, and Enter picks the station in the middle, and Enter again plays it.",
   ]],
   ["ambient", "Ambient mode", [
     ["Ambient in the sidebar fills the screen with a calm scene and its sound: a ", ["Fish tank"], ", ", ["Waves"], " on a shore, or ", ["Birds"], " at dawn."],
