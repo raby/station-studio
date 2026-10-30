@@ -44,7 +44,8 @@
     aria-live="polite"
     data-testid={testId}
   >
-    {#if resolvedPrefix}<strong>{resolvedPrefix}:</strong> {/if}{message}
+    <!-- {' '}: Svelte 5 trims a plain space at the end of a block. -->
+    {#if resolvedPrefix}<strong>{resolvedPrefix}:</strong>{' '}{/if}{message}
   </div>
 {/if}
 

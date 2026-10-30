@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup } from '@testing-library/svelte';
+import { renderWithEvents } from '$lib/renderWithEvents';
 import '@testing-library/jest-dom/vitest';
 import { tick } from 'svelte';
 import DetailPanel from './DetailPanel.svelte';
@@ -122,11 +123,11 @@ describe('<DetailPanel>', () => {
   it('clicking the close button dispatches `close`', async () => {
     const ref: AtomicRef = { kind: 'atomic-ref', slot_index: 0 };
     const onClose = vi.fn();
-    const { component } = render(DetailPanel, {
+    const { on } = renderWithEvents(DetailPanel, {
       selected: { ref, section: SECTION },
       template: makeTemplate(), sidecar: makeSidecar(),
     });
-    component.$on('close', onClose);
+    on('close', onClose);
     await fireEvent.click(screen.getByTestId('detail-close'));
     expect(onClose).toHaveBeenCalledTimes(1);
   });
@@ -134,11 +135,11 @@ describe('<DetailPanel>', () => {
   it('Escape key dispatches `close`', async () => {
     const ref: AtomicRef = { kind: 'atomic-ref', slot_index: 0 };
     const onClose = vi.fn();
-    const { component } = render(DetailPanel, {
+    const { on } = renderWithEvents(DetailPanel, {
       selected: { ref, section: SECTION },
       template: makeTemplate(), sidecar: makeSidecar(),
     });
-    component.$on('close', onClose);
+    on('close', onClose);
     await fireEvent.keyDown(window, { key: 'Escape' });
     expect(onClose).toHaveBeenCalledTimes(1);
   });
@@ -243,11 +244,11 @@ describe('<DetailPanel> — §16.2.3 c1 edit form', () => {
 
   it('dispatches `save` with the edited fields on submit', async () => {
     const onSave = vi.fn();
-    const { component } = render(DetailPanel, {
+    const { on } = renderWithEvents(DetailPanel, {
       selected: { ref: { kind: 'atomic-ref', slot_index: 0 }, section: ESEC },
       template: makeEditTemplate(), sidecar: makeSidecar(),
     });
-    component.$on('save', (e) => onSave(e.detail));
+    on('save', (e) => onSave(e.detail));
     await fireEvent.input(screen.getByTestId('input-genre'), { target: { value: 'New' } });
     await fireEvent.click(screen.getByTestId('detail-save'));
     expect(onSave).toHaveBeenCalledTimes(1);
@@ -263,11 +264,11 @@ describe('<DetailPanel> — §16.2.3 c1 edit form', () => {
     // `(value ?? '').trim()` → `(10).trim()` → TypeError, so saving
     // after editing any int field crashed + no `save` fired.
     const onSave = vi.fn();
-    const { component } = render(DetailPanel, {
+    const { on } = renderWithEvents(DetailPanel, {
       selected: { ref: { kind: 'atomic-ref', slot_index: 0 }, section: ESEC },
       template: makeEditTemplate(), sidecar: makeSidecar(),
     });
-    component.$on('save', (e) => onSave(e.detail));
+    on('save', (e) => onSave(e.detail));
     // exclusion_window is an int field; 8 → 10.
     await fireEvent.input(screen.getByTestId('input-exclusion_window'), {
       target: { value: '10' },
@@ -293,11 +294,11 @@ describe('<DetailPanel> — §16.2.3 c1 edit form', () => {
 
   it('clearing an OPTIONAL field sends null in the payload', async () => {
     const onSave = vi.fn();
-    const { component } = render(DetailPanel, {
+    const { on } = renderWithEvents(DetailPanel, {
       selected: { ref: { kind: 'atomic-ref', slot_index: 0 }, section: ESEC },
       template: makeEditTemplate(), sidecar: makeSidecar(),
     });
-    component.$on('save', (e) => onSave(e.detail));
+    on('save', (e) => onSave(e.detail));
     // exclusion_window is optional → clearing it sends null.
     await fireEvent.input(screen.getByTestId('input-exclusion_window'), { target: { value: '' } });
     await fireEvent.click(screen.getByTestId('detail-save'));
@@ -370,7 +371,7 @@ describe('<DetailPanel> — §16.2.3 c1 edit form', () => {
     // should now show only `genre`.
     const ref: AtomicRef = { kind: 'atomic-ref', slot_index: 0 };
     const sidecar = makeSidecar();
-    const { component } = render(DetailPanel, {
+    const { rerender } = renderWithEvents(DetailPanel, {
       selected: { ref, section: ESEC },
       template: makeEditTemplate(), sidecar,
     });
@@ -383,7 +384,7 @@ describe('<DetailPanel> — §16.2.3 c1 edit form', () => {
     t2.layout.flat_slots![0] = {
       source: 'A', strategy: 'jingle', size: 1, genre: 'Bumper',
     };
-    component.$set({ template: t2 });
+    await rerender({ template: t2 });
     await tick();
     // jingle has only `genre` editable → exclusion_window disappears,
     // genre re-seeds to the new block's value (proves the reseed
@@ -441,7 +442,7 @@ describe('<DetailPanel> — c2 review #1 fixes', () => {
     // populate the input with each new slot's currentSize.
     const tpl = makeStructTemplate();
     const sc = makeStructSidecar();
-    const { component } = render(DetailPanel, {
+    const { rerender } = renderWithEvents(DetailPanel, {
       selected: {
         ref: { kind: 'atomic-ref', slot_index: 1 } as AtomicRef,
         section: STRUCT_SEC,
@@ -451,7 +452,7 @@ describe('<DetailPanel> — c2 review #1 fixes', () => {
     expect((screen.getByTestId('structural-size-input') as HTMLInputElement)
       .value).toBe('4');
     // Flip to slot 2 (size=8).
-    component.$set({
+    await rerender({
       selected: {
         ref: { kind: 'atomic-ref', slot_index: 2 } as AtomicRef,
         section: STRUCT_SEC,
@@ -464,14 +465,14 @@ describe('<DetailPanel> — c2 review #1 fixes', () => {
 
   it('Delete-slot is two-step — first click arms, second commits', async () => {
     const handler = vi.fn();
-    const { component } = render(DetailPanel, {
+    const { on } = renderWithEvents(DetailPanel, {
       selected: {
         ref: { kind: 'atomic-ref', slot_index: 0 } as AtomicRef,
         section: STRUCT_SEC,
       },
       template: makeStructTemplate(), sidecar: makeStructSidecar(),
     });
-    component.$on('structuralEdit', handler);
+    on('structuralEdit', handler);
     const btn = screen.getByTestId('structural-delete');
     expect(btn).toHaveTextContent('Delete slot');
     // First click: arms (text/state changes), no dispatch.
@@ -489,14 +490,14 @@ describe('<DetailPanel> — c2 review #1 fixes', () => {
 
   it('Delete-slot arm-state resets when selection changes', async () => {
     const handler = vi.fn();
-    const { component } = render(DetailPanel, {
+    const { on, rerender } = renderWithEvents(DetailPanel, {
       selected: {
         ref: { kind: 'atomic-ref', slot_index: 0 } as AtomicRef,
         section: STRUCT_SEC,
       },
       template: makeStructTemplate(), sidecar: makeStructSidecar(),
     });
-    component.$on('structuralEdit', handler);
+    on('structuralEdit', handler);
     // Arm on slot 0.
     await fireEvent.click(screen.getByTestId('structural-delete'));
     expect(screen.getByTestId('structural-delete')).toHaveAttribute(
@@ -504,7 +505,7 @@ describe('<DetailPanel> — c2 review #1 fixes', () => {
     );
     // Switch to slot 1 — arm state must reset so a single click on
     // the new selection doesn't immediately commit.
-    component.$set({
+    await rerender({
       selected: {
         ref: { kind: 'atomic-ref', slot_index: 1 } as AtomicRef,
         section: STRUCT_SEC,
@@ -528,11 +529,11 @@ describe('<DetailPanel> — c2 review #1 fixes', () => {
     // (sectionId + slot_index) so refetches leave the arm intact.
     const handler = vi.fn();
     const ref0: AtomicRef = { kind: 'atomic-ref', slot_index: 0 };
-    const { component } = render(DetailPanel, {
+    const { on, rerender } = renderWithEvents(DetailPanel, {
       selected: { ref: ref0, section: STRUCT_SEC },
       template: makeStructTemplate(), sidecar: makeStructSidecar(),
     });
-    component.$on('structuralEdit', handler);
+    on('structuralEdit', handler);
     // Arm.
     await fireEvent.click(screen.getByTestId('structural-delete'));
     expect(screen.getByTestId('structural-delete')).toHaveAttribute(
@@ -540,7 +541,7 @@ describe('<DetailPanel> — c2 review #1 fixes', () => {
     );
     // Simulate a refetch: parent passes a NEW object identity for
     // the SAME logical chip (same section.id + slot_index).
-    component.$set({
+    await rerender({
       selected: {
         ref: { kind: 'atomic-ref', slot_index: 0 } as AtomicRef,
         section: { ...STRUCT_SEC },
@@ -568,15 +569,15 @@ describe('<DetailPanel> — c2 review #1 fixes', () => {
     // the operator to re-click to continue editing.
     const onStructural = vi.fn();
     const onClose = vi.fn();
-    const { component } = render(DetailPanel, {
+    const { on } = renderWithEvents(DetailPanel, {
       selected: {
         ref: { kind: 'atomic-ref', slot_index: 0 } as AtomicRef,
         section: STRUCT_SEC,
       },
       template: makeStructTemplate(), sidecar: makeStructSidecar(),
     });
-    component.$on('structuralEdit', onStructural);
-    component.$on('close', onClose);
+    on('structuralEdit', onStructural);
+    on('close', onClose);
     await fireEvent.click(screen.getByTestId('structural-delete'));  // arm
     await fireEvent.click(screen.getByTestId('structural-delete'));  // commit
     expect(onStructural).toHaveBeenCalledTimes(1);

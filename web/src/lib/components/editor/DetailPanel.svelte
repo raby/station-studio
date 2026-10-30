@@ -651,7 +651,7 @@
 <svelte:window on:keydown={onKey} />
 
 {#if detail !== null}
-  <aside
+  <div
     class="detail-panel"
     role="dialog"
     aria-label="Chip details"
@@ -968,7 +968,7 @@
         </section>
       {/if}
     {/if}
-  </aside>
+  </div>
 {/if}
 
 <style>

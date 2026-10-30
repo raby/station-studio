@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { render, fireEvent } from '@testing-library/svelte';
+import { renderWithEvents } from '$lib/renderWithEvents';
 
 import MacroPalette from './MacroPalette.svelte';
 import type { Sidecar } from '$lib/editor';
@@ -76,19 +77,17 @@ describe('§16.2.4.t1 MacroPalette', () => {
 
   it('dispatches `select { macroId }` on row click', async () => {
     const onSelect = vi.fn();
-    const { getByTestId, component } = render(MacroPalette, {
-      props: {
-        sidecar: _sidecar([
-          {
-            id: 'm-pick',
-            name: 'Pick',
-            repeat: 2,
-            spec: { source: 'A', strategy: 'jingle', size: 1, genre: 'G' },
-          },
-        ]),
-      },
+    const { getByTestId, on } = renderWithEvents(MacroPalette, {
+      sidecar: _sidecar([
+        {
+          id: 'm-pick',
+          name: 'Pick',
+          repeat: 2,
+          spec: { source: 'A', strategy: 'jingle', size: 1, genre: 'G' },
+        },
+      ]),
     });
-    component.$on('select', (e) => onSelect(e.detail));
+    on('select', (e) => onSelect(e.detail));
     await fireEvent.click(getByTestId('macro-palette-row'));
     expect(onSelect).toHaveBeenCalledTimes(1);
     expect(onSelect).toHaveBeenCalledWith({ macroId: 'm-pick' });

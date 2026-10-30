@@ -7,6 +7,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/svelte';
+import { renderWithEvents } from '$lib/renderWithEvents';
 import ChipMultiInput from './ChipMultiInput.svelte';
 
 afterEach(() => cleanup());
@@ -25,10 +26,10 @@ describe('<ChipMultiInput>', () => {
 
   it('typing + Enter dispatches change with the new value appended', async () => {
     const handler = vi.fn();
-    const { component } = render(ChipMultiInput, {
+    const { on } = renderWithEvents(ChipMultiInput, {
       values: ['A'], suggestions: [],
     });
-    component.$on('change', handler);
+    on('change', handler);
     const input = screen.getByTestId('chip-multi-input');
     await fireEvent.input(input, { target: { value: 'NEW_POOL' } });
     await fireEvent.keyDown(input, { key: 'Enter' });
@@ -38,10 +39,10 @@ describe('<ChipMultiInput>', () => {
 
   it('clicking × on a chip dispatches change without that value', async () => {
     const handler = vi.fn();
-    const { component } = render(ChipMultiInput, {
+    const { on } = renderWithEvents(ChipMultiInput, {
       values: ['A', 'B', 'C'], suggestions: [],
     });
-    component.$on('change', handler);
+    on('change', handler);
     const removes = screen.getAllByTestId('chip-multi-chip-remove');
     await fireEvent.click(removes[1]); // remove 'B'
     expect(handler.mock.calls[0][0].detail).toEqual(['A', 'C']);
@@ -49,10 +50,10 @@ describe('<ChipMultiInput>', () => {
 
   it('Backspace on empty input pops the last chip', async () => {
     const handler = vi.fn();
-    const { component } = render(ChipMultiInput, {
+    const { on } = renderWithEvents(ChipMultiInput, {
       values: ['A', 'B'], suggestions: [],
     });
-    component.$on('change', handler);
+    on('change', handler);
     const input = screen.getByTestId('chip-multi-input');
     await fireEvent.keyDown(input, { key: 'Backspace' });
     expect(handler.mock.calls[0][0].detail).toEqual(['A']);
@@ -60,10 +61,10 @@ describe('<ChipMultiInput>', () => {
 
   it('duplicate values are silently ignored (no change dispatched)', async () => {
     const handler = vi.fn();
-    const { component } = render(ChipMultiInput, {
+    const { on } = renderWithEvents(ChipMultiInput, {
       values: ['A'], suggestions: [],
     });
-    component.$on('change', handler);
+    on('change', handler);
     const input = screen.getByTestId('chip-multi-input');
     await fireEvent.input(input, { target: { value: 'A' } });
     await fireEvent.keyDown(input, { key: 'Enter' });
@@ -72,10 +73,10 @@ describe('<ChipMultiInput>', () => {
 
   it('commas in entries are rejected with an inline error', async () => {
     const handler = vi.fn();
-    const { component } = render(ChipMultiInput, {
+    const { on } = renderWithEvents(ChipMultiInput, {
       values: [], suggestions: [],
     });
-    component.$on('change', handler);
+    on('change', handler);
     const input = screen.getByTestId('chip-multi-input');
     await fireEvent.input(input, { target: { value: 'A,B' } });
     await fireEvent.keyDown(input, { key: 'Enter' });
@@ -98,7 +99,7 @@ describe('<ChipMultiInput>', () => {
 
   it('typing shows narrowed suggestions, click adds the picked one', async () => {
     const handler = vi.fn();
-    const { component } = render(ChipMultiInput, {
+    const { on } = renderWithEvents(ChipMultiInput, {
       values: [],
       suggestions: [
         { name: 'REFERENCE_ARCHIVE' },
@@ -106,7 +107,7 @@ describe('<ChipMultiInput>', () => {
         { name: 'OTHER_POOL' },
       ],
     });
-    component.$on('change', handler);
+    on('change', handler);
     await fireEvent.input(screen.getByTestId('chip-multi-input'), {
       target: { value: 'ref' },
     });

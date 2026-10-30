@@ -4,6 +4,21 @@ All notable changes are listed here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses semantic versioning.
 
+## [1.10.1] - 2026-10-30
+
+### Changed
+
+- The web UI runs on **Svelte 5** (from 4), with Vite 7 and the
+  matching SvelteKit, vite-plugin-svelte, svelte-check and Testing
+  Library. Existing pages run unchanged in Svelte 5's compatibility
+  mode; new ones can use runes. npm audit goes from 19 advisories (7
+  high) to 6 low, all in build tools.
+
+### Fixed
+
+- Settings › Station Server no longer replaces an address you typed
+  while your saved settings were still loading.
+
 ## [1.10.0] - 2026-10-26
 
 ### Added

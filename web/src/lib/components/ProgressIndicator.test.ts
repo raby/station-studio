@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, fireEvent, screen, cleanup } from '@testing-library/svelte';
+import { renderWithEvents } from '$lib/renderWithEvents';
 import '@testing-library/jest-dom/vitest';
 import ProgressIndicator from './ProgressIndicator.svelte';
 import type { JobSnapshot } from '$lib/api';
@@ -113,10 +114,10 @@ describe('<ProgressIndicator>', () => {
 
   it('dispatches a `cancel` event on click', async () => {
     const onCancel = vi.fn();
-    const { component } = render(ProgressIndicator, {
+    const { on } = renderWithEvents(ProgressIndicator, {
       job: makeSnap({ status: 'running' }),
     });
-    component.$on('cancel', onCancel);
+    on('cancel', onCancel);
     await fireEvent.click(screen.getByTestId('progress-cancel'));
     expect(onCancel).toHaveBeenCalledTimes(1);
   });

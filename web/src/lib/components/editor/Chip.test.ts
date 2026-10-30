@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup } from '@testing-library/svelte';
+import { renderWithEvents } from '$lib/renderWithEvents';
 import '@testing-library/jest-dom/vitest';
 import Chip from './Chip.svelte';
 import {
@@ -198,10 +199,10 @@ describe('<Chip>', () => {
     const template = makeFlatTemplate();
     const ref: AtomicRef = { kind: 'atomic-ref', slot_index: 1 };
     const onSelect = vi.fn();
-    const { component } = render(Chip, {
+    const { on } = renderWithEvents(Chip, {
       ref, template, sidecar: makeSidecarWithMacro(), viewMode: VM,
     });
-    component.$on('select', (e: Event) => {
+    on('select', (e: Event) => {
       onSelect((e as CustomEvent<{ ref: AtomicRef }>).detail);
     });
     await fireEvent.click(screen.getByTestId('chip'));
