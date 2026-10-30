@@ -177,46 +177,95 @@
     return `${n} of ${of} ${of === 1 ? 'song' : 'songs'} in week ${trace?.week} change.`;
   }
 
-  $: showingEdits = viewingCurrent &&!!editing && editing.opLog.length > 0 && editing.stagedTrace !== null;
+  $: showingEdits = viewingCurrent && !!editing && editing.opLog.length > 0 && editing.stagedTrace !== null;
 
   /** Remake this week with the saved rules. rng='on' reuses the week's
    *  seed, so only songs the rule change touches should move. */
   async function regenerateWeek(): Promise<void> {
-    if (!trace || regenerating) return;
+    if (trace) await regenerateWeeks([trace.week]);
+  }
+
+  /** The station's generated weeks after this one: they were made with
+   *  the old rules too. */
+  $: laterWeeks = trace
+    ? stationPlaylists.map((p) => p.week).filter((w) => w > trace!.week).sort((a, b) => a - b)
+    : [];
+
+  /** "4–6", or "4, 6 and 9" when there are gaps. */
+  function weekList(weeks: number[]): string {
+    const contiguous = weeks.every((w, i) => i === 0 || w === weeks[i - 1] + 1);
+    if (weeks.length === 1) return `week ${weeks[0]}`;
+    if (contiguous) return `weeks ${weeks[0]}–${weeks[weeks.length - 1]}`;
+    return `weeks ${weeks.slice(0, -1).join(', ')} and ${weeks[weeks.length - 1]}`;
+  }
+
+  /** Which week is being remade, for the progress note. */
+  let regenerateProgress: { week: number; done: number; of: number } | null = null;
+
+  /** Remake these weeks with the saved rules, one at a time in order
+   *  (each continues from the one before: last week's songs, cursors).
+   *  The server starts each from the week's own seed and cursors, so
+   *  only songs the rule change touches should move. Stops at the
+   *  first that fails, and says which. */
+  async function regenerateWeeks(weeks: number[]): Promise<void> {
+    if (!trace || regenerating || weeks.length === 0) return;
     regenerating = true;
     regenerateError = null;
     const rngOn = (station?.template as { rng?: string } | undefined)?.rng === 'on';
-    const seed = rngOn ? (trace.seed ?? Math.floor(Math.random() * 2 ** 31)) : undefined;
+    const slug = trace.station;
+    const thisWeek = trace.week;
     try {
-      let jobId: string;
-      try {
-        jobId = (await startGenerateJob(trace.station, trace.week, seed)).job_id;
-      } catch (e) {
-        if (!(e instanceof JobStartConflict)) throw e;
-        jobId = e.existing_job_id; // one already running for this station
-      }
-      for await (const snap of watchJob(jobId)) {
-        if (snap.status === 'done' && isGenerateResult(snap.result)) {
-          endSession();
-          if (requestedVersion != null) {
-            const url = new URL($page.url);
-            url.searchParams.delete('v');
-            await goto(url.pathname + url.search);
-          } else {
-            await loadAll(id, null);
-          }
+      for (const [i, week] of weeks.entries()) {
+        regenerateProgress = { week, done: i, of: weeks.length };
+        // A week with no seed of its own (rng='on' but made without
+        // one) gets a fresh one; otherwise the server reuses its seed.
+        const seed = rngOn && week === thisWeek && trace.seed == null
+          ? Math.floor(Math.random() * 2 ** 31)
+          : undefined;
+        const outcome = await generateOne(slug, week, seed);
+        if (outcome !== null) {
+          regenerateError = weeks.length > 1 ? `week ${week}: ${outcome}` : outcome;
+          // The weeks before it did regenerate: show this one as it now
+          // is, keeping the bar (and this message) up.
+          if (i > 0) await loadAll(id, requestedVersion);
           return;
         }
-        if (snap.status === 'error') {
-          regenerateError = snap.error ? snap.error.message : 'regeneration failed';
-          return;
-        }
-        if (snap.status === 'cancelled') return;
       }
+      await reloadWeek();
     } catch (e) {
       regenerateError = errorText(e);
     } finally {
       regenerating = false;
+      regenerateProgress = null;
+    }
+  }
+
+  /** Generate one week and wait for it: null when done, else why not. */
+  async function generateOne(slug: string, week: number, seed: number | undefined): Promise<string | null> {
+    let jobId: string;
+    try {
+      jobId = (await startGenerateJob(slug, week, seed)).job_id;
+    } catch (e) {
+      if (!(e instanceof JobStartConflict)) throw e;
+      jobId = e.existing_job_id; // one already running for this station
+    }
+    for await (const snap of watchJob(jobId)) {
+      if (snap.status === 'done' && isGenerateResult(snap.result)) return null;
+      if (snap.status === 'error') return snap.error ? snap.error.message : 'regeneration failed';
+      if (snap.status === 'cancelled') return 'cancelled';
+    }
+    return 'regeneration ended without a result';
+  }
+
+  /** Show this week as now generated (the current version). */
+  async function reloadWeek(): Promise<void> {
+    endSession();
+    if (requestedVersion != null) {
+      const url = new URL($page.url);
+      url.searchParams.delete('v');
+      await goto(url.pathname + url.search);
+    } else {
+      await loadAll(id, null);
     }
   }
   let playlist: Playlist | null = null;
@@ -1166,12 +1215,25 @@
           </div>
         {:else if justSaved}
           <p data-testid="song-edit-saved">
-            Saved. Week {trace.week} was made with the old rules: regenerate it to hear the change.
+            {#if regenerateProgress && regenerateProgress.of > 1}
+              Regenerating week {regenerateProgress.week} ({regenerateProgress.done + 1} of {regenerateProgress.of})…
+            {:else if laterWeeks.length > 0}
+              Saved. Week {trace.week} and the {laterWeeks.length === 1 ? 'week' : `${laterWeeks.length} weeks`}
+              after it ({weekList(laterWeeks)}) were made with the old rules: regenerate to hear the change.
+            {:else}
+              Saved. Week {trace.week} was made with the old rules: regenerate it to hear the change.
+            {/if}
           </p>
           <div class="edit-actions">
             <button type="button" class="button" data-testid="song-edit-regenerate" disabled={regenerating} on:click={regenerateWeek}>
-              {regenerating ? 'Regenerating…' : 'Regenerate this week'}
+              {regenerating && regenerateProgress?.of === 1 ? 'Regenerating…' : 'Regenerate this week'}
             </button>
+            {#if laterWeeks.length > 0}
+              <button type="button" data-testid="song-edit-regenerate-later" disabled={regenerating}
+                on:click={() => trace && regenerateWeeks([trace.week, ...laterWeeks])}>
+                Regenerate this week and {laterWeeks.length === 1 ? 'the next' : `the ${laterWeeks.length} after`}
+              </button>
+            {/if}
           </div>
         {/if}
         <ErrorBanner message={editState.loadError} severity="polite" prefix="Couldn't load the station's rules" testId="song-edit-load-error" />

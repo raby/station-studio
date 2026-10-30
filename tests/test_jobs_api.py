@@ -748,6 +748,29 @@ def test_preview_rng_on_without_a_seed_reproduces_the_generated_week(jobs_api):
     assert _preview_tracks(client, template, week=1) == stored_tracks
 
 
+def test_regenerate_rng_on_without_a_seed_reuses_the_weeks_seed(jobs_api):
+    """Regenerating a week (the week page's Regenerate) sends no seed:
+    the week's own is reused, so unchanged rules give the same week.
+    A week never generated still needs one."""
+    client, Session, _store = jobs_api
+    _seed_station_with_pool(Session)
+    _rng_on_weighted(Session)
+
+    def generate(body: dict) -> list[int]:
+        job_id = client.post("/api/stations/ts/jobs/generate", json=body).json()["job_id"]
+        done = _wait_for_status(client, job_id, "done")["result"]
+        trace = client.get(f"/api/playlists/{done['playlist_id']}/trace").json()
+        assert trace["seed"] == 7
+        return [s["track_id"] for s in trace["slots"]]
+
+    first = generate({"week": 1, "seed": 7})
+    assert generate({"week": 1}) == first
+
+    job_id = client.post("/api/stations/ts/jobs/generate", json={"week": 2}).json()["job_id"]
+    snap = _wait_for_status(client, job_id, "error")
+    assert "requires a seed" in snap["error"]["message"]
+
+
 def test_preview_rng_on_week_never_generated_is_repeatable(jobs_api):
     client, Session, _store = jobs_api
     _seed_station_with_pool(Session)

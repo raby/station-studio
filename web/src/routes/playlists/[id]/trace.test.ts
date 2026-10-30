@@ -1752,6 +1752,70 @@ describe('trace viewer — changing a song\'s rule', () => {
     expect(getStationSidecarMock.mock.calls.length).toBe(sidecarLoads + 1);
   });
 
+  /** Change the first rule and save it. */
+  async function changeAndSave(): Promise<void> {
+    await changeFirstRule();
+    applyBatchMock.mockResolvedValueOnce({
+      template: template({ source: 'A', strategy: 'pick', size: 2 }), sidecar: sidecar(), updated_at: 'ts-2',
+    });
+    await fireEvent.click(screen.getByTestId('song-edit-save'));
+    await screen.findByTestId('song-edit-saved');
+  }
+
+  const weekSummary = (id: number, week: number) =>
+    ({ id, week, trace_id: `t${week}`, generated_at: 'x', entry_count: 3 });
+
+  it('after saving, offers to regenerate this week and the later ones, in order', async () => {
+    previewsSavedThenEdited();
+    getStationPlaylistsMock.mockResolvedValue([2, 3, 4, 5].map((w) => weekSummary(w + 4, w)));
+    render(Page);
+    await changeAndSave();
+    expect(screen.getByTestId('song-edit-saved'))
+      .toHaveTextContent('Week 3 and the 2 weeks after it (weeks 4–5) were made with the old rules');
+
+    const order: number[] = [];
+    startGenerateJobMock.mockImplementation(async (_s: unknown, week: unknown) => {
+      order.push(week as number);
+      return { job_id: `gen-${week}`, status: 'running' };
+    });
+    watchJobMock.mockImplementation(() => (async function* () {
+      yield { status: 'done', result: { playlist_id: 7, trace_id: 'new', slot_count: 3 } };
+    })());
+    const tracesBefore = getTraceMock.mock.calls.length;
+    await fireEvent.click(screen.getByTestId('song-edit-regenerate-later'));
+    await vi.waitFor(() => expect(getTraceMock.mock.calls.length).toBeGreaterThan(tracesBefore));
+    expect(order).toEqual([3, 4, 5]);
+    // No seed sent: the server reuses each week's own.
+    expect(startGenerateJobMock.mock.calls.map((c) => c[2])).toEqual([undefined, undefined, undefined]);
+    await vi.waitFor(() => expect(screen.queryByTestId('song-edit-bar')).toBeNull());
+  });
+
+  it('stops at a week that fails and says which', async () => {
+    previewsSavedThenEdited();
+    getStationPlaylistsMock.mockResolvedValue([3, 4, 5].map((w) => weekSummary(w + 4, w)));
+    render(Page);
+    await changeAndSave();
+
+    startGenerateJobMock.mockImplementation(async (_s: unknown, week: unknown) =>
+      ({ job_id: `gen-${week}`, status: 'running' }));
+    watchJobMock.mockImplementation((id: unknown) => (async function* () {
+      if (id === 'gen-4') yield { status: 'error', error: { kind: 'ValueError', message: 'pool A is empty' } };
+      else yield { status: 'done', result: { playlist_id: 7, trace_id: 'new', slot_count: 3 } };
+    })());
+    await fireEvent.click(screen.getByTestId('song-edit-regenerate-later'));
+    expect(await screen.findByTestId('song-edit-regenerate-error')).toHaveTextContent('week 4: pool A is empty');
+    expect(startGenerateJobMock.mock.calls.map((c) => c[1])).toEqual([3, 4]);
+  });
+
+  it('with no later weeks there is just Regenerate this week', async () => {
+    previewsSavedThenEdited();
+    getStationPlaylistsMock.mockResolvedValue([1, 2, 3].map((w) => weekSummary(w + 4, w)));
+    render(Page);
+    await changeAndSave();
+    expect(screen.getByTestId('song-edit-saved')).toHaveTextContent('Week 3 was made with the old rules');
+    expect(screen.queryByTestId('song-edit-regenerate-later')).toBeNull();
+  });
+
   it('lists each change in plain words with how many songs move, and undoes one', async () => {
     previewsSavedThenEdited();
     render(Page);

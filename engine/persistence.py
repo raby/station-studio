@@ -6,8 +6,10 @@ between api/routers/generate.py and scripts/bootstrap_classics.py.
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 
 from engine.artist_match import build_alias_map
@@ -164,8 +166,13 @@ def save_playlist(
     week: int,
     *,
     template: Template | None = None,
+    cursor_positions: dict[str, int] | None = None,
 ) -> Playlist:
     """Persist a generation result as a Playlist + entries + version.
+
+    `cursor_positions` (persistent-cursor templates) is recorded on the
+    new version: the positions this generation started from, which a
+    later regeneration of the week starts from too (`plan_cursors`).
 
     §16.4 — multi-version semantics: if a Playlist for (station, week)
     already exists, this APPENDS a new `PlaylistVersion` (version_no =
@@ -273,6 +280,7 @@ def save_playlist(
         seed=result.trace.seed,
         generated_at=result.trace.generated_at,
         slots=[s.to_dict() for s in result.trace.slots],
+        cursors=dict(cursor_positions) if cursor_positions is not None else None,
     ))
 
     # §16.4.t3 — prune old versions if the station's
@@ -461,6 +469,9 @@ def rollback_playlist(
         # mutating it via shared references would silently corrupt
         # history.
         slots=[dict(s) for s in src_slots],
+        # The rolled-back content was made from these positions; a
+        # later regeneration of the week starts from them again.
+        cursors=dict(source.cursors) if source.cursors is not None else None,
     ))
 
     # Rewrite PlaylistEntry rows from the slots — latest-only.
@@ -788,6 +799,107 @@ def load_cursor_positions(
     return {name: persisted.get(name, init[name]) for name in init}
 
 
+@dataclass(frozen=True)
+class CursorPlan:
+    """Where one generation of a week starts its persistent cursors,
+    and whether it moves the station's live cursors on afterwards.
+
+    `positions` is None for stateless templates (the generator works
+    positions out from the week number). `moves_live` is true only for
+    the station's latest week (or a new later one): regenerating a past
+    week mustn't move the cursors the next new week continues from.
+    """
+    positions: dict[str, int] | None
+    moves_live: bool
+
+
+def recorded_cursor_positions(
+    db: Session, *, station_id: int, week: int,
+) -> dict[str, int] | None:
+    """The cursor positions the week's newest recorded generation
+    started from, or None when none was recorded (stateless template,
+    or generated before versions recorded them)."""
+    row = (
+        db.query(PlaylistVersion.cursors)
+        .join(Playlist, Playlist.id == PlaylistVersion.playlist_id)
+        .filter(
+            Playlist.station_id == station_id,
+            Playlist.week == week,
+            PlaylistVersion.cursors.isnot(None),
+        )
+        .order_by(PlaylistVersion.version_no.desc())
+        .first()
+    )
+    return dict(row[0]) if row is not None and row[0] is not None else None
+
+
+def plan_cursors(
+    db: Session,
+    *,
+    station_id: int,
+    template: Template,
+    week: int,
+) -> CursorPlan:
+    """Plan a generation (or preview) of `week`'s persistent cursors.
+
+    * A week generated before with its positions recorded starts from
+      those, so regenerating a past week (after a rule change, say)
+      gives what that week would have been with the new rules.
+    * Otherwise it starts from the station's live cursors, as every
+      generation did before positions were recorded.
+    * Only the latest week (or a new one after it) moves the live
+      cursors on. Regenerating weeks 3–6 of six, in order, therefore
+      leaves the live cursors where week 7 expects them.
+
+    Cursors added to the template since a week was recorded start
+    from the live positions.
+    """
+    if not template.cursor.persist:
+        return CursorPlan(positions=None, moves_live=False)
+    live = load_cursor_positions(db, station_id=station_id, template=template)
+    recorded = recorded_cursor_positions(db, station_id=station_id, week=week)
+    positions = live if recorded is None else {
+        name: recorded.get(name, pos) for name, pos in live.items()
+    }
+    latest = (
+        db.query(func.max(Playlist.week))
+        .filter(Playlist.station_id == station_id)
+        .scalar()
+    )
+    return CursorPlan(positions=positions, moves_live=latest is None or week >= latest)
+
+
+def finish_cursors(
+    db: Session,
+    *,
+    plan: CursorPlan,
+    station_id: int,
+    template: Template,
+    pools: dict[str, list],
+    advance_step: int,
+    reset_cycle: int,
+    week: int,
+) -> None:
+    """After a generation is saved: when it was of the latest week, the
+    live cursors become its starting positions moved on by one
+    generation (`advance_cursors`). A past week leaves them alone.
+    Caller commits."""
+    if plan.positions is None or not plan.moves_live:
+        return
+    for name, position in plan.positions.items():
+        _upsert_cursor_position(db, station_id=station_id, name=name, position=position)
+    db.flush()
+    advance_cursors(
+        db,
+        station_id=station_id,
+        template=template,
+        pools=pools,
+        advance_step=advance_step,
+        reset_cycle=reset_cycle,
+        generation_count=week - 1,
+    )
+
+
 def advance_cursors(
     db: Session,
     *,
@@ -957,7 +1069,11 @@ def generate_chain(
 
     pids_by_week: dict[int, list[str]] = {}
     for week in weeks:
-        positions = load_cursor_positions(db, station_id=station.id, template=tmpl)
+        plan = plan_cursors(db, station_id=station.id, template=tmpl, week=week)
+        positions = (
+            plan.positions if plan.positions is not None
+            else load_cursor_positions(db, station_id=station.id, template=tmpl)
+        )
         excluded_mix_ids = load_excluded_mix_ids(
             db, station_id=station.id,
             window=max_mix_exclusion_window(tmpl),
@@ -977,11 +1093,13 @@ def generate_chain(
             excluded_track_pids=excluded_track_pids,
         )
         pids_by_week[week] = [track_pids[t.id] for t in result.picks]
-        save_playlist(db, station=station, result=result, week=week, template=tmpl)
-        advance_cursors(
-            db, station_id=station.id, template=tmpl, pools=pools,
-            advance_step=advance_step, reset_cycle=reset_cycle,
-            generation_count=week - 1,
+        save_playlist(
+            db, station=station, result=result, week=week, template=tmpl,
+            cursor_positions=plan.positions,
+        )
+        finish_cursors(
+            db, plan=plan, station_id=station.id, template=tmpl, pools=pools,
+            advance_step=advance_step, reset_cycle=reset_cycle, week=week,
         )
         db.commit()
 

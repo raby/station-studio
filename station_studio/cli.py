@@ -288,7 +288,7 @@ def generate_cmd(
     from engine.generator import generate as engine_generate
     from engine.models import Base, Station
     from engine.persistence import (
-        advance_cursors, load_alias_map, load_cursor_positions,
+        finish_cursors, load_alias_map, plan_cursors,
         load_excluded_mix_ids, load_pools, load_previous_playlist,
         max_mix_exclusion_window, save_playlist,
     )
@@ -347,11 +347,12 @@ def generate_cmd(
         previous_playlist = load_previous_playlist(
             db, station_id=station.id, current_week=week,
         )
-        named_cursor_positions = None
-        if template.cursor.persist:
-            named_cursor_positions = load_cursor_positions(
-                db, station_id=station.id, template=template,
-            )
+        # A past week starts from the positions it was generated with;
+        # only the latest week moves the live cursors (plan_cursors).
+        cursor_plan = plan_cursors(
+            db, station_id=station.id, template=template, week=week,
+        )
+        named_cursor_positions = cursor_plan.positions
 
         try:
             result = engine_generate(
@@ -382,6 +383,7 @@ def generate_cmd(
             playlist = save_playlist(
                 db, station=station, result=result,
                 week=week, template=template,
+                cursor_positions=cursor_plan.positions,
             )
             db.commit()
         except IntegrityError:
@@ -401,13 +403,13 @@ def generate_cmd(
         # `advance_cursors` applies its own internal default. The
         # previous `or 120 / or 0` form silently turned a user-set
         # rule of 0 into 120 — exactly the legitimate-zero footgun.
-        if template.cursor.persist:
-            advance_cursors(
-                db, station_id=station.id, template=template,
-                pools=pools,
+        if cursor_plan.moves_live:
+            finish_cursors(
+                db, plan=cursor_plan, station_id=station.id,
+                template=template, pools=pools,
                 advance_step=cursor_advance_step,
                 reset_cycle=cursor_reset_cycle,
-                generation_count=week - 1,
+                week=week,
             )
             db.commit()
 

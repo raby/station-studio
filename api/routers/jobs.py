@@ -56,7 +56,7 @@ from engine.editor_metadata import EditorMetadataError, validate_sidecar
 from engine.generator import GenerationResult, generate_stream
 from engine.models import Playlist, Station
 from engine.persistence import (
-    advance_cursors, load_alias_map, load_cursor_positions,
+    CursorPlan, finish_cursors, load_alias_map, plan_cursors,
     load_excluded_mix_ids, load_excluded_track_pids, load_pools,
     load_previous_playlist, max_mix_exclusion_window, save_playlist,
 )
@@ -137,6 +137,9 @@ class _EngineInputs:
     artist_dedup_window: int | None
     excluded_mix_ids: Any
     alias_map: dict[str, str]
+    # Where this week's persistent cursors start, and whether a
+    # generation of it moves the live cursors on (plan_cursors).
+    cursor_plan: CursorPlan
     previous_playlist: list[Any] | None
     named_cursor_positions: dict[str, int] | None
     # §16.2.6.t7: cross-pool dedup exclusion set. Loaded for both
@@ -187,11 +190,12 @@ def _load_engine_inputs(
     previous_playlist = load_previous_playlist(
         db, station_id=station.id, current_week=week,
     )
-    named_cursor_positions = None
-    if template.cursor.persist:
-        named_cursor_positions = load_cursor_positions(
-            db, station_id=station.id, template=template,
-        )
+    # A past week starts from the positions it was generated with, so
+    # its preview and its regeneration match; see plan_cursors.
+    cursor_plan = plan_cursors(
+        db, station_id=station.id, template=template, week=week,
+    )
+    named_cursor_positions = cursor_plan.positions
 
     # §16.2.6.t7: cross_pool_dedup_sources → frozenset of excluded
     # Track.persistent_ids. ValueError / TemplateError translate to
@@ -212,6 +216,7 @@ def _load_engine_inputs(
         previous_playlist=previous_playlist,
         named_cursor_positions=named_cursor_positions,
         excluded_track_pids=excluded_track_pids,
+        cursor_plan=cursor_plan,
     )
 
 
@@ -316,7 +321,11 @@ def start_generate_job(
     station_slug = station.slug
     week = payload.week
     seed = payload.seed
-    persist_cursors = template.cursor.persist
+    # rng='on' needs a seed. Regenerating a week without one reuses
+    # the week's own, so only songs the rules changed should move (the
+    # week page's Regenerate does this). A new week still needs one.
+    if seed is None and template.rng == "on":
+        seed = _week_seed(db, station, week)
 
     # ----- Closures -------------------------------------------------
     # stream_factory must be parameterless (matches JobStore.start's
@@ -366,6 +375,7 @@ def start_generate_job(
                 playlist = save_playlist(
                     worker_db, worker_station, result,
                     week=week, template=template,
+                    cursor_positions=inputs.cursor_plan.positions,
                 )
                 worker_db.commit()
             except IntegrityError:  # pragma: no cover
@@ -386,15 +396,18 @@ def start_generate_job(
             # §14.30: advance persistent named cursors AFTER the
             # playlist commits. Same generation_count convention as
             # the synchronous endpoint.
-            if persist_cursors:
-                advance_cursors(
+            # Only a generation of the latest week moves them; a past
+            # week's leaves them where the next new week continues.
+            if inputs.cursor_plan.moves_live:
+                finish_cursors(
                     worker_db,
+                    plan=inputs.cursor_plan,
                     station_id=worker_station.id,
                     template=template,
                     pools=dict(inputs.pools),
                     advance_step=cursor_advance_step,
                     reset_cycle=cursor_reset_cycle,
-                    generation_count=week - 1,
+                    week=week,
                 )
                 worker_db.commit()
 
@@ -433,15 +446,9 @@ def start_generate_job(
     return JobStartResponse(job_id=job_id, status="running")
 
 
-def _preview_seed(db: Session, station: Station, week: int) -> int:
-    """The seed for an rng='on' preview sent without one.
-
-    The seed the week was generated with (its current version), so a
-    preview of the saved template reproduces the stored week and an
-    edited preview differs from it only where the edit does. A week
-    never generated gets the week number: any fixed value keeps
-    repeated previews of that week comparable with each other.
-    """
+def _week_seed(db: Session, station: Station, week: int) -> int | None:
+    """The seed the week was generated with (its current version), or
+    None for a week never generated."""
     playlist = (
         db.query(Playlist)
         .filter(Playlist.station_id == station.id, Playlist.week == week)
@@ -452,7 +459,20 @@ def _preview_seed(db: Session, station: Station, week: int) -> int:
         for seed in (version.seed if version is not None else None, playlist.seed):
             if seed is not None:
                 return seed
-    return week
+    return None
+
+
+def _preview_seed(db: Session, station: Station, week: int) -> int:
+    """The seed for an rng='on' preview sent without one.
+
+    The week's own seed, so a preview of the saved template reproduces
+    the stored week and an edited preview differs from it only where
+    the edit does. A week never generated gets the week number: any
+    fixed value keeps repeated previews of that week comparable with
+    each other.
+    """
+    seed = _week_seed(db, station, week)
+    return week if seed is None else seed
 
 
 @router.post(
