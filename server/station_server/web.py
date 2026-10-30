@@ -20,6 +20,7 @@ import logging
 import queue as queues
 import re
 import socket
+import socketserver
 import sys
 import threading
 import time
@@ -391,9 +392,16 @@ class _Server(ThreadingHTTPServer):
     if sys.platform == "win32":
         allow_reuse_address = False
 
-        def server_bind(self):
+    def server_bind(self):
+        if sys.platform == "win32":
             self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
-            super().server_bind()
+        # HTTPServer.server_bind would also look up socket.getfqdn(host),
+        # which for 0.0.0.0 can wait on mDNS for over a minute on some
+        # Macs (70 s on GitHub's macOS 15 runners), and the phone access
+        # and Station Studio link servers start inside a Settings request.
+        # The name is never used, so skip it.
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = str(self.server_address[0]), self.server_address[1]
 
 
 class RemoteAccess:
