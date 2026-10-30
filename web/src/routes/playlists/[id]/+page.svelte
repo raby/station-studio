@@ -228,18 +228,18 @@
     if (!trace || regenerating || weeks.length === 0) return;
     regenerating = true;
     regenerateError = null;
-    const rngOn = (station?.template as { rng?: string } | undefined)?.rng === 'on';
     const slug = trace.station;
     const thisWeek = trace.week;
     try {
       for (const [i, week] of weeks.entries()) {
         regenerateProgress = { week, done: i, of: weeks.length };
-        // A week with no seed of its own (rng='on' but made without
-        // one) gets a fresh one; otherwise the server reuses its seed.
-        const seed = rngOn && week === thisWeek && trace.seed == null
-          ? Math.floor(Math.random() * 2 ** 31)
-          : undefined;
-        const outcome = await generateOne(slug, week, seed);
+        // No seed: the server reuses the week's own (rng='on').
+        let outcome: string | null;
+        try {
+          outcome = await generateOne(slug, week);
+        } catch (e) {
+          outcome = errorText(e);
+        }
         if (outcome !== null) {
           regenerateError = weeks.length > 1 ? `week ${week}: ${outcome}` : outcome;
           // The weeks before it did regenerate: show this one as it now
@@ -263,14 +263,26 @@
     }
   }
 
-  /** Generate one week and wait for it: null when done, else why not. */
-  async function generateOne(slug: string, week: number, seed: number | undefined): Promise<string | null> {
-    let jobId: string;
-    try {
-      jobId = (await startGenerateJob(slug, week, seed)).job_id;
-    } catch (e) {
-      if (!(e instanceof JobStartConflict)) throw e;
-      jobId = e.existing_job_id; // one already running for this station
+  /** Generate one week and wait for it: null when done, else why not.
+   *  One generate runs per station at a time: if another is running (a
+   *  week started from the station page, say), wait for it to finish,
+   *  then start this one. That job is a different generation, so its
+   *  finishing isn't this week's. */
+  async function generateOne(slug: string, week: number): Promise<string | null> {
+    let jobId: string | null = null;
+    for (let attempt = 0; jobId === null; attempt++) {
+      try {
+        jobId = (await startGenerateJob(slug, week)).job_id;
+      } catch (e) {
+        if (!(e instanceof JobStartConflict) || attempt >= 5) throw e;
+        try {
+          for await (const snap of watchJob(e.existing_job_id)) {
+            if (snap.status !== 'running') break;
+          }
+        } catch {
+          // Gone already: try starting this week again.
+        }
+      }
     }
     for await (const snap of watchJob(jobId)) {
       if (snap.status === 'done' && isGenerateResult(snap.result)) return null;
@@ -1247,7 +1259,7 @@
             <button type="button" data-testid="song-edit-discard" disabled={editState.saving} on:click={() => session?.discard()}>Discard</button>
           </div>
         {:else if justSaved}
-          <p data-testid="song-edit-saved">
+          <p data-testid="song-edit-saved" aria-live="polite">
             {#if regenerateProgress && regenerateProgress.of > 1}
               Regenerating week {regenerateProgress.week} ({regenerateProgress.done + 1} of {regenerateProgress.of})…
             {:else if laterWeeks.length > 0}
