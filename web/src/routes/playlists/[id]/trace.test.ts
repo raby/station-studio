@@ -1788,6 +1788,7 @@ describe('trace viewer — changing a song\'s rule', () => {
     // No seed sent: the server reuses each week's own.
     expect(startGenerateJobMock.mock.calls.map((c) => c[2])).toEqual([undefined, undefined, undefined]);
     await vi.waitFor(() => expect(screen.queryByTestId('song-edit-bar')).toBeNull());
+    expect(await screen.findByTestId('song-regenerated')).toHaveTextContent('Regenerated weeks 3–5 with the saved rules.');
   });
 
   it('stops at a week that fails and says which', async () => {
