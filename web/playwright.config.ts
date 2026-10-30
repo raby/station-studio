@@ -1,4 +1,5 @@
 import { defineConfig, devices } from '@playwright/test';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -6,10 +7,22 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const REPO_ROOT = path.resolve(__dirname, '..');
 
-// Per-process SQLite file. Including the Playwright process PID keeps two
-// concurrent `make test-e2e` runs on the same checkout from stomping each
-// other's DB; the backend command below wipes its own file on boot.
-const TEST_DB_PATH = path.join(REPO_ROOT, `playwright-test.${process.pid}.db`);
+// One scratch folder per run, in the OS temp dir rather than the repo
+// root (runs used to leave a playwright-test.<pid>.db* trio and a
+// playwright-stations.<pid>/ folder there every time). Playwright
+// evaluates this config in its runner AND in each worker process; the
+// first evaluation picks the path and puts it in the environment, and
+// workers inherit it, so every process (and global-teardown.ts, which
+// deletes the folder) agrees on one path. The PID still keeps two
+// concurrent `make test-e2e` runs apart. Nothing is created here: the
+// backend webServer command below makes the folder on boot.
+const E2E_DIR = (process.env.STATION_STUDIO_E2E_DIR ??= path.join(
+  os.tmpdir(),
+  `station-studio-e2e.${process.pid}`,
+));
+
+// Per-run SQLite file; the backend command below wipes it on boot.
+const TEST_DB_PATH = path.join(E2E_DIR, 'test.db');
 
 // §16.2.3 c3 — throwaway stations dir for the e2e backend. The editor
 // EXPORT endpoint writes `stations/{slug}.json`; without this override
@@ -18,7 +31,7 @@ const TEST_DB_PATH = path.join(REPO_ROOT, `playwright-test.${process.pid}.db`);
 // the env var `get_stations_dir` reads (api/deps.py). Editor GETs for
 // e2e-created stations have no committed sidecar → synthesize-trivial,
 // so an empty dir is fine.
-const TEST_STATIONS_DIR = path.join(REPO_ROOT, `playwright-stations.${process.pid}`);
+const TEST_STATIONS_DIR = path.join(E2E_DIR, 'stations');
 
 export default defineConfig({
   testDir: './e2e',
@@ -32,8 +45,10 @@ export default defineConfig({
   projects: [
     { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
   ],
-  // DB wipe is done by the backend webServer command itself (see below),
-  // since Playwright starts webServers before globalSetup runs.
+  // Deletes E2E_DIR after the run. The DB wipe is done by the backend
+  // webServer command itself (see below), since Playwright starts
+  // webServers before globalSetup runs.
+  globalTeardown: './e2e/global-teardown.ts',
   webServer: [
     {
       name: 'backend',
@@ -42,7 +57,7 @@ export default defineConfig({
       // Playwright boots webServers before globalSetup runs, so a stale DB
       // file gets created/opened first and then deleted out from under the
       // connection pool, leaving queries to hit an empty file.
-      command: `rm -rf "${TEST_DB_PATH}" "${TEST_DB_PATH}-wal" "${TEST_DB_PATH}-shm" "${TEST_STATIONS_DIR}" && exec ${REPO_ROOT}/.venv/bin/python -m uvicorn api.main:app --host 127.0.0.1 --port 8001`,
+      command: `rm -rf "${E2E_DIR}" && mkdir -p "${E2E_DIR}" && exec ${REPO_ROOT}/.venv/bin/python -m uvicorn api.main:app --host 127.0.0.1 --port 8001`,
       cwd: REPO_ROOT,
       url: 'http://127.0.0.1:8001/',
       reuseExistingServer: false,
