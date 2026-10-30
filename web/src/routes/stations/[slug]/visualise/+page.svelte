@@ -2383,6 +2383,7 @@
         <div
           role="dialog"
           aria-modal="true"
+          tabindex="-1"
           aria-labelledby="retry-modal-title"
           class="retry-modal"
           data-testid="retry-modal"

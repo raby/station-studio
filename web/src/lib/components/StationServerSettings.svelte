@@ -31,7 +31,8 @@
       const got = await getStationServerSettings(fetchFn);
       if (got && typeof got.address === 'string') {
         settings = got;
-        address = got.address;
+        // Don't overwrite an address typed while the settings were loading.
+        if (!address) address = got.address;
       }
     } catch (e) {
       error = errorText(e);

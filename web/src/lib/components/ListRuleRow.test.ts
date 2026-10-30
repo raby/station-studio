@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, fireEvent, screen, cleanup, waitFor } from '@testing-library/svelte';
+import { renderWithEvents } from '$lib/renderWithEvents';
 import '@testing-library/jest-dom/vitest';
 
 /**
@@ -184,11 +185,11 @@ describe('<ListRuleRow>', () => {
     const updatedRule = listRule({ value: ['POOL_A'], is_override: true });
     setStationRuleMock.mockResolvedValueOnce(updatedRule);
     let captured: Rule | null = null;
-    const { component } = render(ListRuleRow, {
+    const { on } = renderWithEvents(ListRuleRow, {
       slug: 'rb',
       rule: listRule(),
     });
-    component.$on('updated', (e: CustomEvent<Rule>) => {
+    on('updated', (e: CustomEvent<Rule>) => {
       captured = e.detail;
     });
     const input = await screen.findByTestId('list-rule-input');
@@ -233,14 +234,14 @@ describe('<ListRuleRow>', () => {
   it('Reset DELETEs + emits updated with default_value + is_override=false', async () => {
     clearStationRuleMock.mockResolvedValueOnce(undefined);
     let captured: Rule | null = null;
-    const { component } = render(
+    const { on } = renderWithEvents(
       ListRuleRow,
       {
         slug: 'rb',
         rule: listRule({ value: ['A'], default_value: [], is_override: true }),
       },
     );
-    component.$on('updated', (e: CustomEvent<Rule>) => {
+    on('updated', (e: CustomEvent<Rule>) => {
       captured = e.detail;
     });
     await screen.findByTestId('list-rule-row');

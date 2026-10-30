@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { render, screen, cleanup, fireEvent } from '@testing-library/svelte';
+import { renderWithEvents } from '$lib/renderWithEvents';
 import '@testing-library/jest-dom/vitest';
 import TracePane from './TracePane.svelte';
 import type { Trace } from '$lib/api';
@@ -93,11 +94,11 @@ describe('<TracePane>', () => {
 
   it('dispatches a select event with slotIndex on row click (§16.2.6.t3 hook)', async () => {
     const trace = makeTrace(3);
-    const { component } = render(TracePane, {
+    const { on } = renderWithEvents(TracePane, {
       trace, previewing: false, errorMessage: null,
     });
     let selectedSlotIndex: number | null = null;
-    component.$on('select', (e: CustomEvent<{ slotIndex: number }>) => {
+    on('select', (e: CustomEvent<{ slotIndex: number }>) => {
       selectedSlotIndex = e.detail.slotIndex;
     });
     await fireEvent.click(screen.getAllByTestId('trace-row')[1]);
@@ -278,7 +279,7 @@ describe('<TracePane> — §16.2.7 c2 diff mode', () => {
   it('showDiff toggle dispatches showDiffChange { on } on click', async () => {
     const saved = traceFor([1, 2, 3]);
     const staged = traceFor([1, 2, 3]);
-    const { component } = render(TracePane, {
+    const { on } = renderWithEvents(TracePane, {
       trace: staged,
       savedTrace: saved,
       showDiff: false,
@@ -288,7 +289,7 @@ describe('<TracePane> — §16.2.7 c2 diff mode', () => {
       savedTraceError: null,
     });
     let dispatched: { on: boolean } | null = null;
-    component.$on('showDiffChange', (e: CustomEvent<{ on: boolean }>) => {
+    on('showDiffChange', (e: CustomEvent<{ on: boolean }>) => {
       dispatched = e.detail;
     });
     const toggle = screen.getByTestId('trace-show-diff');
@@ -447,7 +448,7 @@ describe('<TracePane> — §16.2.7.t4 multi-week summary', () => {
   });
 
   it('compareNextN input change dispatches compareNextNChange { n }', async () => {
-    const { component } = render(TracePane, {
+    const { on } = renderWithEvents(TracePane, {
       trace: tr([1]), savedTrace: tr([1]),
       showDiff: true, previewing: false, errorMessage: null,
       weekValue: 1, savedTraceError: null,
@@ -457,7 +458,7 @@ describe('<TracePane> — §16.2.7.t4 multi-week summary', () => {
       compareNextNMax: 5,
     });
     let dispatched: { n: number } | null = null;
-    component.$on('compareNextNChange', (e: CustomEvent<{ n: number }>) => {
+    on('compareNextNChange', (e: CustomEvent<{ n: number }>) => {
       dispatched = e.detail;
     });
     const input = screen.getByTestId('trace-compare-next-n') as HTMLInputElement;
@@ -467,7 +468,7 @@ describe('<TracePane> — §16.2.7.t4 multi-week summary', () => {
   });
 
   it('compareNextN input clamps to compareNextNMax on dispatch', async () => {
-    const { component } = render(TracePane, {
+    const { on } = renderWithEvents(TracePane, {
       trace: tr([1]), savedTrace: tr([1]),
       showDiff: true, previewing: false, errorMessage: null,
       weekValue: 1, savedTraceError: null,
@@ -477,7 +478,7 @@ describe('<TracePane> — §16.2.7.t4 multi-week summary', () => {
       compareNextNMax: 5,
     });
     let dispatched: { n: number } | null = null;
-    component.$on('compareNextNChange', (e: CustomEvent<{ n: number }>) => {
+    on('compareNextNChange', (e: CustomEvent<{ n: number }>) => {
       dispatched = e.detail;
     });
     const input = screen.getByTestId('trace-compare-next-n') as HTMLInputElement;
@@ -763,7 +764,7 @@ describe('<TracePane> — §16.2.7.t6 revert button', () => {
   });
 
   it('click on Revert button dispatches revertSlot { slotIndex } + stops propagation (no select)', async () => {
-    const { component } = render(TracePane, {
+    const { on } = renderWithEvents(TracePane, {
       trace: tr([1, 99, 3]),
       savedTrace: tr([1, 2, 3]),
       showDiff: true,
@@ -775,10 +776,10 @@ describe('<TracePane> — §16.2.7.t6 revert button', () => {
     });
     let revertedSlot: number | null = null;
     let selectedSlot: number | null = null;
-    component.$on('revertSlot', (e: CustomEvent<{ slotIndex: number }>) => {
+    on('revertSlot', (e: CustomEvent<{ slotIndex: number }>) => {
       revertedSlot = e.detail.slotIndex;
     });
-    component.$on('select', (e: CustomEvent<{ slotIndex: number }>) => {
+    on('select', (e: CustomEvent<{ slotIndex: number }>) => {
       selectedSlot = e.detail.slotIndex;
     });
     await fireEvent.click(screen.getByTestId('trace-row-revert'));

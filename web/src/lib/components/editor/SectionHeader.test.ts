@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { tick } from 'svelte';
 import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/svelte';
+import { renderWithEvents } from '$lib/renderWithEvents';
 import SectionHeader from './SectionHeader.svelte';
 import type { SidecarSection } from '$lib/editor';
 
@@ -70,10 +71,10 @@ describe('<SectionHeader> — §16.2.5 c2 affordances', () => {
 
   it('Enter commits the rename + dispatches a `rename` event', async () => {
     const handler = vi.fn();
-    const { component } = render(SectionHeader, {
+    const { on } = renderWithEvents(SectionHeader, {
       section: SEC, chipCount: 1, expanded: true,
     });
-    component.$on('rename', handler);
+    on('rename', handler);
     await fireEvent.click(screen.getByTestId('section-rename'));
     const input = screen.getByTestId('section-rename-input');
     await fireEvent.input(input, { target: { value: 'Opening' } });
@@ -86,10 +87,10 @@ describe('<SectionHeader> — §16.2.5 c2 affordances', () => {
 
   it('Escape cancels the rename without dispatching', async () => {
     const handler = vi.fn();
-    const { component } = render(SectionHeader, {
+    const { on } = renderWithEvents(SectionHeader, {
       section: SEC, chipCount: 1, expanded: true,
     });
-    component.$on('rename', handler);
+    on('rename', handler);
     await fireEvent.click(screen.getByTestId('section-rename'));
     const input = screen.getByTestId('section-rename-input');
     await fireEvent.input(input, { target: { value: 'Discarded' } });
@@ -100,10 +101,10 @@ describe('<SectionHeader> — §16.2.5 c2 affordances', () => {
 
   it('blank rename is a no-op (not a dispatch of empty string)', async () => {
     const handler = vi.fn();
-    const { component } = render(SectionHeader, {
+    const { on } = renderWithEvents(SectionHeader, {
       section: SEC, chipCount: 1, expanded: true,
     });
-    component.$on('rename', handler);
+    on('rename', handler);
     await fireEvent.click(screen.getByTestId('section-rename'));
     const input = screen.getByTestId('section-rename-input');
     await fireEvent.input(input, { target: { value: '   ' } });
@@ -113,21 +114,21 @@ describe('<SectionHeader> — §16.2.5 c2 affordances', () => {
 
   it('clicking ▲ dispatches moveUp with the section id', async () => {
     const handler = vi.fn();
-    const { component } = render(SectionHeader, {
+    const { on } = renderWithEvents(SectionHeader, {
       section: SEC, chipCount: 1, expanded: true,
       canMoveUp: true, canMoveDown: true,
     });
-    component.$on('moveUp', handler);
+    on('moveUp', handler);
     await fireEvent.click(screen.getByTestId('section-move-up'));
     expect(handler.mock.calls[0][0].detail).toEqual({ sectionId: 'lead' });
   });
 
   it('clicking 🗑 dispatches delete', async () => {
     const handler = vi.fn();
-    const { component } = render(SectionHeader, {
+    const { on } = renderWithEvents(SectionHeader, {
       section: SEC, chipCount: 1, expanded: true,
     });
-    component.$on('delete', handler);
+    on('delete', handler);
     await fireEvent.click(screen.getByTestId('section-delete'));
     expect(handler.mock.calls[0][0].detail).toEqual({ sectionId: 'lead' });
   });
@@ -139,10 +140,10 @@ describe('<SectionHeader> — §16.2.5 c2 affordances', () => {
   // so this test seeds the bug condition by firing blur explicitly.
   it('Enter then blur on the unmounting input does NOT double-dispatch', async () => {
     const handler = vi.fn();
-    const { component } = render(SectionHeader, {
+    const { on } = renderWithEvents(SectionHeader, {
       section: SEC, chipCount: 1, expanded: true,
     });
-    component.$on('rename', handler);
+    on('rename', handler);
     await fireEvent.click(screen.getByTestId('section-rename'));
     const input = screen.getByTestId('section-rename-input');
     await fireEvent.input(input, { target: { value: 'Opening' } });
@@ -156,10 +157,10 @@ describe('<SectionHeader> — §16.2.5 c2 affordances', () => {
 
   it('Escape then blur does NOT dispatch from the cancel path', async () => {
     const handler = vi.fn();
-    const { component } = render(SectionHeader, {
+    const { on } = renderWithEvents(SectionHeader, {
       section: SEC, chipCount: 1, expanded: true,
     });
-    component.$on('rename', handler);
+    on('rename', handler);
     await fireEvent.click(screen.getByTestId('section-rename'));
     const input = screen.getByTestId('section-rename-input');
     await fireEvent.input(input, { target: { value: 'Discarded' } });
@@ -222,10 +223,10 @@ describe('<SectionHeader> — c2 drag-drop', () => {
 
   it('drop dispatches `chipDrop` with the JSON-decoded ref + section id', async () => {
     const handler = vi.fn();
-    const { component } = render(SectionHeader, {
+    const { on } = renderWithEvents(SectionHeader, {
       section: SEC, chipCount: 1, expanded: true,
     });
-    component.$on('chipDrop', handler);
+    on('chipDrop', handler);
     const header = screen.getByTestId('section-header');
     const payload = { kind: 'atomic-ref' as const, slot_index: 3 };
     header.dispatchEvent(makeDragEvent(
@@ -242,10 +243,10 @@ describe('<SectionHeader> — c2 drag-drop', () => {
 
   it('drop with malformed JSON does NOT dispatch chipDrop', async () => {
     const handler = vi.fn();
-    const { component } = render(SectionHeader, {
+    const { on } = renderWithEvents(SectionHeader, {
       section: SEC, chipCount: 1, expanded: true,
     });
-    component.$on('chipDrop', handler);
+    on('chipDrop', handler);
     const header = screen.getByTestId('section-header');
     header.dispatchEvent(makeDragEvent(
       'drop',

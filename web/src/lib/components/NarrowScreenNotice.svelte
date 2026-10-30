@@ -1,3 +1,8 @@
+<script lang="ts" module>
+  let noticeCount = 0;
+  const nextNoticeId = (): number => ++noticeCount;
+</script>
+
 <script lang="ts">
   /**
    * §16.20 c1 — render a "wider screen required" panel below
@@ -77,9 +82,10 @@
   // Generate a stable id for the heading so the section's
   // `aria-labelledby` resolves without callers having to thread
   // a unique id when multiple notices stack on the same page.
-  // crypto.randomUUID is available in every modern browser and
-  // in jsdom; the slice doesn't run in older UAs.
-  const headingId = `narrow-notice-${crypto.randomUUID()}`;
+  // A per-page counter, not crypto.randomUUID: the Mac app runs in the
+  // system WebKit back to macOS 11 (Safari 14), and randomUUID needs
+  // Safari 15.4.
+  const headingId = `narrow-notice-${nextNoticeId()}`;
 </script>
 
 <section

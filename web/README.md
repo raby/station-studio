@@ -29,8 +29,14 @@ landing → wizard → station detail → trace viewer → iTunes download.
 A few non-obvious things to know before adding tests:
 
 - **Vitest needs `resolve.conditions: ['browser']` at top-level** in
-  `vite.config.js`, gated on `process.env.VITEST`. Otherwise Svelte 4's
+  `vite.config.js`, gated on `process.env.VITEST`. Otherwise Svelte's
   `onMount` is no-op under jsdom (we'd be loading the SSR build).
+- **Listening to a component's events:** Svelte 5 components have no
+  `component.$on`. For a component still on `createEventDispatcher`,
+  render it with `renderWithEvents` from `$lib/renderWithEvents` and
+  call `on('save', handler)`; change props with `await rerender({...})`
+  (it replaced `component.$set`). Components written in runes take
+  callback props (`onsave`), which tests pass like any other prop.
 - **`vitest.setup.ts` already runs `await act(); cleanup()` per test**
   via `@testing-library/svelte/vitest`. Don't add a per-file
   `afterEach(cleanup)` on top — it races the act flush.

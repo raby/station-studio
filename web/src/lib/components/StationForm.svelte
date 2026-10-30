@@ -270,10 +270,12 @@
       });
       if (!ok) return;
     }
-    // structuredClone deep-copies — Object spread / Array map alone leaves
-    // nested arrays/objects shared with `initial`, so subsequent edits
-    // would mutate the original (caught me once during dev).
-    const reset = unpack(structuredClone(initial));
+    // Deep copy: Object spread / Array map alone leaves nested arrays/
+    // objects shared with `initial`, so subsequent edits would mutate the
+    // original (caught me once during dev). A JSON round trip, not
+    // structuredClone: the Mac app's WebKit goes back to Safari 14 and
+    // structuredClone needs 15.4. `initial` is the template's JSON.
+    const reset = unpack(JSON.parse(JSON.stringify(initial)));
     slug = reset.slug;
     name = reset.name;
     cadence = reset.cadence;
