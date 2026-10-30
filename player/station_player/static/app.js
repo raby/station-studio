@@ -41,6 +41,7 @@ const ICONS = {
   folder: ["M3 7.5A2.5 2.5 0 0 1 5.5 5H9l2 2.5h7.5A2.5 2.5 0 0 1 21 10v6.5a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 16.5z"],
   list: ["M9 6h12", "M9 12h12", "M9 18h12", "*c 4.5 6 1.3", "*c 4.5 12 1.3", "*c 4.5 18 1.3"],
   music: ["M9 18V5.5l11-2V16", "c 6 18 3", "c 17 16 3"],
+  sport: ["c 12 12 9", "M12 7.5l4 2.9-1.5 4.6h-5L8 10.4z", "M12 7.5V3", "M16 10.4l4.3-1.4", "M14.5 15l2.7 3.7", "M9.5 15l-2.7 3.7", "M8 10.4L3.7 9"],
   radio: ["c 12 12 2", "M16.24 7.76a6 6 0 0 1 0 8.48", "M7.76 16.24a6 6 0 0 1 0-8.48", "M19.07 4.93a10 10 0 0 1 0 14.14", "M4.93 19.07a10 10 0 0 1 0-14.14"],
   queue: ["M3 6h15", "M3 12h15", "M3 18h8", "*M15.5 15.2v5.6a.6.6 0 0 0 .9.5l4.3-2.8a.6.6 0 0 0 0-1l-4.3-2.8a.6.6 0 0 0-.9.5z"],
   settings: ["M4 21v-7", "M4 10V3", "M12 21v-9", "M12 8V3", "M20 21v-5", "M20 12V3", "M1.5 14h5", "M9.5 8h5", "M17.5 16h5"],
@@ -1575,7 +1576,7 @@ function homeView() {
           ...iconLabel("plus", "Add music"))));
 }
 
-// The ways into Discover: the globe with news and talk, or with music, or a search.
+// The ways into Discover: the globe with news and talk, music or sport, or a search.
 function discoverTiles() {
   const tile = (glyph, title, text, go) => el("button", { type: "button", class: "discover-tile", onclick: go },
     el("div", { class: "glyph big" }, icon(glyph)),
@@ -1586,6 +1587,8 @@ function discoverTiles() {
       () => openDiscover("news")),
     tile("music", "Music around the world", "Turn the globe to a country and hear its music, or pick a genre.",
       () => openDiscover("music")),
+    tile("sport", "Sport around the world", "Live commentary and sports talk: football, cricket, racing and more.",
+      () => openDiscover("sport")),
     tile("search", "Search for a station", "By name, genre or country, from thousands of stations.",
       () => openDiscover(null)));
 }
@@ -1612,7 +1615,7 @@ function discoverView() {
   return el("div", { class: "discover" },
     el("div", { class: "view-head" }, el("h1", {}, "Discover")),
     el("p", { class: "help lead" },
-      "Radio from all over the world. Turn the globe to hear the news, talk or music where it's made, or search by name. ",
+      "Radio from all over the world. Turn the globe to hear the news, talk, music or sport where it's made, or search by name. ",
       "Listen first, then Add the ones you like to your stations."),
     discoverTiles(),
     el("div", { class: "settings" }, finderSection()));
@@ -1746,7 +1749,7 @@ async function notePlayed(st) {
 // An old radio's dial across the top of the Radio page: your stations
 // sit along it, and dragging the needle tunes between them, with a hiss
 // of static on the way. Left and Right (or a click) tune too.
-const TUNE = { stations: [], drag: false, noise: null };
+const TUNE = { stations: [], drag: false, noise: null, fit: null };
 const TUNER_MARKS = [88, 90, 92, 94, 96, 98, 100, 102, 104, 106, 108];
 
 function tuner(stations) {
@@ -1760,12 +1763,16 @@ function tuner(stations) {
   };
   const scale = el("div", { class: "tuner-scale" },
     ...TUNER_MARKS.map((mhz, i) => place(el("span", { class: "tuner-mark" }, String(mhz)), (i / (TUNER_MARKS.length - 1)) * 100)));
-  // Names take turns above and below the scale, so neighbours don't touch.
+  // Names, each with its logo, take turns above and below the scale, so
+  // neighbours don't touch, with a short line to their spot on the dial.
+  // When names would still touch (syncTunerFit), only the logos show.
+  const spot = (i) => ((i + 0.5) / n) * 100;
   const names = el("div", { class: "tuner-names" },
+    ...stations.map((st, i) => place(el("span", { class: i % 2 ? "tuner-line low" : "tuner-line", "data-url": st.url }), spot(i))),
     ...stations.map((st, i) => place(el("button", {
-      type: "button", class: i % 2 ? "tuner-name low" : "tuner-name", tabindex: -1, "data-url": st.url, title: st.name,
+      type: "button", class: i % 2 ? "tuner-name low" : "tuner-name", tabindex: -1, "data-url": st.url, title: st.name, "aria-label": st.name,
       onclick: () => tuneTo(i),
-    }, st.name), ((i + 0.5) / n) * 100, Math.min(40, 190 / n))));
+    }, stationArt(st, "glyph"), el("span", { class: "tuner-label" }, st.name)), spot(i), Math.min(48, 200 / n))));
   const dial = el("div", {
     class: "tuner-dial", id: "tuner", role: "slider", tabindex: 0, "aria-label": "Tuner",
     "aria-valuemin": 1, "aria-valuemax": n,
@@ -1786,9 +1793,34 @@ function tuner(stations) {
     onpointermove: (e) => { if (TUNE.drag) dragTo(e); },
     onpointerup: (e) => endDrag(e, true),
     onpointercancel: (e) => endDrag(e, false),
-  }, scale, el("div", { class: "tuner-needle", id: "tuner-needle" }), names);
-  queueMicrotask(syncTuner);
+  }, scale, names, el("div", { class: "tuner-needle", id: "tuner-needle" }));
+  queueMicrotask(() => { syncTuner(); syncTunerFit(); });
+  TUNE.fit?.disconnect();
+  if (window.ResizeObserver) {
+    TUNE.fit = new ResizeObserver(() => syncTunerFit());
+    TUNE.fit.observe(dial);
+  }
   return el("div", { class: "tuner" }, dial);
+}
+
+// Logos only, when neighbours' names on the same row would overlap.
+function syncTunerFit() {
+  const dial = $("#tuner");
+  if (!dial) return;
+  dial.classList.remove("logos-only");
+  // Names at the ends are moved in, so none hangs off the dial.
+  const box = dial.getBoundingClientRect();
+  for (const b of dial.querySelectorAll(".tuner-name")) {
+    b.style.marginLeft = "0px";
+    const r = b.getBoundingClientRect();
+    const shift = r.left < box.left + 4 ? box.left + 4 - r.left : r.right > box.right - 4 ? box.right - 4 - r.right : 0;
+    b.style.marginLeft = `${shift}px`;
+  }
+  const rows = [[], []];
+  dial.querySelectorAll(".tuner-name").forEach((b, i) => rows[i % 2].push(b.getBoundingClientRect()));
+  const crowded = rows.some((row) => row.some((r, i) => i && r.left < row[i - 1].right + 4))
+    || [...dial.querySelectorAll(".tuner-label")].some((l) => l.scrollWidth > l.clientWidth + 1);
+  dial.classList.toggle("logos-only", crowded);
 }
 
 const tunedIndex = () => TUNE.stations.findIndex((st) => S.mode === "radio" && S.station && st.url === S.station.url);
@@ -1805,7 +1837,7 @@ function dialSpot(e) {
 function dragTo(e) {
   const { x, i, off } = dialSpot(e);
   $("#tuner-needle").style.left = `${x * 100}%`;
-  for (const b of document.querySelectorAll(".tuner-name")) b.classList.toggle("near", b.dataset.url === TUNE.stations[i].url);
+  for (const b of document.querySelectorAll("#tuner [data-url]")) b.classList.toggle("near", b.dataset.url === TUNE.stations[i].url);
   staticHiss(off);
 }
 
@@ -1835,7 +1867,7 @@ function syncTuner() {
   if (i >= 0) needle.style.left = `${((i + 0.5) / n) * 100}%`;
   dial.setAttribute("aria-valuenow", String(Math.max(1, i + 1)));
   dial.setAttribute("aria-valuetext", i >= 0 ? TUNE.stations[i].name : "Not tuned");
-  for (const b of document.querySelectorAll(".tuner-name")) {
+  for (const b of document.querySelectorAll("#tuner [data-url]")) {
     b.classList.remove("near");
     b.classList.toggle("on", i >= 0 && b.dataset.url === TUNE.stations[i].url);
   }
@@ -1986,7 +2018,7 @@ const FIND_COUNTRIES = ["GB", "IE", "US", "CA", "AU", "NZ", "DE", "FR", "NL", "B
 const FIND_GENRES = ["techno / trance", "house / garage", "chart / pop", "asian / bhangra", "latin", "afrobeats",
   "jazz", "soul", "funk", "reggae", "hip hop", "drum and bass", "ambient",
   "chillout", "electronic", "rock", "indie", "metal", "folk", "blues", "country", "classical", "oldies", "80s",
-  "90s", "news", "talk"];
+  "90s", "news", "talk", "sport"];
 
 // The country this computer is set to (en-GB: GB), searched by default.
 function homeCountry() {
@@ -2243,7 +2275,7 @@ function finderView(view, focus = false) {
 // bundled as world.json and drawn here, with no map service.
 
 const G = { world: null, loading: null, stations: new Map(), countries: new Set(),
-  kind: ["music", "news"].includes(store("globe-kind")) ? store("globe-kind") : "all", genre: store("globe-genre") || "",
+  kind: ["music", "news", "sport"].includes(store("globe-kind")) ? store("globe-kind") : "all", genre: store("globe-genre") || "",
   lon: 0, lat: 20, zoom: 1, spin: !matchMedia("(prefers-reduced-motion: reduce)").matches, picked: null, raf: 0, last: 0, pointers: new Map(), moved: 0,
   pinch: 0, settle: 0, error: "", busy: 0, token: 0, hover: null };
 const GLOBE_MAX_ZOOM = 24;
@@ -2564,7 +2596,7 @@ function globeStatus() {
   const line = $("#globe-status");
   if (!line) return;
   const n = G.stations.size;
-  const what = G.kind === "news" ? "news and talk station"
+  const what = G.kind === "news" ? "news and talk station" : G.kind === "sport" ? "sport station"
     : G.kind === "music" ? `${G.genre || "music"} station` : "station";
   line.textContent = G.error || (G.busy && !n ? "Finding stations…"
     : `${plural(n, what)} on the globe${G.busy ? ", finding more…" : ""}`);
@@ -2709,16 +2741,17 @@ function globeSection() {
   return el("div", { class: "globe-box" },
     el("div", { class: "globe-tools" },
       el("div", { class: "globe-kinds", role: "group", "aria-label": "Show" },
-        ...[["all", "All"], ["music", "Music"], ["news", "News"]].map(([kind, label]) => el("button", {
+        ...[["all", "All"], ["music", "Music"], ["news", "News"], ["sport", "Sport"]].map(([kind, label]) => el("button", {
           type: "button", class: "chip", "data-kind": kind, "aria-pressed": String(G.kind === kind),
-          title: { all: "Every station", music: "Music stations, leaving out news and talk", news: "Only news and talk stations" }[kind],
+          title: { all: "Every station", music: "Music stations, leaving out news, talk and sport",
+            news: "Only news and talk stations", sport: "Only sport stations: football, cricket, racing and more" }[kind],
           onclick: () => { if (G.kind !== kind) globeShow(kind); },
         }, label))),
       el("select", {
         id: "globe-genre", "aria-label": "Music genre", hidden: G.kind !== "music",
         onchange: (e) => globeShow("music", e.target.value),
       }, el("option", { value: "" }, "Any music"),
-      ...FIND_GENRES.filter((g) => g !== "news" && g !== "talk").map((g) => el("option", { value: g, selected: g === G.genre }, g))),
+      ...FIND_GENRES.filter((g) => !["news", "talk", "sport"].includes(g)).map((g) => el("option", { value: g, selected: g === G.genre }, g))),
       el("p", { class: "help", id: "globe-status", role: "status" }),
       el("button", { type: "button", class: "btn ghost icon-only", "aria-label": "Zoom out", onclick: () => { globeStop(); globeZoom(1 / 1.6); } }, icon("minus")),
       el("button", { type: "button", class: "btn ghost icon-only", "aria-label": "Zoom in", onclick: () => { globeStop(); globeZoom(1.6); } }, icon("plus"))),
