@@ -636,7 +636,7 @@ def test_home_tiles_and_picks_pause_while_playing(page, player, tone_station):
     try:
         sync_api.expect(picks.get_by_role("button", name="Play the mix: The mix")).to_have_text("Play the mix")
     except AssertionError:
-        print("::warning title=probe::" + page.evaluate("() => JSON.stringify({log: evlog, labels: [...document.querySelectorAll('#home-picks button')].map(b => b.getAttribute('aria-label')), src: S.radioSrc, paused: audio.paused, isRelay: audio === radioRelay, view: S.view.type})"))
+        print("::warning title=probe::" + page.evaluate("() => JSON.stringify({log: evlog, labels: [...document.querySelectorAll('#home-picks button')].map(b => b.getAttribute('aria-label')), picks: !!document.querySelector('#home-picks'), picksHidden: document.querySelector('#home-picks')?.hidden, homePicks: HOME.picks && HOME.picks.picks.length, src: S.radioSrc, mode: S.mode, station: S.station && S.station.url, paused: audio.paused, isRelay: audio === radioRelay, view: S.view.type, href: location.href, now: Math.round(performance.now())})"))
         raise
 
 

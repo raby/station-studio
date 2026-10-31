@@ -57,10 +57,10 @@ jobs:
           STATION_PLAYER_REQUIRE_BROWSER: '1'
         run: |
           fails=0
-          for i in $(seq 1 60); do
-            python -m pytest -q -s -p no:cacheprovider tests/test_browser.py -k home_tiles_and_picks > out.txt 2>&1 || { fails=$((fails+1)); grep '::warning' out.txt | head -1; grep -m3 -E 'AssertionError|Error:' out.txt | sed 's/^/::warning title=probe-error::/'; }
+          for i in $(seq 1 10); do
+            python -m pytest -q -s -p no:cacheprovider > out.txt 2>&1 || { fails=$((fails+1)); grep '::warning' out.txt | head -3; grep -E '^FAILED' out.txt | sed 's/^/::warning title=probe-failed::/'; }
           done
-          echo "::warning title=probe-summary::$fails of 60 failed"
+          echo "::warning title=probe-summary::$fails of 10 full runs failed"
       - name: pytest
         working-directory: player
         env:
