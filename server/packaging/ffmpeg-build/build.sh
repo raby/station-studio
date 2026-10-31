@@ -78,10 +78,13 @@ build_lame() {
   tar -xzf "$lame_src" -C "$work"
   cd "$work"/lame-*/
   # Newer compilers: LAME's configure trips over C23, and its code has
-  # old-style declarations (as Homebrew builds it).
-  ac_cv_prog_cc_c23=no CFLAGS="$cflags -Wno-implicit-function-declaration" LDFLAGS="$ldflags" \
+  # old-style declarations (as Homebrew builds it). Just the encoding
+  # library: no lame program, no MP3 decoder (4.0's needs libmpg123;
+  # ffmpeg decodes), and no iconv (only the program uses it).
+  ac_cv_prog_cc_c23=no am_cv_func_iconv=no \
+    CFLAGS="$cflags -Wno-implicit-function-declaration" LDFLAGS="$ldflags" \
     ./configure --prefix="$prefix" --disable-shared --enable-static \
-      --disable-frontend --disable-gtktest --disable-dependency-tracking
+      --disable-frontend --disable-decoder --disable-gtktest --disable-dependency-tracking
   make -j"$jobs"
   make install
 }
