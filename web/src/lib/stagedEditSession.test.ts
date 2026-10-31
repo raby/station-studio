@@ -252,19 +252,57 @@ describe('createStagedEditSession', () => {
     session.destroy();
   });
 
-  it('a newer change cancels the preview job that was running', async () => {
+  it("a newer change cancels the edits' preview that was running", async () => {
+    const session = await ready(); // job-1: the saved week
     let release: () => void = () => {};
     watchJobMock.mockImplementationOnce(async function* () {
       await new Promise<void>((r) => { release = r; });
       yield { status: 'cancelled' };
     });
-    const session = createStagedEditSession('ts', { debounceMs: 0 });
-    await session.load();
-    await vi.waitFor(() => expect(startPreviewJobMock).toHaveBeenCalledTimes(1));
+    session.stage({ kind: 'patchBlock', address: { slot_index: 1 }, fields: { size: 5 } });
+    await vi.waitFor(() => expect(startPreviewJobMock).toHaveBeenCalledTimes(2));
     session.stage(sizeEdit);
-    expect(cancelJobMock).toHaveBeenCalledWith('job-1');
+    expect(cancelJobMock).toHaveBeenCalledWith('job-2');
     release();
     await vi.waitFor(() => expect(get(session).stagedTrace).toMatchObject({ size1: 7 }));
+    session.destroy();
+  });
+
+  it("an edit made while the saved week's preview runs waits for it instead of cancelling it", async () => {
+    let release: () => void = () => {};
+    const original = watchJobMock.getMockImplementation()!;
+    watchJobMock.mockImplementationOnce(async function* (id: string) {
+      await new Promise<void>((r) => { release = r; });
+      yield* original(id);
+    });
+    const session = createStagedEditSession('ts', { debounceMs: 0, previewOnlyWhenEdited: true });
+    await session.load();
+    await vi.waitFor(() => expect(startPreviewJobMock).toHaveBeenCalledTimes(1)); // started on load
+    session.stage(sizeEdit);
+    await new Promise((r) => setTimeout(r, 10));
+    expect(cancelJobMock).not.toHaveBeenCalled();
+    expect(startPreviewJobMock).toHaveBeenCalledTimes(1); // the edit waits its turn
+    release();
+    await vi.waitFor(() => expect(get(session).stagedTrace).toMatchObject({ size1: 7 }));
+    expect(get(session).savedTrace).toMatchObject({ size1: 2 });
+    expect(startPreviewJobMock).toHaveBeenCalledTimes(2);
+    session.destroy();
+  });
+
+  it("the saved week's preview is dropped when the week changes", async () => {
+    let release: () => void = () => {};
+    const original = watchJobMock.getMockImplementation()!;
+    watchJobMock.mockImplementationOnce(async function* (id: string) {
+      await new Promise<void>((r) => { release = r; });
+      yield* original(id);
+    });
+    const session = createStagedEditSession('ts', { debounceMs: 0, previewOnlyWhenEdited: true });
+    await session.load();
+    await vi.waitFor(() => expect(startPreviewJobMock).toHaveBeenCalledTimes(1));
+    session.setWeek(2);
+    expect(cancelJobMock).toHaveBeenCalledWith('job-1');
+    release();
+    await vi.waitFor(() => expect(get(session).savedTrace).toMatchObject({ week: 2 }));
     session.destroy();
   });
 
@@ -323,16 +361,17 @@ describe('createStagedEditSession', () => {
     session.destroy();
   });
 
-  it('previewOnlyWhenEdited: no preview until an edit is queued, none after the queue empties', async () => {
+  it('previewOnlyWhenEdited: the saved week is worked out on load; edits preview only while queued', async () => {
     const session = createStagedEditSession('ts', { debounceMs: 0, previewOnlyWhenEdited: true });
     await session.load();
-    await new Promise((r) => setTimeout(r, 10));
-    expect(startPreviewJobMock).not.toHaveBeenCalled();
-    expect(get(session)).toMatchObject({ savedTrace: null, stagedTrace: null, previewing: false });
+    // Ready before the first edit, so that edit needs one job, not two.
+    await vi.waitFor(() => expect(get(session).savedTrace).toMatchObject({ size1: 2 }));
+    expect(get(session)).toMatchObject({ stagedTrace: null, previewing: false });
+    expect(startPreviewJobMock).toHaveBeenCalledTimes(1);
 
     session.stage(sizeEdit);
     await vi.waitFor(() => expect(get(session).stagedTrace).toMatchObject({ size1: 7 }));
-    expect(get(session).savedTrace).toMatchObject({ size1: 2 });
+    expect(startPreviewJobMock).toHaveBeenCalledTimes(2);
 
     session.unstage(0);
     expect(get(session).stagedTrace).toBeNull();

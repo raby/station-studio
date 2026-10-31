@@ -23,7 +23,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "station-studio"
-version = "1.12.0"
+version = "1.13.0"
 description = "Open-source playlist generator for hobbyist radio stations"
 readme = "README.md"
 license = { file = "LICENSE" }

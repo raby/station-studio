@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { Trace, TraceSlot } from './api';
 import type { EngineBlock, Sidecar, StationTemplate } from './editor';
-import { describeQueued, removedCount, ruleKey, ruleText, songGroups, songsChanged } from './songList';
+import { describeQueued, filterGroups, removedCount, rowRule, ruleKey, ruleText, songGroups, songsChanged } from './songList';
 
 // The two real example stations: Rebirth Radio (flat slots, sections,
 // 200-song macros) and Rebirth Classics (a repeating row).
@@ -179,5 +179,41 @@ describe('describeQueued', () => {
     const [line] = describeQueued(
       [{ kind: 'renameSection', sectionId: sidecar.sections[0].id, name: 'Mornings' }], template, sidecar);
     expect(line).toContain('Mornings');
+  });
+});
+
+describe('filterGroups', () => {
+  const { template, sidecar } = station('rebirth-radio');
+  const week = flatWeek(template, 6);
+  week.slots[2] = { ...week.slots[2], track_name: 'Night Drive', track_artist: 'The Cure' };
+  const groups = songGroups(week, template, sidecar);
+  const positions = (gs: ReturnType<typeof filterGroups>) => gs.flatMap((g) => g.rows.map((r) => r.position));
+
+  it('no search: everything, untouched', () => {
+    expect(filterGroups(groups, '  ')).toBe(groups);
+  });
+
+  it('matches song or artist, any case, every word somewhere', () => {
+    expect(positions(filterGroups(groups, 'night drive'))).toEqual([3]);
+    expect(positions(filterGroups(groups, 'CURE'))).toEqual([3]);
+    expect(positions(filterGroups(groups, 'cure drive'))).toEqual([3]);
+    expect(filterGroups(groups, 'cure zzz')).toEqual([]);
+  });
+
+  it('matches the rule as written and the macro name', () => {
+    const shuffled = positions(filterGroups(groups, 'shuffled'));
+    expect(shuffled.length).toBeGreaterThan(0);
+    const rows = groups.flatMap((g) => g.rows);
+    expect(shuffled).toEqual(rows.filter((r) => rowRule(r).startsWith('Shuffled')).map((r) => r.position));
+    expect(positions(filterGroups(groups, '200 ×'))).toEqual(
+      rows.filter((r) => r.macroName === '200 × weighted').map((r) => r.position));
+  });
+
+  it('only changed songs, alone or with a search', () => {
+    const saved = flatWeek(template, 6);
+    const edited = trace(saved.slots.map((s, i) => (i === 1 || i === 4 ? { ...s, track_id: 900 + i } : s)));
+    const marked = songGroups(edited, template, sidecar, saved);
+    expect(positions(filterGroups(marked, '', true))).toEqual([2, 5]);
+    expect(positions(filterGroups(marked, 'Song 4', true))).toEqual([5]);
   });
 });
