@@ -24,6 +24,32 @@ jobs=$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
 
 ffmpeg_src=$(ls "$src"/ffmpeg-*.tar.xz)
 lame_src=$(ls "$src"/lame-*.tar.gz)
+log="$work/build.log"
+
+# Run a stage with its output in the log. If it fails: the end of the
+# log and of configure's config.log, on the screen and (in CI) as an
+# annotation on the run, where it can be read without the full log.
+stage() {
+  local name=$1; shift
+  echo "--- $name"
+  # Not `if "$@"`: set -e is off inside a condition, so a failing step
+  # wouldn't stop the stage.
+  local code=0
+  set +e
+  ( set -e; "$@" ) >>"$log" 2>&1
+  code=$?
+  set -e
+  [ "$code" = 0 ] && return
+  local why
+  why=$(tail -n 30 "$log"; for c in "$work"/*/config.log "$work"/*/ffbuild/config.log; do
+          if [ -f "$c" ]; then echo "--- ${c#"$work"/}"; tail -n 20 "$c"; fi; done)
+  echo "$why" >&2
+  if [ -n "${GITHUB_ACTIONS:-}" ]; then
+    why=${why//'%'/'%25'}; why=${why//$'\r'/}; why=${why//$'\n'/'%0A'}
+    echo "::error title=ffmpeg build: $name failed::$why"
+  fi
+  exit 1
+}
 
 cflags="-O2"
 ldflags=""
@@ -48,9 +74,8 @@ case "$(uname -s)" in
     ;;
 esac
 
-echo "--- LAME"
-tar -xzf "$lame_src" -C "$work"
-(
+build_lame() {
+  tar -xzf "$lame_src" -C "$work"
   cd "$work"/lame-*/
   # Newer compilers: LAME's configure trips over C23, and its code has
   # old-style declarations (as Homebrew builds it).
@@ -59,11 +84,10 @@ tar -xzf "$lame_src" -C "$work"
       --disable-frontend --disable-gtktest --disable-dependency-tracking
   make -j"$jobs"
   make install
-)
+}
 
-echo "--- FFmpeg"
-tar -xJf "$ffmpeg_src" -C "$work"
-(
+build_ffmpeg() {
+  tar -xJf "$ffmpeg_src" -C "$work"
   cd "$work"/ffmpeg-*/
   # --disable-autodetect: nothing from the build machine (system
   # frameworks, other libraries) ends up in it unasked; threads are
@@ -90,7 +114,10 @@ tar -xJf "$ffmpeg_src" -C "$work"
     echo
     cat COPYING.LGPLv2.1
   } > "$work/ffmpeg-licence.txt"
-)
+}
+
+( stage LAME build_lame )
+( stage FFmpeg build_ffmpeg )
 {
   cat "$work/ffmpeg-licence.txt"
   echo
