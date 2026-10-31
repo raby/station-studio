@@ -243,4 +243,37 @@ test.describe('trace viewer', () => {
     await expect(page.getByTestId('song-rule').nth(1)).toContainText('Picked from A');
     await expect(page.getByTestId('song-rule').nth(1)).not.toContainText('rule changed since');
   });
+
+  test('Songs view: change a rule and the identical ones with it', async ({ page, request }) => {
+    await importTinyPool(request, 'A');
+    const t = minimalTemplate('trv-twins');
+    t.layout.unit_labels = ['Mon', 'Tue'];
+    t.layout.row_start_offsets = [0, 0];
+    t.layout.row_template = [
+      { source: 'A', strategy: 'weighted', size: 1 },
+      { source: 'A', strategy: 'pick', size: 1 },
+      { source: 'A', strategy: 'weighted', size: 1 },
+    ] as typeof t.layout.row_template;
+    await createStation(request, 'trv-twins', 'Trace View Twins', 'A', t);
+    const { playlist_id } = await generate(request, 'trv-twins', 1);
+    await page.goto(`/playlists/${playlist_id}`);
+    await page.getByTestId('week-view-songs').click();
+
+    await page.getByTestId('song-row').first().click();
+    await expect(page.getByTestId('also-identical')).toContainText('1 other rule just like this one');
+    await page.getByTestId('also-identical-input').check();
+    await page.getByTestId('input-window').fill('3');
+    await page.getByTestId('detail-save').click();
+    await expect(page.getByTestId('song-edit-count')).toContainText("1 change to 2 of this station's rules");
+    await expect(page.getByTestId('song-edit-item')).toHaveCount(1);
+    await expect(page.getByTestId('song-edit-item')).toContainText('and the 1 rule just like it');
+    await page.getByTestId('detail-save').hover(); // the button stays readable on hover
+    await assertNoA11yViolations(page);
+
+    await page.getByTestId('song-edit-save').click();
+    await expect(page.getByTestId('song-edit-saved')).toBeVisible();
+    const saved = await (await request.get(`${API}/api/stations/trv-twins/sidecar`)).json();
+    const row = saved.template.layout.row_template;
+    expect([row[0].window, row[1].window, row[2].window]).toEqual([3, undefined, 3]);
+  });
 });

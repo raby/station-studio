@@ -1889,6 +1889,31 @@ describe('trace viewer — changing a song\'s rule', () => {
     expect(screen.getByTestId('song-shown')).toHaveTextContent('Showing 1 of 3');
   });
 
+  it('can change the identical rules in the row too', async () => {
+    previewsSavedThenEdited();
+    // A third block just like the first.
+    const twinTemplate = template();
+    twinTemplate.layout.row_template.push({ source: 'A', strategy: 'window', size: 2 });
+    const twinSidecar = sidecar();
+    twinSidecar.sections[0].blocks.push({ kind: 'atomic', row_idx: 0, block_idx: 2 });
+    getStationSidecarMock.mockImplementation(async () =>
+      ({ template: twinTemplate, sidecar: twinSidecar, sidecar_error: null, updated_at: 'ts-1' }));
+    render(Page);
+    await fireEvent.click((await screen.findAllByTestId('song-row'))[0]);
+    await screen.findByTestId('detail-panel');
+    expect(screen.getByTestId('also-identical')).toHaveTextContent('Also change the 1 other rule just like this one');
+    await fireEvent.click(screen.getByTestId('also-identical-input'));
+    await fireEvent.click(screen.getByTestId('retype-toggle'));
+    await fireEvent.change(screen.getByTestId('retype-strategy'), { target: { value: 'pick' } });
+    await fireEvent.click(screen.getByTestId('retype-apply'));
+    // One change, to two rules: said once, undone together.
+    expect(await screen.findByTestId('song-edit-count')).toHaveTextContent("1 change to 2 of this station's rules");
+    expect(screen.getByTestId('song-edit-item'))
+      .toHaveTextContent('The day, rule 1: Picked from A, and the 1 rule just like it');
+    await fireEvent.click(screen.getByTestId('song-edit-undo'));
+    await vi.waitFor(() => expect(screen.queryByTestId('song-edit-count')).toBeNull());
+  });
+
   it('lists each change in plain words with how many songs move, and undoes one', async () => {
     previewsSavedThenEdited();
     render(Page);

@@ -591,6 +591,51 @@ describe('<DetailPanel> — c2 review #1 fixes', () => {
   });
 });
 
+describe('<DetailPanel> — identical rules', () => {
+  beforeEach(() => cleanup());
+
+  const twinSidecar = (): Sidecar => ({
+    schema_version: 1, sections: [], layout_order: [],
+    macros: [
+      ...['m1', 'm2', 'm3'].map((id) => ({
+        id, name: id.toUpperCase(), repeat: 7,
+        spec: { source: 'A', strategy: 'weighted' as const, size: 1, window: 7 },
+      })),
+      { id: 'other', name: 'Other', repeat: 7, spec: { source: 'A', strategy: 'weighted' as const, size: 1, window: 3 } },
+    ],
+  });
+  const macroRef = (id: string): MacroPlaceholder => ({ kind: 'macro-placeholder', macro_id: id, pick_in_macro: 1 });
+
+  it('offers to change the identical rules too, and sends them only when ticked', async () => {
+    const handler = vi.fn();
+    const { on } = renderWithEvents(DetailPanel, {
+      selected: { ref: macroRef('m1'), section: SECTION }, template: makeTemplate(), sidecar: twinSidecar(),
+    });
+    on('macroSave', handler);
+    expect(screen.getByTestId('also-identical'))
+      .toHaveTextContent('Also change the 2 other rules just like this one (14 songs a week)');
+
+    await fireEvent.input(screen.getByTestId('input-window'), { target: { value: '2' } });
+    await fireEvent.click(screen.getByTestId('detail-save'));
+    expect(handler.mock.calls[0][0].detail).toMatchObject({ macroId: 'm1', alsoMacroIds: [] });
+
+    await fireEvent.click(screen.getByTestId('also-identical-input'));
+    await fireEvent.click(screen.getByTestId('detail-save'));
+    expect(handler.mock.calls[1][0].detail).toMatchObject({ macroId: 'm1', fields: { window: 2 }, alsoMacroIds: ['m2', 'm3'] });
+  });
+
+  it('no identical rules, no offer; a new selection starts unticked', async () => {
+    const props = { template: makeTemplate(), sidecar: twinSidecar() };
+    const { rerender } = render(DetailPanel, { ...props, selected: { ref: macroRef('other'), section: SECTION } });
+    expect(screen.queryByTestId('also-identical')).toBeNull();
+    await rerender({ ...props, selected: { ref: macroRef('m1'), section: SECTION } });
+    await fireEvent.click(screen.getByTestId('also-identical-input'));
+    expect(screen.getByTestId('also-identical-input')).toBeChecked();
+    await rerender({ ...props, selected: { ref: macroRef('m2'), section: SECTION } });
+    expect(screen.getByTestId('also-identical-input')).not.toBeChecked();
+  });
+});
+
 describe('<DetailPanel> — where the rule is, and the station\'s defaults', () => {
   beforeEach(() => cleanup());
 

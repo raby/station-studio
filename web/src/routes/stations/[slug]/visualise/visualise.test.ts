@@ -589,6 +589,36 @@ describe('visualise +page.svelte — §16.2.6 c3d handler intercepts (toggle ON 
     expect(await screen.findByTestId('staged-save')).toHaveTextContent(/Save 1 edit/);
   });
 
+  it('a change to identical rules too queues one edit per rule', async () => {
+    await mountAndAwaitStub();
+    await act(async () => {
+      fireEditorCanvasEvent('macroSave', {
+        macroId: 'm1',
+        fields: { window: 2 },
+        alsoMacroIds: ['m2', 'm3'],
+      });
+    });
+    expect(await screen.findByTestId('staged-save')).toHaveTextContent(/Save 3 edits/);
+  });
+
+  it('with live preview off, a change to identical rules saves in one batch', async () => {
+    window.localStorage.setItem('livePreview:viz-test', 'off');
+    await mountAndAwaitStub();
+    await act(async () => {
+      fireEditorCanvasEvent('save', {
+        ref: { kind: 'atomic-ref', slot_index: 0 },
+        fields: { size: 5 },
+        also: [{ kind: 'atomic-ref', slot_index: 2 }],
+      });
+    });
+    await vi.waitFor(() => expect(applyBatchMock).toHaveBeenCalledTimes(1));
+    expect((applyBatchMock.mock.calls[0] as unknown[])[1]).toEqual([
+      { kind: 'patchBlock', address: { slot_index: 0 }, fields: { size: 5 } },
+      { kind: 'patchBlock', address: { slot_index: 2 }, fields: { size: 5 } },
+    ]);
+    expect(patchBlockMock).not.toHaveBeenCalled();
+  });
+
   it('renameSection — sectionRename event → opLog grows', async () => {
     await mountAndAwaitStub();
     await act(async () => {

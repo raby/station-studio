@@ -34,14 +34,14 @@
   import DetailPanel from '$lib/components/editor/DetailPanel.svelte';
   import { findSectionIdForRef, type ExpandedRef, type ParsedEditorSidecar } from '$lib/editor';
   import {
-    describeQueued, ruleDefaultsFrom, ruleKey, songsChanged, type RuleDefaults, type SongRow,
+    queuedChanges, ruleDefaultsFrom, ruleKey, songsChanged, type RuleDefaults, type SongRow,
   } from '$lib/songList';
   import {
     createStagedEditSession,
     type StagedEditSession,
     type StagedEditState,
   } from '$lib/stagedEditSession';
-  import { editFromPanel, type PanelEvent } from '$lib/panelEdits';
+  import { editsFromPanel, type PanelEvent } from '$lib/panelEdits';
   import { readStagedEdits } from '$lib/stagedEdits';
 
   let trace: Trace | null = null;
@@ -142,9 +142,11 @@
   }
 
   function onPanel(event: PanelEvent): void {
-    const edit = editFromPanel(event);
-    if (edit !== null && session) {
-      session.stage(edit);
+    // The rule's own change, then the same to each identical rule the
+    // operator ticked.
+    const edits = editsFromPanel(event);
+    if (edits.length > 0 && session) {
+      for (const edit of edits) session.stage(edit);
       justSaved = false;
     }
   }
@@ -171,10 +173,17 @@
   // What the list shows: the week with the queued edits once that preview
   // is in, marked against the same week under the saved rules; otherwise
   // the week as generated.
-  // The queued changes in plain words, against the rules as saved.
-  $: queuedText = editState && editState.template && editState.sidecar && editState.opLog.length > 0
-    ? describeQueued(editState.opLog, editState.template, editState.sidecar, ruleDefaults)
+  // The queued changes in plain words, against the rules as saved; a
+  // change that went to identical rules too is one line.
+  $: queued = editState && editState.template && editState.sidecar && editState.opLog.length > 0
+    ? queuedChanges(editState.opLog, editState.template, editState.sidecar, ruleDefaults)
     : [];
+
+  /** Undo one change: every queued edit it is, last first so the
+   *  places of the rest don't shift. */
+  function undoChange(indices: number[]): void {
+    for (const i of [...indices].reverse()) session?.unstage(i);
+  }
   function movedText(n: number, of: number): string {
     if (n === 0) return `No songs in week ${trace?.week} change.`;
     return `${n} of ${of} ${of === 1 ? 'song' : 'songs'} in week ${trace?.week} change.`;
@@ -1227,17 +1236,19 @@
           </div>
         {:else if editState.opLog.length > 0}
           <p data-testid="song-edit-count">
-            <strong>{editState.opLog.length} {editState.opLog.length === 1 ? 'change' : 'changes'}</strong>
-            to this station's rules, for every week, not just this one.
+            <strong>{queued.length || editState.opLog.length} {(queued.length || editState.opLog.length) === 1 ? 'change' : 'changes'}</strong>
+            to {editState.opLog.length > queued.length && queued.length > 0
+              ? `${editState.opLog.length} of this station's rules`
+              : "this station's rules"}, for every week, not just this one.
             {#if editState.previewing}<span class="muted" data-testid="song-edit-previewing">Previewing week {trace.week}…</span>
             {:else if showingEdits && editing?.stagedTrace}<span class="muted" data-testid="song-edit-moved">{movedText(songsChanged(editing.stagedTrace, editing.savedTrace), editing.stagedTrace.slots.length)}</span>{/if}
           </p>
           <ol class="queued" data-testid="song-edit-list">
-            {#each queuedText as text, i (i)}
+            {#each queued as change (change.indices.join(','))}
               <li data-testid="song-edit-item">
-                <span>{text}</span>
+                <span>{change.text}</span>
                 <button type="button" class="link" data-testid="song-edit-undo" disabled={editState.saving}
-                  on:click={() => session?.unstage(i)}>Undo</button>
+                  on:click={() => undoChange(change.indices)}>Undo</button>
               </li>
             {/each}
           </ol>

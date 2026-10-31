@@ -314,3 +314,60 @@ export function describeQueued(
     return describeOp(op);
   });
 }
+
+/** One change as the operator made it: a line, and the queued edits it
+ *  is (several when it went to identical rules too). */
+export interface QueuedChange {
+  text: string;
+  /** Places in the queue, ascending. */
+  indices: number[];
+}
+
+/** Which rule an edit is to, for telling identical rules apart. */
+function changeTarget(op: Edit): string {
+  if (op.kind === 'patchMacro') return `macro:${op.macroId}`;
+  if (op.kind === 'patchBlock' || op.kind === 'retypeBlock') return JSON.stringify(op.address);
+  return '';
+}
+
+/** The same change, whichever rule it went to. */
+function changeSignature(op: Edit): string {
+  if (op.kind === 'patchMacro') return JSON.stringify({ ...op, macroId: null });
+  if (op.kind === 'patchBlock' || op.kind === 'retypeBlock') return JSON.stringify({ ...op, address: null });
+  return JSON.stringify(op);
+}
+
+/**
+ * The queue as the changes the operator made: consecutive edits making
+ * the same change to different rules (the panel's "Also change the
+ * rules just like this one") are one change, said once ("…, and the 20
+ * rules just like it") and undone together.
+ */
+export function queuedChanges(
+  opLog: Edit[],
+  template: StationTemplate,
+  sidecar: Sidecar,
+  defaults: RuleDefaults = {},
+): QueuedChange[] {
+  const lines = describeQueued(opLog, template, sidecar, defaults);
+  const groups: { first: string; sig: string; targets: Set<string>; indices: number[] }[] = [];
+  opLog.forEach((op, i) => {
+    const sig = changeSignature(op);
+    const target = changeTarget(op);
+    const last = groups[groups.length - 1];
+    // Only a different rule joins: the same edit twice is two changes.
+    if (last && last.sig === sig && target !== '' && !last.targets.has(target)) {
+      last.indices.push(i);
+      last.targets.add(target);
+    } else {
+      groups.push({ first: lines[i], sig, targets: new Set([target]), indices: [i] });
+    }
+  });
+  return groups.map(({ first, indices }) => {
+    const more = indices.length - 1;
+    return {
+      text: more === 0 ? first : `${first}, and the ${more} ${more === 1 ? 'rule' : 'rules'} just like it`,
+      indices,
+    };
+  });
+}
