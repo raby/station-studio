@@ -629,9 +629,24 @@ def test_home_tiles_and_picks_pause_while_playing(page, player, tone_station):
     page.wait_for_function("() => S.mode === 'radio' && S.station.url.endsWith('?2') && !audio.paused", timeout=10000)
     pause = picks.get_by_role("button", name="Pause: The mix")
     sync_api.expect(pause).to_have_text("Pause")
+    # Home looks at the picks again every minute: still Pause while it plays.
+    assert page.evaluate("syncHome(), document.querySelector('#home-picks .listen').getAttribute('aria-label')") == "Pause: The mix"
     pause.click()
     page.wait_for_function("() => audio.paused")
     sync_api.expect(picks.get_by_role("button", name="Play the mix: The mix")).to_have_text("Play the mix")
+
+
+def test_pausing_while_a_station_connects_stays_paused_when_the_relay_fails(page, tone_station):
+    # The relay won't play a station on this computer (not the public
+    # internet), so the page falls back to playing it directly. A pause
+    # before that happens is kept: it used to start playing anyway.
+    page.evaluate(f"playStation({{ name: 'Tone', url: '{tone_station}?3', preview: true }}); audio.pause()")
+    page.wait_for_function("() => S.radioSrc === S.station.url", timeout=10000)  # fallen back
+    page.wait_for_timeout(500)
+    assert page.evaluate("audio.paused && radioDirect.paused && radioRelay.paused")
+    # Not paused, the fallback plays as before.
+    page.evaluate(f"playStation({{ name: 'Tone', url: '{tone_station}?4', preview: true }})")
+    page.wait_for_function("() => S.radioSrc === S.station.url && audio === radioDirect && !audio.paused", timeout=10000)
 
 
 def test_seeking_back_near_the_end_doesnt_start_the_next_track_early(page):
