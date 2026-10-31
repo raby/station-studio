@@ -1108,14 +1108,14 @@
         href={exportVersion != null
           ? `/api/playlists/${playlist.id}/export?v=${exportVersion}`
           : `/api/playlists/${playlist.id}/export`}
-        class="button"
+        class="btn-primary"
         data-testid="download-xml"
       >
         Download iTunes XML{exportVersion != null ? ` (v${exportVersion})` : ''}
       </a>
       <button
         type="button"
-        class="button"
+        class="btn-primary"
         data-testid="export-to-disk"
         disabled={diskExporting}
         on:click={exportToDisk}
@@ -1125,7 +1125,7 @@
       {#if serverTarget && exportVersion == null}
         <button
           type="button"
-          class="button"
+          class="btn-primary"
           data-testid="send-to-station-server"
           disabled={sending || diskExporting}
           on:click={sendToServer}
@@ -1253,7 +1253,7 @@
             {/each}
           </ol>
           <div class="edit-actions">
-            <button type="button" class="button" data-testid="song-edit-save" disabled={editState.saving} on:click={saveRules}>
+            <button type="button" class="btn-primary" data-testid="song-edit-save" disabled={editState.saving} on:click={saveRules}>
               {editState.saving ? 'Saving…' : 'Save changes'}
             </button>
             <button type="button" data-testid="song-edit-discard" disabled={editState.saving} on:click={() => session?.discard()}>Discard</button>
@@ -1270,7 +1270,7 @@
             {/if}
           </p>
           <div class="edit-actions">
-            <button type="button" class="button" data-testid="song-edit-regenerate" disabled={regenerating} on:click={regenerateWeek}>
+            <button type="button" class="btn-primary" data-testid="song-edit-regenerate" disabled={regenerating} on:click={regenerateWeek}>
               {regenerating && regenerateProgress?.of === 1 ? 'Regenerating…' : 'Regenerate this week'}
             </button>
             {#if laterWeeks.length > 0}
@@ -1611,6 +1611,9 @@
     text-decoration: underline;
     cursor: pointer;
   }
+  .edit-bar .queued .link:hover:not(:disabled) {
+    color: var(--accent-strong);
+  }
   .view-switch {
     display: inline-flex;
     margin: 0 0 0.75rem;
@@ -1625,6 +1628,9 @@
     color: var(--text);
     font: inherit;
     cursor: pointer;
+  }
+  .view-switch button:hover:not([aria-pressed='true']) {
+    background: var(--panel-3);
   }
   .view-switch button + button {
     border-left: 1px solid var(--border);
@@ -1777,25 +1783,6 @@
     margin: 1rem 0 0.5rem;
     display: flex;
     gap: 0.5rem;
-  }
-  .button {
-    display: inline-block;
-    padding: 0.4rem 0.9rem;
-    background: var(--accent);
-    color: var(--accent-text);
-    text-decoration: none;
-    border-radius: 4px;
-    font-size: 0.9rem;
-    border: none;
-    cursor: pointer;
-    font-family: inherit;
-  }
-  .button:hover:not(:disabled) {
-    background: var(--accent);
-  }
-  .button:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
   }
   /* §16.5.t2 — `.disk-status` retired; success styling now lives
      in StatusBanner, error styling in ErrorBanner. */

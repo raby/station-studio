@@ -183,7 +183,7 @@
               Station Server has no weeks for {there.name} yet.
             {/if}
             {#if wantedPlaylist}
-              <button type="button" class="primary" disabled={busy} on:click={() => wantedPlaylist && send(wantedPlaylist)} data-testid="ss-send-missing">
+              <button type="button" class="btn-primary send" disabled={busy} on:click={() => wantedPlaylist && send(wantedPlaylist)} data-testid="ss-send-missing">
                 {busy ? 'Sending…' : `Send week ${wanted} now`}
               </button>
             {:else}
@@ -250,19 +250,8 @@
     min-width: 0;
     overflow-wrap: anywhere;
   }
-  button.primary {
-    background: var(--accent);
-    border-color: var(--accent);
-    color: var(--accent-text);
-    font-weight: 650;
+  .send {
     margin-left: 8px;
-  }
-  /* Own hover colour: the app-wide button:hover (panel grey) ties with
-     button.primary on specificity, so only stylesheet order kept this
-     from going white text on light grey. */
-  button.primary:hover:not(:disabled) {
-    background: var(--accent-strong);
-    border-color: var(--accent-strong);
   }
   button.small {
     font-size: 13px;

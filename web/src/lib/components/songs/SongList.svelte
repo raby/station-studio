@@ -161,6 +161,9 @@
     cursor: pointer;
     font: inherit;
   }
+  .clear:hover {
+    color: var(--accent-strong);
+  }
   .none {
     margin: 0.5rem 0;
     color: var(--muted);

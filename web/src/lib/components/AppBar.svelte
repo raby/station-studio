@@ -196,7 +196,7 @@
       <span class="notice" data-testid="app-update-notice">
         Station Studio {latest} is out.
         <span class="row">
-          <button type="button" class="primary" on:click={update} disabled={busy} data-testid="app-update-now">Update now</button>
+          <button type="button" class="btn-primary" on:click={update} disabled={busy} data-testid="app-update-now">Update now</button>
           <button type="button" on:click={() => notNow(latest)} data-testid="app-update-later">Not now</button>
         </span>
         {#if state.release_page}
@@ -208,7 +208,7 @@
       <span class="notice" data-testid="app-window-offer">
         Station Studio now has a window of its own.
         <span class="row">
-          <button type="button" class="primary" on:click={openWindow} data-testid="app-window-open">Open it</button>
+          <button type="button" class="btn-primary" on:click={openWindow} data-testid="app-window-open">Open it</button>
           <button type="button" on:click={offerDone} data-testid="app-window-later">Not now</button>
         </span>
       </span>
@@ -287,16 +287,6 @@
   button {
     font-size: 13px;
     padding: 4px 10px;
-  }
-  button.primary {
-    background: var(--accent);
-    border-color: var(--accent);
-    color: var(--accent-text);
-    font-weight: 650;
-  }
-  button.primary:hover:not(:disabled) {
-    background: var(--accent-strong);
-    border-color: var(--accent-strong);
   }
   .quit {
     align-items: center;

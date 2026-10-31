@@ -105,7 +105,6 @@
       <div class="actions">
         <button
           type="button"
-          class="button"
           data-testid="confirm-dialog-cancel"
           bind:this={cancelButton}
           on:click={handleCancel}
@@ -114,7 +113,7 @@
         </button>
         <button
           type="button"
-          class="button primary"
+          class="btn-primary"
           class:danger={state.danger}
           data-testid="confirm-dialog-confirm"
           on:click={handleConfirm}
@@ -160,34 +159,17 @@
     justify-content: flex-end;
     gap: 0.5rem;
   }
-  .button {
-    padding: 0.5rem 1rem;
-    border: 1px solid var(--border-strong);
-    border-radius: 4px;
-    background: var(--panel);
-    cursor: pointer;
-    font: inherit;
-  }
-  .button:hover {
-    background: var(--panel-2);
-  }
-  .button:focus-visible {
+  .actions button:focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: 2px;
   }
-  .button.primary {
-    background: var(--accent);
-    color: var(--accent-text);
-    border-color: var(--accent);
-  }
-  .button.primary:hover {
-    background: var(--accent);
-  }
-  .button.primary.danger {
+  .btn-primary.danger {
     background: var(--danger);
     border-color: var(--danger);
   }
-  .button.primary.danger:hover {
+  .btn-primary.danger:hover:not(:disabled) {
     background: var(--danger);
+    border-color: var(--danger);
+    filter: brightness(0.92);
   }
 </style>

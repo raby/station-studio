@@ -202,14 +202,8 @@
     font-size: 0.85rem;
   }
   .add-button {
-    padding: 0.3rem 0.75rem;
-    border: 1px solid var(--border, #ccc);
-    background: var(--panel);
-    border-radius: 4px;
-    cursor: pointer;
     font-size: 0.85rem;
   }
-  .add-button:disabled { cursor: not-allowed; opacity: 0.5; }
   .suggestions {
     list-style: none;
     margin: 0;

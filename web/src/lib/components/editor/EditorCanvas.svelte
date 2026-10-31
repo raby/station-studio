@@ -469,7 +469,7 @@
       />
       <button
         type="button"
-        class="primary"
+        class="btn-primary"
         data-testid="add-section-commit"
         on:click={commitAddSection}
       >Add</button>
@@ -484,7 +484,7 @@
     {:else}
       <button
         type="button"
-        class="primary"
+        class="btn-primary"
         data-testid="add-section"
         on:click={startAddSection}
       >+ Add section</button>
@@ -543,19 +543,6 @@
     border-radius: 4px;
     font: inherit;
     font-size: 0.85rem;
-  }
-  .add-section button {
-    padding: 0.3rem 0.7rem;
-    border: 1px solid var(--border, #ccc);
-    background: var(--panel);
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 0.85rem;
-  }
-  .add-section button.primary {
-    background: var(--accent, #2c7a7b);
-    color: var(--accent-text);
-    border-color: var(--accent, #2c7a7b);
   }
   .add-section .err {
     color: var(--error, #c0392b);

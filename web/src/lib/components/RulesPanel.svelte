@@ -196,7 +196,7 @@
               </span>
               <button
                 type="button"
-                class="save"
+                class="save btn-primary"
                 data-testid="rule-save"
                 disabled={edited[r.key] === r.value || saving[r.key]}
                 on:click={() => save(r)}
@@ -308,35 +308,6 @@
   .rule-default-hint {
     color: var(--text-muted);
     font-size: 0.8rem;
-  }
-  .save {
-    padding: 0.35rem 0.9rem;
-    background: var(--accent);
-    color: var(--accent-text);
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
-  }
-  .save:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-  /* Own hover colour: the app-wide button:hover (panel grey) would
-     otherwise win and leave white text on light grey. */
-  .save:hover:not(:disabled) {
-    background: var(--accent-strong);
-  }
-  .reset {
-    padding: 0.35rem 0.7rem;
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 0.85rem;
-  }
-  .reset:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
   }
   .error {
     color: var(--danger);
