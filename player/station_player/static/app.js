@@ -212,6 +212,10 @@ const radioDirect = new Audio();
 const radios = [radioRelay, radioDirect];
 for (const r of radios) r.preload = "none";
 let radioEl = radioRelay;  // the radio player in use
+// Whether the listener last asked for sound (play) or silence (pause).
+// A stream that fails just stops, with no "pause", so this tells a
+// listener's pause from a failure, which audio.paused can't.
+let radioWanted = false;
 let deckIdx = 0;
 let audio = decks[0];  // the element playing (or paused) right now
 const otherDeck = () => decks[1 - deckIdx];
@@ -1498,7 +1502,10 @@ async function loadPicks() {
 
 function syncHome() {
   const old = $("#home-picks");
-  if (old) old.replaceWith(picksSection());
+  if (!old) return;
+  old.replaceWith(picksSection());
+  // The new buttons say Play; the one whose station is playing says Pause.
+  syncRadioCards();
 }
 
 function greeting(now = new Date()) {
@@ -6040,7 +6047,9 @@ onAudio("error", () => {
     step(1, { afterError: true });
   } else if (S.mode === "radio") {
     if (S.radioSrc !== S.station.url) {
-      playStation(S.station, { via: "direct" });  // relay failed: try the station itself
+      // The relay failed: try the station itself, but only playing if
+      // the listener didn't pause while it was connecting.
+      playStation(S.station, { via: "direct", autoplay: radioWanted });
       return;
     }
     audio.pause();
@@ -6053,7 +6062,8 @@ for (const ev of ["play", "pause", "playing"]) {
     syncRadioCards();
   });
 }
-onAudio("pause", () => { cancelHandoff(); endFade(); saveSession(); });
+onAudio("pause", () => { radioWanted = false; cancelHandoff(); endFade(); saveSession(); });
+onAudio("play", () => { radioWanted = true; });
 onAudio("seeking", cancelHandoff);
 onAudio("playing", () => { if (S.mode === "radio") pollTitle(); });
 addEventListener("pagehide", () => saveSession());
