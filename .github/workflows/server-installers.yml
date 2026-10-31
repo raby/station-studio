@@ -8,6 +8,9 @@
 #
 # ffmpeg comes from BtbN/FFmpeg-Builds (Windows, the LGPL build) and
 # ffmpeg.martin-riedl.de (Mac); its licence goes in the app beside it.
+# The Mac builds are pinned by checksum and kept in this repo's
+# ffmpeg-mac-9.0.2 release too: martin-riedl makes no Intel builds after
+# January 2027 and may not keep the old ones.
 #
 # They aren't signed with a paid Apple or Microsoft certificate, so the
 # first open needs System Settings › Privacy & Security › Open Anyway on
@@ -49,13 +52,16 @@ jobs:
             kind: mac
             arch: apple-silicon
             # ffmpeg 9.0.2 from ffmpeg.martin-riedl.de, pinned so a
-            # rebuild gets the same one (it needs macOS 12).
+            # rebuild gets the same one (it needs macOS 12). The checksum
+            # is of that build's ffmpeg.zip, as martin-riedl publishes it.
             ffmpeg: arm64/1789931890_9.0.2
+            ffmpeg_sha256: PIN-ME
           - os: macos-15-intel
             label: Mac (Intel)
             kind: mac
             arch: intel
             ffmpeg: amd64/1789931006_9.0.2
+            ffmpeg_sha256: PIN-ME
           - os: windows-latest
             label: Windows
             kind: windows
@@ -85,23 +91,43 @@ jobs:
 
       - name: get ffmpeg (Mac)
         if: matrix.kind == 'mac'
+        env:
+          MIRROR: ffmpeg-mac-9.0.2
+          BUILD: ${{ matrix.ffmpeg }}
+          WANT: ${{ matrix.ffmpeg_sha256 }}
         run: |
           set -e
           mkdir -p server/packaging/ffmpeg build/ffmpeg
-          url="https://ffmpeg.martin-riedl.de/download/macos/${{ matrix.ffmpeg }}/ffmpeg.zip"
-          curl -fsSL --retry 3 -o build/ffmpeg/ffmpeg.zip "$url"
-          curl -fsSL --retry 3 -o build/ffmpeg/ffmpeg.zip.sha256 "$url.sha256"
-          # The published checksum: a download that isn't that build stops here.
-          want=$(awk '{print $1}' build/ffmpeg/ffmpeg.zip.sha256)
-          got=$(shasum -a 256 build/ffmpeg/ffmpeg.zip | awk '{print $1}')
-          echo "ffmpeg.zip sha256: published ${want:-(none)}, downloaded $got"
-          # Not `test -n … && test …`: under set -e a failing first test
+          # Our own copy first, in this repo's release; martin-riedl's if
+          # it isn't there yet. Either way it must be the pinned build.
+          name="ffmpeg-macos-${BUILD/\//-}.zip"  # ffmpeg-macos-amd64-1789931006_9.0.2.zip
+          if gh release download "$MIRROR" --repo "$GITHUB_REPOSITORY" --pattern "$name" --dir build/ffmpeg 2>/dev/null; then
+            from=mirror
+          else
+            from=martin-riedl
+            url="https://ffmpeg.martin-riedl.de/download/macos/$BUILD/ffmpeg.zip"
+            curl -fsSL --retry 3 -o "build/ffmpeg/$name" "$url"
+            curl -fsSL --retry 3 -o build/ffmpeg/published.sha256 "$url.sha256"
+            published=$(awk '{print $1}' build/ffmpeg/published.sha256)
+          fi
+          got=$(shasum -a 256 "build/ffmpeg/$name" | awk '{print $1}')
+          echo "::notice title=ffmpeg $BUILD::sha256 $got, from $from${published:+ (published $published)}"
+          # Not `test … && test …`: under set -e a failing first test
           # wouldn't stop the step.
-          if [ -z "$want" ] || [ "$want" != "$got" ]; then
-            echo "::error title=ffmpeg checksum::ffmpeg.zip isn't the published ${{ matrix.ffmpeg }} build"
+          if [ "$got" != "$WANT" ] || { [ "$from" = martin-riedl ] && [ "$published" != "$got" ]; }; then
+            echo "::error title=ffmpeg checksum::$name isn't the pinned $BUILD build"
             exit 1
           fi
-          unzip -o build/ffmpeg/ffmpeg.zip -d build/ffmpeg
+          # Keep a copy. Never from a pull request's run: those don't write releases.
+          if [ "$from" = martin-riedl ] && [ "$GITHUB_EVENT_NAME" != pull_request ]; then
+            # Both Mac builds may get here at once: one makes the release.
+            gh release create "$MIRROR" --repo "$GITHUB_REPOSITORY" --target main --prerelease --latest=false \
+              --title "ffmpeg 9.0.2 for Station Server's Mac app" \
+              --notes "Not a Station Server release. The ffmpeg builds the Mac app carries, from https://ffmpeg.martin-riedl.de, kept here in case they go from there (no Intel builds after January 2027). ffmpeg is licensed under the GNU GPL version 3; its source is at https://ffmpeg.org/download.html." \
+              || gh release view "$MIRROR" --repo "$GITHUB_REPOSITORY" >/dev/null
+            gh release upload "$MIRROR" "build/ffmpeg/$name" --repo "$GITHUB_REPOSITORY" --clobber
+          fi
+          unzip -o "build/ffmpeg/$name" -d build/ffmpeg
           cp build/ffmpeg/ffmpeg server/packaging/ffmpeg/ffmpeg
           chmod +x server/packaging/ffmpeg/ffmpeg
           server/packaging/ffmpeg/ffmpeg -hide_banner -version | head -1
@@ -307,7 +333,15 @@ jobs:
             sleep 1
           done
           test ! -f "$APP/Station Server.exe"
-          ! curl -sf http://127.0.0.1:8770/api/state >/dev/null
+          # Not `! curl …`: under set -e a negated command never stops the step.
+          for i in $(seq 1 15); do
+            curl -sf http://127.0.0.1:8770/api/state >/dev/null || break
+            sleep 1
+          done
+          if curl -sf http://127.0.0.1:8770/api/state >/dev/null; then
+            echo "::error title=uninstall::Station Server kept running after it was uninstalled"
+            exit 1
+          fi
           echo "install OK"
 
       - uses: actions/upload-artifact@v6
