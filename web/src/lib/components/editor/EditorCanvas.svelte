@@ -28,6 +28,7 @@
    * uniformity helps the user discover that "open everything" is
    * one click each.
    */
+  import type { RuleDefaults } from '$lib/songList';
   import {
     expandSection,
     readViewMode,
@@ -48,6 +49,9 @@
 
   export let template: StationTemplate;
   export let sidecar: Sidecar;
+  /** The station's defaults for rule settings, for the panel's rule in
+   *  words (RuleDefaults). */
+  export let ruleDefaults: RuleDefaults = {};
 
   // §16.2.3 c2 + §16.2.4 c2 — forward the DetailPanel's write-path
   // events (atomic save, macro save, retype) up to the route, which
@@ -492,6 +496,7 @@
   {selected}
   {template}
   {sidecar}
+  {ruleDefaults}
   on:close={closeDetail}
   on:save
   on:macroSave

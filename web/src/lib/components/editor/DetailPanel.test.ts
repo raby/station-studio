@@ -64,7 +64,12 @@ describe('<DetailPanel>', () => {
     expect(screen.getByTestId('detail-strategy')).toHaveTextContent('sequential');
     expect(screen.getByTestId('detail-source')).toHaveTextContent('A');
     expect(panel).toHaveAttribute('data-kind', 'atomic');
-    expect(screen.getByTestId('detail-address')).toHaveTextContent('slot_index=0');
+    // The place in plain words; the template's address on hover.
+    expect(screen.getByTestId('detail-address')).toHaveTextContent('Not in a section'); // no sections here
+    expect(screen.getByTestId('detail-address')).toHaveAttribute('title', 'slot_index=0');
+    // The rule in words at the top, the strategy by its plain name.
+    expect(screen.getByTestId('detail-rule')).toHaveTextContent('Next 5 in order from A');
+    expect(screen.getByTestId('detail-strategy')).toHaveTextContent('In order (sequential)');
     // §16.2.3 c1: cursor_id is now editable, surfacing in the edit
     // form's <select> (read-only dl row moved into the form). The
     // makeTemplate() has no cursors_init, so the select renders with
@@ -85,7 +90,8 @@ describe('<DetailPanel>', () => {
     const panel = screen.getByTestId('detail-panel');
     expect(panel).toHaveAttribute('data-kind', 'macro');
     expect(panel).toHaveTextContent('M1');
-    expect(screen.getByTestId('detail-repeat')).toHaveTextContent('200');
+    expect(screen.getByTestId('detail-address')).toHaveTextContent('Not in a section');
+    expect(screen.getByTestId('detail-size')).toHaveTextContent('200 × 1');
     expect(screen.getByTestId('detail-strategy')).toHaveTextContent('weighted');
     // §16.2.4 c2: macros are now EDITABLE. The form below shows the
     // strategy's editable fields (here: `window` int + `allowlist_sources`
@@ -93,7 +99,7 @@ describe('<DetailPanel>', () => {
     // since the form covers the same fields.
     expect(screen.getByTestId('edit-form')).toBeInTheDocument();
     expect(screen.getByTestId('macro-fanout-warning')).toHaveTextContent(
-      /all 200 expanded blocks/i,
+      /all 200 songs this rule makes/i,
     );
     // window field rendered as int input seeded with 7.
     expect(screen.getByTestId('input-window')).toHaveValue(7);
@@ -116,7 +122,7 @@ describe('<DetailPanel>', () => {
       template: makeTemplate(), sidecar: makeSidecar(),
     });
     expect(screen.getByTestId('detail-panel')).toHaveTextContent(
-      /engine block not found/i,
+      /isn't in the station any more/i,
     );
   });
 
@@ -474,11 +480,11 @@ describe('<DetailPanel> — c2 review #1 fixes', () => {
     });
     on('structuralEdit', handler);
     const btn = screen.getByTestId('structural-delete');
-    expect(btn).toHaveTextContent('Delete slot');
+    expect(btn).toHaveTextContent('Remove slot');
     // First click: arms (text/state changes), no dispatch.
     await fireEvent.click(btn);
     expect(handler).not.toHaveBeenCalled();
-    expect(btn).toHaveTextContent(/confirm delete/i);
+    expect(btn).toHaveTextContent(/click again to remove/i);
     expect(btn).toHaveAttribute('data-armed', 'true');
     // Second click within the 3s window: commits.
     await fireEvent.click(btn);
@@ -582,5 +588,52 @@ describe('<DetailPanel> — c2 review #1 fixes', () => {
     await fireEvent.click(screen.getByTestId('structural-delete'));  // commit
     expect(onStructural).toHaveBeenCalledTimes(1);
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('<DetailPanel> — where the rule is, and the station\'s defaults', () => {
+  beforeEach(() => cleanup());
+
+  const rowTemplate = (): StationTemplate => ({
+    station: 'ts', name: 'Test',
+    sources: [{ name: 'A', colour: '#abc', role: 'content' }],
+    layout: {
+      unit: 'day', unit_labels: ['Mon', 'Tue'], row_start_offsets: [0, 0],
+      row_template: [
+        { source: 'A', strategy: 'pick', size: 1 },
+        { source: 'A', strategy: 'weighted', size: 1 },
+        { source: 'A', strategy: 'pick', size: 1 },
+      ],
+    },
+  });
+  // Two sections splitting the row: the third block is rule 2 of "Evening".
+  const rowSidecar = (): Sidecar => ({
+    schema_version: 1, macros: [], layout_order: ['am', 'pm'],
+    sections: [
+      { id: 'am', name: 'Morning', blocks: [{ kind: 'atomic', row_idx: 0, block_idx: 0 }] },
+      { id: 'pm', name: 'Evening', blocks: [
+        { kind: 'atomic', row_idx: 0, block_idx: 1 },
+        { kind: 'atomic', row_idx: 0, block_idx: 2 },
+      ] },
+    ],
+  });
+
+  it('numbers a rule within its section, as the queued changes do, every day for a row', () => {
+    const sidecar = rowSidecar();
+    render(DetailPanel, {
+      selected: { ref: { kind: 'atomic-ref', row_idx: 0, block_idx: 2 }, section: sidecar.sections[1] },
+      template: rowTemplate(), sidecar,
+    });
+    expect(screen.getByTestId('detail-address')).toHaveTextContent('Rule 2 of 2 in this section, every day');
+    expect(screen.getByTestId('detail-address')).toHaveAttribute('title', 'row_idx=0, block_idx=2');
+  });
+
+  it("says the station's own artist window when the rule leaves it out", () => {
+    const sidecar = rowSidecar();
+    render(DetailPanel, {
+      selected: { ref: { kind: 'atomic-ref', row_idx: 0, block_idx: 1 }, section: sidecar.sections[1] },
+      template: rowTemplate(), sidecar, ruleDefaults: { artistWindow: 25 },
+    });
+    expect(screen.getByTestId('detail-rule')).toHaveTextContent('Shuffled from A, no artist twice in 25');
   });
 });

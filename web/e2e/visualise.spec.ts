@@ -64,7 +64,7 @@ test.describe('§16.2.2 visualise canvas', () => {
     // Synthesized trivial section name + pick strategy from the
     // minimal template fixture.
     await expect(page.getByTestId('detail-section-name')).toHaveText('All slots');
-    await expect(page.getByTestId('detail-strategy')).toHaveText('pick');
+    await expect(page.getByTestId('detail-strategy')).toHaveText('Pick (pick)');
     await expect(page.getByTestId('detail-source')).toHaveText('A');
   });
 

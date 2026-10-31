@@ -124,9 +124,9 @@ test.describe('§16.2.5 e2e — section + structural happy paths', () => {
     // §16.2.5 — two-click delete: first click arms the button +
     // changes its label; second click commits.
     const deleteBtn = page.getByTestId('structural-delete');
-    await expect(deleteBtn).toHaveText('Delete slot');
+    await expect(deleteBtn).toHaveText('Remove slot');
     await deleteBtn.click();
-    await expect(deleteBtn).toHaveText(/confirm/i);
+    await expect(deleteBtn).toHaveText(/click again/i);
     await deleteBtn.click();
     // One fewer chip on the canvas (2 left from the original 3).
     await expect(page.getByTestId('chip')).toHaveCount(2);
