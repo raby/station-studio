@@ -624,14 +624,20 @@ def test_home_tiles_and_picks_pause_while_playing(page, player, tone_station):
     page.wait_for_function("() => audio.paused")
     sync_api.expect(tile).to_have_attribute("aria-label", "Listen to Tone FM")
     # A pick's button turns to Pause while its station plays.
+    page.evaluate("""() => { window.evlog = []; for (const ev of ['play','pause','playing','error','ended','emptied','stalled','abort','waiting']) for (const [n, e] of [['relay', radioRelay], ['direct', radioDirect]]) e.addEventListener(ev, () => evlog.push([Math.round(performance.now()), n, ev, String(S.radioSrc).slice(0, 60), e.error ? e.error.code : null])); }""")
     picks = page.locator("#home-picks")
     picks.get_by_role("button", name="Play the mix: The mix").click()
     page.wait_for_function("() => S.mode === 'radio' && S.station.url.endsWith('?2') && !audio.paused", timeout=10000)
     pause = picks.get_by_role("button", name="Pause: The mix")
     sync_api.expect(pause).to_have_text("Pause")
+    page.evaluate("""() => { evlog.push([Math.round(performance.now()), 'test', 'pause-click']); new MutationObserver((ms) => { for (const m of ms) if (m.target.closest && m.target.closest('#home-picks')) evlog.push([Math.round(performance.now()), 'dom', m.type, m.attributeName || '', (m.target.getAttribute && m.target.getAttribute('aria-label')) || '']); }).observe(document.querySelector('#view'), { subtree: true, childList: true, attributes: true, attributeFilter: ['aria-label'] }); }""")
     pause.click()
     page.wait_for_function("() => audio.paused")
-    sync_api.expect(picks.get_by_role("button", name="Play the mix: The mix")).to_have_text("Play the mix")
+    try:
+        sync_api.expect(picks.get_by_role("button", name="Play the mix: The mix")).to_have_text("Play the mix")
+    except AssertionError:
+        print("::warning title=probe::" + page.evaluate("() => JSON.stringify({log: evlog, labels: [...document.querySelectorAll('#home-picks button')].map(b => b.getAttribute('aria-label')), src: S.radioSrc, paused: audio.paused, isRelay: audio === radioRelay, view: S.view.type})"))
+        raise
 
 
 def test_seeking_back_near_the_end_doesnt_start_the_next_track_early(page):

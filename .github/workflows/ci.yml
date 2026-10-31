@@ -51,6 +51,16 @@ jobs:
           # read without opening the full log.
           python -m pip install pytest pytest-github-actions-annotate-failures==0.4.2 playwright==1.56.0
           python -m playwright install --with-deps chromium
+      - name: probe the flaky test (don't merge)
+        working-directory: player
+        env:
+          STATION_PLAYER_REQUIRE_BROWSER: '1'
+        run: |
+          fails=0
+          for i in $(seq 1 60); do
+            python -m pytest -q -s -p no:cacheprovider tests/test_browser.py -k home_tiles_and_picks > out.txt 2>&1 || { fails=$((fails+1)); grep '::warning' out.txt | head -1; grep -m3 -E 'AssertionError|Error:' out.txt | sed 's/^/::warning title=probe-error::/'; }
+          done
+          echo "::warning title=probe-summary::$fails of 60 failed"
       - name: pytest
         working-directory: player
         env:
