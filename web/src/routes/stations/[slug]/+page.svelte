@@ -442,7 +442,7 @@
         </a>
         <a
           href="/stations/{encodeURIComponent(slug)}/edit"
-          class="edit-link"
+          class="edit-link btn-primary"
           data-testid="edit-station"
         >
           Edit station
@@ -667,7 +667,7 @@
     <section class="generate" data-testid="generate-panel">
       {#if playlists.length === 0}
         <button
-          class="cta"
+          class="cta btn-primary"
           type="button"
           data-testid="generate-empty-cta"
           disabled={generating || deleting}
@@ -677,7 +677,7 @@
         </button>
       {:else}
         <button
-          class="primary"
+          class="btn-primary"
           type="button"
           data-testid="generate-next"
           disabled={generating || deleting}
@@ -890,7 +890,6 @@
      text so it's hard to misclick (DESIGN.md §16.3 D7). */
   .visualise-link,
   .rules-link,
-  .edit-link,
   .fork,
   .nuke {
     align-items: center;
@@ -914,16 +913,14 @@
     border-color: var(--faint);
     color: var(--text);
   }
+  /* Edit station: the theme's main button, the header row's size. */
   .edit-link {
-    background: var(--accent);
-    border-color: var(--accent);
-    color: var(--accent-text);
-    font-weight: 650;
-  }
-  .edit-link:hover {
-    background: var(--accent-strong);
-    border-color: var(--accent-strong);
-    color: var(--accent-text);
+    align-items: center;
+    display: inline-flex;
+    font-size: 14px;
+    min-height: 36px;
+    padding: 7px 14px;
+    white-space: nowrap;
   }
   .nuke {
     color: var(--danger);
@@ -1094,25 +1091,6 @@
   .cta {
     font-size: 1.1rem;
     padding: 0.75rem 1.5rem;
-    background: var(--accent);
-    color: var(--accent-text);
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
-  }
-  .cta:hover:not(:disabled) {
-    background: var(--accent);
-  }
-  .primary {
-    padding: 0.5rem 1rem;
-    background: var(--accent);
-    color: var(--accent-text);
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
-  }
-  .primary:hover:not(:disabled) {
-    background: var(--accent);
   }
   .replace {
     padding: 0.5rem 1rem;

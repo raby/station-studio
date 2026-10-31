@@ -2008,7 +2008,7 @@
     <div class="editor-actions">
       <button
         type="button"
-        class="export"
+        class="export btn-primary"
         data-testid="export-template"
         on:click={handleExport}
       >
@@ -2048,7 +2048,7 @@
       {#if livePreviewOn && opLog.length > 0}
         <button
           type="button"
-          class="staged-save"
+          class="staged-save btn-primary"
           data-testid="staged-save"
           disabled={saving}
           on:click={handleStagedSave}
@@ -2119,7 +2119,7 @@
           <div class="retry-modal__actions">
             <button
               type="button"
-              class="primary"
+              class="btn-primary"
               data-testid="retry-modal-retry"
               disabled={saving}
               on:click={handleRetry}
@@ -2349,15 +2349,6 @@
   .retry-modal__actions button {
     cursor: pointer;
   }
-  .retry-modal__actions button.primary {
-    background: var(--accent, #3a80c0);
-    color: var(--accent-text);
-    border: 1px solid var(--accent, #3a80c0);
-  }
-  .retry-modal__actions button[disabled] {
-    opacity: 0.6;
-    cursor: not-allowed;
-  }
   .live-preview-toggle {
     display: inline-flex;
     align-items: center;
@@ -2389,56 +2380,11 @@
     background: var(--color-row-hover, #eef);
     border-color: var(--color-focus, #3b82f6);
   }
-  /* §16.2.6 c3 — staged-edit Save / Discard controls. */
-  .staged-save {
-    padding: 0.4rem 0.9rem;
-    background: var(--accent, #2c7a7b);
-    color: var(--accent-text);
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 0.85rem;
-  }
-  .staged-save:hover:not([disabled]) {
-    background: color-mix(in srgb, var(--accent, #2c7a7b) 85%, black);
-  }
-  .staged-save[disabled] {
-    opacity: 0.6;
-    cursor: not-allowed;
-  }
-  .staged-discard {
-    padding: 0.4rem 0.9rem;
-    background: transparent;
-    color: var(--text-muted, #555);
-    border: 1px solid var(--border, #ddd);
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 0.85rem;
-  }
-  .staged-discard:hover:not([disabled]) {
-    background: var(--bg-hover, #f0f0f0);
-  }
-  .staged-discard[disabled] {
-    opacity: 0.6;
-    cursor: not-allowed;
-  }
   .editor-actions {
     display: flex;
     align-items: center;
     gap: 0.75rem;
     margin: 0.75rem 0;
-  }
-  .export {
-    padding: 0.4rem 0.9rem;
-    background: var(--accent);
-    color: var(--accent-text);
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 0.85rem;
-  }
-  .export:hover {
-    background: var(--accent);
   }
   .export-msg {
     color: var(--ok);

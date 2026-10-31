@@ -269,7 +269,7 @@
     </label>
     <button
       type="button"
-      class="add-button"
+      class="add-button btn-primary"
       data-testid="list-rule-add"
       disabled={inputText.trim() === '' || saving}
       on:click={() => addChip(inputText)}
@@ -303,7 +303,7 @@
   <div class="actions">
     <button
       type="button"
-      class="save"
+      class="save btn-primary"
       data-testid="list-rule-save"
       disabled={!isDirty || saving}
       on:click={save}
@@ -405,22 +405,7 @@
     font-size: 0.9rem;
   }
   .add-button {
-    padding: 0.35rem 0.75rem;
-    background: var(--accent);
-    color: var(--accent-text);
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
     font-size: 0.85rem;
-  }
-  .add-button:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-  /* Own hover colour: the app-wide button:hover (panel grey) would
-     otherwise win and leave white text on light grey. */
-  .add-button:hover:not(:disabled) {
-    background: var(--accent-strong);
   }
   .suggestions {
     list-style: none;
@@ -467,35 +452,6 @@
   .actions {
     display: flex;
     gap: 0.5rem;
-  }
-  .save {
-    padding: 0.35rem 0.9rem;
-    background: var(--accent);
-    color: var(--accent-text);
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
-  }
-  .save:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-  /* Own hover colour: the app-wide button:hover (panel grey) would
-     otherwise win and leave white text on light grey. */
-  .save:hover:not(:disabled) {
-    background: var(--accent-strong);
-  }
-  .reset {
-    padding: 0.35rem 0.7rem;
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 0.85rem;
-  }
-  .reset:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
   }
   .error {
     color: var(--danger);

@@ -60,7 +60,7 @@
         <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H9l2 2.5h7.5A2.5 2.5 0 0 1 21 10v6.5a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 16.5z" /></svg>
         Source pools
       </a>
-      <a href="/stations/new" class="btn primary" data-testid="new-station">
+      <a href="/stations/new" class="btn-primary" data-testid="new-station">
         <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14" /><path d="M5 12h14" /></svg>
         New station
       </a>
@@ -235,16 +235,6 @@
     background: var(--panel-3);
     border-color: var(--faint);
     color: var(--text);
-  }
-  .btn.primary {
-    background: var(--accent);
-    border-color: var(--accent);
-    color: var(--accent-text);
-    font-weight: 650;
-  }
-  .btn.primary:hover {
-    background: var(--accent-strong);
-    border-color: var(--accent-strong);
   }
   svg.i {
     fill: none;

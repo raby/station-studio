@@ -177,11 +177,42 @@ button {
     background 0.12s,
     border-color 0.12s;
 }
-button:hover:not(:disabled) {
+/* :where() keeps this rule as weak as plain `button`, so a component's
+   own button style (and .btn-primary below) also decides its hover. It
+   used to beat class-only styles and turn accent buttons light grey under
+   white text. */
+button:where(:hover:not(:disabled)) {
   background: var(--panel-3);
   border-color: var(--faint);
 }
 button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+/* The main action of a page, form or dialog: one look everywhere. Plain
+   buttons are the secondary look above. Works on links too. */
+.btn-primary {
+  display: inline-block;
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  color: var(--accent-text);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 650;
+  padding: 6px 13px;
+  text-decoration: none;
+  transition:
+    background 0.12s,
+    border-color 0.12s;
+}
+.btn-primary:hover:not(:disabled) {
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
+  color: var(--accent-text);
+}
+.btn-primary:disabled {
   cursor: default;
   opacity: 0.5;
 }

@@ -96,7 +96,7 @@
         </div>
         <div class="actions">
           {#if state.latest && state.can_update}
-            <button type="button" class="primary" on:click={() => requestUpdate()} data-testid="settings-update-now">
+            <button type="button" class="btn-primary" on:click={() => requestUpdate()} data-testid="settings-update-now">
               Update now
             </button>
           {:else if state.latest && state.release_page}
@@ -252,16 +252,6 @@
   .actions {
     display: flex;
     gap: 8px;
-  }
-  button.primary {
-    background: var(--accent);
-    border-color: var(--accent);
-    color: var(--accent-text);
-    font-weight: 650;
-  }
-  button.primary:hover:not(:disabled) {
-    background: var(--accent-strong);
-    border-color: var(--accent-strong);
   }
   .btn {
     border: 1px solid var(--border-strong);

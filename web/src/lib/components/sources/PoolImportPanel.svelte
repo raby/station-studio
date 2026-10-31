@@ -689,7 +689,7 @@
         <div class="submit-row">
           <button
             type="submit"
-            class="button primary"
+            class="btn-primary"
             data-testid="batch-submit"
             disabled={submitting || rows.length === 0}
           >
@@ -798,7 +798,7 @@
         <div class="submit-row">
           <button
             type="submit"
-            class="button primary"
+            class="btn-primary"
             data-testid="submit-button"
             disabled={submitting}
           >
@@ -936,7 +936,7 @@
                     {/if}
                     <button
                       type="button"
-                      class="button primary"
+                      class="btn-primary"
                       data-testid="reimport-submit"
                       on:click={() => submitReimport(s)}
                       disabled={reimporting}
@@ -1029,18 +1029,8 @@
     cursor: pointer;
     font: inherit;
   }
-  .button.primary {
-    background: var(--accent);
-    color: var(--accent-text);
-    border-color: var(--accent);
-  }
-  .button.primary:disabled {
-    background: var(--accent);
-    border-color: var(--accent);
+  .btn-primary:disabled {
     cursor: wait;
-  }
-  .button.primary:hover:not(:disabled) {
-    background: var(--accent);
   }
 
   .error {

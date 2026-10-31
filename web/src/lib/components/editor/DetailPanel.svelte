@@ -854,7 +854,7 @@
 
           <button
             type="submit"
-            class="save"
+            class="save btn-primary"
             data-testid="detail-save"
             disabled={!dirty || hasErrors}
           >
@@ -945,7 +945,7 @@
 
             <button
               type="button"
-              class="save"
+              class="save btn-primary"
               data-testid="retype-apply"
               disabled={!retypeDirty || !retypeNewFieldsValid}
               on:click={onRetype}
@@ -973,7 +973,7 @@
             </select>
             <button
               type="button"
-              class="save"
+              class="save btn-primary"
               data-testid="move-apply"
               disabled={!moveTarget}
               on:click={onMove}
@@ -999,7 +999,7 @@
               />
               <button
                 type="button"
-                class="save"
+                class="save btn-primary"
                 data-testid="structural-size-apply"
                 disabled={newSize === null || newSize < 1 || newSize === currentSize}
                 on:click={onResize}
@@ -1151,21 +1151,6 @@
   }
   .save {
     margin-top: 0.25rem;
-    padding: 0.4rem 1rem;
-    background: var(--accent, #2c7a7b);
-    color: var(--accent-text);
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
-  }
-  /* The global button:hover (panel grey) would otherwise win and
-     leave white text on light grey. */
-  .save:hover:not(:disabled) {
-    background: var(--accent-strong);
-  }
-  .save:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
   }
 
   /* §16.2.4 c2 — retype panel */

@@ -100,7 +100,7 @@
     {heading}
   </svelte:element>
   <p>{body}</p>
-  <a class="back-link" href={backHref}>{backLabel}</a>
+  <a class="back-link btn-primary" href={backHref}>{backLabel}</a>
 </section>
 
 <style>
@@ -138,17 +138,9 @@
   /* 44x44 minimum target per WCAG 2.5.5 — `min-height/width`
      guarantees the hit area even if the visible text is short. */
   .back-link {
-    background: var(--accent);
-    border-radius: 4px;
-    color: var(--accent-text);
-    display: inline-block;
     font-size: 0.95rem;
     min-height: 44px;
     min-width: 44px;
     padding: 0.6rem 1rem;
-    text-decoration: none;
-  }
-  .back-link:hover {
-    background: var(--accent);
   }
 </style>

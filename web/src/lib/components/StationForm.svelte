@@ -616,7 +616,7 @@
   </details>
 
   <div class="actions">
-    <button type="submit" disabled={submitting}>
+    <button type="submit" class="btn-primary" disabled={submitting}>
       {submitting ? submittingLabel : submitLabel}
     </button>
     {#if mode === 'edit'}
@@ -644,16 +644,6 @@
     via the global wrapper's class so they don't leak.
   */
 
-  /* The submit button is only on <StationForm>, not in <LayoutFieldset>. */
-  :global(.station-form button[type='submit']) {
-    padding: 0.5rem 1.1rem;
-    background: var(--accent);
-    color: var(--accent-text);
-    border: none;
-    border-radius: 4px;
-    font-size: 0.95rem;
-    cursor: pointer;
-  }
   :global(.station-form button[type='submit']:disabled) {
     opacity: 0.5;
     cursor: not-allowed;
