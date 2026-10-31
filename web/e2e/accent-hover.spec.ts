@@ -33,6 +33,13 @@ async function hoverCheck(page: Page, path: string, prepare?: () => Promise<void
     if (!isAccent) continue;
     await b.hover();
     const after = await b.evaluate((el) => getComputedStyle(el).backgroundColor);
+    // A see-through background shows whatever is behind the button; the
+    // contrast sum below can't account for that, so it's flagged as is.
+    const alpha = Number(after.match(/rgba\([^)]*,\s*([\d.]+)\)/)?.[1] ?? '1');
+    if (alpha < 1) {
+      bad.push(`${path} "${(await b.innerText()).trim()}": see-through on hover (${after}, was ${before})`);
+      continue;
+    }
     // Text and background must still contrast (WCAG AA for normal text).
     const color = await b.evaluate((el) => getComputedStyle(el).color);
     const rel = (c: string) => {
@@ -59,7 +66,7 @@ for (const scheme of ['light', 'dark'] as const) test(`accent buttons stay reada
   const { playlist_id } = await generate(request, slug, 1);
   const bad: string[] = [];
   for (const path of ['/', '/settings', '/sources', '/stations/new', `/stations/${slug}`,
-    `/playlists/${playlist_id}`]) {
+    `/stations/${slug}/edit`, `/playlists/${playlist_id}`]) {
     bad.push(...await hoverCheck(page, path));
   }
   // Buttons that only light up once there's something to save.
@@ -73,5 +80,7 @@ for (const scheme of ['light', 'dark'] as const) test(`accent buttons stay reada
     await page.locator('section[data-section-id="all-slots"] [data-testid="chip"]').first().click();
     await page.getByTestId('detail-panel').locator('input[data-testid^="input-"]').first().fill('Other');
   }));
+  // Not reached here: Station Server's "send this week" (needs a linked
+  // Station Server). Its button.primary sets its own hover all the same.
   expect(bad).toEqual([]);
 });
