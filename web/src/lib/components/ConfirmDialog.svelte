@@ -159,6 +159,10 @@
     justify-content: flex-end;
     gap: 0.5rem;
   }
+  .actions button:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
   .btn-primary.danger {
     background: var(--danger);
     border-color: var(--danger);

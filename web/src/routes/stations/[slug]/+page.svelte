@@ -529,7 +529,6 @@
             </button>
             <button
               type="button"
-              class="ghost"
               data-testid="fork-cancel"
               disabled={forking}
               on:click={closeForkForm}
@@ -709,7 +708,7 @@
                 bind:value={seedInput}
               />
             </label>
-            <button type="button" class="ghost" on:click={rerollSeed}>
+            <button type="button" on:click={rerollSeed}>
               🎲 reroll
             </button>
           {/if}
@@ -1102,13 +1101,6 @@
   }
   .replace:hover:not(:disabled) {
     background: var(--danger);
-  }
-  .ghost {
-    padding: 0.5rem 0.75rem;
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    cursor: pointer;
   }
   button:disabled {
     opacity: 0.5;

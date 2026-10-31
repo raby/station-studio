@@ -2376,6 +2376,10 @@
     font-size: 0.85rem;
     color: var(--text, #222);
   }
+  .palette-toggle:hover:not([aria-pressed='true']) {
+    background: var(--panel-3);
+    border-color: var(--faint);
+  }
   .palette-toggle[aria-pressed='true'] {
     background: var(--color-row-hover, #eef);
     border-color: var(--color-focus, #3b82f6);

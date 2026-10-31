@@ -1611,6 +1611,9 @@
     text-decoration: underline;
     cursor: pointer;
   }
+  .edit-bar .queued .link:hover:not(:disabled) {
+    color: var(--accent-strong);
+  }
   .view-switch {
     display: inline-flex;
     margin: 0 0 0.75rem;

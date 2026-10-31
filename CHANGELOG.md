@@ -17,7 +17,12 @@ this project uses semantic versioning.
   and the narrow-screen notice's large tap target keep their size.
 - A button's own style now always decides its hover: the app-wide grey
   hover can no longer override it (the cause of the unreadable Rules
-  page buttons fixed in 1.14.1).
+  page buttons fixed in 1.14.1). Buttons that had leaned on it now have
+  a hover of their own: the pool form's tabs and links, "Show macros",
+  "Change how it picks", the chip lists' Add, and the song list's Clear
+  and Undo. A pool's Delete now shows red on hover too.
+- The dialog's buttons keep their amber focus ring, and Pool import
+  only shows the waiting cursor while it's actually importing.
 
 ## [1.14.1] - 2026-10-30
 

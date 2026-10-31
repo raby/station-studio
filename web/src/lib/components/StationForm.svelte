@@ -639,15 +639,11 @@
   /*
     Most form rules live in _form-shared.css under `.station-form` scoping
     so <LayoutFieldset> can reuse them without per-component duplication.
-    Only the rules unique to <StationForm> (action area, submit button,
+    Only the rules unique to <StationForm> (action area,
     error banner, disclosures, diff list, pills) live here. They're scoped
     via the global wrapper's class so they don't leak.
   */
 
-  :global(.station-form button[type='submit']:disabled) {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
   .actions {
     display: flex;
     align-items: center;

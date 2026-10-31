@@ -671,7 +671,6 @@
 
         <button
           type="button"
-          class="button"
           data-testid="batch-add-row"
           on:click={addRow}
           disabled={submitting}
@@ -691,6 +690,7 @@
             type="submit"
             class="btn-primary"
             data-testid="batch-submit"
+            class:busy={submitting}
             disabled={submitting || rows.length === 0}
           >
             {submitting
@@ -705,7 +705,6 @@
                  the loop iteration short-circuits the pending tail. -->
             <button
               type="button"
-              class="button"
               data-testid="batch-cancel"
               on:click={cancelSubmission}
             >
@@ -800,6 +799,7 @@
             type="submit"
             class="btn-primary"
             data-testid="submit-button"
+            class:busy={submitting}
             disabled={submitting}
           >
             {submitting ? 'Importing…' : 'Import'}
@@ -812,7 +812,6 @@
                  abortController per submit) just with one upload. -->
             <button
               type="button"
-              class="button"
               data-testid="cancel-button"
               on:click={cancelSubmission}
             >
@@ -938,6 +937,7 @@
                       type="button"
                       class="btn-primary"
                       data-testid="reimport-submit"
+                      class:busy={reimporting}
                       on:click={() => submitReimport(s)}
                       disabled={reimporting}
                     >
@@ -1013,6 +1013,10 @@
     font: inherit;
     color: var(--muted);
   }
+  .mode-tab:hover:not(.active):not(:disabled) {
+    background: var(--panel-2);
+    color: var(--text);
+  }
   .mode-tab.active {
     color: var(--text);
     border-color: var(--border);
@@ -1021,15 +1025,8 @@
     margin-bottom: -1px;
   }
 
-  .button {
-    padding: 0.5rem 1rem;
-    border: 1px solid var(--border-strong);
-    border-radius: 4px;
-    background: var(--panel);
-    cursor: pointer;
-    font: inherit;
-  }
-  .btn-primary:disabled {
+  /* Waiting on the server, not just unavailable. */
+  .btn-primary.busy {
     cursor: wait;
   }
 
@@ -1110,6 +1107,9 @@
     font: inherit;
     font-size: 0.9rem;
     text-decoration: underline;
+  }
+  .link-button:hover:not(:disabled) {
+    color: var(--accent-strong);
   }
   .link-button:disabled {
     color: var(--accent);
@@ -1263,7 +1263,7 @@
     border-color: var(--danger);
   }
   .row-button.danger:hover:not(:disabled) {
-    background: var(--panel);
+    background: var(--danger-soft);
   }
   .row-button:disabled {
     color: var(--faint);

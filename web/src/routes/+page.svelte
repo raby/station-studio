@@ -60,7 +60,7 @@
         <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H9l2 2.5h7.5A2.5 2.5 0 0 1 21 10v6.5a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 16.5z" /></svg>
         Source pools
       </a>
-      <a href="/stations/new" class="btn-primary" data-testid="new-station">
+      <a href="/stations/new" class="btn-primary new" data-testid="new-station">
         <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14" /><path d="M5 12h14" /></svg>
         New station
       </a>
@@ -217,19 +217,24 @@
     flex-wrap: wrap;
     gap: 8px;
   }
-  .btn {
+  /* The header's two links, one size: Source pools (its own look) and
+     New station (the theme's main button). */
+  .btn,
+  .new {
     align-items: center;
+    display: inline-flex;
+    gap: 7px;
+    min-height: 36px;
+    padding: 7px 14px;
+    white-space: nowrap;
+  }
+  .btn {
     background: var(--panel-2);
     border: 1px solid var(--border-strong);
     border-radius: 8px;
     color: var(--text);
-    display: inline-flex;
     font-weight: 550;
-    gap: 7px;
-    min-height: 36px;
-    padding: 7px 14px;
     text-decoration: none;
-    white-space: nowrap;
   }
   .btn:hover {
     background: var(--panel-3);

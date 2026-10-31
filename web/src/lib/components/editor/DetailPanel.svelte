@@ -1168,6 +1168,9 @@
     padding: 0;
     font-weight: 500;
   }
+  .retype-toggle:hover {
+    color: var(--text);
+  }
   .retype-body {
     margin-top: 0.6rem;
     display: flex;
