@@ -103,17 +103,18 @@ jobs:
         id: version
         run: echo "version=$(python -c 'import tomllib; print(tomllib.load(open("server/pyproject.toml","rb"))["project"]["version"])')" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/download-artifact@v6
+      - uses: actions/download-artifact@v7
         with:
           name: ffmpeg-source
           path: build/ffmpeg-source
 
       - name: the ffmpeg already built from it
         id: ffmpeg-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: build/ffmpeg-out
-          key: ffmpeg-${{ matrix.kind }}-${{ matrix.arch }}-${{ hashFiles('server/packaging/ffmpeg-build/*') }}
+          # Built again only when what it's built from, or how, changes.
+          key: ffmpeg-${{ matrix.kind }}-${{ matrix.arch }}-${{ hashFiles('server/packaging/ffmpeg-build/build.sh', 'server/packaging/ffmpeg-build/sources.txt') }}
 
       - name: build ffmpeg (Mac)
         if: matrix.kind == 'mac' && steps.ffmpeg-cache.outputs.cache-hit != 'true'
@@ -126,9 +127,10 @@ jobs:
       - uses: msys2/setup-msys2@v2
         if: matrix.kind == 'windows' && steps.ffmpeg-cache.outputs.cache-hit != 'true'
         with:
-          msystem: MINGW64
+          msystem: UCRT64
           update: false
-          install: mingw-w64-x86_64-gcc make nasm pkgconf diffutils
+          install: make diffutils
+          pacboy: gcc:p nasm:p pkgconf:p
 
       - name: build ffmpeg (Windows)
         if: matrix.kind == 'windows' && steps.ffmpeg-cache.outputs.cache-hit != 'true'

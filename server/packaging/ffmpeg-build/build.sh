@@ -4,7 +4,7 @@
 #   server/packaging/ffmpeg-build/build.sh SOURCE_DIR OUT_DIR
 #
 # Runs on a Mac (for that Mac's architecture, back to macOS 11), on
-# Windows in an MSYS2 MINGW64 shell (one ffmpeg.exe, nothing else to
+# Windows in an MSYS2 UCRT64 shell (one ffmpeg.exe, nothing else to
 # install), and on Linux. OUT_DIR gets ffmpeg (or ffmpeg.exe) and
 # LICENSES.txt, the licences of FFmpeg and LAME.
 #
@@ -63,7 +63,7 @@ case "$(uname -s)" in
     ldflags="-mmacosx-version-min=11.0"
     extra=(--cc=clang --enable-pthreads)
     ;;
-  MINGW*|MSYS*)
+  MINGW*|UCRT*|CLANG*|MSYS*)
     # One self-contained ffmpeg.exe: no libgcc or winpthread DLLs beside it.
     ldflags="-static"
     extra=(--enable-w32threads)
