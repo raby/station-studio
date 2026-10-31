@@ -55,13 +55,13 @@ jobs:
             # rebuild gets the same one (it needs macOS 12). The checksum
             # is of that build's ffmpeg.zip, as martin-riedl publishes it.
             ffmpeg: arm64/1789931890_9.0.2
-            ffmpeg_sha256: PIN-ME
+            ffmpeg_sha256: c8ed4c4e6978a03c485edbfe4e0a5dc2380f8a30bba5150531b31b094492d924
           - os: macos-15-intel
             label: Mac (Intel)
             kind: mac
             arch: intel
             ffmpeg: amd64/1789931006_9.0.2
-            ffmpeg_sha256: PIN-ME
+            ffmpeg_sha256: 7c6b4125b191cbf773832dc51f424cf2b6bb7da43007d1e066f95909e47cacd4
           - os: windows-latest
             label: Windows
             kind: windows
