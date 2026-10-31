@@ -204,6 +204,7 @@ test.describe('trace viewer', () => {
     ] as typeof t.layout.row_template;
     await createStation(request, 'trv-edit', 'Trace View Edit', 'A', t);
     const { playlist_id } = await generate(request, 'trv-edit', 1);
+    const week2 = await generate(request, 'trv-edit', 2);
     await page.goto(`/playlists/${playlist_id}`);
     await page.getByTestId('week-view-songs').click();
 
@@ -231,10 +232,15 @@ test.describe('trace viewer', () => {
     // Saved, not yet regenerated: the week's window songs say their rule
     // has changed since.
     await expect(page.getByTestId('song-rule').nth(1)).toContainText('rule changed since');
-    await page.getByTestId('song-edit-regenerate').click();
+    // Week 2 was made with the old rule too: regenerate both, in order.
+    await expect(page.getByTestId('song-edit-saved')).toContainText('the week after it (week 2)');
+    await page.getByTestId('song-edit-regenerate-later').click();
     await expect(page.getByTestId('song-edit-bar')).toHaveCount(0);
-    // The regenerated week was made with the saved rule.
+    // The regenerated weeks were made with the saved rule.
     await expect(page.getByTestId('song-rule').nth(1)).toContainText('Picked from A');
     await expect(page.getByTestId('song-why').nth(1)).toContainText('pick from');
+    await page.goto(`/playlists/${week2.playlist_id}`);
+    await expect(page.getByTestId('song-rule').nth(1)).toContainText('Picked from A');
+    await expect(page.getByTestId('song-rule').nth(1)).not.toContainText('rule changed since');
   });
 });

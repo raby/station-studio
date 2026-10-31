@@ -310,6 +310,12 @@ class PlaylistVersion(Base):
     # `default=list` provides an empty list for newly-constructed
     # rows; the migration backfills existing rows via server_default.
     tags = Column(JSON, nullable=False, default=list)
+    # The persistent cursor positions this generation started from
+    # ({name: position}), for templates with cursor.persist. Lets a past
+    # week be regenerated from where its rules were then, not from the
+    # station's live cursors (which have moved on with later weeks).
+    # NULL for stateless templates and for versions made before 1.12.
+    cursors = Column(JSON(none_as_null=True), nullable=True)
 
     playlist = relationship("Playlist", back_populates="versions")
 

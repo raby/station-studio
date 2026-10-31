@@ -57,7 +57,7 @@ it via `POST/PUT /api/stations`; the visual editor renders it at
 |---                       |---       |---|
 | `base_advance_per_week`  | yes      | Integer ≥ 0. Per-week stateless cursor offset (and the fallback for stateful cursors when `cursor_advance_step` isn't set). |
 | `cycle_weeks`            | yes      | Integer ≥ 0. The wrap period; `0` means "no wrap, position grows until pool underflow" (Weekly-style). |
-| `persist`                | no       | Bool, default `false`. Opt-in to **stateful** cursors — when `true`, named cursors (those referenced by `sequential` blocks via `layout.cursors_init`) keep their position across weeks in the `cursor_state` table. Stateless stations recompute each week as `cursors_init[id] + week × base_advance_per_week`. |
+| `persist`                | no       | Bool, default `false`. Opt-in to **stateful** cursors — when `true`, named cursors (those referenced by `sequential` blocks via `layout.cursors_init`) keep their position across weeks in the `cursor_state` table. Each generated week records the positions it started from, so regenerating a past week starts from those, and only the latest week moves the live positions on. Stateless stations recompute each week as `cursors_init[id] + week × base_advance_per_week`. |
 
 !!! note "cursors_init lives under `layout`, not `cursor`"
     Per-cursor starting positions are part of the layout, not
