@@ -39,7 +39,17 @@ is remembered per station):
 - **Slots**: one technical row per slot, with the compare-against-saved
   diff and per-slot revert.
 
-A click on either jumps to the song's block on the canvas.
+A click on either jumps to the song's block on the canvas; a song also
+opens its rule's panel. With the preview on, that panel (any rule's,
+from a song or a chip) shows at the top of the column, not over the
+window's edge, so the songs stay in view: the canvas still owns the
+panel, and a small `portal` action shows its element in the column.
+The open rule's songs are highlighted in the list.
+
+The canvas (and so its rule panel) renders the **staged** state, as the
+preview does: queued changes show on the blocks, and an edit made there is
+recorded against what's on screen. That matters because the queue replays
+edits in order, each on top of the ones before.
 
 Staged edits share one per-station queue in `localStorage` with the
 week pages' song-list editor, so a station with edits queued opens its

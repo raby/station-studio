@@ -45,6 +45,56 @@ const SECTION: SidecarSection = { id: 's1', name: 'Section 1', blocks: [] };
 describe('<DetailPanel>', () => {
   beforeEach(() => cleanup());
 
+  it('shows on the window edge by default, or inside a given element (the editor\'s preview column)', () => {
+    const ref: AtomicRef = { kind: 'atomic-ref', slot_index: 0 };
+    const props = { selected: { ref, section: SECTION }, template: makeTemplate(), sidecar: makeSidecar() };
+    render(DetailPanel, props);
+    expect(screen.getByTestId('detail-panel')).not.toHaveClass('detail-panel--column');
+    cleanup();
+    const column = document.createElement('div');
+    document.body.appendChild(column);
+    render(DetailPanel, { ...props, panelTarget: column });
+    const panel = screen.getByTestId('detail-panel');
+    expect(panel.parentElement).toBe(column);
+    expect(panel).toHaveClass('detail-panel--column');
+    column.remove();
+  });
+
+  it('closing with focus inside gives focus back to what opened it (a chip, a song)', async () => {
+    const opener = document.createElement('button');
+    opener.textContent = 'Song 2';
+    document.body.appendChild(opener);
+    opener.focus();
+    const ref: AtomicRef = { kind: 'atomic-ref', slot_index: 0 };
+    const { rerender } = render(DetailPanel, {
+      selected: { ref, section: SECTION }, template: makeTemplate(), sidecar: makeSidecar(),
+    });
+    screen.getByTestId('detail-close').focus();
+    await rerender({ selected: null });
+    await tick();
+    await tick();
+    expect(document.activeElement).toBe(opener);
+    opener.remove();
+  });
+
+  it('closing with focus elsewhere leaves it there', async () => {
+    const opener = document.createElement('button');
+    const elsewhere = document.createElement('input');
+    document.body.append(opener, elsewhere);
+    opener.focus();
+    const ref: AtomicRef = { kind: 'atomic-ref', slot_index: 0 };
+    const { rerender } = render(DetailPanel, {
+      selected: { ref, section: SECTION }, template: makeTemplate(), sidecar: makeSidecar(),
+    });
+    elsewhere.focus();
+    await rerender({ selected: null });
+    await tick();
+    await tick();
+    expect(document.activeElement).toBe(elsewhere);
+    opener.remove();
+    elsewhere.remove();
+  });
+
   it('renders nothing when `selected` is null', () => {
     render(DetailPanel, {
       selected: null, template: makeTemplate(), sidecar: makeSidecar(),

@@ -24,7 +24,8 @@
    * edits the SHARED template block → every row changes. The form
    * shows a warning in that case.
    */
-  import { createEventDispatcher } from 'svelte';
+  import { portal } from '$lib/portal';
+  import { createEventDispatcher, tick } from 'svelte';
   import {
     availableCursorIds,
     compatibleSources,
@@ -68,6 +69,10 @@
   /** The station's defaults for settings a rule leaves out (its rules
    *  artist_dedup_window and mix_exclusion_weeks), for the rule in words. */
   export let ruleDefaults: RuleDefaults = {};
+  /** Where to show the panel: null for its usual place on the window's
+   *  right edge, or an element to show it in (the station editor's
+   *  preview column, so the songs stay in view beside it). */
+  export let panelTarget: HTMLElement | null = null;
 
   /**
    * §16.2.4 c2: dispatch contracts —
@@ -374,6 +379,30 @@
 
   function close() {
     dispatch('close');
+  }
+
+  // Keyboard: what had focus when the panel opened (a chip, or a song in
+  // the preview column) gets it back when the panel closes with focus
+  // inside it, rather than focus falling to the page.
+  let opener: HTMLElement | null = null;
+  let wasOpen = false;
+  $: onOpenChange(detail !== null);
+  function onOpenChange(open: boolean) {
+    if (open === wasOpen) return;
+    wasOpen = open;
+    if (typeof document === 'undefined') return;
+    if (open) {
+      const active = document.activeElement;
+      opener = active instanceof HTMLElement && active !== document.body ? active : null;
+      return;
+    }
+    const back = opener;
+    opener = null;
+    // After the panel's gone: focus was in it if it's now on nothing.
+    void tick().then(() => {
+      const lost = document.activeElement === null || document.activeElement === document.body;
+      if (lost && back?.isConnected) back.focus();
+    });
   }
 
   /** Build the fields payload from current editValues. Shared by
@@ -692,10 +721,12 @@
 {#if detail !== null}
   <div
     class="detail-panel"
+    class:detail-panel--column={panelTarget !== null}
     role="dialog"
     aria-label="Rule details"
     data-testid="detail-panel"
     data-kind={detail.kind}
+    use:portal={panelTarget}
   >
     <header>
       <h2>
@@ -1059,6 +1090,19 @@
        editing this component. Default 10 keeps it above the
        canvas chips' :focus outline + the static layout. */
     z-index: var(--detail-panel-z, 10);
+  }
+  /* In the preview column: part of it, above the songs, with its own
+     scroll, rather than over the window's edge. */
+  .detail-panel--column {
+    position: static;
+    height: auto;
+    max-height: 45vh;
+    width: auto;
+    flex-shrink: 0;
+    box-shadow: none;
+    border-left: 0;
+    border-bottom: 1px solid var(--border, #ddd);
+    border-radius: 4px 4px 0 0;
   }
   header {
     display: flex;

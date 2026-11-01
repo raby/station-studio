@@ -988,6 +988,44 @@ describe('<TracePane> — Songs and Slots tabs', () => {
     expect(slotIndex).toBe(3);
   });
 
+  it('a song asks for its rule\'s panel too; a slot row only jumps', async () => {
+    const { on } = renderSongs();
+    const got: Array<{ slotIndex: number; open?: boolean }> = [];
+    on('select', (e: CustomEvent<{ slotIndex: number; open?: boolean }>) => got.push(e.detail));
+    await fireEvent.click(screen.getAllByTestId('song-row')[0]);
+    expect(got).toEqual([{ slotIndex: 1, open: true }]);
+    cleanup();
+    const slots = renderSongs({ tab: 'slots' });
+    const got2: Array<{ slotIndex: number; open?: boolean }> = [];
+    slots.on('select', (e: CustomEvent<{ slotIndex: number; open?: boolean }>) => got2.push(e.detail));
+    await fireEvent.click(screen.getAllByTestId('trace-row')[0]);
+    expect(got2).toEqual([{ slotIndex: 1 }]);
+  });
+
+  it('while a rule\'s panel is open its songs are highlighted, and the one picked is marked', async () => {
+    // Each of the four songs has its own rule here.
+    const { rerender } = renderSongs();
+    const rows = () => screen.getAllByTestId('song-row');
+    await fireEvent.click(rows()[1]);
+    // Not marked until its rule's panel is open (and never, if it can't be).
+    expect(rows()[1]).toHaveAttribute('aria-pressed', 'false');
+    // The page opens song 2's rule: it's marked, its rule's songs highlighted.
+    await rerender({ selectedRef: { kind: 'atomic-ref', slot_index: 1 } });
+    expect(rows()[1]).toHaveAttribute('aria-pressed', 'true');
+    expect(rows()[1]).toHaveClass('related');
+    expect(rows()[0]).not.toHaveClass('related');
+    // Another rule opened (its chip clicked): the picked song is unmarked.
+    await rerender({ selectedRef: { kind: 'atomic-ref', slot_index: 3 } });
+    expect(rows()[1]).toHaveAttribute('aria-pressed', 'false');
+    expect(rows()[3]).toHaveClass('related');
+    // Panel closed: nothing highlighted; and reopening that other rule
+    // doesn't bring back the old mark.
+    await rerender({ selectedRef: null });
+    expect(screen.queryAllByTestId('song-row').filter((r) => r.classList.contains('related'))).toHaveLength(0);
+    await rerender({ selectedRef: { kind: 'atomic-ref', slot_index: 3 } });
+    expect(rows()[1]).toHaveAttribute('aria-pressed', 'false');
+  });
+
   it('the tabs ask the page to switch (it owns and remembers the choice)', async () => {
     const { on } = renderSongs();
     const asked: string[] = [];
