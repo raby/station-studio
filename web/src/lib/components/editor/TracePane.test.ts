@@ -38,7 +38,7 @@ describe('<TracePane>', () => {
   beforeEach(() => cleanup());
 
   it('renders the empty-state nudge when no trace + not previewing + no error', () => {
-    render(TracePane, { trace: null, previewing: false, errorMessage: null });
+    render(TracePane, { tab: 'slots', trace: null, previewing: false, errorMessage: null });
     expect(screen.getByTestId('trace-empty')).toHaveTextContent(
       /Edit a chip/,
     );
@@ -47,7 +47,7 @@ describe('<TracePane>', () => {
   });
 
   it('renders the previewing indicator when previewing=true', () => {
-    render(TracePane, { trace: null, previewing: true, errorMessage: null });
+    render(TracePane, { tab: 'slots', trace: null, previewing: true, errorMessage: null });
     expect(screen.getByTestId('trace-status-previewing')).toHaveTextContent(
       /Previewing/,
     );
@@ -57,7 +57,7 @@ describe('<TracePane>', () => {
 
   it('renders the trace slots when a trace is supplied', () => {
     const trace = makeTrace(3);
-    render(TracePane, { trace, previewing: false, errorMessage: null });
+    render(TracePane, { tab: 'slots', trace, previewing: false, errorMessage: null });
 
     const rows = screen.getAllByTestId('trace-row');
     expect(rows).toHaveLength(3);
@@ -77,7 +77,7 @@ describe('<TracePane>', () => {
     // when they're mid-typing." Pin both: error banner visible AND
     // trace rows still rendered.
     const trace = makeTrace(2);
-    render(TracePane, {
+    render(TracePane, { tab: 'slots',
       trace,
       previewing: false,
       errorMessage: 'invalid sidecar (grammar): missing layout_order',
@@ -94,7 +94,7 @@ describe('<TracePane>', () => {
 
   it('dispatches a select event with slotIndex on row click (§16.2.6.t3 hook)', async () => {
     const trace = makeTrace(3);
-    const { on } = renderWithEvents(TracePane, {
+    const { on } = renderWithEvents(TracePane, { tab: 'slots',
       trace, previewing: false, errorMessage: null,
     });
     let selectedSlotIndex: number | null = null;
@@ -142,7 +142,7 @@ describe('<TracePane> — §16.2.7 c2 diff mode', () => {
   it('showDiff=false: no diff classes, summary, or toggle-checked state', () => {
     const saved = traceFor([1, 2, 3]);
     const staged = traceFor([1, 99, 3]);
-    render(TracePane, {
+    render(TracePane, { tab: 'slots',
       trace: staged,
       savedTrace: saved,
       showDiff: false,
@@ -168,7 +168,7 @@ describe('<TracePane> — §16.2.7 c2 diff mode', () => {
   it('showDiff=true with matching traces: all UNCHANGED + "No changes since save" summary', () => {
     const saved = traceFor([1, 2, 3]);
     const staged = traceFor([1, 2, 3]);
-    render(TracePane, {
+    render(TracePane, { tab: 'slots',
       trace: staged,
       savedTrace: saved,
       showDiff: true,
@@ -192,7 +192,7 @@ describe('<TracePane> — §16.2.7 c2 diff mode', () => {
   it('showDiff=true with mid-slot change: CHANGED row + "was: X" subtext + count', () => {
     const saved = traceFor([1, 2, 3]);
     const staged = traceFor([1, 99, 3]);  // slot 2 changes 2 → 99
-    render(TracePane, {
+    render(TracePane, { tab: 'slots',
       trace: staged,
       savedTrace: saved,
       showDiff: true,
@@ -217,7 +217,7 @@ describe('<TracePane> — §16.2.7 c2 diff mode', () => {
   it('showDiff=true with staged longer: trailing ADDED rows + "+ added" marker', () => {
     const saved = traceFor([1, 2]);
     const staged = traceFor([1, 2, 3, 4]);  // structural add
-    render(TracePane, {
+    render(TracePane, { tab: 'slots',
       trace: staged,
       savedTrace: saved,
       showDiff: true,
@@ -239,7 +239,7 @@ describe('<TracePane> — §16.2.7 c2 diff mode', () => {
   it('showDiff=true with saved longer: trailing REMOVED rows render SAVED content', () => {
     const saved = traceFor([1, 2, 3, 4]);
     const staged = traceFor([1, 2]);  // structural remove
-    render(TracePane, {
+    render(TracePane, { tab: 'slots',
       trace: staged,
       savedTrace: saved,
       showDiff: true,
@@ -262,7 +262,7 @@ describe('<TracePane> — §16.2.7 c2 diff mode', () => {
   it('mixed CHANGED + ADDED + REMOVED summary lists all three counts joined by " · "', () => {
     const saved = traceFor([1, 2, 5]);
     const staged = traceFor([1, 99, 3, 4]);  // slot1 ok, slot2 changed, slot3 was 5 now 3 (changed), slot4 added
-    render(TracePane, {
+    render(TracePane, { tab: 'slots',
       trace: staged,
       savedTrace: saved,
       showDiff: true,
@@ -279,7 +279,7 @@ describe('<TracePane> — §16.2.7 c2 diff mode', () => {
   it('showDiff toggle dispatches showDiffChange { on } on click', async () => {
     const saved = traceFor([1, 2, 3]);
     const staged = traceFor([1, 2, 3]);
-    const { on } = renderWithEvents(TracePane, {
+    const { on } = renderWithEvents(TracePane, { tab: 'slots',
       trace: staged,
       savedTrace: saved,
       showDiff: false,
@@ -299,7 +299,7 @@ describe('<TracePane> — §16.2.7 c2 diff mode', () => {
 
   it('savedTraceError + showDiff=false: NO banner (don\'t leak the error when diff is off)', () => {
     const staged = traceFor([1, 2, 3]);
-    render(TracePane, {
+    render(TracePane, { tab: 'slots',
       trace: staged,
       savedTrace: null,
       showDiff: false,
@@ -313,7 +313,7 @@ describe('<TracePane> — §16.2.7 c2 diff mode', () => {
 
   it('savedTraceError + showDiff=true: "Diff unavailable: ..." banner with the documented wording', () => {
     const staged = traceFor([1, 2, 3]);
-    render(TracePane, {
+    render(TracePane, { tab: 'slots',
       trace: staged,
       savedTrace: null,
       showDiff: true,
@@ -332,7 +332,7 @@ describe('<TracePane> — §16.2.7 c2 diff mode', () => {
     // single-trace render path takes over — no broken UI, just
     // delayed diff visualization.
     const staged = traceFor([1, 2, 3]);
-    render(TracePane, {
+    render(TracePane, { tab: 'slots',
       trace: staged,
       savedTrace: null,
       showDiff: true,
@@ -368,7 +368,7 @@ describe('<TracePane> — §16.2.7.t4 multi-week summary', () => {
   }
 
   it('compareNextN=0 → input rendered but NO multi-week summary row', () => {
-    render(TracePane, {
+    render(TracePane, { tab: 'slots',
       trace: tr([1, 2]), savedTrace: tr([1, 2]),
       showDiff: true, previewing: false, errorMessage: null,
       weekValue: 1, savedTraceError: null,
@@ -388,7 +388,7 @@ describe('<TracePane> — §16.2.7.t4 multi-week summary', () => {
     summary.set(3, { changed: 0, added: 0, removed: 0 });   // W3 ·
     summary.set(4, { changed: 2, added: 1, removed: 0 });   // W4 2c 1a
     summary.set(5, { changed: 0, added: 0, removed: 3 });   // W5 3r
-    render(TracePane, {
+    render(TracePane, { tab: 'slots',
       trace: tr([1, 2]), savedTrace: tr([1, 2]),
       showDiff: true, previewing: false, errorMessage: null,
       weekValue: 3, savedTraceError: null,
@@ -411,7 +411,7 @@ describe('<TracePane> — §16.2.7.t4 multi-week summary', () => {
   });
 
   it('compareNextN=1 while fetching: cells render "…" placeholders with fetching kind', () => {
-    render(TracePane, {
+    render(TracePane, { tab: 'slots',
       trace: tr([1]), savedTrace: tr([1]),
       showDiff: true, previewing: false, errorMessage: null,
       weekValue: 1, savedTraceError: null,
@@ -432,7 +432,7 @@ describe('<TracePane> — §16.2.7.t4 multi-week summary', () => {
     const summary = new Map<number, { changed: number; added: number; removed: number } | { error: string }>();
     summary.set(1, { changed: 0, added: 0, removed: 0 });
     summary.set(2, { error: 'preview failed: pool empty' });
-    render(TracePane, {
+    render(TracePane, { tab: 'slots',
       trace: tr([1]), savedTrace: tr([1]),
       showDiff: true, previewing: false, errorMessage: null,
       weekValue: 1, savedTraceError: null,
@@ -448,7 +448,7 @@ describe('<TracePane> — §16.2.7.t4 multi-week summary', () => {
   });
 
   it('compareNextN input change dispatches compareNextNChange { n }', async () => {
-    const { on } = renderWithEvents(TracePane, {
+    const { on } = renderWithEvents(TracePane, { tab: 'slots',
       trace: tr([1]), savedTrace: tr([1]),
       showDiff: true, previewing: false, errorMessage: null,
       weekValue: 1, savedTraceError: null,
@@ -468,7 +468,7 @@ describe('<TracePane> — §16.2.7.t4 multi-week summary', () => {
   });
 
   it('compareNextN input clamps to compareNextNMax on dispatch', async () => {
-    const { on } = renderWithEvents(TracePane, {
+    const { on } = renderWithEvents(TracePane, { tab: 'slots',
       trace: tr([1]), savedTrace: tr([1]),
       showDiff: true, previewing: false, errorMessage: null,
       weekValue: 1, savedTraceError: null,
@@ -488,7 +488,7 @@ describe('<TracePane> — §16.2.7.t4 multi-week summary', () => {
   });
 
   it('compareNextN input is HIDDEN when showDiff=false', () => {
-    render(TracePane, {
+    render(TracePane, { tab: 'slots',
       trace: tr([1]), savedTrace: null,
       showDiff: false, previewing: false, errorMessage: null,
       weekValue: 1, savedTraceError: null,
@@ -554,7 +554,7 @@ describe('<TracePane> — §16.2.7.t5 per-section summary', () => {
   }
 
   function renderProps(overrides: Record<string, unknown> = {}) {
-    return render(TracePane, {
+    return render(TracePane, { tab: 'slots',
       trace: tr([1, 2, 3, 4, 5, 6]),
       savedTrace: tr([1, 2, 3, 4, 5, 6]),
       showDiff: true,
@@ -717,7 +717,7 @@ describe('<TracePane> — §16.2.7.t6 revert button', () => {
   }
 
   it('UNCHANGED rows have NO revert button (nothing to revert)', () => {
-    render(TracePane, {
+    render(TracePane, { tab: 'slots',
       trace: tr([1, 2, 3]),
       savedTrace: tr([1, 2, 3]),
       showDiff: true,
@@ -731,7 +731,7 @@ describe('<TracePane> — §16.2.7.t6 revert button', () => {
   });
 
   it('CHANGED row with revertable slot → enabled Revert button', () => {
-    render(TracePane, {
+    render(TracePane, { tab: 'slots',
       trace: tr([1, 99, 3]),  // index 1 (slot=1) changed
       savedTrace: tr([1, 2, 3]),
       showDiff: true,
@@ -748,7 +748,7 @@ describe('<TracePane> — §16.2.7.t6 revert button', () => {
   });
 
   it('CHANGED row with NON-revertable slot → disabled Revert button with cascade tooltip', () => {
-    render(TracePane, {
+    render(TracePane, { tab: 'slots',
       trace: tr([1, 99, 3]),
       savedTrace: tr([1, 2, 3]),
       showDiff: true,
@@ -764,7 +764,7 @@ describe('<TracePane> — §16.2.7.t6 revert button', () => {
   });
 
   it('click on Revert button dispatches revertSlot { slotIndex } + stops propagation (no select)', async () => {
-    const { on } = renderWithEvents(TracePane, {
+    const { on } = renderWithEvents(TracePane, { tab: 'slots',
       trace: tr([1, 99, 3]),
       savedTrace: tr([1, 2, 3]),
       showDiff: true,
@@ -791,7 +791,7 @@ describe('<TracePane> — §16.2.7.t6 revert button', () => {
 
   it('ADDED + REMOVED rows also get a Revert button (one per non-UNCHANGED row)', () => {
     // saved=[1,2,3,4] staged=[1,2,3,4,5] → index 4 ADDED.
-    render(TracePane, {
+    render(TracePane, { tab: 'slots',
       trace: tr([1, 2, 3, 4, 5]),
       savedTrace: tr([1, 2, 3, 4]),
       showDiff: true,
@@ -826,7 +826,7 @@ describe('<TracePane> — §16.2.7.t7 edits panel (semantic diff)', () => {
   }
 
   it('renders nothing when showDiff is OFF (even with non-empty opLog)', () => {
-    render(TracePane, {
+    render(TracePane, { tab: 'slots',
       trace: tr([1, 2, 3]),
       savedTrace: tr([1, 2, 3]),
       showDiff: false,
@@ -842,7 +842,7 @@ describe('<TracePane> — §16.2.7.t7 edits panel (semantic diff)', () => {
   });
 
   it('renders nothing when opLog is empty (even with showDiff on)', () => {
-    render(TracePane, {
+    render(TracePane, { tab: 'slots',
       trace: tr([1, 2, 3]),
       savedTrace: tr([1, 2, 3]),
       showDiff: true,
@@ -856,7 +856,7 @@ describe('<TracePane> — §16.2.7.t7 edits panel (semantic diff)', () => {
   });
 
   it('shows one numbered row per op with describeOp rendering', () => {
-    render(TracePane, {
+    render(TracePane, { tab: 'slots',
       trace: tr([1, 2, 3]),
       savedTrace: tr([1, 2, 3]),
       showDiff: true,
@@ -887,7 +887,7 @@ describe('<TracePane> — §16.2.7.t7 edits panel (semantic diff)', () => {
   it('surfaces structural edits invisible to trace diff (operator clearly did something)', () => {
     // Reorder doesn't change track_ids → trace would say "No
     // changes since save". The Edits panel makes the intent visible.
-    render(TracePane, {
+    render(TracePane, { tab: 'slots',
       trace: tr([1, 2, 3]),
       savedTrace: tr([1, 2, 3]),
       showDiff: true,
@@ -905,5 +905,147 @@ describe('<TracePane> — §16.2.7.t7 edits panel (semantic diff)', () => {
     expect(rows[0].textContent).toContain(
       'Reordered sections to: evening, morning',
     );
+  });
+});
+
+
+// The Songs tab: the week page's song list in the preview column.
+describe('<TracePane> — Songs and Slots tabs', () => {
+  beforeEach(() => cleanup());
+
+  function template(): StationTemplate {
+    return {
+      station: 'ts', name: 'T',
+      sources: [{ name: 'A', role: 'content' }],
+      layout: {
+        unit: 'slot', unit_labels: [], row_start_offsets: [],
+        flat_slots: Array.from({ length: 4 }, () =>
+          ({ source: 'A', strategy: 'sequential' as const, size: 1, cursor_id: 'C' })),
+      },
+    };
+  }
+  function sidecar(): Sidecar {
+    return {
+      schema_version: 1,
+      sections: [
+        { id: 'morning', name: 'Morning', blocks: [
+          { kind: 'atomic' as const, slot_index: 0 },
+          { kind: 'atomic' as const, slot_index: 1 },
+        ]},
+        { id: 'evening', name: 'Evening', blocks: [
+          { kind: 'atomic' as const, slot_index: 2 },
+          { kind: 'atomic' as const, slot_index: 3 },
+        ]},
+      ],
+      macros: [],
+      layout_order: ['morning', 'evening'],
+    };
+  }
+  function tr(track_ids: number[]): Trace {
+    return {
+      trace_id: 'pv', station: 'ts', week: 1, rng: 'off', seed: null,
+      generated_at: '2026-06-15T00:00:00Z',
+      // Slots count from 1, as in a real trace.
+      slots: track_ids.map((track_id, i) => ({
+        slot: i + 1, unit: 'slot', row: 1, block: i + 1,
+        source: 'A', strategy: 'sequential', pool_index: i,
+        track_id, track_name: `T${track_id}`, track_artist: 'Artist',
+        reason: 'next in A', excluded: [],
+      })),
+    };
+  }
+  const anEdit = [{ kind: 'patchBlock', address: { slot_index: 1 }, fields: { size: 1 } }];
+
+  function renderSongs(overrides: Record<string, unknown> = {}) {
+    return renderWithEvents(TracePane, {
+      trace: tr([1, 2, 3, 4]),
+      previewing: false,
+      errorMessage: null,
+      template: template(),
+      savedSidecar: sidecar(),
+      stagedSidecar: sidecar(),
+      ...overrides,
+    });
+  }
+
+  it('opens on Songs: the week as songs, grouped by section', () => {
+    renderSongs();
+    expect(screen.getByTestId('trace-tab-songs')).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByTestId('trace-tab-slots')).toHaveAttribute('aria-selected', 'false');
+    expect(screen.getByTestId('trace-songs')).toBeInTheDocument();
+    expect(screen.queryByTestId('trace-slots')).toBeNull();
+    expect(screen.getAllByTestId('song-section').map((h) => h.textContent)).toEqual([
+      expect.stringContaining('Morning'), expect.stringContaining('Evening'),
+    ]);
+    expect(screen.getAllByTestId('song-row')).toHaveLength(4);
+  });
+
+  it('a song click selects its slot (the page jumps to its block)', async () => {
+    const { on } = renderSongs();
+    let slotIndex: number | null = null;
+    on('select', (e: CustomEvent<{ slotIndex: number }>) => { slotIndex = e.detail.slotIndex; });
+    await fireEvent.click(screen.getAllByTestId('song-row')[2]);
+    expect(slotIndex).toBe(3);
+  });
+
+  it('the tabs ask the page to switch (it owns and remembers the choice)', async () => {
+    const { on } = renderSongs();
+    const asked: string[] = [];
+    on('tabChange', (e: CustomEvent<{ tab: string }>) => asked.push(e.detail.tab));
+    await fireEvent.click(screen.getByTestId('trace-tab-slots'));
+    await fireEvent.click(screen.getByTestId('trace-tab-songs'));  // already showing: nothing
+    expect(asked).toEqual(['slots']);
+  });
+
+  it('Left and Right move between the tabs, as tabs do', async () => {
+    const { on } = renderSongs();
+    const asked: string[] = [];
+    on('tabChange', (e: CustomEvent<{ tab: string }>) => asked.push(e.detail.tab));
+    const songs = screen.getByTestId('trace-tab-songs');
+    expect(songs).toHaveAttribute('tabindex', '0');
+    expect(screen.getByTestId('trace-tab-slots')).toHaveAttribute('tabindex', '-1');
+    await fireEvent.keyDown(songs, { key: 'ArrowRight' });
+    await fireEvent.keyDown(songs, { key: 'ArrowLeft' });
+    expect(asked).toEqual(['slots', 'slots']);  // two of them, wrapping round
+    expect(document.activeElement).toBe(screen.getByTestId('trace-tab-slots'));
+  });
+
+  it('the tab panel is labelled by its tab', () => {
+    renderSongs({ tab: 'slots' });
+    expect(screen.getByRole('tabpanel')).toHaveAttribute('aria-labelledby', 'trace-tab-slots');
+    expect(screen.getByTestId('trace-slots')).toBeInTheDocument();
+    expect(screen.queryByTestId('trace-songs')).toBeNull();
+  });
+
+  it('with edits queued, songs that differ from the saved week are marked, and can be shown alone', () => {
+    renderSongs({ trace: tr([1, 99, 3, 4]), savedTrace: tr([1, 2, 3, 4]), opLog: anEdit });
+    expect(screen.getAllByTestId('song-change')).toHaveLength(1);
+    expect(screen.getByTestId('song-only-changed')).toBeInTheDocument();
+  });
+
+  it('with nothing queued there is nothing to mark (and no "only changed")', () => {
+    renderSongs({ trace: tr([1, 99, 3, 4]), savedTrace: tr([1, 2, 3, 4]), opLog: [] });
+    expect(screen.queryByTestId('song-change')).toBeNull();
+    expect(screen.queryByTestId('song-only-changed')).toBeNull();
+  });
+
+  it('the rules come from the staged template the preview was made from', () => {
+    // Song 2's rule retyped to pick and previewed: the trace says pick.
+    const staged = template();
+    staged.layout.flat_slots![1] = { source: 'A', strategy: 'pick', size: 1 } as never;
+    const previewed = tr([1, 2, 3, 4]);
+    previewed.slots[1] = { ...previewed.slots[1], strategy: 'pick' };
+    renderSongs({ trace: previewed, stagedTemplate: staged });
+    expect(screen.getAllByTestId('song-rule')[1]).toHaveTextContent('Picked from A');
+    expect(screen.queryByTestId('song-rule-changed')).toBeNull();
+    cleanup();
+    // Read against the saved template instead, it would look out of date.
+    renderSongs({ trace: previewed });
+    expect(screen.getByTestId('song-rule-changed')).toBeInTheDocument();
+  });
+
+  it('before the first preview: a note, not an empty list', () => {
+    renderSongs({ trace: null });
+    expect(screen.getByTestId('trace-empty')).toHaveTextContent(/songs show here/);
   });
 });

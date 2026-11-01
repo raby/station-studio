@@ -4,6 +4,26 @@ All notable changes are listed here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses semantic versioning.
 
+## [1.15.0] - 2026-11-01
+
+### Added
+
+- **Songs beside the blocks in the station editor.** With the preview
+  on, its column shows the week as songs, like a week page's song list:
+  grouped by section, each with its rule in plain words and why it's
+  there, with search, and with the songs your queued changes alter
+  marked (and "Only changed songs"). Click a song and its block lights
+  up on the canvas. The old one-row-per-slot list, with its revert
+  buttons, is the **Slots** tab beside it; the choice is remembered for
+  each station.
+- The preview checkbox now says what it gives you: **Preview songs**.
+
+### Fixed
+
+- Opening a station's editor with its preview off threw away changes
+  queued on one of its week pages (they share the queue). It now opens
+  with the preview on and keeps them.
+
 ## [1.14.2] - 2026-10-31
 
 ### Changed

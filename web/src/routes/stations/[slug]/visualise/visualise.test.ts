@@ -1540,7 +1540,9 @@ describe('visualise +page.svelte — §16.2.6 c3e c1 staged-edit loss guards', (
     expect(restored.updatedAtSnapshot).toBe('ts-NEW');
   });
 
-  it('§16.2.6.t1: livePreviewOn=false at mount → drops any persisted opLog (no surprise invisible state)', async () => {
+  it('queued edits with the preview off: it turns on and keeps them (a week page shares the queue)', async () => {
+    // Edits queued on one of the station's week pages, then the editor
+    // opened with its preview off: it used to throw them away.
     window.localStorage.setItem('livePreview:viz-test', 'off');
     window.localStorage.setItem(
       'stagedEdits:viz-test',
@@ -1554,9 +1556,24 @@ describe('visualise +page.svelte — §16.2.6 c3e c1 staged-edit loss guards', (
         updatedAtSnapshot: 'ts-1',
       }),
     );
+    getStationSidecarMock.mockResolvedValue({
+      template: makeTemplate(),
+      sidecar: makeSidecar(),
+      sidecar_error: null,
+      updated_at: 'ts-1',
+    });
     await mountAndAwaitStub();
-    // Persistence cleared; no recovery.
-    expect(window.localStorage.getItem('stagedEdits:viz-test')).toBeNull();
+    expect(window.localStorage.getItem('stagedEdits:viz-test')).not.toBeNull();
+    expect(window.localStorage.getItem('livePreview:viz-test')).toBe('on');
+    expect(screen.getByTestId('live-preview-checkbox')).toBeChecked();
+    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 1 edit/);
+  });
+
+  it('no queued edits and the preview off: it stays off', async () => {
+    window.localStorage.setItem('livePreview:viz-test', 'off');
+    await mountAndAwaitStub();
+    expect(screen.getByTestId('live-preview-checkbox')).not.toBeChecked();
+    expect(window.localStorage.getItem('livePreview:viz-test')).toBe('off');
   });
 
   it('§16.2.6.t1: malformed localStorage entry is silently dropped (defensive)', async () => {
@@ -1762,6 +1779,8 @@ describe('visualise +page.svelte — §16.2.6.t3 click-trace-row → jump-to-chi
     cancelJobMock.mockResolvedValue(undefined);
     setSlug('viz-test');
     try { window.localStorage.clear(); } catch { /* */ }
+    // These click rows of the technical list (the Slots tab).
+    window.localStorage.setItem('previewTab:viz-test', 'slots');
   });
 
   /** Build a custom trace snapshot whose slots' `slot` values
@@ -3345,5 +3364,97 @@ describe('visualise +page.svelte — §16.2.4.t1 macro palette', () => {
     expect(screen.getByTestId('macro-palette-empty').textContent).toMatch(
       /No macros yet/,
     );
+  });
+});
+
+
+// Slice 6 — the preview column's Songs and Slots tabs.
+describe('visualise +page.svelte — Songs tab in the preview column', () => {
+  function doneTrace() {
+    return {
+      [Symbol.asyncIterator]() {
+        return {
+          async next() {
+            return {
+              done: false,
+              value: {
+                status: 'done',
+                result: {
+                  trace: {
+                    trace_id: 'pv', station: 'viz-test', week: 1, rng: 'off', seed: null,
+                    generated_at: '2026-06-15T00:00:00Z',
+                    slots: [{ slot: 1, unit: 'slot', row: 1, block: 1, source: 'A', strategy: 'pick',
+                      pool_index: 1, track_id: 100, track_name: 'T100', track_artist: 'A',
+                      reason: 'picked', excluded: [] }],
+                  },
+                },
+              },
+            };
+          },
+          async return() { return { done: true, value: undefined }; },
+        };
+      },
+    };
+  }
+
+  beforeEach(() => {
+    getStationSidecarMock.mockReset();
+    startPreviewJobMock.mockReset();
+    watchJobMock.mockReset();
+    cancelJobMock.mockReset();
+    cancelJobMock.mockResolvedValue(undefined);
+    startPreviewJobMock.mockResolvedValue({ job_id: 'pv-1', status: 'running' });
+    watchJobMock.mockImplementation(() => doneTrace());
+    setSlug('viz-test');
+    try { window.localStorage.clear(); } catch { /* */ }
+    window.localStorage.setItem('livePreview:viz-test', 'on');
+    getStationSidecarMock.mockResolvedValue({
+      template: makeTemplate(),
+      sidecar: makeSidecar(),
+      sidecar_error: null,
+      updated_at: 'ts-1',
+    });
+  });
+
+  it('the checkbox says what it shows: Preview songs', async () => {
+    render(Page);
+    await screen.findByTestId('editor-canvas');
+    expect(screen.getByTestId('live-preview-toggle')).toHaveTextContent('Preview songs');
+  });
+
+  it('opens on Songs; choosing Slots is remembered for the station', async () => {
+    render(Page);
+    await screen.findByTestId('editor-canvas');
+    expect(await screen.findByTestId('trace-tab-songs')).toHaveAttribute('aria-selected', 'true');
+    await act(async () => { screen.getByTestId('trace-tab-slots').click(); });
+    expect(screen.getByTestId('trace-tab-slots')).toHaveAttribute('aria-selected', 'true');
+    expect(window.localStorage.getItem('previewTab:viz-test')).toBe('slots');
+  });
+
+  it('with an edit queued, the saved week is previewed first, so changed songs can be marked', async () => {
+    // A queued edit (slot 0's size 1 → 7), Compare off: only the Songs
+    // tab wants the saved week, and it must come before the staged one
+    // (two previews at once cancel each other on the server).
+    window.localStorage.setItem('stagedEdits:viz-test', JSON.stringify({
+      schemaVersion: 1,
+      opLog: [{ kind: 'patchBlock', address: { slot_index: 0 }, fields: { size: 7 } }],
+      updatedAtSnapshot: 'ts-1',
+    }));
+    render(Page);
+    await screen.findByTestId('editor-canvas');
+    await act(async () => { await new Promise((r) => setTimeout(r, 700)); });
+    // startPreviewJob(slug, template, sidecar, week): each preview's slot-0 size.
+    const sizes = (startPreviewJobMock.mock.calls as unknown[][]).map(
+      (c) => (c[1] as { layout: { flat_slots: Array<{ size: number }> } }).layout.flat_slots[0].size,
+    );
+    expect(sizes).toEqual([1, 7]);
+    expect(await screen.findByTestId('trace-songs')).toBeInTheDocument();
+  });
+
+  it('with nothing queued, only the one preview runs', async () => {
+    render(Page);
+    await screen.findByTestId('editor-canvas');
+    await act(async () => { await new Promise((r) => setTimeout(r, 700)); });
+    expect(startPreviewJobMock).toHaveBeenCalledTimes(1);
   });
 });
