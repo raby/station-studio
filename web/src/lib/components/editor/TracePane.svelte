@@ -329,24 +329,13 @@
 
   $: songTemplate = stagedTemplate ?? template;
 
-  // The song last picked, marked in the list while its rule's panel is
-  // open. Closing the panel, or opening another rule's (its chip, say),
-  // unmarks it. Only a change of the open rule is looked at: comparing
-  // on every update would unmark a song in the moment between picking
-  // it and its panel opening.
+  // The song last picked is marked while its own rule's panel is open:
+  // not before it opens (or if its rule isn't on the canvas, so none
+  // does), and not once that panel closes or another rule's opens.
   let pickedPosition: number | null = null;
   let pickedKey: string | null = null;
-  let openKey: string | null = null;
-  $: onOpenRule(selectedRef);
-  function onOpenRule(ref: ExpandedRef | null) {
-    const key = ref ? ruleKey(ref) : null;
-    if (key === openKey) return;
-    openKey = key;
-    if (key === null || key !== pickedKey) {
-      pickedPosition = null;
-      pickedKey = null;
-    }
-  }
+  $: openKey = selectedRef ? ruleKey(selectedRef) : null;
+  $: markedPosition = pickedKey !== null && pickedKey === openKey ? pickedPosition : null;
 
   let songsEl: HTMLElement | null = null;
 
@@ -620,7 +609,7 @@
             template={songTemplate}
             sidecar={stagedSidecar}
             onselect={onSongSelect}
-            selected={pickedPosition}
+            selected={markedPosition}
             related={selectedRef ? ruleKey(selectedRef) : null}
             {ruleDefaults}
           />

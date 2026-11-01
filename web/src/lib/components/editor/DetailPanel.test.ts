@@ -60,6 +60,41 @@ describe('<DetailPanel>', () => {
     column.remove();
   });
 
+  it('closing with focus inside gives focus back to what opened it (a chip, a song)', async () => {
+    const opener = document.createElement('button');
+    opener.textContent = 'Song 2';
+    document.body.appendChild(opener);
+    opener.focus();
+    const ref: AtomicRef = { kind: 'atomic-ref', slot_index: 0 };
+    const { rerender } = render(DetailPanel, {
+      selected: { ref, section: SECTION }, template: makeTemplate(), sidecar: makeSidecar(),
+    });
+    screen.getByTestId('detail-close').focus();
+    await rerender({ selected: null });
+    await tick();
+    await tick();
+    expect(document.activeElement).toBe(opener);
+    opener.remove();
+  });
+
+  it('closing with focus elsewhere leaves it there', async () => {
+    const opener = document.createElement('button');
+    const elsewhere = document.createElement('input');
+    document.body.append(opener, elsewhere);
+    opener.focus();
+    const ref: AtomicRef = { kind: 'atomic-ref', slot_index: 0 };
+    const { rerender } = render(DetailPanel, {
+      selected: { ref, section: SECTION }, template: makeTemplate(), sidecar: makeSidecar(),
+    });
+    elsewhere.focus();
+    await rerender({ selected: null });
+    await tick();
+    await tick();
+    expect(document.activeElement).toBe(elsewhere);
+    opener.remove();
+    elsewhere.remove();
+  });
+
   it('renders nothing when `selected` is null', () => {
     render(DetailPanel, {
       selected: null, template: makeTemplate(), sidecar: makeSidecar(),

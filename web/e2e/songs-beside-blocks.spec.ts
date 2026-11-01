@@ -46,12 +46,25 @@ test('a song opens its rule in the preview column; a change marks the songs it a
   await expect(page.getByTestId('staged-save')).toHaveText(/Save 1 edit/);
   await expect(page.getByTestId('song-only-changed')).toBeVisible({ timeout: 15000 });
   await expect(page.getByTestId('song-rule').nth(1)).toContainText('Picked from A');
+  // The panel and the blocks show the queued change too, not the saved rule.
+  await expect(panel.locator('.rule-words')).toHaveText('Picked from A');
+  await expect(page.locator('[data-ref-key]').nth(1)).toHaveText(/Pk/);
 
   // Closing the panel unmarks the song; the list stays.
   await page.keyboard.press('Escape');
   await expect(panel).toHaveCount(0);
   await expect(songs.nth(1)).toHaveAttribute('aria-pressed', 'false');
   await expect(page.getByTestId('trace-songs')).toBeVisible();
+
+  // From the keyboard: a song opens its rule, and closing the panel from
+  // inside it puts focus back on the song.
+  await songs.nth(0).focus();
+  await page.keyboard.press('Enter');
+  await expect(panel).toBeVisible();
+  await page.getByTestId('detail-close').focus();
+  await page.keyboard.press('Enter');
+  await expect(panel).toHaveCount(0);
+  await expect(songs.nth(0)).toBeFocused();
 });
 
 test('with the preview off, a rule\'s panel is on the window edge as before', async ({ page, request }) => {

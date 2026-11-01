@@ -1032,7 +1032,7 @@
     if (songsWantSaved && savedTrace === null) _schedulePreview();
   }
 
-  async function toggleLivePreview() {
+  async function toggleLivePreview(e?: Event) {
     // §16.2.6 c3e — guard the OFF transition when staged edits
     // exist. confirm() returning false aborts the toggle and leaves
     // the operator in staging mode; true runs _resetStagedState()
@@ -1049,7 +1049,11 @@
         `You have ${opLog.length} staged edit${opLog.length === 1 ? '' : 's'} ` +
         'that will be discarded if you turn Preview songs off. Continue?',
       );
-      if (!ok) return;
+      if (!ok) {
+        // Still on: the click had already unticked the box.
+        if (e?.currentTarget instanceof HTMLInputElement) e.currentTarget.checked = true;
+        return;
+      }
       await _resetStagedState();
     }
     livePreviewOn = !livePreviewOn;
@@ -2215,10 +2219,14 @@
       data-testid="editor-region"
     >
       <div class="canvas-col">
+        <!-- The staged state (the saved one when nothing is queued): the
+             canvas, its rule panel and the preview agree, and an edit is
+             made against what's on screen (the queue replays edits in
+             order, each on top of the ones before). -->
         <EditorCanvas
           bind:this={canvas}
-          {template}
-          {sidecar}
+          template={stagedTemplate ?? template}
+          sidecar={stagedSidecar ?? sidecar}
           {ruleDefaults}
           panelTarget={livePreviewOn ? columnPanelEl : null}
           on:selectionChange={(e) => (selectedRef = e.detail.ref)}

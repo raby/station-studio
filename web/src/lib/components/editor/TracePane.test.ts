@@ -1007,7 +1007,9 @@ describe('<TracePane> — Songs and Slots tabs', () => {
     const { rerender } = renderSongs();
     const rows = () => screen.getAllByTestId('song-row');
     await fireEvent.click(rows()[1]);
-    // The page opens song 2's rule: it's marked, others with its rule highlighted.
+    // Not marked until its rule's panel is open (and never, if it can't be).
+    expect(rows()[1]).toHaveAttribute('aria-pressed', 'false');
+    // The page opens song 2's rule: it's marked, its rule's songs highlighted.
     await rerender({ selectedRef: { kind: 'atomic-ref', slot_index: 1 } });
     expect(rows()[1]).toHaveAttribute('aria-pressed', 'true');
     expect(rows()[1]).toHaveClass('related');
@@ -1016,9 +1018,12 @@ describe('<TracePane> — Songs and Slots tabs', () => {
     await rerender({ selectedRef: { kind: 'atomic-ref', slot_index: 3 } });
     expect(rows()[1]).toHaveAttribute('aria-pressed', 'false');
     expect(rows()[3]).toHaveClass('related');
-    // Panel closed: nothing highlighted.
+    // Panel closed: nothing highlighted; and reopening that other rule
+    // doesn't bring back the old mark.
     await rerender({ selectedRef: null });
     expect(screen.queryAllByTestId('song-row').filter((r) => r.classList.contains('related'))).toHaveLength(0);
+    await rerender({ selectedRef: { kind: 'atomic-ref', slot_index: 3 } });
+    expect(rows()[1]).toHaveAttribute('aria-pressed', 'false');
   });
 
   it('the tabs ask the page to switch (it owns and remembers the choice)', async () => {

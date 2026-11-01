@@ -28,9 +28,14 @@
    */
   import { createEventDispatcher, onDestroy, onMount } from 'svelte';
   const dispatch = createEventDispatcher();
-  // Props the page passes the real canvas (unused here).
+  // Props the page passes the real canvas. The template is kept on
+  // `window.__editorCanvasTemplate` for tests to read.
   export let panelTarget: HTMLElement | null = null;
   void panelTarget;
+  export let template: unknown = null;
+  export let sidecar: unknown = null;
+  void sidecar;
+  $: (window as unknown as Record<string, unknown>).__editorCanvasTemplate = template;
   /** The page opens a song's rule panel through this: tests read the
    *  refs it was asked to open from `__editorCanvasOpenRefCalls`. */
   export function openRef(ref: unknown): boolean {

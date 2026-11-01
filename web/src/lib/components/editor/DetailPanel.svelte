@@ -25,7 +25,7 @@
    * shows a warning in that case.
    */
   import { portal } from '$lib/portal';
-  import { createEventDispatcher } from 'svelte';
+  import { createEventDispatcher, tick } from 'svelte';
   import {
     availableCursorIds,
     compatibleSources,
@@ -379,6 +379,30 @@
 
   function close() {
     dispatch('close');
+  }
+
+  // Keyboard: what had focus when the panel opened (a chip, or a song in
+  // the preview column) gets it back when the panel closes with focus
+  // inside it, rather than focus falling to the page.
+  let opener: HTMLElement | null = null;
+  let wasOpen = false;
+  $: onOpenChange(detail !== null);
+  function onOpenChange(open: boolean) {
+    if (open === wasOpen) return;
+    wasOpen = open;
+    if (typeof document === 'undefined') return;
+    if (open) {
+      const active = document.activeElement;
+      opener = active instanceof HTMLElement && active !== document.body ? active : null;
+      return;
+    }
+    const back = opener;
+    opener = null;
+    // After the panel's gone: focus was in it if it's now on nothing.
+    void tick().then(() => {
+      const lost = document.activeElement === null || document.activeElement === document.body;
+      if (lost && back?.isConnected) back.focus();
+    });
   }
 
   /** Build the fields payload from current editValues. Shared by

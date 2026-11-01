@@ -16,6 +16,19 @@ this project uses semantic versioning.
   stays on screen as the blocks scroll, and is as tall as the window.
   With the preview off the panel is on the window's edge, as before.
 
+### Fixed
+
+- **The editor's blocks and rule panel show your queued changes.** With
+  Preview songs on they showed the saved station: apply a change and the
+  panel still showed the old rule (beside a song list showing the new
+  one), and a block added by a queued change never appeared. Edits are
+  now made against what's on screen, so one after a queued change that
+  moved blocks lands where you meant.
+- Cancelling "turn Preview songs off" left the box unticked though the
+  preview stayed on.
+- Closing a rule's panel from the keyboard puts focus back on the song or
+  block that opened it.
+
 ## [1.15.0] - 2026-11-01
 
 ### Added

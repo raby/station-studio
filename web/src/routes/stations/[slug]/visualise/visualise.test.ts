@@ -3466,6 +3466,36 @@ describe('visualise +page.svelte — Songs tab in the preview column', () => {
     expect(calls()).toHaveLength(1);
   });
 
+  it('the canvas shows the queued changes (so its rule panel agrees with the preview)', async () => {
+    window.localStorage.setItem('stagedEdits:viz-test', JSON.stringify({
+      schemaVersion: 1,
+      opLog: [{ kind: 'patchBlock', address: { slot_index: 0 }, fields: { size: 7 } }],
+      updatedAtSnapshot: 'ts-1',
+    }));
+    render(Page);
+    await screen.findByTestId('editor-canvas');
+    await act(async () => {});
+    const t = (window as unknown as Record<string, { layout: { flat_slots: Array<{ size: number }> } }>).__editorCanvasTemplate;
+    expect(t.layout.flat_slots[0].size).toBe(7);
+  });
+
+  it('cancelling "turn Preview songs off" leaves the box ticked', async () => {
+    window.localStorage.setItem('stagedEdits:viz-test', JSON.stringify({
+      schemaVersion: 1,
+      opLog: [{ kind: 'patchBlock', address: { slot_index: 0 }, fields: { size: 7 } }],
+      updatedAtSnapshot: 'ts-1',
+    }));
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    render(Page);
+    await screen.findByTestId('editor-canvas');
+    const box = screen.getByTestId('live-preview-checkbox') as HTMLInputElement;
+    await act(async () => { box.click(); });
+    expect(confirm).toHaveBeenCalled();
+    expect(box.checked).toBe(true);
+    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 1 edit/);
+    confirm.mockRestore();
+  });
+
   it('with nothing queued, only the one preview runs', async () => {
     render(Page);
     await screen.findByTestId('editor-canvas');
