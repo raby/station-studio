@@ -172,6 +172,9 @@
     display: flex;
     flex-direction: column;
     gap: 0.25rem;
+    /* Laid out by its own width, not the window's: it's a full page on
+       a week and a narrow column beside the editor's blocks. */
+    container-type: inline-size;
   }
   .section-name {
     margin: 1rem 0 0.25rem;
@@ -229,6 +232,19 @@
   }
   .song:hover {
     background: var(--row-hover);
+  }
+  /* Narrow (the editor's preview column): the rule goes under the song
+     instead of squeezing beside it. */
+  @container (max-width: 30rem) {
+    .song {
+      grid-template-columns: 2rem minmax(0, 1fr) auto;
+      grid-template-areas:
+        'pos track change'
+        'pos rule  rule'
+        'pos why   why';
+      column-gap: 0.5rem;
+      padding: 0.45rem 0.5rem;
+    }
   }
   .song.related {
     background: var(--accent-soft);

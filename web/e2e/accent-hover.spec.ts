@@ -100,6 +100,12 @@ for (const scheme of ['light', 'dark'] as const) test(`buttons answer hover and 
   bad.push(...await hoverCheck(page, null, async () => {
     await page.getByTestId('add-section').click();
   }));
+  // The preview column: Songs and Slots tabs, and the songs themselves.
+  bad.push(...await hoverCheck(page, `/stations/${slug}/visualise`, async () => {
+    const preview = page.getByTestId('live-preview-checkbox');
+    if (!(await preview.isChecked())) await preview.check();
+    await page.getByTestId('trace-songs').waitFor();
+  }, '[data-testid="trace-col"]'));
   // The week's songs, with a change waiting to be saved.
   bad.push(...await hoverCheck(page, `/playlists/${playlist_id}`, async () => {
     await page.getByTestId('week-view-songs').click();

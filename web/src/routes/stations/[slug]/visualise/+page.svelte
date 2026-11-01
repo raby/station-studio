@@ -75,11 +75,14 @@
     readCompareNextN,
     readLivePreview,
     readMacroPalette,
+    readPreviewTab,
     readPreviewWeek,
     readShowDiff,
+    type PreviewTab,
     writeCompareNextN,
     writeLivePreview,
     writeMacroPalette,
+    writePreviewTab,
     writePreviewWeek,
     writeShowDiff,
   } from '$lib/stationPrefs';
@@ -120,6 +123,9 @@
   // and the DetailPanel ↔ TracePane mutual-exclusivity (D2(b)).
   // c2 ships the scheduler skeleton + visualisation only.
   let livePreviewOn = false;
+  // Which list the preview column shows: the week's songs (grouped,
+  // plain words) or one technical row per slot. Remembered per station.
+  let previewTab: PreviewTab = 'songs';
   // §16.2.4.t1 — macro palette drawer state. Persists per-station to
   // localStorage so a returning operator picks up where they left off.
   // Independent of livePreviewOn — the palette is a browse affordance,
@@ -350,7 +356,8 @@
     _cancelPreview();
     previewTrace = null;
     previewError = null;
-    livePreviewOn = readLivePreview(slug);
+    livePreviewOn = _hydrateLivePreview(slug);
+    previewTab = readPreviewTab(slug);
     // §16.2.4.t1 — hydrate macro-palette open-state per-station.
     paletteOpen = readMacroPalette(slug);
     // §16.2.6.t8: hydrate previewWeek per-station too. Default 1
@@ -681,10 +688,13 @@
       // from a previous toggle ON discards instead of populating the
       // cache after we've cleared it. §16.2.7.t4: ALSO clear the
       // multi-week summary + bump its generation — diff OFF tears
-      // down the whole compare-against-saved feature.
-      savedTrace = null;
-      savedTraceError = null;
-      savedTraceGeneration += 1;
+      // down the whole compare-against-saved feature. The saved week
+      // stays while the Songs tab still marks changes against it.
+      if (!songsWantSaved) {
+        savedTrace = null;
+        savedTraceError = null;
+        savedTraceGeneration += 1;
+      }
       weekDiffSummary = new Map();
       multiWeekFetching = false;
       multiWeekGeneration += 1;
@@ -793,7 +803,7 @@
   // saved-trace job runs to completion first; the staged-trace
   // preview only starts after the cache is filled.
   async function _refreshSavedTraceIfNeeded(): Promise<void> {
-    if (!showDiff) return;
+    if (!showDiff && !songsWantSaved) return;
     if (savedTrace !== null) return;
     if (!template || !sidecar) return;
     // §16.2.7.t1 review F1 fix — no pending guard. The generation gate
@@ -949,6 +959,11 @@
       previewing = true;
       previewError = null;
       try {
+        // The saved week first, when it's wanted and not cached (the
+        // server cancels a station's running preview when another
+        // starts, so they can't run side by side).
+        await _refreshSavedTraceIfNeeded();
+        if (myGeneration !== previewGeneration) return;
         // §16.2.6 c3: preview the STAGED view (equal to the loaded one
         // when nothing is queued). cancelIfStale (review #1 fix #1): a
         // supersede or onDestroy during the POST could only no-op-cancel
@@ -982,6 +997,30 @@
     }, PREVIEW_DEBOUNCE_MS);
   }
 
+  // Staged edits only exist with the preview on. A station with edits
+  // queued (here before a reload, or on one of its week pages, which
+  // share the queue) opens with it on, so they're kept: with it off
+  // the editor would discard them.
+  function _hydrateLivePreview(forSlug: string): boolean {
+    if (readLivePreview(forSlug)) return true;
+    if (readStagedEdits(forSlug) === null) return false;
+    writeLivePreview(forSlug, true);
+    return true;
+  }
+
+  // The Songs tab marks songs that differ from the saved week, so it
+  // needs the saved week's preview whenever edits are queued (not only
+  // while Compare is ticked).
+  $: songsWantSaved = livePreviewOn && previewTab === 'songs' && opLog.length > 0;
+
+  function handlePreviewTabChange(e: CustomEvent<{ tab: PreviewTab }>) {
+    previewTab = e.detail.tab;
+    writePreviewTab(slug, previewTab);
+    // Preview again so the saved week's preview is fetched first (two
+    // previews at once would cancel each other on the server).
+    if (songsWantSaved && savedTrace === null) _schedulePreview();
+  }
+
   async function toggleLivePreview() {
     // §16.2.6 c3e — guard the OFF transition when staged edits
     // exist. confirm() returning false aborts the toggle and leaves
@@ -997,7 +1036,7 @@
     if (livePreviewOn && hasStagedEdits) {
       const ok = window.confirm(
         `You have ${opLog.length} staged edit${opLog.length === 1 ? '' : 's'} ` +
-        'that will be discarded if you turn live preview off. Continue?',
+        'that will be discarded if you turn Preview songs off. Continue?',
       );
       if (!ok) return;
       await _resetStagedState();
@@ -1190,10 +1229,10 @@
     window.addEventListener('storage', _storageHandler);
     // Hydrate the live-preview toggle from localStorage BEFORE the
     // sidecar loads — so a returning operator's preferred mode is
-    // already active when the canvas renders. No preview job fires
-    // here; the operator's first edit triggers _schedulePreview if
-    // the toggle is ON.
-    livePreviewOn = readLivePreview(slug);
+    // already active when the canvas renders. With it on, the first
+    // preview runs once the sidecar has loaded (below).
+    livePreviewOn = _hydrateLivePreview(slug);
+    previewTab = readPreviewTab(slug);
     // §16.2.4.t1 — hydrate the macro palette open-state too. The
     // palette is browse-only (no scheduler / side effects) so this
     // is purely a UI hydration.
@@ -2025,7 +2064,7 @@
           on:change={toggleLivePreview}
           data-testid="live-preview-checkbox"
         />
-        Live preview
+        Preview songs
       </label>
       <!-- §16.2.4.t1 — macro palette toggle. Opens the browseable
            macro list as a drawer above the trace pane area. Per-
@@ -2224,6 +2263,10 @@
               stagedSidecar={stagedSidecar}
               revertableSlots={revertableSlots}
               opLog={opLog}
+              tab={previewTab}
+              stagedTemplate={stagedTemplate}
+              {ruleDefaults}
+              on:tabChange={handlePreviewTabChange}
               on:select={handleTraceSelect}
               on:weekChange={handleWeekChange}
               on:showDiffChange={handleShowDiffChange}

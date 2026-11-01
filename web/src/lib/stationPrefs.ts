@@ -1,7 +1,8 @@
 /**
  * Per-station UI preferences kept in localStorage: whether live preview
- * is on, whether the macro palette is open, the preview week, the
- * compare-against-saved toggle and how many extra weeks to compare.
+ * is on, which list the preview shows (songs or slots), whether the
+ * macro palette is open, the preview week, the compare-against-saved
+ * toggle and how many extra weeks to compare.
  *
  * Moved out of the station editor page (stations/[slug]/visualise) so
  * the week page's song-list editor reads and writes the same values.
@@ -14,6 +15,7 @@
 
 export const prefKeys = {
   livePreview: (slug: string) => `livePreview:${slug}`,
+  previewTab: (slug: string) => `previewTab:${slug}`,
   macroPalette: (slug: string) => `macroPalette:${slug}`,
   previewWeek: (slug: string) => `previewWeek:${slug}`,
   showDiff: (slug: string) => `showDiff:${slug}`,
@@ -47,6 +49,12 @@ const writeFlag = (key: string, on: boolean): void => write(key, on ? 'on' : 'of
 
 export const readLivePreview = (slug: string) => readFlag(prefKeys.livePreview(slug));
 export const writeLivePreview = (slug: string, on: boolean) => writeFlag(prefKeys.livePreview(slug), on);
+
+/** The preview's list: the week's songs unless slots were chosen. */
+export type PreviewTab = 'songs' | 'slots';
+export const readPreviewTab = (slug: string): PreviewTab =>
+  read(prefKeys.previewTab(slug)) === 'slots' ? 'slots' : 'songs';
+export const writePreviewTab = (slug: string, tab: PreviewTab) => write(prefKeys.previewTab(slug), tab);
 
 export const readMacroPalette = (slug: string) => readFlag(prefKeys.macroPalette(slug));
 export const writeMacroPalette = (slug: string, on: boolean) => writeFlag(prefKeys.macroPalette(slug), on);

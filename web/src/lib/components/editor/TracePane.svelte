@@ -37,6 +37,9 @@
     type StationTemplate,
   } from '$lib/editor';
   import { describeOp, type Edit } from '$lib/edit-ops';
+  import SongList from '$lib/components/songs/SongList.svelte';
+  import type { RuleDefaults, SongRow } from '$lib/songList';
+  import type { PreviewTab } from '$lib/stationPrefs';
 
   /** Latest successful preview trace. null when no preview has run yet
    *  or when Discard cleared it. */
@@ -102,8 +105,19 @@
    *  `describeOp` as a numbered line in the "Edits" panel. Panel
    *  shows only when showDiff is on AND opLog non-empty. */
   export let opLog: Edit[] = [];
+  /** Which list shows: the week's songs, grouped and in plain words
+   *  (the week page's song list), or the technical one row per slot.
+   *  The parent owns it (and remembers it); a click dispatches
+   *  `tabChange`. */
+  export let tab: PreviewTab = 'songs';
+  /** The template the preview was made from (staged edits included), for
+   *  the song list's rules; the saved one when nothing is queued. */
+  export let stagedTemplate: StationTemplate | null = null;
+  /** The station's default rule settings, for the song list's wording. */
+  export let ruleDefaults: RuleDefaults = {};
 
   const dispatch = createEventDispatcher<{
+    tabChange: { tab: PreviewTab };
     select: { slotIndex: number };
     weekChange: { week: number };
     showDiffChange: { on: boolean };
@@ -285,6 +299,35 @@
   // landed). Falls back gracefully when either is missing — the
   // diff classes don't apply; the existing single-trace render path
   // takes over.
+  const TABS = [
+    { id: 'songs', label: 'Songs' },
+    { id: 'slots', label: 'Slots' },
+  ] as const;
+
+  function setTab(next: PreviewTab) {
+    if (next !== tab) dispatch('tabChange', { tab: next });
+  }
+
+  // Left and Right move between the tabs (and focus the one chosen),
+  // as tabs do.
+  function onTabKey(e: KeyboardEvent) {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight' && e.key !== 'Home' && e.key !== 'End') return;
+    e.preventDefault();
+    const ids = TABS.map((t) => t.id);
+    const at = ids.indexOf(tab);
+    const next = e.key === 'Home' ? 0 : e.key === 'End' ? ids.length - 1
+      : (at + (e.key === 'ArrowRight' ? 1 : -1) + ids.length) % ids.length;
+    setTab(ids[next]);
+    const el = (e.currentTarget as HTMLElement).parentElement?.querySelector<HTMLElement>(`#trace-tab-${ids[next]}`);
+    el?.focus();
+  }
+
+  $: songTemplate = stagedTemplate ?? template;
+
+  function onSongSelect(row: SongRow) {
+    onRowClick(row.slot.slot);
+  }
+
   $: diffReady = showDiff && trace !== null && savedTrace !== null;
   $: classifications = diffReady
     ? classifySlots(savedTrace, trace)
@@ -344,7 +387,7 @@
 
 <aside class="trace-pane" data-testid="trace-pane">
   <header class="trace-header">
-    <span class="title">Trace</span>
+    <span class="title">Preview</span>
     <!-- §16.2.6.t8 week selector. D1: lives inline with the status
          text so the operator's eye stays in one place. Controlled
          input: value comes from the `weekValue` prop; change events
@@ -500,123 +543,171 @@
     </div>
   {/if}
 
-  {#if diffReady}
-    <ol class="slots slots--diff" data-testid="trace-slots">
-      {#each classifications as cls (cls.index)}
-        {@const slot = pickDisplaySlot(cls, savedTrace, trace)}
-        {@const wasName = pickWasName(cls, savedTrace)}
-        {#if slot}
-          <!-- svelte-ignore a11y-no-noninteractive-element-to-interactive-role -->
-          <li
-            class="slot slot--{cls.kind}"
-            data-testid="trace-row"
-            data-slot-index={slot.slot}
-            data-diff-kind={cls.kind}
-            role="button"
-            tabindex="0"
-            on:click={() => onRowClick(slot.slot)}
-            on:keydown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault();
-                onRowClick(slot.slot);
-              }
-            }}
-          >
-            <span class="idx">{slot.slot}</span>
-            <span class="source" title={slot.source}>{slot.source}</span>
-            <span class="strategy">{slot.strategy}</span>
-            <span class="name" title={slot.track_name}>
-              {slot.track_name}
-              {#if cls.kind === 'added'}
-                <span class="diff-marker" data-testid="trace-row-marker">+ added</span>
-              {/if}
-            </span>
-            {#if slot.track_artist}
-              <span class="artist" title={slot.track_artist}>
-                {slot.track_artist}
-              </span>
-            {/if}
-            {#if wasName}
-              <!-- §16.2.7 c2 (D4) — "was: <name>" subtext on CHANGED
-                   rows so the operator sees the prior content
-                   alongside the new one. -->
-              <span class="diff-was" data-testid="trace-row-was">
-                was: {wasName}
-              </span>
-            {/if}
-            <!-- §16.2.7.t6 (D1) — Revert button. Hidden on
-                 UNCHANGED rows (nothing to revert). Disabled when
-                 no opLog op directly attributable to this slot
-                 (cascade case — operator must revert the cause
-                 instead). Click stops propagation so the row's
-                 select-to-jump doesn't also fire. -->
-            {#if cls.kind !== 'unchanged'}
-              {@const revertable = revertableSlots.has(slot.slot)}
-              <button
-                type="button"
-                class="diff-revert"
-                class:diff-revert--disabled={!revertable}
-                data-testid="trace-row-revert"
-                data-revert-enabled={revertable ? 'true' : 'false'}
-                disabled={!revertable}
-                title={revertable
-                  ? 'Revert the staged edit affecting this slot'
-                  : 'No direct edit to revert (this row changed due to a structural edit elsewhere — revert that instead).'}
-                on:click={(e) => onRevertClick(e, slot.slot)}
+  <!-- The week as songs (grouped, plain words, search) or as slots
+       (one technical row each, with revert). Both are the same
+       preview; a click on either jumps to the song's block. -->
+  <div class="tabs" role="tablist" aria-label="Preview as">
+    {#each TABS as t (t.id)}
+      <button
+        type="button"
+        role="tab"
+        id="trace-tab-{t.id}"
+        class="tab"
+        aria-selected={tab === t.id}
+        aria-controls="trace-tabpanel"
+        tabindex={tab === t.id ? 0 : -1}
+        data-testid="trace-tab-{t.id}"
+        on:click={() => setTab(t.id)}
+        on:keydown={onTabKey}
+      >{t.label}</button>
+    {/each}
+  </div>
+
+  <div class="tab-panel" id="trace-tabpanel" role="tabpanel" aria-labelledby="trace-tab-{tab}">
+    {#if tab === 'songs'}
+      {#if opLog.length > 0 && savedTraceError && !showDiff}
+        <!-- Shown under Compare when that's on; otherwise here, or the
+             missing "changed" marks would go unexplained. -->
+        <div class="diff-error-banner" data-testid="trace-songs-compare-error" role="status">
+          Couldn't compare with the saved week, so changed songs aren't marked: {savedTraceError}
+        </div>
+      {/if}
+      {#if trace && trace.slots.length > 0 && songTemplate && stagedSidecar}
+        <div class="songs" data-testid="trace-songs">
+          <SongList
+            {trace}
+            saved={opLog.length > 0 ? savedTrace : null}
+            template={songTemplate}
+            sidecar={stagedSidecar}
+            onselect={onSongSelect}
+            {ruleDefaults}
+          />
+        </div>
+      {:else if !previewing && !errorMessage}
+        <div class="empty" data-testid="trace-empty">
+          The week's songs show here once it's previewed.
+        </div>
+      {/if}
+    {:else}
+      {#if diffReady}
+        <ol class="slots slots--diff" data-testid="trace-slots">
+          {#each classifications as cls (cls.index)}
+            {@const slot = pickDisplaySlot(cls, savedTrace, trace)}
+            {@const wasName = pickWasName(cls, savedTrace)}
+            {#if slot}
+              <!-- svelte-ignore a11y-no-noninteractive-element-to-interactive-role -->
+              <li
+                class="slot slot--{cls.kind}"
+                data-testid="trace-row"
+                data-slot-index={slot.slot}
+                data-diff-kind={cls.kind}
+                role="button"
+                tabindex="0"
+                on:click={() => onRowClick(slot.slot)}
+                on:keydown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    onRowClick(slot.slot);
+                  }
+                }}
               >
-                Revert
-              </button>
+                <span class="idx">{slot.slot}</span>
+                <span class="source" title={slot.source}>{slot.source}</span>
+                <span class="strategy">{slot.strategy}</span>
+                <span class="name" title={slot.track_name}>
+                  {slot.track_name}
+                  {#if cls.kind === 'added'}
+                    <span class="diff-marker" data-testid="trace-row-marker">+ added</span>
+                  {/if}
+                </span>
+                {#if slot.track_artist}
+                  <span class="artist" title={slot.track_artist}>
+                    {slot.track_artist}
+                  </span>
+                {/if}
+                {#if wasName}
+                  <!-- §16.2.7 c2 (D4) — "was: <name>" subtext on CHANGED
+                       rows so the operator sees the prior content
+                       alongside the new one. -->
+                  <span class="diff-was" data-testid="trace-row-was">
+                    was: {wasName}
+                  </span>
+                {/if}
+                <!-- §16.2.7.t6 (D1) — Revert button. Hidden on
+                     UNCHANGED rows (nothing to revert). Disabled when
+                     no opLog op directly attributable to this slot
+                     (cascade case — operator must revert the cause
+                     instead). Click stops propagation so the row's
+                     select-to-jump doesn't also fire. -->
+                {#if cls.kind !== 'unchanged'}
+                  {@const revertable = revertableSlots.has(slot.slot)}
+                  <button
+                    type="button"
+                    class="diff-revert"
+                    class:diff-revert--disabled={!revertable}
+                    data-testid="trace-row-revert"
+                    data-revert-enabled={revertable ? 'true' : 'false'}
+                    disabled={!revertable}
+                    title={revertable
+                      ? 'Revert the staged edit affecting this slot'
+                      : 'No direct edit to revert (this row changed due to a structural edit elsewhere — revert that instead).'}
+                    on:click={(e) => onRevertClick(e, slot.slot)}
+                  >
+                    Revert
+                  </button>
+                {/if}
+              </li>
             {/if}
-          </li>
-        {/if}
-      {/each}
-    </ol>
-  {:else if trace && trace.slots.length > 0}
-    <ol class="slots" data-testid="trace-slots">
-      {#each trace.slots as slot, i (i)}
-        <!-- §16.2.6 c2 review #1 fix #7: keyboard a11y on trace
-             rows. `role="button"` + `tabindex="0"` make rows
-             keyboard-focusable; Enter and Space both dispatch the
-             same select event as the click handler. Wraps the
-             §16.2.6.t3 jump-to-chip interaction in keyboard
-             support from day one. The
-             a11y-no-noninteractive-element-to-interactive-role
-             warning is intentional: an inner <button> would
-             complicate the grid layout + duplicate the click
-             surface; the role+tabindex+keydown trio gives the
-             same accessibility outcome with simpler markup. -->
-        <!-- svelte-ignore a11y-no-noninteractive-element-to-interactive-role -->
-        <li
-          class="slot"
-          data-testid="trace-row"
-          data-slot-index={slot.slot}
-          role="button"
-          tabindex="0"
-          on:click={() => onRowClick(slot.slot)}
-          on:keydown={(e) => {
-            if (e.key === 'Enter' || e.key === ' ') {
-              e.preventDefault();
-              onRowClick(slot.slot);
-            }
-          }}
-        >
-          <span class="idx">{slot.slot}</span>
-          <span class="source" title={slot.source}>{slot.source}</span>
-          <span class="strategy">{slot.strategy}</span>
-          <span class="name" title={slot.track_name}>{slot.track_name}</span>
-          {#if slot.track_artist}
-            <span class="artist" title={slot.track_artist}>
-              {slot.track_artist}
-            </span>
-          {/if}
-        </li>
-      {/each}
-    </ol>
-  {:else if !previewing && !errorMessage}
-    <div class="empty" data-testid="trace-empty">
-      Edit a chip to see a preview here.
-    </div>
-  {/if}
+          {/each}
+        </ol>
+      {:else if trace && trace.slots.length > 0}
+        <ol class="slots" data-testid="trace-slots">
+          {#each trace.slots as slot, i (i)}
+            <!-- §16.2.6 c2 review #1 fix #7: keyboard a11y on trace
+                 rows. `role="button"` + `tabindex="0"` make rows
+                 keyboard-focusable; Enter and Space both dispatch the
+                 same select event as the click handler. Wraps the
+                 §16.2.6.t3 jump-to-chip interaction in keyboard
+                 support from day one. The
+                 a11y-no-noninteractive-element-to-interactive-role
+                 warning is intentional: an inner <button> would
+                 complicate the grid layout + duplicate the click
+                 surface; the role+tabindex+keydown trio gives the
+                 same accessibility outcome with simpler markup. -->
+            <!-- svelte-ignore a11y-no-noninteractive-element-to-interactive-role -->
+            <li
+              class="slot"
+              data-testid="trace-row"
+              data-slot-index={slot.slot}
+              role="button"
+              tabindex="0"
+              on:click={() => onRowClick(slot.slot)}
+              on:keydown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  onRowClick(slot.slot);
+                }
+              }}
+            >
+              <span class="idx">{slot.slot}</span>
+              <span class="source" title={slot.source}>{slot.source}</span>
+              <span class="strategy">{slot.strategy}</span>
+              <span class="name" title={slot.track_name}>{slot.track_name}</span>
+              {#if slot.track_artist}
+                <span class="artist" title={slot.track_artist}>
+                  {slot.track_artist}
+                </span>
+              {/if}
+            </li>
+          {/each}
+        </ol>
+      {:else if !previewing && !errorMessage}
+        <div class="empty" data-testid="trace-empty">
+          Edit a chip to see a preview here.
+        </div>
+      {/if}
+    {/if}
+  </div>
 </aside>
 
 <style>
@@ -630,8 +721,9 @@
   }
   .trace-header {
     display: flex;
+    flex-wrap: wrap;
     align-items: baseline;
-    gap: 0.5rem;
+    gap: 0.25rem 0.5rem;
     padding: 0.5rem 0.75rem;
     border-bottom: 1px solid var(--border, #ddd);
     flex-shrink: 0;
@@ -659,6 +751,7 @@
     font-size: 0.8rem;
     color: var(--text-muted, #666);
     font-variant-numeric: tabular-nums;
+    white-space: nowrap;
   }
   .status.previewing {
     color: var(--accent, #2c7a7b);
@@ -680,6 +773,54 @@
     color: var(--text-muted, #666);
     text-align: center;
     font-style: italic;
+  }
+  /* Songs | Slots: the week page's view switch, as tabs. */
+  .tabs {
+    display: inline-flex;
+    align-self: flex-start;
+    margin: 0.5rem 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+    flex-shrink: 0;
+  }
+  .tab {
+    padding: 0.25rem 0.8rem;
+    border: 0;
+    border-radius: 0;
+    background: var(--panel);
+    color: var(--text);
+    font: inherit;
+    font-size: 0.85rem;
+    font-weight: 550;
+    cursor: pointer;
+  }
+  .tab + .tab {
+    border-left: 1px solid var(--border);
+  }
+  .tab:hover:not([aria-selected='true']) {
+    background: var(--panel-3);
+  }
+  .tab[aria-selected='true'] {
+    background: var(--accent);
+    color: var(--accent-text);
+  }
+  .tab:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+  }
+  /* The lists scroll inside the pane, under its header and tabs. */
+  .tab-panel {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+  }
+  .songs {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 0 0.75rem 0.75rem;
   }
   .slots {
     list-style: none;
