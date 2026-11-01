@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen, cleanup, fireEvent } from '@testing-library/svelte';
 import { renderWithEvents } from '$lib/renderWithEvents';
 import '@testing-library/jest-dom/vitest';
@@ -703,9 +703,11 @@ describe('<TracePane> — §16.2.7.t5 per-section summary', () => {
 describe('<TracePane> — §16.2.7.t6 revert button', () => {
   beforeEach(() => cleanup());
 
+  // As the engine numbers them: songs and blocks from 1. A song's rule
+  // is block − 1 (here one song per block, so slot and block agree).
   function tr(track_ids: Array<number>): Trace {
     const slots = track_ids.map((track_id, i) => ({
-      slot: i, unit: 'slot', row: 1, block: i,
+      slot: i + 1, unit: 'slot', row: 1, block: i + 1,
       source: 'A', strategy: 'sequential', pool_index: i,
       track_id, track_name: `T${track_id}`, track_artist: 'A',
       reason: '', excluded: [],
@@ -763,6 +765,28 @@ describe('<TracePane> — §16.2.7.t6 revert button', () => {
     expect(button.getAttribute('title') ?? '').toMatch(/structural edit/);
   });
 
+  it("a song's Revert is its rule's: by block, not by song number", async () => {
+    // Rule 0 plays two songs (slots 1-2), rule 1 one (slot 3); only
+    // rule 1's song changed, and only rule 1 has an edit.
+    const week = (ids: number[]): Trace => {
+      const t = tr(ids);
+      t.slots = t.slots.map((s, i) => ({ ...s, block: i < 2 ? 1 : 2 }));
+      return t;
+    };
+    const { on } = renderWithEvents(TracePane, { tab: 'slots',
+      trace: week([1, 2, 99]),
+      savedTrace: week([1, 2, 3]),
+      showDiff: true,
+      revertableSlots: new Set([1]),
+    });
+    let reverted: number | null = null;
+    on('revertSlot', (e: CustomEvent<{ slotIndex: number }>) => { reverted = e.detail.slotIndex; });
+    const button = screen.getByTestId('trace-row-revert');
+    expect(button).toBeEnabled();
+    await fireEvent.click(button);
+    expect(reverted).toBe(1);
+  });
+
   it('click on Revert button dispatches revertSlot { slotIndex } + stops propagation (no select)', async () => {
     const { on } = renderWithEvents(TracePane, { tab: 'slots',
       trace: tr([1, 99, 3]),
@@ -809,7 +833,7 @@ describe('<TracePane> — §16.2.7.t6 revert button', () => {
 
 
 // §16.2.7.t7 — Edits panel.
-describe('<TracePane> — §16.2.7.t7 edits panel (semantic diff)', () => {
+describe('<TracePane> — the queued changes, each with an Undo', () => {
   beforeEach(() => cleanup());
 
   function tr(track_ids: Array<number>): Trace {
@@ -824,87 +848,72 @@ describe('<TracePane> — §16.2.7.t7 edits panel (semantic diff)', () => {
       seed: null, generated_at: '2026-06-15T00:00:00Z', slots,
     };
   }
+  const changes = [
+    { text: 'Renamed section “Morning” to “AM”', indices: [0] },
+    { text: 'Morning, rule 1: Picked from A, and the 2 rules just like it', indices: [1, 2, 3] },
+    { text: 'Sections in this order: “Evening”, “AM”', indices: [4] },
+  ];
 
-  it('renders nothing when showDiff is OFF (even with non-empty opLog)', () => {
-    render(TracePane, { tab: 'slots',
-      trace: tr([1, 2, 3]),
-      savedTrace: tr([1, 2, 3]),
-      showDiff: false,
-      previewing: false,
-      errorMessage: null,
-      weekValue: 1,
-      savedTraceError: null,
-      opLog: [{
-        kind: 'renameSection', sectionId: 'morning', name: 'AM',
-      }],
-    });
-    expect(screen.queryByTestId('trace-edits-panel')).toBeNull();
+  it('listed whichever tab shows, Compare on or off, with how many', () => {
+    for (const tab of ['songs', 'slots'] as const) {
+      render(TracePane, { tab, trace: tr([1, 2, 3]), showDiff: false, changes, onundo: () => true });
+      expect(screen.getByTestId('trace-changes-title')).toHaveTextContent('3 changes, not saved yet');
+      expect(screen.getAllByTestId('trace-change-item').map((li) => li.textContent)).toEqual(
+        changes.map((c) => expect.stringContaining(c.text)));
+      cleanup();
+    }
   });
 
-  it('renders nothing when opLog is empty (even with showDiff on)', () => {
-    render(TracePane, { tab: 'slots',
-      trace: tr([1, 2, 3]),
-      savedTrace: tr([1, 2, 3]),
-      showDiff: true,
-      previewing: false,
-      errorMessage: null,
-      weekValue: 1,
-      savedTraceError: null,
-      opLog: [],
-    });
-    expect(screen.queryByTestId('trace-edits-panel')).toBeNull();
+  it('nothing queued: no list', () => {
+    render(TracePane, { tab: 'slots', trace: tr([1]), changes: [], onundo: () => true });
+    expect(screen.queryByTestId('trace-changes-title')).toBeNull();
+    expect(screen.queryByTestId('trace-change-list')).toBeNull();
   });
 
-  it('shows one numbered row per op with describeOp rendering', () => {
-    render(TracePane, { tab: 'slots',
-      trace: tr([1, 2, 3]),
-      savedTrace: tr([1, 2, 3]),
-      showDiff: true,
-      previewing: false,
-      errorMessage: null,
-      weekValue: 1,
-      savedTraceError: null,
-      opLog: [
-        { kind: 'renameSection', sectionId: 'morning', name: 'AM' },
-        {
-          kind: 'patchBlock',
-          address: { slot_index: 0 },
-          fields: { size: 5 },
-        },
-        { kind: 'sectionDelete', sectionId: 'evening' },
-      ],
+  it('Undo hands over the edits the change is, then focus goes to the next Undo', async () => {
+    const asked: number[][] = [];
+    const { rerender } = render(TracePane, {
+      tab: 'slots', trace: tr([1]), changes,
+      onundo: (indices: number[]) => {
+        asked.push(indices);
+        // The parent takes it out of the queue.
+        void rerender({ changes: [changes[0], { ...changes[2], indices: [1] }] });
+        return true;
+      },
     });
-    const panel = screen.getByTestId('trace-edits-panel');
-    expect(panel).toBeInTheDocument();
-    expect(panel.textContent).toContain('Edits (3):');
-    const rows = screen.getAllByTestId('trace-edits-row');
-    expect(rows).toHaveLength(3);
-    expect(rows[0].textContent).toContain("Renamed section 'morning' to 'AM'");
-    expect(rows[1].textContent).toContain('Patched slot 0: size=5');
-    expect(rows[2].textContent).toContain("Deleted section 'evening'");
+    const undo = screen.getAllByTestId('trace-change-undo')[1];
+    expect(undo).toHaveAccessibleName('Undo: Morning, rule 1: Picked from A, and the 2 rules just like it');
+    undo.focus();
+    await fireEvent.click(undo);
+    expect(asked).toEqual([[1, 2, 3]]);
+    await vi.waitFor(() => expect(document.activeElement).toBe(screen.getAllByTestId('trace-change-undo')[1]));
+    expect(screen.getByText(/^Undone: Morning, rule 1/)).toBeInTheDocument();
   });
 
-  it('surfaces structural edits invisible to trace diff (operator clearly did something)', () => {
-    // Reorder doesn't change track_ids → trace would say "No
-    // changes since save". The Edits panel makes the intent visible.
-    render(TracePane, { tab: 'slots',
-      trace: tr([1, 2, 3]),
-      savedTrace: tr([1, 2, 3]),
-      showDiff: true,
-      previewing: false,
-      errorMessage: null,
-      weekValue: 1,
-      savedTraceError: null,
-      opLog: [{
-        kind: 'reorderSections',
-        layoutOrder: ['evening', 'morning'],
-      }],
+  it('the last one undone: focus goes to the tab shown', async () => {
+    const one = [changes[0]];
+    const { rerender } = render(TracePane, {
+      tab: 'songs', trace: tr([1]), changes: one,
+      onundo: () => { void rerender({ changes: [] }); return true; },
     });
-    const rows = screen.getAllByTestId('trace-edits-row');
-    expect(rows).toHaveLength(1);
-    expect(rows[0].textContent).toContain(
-      'Reordered sections to: evening, morning',
-    );
+    await fireEvent.click(screen.getByTestId('trace-change-undo'));
+    await vi.waitFor(() => expect(document.activeElement).toBe(screen.getByTestId('trace-tab-songs')));
+    expect(screen.getByText('Undone: Renamed section “Morning” to “AM”')).toBeInTheDocument();
+  });
+
+  it('not undone (the parent asked, and was told no): focus and list stay', async () => {
+    render(TracePane, { tab: 'slots', trace: tr([1]), changes, onundo: async () => false });
+    const undo = screen.getAllByTestId('trace-change-undo')[0];
+    undo.focus();
+    await fireEvent.click(undo);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(document.activeElement).toBe(undo);
+    expect(screen.queryByText(/^Undone:/)).toBeNull();
+  });
+
+  it('while saving, nothing can be undone', () => {
+    render(TracePane, { tab: 'slots', trace: tr([1]), changes, onundo: () => true, undoBusy: true });
+    for (const b of screen.getAllByTestId('trace-change-undo')) expect(b).toBeDisabled();
   });
 });
 

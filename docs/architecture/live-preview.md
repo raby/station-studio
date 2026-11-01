@@ -37,7 +37,8 @@ is remembered per station):
   staged one, because `POLICY_CANCEL_EXISTING` (below) means two
   previews for a station can't run side by side.
 - **Slots**: one technical row per slot, with the compare-against-saved
-  diff and per-slot revert.
+  diff and per-slot revert (a song's rule is its `block` − 1; `slot`
+  counts songs).
 
 A click on either jumps to the song's block on the canvas; a song also
 opens its rule's panel. With the preview on, that panel (any rule's,
@@ -50,6 +51,26 @@ The canvas (and so its rule panel) renders the **staged** state, as the
 preview does: queued changes show on the blocks, and an edit made there is
 recorded against what's on screen. That matters because the queue replays
 edits in order, each on top of the ones before.
+
+## Undoing a queued change
+
+The queued changes are listed above the tabs, in plain words, each with
+an **Undo** (`QueuedChanges`, shared with week pages; `queuedChanges`
+makes the lines, one per change, so a change made to identical rules
+too is one line). A slot's revert on the Slots tab undoes its rule's
+edits the same way.
+
+Because each edit replays on top of the ones before, undoing one can
+leave a later one meaning something else: an edit addresses a rule by
+its slot, so after a rule added or removed ahead of it, it would change
+the next rule along; settings for a retyped rule belong to its new
+type; and section edits name sections that may not be there. `undoSet`
+works out which later edits build on the one undone (it follows rules
+through later adds and removes, and checks section edits against the
+queue as it would be), and the editor names them and asks before
+undoing them too (`confirmUndo`). A randomised test undoes every edit
+of many generated queues and checks that what stays still changes the
+same rules.
 
 Staged edits share one per-station queue in `localStorage` with the
 week pages' song-list editor, so a station with edits queued opens its

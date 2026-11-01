@@ -281,10 +281,17 @@ function blockPlace(sidecar: Sidecar, ref: AtomicRef): string {
   return `Rule ${(ref.slot_index ?? ref.block_idx ?? 0) + 1}`;
 }
 
+/** A section's name for the list of changes ("“Evening”"). */
+function sectionLabel(sidecar: Sidecar, id: string): string {
+  const section = sidecar.sections.find((s) => s.id === id);
+  return `“${section?.name ?? id}”`;
+}
+
 /**
  * Each queued change in plain words: which rule, and what it does once
- * changed ("The day, rule 1: Picked from A"). Changes that aren't to a
- * rule's settings (moves, splits) use the editor's own wording.
+ * changed ("The day, rule 1: Picked from A"); rules added, removed or
+ * moved by where they are ("Moved The day, rule 2 to Evening, rule 1");
+ * sections by name.
  */
 export function describeQueued(
   opLog: Edit[],
@@ -294,22 +301,62 @@ export function describeQueued(
 ): string[] {
   let state: { template: StationTemplate; sidecar: unknown } = { template, sidecar };
   return opLog.map((op) => {
+    const before = state;
     state = applyEdit(state.template, state.sidecar, op);
+    const was = before.sidecar as Sidecar;
     const after = state.sidecar as Sidecar;
-    if (op.kind === 'patchMacro') {
-      const macro = lookupMacro(after, op.macroId);
-      if (!macro) return describeOp(op);
-      const name = macro.name ?? macro.id;
-      const where = sectionName(after, { kind: 'macro-placeholder', macro_id: macro.id, pick_in_macro: 1 });
-      return `${where ? `${name} in ${where}` : name}: ${ruleText(macro.spec, defaults)}`;
-    }
-    if (op.kind === 'patchBlock' || op.kind === 'retypeBlock') {
-      const ref: AtomicRef = op.address.slot_index !== undefined
-        ? { kind: 'atomic-ref', slot_index: op.address.slot_index }
-        : { kind: 'atomic-ref', row_idx: 0, block_idx: op.address.block_idx };
-      const block = lookupEngineBlock(ref, state.template.layout);
-      if (!block) return describeOp(op);
-      return `${blockPlace(after, ref)}: ${ruleText(block, defaults)}`;
+    const atomic = (address: { slot_index?: number; block_idx?: number }): AtomicRef =>
+      address.slot_index !== undefined
+        ? { kind: 'atomic-ref', slot_index: address.slot_index }
+        : { kind: 'atomic-ref', row_idx: 0, block_idx: address.block_idx };
+    switch (op.kind) {
+      case 'patchMacro': {
+        const macro = lookupMacro(after, op.macroId);
+        if (!macro) break;
+        const name = macro.name ?? macro.id;
+        const where = sectionName(after, { kind: 'macro-placeholder', macro_id: macro.id, pick_in_macro: 1 });
+        return `${where ? `${name} in ${where}` : name}: ${ruleText(macro.spec, defaults)}`;
+      }
+      case 'patchBlock':
+      case 'retypeBlock': {
+        const ref = atomic(op.address);
+        const block = lookupEngineBlock(ref, state.template.layout);
+        if (!block) break;
+        return `${blockPlace(after, ref)}: ${ruleText(block, defaults)}`;
+      }
+      case 'structuralBlockEdit': {
+        const ref = atomic({ slot_index: op.edit.slot_index });
+        if (op.edit.op === 'remove') {
+          const block = lookupEngineBlock(ref, before.template.layout);
+          if (!block) break;
+          return `Removed ${blockPlace(was, ref)}: ${ruleText(block, defaults)}`;
+        }
+        if (op.edit.op === 'size') {
+          // As the panel puts it ("Songs in this slot"): a rule's words
+          // don't always say how many.
+          const n = op.edit.new_size ?? 1;
+          return `${blockPlace(after, ref)}: ${n} ${n === 1 ? 'song' : 'songs'}`;
+        }
+        const block = lookupEngineBlock(ref, state.template.layout);
+        if (!block) break;
+        return `Added ${blockPlace(after, ref)}: ${ruleText(block, defaults)}`;
+      }
+      case 'moveBlock': {
+        const ref = atomic(op.address);
+        return `Moved ${blockPlace(was, ref)} to ${blockPlace(after, ref)}`;
+      }
+      case 'renameSection':
+        return `Renamed section ${sectionLabel(was, op.sectionId)} to “${op.name}”`;
+      case 'sectionCreate':
+        return `New section ${sectionLabel(after, op.sectionId)}`;
+      case 'sectionDelete': {
+        const rules = was.sections.find((s) => s.id === op.sectionId)?.blocks.length ?? 0;
+        const unsorted = after.sections.find((s) => s.id === '_unsorted');
+        const to = rules > 0 && unsorted ? `: its ${rules === 1 ? 'rule goes' : `${rules} rules go`} to ${sectionLabel(after, '_unsorted')}` : '';
+        return `Deleted section ${sectionLabel(was, op.sectionId)}${to}`;
+      }
+      case 'reorderSections':
+        return `Sections in this order: ${op.layoutOrder.map((id) => sectionLabel(after, id)).join(', ')}`;
     }
     return describeOp(op);
   });

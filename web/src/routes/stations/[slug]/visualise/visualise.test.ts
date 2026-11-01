@@ -156,6 +156,12 @@ vi.mock('$app/stores', () => ({
   page: pageStore,
 }));
 
+// The app's confirm dialog (its host is in the layout, not mounted here).
+const { confirmDialogMock } = vi.hoisted(() => ({
+  confirmDialogMock: vi.fn(async (_opts: { title: string; body: string; confirmLabel?: string }) => true),
+}));
+vi.mock('$lib/confirm', () => ({ confirmDialog: confirmDialogMock }));
+
 // §16.2.6 c3d — EditorCanvas stub. Closes c3c review #1 finding #4:
 // the page's handler intercepts (handleSave / handleMacroSave / etc.)
 // can be tested by replacing EditorCanvas with the stub + driving
@@ -566,7 +572,7 @@ describe('visualise +page.svelte — §16.2.6 c3d handler intercepts (toggle ON 
     await act(async () => {});
   }
 
-  it('patchBlock — save event → opLog grows, staged-save shows "1 edit", no immediate PATCH', async () => {
+  it('patchBlock — save event → opLog grows, staged-save shows "1 change", no immediate PATCH', async () => {
     await mountAndAwaitStub();
     await act(async () => {
       fireEditorCanvasEvent('save', {
@@ -574,7 +580,7 @@ describe('visualise +page.svelte — §16.2.6 c3d handler intercepts (toggle ON 
         fields: { size: 5 },
       });
     });
-    expect(await screen.findByTestId('staged-save')).toHaveTextContent(/Save 1 edit/);
+    expect(await screen.findByTestId('staged-save')).toHaveTextContent(/Save 1 change/);
     expect(patchBlockMock).not.toHaveBeenCalled();
   });
 
@@ -586,10 +592,10 @@ describe('visualise +page.svelte — §16.2.6 c3d handler intercepts (toggle ON 
         fields: { strategy: 'window' },
       });
     });
-    expect(await screen.findByTestId('staged-save')).toHaveTextContent(/Save 1 edit/);
+    expect(await screen.findByTestId('staged-save')).toHaveTextContent(/Save 1 change/);
   });
 
-  it('a change to identical rules too queues one edit per rule', async () => {
+  it('a change to identical rules too queues one edit per rule, listed (and saved) as one change', async () => {
     await mountAndAwaitStub();
     await act(async () => {
       fireEditorCanvasEvent('macroSave', {
@@ -598,7 +604,9 @@ describe('visualise +page.svelte — §16.2.6 c3d handler intercepts (toggle ON 
         alsoMacroIds: ['m2', 'm3'],
       });
     });
-    expect(await screen.findByTestId('staged-save')).toHaveTextContent(/Save 3 edits/);
+    expect(await screen.findByTestId('staged-save')).toHaveTextContent(/Save 1 change/);
+    expect(JSON.parse(window.localStorage.getItem('stagedEdits:viz-test')!).opLog).toHaveLength(3);
+    expect(screen.getByTestId('trace-change-item')).toHaveTextContent(/, and the 2 rules just like it/);
   });
 
   it('with live preview off, a change to identical rules saves in one batch', async () => {
@@ -627,7 +635,7 @@ describe('visualise +page.svelte — §16.2.6 c3d handler intercepts (toggle ON 
         name: 'Morning',
       });
     });
-    expect(await screen.findByTestId('staged-save')).toHaveTextContent(/Save 1 edit/);
+    expect(await screen.findByTestId('staged-save')).toHaveTextContent(/Save 1 change/);
   });
 
   it('sectionCreate — sectionCreate event → opLog grows', async () => {
@@ -638,7 +646,7 @@ describe('visualise +page.svelte — §16.2.6 c3d handler intercepts (toggle ON 
         name: 'Evening',
       });
     });
-    expect(await screen.findByTestId('staged-save')).toHaveTextContent(/Save 1 edit/);
+    expect(await screen.findByTestId('staged-save')).toHaveTextContent(/Save 1 change/);
   });
 
   it('sectionDelete — sectionDelete event → opLog grows', async () => {
@@ -648,7 +656,7 @@ describe('visualise +page.svelte — §16.2.6 c3d handler intercepts (toggle ON 
         sectionId: 'all-slots',
       });
     });
-    expect(await screen.findByTestId('staged-save')).toHaveTextContent(/Save 1 edit/);
+    expect(await screen.findByTestId('staged-save')).toHaveTextContent(/Save 1 change/);
   });
 
   it('reorderSections — sectionsReorder event → opLog grows', async () => {
@@ -658,7 +666,7 @@ describe('visualise +page.svelte — §16.2.6 c3d handler intercepts (toggle ON 
         layoutOrder: ['all-slots'],
       });
     });
-    expect(await screen.findByTestId('staged-save')).toHaveTextContent(/Save 1 edit/);
+    expect(await screen.findByTestId('staged-save')).toHaveTextContent(/Save 1 change/);
   });
 
   it('moveBlock — blockMove event → opLog grows (§16.2.6 c3d)', async () => {
@@ -670,7 +678,7 @@ describe('visualise +page.svelte — §16.2.6 c3d handler intercepts (toggle ON 
         targetIndex: 0,
       });
     });
-    expect(await screen.findByTestId('staged-save')).toHaveTextContent(/Save 1 edit/);
+    expect(await screen.findByTestId('staged-save')).toHaveTextContent(/Save 1 change/);
   });
 
   it('retypeBlock — retype event → opLog grows (§16.2.6 c3d)', async () => {
@@ -683,7 +691,7 @@ describe('visualise +page.svelte — §16.2.6 c3d handler intercepts (toggle ON 
         newFields: { window: 4 },
       });
     });
-    expect(await screen.findByTestId('staged-save')).toHaveTextContent(/Save 1 edit/);
+    expect(await screen.findByTestId('staged-save')).toHaveTextContent(/Save 1 change/);
   });
 
   it('structuralBlockEdit — structuralEdit event → opLog grows (§16.2.6 c3d-follow-up; 9th + final kind)', async () => {
@@ -693,7 +701,7 @@ describe('visualise +page.svelte — §16.2.6 c3d handler intercepts (toggle ON 
         edit: { op: 'size', slot_index: 0, new_size: 5 },
       });
     });
-    expect(await screen.findByTestId('staged-save')).toHaveTextContent(/Save 1 edit/);
+    expect(await screen.findByTestId('staged-save')).toHaveTextContent(/Save 1 change/);
   });
 
   it('multiple intercepts accumulate in opLog (count rises with each event)', async () => {
@@ -704,14 +712,14 @@ describe('visualise +page.svelte — §16.2.6 c3d handler intercepts (toggle ON 
         fields: { size: 5 },
       });
     });
-    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 1 edit/);
+    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 1 change/);
     await act(async () => {
       fireEditorCanvasEvent('sectionRename', {
         sectionId: 'all-slots',
         name: 'Morning',
       });
     });
-    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 2 edits/);
+    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 2 changes/);
   });
 });
 
@@ -778,7 +786,7 @@ describe('visualise +page.svelte — §16.2.6 c3e c1 staged-edit loss guards', (
         fields: { size: 5 },
       });
     });
-    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 1 edit/);
+    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 1 change/);
     // Accept the discard prompt.
     confirmSpy.mockReturnValue(true);
     await act(async () => {
@@ -799,7 +807,7 @@ describe('visualise +page.svelte — §16.2.6 c3e c1 staged-edit loss guards', (
         fields: { size: 5 },
       });
     });
-    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 1 edit/);
+    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 1 change/);
     // Decline.
     confirmSpy.mockReturnValue(false);
     await act(async () => {
@@ -812,7 +820,7 @@ describe('visualise +page.svelte — §16.2.6 c3e c1 staged-edit loss guards', (
     // no, nothing happened").
     expect(confirmSpy).toHaveBeenCalled();
     // opLog still there.
-    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 1 edit/);
+    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 1 change/);
   });
 
   it('c3e c1 review G1: toggle OFF with staged edits + accept fetches a fresh sidecar (mirrors Discard)', async () => {
@@ -922,7 +930,7 @@ describe('visualise +page.svelte — §16.2.6 c3e c1 staged-edit loss guards', (
         fields: { size: 7 },
       });
     });
-    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 2 edits/);
+    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 2 changes/);
     // First patch fails with a non-conflict error.
     applyBatchMock.mockRejectedValueOnce(
       new FakeSidecarBatchFailure(400, 1, 'patchBlock', 'server rejected: bad size'),
@@ -933,7 +941,7 @@ describe('visualise +page.svelte — §16.2.6 c3e c1 staged-edit loss guards', (
     // Modal visible; banner visible underneath; opLog still has 2.
     expect(screen.getByTestId('retry-modal')).toBeInTheDocument();
     expect(screen.getByTestId('save-error')).toHaveTextContent(/server rejected/);
-    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 2 edits/);
+    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 2 changes/);
   });
 
   it('c3e c3 Retry: re-runs handleStagedSave; success drains opLog + closes modal', async () => {
@@ -1024,7 +1032,7 @@ describe('visualise +page.svelte — §16.2.6 c3e c1 staged-edit loss guards', (
     });
     // Modal closed; staged-save + banner still there.
     expect(screen.queryByTestId('retry-modal')).toBeNull();
-    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 1 edit/);
+    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 1 change/);
     expect(screen.getByTestId('save-error')).toHaveTextContent(/validation failed/);
   });
 
@@ -1105,7 +1113,7 @@ describe('visualise +page.svelte — §16.2.6 c3e c1 staged-edit loss guards', (
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
     });
     expect(screen.queryByTestId('retry-modal')).toBeNull();
-    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 1 edit/);
+    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 1 change/);
     expect(screen.getByTestId('save-error')).toBeInTheDocument();
   });
 
@@ -1127,7 +1135,7 @@ describe('visualise +page.svelte — §16.2.6 c3e c1 staged-edit loss guards', (
       screen.getByTestId('retry-modal-backdrop').click();
     });
     expect(screen.queryByTestId('retry-modal')).toBeNull();
-    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 1 edit/);
+    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 1 change/);
   });
 
   it('c3e c3 review J6: click INSIDE the dialog does NOT close the modal (stopPropagation guard)', async () => {
@@ -1294,7 +1302,7 @@ describe('visualise +page.svelte — §16.2.6 c3e c1 staged-edit loss guards', (
     // Modal closed; opLog INTACT (NOT silently dropped opLog[0]);
     // banner explains the internal error.
     expect(screen.queryByTestId('retry-modal')).toBeNull();
-    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 1 edit/);
+    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 1 change/);
     expect(screen.getByTestId('save-error')).toHaveTextContent(
       /server reported failed edit 5/,
     );
@@ -1371,7 +1379,7 @@ describe('visualise +page.svelte — §16.2.6 c3e c1 staged-edit loss guards', (
     await mountAndAwaitStub();
     // Both valid entries recovered; unknown kind dropped silently —
     // staged-save count == 2.
-    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 2 edits/);
+    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 2 changes/);
   });
 
   it('§16.2.6.t1 review L3: persisted entry with mismatched schemaVersion is silently dropped', async () => {
@@ -1482,7 +1490,7 @@ describe('visualise +page.svelte — §16.2.6 c3e c1 staged-edit loss guards', (
     await mountAndAwaitStub();
     // No confirm prompt + staged-save reflects the recovered opLog.
     expect(confirmSpy).not.toHaveBeenCalled();
-    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 1 edit/);
+    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 1 change/);
   });
 
   it('§16.2.6.t1: recovery — mismatched updatedAt → confirm(); accept = discard', async () => {
@@ -1536,7 +1544,7 @@ describe('visualise +page.svelte — §16.2.6 c3e c1 staged-edit loss guards', (
     await mountAndAwaitStub();
     // Cancel = recover anyway.
     expect(confirmSpy).toHaveBeenCalled();
-    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 1 edit/);
+    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 1 change/);
     // Re-snapshot: the localStorage entry now carries the NEW updatedAt.
     const restored = JSON.parse(window.localStorage.getItem('stagedEdits:viz-test')!);
     expect(restored.updatedAtSnapshot).toBe('ts-NEW');
@@ -1568,7 +1576,7 @@ describe('visualise +page.svelte — §16.2.6 c3e c1 staged-edit loss guards', (
     expect(window.localStorage.getItem('stagedEdits:viz-test')).not.toBeNull();
     expect(window.localStorage.getItem('livePreview:viz-test')).toBe('on');
     expect(screen.getByTestId('live-preview-checkbox')).toBeChecked();
-    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 1 edit/);
+    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 1 change/);
   });
 
   it('no queued edits and the preview off: it stays off', async () => {
@@ -1613,7 +1621,7 @@ describe('visualise +page.svelte — §16.2.6 c3e c1 staged-edit loss guards', (
         storageArea: window.localStorage,
       }));
     });
-    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 1 edit/);
+    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 1 change/);
   });
 
   it('§16.2.6.t1-follow-up: cross-tab storage event with non-matching key is ignored', async () => {
@@ -1661,7 +1669,7 @@ describe('visualise +page.svelte — §16.2.6 c3e c1 staged-edit loss guards', (
     // Second loadSidecar fired by the cross-tab snapshot-drift
     // detection. opLog updated too.
     expect(getStationSidecarMock).toHaveBeenCalledTimes(2);
-    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 1 edit/);
+    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 1 change/);
   });
 
   it('§16.2.6.t1-follow-up review M2: storage listener removed on unmount', async () => {
@@ -1706,7 +1714,7 @@ describe('visualise +page.svelte — §16.2.6 c3e c1 staged-edit loss guards', (
         fields: { size: 5 },
       });
     });
-    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 1 edit/);
+    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 1 change/);
     // Simulate Tab A discarding its staged edits → storage event with
     // newValue=null on this tab.
     window.localStorage.removeItem('stagedEdits:viz-test');
@@ -2049,7 +2057,7 @@ describe('visualise +page.svelte — §16.2.6.t11 intercept-path integration', (
         targetIndex: 0,
       });
     });
-    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 1 edit/);
+    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 1 change/);
 
     // Drive the save with a 400 response (server's _apply_move_block
     // helper raises HTTPException(400) for system-section targets).
@@ -2075,7 +2083,7 @@ describe('visualise +page.svelte — §16.2.6.t11 intercept-path integration', (
     // the operator can fix-and-retry. Staged-save still shows
     // the op count.
     expect(screen.getByTestId('retry-modal')).toBeInTheDocument();
-    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 1 edit/);
+    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 1 change/);
   });
 
   it('D3 — multi-op composition: 3 ops across 3 kinds replay through applyBatch in stage order', async () => {
@@ -2103,7 +2111,7 @@ describe('visualise +page.svelte — §16.2.6.t11 intercept-path integration', (
         edit: { op: 'size', slot_index: 0, new_size: 3 },
       });
     });
-    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 3 edits/);
+    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 3 changes/);
 
     await act(async () => {
       screen.getByTestId('staged-save').click();
@@ -2142,7 +2150,7 @@ describe('visualise +page.svelte — §16.2.6.t11 intercept-path integration', (
         name: 'Morning',
       });
     });
-    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 2 edits/);
+    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 2 changes/);
 
     // Discard refetches the sidecar via loadSidecar; preload the
     // next getStationSidecar response so the GET doesn't 404.
@@ -2204,7 +2212,7 @@ describe('visualise +page.svelte — §16.2.6.t11 intercept-path integration', (
         name: 'Morning',
       });
     });
-    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 3 edits/);
+    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 3 changes/);
 
     // Server returns 400 at index 2 (the bad moveBlock).
     applyBatchMock.mockRejectedValueOnce(
@@ -2763,7 +2771,7 @@ describe('visualise +page.svelte — §16.2.7 c2 diff toggle integration', () =>
         fields: { size: 5 },
       });
     });
-    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 1 edit/);
+    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 1 change/);
 
     const callsBeforeSave = startPreviewJobMock.mock.calls.length;
 
@@ -3199,14 +3207,14 @@ describe('visualise +page.svelte — §16.2.7.t6 revertableSlots wiring', () => 
     await act(async () => {});
 
     // Stage a patchBlock targeting slot 0 via the EditorCanvasStub
-    // intercept. staged-save shows "1 edit".
+    // intercept. staged-save shows "1 change".
     await act(async () => {
       fireEditorCanvasEvent('save', {
         ref: { kind: 'atomic-ref', slot_index: 0 },
         fields: { size: 5 },
       });
     });
-    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 1 edit/);
+    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 1 change/);
 
     // No direct revertableSlots inspection surface from outside;
     // the wiring is pinned implicitly via the staged-save count
@@ -3492,7 +3500,7 @@ describe('visualise +page.svelte — Songs tab in the preview column', () => {
     await act(async () => { box.click(); });
     expect(confirm).toHaveBeenCalled();
     expect(box.checked).toBe(true);
-    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 1 edit/);
+    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 1 change/);
     confirm.mockRestore();
   });
 
@@ -3501,5 +3509,180 @@ describe('visualise +page.svelte — Songs tab in the preview column', () => {
     await screen.findByTestId('editor-canvas');
     await act(async () => { await new Promise((r) => setTimeout(r, 700)); });
     expect(startPreviewJobMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+
+describe('visualise +page.svelte — undoing a queued change', () => {
+  // Three rules: Morning has the first two, Evening the third.
+  function template3() {
+    const t = makeTemplate();
+    t.layout.flat_slots = [
+      { source: 'A', strategy: 'pick', size: 1 },
+      { source: 'A', strategy: 'pick', size: 1 },
+      { source: 'A', strategy: 'pick', size: 1 },
+    ];
+    return t;
+  }
+  function sidecar3() {
+    return {
+      schema_version: 1,
+      sections: [
+        { id: 'morning', name: 'Morning', blocks: [{ kind: 'atomic', slot_index: 0 }, { kind: 'atomic', slot_index: 1 }] },
+        { id: 'evening', name: 'Evening', blocks: [{ kind: 'atomic', slot_index: 2 }] },
+      ],
+      macros: [],
+      layout_order: ['morning', 'evening'],
+    };
+  }
+  // A week of four songs, one per rule (numbered as the engine does);
+  // `changed`: song 2 is another one.
+  function week(changed = false) {
+    return {
+      [Symbol.asyncIterator]() {
+        return {
+          async next() {
+            return {
+              done: false,
+              value: {
+                status: 'done',
+                result: {
+                  trace: {
+                    trace_id: 'pv', station: 'viz-test', week: 1, rng: 'off', seed: null,
+                    generated_at: '2026-06-15T00:00:00Z',
+                    slots: [1, 2, 3, 4].map((n) => ({ slot: n, unit: 'slot', row: 1, block: n, source: 'A', strategy: 'pick',
+                      pool_index: n, track_id: changed && n === 2 ? 999 : 100 + n, track_name: `T${n}`, track_artist: 'A', reason: 'picked', excluded: [] })),
+                  },
+                },
+              },
+            };
+          },
+          async return() { return { done: true, value: undefined }; },
+        };
+      },
+    };
+  }
+  const queue = () => JSON.parse(window.localStorage.getItem('stagedEdits:viz-test') ?? '{"opLog":[]}').opLog as unknown[];
+  const items = () => screen.queryAllByTestId('trace-change-item').map((li) => li.querySelector('span')!.textContent);
+  const rename = { sectionId: 'evening', name: 'Late' };
+  const add1 = { edit: { op: 'add', slot_index: 1, new_block: { source: 'A', strategy: 'pick', size: 1 } } };
+  // After adding a rule at 1, the rule that was at 1 is at 2.
+  const patch2 = { ref: { kind: 'atomic-ref', slot_index: 2 }, fields: { allowlist_sources: ['X'] } };
+
+  beforeEach(() => {
+    getStationSidecarMock.mockReset();
+    startPreviewJobMock.mockReset();
+    watchJobMock.mockReset();
+    cancelJobMock.mockReset();
+    confirmDialogMock.mockReset();
+    confirmDialogMock.mockResolvedValue(true);
+    cancelJobMock.mockResolvedValue(undefined);
+    startPreviewJobMock.mockResolvedValue({ job_id: 'pv-1', status: 'running' });
+    watchJobMock.mockImplementation(() => week());
+    setSlug('viz-test');
+    try { window.localStorage.clear(); } catch { /* */ }
+    window.localStorage.setItem('livePreview:viz-test', 'on');
+    getStationSidecarMock.mockResolvedValue({
+      template: template3(), sidecar: sidecar3(), sidecar_error: null, updated_at: 'ts-1',
+    });
+  });
+
+  async function mount() {
+    render(Page);
+    await screen.findByTestId('editor-canvas');
+    await act(async () => {});
+  }
+  async function stage(kind: string, detail: unknown) {
+    await act(async () => { fireEditorCanvasEvent(kind, detail); });
+  }
+
+  it('lists each change in plain words; one nothing builds on is undone straight away', async () => {
+    await mount();
+    await stage('sectionRename', rename);
+    await stage('save', { ref: { kind: 'atomic-ref', slot_index: 0 }, fields: { allowlist_sources: ['X'] } });
+    expect(items()).toEqual(['Renamed section “Evening” to “Late”', 'Morning, rule 1: Picked from A, only songs also in X']);
+    expect(screen.getByTestId('staged-save')).toHaveTextContent('Save 2 changes');
+
+    await act(async () => { screen.getAllByTestId('trace-change-undo')[0].click(); });
+    expect(confirmDialogMock).not.toHaveBeenCalled();
+    expect(items()).toEqual(['Morning, rule 1: Picked from A, only songs also in X']);
+    expect(queue()).toEqual([{ kind: 'patchBlock', address: { slot_index: 0 }, fields: { allowlist_sources: ['X'] } }]);
+    expect(screen.getByTestId('staged-save')).toHaveTextContent('Save 1 change');
+  });
+
+  it('a change later ones build on: asks, naming them, then undoes them all', async () => {
+    await mount();
+    await stage('structuralEdit', add1);
+    await stage('save', patch2);
+    await stage('sectionRename', rename);
+    await act(async () => { screen.getAllByTestId('trace-change-undo')[0].click(); });
+    await waitFor(() => expect(confirmDialogMock).toHaveBeenCalledTimes(1));
+    const asked = confirmDialogMock.mock.calls[0][0];
+    expect(asked.title).toBe('Undo a later change too?');
+    expect(asked.body).toMatch(/^Undoing: Added Unsorted \(moved from a deleted section\), rule 1: Picked from A\n/);
+    expect(asked.body).toContain('• Morning, rule 2: Picked from A, only songs also in X');
+    expect(asked.body).not.toContain('Late');
+    expect(asked.confirmLabel).toBe('Undo both');
+    await waitFor(() => expect(items()).toEqual(['Renamed section “Evening” to “Late”']));
+    expect(queue()).toEqual([{ kind: 'renameSection', ...rename }]);
+  });
+
+  it('told no: nothing is undone', async () => {
+    confirmDialogMock.mockResolvedValue(false);
+    await mount();
+    await stage('structuralEdit', add1);
+    await stage('save', patch2);
+    await act(async () => { screen.getAllByTestId('trace-change-undo')[0].click(); });
+    await waitFor(() => expect(confirmDialogMock).toHaveBeenCalled());
+    await act(async () => {});
+    expect(queue()).toHaveLength(2);
+    expect(items()).toHaveLength(2);
+  });
+
+  it('the queue changed while asking: nothing is undone (what was asked about has changed)', async () => {
+    let answer: (ok: boolean) => void = () => {};
+    confirmDialogMock.mockImplementation(() => new Promise((r) => { answer = r; }));
+    await mount();
+    await stage('structuralEdit', add1);
+    await stage('save', patch2);
+    await act(async () => { screen.getAllByTestId('trace-change-undo')[0].click(); });
+    await waitFor(() => expect(confirmDialogMock).toHaveBeenCalled());
+    await stage('sectionRename', rename);
+    await act(async () => { answer(true); });
+    expect(queue()).toHaveLength(3);
+  });
+
+  it("undoing an added or removed rule closes an open slot rule's panel (another rule is at that slot now)", async () => {
+    await mount();
+    await stage('structuralEdit', add1);
+    await stage('sectionRename', rename);
+    await stage('selectionChange', { ref: { kind: 'atomic-ref', slot_index: 2 } });
+    // A rename: the rules stay where they are.
+    await act(async () => { screen.getAllByTestId('trace-change-undo')[1].click(); });
+    const closes = () => (window as unknown as Record<string, number>).__editorCanvasCloseRuleCalls ?? 0;
+    expect(closes()).toBe(0);
+    await act(async () => { screen.getAllByTestId('trace-change-undo')[0].click(); });
+    expect(closes()).toBe(1);
+  });
+
+  it("a song's Revert (Slots tab) undoes its rule's edits, and asks about later ones the same way", async () => {
+    window.localStorage.setItem('previewTab:viz-test', 'slots');
+    window.localStorage.setItem('showDiff:viz-test', 'on');
+    // The saved week first, then the edited one.
+    watchJobMock.mockImplementationOnce(() => week()).mockImplementation(() => week(true));
+    await mount();
+    await stage('structuralEdit', add1);
+    await stage('save', patch2);
+    // Song 2 is the added rule's (block 2 → slot 1).
+    const rows = await screen.findAllByTestId('trace-row');
+    expect(rows.length).toBeGreaterThan(1);
+    const revert = await waitFor(() => {
+      const b = within(screen.getAllByTestId('trace-row')[1]).getByTestId('trace-row-revert');
+      expect(b).toBeEnabled();
+      return b;
+    });
+    await act(async () => { revert.click(); });
+    await waitFor(() => expect(confirmDialogMock).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(queue()).toEqual([]));
   });
 });

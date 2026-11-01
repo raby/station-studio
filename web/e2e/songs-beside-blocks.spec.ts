@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { createStation, importTinyPool, minimalTemplate } from './fixtures';
+import { createStation, importTinyPool, minimalFlatTemplate, minimalTemplate } from './fixtures';
 import { assertNoA11yViolations } from './a11y';
 
 /**
@@ -43,7 +43,7 @@ test('a song opens its rule in the preview column; a change marks the songs it a
   await page.getByTestId('retype-toggle').click();
   await page.getByTestId('retype-strategy').selectOption('pick');
   await page.getByTestId('retype-apply').click();
-  await expect(page.getByTestId('staged-save')).toHaveText(/Save 1 edit/);
+  await expect(page.getByTestId('staged-save')).toHaveText(/Save 1 change/);
   await expect(page.getByTestId('song-only-changed')).toBeVisible({ timeout: 15000 });
   await expect(page.getByTestId('song-rule').nth(1)).toContainText('Picked from A');
   // The panel and the blocks show the queued change too, not the saved rule.
@@ -77,4 +77,67 @@ test('with the preview off, a rule\'s panel is on the window edge as before', as
   await expect(panel).toBeVisible();
   await expect(panel).not.toHaveClass(/detail-panel--column/);
   await expect(page.getByTestId('column-panel')).toHaveCount(0);
+});
+
+test('the queued changes are listed, each with an Undo; one built on asks first', async ({ page, request }) => {
+  await importTinyPool(request, 'A');
+  // Rules the tiny pool can fill, so the week previews as it changes.
+  const t = minimalFlatTemplate('undo-each');
+  t.layout.flat_slots = [1, 2, 3].map(() => ({ source: 'A', strategy: 'weighted', size: 1 })) as typeof t.layout.flat_slots;
+  await createStation(request, 'undo-each', 'Undo Each', 'A', t as unknown as ReturnType<typeof minimalTemplate>);
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await page.goto('/stations/undo-each/visualise');
+  await page.getByTestId('live-preview-checkbox').check();
+  const chips = page.getByTestId('chip');
+  await expect(chips).toHaveCount(3);
+  const panel = page.locator('[data-testid="column-panel"] [data-testid="detail-panel"]');
+  const changes = page.getByTestId('trace-change-item');
+
+  // One change, undone on its own.
+  await chips.nth(2).click();
+  await page.getByTestId('structural-size-input').fill('5');
+  await page.getByTestId('structural-size-apply').click();
+  await page.keyboard.press('Escape');
+  await expect(changes).toHaveCount(1);
+  await expect(changes).toHaveText([/rule 3: 5 songs/]);
+  // The week previews with it: 1 + 1 + 5 songs.
+  await expect(page.getByTestId('song-row')).toHaveCount(7, { timeout: 15000 });
+  await expect(page.getByTestId('trace-changes-title')).toHaveText('1 change, not saved yet');
+  await assertNoA11yViolations(page);
+  await page.getByTestId('trace-change-undo').click();
+  await expect(changes).toHaveCount(0);
+  await expect(page.getByTestId('staged-save')).toHaveCount(0);
+  // Focus doesn't drop to the page: it's on the tab shown.
+  await expect(page.getByTestId('trace-tab-songs')).toBeFocused();
+
+  // Remove the first rule, then resize the one now first (the second
+  // rule as saved). Undoing the remove would make that resize the first
+  // rule's, so it asks to undo both.
+  await chips.nth(0).click();
+  await page.getByTestId('structural-delete').click();
+  await page.getByTestId('structural-delete').click();
+  await expect(chips).toHaveCount(2);
+  await chips.nth(0).click();
+  await expect(panel).toBeVisible();
+  await page.getByTestId('structural-size-input').fill('3');
+  await page.getByTestId('structural-size-apply').click();
+  await page.keyboard.press('Escape');
+  await expect(changes).toHaveText([/^Removed .*rule 1: Shuffled from A/, /rule 1: 3 songs/]);
+  await expect(page.getByTestId('staged-save')).toHaveText('Save 2 changes');
+
+  await page.getByTestId('trace-change-undo').first().click();
+  const dialog = page.getByTestId('confirm-dialog');
+  await expect(dialog).toBeVisible();
+  await expect(page.getByTestId('confirm-dialog-title')).toHaveText('Undo a later change too?');
+  await expect(page.getByTestId('confirm-dialog-body')).toContainText(/• .*rule 1: 3 songs/);
+  // Keep them: nothing changes.
+  await page.getByTestId('confirm-dialog-cancel').click();
+  await expect(dialog).toHaveCount(0);
+  await expect(changes).toHaveCount(2);
+  // Undo both.
+  await page.getByTestId('trace-change-undo').first().click();
+  await page.getByTestId('confirm-dialog-confirm').click();
+  await expect(changes).toHaveCount(0);
+  await expect(chips).toHaveCount(3);
+  await expect(page.getByTestId('staged-save')).toHaveCount(0);
 });

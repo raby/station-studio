@@ -31,6 +31,8 @@
   import { sentText } from '$lib/stationServer';
   import { onDestroy } from 'svelte';
   import SongList from '$lib/components/songs/SongList.svelte';
+  import QueuedChanges from '$lib/components/songs/QueuedChanges.svelte';
+  import { confirmUndo, movesRules } from '$lib/undoQueued';
   import DetailPanel from '$lib/components/editor/DetailPanel.svelte';
   import { findSectionIdForRef, type ExpandedRef, type ParsedEditorSidecar } from '$lib/editor';
   import {
@@ -179,10 +181,28 @@
     ? queuedChanges(editState.opLog, editState.template, editState.sidecar, ruleDefaults)
     : [];
 
-  /** Undo one change: every queued edit it is, last first so the
-   *  places of the rest don't shift. */
-  function undoChange(indices: number[]): void {
-    for (const i of [...indices].reverse()) session?.unstage(i);
+  /** Undo one change: every queued edit it is, with any later ones
+   *  built on it (a rule's settings after it was retyped, say), asked
+   *  about first. True if it was undone. */
+  async function undoChange(indices: number[]): Promise<boolean> {
+    const state = editState;
+    if (!session || !state?.template || !state.sidecar || state.saving) return false;
+    const log = state.opLog;
+    const all = await confirmUndo(log, state.template, state.sidecar, ruleDefaults, indices);
+    // Told no; or the queue changed while asking (another tab, say).
+    if (all === null || !session || editState?.opLog !== log) return false;
+    // A rule added or removed: the open panel's slot may be another rule's now.
+    if (movesRules(log, all) && selectedRef?.kind === 'atomic-ref' && selectedRef.slot_index !== undefined) {
+      closePanel();
+    }
+    session.unstage(all);
+    return true;
+  }
+  /** Once the last change is undone the bar goes: focus the song picked,
+   *  or else the song search. */
+  function afterLastUndo(): HTMLElement | null {
+    return document.querySelector<HTMLElement>('[data-testid="song-row"][aria-pressed="true"]')
+      ?? document.querySelector<HTMLElement>('[data-testid="song-search"]');
   }
   function movedText(n: number, of: number): string {
     if (n === 0) return `No songs in week ${trace?.week} change.`;
@@ -1243,15 +1263,9 @@
             {#if editState.previewing}<span class="muted" data-testid="song-edit-previewing">Previewing week {trace.week}…</span>
             {:else if showingEdits && editing?.stagedTrace}<span class="muted" data-testid="song-edit-moved">{movedText(songsChanged(editing.stagedTrace, editing.savedTrace), editing.stagedTrace.slots.length)}</span>{/if}
           </p>
-          <ol class="queued" data-testid="song-edit-list">
-            {#each queued as change (change.indices.join(','))}
-              <li data-testid="song-edit-item">
-                <span>{change.text}</span>
-                <button type="button" class="link" data-testid="song-edit-undo" disabled={editState.saving}
-                  on:click={() => undoChange(change.indices)}>Undo</button>
-              </li>
-            {/each}
-          </ol>
+          <div class="queued">
+            <QueuedChanges changes={queued} busy={editState.saving} onundo={undoChange} emptyFocus={afterLastUndo} testid="song-edit" />
+          </div>
           <div class="edit-actions">
             <button type="button" class="btn-primary" data-testid="song-edit-save" disabled={editState.saving} on:click={saveRules}>
               {editState.saving ? 'Saving…' : 'Save changes'}
@@ -1589,30 +1603,10 @@
     flex-basis: 100%;
   }
   /* Under the count and buttons; the bar is sticky, so a long queue
-     scrolls within it rather than covering the songs. */
+     scrolls within it (QueuedChanges) rather than covering the songs. */
   .edit-bar .queued {
     order: 1;
     flex-basis: 100%;
-    max-height: 7.5rem;
-    overflow-y: auto;
-    margin: 0;
-    padding-left: 1.4rem;
-    font-size: 0.9em;
-  }
-  .edit-bar .queued li {
-    padding: 0.1rem 0;
-  }
-  .edit-bar .queued .link {
-    margin-left: 0.5rem;
-    padding: 0;
-    border: 0;
-    background: none;
-    color: var(--accent);
-    text-decoration: underline;
-    cursor: pointer;
-  }
-  .edit-bar .queued .link:hover:not(:disabled) {
-    color: var(--accent-strong);
   }
   .view-switch {
     display: inline-flex;

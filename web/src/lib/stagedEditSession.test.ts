@@ -373,7 +373,7 @@ describe('createStagedEditSession', () => {
     await vi.waitFor(() => expect(get(session).stagedTrace).toMatchObject({ size1: 7 }));
     expect(startPreviewJobMock).toHaveBeenCalledTimes(2);
 
-    session.unstage(0);
+    session.unstage([0]);
     expect(get(session).stagedTrace).toBeNull();
     // The saved week's preview is still good: the next edit reuses it.
     session.stage(sizeEdit);

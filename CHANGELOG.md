@@ -4,6 +4,40 @@ All notable changes are listed here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses semantic versioning.
 
+## [1.17.0] - 2026-11-01
+
+### Added
+
+- **Undo each queued change in the station editor.** With Preview songs
+  on, the changes you've queued are listed above the songs in plain
+  words ("Moved The day, rule 2 to Evening, rule 1"), each with an
+  Undo, as on week pages. Before, the editor could only discard them
+  all. Renames and reorders, which change no songs, show there too.
+- **Undoing a change that later ones build on asks first.** Say you
+  remove a rule and then resize the one that's now first: undoing the
+  remove would make that resize land on another rule, so you're shown
+  it and asked to undo both. The same on week pages, and for a slot's
+  Revert.
+- After an Undo, focus moves to the next change's Undo (or, after the
+  last, to the preview's tab), and the undone change is announced.
+
+### Changed
+
+- The editor's save button counts changes as the list does ("Save 2
+  changes"): a change made to identical rules too is one.
+
+### Fixed
+
+- **A slot's Revert (Slots tab) was beside the wrong song.** It took a
+  song's number in the week for its rule's place, so it showed beside
+  the song before the changed one (or none, for rules of several songs),
+  and undid the change to the next rule along from the song you clicked.
+  It also missed that a rule moves along when one is added or removed
+  ahead of it.
+- **Undoing a change on a week page could change another rule.** An
+  edit queued after a rule was removed, or after one was retyped, stayed
+  queued and would have changed the wrong rule or failed to save.
+
 ## [1.16.0] - 2026-11-01
 
 ### Added

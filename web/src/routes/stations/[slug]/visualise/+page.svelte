@@ -18,7 +18,8 @@
    */
   import { onDestroy, onMount, tick } from 'svelte';
   import { editsFromPanel, type PanelEvent } from '$lib/panelEdits';
-  import { ruleDefaultsFrom, type RuleDefaults } from '$lib/songList';
+  import { queuedChanges, ruleDefaultsFrom, type RuleDefaults } from '$lib/songList';
+  import { confirmUndo, movesRules } from '$lib/undoQueued';
   import { page } from '$app/stores';
   import {
     ApiError,
@@ -68,7 +69,7 @@
     summarizeClassifications,
     type ExpandedRef, type Sidecar, type StationTemplate,
   } from '$lib/editor';
-  import { applyEdits, attributeOpsToSlot, type Edit } from '$lib/edit-ops';
+  import { applyEdits, attributeOpsToSlot, slotsNow, type Edit } from '$lib/edit-ops';
   import {
     COMPARE_NEXT_N_MAX,
     prefKeys,
@@ -265,28 +266,13 @@
   let opLog: Edit[] = [];
   let saving = false;
 
-  // §16.2.7.t6 — derived set of slot indices that have at least one
-  // DIRECT op in the opLog. Used by TracePane to enable/disable the
-  // per-row Revert button. Cheap: O(opLog), recomputed reactively
-  // whenever opLog changes. Slots NOT in this set are cascade-only
-  // (an earlier structural edit shifted them but no op directly
-  // targets them); revert affordance is disabled for them with a
-  // tooltip per D1.
-  $: revertableSlots = (() => {
-    const out = new Set<number>();
-    for (const op of opLog) {
-      if (
-        (op.kind === 'patchBlock' || op.kind === 'retypeBlock' ||
-         op.kind === 'moveBlock') &&
-        op.address.slot_index !== undefined
-      ) {
-        out.add(op.address.slot_index);
-      } else if (op.kind === 'structuralBlockEdit') {
-        out.add(op.edit.slot_index);
-      }
-    }
-    return out;
-  })();
+  // §16.2.7.t6 — the slots whose rule (where it is now, after every
+  // edit) has at least one DIRECT op in the opLog. Used by TracePane
+  // to enable/disable the per-row Revert button. Slots NOT in this set
+  // are cascade-only (an earlier structural edit moved their songs but
+  // no op directly targets their rule); revert affordance is disabled
+  // for them with a tooltip per D1.
+  $: revertableSlots = new Set(slotsNow(opLog).filter((s): s is number => s !== undefined));
 
   // Derived: when toggle ON + opLog non-empty, stagedTemplate +
   // stagedSidecar reflect (base + applyEdits). Otherwise they're
@@ -729,8 +715,8 @@
 
   // §16.2.7.t6 — per-row Revert. Receives a slot index from
   // TracePane; calls attributeOpsToSlot to find the matching opLog
-  // entries, splices them (highest index first to avoid shifting),
-  // persists, and reschedules the staged preview. Saved-trace cache
+  // entries and undoes them as the list's Undo does (undoQueued:
+  // later edits built on them too, asked first). Saved-trace cache
   // is NOT invalidated — the saved baseline is unchanged (DB state);
   // only the staged side regressed. Empty attribution = defensive
   // no-op + console.warn (TracePane should have disabled the
@@ -748,15 +734,40 @@
       );
       return;
     }
-    // Splice highest first so earlier-index removals don't shift
-    // the later-index entries.
-    const next = opLog.slice();
-    for (let i = indices.length - 1; i >= 0; i--) {
-      next.splice(indices[i], 1);
+    // With any later edits made on top of them (asked first).
+    void undoQueued(indices);
+  }
+
+  // The queued changes in plain words, against the station as saved;
+  // a change that went to identical rules too is one line. Listed in
+  // the preview column, each with an Undo.
+  $: queued = opLog.length > 0 && template && sidecar
+    ? queuedChanges(opLog, template, sidecar, ruleDefaults)
+    : [];
+
+  /**
+   * Undo queued edits: a change from the list, or a slot's (Revert on
+   * the Slots tab). Later edits made on top of them go too, or they'd
+   * change a different rule or fail to save (`undoSet`); those are
+   * listed and the operator asked first. True if anything was undone.
+   */
+  async function undoQueued(indices: number[]): Promise<boolean> {
+    if (!template || !sidecar || saving) return false;
+    const log = opLog;
+    const all = await confirmUndo(log, template, sidecar, ruleDefaults, indices);
+    // Told no; or the queue changed while asking (another tab, say), so
+    // what was asked about isn't what would go.
+    if (all === null || opLog !== log) return false;
+    if (movesRules(log, all) && selectedRef?.kind === 'atomic-ref' && selectedRef.slot_index !== undefined) {
+      canvas?.closeRule();
     }
-    opLog = next;
+    const drop = new Set(all);
+    opLog = log.filter((_, i) => !drop.has(i));
     _persistOpLog();
+    // A failed save's message was about a queue that's changed.
+    saveError = null;
     _schedulePreview();
+    return true;
   }
 
   // §16.2.7.t4 — compareNextN change handler dispatched from
@@ -2107,7 +2118,7 @@
           disabled={saving}
           on:click={handleStagedSave}
         >
-          {saving ? 'Saving…' : `Save ${opLog.length} edit${opLog.length === 1 ? '' : 's'}`}
+          {saving ? 'Saving…' : `Save ${queued.length || opLog.length} ${(queued.length || opLog.length) === 1 ? 'change' : 'changes'}`}
         </button>
         <button
           type="button"
@@ -2290,6 +2301,9 @@
               stagedSidecar={stagedSidecar}
               revertableSlots={revertableSlots}
               opLog={opLog}
+              changes={queued}
+              onundo={undoQueued}
+              undoBusy={saving}
               {selectedRef}
               tab={previewTab}
               stagedTemplate={stagedTemplate}

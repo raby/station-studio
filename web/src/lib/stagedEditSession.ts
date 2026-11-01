@@ -78,8 +78,8 @@ export interface StagedEditSession extends Readable<StagedEditState> {
   load(): Promise<void>;
   /** Queue an edit and refresh the edited preview. */
   stage(op: Edit): void;
-  /** Remove one queued edit (0-based). */
-  unstage(index: number): void;
+  /** Remove these queued edits (0-based places in the queue), together. */
+  unstage(indices: number[]): void;
   /** Save the whole queue in one batch. True when it landed. */
   save(): Promise<boolean>;
   /** After a failed save: drop the edit it stopped at, then save the rest. */
@@ -359,9 +359,10 @@ export function createStagedEditSession(slug: string, opts: SessionOptions = {})
     schedule(false);
   }
 
-  function unstage(index: number): void {
-    if (index < 0 || index >= s.opLog.length) return;
-    setQueue(s.opLog.filter((_, i) => i !== index));
+  function unstage(indices: number[]): void {
+    const drop = new Set(indices.filter((i) => i >= 0 && i < s.opLog.length));
+    if (drop.size === 0) return;
+    setQueue(s.opLog.filter((_, i) => !drop.has(i)));
     schedule(false);
   }
 

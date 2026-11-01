@@ -37,9 +37,10 @@
     type SlotClassification,
     type StationTemplate,
   } from '$lib/editor';
-  import { describeOp, type Edit } from '$lib/edit-ops';
+  import type { Edit } from '$lib/edit-ops';
+  import QueuedChanges from '$lib/components/songs/QueuedChanges.svelte';
   import SongList from '$lib/components/songs/SongList.svelte';
-  import { ruleKey, type RuleDefaults, type SongRow } from '$lib/songList';
+  import { ruleKey, type QueuedChange, type RuleDefaults, type SongRow } from '$lib/songList';
   import type { PreviewTab } from '$lib/stationPrefs';
 
   /** Latest successful preview trace. null when no preview has run yet
@@ -93,19 +94,27 @@
   export let template: StationTemplate | null = null;
   export let savedSidecar: Sidecar | null = null;
   export let stagedSidecar: Sidecar | null = null;
-  /** §16.2.7.t6 — set of slot indices that have a DIRECT op
-   *  attributable in the opLog. The PARENT owns the opLog +
+  /** §16.2.7.t6 — set of slot indices (a rule's place in flat_slots;
+   *  a song's `block` − 1) that have a DIRECT op attributable in the
+   *  opLog. The PARENT owns the opLog +
    *  computes this via `attributeOpsToSlot`. TracePane uses it to
    *  enable/disable the per-row Revert button. Slots NOT in this
    *  set (cascade-CHANGED, e.g. shifted by an earlier structural
    *  edit) show a disabled button with a tooltip explaining the
    *  cause. */
   export let revertableSlots: Set<number> = new Set();
-  /** §16.2.7.t7 — the operator's staged opLog. PARENT passes a
-   *  read-only reference; TracePane just renders each entry via
-   *  `describeOp` as a numbered line in the "Edits" panel. Panel
-   *  shows only when showDiff is on AND opLog non-empty. */
+  /** The queued edits (read-only): the song list marks changes only
+   *  while there are some. */
   export let opLog: Edit[] = [];
+  /** The queued changes in plain words (`queuedChanges`), listed at the
+   *  top with an Undo each. They show whatever the tab: renames and
+   *  reorders, say, change no songs, so the lists wouldn't show them. */
+  export let changes: QueuedChange[] = [];
+  /** Undo a change (its queued edits); true if it was undone. The
+   *  parent may ask first. */
+  export let onundo: ((indices: number[]) => boolean | Promise<boolean>) | null = null;
+  /** While saving, nothing can be undone. */
+  export let undoBusy: boolean = false;
   /** Which list shows: the week's songs, grouped and in plain words
    *  (the week page's song list), or the technical one row per slot.
    *  The parent owns it (and remembers it); a click dispatches
@@ -308,6 +317,11 @@
     { id: 'songs', label: 'Songs' },
     { id: 'slots', label: 'Slots' },
   ] as const;
+
+  let tablistEl: HTMLElement | null = null;
+  /** Once the last change is undone (the list gone): the tab shown. */
+  const shownTab = (): HTMLElement | null =>
+    tablistEl?.querySelector<HTMLElement>('[aria-selected="true"]') ?? null;
 
   function setTab(next: PreviewTab) {
     if (next !== tab) dispatch('tabChange', { tab: next });
@@ -553,29 +567,34 @@
     </div>
   {/if}
 
-  {#if showDiff && opLog.length > 0}
-    <!-- §16.2.7.t7 (D1) — Edits panel. Surfaces structural intent
-         (renames, reorders, create/delete) that doesn't show up
-         in track_id-based slot diff. Numbered list, scrollable so
-         50-op opLogs don't take over. Renders ONLY when showDiff is
-         on AND opLog non-empty per D1; same gating as the per-week
-         + per-section summary rows. -->
-    <div class="edits-panel" data-testid="trace-edits-panel">
-      <div class="edits-panel-label">Edits ({opLog.length}):</div>
-      <ol class="edits-panel-list" data-testid="trace-edits-list">
-        {#each opLog as op, i (i)}
-          <li class="edits-panel-row" data-testid="trace-edits-row">
-            {describeOp(op)}
-          </li>
-        {/each}
-      </ol>
-    </div>
+  {#if onundo}
+    <!-- Always there (empty, it's just QueuedChanges' status line), so
+         the undo of the last change is still announced. -->
+    <section
+      class="changes"
+      class:changes--none={changes.length === 0}
+      aria-labelledby={changes.length > 0 ? 'trace-changes-title' : undefined}
+      data-testid="trace-changes"
+    >
+      {#if changes.length > 0}
+        <h3 class="changes-title" id="trace-changes-title" data-testid="trace-changes-title">
+          {changes.length} {changes.length === 1 ? 'change' : 'changes'}, not saved yet
+        </h3>
+      {/if}
+      <QueuedChanges
+        {changes}
+        onundo={onundo}
+        busy={undoBusy}
+        emptyFocus={shownTab}
+        testid="trace-change"
+      />
+    </section>
   {/if}
 
   <!-- The week as songs (grouped, plain words, search) or as slots
        (one technical row each, with revert). Both are the same
        preview; a click on either jumps to the song's block. -->
-  <div class="tabs" role="tablist" aria-label="Preview as">
+  <div class="tabs" role="tablist" aria-label="Preview as" bind:this={tablistEl}>
     {#each TABS as t (t.id)}
       <button
         type="button"
@@ -671,7 +690,9 @@
                      instead). Click stops propagation so the row's
                      select-to-jump doesn't also fire. -->
                 {#if cls.kind !== 'unchanged'}
-                  {@const revertable = revertableSlots.has(slot.slot)}
+                  <!-- The song's rule: `block` is its place in the
+                       layout, plus one (`slot` counts songs). -->
+                  {@const revertable = revertableSlots.has(slot.block - 1)}
                   <button
                     type="button"
                     class="diff-revert"
@@ -682,7 +703,7 @@
                     title={revertable
                       ? 'Revert the staged edit affecting this slot'
                       : 'No direct edit to revert (this row changed due to a structural edit elsewhere — revert that instead).'}
-                    on:click={(e) => onRevertClick(e, slot.slot)}
+                    on:click={(e) => onRevertClick(e, slot.block - 1)}
                   >
                     Revert
                   </button>
@@ -1107,33 +1128,19 @@
     opacity: 0.6;
   }
 
-  /* §16.2.7.t7 — Edits panel. Scrollable list capped at 25vh so
-     50-op opLogs don't take over. Renders below the per-section
-     summary. */
-  .edits-panel {
-    display: flex;
-    flex-direction: column;
+  /* The queued changes, above the tabs. */
+  .changes {
+    flex-shrink: 0;
     padding: 0.4rem 0.75rem;
     border-bottom: 1px solid var(--border, #ddd);
-    background: color-mix(in srgb, var(--bg-subtle, #fafafa) 60%, transparent);
-    font-size: 0.78rem;
-    flex-shrink: 0;
-    max-height: 25vh;
-    overflow-y: auto;
   }
-  .edits-panel-label {
-    color: var(--text-muted, #666);
-    font-weight: 500;
-    margin-bottom: 0.2rem;
-  }
-  .edits-panel-list {
-    list-style: decimal inside;
+  .changes--none {
     padding: 0;
-    margin: 0;
+    border: 0;
   }
-  .edits-panel-row {
-    padding: 0.1rem 0;
-    color: var(--text-muted, #444);
-    line-height: 1.4;
+  .changes-title {
+    margin: 0 0 0.2rem;
+    font-size: 0.85rem;
+    font-weight: 600;
   }
 </style>
