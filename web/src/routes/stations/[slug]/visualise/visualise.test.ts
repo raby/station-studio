@@ -843,21 +843,23 @@ describe('visualise +page.svelte — §16.2.6 c3e c1 staged-edit loss guards', (
     expect(trace.className).not.toContain('trace-col--hidden');
   });
 
-  it('c3e c2 D2(b): detailOpen=true hides TracePane via CSS (DetailPanel claims the right-side real estate; review H4 — no remount)', async () => {
+  it('with the preview on, an open rule panel sits in the column: the songs stay in view', async () => {
+    // It used to hide the column (the panel covered the window's edge).
     await mountAndAwaitStub();
-    expect(screen.getByTestId('trace-col')).toBeInTheDocument();
     await act(async () => {
       fireEditorCanvasEvent('detailOpen', { open: true });
     });
-    // Element stays in DOM (H4 — no remount on every open/close);
-    // hidden via class instead.
-    const trace = screen.getByTestId('trace-col');
-    expect(trace).toBeInTheDocument();
-    expect(trace.className).toContain('trace-col--hidden');
+    const col = screen.getByTestId('trace-col');
+    expect(col.className).not.toContain('trace-col--hidden');
+    expect(screen.getByTestId('column-panel')).toBeInTheDocument();
+    expect(screen.getByTestId('trace-pane')).toBeInTheDocument();
   });
 
-  it('c3e c2 D2(b): detailOpen=false restores TracePane (close DetailPanel → trace reappears)', async () => {
+  it('with only the macro list open (preview off), the panel still covers the column: it hides, as before', async () => {
+    window.localStorage.setItem('livePreview:viz-test', 'off');
+    window.localStorage.setItem('macroPalette:viz-test', 'on');
     await mountAndAwaitStub();
+    expect(screen.queryByTestId('column-panel')).toBeNull();
     await act(async () => {
       fireEditorCanvasEvent('detailOpen', { open: true });
     });
@@ -3449,6 +3451,19 @@ describe('visualise +page.svelte — Songs tab in the preview column', () => {
     );
     expect(sizes).toEqual([1, 7]);
     expect(await screen.findByTestId('trace-songs')).toBeInTheDocument();
+  });
+
+  it('a song opens its rule\'s panel (a slot row only jumps)', async () => {
+    render(Page);
+    await screen.findByTestId('editor-canvas');
+    const song = await screen.findByTestId('song-row');
+    await act(async () => { song.click(); });
+    const calls = () => (window as unknown as Record<string, unknown[]>).__editorCanvasOpenRefCalls ?? [];
+    // Trace slot 1 is the template's first slot (slot_index 0).
+    expect(calls()).toEqual([{ kind: 'atomic-ref', slot_index: 0 }]);
+    await act(async () => { screen.getByTestId('trace-tab-slots').click(); });
+    await act(async () => { screen.getAllByTestId('trace-row')[0].click(); });
+    expect(calls()).toHaveLength(1);
   });
 
   it('with nothing queued, only the one preview runs', async () => {

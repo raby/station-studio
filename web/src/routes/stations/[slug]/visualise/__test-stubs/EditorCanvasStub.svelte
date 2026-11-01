@@ -28,6 +28,16 @@
    */
   import { createEventDispatcher, onDestroy, onMount } from 'svelte';
   const dispatch = createEventDispatcher();
+  // Props the page passes the real canvas (unused here).
+  export let panelTarget: HTMLElement | null = null;
+  void panelTarget;
+  /** The page opens a song's rule panel through this: tests read the
+   *  refs it was asked to open from `__editorCanvasOpenRefCalls`. */
+  export function openRef(ref: unknown): boolean {
+    const w = window as unknown as Record<string, unknown[]>;
+    (w.__editorCanvasOpenRefCalls ??= []).push(ref);
+    return true;
+  }
   onMount(() => {
     // Expose to tests via the documented global.
     (window as unknown as Record<string, unknown>).__editorCanvasStubDispatch = dispatch;
@@ -45,6 +55,7 @@
     // the moment someone writes a test that needs an explicit
     // "stub absent" assertion.
     delete (window as unknown as Record<string, unknown>).__editorCanvasStubDispatch;
+    delete (window as unknown as Record<string, unknown>).__editorCanvasOpenRefCalls;
   });
 </script>
 

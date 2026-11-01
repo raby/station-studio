@@ -31,6 +31,7 @@
   import type { RuleDefaults } from '$lib/songList';
   import {
     expandSection,
+    findSectionIdForRef,
     readViewMode,
     writeViewMode,
     type ExpandedRef,
@@ -52,6 +53,9 @@
   /** The station's defaults for rule settings, for the panel's rule in
    *  words (RuleDefaults). */
   export let ruleDefaults: RuleDefaults = {};
+  /** Where the rule panel shows: null for the window's right edge, or
+   *  an element (the page's preview column). */
+  export let panelTarget: HTMLElement | null = null;
 
   // §16.2.3 c2 + §16.2.4 c2 — forward the DetailPanel's write-path
   // events (atomic save, macro save, retype) up to the route, which
@@ -91,6 +95,9 @@
     // for these events to hide its TracePane while DetailPanel
     // claims the side-panel real estate.
     detailOpen: { open: boolean };
+    /** The rule whose panel is open (null when none), on every change:
+     *  the preview's song list highlights its songs. */
+    selectionChange: { ref: ExpandedRef | null };
   }>();
 
   // §16.2.2 c4 — view-mode prefs, hydrated from localStorage +
@@ -139,8 +146,20 @@
     }
   }
 
+  $: dispatch('selectionChange', { ref: selected?.ref ?? null });
+
   function onSelect(e: CustomEvent<{ ref: ExpandedRef }>, section: SidecarSection) {
     selected = { ref: e.detail.ref, section };
+  }
+
+  /** Open a rule's panel, as clicking its chip does (a song in the
+   *  preview column, for one). False when the rule isn't on the canvas. */
+  export function openRef(ref: ExpandedRef): boolean {
+    const sectionId = findSectionIdForRef(sidecar, ref);
+    const section = sidecar.sections.find((s) => s.id === sectionId);
+    if (!section) return false;
+    selected = { ref, section };
+    return true;
   }
   function closeDetail() {
     selected = null;
@@ -497,6 +516,7 @@
   {template}
   {sidecar}
   {ruleDefaults}
+  {panelTarget}
   on:close={closeDetail}
   on:save
   on:macroSave

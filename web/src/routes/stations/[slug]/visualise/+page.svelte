@@ -126,6 +126,12 @@
   // Which list the preview column shows: the week's songs (grouped,
   // plain words) or one technical row per slot. Remembered per station.
   let previewTab: PreviewTab = 'songs';
+  // With the preview on, a rule's panel shows here, at the top of the
+  // preview column, so the songs stay in view beside it.
+  let columnPanelEl: HTMLElement | null = null;
+  let canvas: EditorCanvas | null = null;
+  // The rule whose panel is open: its songs are highlighted in the list.
+  let selectedRef: ExpandedRef | null = null;
   // §16.2.4.t1 — macro palette drawer state. Persists per-station to
   // localStorage so a returning operator picks up where they left off.
   // Independent of livePreviewOn — the palette is a browse affordance,
@@ -425,7 +431,7 @@
   // flashes the chip's outline. D5: does NOT auto-open DetailPanel —
   // a trace-click is "where is this slot?", not "edit this slot." The
   // operator clicks the chip themselves to edit.
-  async function handleTraceSelect(e: CustomEvent<{ slotIndex: number }>) {
+  async function handleTraceSelect(e: CustomEvent<{ slotIndex: number; open?: boolean }>) {
     if (!previewTrace || !stagedTemplate || !stagedSidecar) return;
     // The TracePane dispatches whichever slot index appears in the
     // row; for row_template stations this is the globally-flattened
@@ -458,6 +464,11 @@
       );
       return;
     }
+
+    // A song: open its rule's panel too (in the preview column), as
+    // clicking its chip would. Before the jump, so it opens even if
+    // the chip's section stays collapsed.
+    if (e.detail.open) canvas?.openRef(ref);
 
     const key = refKey(ref);
     let chipEl = document.querySelector<HTMLElement>(
@@ -2205,9 +2216,12 @@
     >
       <div class="canvas-col">
         <EditorCanvas
+          bind:this={canvas}
           {template}
           {sidecar}
           {ruleDefaults}
+          panelTarget={livePreviewOn ? columnPanelEl : null}
+          on:selectionChange={(e) => (selectedRef = e.detail.ref)}
           on:save={handleSave}
           on:macroSave={handleMacroSave}
           on:retype={handleRetype}
@@ -2233,9 +2247,14 @@
       {#if livePreviewOn || paletteOpen}
         <div
           class="trace-col"
-          class:trace-col--hidden={detailPanelOpen}
+          class:trace-col--hidden={detailPanelOpen && !livePreviewOn}
           data-testid="trace-col"
         >
+          {#if livePreviewOn}
+            <!-- A rule's panel shows here (EditorCanvas puts it here),
+                 so the songs stay in view below it. -->
+            <div class="column-panel" bind:this={columnPanelEl} data-testid="column-panel"></div>
+          {/if}
           <!-- §16.2.4.t1 — macro palette sits ABOVE the trace pane in
                the right column. Independent of livePreviewOn — the
                column auto-renders when either feature is active. -->
@@ -2263,6 +2282,7 @@
               stagedSidecar={stagedSidecar}
               revertableSlots={revertableSlots}
               opLog={opLog}
+              {selectedRef}
               tab={previewTab}
               stagedTemplate={stagedTemplate}
               {ruleDefaults}
@@ -2326,10 +2346,17 @@
   .trace-col {
     /* D2: ~30% viewport on a 1400px max main. The pane internally
        handles its own scrolling. Max-height matches what the canvas
-       would visually occupy on a typical edit session. */
+       would visually occupy on a typical edit session. Sticky, so a
+       song's block can be scrolled to on a long canvas without the
+       column (and the song's panel in it) leaving the screen. */
+    position: sticky;
+    top: 1rem;
+    align-self: flex-start;
     width: 30%;
     min-width: 280px;
-    max-height: 80vh;
+    /* The window's height, less the gap it sticks at (top and bottom):
+       a rule's panel and the songs share it. */
+    max-height: calc(100vh - 2rem);
     border-radius: 4px;
     overflow: hidden;
     border: 1px solid var(--border, #ddd);
@@ -2340,6 +2367,23 @@
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
+  }
+  /* The rule panel's place in the column; nothing when no panel is open.
+     The preview pane below takes the rest of the column's height. */
+  .column-panel {
+    /* Its own height (the panel caps itself at 45vh and scrolls): not
+       shrunk when the column runs short, which would let the panel
+       spill over the songs' header. The songs take what's left. */
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+  }
+  .column-panel:empty {
+    display: none;
+  }
+  .trace-col > :global(.trace-pane) {
+    flex: 1;
+    min-height: 0;
   }
   .trace-col--hidden {
     /* §16.2.6 c3e c2 review H4: hide via display:none instead of

@@ -24,7 +24,7 @@
    * height render fine in modern browsers; §16.18 (saved-trace
    * virtualisation) folds preview-pane in if scroll perf ever bites.
    */
-  import { createEventDispatcher } from 'svelte';
+  import { createEventDispatcher, tick } from 'svelte';
   import type { Trace, TraceSlot } from '$lib/api';
   import {
     aggregateBySection,
@@ -32,13 +32,14 @@
     summarizeClassifications,
     UNMAPPED_BUCKET_KEY,
     type ClassificationCounts,
+    type ExpandedRef,
     type Sidecar,
     type SlotClassification,
     type StationTemplate,
   } from '$lib/editor';
   import { describeOp, type Edit } from '$lib/edit-ops';
   import SongList from '$lib/components/songs/SongList.svelte';
-  import type { RuleDefaults, SongRow } from '$lib/songList';
+  import { ruleKey, type RuleDefaults, type SongRow } from '$lib/songList';
   import type { PreviewTab } from '$lib/stationPrefs';
 
   /** Latest successful preview trace. null when no preview has run yet
@@ -115,10 +116,14 @@
   export let stagedTemplate: StationTemplate | null = null;
   /** The station's default rule settings, for the song list's wording. */
   export let ruleDefaults: RuleDefaults = {};
+  /** The rule whose panel is open, if any: its songs are highlighted. */
+  export let selectedRef: ExpandedRef | null = null;
 
   const dispatch = createEventDispatcher<{
     tabChange: { tab: PreviewTab };
-    select: { slotIndex: number };
+    /** `open`: a song was picked, so open its rule's panel too (a slot
+     *  row only jumps to its block). */
+    select: { slotIndex: number; open?: boolean };
     weekChange: { week: number };
     showDiffChange: { on: boolean };
     compareNextNChange: { n: number };
@@ -324,8 +329,43 @@
 
   $: songTemplate = stagedTemplate ?? template;
 
-  function onSongSelect(row: SongRow) {
-    onRowClick(row.slot.slot);
+  // The song last picked, marked in the list while its rule's panel is
+  // open. Closing the panel, or opening another rule's (its chip, say),
+  // unmarks it. Only a change of the open rule is looked at: comparing
+  // on every update would unmark a song in the moment between picking
+  // it and its panel opening.
+  let pickedPosition: number | null = null;
+  let pickedKey: string | null = null;
+  let openKey: string | null = null;
+  $: onOpenRule(selectedRef);
+  function onOpenRule(ref: ExpandedRef | null) {
+    const key = ref ? ruleKey(ref) : null;
+    if (key === openKey) return;
+    openKey = key;
+    if (key === null || key !== pickedKey) {
+      pickedPosition = null;
+      pickedKey = null;
+    }
+  }
+
+  let songsEl: HTMLElement | null = null;
+
+  async function onSongSelect(row: SongRow) {
+    pickedPosition = row.position;
+    pickedKey = row.ref ? ruleKey(row.ref) : null;
+    dispatch('select', { slotIndex: row.slot.slot, open: true });
+    // The rule's panel opens above the list and takes some of its room:
+    // keep the song just picked in view. Only the list scrolls (not the
+    // page): if the song isn't wholly on screen it moves to the list's
+    // top, which is.
+    await tick();
+    const song = songsEl?.querySelector<HTMLElement>('[aria-pressed="true"]');
+    if (!songsEl || !song) return;
+    const box = songsEl.getBoundingClientRect();
+    const at = song.getBoundingClientRect();
+    if (at.top < box.top || at.bottom > Math.min(box.bottom, window.innerHeight)) {
+      songsEl.scrollTop += at.top - box.top;
+    }
   }
 
   $: diffReady = showDiff && trace !== null && savedTrace !== null;
@@ -573,13 +613,15 @@
         </div>
       {/if}
       {#if trace && trace.slots.length > 0 && songTemplate && stagedSidecar}
-        <div class="songs" data-testid="trace-songs">
+        <div class="songs" data-testid="trace-songs" bind:this={songsEl}>
           <SongList
             {trace}
             saved={opLog.length > 0 ? savedTrace : null}
             template={songTemplate}
             sidecar={stagedSidecar}
             onselect={onSongSelect}
+            selected={pickedPosition}
+            related={selectedRef ? ruleKey(selectedRef) : null}
             {ruleDefaults}
           />
         </div>

@@ -45,6 +45,21 @@ const SECTION: SidecarSection = { id: 's1', name: 'Section 1', blocks: [] };
 describe('<DetailPanel>', () => {
   beforeEach(() => cleanup());
 
+  it('shows on the window edge by default, or inside a given element (the editor\'s preview column)', () => {
+    const ref: AtomicRef = { kind: 'atomic-ref', slot_index: 0 };
+    const props = { selected: { ref, section: SECTION }, template: makeTemplate(), sidecar: makeSidecar() };
+    render(DetailPanel, props);
+    expect(screen.getByTestId('detail-panel')).not.toHaveClass('detail-panel--column');
+    cleanup();
+    const column = document.createElement('div');
+    document.body.appendChild(column);
+    render(DetailPanel, { ...props, panelTarget: column });
+    const panel = screen.getByTestId('detail-panel');
+    expect(panel.parentElement).toBe(column);
+    expect(panel).toHaveClass('detail-panel--column');
+    column.remove();
+  });
+
   it('renders nothing when `selected` is null', () => {
     render(DetailPanel, {
       selected: null, template: makeTemplate(), sidecar: makeSidecar(),

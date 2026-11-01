@@ -24,6 +24,7 @@
    * edits the SHARED template block → every row changes. The form
    * shows a warning in that case.
    */
+  import { portal } from '$lib/portal';
   import { createEventDispatcher } from 'svelte';
   import {
     availableCursorIds,
@@ -68,6 +69,10 @@
   /** The station's defaults for settings a rule leaves out (its rules
    *  artist_dedup_window and mix_exclusion_weeks), for the rule in words. */
   export let ruleDefaults: RuleDefaults = {};
+  /** Where to show the panel: null for its usual place on the window's
+   *  right edge, or an element to show it in (the station editor's
+   *  preview column, so the songs stay in view beside it). */
+  export let panelTarget: HTMLElement | null = null;
 
   /**
    * §16.2.4 c2: dispatch contracts —
@@ -692,10 +697,12 @@
 {#if detail !== null}
   <div
     class="detail-panel"
+    class:detail-panel--column={panelTarget !== null}
     role="dialog"
     aria-label="Rule details"
     data-testid="detail-panel"
     data-kind={detail.kind}
+    use:portal={panelTarget}
   >
     <header>
       <h2>
@@ -1059,6 +1066,19 @@
        editing this component. Default 10 keeps it above the
        canvas chips' :focus outline + the static layout. */
     z-index: var(--detail-panel-z, 10);
+  }
+  /* In the preview column: part of it, above the songs, with its own
+     scroll, rather than over the window's edge. */
+  .detail-panel--column {
+    position: static;
+    height: auto;
+    max-height: 45vh;
+    width: auto;
+    flex-shrink: 0;
+    box-shadow: none;
+    border-left: 0;
+    border-bottom: 1px solid var(--border, #ddd);
+    border-radius: 4px 4px 0 0;
   }
   header {
     display: flex;

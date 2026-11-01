@@ -15,8 +15,9 @@ tool behind [Rebirth Radio](https://github.com/raby/rebirth-radio)'s
 - **Visual block editor** — `/stations/{slug}/visualise` renders the
   template as a drag-and-drop canvas. **Preview songs** shows any
   week's songs beside it as you edit: each with its rule in plain words
-  and why it's there, the ones your changes alter marked, and a click
-  lights up the song's block (or, on the Slots tab, one row per slot).
+  and why it's there, the ones your changes alter marked. Click a song
+  and its block lights up and its rule opens beside the list (or see
+  one row per slot on the Slots tab).
 - **Trace versioning** — every regenerate keeps the prior trace as
   a version; pick / rollback / tag via the trace viewer.
 - **Disk export** — iTunes XML written to a configurable directory;

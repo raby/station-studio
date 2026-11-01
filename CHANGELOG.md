@@ -4,6 +4,18 @@ All notable changes are listed here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses semantic versioning.
 
+## [1.16.0] - 2026-11-01
+
+### Added
+
+- **A song opens its rule beside the list.** In the station editor, with
+  Preview songs on, clicking a song opens its rule's panel at the top of
+  the preview column (and lights up its block), so the songs stay in view
+  while you change it; the song is marked and the others from that rule
+  highlighted. Clicking a block opens its panel there too. The column now
+  stays on screen as the blocks scroll, and is as tall as the window.
+  With the preview off the panel is on the window's edge, as before.
+
 ## [1.15.0] - 2026-11-01
 
 ### Added
