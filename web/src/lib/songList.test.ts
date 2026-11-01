@@ -192,11 +192,59 @@ describe('describeQueued', () => {
     expect(line).toMatch(new RegExp(`^${macro.name} in .+: Shuffled from ${macro.spec.source}, no artist twice in 3$`));
   });
 
-  it("other changes use the editor's wording", () => {
-    const { template, sidecar } = station('rebirth-radio');
-    const [line] = describeQueued(
-      [{ kind: 'renameSection', sectionId: sidecar.sections[0].id, name: 'Mornings' }], template, sidecar);
-    expect(line).toContain('Mornings');
+  describe('rules added, removed, moved and resized, and sections, in plain words', () => {
+    const template = {
+      station: 'ts', name: 'Test', sources: [{ name: 'A', colour: '#abc', role: 'content' }],
+      layout: {
+        unit: 'slot', unit_labels: [], row_start_offsets: [],
+        flat_slots: [
+          { source: 'A', strategy: 'pick', size: 1 },
+          { source: 'A', strategy: 'window', size: 2 },
+          { source: 'B', strategy: 'pick', size: 1 },
+        ],
+      },
+    } as unknown as StationTemplate;
+    const sidecar = {
+      schema_version: 1,
+      sections: [
+        { id: 'morning', name: 'Morning', blocks: [{ kind: 'atomic', slot_index: 0 }, { kind: 'atomic', slot_index: 1 }] },
+        { id: 'evening', name: 'Evening', blocks: [{ kind: 'atomic', slot_index: 2 }] },
+      ],
+      macros: [],
+      layout_order: ['morning', 'evening'],
+    } as unknown as Sidecar;
+    const say = (...ops: Edit[]) => describeQueued(ops, template, sidecar);
+
+    it('sections by name', () => {
+      expect(say(
+        { kind: 'renameSection', sectionId: 'morning', name: 'Breakfast' },
+        { kind: 'sectionCreate', sectionId: 'late', name: 'Late' },
+        { kind: 'reorderSections', layoutOrder: ['late', 'evening', 'morning'] },
+        { kind: 'sectionDelete', sectionId: 'late' },
+        { kind: 'sectionDelete', sectionId: 'evening' },
+      )).toEqual([
+        'Renamed section “Morning” to “Breakfast”',
+        'New section “Late”',
+        'Sections in this order: “Late”, “Evening”, “Breakfast”',
+        'Deleted section “Late”',
+        'Deleted section “Evening”: its rule goes to “Unsorted (moved from a deleted section)”',
+      ]);
+    });
+
+    it('rules by where they are, before and after', () => {
+      expect(say(
+        { kind: 'moveBlock', address: { slot_index: 0 }, targetSectionId: 'evening', targetIndex: null },
+        { kind: 'structuralBlockEdit', edit: { op: 'size', slot_index: 1, new_size: 3 } },
+        { kind: 'structuralBlockEdit', edit: { op: 'remove', slot_index: 1 } },
+        { kind: 'structuralBlockEdit', edit: { op: 'add', slot_index: 0, new_block: { source: 'C', strategy: 'pick', size: 1 } } },
+      )).toEqual([
+        'Moved Morning, rule 1 to Evening, rule 2',
+        'Morning, rule 1: 3 songs',
+        'Removed Morning, rule 1: 3 in a row from A',
+        // A new rule goes to the Unsorted section, as on the canvas.
+        'Added Unsorted (moved from a deleted section), rule 1: Picked from C',
+      ]);
+    });
   });
 });
 

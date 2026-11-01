@@ -78,12 +78,14 @@ export interface StagedEditSession extends Readable<StagedEditState> {
   load(): Promise<void>;
   /** Queue an edit and refresh the edited preview. */
   stage(op: Edit): void;
-  /** Remove one queued edit (0-based). */
-  unstage(index: number): void;
+  /** Remove these queued edits (0-based places in the queue), together. */
+  unstage(indices: number[]): void;
   /** Save the whole queue in one batch. True when it landed. */
   save(): Promise<boolean>;
-  /** After a failed save: drop the edit it stopped at, then save the rest. */
-  dropFailed(): Promise<boolean>;
+  /** After a failed save: drop the edit it stopped at (and `drop`, the
+   *  places of the edits built on it, which must include it), then save
+   *  the rest. */
+  dropFailed(drop?: number[]): Promise<boolean>;
   /** Drop every queued edit and reload the saved station. */
   discard(): Promise<void>;
   acceptRecovered(): void;
@@ -359,9 +361,10 @@ export function createStagedEditSession(slug: string, opts: SessionOptions = {})
     schedule(false);
   }
 
-  function unstage(index: number): void {
-    if (index < 0 || index >= s.opLog.length) return;
-    setQueue(s.opLog.filter((_, i) => i !== index));
+  function unstage(indices: number[]): void {
+    const drop = new Set(indices.filter((i) => i >= 0 && i < s.opLog.length));
+    if (drop.size === 0) return;
+    setQueue(s.opLog.filter((_, i) => !drop.has(i)));
     schedule(false);
   }
 
@@ -424,11 +427,12 @@ export function createStagedEditSession(slug: string, opts: SessionOptions = {})
     }
   }
 
-  async function dropFailed(): Promise<boolean> {
+  async function dropFailed(drop: number[] = [s.failedAtIdx - 1]): Promise<boolean> {
     const at = s.failedAtIdx;
-    if (at < 1 || at > s.opLog.length) return false;
+    if (at < 1 || at > s.opLog.length || !drop.includes(at - 1)) return false;
     update({ failedAtIdx: 0, saveError: null });
-    setQueue(s.opLog.filter((_, i) => i !== at - 1));
+    const out = new Set(drop);
+    setQueue(s.opLog.filter((_, i) => !out.has(i)));
     if (s.opLog.length === 0) {
       schedule(false);
       return true;

@@ -121,6 +121,12 @@ vi.mock('$lib/api', async () => ({
   ApiError: FakeApiError,
 }));
 
+// The app's confirm dialog (its host is in the layout, not mounted here).
+const { confirmDialogMock } = vi.hoisted(() => ({
+  confirmDialogMock: vi.fn(async (_o: { title: string; body: string }) => true),
+}));
+vi.mock('$lib/confirm', () => ({ confirmDialog: confirmDialogMock }));
+
 vi.mock('$app/stores', () => ({
   page: pageStore,
 }));
@@ -130,7 +136,7 @@ vi.mock('$app/navigation', () => ({
 }));
 
 import Page from './+page.svelte';
-import { JobStartConflict } from '$lib/api';
+import { JobStartConflict, SidecarBatchFailure } from '$lib/api';
 
 // ---- fixtures -------------------------------------------------------------
 
@@ -1924,6 +1930,9 @@ describe('trace viewer — changing a song\'s rule', () => {
     await fireEvent.click(screen.getByTestId('song-edit-undo'));
     await vi.waitFor(() => expect(screen.queryByTestId('song-edit-bar')).toBeNull());
     expect(screen.queryByTestId('song-change')).toBeNull();
+    // The bar's gone; focus is on the song picked, not lost.
+    await vi.waitFor(() => expect(document.activeElement).toHaveAttribute('aria-pressed', 'true'));
+    expect(document.activeElement).toHaveAttribute('data-testid', 'song-row');
     expect(window.localStorage.getItem('stagedEdits:cls')).toBeNull();
   });
 
@@ -1953,6 +1962,59 @@ describe('trace viewer — changing a song\'s rule', () => {
     await fireEvent.click((await screen.findAllByTestId('song-row'))[0]);
     await screen.findByTestId('detail-panel');
     expect(screen.queryByTestId('song-edit-bar')).toBeNull();
+  });
+
+  it("undoing a change a later one builds on asks first: a retype, then that rule's settings as retyped", async () => {
+    previewsSavedThenEdited();
+    window.localStorage.setItem('stagedEdits:cls', JSON.stringify({
+      schemaVersion: 1,
+      opLog: [
+        { kind: 'retypeBlock', address: { block_idx: 0 }, newStrategy: 'pick', newSource: null, newFields: {} },
+        { kind: 'patchBlock', address: { block_idx: 0 }, fields: { allowlist_sources: ['B'] } },
+      ],
+      updatedAtSnapshot: 'ts-1',
+    }));
+    confirmDialogMock.mockReset();
+    confirmDialogMock.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    render(Page);
+    expect(await screen.findAllByTestId('song-edit-item')).toHaveLength(2);
+
+    // Told no: both stay.
+    await fireEvent.click(screen.getAllByTestId('song-edit-undo')[0]);
+    await vi.waitFor(() => expect(confirmDialogMock).toHaveBeenCalledTimes(1));
+    expect(confirmDialogMock.mock.calls[0][0].body)
+      .toMatch(/:\n\n• The day, rule 1: Picked from A, only songs also in B$/);
+    expect(screen.getAllByTestId('song-edit-item')).toHaveLength(2);
+
+    // Yes: both go.
+    await fireEvent.click(screen.getAllByTestId('song-edit-undo')[0]);
+    await vi.waitFor(() => expect(screen.queryByTestId('song-edit-bar')).toBeNull());
+    expect(window.localStorage.getItem('stagedEdits:cls')).toBeNull();
+  });
+
+  it("a failed save's Drop takes the changes built on the failed one too, once told yes", async () => {
+    previewsSavedThenEdited();
+    window.localStorage.setItem('stagedEdits:cls', JSON.stringify({
+      schemaVersion: 1,
+      opLog: [
+        { kind: 'retypeBlock', address: { block_idx: 0 }, newStrategy: 'pick', newSource: null, newFields: {} },
+        { kind: 'patchBlock', address: { block_idx: 0 }, fields: { allowlist_sources: ['B'] } },
+      ],
+      updatedAtSnapshot: 'ts-1',
+    }));
+    confirmDialogMock.mockReset();
+    confirmDialogMock.mockResolvedValue(true);
+    applyBatchMock.mockRejectedValueOnce(new SidecarBatchFailure(400, { error: 'bad type', failed_at_idx: 1, kind: 'retypeBlock' }));
+    render(Page);
+    await fireEvent.click(await screen.findByTestId('song-edit-save'));
+    const drop = await screen.findByTestId('song-edit-drop-failed');
+    const calls = applyBatchMock.mock.calls.length;
+    await fireEvent.click(drop);
+    await vi.waitFor(() => expect(confirmDialogMock).toHaveBeenCalledTimes(1));
+    expect(confirmDialogMock.mock.calls[0][0].title).toBe('Drop a later change too?');
+    await vi.waitFor(() => expect(window.localStorage.getItem('stagedEdits:cls')).toBeNull());
+    // Nothing left to save: the settings were for the type it didn't get.
+    expect(applyBatchMock.mock.calls.length).toBe(calls);
   });
 
   it('changes left from an earlier visit show on arrival, without clicking a song', async () => {

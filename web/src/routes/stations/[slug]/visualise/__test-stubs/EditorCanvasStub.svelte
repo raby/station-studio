@@ -24,7 +24,7 @@
    *   await act(async () => {
    *     fireEditorCanvasEvent('save', {ref, fields});
    *   });
-   *   expect(screen.getByTestId('staged-save')).toHaveTextContent('Save 1 edit');
+   *   expect(screen.getByTestId('staged-save')).toHaveTextContent('Save 1 change');
    */
   import { createEventDispatcher, onDestroy, onMount } from 'svelte';
   const dispatch = createEventDispatcher();
@@ -42,6 +42,11 @@
     const w = window as unknown as Record<string, unknown[]>;
     (w.__editorCanvasOpenRefCalls ??= []).push(ref);
     return true;
+  }
+  /** Counted in `__editorCanvasCloseRuleCalls`. */
+  export function closeRule(): void {
+    const w = window as unknown as Record<string, number>;
+    w.__editorCanvasCloseRuleCalls = (w.__editorCanvasCloseRuleCalls ?? 0) + 1;
   }
   onMount(() => {
     // Expose to tests via the documented global.
@@ -61,6 +66,7 @@
     // "stub absent" assertion.
     delete (window as unknown as Record<string, unknown>).__editorCanvasStubDispatch;
     delete (window as unknown as Record<string, unknown>).__editorCanvasOpenRefCalls;
+    delete (window as unknown as Record<string, unknown>).__editorCanvasCloseRuleCalls;
   });
 </script>
 

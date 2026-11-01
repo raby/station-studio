@@ -17,7 +17,8 @@ tool behind [Rebirth Radio](https://github.com/raby/rebirth-radio)'s
   week's songs beside it as you edit: each with its rule in plain words
   and why it's there, the ones your changes alter marked. Click a song
   and its block lights up and its rule opens beside the list (or see
-  one row per slot on the Slots tab).
+  one row per slot on the Slots tab). Changes wait until you save,
+  listed in plain words, each with an Undo.
 - **Trace versioning** — every regenerate keeps the prior trace as
   a version; pick / rollback / tag via the trace viewer.
 - **Disk export** — iTunes XML written to a configurable directory;

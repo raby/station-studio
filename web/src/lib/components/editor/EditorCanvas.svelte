@@ -164,6 +164,10 @@
   function closeDetail() {
     selected = null;
   }
+  /** Close the rule's panel, if one is open (its rule may be gone). */
+  export function closeRule(): void {
+    selected = null;
+  }
 
   /**
    * Total chips threshold. ≤ threshold → all sections start

@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  applyEdit, applyEdits, attributeOpsToSlot, describeOp, replayOpLog, resolveMacroAddresses,
+  applyEdit, applyEdits, attributeOpsToSlot, describeOp, replayOpLog, resolveMacroAddresses, slotsNow, undoSet,
   type BlockAddress, type Edit, type ReplayDeps,
 } from './edit-ops';
 import type { StationTemplate } from './editor';
@@ -1776,6 +1776,22 @@ describe('attributeOpsToSlot', () => {
     expect(attributeOpsToSlot(log, 0)).toEqual([0]);
   });
 
+  it("by where the rule is now: rules added or removed after an edit move it along", () => {
+    const log: Edit[] = [
+      patchBlockOp(1),         // 0: rule at 1, then 2 (add at 0), then 1 (remove at 0)…
+      structuralOp(0, 'add'),  // 1: the new rule at 0
+      patchBlockOp(4),         // 2: rule at 4, then 3
+      structuralOp(0, 'remove'), // 3: removes the rule added by 1
+      patchBlockOp(6),         // 4
+      structuralOp(6, 'remove'), // 5: …and removes 4's rule
+    ];
+    expect(slotsNow(log)).toEqual([1, undefined, 3, undefined, undefined, undefined]);
+    expect(attributeOpsToSlot(log, 1)).toEqual([0]);
+    expect(attributeOpsToSlot(log, 3)).toEqual([2]);
+    expect(attributeOpsToSlot(log, 4)).toEqual([]);
+    expect(attributeOpsToSlot(log, 6)).toEqual([]);
+  });
+
   it('other kinds (patchMacro / section* / reorder) never match', () => {
     const log: Edit[] = [
       { kind: 'patchMacro', macroId: 'm1', fields: { size: 2 } },
@@ -1983,5 +1999,238 @@ describe('resolveMacroAddresses — same as engine.editor_metadata.resolve_macro
     const out = applyEdit(template, sidecar, { kind: 'patchMacro', macroId: 'm', fields: { size: 9 } });
     expect(out.template.layout.flat_slots!.map((b) => b.size)).toEqual([1, 9, 9]);
     expect((out.sidecar as typeof sidecar).macros[0].spec.size).toBe(9);
+  });
+});
+
+
+describe('undoSet — undoing a change takes the later ones built on it', () => {
+  const sidecar = {
+    schema_version: 1,
+    sections: [
+      { id: 'morning', name: 'Morning', blocks: [
+        { kind: 'atomic', slot_index: 0 },
+        { kind: 'atomic', slot_index: 1 },
+      ]},
+      { id: 'evening', name: 'Evening', blocks: [{ kind: 'atomic', slot_index: 2 }] },
+    ],
+    macros: [],
+    layout_order: ['morning', 'evening'],
+  };
+  const t = makeFlatTemplate();
+  const patch = (slot: number, size = 3): Edit => ({ kind: 'patchBlock', address: { slot_index: slot }, fields: { size } });
+  const add = (slot: number): Edit => ({
+    kind: 'structuralBlockEdit', edit: { op: 'add', slot_index: slot, new_block: { source: 'A', strategy: 'pick', size: 1 } },
+  });
+  const remove = (slot: number): Edit => ({ kind: 'structuralBlockEdit', edit: { op: 'remove', slot_index: slot } });
+  const retype = (slot: number): Edit => ({
+    kind: 'retypeBlock', address: { slot_index: slot }, newStrategy: 'sequential', newSource: null, newFields: {},
+  });
+
+  it('a change nothing builds on goes alone, settings to the same rule included', () => {
+    const log = [patch(0), patch(0, 4), { kind: 'renameSection', sectionId: 'morning', name: 'AM' } as Edit, patch(2)];
+    expect(undoSet(log, t, sidecar, [0])).toEqual([0]);
+    expect(undoSet(log, t, sidecar, [2])).toEqual([2]);
+  });
+
+  it('nothing to undo: nothing (out-of-range places ignored)', () => {
+    expect(undoSet([patch(0)], t, sidecar, [])).toEqual([]);
+    expect(undoSet([patch(0)], t, sidecar, [5, -1])).toEqual([]);
+  });
+
+  it('an added rule: later edits to it or to any rule after it go too', () => {
+    // Slot 1 is the added rule; slot 3 was slot 2. Slot 0 is before it.
+    const log = [add(1), patch(1), patch(3), patch(0)];
+    expect(undoSet(log, t, sidecar, [0])).toEqual([0, 1, 2]);
+  });
+
+  it('a removed rule: later edits to the rules after it go too', () => {
+    // After removing slot 0, slot 1 is what was slot 2.
+    expect(undoSet([remove(0), patch(1)], t, sidecar, [0])).toEqual([0, 1]);
+    expect(undoSet([remove(2), patch(1)], t, sidecar, [0])).toEqual([0]);
+  });
+
+  it('follows the rules through later adds and removes', () => {
+    // Add at 2, then add at 0 (before it): what was slot 2 is now 3.
+    const log = [add(2), add(0), patch(2), patch(3)];
+    expect(undoSet(log, t, sidecar, [0])).toEqual([0, 3]);
+  });
+
+  it('a retyped rule: later settings or size for it go too, not other rules', () => {
+    const size: Edit = { kind: 'structuralBlockEdit', edit: { op: 'size', slot_index: 1, new_size: 2 } };
+    expect(undoSet([retype(1), patch(1), size, patch(2)], t, sidecar, [0])).toEqual([0, 1, 2]);
+    // Followed when a rule is added before it (slot 1 → 2).
+    expect(undoSet([retype(1), add(0), patch(2), patch(1)], t, sidecar, [0])).toEqual([0, 2]);
+  });
+
+  it('a new section: renaming, deleting or moving a rule into it go too', () => {
+    const log: Edit[] = [
+      { kind: 'sectionCreate', sectionId: 'late', name: 'Late' },
+      { kind: 'renameSection', sectionId: 'late', name: 'Late night' },
+      { kind: 'moveBlock', address: { slot_index: 2 }, targetSectionId: 'late', targetIndex: null },
+      { kind: 'renameSection', sectionId: 'morning', name: 'AM' },
+      { kind: 'sectionDelete', sectionId: 'late' },
+    ];
+    expect(undoSet(log, t, sidecar, [0])).toEqual([0, 1, 2, 4]);
+  });
+
+  it('a reorder after the sections changed goes with that change', () => {
+    const log: Edit[] = [
+      { kind: 'sectionCreate', sectionId: 'late', name: 'Late' },
+      { kind: 'reorderSections', layoutOrder: ['late', 'evening', 'morning'] },
+    ];
+    expect(undoSet(log, t, sidecar, [0])).toEqual([0, 1]);
+    // An added rule can make the Unsorted section: the same.
+    expect(undoSet([add(0), { kind: 'reorderSections', layoutOrder: ['_unsorted', 'morning', 'evening'] }], t, sidecar, [0]))
+      .toEqual([0, 1]);
+    // Undoing the reorder itself takes nothing else.
+    expect(undoSet(log, t, sidecar, [1])).toEqual([1]);
+  });
+
+  it('a deleted section made again goes with the delete', () => {
+    const log: Edit[] = [
+      { kind: 'sectionDelete', sectionId: 'evening' },
+      { kind: 'sectionCreate', sectionId: 'evening', name: 'Evening again' },
+      { kind: 'renameSection', sectionId: 'evening', name: 'Eve' },
+    ];
+    expect(undoSet(log, t, sidecar, [0])).toEqual([0, 1, 2]);
+  });
+
+  it("an edit the server would refuse without it goes too: removing a section's last rule beside a macro", () => {
+    // Morning: rule 0 and a macro (rule 1). Moving rule 2 into Morning
+    // lets rule 0 be removed (the macro still has a rule beside it);
+    // without the move, removing rule 0 would leave the macro alone.
+    const withMacro = {
+      ...sidecar,
+      sections: [
+        { id: 'morning', name: 'Morning', blocks: [{ kind: 'atomic', slot_index: 0 }, { kind: 'macro', ref: 'm' }] },
+        { id: 'evening', name: 'Evening', blocks: [{ kind: 'atomic', slot_index: 2 }] },
+      ],
+      macros: [{ id: 'm', name: 'M', repeat: 1, spec: { source: 'A', strategy: 'pick', size: 1 } }],
+    };
+    const log: Edit[] = [
+      { kind: 'moveBlock', address: { slot_index: 2 }, targetSectionId: 'morning', targetIndex: null },
+      remove(0),
+    ];
+    expect(applyEdits(t, withMacro, [remove(0)]).template).toBe(t); // refused on its own
+    expect(undoSet(log, t, withMacro, [0])).toEqual([0, 1]);
+  });
+
+  it('a change of several edits (identical rules) goes with what builds on any of them', () => {
+    const log = [patch(0), patch(2), add(0), patch(1)];
+    expect(undoSet(log, t, sidecar, [0, 1])).toEqual([0, 1]);
+    expect(undoSet(log, t, sidecar, [2])).toEqual([2, 3]);
+  });
+
+  // Every edit left after an undo must still do what it did: change the
+  // same rule (and that rule still has the type it had), or still find
+  // its section. Random queues of every kind, each edit undone in turn.
+  it('what stays still changes the same rules (random queues)', () => {
+    // mulberry32: seeded, so a failure repeats.
+    let seed = 7;
+    const rand = (n: number): number => {
+      seed = (seed + 0x6d2b79f5) | 0;
+      let x = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+      x = (x + Math.imul(x ^ (x >>> 7), 61 | x)) ^ x;
+      return (((x ^ (x >>> 14)) >>> 0) / 4294967296 * n) | 0;
+    };
+    const strategies = ['pick', 'sequential', 'window'];
+    type State = { template: StationTemplate; sidecar: unknown };
+    const ids = (st: State): string[] => ((st.sidecar as { layout_order: string[] }).layout_order);
+    const slots = (st: State): number => st.template.layout.flat_slots!.length;
+
+    function randomOp(st: State, n: number): Edit {
+      const len = slots(st);
+      const user = ids(st).filter((id) => !id.startsWith('_'));
+      switch (rand(10)) {
+        case 0: return { kind: 'patchBlock', address: { slot_index: rand(len) }, fields: { size: 1 + rand(4) } };
+        case 1: return { kind: 'retypeBlock', address: { slot_index: rand(len) }, newStrategy: strategies[rand(3)], newSource: null, newFields: {} };
+        case 2: return { kind: 'structuralBlockEdit', edit: { op: 'add', slot_index: rand(len + 1), new_block: { source: 'A', strategy: 'pick', size: 1 } } };
+        case 3: return len > 1
+          ? { kind: 'structuralBlockEdit', edit: { op: 'remove', slot_index: rand(len) } }
+          : { kind: 'patchBlock', address: { slot_index: 0 }, fields: { size: 2 } };
+        case 4: return { kind: 'structuralBlockEdit', edit: { op: 'size', slot_index: rand(len), new_size: 1 + rand(3) } };
+        case 5: return { kind: 'sectionCreate', sectionId: `s${n}`, name: `S${n}` };
+        case 6: return user.length > 1
+          ? { kind: 'sectionDelete', sectionId: user[rand(user.length)] }
+          : { kind: 'sectionCreate', sectionId: `t${n}`, name: null };
+        case 7: return { kind: 'renameSection', sectionId: user[rand(user.length)], name: `R${n}` };
+        case 8: return { kind: 'moveBlock', address: { slot_index: rand(len) }, targetSectionId: user[rand(user.length)], targetIndex: rand(3) };
+        default: {
+          const order = ids(st).slice();
+          for (let i = order.length - 1; i > 0; i--) {
+            const k = rand(i + 1);
+            [order[i], order[k]] = [order[k], order[i]];
+          }
+          return { kind: 'reorderSections', layoutOrder: order };
+        }
+      }
+    }
+
+    // Which rule each slot is (rules only move by adds and removes),
+    // and its type, before each edit; and whether each edit did anything.
+    function replay(log: Edit[], names: number[] = log.map((_, j) => j)) {
+      let st: State = { template: t, sidecar };
+      let rules = [0, 1, 2].map((i) => `r${i}`);
+      const seen: { rule: string | null; strategy: string | null; did: boolean }[] = [];
+      log.forEach((op, j) => {
+        const slot = op.kind === 'patchBlock' || op.kind === 'retypeBlock' || op.kind === 'moveBlock'
+          ? op.address.slot_index
+          : op.kind === 'structuralBlockEdit' && op.edit.op !== 'add' ? op.edit.slot_index : undefined;
+        const strategy = slot !== undefined ? st.template.layout.flat_slots![slot]?.strategy ?? null : null;
+        const next = applyEdit(st.template, st.sidecar, op);
+        seen.push({
+          rule: slot !== undefined ? rules[slot] ?? null : null,
+          strategy,
+          did: next.template !== st.template || next.sidecar !== st.sidecar,
+        });
+        if (op.kind === 'structuralBlockEdit' && op.edit.op === 'add' && next.template !== st.template) {
+          rules = [...rules.slice(0, op.edit.slot_index), `n${names[j]}`, ...rules.slice(op.edit.slot_index)];
+        }
+        if (op.kind === 'structuralBlockEdit' && op.edit.op === 'remove' && next.template !== st.template) {
+          rules = rules.filter((_, i) => i !== op.edit.slot_index);
+        }
+        st = next;
+      });
+      return seen;
+    }
+
+    let undone = 0;
+    let alone = 0;
+    for (let run = 0; run < 300; run++) {
+      const log: Edit[] = [];
+      let st: State = { template: t, sidecar };
+      for (let n = 0; n < 8; n++) {
+        const op = randomOp(st, n);
+        log.push(op);
+        st = applyEdit(st.template, st.sidecar, op);
+      }
+      const before = replay(log);
+      for (let i = 0; i < log.length; i++) {
+        const out = new Set(undoSet(log, t, sidecar, [i]));
+        expect(out.has(i)).toBe(true);
+        const keep = log.map((_, j) => j).filter((j) => !out.has(j));
+        const after = replay(keep.map((j) => log[j]), keep);
+        keep.forEach((j, k) => {
+          const was = before[j];
+          const now = after[k];
+          if (!was.did) return;
+          const what = `run ${run}: undoing ${i} (${log[i].kind}) leaves ${j} (${log[j].kind})`;
+          expect(now.did, `${what} doing nothing`).toBe(true);
+          // An added rule isn't any earlier rule: compare added ones by
+          // being added, and the rest by which rule.
+          if (was.rule !== null) {
+            expect(now.rule, `${what} on another rule`).toBe(was.rule);
+            if (log[j].kind !== 'moveBlock' && log[j].kind !== 'structuralBlockEdit') {
+              expect(now.strategy, `${what} on another type`).toBe(was.strategy);
+            }
+          }
+        });
+        undone += out.size;
+        if (out.size === 1) alone += 1;
+      }
+    }
+    // Not just "undo everything after": most changes go alone.
+    expect(alone).toBeGreaterThan(300 * 8 * 0.4);
+    expect(undone).toBeGreaterThan(0);
   });
 });

@@ -213,6 +213,22 @@ describe('createStagedEditSession', () => {
     session.destroy();
   });
 
+  it('a failed edit can be dropped with the ones built on it; it must be among them', async () => {
+    const session = await ready();
+    const other: Edit = { kind: 'patchBlock', address: { slot_index: 0 }, fields: { size: 3 } };
+    session.stage(sizeEdit);
+    session.stage(other);
+    applyBatchMock.mockRejectedValueOnce(new FakeBatchFailure('bad size', 1));
+    expect(await session.save()).toBe(false);
+    const calls = applyBatchMock.mock.calls.length;
+    expect(await session.dropFailed([1])).toBe(false); // not the failed one
+    expect(get(session).opLog).toEqual([sizeEdit, other]);
+    expect(await session.dropFailed([0, 1])).toBe(true);
+    expect(get(session).opLog).toEqual([]);
+    expect(applyBatchMock.mock.calls.length).toBe(calls); // nothing left to save
+    session.destroy();
+  });
+
   it('discard drops the queue and reloads the saved station', async () => {
     const session = await ready();
     session.stage(sizeEdit);
@@ -373,7 +389,7 @@ describe('createStagedEditSession', () => {
     await vi.waitFor(() => expect(get(session).stagedTrace).toMatchObject({ size1: 7 }));
     expect(startPreviewJobMock).toHaveBeenCalledTimes(2);
 
-    session.unstage(0);
+    session.unstage([0]);
     expect(get(session).stagedTrace).toBeNull();
     // The saved week's preview is still good: the next edit reuses it.
     session.stage(sizeEdit);
