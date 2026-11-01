@@ -39,6 +39,7 @@
   import { describeOp, type Edit } from '$lib/edit-ops';
   import SongList from '$lib/components/songs/SongList.svelte';
   import type { RuleDefaults, SongRow } from '$lib/songList';
+  import type { PreviewTab } from '$lib/stationPrefs';
 
   /** Latest successful preview trace. null when no preview has run yet
    *  or when Discard cleared it. */
@@ -108,7 +109,7 @@
    *  (the week page's song list), or the technical one row per slot.
    *  The parent owns it (and remembers it); a click dispatches
    *  `tabChange`. */
-  export let tab: 'songs' | 'slots' = 'songs';
+  export let tab: PreviewTab = 'songs';
   /** The template the preview was made from (staged edits included), for
    *  the song list's rules; the saved one when nothing is queued. */
   export let stagedTemplate: StationTemplate | null = null;
@@ -116,7 +117,7 @@
   export let ruleDefaults: RuleDefaults = {};
 
   const dispatch = createEventDispatcher<{
-    tabChange: { tab: 'songs' | 'slots' };
+    tabChange: { tab: PreviewTab };
     select: { slotIndex: number };
     weekChange: { week: number };
     showDiffChange: { on: boolean };
@@ -303,7 +304,7 @@
     { id: 'slots', label: 'Slots' },
   ] as const;
 
-  function setTab(next: 'songs' | 'slots') {
+  function setTab(next: PreviewTab) {
     if (next !== tab) dispatch('tabChange', { tab: next });
   }
 
@@ -564,6 +565,13 @@
 
   <div class="tab-panel" id="trace-tabpanel" role="tabpanel" aria-labelledby="trace-tab-{tab}">
     {#if tab === 'songs'}
+      {#if opLog.length > 0 && savedTraceError && !showDiff}
+        <!-- Shown under Compare when that's on; otherwise here, or the
+             missing "changed" marks would go unexplained. -->
+        <div class="diff-error-banner" data-testid="trace-songs-compare-error" role="status">
+          Couldn't compare with the saved week, so changed songs aren't marked: {savedTraceError}
+        </div>
+      {/if}
       {#if trace && trace.slots.length > 0 && songTemplate && stagedSidecar}
         <div class="songs" data-testid="trace-songs">
           <SongList

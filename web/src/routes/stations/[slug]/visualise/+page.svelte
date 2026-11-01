@@ -1036,7 +1036,7 @@
     if (livePreviewOn && hasStagedEdits) {
       const ok = window.confirm(
         `You have ${opLog.length} staged edit${opLog.length === 1 ? '' : 's'} ` +
-        'that will be discarded if you turn live preview off. Continue?',
+        'that will be discarded if you turn Preview songs off. Continue?',
       );
       if (!ok) return;
       await _resetStagedState();
@@ -1229,9 +1229,8 @@
     window.addEventListener('storage', _storageHandler);
     // Hydrate the live-preview toggle from localStorage BEFORE the
     // sidecar loads — so a returning operator's preferred mode is
-    // already active when the canvas renders. No preview job fires
-    // here; the operator's first edit triggers _schedulePreview if
-    // the toggle is ON.
+    // already active when the canvas renders. With it on, the first
+    // preview runs once the sidecar has loaded (below).
     livePreviewOn = _hydrateLivePreview(slug);
     previewTab = readPreviewTab(slug);
     // §16.2.4.t1 — hydrate the macro palette open-state too. The

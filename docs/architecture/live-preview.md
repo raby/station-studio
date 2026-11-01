@@ -24,6 +24,27 @@ TracePane render      ──  the preview trace renders next to the
                           via §16.2.7's diff classifier
 ```
 
+## Songs and Slots
+
+The preview column shows the trace two ways, on two tabs (the choice
+is remembered per station):
+
+- **Songs** (the default): the week page's song list (`SongList`) for
+  the staged trace, read against the staged template, so each song's
+  rule reads as it now is. With edits queued it marks the songs they
+  change, which needs the **saved** state's trace too: whenever it's
+  wanted and not cached, the debounced preview fetches it *before* the
+  staged one, because `POLICY_CANCEL_EXISTING` (below) means two
+  previews for a station can't run side by side.
+- **Slots**: one technical row per slot, with the compare-against-saved
+  diff and per-slot revert.
+
+A click on either jumps to the song's block on the canvas.
+
+Staged edits share one per-station queue in `localStorage` with the
+week pages' song-list editor, so a station with edits queued opens its
+editor with the preview on: with it off they'd be discarded.
+
 ## Why a job-id, not a sync response
 
 `engine.generator.generate()` for a Rebirth-Classics-sized template

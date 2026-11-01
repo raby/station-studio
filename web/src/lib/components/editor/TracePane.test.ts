@@ -1044,6 +1044,21 @@ describe('<TracePane> — Songs and Slots tabs', () => {
     expect(screen.getByTestId('song-rule-changed')).toBeInTheDocument();
   });
 
+  it("if the saved week can't be previewed, Songs says why nothing is marked", () => {
+    renderSongs({ opLog: anEdit, savedTrace: null, savedTraceError: 'pool A is missing' });
+    expect(screen.getByTestId('trace-songs-compare-error')).toHaveTextContent(
+      "Couldn't compare with the saved week, so changed songs aren't marked: pool A is missing");
+    cleanup();
+    // Compare ticked: its own error line says it (once, not twice).
+    renderSongs({ opLog: anEdit, savedTrace: null, savedTraceError: 'pool A is missing', showDiff: true });
+    expect(screen.queryByTestId('trace-songs-compare-error')).toBeNull();
+    expect(screen.getByTestId('trace-diff-error')).toBeInTheDocument();
+    cleanup();
+    // Nothing queued: nothing to compare.
+    renderSongs({ opLog: [], savedTraceError: 'pool A is missing' });
+    expect(screen.queryByTestId('trace-songs-compare-error')).toBeNull();
+  });
+
   it('before the first preview: a note, not an empty list', () => {
     renderSongs({ trace: null });
     expect(screen.getByTestId('trace-empty')).toHaveTextContent(/songs show here/);

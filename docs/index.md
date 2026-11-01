@@ -13,8 +13,10 @@ tool behind [Rebirth Radio](https://github.com/raby/rebirth-radio)'s
   window, sequential, jingle, archive_ref, hook), seeded RNG for
   reproducibility, multi-week chains via persistent cursor state.
 - **Visual block editor** — `/stations/{slug}/visualise` renders the
-  template as a drag-and-drop canvas. Live preview shows the trace
-  for any week as you edit.
+  template as a drag-and-drop canvas. **Preview songs** shows any
+  week's songs beside it as you edit: each with its rule in plain words
+  and why it's there, the ones your changes alter marked, and a click
+  lights up the song's block (or, on the Slots tab, one row per slot).
 - **Trace versioning** — every regenerate keeps the prior trace as
   a version; pick / rollback / tag via the trace viewer.
 - **Disk export** — iTunes XML written to a configurable directory;
