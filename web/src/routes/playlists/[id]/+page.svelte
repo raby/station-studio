@@ -198,6 +198,17 @@
     session.unstage(all);
     return true;
   }
+  /** After a failed save, drop the edit it stopped at, with any later
+   *  ones built on it (asked about first: they'd save to other rules),
+   *  and save the rest. */
+  async function dropFailed(): Promise<void> {
+    const state = editState;
+    if (!session || !state?.template || !state.sidecar || state.failedAtIdx < 1) return;
+    const log = state.opLog;
+    const drop = await confirmUndo(log, state.template, state.sidecar, ruleDefaults, [state.failedAtIdx - 1], { drop: true });
+    if (drop === null || !session || editState?.opLog !== log) return;
+    await session.dropFailed(drop);
+  }
   /** Once the last change is undone the bar goes: focus the song picked,
    *  or else the song search. */
   function afterLastUndo(): HTMLElement | null {
@@ -1299,7 +1310,7 @@
         <ErrorBanner message={editState.previewError} severity="polite" prefix="Preview" testId="song-edit-preview-error" />
         <ErrorBanner message={editState.saveError} severity="polite" prefix="Save" testId="song-edit-save-error" />
         {#if editState.failedAtIdx > 0}
-          <button type="button" data-testid="song-edit-drop-failed" on:click={() => session?.dropFailed()}>
+          <button type="button" data-testid="song-edit-drop-failed" on:click={dropFailed}>
             Drop that change and save the rest
           </button>
         {/if}

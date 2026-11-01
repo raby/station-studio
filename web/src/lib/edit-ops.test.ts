@@ -2095,6 +2095,26 @@ describe('undoSet — undoing a change takes the later ones built on it', () => 
     expect(undoSet(log, t, sidecar, [0])).toEqual([0, 1, 2]);
   });
 
+  it("an edit the server would refuse without it goes too: removing a section's last rule beside a macro", () => {
+    // Morning: rule 0 and a macro (rule 1). Moving rule 2 into Morning
+    // lets rule 0 be removed (the macro still has a rule beside it);
+    // without the move, removing rule 0 would leave the macro alone.
+    const withMacro = {
+      ...sidecar,
+      sections: [
+        { id: 'morning', name: 'Morning', blocks: [{ kind: 'atomic', slot_index: 0 }, { kind: 'macro', ref: 'm' }] },
+        { id: 'evening', name: 'Evening', blocks: [{ kind: 'atomic', slot_index: 2 }] },
+      ],
+      macros: [{ id: 'm', name: 'M', repeat: 1, spec: { source: 'A', strategy: 'pick', size: 1 } }],
+    };
+    const log: Edit[] = [
+      { kind: 'moveBlock', address: { slot_index: 2 }, targetSectionId: 'morning', targetIndex: null },
+      remove(0),
+    ];
+    expect(applyEdits(t, withMacro, [remove(0)]).template).toBe(t); // refused on its own
+    expect(undoSet(log, t, withMacro, [0])).toEqual([0, 1]);
+  });
+
   it('a change of several edits (identical rules) goes with what builds on any of them', () => {
     const log = [patch(0), patch(2), add(0), patch(1)];
     expect(undoSet(log, t, sidecar, [0, 1])).toEqual([0, 1]);

@@ -37,7 +37,7 @@
     type SlotClassification,
     type StationTemplate,
   } from '$lib/editor';
-  import type { Edit } from '$lib/edit-ops';
+  import { editsForRule, type Edit } from '$lib/edit-ops';
   import QueuedChanges from '$lib/components/songs/QueuedChanges.svelte';
   import SongList from '$lib/components/songs/SongList.svelte';
   import { ruleKey, type QueuedChange, type RuleDefaults, type SongRow } from '$lib/songList';
@@ -94,24 +94,16 @@
   export let template: StationTemplate | null = null;
   export let savedSidecar: Sidecar | null = null;
   export let stagedSidecar: Sidecar | null = null;
-  /** §16.2.7.t6 — set of slot indices (a rule's place in flat_slots;
-   *  a song's `block` − 1) that have a DIRECT op attributable in the
-   *  opLog. The PARENT owns the opLog +
-   *  computes this via `attributeOpsToSlot`. TracePane uses it to
-   *  enable/disable the per-row Revert button. Slots NOT in this
-   *  set (cascade-CHANGED, e.g. shifted by an earlier structural
-   *  edit) show a disabled button with a tooltip explaining the
-   *  cause. */
-  export let revertableSlots: Set<number> = new Set();
   /** The queued edits (read-only): the song list marks changes only
-   *  while there are some. */
+   *  while there are some, and a song's Revert (Slots tab, with
+   *  Compare on) undoes the ones to its rule (`editsForRule`). */
   export let opLog: Edit[] = [];
   /** The queued changes in plain words (`queuedChanges`), listed at the
    *  top with an Undo each. They show whatever the tab: renames and
    *  reorders, say, change no songs, so the lists wouldn't show them. */
   export let changes: QueuedChange[] = [];
-  /** Undo a change (its queued edits); true if it was undone. The
-   *  parent may ask first. */
+  /** Undo queued edits (a change from the list, or a song's Revert);
+   *  true if they were undone. The parent may ask first. */
   export let onundo: ((indices: number[]) => boolean | Promise<boolean>) | null = null;
   /** While saving, nothing can be undone. */
   export let undoBusy: boolean = false;
@@ -136,16 +128,14 @@
     weekChange: { week: number };
     showDiffChange: { on: boolean };
     compareNextNChange: { n: number };
-    revertSlot: { slotIndex: number };
   }>();
 
-  function onRevertClick(e: Event, slotIndex: number): void {
+  function onRevertClick(e: Event, indices: number[]): void {
     // D1 — stop propagation so the parent <li>'s click-to-jump
     // doesn't also fire. The button is inside the row's grid;
-    // without stopPropagation a click would dispatch BOTH
-    // revertSlot AND select.
+    // without stopPropagation a click would undo AND select.
     e.stopPropagation();
-    dispatch('revertSlot', { slotIndex });
+    void onundo?.(indices);
   }
 
   function onRowClick(slotIndex: number) {
@@ -645,22 +635,25 @@
             {@const slot = pickDisplaySlot(cls, savedTrace, trace)}
             {@const wasName = pickWasName(cls, savedTrace)}
             {#if slot}
-              <!-- svelte-ignore a11y-no-noninteractive-element-to-interactive-role -->
+              <!-- The song is a button (keyboard: Enter or Space) whose
+                   click the row takes, so a click anywhere on the row
+                   jumps; Revert is beside it, not inside. A removed
+                   song isn't in the week any more: nothing to jump to. -->
+              <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-noninteractive-element-interactions -->
               <li
                 class="slot slot--{cls.kind}"
                 data-testid="trace-row"
                 data-slot-index={slot.slot}
                 data-diff-kind={cls.kind}
-                role="button"
-                tabindex="0"
-                on:click={() => onRowClick(slot.slot)}
-                on:keydown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault();
-                    onRowClick(slot.slot);
-                  }
+                on:click={() => {
+                  if (cls.kind !== 'removed') onRowClick(slot.slot);
                 }}
               >
+                <svelte:element
+                  this={cls.kind === 'removed' ? 'div' : 'button'}
+                  type={cls.kind === 'removed' ? undefined : 'button'}
+                  class="slot-main"
+                >
                 <span class="idx">{slot.slot}</span>
                 <span class="source" title={slot.source}>{slot.source}</span>
                 <span class="strategy">{slot.strategy}</span>
@@ -683,16 +676,19 @@
                     was: {wasName}
                   </span>
                 {/if}
+                </svelte:element>
                 <!-- §16.2.7.t6 (D1) — Revert button. Hidden on
                      UNCHANGED rows (nothing to revert). Disabled when
-                     no opLog op directly attributable to this slot
-                     (cascade case — operator must revert the cause
-                     instead). Click stops propagation so the row's
-                     select-to-jump doesn't also fire. -->
+                     no edit is to this song's rule (cascade case — the
+                     cause is undone from the list of changes). Click
+                     stops propagation so the row's select-to-jump
+                     doesn't also fire. -->
                 {#if cls.kind !== 'unchanged'}
                   <!-- The song's rule: `block` is its place in the
-                       layout, plus one (`slot` counts songs). -->
-                  {@const revertable = revertableSlots.has(slot.block - 1)}
+                       layout, plus one (`slot` counts songs). A
+                       removed song's is in the station as saved. -->
+                  {@const undo = editsForRule(opLog, slot.block - 1, cls.kind === 'removed')}
+                  {@const revertable = undo.length > 0 && !!onundo && !undoBusy}
                   <button
                     type="button"
                     class="diff-revert"
@@ -701,9 +697,11 @@
                     data-revert-enabled={revertable ? 'true' : 'false'}
                     disabled={!revertable}
                     title={revertable
-                      ? 'Revert the staged edit affecting this slot'
-                      : 'No direct edit to revert (this row changed due to a structural edit elsewhere — revert that instead).'}
-                    on:click={(e) => onRevertClick(e, slot.block - 1)}
+                      ? "Undo the queued changes to this song's rule"
+                      : undo.length > 0
+                        ? "Can't undo while saving"
+                        : 'Nothing queued for this song\'s rule: another change moved it (undo that from the list above).'}
+                    on:click={(e) => onRevertClick(e, undo)}
                   >
                     Revert
                   </button>
@@ -715,41 +713,27 @@
       {:else if trace && trace.slots.length > 0}
         <ol class="slots" data-testid="trace-slots">
           {#each trace.slots as slot, i (i)}
-            <!-- §16.2.6 c2 review #1 fix #7: keyboard a11y on trace
-                 rows. `role="button"` + `tabindex="0"` make rows
-                 keyboard-focusable; Enter and Space both dispatch the
-                 same select event as the click handler. Wraps the
-                 §16.2.6.t3 jump-to-chip interaction in keyboard
-                 support from day one. The
-                 a11y-no-noninteractive-element-to-interactive-role
-                 warning is intentional: an inner <button> would
-                 complicate the grid layout + duplicate the click
-                 surface; the role+tabindex+keydown trio gives the
-                 same accessibility outcome with simpler markup. -->
-            <!-- svelte-ignore a11y-no-noninteractive-element-to-interactive-role -->
+            <!-- §16.2.6 c2 review #1 fix #7, done with a real button: the
+                 song is one (keyboard: Enter or Space), and the row
+                 takes its click, so a click anywhere on the row jumps. -->
+            <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-noninteractive-element-interactions -->
             <li
               class="slot"
               data-testid="trace-row"
               data-slot-index={slot.slot}
-              role="button"
-              tabindex="0"
               on:click={() => onRowClick(slot.slot)}
-              on:keydown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault();
-                  onRowClick(slot.slot);
-                }
-              }}
             >
-              <span class="idx">{slot.slot}</span>
-              <span class="source" title={slot.source}>{slot.source}</span>
-              <span class="strategy">{slot.strategy}</span>
-              <span class="name" title={slot.track_name}>{slot.track_name}</span>
-              {#if slot.track_artist}
-                <span class="artist" title={slot.track_artist}>
-                  {slot.track_artist}
-                </span>
-              {/if}
+              <button type="button" class="slot-main">
+                <span class="idx">{slot.slot}</span>
+                <span class="source" title={slot.source}>{slot.source}</span>
+                <span class="strategy">{slot.strategy}</span>
+                <span class="name" title={slot.track_name}>{slot.track_name}</span>
+                {#if slot.track_artist}
+                  <span class="artist" title={slot.track_artist}>
+                    {slot.track_artist}
+                  </span>
+                {/if}
+              </button>
             </li>
           {/each}
         </ol>
@@ -883,22 +867,39 @@
   }
   .slot {
     display: grid;
-    grid-template-columns: 2.5rem 4rem 4rem 1fr 1fr;
+    grid-template-columns: 1fr;
+    align-items: center;
     gap: 0.4rem;
     padding: 0.2rem 0.75rem;
     font-size: 0.8rem;
     cursor: pointer;
     border-bottom: 1px solid color-mix(in srgb, var(--border, #ddd) 50%, transparent);
   }
-  /* §16.2.7.t6 — diff rows get an extra trailing column for the
-     Revert button. Width sized to fit the button + a small gap;
-     UNCHANGED rows in diff mode keep the trailing column reserved
-     (placeholder) so the grid alignment matches across kinds. */
+  /* §16.2.7.t6 — diff rows get a trailing column for the Revert
+     button, beside the song. */
   .slots--diff .slot {
-    grid-template-columns: 2.5rem 4rem 4rem 1fr 1fr auto;
+    grid-template-columns: 1fr auto;
   }
   .slot:hover {
     background: var(--bg-hover, #f0f0f0);
+  }
+  /* The song: its own grid of columns, looking like the row it is. */
+  .slot-main {
+    display: grid;
+    grid-template-columns: 2.5rem 4rem 4rem 1fr 1fr;
+    gap: 0.4rem;
+    min-width: 0;
+    width: 100%;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: inherit;
+  }
+  .slot--removed {
+    cursor: default;
   }
   .idx {
     color: var(--text-muted, #666);
@@ -991,7 +992,8 @@
   .diff-marker {
     margin-left: 0.4rem;
     font-size: 0.7rem;
-    color: var(--diff-add, #2c7a2c);
+    /* The accent toward the text colour: readable on the row's tint. */
+    color: color-mix(in srgb, var(--diff-add, #2c7a2c) 60%, var(--text, #222));
     font-weight: 600;
     vertical-align: middle;
   }
@@ -1087,14 +1089,11 @@
     color: var(--text-muted, #555);
   }
 
-  /* §16.2.7.t6 — per-row Revert button. Lives inside the .slot
-     grid as a 6th-column overflow (grid-column: -1 / span 1 puts
-     it at the end). Color via the row's parent class (.slot--*)
+  /* §16.2.7.t6 — per-row Revert button, in the .slot grid's
+     trailing column beside the song. Color via the row's class (.slot--*)
      so it picks up the kind accent. Disabled state grays out +
      not-allowed cursor. */
   .diff-revert {
-    grid-column: -2 / -1;
-    align-self: center;
     padding: 0.1rem 0.4rem;
     border: 1px solid currentColor;
     border-radius: 3px;
@@ -1104,14 +1103,16 @@
     cursor: pointer;
     line-height: 1.2;
   }
+  /* Each kind's accent, toward the text colour: readable on the row's
+     tint, in either theme. */
   .slot--changed .diff-revert {
-    color: var(--diff-warn, #b08c00);
+    color: color-mix(in srgb, var(--diff-warn, #b08c00) 60%, var(--text, #222));
   }
   .slot--added .diff-revert {
-    color: var(--diff-add, #2c7a2c);
+    color: color-mix(in srgb, var(--diff-add, #2c7a2c) 60%, var(--text, #222));
   }
   .slot--removed .diff-revert {
-    color: var(--diff-rem, #c0392b);
+    color: color-mix(in srgb, var(--diff-rem, #c0392b) 60%, var(--text, #222));
   }
   .diff-revert:hover:not(:disabled) {
     background: color-mix(in srgb, currentColor 10%, transparent);

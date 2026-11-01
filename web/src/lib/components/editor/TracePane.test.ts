@@ -1,10 +1,11 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen, cleanup, fireEvent } from '@testing-library/svelte';
+import { render, screen, cleanup, fireEvent, within } from '@testing-library/svelte';
 import { renderWithEvents } from '$lib/renderWithEvents';
 import '@testing-library/jest-dom/vitest';
 import TracePane from './TracePane.svelte';
 import type { Trace } from '$lib/api';
 import type { Sidecar, StationTemplate } from '$lib/editor';
+import type { Edit } from '$lib/edit-ops';
 
 
 function makeTrace(slotCount: number = 3): Trace {
@@ -717,52 +718,45 @@ describe('<TracePane> — §16.2.7.t6 revert button', () => {
       seed: null, generated_at: '2026-06-15T00:00:00Z', slots,
     };
   }
+  const patch = (slot: number): Edit => ({ kind: 'patchBlock', address: { slot_index: slot }, fields: { size: 2 } });
+  const structural = (op: 'add' | 'remove', slot: number): Edit => ({
+    kind: 'structuralBlockEdit',
+    edit: { op, slot_index: slot, ...(op === 'add' ? { new_block: { source: 'A', strategy: 'sequential', size: 1 } } : {}) },
+  });
+  /** The rows' Revert buttons, and the edits each undid when clicked. */
+  function rendered(props: Record<string, unknown>) {
+    const undone: number[][] = [];
+    const r = renderWithEvents(TracePane, {
+      tab: 'slots', showDiff: true,
+      onundo: (indices: number[]) => { undone.push(indices); return true; },
+      ...props,
+    });
+    return { ...r, undone };
+  }
 
   it('UNCHANGED rows have NO revert button (nothing to revert)', () => {
-    render(TracePane, { tab: 'slots',
-      trace: tr([1, 2, 3]),
-      savedTrace: tr([1, 2, 3]),
-      showDiff: true,
-      previewing: false,
-      errorMessage: null,
-      weekValue: 1,
-      savedTraceError: null,
-      revertableSlots: new Set<number>(),
-    });
+    rendered({ trace: tr([1, 2, 3]), savedTrace: tr([1, 2, 3]), opLog: [patch(1)] });
     expect(screen.queryAllByTestId('trace-row-revert')).toHaveLength(0);
   });
 
-  it('CHANGED row with revertable slot → enabled Revert button', () => {
-    render(TracePane, { tab: 'slots',
-      trace: tr([1, 99, 3]),  // index 1 (slot=1) changed
-      savedTrace: tr([1, 2, 3]),
-      showDiff: true,
-      previewing: false,
-      errorMessage: null,
-      weekValue: 1,
-      savedTraceError: null,
-      revertableSlots: new Set([1]),  // slot 1 has direct attribution
-    });
-    const buttons = screen.getAllByTestId('trace-row-revert');
-    expect(buttons).toHaveLength(1);
-    expect(buttons[0]).toHaveAttribute('data-revert-enabled', 'true');
-    expect((buttons[0] as HTMLButtonElement).disabled).toBe(false);
+  it("CHANGED row whose rule has an edit → Revert undoes that rule's edits", async () => {
+    const { undone } = rendered({ trace: tr([1, 99, 3]), savedTrace: tr([1, 2, 3]), opLog: [patch(1), patch(2), patch(1)] });
+    const button = screen.getByTestId('trace-row-revert');
+    expect(button).toHaveAttribute('data-revert-enabled', 'true');
+    await fireEvent.click(button);
+    expect(undone).toEqual([[0, 2]]);
   });
 
-  it('CHANGED row with NON-revertable slot → disabled Revert button with cascade tooltip', () => {
-    render(TracePane, { tab: 'slots',
-      trace: tr([1, 99, 3]),
-      savedTrace: tr([1, 2, 3]),
-      showDiff: true,
-      previewing: false,
-      errorMessage: null,
-      weekValue: 1,
-      savedTraceError: null,
-      revertableSlots: new Set<number>(),  // empty — cascade only
-    });
-    const button = screen.getByTestId('trace-row-revert') as HTMLButtonElement;
-    expect(button.disabled).toBe(true);
-    expect(button.getAttribute('title') ?? '').toMatch(/structural edit/);
+  it('CHANGED row whose rule has no edit → disabled, pointing at the list of changes', () => {
+    rendered({ trace: tr([1, 99, 3]), savedTrace: tr([1, 2, 3]), opLog: [patch(0)] });
+    const button = screen.getByTestId('trace-row-revert');
+    expect(button).toBeDisabled();
+    expect(button.getAttribute('title')).toMatch(/another change moved it \(undo that from the list above\)/);
+  });
+
+  it('while saving: disabled', () => {
+    rendered({ trace: tr([1, 99, 3]), savedTrace: tr([1, 2, 3]), opLog: [patch(1)], undoBusy: true });
+    expect(screen.getByTestId('trace-row-revert')).toBeDisabled();
   });
 
   it("a song's Revert is its rule's: by block, not by song number", async () => {
@@ -773,66 +767,87 @@ describe('<TracePane> — §16.2.7.t6 revert button', () => {
       t.slots = t.slots.map((s, i) => ({ ...s, block: i < 2 ? 1 : 2 }));
       return t;
     };
-    const { on } = renderWithEvents(TracePane, { tab: 'slots',
-      trace: week([1, 2, 99]),
-      savedTrace: week([1, 2, 3]),
-      showDiff: true,
-      revertableSlots: new Set([1]),
-    });
-    let reverted: number | null = null;
-    on('revertSlot', (e: CustomEvent<{ slotIndex: number }>) => { reverted = e.detail.slotIndex; });
+    const { undone } = rendered({ trace: week([1, 2, 99]), savedTrace: week([1, 2, 3]), opLog: [patch(1)] });
     const button = screen.getByTestId('trace-row-revert');
     expect(button).toBeEnabled();
     await fireEvent.click(button);
-    expect(reverted).toBe(1);
+    expect(undone).toEqual([[0]]);
   });
 
-  it('click on Revert button dispatches revertSlot { slotIndex } + stops propagation (no select)', async () => {
-    const { on } = renderWithEvents(TracePane, { tab: 'slots',
-      trace: tr([1, 99, 3]),
-      savedTrace: tr([1, 2, 3]),
-      showDiff: true,
-      previewing: false,
-      errorMessage: null,
-      weekValue: 1,
-      savedTraceError: null,
-      revertableSlots: new Set([1]),
-    });
-    let revertedSlot: number | null = null;
+  it("a removed song's Revert: its rule as saved, followed through the queue", async () => {
+    // Saved: four songs, one per rule. Rule 1 removed (edit 0), then the
+    // rule now at 1 (rule 2 as saved) changed (edit 1). The staged week
+    // has three songs: song 4 is gone from the end, and songs 2-3 moved.
+    const { undone } = rendered({ trace: tr([1, 3, 4]), savedTrace: tr([1, 2, 3, 4]), opLog: [structural('remove', 1), patch(1)] });
+    const rows = screen.getAllByTestId('trace-row');
+    const removed = rows.find((r) => r.getAttribute('data-diff-kind') === 'removed')!;
+    // Song 4 as saved: rule 3, now at 2, which has no edit.
+    expect(within(removed).getByTestId('trace-row-revert')).toBeDisabled();
+    // Songs 2 and 3 changed: now rules 1 (edited) and 2.
+    const changed = rows.filter((r) => r.getAttribute('data-diff-kind') === 'changed');
+    await fireEvent.click(within(changed[0]).getByTestId('trace-row-revert'));
+    expect(undone).toEqual([[1]]);
+  });
+
+  it("a removed song whose rule an edit removed: Revert undoes that edit", async () => {
+    // Rule 3 (the last) removed, so its song is gone; the rule before it
+    // changed too.
+    const { undone } = rendered({ trace: tr([1, 2, 99]), savedTrace: tr([1, 2, 3, 4]), opLog: [patch(1), structural('remove', 3)] });
+    const removed = screen.getAllByTestId('trace-row').find((r) => r.getAttribute('data-diff-kind') === 'removed')!;
+    await fireEvent.click(within(removed).getByTestId('trace-row-revert'));
+    expect(undone).toEqual([[1]]);
+  });
+
+  it('a row is a list item holding the song (a button) and Revert beside it, not nested', async () => {
+    const { on } = rendered({ trace: tr([1, 99, 3]), savedTrace: tr([1, 2, 3]), opLog: [patch(1)] });
+    const row = screen.getAllByTestId('trace-row')[1];
+    expect(row).not.toHaveAttribute('role');
+    const [song, revert] = within(row).getAllByRole('button');
+    expect(song).toHaveTextContent('T99');
+    expect(song.contains(revert)).toBe(false);
+    expect(revert).toBe(within(row).getByTestId('trace-row-revert'));
+    // The song's button jumps (from the keyboard too: Enter clicks it).
+    let selected: number | null = null;
+    on('select', (e: CustomEvent<{ slotIndex: number }>) => { selected = e.detail.slotIndex; });
+    await fireEvent.click(song);
+    expect(selected).toBe(2);
+  });
+
+  it("a removed song isn't a button: it's not in the week, so there's nothing to jump to", async () => {
+    const { on } = rendered({ trace: tr([1, 2]), savedTrace: tr([1, 2, 3]), opLog: [structural('remove', 2)] });
+    const removed = screen.getAllByTestId('trace-row').find((r) => r.getAttribute('data-diff-kind') === 'removed')!;
+    expect(within(removed).getAllByRole('button')).toEqual([within(removed).getByTestId('trace-row-revert')]);
+    let selected = false;
+    on('select', () => { selected = true; });
+    await fireEvent.click(removed);
+    expect(selected).toBe(false);
+  });
+
+  it('click on Revert stops propagation (no select)', async () => {
+    const { on, undone } = rendered({ trace: tr([1, 99, 3]), savedTrace: tr([1, 2, 3]), opLog: [patch(1)] });
     let selectedSlot: number | null = null;
-    on('revertSlot', (e: CustomEvent<{ slotIndex: number }>) => {
-      revertedSlot = e.detail.slotIndex;
-    });
     on('select', (e: CustomEvent<{ slotIndex: number }>) => {
       selectedSlot = e.detail.slotIndex;
     });
     await fireEvent.click(screen.getByTestId('trace-row-revert'));
-    expect(revertedSlot).toBe(1);
+    expect(undone).toEqual([[0]]);
     // stopPropagation: the select event must NOT have fired even
     // though the button is inside the row's <li>.
     expect(selectedSlot).toBeNull();
   });
 
-  it('ADDED + REMOVED rows also get a Revert button (one per non-UNCHANGED row)', () => {
-    // saved=[1,2,3,4] staged=[1,2,3,4,5] → index 4 ADDED.
-    render(TracePane, { tab: 'slots',
-      trace: tr([1, 2, 3, 4, 5]),
-      savedTrace: tr([1, 2, 3, 4]),
-      showDiff: true,
-      previewing: false,
-      errorMessage: null,
-      weekValue: 1,
-      savedTraceError: null,
-      revertableSlots: new Set([4]),
-    });
+  it('ADDED rows get a Revert button too: the edit that added the rule', async () => {
+    // saved=[1,2,3,4] staged=[1,2,3,4,5] → song 5 ADDED, by a rule added at 4.
+    const { undone } = rendered({ trace: tr([1, 2, 3, 4, 5]), savedTrace: tr([1, 2, 3, 4]), opLog: [structural('add', 4)] });
     const buttons = screen.getAllByTestId('trace-row-revert');
     expect(buttons).toHaveLength(1);
     expect(buttons[0].closest('li')?.getAttribute('data-diff-kind')).toBe('added');
+    await fireEvent.click(buttons[0]);
+    expect(undone).toEqual([[0]]);
   });
 });
 
 
-// §16.2.7.t7 — Edits panel.
 describe('<TracePane> — the queued changes, each with an Undo', () => {
   beforeEach(() => cleanup());
 
@@ -909,6 +924,31 @@ describe('<TracePane> — the queued changes, each with an Undo', () => {
     await new Promise((r) => setTimeout(r, 0));
     expect(document.activeElement).toBe(undo);
     expect(screen.queryByText(/^Undone:/)).toBeNull();
+  });
+
+  it("a double-click undoes one change, not the next one too (it moves up into the clicked one's place)", async () => {
+    const asked: number[][] = [];
+    render(TracePane, { tab: 'slots', trace: tr([1]), changes, onundo: (indices: number[]) => { asked.push(indices); return true; } });
+    const undo = screen.getAllByTestId('trace-change-undo')[0];
+    await fireEvent.click(undo, { detail: 1 });
+    await fireEvent.click(undo, { detail: 2 });
+    expect(asked).toEqual([[0]]);
+  });
+
+  it('while one undo is asked about, another click does nothing', async () => {
+    let answer: (ok: boolean) => void = () => {};
+    const asked: number[][] = [];
+    render(TracePane, {
+      tab: 'slots', trace: tr([1]), changes,
+      onundo: (indices: number[]) => { asked.push(indices); return new Promise<boolean>((r) => { answer = r; }); },
+    });
+    await fireEvent.click(screen.getAllByTestId('trace-change-undo')[0]);
+    await fireEvent.click(screen.getAllByTestId('trace-change-undo')[2]);
+    expect(asked).toEqual([[0]]);
+    answer(false);
+    await new Promise((r) => setTimeout(r, 0));
+    await fireEvent.click(screen.getAllByTestId('trace-change-undo')[2]);
+    expect(asked).toEqual([[0], [4]]);
   });
 
   it('while saving, nothing can be undone', () => {

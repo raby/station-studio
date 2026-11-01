@@ -69,7 +69,7 @@
     summarizeClassifications,
     type ExpandedRef, type Sidecar, type StationTemplate,
   } from '$lib/editor';
-  import { applyEdits, attributeOpsToSlot, slotsNow, type Edit } from '$lib/edit-ops';
+  import { applyEdits, type Edit } from '$lib/edit-ops';
   import {
     COMPARE_NEXT_N_MAX,
     prefKeys,
@@ -265,14 +265,6 @@
   // fix-and-retry sequence works.
   let opLog: Edit[] = [];
   let saving = false;
-
-  // §16.2.7.t6 — the slots whose rule (where it is now, after every
-  // edit) has at least one DIRECT op in the opLog. Used by TracePane
-  // to enable/disable the per-row Revert button. Slots NOT in this set
-  // are cascade-only (an earlier structural edit moved their songs but
-  // no op directly targets their rule); revert affordance is disabled
-  // for them with a tooltip per D1.
-  $: revertableSlots = new Set(slotsNow(opLog).filter((s): s is number => s !== undefined));
 
   // Derived: when toggle ON + opLog non-empty, stagedTemplate +
   // stagedSidecar reflect (base + applyEdits). Otherwise they're
@@ -713,31 +705,6 @@
     _applyShowDiffChange(next);
   }
 
-  // §16.2.7.t6 — per-row Revert. Receives a slot index from
-  // TracePane; calls attributeOpsToSlot to find the matching opLog
-  // entries and undoes them as the list's Undo does (undoQueued:
-  // later edits built on them too, asked first). Saved-trace cache
-  // is NOT invalidated — the saved baseline is unchanged (DB state);
-  // only the staged side regressed. Empty attribution = defensive
-  // no-op + console.warn (TracePane should have disabled the
-  // button, but state drift is possible).
-  function handleRevertSlot(e: CustomEvent<{ slotIndex: number }>): void {
-    const slotIndex = e.detail.slotIndex;
-    const indices = attributeOpsToSlot(opLog, slotIndex);
-    if (indices.length === 0) {
-      // eslint-disable-next-line no-console
-      console.warn(
-        `§16.2.7.t6 revertSlot: no direct attribution for slot ${slotIndex} ` +
-          '(opLog has no patchBlock/retypeBlock/moveBlock/structuralBlockEdit ' +
-          'targeting it). The button should have been disabled — this is a ' +
-          'defensive no-op against state drift.',
-      );
-      return;
-    }
-    // With any later edits made on top of them (asked first).
-    void undoQueued(indices);
-  }
-
   // The queued changes in plain words, against the station as saved;
   // a change that went to identical rules too is one line. Listed in
   // the preview column, each with an Undo.
@@ -746,10 +713,11 @@
     : [];
 
   /**
-   * Undo queued edits: a change from the list, or a slot's (Revert on
-   * the Slots tab). Later edits made on top of them go too, or they'd
-   * change a different rule or fail to save (`undoSet`); those are
-   * listed and the operator asked first. True if anything was undone.
+   * Undo queued edits: a change from the list, or a song's rule's
+   * (Revert on the Slots tab). Later edits made on top of them go too,
+   * or they'd change a different rule or fail to save (`undoSet`);
+   * those are listed and the operator asked first. True if anything
+   * was undone.
    */
   async function undoQueued(indices: number[]): Promise<boolean> {
     if (!template || !sidecar || saving) return false;
@@ -1684,10 +1652,20 @@
     }
     showRetryModal = false;
     if (failedAtIdx > 0) {
-      opLog = [
-        ...opLog.slice(0, failedAtIdx - 1),
-        ...opLog.slice(failedAtIdx),
-      ];
+      // Edits built on it go too (asked about first): saved without it,
+      // they'd change other rules.
+      const log = opLog;
+      const drop = template && sidecar
+        ? await confirmUndo(log, template, sidecar, ruleDefaults, [failedAtIdx - 1], { drop: true })
+        : [failedAtIdx - 1];
+      if (opLog !== log) return;
+      if (drop === null) {
+        // Back to the choice: retry, drop, or cancel.
+        showRetryModal = true;
+        return;
+      }
+      const out = new Set(drop);
+      opLog = log.filter((_, i) => !out.has(i));
     } else {
       // Defensive fallback (shouldn't fire — UI hides Drop on sentinel).
       opLog = opLog.slice(1);
@@ -2299,7 +2277,6 @@
               template={template}
               savedSidecar={sidecar}
               stagedSidecar={stagedSidecar}
-              revertableSlots={revertableSlots}
               opLog={opLog}
               changes={queued}
               onundo={undoQueued}
@@ -2313,7 +2290,6 @@
               on:weekChange={handleWeekChange}
               on:showDiffChange={handleShowDiffChange}
               on:compareNextNChange={handleCompareNextNChange}
-              on:revertSlot={handleRevertSlot}
             />
           {/if}
         </div>

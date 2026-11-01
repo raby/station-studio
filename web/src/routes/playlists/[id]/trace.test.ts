@@ -136,7 +136,7 @@ vi.mock('$app/navigation', () => ({
 }));
 
 import Page from './+page.svelte';
-import { JobStartConflict } from '$lib/api';
+import { JobStartConflict, SidecarBatchFailure } from '$lib/api';
 
 // ---- fixtures -------------------------------------------------------------
 
@@ -1990,6 +1990,31 @@ describe('trace viewer — changing a song\'s rule', () => {
     await fireEvent.click(screen.getAllByTestId('song-edit-undo')[0]);
     await vi.waitFor(() => expect(screen.queryByTestId('song-edit-bar')).toBeNull());
     expect(window.localStorage.getItem('stagedEdits:cls')).toBeNull();
+  });
+
+  it("a failed save's Drop takes the changes built on the failed one too, once told yes", async () => {
+    previewsSavedThenEdited();
+    window.localStorage.setItem('stagedEdits:cls', JSON.stringify({
+      schemaVersion: 1,
+      opLog: [
+        { kind: 'retypeBlock', address: { block_idx: 0 }, newStrategy: 'pick', newSource: null, newFields: {} },
+        { kind: 'patchBlock', address: { block_idx: 0 }, fields: { allowlist_sources: ['B'] } },
+      ],
+      updatedAtSnapshot: 'ts-1',
+    }));
+    confirmDialogMock.mockReset();
+    confirmDialogMock.mockResolvedValue(true);
+    applyBatchMock.mockRejectedValueOnce(new SidecarBatchFailure(400, { error: 'bad type', failed_at_idx: 1, kind: 'retypeBlock' }));
+    render(Page);
+    await fireEvent.click(await screen.findByTestId('song-edit-save'));
+    const drop = await screen.findByTestId('song-edit-drop-failed');
+    const calls = applyBatchMock.mock.calls.length;
+    await fireEvent.click(drop);
+    await vi.waitFor(() => expect(confirmDialogMock).toHaveBeenCalledTimes(1));
+    expect(confirmDialogMock.mock.calls[0][0].title).toBe('Drop a later change too?');
+    await vi.waitFor(() => expect(window.localStorage.getItem('stagedEdits:cls')).toBeNull());
+    // Nothing left to save: the settings were for the type it didn't get.
+    expect(applyBatchMock.mock.calls.length).toBe(calls);
   });
 
   it('changes left from an earlier visit show on arrival, without clicking a song', async () => {

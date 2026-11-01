@@ -64,6 +64,13 @@ describe('confirmUndo', () => {
     expect(confirmDialogMock.mock.calls[0][0]).toMatchObject({ title: 'Undo a later change too?', confirmLabel: 'Undo both' });
   });
 
+  it('dropping a failed edit: the question says drop', async () => {
+    await confirmUndo([remove(0), size(0, 3)], template, sidecar, {}, [0], { drop: true });
+    const asked = confirmDialogMock.mock.calls[0][0];
+    expect(asked).toMatchObject({ title: 'Drop a later change too?', confirmLabel: 'Drop both' });
+    expect(asked.body).toMatch(/^Dropping: Removed The day, rule 1/);
+  });
+
   it('told no: null, nothing undone', async () => {
     confirmDialogMock.mockResolvedValue(false);
     expect(await confirmUndo([remove(0), size(0, 3)], template, sidecar, {}, [0])).toBeNull();

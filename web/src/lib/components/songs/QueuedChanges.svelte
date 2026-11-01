@@ -29,11 +29,24 @@
 
   let list: HTMLOListElement | null = $state(null);
   let announced = $state('');
+  // One undo at a time: while one is asked about or applied, the places
+  // in the queue are about to change.
+  let undoing = false;
 
-  async function undo(change: QueuedChange, at: number): Promise<void> {
-    if (!(await onundo(change.indices))) return;
-    announced = `Undone: ${change.text}`;
+  async function undo(e: MouseEvent, change: QueuedChange, at: number): Promise<void> {
+    // The second click of a double-click would land on the next change,
+    // which has moved up into this one's place.
+    if (e.detail > 1 || undoing) return;
+    undoing = true;
+    try {
+      if (!(await onundo(change.indices))) return;
+    } finally {
+      undoing = false;
+    }
+    // Cleared first, so the same words twice running are said twice.
+    announced = '';
     await tick();
+    announced = `Undone: ${change.text}`;
     const buttons = list?.querySelectorAll<HTMLButtonElement>('button.undo') ?? [];
     const next = buttons.length > 0 ? buttons[Math.min(at, buttons.length - 1)] : (emptyFocus?.() ?? null);
     next?.focus();
@@ -53,7 +66,7 @@
           data-testid="{testid}-undo"
           aria-label="Undo: {change.text}"
           disabled={busy}
-          onclick={() => undo(change, i)}
+          onclick={(e) => undo(e, change, i)}
         >Undo</button>
       </li>
     {/each}

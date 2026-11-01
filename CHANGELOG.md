@@ -11,13 +11,14 @@ this project uses semantic versioning.
 - **Undo each queued change in the station editor.** With Preview songs
   on, the changes you've queued are listed above the songs in plain
   words ("Moved The day, rule 2 to Evening, rule 1"), each with an
-  Undo, as on week pages. Before, the editor could only discard them
-  all. Renames and reorders, which change no songs, show there too.
+  Undo, as on week pages. Before, the editor could discard them all or
+  revert a song's rule on the Slots tab. Renames and reorders, which
+  change no songs, show there too.
 - **Undoing a change that later ones build on asks first.** Say you
   remove a rule and then resize the one that's now first: undoing the
   remove would make that resize land on another rule, so you're shown
-  it and asked to undo both. The same on week pages, and for a slot's
-  Revert.
+  it and asked to undo both. The same on week pages, for a song's
+  Revert, and for dropping a change a save failed on.
 - After an Undo, focus moves to the next change's Undo (or, after the
   last, to the preview's tab), and the undone change is announced.
 
@@ -28,15 +29,26 @@ this project uses semantic versioning.
 
 ### Fixed
 
-- **A slot's Revert (Slots tab) was beside the wrong song.** It took a
+- **A song's Revert (Slots tab) was beside the wrong song.** It took a
   song's number in the week for its rule's place, so it showed beside
-  the song before the changed one (or none, for rules of several songs),
-  and undid the change to the next rule along from the song you clicked.
-  It also missed that a rule moves along when one is added or removed
-  ahead of it.
+  the song before the changed one (and only if that one had changed
+  too), and undid the change to the next rule along from the song you
+  clicked. It now goes by the song's rule, follows rules along as others
+  are added or removed ahead of them, and on a song a change took out
+  of the week undoes that change.
 - **Undoing a change on a week page could change another rule.** An
   edit queued after a rule was removed, or after one was retyped, stayed
   queued and would have changed the wrong rule or failed to save.
+- **Dropping a change a save failed on saved the rest to the wrong
+  rules** when they were built on it ("Drop & continue" in the editor,
+  "Drop that change and save the rest" on week pages). Those go too
+  now, once you've said yes.
+- **The Slots tab works with a screen reader.** Each row was itself a
+  "button" with the Revert button inside it, which assistive technology
+  can't use, and wasn't a list item. Now each song is a button and
+  Revert sits beside it. Revert and "+ added" are easier to read on the
+  tinted rows. A song taken out of the week no longer jumps to a
+  different song when clicked.
 
 ## [1.16.0] - 2026-11-01
 

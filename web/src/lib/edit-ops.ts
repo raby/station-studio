@@ -1553,6 +1553,33 @@ export function attributeOpsToSlot(
 
 
 /**
+ * The queued edits a song's Revert undoes: those to its rule. `rule` is
+ * the rule's slot (a song's `block` − 1) in the station as edited; with
+ * `saved`, in the station as saved (a song the edits took out of the
+ * week), followed through the queue to where it is now, or to the edit
+ * that removed it.
+ */
+export function editsForRule(opLog: Edit[], rule: number, saved = false): number[] {
+  let p = rule;
+  if (saved) {
+    for (let j = 0; j < opLog.length; j++) {
+      const op = opLog[j];
+      if (op.kind !== 'structuralBlockEdit' || op.edit.op === 'size') continue;
+      const at = op.edit.slot_index;
+      if (op.edit.op === 'add') {
+        if (at <= p) p += 1;
+      } else if (at === p) {
+        return [j];
+      } else if (at < p) {
+        p -= 1;
+      }
+    }
+  }
+  return attributeOpsToSlot(opLog, p);
+}
+
+
+/**
  * For each queued edit, the slot its rule is at now, with every edit
  * applied: its address, moved along by the rules added or removed
  * after it. Undefined for edits not to a slot's rule (sections,
@@ -1589,34 +1616,31 @@ function _slotOf(op: Edit): number | undefined {
   return undefined;
 }
 
-/** The ids of a sidecar's sections. */
-function _sectionIds(sidecar: unknown): Set<string> {
-  const order = _isSidecarLike(sidecar) ? (sidecar as Record<string, unknown>).layout_order : null;
-  return new Set(Array.isArray(order) ? order.map(String) : []);
-}
-
 /**
  * What undoing the queued edits at `indices` takes out: those, and every
  * later edit made on top of them, which without them would change a
  * different rule or fail to save. Ascending.
  *
  * Each edit was made against the station with every edit before it, so
- * a later one depends on an earlier one when it
- *   - is addressed to a slot at or after a rule the earlier one added or
- *     removed (its address counts that rule; without it, it'd be the
- *     next rule along);
- *   - changes the settings or size of a rule the earlier one retyped
- *     (they're settings of the new type);
- *   - names a section that isn't there without it (renaming, deleting or
- *     moving a rule into one it made), or makes one that is (one it
- *     deleted), or reorders sections that aren't the ones there are (a
- *     reorder lists every section: think of the Unsorted section an
- *     added rule, or a deleted section's rules, go to).
- * The sections are checked against the station with only the edits that
- * stay, so a change made indirectly counts too. Undoing a dependent
- * edit takes out the ones that depend on it, and so on. Anything else
- * (two changes to the same rule's settings, renames, moves, reorders)
- * stands on its own.
+ * a later one depends on an earlier one when, without it, the later one
+ *   - would change a different rule: it's addressed to a slot at or
+ *     after a rule the earlier one added or removed (its address counts
+ *     that rule; without it, it'd be the next rule along), or it renames,
+ *     deletes or moves a rule into a section the earlier one made, and a
+ *     section of that name is there anyway (one it was made again after
+ *     being deleted);
+ *   - would set a rule's settings or size for a type it no longer has
+ *     (the earlier one retyped it);
+ *   - would do nothing, as the server would refuse it: names a section
+ *     that isn't there, makes one that is, reorders sections that aren't
+ *     the ones there are (a reorder lists every section: think of the
+ *     Unsorted section an added rule, or a deleted section's rules, go
+ *     to), removes a section's last rule while it has a macro.
+ * The last is checked by replaying the edits that stay (`applyEdit`
+ * mirrors what the server refuses), so whatever an undone edit made
+ * possible counts. Undoing a dependent edit takes out the ones that
+ * depend on it, and so on. Anything else (two changes to the same
+ * rule's settings, renames, moves, reorders) stands on its own.
  */
 export function undoSet(
   opLog: Edit[],
@@ -1627,22 +1651,24 @@ export function undoSet(
   const out = new Set(indices.filter((i) => Number.isInteger(i) && i >= 0 && i < opLog.length));
   if (out.size === 0) return [];
   const first = Math.min(...out);
-  // The station with only the edits that stay.
-  let kept = applyEdits(template, sidecar, opLog.slice(0, first));
+  // The station with every edit, and with only the edits that stay.
+  let all = applyEdits(template, sidecar, opLog.slice(0, first));
+  let kept = all;
 
   // From each of these slots on, later addresses count a rule that an
   // undone edit added or removed.
   const shiftedFrom: number[] = [];
   // Rules an undone edit retyped (followed as later edits add/remove).
   const retyped: BlockAddress[] = [];
-  // Sections an undone edit made: one of the same name that stays (one
-  // it was made again after deleting) is another section.
+  // Sections an undone edit made.
   const made = new Set<string>();
 
   const sameRule = (a: BlockAddress, b: BlockAddress): boolean =>
     a.slot_index !== undefined ? a.slot_index === b.slot_index : a.block_idx !== undefined && a.block_idx === b.block_idx;
+  const changes = (from: { template: unknown; sidecar: unknown }, to: { template: unknown; sidecar: unknown }): boolean =>
+    to.template !== from.template || to.sidecar !== from.sidecar;
 
-  function dependsOnUndone(op: Edit): boolean {
+  function changesAnotherRule(op: Edit): boolean {
     const slot = _slotOf(op);
     if (slot !== undefined && shiftedFrom.some((from) => slot >= from)) return true;
     if ((op.kind === 'patchBlock' || op.kind === 'retypeBlock') && retyped.some((a) => sameRule(a, op.address))) {
@@ -1652,25 +1678,21 @@ export function undoSet(
         retyped.some((a) => a.slot_index === op.edit.slot_index)) {
       return true;
     }
-    const sections = _sectionIds(kept.sidecar);
-    switch (op.kind) {
-      case 'renameSection':
-      case 'sectionDelete':
-        return made.has(op.sectionId) || !sections.has(op.sectionId);
-      case 'moveBlock':
-        return made.has(op.targetSectionId) || !sections.has(op.targetSectionId);
-      case 'sectionCreate':
-        return sections.has(op.sectionId);
-      case 'reorderSections':
-        return op.layoutOrder.length !== sections.size || op.layoutOrder.some((id) => !sections.has(id));
-      default:
-        return false;
-    }
+    if (op.kind === 'renameSection' || op.kind === 'sectionDelete') return made.has(op.sectionId);
+    if (op.kind === 'moveBlock') return made.has(op.targetSectionId);
+    return false;
   }
 
   for (let j = first; j < opLog.length; j++) {
     const op = opLog[j];
-    if (!out.has(j) && dependsOnUndone(op)) out.add(j);
+    const was = all;
+    all = applyEdit(was.template, was.sidecar, op);
+    if (!out.has(j)) {
+      const next = applyEdit(kept.template, kept.sidecar, op);
+      // Did something with every edit, nothing with only these.
+      if (changesAnotherRule(op) || (changes(was, all) && !changes(kept, next))) out.add(j);
+      else kept = next;
+    }
 
     // Later addresses count this edit's added or removed rule: follow
     // the slots being tracked to where they are now.
@@ -1692,8 +1714,6 @@ export function undoSet(
       if (op.kind === 'structuralBlockEdit' && op.edit.op !== 'size') shiftedFrom.push(op.edit.slot_index);
       if (op.kind === 'retypeBlock') retyped.push(op.address);
       if (op.kind === 'sectionCreate') made.add(op.sectionId);
-    } else {
-      kept = applyEdit(kept.template, kept.sidecar, op);
     }
   }
   return [...out].sort((a, b) => a - b);
@@ -1706,12 +1726,9 @@ export function undoSet(
 /**
  * §16.2.7.t7 — render one Edit op as a human-readable sentence.
  *
- * Used by TracePane's "Edits" panel to surface staged structural
- * intent that doesn't show up in track-id-based trace diff:
- * sectionRename, sectionCreate, reorderSections, and the like
- * don't change any track id, so the existing per-slot diff
- * reports "No changes since save" even when the operator clearly
- * did something.
+ * The fallback wording of `describeQueued` (songList.ts), which says
+ * each queued change in the operator's words, for an edit it can't
+ * place (a rule no longer in the station, say).
  *
  * Defensive: missing address.slot_index renders "(no address)" so
  * the line stays informative.

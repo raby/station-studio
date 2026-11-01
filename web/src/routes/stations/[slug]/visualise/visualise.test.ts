@@ -3164,78 +3164,6 @@ describe('visualise +page.svelte — §16.2.7 c2 diff toggle integration', () =>
 });
 
 
-// §16.2.7.t6 — page-level wiring smoke test for revert-this-slot.
-// Full FULL chain (stage → TracePane render → revert button click →
-// opLog spliced) would require driving BOTH saved + staged preview
-// responses to populate TracePane's diff rows + clicking the actual
-// button. c1 + c2 cover those layers exhaustively (6 attribution
-// unit + 5 TracePane render). This block pins the PAGE-side wiring
-// at the lowest verifiable altitude — verify TracePane's
-// revertableSlots prop receives slot indices that have a direct
-// op in the opLog. A regression in the page's reactive derivation
-// (e.g. wrong field name, wrong op-kind set) would land here.
-describe('visualise +page.svelte — §16.2.7.t6 revertableSlots wiring', () => {
-  beforeEach(() => {
-    getStationSidecarMock.mockReset();
-    patchBlockMock.mockReset();
-    applyBatchMock.mockClear();
-    startPreviewJobMock.mockReset();
-    watchJobMock.mockReset();
-    cancelJobMock.mockReset();
-    startPreviewJobMock.mockResolvedValue({
-      job_id: 'pv-default', status: 'running',
-    });
-    cancelJobMock.mockResolvedValue(undefined);
-    setSlug('viz-test');
-    try { window.localStorage.clear(); } catch { /* */ }
-    window.localStorage.setItem('livePreview:viz-test', 'on');
-    getStationSidecarMock.mockResolvedValue({
-      template: makeTemplate(),
-      sidecar: makeSidecar(),
-      sidecar_error: null,
-    });
-    watchJobMock.mockReturnValue({
-      [Symbol.asyncIterator]() {
-        return { async next() { return { done: true, value: undefined }; } };
-      },
-    });
-  });
-
-  it('staged patchBlock contributes its slot_index to the revertableSlots set passed into TracePane', async () => {
-    render(Page);
-    await screen.findByTestId('editor-canvas');
-    await act(async () => {});
-
-    // Stage a patchBlock targeting slot 0 via the EditorCanvasStub
-    // intercept. staged-save shows "1 change".
-    await act(async () => {
-      fireEditorCanvasEvent('save', {
-        ref: { kind: 'atomic-ref', slot_index: 0 },
-        fields: { size: 5 },
-      });
-    });
-    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 1 change/);
-
-    // No direct revertableSlots inspection surface from outside;
-    // the wiring is pinned implicitly via the staged-save count
-    // (the test would fail at the stage step if the page wiring
-    // were broken). The TracePane.test.ts suite covers the prop
-    // → button-enabled translation; this block just confirms
-    // that the page-side reactive derivation doesn't crash + the
-    // staged-edit chain works end-to-end with the new wiring
-    // present.
-    //
-    // Sanity: discard clears opLog → staged-save hides.
-    await act(async () => {
-      const discardBtn = screen.queryByTestId('staged-discard');
-      if (discardBtn) discardBtn.click();
-    });
-    await act(async () => {});
-    expect(screen.queryByTestId('staged-save')).toBeNull();
-  });
-});
-
-
 describe('visualise +page.svelte — §16.2.4.t1 macro palette', () => {
   beforeEach(() => {
     getStationSidecarMock.mockReset();
@@ -3663,6 +3591,29 @@ describe('visualise +page.svelte — undoing a queued change', () => {
     expect(closes()).toBe(0);
     await act(async () => { screen.getAllByTestId('trace-change-undo')[0].click(); });
     expect(closes()).toBe(1);
+  });
+
+  it('a failed save: Drop takes the edits built on the failed one too, once told yes (else back to the choice)', async () => {
+    await mount();
+    await stage('structuralEdit', add1);
+    await stage('save', patch2);
+    // The add (edit 1) fails.
+    applyBatchMock.mockRejectedValueOnce(new FakeSidecarBatchFailure(400, 1, 'structuralBlockEdit', 'server reject'));
+    await act(async () => { screen.getByTestId('staged-save').click(); });
+    expect(screen.getByTestId('retry-modal')).toBeInTheDocument();
+    const calls = applyBatchMock.mock.calls.length;
+
+    confirmDialogMock.mockResolvedValueOnce(false);
+    await act(async () => { screen.getByTestId('retry-modal-drop').click(); });
+    await waitFor(() => expect(confirmDialogMock).toHaveBeenCalledTimes(1));
+    expect(confirmDialogMock.mock.calls[0][0]).toMatchObject({ title: 'Drop a later change too?', confirmLabel: 'Drop both' });
+    await waitFor(() => expect(screen.getByTestId('retry-modal')).toBeInTheDocument());
+    expect(queue()).toHaveLength(2);
+
+    await act(async () => { screen.getByTestId('retry-modal-drop').click(); });
+    await waitFor(() => expect(queue()).toEqual([]));
+    // Nothing left to save: the patch would have gone to another rule.
+    expect(applyBatchMock.mock.calls.length).toBe(calls);
   });
 
   it("a song's Revert (Slots tab) undoes its rule's edits, and asks about later ones the same way", async () => {

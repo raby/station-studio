@@ -82,8 +82,10 @@ export interface StagedEditSession extends Readable<StagedEditState> {
   unstage(indices: number[]): void;
   /** Save the whole queue in one batch. True when it landed. */
   save(): Promise<boolean>;
-  /** After a failed save: drop the edit it stopped at, then save the rest. */
-  dropFailed(): Promise<boolean>;
+  /** After a failed save: drop the edit it stopped at (and `drop`, the
+   *  places of the edits built on it, which must include it), then save
+   *  the rest. */
+  dropFailed(drop?: number[]): Promise<boolean>;
   /** Drop every queued edit and reload the saved station. */
   discard(): Promise<void>;
   acceptRecovered(): void;
@@ -425,11 +427,12 @@ export function createStagedEditSession(slug: string, opts: SessionOptions = {})
     }
   }
 
-  async function dropFailed(): Promise<boolean> {
+  async function dropFailed(drop: number[] = [s.failedAtIdx - 1]): Promise<boolean> {
     const at = s.failedAtIdx;
-    if (at < 1 || at > s.opLog.length) return false;
+    if (at < 1 || at > s.opLog.length || !drop.includes(at - 1)) return false;
     update({ failedAtIdx: 0, saveError: null });
-    setQueue(s.opLog.filter((_, i) => i !== at - 1));
+    const out = new Set(drop);
+    setQueue(s.opLog.filter((_, i) => !out.has(i)));
     if (s.opLog.length === 0) {
       schedule(false);
       return true;

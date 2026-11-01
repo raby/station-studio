@@ -15,7 +15,8 @@ import { describeQueued, queuedChanges, type RuleDefaults } from '$lib/songList'
 /**
  * The queued edits undoing `indices` takes out (ascending): those, and
  * any later ones built on them, once the operator says yes to those.
- * Null when they say no, or there's nothing to undo.
+ * Null when they say no, or there's nothing to undo. `drop`: it's a
+ * failed save's edit being dropped, so the question says so.
  */
 export async function confirmUndo(
   opLog: Edit[],
@@ -23,6 +24,7 @@ export async function confirmUndo(
   sidecar: Sidecar,
   defaults: RuleDefaults,
   indices: number[],
+  { drop = false }: { drop?: boolean } = {},
 ): Promise<number[] | null> {
   const all = undoSet(opLog, template, sidecar, indices);
   if (all.length === 0) return null;
@@ -43,14 +45,15 @@ export async function confirmUndo(
   const built = say(later);
   const one = built.length === 1;
   const total = undoing.length + built.length;
+  const [Verb, verbing] = drop ? ['Drop', 'Dropping'] : ['Undo', 'Undoing'];
   const ok = await confirmDialog({
-    title: one ? 'Undo a later change too?' : `Undo ${built.length} later changes too?`,
+    title: one ? `${Verb} a later change too?` : `${Verb} ${built.length} later changes too?`,
     body:
-      `Undoing: ${undoing.join('; ')}\n\n` +
+      `${verbing}: ${undoing.join('; ')}\n\n` +
       `${one ? 'This later change builds' : 'These later changes build'} on it, and without it ` +
       `would change a different rule or fail to save:\n\n` +
       built.map((line) => `• ${line}`).join('\n'),
-    confirmLabel: total === 2 ? 'Undo both' : `Undo all ${total}`,
+    confirmLabel: total === 2 ? `${Verb} both` : `${Verb} all ${total}`,
   });
   return ok ? all : null;
 }

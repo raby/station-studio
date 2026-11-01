@@ -141,3 +141,33 @@ test('the queued changes are listed, each with an Undo; one built on asks first'
   await expect(chips).toHaveCount(3);
   await expect(page.getByTestId('staged-save')).toHaveCount(0);
 });
+
+test("a song's Revert (Slots tab, Compare on) is on its rule's songs and undoes that rule's change", async ({ page, request }) => {
+  await importTinyPool(request, 'A');
+  const t = minimalFlatTemplate('revert-song');
+  t.layout.flat_slots = [1, 2, 3].map(() => ({ source: 'A', strategy: 'weighted', size: 1 })) as typeof t.layout.flat_slots;
+  await createStation(request, 'revert-song', 'Revert Song', 'A', t as unknown as ReturnType<typeof minimalTemplate>);
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await page.goto('/stations/revert-song/visualise');
+  await page.getByTestId('live-preview-checkbox').check();
+  await page.getByTestId('trace-tab-slots').click();
+  await page.getByTestId('trace-show-diff').check();
+
+  // Rule 2 plays three songs instead of one: songs 3-4 are new (rule 2's),
+  // and song 5 is rule 3's, moved along.
+  await page.getByTestId('chip').nth(1).click();
+  await page.getByTestId('structural-size-input').fill('3');
+  await page.getByTestId('structural-size-apply').click();
+  await page.keyboard.press('Escape');
+  const rows = page.getByTestId('trace-row');
+  await expect(rows).toHaveCount(5, { timeout: 15000 });
+  const revert = (n: number) => rows.nth(n).getByTestId('trace-row-revert');
+  await expect(revert(3)).toBeEnabled();
+  await expect(rows.nth(4)).toHaveAttribute('data-diff-kind', 'added');
+  await expect(revert(4)).toBeDisabled();
+  await assertNoA11yViolations(page);
+
+  await revert(3).click();
+  await expect(page.getByTestId('trace-change-item')).toHaveCount(0);
+  await expect(rows).toHaveCount(3, { timeout: 15000 });
+});
