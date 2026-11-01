@@ -1,0 +1,10 @@
+# The source Station Server's own ffmpeg is built from (build.sh), each
+# pinned by its SHA-256. fetch.sh gets them, and keeps a copy of each in
+# this repo's ffmpeg-source release: that's where the app's LICENSE.txt
+# says the source is. To move to a newer version, change its line here;
+# a "-" checksum makes fetch.sh print the right one (after checking
+# ffmpeg's release signature) and stop.
+#
+# file                sha256                                                            from                                                                       signature
+ffmpeg-9.0.2.tar.xz   8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz                            https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz.asc
+lame-4.0.tar.gz       3df5124d5ad3a98312ffd7ba6a9b36230e4f8a3e66d3ce0f425e336c32d216eb  https://downloads.sourceforge.net/project/lame/lame/4.0/lame-4.0.tar.gz    -

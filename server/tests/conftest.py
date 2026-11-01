@@ -19,6 +19,21 @@ FFMPEG = shutil.which("ffmpeg")
 needs_ffmpeg = pytest.mark.skipif(FFMPEG is None, reason="ffmpeg not installed")
 
 
+def _ffmpeg_sends_icecast() -> bool:
+    if FFMPEG is None:
+        return False
+    import subprocess
+    out = subprocess.run([FFMPEG, "-hide_banner", "-protocols"], capture_output=True, text=True).stdout
+    return "icecast" in out.split("Output:", 1)[-1].split()
+
+
+# A test that plays a presenter sends to Station Server with ffmpeg. The
+# ffmpeg the downloads carry can't (no network: Station Server only gives
+# it files and pipes), so with that one on the PATH those tests skip.
+needs_ffmpeg_icecast = pytest.mark.skipif(not _ffmpeg_sends_icecast(),
+                                          reason="this ffmpeg can't send to Icecast (needed to play the presenter)")
+
+
 class Unpaced:
     """A pacer that never waits: plays a whole queue as fast as ffmpeg can."""
 

@@ -10,7 +10,7 @@ from datetime import date
 
 import pytest
 
-from conftest import FFMPEG, needs_ffmpeg
+from conftest import FFMPEG, needs_ffmpeg, needs_ffmpeg_icecast
 from station_server.audio import BYTES_PER_SECOND, CHUNK
 from station_server.config import Station, clean_station
 from station_server.live import LiveInput
@@ -306,7 +306,7 @@ def test_two_stations_cant_share_a_live_port(api):  # noqa: F811
     assert api("/api/stations", {"name": "B", "live": True, "live_port": 8012, "live_password": "x"})[0] == 200
 
 
-@needs_ffmpeg
+@needs_ffmpeg_icecast
 def test_a_presenter_goes_live_on_air_and_hands_back(api, exports, icecast, monkeypatch):  # noqa: F811
     import station_player.playlog
     monkeypatch.setattr(station_player.playlog, "MIN_SECONDS", 0)

@@ -5,9 +5,8 @@
 #
 # Without a version, the app's own LSMinimumSystemVersion (what it tells
 # macOS it runs on) is the limit, so the promise and the check can't drift
-# apart. Each app says what it needs (Studio and Player macOS 11, Server
-# macOS 12 for its ffmpeg), but each
-# executable and library carries its own minimum (LC_BUILD_VERSION
+# apart. Each app says what it needs (all three macOS 11 just now), but
+# each executable and library carries its own minimum (LC_BUILD_VERSION
 # minos, or LC_VERSION_MIN_MACOSX on older binaries), set by whatever
 # built it: the runner's SDK, a wheel, a downloaded ffmpeg. Building on
 # a newer runner can quietly raise it, and the app then won't start on
