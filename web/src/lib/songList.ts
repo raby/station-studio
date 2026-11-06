@@ -8,7 +8,7 @@
  * section comes round every row, and the list keeps playing order.
  */
 import type { Trace, TraceSlot } from '$lib/api';
-import { applyEdit, describeOp, type Edit } from '$lib/edit-ops';
+import { applyEdit, describeOp, rulesAt, type Edit } from '$lib/edit-ops';
 import {
   classifySlots,
   findChipRef,
@@ -281,6 +281,26 @@ function blockPlace(sidecar: Sidecar, ref: AtomicRef): string {
   return `Rule ${(ref.slot_index ?? ref.block_idx ?? 0) + 1}`;
 }
 
+/** Rules at these slots for the list of changes: "The day, rule 2",
+ *  "The day, rules 2–4", or "The day, rule 4 – Evening, rule 1". */
+function runPlace(sidecar: Sidecar, slots: number[]): string {
+  const rules = rulesAt(sidecar, slots);
+  const name = (id: string): string => {
+    const section = sidecar.sections.find((s) => s.id === id);
+    return section?.name ?? id;
+  };
+  if (rules.length === 0) {
+    const [a, b] = [slots[0] + 1, slots[slots.length - 1] + 1];
+    return a === b ? `Rule ${a}` : `Rules ${a}–${b}`;
+  }
+  const first = rules[0];
+  const last = rules[rules.length - 1];
+  if (rules.length === 1) return `${name(first.sectionId)}, rule ${first.number}`;
+  const together = rules.every((r, k) => r.sectionId === first.sectionId && r.number === first.number + k);
+  if (together) return `${name(first.sectionId)}, rules ${first.number}–${last.number}`;
+  return `${name(first.sectionId)}, rule ${first.number} – ${name(last.sectionId)}, rule ${last.number}`;
+}
+
 /** A section's name for the list of changes ("“Evening”"). */
 function sectionLabel(sidecar: Sidecar, id: string): string {
   const section = sidecar.sections.find((s) => s.id === id);
@@ -357,6 +377,17 @@ export function describeQueued(
       }
       case 'reorderSections':
         return `Sections in this order: ${op.layoutOrder.map((id) => sectionLabel(after, id)).join(', ')}`;
+      case 'moveRules':
+      case 'moveSection': {
+        if (state.template === before.template) break; // refused: say what it is
+        const run = Array.from({ length: op.count }, (_, k) => op.from + k);
+        const at = op.to < op.from ? op.to : op.to - op.count;
+        if (op.kind === 'moveSection') {
+          const where = op.beforeSectionId === null ? 'to the end' : `before ${sectionLabel(was, op.beforeSectionId)}`;
+          return `Moved section ${sectionLabel(was, op.sectionId)} ${where}`;
+        }
+        return `Moved ${runPlace(was, run)} to ${runPlace(after, run.map((_, k) => at + k))}`;
+      }
     }
     return describeOp(op);
   });

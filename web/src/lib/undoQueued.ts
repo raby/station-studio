@@ -58,12 +58,13 @@ export async function confirmUndo(
   return ok ? all : null;
 }
 
-/** Whether taking these edits out adds or removes a rule: the rules
- *  after it are then at other slots (so a panel open on a slot may be
+/** Whether taking these edits out adds, removes or moves a rule: other
+ *  rules are then at other slots (so a panel open on a slot may be
  *  showing a different rule). */
 export function movesRules(opLog: Edit[], indices: number[]): boolean {
   return indices.some((i) => {
     const op = opLog[i];
-    return op?.kind === 'structuralBlockEdit' && op.edit.op !== 'size';
+    return (op?.kind === 'structuralBlockEdit' && op.edit.op !== 'size')
+      || op?.kind === 'moveRules' || op?.kind === 'moveSection';
   });
 }

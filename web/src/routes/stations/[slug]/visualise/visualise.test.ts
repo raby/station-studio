@@ -1357,7 +1357,7 @@ describe('visualise +page.svelte — §16.2.6 c3e c1 staged-edit loss guards', (
     expect(parsed.opLog[0].kind).toBe('patchBlock');
   });
 
-  it('§16.2.6.t1 review L2: persisted opLog entry with unknown `kind` is filtered out on recovery', async () => {
+  it('§16.2.6.t1 review L2: from a persisted edit of an unknown `kind`, the rest is dropped on recovery (they were made on top of it)', async () => {
     window.localStorage.setItem(
       'stagedEdits:viz-test',
       JSON.stringify({
@@ -1377,9 +1377,10 @@ describe('visualise +page.svelte — §16.2.6 c3e c1 staged-edit loss guards', (
       updated_at: 'ts-1',
     });
     await mountAndAwaitStub();
-    // Both valid entries recovered; unknown kind dropped silently —
-    // staged-save count == 2.
-    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 2 changes/);
+    // Only the edit before it: the one after was made on top of the
+    // unknown one, so without it could change another rule.
+    expect(screen.getByTestId('staged-save')).toHaveTextContent(/Save 1 change/);
+    expect(screen.getAllByTestId('trace-change-item')).toHaveLength(1);
   });
 
   it('§16.2.6.t1 review L3: persisted entry with mismatched schemaVersion is silently dropped', async () => {

@@ -27,19 +27,24 @@ import type { Edit } from '$lib/edit-ops';
  *  an edit whose meaning has changed under it. */
 export const STAGED_EDITS_SCHEMA_VERSION = 1;
 
-/** Edit kinds a persisted queue may hold; anything else is dropped on
- *  read. Keep in step with the `Edit` union in `$lib/edit-ops`. */
-export const KNOWN_EDIT_KINDS: ReadonlySet<string> = new Set([
-  'patchBlock',
-  'patchMacro',
-  'renameSection',
-  'sectionCreate',
-  'sectionDelete',
-  'reorderSections',
-  'moveBlock',
-  'retypeBlock',
-  'structuralBlockEdit',
-]);
+/** Every kind of `Edit` (`$lib/edit-ops`): a kind missing here doesn't
+ *  compile. */
+const EDIT_KINDS: Record<Edit['kind'], true> = {
+  patchBlock: true,
+  patchMacro: true,
+  renameSection: true,
+  sectionCreate: true,
+  sectionDelete: true,
+  reorderSections: true,
+  moveBlock: true,
+  retypeBlock: true,
+  structuralBlockEdit: true,
+  moveRules: true,
+  moveSection: true,
+};
+
+/** Edit kinds a persisted queue may hold. */
+export const KNOWN_EDIT_KINDS: ReadonlySet<string> = new Set(Object.keys(EDIT_KINDS));
 
 export interface PersistedStagedEdits {
   schemaVersion: number;
@@ -53,7 +58,9 @@ export const stagedEditsKey = (slug: string): string => `stagedEdits:${slug}`;
 
 /** The queued edits stored for a station, or null when there are none
  *  or the entry is unreadable, from another schema version or the
- *  wrong shape. Unknown edit kinds are filtered out. */
+ *  wrong shape. From an edit this page doesn't know (a newer page's), the
+ *  rest is dropped: each edit was made on top of the ones before it, so
+ *  without it the later ones could change other rules. */
 export function readStagedEdits(slug: string): PersistedStagedEdits | null {
   if (typeof window === 'undefined') return null;
   try {
@@ -69,13 +76,12 @@ export function readStagedEdits(slug: string): PersistedStagedEdits | null {
     ) {
       return null;
     }
-    const filtered = parsed.opLog.filter(
-      (op) =>
-        op !== null &&
-        typeof op === 'object' &&
-        KNOWN_EDIT_KINDS.has((op as { kind?: unknown }).kind as string),
-    );
-    return { ...parsed, opLog: filtered };
+    const known = (op: unknown): boolean =>
+      op !== null &&
+      typeof op === 'object' &&
+      KNOWN_EDIT_KINDS.has((op as { kind?: unknown }).kind as string);
+    const unknownAt = parsed.opLog.findIndex((op) => !known(op));
+    return { ...parsed, opLog: unknownAt === -1 ? parsed.opLog : parsed.opLog.slice(0, unknownAt) };
   } catch {
     return null;
   }

@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  applyEdit, applyEdits, attributeOpsToSlot, describeOp, replayOpLog, resolveMacroAddresses, slotsNow, undoSet,
+  applyEdit, applyEdits, attributeOpsToSlot, describeOp, editsForRule, newPosition, replayOpLog, resolveMacroAddresses, sectionSlots, slotsNow, undoSet,
   type BlockAddress, type Edit, type ReplayDeps,
 } from './edit-ops';
 import type { StationTemplate } from './editor';
@@ -1785,11 +1785,25 @@ describe('attributeOpsToSlot', () => {
       patchBlockOp(6),         // 4
       structuralOp(6, 'remove'), // 5: …and removes 4's rule
     ];
-    expect(slotsNow(log)).toEqual([1, undefined, 3, undefined, undefined, undefined]);
+    expect(slotsNow(log)).toEqual([[1], [], [3], [], [], []]);
     expect(attributeOpsToSlot(log, 1)).toEqual([0]);
     expect(attributeOpsToSlot(log, 3)).toEqual([2]);
     expect(attributeOpsToSlot(log, 4)).toEqual([]);
     expect(attributeOpsToSlot(log, 6)).toEqual([]);
+  });
+
+  it('a move is to the rules it moved, and moves the others along to where they are now', () => {
+    const log: Edit[] = [
+      patchBlockOp(0),     // 0: rule at 0; 2 once 1-2 move in front; 0 once 0-1 go to the end
+      { kind: 'moveRules', from: 1, count: 2, to: 0, sectionId: 's' }, // 1: now at 0-1
+      patchBlockOp(4),     // 2: after the move, unmoved
+      { kind: 'moveSection', sectionId: 's', beforeSectionId: null, from: 0, count: 2, to: 5 }, // 3: 0-1 to the end: 3-4
+    ];
+    expect(slotsNow(log)).toEqual([[0], [3, 4], [2], [3, 4]]);
+    expect(attributeOpsToSlot(log, 3)).toEqual([1, 3]);
+    expect(attributeOpsToSlot(log, 0)).toEqual([0]);
+    // A song as saved, at rule 1: moved twice, to 4.
+    expect(editsForRule(log, 1, true)).toEqual([1, 3]);
   });
 
   it('other kinds (patchMacro / section* / reorder) never match', () => {
@@ -2115,6 +2129,28 @@ describe('undoSet — undoing a change takes the later ones built on it', () => 
     expect(undoSet(log, t, withMacro, [0])).toEqual([0, 1]);
   });
 
+  it('an edit refused with every edit, that would take without the undone one, goes too', () => {
+    // Regrouping rule 0 into Evening splits Evening (rules 0 and 2), so
+    // moving Evening is refused; without the regroup it would take.
+    const log: Edit[] = [
+      { kind: 'moveBlock', address: { slot_index: 0 }, targetSectionId: 'evening', targetIndex: null },
+      { kind: 'moveSection', sectionId: 'evening', beforeSectionId: 'morning', from: 2, count: 1, to: 0 },
+    ];
+    expect(applyEdits(t, sidecar, log)).toEqual(applyEdits(t, sidecar, log.slice(0, 1)));
+    expect(undoSet(log, t, sidecar, [0])).toEqual([0, 1]);
+  });
+
+  it("an edit that was refused moved no rules: later addresses aren't followed through it", () => {
+    // The move names no real section, so nothing moved; rule 1 is still
+    // at 1 for the patch after it, which is to the retyped rule.
+    const log: Edit[] = [
+      retype(1),
+      { kind: 'moveRules', from: 0, count: 1, to: 3, sectionId: 'ghost' },
+      patch(1),
+    ];
+    expect(undoSet(log, t, sidecar, [0])).toEqual([0, 2]);
+  });
+
   it('a change of several edits (identical rules) goes with what builds on any of them', () => {
     const log = [patch(0), patch(2), add(0), patch(1)];
     expect(undoSet(log, t, sidecar, [0, 1])).toEqual([0, 1]);
@@ -2141,7 +2177,27 @@ describe('undoSet — undoing a change takes the later ones built on it', () => 
     function randomOp(st: State, n: number): Edit {
       const len = slots(st);
       const user = ids(st).filter((id) => !id.startsWith('_'));
-      switch (rand(10)) {
+      switch (rand(12)) {
+        case 10: {
+          // A run of one or two rules, somewhere else, into a section.
+          const from = rand(len);
+          const count = 1 + rand(Math.min(2, len - from));
+          const places = Array.from({ length: len + 1 }, (_, p) => p).filter((p) => p < from || p > from + count);
+          if (places.length === 0) return { kind: 'patchBlock', address: { slot_index: 0 }, fields: { size: 3 } };
+          return { kind: 'moveRules', from, count, to: places[rand(places.length)], sectionId: user[rand(user.length)] };
+        }
+        case 11: {
+          // A section whose rules play together, before another or to the end.
+          const sectionId = user[rand(user.length)];
+          const mine = sectionSlots(st.sidecar, sectionId) ?? [];
+          const others = ids(st).filter((id) => id !== sectionId)
+            .map((id) => [id, sectionSlots(st.sidecar, id)?.[0]] as const)
+            .filter(([, first]) => first !== undefined) as (readonly [string, number])[];
+          const choices: [string | null, number][] = [...others.map(([id, first]) => [id, first] as [string, number]), [null, len]];
+          const [beforeSectionId, to] = choices[rand(choices.length)];
+          if (mine.length === 0) return { kind: 'renameSection', sectionId, name: `M${n}` };
+          return { kind: 'moveSection', sectionId, beforeSectionId, from: mine[0], count: mine.length, to };
+        }
         case 0: return { kind: 'patchBlock', address: { slot_index: rand(len) }, fields: { size: 1 + rand(4) } };
         case 1: return { kind: 'retypeBlock', address: { slot_index: rand(len) }, newStrategy: strategies[rand(3)], newSource: null, newFields: {} };
         case 2: return { kind: 'structuralBlockEdit', edit: { op: 'add', slot_index: rand(len + 1), new_block: { source: 'A', strategy: 'pick', size: 1 } } };
@@ -2166,8 +2222,9 @@ describe('undoSet — undoing a change takes the later ones built on it', () => 
       }
     }
 
-    // Which rule each slot is (rules only move by adds and removes),
+    // Which rule each slot is (rules move by adds, removes and moves),
     // and its type, before each edit; and whether each edit did anything.
+    // A move's "rule" is the run it moved.
     function replay(log: Edit[], names: number[] = log.map((_, j) => j)) {
       let st: State = { template: t, sidecar };
       let rules = [0, 1, 2].map((i) => `r${i}`);
@@ -2178,11 +2235,18 @@ describe('undoSet — undoing a change takes the later ones built on it', () => 
           : op.kind === 'structuralBlockEdit' && op.edit.op !== 'add' ? op.edit.slot_index : undefined;
         const strategy = slot !== undefined ? st.template.layout.flat_slots![slot]?.strategy ?? null : null;
         const next = applyEdit(st.template, st.sidecar, op);
+        const moving = op.kind === 'moveRules' || op.kind === 'moveSection';
         seen.push({
-          rule: slot !== undefined ? rules[slot] ?? null : null,
+          rule: moving ? rules.slice(op.from, op.from + op.count).join(',')
+            : slot !== undefined ? rules[slot] ?? null : null,
           strategy,
           did: next.template !== st.template || next.sidecar !== st.sidecar,
         });
+        if (moving && next.template !== st.template) {
+          const was = rules;
+          rules = was.slice();
+          was.forEach((r, p) => { rules[newPosition(p, op.from, op.count, op.to)] = r; });
+        }
         if (op.kind === 'structuralBlockEdit' && op.edit.op === 'add' && next.template !== st.template) {
           rules = [...rules.slice(0, op.edit.slot_index), `n${names[j]}`, ...rules.slice(op.edit.slot_index)];
         }
@@ -2220,7 +2284,7 @@ describe('undoSet — undoing a change takes the later ones built on it', () => 
           // being added, and the rest by which rule.
           if (was.rule !== null) {
             expect(now.rule, `${what} on another rule`).toBe(was.rule);
-            if (log[j].kind !== 'moveBlock' && log[j].kind !== 'structuralBlockEdit') {
+            if (!['moveBlock', 'structuralBlockEdit', 'moveRules', 'moveSection'].includes(log[j].kind)) {
               expect(now.strategy, `${what} on another type`).toBe(was.strategy);
             }
           }

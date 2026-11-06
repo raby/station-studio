@@ -81,6 +81,7 @@ from engine.editor_metadata import (
     validate_sidecar,
     validate_sidecar_semantics,
 )
+from engine.rule_moves import RuleMoveError, move_rules, move_section
 from engine.models import Station
 from engine.template import SUPPORTED_STRATEGIES, parse_template, TemplateError
 from api.timefmt import iso as _iso
@@ -1490,6 +1491,22 @@ def _apply_batch_edit(template: dict, sidecar: dict, env) -> dict:
         )
     if kind == "structuralBlockEdit":
         return _apply_structural_block_edit(template, sidecar, env.edit)
+    if kind in ("moveRules", "moveSection"):
+        try:
+            if kind == "moveRules":
+                moved, sidecar = move_rules(
+                    template, sidecar, env.from_, env.count, env.to, env.section_id,
+                )
+            else:
+                moved, sidecar = move_section(
+                    template, sidecar, env.section_id, env.before_section_id,
+                    env.from_, env.count, env.to,
+                )
+        except RuleMoveError as e:
+            raise HTTPException(400, str(e)) from e
+        # Like the other template kinds: the template is changed in place.
+        template["layout"]["flat_slots"] = moved["layout"]["flat_slots"]
+        return sidecar
 
     # c1b review P5: Pydantic's discriminated union rejects unknown
     # `kind` at parse time, so this branch is unreachable. Kept as a

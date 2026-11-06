@@ -1,0 +1,266 @@
+{
+  "_about": "Moving a flat station's rules (engine/rule_moves.py, and its mirror in web/src/lib/edit-ops.ts). Both are checked against these cases. Rules are told apart by `source` (r0, r1, ...). In `expect`, `order` is the rules' sources in play order (the moved ones join their section among its blocks by when they play); `sections` is each section's blocks (a number is an atomic block's slot_index, \"macro:<id>\" a macro); `error` means the move is refused (the server says why; the preview changes nothing), and the text is part of the reason.",
+  "stations": {
+    "plain": {
+      "template": {"layout": {"flat_slots": [
+        {"source": "r0", "strategy": "weighted", "size": 1},
+        {"source": "r1", "strategy": "weighted", "size": 1},
+        {"source": "r2", "strategy": "weighted", "size": 1},
+        {"source": "r3", "strategy": "weighted", "size": 1},
+        {"source": "r4", "strategy": "weighted", "size": 1}
+      ]}},
+      "sidecar": {
+        "schema_version": 1,
+        "sections": [
+          {"id": "morning", "name": "Morning", "blocks": [
+            {"kind": "atomic", "slot_index": 0},
+            {"kind": "atomic", "slot_index": 1},
+            {"kind": "atomic", "slot_index": 2}
+          ]},
+          {"id": "evening", "name": "Evening", "blocks": [
+            {"kind": "atomic", "slot_index": 3},
+            {"kind": "atomic", "slot_index": 4}
+          ]}
+        ],
+        "macros": [],
+        "layout_order": ["morning", "evening"]
+      }
+    },
+    "macro": {
+      "template": {"layout": {"flat_slots": [
+        {"source": "r0", "strategy": "weighted", "size": 1},
+        {"source": "r1", "strategy": "weighted", "size": 1},
+        {"source": "r2", "strategy": "weighted", "size": 1},
+        {"source": "r3", "strategy": "weighted", "size": 1},
+        {"source": "r4", "strategy": "weighted", "size": 1},
+        {"source": "r5", "strategy": "weighted", "size": 1}
+      ]}},
+      "sidecar": {
+        "schema_version": 1,
+        "sections": [
+          {"id": "morning", "name": "Morning", "blocks": [
+            {"kind": "atomic", "slot_index": 0},
+            {"kind": "macro", "ref": "m"}
+          ]},
+          {"id": "evening", "name": "Evening", "blocks": [
+            {"kind": "atomic", "slot_index": 3},
+            {"kind": "atomic", "slot_index": 4},
+            {"kind": "atomic", "slot_index": 5}
+          ]}
+        ],
+        "macros": [{"id": "m", "name": "Pair", "repeat": 2, "spec": {"source": "r1", "strategy": "weighted", "size": 1}}],
+        "layout_order": ["morning", "evening"]
+      }
+    },
+    "unsorted": {
+      "template": {"layout": {"flat_slots": [
+        {"source": "r0", "strategy": "weighted", "size": 1},
+        {"source": "r1", "strategy": "weighted", "size": 1},
+        {"source": "r2", "strategy": "weighted", "size": 1},
+        {"source": "r3", "strategy": "weighted", "size": 1}
+      ]}},
+      "sidecar": {
+        "schema_version": 1,
+        "sections": [
+          {"id": "morning", "name": "Morning", "blocks": [
+            {"kind": "atomic", "slot_index": 0},
+            {"kind": "atomic", "slot_index": 2}
+          ]},
+          {"id": "_unsorted", "name": "Unsorted", "blocks": [
+            {"kind": "atomic", "slot_index": 1}
+          ]},
+          {"id": "evening", "name": "Evening", "blocks": [
+            {"kind": "atomic", "slot_index": 3}
+          ]}
+        ],
+        "macros": [],
+        "layout_order": ["morning", "evening", "_unsorted"]
+      }
+    },
+    "row": {
+      "template": {"layout": {"row_template": [
+        {"source": "r0", "strategy": "pick", "size": 1},
+        {"source": "r1", "strategy": "pick", "size": 1}
+      ]}},
+      "sidecar": {
+        "schema_version": 1,
+        "sections": [
+          {"id": "day", "name": "Day", "blocks": [
+            {"kind": "atomic", "row_idx": 0, "block_idx": 0},
+            {"kind": "atomic", "row_idx": 0, "block_idx": 1}
+          ]}
+        ],
+        "macros": [],
+        "layout_order": ["day"]
+      }
+    }
+  },
+  "cases": [
+    {
+      "name": "a rule moves down within its section",
+      "station": "plain",
+      "edit": {"kind": "moveRules", "from": 0, "count": 1, "to": 2, "sectionId": "morning"},
+      "expect": {
+        "order": ["r1", "r0", "r2", "r3", "r4"],
+        "sections": {"morning": [0, 1, 2], "evening": [3, 4]},
+        "layout_order": ["morning", "evening"]
+      }
+    },
+    {
+      "name": "a rule moves into the next section",
+      "station": "plain",
+      "edit": {"kind": "moveRules", "from": 1, "count": 1, "to": 4, "sectionId": "evening"},
+      "expect": {
+        "order": ["r0", "r2", "r3", "r1", "r4"],
+        "sections": {"morning": [0, 1], "evening": [2, 3, 4]},
+        "layout_order": ["morning", "evening"]
+      }
+    },
+    {
+      "name": "two rules move to the end",
+      "station": "plain",
+      "edit": {"kind": "moveRules", "from": 0, "count": 2, "to": 5, "sectionId": "evening"},
+      "expect": {
+        "order": ["r2", "r3", "r4", "r0", "r1"],
+        "sections": {"morning": [0], "evening": [1, 2, 3, 4]},
+        "layout_order": ["morning", "evening"]
+      }
+    },
+    {
+      "name": "a section's rules all move up into another: it stays, empty",
+      "station": "plain",
+      "edit": {"kind": "moveRules", "from": 3, "count": 2, "to": 0, "sectionId": "morning"},
+      "expect": {
+        "order": ["r3", "r4", "r0", "r1", "r2"],
+        "sections": {"morning": [0, 1, 2, 3, 4], "evening": []},
+        "layout_order": ["morning", "evening"]
+      }
+    },
+    {
+      "name": "refused: moved to where it is",
+      "station": "plain",
+      "edit": {"kind": "moveRules", "from": 1, "count": 2, "to": 2, "sectionId": "morning"},
+      "expect": {"error": "already there"}
+    },
+    {
+      "name": "refused: rules past the end",
+      "station": "plain",
+      "edit": {"kind": "moveRules", "from": 4, "count": 2, "to": 0, "sectionId": "morning"},
+      "expect": {"error": "aren't all in the station"}
+    },
+    {
+      "name": "refused: a section that isn't there",
+      "station": "plain",
+      "edit": {"kind": "moveRules", "from": 0, "count": 1, "to": 5, "sectionId": "ghost"},
+      "expect": {"error": "'ghost' not found"}
+    },
+    {
+      "name": "into a section that plays around where it lands: placed by when it plays",
+      "station": "unsorted",
+      "edit": {"kind": "moveRules", "from": 3, "count": 1, "to": 2, "sectionId": "morning"},
+      "expect": {
+        "order": ["r0", "r1", "r3", "r2"],
+        "sections": {"morning": [0, 2, 3], "_unsorted": [1], "evening": []},
+        "layout_order": ["morning", "evening", "_unsorted"]
+      }
+    },
+    {
+      "name": "refused: landing inside a macro",
+      "station": "macro",
+      "edit": {"kind": "moveRules", "from": 4, "count": 1, "to": 2, "sectionId": "morning"},
+      "expect": {"error": "inside a macro"}
+    },
+    {
+      "name": "a whole macro moves, and still covers its rules",
+      "station": "macro",
+      "edit": {"kind": "moveRules", "from": 1, "count": 2, "to": 5, "sectionId": "evening"},
+      "expect": {
+        "order": ["r0", "r3", "r4", "r1", "r2", "r5"],
+        "sections": {"morning": [0], "evening": [1, 2, "macro:m", 5]},
+        "layout_order": ["morning", "evening"]
+      }
+    },
+    {
+      "name": "refused: part of a macro",
+      "station": "macro",
+      "edit": {"kind": "moveRules", "from": 2, "count": 1, "to": 6, "sectionId": "evening"},
+      "expect": {"error": "split a macro"}
+    },
+    {
+      "name": "refused: taking the rule a macro is placed by",
+      "station": "macro",
+      "edit": {"kind": "moveRules", "from": 0, "count": 1, "to": 6, "sectionId": "evening"},
+      "expect": {"error": "out of place"}
+    },
+    {
+      "name": "a rule out of Unsorted, from between two of a section's",
+      "station": "unsorted",
+      "edit": {"kind": "moveRules", "from": 1, "count": 1, "to": 3, "sectionId": "evening"},
+      "expect": {
+        "order": ["r0", "r2", "r1", "r3"],
+        "sections": {"morning": [0, 1], "_unsorted": [], "evening": [2, 3]},
+        "layout_order": ["morning", "evening", "_unsorted"]
+      }
+    },
+    {
+      "name": "refused: a station built from a repeating row",
+      "station": "row",
+      "edit": {"kind": "moveRules", "from": 0, "count": 1, "to": 2, "sectionId": "day"},
+      "expect": {"error": "repeating row"}
+    },
+    {
+      "name": "a section moves before another",
+      "station": "plain",
+      "edit": {"kind": "moveSection", "sectionId": "evening", "beforeSectionId": "morning", "from": 3, "count": 2, "to": 0},
+      "expect": {
+        "order": ["r3", "r4", "r0", "r1", "r2"],
+        "sections": {"morning": [2, 3, 4], "evening": [0, 1]},
+        "layout_order": ["evening", "morning"]
+      }
+    },
+    {
+      "name": "a section moves to the end",
+      "station": "plain",
+      "edit": {"kind": "moveSection", "sectionId": "morning", "beforeSectionId": null, "from": 0, "count": 3, "to": 5},
+      "expect": {
+        "order": ["r3", "r4", "r0", "r1", "r2"],
+        "sections": {"morning": [2, 3, 4], "evening": [0, 1]},
+        "layout_order": ["evening", "morning"]
+      }
+    },
+    {
+      "name": "a section with a macro moves, macro and all",
+      "station": "macro",
+      "edit": {"kind": "moveSection", "sectionId": "morning", "beforeSectionId": null, "from": 0, "count": 3, "to": 6},
+      "expect": {
+        "order": ["r3", "r4", "r5", "r0", "r1", "r2"],
+        "sections": {"morning": [3, "macro:m"], "evening": [0, 1, 2]},
+        "layout_order": ["evening", "morning"]
+      }
+    },
+    {
+      "name": "refused: a section whose rules don't play together",
+      "station": "unsorted",
+      "edit": {"kind": "moveSection", "sectionId": "morning", "beforeSectionId": null, "from": 0, "count": 2, "to": 4},
+      "expect": {"error": "played together"}
+    },
+    {
+      "name": "refused: the other section doesn't start there",
+      "station": "plain",
+      "edit": {"kind": "moveSection", "sectionId": "evening", "beforeSectionId": "morning", "from": 3, "count": 2, "to": 1},
+      "expect": {"error": "doesn't start at rule 1"}
+    },
+    {
+      "name": "refused: to the end, but not at the end",
+      "station": "plain",
+      "edit": {"kind": "moveSection", "sectionId": "morning", "beforeSectionId": null, "from": 0, "count": 3, "to": 4},
+      "expect": {"error": "to the end"}
+    },
+    {
+      "name": "refused: a section before itself",
+      "station": "plain",
+      "edit": {"kind": "moveSection", "sectionId": "evening", "beforeSectionId": "evening", "from": 3, "count": 2, "to": 3},
+      "expect": {"error": "before itself"}
+    }
+  ]
+}
