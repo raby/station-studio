@@ -303,12 +303,18 @@ def call(port, path, data=None, password=None, host=None):
 
 def test_phone_access_needs_its_password_and_only_watches_and_switches(api, monkeypatch):  # noqa: F811
     api.app.remote.host = "127.0.0.1"  # the test stays on this computer
-    port = free_port()
     status, body = api("/api/settings", {"remote": True})
     assert status == 400 and "password" in body["error"]
     assert api("/api/settings", {"remote_password": "short"})[0] == 400
-    status, state = api("/api/settings", {"remote": True, "remote_password": "rebirth-2026", "remote_port": port})
-    assert status == 200 and state["remote"]["running"] and state["remote"]["port"] == port
+    # A port found free can be taken by something else on the computer
+    # before phone access opens it (a busy CI runner, say): then another.
+    for _ in range(5):
+        port = free_port()
+        status, state = api("/api/settings", {"remote": True, "remote_password": "rebirth-2026", "remote_port": port})
+        assert status == 200
+        if state["remote"]["running"]:
+            break
+    assert state["remote"]["running"] and state["remote"]["port"] == port
     assert api("/api/state")[1]["remote"]["has_password"]
     assert "rebirth-2026" not in json.dumps(api("/api/state")[1])
 
