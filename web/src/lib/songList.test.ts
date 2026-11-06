@@ -374,6 +374,13 @@ describe('describeQueued', () => {
       ], rows, days)).toEqual(['Moved section “Evening” before “Morning”, in every day']);
     });
 
+    it('Rebirth Classics (one section repeated for every day): its rules counted once, the move in every day', () => {
+      const t = JSON.parse(fs.readFileSync(path.join(STATIONS, 'rebirth-classics.json'), 'utf-8')) as StationTemplate;
+      const sc = JSON.parse(fs.readFileSync(path.join(STATIONS, 'rebirth-classics.editor.json'), 'utf-8')) as Sidecar;
+      expect(describeQueued([{ kind: 'moveRules', from: 1, count: 1, to: 0, sectionId: 'weekly-cycle' }], t, sc))
+        .toEqual(['Moved Weekly cycle (7 days), rule 2 to rule 1, in every day']);
+    });
+
     it("rules moved to play somewhere else, and sections", () => {
       expect(say(
         { kind: 'moveRules', from: 0, count: 2, to: 3, sectionId: 'evening' },

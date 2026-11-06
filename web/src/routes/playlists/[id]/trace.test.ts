@@ -2222,6 +2222,24 @@ describe('trace viewer — moving songs, a station built from a repeating row', 
     window.localStorage.setItem('weekView', 'songs');
   });
 
+  it("one section repeated for every day (as Rebirth Classics'): the same move, the section kept", async () => {
+    const cycle = () => ({
+      schema_version: 1,
+      sections: [{ id: 'cycle', name: 'Weekly cycle', repeat_with_offsets: [0, 3], blocks: [0, 1, 2].map((b) => at(0, b)) }],
+      macros: [],
+      layout_order: ['cycle'],
+    });
+    getStationSidecarMock.mockImplementation(async () => ({ template: template(), sidecar: cycle(), sidecar_error: null, updated_at: 'ts-1' }));
+    render(Page);
+    const grips = await screen.findAllByTestId('song-grip');
+    await key(grips[5], ' ');
+    await key(grips[5], 'Home');
+    await key(grips[5], ' ');
+    await vi.waitFor(() => expect(queue()).toEqual([{ kind: 'moveRules', from: 2, count: 1, to: 0, sectionId: 'cycle' }]));
+    await vi.waitFor(() => expect(screen.getAllByTestId('song-change').map((c) => c.textContent)).toEqual(['moved', 'moved']));
+    expect(screen.getAllByTestId('song-edit-item')[0]).toHaveTextContent('Moved Weekly cycle, rule 3 to rule 1, in every day');
+  });
+
   it("Tue's evening song to the front of its day: queued for the row, so every day shows it moved", async () => {
     render(Page);
     const grips = await screen.findAllByTestId('song-grip');

@@ -25,12 +25,15 @@ Both are pure: they return a new template and sidecar, and raise
 
 A station built from a repeating row (`row_template`) is moved the same
 way, numbered by the row's blocks (`block_idx`): every row plays the row
-template, so a move changes every row. Its sidecar's atomic blocks carry
-a row too (`row_idx`); a moved block joins `section_id` when that section
-has blocks of its row (so a section per day keeps its day's blocks),
-and each section's blocks are kept in play order. Such stations can't
-move rules while their sidecar uses macros or sections that repeat for
-every row (`repeat_with_offsets`).
+template, so a move changes every row. Its sidecar's blocks belong to a
+row: an atomic block its `row_idx`, a macro its section's, and a section
+that repeats for every row (`repeat_with_offsets`) is every row's. A
+moved block joins `section_id` when that section has blocks of its row,
+else it stays in its own (so a section per day keeps its day's blocks);
+a block of a section repeated for every row can only join another such
+section, and the other way round. Every moved block goes in among its
+section's blocks by when it plays now, and sections without macros are
+kept in play order.
 
 The editor's in-browser preview (`web/src/lib/edit-ops.ts`) mirrors these
 exactly; `tests/fixtures/rule_moves.json` holds the cases both are checked
@@ -87,29 +90,56 @@ def _set_pos(block: dict, p: int) -> None:
     block["slot_index" if "slot_index" in block else "block_idx"] = p
 
 
-def _check_rows(sidecar: dict) -> None:
-    """A row station's sidecar the moves can follow."""
+EVERY = "every"  # the row of a block in a section repeated for every row
+
+
+def _repeats(section: dict) -> bool:
+    return section.get("repeat_with_offsets") is not None
+
+
+def _rows_of(sidecar: dict, rows: bool) -> dict[int, Any]:
+    """Each section block's row, by id(): a flat station's are all one
+    (0); a row station's atomic block its `row_idx`, a macro its
+    section's (the atomic before it, or the first), a block of a section
+    repeated for every row EVERY."""
+    out: dict[int, Any] = {}
     for section in sidecar.get("sections", []):
-        if section.get("repeat_with_offsets") is not None:
-            raise RuleMoveError(
-                f"section '{section.get('id')}' repeats for every row: rules "
-                "can't be moved in a station built from a repeating row with "
-                "such sections yet.",
-            )
-        if any(b.get("kind") == "macro" for b in section.get("blocks", [])):
-            raise RuleMoveError(
-                "rules can't be moved in a station built from a repeating row "
-                "while its sections use macros yet.",
-            )
+        blocks = section.get("blocks", [])
+        if not rows:
+            out.update((id(b), 0) for b in blocks)
+            continue
+        if _repeats(section):
+            out.update((id(b), EVERY) for b in blocks)
+            continue
+        first = next((b.get("row_idx", 0) for b in blocks if b.get("kind") == "atomic"), 0)
+        last = first
+        for b in blocks:
+            if b.get("kind") == "atomic":
+                last = b.get("row_idx", 0)
+            out[id(b)] = last
+    return out
+
+
+def _plays_before(row: Any, slots: list[int], at_row: Any, to: int) -> bool:
+    """Whether a block of `row` covering `slots` plays before rule `to` in
+    `at_row` (all numbered as before the move). (Never one row EVERY and
+    the other not: such a move is refused.)"""
+    if row == at_row:
+        return max(slots) < to
+    return row < at_row
 
 
 def _play_order(sidecar: dict) -> None:
-    """Each section's blocks in play order: by row, then place in it.
-    (Row stations: their sections are all atomic blocks.)"""
+    """A row station's sections without macros, in play order: by row,
+    then place in it. (Renumbering can reorder a day's blocks in a
+    section a move didn't touch; macros are placed by their order, so
+    sections with them are left as they are.)"""
     for section in sidecar.get("sections", []):
+        blocks = section.get("blocks", [])
+        if any(b.get("kind") != "atomic" for b in blocks):
+            continue
         section["blocks"] = sorted(
-            section.get("blocks", []),
-            key=lambda b: (b.get("row_idx", 0), _pos(b) if _pos(b) is not None else -1),
+            blocks, key=lambda b: (b.get("row_idx", 0), _pos(b) if _pos(b) is not None else -1),
         )
 
 
@@ -180,7 +210,7 @@ def _macro_slots(sidecar: dict) -> dict[str, list[int]]:
             addrs = resolve_macro_addresses(sidecar, macro_id)
         except MacroResolutionError:
             addrs = []
-        out[macro_id] = sorted(a["slot_index"] for a in addrs if "slot_index" in a)
+        out[macro_id] = sorted({a.get("slot_index", a.get("block_idx")) for a in addrs} - {None})
     return out
 
 
@@ -233,8 +263,6 @@ def move_rules(
     blocks that play before `to`."""
     key, slots = _rules(template)
     rows = key == "row_template"
-    if rows:
-        _check_rows(sidecar)
     _check_run(len(slots), from_, count, to, stay=True)
     run = range(from_, from_ + count)
 
@@ -262,36 +290,58 @@ def move_rules(
             "sidecar has drifted from the station.",
         )
 
-    target_was = next((s for s in sidecar.get("sections", []) if s.get("id") == section_id), None)
-    if target_was is None:
+    target = next((s for s in sidecar.get("sections", []) if s.get("id") == section_id), None)
+    if target is None:
         raise RuleMoveError(f"section '{section_id}' not found.")
-    # Which moved blocks join the section: all of them; in a row
-    # station, those of the rows it has blocks of (the rest stay put).
-    target_rows = {b.get("row_idx") for b in target_was.get("blocks", [])}
-    joining = [m for m in moving if not rows or m[1].get("row_idx") in target_rows]
-    if to == from_ + count and all(sec is target_was for _p, _b, sec in joining):
+    # Where each moved block goes: the target section, when it has blocks
+    # of its row (a flat station's: always); else it stays in its own.
+    row_of = _rows_of(sidecar, rows)
+    target_rows = {row_of[id(b)] for b in target.get("blocks", [])}
+    dest: dict[int, dict] = {}
+    for _p, b, sec in moving:
+        joins = not rows or row_of[id(b)] in target_rows
+        if rows and sec is not target and _repeats(sec) != _repeats(target):
+            raise RuleMoveError(
+                "rules in a section repeated for every row can only move into "
+                "another such section, and the other way round.",
+            )
+        dest[id(b)] = target if joins else sec
+    if to == from_ + count and all(dest[id(b)] is sec for _p, b, sec in moving):
         raise RuleMoveError("the rules are already there.")
 
-    # Take the moved blocks out of their sections, by identity, then put
-    # them into the target section, in play order.
+    # Each moved block, out of its section and into where it goes: after
+    # that section's blocks that play before it does now (its first, when
+    # none do; at the end, when the section has blocks that can't be
+    # placed).
     staged = copy.deepcopy(sidecar)
-    originals = [b for s in sidecar.get("sections", []) for b in s.get("blocks", [])]
-    copies = [b for s in staged.get("sections", []) for b in s.get("blocks", [])]
-    copy_of = {id(o): c for o, c in zip(originals, copies)}
-    moved_copies = [copy_of[id(b)] for _p, b, _sec in sorted(joining, key=lambda m: m[0])]
-    moved_copy_ids = {id(c) for c in moved_copies}
-    for section in staged.get("sections", []):
-        section["blocks"] = [b for b in section.get("blocks", []) if id(b) not in moved_copy_ids]
-    # After the section's blocks that play before `to` (its first, when
-    # none do; at the end, when it has blocks that can't be placed).
-    target = next(s for s in staged["sections"] if s.get("id") == section_id)
-    placed = {id(copy_of[id(b)]): slots_of for sec, b, slots_of in elements
-              if sec.get("id") == section_id}
-    at = sum(1 for b in target["blocks"]
-             if placed.get(id(b)) is not None and max(placed[id(b)]) < to)
-    if any(placed.get(id(b)) is None for b in target["blocks"]):
-        at = len(target["blocks"])
-    target["blocks"][at:at] = moved_copies
+    copy_of = {
+        id(o): c
+        for so, sc in zip(sidecar.get("sections", []), staged.get("sections", []))
+        for o, c in zip(so.get("blocks", []), sc.get("blocks", []))
+    }
+    section_copy = {id(so): sc for so, sc in zip(sidecar.get("sections", []), staged.get("sections", []))}
+    slots_of = {id(b): sl for _sec, b, sl in elements}
+    moved_ids = {id(b) for _p, b, _sec in moving}
+    for so in sidecar.get("sections", []):
+        comers = sorted(
+            ((row_of[id(b)], p, b) for p, b, _sec in moving if dest[id(b)] is so),
+            key=lambda m: (0 if m[0] == EVERY else m[0], m[1]),
+        )
+        if not comers and not any(id(b) in moved_ids for b in so.get("blocks", [])):
+            continue
+        stay = [b for b in so.get("blocks", []) if id(b) not in moved_ids]
+        unplaceable = any(slots_of.get(id(b)) is None for b in stay)
+        out: list[dict] = []
+        k = 0
+        for b in stay:
+            while k < len(comers) and not unplaceable and not _plays_before(
+                row_of[id(b)], slots_of[id(b)], comers[k][0], to,
+            ):
+                out.append(copy_of[id(comers[k][2])])
+                k += 1
+            out.append(copy_of[id(b)])
+        out.extend(copy_of[id(c[2])] for c in comers[k:])
+        section_copy[id(so)]["blocks"] = out
 
     return _reorder(template, staged, from_, count, to, _macro_slots(sidecar))
 
@@ -325,8 +375,6 @@ def move_section(
     `to`, its first), or to the end (`before_section_id` None, `to` the
     number of rules). Its place in `layout_order` moves too."""
     key, slots = _rules(template)
-    if key == "row_template":
-        _check_rows(sidecar)
     sections = {s.get("id"): s for s in sidecar.get("sections", [])}
     if section_id not in sections:
         raise RuleMoveError(f"section '{section_id}' not found.")

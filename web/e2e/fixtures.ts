@@ -1,4 +1,5 @@
 import type { APIRequestContext } from '@playwright/test';
+import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -128,4 +129,24 @@ export async function generate(
     throw new Error(`generate(${slug}, ${week}) failed: ${r.status()} ${await r.text()}`);
   }
   return r.json();
+}
+
+/** Give a station a hand-authored sidecar, straight into the e2e
+ *  database. The API has no way to: sections repeated for every row
+ *  (`repeat_with_offsets`), and macros in a station built from a
+ *  repeating row, come only from station files (as Rebirth Classics').
+ *  Validated first, as loading a station file would be. */
+export function setSidecar(slug: string, sidecar: unknown): void {
+  const db = path.join(process.env.STATION_STUDIO_E2E_DIR!, 'test.db');
+  execFileSync(path.join(REPO_ROOT, '.venv/bin/python'), ['-c', `
+import json, sqlite3, sys
+sys.path.insert(0, ${JSON.stringify(REPO_ROOT)})
+from engine.editor_metadata import validate_sidecar
+db, slug, sidecar = sys.argv[1], sys.argv[2], json.loads(sys.argv[3])
+c = sqlite3.connect(db)
+(template,) = c.execute("select template from station where slug = ?", (slug,)).fetchone()
+validate_sidecar(sidecar, json.loads(template))
+c.execute("update station set sidecar = ? where slug = ?", (json.dumps(sidecar), slug))
+c.commit()
+`, db, slug, JSON.stringify(sidecar)]);
 }

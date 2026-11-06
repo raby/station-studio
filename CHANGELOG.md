@@ -4,7 +4,7 @@ All notable changes are listed here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses semantic versioning.
 
-## [Unreleased]
+## [1.18.0] - 2026-11-06
 
 ### Added
 
@@ -18,9 +18,10 @@ this project uses semantic versioning.
   aren't marked.
 - **On a station built from a repeating day** (or other row), a move is
   made in every day, and the list says so: each day's first song says
-  which day it is, and what you're moving is marked on every day.
-  (Not yet while its sections use macros, or one section repeats for
-  every day, as Rebirth Classics' does: that comes next.)
+  which day it is, and what you're moving is marked on every day. That
+  includes Rebirth Classics, whose one section repeats for every day,
+  and stations whose days have sections with macros (a macro moves
+  whole).
 - **Moving rules to play somewhere else**, under that: two new edits in
   the save batch, `moveRules` and `moveSection`, reorder a station's
   rules (`flat_slots`, or a repeating row's `row_template`), and the

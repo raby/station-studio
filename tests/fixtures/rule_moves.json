@@ -162,6 +162,52 @@
         "layout_order": ["day"]
       }
     },
+    "row-mixed": {
+      "template": {"layout": {"row_template": [
+        {"source": "r0", "strategy": "pick", "size": 1},
+        {"source": "r1", "strategy": "pick", "size": 1},
+        {"source": "r2", "strategy": "pick", "size": 1}
+      ]}},
+      "sidecar": {
+        "schema_version": 1,
+        "sections": [
+          {"id": "every", "name": "Every day", "repeat_with_offsets": [0, 10], "blocks": [
+            {"kind": "atomic", "row_idx": 0, "block_idx": 0},
+            {"kind": "atomic", "row_idx": 0, "block_idx": 1}
+          ]},
+          {"id": "days", "name": "Days", "blocks": [
+            {"kind": "atomic", "row_idx": 0, "block_idx": 2},
+            {"kind": "atomic", "row_idx": 1, "block_idx": 2}
+          ]}
+        ],
+        "macros": [],
+        "layout_order": ["every", "days"]
+      }
+    },
+    "row-days-macro": {
+      "template": {"layout": {"row_template": [
+        {"source": "r0", "strategy": "pick", "size": 1},
+        {"source": "r1", "strategy": "pick", "size": 1},
+        {"source": "r2", "strategy": "pick", "size": 1}
+      ]}},
+      "sidecar": {
+        "schema_version": 1,
+        "sections": [
+          {"id": "monday", "name": "Monday", "blocks": [
+            {"kind": "atomic", "row_idx": 0, "block_idx": 0},
+            {"kind": "macro", "ref": "m0"}
+          ]},
+          {"id": "tuesday", "name": "Tuesday", "blocks": [
+            {"kind": "atomic", "row_idx": 1, "block_idx": 0},
+            {"kind": "macro", "ref": "m0"}
+          ]}
+        ],
+        "macros": [
+          {"id": "m0", "name": "M0", "repeat": 2, "spec": {"source": "r1", "strategy": "pick", "size": 1}}
+        ],
+        "layout_order": ["monday", "tuesday"]
+      }
+    },
     "row-repeat": {
       "template": {"layout": {"row_template": [
         {"source": "r0", "strategy": "pick", "size": 1},
@@ -438,22 +484,72 @@
       }
     },
     {
-      "name": "refused: row station whose sections use macros",
+      "name": "row station with a macro: a block past it, the macro kept whole and in place",
       "station": "row-macro",
       "edit": {"kind": "moveRules", "from": 0, "count": 1, "to": 3, "sectionId": "day"},
-      "expect": {"error": "use macros"}
+      "expect": {
+        "order": ["r1", "r2", "r0"],
+        "sections": {"day": ["macro:two", "0:2"]},
+        "layout_order": ["day"]
+      }
     },
     {
-      "name": "refused: a section of a row station whose sections use macros",
+      "name": "refused: a row station's macro split",
       "station": "row-macro",
-      "edit": {"kind": "moveSection", "sectionId": "day", "beforeSectionId": null, "from": 0, "count": 3, "to": 3},
-      "expect": {"error": "use macros"}
+      "edit": {"kind": "moveRules", "from": 1, "count": 1, "to": 0, "sectionId": "day"},
+      "expect": {"error": "split a macro"}
     },
     {
-      "name": "refused: row station with a section repeated for every row",
+      "name": "a section repeated for every row (as Rebirth Classics'): its blocks reordered, the section kept",
       "station": "row-repeat",
       "edit": {"kind": "moveRules", "from": 0, "count": 1, "to": 3, "sectionId": "day"},
-      "expect": {"error": "repeats for every row"}
+      "expect": {
+        "order": ["r1", "r2", "r0"],
+        "sections": {"day": ["0:0", "0:1", "0:2"]},
+        "layout_order": ["day"]
+      }
+    },
+    {
+      "name": "repeated and per-row sections: within the repeated one",
+      "station": "row-mixed",
+      "edit": {"kind": "moveRules", "from": 0, "count": 1, "to": 2, "sectionId": "every"},
+      "expect": {
+        "order": ["r1", "r0", "r2"],
+        "sections": {"every": ["0:0", "0:1"], "days": ["0:2", "1:2"]},
+        "layout_order": ["every", "days"]
+      }
+    },
+    {
+      "name": "refused: a per-row block into a section repeated for every row",
+      "station": "row-mixed",
+      "edit": {"kind": "moveRules", "from": 2, "count": 1, "to": 0, "sectionId": "every"},
+      "expect": {"error": "repeated for every row"}
+    },
+    {
+      "name": "refused: a repeated section's block into one that isn't",
+      "station": "row-mixed",
+      "edit": {"kind": "moveRules", "from": 0, "count": 1, "to": 3, "sectionId": "days"},
+      "expect": {"error": "repeated for every row"}
+    },
+    {
+      "name": "a section per day, the same macro in each: each day's block past it",
+      "station": "row-days-macro",
+      "edit": {"kind": "moveRules", "from": 0, "count": 1, "to": 3, "sectionId": "monday"},
+      "expect": {
+        "order": ["r1", "r2", "r0"],
+        "sections": {"monday": ["macro:m0", "0:2"], "tuesday": ["macro:m0", "1:2"]},
+        "layout_order": ["monday", "tuesday"]
+      }
+    },
+    {
+      "name": "a section per day, the same macro in each: the macro to the front, in every day",
+      "station": "row-days-macro",
+      "edit": {"kind": "moveRules", "from": 1, "count": 2, "to": 0, "sectionId": "monday"},
+      "expect": {
+        "order": ["r1", "r2", "r0"],
+        "sections": {"monday": ["macro:m0", "0:2"], "tuesday": ["macro:m0", "1:2"]},
+        "layout_order": ["monday", "tuesday"]
+      }
     }
   ]
 }
