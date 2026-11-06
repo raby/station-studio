@@ -6,10 +6,11 @@
  */
 import { describe, expect, it } from 'vitest';
 import shared from '../../../tests/fixtures/rule_moves.json';
+import random from '../../../tests/fixtures/rule_moves_random.json';
 import { applyEdit, newPosition, type Edit } from './edit-ops';
 import type { StationTemplate } from './editor';
 
-interface Station { template: StationTemplate; sidecar: { sections: { id: string; blocks: { kind: string; slot_index?: number; ref?: string }[] }[]; layout_order: string[] } }
+interface Station { template: StationTemplate; sidecar: { sections: { id: string; blocks: { kind: string; slot_index?: number; row_idx?: number; block_idx?: number; ref?: string }[] }[]; layout_order: string[] } }
 interface Case {
   name: string;
   station: string;
@@ -29,9 +30,11 @@ describe('moving rules: the shared cases', () => {
       expect(out.sidecar).toBe(station.sidecar);
     } else {
       const sidecar = out.sidecar as Station['sidecar'];
-      expect(out.template.layout.flat_slots!.map((b) => b.source)).toEqual(c.expect.order);
+      const rules = out.template.layout.row_template?.length ? out.template.layout.row_template : out.template.layout.flat_slots!;
+      expect(rules.map((b) => b.source)).toEqual(c.expect.order);
       expect(Object.fromEntries(sidecar.sections.map((s) => [
-        s.id, s.blocks.map((b) => (b.kind === 'atomic' ? b.slot_index! : `macro:${b.ref}`)),
+        s.id, s.blocks.map((b) => (b.kind !== 'atomic' ? `macro:${b.ref}`
+          : b.slot_index !== undefined ? b.slot_index : `${b.row_idx}:${b.block_idx}`)),
       ]))).toEqual(c.expect.sections);
       expect(sidecar.layout_order).toEqual(c.expect.layout_order);
     }
@@ -42,6 +45,28 @@ describe('moving rules: the shared cases', () => {
   it('every case is checked (none skipped by a typo in its kind)', () => {
     expect(fixtures.cases.length).toBeGreaterThan(15);
     for (const c of fixtures.cases) expect(['moveRules', 'moveSection']).toContain(c.edit.kind);
+  });
+});
+
+describe('moving rules: random stations and moves (tests/fixtures/rule_moves_random.json)', () => {
+  // Made by the server's own moves (tests/test_rule_moves.py): the
+  // preview must give exactly the station it does, or refuse the same.
+  type R = { station: Station; edit: Edit; template?: unknown; sidecar?: unknown; error?: string };
+  const cases = (random as unknown as { cases: R[] }).cases;
+  it('has moves taken and refused, flat and row stations', () => {
+    expect(cases.filter((c) => !c.error).length).toBeGreaterThanOrEqual(100);
+    expect(cases.filter((c) => c.error).length).toBeGreaterThanOrEqual(50);
+    expect(cases.some((c) => !c.error && c.station.template.layout.row_template)).toBe(true);
+  });
+  it.each(cases.map((c, i) => [i, c] as const))('case %i', (_i, c) => {
+    const out = applyEdit(c.station.template, c.station.sidecar, c.edit);
+    if (c.error) {
+      expect(out.template).toBe(c.station.template);
+      expect(out.sidecar).toBe(c.station.sidecar);
+    } else {
+      expect(out.template).toEqual(c.template);
+      expect(out.sidecar).toEqual(c.sidecar);
+    }
   });
 });
 

@@ -21,8 +21,16 @@ numbering before the move:
     the section's place in `layout_order` moves with it.
 
 Both are pure: they return a new template and sidecar, and raise
-`RuleMoveError` for a move the station can't take. Stations built from a
-repeating row (`row_template`) can't move rules yet.
+`RuleMoveError` for a move the station can't take.
+
+A station built from a repeating row (`row_template`) is moved the same
+way, numbered by the row's blocks (`block_idx`): every row plays the row
+template, so a move changes every row. Its sidecar's atomic blocks carry
+a row too (`row_idx`); a moved block joins `section_id` when that section
+has blocks of its row (so a section per day keeps its day's blocks),
+and each section's blocks are kept in play order. Such stations can't
+move rules while their sidecar uses macros or sections that repeat for
+every row (`repeat_with_offsets`).
 
 The editor's in-browser preview (`web/src/lib/edit-ops.ts`) mirrors these
 exactly; `tests/fixtures/rule_moves.json` holds the cases both are checked
@@ -53,16 +61,56 @@ def new_position(p: int, from_: int, count: int, to: int) -> int:
     return p
 
 
-def _flat_slots(template: dict) -> list:
+def _rules(template: dict) -> tuple[str, list]:
+    """Where the station's rules are, and them: `flat_slots`, or the
+    repeating row's `row_template`."""
     layout = template.get("layout", {})
     if layout.get("row_template"):
-        raise RuleMoveError(
-            "rules can't be moved in a station built from a repeating row yet.",
-        )
+        return "row_template", layout["row_template"]
     slots = layout.get("flat_slots")
     if not isinstance(slots, list):
         raise RuleMoveError("the station has no rules to move.")
-    return slots
+    return "flat_slots", slots
+
+
+def _pos(block: dict) -> int | None:
+    """An atomic block's rule: its slot (flat) or its place in the row."""
+    if block.get("kind") != "atomic":
+        return None
+    for key in ("slot_index", "block_idx"):
+        if isinstance(block.get(key), int):
+            return block[key]
+    return None
+
+
+def _set_pos(block: dict, p: int) -> None:
+    block["slot_index" if "slot_index" in block else "block_idx"] = p
+
+
+def _check_rows(sidecar: dict) -> None:
+    """A row station's sidecar the moves can follow."""
+    for section in sidecar.get("sections", []):
+        if section.get("repeat_with_offsets") is not None:
+            raise RuleMoveError(
+                f"section '{section.get('id')}' repeats for every row: rules "
+                "can't be moved in a station built from a repeating row with "
+                "such sections yet.",
+            )
+        if any(b.get("kind") == "macro" for b in section.get("blocks", [])):
+            raise RuleMoveError(
+                "rules can't be moved in a station built from a repeating row "
+                "while its sections use macros yet.",
+            )
+
+
+def _play_order(sidecar: dict) -> None:
+    """Each section's blocks in play order: by row, then place in it.
+    (Row stations: their sections are all atomic blocks.)"""
+    for section in sidecar.get("sections", []):
+        section["blocks"] = sorted(
+            section.get("blocks", []),
+            key=lambda b: (b.get("row_idx", 0), _pos(b) if _pos(b) is not None else -1),
+        )
 
 
 def _check_run(n: int, from_: int, count: int, to: int, *, stay: bool = False) -> None:
@@ -98,19 +146,19 @@ def _element_slots(sidecar: dict) -> list[tuple[dict, dict, list[int] | None]]:
     out: list[tuple[dict, dict, list[int] | None]] = []
     for section in sidecar.get("sections", []):
         blocks = section.get("blocks", [])
-        anchor = next(
-            (j for j, b in enumerate(blocks)
-             if b.get("kind") == "atomic" and isinstance(b.get("slot_index"), int)),
-            None,
-        )
+        anchor = next((j for j, b in enumerate(blocks) if _pos(b) is not None), None)
         if anchor is None:
             out.extend((section, b, None) for b in blocks)
             continue
-        pos = blocks[anchor]["slot_index"] - sum(width(b) for b in blocks[:anchor])
+        pos = _pos(blocks[anchor]) - sum(width(b) for b in blocks[:anchor])
         for b in blocks:
             if b.get("kind") == "atomic":
-                out.append((section, b, [b["slot_index"]]))
-                pos = b["slot_index"] + 1
+                p = _pos(b)
+                if p is None:
+                    out.append((section, b, None))
+                    continue
+                out.append((section, b, [p]))
+                pos = p + 1
             else:
                 w = width(b)
                 out.append((section, b, list(range(pos, pos + w))))
@@ -145,17 +193,20 @@ def _reorder(
     `before`, its slots in the station as it was."""
     template = copy.deepcopy(template)
     sidecar = copy.deepcopy(sidecar)
-    slots = _flat_slots(template)
+    key, slots = _rules(template)
 
     moved = slots[from_:from_ + count]
     rest = slots[:from_] + slots[from_ + count:]
     at = to if to < from_ else to - count
-    template["layout"]["flat_slots"] = rest[:at] + moved + rest[at:]
+    template["layout"][key] = rest[:at] + moved + rest[at:]
 
     for section in sidecar.get("sections", []):
         for b in section.get("blocks", []):
-            if b.get("kind") == "atomic" and isinstance(b.get("slot_index"), int):
-                b["slot_index"] = new_position(b["slot_index"], from_, count, to)
+            p = _pos(b)
+            if p is not None:
+                _set_pos(b, new_position(p, from_, count, to))
+    if key == "row_template":
+        _play_order(sidecar)
 
     after = _macro_slots(sidecar)
     for macro_id, was in before.items():
@@ -180,14 +231,16 @@ def move_rules(
     """Move the rules in slots `[from_, from_+count)` to before slot `to`;
     they join section `section_id`, in the order they play, after its
     blocks that play before `to`."""
-    slots = _flat_slots(template)
+    key, slots = _rules(template)
+    rows = key == "row_template"
+    if rows:
+        _check_rows(sidecar)
     _check_run(len(slots), from_, count, to, stay=True)
     run = range(from_, from_ + count)
 
     elements = _element_slots(sidecar)
-    moving: list[tuple[int, dict]] = []
+    moving: list[tuple[int, dict, dict]] = []
     covered: set[int] = set()
-    from_sections: set[Any] = set()
     for section, block, slots_of in elements:
         if slots_of is None:
             continue
@@ -201,18 +254,22 @@ def move_rules(
                 f"rules {from_}..{from_ + count - 1} split a macro: move all "
                 "of it, or none.",
             )
-        moving.append((min(slots_of), block))
+        moving.append((min(slots_of), block, section))
         covered.update(slots_of)
-        from_sections.add(section.get("id"))
     if covered != set(run):
         raise RuleMoveError(
             f"rules {sorted(set(run) - covered)} aren't in a section: the "
             "sidecar has drifted from the station.",
         )
 
-    if not any(s.get("id") == section_id for s in sidecar.get("sections", [])):
+    target_was = next((s for s in sidecar.get("sections", []) if s.get("id") == section_id), None)
+    if target_was is None:
         raise RuleMoveError(f"section '{section_id}' not found.")
-    if to == from_ + count and from_sections == {section_id}:
+    # Which moved blocks join the section: all of them; in a row
+    # station, those of the rows it has blocks of (the rest stay put).
+    target_rows = {b.get("row_idx") for b in target_was.get("blocks", [])}
+    joining = [m for m in moving if not rows or m[1].get("row_idx") in target_rows]
+    if to == from_ + count and all(sec is target_was for _p, _b, sec in joining):
         raise RuleMoveError("the rules are already there.")
 
     # Take the moved blocks out of their sections, by identity, then put
@@ -221,7 +278,7 @@ def move_rules(
     originals = [b for s in sidecar.get("sections", []) for b in s.get("blocks", [])]
     copies = [b for s in staged.get("sections", []) for b in s.get("blocks", [])]
     copy_of = {id(o): c for o, c in zip(originals, copies)}
-    moved_copies = [copy_of[id(b)] for _p, b in sorted(moving, key=lambda m: m[0])]
+    moved_copies = [copy_of[id(b)] for _p, b, _sec in sorted(joining, key=lambda m: m[0])]
     moved_copy_ids = {id(c) for c in moved_copies}
     for section in staged.get("sections", []):
         section["blocks"] = [b for b in section.get("blocks", []) if id(b) not in moved_copy_ids]
@@ -240,15 +297,17 @@ def move_rules(
 
 
 def section_slots(sidecar: dict, section_id: str) -> list[int] | None:
-    """The slots a section's blocks cover, sorted; None when it has a
-    block that can't be placed (a macro in a section with no atomic)."""
-    out: list[int] = []
+    """The slots a section's blocks cover, sorted, once each (a row
+    station's: the places in the row, of every row it has); None when it
+    has a block that can't be placed (a macro in a section with no
+    atomic)."""
+    out: set[int] = set()
     for section, _block, slots_of in _element_slots(sidecar):
         if section.get("id") != section_id:
             continue
         if slots_of is None:
             return None
-        out.extend(slots_of)
+        out.update(slots_of)  # a row station's: each row's, once
     return sorted(out)
 
 
@@ -265,7 +324,9 @@ def move_section(
     from_+count)`, to before section `before_section_id`'s rules (slot
     `to`, its first), or to the end (`before_section_id` None, `to` the
     number of rules). Its place in `layout_order` moves too."""
-    slots = _flat_slots(template)
+    key, slots = _rules(template)
+    if key == "row_template":
+        _check_rows(sidecar)
     sections = {s.get("id"): s for s in sidecar.get("sections", [])}
     if section_id not in sections:
         raise RuleMoveError(f"section '{section_id}' not found.")

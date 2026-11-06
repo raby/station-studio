@@ -87,13 +87,27 @@ its place in `layout_order` with them). The sidecar follows: every
 atomic block is renumbered to where its rule now plays. A macro moves
 whole or not at all, and a move that would leave one out of place is
 refused. A `moveRules` with `to` just after the run (`from + count`)
-only changes the rules' section: they play where they did. `moveBlock`, older, only regroups: the songs play where they
-did.
+only changes the rules' section: they play where they did. `moveBlock`,
+older, only regroups: the songs play where they did.
+
+A station built from a repeating row (`layout.row_template`, a day,
+say) is moved the same way, numbered by the row's blocks: every row
+plays the row, so a move reorders `row_template` and is made in every
+row. Its sidecar's atomic blocks carry a row (`row_idx`) as well as
+their place (`block_idx`); every row's are renumbered, a moved block
+joins the target section when that section has blocks of its row (so a
+section per day keeps its day's), and each section's blocks are kept
+in play order. A section's move changes only its own place in
+`layout_order`: with a section per day, the other days' sections keep
+theirs (their songs still play in the new order). Such a station can't
+move rules yet while its sections use macros, or repeat for every row
+(`repeat_with_offsets`, as Rebirth Classics' does).
 
 Both are in `engine/rule_moves.py` on the server and mirrored in
 `edit-ops.ts` for the preview; `tests/fixtures/rule_moves.json` holds
 the cases both are checked against, so the preview shows what saving
-does. Stations built from a repeating row can't move rules yet.
+does. Undo, a song's Revert and an open rule panel follow a row's
+blocks through moves just as a flat station's rules.
 
 ### Dragging in the song list
 
@@ -108,6 +122,13 @@ order. Dropped over the line between its section and the next (or on
 a section's heading), a song joins that section and plays where it
 did.
 
+On a station built from a repeating row the list says so: a move is
+made in every row. Each row's first song says which row it is (its
+unit label, "Mon"), what's carried is marked in every row, and from
+the keyboard the places offered are those of the row the song was
+picked up in (every row has the same). A selection is of one row's
+songs.
+
 Moves are numbered by places in the list, so they're only taken from a
 list of the rules as they are now. The list waits while it's behind:
 in the editor, until the preview of the latest queue is in (the
@@ -116,7 +137,7 @@ page, until the session's preview was made with the current queue
 (`stagedFor`), and with nothing queued, only for a week that lines up
 with the rules (`weekMatchesRules`: a week made before they last
 changed may not). Moving is off while the list is searched or
-filtered, and on stations built from a repeating row.
+filtered.
 
 The changed-song marks follow each song's rule back through the queue
 (`slotAsSaved`) rather than comparing place by place, so rules a move

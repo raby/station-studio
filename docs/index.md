@@ -18,7 +18,8 @@ tool behind [Rebirth Radio](https://github.com/raby/rebirth-radio)'s
   and why it's there, the ones your changes alter marked. Click a song
   and its block lights up and its rule opens beside the list (or see
   one row per slot on the Slots tab). Drag a song, a run of songs or a
-  section by its grip (or from the keyboard) to change when it plays.
+  section by its grip (or from the keyboard) to change when it plays
+(on a station built from a repeating day, in every day).
   Changes wait until you save, listed in plain words, each with an
   Undo.
 - **Trace versioning** — every regenerate keeps the prior trace as

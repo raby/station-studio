@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import '@testing-library/jest-dom/vitest';
 import type { Trace, TraceSlot } from '$lib/api';
-import type { Edit } from '$lib/edit-ops';
+import { applyEdit, type Edit } from '$lib/edit-ops';
 import type { Sidecar, StationTemplate } from '$lib/editor';
 import SongList from './SongList.svelte';
 
@@ -149,14 +149,40 @@ describe('<SongList> moving songs', () => {
     await key(grip, 'ArrowUp');
     expect(status()).toBe('before Song 1 in Music');
     expect(screen.getAllByTestId('song-drop-line')).toHaveLength(1);
-    // Up again: the end of Top of the hour (the same place in play, the
-    // other section).
+    // No further: into Top of the hour would leave Music only its macro,
+    // with no rule of its own to stand on, which the station refuses.
     await key(grip, 'ArrowUp');
-    expect(status()).toBe('at the end of Top of the hour');
+    expect(status()).toBe('before Song 1 in Music');
     await key(grip, ' ');
-    expect(onmove).toHaveBeenCalledWith({ kind: 'moveRules', from: 3, count: 1, to: 1, sectionId: 'top' });
-    expect(status()).toBe('Moved Song 3 at the end of Top of the hour.');
+    expect(onmove).toHaveBeenCalledWith({ kind: 'moveRules', from: 3, count: 1, to: 1, sectionId: 'music' });
+    expect(status()).toBe('Moved Song 3 before Song 1 in Music.');
     expect(screen.queryByTestId('song-drop-line')).toBeNull();
+  });
+
+  it('Home and End skip the places the station would refuse', async () => {
+    const { onmove } = setup();
+    const grip = grips()[3]; // the pick: Top of the hour's places are refused
+    await key(grip, ' ');
+    await key(grip, 'Home');
+    expect(status()).toBe('before Song 1 in Music');
+    await key(grip, 'End');
+    expect(status()).toBe('back where it was');
+    await key(grip, ' ');
+    expect(onmove).not.toHaveBeenCalled();
+  });
+
+  it("a place the station would refuse isn't offered, and a drop there does nothing", async () => {
+    const { onmove } = setup();
+    const dataTransfer = { setData: vi.fn(), effectAllowed: '', dropEffect: '' };
+    // The pick (Music's only single rule) onto Top of the hour's song:
+    // Music would be left with just its macro.
+    await fireEvent.dragStart(grips()[3], { dataTransfer });
+    const top = screen.getAllByTestId('song-row')[0].closest('li')!;
+    await fireEvent.dragOver(top, { dataTransfer, clientY: 0 });
+    expect(screen.queryByTestId('song-drop-line')).toBeNull();
+    expect(dataTransfer.dropEffect).toBe('none');
+    await fireEvent.drop(top, { dataTransfer });
+    expect(onmove).not.toHaveBeenCalled();
   });
 
   it('Escape, or leaving the grip, puts it back; dropping where it was moves nothing', async () => {
@@ -348,7 +374,8 @@ describe('<SongList> moving songs', () => {
       layout: { unit: 'slot', unit_labels: [], row_start_offsets: [0], row_template: template.layout.flat_slots! },
     };
     render(SongList, { props: { trace: four(), template: rows, sidecar, onmove: vi.fn() } });
-    expect(screen.getByTestId('song-move-note')).toHaveTextContent("can't be moved in a station built from a repeating row");
+    // (Its sidecar is the flat station's: a macro.)
+    expect(screen.getByTestId('song-move-note')).toHaveTextContent("can't be moved yet in a station built from a repeating row whose sections use macros");
   });
 
   it('told to wait mid-carry: put back', async () => {
@@ -400,4 +427,312 @@ describe('<SongList> moving songs', () => {
     expect(screen.getAllByTestId('song-row')[1]).toContainElement(screen.getByTestId('song-change'));
     expect(screen.queryByTestId('song-removed')).toBeNull();
   });
+});
+
+describe('<SongList> moving songs, a station built from a repeating row', () => {
+  // Two days (Mon, Tue) of three blocks: Morning has blocks 0-1, Evening
+  // block 2, on both days.
+  const rows: StationTemplate = {
+    ...template,
+    layout: {
+      unit: 'day', unit_labels: ['Mon', 'Tue'], row_start_offsets: [0, 3],
+      row_template: [
+        { source: 'POP', strategy: 'pick', size: 1 },
+        { source: 'POP', strategy: 'pick', size: 1 },
+        { source: 'JINGLES', strategy: 'pick', size: 1 },
+      ],
+    },
+  };
+  const at = (r: number, b: number) => ({ kind: 'atomic' as const, row_idx: r, block_idx: b });
+  const days: Sidecar = {
+    schema_version: 1,
+    sections: [
+      { id: 'morning', name: 'Morning', blocks: [at(0, 0), at(0, 1), at(1, 0), at(1, 1)] },
+      { id: 'evening', name: 'Evening', blocks: [at(0, 2), at(1, 2)] },
+    ],
+    macros: [],
+    layout_order: ['morning', 'evening'],
+  };
+  const song = (row: number, block: number): TraceSlot => {
+    const b = rows.layout.row_template![block];
+    return {
+      slot: (row - 1) * 3 + block + 1, unit: row === 1 ? 'Mon' : 'Tue', row, block: block + 1, source: b.source,
+      strategy: b.strategy, pool_index: block, track_id: row * 10 + block, track_name: `${row === 1 ? 'Mon' : 'Tue'} ${block}`,
+      track_artist: null, reason: 'picked',
+    };
+  };
+  const twoDays = () => week([1, 2].flatMap((r) => [0, 1, 2].map((b) => song(r, b))));
+  function setup() {
+    const onmove = vi.fn();
+    const r = render(SongList, { props: { trace: twoDays(), template: rows, sidecar: days, onmove } });
+    return { onmove, ...r };
+  }
+  const grips = () => screen.getAllByTestId('song-grip');
+  const key = (el: HTMLElement, k: string) => fireEvent.keyDown(el, { key: k });
+  const status = () => screen.getByTestId('song-move-status').textContent;
+  const carried = () => screen.getAllByTestId('song-row').map((r) => r.closest('li')!.classList.contains('carried'));
+
+  it('grips on every song, and the note says a move is made in every day', () => {
+    setup();
+    expect(grips()).toHaveLength(6);
+    expect(screen.getByTestId('song-move-note')).toHaveTextContent('between. A move is made in every day');
+    // Each day's first song says which day.
+    expect(screen.getAllByTestId('song-unit').map((u) => u.textContent)).toEqual(['Mon', 'Tue']);
+  });
+
+  it("searched, the first song shown of each day says which", async () => {
+    setup();
+    await fireEvent.input(screen.getByTestId('song-search'), { target: { value: 'Tue 2' } });
+    expect(screen.getAllByTestId('song-unit').map((u) => u.textContent)).toEqual(['Tue']);
+  });
+
+  it("from the keyboard, the places are the song's own day's; what moves is marked on every day", async () => {
+    const { onmove } = setup();
+    const grip = grips()[5]; // Tue's evening song: block 2
+    await key(grip, ' ');
+    expect(status()).toMatch(/^Picked up Tue 2\./);
+    expect(carried()).toEqual([false, false, true, false, false, true]);
+    // Up: the end of Morning that day (where it plays already), then
+    // before Tue's second song.
+    await key(grip, 'ArrowUp');
+    expect(status()).toBe('at the end of Morning (Tue)');
+    await key(grip, 'ArrowUp');
+    expect(status()).toBe('before Tue 1 in Morning');
+    await key(grip, 'Home');
+    expect(status()).toBe('before Tue 0 in Morning');
+    await key(grip, 'ArrowDown');
+    await key(grip, ' ');
+    expect(onmove).toHaveBeenCalledWith({ kind: 'moveRules', from: 2, count: 1, to: 1, sectionId: 'morning' });
+  });
+
+  it('after a move from the keyboard, focus goes to the song in the day it was moved from', async () => {
+    const { rerender } = setup();
+    const grip = grips()[5];
+    grip.focus();
+    await key(grip, ' ');
+    await key(grip, 'ArrowUp');
+    await key(grip, 'ArrowUp');
+    await key(grip, ' ');
+    await rerender({ trace: twoDays() });
+    await waitFor(() => expect(document.activeElement).toBe(
+      document.querySelector('[data-testid="song-grip"][data-rule="1"][data-row="2"]'),
+    ));
+  });
+
+  it('a section moves in every day, from any day\'s heading', async () => {
+    const { onmove, rerender } = setup();
+    const evenings = screen.getAllByTestId('section-grip').filter((g) => g.getAttribute('data-section') === 'evening');
+    expect(evenings).toHaveLength(2);
+    evenings[1].focus();
+    await key(evenings[1], ' ');
+    // Tue's places only: one "before Morning", then back.
+    await key(evenings[1], 'ArrowUp');
+    await key(evenings[1], 'ArrowUp');
+    expect(status()).toBe('before Morning');
+    await key(evenings[1], 'ArrowDown');
+    expect(status()).toBe('back where it was');
+    await key(evenings[1], 'ArrowUp');
+    await key(evenings[1], ' ');
+    expect(onmove).toHaveBeenCalledWith({
+      kind: 'moveSection', sectionId: 'evening', beforeSectionId: 'morning', from: 2, count: 1, to: 0,
+    });
+    // Focus goes to its heading in the day it was moved from.
+    await rerender({ trace: twoDays() });
+    await waitFor(() => expect(document.activeElement).toBe(
+      document.querySelector('[data-testid="section-grip"][data-section="evening"][data-row="2"]'),
+    ));
+  });
+
+  it("a section per day: the song's own day's sections, in order, and its own place among them", async () => {
+    const perDay: Sidecar = {
+      ...days,
+      sections: [
+        { id: 'mon-am', name: 'Mon AM', blocks: [at(0, 0), at(0, 1)] },
+        { id: 'mon-pm', name: 'Mon PM', blocks: [at(0, 2)] },
+        { id: 'tue-am', name: 'Tue AM', blocks: [at(1, 0), at(1, 1)] },
+        { id: 'tue-pm', name: 'Tue PM', blocks: [at(1, 2)] },
+      ],
+      layout_order: ['mon-am', 'mon-pm', 'tue-am', 'tue-pm'],
+    };
+    const onmove = vi.fn();
+    render(SongList, { props: { trace: twoDays(), template: rows, sidecar: perDay, onmove } });
+    expect(screen.getAllByTestId('song-section').map((h) => h.textContent?.replace(/\s+/g, ' ').trim()))
+      .toEqual(['⋮⋮ Mon AM 2 songs', '⋮⋮ Mon PM 1 song', '⋮⋮ Tue AM 2 songs', '⋮⋮ Tue PM 1 song']);
+    const grip = grips()[5]; // Tue PM's song
+    await key(grip, ' ');
+    await key(grip, 'ArrowUp');
+    expect(status()).toBe('at the end of Tue AM (Tue)');
+    await key(grip, 'ArrowDown');
+    expect(status()).toBe('back where it was');
+    await key(grip, 'ArrowUp');
+    await key(grip, ' ');
+    // Into Tue AM, playing where it did (Mon's block stays in Mon PM).
+    expect(onmove).toHaveBeenCalledWith({ kind: 'moveRules', from: 2, count: 1, to: 3, sectionId: 'tue-am' });
+  });
+
+  it('a selection is of one day: shift-clicking into another says so', async () => {
+    setup();
+    const songs = screen.getAllByTestId('song-row');
+    await fireEvent.click(songs[0]);
+    await fireEvent.click(songs[4], { shiftKey: true });
+    expect(document.querySelector('.in-selection')).toBeNull();
+    expect(status()).toMatch(/^Select songs of one day/);
+    await fireEvent.click(songs[0]);
+    await fireEvent.click(songs[1], { shiftKey: true });
+    // Blocks 0-1, marked on both days; counted in the one.
+    expect(screen.getByTestId('song-move-note')).toHaveTextContent('2 songs selected');
+  });
+
+  it("with a pointer, a line in the day it's over; the move is the same", async () => {
+    const { onmove } = setup();
+    const dataTransfer = { setData: vi.fn(), effectAllowed: '', dropEffect: '' };
+    await fireEvent.dragStart(grips()[2], { dataTransfer }); // Mon's evening song
+    const tueFirst = screen.getAllByTestId('song-row')[3].closest('li')!;
+    await fireEvent.dragOver(tueFirst, { dataTransfer, clientY: 0 });
+    expect(tueFirst.querySelector('[data-testid="song-drop-line"]')).not.toBeNull();
+    await fireEvent.drop(tueFirst, { dataTransfer });
+    expect(onmove).toHaveBeenCalledWith({ kind: 'moveRules', from: 2, count: 1, to: 0, sectionId: 'morning' });
+  });
+
+  it('one section over every day: each day has its own end to move to', async () => {
+    const all: Sidecar = {
+      ...days,
+      sections: [{ id: 'all', name: 'All', blocks: [0, 1].flatMap((r) => [0, 1, 2].map((b) => at(r, b))) }],
+      layout_order: ['all'],
+    };
+    const onmove = vi.fn();
+    render(SongList, { props: { trace: twoDays(), template: rows, sidecar: all, onmove } });
+    const grip = grips()[0]; // Mon's first
+    await key(grip, ' ');
+    await key(grip, 'End');
+    expect(status()).toBe('at the end of All (Mon)');
+    // The line is at the bottom of Mon's last song (the list runs on
+    // into Tue in the same section).
+    const monLast = screen.getAllByTestId('song-row')[2].closest('li')!;
+    expect(monLast.querySelector('.drop-line--after')).not.toBeNull();
+    await key(grip, ' ');
+    expect(onmove).toHaveBeenCalledWith({ kind: 'moveRules', from: 0, count: 1, to: 3, sectionId: 'all' });
+    // With a pointer, over the top of Tue's first song: before it (the
+    // same rule on Mon, in the same list, doesn't count).
+    const dataTransfer = { setData: vi.fn(), effectAllowed: '', dropEffect: '' };
+    await fireEvent.dragStart(grips()[2], { dataTransfer });
+    const tueFirst = screen.getAllByTestId('song-row')[3].closest('li')!;
+    await fireEvent.dragOver(tueFirst, { dataTransfer, clientY: 0 });
+    expect(tueFirst.querySelector('[data-testid="song-drop-line"]:not(.drop-line--after)')).not.toBeNull();
+  });
+
+  it('a row station whose sections use macros: no moving, and why', () => {
+    const withMacro: Sidecar = {
+      ...days,
+      sections: [{ id: 'morning', name: 'Morning', blocks: [at(0, 0), { kind: 'macro', ref: 'two' }] }],
+      macros: [{ id: 'two', name: 'Two', repeat: 2, spec: { source: 'POP', strategy: 'pick', size: 1 } }],
+    };
+    render(SongList, { props: { trace: twoDays(), template: rows, sidecar: withMacro, onmove: vi.fn() } });
+    expect(screen.queryByTestId('song-grip')).toBeNull();
+    expect(screen.getByTestId('song-move-note')).toHaveTextContent("Songs can't be moved yet in a station built from a repeating day whose sections use macros.");
+  });
+
+  it('a row station whose sections repeat for every day (as a bundled one does): no moving, and why', () => {
+    const repeating = { ...days, sections: [{ ...days.sections[0], repeat_with_offsets: [0, 3] }] } as unknown as Sidecar;
+    render(SongList, { props: { trace: twoDays(), template: rows, sidecar: repeating, onmove: vi.fn() } });
+    expect(screen.queryByTestId('song-grip')).toBeNull();
+    expect(screen.getByTestId('song-move-note')).toHaveTextContent("Songs can't be moved yet in a station whose sections repeat for every day.");
+  });
+});
+
+describe('<SongList> every place offered is a move the station takes', () => {
+  // Random stations (as tests/test_rule_moves.py makes them): flat, some
+  // sections with a macro; or 1-3 days, with sections per day or over
+  // every day. From every grip, every place the keyboard offers, dropped:
+  // the preview (the server's mirror) must take the edit.
+  let seed = 5;
+  const rand = (n: number): number => {
+    seed = (seed + 0x6d2b79f5) | 0;
+    let x = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    x = (x + Math.imul(x ^ (x >>> 7), 61 | x)) ^ x;
+    return (((x ^ (x >>> 14)) >>> 0) / 4294967296 * n) | 0;
+  };
+  function station(rowsToo: boolean): { template: StationTemplate; sidecar: Sidecar; trace: Trace } {
+    const n = 2 + rand(5);
+    const rules = Array.from({ length: n }, (_, i) => ({ source: `r${i}`, strategy: 'pick' as const, size: 1 }));
+    const cuts = [...new Set(Array.from({ length: rand(3) }, () => 1 + rand(n - 1)))].filter((c) => c < n).sort((a, b) => a - b);
+    const spans = [0, ...cuts].map((a, k) => [a, [...cuts, n][k]] as const);
+    const sections: Sidecar['sections'] = [];
+    const macros: Sidecar['macros'] = [];
+    const slots: TraceSlot[] = [];
+    const songAt = (row: number, block: number, unit: string): TraceSlot => ({
+      slot: slots.length + 1, unit, row, block: block + 1, source: `r${block}`, strategy: 'pick', pool_index: block,
+      track_id: row * 100 + block, track_name: `S${row}-${block}`, track_artist: null, reason: 'r',
+    });
+    if (!rowsToo) {
+      spans.forEach(([a, b], k) => {
+        let blocks: Sidecar['sections'][number]['blocks'] = Array.from({ length: b - a }, (_, i) => ({ kind: 'atomic' as const, slot_index: a + i }));
+        if (b - a >= 3 && rand(2)) {
+          const width = 2 + rand(b - a - 2);
+          macros.push({ id: `m${k}`, name: `M${k}`, repeat: width, spec: { source: 'r0', strategy: 'pick', size: 1 } });
+          blocks = [blocks[0], { kind: 'macro', ref: `m${k}` }, ...blocks.slice(1 + width)];
+        }
+        sections.push({ id: `s${k}`, name: `S${k}`, blocks });
+      });
+      for (let b = 0; b < n; b++) slots.push(songAt(1, b, 'slot'));
+      return {
+        template: { ...template, layout: { unit: 'slot', unit_labels: [], row_start_offsets: [], flat_slots: rules } },
+        sidecar: { schema_version: 1, sections, macros, layout_order: sections.map((s) => s.id) },
+        trace: week(slots),
+      };
+    }
+    const days = 1 + rand(3);
+    const perDay = rand(2) === 1;
+    const at = (r: number, b: number) => ({ kind: 'atomic' as const, row_idx: r, block_idx: b });
+    if (perDay) {
+      for (let r = 0; r < days; r++) spans.forEach(([a, b], k) => sections.push({ id: `d${r}s${k}`, name: `D${r}S${k}`, blocks: Array.from({ length: b - a }, (_, i) => at(r, a + i)) }));
+    } else {
+      spans.forEach(([a, b], k) => sections.push({ id: `s${k}`, name: `S${k}`, blocks: Array.from({ length: days }, (_, r) => Array.from({ length: b - a }, (_, i) => at(r, a + i))).flat() }));
+    }
+    for (let r = 1; r <= days; r++) for (let b = 0; b < n; b++) slots.push(songAt(r, b, `D${r}`));
+    return {
+      template: { ...template, layout: { unit: 'day', unit_labels: Array.from({ length: days }, (_, r) => `D${r + 1}`), row_start_offsets: Array(days).fill(0), row_template: rules } },
+      sidecar: { schema_version: 1, sections, macros: [], layout_order: sections.map((s) => s.id) },
+      trace: week(slots),
+    };
+  }
+
+  const key = (el: HTMLElement, k: string) => fireEvent.keyDown(el, { key: k });
+  const status = () => screen.getByTestId('song-move-status').textContent;
+
+  it('flat and row stations, songs and sections, from the keyboard', async () => {
+    let tried = 0;
+    for (let i = 0; i < 40; i++) {
+      const st = station(i % 2 === 1);
+      const onmove = vi.fn();
+      render(SongList, { props: { trace: st.trace, template: st.template, sidecar: st.sidecar, onmove } });
+      const all = [...screen.queryAllByTestId('song-grip'), ...screen.queryAllByTestId('section-grip')];
+      for (const grip of all) {
+        // Count the places: down from its own, then up from its own.
+        for (const dir of ['ArrowDown', 'ArrowUp']) {
+          let before = '';
+          for (let k = 1; k < 30; k++) {
+            await key(grip, ' ');
+            for (let j = 0; j < k; j++) await key(grip, dir);
+            const said = status() ?? '';
+            if (said === before || said === 'back where it was') {
+              await key(grip, 'Escape'); // past the last place
+              break;
+            }
+            before = said;
+            await key(grip, ' ');
+            const edit = onmove.mock.calls.at(-1)?.[0] as Edit | undefined;
+            onmove.mockClear();
+            expect(edit, said).toBeDefined();
+            if (!edit) break;
+            tried++;
+            const out = applyEdit(st.template, st.sidecar, edit);
+            expect(out.template === st.template && out.sidecar === st.sidecar, `${said}: ${JSON.stringify(edit)} on ${JSON.stringify(st.sidecar)}`).toBe(false);
+          }
+        }
+      }
+      cleanup();
+    }
+    expect(tried).toBeGreaterThan(200);
+  }, 60000);
 });
