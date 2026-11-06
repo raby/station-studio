@@ -19,11 +19,18 @@ def free_port() -> int:
 
 
 def link(api, code=None):  # noqa: F811
-    """Turn the link on; returns a caller for its port, sending the code."""
-    port = free_port()
-    status, state = api("/api/settings", {"studio_link": True, "studio_port": port})
-    assert status == 200
-    studio = api("/api/state")[1]["studio"]
+    """Turn the link on; returns a caller for its port, sending the code.
+
+    A port found free can be taken by something else on the computer
+    before the link opens it (a busy CI runner, say); then it tries
+    another, as moving the port restarts the link."""
+    for _ in range(5):
+        port = free_port()
+        status, state = api("/api/settings", {"studio_link": True, "studio_port": port})
+        assert status == 200
+        studio = api("/api/state")[1]["studio"]
+        if studio["running"]:
+            break
     assert studio["running"] and studio["port"] == port
     code = studio["code"] if code is None else code
 
