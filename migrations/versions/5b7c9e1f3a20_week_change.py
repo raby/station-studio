@@ -10,6 +10,12 @@ at the next generation).
 generation ("Just this week: song 12 swapped"). NULL for every version
 made before this column, which were all generations or rollbacks.
 
+`playlist_version.slots` is written compressed from this revision on
+(engine.compressed_json: a JSON string "z1:<base64 zlib JSON>"). The
+column's type is unchanged and rows written before stay as they are, so
+upgrading rewrites nothing; downgrading unpacks every compressed row,
+for code that reads slots as plain JSON.
+
 Revision ID: 5b7c9e1f3a20
 Revises: 3e1d2c8a9b47
 Create Date: 2026-11-06 12:00:00.000000
@@ -17,6 +23,9 @@ Create Date: 2026-11-06 12:00:00.000000
 """
 from __future__ import annotations
 
+import base64
+import json
+import zlib
 from typing import Sequence, Union
 
 from alembic import op
@@ -52,18 +61,31 @@ def upgrade() -> None:
             name='uq_week_change_playlist_id_row_block_k',
         ),
     )
-    with op.batch_alter_table('week_change', schema=None) as batch_op:
-        batch_op.create_index(
-            batch_op.f('ix_week_change_playlist_id'), ['playlist_id'], unique=False,
-        )
+    # No index on playlist_id of its own: the unique constraint's index
+    # starts with it.
     with op.batch_alter_table('playlist_version', schema=None) as batch_op:
         batch_op.add_column(sa.Column('note', sa.Text(), nullable=True))
 
 
+def _unpack_slots() -> None:
+    """Rewrite every compressed `playlist_version.slots` as plain JSON.
+    Self-contained (no engine imports), one row at a time."""
+    conn = op.get_bind()
+    pv = sa.table('playlist_version', sa.column('id', sa.Integer), sa.column('slots', sa.Text))
+    ids = [r[0] for r in conn.execute(sa.select(pv.c.id)).fetchall()]
+    for vid in ids:
+        raw = conn.execute(sa.select(pv.c.slots).where(pv.c.id == vid)).scalar()
+        if not raw:
+            continue
+        value = json.loads(raw)
+        if isinstance(value, str) and value.startswith('z1:'):
+            plain = zlib.decompress(base64.b64decode(value[3:])).decode('utf-8')
+            conn.execute(pv.update().where(pv.c.id == vid).values(slots=plain))
+
+
 def downgrade() -> None:
     """Downgrade schema."""
+    _unpack_slots()
     with op.batch_alter_table('playlist_version', schema=None) as batch_op:
         batch_op.drop_column('note')
-    with op.batch_alter_table('week_change', schema=None) as batch_op:
-        batch_op.drop_index(batch_op.f('ix_week_change_playlist_id'))
     op.drop_table('week_change')

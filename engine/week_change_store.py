@@ -113,13 +113,15 @@ def build_changes(
                 invalid = f"the changed rule can't be played: {e}"
         out.append(Change(
             **common, spec=spec, invalid=invalid, rule=rule,
-            fields=_fields(template_raw, common["block"], rule) if rule else None,
+            fields=changed_fields(template_raw, common["block"], rule) if rule else None,
         ))
     return out, run_pools
 
 
-def _fields(template_raw: dict, block: int, rule: dict) -> dict:
-    """What `rule` changes of the station's rule number `block`."""
+def changed_fields(template_raw: dict, block: int, rule: dict) -> dict:
+    """What `rule` changes of the station's rule number `block`: each
+    field it sets differently, and None for each it leaves out. Its size
+    is never changed (a rule change keeps the original's)."""
     layout = template_raw.get("layout") or {}
     blocks = layout.get("flat_slots") or layout.get("row_template") or []
     orig = blocks[block - 1] if 1 <= block <= len(blocks) else {}

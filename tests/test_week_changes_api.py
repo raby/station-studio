@@ -127,6 +127,23 @@ def add(client, pid, change, version):
                        json={"expected_version": version, "change": change})
 
 
+def made(client, pid, change, version):
+    """`add`, which must work."""
+    r = add(client, pid, change, version)
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+def fresh(client, Session, pid, pool: str, n: int = 0) -> int:
+    """The id of a song of `pool` the week doesn't play (the `n`-th such,
+    from the end of the pool)."""
+    playing = {s["track_id"] for s in trace(client, pid)["slots"]}
+    with Session() as db:
+        ids = [t.id for t in db.query(Track).filter(Track.persistent_id.like(f"{pool}%"))
+               .order_by(Track.id.desc())]
+    return [i for i in ids if i not in playing][n]
+
+
 def entries(Session, playlist_id) -> list[int]:
     with Session() as db:
         return [e.track_id for e in db.query(PlaylistEntry)
@@ -143,18 +160,23 @@ def test_swap_makes_a_version_and_regenerating_keeps_it(env):
     assert g["week_changes_applied"] == 0 and g["week_changes_dropped"] == []
     v1 = trace(client, pid)
     assert v1["version_no"] == 1 and v1["note"] is None
-    mine = track_id(Session, "A030")
+    mine = fresh(client, Session, pid, "A")
 
     r = add(client, pid, swap(block=3, k=1, track=mine), 1)
     assert r.status_code == 201, r.text
     body = r.json()
     assert body["version_no"] == 2
-    assert body["change"]["position"] == 7 and body["change"]["track"]["name"] == "A song 30"
+    with Session() as db:
+        song = db.get(Track, mine)
+        name, artist = song.name, song.artist
+    assert body["change"]["position"] == 7 and body["change"]["track"]["name"] == name
+    assert body["change"]["also_plays_at"] == []
     assert body["slot"]["track_id"] == mine and body["slot"]["change"]["kind"] == "swap"
 
     v2 = trace(client, pid)
     assert v2["version_no"] == 2
-    assert v2["note"] == "Just this week: song 7 swapped for A song 30"
+    assert v2["note"] == f"Just this week: song 7 swapped for {name} by {artist}"
+    assert body["note"] == v2["note"]
     assert [s["track_id"] for s in v2["slots"]][:6] == [s["track_id"] for s in v1["slots"]][:6]
     assert v2["slots"][6]["track_id"] == mine
     assert v2["slots"][6]["source"] == "A" and v2["slots"][6]["strategy"] == "weighted"
@@ -186,7 +208,8 @@ def test_rule_change_song_is_the_one_regenerating_gives(env):
     assert slot["source"] == "A"  # the rule's, still
     with Session() as db:
         assert db.get(Track, slot["track_id"]).persistent_id.startswith("B")
-    assert trace(client, pid)["note"] == "Just this week: song 3 picked by a changed rule"
+    assert trace(client, pid)["note"] == \
+        "Just this week: song 3 picked by its rule changed: source B"
     gen(client)
     assert trace(client, pid)["slots"][2] == slot
 
@@ -195,7 +218,7 @@ def test_undo_puts_the_rules_song_back_exactly(env):
     client, Session, _ = env
     pid = gen(client)["playlist_id"]
     v1 = trace(client, pid)
-    change = add(client, pid, swap(block=2, k=0, track=track_id(Session, "B015"), source="B"), 1).json()
+    change = add(client, pid, swap(block=2, k=0, track=fresh(client, Session, pid, "B"), source="B"), 1).json()
     r = client.delete(f"/api/playlists/{pid}/changes/{change['change']['id']}?expected_version=2")
     assert r.status_code == 200, r.text
     assert r.json()["version_no"] == 3
@@ -210,20 +233,21 @@ def test_a_second_change_to_a_song_replaces_the_first(env):
     client, Session, _ = env
     pid = gen(client)["playlist_id"]
     v1 = trace(client, pid)
-    add(client, pid, swap(track=track_id(Session, "A029")), 1)
-    r = add(client, pid, swap(track=track_id(Session, "A028")), 2)
+    second = fresh(client, Session, pid, "A", 1)
+    made(client, pid, swap(track=fresh(client, Session, pid, "A")), 1)
+    r = add(client, pid, swap(track=second), 2)
     assert r.status_code == 201
     slot = r.json()["slot"]
     # "was" is still the rule's own song, not the first swap.
     assert slot["change"]["was"]["track_id"] == v1["slots"][0]["track_id"]
     changes = client.get(f"/api/playlists/{pid}/changes").json()["changes"]
-    assert [c["track"]["name"] for c in changes] == ["A song 28"]
+    assert [c["track"]["id"] for c in changes] == [second]
 
 
 def test_stale_version_and_running_generation_are_refused(env):
     client, Session, store = env
     pid = gen(client)["playlist_id"]
-    mine = track_id(Session, "A030")
+    mine = fresh(client, Session, pid, "A")
     r = add(client, pid, swap(track=mine), 2)
     assert r.status_code == 409 and r.json()["detail"]["current_version"] == 1
     store.running_job_id = lambda slug, kind: "job123"  # type: ignore[method-assign]
@@ -296,7 +320,7 @@ def test_changing_a_week_the_rules_have_moved_on_from_is_refused(env):
         t["layout"]["flat_slots"][0]["source"] = "B"
         st.template = t
         db.commit()
-    r = add(client, pid, swap(track=track_id(Session, "A030")), 1)
+    r = add(client, pid, swap(track=fresh(client, Session, pid, "A")), 1)
     assert r.status_code == 400
     assert "rules have changed since this week was made" in r.json()["detail"]
 
@@ -315,7 +339,7 @@ def test_unknown_playlist_and_change(env):
 def test_regenerating_drops_a_change_whose_rule_changed(env):
     client, Session, _ = env
     pid = gen(client)["playlist_id"]
-    add(client, pid, swap(block=2, k=1, track=track_id(Session, "B001"), source="B"), 1)
+    made(client, pid, swap(block=2, k=1, track=fresh(client, Session, pid, "B", 1), source="B"), 1)
     # The JSON page replaces the template: its rule 2 is now another pool's.
     t = station_template()
     t["layout"]["flat_slots"][1]["source"] = "A"
@@ -332,8 +356,8 @@ def test_regenerating_drops_a_change_whose_rule_changed(env):
 def test_a_deleted_song_drops_its_swap(env):
     client, Session, _ = env
     pid = gen(client)["playlist_id"]
-    mine = track_id(Session, "A030")
-    add(client, pid, swap(track=mine), 1)
+    mine = fresh(client, Session, pid, "A")
+    made(client, pid, swap(track=mine), 1)
     with Session() as db:
         # Deleting the track leaves the stored change with no track
         # (ON DELETE SET NULL).
@@ -353,8 +377,8 @@ def test_a_deleted_song_drops_its_swap(env):
 def test_changes_follow_moved_rules(env):
     client, Session, _ = env
     pid = gen(client)["playlist_id"]
-    mine = track_id(Session, "A030")
-    add(client, pid, swap(block=1, k=2, track=mine), 1)
+    mine = fresh(client, Session, pid, "A")
+    made(client, pid, swap(block=1, k=2, track=mine), 1)
     # Move rule 1 (slot 0) to the end.
     r = client.post(f"/api/stations/{SLUG}/sidecar/batch", json={"edits": [
         {"kind": "moveRules", "from": 0, "count": 1, "to": 3, "sectionId": "all-slots"},
@@ -372,8 +396,8 @@ def test_changes_follow_moved_rules(env):
 def test_changes_of_a_removed_rule_are_deleted(env):
     client, Session, _ = env
     pid = gen(client)["playlist_id"]
-    add(client, pid, swap(block=2, k=0, track=track_id(Session, "B001"), source="B"), 1)
-    add(client, pid, swap(block=3, k=0, track=track_id(Session, "A030")), 2)
+    made(client, pid, swap(block=2, k=0, track=fresh(client, Session, pid, "B", 1), source="B"), 1)
+    made(client, pid, swap(block=3, k=0, track=fresh(client, Session, pid, "A")), 2)
     r = client.patch(f"/api/stations/{SLUG}/blocks/structure",
                      json={"edit": {"op": "remove", "slot_index": 1}})
     assert r.status_code == 200, r.text
@@ -384,8 +408,8 @@ def test_changes_of_a_removed_rule_are_deleted(env):
 def test_changes_past_a_smaller_rule_are_deleted(env):
     client, Session, _ = env
     pid = gen(client)["playlist_id"]
-    add(client, pid, swap(block=1, k=0, track=track_id(Session, "A029")), 1)
-    add(client, pid, swap(block=1, k=2, track=track_id(Session, "A030")), 2)
+    made(client, pid, swap(block=1, k=0, track=fresh(client, Session, pid, "A", 1)), 1)
+    made(client, pid, swap(block=1, k=2, track=fresh(client, Session, pid, "A")), 2)
     r = client.post(f"/api/stations/{SLUG}/sidecar/batch", json={"edits": [
         {"kind": "structuralBlockEdit", "edit": {"op": "size", "slot_index": 0, "new_size": 2}},
         {"kind": "structuralBlockEdit", "edit": {"op": "add", "slot_index": 0,
@@ -402,8 +426,8 @@ def test_changes_past_a_smaller_rule_are_deleted(env):
 def test_rollback_restores_the_versions_changes(env):
     client, Session, _ = env
     pid = gen(client)["playlist_id"]
-    add(client, pid, swap(track=track_id(Session, "A030")), 1)
-    add(client, pid, rule(block=3, k=0, new={"source": "B", "strategy": "weighted"}), 2)
+    made(client, pid, swap(track=fresh(client, Session, pid, "A")), 1)
+    made(client, pid, rule(block=3, k=0, new={"source": "B", "strategy": "weighted"}), 2)
     r = client.post(f"/api/playlists/{pid}/rollback?to=1")
     assert r.status_code == 200, r.text
     assert trace(client, pid)["note"] == "Rolled back to version 1"
@@ -435,9 +459,9 @@ def _wait(client, job_id, timeout=10.0):
 def test_generate_job_makes_changes_and_reports_drops(env):
     client, Session, _ = env
     pid = gen(client)["playlist_id"]
-    mine = track_id(Session, "A030")
-    add(client, pid, swap(track=mine), 1)
-    add(client, pid, rule(block=3, k=1, new={"source": "B", "strategy": "weighted"}), 2)
+    mine = fresh(client, Session, pid, "A")
+    made(client, pid, swap(track=mine), 1)
+    made(client, pid, rule(block=3, k=1, new={"source": "B", "strategy": "weighted"}), 2)
     expected = trace(client, pid)["slots"]
     with Session() as db:
         db.add(WeekChange(playlist_id=pid, row=1, block=2, k=5, kind="swap", track_id=mine,
@@ -461,7 +485,7 @@ def test_preview_job_makes_the_changes_it_is_sent(env):
     with Session() as db:
         st = db.query(Station).filter_by(slug=SLUG).one()
         template, sidecar = st.template, st.sidecar
-    mine = track_id(Session, "A030")
+    mine = fresh(client, Session, pid, "A")
     r = client.post(f"/api/stations/{SLUG}/jobs/preview", json={
         "template": template, "sidecar": sidecar, "week": 1, "seed": 7,
         "week_changes": [swap(block=3, k=0, track=mine), swap(block=9, k=0, track=mine)],
@@ -488,12 +512,13 @@ def test_preview_job_makes_the_changes_it_is_sent(env):
 def test_generate_chain_keeps_changes(env):
     client, Session, _ = env
     pid = gen(client, seed=101)["playlist_id"]
-    mine = track_id(Session, "A030")
-    add(client, pid, swap(block=1, k=1, track=mine), 1)
+    mine = fresh(client, Session, pid, "A")
+    made(client, pid, swap(block=1, k=1, track=mine), 1)
     before = trace(client, pid)["slots"]
     with Session() as db:
         pids = generate_chain(db, station_slug=SLUG, weeks=[1, 2], seed_base=100)
-    assert pids[1][1] == "A030"
+    with Session() as db:
+        assert pids[1][1] == db.get(Track, mine).persistent_id
     # The same week again (same seed), the swap made again.
     assert trace(client, pid)["slots"] == before
     with Session() as db:
@@ -595,7 +620,10 @@ def test_row_station_rule_change_is_made_in_its_row_only(env):
     slot = r.json()["slot"]
     # archive_ref reads from `position`, one song per place: k=1 is 3.
     assert slot["track_name"] == "Archive 3" and slot["change"]["strategy"] == "archive_ref"
-    assert trace(client, pid)["note"] == "Just this week: Tue song 5 picked by a changed rule"
+    assert trace(client, pid)["note"] == (
+        "Just this week: song 5 (Tue) picked by its rule changed: "
+        "source R, strategy archive_ref, position 2"
+    )
     slots = trace(client, pid)["slots"]
     assert [s["track_id"] for i, s in enumerate(slots) if i != 4] == \
         [s["track_id"] for i, s in enumerate(v1["slots"]) if i != 4]
@@ -604,7 +632,7 @@ def test_row_station_rule_change_is_made_in_its_row_only(env):
     assert g["week_changes_applied"] == 1
     assert trace(client, pid)["slots"] == slots
     # A swap in Mon only.
-    mine = track_id(Session, "B015")
+    mine = fresh(client, Session, pid, "B")
     r = add(client, pid, swap(row=1, block=2, k=0, track=mine, source="B"), 3)
     assert r.status_code == 201
     assert [s["track_id"] == mine for s in trace(client, pid)["slots"]].index(True) == 2
@@ -631,7 +659,7 @@ def test_a_rule_whose_pool_isnt_imported_is_refused_and_dropped(env):
 def test_undoing_a_change_the_week_doesnt_have_now_only_forgets_it(env):
     client, Session, _ = env
     pid = gen(client)["playlist_id"]
-    c = add(client, pid, swap(block=1, k=2, track=track_id(Session, "A030")), 1).json()
+    c = add(client, pid, swap(block=1, k=2, track=fresh(client, Session, pid, "A")), 1).json()
     client.post(f"/api/stations/{SLUG}/sidecar/batch", json={"edits": [
         {"kind": "moveRules", "from": 0, "count": 1, "to": 3, "sectionId": "all-slots"},
     ]})
@@ -642,3 +670,242 @@ def test_undoing_a_change_the_week_doesnt_have_now_only_forgets_it(env):
     r = client.delete(f"/api/playlists/{pid}/changes/{c['change']['id']}?expected_version=2")
     assert r.status_code == 200 and r.json()["version_no"] == 2
     assert client.get(f"/api/playlists/{pid}/changes").json()["changes"] == []
+
+
+# ---------- review: changes and a week the rules have moved on from ------
+
+
+def test_undo_after_rules_moved_leaves_the_other_change_alone(env):
+    """Rules moved and the week not generated since: each change follows
+    its rule, but the songs don't, so undoing one mustn't touch the song
+    another change now sits on."""
+    client, Session, _ = env
+    pid = gen(client)["playlist_id"]
+    x = made(client, pid, swap(block=1, k=0, track=fresh(client, Session, pid, "A")), 1)
+    y = made(client, pid, swap(block=3, k=0, track=fresh(client, Session, pid, "A")), 2)
+    shown = trace(client, pid)["slots"]
+    r = client.post(f"/api/stations/{SLUG}/sidecar/batch", json={"edits": [
+        {"kind": "moveRules", "from": 0, "count": 1, "to": 3, "sectionId": "all-slots"},
+    ]})
+    assert r.status_code == 200, r.text
+    listed = client.get(f"/api/playlists/{pid}/changes").json()["changes"]
+    # X is now rule 3's, Y rule 2's: the week (as generated) plays neither there.
+    assert [(c["block"], c["position"]) for c in listed] == [(3, None), (2, None)]
+    r = client.delete(f"/api/playlists/{pid}/changes/{x['change']['id']}?expected_version=3")
+    assert r.status_code == 200 and r.json() == {"playlist_id": pid, "version_no": 3, "note": None}
+    assert trace(client, pid)["slots"] == shown
+    # Regenerating plays Y on its rule, now rule 2.
+    g = gen(client)
+    assert g["week_changes_applied"] == 1
+    slots = trace(client, pid)["slots"]
+    # B ×2, then the old rule 3 (A ×2, Y's), then the old rule 1 (A ×3).
+    assert [(s["block"], s["source"]) for s in slots] == \
+        [(1, "B"), (1, "B"), (2, "A"), (2, "A"), (3, "A"), (3, "A"), (3, "A")]
+    assert slots[2]["track_id"] == y["slot"]["track_id"]
+    assert [c["position"] for c in client.get(f"/api/playlists/{pid}/changes").json()["changes"]] == [3]
+
+
+def test_changing_a_song_of_a_week_the_rules_moved_on_from_is_refused(env):
+    client, Session, _ = env
+    pid = gen(client)["playlist_id"]
+    r = client.post(f"/api/stations/{SLUG}/sidecar/batch", json={"edits": [
+        {"kind": "moveRules", "from": 2, "count": 1, "to": 0, "sectionId": "all-slots"},
+    ]})
+    assert r.status_code == 200, r.text
+    # Song 1 is still rule 1's, an A rule as before, but the week as a
+    # whole isn't the rules now.
+    r = add(client, pid, swap(block=1, k=0, track=fresh(client, Session, pid, "A")), 1)
+    assert r.status_code == 400
+    assert "rules have changed since this week was made" in r.json()["detail"]
+
+
+def test_no_op_changes_are_refused(env):
+    client, Session, _ = env
+    pid = gen(client)["playlist_id"]
+    own = trace(client, pid)["slots"][0]["track_id"]
+    r = add(client, pid, swap(track=own), 1)
+    assert r.status_code == 400 and r.json()["detail"] == "that's the song its rule picks"
+    made(client, pid, swap(track=fresh(client, Session, pid, "A")), 1)
+    r = add(client, pid, swap(track=own), 2)
+    assert r.json()["detail"] == "that's the song its rule picks; undo the change instead"
+    r = add(client, pid, rule(new={"source": "A", "strategy": "weighted", "size": 1}), 2)
+    assert r.status_code == 400
+    assert r.json()["detail"] == "that's the rule as it is; change something about it"
+
+
+def test_a_repeat_is_pointed_out(env):
+    client, Session, _ = env
+    pid = gen(client)["playlist_id"]
+    slots = trace(client, pid)["slots"]
+    # Song 7 swapped for the song song 1 plays.
+    body = made(client, pid, swap(block=3, k=1, track=slots[0]["track_id"]), 1)
+    assert body["change"]["also_plays_at"] == [1]
+    listed = client.get(f"/api/playlists/{pid}/changes").json()["changes"]
+    assert listed[0]["also_plays_at"] == [1] and listed[0]["position"] == 7
+    assert listed[0]["created_at"].endswith("+00:00")
+
+
+def test_a_change_whose_rule_cant_be_played_is_dropped_not_the_week(env):
+    client, Session, _ = env
+    _row_station(Session)
+    pid = client.post("/api/stations/rows/generate", json={"week": 1, "seed": 3}).json()["playlist_id"]
+    bad = {"source": "R", "strategy": "archive_ref", "position": 50}
+    r = add(client, pid, rule(row=1, block=1, k=0, new=bad), 1)
+    assert r.status_code == 400
+    assert r.json()["detail"].startswith("the changed rule can't be played: ")
+    # One stored anyway (the pool was bigger then, say) doesn't stop the week.
+    with Session() as db:
+        db.add(WeekChange(playlist_id=pid, row=1, block=1, k=0, kind="rule", rule=bad,
+                          rule_strategy="weighted", rule_source="A"))
+        db.commit()
+    r = client.post("/api/stations/rows/generate", json={"week": 1, "seed": 3})
+    assert r.status_code == 201, r.text
+    [d] = r.json()["week_changes_dropped"]
+    assert d["reason"].startswith("the changed rule can't be played: ")
+
+
+def test_rule_change_on_persistent_cursors_is_the_song_regenerating_gives(env):
+    """A station whose cursors persist: the song worked out when the
+    change is made is the one regenerating keeps (both start from the
+    week's recorded positions, not the live ones it moved on)."""
+    client, Session, _ = env
+    template = {
+        "station": "seq", "name": "Seq", "cadence": "weekly", "rng": "off",
+        "sources": [{"name": "A", "colour": "#aaa", "role": "content"},
+                    {"name": "B", "colour": "#bbb", "role": "content"}],
+        "cursor": {"base_advance_per_week": 0, "cycle_weeks": 1, "persist": True},
+        "layout": {"unit": "slot", "unit_labels": [], "row_start_offsets": [],
+                   "cursors_init": {"CA": 0, "CB": 0},
+                   "flat_slots": [
+                       {"source": "A", "strategy": "sequential", "size": 2, "cursor_id": "CA"},
+                       {"source": "B", "strategy": "sequential", "size": 2, "cursor_id": "CB"},
+                   ]},
+    }
+    with Session() as db:
+        db.add(Station(slug="seq", name="Seq", template=template,
+                       sidecar=synthesize_trivial_sidecar(template)))
+        db.commit()
+    pid = client.post("/api/stations/seq/generate", json={"week": 1}).json()["playlist_id"]
+    new = {"source": "B", "strategy": "sequential", "cursor_id": "CB"}
+    body = made(client, pid, rule(block=1, k=1, new=new, strategy="sequential"), 1)
+    picked = body["slot"]["track_id"]
+    client.post("/api/stations/seq/generate", json={"week": 1})
+    assert trace(client, pid)["slots"][1]["track_id"] == picked
+
+
+def test_the_routes_are_typed_in_openapi(env):
+    client, _, _ = env
+    spec = client.get("/openapi.json").json()
+    schemas = spec["components"]["schemas"]
+    for name in ("WeekChangeOut", "WeekChangesResponse", "WeekChangeAddResponse",
+                 "WeekChangeUndoResponse", "WeekChangeItem", "WeekChangeDropped"):
+        assert name in schemas, name
+    assert "also_plays_at" in schemas["WeekChangeOut"]["properties"]
+
+
+def test_a_version_made_at_the_same_moment_is_a_409(env, monkeypatch):
+    import api.routers.week_changes as wc
+    client, Session, _ = env
+    pid = gen(client)["playlist_id"]
+    real = wc.append_version
+    # As if another request had made version 2 first.
+    monkeypatch.setattr(wc, "append_version", lambda db, pl, **kw: real(db, pl, **kw, version_no=1))
+    r = add(client, pid, swap(track=fresh(client, Session, pid, "A")), 1)
+    assert r.status_code == 409
+    assert r.json()["detail"]["message"].startswith("the week changed at the same moment")
+    assert client.get(f"/api/playlists/{pid}/changes").json()["changes"] == []
+    assert trace(client, pid)["version_no"] == 1
+
+
+def test_a_change_past_a_rules_size_now_is_refused(env):
+    client, Session, _ = env
+    pid = gen(client)["playlist_id"]
+    r = client.post(f"/api/stations/{SLUG}/sidecar/batch", json={"edits": [
+        {"kind": "structuralBlockEdit", "edit": {"op": "size", "slot_index": 0, "new_size": 2}},
+    ]})
+    assert r.status_code == 200, r.text
+    r = add(client, pid, swap(block=1, k=2, track=track_id(Session, "A030")), 1)
+    assert r.status_code == 400
+    assert r.json()["detail"] == "that rule plays 2 songs now; regenerate the week, then change the song"
+    assert add(client, pid, swap(block=1, k=1, track=track_id(Session, "A030")), 1).status_code == 201
+
+
+def test_a_generation_started_while_a_change_is_worked_out_wins(env, monkeypatch):
+    """A rule change can take seconds to work out; a generation started
+    meanwhile would save the week without it, so it's refused, with
+    nothing written."""
+    import api.routers.week_changes as wc
+    client, Session, store = env
+    pid = gen(client)["playlist_id"]
+    real = wc.generate
+    calls = {"n": 0}
+
+    def slow_generate(*a, **kw):
+        out = real(*a, **kw)
+        store.running_job_id = lambda slug, kind: "job9"  # started meanwhile
+        calls["n"] += 1
+        return out
+    monkeypatch.setattr(wc, "generate", slow_generate)
+    r = add(client, pid, rule(block=1, k=0, new={"source": "B", "strategy": "weighted"}), 1)
+    assert calls["n"] == 1
+    assert r.status_code == 409 and r.json()["detail"]["existing_job_id"] == "job9"
+    assert trace(client, pid)["version_no"] == 1
+    with Session() as db:
+        assert db.query(WeekChange).count() == 0
+
+
+# ---------- regenerating a week with mixes gives the same mixes ------------
+
+
+def _mix_station(Session) -> None:
+    template = {
+        "station": "mx", "name": "Mixes", "cadence": "weekly", "rng": "on",
+        "sources": [{"name": "M", "colour": "#0cf", "role": "content"}],
+        "cursor": {"base_advance_per_week": 0, "cycle_weeks": 1},
+        "layout": {"unit": "slot", "unit_labels": [], "row_start_offsets": [],
+                   "flat_slots": [{"source": "M", "strategy": "mix", "size": 3,
+                                   "genre": "House", "exclusion_window": 4}]},
+    }
+    with Session() as db:
+        sp = SourcePlaylist(name="M", role="content")
+        db.add(sp)
+        db.flush()
+        for i in range(1, 9):
+            t = Track(persistent_id=f"H{i}", name=f"House {i}", genre="House")
+            db.add(t)
+            db.flush()
+            db.add(SourcePlaylistEntry(source_playlist_id=sp.id, position=i, track_id=t.id))
+        db.add(Station(slug="mx", name="Mixes", template=template,
+                       sidecar=synthesize_trivial_sidecar(template)))
+        db.commit()
+
+
+def test_regenerating_a_mix_week_gives_the_same_mixes(env):
+    client, Session, _ = env
+    _mix_station(Session)
+
+    def songs(pid):
+        return [s["track_id"] for s in trace(client, pid)["slots"]]
+    w1 = client.post("/api/stations/mx/generate", json={"week": 1, "seed": 5}).json()["playlist_id"]
+    w2 = client.post("/api/stations/mx/generate", json={"week": 2, "seed": 6}).json()["playlist_id"]
+    first1, first2 = songs(w1), songs(w2)
+    assert not set(first1) & set(first2)  # week 2 avoided week 1's mixes
+    # The sync route, twice: the same mixes (not avoiding its own).
+    for _ in range(2):
+        client.post("/api/stations/mx/generate", json={"week": 2, "seed": 6})
+        assert songs(w2) == first2
+    # A past week isn't changed by the weeks after it.
+    client.post("/api/stations/mx/generate", json={"week": 1, "seed": 5})
+    assert songs(w1) == first1
+    # The generate job, too.
+    r = client.post("/api/stations/mx/jobs/generate", json={"week": 2, "seed": 6})
+    assert _wait(client, r.json()["job_id"])["status"] == "done"
+    assert songs(w2) == first2
+    # And the week's preview shows the week.
+    with Session() as db:
+        st = db.query(Station).filter_by(slug="mx").one()
+        template, sidecar = st.template, st.sidecar
+    r = client.post("/api/stations/mx/jobs/preview",
+                    json={"template": template, "sidecar": sidecar, "week": 2, "seed": 6})
+    body = _wait(client, r.json()["job_id"])
+    assert [s["track_id"] for s in body["result"]["trace"]["slots"]] == first2

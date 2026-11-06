@@ -151,6 +151,70 @@ class WeekChangeItem(BaseModel):
         return self
 
 
+class WeekChangeAdd(BaseModel):
+    """POST /api/playlists/{id}/changes body."""
+    model_config = ConfigDict(strict=True)
+
+    #: The version of the week the change is made to (the page's).
+    expected_version: int = Field(ge=1)
+    change: WeekChangeItem
+
+
+class WeekChangeTrack(BaseModel):
+    id: int
+    name: str
+    artist: str | None = None
+    album: str | None = None
+
+
+class WeekChangeOut(BaseModel):
+    """A stored just-this-week change."""
+    id: int
+    row: int
+    block: int
+    k: int
+    kind: Literal["swap", "rule"]
+    # A swap's song (null once it's gone from the library), and its id.
+    track_id: int | None = None
+    track: WeekChangeTrack | None = None
+    # A rule change's rule (the whole block as changed).
+    rule: dict[str, Any] | None = None
+    rule_strategy: str
+    rule_source: str
+    # The song's place in the week's current version (from 1); null when
+    # that version doesn't play the change (the station's rules have
+    # moved or changed since the week was generated).
+    position: int | None = None
+    # Where else in the week the changed song plays (from 1): a repeat.
+    also_plays_at: list[int] = []
+    created_at: str | None = None
+
+
+class WeekChangesResponse(BaseModel):
+    playlist_id: int
+    version_no: int
+    max_rule_changes: int
+    changes: list[WeekChangeOut]
+
+
+class WeekChangeAddResponse(BaseModel):
+    playlist_id: int
+    # The week's new version, with the change.
+    version_no: int
+    note: str
+    change: WeekChangeOut
+    # The song's trace slot in the new version.
+    slot: dict[str, Any]
+
+
+class WeekChangeUndoResponse(BaseModel):
+    playlist_id: int
+    # The week's new version; the same one when the version didn't play
+    # the change (it's only forgotten).
+    version_no: int
+    note: str | None = None
+
+
 class PreviewRequest(BaseModel):
     """Body for §16.2.6 live-preview endpoint — `POST /api/stations/
     {slug}/jobs/preview`.

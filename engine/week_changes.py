@@ -105,9 +105,56 @@ def changed_rule(template: dict, block: int, rule: dict) -> BlockSpec | None:
     blocks[block - 1] = changed
     try:
         parsed = parse_template(raw)
-    except (TemplateError, KeyError, TypeError, ValueError):
+    except TemplateError:
+        return None
+    except Exception:  # noqa: BLE001 — a rule malformed past the grammar's checks
         return None
     return parsed.layout.all_blocks()[block - 1]
+
+
+def week_matches_rules(slots: list[dict], template: dict) -> bool:
+    """Whether a week (its stored trace slots) is the station's rules
+    as they are now: every song in play order, each under a rule of
+    the strategy and source it played as. The twin of the week page's
+    `weekMatchesRules` (web/src/lib/songList.ts). A week made before
+    the rules were moved or changed isn't, and changing one of its
+    songs would put the change on whichever rule is at its place now.
+    """
+    layout = template.get("layout") or {}
+    rows = bool(layout.get("row_template"))
+    rules = layout.get("row_template") if rows else layout.get("flat_slots")
+    if not rules:
+        return False
+    last = (0, 0)
+    for s in slots:
+        block = s.get("block")
+        if not isinstance(block, int) or not 1 <= block <= len(rules):
+            return False
+        rule = rules[block - 1]
+        row = s.get("row") if rows else 0
+        if not isinstance(row, int) or (row, block) < last:
+            return False
+        if rule.get("strategy") != s.get("strategy") or rule.get("source") != s.get("source"):
+            return False
+        last = (row, block)
+    return True
+
+
+def change_matches_slot(slot: dict, *, kind: str, track_id: int | None,
+                        rule: dict | None, rule_strategy: str, rule_source: str) -> bool:
+    """Whether stored trace `slot` carries this change: its note is of
+    that kind and song (or rule), under the rule the change was made
+    for. After the station's rules move, a change follows its rule but
+    the week's songs don't until it's generated again, so the song at a
+    change's place can carry another change, or none."""
+    note = slot.get("change")
+    if not note or note.get("kind") != kind:
+        return False
+    if (slot.get("strategy"), slot.get("source")) != (rule_strategy, rule_source):
+        return False
+    if kind == "swap":
+        return slot.get("track_id") == track_id
+    return note.get("rule") == rule
 
 
 def find_slot(slots: list[TraceSlot] | list[dict], row: int, block: int, k: int) -> int | None:
@@ -214,8 +261,11 @@ def apply_week_changes_stream(
 
     `run(spec, (row, block))` plays the week, with `spec` instead of the
     rule at (`row`, `block`) and only there, up to that rule, with the
-    same seed and inputs as `result` was made with. Changes that can't be made are dropped, with the reason;
-    rule changes past `MAX_RULE_CHANGES` are dropped too.
+    same seed and inputs as `result` was made with. Changes that can't
+    be made are dropped, with the reason; rule changes past
+    `MAX_RULE_CHANGES` are dropped too, and so is one whose replay
+    fails (a pool too small for it now, say), so one change can't stop
+    the week being generated.
 
     Yields `(done, total)` before each rule change is worked out (each
     plays part of the week again, so a job can show progress and be
@@ -261,7 +311,11 @@ def apply_week_changes_stream(
                 ))
                 continue
             yield (rule_changes - 1, total)
-            shadow = run(change.spec, (change.row, change.block))
+            try:
+                shadow = run(change.spec, (change.row, change.block))
+            except Exception as e:  # noqa: BLE001 — as a generation's errors
+                out.dropped.append(Dropped(change, f"the changed rule can't be played: {e}"))
+                continue
             j = find_slot(shadow.trace.slots, change.row, change.block, change.k)
             if j is None:
                 out.dropped.append(Dropped(change, "the changed rule picks no song there"))

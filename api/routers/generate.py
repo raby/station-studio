@@ -85,6 +85,7 @@ def generate_playlist(slug: str, payload: GenerateRequest, db: Session = Depends
         db,
         station_id=station.id,
         window=max_mix_exclusion_window(template, default=mix_exclusion_weeks),
+        week=payload.week,
     )
 
     # §14.26 + §14.27: alias map for the `weighted` strategy's artist-key

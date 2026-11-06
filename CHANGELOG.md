@@ -33,6 +33,20 @@ this project uses semantic versioning.
 
 - Rollback makes the week's just-this-week changes those of the
   version rolled back to.
+- **A week's versions take far less room.** Their songs are stored
+  compressed: a Rebirth Radio version is about 0.5 MB instead of
+  16.7 MB. Versions written before stay as they are and read the same.
+  Listing a week's versions, or finding its current one, no longer
+  loads every version's songs, so a week with a long history opens
+  faster.
+
+### Fixed
+
+- **Regenerating a week with mixes changed its mixes every time**, even
+  with the same seed: it counted its own earlier version's mixes as
+  recently played. A past week's mixes also depended on the weeks after
+  it. Now only the weeks before a week count, so regenerating gives the
+  same mixes, and a week's preview matches it.
 
 ## [1.18.0] - 2026-11-06
 

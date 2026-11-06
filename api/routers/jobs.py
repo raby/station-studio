@@ -201,6 +201,7 @@ def _load_engine_inputs(
         db,
         station_id=station.id,
         window=max_mix_exclusion_window(template, default=mix_exclusion_weeks),
+        week=week,
     )
     alias_map = load_alias_map(db)
     previous_playlist = load_previous_playlist(

@@ -355,3 +355,98 @@ def test_a_changed_song_drops_the_rules_exclusions_and_undo_restores_them():
     assert out.excluded == []  # they were the rule's song's, not this one's
     assert out.change["was"]["excluded"] == [slot.excluded[0].to_dict()]
     assert unchanged_slot(out.to_dict()) == slot.to_dict()
+
+
+# ---------- review additions --------------------------------------------
+
+
+def test_a_failing_replay_drops_that_change_only():
+    raw = row_station()
+    r = week(raw)
+    ok = swap(1, 1, 0, T(id=901, name="Kept"))
+    bad = rule(raw, 2, 1, 0, {"source": "C", "strategy": "pick"})
+
+    def boom(spec, at):
+        raise IndexError("pool 'C' has 2 tracks")
+    out = apply_week_changes(r, [bad, ok], run=boom)
+    assert [d.reason for d in out.dropped] == ["the changed rule can't be played: pool 'C' has 2 tracks"]
+    assert out.applied == [ok] and out.result.picks[0].name == "Kept"
+
+
+def test_malformed_rules_arent_valid():
+    raw = row_station()
+    for bad in ({"source": {"x": 1}, "strategy": "pick"}, {"source": "A", "strategy": ["pick"]},
+                {"source": "A", "strategy": "sequential", "cursor_id": {"a": 1}}):
+        assert changed_rule(raw, 1, bad) is None, bad
+
+
+def test_week_matches_rules():
+    from engine.week_changes import week_matches_rules
+    for raw in (row_station(), flat_station()):
+        slots = [s.to_dict() for s in week(raw).trace.slots]
+        assert week_matches_rules(slots, raw)
+        # A swapped song still plays as its rule.
+        changed = apply_week_changes(week(raw), [Change(
+            row=1, block=1, k=0, kind="swap", rule_strategy=slots[0]["strategy"],
+            rule_source=slots[0]["source"], track=T(id=1, name="x"))], run=runner(raw)).result
+        assert week_matches_rules([s.to_dict() for s in changed.trace.slots], raw)
+    raw = flat_station()
+    slots = [s.to_dict() for s in week(raw).trace.slots]
+    moved = copy.deepcopy(raw)
+    moved["layout"]["flat_slots"].insert(0, moved["layout"]["flat_slots"].pop(1))
+    assert not week_matches_rules(slots, moved)  # rule 1 is B's now
+    assert not week_matches_rules(list(reversed(slots)), raw)  # out of play order
+    assert not week_matches_rules(slots + [dict(slots[-1], block=9)], raw)
+    assert not week_matches_rules(slots, {"layout": {}})
+    rows = row_station()
+    rslots = [s.to_dict() for s in week(rows).trace.slots]
+    assert not week_matches_rules([rslots[3]] + rslots[:3], rows)  # Tue before Mon
+
+
+def test_change_matches_slot():
+    from engine.week_changes import change_matches_slot
+    raw = row_station()
+    r = week(raw)
+    mine = T(id=777, name="Mine")
+    s = apply_week_changes(r, [swap(1, 1, 0, mine)], run=runner(raw)).result.trace.slots[0].to_dict()
+    kw = dict(kind="swap", track_id=777, rule=None, rule_strategy="pick", rule_source="A")
+    assert change_matches_slot(s, **kw)
+    assert not change_matches_slot(s, **{**kw, "track_id": 778})
+    assert not change_matches_slot(s, **{**kw, "kind": "rule"})
+    assert not change_matches_slot(s, **{**kw, "rule_source": "B"})
+    assert not change_matches_slot(r.trace.slots[0].to_dict(), **kw)
+    new = {"source": "C", "strategy": "pick"}
+    s = apply_week_changes(r, [rule(raw, 1, 1, 0, new)], run=runner(raw)).result.trace.slots[0].to_dict()
+    kw = dict(kind="rule", track_id=None, rule=new, rule_strategy="pick", rule_source="A")
+    assert change_matches_slot(s, **kw)
+    assert not change_matches_slot(s, **{**kw, "rule": {"source": "B", "strategy": "pick"}})
+
+
+def test_a_job_stream_reports_progress_between_replays():
+    from engine.generator import ProgressEvent, generate_stream
+    from engine.week_change_store import EngineInputs, Prepared, stream_with_changes
+    raw = row_station()
+    t = parse_template(raw)
+    changes = [rule(raw, 1, 1, 0, {"source": "C", "strategy": "pick"}),
+               swap(1, 2, 0, T(id=5, name="S")),
+               rule(raw, 2, 2, 1, {"source": "C", "strategy": "pick"})]
+    inputs = EngineInputs(week=2, seed=SEED)
+    made: dict = {}
+    events = list(stream_with_changes(
+        generate_stream(t, POOLS, **inputs.kwargs()),
+        Prepared(changes=changes, pools=dict(POOLS)), template=t, inputs=inputs, holder=made,
+    ))
+    tail = [e for e in events if isinstance(e, ProgressEvent) and e.phase == "week_changes"]
+    assert [(e.current, e.total, e.label) for e in tail] == [
+        (0, 2, "Making this week's changes"),
+        (0, 2, "Making this week's changes (1 of 2)"),
+        (1, 2, "Making this week's changes (2 of 2)"),
+    ]
+    assert events[-1] is made["applied"].result and len(made["applied"].applied) == 3
+    # With nothing to make, the stream is the generation's own.
+    plain = list(stream_with_changes(
+        generate_stream(t, POOLS, **inputs.kwargs()), Prepared(changes=[], pools={}),
+        template=t, inputs=inputs, holder=made,
+    ))
+    assert not any(getattr(e, "phase", None) == "week_changes" for e in plain)
+    assert made["applied"].applied == [] and plain[-1] is made["applied"].result

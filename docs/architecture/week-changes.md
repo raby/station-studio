@@ -37,9 +37,13 @@ changed rule at that one place (`generate(..., override_block=…)`; on a
 row station the other rows keep the template's rule), with the same
 seed and inputs, and stopping once it has played (`stop_after`).
 Everything before it plays the same, so the song is picked in the same
-context the rule's own was. Each replay costs part of a week (about
-3 s at most on Rebirth Radio's 2,196 songs), so a week has at most 20
-rule changes; swaps cost nothing.
+context the rule's own was. Each replay costs part of a week (up to
+about 4 s on Rebirth Radio's 2,196 songs, a few ms on Rebirth
+Classics), so a week has at most 20 rule changes; swaps cost nothing.
+A change can't be made on a week the station's rules have moved on
+from (regenerate it first), past a rule's size now, or as a no-op (the
+song its rule picks, or the rule as it is). Each change version stores
+the whole week, compressed: about 0.5 MB on Rebirth Radio.
 
 ## Generating again
 
@@ -49,6 +53,11 @@ its changes (`engine.week_change_store`). The preview job makes the
 changes it's sent, so the week page can preview its own, following its
 queued edits. Changes that can't be made are reported
 (`week_changes_dropped`, with the reason) and deleted.
+
+Generating a week again with the same seed gives the same week: its
+mix exclusions are the mixes of the weeks **before** it, not its own
+earlier version's or later weeks'. So the song a rule change shows when
+it's made is the one regenerating keeps, and a preview matches its week.
 
 The station's state follows what its **rules** picked
 (`GenerationResult.rule_picks`): mix usage records the rule's song, and

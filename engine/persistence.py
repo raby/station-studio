@@ -682,20 +682,32 @@ def load_alias_map(db: Session) -> dict[str, str]:
     return build_alias_map([(a, c) for (a, c) in rows])
 
 
-def load_excluded_mix_ids(db: Session, *, station_id: int, window: int) -> set[int]:
+def load_excluded_mix_ids(
+    db: Session, *, station_id: int, window: int, week: int | None = None,
+) -> set[int]:
     """Build the §14.25 exclusion set: track ids used as mixes in the
-    station's last `window` playlists.
+    station's last `window` playlists before `week`, the week being
+    generated.
 
     Returns an empty set when window == 0 or when the station has no
     prior playlists. Matches weekly's `_load_excluded_mix_ids` semantics
     but scopes by station_id (station-studio is multi-station; weekly is
-    single-station).
+    single-station). Weekly only ever generated the next week, so its
+    "last playlists" were all earlier weeks; here a week can be
+    regenerated, so only weeks before it count. Counting the week's own
+    earlier version made each regeneration avoid the mixes the last one
+    picked, so the same seed gave other mixes every time; counting later
+    weeks made a past week's mixes depend on the weeks after it.
+    `week=None` counts the station's latest playlists (kept for callers
+    that generate only a new week; every generation path passes it).
     """
     if window <= 0:
         return set()
+    q = db.query(Playlist.id).filter(Playlist.station_id == station_id)
+    if week is not None:
+        q = q.filter(Playlist.week < week)
     recent = (
-        db.query(Playlist.id)
-        .filter(Playlist.station_id == station_id)
+        q
         .order_by(Playlist.week.desc())
         .limit(window)
         .all()
@@ -1144,7 +1156,7 @@ def generate_chain(
         )
         excluded_mix_ids = load_excluded_mix_ids(
             db, station_id=station.id,
-            window=max_mix_exclusion_window(tmpl),
+            window=max_mix_exclusion_window(tmpl), week=week,
         )
         previous_playlist = load_previous_playlist(
             db, station_id=station.id, current_week=week,

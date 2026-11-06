@@ -359,3 +359,36 @@ def test_save_playlist_replacing_existing_clears_old_mix_usage(session_factory):
         rows = db.query(MixUsage).all()
         assert len(rows) == 1
         assert rows[0].track_id != first_track_id
+
+
+def test_exclusions_are_of_the_weeks_before(session_factory):
+    """A week's mix exclusions are the mixes of the weeks BEFORE it: not
+    its own earlier version (regenerating it would avoid what it picked
+    last time, so the same seed gave other mixes every time), and not
+    later weeks (a past week's mixes would depend on the weeks after)."""
+    Session = session_factory
+    station_id, template_dict = _seed_mix_station(Session)
+    tmpl = parse_template(template_dict)
+    with Session() as db:
+        station = db.query(Station).filter_by(id=station_id).one()
+        pools = load_pools(db, tmpl)
+        picks: dict[int, int] = {}
+        for week in (1, 2, 3):
+            excluded = load_excluded_mix_ids(db, station_id=station.id, window=5, week=week)
+            r = generate(tmpl, pools, week=week, excluded_mix_ids=excluded)
+            picks[week] = r.picks[0].id
+            save_playlist(db, station, r, week=week, template=tmpl)
+            db.commit()
+        assert len(set(picks.values())) == 3
+        # Week 2 again: weeks 1 only, so it picks what it did.
+        assert load_excluded_mix_ids(db, station_id=station.id, window=5, week=2) == {picks[1]}
+        for _ in range(2):
+            excluded = load_excluded_mix_ids(db, station_id=station.id, window=5, week=2)
+            r = generate(tmpl, pools, week=2, excluded_mix_ids=excluded)
+            assert r.picks[0].id == picks[2]
+            save_playlist(db, station, r, week=2, template=tmpl)
+            db.commit()
+        assert load_excluded_mix_ids(db, station_id=station.id, window=5, week=1) == set()
+        assert load_excluded_mix_ids(db, station_id=station.id, window=1, week=3) == {picks[2]}
+        # Without a week: the latest playlists, as before.
+        assert load_excluded_mix_ids(db, station_id=station.id, window=5) == set(picks.values())

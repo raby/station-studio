@@ -23,8 +23,9 @@ from datetime import datetime, timezone
 from sqlalchemy import (
     Column, Integer, Text, DateTime, ForeignKey, JSON, UniqueConstraint,
 )
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import deferred, relationship
 
+from engine.compressed_json import CompressedJSON
 from engine.database import Base
 # §16.2.5.t13 — `SidecarJSON` lives in the leaf `engine.sidecar_types`
 # module so this file (loaded by every ORM consumer) doesn't pull in
@@ -310,7 +311,11 @@ class PlaylistVersion(Base):
     rng = Column(Text, nullable=False)
     seed = Column(Integer, nullable=True)
     generated_at = Column(Text, nullable=False)  # ISO8601
-    slots = Column(JSON, nullable=False)         # list[TraceSlot as dict]
+    # list[TraceSlot as dict]. Stored compressed (engine.compressed_json:
+    # ~16.7 MB → ~0.5 MB a version on Rebirth Radio) and loaded only when
+    # read: listing a week's versions, finding its current one or its
+    # next number doesn't load every version's songs.
+    slots = deferred(Column(CompressedJSON, nullable=False))
     # §16.4.t5 — operator-applied annotation tags (e.g.
     # "sent-to-iTunes", "jon-approved"). Linear history is preserved;
     # tags are pure annotations, not branches. Validated at the
@@ -352,9 +357,10 @@ class WeekChange(Base):
     __tablename__ = "week_change"
 
     id = Column(Integer, primary_key=True)
+    # No index of its own: the unique (playlist_id, row, block, k)
+    # constraint's index starts with it.
     playlist_id = Column(
-        Integer, ForeignKey("playlist.id", ondelete="CASCADE"),
-        nullable=False, index=True,
+        Integer, ForeignKey("playlist.id", ondelete="CASCADE"), nullable=False,
     )
     row = Column(Integer, nullable=False)
     block = Column(Integer, nullable=False)
