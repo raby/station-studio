@@ -63,6 +63,10 @@ class GenerationResult:
     # picks; the trace's "strategy" field can't distinguish mirror from
     # fallback-mix because both still record strategy='prev_ref'.
     prev_ref_fallback_mixes: list[tuple[int, str, Any]] = field(default_factory=list)
+    # The rules' own picks, when a week's just-this-week changes
+    # (engine.week_changes) replaced some of `picks`: what the station's
+    # state (mix exclusions) follows. None when nothing was replaced.
+    rule_picks: list[Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -155,6 +159,8 @@ def generate(
     weighted_window_default: int | None = None,
     named_cursor_positions: dict[str, int] | None = None,
     excluded_track_pids: frozenset[str] | set[str] | None = None,
+    stop_after: tuple[int, int] | None = None,
+    override_block: tuple[int, int, BlockSpec] | None = None,
 ) -> GenerationResult:
     """Generate one playlist for the given station + week.
 
@@ -183,6 +189,8 @@ def generate(
         weighted_window_default=weighted_window_default,
         named_cursor_positions=named_cursor_positions,
         excluded_track_pids=excluded_track_pids,
+        stop_after=stop_after,
+        override_block=override_block,
     ):
         if isinstance(event, GenerationResult):
             assert final is None, (
@@ -221,6 +229,8 @@ def generate_stream(
     weighted_window_default: int | None = None,
     named_cursor_positions: dict[str, int] | None = None,
     excluded_track_pids: frozenset[str] | set[str] | None = None,
+    stop_after: tuple[int, int] | None = None,
+    override_block: tuple[int, int, BlockSpec] | None = None,
 ) -> Iterator["ProgressEvent | GenerationResult"]:
     """Generate one playlist as a STREAM of progress events + a
     final result (§16.11 Decision B).
@@ -295,8 +305,24 @@ def generate_stream(
         save_playlist to mutate the table for the next generation.
         Engine stays DB-agnostic — for tests without a DB, pass the
         dict directly.
+    stop_after : (row, block) | None
+        Stop once this block (both 1-indexed, as traces number them; a
+        flat station's row is 1) has played: the result holds the songs
+        up to and including it. For working out one song of a block
+        (engine.week_changes), where nothing after it is needed. None
+        (the default) plays the whole week.
+    override_block : (row, block, BlockSpec) | None
+        Play this rule instead of the template's at that one place (row
+        and block numbered as `stop_after`), and nowhere else: on a row
+        station the other rows keep the template's rule. For a
+        just-this-week rule change (engine.week_changes). Its source
+        must be in `pools`.
     """
     _check_pools_present(template, pools)
+    if override_block is not None and override_block[2].source not in pools:
+        raise ValueError(
+            f"override block source {override_block[2].source!r} not in pools"
+        )
 
     rng = None
     if template.rng == "on":
@@ -385,6 +411,10 @@ def generate_stream(
     for row_idx, unit_label, row_start_in_pool, block_idx, block in (
         _iterate_slots(template, base_cursor)
     ):
+        if stop_after is not None and (row_idx + 1, block_idx + 1) > stop_after:
+            break
+        if override_block is not None and (row_idx + 1, block_idx + 1) == override_block[:2]:
+            block = override_block[2]
         pool = pools[block.source]
         # §16.14.t7 D7: precompute the per-block allowlist union.
         # The block's `allowlist_sources` names role:reference

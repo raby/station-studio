@@ -294,6 +294,9 @@ def generate_cmd(
     )
     from engine.rules import get_rule_value
     from engine.template import TemplateError, parse_template
+    from engine.week_change_store import (
+        EngineInputs, apply_changes, forget_dropped, saved_items,
+    )
 
     db_engine = make_engine()
     Base.metadata.create_all(db_engine)
@@ -342,6 +345,7 @@ def generate_cmd(
             window=max_mix_exclusion_window(
                 template, default=mix_exclusion_weeks,
             ),
+            week=week,
         )
         alias_map = load_alias_map(db)
         previous_playlist = load_previous_playlist(
@@ -354,17 +358,24 @@ def generate_cmd(
         )
         named_cursor_positions = cursor_plan.positions
 
+        inputs = EngineInputs(
+            week=week, seed=seed,
+            excluded_mix_ids=excluded_mix_ids,
+            alias_map=alias_map,
+            previous_playlist=previous_playlist,
+            # t2-review 🟡-1: was missing — now matches the API.
+            weighted_window_default=artist_dedup_window,
+            named_cursor_positions=named_cursor_positions,
+        )
         try:
-            result = engine_generate(
-                template, pools,
-                week=week, seed=seed,
-                excluded_mix_ids=excluded_mix_ids,
-                alias_map=alias_map,
-                previous_playlist=previous_playlist,
-                # t2-review 🟡-1: was missing — now matches the API.
-                weighted_window_default=artist_dedup_window,
-                named_cursor_positions=named_cursor_positions,
+            result = engine_generate(template, pools, **inputs.kwargs())
+            # The week's just-this-week changes, made again.
+            applied = apply_changes(
+                db, result, saved_items(db, station_id=station.id, week=week),
+                template=template, template_raw=station.template,
+                pools=pools, inputs=inputs,
             )
+            result = applied.result
         # t2-review 🟢-1: broaden the catch from `ValueError` to
         # `Exception` — same as the API's `except Exception` →
         # HTTPException(400). Mid-generate failures from malformed
@@ -385,6 +396,7 @@ def generate_cmd(
                 week=week, template=template,
                 cursor_positions=cursor_plan.positions,
             )
+            forget_dropped(db, applied.dropped)
             db.commit()
         except IntegrityError:
             db.rollback()
@@ -417,6 +429,14 @@ def generate_cmd(
             f"Generated playlist {playlist.id} for '{slug}' week {week} "
             f"({len(result.picks)} slots)."
         )
+        if applied.applied:
+            n = len(applied.applied)
+            click.echo(f"Made {n} just-this-week change{'s' if n != 1 else ''}.")
+        for d in applied.dropped:
+            click.echo(
+                f"Dropped a just-this-week change (row {d.change.row}, rule "
+                f"{d.change.block}, song {d.change.k + 1}): {d.reason}."
+            )
 
 
 @main.command(

@@ -23,8 +23,9 @@ from datetime import datetime, timezone
 from sqlalchemy import (
     Column, Integer, Text, DateTime, ForeignKey, JSON, UniqueConstraint,
 )
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import deferred, relationship
 
+from engine.compressed_json import CompressedJSON
 from engine.database import Base
 # §16.2.5.t13 — `SidecarJSON` lives in the leaf `engine.sidecar_types`
 # module so this file (loaded by every ORM consumer) doesn't pull in
@@ -208,6 +209,14 @@ class Playlist(Base):
         cascade="all, delete-orphan",
         order_by="PlaylistVersion.version_no",
     )
+    # Just-this-week changes (engine.week_changes): the week's standing
+    # one-off changes, made again whenever it's generated.
+    week_changes = relationship(
+        "WeekChange",
+        back_populates="playlist",
+        cascade="all, delete-orphan",
+        order_by="WeekChange.id",
+    )
 
     __table_args__ = (
         UniqueConstraint("station_id", "week"),
@@ -302,7 +311,11 @@ class PlaylistVersion(Base):
     rng = Column(Text, nullable=False)
     seed = Column(Integer, nullable=True)
     generated_at = Column(Text, nullable=False)  # ISO8601
-    slots = Column(JSON, nullable=False)         # list[TraceSlot as dict]
+    # list[TraceSlot as dict]. Stored compressed (engine.compressed_json:
+    # ~16.7 MB → ~0.5 MB a version on Rebirth Radio) and loaded only when
+    # read: listing a week's versions, finding its current one or its
+    # next number doesn't load every version's songs.
+    slots = deferred(Column(CompressedJSON, nullable=False))
     # §16.4.t5 — operator-applied annotation tags (e.g.
     # "sent-to-iTunes", "jon-approved"). Linear history is preserved;
     # tags are pure annotations, not branches. Validated at the
@@ -316,6 +329,9 @@ class PlaylistVersion(Base):
     # station's live cursors (which have moved on with later weeks).
     # NULL for stateless templates and for versions made before 1.12.
     cursors = Column(JSON(none_as_null=True), nullable=True)
+    # What made this version, in words, when it wasn't a generation
+    # ("Just this week: song 12 swapped"). NULL for generated versions.
+    note = Column(Text, nullable=True)
 
     playlist = relationship("Playlist", back_populates="versions")
 
@@ -323,6 +339,51 @@ class PlaylistVersion(Base):
         UniqueConstraint(
             "playlist_id", "version_no",
             name="uq_playlist_version_playlist_id_version_no",
+        ),
+    )
+
+
+class WeekChange(Base):
+    """A just-this-week change to one song of a generated week
+    (engine.week_changes): kept with the week (deleting the week deletes
+    it) and made again whenever the week is generated.
+
+    Addressed by the song's place: `row` and `block` (from 1, as traces
+    number them; a flat station's row is 1) and which of that rule's
+    songs (`k`, from 0). `rule_strategy` / `rule_source` are the rule's
+    when the change was made: a change whose rule has since become
+    something else is dropped rather than put on it.
+    """
+    __tablename__ = "week_change"
+
+    id = Column(Integer, primary_key=True)
+    # No index of its own: the unique (playlist_id, row, block, k)
+    # constraint's index starts with it.
+    playlist_id = Column(
+        Integer, ForeignKey("playlist.id", ondelete="CASCADE"), nullable=False,
+    )
+    row = Column(Integer, nullable=False)
+    block = Column(Integer, nullable=False)
+    k = Column(Integer, nullable=False)
+    kind = Column(Text, nullable=False)  # "swap" | "rule"
+    # A swap's song. SET NULL if the track is deleted: the change is then
+    # dropped at the next generation, and says why.
+    track_id = Column(
+        Integer, ForeignKey("track.id", ondelete="SET NULL"), nullable=True,
+    )
+    # A rule change's rule: the whole block, as it plays this song.
+    rule = Column(JSON(none_as_null=True), nullable=True)
+    rule_strategy = Column(Text, nullable=False)
+    rule_source = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    playlist = relationship("Playlist", back_populates="week_changes")
+    track = relationship("Track")
+
+    __table_args__ = (
+        UniqueConstraint(
+            "playlist_id", "row", "block", "k",
+            name="uq_week_change_playlist_id_row_block_k",
         ),
     )
 

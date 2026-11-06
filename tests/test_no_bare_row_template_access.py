@@ -90,7 +90,7 @@ ALLOWED_SITES: set[tuple[str, int]] = {
     # when window/pick/sequential/weighted dispatch sites picked
     # up allowed_track_pids kwarg + the per-block allowlist union
     # construction + sequential's inline allowlist check.
-    ("engine/generator.py", 1029),
+    ("engine/generator.py", 1059),
     # NOTE: `LayoutSpec.all_blocks` itself (engine/template.py:174)
     # uses `self.row_template` (no `.layout.` prefix; it's a method
     # ON LayoutSpec) and so doesn't match this lint pattern. That's

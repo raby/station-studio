@@ -18,6 +18,9 @@ from engine.persistence import (
 from engine.rules import get_rule_value
 from engine.template import parse_template, TemplateError
 from engine.generator import generate
+from engine.week_change_store import (
+    EngineInputs, apply_changes, dropped_report, forget_dropped, saved_items,
+)
 from engine.exporter import (
     export_playlist, export_playlist_to_disk, prune_export_directory,
 )
@@ -82,6 +85,7 @@ def generate_playlist(slug: str, payload: GenerateRequest, db: Session = Depends
         db,
         station_id=station.id,
         window=max_mix_exclusion_window(template, default=mix_exclusion_weeks),
+        week=payload.week,
     )
 
     # §14.26 + §14.27: alias map for the `weighted` strategy's artist-key
@@ -129,21 +133,29 @@ def generate_playlist(slug: str, payload: GenerateRequest, db: Session = Depends
     except TemplateError as e:
         raise HTTPException(400, str(e))
 
+    inputs = EngineInputs(
+        week=payload.week, seed=seed,
+        excluded_mix_ids=excluded_mix_ids,
+        alias_map=alias_map,
+        previous_playlist=previous_playlist,
+        # §14.29: weighted blocks without BlockSpec.window inherit
+        # the station rule. The generator's _resolve_weighted_window
+        # helper makes this precedence explicit.
+        weighted_window_default=artist_dedup_window,
+        # §14.30: stateful cursor positions when persist=True.
+        named_cursor_positions=named_cursor_positions,
+        # §16.14.t5: cross-pool dedup exclusion set.
+        excluded_track_pids=excluded_track_pids,
+    )
     try:
-        result = generate(
-            template, pools, week=payload.week, seed=seed,
-            excluded_mix_ids=excluded_mix_ids,
-            alias_map=alias_map,
-            previous_playlist=previous_playlist,
-            # §14.29: weighted blocks without BlockSpec.window inherit
-            # the station rule. The generator's _resolve_weighted_window
-            # helper makes this precedence explicit.
-            weighted_window_default=artist_dedup_window,
-            # §14.30: stateful cursor positions when persist=True.
-            named_cursor_positions=named_cursor_positions,
-            # §16.14.t5: cross-pool dedup exclusion set.
-            excluded_track_pids=excluded_track_pids,
+        result = generate(template, pools, **inputs.kwargs())
+        # The week's just-this-week changes, made again (engine.week_changes).
+        applied = apply_changes(
+            db, result, saved_items(db, station_id=station.id, week=payload.week),
+            template=template, template_raw=station.template,
+            pools=pools, inputs=inputs,
         )
+        result = applied.result
     except Exception as e:
         raise HTTPException(400, f"generation failed: {e}")
 
@@ -152,6 +164,7 @@ def generate_playlist(slug: str, payload: GenerateRequest, db: Session = Depends
             db, station, result, week=payload.week, template=template,
             cursor_positions=cursor_plan.positions,
         )
+        forget_dropped(db, applied.dropped)
         db.commit()
     except IntegrityError:
         db.rollback()
@@ -185,6 +198,8 @@ def generate_playlist(slug: str, payload: GenerateRequest, db: Session = Depends
         station=station.slug,
         week=payload.week,
         slot_count=len(result.picks),
+        week_changes_applied=len(applied.applied),
+        week_changes_dropped=dropped_report(applied.dropped),
     )
 
 
@@ -363,10 +378,11 @@ def get_trace(
 
     §16.4 — multi-version semantics. `?v=N` selects version N
     explicitly; omitting `v` returns the CURRENT (max) version. The
-    wire shape is unchanged from pre-§16.4 (`trace_id`, `station`,
-    `week`, `rng`, `seed`, `generated_at`, `slots`) — adding a field
-    would be a separate slice (the `/versions` endpoint below is the
-    explicit history-listing surface).
+    wire shape is pre-§16.4's (`trace_id`, `station`, `week`, `rng`,
+    `seed`, `generated_at`, `slots`) plus the version's `version_no`
+    and `note` (what made it, when it wasn't a generation), which the
+    week page's just-this-week changes are made against. The
+    `/versions` endpoint below is the history-listing surface.
 
     Errors:
       * 404 — playlist has no PlaylistVersion rows (fresh row pre-
@@ -409,6 +425,8 @@ def get_trace(
         "seed": t.seed,
         "generated_at": t.generated_at,
         "slots": t.slots,
+        "version_no": t.version_no,
+        "note": t.note,
     }
 
 
@@ -452,6 +470,9 @@ def get_versions(playlist_id: int, db: Session = Depends(get_db)):
                 # §16.4.t5 — operator-applied annotations. Always a
                 # list (DB column is NOT NULL DEFAULT []).
                 "tags": r.tags,
+                # What made the version when it wasn't a generation (a
+                # rollback, a just-this-week change); null otherwise.
+                "note": r.note,
             }
             for r in rows
         ],

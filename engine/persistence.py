@@ -364,6 +364,9 @@ def rollback_playlist(
       * Playlist.seed is updated to the source version's seed.
       * §16.4.t3 retention cap is applied after the append (the new
         version counts toward the cap; oldest may be pruned).
+      * The new version's note says "Rolled back to version N".
+      * The week's just-this-week changes become those the rolled-back
+        version's songs carry, so regenerating keeps what it shows.
 
     Not-touched (documented limitation):
       * MixUsage rows are NOT rewritten — rebuilding them requires
@@ -443,44 +446,77 @@ def rollback_playlist(
                 f"{pos}: track {tid} has been deleted; cannot roll back."
             )
 
-    # Clear latest-only children (mirrors save_playlist).
-    for e in list(playlist.entries):
-        db.delete(e)
+    # Clear MixUsage (see "Not-touched" above); append_version
+    # rewrites the entries.
     db.query(MixUsage).filter_by(playlist_id=playlist.id).delete(
         synchronize_session=False,
     )
     db.flush()
 
-    # Append new PlaylistVersion with source's content.
-    new_trace_id = str(uuid.uuid4())
-    new_generated_at = datetime.now(timezone.utc).isoformat()
-    next_version_no = max_version_no + 1
-    db.add(PlaylistVersion(
-        playlist_id=playlist.id,
-        version_no=next_version_no,
-        trace_id=new_trace_id,
-        station_slug=source.station_slug,
-        week=source.week,
-        rng=source.rng,
-        seed=source.seed,
-        generated_at=new_generated_at,
+    new_version = append_version(
+        db, playlist,
         # Deep-copy via list-comprehension over the slot dicts. The
         # source row stays addressable (rollback is non-destructive);
         # mutating it via shared references would silently corrupt
         # history.
         slots=[dict(s) for s in src_slots],
-        # The rolled-back content was made from these positions; a
-        # later regeneration of the week starts from them again.
-        cursors=dict(source.cursors) if source.cursors is not None else None,
-    ))
+        like=source,
+        note=f"Rolled back to version {to_version}",
+        version_no=max_version_no + 1,
+    )
+    # The week's just-this-week changes become the rolled-back
+    # version's: those its songs carry (engine.week_changes).
+    from engine.week_change_store import restore_from_slots
+    restore_from_slots(db, playlist, src_slots)
+    db.flush()
+    return new_version
 
+
+def append_version(
+    db: Session,
+    playlist: Playlist,
+    *,
+    slots: list[dict],
+    like: PlaylistVersion,
+    note: str | None,
+    version_no: int | None = None,
+) -> PlaylistVersion:
+    """Append a version of `playlist` with these `slots` (trace slot
+    dicts, each with a `track_id` that exists), made now, and make it
+    current: its entries are rewritten from the slots and the
+    playlist's trace pointer moves to it. Its rng, seed and cursors are
+    `like`'s, the version its songs were generated as. Doesn't touch
+    MixUsage (callers whose songs' rules picked differently do).
+
+    For versions that aren't a generation: a rollback, or a
+    just-this-week change made to one song. Flushed, not committed.
+    """
+    if version_no is None:
+        version_no = max((v.version_no for v in playlist.versions), default=0) + 1
+    for e in list(playlist.entries):
+        db.delete(e)
+    db.flush()
+    version = PlaylistVersion(
+        playlist_id=playlist.id,
+        version_no=version_no,
+        trace_id=str(uuid.uuid4()),
+        station_slug=like.station_slug,
+        week=like.week,
+        rng=like.rng,
+        seed=like.seed,
+        generated_at=datetime.now(timezone.utc).isoformat(),
+        slots=slots,
+        # The content was made from these positions; a later
+        # regeneration of the week starts from them again.
+        cursors=dict(like.cursors) if like.cursors is not None else None,
+        note=note,
+    )
+    db.add(version)
     # Rewrite PlaylistEntry rows from the slots — latest-only.
-    for pos, tid in enumerate(track_ids_in_order, start=1):
-        # `tid` already validated above; the guard's there for type
-        # narrowing.
-        if tid is None:
+    for pos, slot in enumerate(slots, start=1):
+        tid = slot.get("track_id")
+        if tid is None:  # pragma: no cover — callers check first
             continue
-        slot = src_slots[pos - 1]
         db.add(PlaylistEntry(
             playlist_id=playlist.id,
             track_id=tid,
@@ -488,22 +524,13 @@ def rollback_playlist(
             source_name=slot.get("source"),
             slot_type=slot.get("strategy"),
         ))
-
     # Flip denormalized pointers.
-    playlist.trace_id = new_trace_id
-    playlist.seed = source.seed
-
+    playlist.trace_id = version.trace_id
+    playlist.seed = like.seed
     # Apply retention cap — the new version counts toward it.
-    _prune_old_versions(
-        db, station=playlist.station, playlist_id=playlist.id,
-    )
-
+    _prune_old_versions(db, station=playlist.station, playlist_id=playlist.id)
     db.flush()
-    return (
-        db.query(PlaylistVersion)
-        .filter_by(playlist_id=playlist.id, version_no=next_version_no)
-        .one()
-    )
+    return version
 
 
 def _save_mix_usages(db: Session, *, playlist_id: int, template: Template, result) -> None:
@@ -529,7 +556,11 @@ def _save_mix_usages(db: Session, *, playlist_id: int, template: Template, resul
     # form's list (XOR-enforced so one is always empty); same indexing
     # math regardless.
     block_list = template.layout.all_blocks()
-    for track, slot in zip(result.picks, result.trace.slots):
+    # Just-this-week changes (engine.week_changes) replace some picks;
+    # the station's state follows what its rules picked, so a song
+    # changed this week doesn't shift the mix rotation of later weeks.
+    picks = result.rule_picks if result.rule_picks is not None else result.picks
+    for track, slot in zip(picks, result.trace.slots):
         # block / row are 1-indexed on the slot.
         block_spec = block_list[slot.block - 1]
         if block_spec.strategy != "mix":
@@ -607,11 +638,12 @@ def load_previous_playlist(
     `_load_previous_weekly`, but station-scoped via Playlist.station_id
     since station-studio is multi-station.
 
-    `current_week` is excluded explicitly. Otherwise a regeneration of
-    the current week (which deletes the existing playlist before
-    saving the new one — see save_playlist) would race with the
-    "most recent" query, and a regenerated week W shouldn't reference
-    its own pre-deletion contents.
+    `current_week` is excluded explicitly: a regenerated week W keeps
+    its Playlist row (save_playlist appends a version to it), and it
+    mustn't reference its own songs.
+
+    These are the songs the week played, just-this-week changes
+    (engine.week_changes) included: `prev_ref` repeats what was played.
     """
     prev = (
         db.query(Playlist)
@@ -650,20 +682,32 @@ def load_alias_map(db: Session) -> dict[str, str]:
     return build_alias_map([(a, c) for (a, c) in rows])
 
 
-def load_excluded_mix_ids(db: Session, *, station_id: int, window: int) -> set[int]:
+def load_excluded_mix_ids(
+    db: Session, *, station_id: int, window: int, week: int | None = None,
+) -> set[int]:
     """Build the §14.25 exclusion set: track ids used as mixes in the
-    station's last `window` playlists.
+    station's last `window` playlists before `week`, the week being
+    generated.
 
     Returns an empty set when window == 0 or when the station has no
     prior playlists. Matches weekly's `_load_excluded_mix_ids` semantics
     but scopes by station_id (station-studio is multi-station; weekly is
-    single-station).
+    single-station). Weekly only ever generated the next week, so its
+    "last playlists" were all earlier weeks; here a week can be
+    regenerated, so only weeks before it count. Counting the week's own
+    earlier version made each regeneration avoid the mixes the last one
+    picked, so the same seed gave other mixes every time; counting later
+    weeks made a past week's mixes depend on the weeks after it.
+    `week=None` counts the station's latest playlists (kept for callers
+    that generate only a new week; every generation path passes it).
     """
     if window <= 0:
         return set()
+    q = db.query(Playlist.id).filter(Playlist.station_id == station_id)
+    if week is not None:
+        q = q.filter(Playlist.week < week)
     recent = (
-        db.query(Playlist.id)
-        .filter(Playlist.station_id == station_id)
+        q
         .order_by(Playlist.week.desc())
         .limit(window)
         .all()
@@ -1083,6 +1127,9 @@ def generate_chain(
     # and importing at module-load creates a circular dep.
     from engine.generator import generate
     from engine.template import parse_template
+    from engine.week_change_store import (
+        EngineInputs, apply_changes, forget_dropped, saved_items,
+    )
 
     station = db.query(Station).filter_by(slug=station_slug).one()
     tmpl = parse_template(station.template)
@@ -1109,13 +1156,12 @@ def generate_chain(
         )
         excluded_mix_ids = load_excluded_mix_ids(
             db, station_id=station.id,
-            window=max_mix_exclusion_window(tmpl),
+            window=max_mix_exclusion_window(tmpl), week=week,
         )
         previous_playlist = load_previous_playlist(
             db, station_id=station.id, current_week=week,
         )
-        result = generate(
-            tmpl, pools,
+        inputs = EngineInputs(
             week=week,
             seed=seed_base + week,
             excluded_mix_ids=excluded_mix_ids,
@@ -1125,11 +1171,19 @@ def generate_chain(
             named_cursor_positions=positions,
             excluded_track_pids=excluded_track_pids,
         )
+        result = generate(tmpl, pools, **inputs.kwargs())
+        # A week regenerated in the chain keeps its just-this-week changes.
+        applied = apply_changes(
+            db, result, saved_items(db, station_id=station.id, week=week),
+            template=tmpl, template_raw=station.template, pools=pools, inputs=inputs,
+        )
+        result = applied.result
         pids_by_week[week] = [track_pids[t.id] for t in result.picks]
         save_playlist(
             db, station=station, result=result, week=week, template=tmpl,
             cursor_positions=plan.positions,
         )
+        forget_dropped(db, applied.dropped)
         finish_cursors(
             db, plan=plan, station_id=station.id, template=tmpl, pools=pools,
             advance_step=advance_step, reset_cycle=reset_cycle, week=week,

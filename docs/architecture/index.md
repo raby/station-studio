@@ -18,6 +18,10 @@ order — they unblock most "why is it like this?" questions.
   the `Playlist` + `PlaylistVersion` model + the `trace_id`
   denormalised pointer.
 
+- :material-swap-horizontal: **[Just-this-week changes](week-changes.md)** —
+  one song of a week changed for that week only, kept when it's
+  generated again.
+
 - :material-database-edit: **[Sidecar + DB-as-truth](sidecar-db-as-truth.md)** —
   the visual editor's JSON column + its grammar drift detector.
 

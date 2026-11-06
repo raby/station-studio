@@ -51,9 +51,19 @@ class TraceSlot:
     # before §14.23 lack the field and round-trip back without it (the
     # frontend treats missing as empty).
     excluded: list[ExcludedCandidate] = field(default_factory=list)
+    # A just-this-week change made to this song (engine.week_changes):
+    # its kind, the song the rule had picked (`was`), and for a rule
+    # change the rule it was picked by. The slot's own source,
+    # strategy and block stay the rule's. Absent (None) for every
+    # other song, and then left out of to_dict, so traces of weeks
+    # without changes are exactly as before.
+    change: dict | None = None
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        d = asdict(self)
+        if d["change"] is None:
+            del d["change"]
+        return d
 
 
 @dataclass

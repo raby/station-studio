@@ -4,6 +4,50 @@ All notable changes are listed here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses semantic versioning.
 
+## [Unreleased]
+
+### Added
+
+- **Just-this-week changes, in the API** (the week page's controls come
+  next). One song of a generated week can be changed for that week
+  only: swapped for a song chosen from the station's pools, or picked
+  by its rule changed (another pool, say). It's kept whenever the week
+  is generated again, every other song plays as the rules play it, and
+  the station's rotation follows what the rules picked, so later weeks
+  don't shift. Each change, or undo, makes a new version of the week
+  with a note saying what changed, so Rollback undoes it too.
+  `GET/POST /api/playlists/{id}/changes`,
+  `DELETE /api/playlists/{id}/changes/{change_id}`.
+- Changes follow their rule when the station's rules are moved, added
+  or removed in the editor. A change that can't be made when the week
+  is generated (its rule became another kind, its song left the
+  library) is dropped, and the generation says which and why
+  (`week_changes_dropped`; the CLI prints it).
+- A week's versions say what made them when it wasn't a generation
+  (`note`: "Rolled back to version 2", a just-this-week change). The
+  trace says its `version_no` and `note`.
+- The preview job takes a week's changes (`week_changes`) to make in
+  the preview.
+
+### Changed
+
+- Rollback makes the week's just-this-week changes those of the
+  version rolled back to.
+- **A week's versions take far less room.** Their songs are stored
+  compressed: a Rebirth Radio version is about 0.5 MB instead of
+  16.7 MB. Versions written before stay as they are and read the same.
+  Listing a week's versions, or finding its current one, no longer
+  loads every version's songs, so a week with a long history opens
+  faster.
+
+### Fixed
+
+- **Regenerating a week with mixes changed its mixes every time**, even
+  with the same seed: it counted its own earlier version's mixes as
+  recently played. A past week's mixes also depended on the weeks after
+  it. Now only the weeks before a week count, so regenerating gives the
+  same mixes, and a week's preview matches it.
+
 ## [1.18.0] - 2026-11-06
 
 ### Added

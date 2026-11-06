@@ -62,6 +62,10 @@ from engine.persistence import (
 )
 from engine.rules import get_rule_value
 from engine.template import parse_template, TemplateError
+from engine.week_change_store import (
+    EngineInputs, dropped_report, forget_dropped, prepare_changes, saved_items,
+    stream_with_changes,
+)
 from api.deps import get_db, get_session_factory
 from api.job_runner import (
     JobSnapshot,
@@ -149,6 +153,18 @@ class _EngineInputs:
     # c1); the helper now centralizes both load sites.
     excluded_track_pids: frozenset[str]
 
+    def engine(self, *, week: int, seed: int | None) -> EngineInputs:
+        """The generator's inputs past the template and pools."""
+        return EngineInputs(
+            week=week, seed=seed,
+            excluded_mix_ids=self.excluded_mix_ids,
+            alias_map=self.alias_map,
+            previous_playlist=self.previous_playlist,
+            weighted_window_default=self.artist_dedup_window,
+            named_cursor_positions=self.named_cursor_positions,
+            excluded_track_pids=self.excluded_track_pids,
+        )
+
 
 def _load_engine_inputs(
     db: Session, station: Station, template: Any, week: int,
@@ -185,6 +201,7 @@ def _load_engine_inputs(
         db,
         station_id=station.id,
         window=max_mix_exclusion_window(template, default=mix_exclusion_weeks),
+        week=week,
     )
     alias_map = load_alias_map(db)
     previous_playlist = load_previous_playlist(
@@ -332,17 +349,19 @@ def start_generate_job(
     # signature). Capturing the loaded inputs into the closure keeps
     # the runner engine-agnostic.
 
+    engine_inputs = inputs.engine(week=week, seed=seed)
+    # The week's just-this-week changes (engine.week_changes), loaded
+    # here while the request's session is open; the worker makes them.
+    prepared = prepare_changes(
+        db, saved_items(db, station_id=station.id, week=week),
+        template_raw=station.template, pools=inputs.pools,
+    )
+    made: dict[str, Any] = {}
+
     def stream_factory():
-        return generate_stream(
-            template, inputs.pools,
-            week=week, seed=seed,
-            excluded_mix_ids=inputs.excluded_mix_ids,
-            alias_map=inputs.alias_map,
-            previous_playlist=inputs.previous_playlist,
-            weighted_window_default=inputs.artist_dedup_window,
-            named_cursor_positions=inputs.named_cursor_positions,
-            # §16.2.6.t7: align with sync /generate + /jobs/preview.
-            excluded_track_pids=inputs.excluded_track_pids,
+        return stream_with_changes(
+            generate_stream(template, inputs.pools, **engine_inputs.kwargs()),
+            prepared, template=template, inputs=engine_inputs, holder=made,
         )
 
     # on_result runs inside the worker thread. The request's `db` is
@@ -377,6 +396,7 @@ def start_generate_job(
                     week=week, template=template,
                     cursor_positions=inputs.cursor_plan.positions,
                 )
+                forget_dropped(worker_db, made["applied"].dropped)
                 worker_db.commit()
             except IntegrityError:  # pragma: no cover
                 # Concurrent (station_id, week) generations racing the
@@ -417,6 +437,8 @@ def start_generate_job(
                 "station": station_slug,
                 "week": week,
                 "slot_count": len(result.picks),
+                "week_changes_applied": len(made["applied"].applied),
+                "week_changes_dropped": dropped_report(made["applied"].dropped),
             }
 
     # ----- Spawn the job --------------------------------------------
@@ -561,25 +583,29 @@ def start_preview_job(
         seed = _preview_seed(db, station, week)
 
     # ----- Closures -------------------------------------------------
+    engine_inputs = inputs.engine(week=week, seed=seed)
+    # Just-this-week changes the week page sent (its own, following its
+    # queued edits), made on the previewed template.
+    prepared = prepare_changes(
+        db, [c.model_dump() for c in payload.week_changes or []],
+        template_raw=payload.template, pools=inputs.pools,
+    )
+    made: dict[str, Any] = {}
+
     def stream_factory():
-        return generate_stream(
-            parsed_template, inputs.pools,
-            week=week, seed=seed,
-            excluded_mix_ids=inputs.excluded_mix_ids,
-            alias_map=inputs.alias_map,
-            previous_playlist=inputs.previous_playlist,
-            weighted_window_default=inputs.artist_dedup_window,
-            named_cursor_positions=inputs.named_cursor_positions,
-            excluded_track_pids=inputs.excluded_track_pids,
+        return stream_with_changes(
+            generate_stream(parsed_template, inputs.pools, **engine_inputs.kwargs()),
+            prepared, template=parsed_template, inputs=engine_inputs, holder=made,
         )
 
     def on_result(result: GenerationResult) -> dict[str, Any]:
         # NO persistence side-effects. Pure transformation: the trace
         # dict the frontend renders + a slot_count summary for the
-        # JobSnapshot's UI.
+        # JobSnapshot's UI, and the changes that couldn't be made.
         return {
             "trace": result.trace.to_dict(),
             "slot_count": len(result.picks),
+            "week_changes_dropped": dropped_report(made["applied"].dropped),
         }
 
     # ----- Spawn the job --------------------------------------------

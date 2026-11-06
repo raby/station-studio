@@ -48,6 +48,21 @@ what the iTunes XML export reads. Historical versions are
 reconstructable from `PlaylistVersion.slots` JSON; they don't
 need a parallel entries table.
 
+## Storage
+
+`PlaylistVersion.slots` is stored compressed
+(`engine.compressed_json`: a JSON string `"z1:<base64 zlib JSON>"`):
+a week's slots are mostly the candidates each rule passed over, so a
+Rebirth Radio version is about 16.7 MB as JSON and 0.5 MB stored. Rows
+written before stay plain JSON and read the same; the migration that
+introduced it unpacks every row on downgrade. The column is deferred:
+listing a week's versions or finding its current one doesn't load the
+songs of every version.
+
+Versions that aren't generations (a rollback, a
+[just-this-week change](week-changes.md)) carry a `note` saying what
+made them.
+
 ## Read more
 
 DESIGN.md §16.4 (the SHIPPED block at the top of the section)
