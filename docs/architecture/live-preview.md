@@ -51,6 +51,11 @@ preview does: queued changes show on the blocks, and an edit made there is
 recorded against what's on screen. That matters because the queue replays
 edits in order, each on top of the ones before.
 
+A generated week's [just-this-week changes](week-changes.md) are
+made in its previews too (the preview job's `week_changes`), moved
+through the queue as saving would move them, so a preview shows what
+regenerating the week would give.
+
 ## Undoing a queued change
 
 The queued changes are listed above the tabs, in plain words, each with

@@ -117,7 +117,36 @@ export interface TraceSlot {
    * this field; the viewer treats missing/undefined as an empty list.
    */
   excluded?: ExcludedCandidate[];
+  /** A just-this-week change made to this song (engine.week_changes):
+   *  the slot keeps its rule's source, strategy and place; this says
+   *  what changed. Absent on a song as its rule picked it. */
+  change?: SlotChange;
 }
+
+/** The rule's own song a just-this-week change replaced. */
+export interface ChangedFrom {
+  track_id: number | null;
+  track_name: string;
+  track_artist: string | null;
+  pool_index: number;
+  reason?: string;
+}
+
+/** A trace slot's note of a just-this-week change. */
+export type SlotChange =
+  | { kind: 'swap'; was: ChangedFrom }
+  | {
+      kind: 'rule';
+      was: ChangedFrom;
+      /** What the changed rule picked from, and how. */
+      source: string;
+      strategy: string;
+      pool_index: number;
+      /** The rule as changed (a whole block). */
+      rule: Record<string, unknown>;
+      /** What it changed: each field set differently, null for one left out. */
+      fields: Record<string, unknown>;
+    };
 
 export interface Trace {
   trace_id: string;
@@ -127,6 +156,11 @@ export interface Trace {
   seed: number | null;
   generated_at: string;
   slots: TraceSlot[];
+  /** Which version of the week this is (servers before 1.19 don't say). */
+  version_no?: number;
+  /** What made it, when it wasn't a generation ("Rolled back to
+   *  version 2", a just-this-week change); null for a generation. */
+  note?: string | null;
 }
 
 // ---- internals ----------------------------------------------------------
@@ -295,6 +329,9 @@ export interface VersionSummary {
    * backfills existing rows).
    */
   tags: string[];
+  /** What made the version when it wasn't a generation; null otherwise
+   *  (and absent from servers before 1.19). */
+  note?: string | null;
 }
 
 export interface VersionsResponse {
@@ -533,6 +570,10 @@ export interface GenerateResponse {
   station: string;
   week: number;
   slot_count: number;
+  /** Just-this-week changes made again, and those that couldn't be
+   *  (deleted, with why). Absent from servers before 1.19. */
+  week_changes_applied?: number;
+  week_changes_dropped?: WeekChangeDropped[];
 }
 
 /**
@@ -777,6 +818,8 @@ export interface JobErrorBody {
 export interface PreviewResult {
   trace: Trace;
   slot_count: number;
+  /** The `week_changes` sent that couldn't be made, and why. */
+  week_changes_dropped?: WeekChangeDropped[];
 }
 
 
@@ -1662,14 +1705,18 @@ export const startPreviewJob = async (
   week: number,
   seed?: number,
   fetch_ = fetch,
+  weekChanges?: WeekChangeItem[],
 ): Promise<JobStartResponse> => {
   const body: {
     template: Record<string, unknown>;
     sidecar: Record<string, unknown>;
     week: number;
     seed?: number;
+    week_changes?: WeekChangeItem[];
   } = { template, sidecar, week };
   if (seed !== undefined) body.seed = seed;
+  // The week's just-this-week changes, to make in the preview.
+  if (weekChanges && weekChanges.length > 0) body.week_changes = weekChanges;
   const res = await fetch_(
     `/api/stations/${encodeURIComponent(slug)}/jobs/preview`,
     {
@@ -1848,6 +1895,9 @@ export function errorText(e: unknown): string {
   if (e instanceof ApiError) {
     const body = e.body as { detail?: unknown } | undefined;
     if (body && typeof body.detail === 'string') return body.detail;
+    // A structured detail ({message, ...}: a conflict, say).
+    const d = body?.detail as { message?: unknown } | undefined;
+    if (d && typeof d === 'object' && typeof d.message === 'string') return d.message;
   }
   return e instanceof Error ? e.message : String(e);
 }
@@ -1883,3 +1933,156 @@ export const sendToStationServer = (id: number, fetch_ = fetch): Promise<Station
   fetch_(`/api/playlists/${id}/send-to-station-server`, { method: 'POST' }).then((r) =>
     json<StationServerSent>(r),
   );
+
+
+// ---- just-this-week changes (api/routers/week_changes.py) -----------------
+
+/** One just-this-week change, as made: the song by its place (`row`,
+ *  `block` from 1, as traces number them; `k` from 0, which of that
+ *  rule's songs) and its rule's strategy and source when it was made. */
+export interface WeekChangeItem {
+  row: number;
+  block: number;
+  k: number;
+  kind: 'swap' | 'rule';
+  /** A swap's song. */
+  track_id?: number | null;
+  /** A rule change's rule: the whole block as changed. */
+  rule?: Record<string, unknown> | null;
+  rule_strategy: string;
+  rule_source: string;
+}
+
+export interface WeekChangeTrack {
+  id: number;
+  name: string;
+  artist: string | null;
+  album: string | null;
+}
+
+/** A stored change. */
+export interface WeekChange extends WeekChangeItem {
+  id: number;
+  track_id: number | null;
+  rule: Record<string, unknown> | null;
+  /** A swap's song (null once it's gone from the library). */
+  track: WeekChangeTrack | null;
+  /** Its song's place in the week's current version (from 1); null when
+   *  that version doesn't play it (the rules moved since it was made). */
+  position: number | null;
+  /** Where else the changed song plays in the week (from 1). */
+  also_plays_at: number[];
+  created_at: string | null;
+}
+
+export interface WeekChangesResponse {
+  playlist_id: number;
+  version_no: number;
+  max_rule_changes: number;
+  changes: WeekChange[];
+}
+
+export interface WeekChangeAddResponse {
+  playlist_id: number;
+  version_no: number;
+  note: string;
+  change: WeekChange;
+  slot: TraceSlot;
+}
+
+export interface WeekChangeUndoResponse {
+  playlist_id: number;
+  /** The new version; the same one when the change was only forgotten. */
+  version_no: number;
+  note: string | null;
+}
+
+export interface WeekChangeDropped {
+  id: number | null;
+  row: number;
+  block: number;
+  k: number;
+  kind: string;
+  reason: string;
+}
+
+/** A 409 from a change: the week changed meanwhile, or is being
+ *  generated. `currentVersion` when the server said which it is now. */
+export class WeekChangeConflict extends Error {
+  currentVersion: number | null;
+  constructor(message: string, currentVersion: number | null) {
+    super(message);
+    this.name = 'WeekChangeConflict';
+    this.currentVersion = currentVersion;
+  }
+}
+
+async function weekChangeJson<T>(res: Response): Promise<T> {
+  if (res.status === 409) {
+    const { text, body } = await readErrorBody(res);
+    const d = (body as { detail?: { message?: unknown; current_version?: unknown } } | undefined)?.detail;
+    throw new WeekChangeConflict(
+      typeof d?.message === 'string' ? d.message : text,
+      typeof d?.current_version === 'number' ? d.current_version : null,
+    );
+  }
+  return json<T>(res);
+}
+
+export const getWeekChanges = (playlistId: number, fetch_ = fetch): Promise<WeekChangesResponse> =>
+  fetch_(`/api/playlists/${playlistId}/changes`).then((r) => json<WeekChangesResponse>(r));
+
+/** Change one song of the week, just this week: a new version at once.
+ *  Throws `WeekChangeConflict` when the week changed since
+ *  `expectedVersion` or is being generated. */
+export const addWeekChange = (
+  playlistId: number,
+  expectedVersion: number,
+  change: WeekChangeItem,
+  fetch_ = fetch,
+): Promise<WeekChangeAddResponse> =>
+  fetch_(`/api/playlists/${playlistId}/changes`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ expected_version: expectedVersion, change }),
+  }).then((r) => weekChangeJson<WeekChangeAddResponse>(r));
+
+export const undoWeekChange = (
+  playlistId: number,
+  changeId: number,
+  expectedVersion: number,
+  fetch_ = fetch,
+): Promise<WeekChangeUndoResponse> =>
+  fetch_(`/api/playlists/${playlistId}/changes/${changeId}?expected_version=${expectedVersion}`, {
+    method: 'DELETE',
+  }).then((r) => weekChangeJson<WeekChangeUndoResponse>(r));
+
+export interface StationSong {
+  id: number;
+  name: string;
+  artist: string | null;
+  album: string | null;
+  /** The station's pools it's in, the preferred one first. */
+  pools: string[];
+}
+
+export interface StationSongsResponse {
+  songs: StationSong[];
+  more: boolean;
+}
+
+/** Songs in the station's pools with every word of `q` (name, artist or
+ *  album), `prefer`'s first; with no `q`, `prefer`'s songs in order. */
+export const searchStationSongs = (
+  slug: string,
+  q: string,
+  prefer: string | null,
+  limit = 50,
+  fetch_ = fetch,
+): Promise<StationSongsResponse> => {
+  const params = new URLSearchParams({ q, limit: String(limit) });
+  if (prefer) params.set('prefer', prefer);
+  return fetch_(`/api/stations/${encodeURIComponent(slug)}/songs?${params}`).then((r) =>
+    json<StationSongsResponse>(r),
+  );
+};

@@ -219,6 +219,8 @@ test.describe('trace viewer', () => {
     await page.getByTestId('retype-toggle').click();
     await page.getByTestId('retype-strategy').selectOption('pick');
     await page.getByTestId('retype-apply').click();
+    // Asked: for every week (queued), or just this song.
+    await page.getByTestId('change-scope-every').click();
     await expect(page.getByTestId('song-edit-count')).toContainText('1 change');
     // A real preview of the edited rules replaces the list.
     await expect(page.getByTestId('song-rule').nth(1)).toContainText('Picked from A');

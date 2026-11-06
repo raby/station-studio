@@ -745,6 +745,10 @@
       >×</button>
     </header>
 
+    <!-- What the page that opened the panel adds about the song picked
+         (the week page: change it just this week). -->
+    <slot name="top" />
+
     {#if detail.block}
       <p class="rule-words" data-testid="detail-rule">{ruleText(detail.block, ruleDefaults)}</p>
     {/if}

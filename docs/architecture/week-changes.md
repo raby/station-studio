@@ -65,6 +65,36 @@ cursors don't depend on picks, so a change doesn't shift later weeks.
 The songs the week played, changes included, are what `prev_ref` repeats
 next week.
 
+## On the week's page
+
+- **The ask.** Changing a song's rule in the rule panel asks: *Every
+  week* (the rule itself, queued with the other changes, as before) or
+  *Just this song, week N* (saved now, `kind: "rule"`, the rule worked
+  out as the station's own save would: `changedRule`, `applyEdits` on
+  the saved template). The choice made last time has focus, so Enter
+  takes it. "Just this song" says why when it can't be: rule changes
+  are queued (a song is changed on the week as saved), the week was
+  made before the rules last changed, only the size changed, or the
+  week has its 20 rule changes. Ticking the other identical rules too
+  makes the change every week's, without asking.
+- **Swap song.** The rule panel's box for the picked song offers *Swap
+  song, just this week*: a search over the station's pools
+  (`GET /api/stations/{slug}/songs`, the rule's own pool first), saying
+  where songs already play in the week. The rule's own song isn't
+  offered: Undo puts it back.
+- **This week only.** The week's changes are listed above the songs,
+  each with an Undo, saved at once. Changed songs say *just this week*
+  in the list and the table; a version's note shows in the picker.
+- **Previews.** A queued rule change's preview makes the week's changes,
+  moved through the queue (`changesAfter`, the twin of
+  `follow_rule_ops`). When the queue would drop one (its rule changes
+  kind or source), the edit bar says so before it's saved; once saved,
+  regenerating says which changes it kept and which it dropped. The
+  station editor's preview of a generated week makes that week's
+  changes too, read only, with a link to its page.
+- A change made against a version that's no longer current (another tab
+  regenerated the week) is refused, and the page reloads the week.
+
 ## Following the rules
 
 When the editor's batch save or the structure route moves, adds or

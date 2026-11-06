@@ -17,6 +17,8 @@ import {
   startPreviewJob,
   watchJob,
   type Trace,
+  type WeekChangeDropped,
+  type WeekChangeItem,
 } from '$lib/api';
 import type { Edit } from '$lib/edit-ops';
 
@@ -135,7 +137,7 @@ export function friendlyPreviewError(raw: string | undefined): string {
 /** How a preview job ended, from the caller's point of view. */
 export type PreviewOutcome =
   /** Finished. `trace` is null when the result wasn't a preview result. */
-  | { status: 'done'; trace: Trace | null }
+  | { status: 'done'; trace: Trace | null; dropped: WeekChangeDropped[] }
   /** The job failed; `message` is the server's raw text. */
   | { status: 'error'; message: string | undefined }
   /** Cancelled server-side (a newer preview superseded it). */
@@ -146,6 +148,8 @@ export type PreviewOutcome =
   | { status: 'ended' };
 
 export interface RunPreviewOptions {
+  /** The week's just-this-week changes, to make in the preview. */
+  weekChanges?: WeekChangeItem[];
   /** Checked after the job starts (when `cancelIfStale`) and before each
    *  update is acted on; false ends the run with `stale`. */
   isCurrent?: () => boolean;
@@ -169,12 +173,17 @@ export async function runPreview(
   opts: RunPreviewOptions = {},
 ): Promise<PreviewOutcome> {
   const isCurrent = opts.isCurrent ?? (() => true);
-  const start = await startPreviewJob(
-    slug,
-    template as Record<string, unknown>,
-    sidecar as Record<string, unknown>,
-    week,
-  );
+  const start = opts.weekChanges && opts.weekChanges.length > 0
+    ? await startPreviewJob(
+      slug,
+      template as Record<string, unknown>,
+      sidecar as Record<string, unknown>,
+      week,
+      undefined,
+      fetch,
+      opts.weekChanges,
+    )
+    : await startPreviewJob(slug, template as Record<string, unknown>, sidecar as Record<string, unknown>, week);
   if (opts.cancelIfStale && !isCurrent()) {
     void cancelJob(start.job_id).catch(() => {
       // Idempotent (204 / 404 both fine); a network blip is harmless.
@@ -186,7 +195,11 @@ export async function runPreview(
     if (!isCurrent()) return { status: 'stale' };
     if (snap.status === 'done') {
       const r = snap.result;
-      return { status: 'done', trace: isPreviewResult(r) ? r.trace : null };
+      return {
+        status: 'done',
+        trace: isPreviewResult(r) ? r.trace : null,
+        dropped: isPreviewResult(r) ? (r.week_changes_dropped ?? []) : [],
+      };
     }
     if (snap.status === 'error') return { status: 'error', message: snap.error?.message };
     if (snap.status === 'cancelled') return { status: 'cancelled' };

@@ -23,6 +23,9 @@
   import { page } from '$app/stores';
   import {
     ApiError,
+    getStationPlaylists,
+    getWeekChanges,
+    type WeekChange,
     applyBatch,
     BlockPatchConflict,
     cancelJob,
@@ -70,6 +73,7 @@
     type ExpandedRef, type Sidecar, type StationTemplate,
   } from '$lib/editor';
   import { applyEdits, followRef, type Edit, type MoveRulesOp, type MoveSectionOp } from '$lib/edit-ops';
+  import { changesAfter, itemsOf } from '$lib/weekChanges';
   import {
     COMPARE_NEXT_N_MAX,
     prefKeys,
@@ -371,6 +375,42 @@
     multiWeekFetching = false;
     multiWeekGeneration += 1;
     _lastHydratedSlug = slug;
+    previewWeekChanges = null;
+    void loadPreviewWeekChanges(previewWeek);
+  }
+
+  // A generated week's just-this-week changes (made on its week page):
+  // the preview of that week makes them too, as regenerating it would,
+  // moved through the queued edits as saving would move them. Shown
+  // only: they're changed on the week's page.
+  let previewWeekChanges: { week: number; playlistId: number; changes: WeekChange[] } | null = null;
+  let weekChangesAsked = 0;
+  $: previewChanges = previewWeekChanges && previewWeekChanges.week === previewWeek
+    ? itemsOf(previewWeekChanges.changes)
+    : [];
+  async function loadPreviewWeekChanges(week: number): Promise<void> {
+    const mine = ++weekChangesAsked;
+    const forSlug = slug;
+    let found: typeof previewWeekChanges = null;
+    try {
+      const p = (await getStationPlaylists(forSlug)).find((x) => x.week === week);
+      if (p) found = { week, playlistId: p.id, changes: (await getWeekChanges(p.id)).changes };
+    } catch {
+      // A server without them, or not reachable: the preview is the rules'.
+      found = null;
+    }
+    if (mine !== weekChangesAsked || forSlug !== slug) return;
+    const before = JSON.stringify(previewChanges);
+    previewWeekChanges = found;
+    const after = JSON.stringify(found && found.week === previewWeek ? itemsOf(found.changes) : []);
+    if (before !== after) {
+      // The previews were made without them (or with others): again.
+      savedTrace = null;
+      savedTraceError = null;
+      savedTraceGeneration += 1;
+      await _refreshSavedTraceIfNeeded();
+      _schedulePreview();
+    }
   }
 
   // Per-station preferences (live preview, macro palette, preview week,
@@ -636,6 +676,7 @@
     if (next === previewWeek) return;
     previewWeek = next;
     writePreviewWeek(slug, next);
+    void loadPreviewWeekChanges(next);
     // §16.2.7 c1 (D2 invalidation): the savedTrace cache was for the
     // OLD week's baseline; new week needs a fresh fetch. Bump the
     // generation so any in-flight refresh discards (R1). Then AWAIT
@@ -816,6 +857,7 @@
       // generation check drops its result).
       const out = await runPreview(slug, template, sidecar, previewWeek, {
         isCurrent: () => myGen === savedTraceGeneration,
+        weekChanges: previewChanges,
       });
       if (out.status === 'done') {
         if (out.trace !== null) savedTrace = out.trace;
@@ -969,6 +1011,7 @@
           isCurrent: () => myGeneration === previewGeneration,
           cancelIfStale: true,
           onStart: (jobId) => { currentPreviewJobId = jobId; },
+          weekChanges: changesAfter(previewChanges, opLog),
         });
         if (out.status === 'stale' || out.status === 'ended') return;
         if (out.status === 'done') {
@@ -2294,6 +2337,14 @@
             />
           {/if}
           {#if livePreviewOn}
+            {#if previewWeekChanges && previewWeekChanges.week === previewWeek && previewWeekChanges.changes.length > 0}
+              <p class="week-only-note" data-testid="editor-week-only">
+                Week {previewWeek} has {previewWeekChanges.changes.length} just-this-week
+                {previewWeekChanges.changes.length === 1 ? 'change' : 'changes'}, shown in its preview as
+                regenerating it would make {previewWeekChanges.changes.length === 1 ? 'it' : 'them'}.
+                <a href="/playlists/{previewWeekChanges.playlistId}">Change {previewWeekChanges.changes.length === 1 ? 'it' : 'them'} on the week's page</a>.
+              </p>
+            {/if}
             <TracePane
               trace={previewTrace}
               previewing={previewing}
@@ -2604,5 +2655,12 @@
       outline: 3px solid var(--chip-color, #2c7a7b);
       outline-offset: 2px;
     }
+  }
+  .week-only-note {
+    margin: 0 0 0.5rem;
+    padding: 0.4rem 0.6rem;
+    border-left: 3px solid var(--accent);
+    background: var(--panel);
+    font-size: 0.85rem;
   }
 </style>

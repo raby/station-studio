@@ -4,20 +4,33 @@ All notable changes are listed here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses semantic versioning.
 
-## [Unreleased]
+## [1.19.0] - 2026-11-06
 
 ### Added
 
-- **Just-this-week changes, in the API** (the week page's controls come
-  next). One song of a generated week can be changed for that week
-  only: swapped for a song chosen from the station's pools, or picked
-  by its rule changed (another pool, say). It's kept whenever the week
-  is generated again, every other song plays as the rules play it, and
-  the station's rotation follows what the rules picked, so later weeks
-  don't shift. Each change, or undo, makes a new version of the week
-  with a note saying what changed, so Rollback undoes it too.
-  `GET/POST /api/playlists/{id}/changes`,
-  `DELETE /api/playlists/{id}/changes/{change_id}`.
+- **Change a song just this week.** On a week's page, one song can be
+  changed for that week only, and stays changed when the week is
+  regenerated: every other song plays as the rules play it, and later
+  weeks don't shift.
+  - **Swap song:** pick the song in the rule panel and choose *Swap
+    song, just this week*. Search the station's songs (its rule's pool
+    first); songs already in the week say where they play.
+  - **Its rule, just this song:** changing a song's rule in the rule
+    panel now asks *Every week* or *Just this song*. The choice made
+    last time is offered first.
+  - Each change, and each Undo, is saved at once as a new version of
+    the week with a note saying what changed (shown in the version
+    picker), so Rollback undoes it too.
+  - **This week only** lists the week's changes above its songs, each
+    with an Undo; changed songs say *just this week*, in the list and
+    the table.
+  - Previews of queued rule changes include the week's changes, and the
+    edit bar says when saving would drop one. Regenerating says which
+    it kept and which no longer fit. The station editor's preview of a
+    generated week shows its changes too.
+- **In the API:** `GET/POST /api/playlists/{id}/changes`,
+  `DELETE /api/playlists/{id}/changes/{change_id}`, and a search of a
+  station's songs, `GET /api/stations/{slug}/songs`.
 - Changes follow their rule when the station's rules are moved, added
   or removed in the editor. A change that can't be made when the week
   is generated (its rule became another kind, its song left the

@@ -909,3 +909,50 @@ def test_regenerating_a_mix_week_gives_the_same_mixes(env):
                     json={"template": template, "sidecar": sidecar, "week": 2, "seed": 6})
     body = _wait(client, r.json()["job_id"])
     assert [s["track_id"] for s in body["result"]["trace"]["slots"]] == first2
+
+
+# ---------- the swap search ---------------------------------------------
+
+
+def test_song_search_over_the_stations_pools(env):
+    client, Session, _ = env
+
+    def search(**params):
+        r = client.get(f"/api/stations/{SLUG}/songs", params=params)
+        assert r.status_code == 200, r.text
+        return r.json()
+    # Every word, in name, artist or album, any case; the preferred pool first.
+    got = search(q="SONG 1", prefer="B")
+    names = [s["name"] for s in got["songs"]]
+    assert names[:7] == ["B song 1", "B song 10", "B song 11", "B song 12", "B song 13", "B song 14", "B song 15"]
+    assert "A song 1" in names and "Elsewhere" not in names
+    assert got["songs"][0]["pools"] == ["B"] and got["more"] is False
+    # Words match anywhere (an artist's name too), so "3" finds "13".
+    by_artist = [s["name"] for s in search(q="b artist 3")["songs"]]
+    assert {"B song 3", "B song 12"} <= set(by_artist) and all(n.startswith("B") for n in by_artist)
+    # A song in no pool of the station's isn't offered.
+    assert search(q="nobody")["songs"] == []
+    # No words: the preferred pool in its order; without one, nothing.
+    got = search(prefer="A", limit=3)
+    assert [s["name"] for s in got["songs"]] == ["A song 1", "A song 2", "A song 3"]
+    assert got["more"] is True
+    assert search() == {"songs": [], "more": False}
+    # LIKE's wildcards are just characters.
+    assert search(q="%")["songs"] == [] and search(q="_")["songs"] == []
+    # A song in two pools lists both, the preferred first.
+    with Session() as db:
+        b = db.query(SourcePlaylist).filter_by(name="B").one()
+        a1 = db.query(Track).filter_by(persistent_id="A001").one()
+        db.add(SourcePlaylistEntry(source_playlist_id=b.id, position=99, track_id=a1.id))
+        db.commit()
+    hit = next(s for s in search(q="a song 1", prefer="B")["songs"] if s["name"] == "A song 1")
+    assert hit["pools"] == ["B", "A"]
+    assert search(q="a song 1", prefer="B")["songs"][0]["name"] == "A song 1"
+
+
+def test_song_search_refusals(env):
+    client, _, _ = env
+    assert client.get("/api/stations/nope/songs", params={"q": "x"}).status_code == 404
+    r = client.get(f"/api/stations/{SLUG}/songs", params={"prefer": "X"})
+    assert r.status_code == 400
+    assert client.get(f"/api/stations/{SLUG}/songs", params={"limit": 0}).status_code == 422
