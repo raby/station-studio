@@ -2166,3 +2166,72 @@ describe('trace viewer — moving songs', () => {
     expect(screen.queryByTestId('song-grip')).toBeNull();
   });
 });
+
+describe('trace viewer — moving songs, a station built from a repeating row', () => {
+  // Two days of three blocks: Morning has blocks 0-1, Evening block 2.
+  const template = () => ({
+    station: 'cls', name: 'Classics',
+    sources: [{ name: 'A', colour: '#c0392b', role: 'content' }, { name: 'B', colour: '#8e44ad', role: 'content' }],
+    layout: {
+      unit: 'day', unit_labels: ['Mon', 'Tue'], row_start_offsets: [0, 3],
+      row_template: [{ source: 'A', strategy: 'pick', size: 1 }, { source: 'A', strategy: 'pick', size: 1 }, { source: 'B', strategy: 'pick', size: 1 }],
+    },
+  });
+  const at = (r: number, b: number) => ({ kind: 'atomic', row_idx: r, block_idx: b });
+  const sidecar = () => ({
+    schema_version: 1,
+    sections: [
+      { id: 'morning', name: 'Morning', blocks: [at(0, 0), at(0, 1), at(1, 0), at(1, 1)] },
+      { id: 'evening', name: 'Evening', blocks: [at(0, 2), at(1, 2)] },
+    ],
+    macros: [],
+    layout_order: ['morning', 'evening'],
+  });
+  // Each day: the rules in `order` (by their place now), one song each.
+  const days = (order = [0, 1, 2]) => stubTrace({
+    slots: [1, 2].flatMap((row) => order.map((b, i) => ({
+      slot: (row - 1) * 3 + i + 1, unit: row === 1 ? 'Mon' : 'Tue', row, block: i + 1,
+      source: b === 2 ? 'B' : 'A', strategy: 'pick', pool_index: i, track_id: row * 10 + b,
+      track_name: `${row === 1 ? 'Mon' : 'Tue'} ${b}`, track_artist: 'Artist', reason: 'picked',
+    }))),
+  });
+  const queue = () => JSON.parse(window.localStorage.getItem('stagedEdits:cls') ?? '{"opLog":[]}').opLog as unknown[];
+  const key = async (el: HTMLElement, k: string) => { await act(async () => { await fireEvent.keyDown(el, { key: k }); }); };
+
+  beforeEach(() => {
+    for (const m of [getPlaylistMock, getTraceMock, getStationMock, getStationPlaylistsMock, getVersionsMock,
+      getStationSidecarMock, startPreviewJobMock, watchJobMock, applyBatchMock, startGenerateJobMock]) m.mockReset();
+    getStationPlaylistsMock.mockResolvedValue([]);
+    getVersionsMock.mockResolvedValue({ playlist_id: 7, current_v: 1, versions: [] });
+    stationServerSettingsMock.mockResolvedValue(
+      null as unknown as Awaited<ReturnType<typeof stationServerSettingsMock>>,
+    );
+    getStationSidecarMock.mockImplementation(async () => ({ template: template(), sidecar: sidecar(), sidecar_error: null, updated_at: 'ts-1' }));
+    getTraceMock.mockImplementation(async () => days());
+    getPlaylistMock.mockImplementation(async () => stubPlaylist());
+    getStationMock.mockImplementation(async () => stubStation());
+    let n = 0;
+    startPreviewJobMock.mockImplementation(async () => ({ job_id: `pv-${++n}`, status: 'running' }));
+    watchJobMock.mockImplementation((id: unknown) => (async function* () {
+      const trace = id === 'pv-1' ? days() : days([2, 0, 1]);
+      yield { status: 'done', result: { trace, slot_count: 6 } };
+    })());
+    setId('7');
+    setSearch('');
+    try { window.localStorage.clear(); } catch { /* */ }
+    window.localStorage.setItem('weekView', 'songs');
+  });
+
+  it("Tue's evening song to the front of its day: queued for the row, so every day shows it moved", async () => {
+    render(Page);
+    const grips = await screen.findAllByTestId('song-grip');
+    expect(screen.getByTestId('song-move-note')).toHaveTextContent('A move is made in every day');
+    await key(grips[5], ' ');
+    await key(grips[5], 'Home');
+    await key(grips[5], ' ');
+    await vi.waitFor(() => expect(queue()).toEqual([{ kind: 'moveRules', from: 2, count: 1, to: 0, sectionId: 'morning' }]));
+    expect(await screen.findByTestId('song-edit-count')).toHaveTextContent('1 change');
+    await vi.waitFor(() => expect(screen.getAllByTestId('song-change').map((c) => c.textContent)).toEqual(['moved', 'moved']));
+    expect(screen.getAllByTestId('song-edit-item')[0]).toHaveTextContent('Moved Evening, rule 1 to Morning, rule 1, in every day');
+  });
+});

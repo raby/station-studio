@@ -38,7 +38,7 @@
   import {
     queuedChanges, ruleDefaultsFrom, ruleKey, songsChanged, weekMatchesRules, type RuleDefaults, type SongRow,
   } from '$lib/songList';
-  import { slotAfter, type MoveRulesOp, type MoveSectionOp } from '$lib/edit-ops';
+  import { followRef, type MoveRulesOp, type MoveSectionOp } from '$lib/edit-ops';
   import {
     createStagedEditSession,
     type StagedEditSession,
@@ -263,10 +263,7 @@
     session.stage(edit);
     justSaved = false;
     // An open rule panel follows its rule to where it plays now.
-    if (selectedRef?.kind === 'atomic-ref' && selectedRef.slot_index !== undefined) {
-      const now = slotAfter(edit, selectedRef.slot_index);
-      selectedRef = now === undefined ? null : { kind: 'atomic-ref', slot_index: now };
-    }
+    if (selectedRef?.kind === 'atomic-ref') selectedRef = followRef(selectedRef, edit);
     selectedSong = null;
   }
 

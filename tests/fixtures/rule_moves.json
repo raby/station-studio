@@ -1,5 +1,5 @@
 {
-  "_about": "Moving a flat station's rules (engine/rule_moves.py, and its mirror in web/src/lib/edit-ops.ts). Both are checked against these cases. Rules are told apart by `source` (r0, r1, ...). In `expect`, `order` is the rules' sources in play order (the moved ones join their section among its blocks by when they play); `sections` is each section's blocks (a number is an atomic block's slot_index, \"macro:<id>\" a macro); `error` means the move is refused (the server says why; the preview changes nothing), and the text is part of the reason.",
+  "_about": "Moving a station's rules (engine/rule_moves.py, and its mirror in web/src/lib/edit-ops.ts). Both are checked against these cases. Rules are told apart by `source` (r0, r1, ...). In `expect`, `order` is the rules' sources in play order (flat_slots, or a repeating row's row_template; the moved ones join their section among its blocks by when they play); `sections` is each section's blocks (a number is an atomic block's slot_index, \"r:b\" a row station's atomic block's row_idx and block_idx, \"macro:<id>\" a macro); `error` means the move is refused (the server says why; the preview changes nothing), and the text is part of the reason.",
   "stations": {
     "plain": {
       "template": {"layout": {"flat_slots": [
@@ -80,14 +80,101 @@
     "row": {
       "template": {"layout": {"row_template": [
         {"source": "r0", "strategy": "pick", "size": 1},
-        {"source": "r1", "strategy": "pick", "size": 1}
+        {"source": "r1", "strategy": "pick", "size": 1},
+        {"source": "r2", "strategy": "pick", "size": 1}
       ]}},
       "sidecar": {
         "schema_version": 1,
         "sections": [
           {"id": "day", "name": "Day", "blocks": [
             {"kind": "atomic", "row_idx": 0, "block_idx": 0},
-            {"kind": "atomic", "row_idx": 0, "block_idx": 1}
+            {"kind": "atomic", "row_idx": 0, "block_idx": 1},
+            {"kind": "atomic", "row_idx": 0, "block_idx": 2}
+          ]}
+        ],
+        "macros": [],
+        "layout_order": ["day"]
+      }
+    },
+    "row-days": {
+      "template": {"layout": {"row_template": [
+        {"source": "r0", "strategy": "pick", "size": 1},
+        {"source": "r1", "strategy": "pick", "size": 1},
+        {"source": "r2", "strategy": "pick", "size": 1}
+      ]}},
+      "sidecar": {
+        "schema_version": 1,
+        "sections": [
+          {"id": "monday", "name": "Monday", "blocks": [
+            {"kind": "atomic", "row_idx": 0, "block_idx": 0},
+            {"kind": "atomic", "row_idx": 0, "block_idx": 1},
+            {"kind": "atomic", "row_idx": 0, "block_idx": 2}
+          ]},
+          {"id": "tuesday", "name": "Tuesday", "blocks": [
+            {"kind": "atomic", "row_idx": 1, "block_idx": 0},
+            {"kind": "atomic", "row_idx": 1, "block_idx": 1},
+            {"kind": "atomic", "row_idx": 1, "block_idx": 2}
+          ]}
+        ],
+        "macros": [],
+        "layout_order": ["monday", "tuesday"]
+      }
+    },
+    "row-split": {
+      "template": {"layout": {"row_template": [
+        {"source": "r0", "strategy": "pick", "size": 1},
+        {"source": "r1", "strategy": "pick", "size": 1},
+        {"source": "r2", "strategy": "pick", "size": 1}
+      ]}},
+      "sidecar": {
+        "schema_version": 1,
+        "sections": [
+          {"id": "morning", "name": "Morning", "blocks": [
+            {"kind": "atomic", "row_idx": 0, "block_idx": 0},
+            {"kind": "atomic", "row_idx": 0, "block_idx": 1},
+            {"kind": "atomic", "row_idx": 1, "block_idx": 0},
+            {"kind": "atomic", "row_idx": 1, "block_idx": 1}
+          ]},
+          {"id": "evening", "name": "Evening", "blocks": [
+            {"kind": "atomic", "row_idx": 0, "block_idx": 2},
+            {"kind": "atomic", "row_idx": 1, "block_idx": 2}
+          ]}
+        ],
+        "macros": [],
+        "layout_order": ["morning", "evening"]
+      }
+    },
+    "row-macro": {
+      "template": {"layout": {"row_template": [
+        {"source": "r0", "strategy": "pick", "size": 1},
+        {"source": "r1", "strategy": "pick", "size": 1},
+        {"source": "r2", "strategy": "pick", "size": 1}
+      ]}},
+      "sidecar": {
+        "schema_version": 1,
+        "sections": [
+          {"id": "day", "name": "Day", "blocks": [
+            {"kind": "atomic", "row_idx": 0, "block_idx": 0},
+            {"kind": "macro", "ref": "two"}
+          ]}
+        ],
+        "macros": [{"id": "two", "name": "Two", "repeat": 2, "spec": {"source": "r1", "strategy": "pick", "size": 1}}],
+        "layout_order": ["day"]
+      }
+    },
+    "row-repeat": {
+      "template": {"layout": {"row_template": [
+        {"source": "r0", "strategy": "pick", "size": 1},
+        {"source": "r1", "strategy": "pick", "size": 1},
+        {"source": "r2", "strategy": "pick", "size": 1}
+      ]}},
+      "sidecar": {
+        "schema_version": 1,
+        "sections": [
+          {"id": "day", "name": "Day", "repeat_with_offsets": [0, 10], "blocks": [
+            {"kind": "atomic", "row_idx": 0, "block_idx": 0},
+            {"kind": "atomic", "row_idx": 0, "block_idx": 1},
+            {"kind": "atomic", "row_idx": 0, "block_idx": 2}
           ]}
         ],
         "macros": [],
@@ -241,12 +328,6 @@
       }
     },
     {
-      "name": "refused: a station built from a repeating row",
-      "station": "row",
-      "edit": {"kind": "moveRules", "from": 0, "count": 1, "to": 2, "sectionId": "day"},
-      "expect": {"error": "repeating row"}
-    },
-    {
       "name": "a section moves before another",
       "station": "plain",
       "edit": {"kind": "moveSection", "sectionId": "evening", "beforeSectionId": "morning", "from": 3, "count": 2, "to": 0},
@@ -299,6 +380,80 @@
       "station": "plain",
       "edit": {"kind": "moveSection", "sectionId": "evening", "beforeSectionId": "evening", "from": 3, "count": 2, "to": 3},
       "expect": {"error": "before itself"}
+    },
+    {
+      "name": "row station: a block to the front of the row, in every row",
+      "station": "row",
+      "edit": {"kind": "moveRules", "from": 2, "count": 1, "to": 0, "sectionId": "day"},
+      "expect": {
+        "order": ["r2", "r0", "r1"],
+        "sections": {"day": ["0:0", "0:1", "0:2"]},
+        "layout_order": ["day"]
+      }
+    },
+    {
+      "name": "row station, a section per day: each day's block stays in its day",
+      "station": "row-days",
+      "edit": {"kind": "moveRules", "from": 0, "count": 1, "to": 3, "sectionId": "monday"},
+      "expect": {
+        "order": ["r1", "r2", "r0"],
+        "sections": {"monday": ["0:0", "0:1", "0:2"], "tuesday": ["1:0", "1:1", "1:2"]},
+        "layout_order": ["monday", "tuesday"]
+      }
+    },
+    {
+      "name": "refused: row station, a section per day, only into another day's section (nothing would change)",
+      "station": "row-days",
+      "edit": {"kind": "moveRules", "from": 0, "count": 1, "to": 1, "sectionId": "tuesday"},
+      "expect": {"error": "already there"}
+    },
+    {
+      "name": "row station, sections over every row: into Morning, in each row",
+      "station": "row-split",
+      "edit": {"kind": "moveRules", "from": 2, "count": 1, "to": 0, "sectionId": "morning"},
+      "expect": {
+        "order": ["r2", "r0", "r1"],
+        "sections": {"morning": ["0:0", "0:1", "0:2", "1:0", "1:1", "1:2"], "evening": []},
+        "layout_order": ["morning", "evening"]
+      }
+    },
+    {
+      "name": "row station: just after the run, only into the next section, in each row",
+      "station": "row-split",
+      "edit": {"kind": "moveRules", "from": 1, "count": 1, "to": 2, "sectionId": "evening"},
+      "expect": {
+        "order": ["r0", "r1", "r2"],
+        "sections": {"morning": ["0:0", "1:0"], "evening": ["0:1", "0:2", "1:1", "1:2"]},
+        "layout_order": ["morning", "evening"]
+      }
+    },
+    {
+      "name": "row station: a section before another, in every row",
+      "station": "row-split",
+      "edit": {"kind": "moveSection", "sectionId": "evening", "beforeSectionId": "morning", "from": 2, "count": 1, "to": 0},
+      "expect": {
+        "order": ["r2", "r0", "r1"],
+        "sections": {"morning": ["0:1", "0:2", "1:1", "1:2"], "evening": ["0:0", "1:0"]},
+        "layout_order": ["evening", "morning"]
+      }
+    },
+    {
+      "name": "refused: row station whose sections use macros",
+      "station": "row-macro",
+      "edit": {"kind": "moveRules", "from": 0, "count": 1, "to": 3, "sectionId": "day"},
+      "expect": {"error": "use macros"}
+    },
+    {
+      "name": "refused: a section of a row station whose sections use macros",
+      "station": "row-macro",
+      "edit": {"kind": "moveSection", "sectionId": "day", "beforeSectionId": null, "from": 0, "count": 3, "to": 3},
+      "expect": {"error": "use macros"}
+    },
+    {
+      "name": "refused: row station with a section repeated for every row",
+      "station": "row-repeat",
+      "edit": {"kind": "moveRules", "from": 0, "count": 1, "to": 3, "sectionId": "day"},
+      "expect": {"error": "repeats for every row"}
     }
   ]
 }

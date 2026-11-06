@@ -4,7 +4,7 @@ import path from 'node:path';
 import type { Trace, TraceSlot } from './api';
 import type { Edit } from './edit-ops';
 import type { EngineBlock, Sidecar, StationTemplate } from './editor';
-import { compareWeeks, describeQueued, filterGroups, queuedChanges, removedCount, rowRule, ruleDefaultsFrom, ruleKey, ruleText, songGroups, songsChanged } from './songList';
+import { compareWeeks, describeQueued, weekMatchesRules, filterGroups, queuedChanges, removedCount, rowRule, ruleDefaultsFrom, ruleKey, ruleText, songGroups, songsChanged } from './songList';
 
 // The two real example stations: Rebirth Radio (flat slots, sections,
 // 200-song macros) and Rebirth Classics (a repeating row).
@@ -202,11 +202,55 @@ describe('songGroups', () => {
       expect(compareWeeks(edited, week, rows).changes).toEqual([null, 'changed']);
     });
 
+    it('a repeating row, a block moved: in each row, the moved block says moved, the others nothing', () => {
+      const rows = {
+        station: 'rw', name: 'Rows', sources: [{ name: 'A', colour: '#abc', role: 'content' }],
+        layout: { unit: 'day', unit_labels: ['Mon', 'Tue'], row_start_offsets: [0, 3],
+          row_template: [0, 1, 2].map((i) => ({ source: `S${i}`, strategy: 'pick', size: 1 })) },
+      } as unknown as StationTemplate;
+      const song = (row: number, block: number, place: number): TraceSlot => ({
+        ...slot(0, rows.layout.row_template![block]), row, block: place + 1, track_id: row * 10 + block,
+      });
+      // Saved: 0 1 2 in each day; block 2 moved to the front: 2 0 1.
+      const savedWeek = trace([1, 2].flatMap((r) => [0, 1, 2].map((b) => song(r, b, b))));
+      const opLog: Edit[] = [{ kind: 'moveRules', from: 2, count: 1, to: 0, sectionId: 'day' }];
+      const edited = trace([1, 2].flatMap((r) => [2, 0, 1].map((b, place) => song(r, b, place))));
+      expect(compareWeeks(edited, savedWeek, rows, opLog)).toEqual({
+        changes: ['moved', null, null, 'moved', null, null], removed: 0,
+      });
+      expect(weekMatchesRules(savedWeek, rows)).toBe(true);
+      // A week of the rules before the move doesn't line up with them after.
+      const after = { ...rows, layout: { ...rows.layout, row_template: [2, 0, 1].map((i) => rows.layout.row_template![i]) } };
+      expect(weekMatchesRules(savedWeek, after)).toBe(false);
+      expect(weekMatchesRules(edited, after)).toBe(true);
+      // Out of play order (a day before the one it follows): no.
+      expect(weekMatchesRules(trace([...savedWeek.slots.slice(3), ...savedWeek.slots.slice(0, 3)]), rows)).toBe(false);
+    });
+
     it('a trace without block numbers: by place, as before', () => {
       const old = trace(saved.slots.map((x) => ({ ...x, block: 0 })));
       const edited = trace([old.slots[0], { ...old.slots[1], track_id: 8 }]);
       expect(compareWeeks(edited, old, template)).toEqual({ changes: [null, 'changed'], removed: 3 });
     });
+  });
+
+  it("a repeating row with a section per day: each day's songs under its own day's section", () => {
+    const rows = {
+      station: 'rw', name: 'Rows', sources: [{ name: 'A', colour: '#abc', role: 'content' }],
+      layout: { unit: 'day', unit_labels: ['Mon', 'Tue'], row_start_offsets: [0, 2],
+        row_template: [0, 1].map(() => ({ source: 'A', strategy: 'pick', size: 1 })) },
+    } as unknown as StationTemplate;
+    const at = (r: number, b: number) => ({ kind: 'atomic', row_idx: r, block_idx: b });
+    const days = {
+      schema_version: 1,
+      sections: [
+        { id: 'mon', name: 'Monday', blocks: [at(0, 0), at(0, 1)] },
+        { id: 'tue', name: 'Tuesday', blocks: [at(1, 0), at(1, 1)] },
+      ],
+      macros: [], layout_order: ['mon', 'tue'],
+    } as unknown as Sidecar;
+    const week = trace([1, 2].flatMap((row) => [0, 1].map((b) => slot(b, rows.layout.row_template![b], { row, block: b + 1 }))));
+    expect(songGroups(week, rows, days).map((g) => [g.sectionName, g.rows.length])).toEqual([['Monday', 2], ['Tuesday', 2]]);
   });
 
   it('songs outside every section go in their own run', () => {
@@ -305,6 +349,29 @@ describe('describeQueued', () => {
         'Deleted section “Late”',
         'Deleted section “Evening”: its rule goes to “Unsorted (moved from a deleted section)”',
       ]);
+    });
+
+    it('a repeating row: said once, by its first row, and that it is in every day', () => {
+      const rows = {
+        ...template,
+        layout: { unit: 'day', unit_labels: ['Mon', 'Tue'], row_start_offsets: [0, 3], row_template: template.layout.flat_slots },
+      } as unknown as StationTemplate;
+      // Morning and Evening over both days.
+      const at = (r: number, b: number) => ({ kind: 'atomic', row_idx: r, block_idx: b });
+      const days = {
+        schema_version: 1,
+        sections: [
+          { id: 'morning', name: 'Morning', blocks: [at(0, 0), at(0, 1), at(1, 0), at(1, 1)] },
+          { id: 'evening', name: 'Evening', blocks: [at(0, 2), at(1, 2)] },
+        ],
+        macros: [],
+        layout_order: ['morning', 'evening'],
+      } as unknown as Sidecar;
+      expect(describeQueued([{ kind: 'moveRules', from: 2, count: 1, to: 0, sectionId: 'morning' }], rows, days))
+        .toEqual(['Moved Evening, rule 1 to Morning, rule 1, in every day']);
+      expect(describeQueued([
+        { kind: 'moveSection', sectionId: 'evening', beforeSectionId: 'morning', from: 2, count: 1, to: 0 },
+      ], rows, days)).toEqual(['Moved section “Evening” before “Morning”, in every day']);
     });
 
     it("rules moved to play somewhere else, and sections", () => {

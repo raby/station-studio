@@ -69,7 +69,7 @@
     summarizeClassifications,
     type ExpandedRef, type Sidecar, type StationTemplate,
   } from '$lib/editor';
-  import { applyEdits, slotAfter, type Edit, type MoveRulesOp, type MoveSectionOp } from '$lib/edit-ops';
+  import { applyEdits, followRef, type Edit, type MoveRulesOp, type MoveSectionOp } from '$lib/edit-ops';
   import {
     COMPARE_NEXT_N_MAX,
     prefKeys,
@@ -1487,13 +1487,14 @@
         : 'Moving songs waits for the preview to catch up…';
   async function handleSongMove(edit: MoveRulesOp | MoveSectionOp): Promise<void> {
     if (songMoveBlocked !== null) return;
-    const open = selectedRef?.kind === 'atomic-ref' ? selectedRef.slot_index : undefined;
+    const open = selectedRef?.kind === 'atomic-ref' ? selectedRef : null;
     _interceptToOpLog(edit);
-    // An open rule panel follows its rule to where it plays now.
-    if (open !== undefined) {
-      const now = slotAfter(edit, open);
+    // An open rule panel follows its rule to where it plays now (a
+    // repeating row's block: in the same row).
+    const ref = open ? followRef(open, edit) : null;
+    if (ref) {
       await tick();
-      if (now !== undefined) canvas?.openRef({ kind: 'atomic-ref', slot_index: now });
+      canvas?.openRef(ref);
     }
   }
 

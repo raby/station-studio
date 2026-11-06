@@ -151,12 +151,20 @@ function blockFor(ref: ExpandedRef | null, template: StationTemplate, sidecar: S
 
 export type SongChange = 'changed' | 'added' | 'moved';
 
+/** What a repeating row is, in words: its unit ("day"), or "row". */
+export function unitWord(template: StationTemplate): string {
+  const u = (template.layout as { unit?: unknown }).unit;
+  return typeof u === 'string' && u.trim() && u !== 'slot' ? u.trim().toLowerCase() : 'row';
+}
+
 /**
  * The rules (by slot now) a queued move moved that play in a different
  * order from the saved station: some rule now before one of them was
  * after it, or the other way. So one moved back where it was, or only
  * put in another section, isn't; the rules a move passed aren't either
  * (no move moved them). Rules with no songs this week aren't looked at.
+ * (A repeating row's rules are its places in the row: the same in every
+ * row, so one look does for all.)
  */
 function reallyMoved(trace: Trace, opLog: Edit[]): Set<number> {
   const candidates = movedSlotsNow(opLog);
@@ -190,9 +198,9 @@ function reallyMoved(trace: Trace, opLog: Edit[]): Set<number> {
  * song with no match is new, one whose rule a move moved says so, and
  * `removed` counts the saved songs left unmatched.
  *
- * Stations built from a repeating row are matched by row and block (the
- * queue doesn't move their rules); a trace without block numbers, by
- * place.
+ * A station built from a repeating row is matched by row and block, the
+ * block followed back the same way (a move moves it in every row); a
+ * trace without block numbers, by place.
  */
 export function compareWeeks(
   trace: Trace,
@@ -210,7 +218,7 @@ export function compareWeeks(
     };
   }
   const flat = !template.layout.row_template?.length;
-  const ruleOf = (x: TraceSlot): string => (flat ? `${x.block - 1}` : `${x.row}:${x.block}`);
+  const ruleOf = (x: TraceSlot, block = x.block - 1): string => (flat ? `${block}` : `${x.row}:${block}`);
   const savedByRule = new Map<string, TraceSlot[]>();
   for (const x of saved.slots) {
     const k = ruleOf(x);
@@ -218,22 +226,20 @@ export function compareWeeks(
     if (list) list.push(x);
     else savedByRule.set(k, [x]);
   }
-  const moved = flat ? reallyMoved(trace, opLog) : new Set<number>();
+  const movedRules = reallyMoved(trace, opLog);
+  const moved = (x: TraceSlot): boolean => movedRules.has(x.block - 1);
   const used = new Map<string, number>();
   const changes = trace.slots.map((x): SongChange | null => {
-    let was = ruleOf(x);
-    if (flat) {
-      const q = slotAsSaved(opLog, x.block - 1);
-      if (q === undefined) return 'added';
-      was = `${q}`;
-    }
+    const q = slotAsSaved(opLog, x.block - 1);
+    if (q === undefined) return 'added';
+    const was = ruleOf(x, q);
     const k = used.get(was) ?? 0;
     used.set(was, k + 1);
     const before = savedByRule.get(was)?.[k];
     if (!before) return 'added';
     // A rule moved says so, even when it picks another song where it
     // plays now: what was done is the thing to see.
-    if (flat && moved.has(x.block - 1)) return 'moved';
+    if (moved(x)) return 'moved';
     return before.track_id !== x.track_id ? 'changed' : null;
   });
   let matched = 0;
@@ -329,17 +335,21 @@ export function filterGroups(
  * the rule now in that place. A week made before rules were added,
  * removed or moved usually doesn't, and then its places can't be used to
  * move rules. (A rule can play fewer songs than its size, so counts
- * aren't compared.) Flat stations only.
+ * aren't compared.) A repeating row's: each row's songs against the row.
  */
 export function weekMatchesRules(trace: Trace, template: StationTemplate): boolean {
-  const rules = template.layout.flat_slots;
-  if (!rules?.length || template.layout.row_template?.length) return false;
-  let last = 0;
+  const rows = !!template.layout.row_template?.length;
+  const rules = rows ? template.layout.row_template : template.layout.flat_slots;
+  if (!rules?.length) return false;
+  let last = { row: 0, block: 0 };
   for (const x of trace.slots) {
     const rule = rules[x.block - 1];
-    if (!Number.isInteger(x.block) || x.block < last || !rule) return false;
+    if (!Number.isInteger(x.block) || !rule) return false;
+    // In play order: by row (a repeating row's), then block.
+    const row = rows ? x.row : 0;
+    if (!Number.isInteger(row) || row < last.row || (row === last.row && x.block < last.block)) return false;
     if (rule.strategy !== x.strategy || rule.source !== x.source) return false;
-    last = x.block;
+    last = { row, block: x.block };
   }
   return true;
 }
@@ -496,9 +506,11 @@ export function describeQueued(
         if (state.template === before.template) break; // refused: say what it is
         const run = Array.from({ length: op.count }, (_, k) => op.from + k);
         const at = op.to < op.from ? op.to : op.to - op.count;
+        // A repeating row's rules: the move is made in every row.
+        const every = before.template.layout.row_template?.length ? `, in every ${unitWord(before.template)}` : '';
         if (op.kind === 'moveSection') {
           const where = op.beforeSectionId === null ? 'to the end' : `before ${sectionLabel(was, op.beforeSectionId)}`;
-          return `Moved section ${sectionLabel(was, op.sectionId)} ${where}`;
+          return `Moved section ${sectionLabel(was, op.sectionId)} ${where}${every}`;
         }
         const from = runPlace(was, run);
         let to = runPlace(after, run.map((_, k) => at + k));
@@ -509,7 +521,7 @@ export function describeQueued(
         };
         const here = sectionOf(from);
         if (here !== null && here === sectionOf(to)) to = to.slice(here.length + 2);
-        return `Moved ${from} to ${to}`;
+        return `Moved ${from} to ${to}${every}`;
       }
     }
     return describeOp(op);

@@ -1013,6 +1013,15 @@ export function findSectionIdForRef(
   sidecar: Sidecar,
   ref: ExpandedRef,
 ): string | null {
+  // A repeating row's block: the section listing it for that row, when
+  // one does (a section per day, say); else the first with it.
+  if (ref.kind === 'atomic-ref' && ref.block_idx !== undefined && ref.row_idx !== undefined) {
+    for (const section of sidecar.sections) {
+      if (section.blocks.some((b) => b.kind === 'atomic' && b.block_idx === ref.block_idx && b.row_idx === ref.row_idx)) {
+        return section.id;
+      }
+    }
+  }
   for (const section of sidecar.sections) {
     for (const block of section.blocks) {
       if (ref.kind === 'atomic-ref' && block.kind === 'atomic') {

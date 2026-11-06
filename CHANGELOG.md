@@ -4,7 +4,7 @@ All notable changes are listed here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses semantic versioning.
 
-## [Unreleased]
+## [1.18.0] - 2026-11-06
 
 ### Added
 
@@ -15,13 +15,19 @@ this project uses semantic versioning.
   the keyboard too: Space to pick up, the arrows to choose, Space to
   drop. Dropped over the line between two sections, a song just joins
   the other one. The songs moved say **moved**; ones only shifted along
-  aren't marked. For stations built from a list of rules; ones built from a
-  repeating row come next.
+  aren't marked.
+- **On a station built from a repeating day** (or other row), a move is
+  made in every day, and the list says so: each day's first song says
+  which day it is, and what you're moving is marked on every day.
+  (Not yet while the station's sections use macros.)
 - **Moving rules to play somewhere else**, under that: two new edits in
-  the save batch, `moveRules` and `moveSection`, reorder a flat
-  station's rules, and the sections follow. The editor's preview does
-  the same, checked against the same cases as the server. Undo and a
-  song's Revert follow rules through a move.
+  the save batch, `moveRules` and `moveSection`, reorder a station's
+  rules (`flat_slots`, or a repeating row's `row_template`), and the
+  sections follow. The editor's preview does the same, checked against
+  the same cases as the server. Undo and a song's Revert follow rules
+  through a move.
+- **A song's Revert now works on stations built from a repeating row**
+  too (it only found a flat station's rules).
 
 ### Fixed
 

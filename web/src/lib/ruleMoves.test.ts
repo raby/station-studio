@@ -9,7 +9,7 @@ import shared from '../../../tests/fixtures/rule_moves.json';
 import { applyEdit, newPosition, type Edit } from './edit-ops';
 import type { StationTemplate } from './editor';
 
-interface Station { template: StationTemplate; sidecar: { sections: { id: string; blocks: { kind: string; slot_index?: number; ref?: string }[] }[]; layout_order: string[] } }
+interface Station { template: StationTemplate; sidecar: { sections: { id: string; blocks: { kind: string; slot_index?: number; row_idx?: number; block_idx?: number; ref?: string }[] }[]; layout_order: string[] } }
 interface Case {
   name: string;
   station: string;
@@ -29,9 +29,11 @@ describe('moving rules: the shared cases', () => {
       expect(out.sidecar).toBe(station.sidecar);
     } else {
       const sidecar = out.sidecar as Station['sidecar'];
-      expect(out.template.layout.flat_slots!.map((b) => b.source)).toEqual(c.expect.order);
+      const rules = out.template.layout.row_template?.length ? out.template.layout.row_template : out.template.layout.flat_slots!;
+      expect(rules.map((b) => b.source)).toEqual(c.expect.order);
       expect(Object.fromEntries(sidecar.sections.map((s) => [
-        s.id, s.blocks.map((b) => (b.kind === 'atomic' ? b.slot_index! : `macro:${b.ref}`)),
+        s.id, s.blocks.map((b) => (b.kind !== 'atomic' ? `macro:${b.ref}`
+          : b.slot_index !== undefined ? b.slot_index : `${b.row_idx}:${b.block_idx}`)),
       ]))).toEqual(c.expect.sections);
       expect(sidecar.layout_order).toEqual(c.expect.layout_order);
     }

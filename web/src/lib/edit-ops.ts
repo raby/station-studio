@@ -1549,8 +1549,38 @@ export function newPosition(p: number, from: number, count: number, to: number):
   return p;
 }
 
-type _SidecarBlock = { kind?: unknown; slot_index?: unknown; ref?: unknown };
-type _Section = { id?: unknown; blocks?: _SidecarBlock[] };
+type _SidecarBlock = { kind?: unknown; slot_index?: unknown; row_idx?: unknown; block_idx?: unknown; ref?: unknown };
+type _Section = { id?: unknown; blocks?: _SidecarBlock[]; repeat_with_offsets?: unknown };
+
+/** An atomic block's rule: its slot (flat), or its place in the row. */
+function _pos(b: _SidecarBlock): number | undefined {
+  if (b.kind !== 'atomic') return undefined;
+  if (typeof b.slot_index === 'number') return b.slot_index;
+  if (typeof b.block_idx === 'number') return b.block_idx;
+  return undefined;
+}
+function _setPos(b: _SidecarBlock, p: number): void {
+  if ('slot_index' in b) b.slot_index = p;
+  else b.block_idx = p;
+}
+
+/** Why the station's rules can't be moved (`moveRules`/`moveSection`
+ *  would be refused, whatever the move), in words; null when they can. */
+export function whyRulesCantMove(template: StationTemplate, sidecar: unknown): string | null {
+  if (template.layout.row_template?.length) {
+    return _isSidecarLike(sidecar) && _rowsMovable(sidecar as { sections?: _Section[] }) ? null
+      : "Songs can't be moved in a station built from a repeating row while its sections use macros, or repeat for every row.";
+  }
+  return template.layout.flat_slots?.length ? null : 'This station has no rules to move.';
+}
+
+/** A row station's sidecar the moves can follow: no macros, no section
+ *  repeated for every row (`engine.rule_moves._check_rows`). */
+function _rowsMovable(sidecar: { sections?: _Section[] }): boolean {
+  return (sidecar.sections ?? []).every((s) =>
+    (s.repeat_with_offsets === undefined || s.repeat_with_offsets === null) &&
+    (s.blocks ?? []).every((b) => b.kind !== 'macro'));
+}
 
 /** Each section block, with the slots it covers (an atomic its own; a
  *  macro `repeat` from where its section has got to); null for a block
@@ -1563,16 +1593,21 @@ function _elementSlots(sidecar: { sections?: _Section[]; macros?: { id?: unknown
   const out: { section: _Section; block: _SidecarBlock; slots: number[] | null }[] = [];
   for (const section of sidecar.sections ?? []) {
     const blocks = section.blocks ?? [];
-    const anchor = blocks.findIndex((b) => b.kind === 'atomic' && typeof b.slot_index === 'number');
+    const anchor = blocks.findIndex((b) => _pos(b) !== undefined);
     if (anchor === -1) {
       for (const block of blocks) out.push({ section, block, slots: null });
       continue;
     }
-    let pos = (blocks[anchor].slot_index as number) - blocks.slice(0, anchor).reduce((n, b) => n + width(b), 0);
+    let pos = (_pos(blocks[anchor]) as number) - blocks.slice(0, anchor).reduce((n, b) => n + width(b), 0);
     for (const block of blocks) {
       if (block.kind === 'atomic') {
-        out.push({ section, block, slots: [block.slot_index as number] });
-        pos = (block.slot_index as number) + 1;
+        const p = _pos(block);
+        if (p === undefined) {
+          out.push({ section, block, slots: null });
+          continue;
+        }
+        out.push({ section, block, slots: [p] });
+        pos = p + 1;
       } else {
         const w = width(block);
         out.push({ section, block, slots: Array.from({ length: w }, (_, k) => pos + k) });
@@ -1600,33 +1635,39 @@ function _macroSlots(sidecar: { sections?: _Section[] }): Map<unknown, number[]>
 
 /** The rules at these slots, as the operator counts them: each rule's
  *  section and number there (single rules and macros, in order), once
- *  each, in play order. Slots no section places are left out. */
+ *  each, in play order. Slots no section places are left out. (A row
+ *  station's: a section's blocks are counted once for all its rows, and
+ *  each rule is said where it first is.) */
 export function rulesAt(sidecar: unknown, slots: number[]): { sectionId: string; number: number }[] {
   if (!_isSidecarLike(sidecar)) return [];
   const want = new Set(slots);
-  const found: { first: number; sectionId: string; number: number }[] = [];
-  const numbers = new Map<_Section, number>();
+  const found = new Map<number, { sectionId: string; number: number }>();
+  const numbers = new Map<_Section, Map<number, number>>();
   for (const { section, slots: of } of _elementSlots(sidecar as { sections?: _Section[] })) {
-    const number = (numbers.get(section) ?? 0) + 1;
-    numbers.set(section, number);
-    if (of !== null && of.some((p) => want.has(p))) {
-      found.push({ first: Math.min(...of), sectionId: String(section.id), number });
+    if (of === null) continue;
+    const first = Math.min(...of);
+    const mine = numbers.get(section) ?? new Map<number, number>();
+    numbers.set(section, mine);
+    if (!mine.has(first)) mine.set(first, mine.size + 1);
+    if (!found.has(first) && of.some((p) => want.has(p))) {
+      found.set(first, { sectionId: String(section.id), number: mine.get(first)! });
     }
   }
-  return found.sort((a, b) => a.first - b.first).map(({ sectionId, number }) => ({ sectionId, number }));
+  return [...found].sort((a, b) => a[0] - b[0]).map(([, r]) => r);
 }
 
-/** The slots a section's blocks cover, sorted; null when one can't be
- *  placed. */
+/** The slots a section's blocks cover, sorted, once each (a row
+ *  station's: the places in the row, of every row it has); null when
+ *  one can't be placed. */
 export function sectionSlots(sidecar: unknown, sectionId: string): number[] | null {
   if (!_isSidecarLike(sidecar)) return null;
-  const out: number[] = [];
+  const out = new Set<number>();
   for (const { section, slots } of _elementSlots(sidecar as { sections?: _Section[] })) {
     if (section.id !== sectionId) continue;
     if (slots === null) return null;
-    out.push(...slots);
+    for (const p of slots) out.add(p);
   }
-  return out.sort((a, b) => a - b);
+  return [...out].sort((a, b) => a - b);
 }
 
 /**
@@ -1639,8 +1680,12 @@ function _moveRules(
   sidecar: unknown,
   op: MoveRulesOp | MoveSectionOp,
 ): { template: StationTemplate; sidecar: unknown } | null {
-  const slots = template.layout.flat_slots;
-  if (template.layout.row_template?.length || !Array.isArray(slots) || !_isSidecarLike(sidecar)) return null;
+  // The station's rules: flat_slots, or a repeating row's row_template
+  // (a move then changes every row).
+  const rows = !!template.layout.row_template?.length;
+  const slots = rows ? template.layout.row_template : template.layout.flat_slots;
+  if (!Array.isArray(slots) || !_isSidecarLike(sidecar)) return null;
+  if (rows && !_rowsMovable(sidecar as { sections?: _Section[] })) return null;
   const n = slots.length;
   const { from, count, to } = op;
   if (![from, count, to].every(Number.isInteger)) return null;
@@ -1662,31 +1707,34 @@ function _moveRules(
     // (Landing inside a macro, the server's own reason, is refused by the
     // macro check below.)
     const elements = _elementSlots(sc);
-    const moving: { first: number; block: _SidecarBlock }[] = [];
+    const moving: { first: number; block: _SidecarBlock; section: _Section }[] = [];
     const covered = new Set<number>();
-    for (const { block, slots: of } of elements) {
+    for (const { section, block, slots: of } of elements) {
       if (of === null) continue;
       const inside = of.filter((p) => p >= from && p < from + count);
       if (inside.length === 0) continue;
       if (inside.length !== of.length) return null;
-      moving.push({ first: Math.min(...of), block });
+      moving.push({ first: Math.min(...of), block, section });
       for (const p of of) covered.add(p);
     }
     if (covered.size !== count) return null;
-    if (to === from + count && elements.every((e) => !moving.some((m) => m.block === e.block) || e.section.id === op.sectionId)) {
-      return null;
-    }
-    const moved = new Set(moving.map((m) => m.block));
+    const target = sc.sections.find((s) => s.id === op.sectionId)!;
+    // Which moved blocks join the section: all of them; in a row station,
+    // those of the rows it has blocks of (the rest stay put).
+    const targetRows = new Set((target.blocks ?? []).map((b) => b.row_idx));
+    const joining = moving.filter((m) => !rows || targetRows.has(m.block.row_idx));
+    if (to === from + count && joining.every((m) => m.section === target)) return null;
+    const moved = new Set(joining.map((m) => m.block));
     for (const s of sc.sections) s.blocks = (s.blocks ?? []).filter((b) => !moved.has(b));
     // After the section's blocks that play before `to` (at the end, when
-    // it has blocks that can't be placed).
-    const target = sc.sections.find((s) => s.id === op.sectionId)!;
+    // it has blocks that can't be placed). A row station's are put in
+    // play order below.
     const blocks = target.blocks ?? [];
     const placed = new Map(elements.filter((e) => e.section.id === op.sectionId).map((e) => [e.block, e.slots]));
     const at = blocks.some((b) => placed.get(b) === null)
       ? blocks.length
       : blocks.filter((b) => Math.max(...(placed.get(b) ?? [Infinity])) < to).length;
-    blocks.splice(at, 0, ...moving.sort((a, b) => a.first - b.first).map((m) => m.block));
+    blocks.splice(at, 0, ...joining.sort((a, b) => a.first - b.first).map((m) => m.block));
     target.blocks = blocks;
   } else {
     if (!ids.has(op.sectionId) || op.beforeSectionId === op.sectionId) return null;
@@ -1704,9 +1752,18 @@ function _moveRules(
   // Renumber every atomic block to where its rule now plays.
   for (const s of sc.sections) {
     for (const b of s.blocks ?? []) {
-      if (b.kind === 'atomic' && typeof b.slot_index === 'number') {
-        b.slot_index = newPosition(b.slot_index, from, count, to);
-      }
+      const p = _pos(b);
+      if (p !== undefined) _setPos(b, newPosition(p, from, count, to));
+    }
+  }
+  // A row station's sections, in play order: by row, then place in it.
+  if (rows) {
+    const key = (b: _SidecarBlock): [number, number] => [typeof b.row_idx === 'number' ? b.row_idx : 0, _pos(b) ?? -1];
+    for (const s of sc.sections) {
+      s.blocks = [...(s.blocks ?? [])].sort((x, y) => {
+        const [a, b] = [key(x), key(y)];
+        return a[0] - b[0] || a[1] - b[1];
+      });
     }
   }
   // Each macro still covers the rules it did.
@@ -1726,9 +1783,9 @@ function _moveRules(
 
   const rest = [...slots.slice(0, from), ...slots.slice(from + count)];
   const at = to < from ? to : to - count;
-  const flat = [...rest.slice(0, at), ...slots.slice(from, from + count), ...rest.slice(at)];
+  const reordered = [...rest.slice(0, at), ...slots.slice(from, from + count), ...rest.slice(at)];
   return {
-    template: { ...template, layout: { ...template.layout, flat_slots: flat } },
+    template: { ...template, layout: { ...template.layout, [rows ? 'row_template' : 'flat_slots']: reordered } },
     sidecar: sc,
   };
 }
@@ -1766,15 +1823,9 @@ function _isSidecarLike(value: unknown): boolean {
  * disabled "Revert" button on cascade-CHANGED rows; this attribution
  * function returns an empty array for them.
  *
- * §16.2.7.t6 review R1: ROW_TEMPLATE STATIONS ARE NOT SUPPORTED in
- * v1. Row_template ops target `block_idx` (not `slot_index`); this
- * function only matches slot_index. Operator on a row_template
- * station sees ALL revert buttons disabled (attribution always
- * empty for block_idx-targeted ops). Accepted limitation per the
- * existing D5 punt scope (cascade + macro + multi-slot already
- * punted; row_template implicitly so). Future `§16.2.7.tX` could
- * extend attribution to block_idx with a parallel second-arg or a
- * tagged union.
+ * A row_template station's ops target `block_idx`, its place in the
+ * repeating row: `slotIndex` is then that place (a station's queue is
+ * all one or the other, so they never mix).
  *
  * Pure function — no DOM, no state. Vitest-testable end to end.
  */
@@ -1825,6 +1876,16 @@ export function slotAfter(op: Edit, p: number): number | undefined {
   return p;
 }
 
+
+/** A rule's ref (a flat slot's, or a repeating row's block in a row)
+ *  after `op`: where it is now; null when `op` removed it. */
+export function followRef<R extends { slot_index?: number; block_idx?: number }>(ref: R, op: Edit): R | null {
+  const p = ref.slot_index ?? ref.block_idx;
+  if (p === undefined) return ref;
+  const now = slotAfter(op, p);
+  if (now === undefined) return null;
+  return ref.slot_index !== undefined ? { ...ref, slot_index: now } : { ...ref, block_idx: now };
+}
 
 /** Where the rule now at slot `p` was before `op`; undefined when `op`
  *  added it. (`slotAfter` the other way.) */
@@ -1884,8 +1945,9 @@ export function blockRuns(sidecar: unknown): Map<number, { from: number; count: 
  * For each queued edit, the slots of the rules it's to, where they are
  * now, with every edit applied: followed along by the rules added,
  * removed or moved after it (taking each edit as made: a queue the
- * server would save). Empty for edits not to a slot's rule
- * (sections, macros, row-template blocks), and for a rule since
+ * server would save). A row station's "slots" are the places in its
+ * repeating row. Empty for edits not to a rule (sections, macros),
+ * and for a rule since
  * removed, or removed by the edit itself (its songs aren't in the week
  * any more). A move is to the rules it moved.
  */
@@ -1900,13 +1962,21 @@ export function slotsNow(opLog: Edit[]): number[][] {
 }
 
 
+/** An address's rule: its slot (flat), or its place in the repeating
+ *  row (a row station's queue is all `block_idx`, so the two never mix). */
+function _addressPos(a: BlockAddress): number | undefined {
+  return a.slot_index ?? a.block_idx;
+}
+
 /** The slots of the rules an edit is to, just after it. */
 function _rulesOf(op: Edit): number[] {
   switch (op.kind) {
     case 'patchBlock':
     case 'retypeBlock':
-    case 'moveBlock':
-      return op.address.slot_index === undefined ? [] : [op.address.slot_index];
+    case 'moveBlock': {
+      const p = _addressPos(op.address);
+      return p === undefined ? [] : [p];
+    }
     case 'structuralBlockEdit':
       return op.edit.op === 'remove' ? [] : [op.edit.slot_index];
     case 'moveRules':
@@ -1927,7 +1997,7 @@ function _span(op: Edit): [number, number] | null {
     case 'patchBlock':
     case 'retypeBlock':
     case 'moveBlock': {
-      const p = op.address.slot_index;
+      const p = _addressPos(op.address);
       return p === undefined ? null : [p, p + 1];
     }
     case 'structuralBlockEdit':
@@ -2050,11 +2120,11 @@ export function undoSet(
     const took = changes(was, all);
     for (let k = 0; took && k < affected.length; k++) affected[k] = _spanAfter(op, affected[k]);
     for (let k = retyped.length - 1; took && k >= 0; k--) {
-      const p = retyped[k].slot_index;
+      const p = _addressPos(retyped[k]);
       if (p === undefined) continue;
       const now = slotAfter(op, p);
       if (now === undefined) retyped.splice(k, 1);
-      else retyped[k] = { slot_index: now };
+      else retyped[k] = retyped[k].slot_index !== undefined ? { slot_index: now } : { block_idx: now };
     }
 
     if (out.has(j)) {

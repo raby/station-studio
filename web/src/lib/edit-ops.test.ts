@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  applyEdit, applyEdits, attributeOpsToSlot, describeOp, editsForRule, movedSlotsNow, newPosition, replayOpLog, resolveMacroAddresses, sectionSlots, slotAfter, slotAsSaved, slotBefore, slotsNow, undoSet,
+  applyEdit, applyEdits, attributeOpsToSlot, describeOp, editsForRule, followRef, movedSlotsNow, newPosition, replayOpLog, resolveMacroAddresses, rulesAt, sectionSlots, slotAfter, slotAsSaved, slotBefore, slotsNow, undoSet,
   type BlockAddress, type Edit, type ReplayDeps,
 } from './edit-ops';
 import type { StationTemplate } from './editor';
@@ -2330,5 +2330,66 @@ describe('undoSet — undoing a change takes the later ones built on it', () => 
     // Not just "undo everything after": most changes go alone.
     expect(alone).toBeGreaterThan(300 * 8 * 0.4);
     expect(undone).toBeGreaterThan(0);
+  });
+});
+
+describe('a station built from a repeating row: edits follow its blocks', () => {
+  // A day of three blocks; the sidecar's one section has row 0's.
+  const t = {
+    station: 'rw', name: 'Rows', sources: [{ name: 'A', colour: '#abc', role: 'content' }],
+    layout: {
+      unit: 'day', unit_labels: ['Mon', 'Tue'], row_start_offsets: [0, 3],
+      row_template: [1, 2, 3].map((size) => ({ source: 'A', strategy: 'pick', size })),
+    },
+  } as unknown as StationTemplate;
+  const sidecar = {
+    schema_version: 1,
+    sections: [{ id: 'day', name: 'Day', blocks: [0, 1, 2].map((b) => ({ kind: 'atomic', row_idx: 0, block_idx: b })) }],
+    macros: [],
+    layout_order: ['day'],
+  };
+  const patch = (b: number): Edit => ({ kind: 'patchBlock', address: { block_idx: b }, fields: { size: 9 } });
+  const retype = (b: number): Edit => ({ kind: 'retypeBlock', address: { block_idx: b }, newStrategy: 'window', newSource: null, newFields: {} });
+  const toFront = (b: number): Edit => ({ kind: 'moveRules', from: b, count: 1, to: 0, sectionId: 'day' });
+
+  it('a move reorders the row; sizes tell the blocks apart', () => {
+    const out = applyEdit(t, sidecar, toFront(2));
+    expect(out.template.layout.row_template!.map((b) => b.size)).toEqual([3, 1, 2]);
+    expect(out.template.layout.flat_slots).toBeUndefined();
+  });
+
+  it("a block's edits are followed through a move (Revert finds them)", () => {
+    const log = [patch(1), toFront(1)];
+    expect(slotsNow(log)).toEqual([[0], [0]]);
+    expect(editsForRule(log, 0)).toEqual([0, 1]);
+    expect(editsForRule(log, 1)).toEqual([]);
+  });
+
+  it('undoing a move takes a later edit to the block it put there', () => {
+    expect(undoSet([toFront(2), patch(0)], t, sidecar, [0])).toEqual([0, 1]);
+    // An edit to a block the move didn't touch stands.
+    expect(undoSet([toFront(1), patch(2)], t, sidecar, [0])).toEqual([0]);
+  });
+
+  it('undoing a retype takes a later edit to that block, followed through a move', () => {
+    expect(undoSet([retype(1), toFront(1), patch(0)], t, sidecar, [0])).toEqual([0, 2]);
+  });
+});
+
+describe('rulesAt, a station built from a repeating row', () => {
+  it("counts a section's blocks once for all its rows (its rows needn't each list them all)", () => {
+    const at = (r: number, b: number) => ({ kind: 'atomic', row_idx: r, block_idx: b });
+    const sidecar = { schema_version: 1, sections: [{ id: 'day', name: 'Day', blocks: [at(0, 0), at(1, 0), at(1, 1)] }], macros: [], layout_order: ['day'] };
+    expect(rulesAt(sidecar, [1])).toEqual([{ sectionId: 'day', number: 2 }]);
+    expect(rulesAt(sidecar, [0, 1])).toEqual([{ sectionId: 'day', number: 1 }, { sectionId: 'day', number: 2 }]);
+  });
+});
+
+describe('followRef', () => {
+  const toFront = (b: number): Edit => ({ kind: 'moveRules', from: b, count: 1, to: 0, sectionId: 's' });
+  it("a flat slot's ref, and a repeating row's block (its row kept), go where the move puts them", () => {
+    expect(followRef({ kind: 'atomic-ref', slot_index: 2 }, toFront(2))).toEqual({ kind: 'atomic-ref', slot_index: 0 });
+    expect(followRef({ kind: 'atomic-ref', row_idx: 3, block_idx: 0 }, toFront(2))).toEqual({ kind: 'atomic-ref', row_idx: 3, block_idx: 1 });
+    expect(followRef({ kind: 'atomic-ref', slot_index: 1 }, { kind: 'structuralBlockEdit', edit: { op: 'remove', slot_index: 1 } })).toBeNull();
   });
 });

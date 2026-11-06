@@ -1504,8 +1504,10 @@ def _apply_batch_edit(template: dict, sidecar: dict, env) -> dict:
                 )
         except RuleMoveError as e:
             raise HTTPException(400, str(e)) from e
-        # Like the other template kinds: the template is changed in place.
-        template["layout"]["flat_slots"] = moved["layout"]["flat_slots"]
+        # Like the other template kinds: the template is changed in place
+        # (its rules: flat_slots, or a repeating row's row_template).
+        key = "row_template" if moved["layout"].get("row_template") else "flat_slots"
+        template["layout"][key] = moved["layout"][key]
         return sidecar
 
     # c1b review P5: Pydantic's discriminated union rejects unknown

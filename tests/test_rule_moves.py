@@ -1,4 +1,4 @@
-"""Moving a flat station's rules: `engine.rule_moves` against the shared
+"""Moving a station's rules: `engine.rule_moves` against the shared
 cases (`tests/fixtures/rule_moves.json`, which the editor's in-browser
 mirror is checked against too), and the two batch edits end to end."""
 from __future__ import annotations
@@ -29,10 +29,16 @@ def _apply(station: dict, edit: dict) -> tuple[dict, dict]:
 
 
 def _blocks(section: dict) -> list:
-    return [
-        b["slot_index"] if b["kind"] == "atomic" else f"macro:{b['ref']}"
-        for b in section["blocks"]
-    ]
+    def one(b: dict):
+        if b["kind"] != "atomic":
+            return f"macro:{b['ref']}"
+        return b["slot_index"] if "slot_index" in b else f"{b['row_idx']}:{b['block_idx']}"
+    return [one(b) for b in section["blocks"]]
+
+
+def _rules(template: dict) -> list:
+    layout = template["layout"]
+    return layout.get("row_template") or layout["flat_slots"]
 
 
 @pytest.mark.parametrize("case", CASES["cases"], ids=lambda c: c["name"])
@@ -45,7 +51,7 @@ def test_shared_case(case):
             _apply(station, case["edit"])
     else:
         template, sidecar = _apply(station, case["edit"])
-        assert [b["source"] for b in template["layout"]["flat_slots"]] == expect["order"]
+        assert [b["source"] for b in _rules(template)] == expect["order"]
         assert {s["id"]: _blocks(s) for s in sidecar["sections"]} == expect["sections"]
         assert sidecar["layout_order"] == expect["layout_order"]
     # Pure: the station it was given is untouched.
@@ -147,3 +153,56 @@ def test_batch_refuses_a_bad_move_and_keeps_everything(five):
     r = client.get("/api/stations/mv/sidecar")
     assert r.json()["sidecar"]["sections"][0]["name"] == "Morning"
     assert _sizes(client) == [1, 2, 3, 4, 5]
+
+
+# ---------- a station built from a repeating row ----------------------------
+
+@pytest.fixture
+def rows(editor_api):  # noqa: F811
+    """Two days of three blocks (told apart by size), in two sections that
+    span both days: Morning has blocks 0-1, Evening block 2."""
+    client, Session, _dir = editor_api
+    template = seed_station(Session, slug="rw")
+    template["layout"] = {
+        "unit": "day", "unit_labels": ["Mon", "Tue"], "row_start_offsets": [0, 3],
+        "row_template": [{"source": "A", "strategy": "pick", "size": n} for n in (1, 2, 3)],
+    }
+    at = lambda r, b: {"kind": "atomic", "row_idx": r, "block_idx": b}  # noqa: E731
+    sidecar = {
+        "schema_version": 1,
+        "sections": [
+            {"id": "morning", "name": "Morning", "blocks": [at(0, 0), at(0, 1), at(1, 0), at(1, 1)]},
+            {"id": "evening", "name": "Evening", "blocks": [at(0, 2), at(1, 2)]},
+        ],
+        "macros": [],
+        "layout_order": ["morning", "evening"],
+    }
+    with Session() as db:
+        s = db.query(Station).filter(Station.slug == "rw").first()
+        s.template = template
+        s.sidecar = sidecar
+        db.commit()
+    return client
+
+
+def test_batch_moves_a_rows_rules_in_every_row(rows):
+    r = rows.post("/api/stations/rw/sidecar/batch", json={"edits": [
+        {"kind": "moveRules", "from": 2, "count": 1, "to": 0, "sectionId": "morning"},
+    ]})
+    assert r.status_code == 200, r.json()
+    body = r.json()
+    assert [b["size"] for b in body["template"]["layout"]["row_template"]] == [3, 1, 2]
+    assert "flat_slots" not in body["template"]["layout"]
+    morning = body["sidecar"]["sections"][0]["blocks"]
+    assert [(b["row_idx"], b["block_idx"]) for b in morning] == [(r, b) for r in (0, 1) for b in range(3)]
+    saved = rows.get("/api/stations/rw/sidecar").json()
+    assert [b["size"] for b in saved["template"]["layout"]["row_template"]] == [3, 1, 2]
+
+
+def test_batch_moves_a_rows_section(rows):
+    r = rows.post("/api/stations/rw/sidecar/batch", json={"edits": [
+        {"kind": "moveSection", "sectionId": "evening", "beforeSectionId": "morning", "from": 2, "count": 1, "to": 0},
+    ]})
+    assert r.status_code == 200, r.json()
+    assert r.json()["sidecar"]["layout_order"] == ["evening", "morning"]
+    assert [b["size"] for b in r.json()["template"]["layout"]["row_template"]] == [3, 1, 2]
