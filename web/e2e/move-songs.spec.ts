@@ -1,5 +1,5 @@
 import { test, expect, type APIRequestContext } from '@playwright/test';
-import { API, createStation, generate, importTinyPool, minimalFlatTemplate, minimalTemplate } from './fixtures';
+import { API, createStation, generate, importTinyPool, minimalFlatTemplate, minimalTemplate, setSidecar } from './fixtures';
 import { assertNoA11yViolations } from './a11y';
 
 /**
@@ -178,4 +178,51 @@ test('a station built from a repeating row: a move is made in every day, and sav
   await expect(page.getByTestId('staged-save')).toHaveCount(0, { timeout: 15000 });
   const saved = await (await request.get(`${API}/api/stations/mv-rows/sidecar`)).json();
   expect(saved.template.layout.row_template.map((b: { source: string }) => b.source)).toEqual(['B', 'A', 'A']);
+});
+
+test('a section repeated for every day (as Rebirth Classics\' is): a move is made in every day, the section kept', async ({ page, request }) => {
+  await importTinyPool(request, 'A');
+  await importTinyPool(request, 'B');
+  const t = minimalTemplate('mv-cycle');
+  t.sources.push({ name: 'B', colour: '#882255', role: 'content' });
+  t.layout.unit_labels = ['Mon', 'Tue'];
+  t.layout.row_start_offsets = [0, 0];
+  t.layout.row_template = [
+    { source: 'A', strategy: 'pick', size: 1 },
+    { source: 'A', strategy: 'pick', size: 1 },
+    { source: 'B', strategy: 'pick', size: 1 },
+  ] as typeof t.layout.row_template;
+  await createStation(request, 'mv-cycle', 'mv-cycle', 'A', t);
+  setSidecar('mv-cycle', {
+    schema_version: 1,
+    sections: [{
+      id: 'cycle', name: 'Weekly cycle', repeat_with_offsets: [0, 0],
+      blocks: [0, 1, 2].map((b) => ({ kind: 'atomic', row_idx: 0, block_idx: b })),
+    }],
+    macros: [],
+    layout_order: ['cycle'],
+  });
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await page.goto('/stations/mv-cycle/visualise');
+  await page.getByTestId('live-preview-checkbox').check();
+  const rules = page.getByTestId('song-rule');
+  await expect(rules).toHaveCount(6, { timeout: 15000 });
+  await expect(page.getByTestId('song-move-note')).toContainText('A move is made in every day');
+
+  const grip = page.getByTestId('song-grip').nth(5);
+  await grip.focus();
+  await page.keyboard.press('Space');
+  await expect(page.locator('li.carried')).toHaveCount(2);
+  await assertNoA11yViolations(page);
+  await page.keyboard.press('Home');
+  await page.keyboard.press('Space');
+  await expect(page.getByTestId('trace-change-item')).toHaveText([/in every day/]);
+  await expect(rules.nth(0)).toContainText('from B', { timeout: 15000 });
+  await expect(rules.nth(3)).toContainText('from B');
+
+  await page.getByTestId('staged-save').click();
+  await expect(page.getByTestId('staged-save')).toHaveCount(0, { timeout: 15000 });
+  const saved = await (await request.get(`${API}/api/stations/mv-cycle/sidecar`)).json();
+  expect(saved.template.layout.row_template.map((b: { source: string }) => b.source)).toEqual(['B', 'A', 'A']);
+  expect(saved.sidecar.sections).toEqual([expect.objectContaining({ id: 'cycle', repeat_with_offsets: [0, 0] })]);
 });

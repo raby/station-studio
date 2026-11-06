@@ -57,6 +57,12 @@ describe('moving rules: random stations and moves (tests/fixtures/rule_moves_ran
     expect(cases.filter((c) => !c.error).length).toBeGreaterThanOrEqual(100);
     expect(cases.filter((c) => c.error).length).toBeGreaterThanOrEqual(50);
     expect(cases.some((c) => !c.error && c.station.template.layout.row_template)).toBe(true);
+    // Sections repeated for every row (Rebirth Classics'), and a row
+    // station's macros, taken too.
+    const sections = (c: R) => (c.station.sidecar as { sections: { repeat_with_offsets?: unknown }[] }).sections;
+    expect(cases.filter((c) => !c.error && sections(c).some((s) => s.repeat_with_offsets)).length).toBeGreaterThanOrEqual(10);
+    expect(cases.filter((c) => !c.error && c.station.template.layout.row_template
+      && (c.station.sidecar as unknown as { macros: unknown[] }).macros.length > 0).length).toBeGreaterThanOrEqual(10);
   });
   it.each(cases.map((c, i) => [i, c] as const))('case %i', (_i, c) => {
     const out = applyEdit(c.station.template, c.station.sidecar, c.edit);

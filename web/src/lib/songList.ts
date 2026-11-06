@@ -264,7 +264,8 @@ export function songGroups(
   const groups: SongGroup[] = [];
   trace.slots.forEach((slot, i) => {
     const ref = findChipRef(template, sidecar, slot);
-    const sectionId = ref ? findSectionIdForRef(sidecar, ref) : null;
+    const rowStation = !!template.layout.row_template?.length;
+    const sectionId = ref ? findSectionIdForRef(sidecar, ref, rowStation ? slot.row - 1 : undefined) : null;
     const { block, macroName } = blockFor(ref, template, sidecar);
     const row: SongRow = {
       slot,

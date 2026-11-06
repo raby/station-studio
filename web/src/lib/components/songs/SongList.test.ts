@@ -352,7 +352,7 @@ describe('<SongList> moving songs', () => {
     expect(onmove).not.toHaveBeenCalled();
   });
 
-  it('off while searched, when the page says so, and on a station built from a repeating row: the note says why', async () => {
+  it('off while searched, and when the page says so: the note says why', async () => {
     const { rerender, onmove } = setup({ moveBlocked: 'Saving…' });
     // While the page waits the grips stay (one with focus keeps it),
     // but don't pick up: Space says why.
@@ -368,14 +368,6 @@ describe('<SongList> moving songs', () => {
     await fireEvent.input(screen.getByTestId('song-search'), { target: { value: 'Song 1' } });
     expect(screen.queryByTestId('song-grip')).toBeNull();
     expect(screen.getByTestId('song-move-note')).toHaveTextContent('Clear the search to move songs.');
-    cleanup();
-    const rows: StationTemplate = {
-      ...template,
-      layout: { unit: 'slot', unit_labels: [], row_start_offsets: [0], row_template: template.layout.flat_slots! },
-    };
-    render(SongList, { props: { trace: four(), template: rows, sidecar, onmove: vi.fn() } });
-    // (Its sidecar is the flat station's: a macro.)
-    expect(screen.getByTestId('song-move-note')).toHaveTextContent("can't be moved yet in a station built from a repeating row whose sections use macros");
   });
 
   it('told to wait mid-carry: put back', async () => {
@@ -621,22 +613,50 @@ describe('<SongList> moving songs, a station built from a repeating row', () => 
     expect(tueFirst.querySelector('[data-testid="song-drop-line"]:not(.drop-line--after)')).not.toBeNull();
   });
 
-  it('a row station whose sections use macros: no moving, and why', () => {
-    const withMacro: Sidecar = {
+  it('a section repeated for every day (as Rebirth Classics\' is): a block moves in every day, the section kept', async () => {
+    const cycle = {
       ...days,
-      sections: [{ id: 'morning', name: 'Morning', blocks: [at(0, 0), { kind: 'macro', ref: 'two' }] }],
-      macros: [{ id: 'two', name: 'Two', repeat: 2, spec: { source: 'POP', strategy: 'pick', size: 1 } }],
-    };
-    render(SongList, { props: { trace: twoDays(), template: rows, sidecar: withMacro, onmove: vi.fn() } });
-    expect(screen.queryByTestId('song-grip')).toBeNull();
-    expect(screen.getByTestId('song-move-note')).toHaveTextContent("Songs can't be moved yet in a station built from a repeating day whose sections use macros.");
+      sections: [{ id: 'cycle', name: 'Weekly cycle', repeat_with_offsets: [0, 3], blocks: [at(0, 0), at(0, 1), at(0, 2)] }],
+      layout_order: ['cycle'],
+    } as unknown as Sidecar;
+    const onmove = vi.fn();
+    render(SongList, { props: { trace: twoDays(), template: rows, sidecar: cycle, onmove } });
+    expect(grips()).toHaveLength(6);
+    expect(screen.getByTestId('song-move-note')).toHaveTextContent('A move is made in every day');
+    // Every day's songs are the cycle's.
+    expect(screen.getAllByTestId('song-section').map((h) => h.textContent)).toEqual([
+      expect.stringContaining('Weekly cycle'),
+    ]);
+    const grip = grips()[5]; // Tue's last
+    await key(grip, ' ');
+    expect(carried()).toEqual([false, false, true, false, false, true]);
+    await key(grip, 'Home');
+    expect(status()).toBe('before Tue 0 in Weekly cycle');
+    await key(grip, ' ');
+    expect(onmove).toHaveBeenCalledWith({ kind: 'moveRules', from: 2, count: 1, to: 0, sectionId: 'cycle' });
   });
 
-  it('a row station whose sections repeat for every day (as a bundled one does): no moving, and why', () => {
-    const repeating = { ...days, sections: [{ ...days.sections[0], repeat_with_offsets: [0, 3] }] } as unknown as Sidecar;
-    render(SongList, { props: { trace: twoDays(), template: rows, sidecar: repeating, onmove: vi.fn() } });
-    expect(screen.queryByTestId('song-grip')).toBeNull();
-    expect(screen.getByTestId('song-move-note')).toHaveTextContent("Songs can't be moved yet in a station whose sections repeat for every day.");
+  it("a section per day with a macro in each: each day's songs under its own day; the macro moves whole", async () => {
+    const perDay = {
+      ...days,
+      sections: [
+        { id: 'mon', name: 'Monday', blocks: [at(0, 0), { kind: 'macro', ref: 'two' }] },
+        { id: 'tue', name: 'Tuesday', blocks: [at(1, 0), { kind: 'macro', ref: 'two' }] },
+      ],
+      macros: [{ id: 'two', name: 'Two', repeat: 2, spec: { source: 'POP', strategy: 'pick', size: 1 } }],
+      layout_order: ['mon', 'tue'],
+    } as unknown as Sidecar;
+    const onmove = vi.fn();
+    render(SongList, { props: { trace: twoDays(), template: rows, sidecar: perDay, onmove } });
+    expect(screen.getAllByTestId('song-section').map((h) => h.textContent))
+      .toEqual([expect.stringContaining('Monday 3 songs'), expect.stringContaining('Tuesday 3 songs')]);
+    const grip = grips()[4]; // Tue's first of the macro
+    await key(grip, ' ');
+    expect(status()).toMatch(/^Picked up 2 songs\./);
+    expect(carried()).toEqual([false, true, true, false, true, true]);
+    await key(grip, 'Home');
+    await key(grip, ' ');
+    expect(onmove).toHaveBeenCalledWith({ kind: 'moveRules', from: 1, count: 2, to: 0, sectionId: 'tue' });
   });
 });
 

@@ -1012,12 +1012,23 @@ export function refKey(ref: ExpandedRef): string {
 export function findSectionIdForRef(
   sidecar: Sidecar,
   ref: ExpandedRef,
+  row?: number,
 ): string | null {
   // A repeating row's block: the section listing it for that row, when
   // one does (a section per day, say); else the first with it.
   if (ref.kind === 'atomic-ref' && ref.block_idx !== undefined && ref.row_idx !== undefined) {
     for (const section of sidecar.sections) {
       if (section.blocks.some((b) => b.kind === 'atomic' && b.block_idx === ref.block_idx && b.row_idx === ref.row_idx)) {
+        return section.id;
+      }
+    }
+  }
+  // A macro in a section per day (`row`, 0-based, given): the one of
+  // that day's sections.
+  if (ref.kind === 'macro-placeholder' && row !== undefined) {
+    for (const section of sidecar.sections) {
+      if (section.blocks.some((b) => b.kind === 'macro' && b.ref === ref.macro_id) &&
+          section.blocks.some((b) => b.kind === 'atomic' && b.row_idx === row)) {
         return section.id;
       }
     }

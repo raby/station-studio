@@ -93,15 +93,21 @@ older, only regroups: the songs play where they did.
 A station built from a repeating row (`layout.row_template`, a day,
 say) is moved the same way, numbered by the row's blocks: every row
 plays the row, so a move reorders `row_template` and is made in every
-row. Its sidecar's atomic blocks carry a row (`row_idx`) as well as
-their place (`block_idx`); every row's are renumbered, a moved block
-joins the target section when that section has blocks of its row (so a
-section per day keeps its day's), and each section's blocks are kept
-in play order. A section's move changes only its own place in
-`layout_order`: with a section per day, the other days' sections keep
-theirs (their songs still play in the new order). Such a station can't
-move rules yet while its sections use macros, or repeat for every row
-(`repeat_with_offsets`, as Rebirth Classics' does).
+row. Its sidecar's blocks belong to a row: an atomic block its
+`row_idx` (with its place, `block_idx`), a macro its section's, and a
+section repeated for every row (`repeat_with_offsets`, as Rebirth
+Classics' is) is every row's. Every row's blocks are renumbered; a
+moved block joins the target section when that section has blocks of
+its row, else it stays in its own (so a section per day keeps its
+day's); a block of a repeated section only joins another repeated one,
+and the other way round (refused, with the reason). Each moved block
+goes in among its section's blocks by when it plays now, so macros
+stay in place, and sections without macros are kept in play order. A
+section's move changes only its own place in `layout_order`: with a
+section per day, the other days' sections keep theirs (their songs
+still play in the new order). A row station's macro is of one row's
+blocks (the validator allows none in a repeated section), so one in a
+section per day is the same macro in every day's section.
 
 Both are in `engine/rule_moves.py` on the server and mirrored in
 `edit-ops.ts` for the preview; `tests/fixtures/rule_moves.json` holds
