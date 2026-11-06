@@ -94,6 +94,33 @@ Both are in `engine/rule_moves.py` on the server and mirrored in
 the cases both are checked against, so the preview shows what saving
 does. Stations built from a repeating row can't move rules yet.
 
+### Dragging in the song list
+
+The song list (the editor's Songs tab and a week's page) queues these
+edits. A song's grip moves its whole rule (a macro's song, the whole
+macro); Shift-click selects the songs between two, rounded out to whole
+rules; a section's grip moves the section, when its rules play
+together. Each can be dragged, or picked up from the keyboard (Space,
+the arrows, Space; Escape puts it back), and a live region says where
+it would go. Focus follows what moved once the list shows the new
+order.
+
+Moves are numbered by places in the list, so they're only taken from a
+list of the rules as they are now. The list waits while it's behind:
+in the editor, until the preview of the latest queue is in (the
+preview's template and sidecar must be the staged ones); on a week's
+page, until the session's preview was made with the current queue
+(`stagedFor`), and with nothing queued, only for a week that lines up
+with the rules (`weekMatchesRules`: a week made before they last
+changed may not). Moving is off while the list is searched or
+filtered, and on stations built from a repeating row.
+
+The changed-song marks follow each song's rule back through the queue
+(`slotAsSaved`) rather than comparing place by place, so rules a move
+only shifts along stay unmarked, and the rules moved say **moved**.
+Shuffled rules can still pick other songs where they play now: those
+say **changed**.
+
 Staged edits share one per-station queue in `localStorage` with the
 week pages' song-list editor, so a station with edits queued opens its
 editor with the preview on: with it off they'd be discarded.

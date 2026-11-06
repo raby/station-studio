@@ -8,7 +8,7 @@
  * section comes round every row, and the list keeps playing order.
  */
 import type { Trace, TraceSlot } from '$lib/api';
-import { applyEdit, describeOp, rulesAt, type Edit } from '$lib/edit-ops';
+import { applyEdit, describeOp, movedSlotsNow, rulesAt, slotAsSaved, type Edit } from '$lib/edit-ops';
 import {
   classifySlots,
   findChipRef,
@@ -121,8 +121,9 @@ export interface SongRow {
   block: EngineBlock | null;
   /** The macro's name when the song comes from one ("Hour jingles"). */
   macroName: string | null;
-  /** Compared with the saved week: a different song, a new one, or null. */
-  change: 'changed' | 'added' | null;
+  /** Compared with what its rule played in the saved week: a different
+   *  song, a new one, the same song moved with its rule, or null. */
+  change: SongChange | null;
   /** The block's rule now differs from the one this song was picked with
    *  (an older version of the week, or the template changed since). The
    *  trace's own strategy and source are then the accurate account. */
@@ -148,32 +149,94 @@ function blockFor(ref: ExpandedRef | null, template: StationTemplate, sidecar: S
   return { block: lookupEngineBlock(ref, template.layout), macroName: null };
 }
 
+export type SongChange = 'changed' | 'added' | 'moved';
+
+/**
+ * Each song of the edited week (`trace`) against the saved one: compared
+ * with what its own rule played there, not with whatever was at its
+ * place, so songs that only shift along (a rule added, removed or moved
+ * before them) aren't changes. A rule is followed back through the
+ * queue (`opLog`) to where it was; its songs are matched in order. A
+ * song with no match is new, one whose rule a move moved says so, and
+ * `removed` counts the saved songs left unmatched.
+ *
+ * Stations built from a repeating row are matched by row and block (the
+ * queue doesn't move their rules); a trace without block numbers, by
+ * place.
+ */
+export function compareWeeks(
+  trace: Trace,
+  saved: Trace | null,
+  template: StationTemplate,
+  opLog: Edit[] = [],
+): { changes: (SongChange | null)[]; removed: number } {
+  if (!saved) return { changes: trace.slots.map(() => null), removed: 0 };
+  const hasBlocks = (t: Trace) => t.slots.every((x) => Number.isInteger(x.block) && x.block >= 1);
+  if (!hasBlocks(trace) || !hasBlocks(saved)) {
+    const by = classifySlots(saved, trace);
+    return {
+      changes: trace.slots.map((_, i) => (by[i]?.kind === 'changed' || by[i]?.kind === 'added' ? by[i].kind as SongChange : null)),
+      removed: by.filter((c) => c.kind === 'removed').length,
+    };
+  }
+  const flat = !template.layout.row_template?.length;
+  const ruleOf = (x: TraceSlot): string => (flat ? `${x.block - 1}` : `${x.row}:${x.block}`);
+  const savedByRule = new Map<string, TraceSlot[]>();
+  for (const x of saved.slots) {
+    const k = ruleOf(x);
+    const list = savedByRule.get(k);
+    if (list) list.push(x);
+    else savedByRule.set(k, [x]);
+  }
+  const moved = flat ? movedSlotsNow(opLog) : new Set<number>();
+  const used = new Map<string, number>();
+  const changes = trace.slots.map((x): SongChange | null => {
+    let was = ruleOf(x);
+    if (flat) {
+      const q = slotAsSaved(opLog, x.block - 1);
+      if (q === undefined) return 'added';
+      was = `${q}`;
+    }
+    const k = used.get(was) ?? 0;
+    used.set(was, k + 1);
+    const before = savedByRule.get(was)?.[k];
+    if (!before) return 'added';
+    // A rule moved says so, even when it picks another song where it
+    // plays now: what was done is the thing to see.
+    if (flat && moved.has(x.block - 1)) return 'moved';
+    return before.track_id !== x.track_id ? 'changed' : null;
+  });
+  let matched = 0;
+  for (const [k, n] of used) matched += Math.min(n, savedByRule.get(k)?.length ?? 0);
+  return { changes, removed: saved.slots.length - matched };
+}
+
 /**
  * A week's songs in playing order, in runs that share a section.
- * With `saved` (the same week as saved), each song is marked when it
- * differs from the saved week's song at that place.
+ * With `saved` (the same week as saved), each song is marked as
+ * `compareWeeks` says, following rules through `opLog`.
  */
 export function songGroups(
   trace: Trace,
   template: StationTemplate,
   sidecar: Sidecar,
   saved: Trace | null = null,
+  opLog: Edit[] = [],
 ): SongGroup[] {
   const sectionNames = new Map(sidecar.sections.map((s) => [s.id, s.name ?? s.id] as const));
-  const changes = saved ? classifySlots(saved, trace) : [];
+  const { changes } = compareWeeks(trace, saved, template, opLog);
   const groups: SongGroup[] = [];
   trace.slots.forEach((slot, i) => {
     const ref = findChipRef(template, sidecar, slot);
     const sectionId = ref ? findSectionIdForRef(sidecar, ref) : null;
     const { block, macroName } = blockFor(ref, template, sidecar);
-    const kind = changes[i]?.kind;
     const row: SongRow = {
       slot,
       position: i + 1,
       ref,
       block,
       macroName,
-      change: kind === 'changed' || kind === 'added' ? kind : null,
+      change: changes[i] ?? null,
       ruleChanged: block !== null && (block.strategy !== slot.strategy || block.source !== slot.source),
     };
     const last = groups[groups.length - 1];
@@ -230,18 +293,39 @@ export function filterGroups(
     .filter((group) => group.rows.length > 0);
 }
 
+/**
+ * Whether a week's songs line up with the station's rules now: in rule
+ * order, each song's rule (its block) of the same type and source as
+ * the rule now in that place. A week made before rules were added,
+ * removed or moved usually doesn't, and then its places can't be used to
+ * move rules. (A rule can play fewer songs than its size, so counts
+ * aren't compared.) Flat stations only.
+ */
+export function weekMatchesRules(trace: Trace, template: StationTemplate): boolean {
+  const rules = template.layout.flat_slots;
+  if (!rules?.length || template.layout.row_template?.length) return false;
+  let last = 0;
+  for (const x of trace.slots) {
+    const rule = rules[x.block - 1];
+    if (!Number.isInteger(x.block) || x.block < last || !rule) return false;
+    if (rule.strategy !== x.strategy || rule.source !== x.source) return false;
+    last = x.block;
+  }
+  return true;
+}
+
 /** How many songs the saved week had that the edited week doesn't
  *  (shown as a note: removed songs have no row of their own). */
-export function removedCount(trace: Trace, saved: Trace | null): number {
-  if (!saved) return 0;
-  return classifySlots(saved, trace).filter((c) => c.kind === 'removed').length;
+export function removedCount(trace: Trace, saved: Trace | null, template: StationTemplate, opLog: Edit[] = []): number {
+  return compareWeeks(trace, saved, template, opLog).removed;
 }
 
 /** How many songs differ between the saved week and the edited one:
- *  a different song, a new one, or one gone. */
-export function songsChanged(trace: Trace, saved: Trace | null): number {
+ *  a different song, a new one, one moved, or one gone. */
+export function songsChanged(trace: Trace, saved: Trace | null, template: StationTemplate, opLog: Edit[] = []): number {
   if (!saved) return 0;
-  return classifySlots(saved, trace).filter((c) => c.kind !== 'unchanged').length;
+  const { changes, removed } = compareWeeks(trace, saved, template, opLog);
+  return changes.filter((c) => c !== null).length + removed;
 }
 
 function sectionName(sidecar: Sidecar, ref: ExpandedRef): string | null {
@@ -386,7 +470,16 @@ export function describeQueued(
           const where = op.beforeSectionId === null ? 'to the end' : `before ${sectionLabel(was, op.beforeSectionId)}`;
           return `Moved section ${sectionLabel(was, op.sectionId)} ${where}`;
         }
-        return `Moved ${runPlace(was, run)} to ${runPlace(after, run.map((_, k) => at + k))}`;
+        const from = runPlace(was, run);
+        let to = runPlace(after, run.map((_, k) => at + k));
+        // Within one section, it's said once: "The day, rule 4 to rule 2".
+        const sectionOf = (text: string): string | null => {
+          const i = text.indexOf(', rule');
+          return i === -1 || text.includes(' – ') ? null : text.slice(0, i);
+        };
+        const here = sectionOf(from);
+        if (here !== null && here === sectionOf(to)) to = to.slice(here.length + 2);
+        return `Moved ${from} to ${to}`;
       }
     }
     return describeOp(op);

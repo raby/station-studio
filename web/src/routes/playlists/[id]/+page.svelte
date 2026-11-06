@@ -36,8 +36,9 @@
   import DetailPanel from '$lib/components/editor/DetailPanel.svelte';
   import { findSectionIdForRef, type ExpandedRef, type ParsedEditorSidecar } from '$lib/editor';
   import {
-    queuedChanges, ruleDefaultsFrom, ruleKey, songsChanged, type RuleDefaults, type SongRow,
+    queuedChanges, ruleDefaultsFrom, ruleKey, songsChanged, weekMatchesRules, type RuleDefaults, type SongRow,
   } from '$lib/songList';
+  import { slotAfter, type MoveRulesOp, type MoveSectionOp } from '$lib/edit-ops';
   import {
     createStagedEditSession,
     type StagedEditSession,
@@ -112,11 +113,13 @@
   }
   onDestroy(endSession);
 
+  /** The session's first load, for a move made before there was one. */
+  let sessionLoaded: Promise<void> | null = null;
   function startSession(t: Trace): void {
     session = createStagedEditSession(t.station, { week: t.week, previewOnlyWhenEdited: true });
     unsubscribe = session.subscribe((v) => (editState = v));
     sessionStation = t.station;
-    void session.load();
+    sessionLoaded = session.load();
   }
 
   function pickSong(row: SongRow): void {
@@ -221,6 +224,45 @@
   }
 
   $: showingEdits = viewingCurrent && !!editing && editing.opLog.length > 0 && editing.stagedTrace !== null;
+
+  // Songs are moved by their places in the list, so only from a list of
+  // the rules as they are: the queued changes' preview once it's in, or,
+  // with nothing queued, a week that lines up with the rules now (one
+  // made before they last changed may not).
+  let moveProblem: string | null = null;
+  $: songMoveBlocked = editState?.saving ? 'Saving…'
+    : moveProblem
+      ?? (editState && editState.opLog.length > 0
+        ? (showingEdits && editState.stagedFor === editState.opLog ? null : 'Moving songs waits for the preview to catch up…')
+        : trace && editorData && weekMatchesRules(trace, editing?.template ?? editorData.template)
+          ? null
+          : "This week was made before the station's rules last changed, so its songs can't be moved here: regenerate it, or move them in the station editor.");
+
+  /** A song, selection or section dropped somewhere else: queue the move
+   *  (starting the session if there isn't one yet). */
+  async function moveSongs(edit: MoveRulesOp | MoveSectionOp): Promise<void> {
+    if (!trace || songMoveBlocked !== null) return;
+    const shownBefore = editState?.opLog.length ?? 0;
+    if (!session) startSession(trace);
+    await sessionLoaded;
+    const state = editState;
+    if (!session || !state?.template || !state.sidecar) return;
+    // Loading can bring back changes left from an earlier visit, or rules
+    // changed meanwhile: then the places dropped on aren't theirs.
+    if (state.opLog.length !== shownBefore || (shownBefore === 0 && !weekMatchesRules(trace, state.template))) {
+      moveProblem = 'The rules changed while you moved that, so it was put back: try again with the list as it is now.';
+      setTimeout(() => (moveProblem = null), 6000);
+      return;
+    }
+    session.stage(edit);
+    justSaved = false;
+    // An open rule panel follows its rule to where it plays now.
+    if (selectedRef?.kind === 'atomic-ref' && selectedRef.slot_index !== undefined) {
+      const now = slotAfter(edit, selectedRef.slot_index);
+      selectedRef = now === undefined ? null : { kind: 'atomic-ref', slot_index: now };
+    }
+    selectedSong = null;
+  }
 
   /** Remake this week with the saved rules. rng='on' reuses the week's
    *  seed, so only songs the rule change touches should move. */
@@ -1272,7 +1314,7 @@
               ? `${editState.opLog.length} of this station's rules`
               : "this station's rules"}, for every week, not just this one.
             {#if editState.previewing}<span class="muted" data-testid="song-edit-previewing">Previewing week {trace.week}…</span>
-            {:else if showingEdits && editing?.stagedTrace}<span class="muted" data-testid="song-edit-moved">{movedText(songsChanged(editing.stagedTrace, editing.savedTrace), editing.stagedTrace.slots.length)}</span>{/if}
+            {:else if showingEdits && editing?.stagedTrace}<span class="muted" data-testid="song-edit-moved">{movedText(songsChanged(editing.stagedTrace, editing.savedTrace, editing.staged.template ?? editing.template!, editing.opLog), editing.stagedTrace.slots.length)}</span>{/if}
           </p>
           <div class="queued">
             <QueuedChanges changes={queued} busy={editState.saving} onundo={undoChange} emptyFocus={afterLastUndo} testid="song-edit" />
@@ -1338,9 +1380,12 @@
       sidecar={showingEdits && editing
         ? (editing.staged.sidecar ?? editorData.sidecar)
         : (editing?.sidecar ?? editorData.sidecar)}
+      opLog={showingEdits && editing ? editing.opLog : []}
       selected={selectedSong}
       related={selectedRef ? ruleKey(selectedRef) : null}
       onselect={pickSong}
+      onmove={editable ? moveSongs : undefined}
+      moveBlocked={songMoveBlocked}
       {ruleDefaults}
     />
 

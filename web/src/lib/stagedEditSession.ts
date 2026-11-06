@@ -68,6 +68,9 @@ export interface StagedEditState {
   savedTrace: Trace | null;
   /** The week with the queued edits (the saved trace when none). */
   stagedTrace: Trace | null;
+  /** The queue `stagedTrace` was made with (this very array): while it
+   *  isn't `opLog`, the preview is behind. */
+  stagedFor: Edit[] | null;
   previewing: boolean;
   previewError: string | null;
 }
@@ -132,6 +135,7 @@ export function createStagedEditSession(slug: string, opts: SessionOptions = {})
     week: Math.max(1, Math.floor(opts.week ?? 1)),
     savedTrace: null,
     stagedTrace: null,
+    stagedFor: null,
     previewing: false,
     previewError: null,
   };
@@ -244,7 +248,7 @@ export function createStagedEditSession(slug: string, opts: SessionOptions = {})
       // Nothing to compare: the page shows the week as generated. Work
       // out the week under the saved rules meanwhile, so the first edit
       // shows sooner (kept until the saved station or the week changes).
-      update({ stagedTrace: null, previewing: false, previewError: null });
+      update({ stagedTrace: null, stagedFor: null, previewing: false, previewError: null });
       if (s.template && s.sidecar) {
         void savedWeek().catch(() => {
           // Shown by the first edit's preview, which tries again.
@@ -284,18 +288,19 @@ export function createStagedEditSession(slug: string, opts: SessionOptions = {})
   async function refresh(gen: number): Promise<void> {
     if (!s.template || !s.sidecar) return;
     update({ previewing: true, previewError: null });
+    const log = s.opLog;
     try {
       const saved = await savedWeek();
       if (saved === 'stale' || gen !== generation) return;
       if (s.opLog.length === 0) {
-        update({ stagedTrace: saved });
+        update({ stagedTrace: saved, stagedFor: log });
       } else {
         const t = await previewOf(s.staged.template, s.staged.sidecar, () => gen === generation, (id) => {
           jobId = id;
         });
         jobId = null;
         if (t === 'stale' || gen !== generation) return;
-        update({ stagedTrace: t });
+        update({ stagedTrace: t, stagedFor: log });
       }
       update({ previewing: false });
     } catch (e) {
@@ -474,7 +479,7 @@ export function createStagedEditSession(slug: string, opts: SessionOptions = {})
   function setWeek(week: number): void {
     const w = Math.max(1, Math.floor(week));
     if (!Number.isFinite(w) || w === s.week) return;
-    update({ week: w, savedTrace: null, stagedTrace: null });
+    update({ week: w, savedTrace: null, stagedTrace: null, stagedFor: null });
     schedule(true);
   }
 

@@ -2029,3 +2029,120 @@ describe('trace viewer — changing a song\'s rule', () => {
     expect(await screen.findByTestId('song-change')).toHaveTextContent('changed');
   });
 });
+
+
+describe('trace viewer — moving songs', () => {
+  // A station of three rules in a list (not a repeating row): Morning
+  // has rules 1 and 2, Evening rule 3. The week: a song from each.
+  const template = (strategy = 'pick') => ({
+    station: 'cls', name: 'Classics',
+    sources: [{ name: 'A', colour: '#c0392b', role: 'content' }],
+    layout: {
+      unit: 'slot', unit_labels: [], row_start_offsets: [],
+      flat_slots: [1, 2, 3].map(() => ({ source: 'A', strategy, size: 1 })),
+    },
+  });
+  const sidecar = () => ({
+    schema_version: 1,
+    sections: [
+      { id: 'morning', name: 'Morning', blocks: [{ kind: 'atomic', slot_index: 0 }, { kind: 'atomic', slot_index: 1 }] },
+      { id: 'evening', name: 'Evening', blocks: [{ kind: 'atomic', slot_index: 2 }] },
+    ],
+    macros: [],
+    layout_order: ['morning', 'evening'],
+  });
+  const flatWeek = (order = [1, 2, 3], strategy = 'pick') => stubTrace({
+    slots: order.map((n, i) => ({
+      slot: i + 1, unit: 'slot', row: 1, block: i + 1, source: 'A', strategy, pool_index: i + 1,
+      track_id: 100 + n, track_name: `Song ${n}`, track_artist: 'Artist', reason: 'picked',
+    })),
+  });
+  const queue = () => JSON.parse(window.localStorage.getItem('stagedEdits:cls') ?? '{"opLog":[]}').opLog as unknown[];
+  const note = () => screen.queryByTestId('song-move-note')?.textContent ?? '';
+  const key = async (el: HTMLElement, k: string) => { await act(async () => { await fireEvent.keyDown(el, { key: k }); }); };
+  /** Evening's song up one place: before rule 2, in Morning. */
+  async function moveLastUp() {
+    const grip = (await screen.findAllByTestId('song-grip'))[2];
+    await key(grip, ' ');
+    await key(grip, 'ArrowUp');
+    await key(grip, ' ');
+  }
+
+  beforeEach(() => {
+    for (const m of [getPlaylistMock, getTraceMock, getStationMock, getStationPlaylistsMock, getVersionsMock,
+      getStationSidecarMock, startPreviewJobMock, watchJobMock, applyBatchMock, startGenerateJobMock]) m.mockReset();
+    getStationPlaylistsMock.mockResolvedValue([]);
+    getVersionsMock.mockResolvedValue({ playlist_id: 7, current_v: 1, versions: [] });
+    stationServerSettingsMock.mockResolvedValue(
+      null as unknown as Awaited<ReturnType<typeof stationServerSettingsMock>>,
+    );
+    getStationSidecarMock.mockImplementation(async () => ({ template: template(), sidecar: sidecar(), sidecar_error: null, updated_at: 'ts-1' }));
+    getTraceMock.mockImplementation(async () => flatWeek());
+    getPlaylistMock.mockImplementation(async () => stubPlaylist());
+    getStationMock.mockImplementation(async () => stubStation());
+    // Previews: the saved week, then the week with the move (3 before 2).
+    let n = 0;
+    startPreviewJobMock.mockImplementation(async () => ({ job_id: `pv-${++n}`, status: 'running' }));
+    watchJobMock.mockImplementation((id: unknown) => (async function* () {
+      const trace = id === 'pv-1' ? flatWeek() : flatWeek([1, 3, 2]);
+      yield { status: 'done', result: { trace, slot_count: 3 } };
+    })());
+    setId('7');
+    setSearch('');
+    try { window.localStorage.clear(); } catch { /* */ }
+    window.localStorage.setItem('weekView', 'songs');
+  });
+
+  it('a song dragged is queued as a move for every week; the week shows it moved', async () => {
+    render(Page);
+    await moveLastUp();
+    await vi.waitFor(() => expect(queue()).toEqual([{ kind: 'moveRules', from: 2, count: 1, to: 1, sectionId: 'morning' }]));
+    expect(await screen.findByTestId('song-edit-count')).toHaveTextContent('1 change');
+    await vi.waitFor(() => expect(screen.getAllByTestId('song-row').map((r) => r.querySelector('.track')?.textContent ?? r.textContent))
+      .toEqual([expect.stringContaining('Song 1'), expect.stringContaining('Song 3'), expect.stringContaining('Song 2')]));
+    expect(screen.getAllByTestId('song-change').map((c) => c.textContent)).toEqual(['moved']);
+    // The preview is in: it can move again. Straight after, it waits
+    // again (the list shown is of the queue before), till that's in.
+    expect(note()).not.toContain('waits');
+    const grip = screen.getAllByTestId('song-grip')[0];
+    await key(grip, ' ');
+    await key(grip, 'End');
+    await key(grip, ' ');
+    expect(queue()).toHaveLength(2);
+    expect(note()).toContain('waits');
+    await vi.waitFor(() => expect(note()).not.toContain('waits'));
+  });
+
+  it("a week made before the rules last changed can't be moved here, and says what to do", async () => {
+    getTraceMock.mockImplementation(async () => flatWeek([1, 2, 3], 'window'));
+    render(Page);
+    const grips = await screen.findAllByTestId('song-grip');
+    expect(grips[0]).toHaveAttribute('aria-disabled', 'true');
+    expect(note()).toContain("made before the station's rules last changed");
+    await moveLastUp();
+    expect(queue()).toEqual([]);
+  });
+
+  it('rules changed between showing the week and the move: nothing queued, and it says to try again', async () => {
+    // The page's first look has the rules the week was made with; by the
+    // time the move starts editing, they've changed.
+    getStationSidecarMock
+      .mockImplementationOnce(async () => ({ template: template(), sidecar: sidecar(), sidecar_error: null, updated_at: 'ts-1' }))
+      .mockImplementation(async () => ({ template: template('window'), sidecar: sidecar(), sidecar_error: null, updated_at: 'ts-2' }));
+    render(Page);
+    await moveLastUp();
+    await vi.waitFor(() => expect(note()).toContain('The rules changed while you moved that'));
+    expect(queue()).toEqual([]);
+  });
+
+  it('an older version of the week has no grips', async () => {
+    setSearch('?v=1');
+    getVersionsMock.mockResolvedValue({ playlist_id: 7, current_v: 2, versions: [
+      { version_no: 1, trace_id: 'abc12345-trace-id', generated_at: 'a', seed: null, tags: [] },
+      { version_no: 2, trace_id: 'newer', generated_at: 'b', seed: null, tags: [] },
+    ] });
+    render(Page);
+    await screen.findByTestId('song-edit-older');
+    expect(screen.queryByTestId('song-grip')).toBeNull();
+  });
+});

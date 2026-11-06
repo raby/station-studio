@@ -69,7 +69,7 @@
     summarizeClassifications,
     type ExpandedRef, type Sidecar, type StationTemplate,
   } from '$lib/editor';
-  import { applyEdits, type Edit } from '$lib/edit-ops';
+  import { applyEdits, slotAfter, type Edit, type MoveRulesOp, type MoveSectionOp } from '$lib/edit-ops';
   import {
     COMPARE_NEXT_N_MAX,
     prefKeys,
@@ -140,6 +140,9 @@
   // if livePreviewOn is false (palette occupies it solo).
   let paletteOpen = false;
   let previewTrace: Trace | null = null;
+  /** The edited station `previewTrace` was made from. Songs are moved by
+   *  their places in it, so only while it's the station as it is now. */
+  let previewTraceOf: { template: unknown; sidecar: unknown } | null = null;
   let previewing = false;
   let previewError: string | null = null;
   // §16.2.6.t8 — operator-selected preview week. Default 1 mirrors
@@ -280,6 +283,8 @@
     : { template, sidecar };
   $: stagedTemplate = stagedView.template;
   $: stagedSidecar = stagedView.sidecar;
+  $: previewCurrent = previewTrace !== null && previewTraceOf !== null &&
+    previewTraceOf.template === stagedTemplate && previewTraceOf.sidecar === stagedSidecar;
 
   // §16.2.6 c3e c2 — D2(b) DetailPanel ↔ TracePane mutual-
   // exclusivity. EditorCanvas dispatches `detailOpen: { open }` on
@@ -339,6 +344,7 @@
   $: if (slug && slug !== _lastHydratedSlug) {
     _cancelPreview();
     previewTrace = null;
+    previewTraceOf = null;
     previewError = null;
     livePreviewOn = _hydrateLivePreview(slug);
     previewTab = readPreviewTab(slug);
@@ -958,6 +964,7 @@
         // when nothing is queued). cancelIfStale (review #1 fix #1): a
         // supersede or onDestroy during the POST could only no-op-cancel
         // because the job id wasn't known yet, so cancel it here.
+        const of = { template: stagedTemplate, sidecar: stagedSidecar };
         const out = await runPreview(slug, stagedTemplate, stagedSidecar, previewWeek, {
           isCurrent: () => myGeneration === previewGeneration,
           cancelIfStale: true,
@@ -967,8 +974,12 @@
         if (out.status === 'done') {
           // Review #1 fix #13: an unexpected result shape is an error the
           // banner names; the (possibly stale) trace stays visible.
-          if (out.trace !== null) previewTrace = out.trace;
-          else previewError = 'preview returned an unexpected shape';
+          if (out.trace !== null) {
+            previewTrace = out.trace;
+            previewTraceOf = of;
+          } else {
+            previewError = 'preview returned an unexpected shape';
+          }
         } else if (out.status === 'error') {
           previewError = friendlyPreviewError(out.message);
         }
@@ -1040,6 +1051,7 @@
     if (!livePreviewOn) {
       _cancelPreview();
       previewTrace = null;
+      previewTraceOf = null;
       previewError = null;
     } else {
       // Toggle-on: schedule an immediate preview against the current
@@ -1464,6 +1476,24 @@
     conflict = false;
     exportMsg = null;
     _schedulePreview();
+  }
+
+  // Songs dragged in the preview's song list: a move to queue. Only from
+  // a list of the station as it is (the places are its), so not while
+  // the preview catches up or a save runs.
+  $: songMoveBlocked = saving ? 'Saving…'
+    : !previewCurrent ? 'Moving songs waits for the preview to catch up…'
+      : null;
+  async function handleSongMove(edit: MoveRulesOp | MoveSectionOp): Promise<void> {
+    if (songMoveBlocked !== null) return;
+    const open = selectedRef?.kind === 'atomic-ref' ? selectedRef.slot_index : undefined;
+    _interceptToOpLog(edit);
+    // An open rule panel follows its rule to where it plays now.
+    if (open !== undefined) {
+      const now = slotAfter(edit, open);
+      await tick();
+      if (now !== undefined) canvas?.openRef({ kind: 'atomic-ref', slot_index: now });
+    }
   }
 
   // §16.2.3 c2 — DetailPanel save → PATCH → refetch. On 409 (someone
@@ -2280,6 +2310,8 @@
               opLog={opLog}
               changes={queued}
               onundo={undoQueued}
+              onmove={handleSongMove}
+              moveBlocked={songMoveBlocked}
               undoBusy={saving}
               {selectedRef}
               tab={previewTab}

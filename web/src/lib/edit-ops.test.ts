@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  applyEdit, applyEdits, attributeOpsToSlot, describeOp, editsForRule, newPosition, replayOpLog, resolveMacroAddresses, sectionSlots, slotsNow, undoSet,
+  applyEdit, applyEdits, attributeOpsToSlot, describeOp, editsForRule, movedSlotsNow, newPosition, replayOpLog, resolveMacroAddresses, sectionSlots, slotAfter, slotAsSaved, slotBefore, slotsNow, undoSet,
   type BlockAddress, type Edit, type ReplayDeps,
 } from './edit-ops';
 import type { StationTemplate } from './editor';
@@ -1804,6 +1804,39 @@ describe('attributeOpsToSlot', () => {
     expect(attributeOpsToSlot(log, 0)).toEqual([0]);
     // A song as saved, at rule 1: moved twice, to 4.
     expect(editsForRule(log, 1, true)).toEqual([1, 3]);
+  });
+
+  it('slotBefore undoes slotAfter, for every add, remove and move; an added rule came from nowhere', () => {
+    for (let n = 1; n <= 6; n++) {
+      const ops: Edit[] = [];
+      for (let s = 0; s <= n; s++) {
+        ops.push({ kind: 'structuralBlockEdit', edit: { op: 'add', slot_index: s, new_block: { source: 'A', strategy: 'pick', size: 1 } } });
+      }
+      for (let s = 0; s < n; s++) ops.push({ kind: 'structuralBlockEdit', edit: { op: 'remove', slot_index: s } });
+      for (let f = 0; f < n; f++) {
+        for (let c = 1; f + c <= n; c++) {
+          for (let t = 0; t <= n; t++) {
+            if (t < f || t > f + c) ops.push({ kind: 'moveRules', from: f, count: c, to: t, sectionId: 'x' });
+          }
+        }
+      }
+      for (const op of ops) {
+        for (let p = 0; p < n; p++) {
+          const now = slotAfter(op, p);
+          if (now !== undefined) expect(slotBefore(op, now), JSON.stringify([op, p])).toBe(p);
+        }
+        if (op.kind === 'structuralBlockEdit' && op.edit.op === 'add') expect(slotBefore(op, op.edit.slot_index)).toBeUndefined();
+      }
+    }
+  });
+
+  it('slotAsSaved follows a rule back through the whole queue', () => {
+    const log: Edit[] = [
+      { kind: 'moveRules', from: 3, count: 1, to: 0, sectionId: 's' },  // 3 0 1 2 4
+      { kind: 'structuralBlockEdit', edit: { op: 'add', slot_index: 0, new_block: { source: 'A', strategy: 'pick', size: 1 } } },
+    ];
+    expect([0, 1, 2, 3, 4, 5].map((p) => slotAsSaved(log, p))).toEqual([undefined, 3, 0, 1, 2, 4]);
+    expect([...movedSlotsNow(log)]).toEqual([1]);
   });
 
   it('other kinds (patchMacro / section* / reorder) never match', () => {
