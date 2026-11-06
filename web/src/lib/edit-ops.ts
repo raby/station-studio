@@ -196,7 +196,8 @@ export interface StructuralBlockEditOp {
  * order, after its blocks that play before `to`. Unlike `moveBlock`,
  * which only regroups, this changes when the songs play
  * (`engine/rule_moves.py`; the cases in `tests/fixtures/rule_moves.json`
- * check both).
+ * check both). With `to` just after the run (`from + count`, never
+ * `from`) they play where they did, and only change section.
  */
 export interface MoveRulesOp {
   kind: 'moveRules';
@@ -1644,7 +1645,9 @@ function _moveRules(
   const { from, count, to } = op;
   if (![from, count, to].every(Number.isInteger)) return null;
   if (count < 1 || from < 0 || from + count > n || to < 0 || to > n) return null;
-  if (to >= from && to <= from + count) return null;
+  // Just after the run, rules only change section (playing where they
+  // did); a section can't.
+  if (to >= from && to <= from + count && !(op.kind === 'moveRules' && to === from + count)) return null;
 
   const sc = JSON.parse(JSON.stringify(sidecar)) as {
     sections: _Section[]; macros?: { id?: unknown; repeat?: unknown }[]; layout_order?: unknown[];
@@ -1670,6 +1673,9 @@ function _moveRules(
       for (const p of of) covered.add(p);
     }
     if (covered.size !== count) return null;
+    if (to === from + count && elements.every((e) => !moving.some((m) => m.block === e.block) || e.section.id === op.sectionId)) {
+      return null;
+    }
     const moved = new Set(moving.map((m) => m.block));
     for (const s of sc.sections) s.blocks = (s.blocks ?? []).filter((b) => !moved.has(b));
     // After the section's blocks that play before `to` (at the end, when
@@ -1819,6 +1825,60 @@ export function slotAfter(op: Edit, p: number): number | undefined {
   return p;
 }
 
+
+/** Where the rule now at slot `p` was before `op`; undefined when `op`
+ *  added it. (`slotAfter` the other way.) */
+export function slotBefore(op: Edit, p: number): number | undefined {
+  if (op.kind === 'structuralBlockEdit') {
+    const at = op.edit.slot_index;
+    if (op.edit.op === 'add') return p === at ? undefined : p > at ? p - 1 : p;
+    if (op.edit.op === 'remove') return p >= at ? p + 1 : p;
+    return p;
+  }
+  if (op.kind === 'moveRules' || op.kind === 'moveSection') {
+    const { from, count, to } = op;
+    const at = to < from ? to : to - count;
+    if (p >= at && p < at + count) return from + (p - at);
+    if (to < from && p >= to + count && p < from + count) return p - count;
+    if (to > from + count && p >= from && p < to - count) return p + count;
+    return p;
+  }
+  return p;
+}
+
+/** Where the rule now at slot `p` was before any queued edit, in the
+ *  station as saved; undefined for a rule an edit added. Takes each edit
+ *  as made (a queue the server would save). */
+export function slotAsSaved(opLog: Edit[], p: number): number | undefined {
+  let q: number | undefined = p;
+  for (let j = opLog.length - 1; j >= 0 && q !== undefined; j--) q = slotBefore(opLog[j], q);
+  return q;
+}
+
+/** The slots, now, of the rules a queued move moved (not those that only
+ *  shifted along because of it). */
+export function movedSlotsNow(opLog: Edit[]): Set<number> {
+  const out = new Set<number>();
+  slotsNow(opLog).forEach((slots, i) => {
+    const op = opLog[i];
+    if (op.kind === 'moveRules' || op.kind === 'moveSection') for (const p of slots) out.add(p);
+  });
+  return out;
+}
+
+/** For each slot a section places, the run of slots, [from, from +
+ *  count), of the block it's in: a single rule's own, or all of a
+ *  macro's. What a drag of one of its songs moves. */
+export function blockRuns(sidecar: unknown): Map<number, { from: number; count: number }> {
+  const out = new Map<number, { from: number; count: number }>();
+  if (!_isSidecarLike(sidecar)) return out;
+  for (const { slots } of _elementSlots(sidecar as { sections?: _Section[] })) {
+    if (!slots?.length) continue;
+    const run = { from: Math.min(...slots), count: slots.length };
+    for (const p of slots) out.set(p, run);
+  }
+  return out;
+}
 
 /**
  * For each queued edit, the slots of the rules it's to, where they are

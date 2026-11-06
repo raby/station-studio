@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/svelte';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import '@testing-library/jest-dom/vitest';
 import type { Trace, TraceSlot } from '$lib/api';
+import type { Edit } from '$lib/edit-ops';
 import type { Sidecar, StationTemplate } from '$lib/editor';
 import SongList from './SongList.svelte';
 
@@ -104,5 +105,299 @@ describe('<SongList>', () => {
     render(SongList, { props: { trace: week([slot(0), slot(1), slot(2)]), template, sidecar, related: 'macro:pops' } });
     const rows = screen.getAllByTestId('song-row');
     expect(rows.map((r) => r.classList.contains('related'))).toEqual([false, true, true]);
+  });
+});
+
+describe('<SongList> moving songs', () => {
+  // Top of the hour: the jingle (rule 0). Music: the two-pop macro
+  // (rules 1-2), then a pick (rule 3).
+  const four = () => week([slot(0), slot(1), slot(2), slot(3)]);
+  function setup(props: Record<string, unknown> = {}) {
+    const onmove = vi.fn();
+    const r = render(SongList, { props: { trace: four(), template, sidecar, onmove, ...props } });
+    return { onmove, ...r };
+  }
+  const grips = () => screen.getAllByTestId('song-grip');
+  const key = (el: HTMLElement, k: string) => fireEvent.keyDown(el, { key: k });
+  const status = () => screen.getByTestId('song-move-status').textContent;
+
+  it("off unless the page can take moves: no grips, no note", () => {
+    render(SongList, { props: { trace: four(), template, sidecar } });
+    expect(screen.queryByTestId('song-grip')).toBeNull();
+    expect(screen.queryByTestId('section-grip')).toBeNull();
+    expect(screen.queryByTestId('song-move-note')).toBeNull();
+  });
+
+  it('a grip on every song, one on each section that plays together, and how to use them', () => {
+    setup();
+    expect(grips()).toHaveLength(4);
+    expect(grips()[3]).toHaveAccessibleName('Move Song 3');
+    expect(screen.getAllByTestId('section-grip').map((g) => g.getAttribute('aria-label')))
+      .toEqual(['Move section Top of the hour', 'Move section Music']);
+    expect(screen.getByTestId('song-move-note')).toHaveTextContent("Drag a song's grip");
+  });
+
+  it('from the keyboard: Space picks up, the arrows choose, Space drops; the move is the rule, to a place between rules', async () => {
+    const { onmove } = setup();
+    const grip = grips()[3];
+    await key(grip, ' ');
+    expect(status()).toMatch(/^Picked up Song 3\./);
+    // What's carried is marked, so it's plain what's on the move.
+    expect(screen.getAllByTestId('song-row').map((r) => r.closest('li')!.classList.contains('carried')))
+      .toEqual([false, false, false, true]);
+    // Its own place first; up: before the macro's first song, in Music.
+    await key(grip, 'ArrowUp');
+    expect(status()).toBe('before Song 1 in Music');
+    expect(screen.getAllByTestId('song-drop-line')).toHaveLength(1);
+    // Up again: the end of Top of the hour (the same place in play, the
+    // other section).
+    await key(grip, 'ArrowUp');
+    expect(status()).toBe('at the end of Top of the hour');
+    await key(grip, ' ');
+    expect(onmove).toHaveBeenCalledWith({ kind: 'moveRules', from: 3, count: 1, to: 1, sectionId: 'top' });
+    expect(status()).toBe('Moved Song 3 at the end of Top of the hour.');
+    expect(screen.queryByTestId('song-drop-line')).toBeNull();
+  });
+
+  it('Escape, or leaving the grip, puts it back; dropping where it was moves nothing', async () => {
+    const { onmove } = setup();
+    const grip = grips()[0];
+    await key(grip, 'Enter');
+    await key(grip, 'ArrowDown');
+    await key(grip, 'Escape');
+    expect(status()).toBe('Put back.');
+    await key(grip, ' ');
+    await key(grip, 'ArrowDown');
+    await fireEvent.blur(grip);
+    expect(status()).toBe('Put back.');
+    await key(grip, ' ');
+    await key(grip, ' ');
+    expect(status()).toBe('Put back where it was.');
+    expect(onmove).not.toHaveBeenCalled();
+  });
+
+  it("a macro's song moves all of the macro", async () => {
+    const { onmove } = setup();
+    const grip = grips()[2]; // the macro's second song
+    await key(grip, ' ');
+    await key(grip, 'End');
+    expect(status()).toBe('at the end of Music');
+    await key(grip, ' ');
+    expect(onmove).toHaveBeenCalledWith({ kind: 'moveRules', from: 1, count: 2, to: 4, sectionId: 'music' });
+  });
+
+  it('shift-click selects the songs between, and the whole of their rules; their grips move them all', async () => {
+    const { onmove } = setup();
+    const rows = screen.getAllByTestId('song-row');
+    await fireEvent.click(rows[2]);                     // the macro's second song
+    await fireEvent.click(rows[3], { shiftKey: true }); // to the pick
+    // The macro's first song comes too: a macro moves whole.
+    expect(screen.getAllByTestId('song-row').map((r) => r.closest('li')!.classList.contains('in-selection')))
+      .toEqual([false, true, true, true]);
+    expect(screen.getByTestId('song-move-note')).toHaveTextContent('3 songs selected');
+    expect(grips()[1]).toHaveAccessibleName('Move 3 selected songs');
+    await key(grips()[3], ' ');
+    await key(grips()[3], 'Home');
+    await key(grips()[3], ' ');
+    expect(onmove).toHaveBeenCalledWith({ kind: 'moveRules', from: 1, count: 3, to: 0, sectionId: 'top' });
+    // Moved: the selection's gone.
+    expect(document.querySelector('.in-selection')).toBeNull();
+  });
+
+  it('a new list (an Undo, say) clears a selection: its rules may be other songs now', async () => {
+    const { rerender } = setup();
+    const rows = screen.getAllByTestId('song-row');
+    await fireEvent.click(rows[0]);
+    await fireEvent.click(rows[1], { shiftKey: true });
+    expect(document.querySelectorAll('.in-selection').length).toBeGreaterThan(0);
+    await rerender({ trace: four() });
+    expect(document.querySelector('.in-selection')).toBeNull();
+  });
+
+  it('Escape clears a selection', async () => {
+    setup();
+    const rows = screen.getAllByTestId('song-row');
+    await fireEvent.click(rows[0]);
+    await fireEvent.click(rows[1], { shiftKey: true });
+    expect(document.querySelectorAll('.in-selection').length).toBeGreaterThan(0);
+    await fireEvent.keyDown(screen.getByTestId('song-list'), { key: 'Escape' });
+    expect(document.querySelector('.in-selection')).toBeNull();
+  });
+
+  it('a section moves before another section, or to the end', async () => {
+    const { onmove } = setup();
+    const music = screen.getAllByTestId('section-grip')[1];
+    await key(music, ' ');
+    await key(music, 'ArrowUp');
+    expect(status()).toBe('before Top of the hour');
+    await key(music, ' ');
+    expect(onmove).toHaveBeenCalledWith({
+      kind: 'moveSection', sectionId: 'music', beforeSectionId: 'top', from: 1, count: 3, to: 0,
+    });
+    const top = screen.getAllByTestId('section-grip')[0];
+    await key(top, ' ');
+    await key(top, 'ArrowDown');
+    expect(status()).toBe('at the end');
+    await key(top, ' ');
+    expect(onmove).toHaveBeenLastCalledWith({
+      kind: 'moveSection', sectionId: 'top', beforeSectionId: null, from: 0, count: 1, to: 4,
+    });
+  });
+
+  it('with a pointer: drag a grip over a song, a line shows where, and the drop is the move', async () => {
+    const { onmove } = setup();
+    const dataTransfer = { setData: vi.fn(), effectAllowed: '', dropEffect: '' };
+    await fireEvent.dragStart(grips()[0], { dataTransfer });
+    const target = screen.getAllByTestId('song-row')[3].closest('li')!;
+    // (No layout here: the pointer reads as the top of the song.)
+    await fireEvent.dragOver(target, { dataTransfer, clientY: 0 });
+    expect(target.querySelector('[data-testid="song-drop-line"]')).not.toBeNull();
+    await fireEvent.drop(target, { dataTransfer });
+    expect(onmove).toHaveBeenCalledWith({ kind: 'moveRules', from: 0, count: 1, to: 3, sectionId: 'music' });
+    expect(screen.queryByTestId('song-drop-line')).toBeNull();
+  });
+
+  it('over the line between two sections it plays where it did, and only changes section', async () => {
+    const { onmove } = setup();
+    // The macro (Music's first) up one stop: the end of Top of the hour,
+    // which is where it plays already.
+    const grip = grips()[1];
+    await key(grip, ' ');
+    await key(grip, 'ArrowUp');
+    expect(status()).toBe('at the end of Top of the hour');
+    await key(grip, ' ');
+    // `to` just after the run: the edit for "plays where it did".
+    expect(onmove).toHaveBeenCalledWith({ kind: 'moveRules', from: 1, count: 2, to: 3, sectionId: 'top' });
+  });
+
+  it('a selection in two sections: from where it is, it can join either, each offered once', async () => {
+    const { onmove } = setup();
+    const rows = screen.getAllByTestId('song-row');
+    await fireEvent.click(rows[0]);                     // the jingle, Top of the hour
+    await fireEvent.click(rows[1], { shiftKey: true }); // and the macro, Music
+    const grip = grips()[0];
+    await key(grip, ' ');
+    await key(grip, 'ArrowUp');
+    expect(status()).toBe('back where it was');
+    const seen: string[] = [];
+    for (let i = 0; i < 4; i++) {
+      await key(grip, 'ArrowDown');
+      seen.push(status());
+    }
+    expect(seen).toEqual([
+      'before Song 0 in Top of the hour', // all of it into Top of the hour
+      'before Song 1 in Music',           // all of it into Music
+      'at the end of Music',
+      'at the end of Music',
+    ]);
+    await key(grip, 'ArrowUp');
+    await key(grip, ' ');
+    expect(onmove).toHaveBeenCalledWith({ kind: 'moveRules', from: 0, count: 3, to: 3, sectionId: 'music' });
+  });
+
+  it("with a pointer, over a section's heading: the start of that section", async () => {
+    const { onmove } = setup();
+    const dataTransfer = { setData: vi.fn(), effectAllowed: '', dropEffect: '' };
+    // The jingle (Top of the hour's only song) onto Music's heading:
+    // first in Music, playing where it did.
+    await fireEvent.dragStart(grips()[0], { dataTransfer });
+    const heading = screen.getAllByTestId('song-section')[1];
+    await fireEvent.dragOver(heading, { dataTransfer });
+    expect(screen.getAllByTestId('song-drop-line')).toHaveLength(1);
+    expect(dataTransfer.dropEffect).toBe('move');
+    await fireEvent.drop(heading, { dataTransfer });
+    expect(onmove).toHaveBeenCalledWith({ kind: 'moveRules', from: 0, count: 1, to: 1, sectionId: 'music' });
+    // Its own section's heading: where it is already, so nothing.
+    onmove.mockClear();
+    await fireEvent.dragStart(grips()[0], { dataTransfer });
+    await fireEvent.dragOver(screen.getAllByTestId('song-section')[0], { dataTransfer });
+    expect(screen.queryByTestId('song-drop-line')).toBeNull();
+    expect(dataTransfer.dropEffect).toBe('none');
+  });
+
+  it('over its own place, no line, and a drop there moves nothing', async () => {
+    const { onmove } = setup();
+    const dataTransfer = { setData: vi.fn(), effectAllowed: '', dropEffect: '' };
+    await fireEvent.dragStart(grips()[3], { dataTransfer });
+    const own = screen.getAllByTestId('song-row')[3].closest('li')!;
+    await fireEvent.dragOver(own, { dataTransfer, clientY: 0 });
+    expect(screen.queryByTestId('song-drop-line')).toBeNull();
+    await fireEvent.drop(own, { dataTransfer });
+    expect(onmove).not.toHaveBeenCalled();
+  });
+
+  it('off while searched, when the page says so, and on a station built from a repeating row: the note says why', async () => {
+    const { rerender, onmove } = setup({ moveBlocked: 'Saving…' });
+    // While the page waits the grips stay (one with focus keeps it),
+    // but don't pick up: Space says why.
+    expect(grips().every((g) => g.getAttribute('aria-disabled') === 'true' && !g.draggable)).toBe(true);
+    expect(screen.getByTestId('song-move-note')).toHaveTextContent('Saving…');
+    await key(grips()[3], ' ');
+    expect(status()).toBe('Saving…');
+    await key(grips()[3], 'ArrowUp');
+    await key(grips()[3], ' ');
+    expect(onmove).not.toHaveBeenCalled();
+    await rerender({ moveBlocked: null });
+    expect(grips()[0]).toHaveAttribute('aria-disabled', 'false');
+    await fireEvent.input(screen.getByTestId('song-search'), { target: { value: 'Song 1' } });
+    expect(screen.queryByTestId('song-grip')).toBeNull();
+    expect(screen.getByTestId('song-move-note')).toHaveTextContent('Clear the search to move songs.');
+    cleanup();
+    const rows: StationTemplate = {
+      ...template,
+      layout: { unit: 'slot', unit_labels: [], row_start_offsets: [0], row_template: template.layout.flat_slots! },
+    };
+    render(SongList, { props: { trace: four(), template: rows, sidecar, onmove: vi.fn() } });
+    expect(screen.getByTestId('song-move-note')).toHaveTextContent("can't be moved in a station built from a repeating row");
+  });
+
+  it('told to wait mid-carry: put back', async () => {
+    const { rerender, onmove } = setup();
+    await key(grips()[3], ' ');
+    await key(grips()[3], 'ArrowUp');
+    await rerender({ moveBlocked: 'Saving…' });
+    expect(screen.queryByTestId('song-drop-line')).toBeNull();
+    await rerender({ moveBlocked: null });
+    await key(grips()[3], ' ');
+    expect(onmove).not.toHaveBeenCalled();
+    expect(status()).toMatch(/^Picked up/);
+  });
+
+  it('after a move from the keyboard, focus goes with the song once the list shows the new order', async () => {
+    const { rerender } = setup();
+    const grip = grips()[3];
+    grip.focus();
+    await key(grip, ' ');
+    await key(grip, 'ArrowUp');
+    await key(grip, 'ArrowUp');
+    await key(grip, ' ');
+    // The page's preview catches up: rule 3 now plays second (to: 1).
+    const t: StationTemplate = { ...template, layout: { ...template.layout, flat_slots: [0, 3, 1, 2].map((i) => template.layout.flat_slots![i]) } };
+    const moved: Sidecar = {
+      ...sidecar,
+      sections: [
+        { ...sidecar.sections[0], blocks: [{ kind: 'atomic', slot_index: 0 }, { kind: 'atomic', slot_index: 1 }] },
+        { ...sidecar.sections[1], blocks: [{ kind: 'macro', ref: 'pops' }] },
+      ],
+    };
+    await rerender({ trace: week([slot(0), { ...slot(3), block: 2 }, { ...slot(1), block: 3 }, { ...slot(2), block: 4 }]), template: t, sidecar: moved });
+    await waitFor(() => expect(document.activeElement).toBe(grips()[1]));
+    expect(grips()[1]).toHaveAccessibleName('Move Song 3');
+  });
+
+  it('a song moved with its rule says moved; ones only shifted along say nothing', () => {
+    const saved = four();
+    // The pick (rule 3) moved to the front of Music: 0 3 1 2.
+    const opLog: Edit[] = [{ kind: 'moveRules', from: 3, count: 1, to: 1, sectionId: 'music' }];
+    const moved: Sidecar = {
+      ...sidecar,
+      sections: [sidecar.sections[0], { ...sidecar.sections[1], blocks: [{ kind: 'atomic', slot_index: 1 }, { kind: 'macro', ref: 'pops' }] }],
+    };
+    const t: StationTemplate = { ...template, layout: { ...template.layout, flat_slots: [0, 3, 1, 2].map((i) => template.layout.flat_slots![i]) } };
+    const edited = week([slot(0), { ...slot(3), block: 2 }, { ...slot(1), block: 3 }, { ...slot(2), block: 4 }]);
+    render(SongList, { props: { trace: edited, template: t, sidecar: moved, saved, opLog } });
+    expect(screen.getAllByTestId('song-change').map((c) => c.textContent)).toEqual(['moved']);
+    expect(screen.getAllByTestId('song-row')[1]).toContainElement(screen.getByTestId('song-change'));
+    expect(screen.queryByTestId('song-removed')).toBeNull();
   });
 });

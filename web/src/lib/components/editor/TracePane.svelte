@@ -37,7 +37,7 @@
     type SlotClassification,
     type StationTemplate,
   } from '$lib/editor';
-  import { editsForRule, type Edit } from '$lib/edit-ops';
+  import { editsForRule, type Edit, type MoveRulesOp, type MoveSectionOp } from '$lib/edit-ops';
   import QueuedChanges from '$lib/components/songs/QueuedChanges.svelte';
   import SongList from '$lib/components/songs/SongList.svelte';
   import { ruleKey, type QueuedChange, type RuleDefaults, type SongRow } from '$lib/songList';
@@ -107,6 +107,11 @@
   export let onundo: ((indices: number[]) => boolean | Promise<boolean>) | null = null;
   /** While saving, nothing can be undone. */
   export let undoBusy: boolean = false;
+  /** Songs can be moved in the Songs tab: each drop, as an edit to
+   *  queue (SongList's `onmove`). */
+  export let onmove: ((edit: MoveRulesOp | MoveSectionOp) => void) | undefined = undefined;
+  /** Why songs can't be moved just now, or null. */
+  export let moveBlocked: string | null = null;
   /** Which list shows: the week's songs, grouped and in plain words
    *  (the week page's song list), or the technical one row per slot.
    *  The parent owns it (and remembers it); a click dispatches
@@ -615,8 +620,11 @@
           <SongList
             {trace}
             saved={opLog.length > 0 ? savedTrace : null}
+            {opLog}
             template={songTemplate}
             sidecar={stagedSidecar}
+            {onmove}
+            {moveBlocked}
             onselect={onSongSelect}
             selected={markedPosition}
             related={selectedRef ? ruleKey(selectedRef) : null}

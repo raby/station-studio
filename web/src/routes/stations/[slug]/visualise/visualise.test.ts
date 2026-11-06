@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import '@testing-library/jest-dom/vitest';
 
 /**
@@ -3636,5 +3636,134 @@ describe('visualise +page.svelte — undoing a queued change', () => {
     await act(async () => { revert.click(); });
     await waitFor(() => expect(confirmDialogMock).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(queue()).toEqual([]));
+  });
+});
+
+
+describe('visualise +page.svelte — moving songs in the Songs tab', () => {
+  // Morning has rules 1 and 2, Evening rule 3; a song from each.
+  function template3() {
+    const t = makeTemplate();
+    t.layout.flat_slots = [1, 2, 3].map(() => ({ source: 'A', strategy: 'pick', size: 1 }));
+    return t;
+  }
+  const sidecar3 = () => ({
+    schema_version: 1,
+    sections: [
+      { id: 'morning', name: 'Morning', blocks: [{ kind: 'atomic', slot_index: 0 }, { kind: 'atomic', slot_index: 1 }] },
+      { id: 'evening', name: 'Evening', blocks: [{ kind: 'atomic', slot_index: 2 }] },
+    ],
+    macros: [],
+    layout_order: ['morning', 'evening'],
+  });
+  function week() {
+    return {
+      [Symbol.asyncIterator]() {
+        return {
+          async next() {
+            return {
+              done: false,
+              value: {
+                status: 'done',
+                result: {
+                  trace: {
+                    trace_id: 'pv', station: 'viz-test', week: 1, rng: 'off', seed: null,
+                    generated_at: '2026-06-15T00:00:00Z',
+                    slots: [1, 2, 3].map((n) => ({ slot: n, unit: 'slot', row: 1, block: n, source: 'A', strategy: 'pick',
+                      pool_index: n, track_id: 100 + n, track_name: `T${n}`, track_artist: 'A', reason: 'picked', excluded: [] })),
+                  },
+                },
+              },
+            };
+          },
+          async return() { return { done: true, value: undefined }; },
+        };
+      },
+    };
+  }
+  const queue = () => JSON.parse(window.localStorage.getItem('stagedEdits:viz-test') ?? '{"opLog":[]}').opLog as unknown[];
+  const note = () => screen.queryByTestId('song-move-note')?.textContent ?? '';
+  const key = async (el: HTMLElement, k: string) => { await act(async () => { await fireEvent.keyDown(el, { key: k }); }); };
+  const settle = () => act(async () => { await new Promise((r) => setTimeout(r, 700)); });
+
+  beforeEach(() => {
+    getStationSidecarMock.mockReset();
+    startPreviewJobMock.mockReset();
+    watchJobMock.mockReset();
+    cancelJobMock.mockReset();
+    cancelJobMock.mockResolvedValue(undefined);
+    startPreviewJobMock.mockResolvedValue({ job_id: 'pv-1', status: 'running' });
+    watchJobMock.mockImplementation(() => week());
+    setSlug('viz-test');
+    try { window.localStorage.clear(); } catch { /* */ }
+    window.localStorage.setItem('livePreview:viz-test', 'on');
+    getStationSidecarMock.mockResolvedValue({
+      template: template3(), sidecar: sidecar3(), sidecar_error: null, updated_at: 'ts-1',
+    });
+  });
+
+  async function mount() {
+    render(Page);
+    await screen.findByTestId('editor-canvas');
+    await screen.findAllByTestId('song-grip');
+  }
+  /** Evening's song up: past the end of Morning (where it plays
+   *  already), to before rule 2. */
+  async function moveLastUp() {
+    const grip = screen.getAllByTestId('song-grip')[2];
+    await key(grip, ' ');
+    await key(grip, 'ArrowUp');
+    await key(grip, 'ArrowUp');
+    await key(grip, ' ');
+  }
+
+  it('a song dragged is queued as a move, and listed', async () => {
+    await mount();
+    await moveLastUp();
+    expect(queue()).toEqual([{ kind: 'moveRules', from: 2, count: 1, to: 1, sectionId: 'morning' }]);
+    expect(screen.getByTestId('staged-save')).toHaveTextContent('Save 1 change');
+    expect(screen.getAllByTestId('trace-change-item')[0]).toHaveTextContent('Moved Evening, rule 1 to Morning, rule 2');
+  });
+
+  it('until the preview catches up, moving waits (the list is of the old order); then it can move again', async () => {
+    await mount();
+    await moveLastUp();
+    expect(note()).toBe('Moving songs waits for the preview to catch up…');
+    // A second move now would be numbered from the old list: refused.
+    const grip = screen.getAllByTestId('song-grip')[0];
+    expect(grip).toHaveAttribute('aria-disabled', 'true');
+    await key(grip, ' ');
+    await key(grip, 'ArrowDown');
+    await key(grip, ' ');
+    expect(queue()).toHaveLength(1);
+    await settle();
+    expect(note()).not.toContain('waits');
+    expect(screen.getAllByTestId('song-grip')[0]).toHaveAttribute('aria-disabled', 'false');
+  });
+
+  it("if the preview fails, it says moving waits for it to work again", async () => {
+    await mount();
+    watchJobMock.mockImplementation(() => (async function* () {
+      yield { status: 'error', error: { message: 'boom' } };
+    })());
+    await moveLastUp();
+    await settle();
+    expect(note()).toBe("Songs can't be moved until the preview works again.");
+  });
+
+  it("an open rule's panel follows it to where it plays now", async () => {
+    await mount();
+    await act(async () => { fireEditorCanvasEvent('selectionChange', { ref: { kind: 'atomic-ref', slot_index: 2 } }); });
+    await moveLastUp();
+    const calls = (window as unknown as Record<string, unknown[]>).__editorCanvasOpenRefCalls ?? [];
+    expect(calls.at(-1)).toEqual({ kind: 'atomic-ref', slot_index: 1 });
+  });
+
+  it('with Preview songs off, there are no grips', async () => {
+    window.localStorage.setItem('livePreview:viz-test', 'off');
+    render(Page);
+    await screen.findByTestId('editor-canvas');
+    await act(async () => {});
+    expect(screen.queryByTestId('song-grip')).toBeNull();
   });
 });

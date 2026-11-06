@@ -3,12 +3,26 @@
    * A week's songs, each with the rule that put it there and why, in
    * playing order under the station's section names.
    *
-   * Read-only on its own: clicking a song calls `onselect` with its row
-   * (the rule's block and editor ref included), and the page decides
-   * what that opens. With `saved` (the same week as saved), songs that
-   * changed are marked.
+   * Clicking a song calls `onselect` with its row (the rule's block and
+   * editor ref included), and the page decides what that opens. With
+   * `saved` (the same week as saved), songs are marked against what
+   * their own rule played there (`compareWeeks`), rules followed through
+   * the queue (`opLog`).
+   *
+   * With `onmove`, songs can be moved to play somewhere else: drag a
+   * song's grip (its whole rule moves, a macro all of it), a selection
+   * (shift-click a second song: every song between, and their rules), or
+   * a section's heading. Or from the keyboard: Space on a grip picks it
+   * up, the arrow keys choose where, Space drops it, Escape puts it back.
+   * Each drop is a `moveRules` or `moveSection` edit for the page to
+   * queue. A drop goes between rules, never inside one, and joins the
+   * section it's drawn in. Off, with a line saying why, on stations built
+   * from a repeating row, while the list is searched or filtered, and when
+   * the page says so (`moveBlocked`: while its preview catches up, say).
    */
+  import { tick } from 'svelte';
   import type { Trace } from '$lib/api';
+  import { blockRuns, sectionSlots, type Edit, type MoveRulesOp, type MoveSectionOp } from '$lib/edit-ops';
   import { sourceColour, type Sidecar, type StationTemplate } from '$lib/editor';
   import { filterGroups, removedCount, rowRule, ruleKey, songGroups, type RuleDefaults, type SongRow } from '$lib/songList';
 
@@ -18,20 +32,29 @@
     sidecar: Sidecar;
     /** The same week as saved, to mark changes against. */
     saved?: Trace | null;
+    /** The queued edits, to follow rules back to what they played. */
+    opLog?: Edit[];
     /** The selected song's position (1-based), if any. */
     selected?: number | null;
     /** Mark every song made by the rule with this key (ruleKey), so the
      *  page can show which songs a change to that rule touches. */
     related?: string | null;
     onselect?: (row: SongRow) => void;
+    /** Songs can be moved: each drop, as an edit to queue. */
+    onmove?: (edit: MoveRulesOp | MoveSectionOp) => void;
+    /** Why songs can't be moved just now (the page's say), or null. */
+    moveBlocked?: string | null;
     /** The station's defaults for settings a rule leaves out. */
     ruleDefaults?: RuleDefaults;
   }
 
-  let { trace, template, sidecar, saved = null, selected = null, related = null, onselect, ruleDefaults = {} }: Props = $props();
+  let {
+    trace, template, sidecar, saved = null, opLog = [], selected = null, related = null,
+    onselect, onmove, moveBlocked = null, ruleDefaults = {},
+  }: Props = $props();
 
-  const allGroups = $derived(songGroups(trace, template, sidecar, saved));
-  const removed = $derived(removedCount(trace, saved));
+  const allGroups = $derived(songGroups(trace, template, sidecar, saved, opLog));
+  const removed = $derived(removedCount(trace, saved, template, opLog));
 
   // Search: song, artist, the rule in words, macro or section.
   let query = $state('');
@@ -46,6 +69,394 @@
     query = '';
     onlyChanged = false;
   }
+
+  // ---- moving ------------------------------------------------------------
+
+  type Run = { from: number; count: number };
+  const flat = $derived(!template.layout.row_template?.length && !!template.layout.flat_slots?.length);
+  const ruleCount = $derived(template.layout.flat_slots?.length ?? 0);
+  /** Why songs can't be moved now, when the page lets them be. */
+  const moveNote = $derived(
+    !onmove ? null
+      : !flat ? "Songs can't be moved in a station built from a repeating row yet."
+        : filtering ? 'Clear the search to move songs.'
+          : moveBlocked,
+  );
+  const canMove = $derived(!!onmove && moveNote === null);
+  // Grips stay while moving waits (the page catching up, say), so a
+  // grip that has focus keeps it; they just don't pick anything up.
+  const showGrips = $derived(!!onmove && flat && !filtering);
+  // Told it can't now, mid-carry: put it back.
+  $effect(() => {
+    if (!canMove && moving) end();
+  });
+
+  // Each slot's block: what dragging one of its songs moves.
+  const runs = $derived(flat ? blockRuns(sidecar) : new Map<number, Run>());
+  const runOf = (row: SongRow): Run | null => runs.get(row.slot.block - 1) ?? null;
+
+  /** A place a drop can go: before the rule a row starts (in that row's
+   *  section), or after a run's last rule. */
+  interface Spot { key: string; to: number; sectionId: string; before: number | null; endOf: number | null; label: string }
+  const spots = $derived.by((): Spot[] => {
+    const out: Spot[] = [];
+    if (!flat) return out;
+    allGroups.forEach((g, gi) => {
+      if (g.sectionId === null) return;
+      let last: Run | null = null;
+      for (const r of g.rows) {
+        const run = runOf(r);
+        if (!run) continue;
+        if (!last || run.from !== last.from) {
+          out.push({ key: `b${r.position}`, to: run.from, sectionId: g.sectionId, before: r.position, endOf: null,
+            label: `before ${r.slot.track_name} in ${g.sectionName}` });
+        }
+        last = run;
+      }
+      if (last) {
+        out.push({ key: `e${gi}`, to: last.from + last.count, sectionId: g.sectionId, before: null, endOf: gi,
+          label: `at the end of ${g.sectionName}` });
+      }
+    });
+    return out;
+  });
+
+  /** A section heading that can be dragged: the section's rules all play
+   *  together, and all of them are this run. */
+  function sectionRun(gi: number): Run | null {
+    const g = allGroups[gi];
+    if (!flat || !g?.sectionId) return null;
+    const mine = sectionSlots(sidecar, g.sectionId);
+    if (!mine?.length || mine.some((p, k) => p !== mine[0] + k)) return null;
+    const first = runOf(g.rows[0]);
+    const last = runOf(g.rows[g.rows.length - 1]);
+    if (!first || !last || first.from !== mine[0] || last.from + last.count !== mine[0] + mine.length) return null;
+    return { from: mine[0], count: mine.length };
+  }
+  /** Where a section can go: before a run that starts its section, or the end. */
+  interface SectionSpot { key: string; to: number; beforeSectionId: string | null; group: number | null; label: string }
+  const sectionSpots = $derived.by((): SectionSpot[] => {
+    const out: SectionSpot[] = [];
+    allGroups.forEach((g, gi) => {
+      if (!g.sectionId) return;
+      const first = sectionSlots(sidecar, g.sectionId)?.[0];
+      const run = runOf(g.rows[0]);
+      if (first !== undefined && run?.from === first) {
+        out.push({ key: `s${gi}`, to: first, beforeSectionId: g.sectionId, group: gi, label: `before ${g.sectionName}` });
+      }
+    });
+    out.push({ key: 's-end', to: ruleCount, beforeSectionId: null, group: null, label: 'at the end' });
+    return out;
+  });
+
+  // Selected songs (shift-click): every song from the anchor to the
+  // clicked one, and the whole of each rule they're in.
+  let anchor: number | null = $state(null);
+  let selection: Run | null = $state(null);
+  // Numbered by rules: a new list (an Undo, the preview catching up)
+  // may have other songs there, so it starts again.
+  $effect(() => {
+    void trace;
+    selection = null;
+    anchor = null;
+  });
+  const selectedCount = $derived(selection
+    ? allGroups.reduce((n, g) => n + g.rows.filter((r) => inSelection(r)).length, 0) : 0);
+  function inSelection(r: SongRow): boolean {
+    const p = r.slot.block - 1;
+    return selection !== null && p >= selection.from && p < selection.from + selection.count;
+  }
+  function selectTo(row: SongRow): void {
+    if (anchor === null) return;
+    const rows = allGroups.flatMap((g) => g.rows);
+    const [a, b] = [Math.min(anchor, row.position), Math.max(anchor, row.position)];
+    const picked = rows.filter((r) => r.position >= a && r.position <= b).map(runOf);
+    if (picked.some((r) => r === null)) return;
+    const from = Math.min(...picked.map((r) => r!.from));
+    const end = Math.max(...picked.map((r) => r!.from + r!.count));
+    selection = { from, count: end - from };
+  }
+  function pick(e: MouseEvent, row: SongRow): void {
+    if (e.shiftKey && canMove && anchor !== null) {
+      selectTo(row);
+      announce(`${selectedCount} songs selected. Use a grip to move them.`);
+      return;
+    }
+    anchor = row.position;
+    selection = null;
+    onselect?.(row);
+  }
+
+  // What's being moved, and where to.
+  type Moving =
+    | { kind: 'rules'; run: Run; label: string }
+    | { kind: 'section'; run: Run; sectionId: string; label: string };
+  let moving: Moving | null = $state(null);
+  let target: string | null = $state(null);
+  let carrying = $state(false);
+
+  /** The sections the run's songs are in now. */
+  function runSections(run: Run): Set<string | null> {
+    const out = new Set<string | null>();
+    for (const g of allGroups) {
+      for (const r of g.rows) {
+        const p = r.slot.block - 1;
+        if (p >= run.from && p < run.from + run.count) out.add(g.sectionId);
+      }
+    }
+    return out;
+  }
+  /** A place the run can go: somewhere else in play, or where it is in
+   *  another section (over the line between two: only the section
+   *  changes). */
+  function canGo(run: Run, s: Spot, own: Set<string | null>): boolean {
+    if (s.to < run.from || s.to > run.from + run.count) return true;
+    return !(own.size === 1 && own.has(s.sectionId));
+  }
+  const rulesTargets = (run: Run): Spot[] => {
+    const own = runSections(run);
+    return spots.filter((s) => canGo(run, s, own));
+  };
+  const sectionTargets = (run: Run): SectionSpot[] =>
+    sectionSpots.filter((s) => s.to < run.from || s.to > run.from + run.count);
+
+  function songsLabel(run: Run): string {
+    const rows = allGroups.flatMap((g) => g.rows).filter((r) => {
+      const p = r.slot.block - 1;
+      return p >= run.from && p < run.from + run.count;
+    });
+    return rows.length === 1 ? rows[0].slot.track_name : `${rows.length} songs`;
+  }
+  function movingFor(row: SongRow): Moving | null {
+    const run = selection && inSelection(row) ? selection : runOf(row);
+    return run ? { kind: 'rules', run, label: songsLabel(run) } : null;
+  }
+  function movingSection(gi: number): Moving | null {
+    const run = sectionRun(gi);
+    const g = allGroups[gi];
+    return run && g.sectionId ? { kind: 'section', run, sectionId: g.sectionId, label: `section ${g.sectionName}` } : null;
+  }
+
+  function drop(): void {
+    const m = moving;
+    const key = target;
+    const byKey = carrying;
+    end();
+    if (!m || key === null || !onmove) return;
+    if (m.kind === 'rules') {
+      const spot = rulesTargets(m.run).find((s) => s.key === key);
+      if (!spot) return;
+      // Where it plays already (into another section): `to` just after
+      // the run, as the edit has it.
+      const stays = spot.to >= m.run.from && spot.to <= m.run.from + m.run.count;
+      const to = stays ? m.run.from + m.run.count : spot.to;
+      onmove({ kind: 'moveRules', from: m.run.from, count: m.run.count, to, sectionId: spot.sectionId });
+      announce(`Moved ${m.label} ${spot.label}.`);
+      if (byKey) follow(`[data-testid="song-grip"][data-rule="${stays ? m.run.from : to > m.run.from ? to - m.run.count : to}"]`);
+    } else {
+      const spot = sectionTargets(m.run).find((s) => s.key === key);
+      if (!spot) return;
+      onmove({
+        kind: 'moveSection', sectionId: m.sectionId, beforeSectionId: spot.beforeSectionId,
+        from: m.run.from, count: m.run.count, to: spot.to,
+      });
+      announce(`Moved ${m.label} ${spot.label}.`);
+      if (byKey) follow(`[data-testid="section-grip"][data-section="${CSS.escape(m.sectionId)}"]`);
+    }
+    selection = null;
+  }
+  /** After a move from the keyboard, focus goes with what moved: to
+   *  its grip (`selector`), once the list shows the new order. */
+  let following: { selector: string; trace: Trace } | null = null;
+  function follow(selector: string): void {
+    following = { selector, trace };
+  }
+  $effect(() => {
+    const now = trace;
+    void groups;
+    if (!following || following.trace === now) return;
+    const { selector } = following;
+    following = null;
+    void tick().then(() => listEl?.querySelector<HTMLElement>(selector)?.focus());
+  });
+  function end(): void {
+    moving = null;
+    target = null;
+    carrying = false;
+  }
+
+  // ---- with a pointer: drag and drop --------------------------------------
+
+  function dragStart(e: DragEvent, m: Moving | null): void {
+    if (!canMove || !m) {
+      e.preventDefault();
+      return;
+    }
+    moving = m;
+    e.dataTransfer?.setData('text/plain', m.label);
+    if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
+  }
+  /** Over a song: before its rule or after it, by which half of the
+   *  rule's songs the pointer is in. */
+  function dragOverRow(e: DragEvent, row: SongRow, gi: number): void {
+    if (!moving) return;
+    e.preventDefault();
+    if (moving.kind === 'section') return dragOverGroup(e, gi);
+    const run = runOf(row);
+    const g = allGroups[gi];
+    if (!run || !g.sectionId) {
+      target = null;
+      return;
+    }
+    const mine = g.rows.filter((r) => runOf(r)?.from === run.from);
+    const at = mine.indexOf(row);
+    const box = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const within = box.height > 0 ? (e.clientY - box.top) / box.height : 0;
+    const before = (at + within) / mine.length < 0.5;
+    const i = spots.findIndex((s) => s.key === `b${mine[0].position}`);
+    const spot = before ? spots[i] : spots[i + 1];
+    target = spot && rulesTargets(moving.run).some((s) => s.key === spot.key) ? spot.key : null;
+    if (e.dataTransfer) e.dataTransfer.dropEffect = target ? 'move' : 'none';
+  }
+  /** Over a group, not a song. A section: before this run (when it
+   *  starts a section) or before the next run that does. */
+  function dragOverGroup(e: DragEvent, gi: number): void {
+    if (!moving) return;
+    if (moving.kind === 'rules') {
+      // Over a song, the row said where. Over the heading (or the gap
+      // under the list): the start of this section, so a drop there
+      // does what the line shows.
+      if ((e.target as Element | null)?.closest?.('li')) return;
+      e.preventDefault();
+      const first = allGroups[gi]?.rows[0];
+      const key = first ? `b${first.position}` : null;
+      target = key && rulesTargets(moving.run).some((s) => s.key === key) ? key : null;
+      if (e.dataTransfer) e.dataTransfer.dropEffect = target ? 'move' : 'none';
+      return;
+    }
+    e.preventDefault();
+    const box = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const upper = box.height > 0 && e.clientY - box.top < box.height / 2;
+    const valid = sectionTargets(moving.run);
+    const later = sectionSpots.filter((s) => s.group === null || s.group > gi || (upper && s.group === gi));
+    const spot = later[0];
+    target = spot && valid.some((s) => s.key === spot.key) ? spot.key : null;
+    if (e.dataTransfer) e.dataTransfer.dropEffect = target ? 'move' : 'none';
+  }
+  function dropHere(e: DragEvent): void {
+    if (!moving) return;
+    e.preventDefault();
+    drop();
+  }
+
+  // ---- with the keyboard --------------------------------------------------
+
+  let status = $state('');
+  async function announce(text: string): Promise<void> {
+    // Cleared first, so the same words twice running are said twice.
+    status = '';
+    await tick();
+    status = text;
+  }
+  /** Where the carried songs or section can go, in list order, with
+   *  their own place ("here") among them. */
+  function carryStops(m: Moving): { key: string; label: string }[] {
+    if (m.kind === 'rules') {
+      const own = runSections(m.run);
+      const near = (s: Spot) => s.to >= m.run.from && s.to <= m.run.from + m.run.count;
+      // Its own place: where its own section's spot is, or (a run in
+      // more than one section) the first place it already plays at.
+      let here = spots.findIndex((s) => near(s) && !canGo(m.run, s, own));
+      if (here === -1) here = spots.findIndex(near);
+      const stops: { key: string; label: string }[] = [];
+      const into = new Set<string>(); // sections it can join where it plays: once each
+      spots.forEach((s, i) => {
+        if (i === here) stops.push({ key: 'here', label: 'back where it was' });
+        if (!canGo(m.run, s, own)) return;
+        if (near(s)) {
+          if (into.has(s.sectionId)) return;
+          into.add(s.sectionId);
+        }
+        stops.push({ key: s.key, label: s.label });
+      });
+      return stops;
+    }
+    const stops = sectionSpots.filter((s) => s.to < m.run.from || s.to > m.run.from + m.run.count)
+      .map((s) => ({ key: s.key, label: s.label, to: s.to }));
+    const at = stops.findIndex((s) => s.to > m.run.from);
+    stops.splice(at === -1 ? stops.length : at, 0, { key: 'here', label: 'back where it was', to: m.run.from });
+    return stops;
+  }
+  function gripKey(e: KeyboardEvent, m: Moving | null): void {
+    if (!canMove) {
+      if (moveNote && (e.key === ' ' || e.key === 'Enter')) {
+        e.preventDefault();
+        void announce(moveNote);
+      }
+      return;
+    }
+    if (!m) return;
+    if (!carrying) {
+      if (e.key !== ' ' && e.key !== 'Enter') return;
+      e.preventDefault();
+      moving = m;
+      carrying = true;
+      target = 'here';
+      void announce(`Picked up ${m.label}. Up and down arrows to choose where, Space to drop, Escape to put it back.`);
+      return;
+    }
+    if (!moving) return;
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      end();
+      void announce('Put back.');
+      return;
+    }
+    if (e.key === ' ' || e.key === 'Enter') {
+      e.preventDefault();
+      if (target === 'here') {
+        end();
+        void announce('Put back where it was.');
+      } else {
+        drop();
+      }
+      return;
+    }
+    if (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'Home' || e.key === 'End') {
+      e.preventDefault();
+      const stops = carryStops(moving);
+      const at = stops.findIndex((s) => s.key === target);
+      const next = e.key === 'Home' ? 0 : e.key === 'End' ? stops.length - 1
+        : Math.max(0, Math.min(stops.length - 1, at + (e.key === 'ArrowUp' ? -1 : 1)));
+      target = stops[next].key;
+      void announce(stops[next].label);
+      void tick().then(() => listEl?.querySelector('.drop-line')?.scrollIntoView?.({ block: 'nearest' }));
+    }
+  }
+  function gripBlur(): void {
+    if (carrying) {
+      end();
+      void announce('Put back.');
+    }
+  }
+  function listKey(e: KeyboardEvent): void {
+    if (e.key === 'Escape' && selection && !carrying) {
+      selection = null;
+      void announce('Selection cleared.');
+    }
+  }
+
+  /** The songs being moved: dimmed, so it's plain what's on the move. */
+  function isCarried(r: SongRow): boolean {
+    if (!moving) return false;
+    const p = r.slot.block - 1;
+    return p >= moving.run.from && p < moving.run.from + moving.run.count;
+  }
+
+  let listEl: HTMLElement | null = $state(null);
+  const lineBefore = (r: SongRow): boolean => target === `b${r.position}`;
+  const lineAtEnd = (gi: number): boolean => target === `e${gi}`;
+  const lineBeforeGroup = (gi: number): boolean => target === `s${gi}`;
 </script>
 
 <div class="song-filters" data-testid="song-filters">
@@ -70,49 +481,128 @@
     <button type="button" class="clear" data-testid="song-search-clear" onclick={clear}>Clear</button>
   {/if}
 </div>
+{#if onmove}
+  <p class="move-note" data-testid="song-move-note">
+    {#if moveNote}
+      {moveNote}
+    {:else if selection}
+      {selectedCount} songs selected: drag one of their grips to move them all.
+      <button type="button" class="clear" data-testid="song-selection-clear" onclick={() => (selection = null)}>Clear selection</button>
+    {:else}
+      Drag a song's grip, or a section's, to move it. Shift-click a second song to select the songs between.
+    {/if}
+  </p>
+{/if}
+<p class="visually-hidden" id="song-grip-help">
+  Space to pick it up, then the up and down arrows to choose where, Space to drop it, Escape to put it back.
+</p>
+<span class="visually-hidden" role="status" aria-live="assertive" data-testid="song-move-status">{status}</span>
 
-<section class="song-list" aria-label="Songs this week" data-testid="song-list">
+<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+<section
+  class="song-list"
+  class:moving={moving !== null}
+  aria-label="Songs this week"
+  data-testid="song-list"
+  bind:this={listEl}
+  onkeydown={listKey}
+>
   {#each groups as group, gi (gi)}
-    <h3 class="section-name" data-testid="song-section">
-      {group.sectionName}
-      <span class="count">{group.rows.length} {group.rows.length === 1 ? 'song' : 'songs'}</span>
-    </h3>
-    <ol class="songs" start={group.rows[0].position}>
-      {#each group.rows as row (row.position)}
-        <li>
+    {@const headRun = showGrips ? sectionRun(gi) : null}
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div
+      class="group"
+      ondragover={(e) => dragOverGroup(e, gi)}
+      ondrop={dropHere}
+    >
+      {#if lineBeforeGroup(gi)}<div class="drop-line" data-testid="song-drop-line" aria-hidden="true"></div>{/if}
+      <h3 class="section-name" data-testid="song-section">
+        {#if headRun}
           <button
             type="button"
-            class="song"
-            class:selected={selected === row.position}
-            class:changed={row.change !== null}
-            class:related={related !== null && row.ref !== null && ruleKey(row.ref) === related}
-            aria-pressed={selected === row.position}
-            data-testid="song-row"
-            onclick={() => onselect?.(row)}
+            class="grip"
+            draggable={canMove}
+            aria-disabled={!canMove}
+            aria-label="Move section {group.sectionName}"
+            data-section={group.sectionId}
+            aria-describedby="song-grip-help"
+            data-testid="section-grip"
+            ondragstart={(e) => dragStart(e, movingSection(gi))}
+            ondragend={end}
+            onkeydown={(e) => gripKey(e, movingSection(gi))}
+            onblur={gripBlur}
+          ><span aria-hidden="true">⋮⋮</span></button>
+        {/if}
+        {group.sectionName}
+        <span class="count">{group.rows.length} {group.rows.length === 1 ? 'song' : 'songs'}</span>
+      </h3>
+      <ol class="songs" start={group.rows[0].position}>
+        {#each group.rows as row (row.position)}
+          <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+          <li
+            class:drop-before={lineBefore(row)}
+            class:in-selection={inSelection(row)}
+            class:carried={isCarried(row)}
+            ondragover={(e) => dragOverRow(e, row, gi)}
+            ondrop={dropHere}
           >
-            <span class="position">{row.position}</span>
-            <span class="track">
-              <span class="title">{row.slot.track_name}</span>
-              {#if row.slot.track_artist}<span class="artist">{row.slot.track_artist}</span>{/if}
-            </span>
-            <span class="rule" data-testid="song-rule">
-              <span
-                class="dot"
-                style:background={sourceColour(template, row.slot.source)}
-                aria-hidden="true"
-              ></span>
-              {rowRule(row, ruleDefaults)}{#if row.macroName}<span class="macro">{' '}· {row.macroName}</span>{/if}{#if row.ruleChanged}<span
-                  class="macro" data-testid="song-rule-changed">{' '}· rule changed since</span>{/if}
-            </span>
-            {#if row.change}
-              <span class="change" data-testid="song-change">{row.change === 'added' ? 'new' : 'changed'}</span>
+            {#if lineBefore(row)}<div class="drop-line" data-testid="song-drop-line" aria-hidden="true"></div>{/if}
+            {#if showGrips && runOf(row) && group.sectionId}
+              <button
+                type="button"
+                class="grip"
+                draggable={canMove}
+                aria-disabled={!canMove}
+                data-rule={row.slot.block - 1}
+                aria-label="Move {selection && inSelection(row) ? `${selectedCount} selected songs` : row.slot.track_name}"
+                aria-describedby="song-grip-help"
+                data-testid="song-grip"
+                ondragstart={(e) => dragStart(e, movingFor(row))}
+                ondragend={end}
+                onkeydown={(e) => gripKey(e, movingFor(row))}
+                onblur={gripBlur}
+              ><span aria-hidden="true">⋮⋮</span></button>
             {/if}
-            <span class="why" data-testid="song-why"><span class="visually-hidden">Why:</span> {row.slot.reason}</span>
-          </button>
-        </li>
-      {/each}
-    </ol>
+            <button
+              type="button"
+              class="song"
+              class:selected={selected === row.position}
+              class:changed={row.change !== null}
+              class:related={related !== null && row.ref !== null && ruleKey(row.ref) === related}
+              aria-pressed={selected === row.position}
+              data-testid="song-row"
+              onclick={(e) => pick(e, row)}
+            >
+              <span class="position">{row.position}</span>
+              <span class="track">
+                <span class="title">{row.slot.track_name}</span>
+                {#if row.slot.track_artist}<span class="artist">{row.slot.track_artist}</span>{/if}
+              </span>
+              <span class="rule" data-testid="song-rule">
+                <span
+                  class="dot"
+                  style:background={sourceColour(template, row.slot.source)}
+                  aria-hidden="true"
+                ></span>
+                {rowRule(row, ruleDefaults)}{#if row.macroName}<span class="macro">{' '}· {row.macroName}</span>{/if}{#if row.ruleChanged}<span
+                    class="macro" data-testid="song-rule-changed">{' '}· rule changed since</span>{/if}
+              </span>
+              {#if row.change}
+                <span
+                  class="change change--{row.change}"
+                  data-testid="song-change"
+                  title={row.change === 'moved' ? 'Its rule plays here now, so the song it picks can differ' : undefined}
+                >{row.change === 'added' ? 'new' : row.change}</span>
+              {/if}
+              <span class="why" data-testid="song-why"><span class="visually-hidden">Why:</span> {row.slot.reason}</span>
+            </button>
+          </li>
+        {/each}
+      </ol>
+      {#if lineAtEnd(gi)}<div class="drop-line drop-line--end" data-testid="song-drop-line" aria-hidden="true"></div>{/if}
+    </div>
   {/each}
+  {#if target === 's-end'}<div class="drop-line" data-testid="song-drop-line" aria-hidden="true"></div>{/if}
   {#if filtering && shown === 0}
     <p class="none" role="status" data-testid="song-search-empty">
       No songs match.
@@ -168,6 +658,11 @@
     margin: 0.5rem 0;
     color: var(--muted);
   }
+  .move-note {
+    margin: -0.25rem 0 0.75rem;
+    color: var(--muted);
+    font-size: 0.85rem;
+  }
   .song-list {
     display: flex;
     flex-direction: column;
@@ -176,7 +671,15 @@
        a week and a narrow column beside the editor's blocks. */
     container-type: inline-size;
   }
+  .group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
   .section-name {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
     margin: 1rem 0 0.25rem;
     font-size: 0.85rem;
     font-weight: 600;
@@ -184,7 +687,7 @@
     letter-spacing: 0.04em;
     color: var(--muted);
   }
-  .section-name:first-child {
+  .group:first-child .section-name {
     margin-top: 0;
   }
   .count {
@@ -209,10 +712,89 @@
   /* A week can be 2,000+ songs: skip laying out rows that are off
      screen (they stay in the DOM, so find-in-page and focus still work). */
   .songs li {
+    position: relative;
+    display: flex;
     content-visibility: auto;
     contain-intrinsic-size: auto 4rem;
   }
+  .songs li.in-selection {
+    background: var(--accent-soft);
+  }
+  /* What's being moved: outlined (not faded, so it stays readable). */
+  .songs li.carried {
+    outline: 2px dashed var(--accent);
+    outline-offset: -2px;
+  }
+  .grip {
+    flex: 0 0 auto;
+    align-self: stretch;
+    width: 1.5rem;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--faint);
+    font: inherit;
+    font-size: 0.8rem;
+    letter-spacing: -0.15em;
+    cursor: grab;
+  }
+  .grip:hover,
+  .grip:focus-visible {
+    background: var(--row-hover);
+    color: var(--text);
+  }
+  .grip:focus-visible {
+    outline: 2px solid var(--focus, var(--accent));
+    outline-offset: -2px;
+  }
+  .section-name .grip {
+    align-self: auto;
+    width: 1.25rem;
+    height: 1.25rem;
+    border-radius: 4px;
+  }
+  .moving .grip {
+    cursor: grabbing;
+  }
+  .grip[aria-disabled='true'] {
+    cursor: not-allowed;
+    opacity: 0.5;
+  }
+  /* Where a drop goes. */
+  .drop-line {
+    position: relative;
+    height: 0;
+    border-top: 3px solid var(--accent);
+    border-radius: 2px;
+    pointer-events: none;
+  }
+  /* Inside the row's own box: a row skipped off screen
+     (content-visibility) clips what it paints to that box. */
+  .songs li .drop-line {
+    position: absolute;
+    top: -1px;
+    left: 0;
+    right: 0;
+    z-index: 1;
+  }
+  /* A notch at its start, so the line reads as a place, not a border. */
+  .drop-line::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: -3px;
+    width: 4px;
+    height: 12px;
+    border-radius: 0 2px 2px 0;
+    background: var(--accent);
+  }
+  .songs li .drop-line::before {
+    top: 0;
+    height: 9px;
+  }
   .song {
+    flex: 1 1 auto;
+    min-width: 0;
     display: grid;
     grid-template-columns: 2.5rem minmax(0, 1fr) minmax(0, 1fr) auto;
     grid-template-areas:
@@ -229,6 +811,9 @@
     font: inherit;
     text-align: left;
     cursor: pointer;
+  }
+  .grip + .song {
+    padding-left: 0.25rem;
   }
   .song:hover {
     background: var(--row-hover);
@@ -306,6 +891,10 @@
     color: var(--warn);
     font-size: 0.75rem;
     font-weight: 600;
+  }
+  .change--moved {
+    background: var(--accent-soft);
+    color: var(--accent-strong);
   }
   .why {
     grid-area: why;

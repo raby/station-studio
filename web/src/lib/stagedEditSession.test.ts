@@ -126,6 +126,20 @@ describe('createStagedEditSession', () => {
     session.destroy();
   });
 
+  it('says which queue its edited week was made with: behind until the preview of the latest is in', async () => {
+    const session = createStagedEditSession('ts', { debounceMs: 50, week: 1 });
+    await session.load();
+    await vi.waitFor(() => expect(get(session).stagedFor).not.toBeNull());
+    session.stage(sizeEdit);
+    // Waiting out the debounce: previewing isn't set yet, and the week
+    // shown is still the one before.
+    expect(get(session).previewing).toBe(false);
+    expect(get(session).stagedFor).not.toBe(get(session).opLog);
+    await vi.waitFor(() => expect(get(session).stagedTrace).toMatchObject({ size1: 7 }));
+    expect(get(session).stagedFor).toBe(get(session).opLog);
+    session.destroy();
+  });
+
   it('keeps queued edits across a reload of the page', async () => {
     const first = await ready();
     first.stage(sizeEdit);

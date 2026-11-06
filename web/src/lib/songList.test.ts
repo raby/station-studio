@@ -4,7 +4,7 @@ import path from 'node:path';
 import type { Trace, TraceSlot } from './api';
 import type { Edit } from './edit-ops';
 import type { EngineBlock, Sidecar, StationTemplate } from './editor';
-import { describeQueued, filterGroups, queuedChanges, removedCount, rowRule, ruleDefaultsFrom, ruleKey, ruleText, songGroups, songsChanged } from './songList';
+import { compareWeeks, describeQueued, filterGroups, queuedChanges, removedCount, rowRule, ruleDefaultsFrom, ruleKey, ruleText, songGroups, songsChanged } from './songList';
 
 // The two real example stations: Rebirth Radio (flat slots, sections,
 // 200-song macros) and Rebirth Classics (a repeating row).
@@ -126,11 +126,87 @@ describe('songGroups', () => {
     ]);
     const rows = songGroups(edited, template, sidecar, saved).flatMap((g) => g.rows);
     expect(rows.map((r) => r.change)).toEqual([null, null, 'changed', null]);
-    expect(removedCount(edited, saved)).toBe(1);
-    expect(removedCount(edited, null)).toBe(0);
+    expect(removedCount(edited, saved, template)).toBe(1);
+    expect(removedCount(edited, null, template)).toBe(0);
 
     const longer = trace([...saved.slots, slot(5, template.layout.flat_slots![5])]);
     expect(songGroups(longer, template, sidecar, saved).flatMap((g) => g.rows)[5].change).toBe('added');
+  });
+
+  describe('compared by rule, not by place', () => {
+    // A week of five rules, one song each; the edited week is the saved
+    // one with the queue's changes, song by song.
+    const { template } = station('rebirth-radio');
+    const saved = flatWeek(template, 5);
+    const s = saved.slots;
+    // A song now at place `at`, made by the rule now at `rule`.
+    const at = (from: TraceSlot, rule: number, over: Partial<TraceSlot> = {}): TraceSlot =>
+      ({ ...from, block: rule + 1, ...over });
+
+    it('a moved rule says moved; the rules it passed only shift, so are unmarked', () => {
+      // Rule 3 moved to the front: 3 0 1 2 4.
+      const opLog: Edit[] = [{ kind: 'moveRules', from: 3, count: 1, to: 0, sectionId: 'x' }];
+      const edited = trace([at(s[3], 0), at(s[0], 1), at(s[1], 2), at(s[2], 3), at(s[4], 4)]);
+      expect(compareWeeks(edited, saved, template, opLog)).toEqual({
+        changes: ['moved', null, null, null, null], removed: 0,
+      });
+      // By place, four would have looked changed.
+      expect(compareWeeks(edited, saved, template, []).changes.filter((c) => c !== null)).toHaveLength(4);
+    });
+
+    it("a moved rule that picks another song where it plays now still says moved; a rule it passed that did, changed", () => {
+      const opLog: Edit[] = [{ kind: 'moveRules', from: 3, count: 1, to: 0, sectionId: 'x' }];
+      const edited = trace([at(s[3], 0, { track_id: 7 }), at(s[0], 1, { track_id: 8 }), at(s[1], 2), at(s[2], 3), at(s[4], 4)]);
+      expect(compareWeeks(edited, saved, template, opLog).changes).toEqual(['moved', 'changed', null, null, null]);
+    });
+
+    it('a rule moved and moved back, or only into another section, plays in its old order: not marked', () => {
+      const there = { kind: 'moveRules', from: 3, count: 1, to: 0, sectionId: 'x' } as const;
+      const back = { kind: 'moveRules', from: 0, count: 1, to: 4, sectionId: 'x' } as const;
+      expect(compareWeeks(saved, saved, template, [there, back]).changes).toEqual([null, null, null, null, null]);
+      const regroup = { kind: 'moveRules', from: 2, count: 1, to: 3, sectionId: 'y' } as const;
+      expect(compareWeeks(saved, saved, template, [regroup]).changes).toEqual([null, null, null, null, null]);
+    });
+
+    it('a bigger run moved past a smaller one: the run moved says so, the rules passed don\'t', () => {
+      // Rules 1-3 to the end: 0 4 1 2 3.
+      const opLog: Edit[] = [{ kind: 'moveRules', from: 1, count: 3, to: 5, sectionId: 'x' }];
+      const edited = trace([at(s[0], 0), at(s[4], 1), at(s[1], 2), at(s[2], 3), at(s[3], 4)]);
+      expect(compareWeeks(edited, saved, template, opLog).changes).toEqual([null, null, 'moved', 'moved', 'moved']);
+    });
+
+    it('an added rule is new, and the songs after it are unmarked', () => {
+      const opLog: Edit[] = [{ kind: 'structuralBlockEdit', edit: { op: 'add', slot_index: 1, new_block: { source: 'A', strategy: 'pick', size: 1 } } }];
+      const edited = trace([at(s[0], 0), at(s[1], 1, { track_id: 50 }), at(s[1], 2), at(s[2], 3), at(s[3], 4), at(s[4], 5)]);
+      expect(compareWeeks(edited, saved, template, opLog)).toEqual({
+        changes: [null, 'added', null, null, null, null], removed: 0,
+      });
+    });
+
+    it("a rule that plays more songs: the extra ones are new; fewer: the rest are gone", () => {
+      // Rule 0 plays two songs now: its second is new, the rest as they were.
+      const more = trace([s[0], at(s[0], 0, { track_id: 60 }), s[1], s[2], s[3], s[4]]);
+      expect(compareWeeks(more, saved, template)).toEqual({ changes: [null, 'added', null, null, null, null], removed: 0 });
+      const fewer = trace([s[0], s[2], s[3], s[4]]);
+      expect(compareWeeks(fewer, saved, template).removed).toBe(1);
+      expect(songsChanged(fewer, saved, template)).toBe(1);
+    });
+
+    it('a repeating row: by row and block', () => {
+      const { template: rows } = station('rebirth-classics');
+      const week = trace([
+        slot(0, rows.layout.row_template![0], { row: 1, block: 1 }),
+        slot(1, rows.layout.row_template![1], { row: 1, block: 2 }),
+      ]);
+      const edited = trace([week.slots[0], { ...week.slots[1], track_id: 5 }]);
+      expect(compareWeeks(edited, week, rows).changes).toEqual([null, 'changed']);
+    });
+
+    it('a trace without block numbers: by place, as before', () => {
+      const old = trace(saved.slots.map((x) => ({ ...x, block: 0 })));
+      const edited = trace([old.slots[0], { ...old.slots[1], track_id: 8 }]);
+      expect(compareWeeks(edited, old, template)).toEqual({ changes: [null, 'changed'], removed: 3 });
+    });
   });
 
   it('songs outside every section go in their own run', () => {
@@ -155,9 +231,9 @@ describe('songGroups', () => {
     const { template } = station('rebirth-radio');
     const saved = flatWeek(template, 4);
     const edited = trace([saved.slots[0], { ...saved.slots[1], track_id: 99 }, saved.slots[2]]);
-    expect(songsChanged(edited, saved)).toBe(2); // one different, one gone
-    expect(songsChanged(saved, saved)).toBe(0);
-    expect(songsChanged(edited, null)).toBe(0);
+    expect(songsChanged(edited, saved, template)).toBe(2); // one different, one gone
+    expect(songsChanged(saved, saved, template)).toBe(0);
+    expect(songsChanged(edited, null, template)).toBe(0);
   });
 
   it('ruleKey: one rule per repeating-row block (every row), per flat slot, per macro', () => {
@@ -235,6 +311,14 @@ describe('describeQueued', () => {
       expect(say(
         { kind: 'moveRules', from: 0, count: 2, to: 3, sectionId: 'evening' },
       )).toEqual(['Moved Morning, rules 1–2 to Evening, rules 2–3']);
+      // Within one section, it's named once.
+      expect(say(
+        { kind: 'moveRules', from: 1, count: 1, to: 0, sectionId: 'morning' },
+      )).toEqual(['Moved Morning, rule 2 to rule 1']);
+      // Only into another section, playing where it did.
+      expect(say(
+        { kind: 'moveRules', from: 1, count: 1, to: 2, sectionId: 'evening' },
+      )).toEqual(['Moved Morning, rule 2 to Evening, rule 1']);
       expect(say(
         { kind: 'moveRules', from: 2, count: 1, to: 0, sectionId: 'morning' },
         { kind: 'moveSection', sectionId: 'evening', beforeSectionId: 'morning', from: 2, count: 1, to: 0 },

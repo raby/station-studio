@@ -13,7 +13,9 @@ numbering before the move:
   * `move_rules` — the rules join `section_id`, placed among its blocks by
     when they play (after the ones that play before `to`). A run never
     splits a macro, and never lands inside one: a macro moves whole, or
-    not at all.
+    not at all. With `to` just after the run (`from_ + count`), they play
+    where they did and only change section (one dragged over the line
+    between two sections).
   * `move_section` — the run is all of a section's rules, which keep their
     section; it moves to before another section's rules (or the end), and
     the section's place in `layout_order` moves with it.
@@ -63,7 +65,10 @@ def _flat_slots(template: dict) -> list:
     return slots
 
 
-def _check_run(n: int, from_: int, count: int, to: int) -> None:
+def _check_run(n: int, from_: int, count: int, to: int, *, stay: bool = False) -> None:
+    """The run and `to` are in the station, and `to` isn't where the run
+    is; with `stay`, `to` may be just after it (`from_ + count`): the
+    rules play where they did."""
     if count < 1 or from_ < 0 or from_ + count > n:
         raise RuleMoveError(
             f"rules {from_}..{from_ + count - 1} aren't all in the station "
@@ -71,7 +76,7 @@ def _check_run(n: int, from_: int, count: int, to: int) -> None:
         )
     if to < 0 or to > n:
         raise RuleMoveError(f"can't move rules to {to}: the station has {n} rules.")
-    if from_ <= to <= from_ + count:
+    if from_ <= to <= from_ + count and not (stay and to == from_ + count):
         raise RuleMoveError("the rules are already there.")
 
 
@@ -176,13 +181,14 @@ def move_rules(
     they join section `section_id`, in the order they play, after its
     blocks that play before `to`."""
     slots = _flat_slots(template)
-    _check_run(len(slots), from_, count, to)
+    _check_run(len(slots), from_, count, to, stay=True)
     run = range(from_, from_ + count)
 
     elements = _element_slots(sidecar)
     moving: list[tuple[int, dict]] = []
     covered: set[int] = set()
-    for _section, block, slots_of in elements:
+    from_sections: set[Any] = set()
+    for section, block, slots_of in elements:
         if slots_of is None:
             continue
         if min(slots_of) < to <= max(slots_of):
@@ -197,6 +203,7 @@ def move_rules(
             )
         moving.append((min(slots_of), block))
         covered.update(slots_of)
+        from_sections.add(section.get("id"))
     if covered != set(run):
         raise RuleMoveError(
             f"rules {sorted(set(run) - covered)} aren't in a section: the "
@@ -205,6 +212,8 @@ def move_rules(
 
     if not any(s.get("id") == section_id for s in sidecar.get("sections", [])):
         raise RuleMoveError(f"section '{section_id}' not found.")
+    if to == from_ + count and from_sections == {section_id}:
+        raise RuleMoveError("the rules are already there.")
 
     # Take the moved blocks out of their sections, by identity, then put
     # them into the target section, in play order.

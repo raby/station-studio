@@ -8,12 +8,20 @@ this project uses semantic versioning.
 
 ### Added
 
-- **Moving rules to play somewhere else** (no way to do it in the app
-  yet: dragging in the song list comes next). Two new edits in the save
-  batch, `moveRules` and `moveSection`, reorder a flat station's rules,
-  and the sections follow. The editor's preview does the same, checked
-  against the same cases as the server. Undo and a song's Revert follow
-  rules through a move.
+- **Drag songs to change when they play.** In the song list (the
+  station editor's Songs tab, and a week's page), drag a song by its
+  grip, a run of songs (Shift-click to select them), or a whole
+  section, and it's queued to play there in every week. It works from
+  the keyboard too: Space to pick up, the arrows to choose, Space to
+  drop. Dropped over the line between two sections, a song just joins
+  the other one. The songs moved say **moved**; ones only shifted along
+  aren't marked. For stations built from a list of rules; ones built from a
+  repeating row come next.
+- **Moving rules to play somewhere else**, under that: two new edits in
+  the save batch, `moveRules` and `moveSection`, reorder a flat
+  station's rules, and the sections follow. The editor's preview does
+  the same, checked against the same cases as the server. Undo and a
+  song's Revert follow rules through a move.
 
 ### Fixed
 
