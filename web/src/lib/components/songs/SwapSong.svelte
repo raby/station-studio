@@ -86,6 +86,9 @@
   function onKey(e: KeyboardEvent): void {
     if (e.key === 'Escape') {
       e.preventDefault();
+      // Only the dialog closes: the rule panel behind (which closes on
+      // Escape anywhere) stays open.
+      e.stopPropagation();
       cancel();
     } else if (e.key === 'Tab' && dialog) {
       // Keep focus in the dialog.

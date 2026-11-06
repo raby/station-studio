@@ -449,6 +449,10 @@ export function createStagedEditSession(slug: string, opts: SessionOptions = {})
           // Keep the message above.
         }
       }
+      // The server moved the week's just-this-week changes with their
+      // rules (dropping those whose rule went): so do the previews'.
+      update({ weekChanges: changesAfter(s.weekChanges, sending) });
+      changesVersion += 1;
       setQueue(s.opLog.slice(sending.length));
       schedule(true);
       return true;

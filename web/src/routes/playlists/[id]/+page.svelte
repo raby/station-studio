@@ -206,8 +206,10 @@
   let asking: { edits: ReturnType<typeof editsFromPanel>; event: PanelEvent; position: number } | null = null;
   let swapping = false;
   let swapError: string | null = null;
+  /** The week (playlist) the messages above are about. */
+  let shownPlaylist = 0;
 
-  $: weekChangesOn = weekChanges !== null && viewingCurrent;
+  $: weekChangesOn = weekChanges !== null && viewingCurrent && !!trace && weekChangesFor === trace.trace_id;
   $: pickedSlot = trace && selectedSong !== null ? trace.slots[selectedSong - 1] : undefined;
   /** Why the picked song can't be changed just this week, or null. */
   $: justThisWeekBlocked = trace && editorData
@@ -305,7 +307,12 @@
 
   /** Save one just-this-week change. True when it was made. */
   async function makeChange(item: WeekChangeItem, busyText: string): Promise<boolean> {
-    if (!playlist || !trace || changeBusy) return false;
+    if (!playlist || !trace) return false;
+    if (changeBusy) {
+      // One at a time: each is made against the version the last made.
+      changeError = 'Another change is being saved: try again when it\'s done.';
+      return false;
+    }
     changeBusy = busyText;
     changeError = null;
     changeStatus = null;
@@ -327,7 +334,11 @@
   }
 
   async function undoWeekOnly(c: WeekChange): Promise<boolean> {
-    if (!playlist || changeBusy) return false;
+    if (!playlist) return false;
+    if (changeBusy) {
+      changeError = 'Another change is being saved: try again when it\'s done.';
+      return false;
+    }
     changeBusy = `Putting back ${c.position ? `song ${c.position}` : 'the song'}'s own song…`;
     changeError = null;
     changeStatus = null;
@@ -382,7 +393,17 @@
   })();
 
   async function saveRules(): Promise<void> {
-    if (session && (await session.save())) justSaved = true;
+    if (session && (await session.save())) {
+      justSaved = true;
+      // The server moved the week's changes with their rules: list them
+      // as they are now (a moved one isn't played by this version until
+      // the week is regenerated).
+      if (playlist && weekChanges) {
+        const forTrace = trace?.trace_id;
+        const fresh = await getWeekChanges(playlist.id).catch(() => null);
+        if (fresh && trace?.trace_id === forTrace) weekChanges = fresh;
+      }
+    }
   }
 
   // The panel needs the picked block's section, looked up in the edited
@@ -824,6 +845,14 @@
       rowGroups = groupByRow(t.slots);
       editorData = ed;
       ruleDefaults = ruleDefaultsFrom(rules?.rules ?? []);
+      // Another week: the last one's messages and dialogs aren't this one's.
+      if (playlistId !== shownPlaylist) {
+        changeStatus = null;
+        changeError = null;
+        asking = null;
+        swapping = false;
+        shownPlaylist = playlistId;
+      }
       weekChanges = changes;
       // Positions in it are the current version's.
       weekChangesFor = changes && changes.version_no === vlist.current_v
@@ -944,7 +973,8 @@
       `Roll back to v${targetVersion}?\n\n` +
         `A new current version will be created with v${targetVersion}'s ` +
         `content. The existing current (v${currentV}) stays in history ` +
-        `as a prior version — nothing is deleted.`,
+        `as a prior version — nothing is deleted.` +
+        (weekChanges ? `\n\nThe week's just-this-week changes become v${targetVersion}'s.` : ''),
     );
     if (!ok) return;
     rollingBack = true;
@@ -1735,14 +1765,22 @@
                     type="button"
                     data-testid="this-song-undo"
                     disabled={!!changeBusy}
-                    on:click={() => pickedChange && undoWeekOnly(pickedChange)}
+                    on:click={async () => {
+                      if (pickedChange && (await undoWeekOnly(pickedChange))) {
+                        // The box was rebuilt with the week: on to Swap song.
+                        await tick();
+                        document.querySelector<HTMLElement>('[data-testid="this-song-swap"]')?.focus();
+                      }
+                    }}
                   >Undo just this week</button>
                 {/if}
               </div>
               {#if justThisWeekBlocked}
                 <p id="this-song-why" class="this-song-why" data-testid="this-song-why">{justThisWeekBlocked}</p>
-              {:else}
+              {:else if selectedRef?.kind === 'atomic-ref'}
                 <p class="this-song-why">Or change its rule below: you'll be asked if it's for every week or just this song.</p>
+              {:else}
+                <p class="this-song-why" data-testid="this-song-group">Its group's settings below are for every week.</p>
               {/if}
             </section>
           {/if}

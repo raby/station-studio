@@ -385,6 +385,14 @@
   // only: they're changed on the week's page.
   let previewWeekChanges: { week: number; playlistId: number; changes: WeekChange[] } | null = null;
   let weekChangesAsked = 0;
+  // A save of the station (any kind) can move them with their rules:
+  // read them again for the new version.
+  let _changesForVersion: string | null = null;
+  $: if (updatedAt && slug && updatedAt !== _changesForVersion) {
+    const first = _changesForVersion === null;
+    _changesForVersion = updatedAt;
+    if (!first) void loadPreviewWeekChanges(previewWeek);
+  }
   $: previewChanges = previewWeekChanges && previewWeekChanges.week === previewWeek
     ? itemsOf(previewWeekChanges.changes)
     : [];
@@ -1673,6 +1681,14 @@
           'Save landed but the response shape failed validation: ' +
           (err instanceof Error ? err.message : String(err));
         try { await loadSidecar(); } catch { /* preserve validation error */ }
+      }
+      // The server moved the week's just-this-week changes with their
+      // rules; so do the previews', at once (re-fetched below too).
+      if (previewWeekChanges) {
+        previewWeekChanges = {
+          ...previewWeekChanges,
+          changes: changesAfter(previewWeekChanges.changes, opLog),
+        };
       }
       opLog = [];
       _persistOpLog();

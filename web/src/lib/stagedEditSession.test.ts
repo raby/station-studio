@@ -477,5 +477,19 @@ describe('createStagedEditSession', () => {
       await vi.waitFor(() => expect(get(session).stagedDropped).toEqual([]));
       session.destroy();
     });
+
+    it('saved, follow their rules as the server moves them', async () => {
+      const move: Edit = { kind: 'moveRules', from: 1, count: 1, to: 0, sectionId: 's' };
+      const session = createStagedEditSession('ts', { debounceMs: 0, week: 1, weekChanges: [swap] });
+      await session.load();
+      await vi.waitFor(() => expect(get(session).stagedTrace).not.toBeNull());
+      session.stage(move);
+      applyBatchMock.mockResolvedValueOnce({ template: template(), sidecar: SIDECAR, updated_at: 'ts-2' });
+      expect(await session.save()).toBe(true);
+      // Rule 2 plays first now: its change goes with it.
+      expect(get(session).weekChanges).toEqual([{ ...swap, block: 1 }]);
+      await vi.waitFor(() => expect(startPreviewJobMock.mock.calls.at(-1)?.[6]).toEqual([{ ...swap, block: 1 }]));
+      session.destroy();
+    });
   });
 });

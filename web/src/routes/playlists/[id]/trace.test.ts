@@ -2424,6 +2424,8 @@ describe('trace viewer — just this week', () => {
     await fireEvent.keyDown(screen.getByTestId('change-scope'), { key: 'Escape' });
     expect(screen.queryByTestId('change-scope')).toBeNull();
     expect(addWeekChangeMock).not.toHaveBeenCalled();
+    // Escape closed only the ask: the rule panel behind is still open.
+    expect(screen.getByTestId('detail-panel')).toBeInTheDocument();
   });
 
   it('swap a song: search the station, pick one, saved at once', async () => {
@@ -2444,6 +2446,11 @@ describe('trace viewer — just this week', () => {
     render(Page);
     await pick(1);
     expect(screen.getByTestId('this-song')).toHaveTextContent('Song 2 (Mon): Track Mon-2');
+    await fireEvent.click(screen.getByTestId('this-song-swap'));
+    // Escape closes the dialog alone; open it again.
+    await fireEvent.keyDown(await screen.findByTestId('swap-song'), { key: 'Escape' });
+    expect(screen.queryByTestId('swap-song')).toBeNull();
+    expect(screen.getByTestId('detail-panel')).toBeInTheDocument();
     await fireEvent.click(screen.getByTestId('this-song-swap'));
     const dialog = await screen.findByTestId('swap-song');
     expect(searchStationSongsMock).toHaveBeenCalledWith('cls', '', 'A');
@@ -2578,6 +2585,43 @@ describe('trace viewer — just this week', () => {
     expect(await screen.findByTestId('song-regenerated')).toHaveTextContent(
       'Regenerated week 3 with the saved rules. Kept 1 just-this-week change. Dropped 1 just-this-week change that no longer fits: song 3 (Mon): the rule for that song has changed since.',
     );
+  });
+
+  it("saving queued rule changes lists the week's changes as the server moved them", async () => {
+    getWeekChangesMock.mockImplementation(async () => ({ ...noChanges, changes: [swapped] }));
+    render(Page);
+    await screen.findByTestId('week-only-item');
+    await pick(0);
+    await retypeToPick();
+    await fireEvent.click(await screen.findByTestId('change-scope-every'));
+    const asked = getWeekChangesMock.mock.calls.length;
+    // The server moved it (its version doesn't play it there until regenerated).
+    getWeekChangesMock.mockImplementation(async () => ({ ...noChanges, changes: [{ ...swapped, block: 2, position: null }] }));
+    applyBatchMock.mockResolvedValueOnce({ template: template(), sidecar: sidecar(), updated_at: 'ts-2' });
+    await fireEvent.click(await screen.findByTestId('song-edit-save'));
+    await screen.findByTestId('song-edit-saved');
+    await vi.waitFor(() => expect(getWeekChangesMock.mock.calls.length).toBe(asked + 1));
+    expect(await screen.findByTestId('week-only-pending')).toHaveTextContent('regenerate it');
+  });
+
+  it("another week's page doesn't keep this week's messages", async () => {
+    addWeekChangeMock.mockImplementation(async () => {
+      const { WeekChangeConflict } = await vi.importActual<typeof import('$lib/api')>('$lib/api');
+      throw new WeekChangeConflict('the week changed meanwhile', 2);
+    });
+    searchStationSongsMock.mockImplementation(async () => ({
+      songs: [{ id: 555, name: 'Mine', artist: 'Me', album: null, pools: ['A'] }], more: false,
+    }));
+    render(Page);
+    await pick(1);
+    await fireEvent.click(screen.getByTestId('this-song-swap'));
+    await fireEvent.click((await screen.findAllByTestId('swap-song-result'))[0]);
+    await screen.findByTestId('week-change-error');
+    getPlaylistMock.mockImplementation(async () => ({ ...stubPlaylist(), id: 8, week: 4 }));
+    getTraceMock.mockImplementation(async () => week({ week: 4, trace_id: 'w4' }));
+    await act(() => setId('8'));
+    await vi.waitFor(() => expect(screen.queryByTestId('week-change-error')).toBeNull());
+    expect(screen.queryByTestId('swap-song')).toBeNull();
   });
 
   it('an older version of the week offers no changes', async () => {

@@ -26,6 +26,11 @@
 
   let { changes, template, units, onundo, onshow, busy = false, emptyFocus }: Props = $props();
 
+  /** In the week's order; one this version doesn't play, last. */
+  const shown = $derived(
+    [...changes].sort((a, b) => (a.position ?? Infinity) - (b.position ?? Infinity) || a.id - b.id),
+  );
+
   let list: HTMLUListElement | null = $state(null);
   let announced = $state('');
 
@@ -58,7 +63,7 @@
   <section class="week-only" aria-labelledby="week-only-title" data-testid="week-only">
     <h3 id="week-only-title">This week only <span class="count">({changes.length})</span></h3>
     <ul bind:this={list}>
-      {#each changes as c, i (c.id)}
+      {#each shown as c, i (c.id)}
         <li data-testid="week-only-item">
           <span class="where">
             {#if c.position !== null && onshow}

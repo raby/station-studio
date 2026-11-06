@@ -123,3 +123,56 @@ test("change a song's rule just this song, from the ask", async ({ page, request
   await page.keyboard.press('Escape');
   await expect(page.getByTestId('change-scope')).toHaveCount(0);
 });
+
+test("the station editor's preview of a week shows its just-this-week changes", async ({ page, request }) => {
+  await station(request, 'wk-editor');
+  const { playlist_id } = await generate(request, 'wk-editor', 1, 5);
+  const trace = await (await request.get(`${API}/api/playlists/${playlist_id}/trace`)).json();
+  const other = (await (await request.get(`${API}/api/stations/wk-editor/songs?prefer=A`)).json()).songs
+    .find((s: { id: number }) => s.id !== trace.slots[1].track_id);
+  const r = await request.post(`${API}/api/playlists/${playlist_id}/changes`, { data: { expected_version: 1,
+    change: { row: 1, block: 2, k: 0, kind: 'swap', track_id: other.id, rule_strategy: 'weighted', rule_source: 'A' } } });
+  expect(r.ok(), await r.text()).toBe(true);
+
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await page.goto('/stations/wk-editor/visualise');
+  await page.getByTestId('live-preview-checkbox').check();
+  await expect(page.getByTestId('editor-week-only')).toContainText('Week 1 has 1 just-this-week change');
+  await expect(page.getByTestId('song-week-only')).toHaveCount(1, { timeout: 15000 });
+  await expect(page.getByTestId('song-row').nth(1)).toContainText(other.name);
+  await expect(page.getByTestId('editor-week-only').getByRole('link')).toHaveAttribute('href', `/playlists/${playlist_id}`);
+  await assertNoA11yViolations(page);
+});
+
+test('a change follows its rule when the rule is moved and saved, and regenerating plays it there', async ({ page, request }) => {
+  await station(request, 'wk-move');
+  const { playlist_id } = await generate(request, 'wk-move', 1, 5);
+  const trace = await (await request.get(`${API}/api/playlists/${playlist_id}/trace`)).json();
+  const other = (await (await request.get(`${API}/api/stations/wk-move/songs?prefer=A`)).json()).songs
+    .find((s: { id: number }) => s.id !== trace.slots[0].track_id);
+  const r = await request.post(`${API}/api/playlists/${playlist_id}/changes`, { data: { expected_version: 1,
+    change: { row: 1, block: 1, k: 0, kind: 'swap', track_id: other.id, rule_strategy: 'weighted', rule_source: 'A' } } });
+  expect(r.ok(), await r.text()).toBe(true);
+  await openWeek(page, playlist_id);
+  await expect(page.getByTestId('song-row').first()).toContainText(other.name);
+
+  // Song 1's rule, from the keyboard, to play last.
+  await page.getByTestId('song-grip').first().focus();
+  await page.keyboard.press('Space');
+  await page.keyboard.press('End');
+  await page.keyboard.press('Space');
+  await expect(page.getByTestId('song-edit-count')).toContainText('1 change');
+  // The queue's preview plays the swapped song where its rule goes.
+  await expect(page.getByTestId('song-row').last()).toContainText(other.name, { timeout: 15000 });
+  await expect(page.getByTestId('song-week-only')).toHaveCount(1);
+
+  await page.getByTestId('song-edit-save').click();
+  await expect(page.getByTestId('song-edit-saved')).toBeVisible({ timeout: 15000 });
+  // This version doesn't play it there yet: regenerate to.
+  await expect(page.getByTestId('week-only-pending')).toBeVisible();
+  await page.getByTestId('song-edit-regenerate').click();
+  await expect(page.getByTestId('song-regenerated')).toContainText('Kept 1 just-this-week change', { timeout: 15000 });
+  await expect(page.getByTestId('song-row').last()).toContainText(other.name);
+  await expect(page.getByTestId('week-only-item')).toContainText('Song 3');
+  await expect(page.getByTestId('week-only-pending')).toHaveCount(0);
+});
