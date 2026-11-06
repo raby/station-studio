@@ -774,6 +774,22 @@ describe('<TracePane> — §16.2.7.t6 revert button', () => {
     expect(undone).toEqual([[0]]);
   });
 
+  it("a station built from a repeating row: a song's Revert is its block's, on any day", async () => {
+    // Two days of two blocks; block 1 edited (block_idx, as row stations
+    // are addressed): Tue's song from it changed.
+    const days = (ids: number[]): Trace => {
+      const t = tr(ids);
+      t.slots = t.slots.map((s, i) => ({ ...s, row: i < 2 ? 1 : 2, block: (i % 2) + 1 }));
+      return t;
+    };
+    const rowPatch: Edit = { kind: 'patchBlock', address: { block_idx: 1 }, fields: { size: 2 } };
+    const { undone } = rendered({ trace: days([1, 2, 3, 99]), savedTrace: days([1, 2, 3, 4]), opLog: [rowPatch] });
+    const button = screen.getByTestId('trace-row-revert');
+    expect(button).toBeEnabled();
+    await fireEvent.click(button);
+    expect(undone).toEqual([[0]]);
+  });
+
   it("a removed song's Revert: its rule as saved, followed through the queue", async () => {
     // Saved: four songs, one per rule. Rule 1 removed (edit 0), then the
     // rule now at 1 (rule 2 as saved) changed (edit 1). The staged week

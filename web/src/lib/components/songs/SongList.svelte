@@ -22,7 +22,7 @@
    */
   import { tick } from 'svelte';
   import type { Trace } from '$lib/api';
-  import { blockRuns, sectionSlots, whyRulesCantMove, type Edit, type MoveRulesOp, type MoveSectionOp } from '$lib/edit-ops';
+  import { applyEdit, blockRuns, sectionSlots, whyRulesCantMove, type Edit, type MoveRulesOp, type MoveSectionOp } from '$lib/edit-ops';
   import { sourceColour, type Sidecar, type StationTemplate } from '$lib/editor';
   import { filterGroups, removedCount, rowRule, ruleKey, songGroups, unitWord, type RuleDefaults, type SongRow } from '$lib/songList';
 
@@ -221,30 +221,39 @@
   let target: string | null = $state(null);
   let carrying = $state(false);
 
-  /** The sections the run's songs are in now. */
-  function runSections(run: Run): Set<string | null> {
+  /** The sections the run's songs are in now (a repeating row's: in
+   *  row `row`, the one it was picked up in). */
+  function runSections(run: Run, row: number): Set<string | null> {
     const out = new Set<string | null>();
     for (const g of allGroups) {
       for (const r of g.rows) {
         const p = r.slot.block - 1;
-        if (p >= run.from && p < run.from + run.count) out.add(g.sectionId);
+        if (p >= run.from && p < run.from + run.count && (!rows || r.slot.row === row)) out.add(g.sectionId);
       }
     }
     return out;
   }
-  /** A place the run can go: somewhere else in play, or where it is in
-   *  another section (over the line between two: only the section
-   *  changes). */
-  function canGo(run: Run, s: Spot, own: Set<string | null>): boolean {
+  /** A place the run might go: somewhere else in play, or where it is
+   *  in another section (over the line between two: only the section
+   *  changes). `own`: its sections, in the row it was picked up in.
+   *  (Whether the station takes it is `takes`.) */
+  function canGo(m: Moving, s: Spot, own: Set<string | null>): boolean {
+    const { run } = m;
     if (s.to < run.from || s.to > run.from + run.count) return true;
     return !(own.size === 1 && own.has(s.sectionId));
   }
-  const rulesTargets = (run: Run): Spot[] => {
-    const own = runSections(run);
-    return spots.filter((s) => canGo(run, s, own));
-  };
-  const sectionTargets = (run: Run): SectionSpot[] =>
-    sectionSpots.filter((s) => s.to < run.from || s.to > run.from + run.count);
+  /** Whether a drop at place `key` is a move: somewhere it can go, that
+   *  the station takes. */
+  function canDrop(m: Moving, key: string): boolean {
+    if (m.kind === 'rules') {
+      const spot = spots.find((s) => s.key === key);
+      return !!spot && canGo(m, spot, runSections(m.run, m.row)) && takes(m, key);
+    }
+    const spot = sectionSpots.find((s) => s.key === key);
+    // (`takes` here is belt and braces: a section's places are only where
+    // another section starts, which the station takes.)
+    return !!spot && (spot.to < m.run.from || spot.to > m.run.from + m.run.count) && takes(m, key);
+  }
 
   function songsLabel(run: Run, row: number): string {
     const songs = allGroups.flatMap((g) => g.rows).filter((r) => {
@@ -265,31 +274,57 @@
       : null;
   }
 
+  /** The edit a drop at place `key` would be, or null. */
+  function editFor(m: Moving, key: string): MoveRulesOp | MoveSectionOp | null {
+    if (m.kind === 'rules') {
+      const spot = spots.find((s) => s.key === key);
+      if (!spot) return null;
+      // Where it plays already (into another section): `to` just after
+      // the run, as the edit has it.
+      const stays = spot.to >= m.run.from && spot.to <= m.run.from + m.run.count;
+      const to = stays ? m.run.from + m.run.count : spot.to;
+      return { kind: 'moveRules', from: m.run.from, count: m.run.count, to, sectionId: spot.sectionId };
+    }
+    const spot = sectionSpots.find((s) => s.key === key);
+    if (!spot) return null;
+    return {
+      kind: 'moveSection', sectionId: m.sectionId, beforeSectionId: spot.beforeSectionId,
+      from: m.run.from, count: m.run.count, to: spot.to,
+    };
+  }
+  /** Whether the station takes the drop at `key`: the preview's mirror
+   *  of the server says (a move that would leave a macro with nothing
+   *  to stand on, say, it refuses). Asked once per place a carry. */
+  let takenFor: { m: Moving; at: Map<string, boolean> } | null = null;
+  function takes(m: Moving, key: string): boolean {
+    if (takenFor?.m !== m) takenFor = { m, at: new Map() };
+    let ok = takenFor.at.get(key);
+    if (ok === undefined) {
+      const edit = editFor(m, key);
+      const out = edit ? applyEdit(template, sidecar, edit) : null;
+      ok = !!out && (out.template !== template || out.sidecar !== sidecar);
+      takenFor.at.set(key, ok);
+    }
+    return ok;
+  }
+
   function drop(): void {
     const m = moving;
     const key = target;
     const byKey = carrying;
     end();
     if (!m || key === null || !onmove) return;
-    if (m.kind === 'rules') {
-      const spot = rulesTargets(m.run).find((s) => s.key === key);
-      if (!spot) return;
-      // Where it plays already (into another section): `to` just after
-      // the run, as the edit has it.
-      const stays = spot.to >= m.run.from && spot.to <= m.run.from + m.run.count;
-      const to = stays ? m.run.from + m.run.count : spot.to;
-      onmove({ kind: 'moveRules', from: m.run.from, count: m.run.count, to, sectionId: spot.sectionId });
-      announce(`Moved ${m.label} ${spot.label}.`);
-      if (byKey) follow(`[data-testid="song-grip"][data-rule="${stays ? m.run.from : to > m.run.from ? to - m.run.count : to}"][data-row="${m.row}"]`);
-    } else {
-      const spot = sectionTargets(m.run).find((s) => s.key === key);
-      if (!spot) return;
-      onmove({
-        kind: 'moveSection', sectionId: m.sectionId, beforeSectionId: spot.beforeSectionId,
-        from: m.run.from, count: m.run.count, to: spot.to,
-      });
-      announce(`Moved ${m.label} ${spot.label}.`);
-      if (byKey) follow(`[data-testid="section-grip"][data-section="${CSS.escape(m.sectionId)}"][data-row="${m.row}"]`);
+    const edit = canDrop(m, key) ? editFor(m, key) : null;
+    if (!edit) return;
+    onmove(edit);
+    const label = (m.kind === 'rules' ? spots : sectionSpots).find((s) => s.key === key)!.label;
+    announce(`Moved ${m.label} ${label}.`);
+    if (byKey && edit.kind === 'moveRules') {
+      const { from, count, to } = edit;
+      const now = to === from + count ? from : to > from ? to - count : to;
+      follow(`[data-testid="song-grip"][data-rule="${now}"][data-row="${m.row}"]`);
+    } else if (byKey && m.kind === 'section') {
+      follow(`[data-testid="section-grip"][data-section="${CSS.escape(m.sectionId)}"][data-row="${m.row}"]`);
     }
     selection = null;
   }
@@ -343,7 +378,7 @@
     const before = (at + within) / mine.length < 0.5;
     const i = spots.findIndex((s) => s.key === `b${mine[0].position}`);
     const spot = before ? spots[i] : spots[i + 1];
-    target = spot && rulesTargets(moving.run).some((s) => s.key === spot.key) ? spot.key : null;
+    target = spot && canDrop(moving, spot.key) ? spot.key : null;
     if (e.dataTransfer) e.dataTransfer.dropEffect = target ? 'move' : 'none';
   }
   /** Over a group, not a song. A section: before this run (when it
@@ -358,17 +393,16 @@
       e.preventDefault();
       const first = allGroups[gi]?.rows[0];
       const key = first ? `b${first.position}` : null;
-      target = key && rulesTargets(moving.run).some((s) => s.key === key) ? key : null;
+      target = key && canDrop(moving, key) ? key : null;
       if (e.dataTransfer) e.dataTransfer.dropEffect = target ? 'move' : 'none';
       return;
     }
     e.preventDefault();
     const box = (e.currentTarget as HTMLElement).getBoundingClientRect();
     const upper = box.height > 0 && e.clientY - box.top < box.height / 2;
-    const valid = sectionTargets(moving.run);
     const later = sectionSpots.filter((s) => s.group === null || s.group > gi || (upper && s.group === gi));
     const spot = later[0];
-    target = spot && valid.some((s) => s.key === spot.key) ? spot.key : null;
+    target = spot && canDrop(moving, spot.key) ? spot.key : null;
     if (e.dataTransfer) e.dataTransfer.dropEffect = target ? 'move' : 'none';
   }
   function dropHere(e: DragEvent): void {
@@ -386,24 +420,25 @@
     await tick();
     status = text;
   }
-  /** Where the carried songs or section can go, in list order, with
-   *  their own place ("here") among them. */
+  /** Where the carried songs or section might go, in list order, with
+   *  their own place ("here") among them. (Whether the station takes
+   *  each is asked as the arrows reach it: `takes`.) */
   function carryStops(m: Moving): { key: string; label: string }[] {
     if (m.kind === 'rules') {
-      const own = runSections(m.run);
+      const own = runSections(m.run, m.row);
       // A repeating row's: the places in the row it was picked up in
       // (every row has the same ones).
       const mine = rows ? spots.filter((s) => s.row === m.row) : spots;
       const near = (s: Spot) => s.to >= m.run.from && s.to <= m.run.from + m.run.count;
       // Its own place: where its own section's spot is, or (a run in
       // more than one section) the first place it already plays at.
-      let here = mine.findIndex((s) => near(s) && !canGo(m.run, s, own));
+      let here = mine.findIndex((s) => near(s) && !canGo(m, s, own));
       if (here === -1) here = mine.findIndex(near);
       const stops: { key: string; label: string }[] = [];
       const into = new Set<string>(); // sections it can join where it plays: once each
       mine.forEach((s, i) => {
         if (i === here) stops.push({ key: 'here', label: 'back where it was' });
-        if (!canGo(m.run, s, own)) return;
+        if (!canGo(m, s, own)) return;
         if (near(s)) {
           if (into.has(s.sectionId)) return;
           into.add(s.sectionId);
@@ -458,8 +493,20 @@
       e.preventDefault();
       const stops = carryStops(moving);
       const at = stops.findIndex((s) => s.key === target);
-      const next = e.key === 'Home' ? 0 : e.key === 'End' ? stops.length - 1
-        : Math.max(0, Math.min(stops.length - 1, at + (e.key === 'ArrowUp' ? -1 : 1)));
+      // The next place the station takes, that way (each asked only when
+      // reached: on a big station asking all at once would lag).
+      const m = moving;
+      const ok = (i: number) => stops[i].key === 'here' || takes(m, stops[i].key);
+      const step = e.key === 'ArrowUp' ? -1 : 1;
+      let next = e.key === 'Home' ? 0 : e.key === 'End' ? stops.length - 1 : at + step;
+      if (e.key === 'Home' || e.key === 'End') {
+        // Inwards from that end ("here" is always there to stop at).
+        const inwards = e.key === 'Home' ? 1 : -1;
+        while (!ok(next)) next += inwards;
+      } else {
+        while (next >= 0 && next < stops.length && !ok(next)) next += step;
+        if (next < 0 || next >= stops.length) next = at;
+      }
       target = stops[next].key;
       void announce(stops[next].label);
       void tick().then(() => listEl?.querySelector('.drop-line')?.scrollIntoView?.({ block: 'nearest' }));
@@ -487,11 +534,19 @@
 
   let listEl: HTMLElement | null = $state(null);
   const lineBefore = (r: SongRow): boolean => target === `b${r.position}`;
-  /** A repeating row's: the week's first song of a row (day), which says
-   *  which. */
-  const dayStarts = $derived(new Set(
-    trace.slots.flatMap((x, i) => (i === 0 || trace.slots[i - 1].row !== x.row ? [i + 1] : [])),
-  ));
+  /** A repeating row's: the first song shown of each row (day), which
+   *  says which (a search can hide a day's first). */
+  const dayStarts = $derived.by(() => {
+    const out = new Set<number>();
+    let last: number | null = null;
+    for (const g of groups) {
+      for (const r of g.rows) {
+        if (r.slot.row !== last) out.add(r.position);
+        last = r.slot.row;
+      }
+    }
+    return out;
+  });
   const startsDay = (r: SongRow): boolean => dayStarts.has(r.position);
   /** After a song: a row's end, in a group that runs on into the next. */
   const lineAfter = (r: SongRow): boolean => target === `a${r.position}`;

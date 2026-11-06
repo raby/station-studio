@@ -6,6 +6,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import shared from '../../../tests/fixtures/rule_moves.json';
+import random from '../../../tests/fixtures/rule_moves_random.json';
 import { applyEdit, newPosition, type Edit } from './edit-ops';
 import type { StationTemplate } from './editor';
 
@@ -44,6 +45,28 @@ describe('moving rules: the shared cases', () => {
   it('every case is checked (none skipped by a typo in its kind)', () => {
     expect(fixtures.cases.length).toBeGreaterThan(15);
     for (const c of fixtures.cases) expect(['moveRules', 'moveSection']).toContain(c.edit.kind);
+  });
+});
+
+describe('moving rules: random stations and moves (tests/fixtures/rule_moves_random.json)', () => {
+  // Made by the server's own moves (tests/test_rule_moves.py): the
+  // preview must give exactly the station it does, or refuse the same.
+  type R = { station: Station; edit: Edit; template?: unknown; sidecar?: unknown; error?: string };
+  const cases = (random as unknown as { cases: R[] }).cases;
+  it('has moves taken and refused, flat and row stations', () => {
+    expect(cases.filter((c) => !c.error).length).toBeGreaterThanOrEqual(100);
+    expect(cases.filter((c) => c.error).length).toBeGreaterThanOrEqual(50);
+    expect(cases.some((c) => !c.error && c.station.template.layout.row_template)).toBe(true);
+  });
+  it.each(cases.map((c, i) => [i, c] as const))('case %i', (_i, c) => {
+    const out = applyEdit(c.station.template, c.station.sidecar, c.edit);
+    if (c.error) {
+      expect(out.template).toBe(c.station.template);
+      expect(out.sidecar).toBe(c.station.sidecar);
+    } else {
+      expect(out.template).toEqual(c.template);
+      expect(out.sidecar).toEqual(c.sidecar);
+    }
   });
 });
 

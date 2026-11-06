@@ -97,8 +97,11 @@ row. Its sidecar's atomic blocks carry a row (`row_idx`) as well as
 their place (`block_idx`); every row's are renumbered, a moved block
 joins the target section when that section has blocks of its row (so a
 section per day keeps its day's), and each section's blocks are kept
-in play order. Such a station can't move rules while its sections use
-macros, or repeat for every row (`repeat_with_offsets`).
+in play order. A section's move changes only its own place in
+`layout_order`: with a section per day, the other days' sections keep
+theirs (their songs still play in the new order). Such a station can't
+move rules yet while its sections use macros, or repeat for every row
+(`repeat_with_offsets`, as Rebirth Classics' does).
 
 Both are in `engine/rule_moves.py` on the server and mirrored in
 `edit-ops.ts` for the preview; `tests/fixtures/rule_moves.json` holds

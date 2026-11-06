@@ -1568,8 +1568,17 @@ function _setPos(b: _SidecarBlock, p: number): void {
  *  would be refused, whatever the move), in words; null when they can. */
 export function whyRulesCantMove(template: StationTemplate, sidecar: unknown): string | null {
   if (template.layout.row_template?.length) {
-    return _isSidecarLike(sidecar) && _rowsMovable(sidecar as { sections?: _Section[] }) ? null
-      : "Songs can't be moved in a station built from a repeating row while its sections use macros, or repeat for every row.";
+    if (!_isSidecarLike(sidecar)) return 'This station has no sections to move songs in.';
+    const sections = (sidecar as { sections?: _Section[] }).sections ?? [];
+    const u = (template.layout as { unit?: unknown }).unit;
+    const unit = typeof u === 'string' && u.trim() && u !== 'slot' ? u.trim().toLowerCase() : 'row';
+    if (sections.some((s) => s.repeat_with_offsets !== undefined && s.repeat_with_offsets !== null)) {
+      return `Songs can't be moved yet in a station whose sections repeat for every ${unit}.`;
+    }
+    if (!_rowsMovable(sidecar as { sections?: _Section[] })) {
+      return `Songs can't be moved yet in a station built from a repeating ${unit} whose sections use macros.`;
+    }
+    return null;
   }
   return template.layout.flat_slots?.length ? null : 'This station has no rules to move.';
 }

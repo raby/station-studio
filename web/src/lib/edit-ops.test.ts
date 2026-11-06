@@ -2192,8 +2192,30 @@ describe('undoSet — undoing a change takes the later ones built on it', () => 
 
   // Every edit left after an undo must still do what it did: change the
   // same rule (and that rule still has the type it had), or still find
-  // its section. Random queues of every kind, each edit undone in turn.
-  it('what stays still changes the same rules (random queues)', () => {
+  // its section. Random queues of every kind, each edit undone in turn;
+  // and on a station built from a repeating row (two days of three
+  // blocks, Morning and Evening over both), whose edits are to blocks.
+  const at = (r: number, b: number) => ({ kind: 'atomic', row_idx: r, block_idx: b });
+  const rowStation = {
+    template: {
+      ...t,
+      layout: { unit: 'day', unit_labels: ['Mon', 'Tue'], row_start_offsets: [0, 3], row_template: t.layout.flat_slots },
+    } as unknown as StationTemplate,
+    sidecar: {
+      schema_version: 1,
+      sections: [
+        { id: 'morning', name: 'Morning', blocks: [at(0, 0), at(0, 1), at(1, 0), at(1, 1)] },
+        { id: 'evening', name: 'Evening', blocks: [at(0, 2), at(1, 2)] },
+      ],
+      macros: [],
+      layout_order: ['morning', 'evening'],
+    },
+  };
+  it.each([
+    ['a flat station', { template: t, sidecar }, false],
+    ['a repeating row', rowStation, true],
+  ] as const)('what stays still changes the same rules (random queues): %s', (_name, station, rows) => {
+    const { template: t, sidecar } = station as { template: StationTemplate; sidecar: unknown };
     // mulberry32: seeded, so a failure repeats.
     let seed = 7;
     const rand = (n: number): number => {
@@ -2205,7 +2227,10 @@ describe('undoSet — undoing a change takes the later ones built on it', () => 
     const strategies = ['pick', 'sequential', 'window'];
     type State = { template: StationTemplate; sidecar: unknown };
     const ids = (st: State): string[] => ((st.sidecar as { layout_order: string[] }).layout_order);
-    const slots = (st: State): number => st.template.layout.flat_slots!.length;
+    const rulesOf = (template: StationTemplate) => (rows ? template.layout.row_template! : template.layout.flat_slots!);
+    const slots = (st: State): number => rulesOf(st.template).length;
+    // A rule's address: its slot, or a repeating row's block.
+    const addr = (p: number): BlockAddress => (rows ? { block_idx: p } : { slot_index: p });
 
     function randomOp(st: State, n: number): Edit {
       const len = slots(st);
@@ -2217,7 +2242,7 @@ describe('undoSet — undoing a change takes the later ones built on it', () => 
           const from = rand(len);
           const count = 1 + rand(Math.min(2, len - from));
           const places = Array.from({ length: len + 1 }, (_, p) => p).filter((p) => p < from || p >= from + count);
-          if (places.length === 0) return { kind: 'patchBlock', address: { slot_index: 0 }, fields: { size: 3 } };
+          if (places.length === 0) return { kind: 'patchBlock', address: addr(0), fields: { size: 3 } };
           return { kind: 'moveRules', from, count, to: places[rand(places.length)], sectionId: user[rand(user.length)] };
         }
         case 11: {
@@ -2232,19 +2257,25 @@ describe('undoSet — undoing a change takes the later ones built on it', () => 
           if (mine.length === 0) return { kind: 'renameSection', sectionId, name: `M${n}` };
           return { kind: 'moveSection', sectionId, beforeSectionId, from: mine[0], count: mine.length, to };
         }
-        case 0: return { kind: 'patchBlock', address: { slot_index: rand(len) }, fields: { size: 1 + rand(4) } };
-        case 1: return { kind: 'retypeBlock', address: { slot_index: rand(len) }, newStrategy: strategies[rand(3)], newSource: null, newFields: {} };
-        case 2: return { kind: 'structuralBlockEdit', edit: { op: 'add', slot_index: rand(len + 1), new_block: { source: 'A', strategy: 'pick', size: 1 } } };
-        case 3: return len > 1
+        case 0: return { kind: 'patchBlock', address: addr(rand(len)), fields: { size: 1 + rand(4) } };
+        case 1: return { kind: 'retypeBlock', address: addr(rand(len)), newStrategy: strategies[rand(3)], newSource: null, newFields: {} };
+        // (A repeating row's rules can't be added, removed or resized
+        // one by one: a change to its settings instead.)
+        case 2: return rows
+          ? { kind: 'patchBlock', address: addr(rand(len)), fields: { size: 1 + rand(4) } }
+          : { kind: 'structuralBlockEdit', edit: { op: 'add', slot_index: rand(len + 1), new_block: { source: 'A', strategy: 'pick', size: 1 } } };
+        case 3: return !rows && len > 1
           ? { kind: 'structuralBlockEdit', edit: { op: 'remove', slot_index: rand(len) } }
-          : { kind: 'patchBlock', address: { slot_index: 0 }, fields: { size: 2 } };
-        case 4: return { kind: 'structuralBlockEdit', edit: { op: 'size', slot_index: rand(len), new_size: 1 + rand(3) } };
+          : { kind: 'patchBlock', address: addr(0), fields: { size: 2 } };
+        case 4: return rows
+          ? { kind: 'retypeBlock', address: addr(rand(len)), newStrategy: strategies[rand(3)], newSource: null, newFields: {} }
+          : { kind: 'structuralBlockEdit', edit: { op: 'size', slot_index: rand(len), new_size: 1 + rand(3) } };
         case 5: return { kind: 'sectionCreate', sectionId: `s${n}`, name: `S${n}` };
         case 6: return user.length > 1
           ? { kind: 'sectionDelete', sectionId: user[rand(user.length)] }
           : { kind: 'sectionCreate', sectionId: `t${n}`, name: null };
         case 7: return { kind: 'renameSection', sectionId: user[rand(user.length)], name: `R${n}` };
-        case 8: return { kind: 'moveBlock', address: { slot_index: rand(len) }, targetSectionId: user[rand(user.length)], targetIndex: rand(3) };
+        case 8: return { kind: 'moveBlock', address: addr(rand(len)), targetSectionId: user[rand(user.length)], targetIndex: rand(3) };
         default: {
           const order = ids(st).slice();
           for (let i = order.length - 1; i > 0; i--) {
@@ -2265,9 +2296,9 @@ describe('undoSet — undoing a change takes the later ones built on it', () => 
       const seen: { rule: string | null; strategy: string | null; did: boolean }[] = [];
       log.forEach((op, j) => {
         const slot = op.kind === 'patchBlock' || op.kind === 'retypeBlock' || op.kind === 'moveBlock'
-          ? op.address.slot_index
+          ? op.address.slot_index ?? op.address.block_idx
           : op.kind === 'structuralBlockEdit' && op.edit.op !== 'add' ? op.edit.slot_index : undefined;
-        const strategy = slot !== undefined ? st.template.layout.flat_slots![slot]?.strategy ?? null : null;
+        const strategy = slot !== undefined ? rulesOf(st.template)[slot]?.strategy ?? null : null;
         const next = applyEdit(st.template, st.sidecar, op);
         const moving = op.kind === 'moveRules' || op.kind === 'moveSection';
         seen.push({
