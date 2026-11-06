@@ -411,4 +411,85 @@ describe('createStagedEditSession', () => {
     expect(startPreviewJobMock).toHaveBeenCalledTimes(3);
     session.destroy();
   });
+
+  describe("the week's just-this-week changes", () => {
+    const swap = { row: 1, block: 2, k: 1, kind: 'swap' as const, track_id: 9, rule: null,
+      rule_strategy: 'pick', rule_source: 'A' };
+    const moveFirstToEnd: Edit = { kind: 'moveRules', from: 0, count: 1, to: 2, sectionId: 's' };
+
+    it('go with both previews, moved through the queue for the edited one', async () => {
+      const session = createStagedEditSession('ts', { debounceMs: 0, week: 1, weekChanges: [swap] });
+      await session.load();
+      await vi.waitFor(() => expect(get(session).stagedTrace).not.toBeNull());
+      // The saved week: the changes as they are.
+      expect(startPreviewJobMock.mock.calls[0][6]).toEqual([swap]);
+      session.stage(moveFirstToEnd);
+      await vi.waitFor(() => expect(startPreviewJobMock).toHaveBeenCalledTimes(2));
+      // Rule 2 plays first once rule 1 moves to the end: the swap follows it.
+      expect(startPreviewJobMock.mock.calls[1][6]).toEqual([{ ...swap, block: 1 }]);
+      session.destroy();
+    });
+
+    it('set anew, preview the saved week again with them', async () => {
+      const session = await ready();
+      expect(startPreviewJobMock.mock.calls[0][6]).toBeUndefined(); // none: called as before
+      session.setWeekChanges([swap]);
+      await vi.waitFor(() => expect(startPreviewJobMock).toHaveBeenCalledTimes(2));
+      expect(startPreviewJobMock.mock.calls[1][6]).toEqual([swap]);
+      expect(get(session).weekChanges).toEqual([swap]);
+      // The same again (the week reloaded): no new previews.
+      session.setWeekChanges([{ ...swap }]);
+      await new Promise((r) => setTimeout(r, 20));
+      expect(startPreviewJobMock).toHaveBeenCalledTimes(2);
+      session.destroy();
+    });
+
+    it("are another week's no longer once the week changes", async () => {
+      const session = createStagedEditSession('ts', { debounceMs: 0, week: 1, weekChanges: [swap] });
+      await session.load();
+      await vi.waitFor(() => expect(get(session).stagedTrace).not.toBeNull());
+      session.setWeek(2);
+      await vi.waitFor(() => expect(startPreviewJobMock).toHaveBeenCalledTimes(2));
+      expect(startPreviewJobMock.mock.calls[1][3]).toBe(2);
+      expect(startPreviewJobMock.mock.calls[1][6]).toBeUndefined();
+      session.destroy();
+    });
+
+    it("says which the edited week's preview couldn't make", async () => {
+      const dropped = [{ id: 4, row: 1, block: 2, k: 1, kind: 'swap', reason: 'the rule for that song has changed since' }];
+      const traces = new Map<string, unknown>();
+      let n = 0;
+      startPreviewJobMock.mockImplementation(async (_slug: string, t: StationTemplate, _s: unknown, week: number) => {
+        n += 1;
+        traces.set(`j${n}`, traceFor(t, week));
+        return { job_id: `j${n}` };
+      });
+      watchJobMock.mockImplementation(async function* (id: string) {
+        yield { status: 'done', result: { trace: traces.get(id), week_changes_dropped: id === 'j1' ? [] : dropped } };
+      });
+      const session = createStagedEditSession('ts', { debounceMs: 0, week: 1, weekChanges: [swap] });
+      await session.load();
+      await vi.waitFor(() => expect(get(session).stagedTrace).not.toBeNull());
+      expect(get(session).stagedDropped).toEqual([]);
+      session.stage(sizeEdit);
+      await vi.waitFor(() => expect(get(session).stagedDropped).toEqual(dropped));
+      session.unstage([0]);
+      await vi.waitFor(() => expect(get(session).stagedDropped).toEqual([]));
+      session.destroy();
+    });
+
+    it('saved, follow their rules as the server moves them', async () => {
+      const move: Edit = { kind: 'moveRules', from: 1, count: 1, to: 0, sectionId: 's' };
+      const session = createStagedEditSession('ts', { debounceMs: 0, week: 1, weekChanges: [swap] });
+      await session.load();
+      await vi.waitFor(() => expect(get(session).stagedTrace).not.toBeNull());
+      session.stage(move);
+      applyBatchMock.mockResolvedValueOnce({ template: template(), sidecar: SIDECAR, updated_at: 'ts-2' });
+      expect(await session.save()).toBe(true);
+      // Rule 2 plays first now: its change goes with it.
+      expect(get(session).weekChanges).toEqual([{ ...swap, block: 1 }]);
+      await vi.waitFor(() => expect(startPreviewJobMock.mock.calls.at(-1)?.[6]).toEqual([{ ...swap, block: 1 }]));
+      session.destroy();
+    });
+  });
 });

@@ -112,6 +112,8 @@ for (const scheme of ['light', 'dark'] as const) test(`buttons answer hover and 
     await page.getByTestId('song-row').first().click();
     await page.getByTestId('detail-panel').locator('input[data-testid^="input-"]').first().fill('Other');
     await page.getByTestId('detail-save').click();
+    // Asked: for every week (queued), or just this song.
+    await page.getByTestId('change-scope-every').click();
     await expect(page.getByTestId('song-edit-count')).toBeVisible();
   }));
   bad.push(...await hoverCheck(page, `/stations/${slug}`, async () => {

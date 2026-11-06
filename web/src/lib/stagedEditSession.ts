@@ -22,7 +22,10 @@ import {
   getStationSidecar,
   SidecarBatchFailure,
   type Trace,
+  type WeekChangeDropped,
+  type WeekChangeItem,
 } from '$lib/api';
+import { changesAfter } from '$lib/weekChanges';
 import { applyEdits, type Edit } from '$lib/edit-ops';
 import { parseEditorSidecarResponse, type Sidecar, type StationTemplate } from '$lib/editor';
 import {
@@ -73,6 +76,12 @@ export interface StagedEditState {
   stagedFor: Edit[] | null;
   previewing: boolean;
   previewError: string | null;
+  /** The week's just-this-week changes, made in both previews (moved
+   *  through the queue for the edited one, as saving would move them). */
+  weekChanges: WeekChangeItem[];
+  /** Those the edited week's preview couldn't make: saving the queue and
+   *  regenerating would drop them (a queued edit changes their rule). */
+  stagedDropped: WeekChangeDropped[];
 }
 
 export interface StagedEditSession extends Readable<StagedEditState> {
@@ -94,6 +103,9 @@ export interface StagedEditSession extends Readable<StagedEditState> {
   acceptRecovered(): void;
   discardRecovered(): void;
   setWeek(week: number): void;
+  /** The week's just-this-week changes now (one made or undone): both
+   *  previews are made again with them. */
+  setWeekChanges(items: WeekChangeItem[]): void;
   /** Stop any preview job and timers; call when the page goes away. */
   destroy(): void;
 }
@@ -107,6 +119,8 @@ export interface SessionOptions {
    *  which edits are compared with, is still worked out on load, so the
    *  first edit needs only its own preview. */
   previewOnlyWhenEdited?: boolean;
+  /** The week's just-this-week changes, for its previews. */
+  weekChanges?: WeekChangeItem[];
 }
 
 const errorText = (e: unknown): string => (e instanceof Error ? e.message : String(e));
@@ -138,6 +152,8 @@ export function createStagedEditSession(slug: string, opts: SessionOptions = {})
     stagedFor: null,
     previewing: false,
     previewError: null,
+    weekChanges: opts.weekChanges ?? [],
+    stagedDropped: [],
   };
   const store = writable<StagedEditState>(s);
   let pendingRecovery: Edit[] = [];
@@ -149,6 +165,9 @@ export function createStagedEditSession(slug: string, opts: SessionOptions = {})
    *  version of the station (`key`). Kept apart from the edits' preview:
    *  an edit doesn't cancel it, it waits for it. */
   let baseline: { key: string; promise: Promise<Trace>; jobId: string | null } | null = null;
+  /** Bumped when the week's just-this-week changes change: the saved
+   *  week's preview is then out of date. */
+  let changesVersion = 0;
 
   function update(patch: Partial<StagedEditState>): void {
     s = { ...s, ...patch };
@@ -201,7 +220,7 @@ export function createStagedEditSession(slug: string, opts: SessionOptions = {})
    *  'stale' when the station or week changed while it ran. */
   function savedWeek(): Promise<Trace | 'stale'> {
     if (s.savedTrace !== null) return Promise.resolve(s.savedTrace);
-    const key = `${s.week}:${s.updatedAt}`;
+    const key = `${s.week}:${s.updatedAt}:${changesVersion}`;
     if (baseline?.key !== key) {
       dropBaseline();
       const mine: { key: string; promise: Promise<Trace>; jobId: string | null } = {
@@ -211,13 +230,13 @@ export function createStagedEditSession(slug: string, opts: SessionOptions = {})
       };
       const isCurrent = () => baseline === mine;
       mine.promise = (async () => {
-        const out = await previewOf(s.template, s.sidecar, isCurrent, (id) => {
+        const out = await previewOf(s.template, s.sidecar, s.weekChanges, isCurrent, (id) => {
           mine.jobId = id;
         });
         mine.jobId = null;
         if (out === 'stale') throw new StaleBaseline();
-        if (isCurrent()) update({ savedTrace: out });
-        return out;
+        if (isCurrent()) update({ savedTrace: out.trace });
+        return out.trace;
       })();
       // A failed one is tried again by the next preview that needs it.
       mine.promise.catch(() => {
@@ -248,7 +267,7 @@ export function createStagedEditSession(slug: string, opts: SessionOptions = {})
       // Nothing to compare: the page shows the week as generated. Work
       // out the week under the saved rules meanwhile, so the first edit
       // shows sooner (kept until the saved station or the week changes).
-      update({ stagedTrace: null, stagedFor: null, previewing: false, previewError: null });
+      update({ stagedTrace: null, stagedFor: null, previewing: false, previewError: null, stagedDropped: [] });
       if (s.template && s.sidecar) {
         void savedWeek().catch(() => {
           // Shown by the first edit's preview, which tries again.
@@ -266,18 +285,20 @@ export function createStagedEditSession(slug: string, opts: SessionOptions = {})
   async function previewOf(
     template: unknown,
     sidecar: unknown,
+    weekChanges: WeekChangeItem[],
     isCurrent: () => boolean,
     onStart: (id: string) => void,
-  ): Promise<Trace | 'stale'> {
+  ): Promise<{ trace: Trace; dropped: WeekChangeDropped[] } | 'stale'> {
     const out = await runPreview(slug, template, sidecar, s.week, {
       isCurrent,
       cancelIfStale: true,
       onStart,
+      weekChanges,
     });
     if (out.status === 'stale') return 'stale';
     if (out.status === 'done') {
       if (out.trace === null) throw new Error('preview returned an unexpected shape');
-      return out.trace;
+      return { trace: out.trace, dropped: out.dropped };
     }
     if (out.status === 'error') throw new Error(friendlyPreviewError(out.message));
     // Cancelled server-side or ended without a result: a newer preview
@@ -293,14 +314,18 @@ export function createStagedEditSession(slug: string, opts: SessionOptions = {})
       const saved = await savedWeek();
       if (saved === 'stale' || gen !== generation) return;
       if (s.opLog.length === 0) {
-        update({ stagedTrace: saved, stagedFor: log });
+        update({ stagedTrace: saved, stagedFor: log, stagedDropped: [] });
       } else {
-        const t = await previewOf(s.staged.template, s.staged.sidecar, () => gen === generation, (id) => {
-          jobId = id;
-        });
+        const t = await previewOf(
+          s.staged.template, s.staged.sidecar, changesAfter(s.weekChanges, log),
+          () => gen === generation,
+          (id) => {
+            jobId = id;
+          },
+        );
         jobId = null;
         if (t === 'stale' || gen !== generation) return;
-        update({ stagedTrace: t, stagedFor: log });
+        update({ stagedTrace: t.trace, stagedFor: log, stagedDropped: t.dropped });
       }
       update({ previewing: false });
     } catch (e) {
@@ -424,6 +449,10 @@ export function createStagedEditSession(slug: string, opts: SessionOptions = {})
           // Keep the message above.
         }
       }
+      // The server moved the week's just-this-week changes with their
+      // rules (dropping those whose rule went): so do the previews'.
+      update({ weekChanges: changesAfter(s.weekChanges, sending) });
+      changesVersion += 1;
       setQueue(s.opLog.slice(sending.length));
       schedule(true);
       return true;
@@ -479,7 +508,19 @@ export function createStagedEditSession(slug: string, opts: SessionOptions = {})
   function setWeek(week: number): void {
     const w = Math.max(1, Math.floor(week));
     if (!Number.isFinite(w) || w === s.week) return;
-    update({ week: w, savedTrace: null, stagedTrace: null, stagedFor: null });
+    // Another week's changes aren't this one's: the page sets the new
+    // week's once it has them (setWeekChanges).
+    changesVersion += 1;
+    update({ week: w, savedTrace: null, stagedTrace: null, stagedFor: null, weekChanges: [], stagedDropped: [] });
+    schedule(true);
+  }
+
+  function setWeekChanges(items: WeekChangeItem[]): void {
+    // The same changes (a reload of the week): the previews stand.
+    if (JSON.stringify(items) === JSON.stringify(s.weekChanges)) return;
+    changesVersion += 1;
+    update({ weekChanges: items.slice() });
+    // The saved week (the edits' baseline) has other songs now.
     schedule(true);
   }
 
@@ -500,6 +541,7 @@ export function createStagedEditSession(slug: string, opts: SessionOptions = {})
     acceptRecovered,
     discardRecovered,
     setWeek,
+    setWeekChanges,
     destroy,
   };
 }

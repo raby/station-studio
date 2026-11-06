@@ -207,6 +207,22 @@ class WeekChangeAddResponse(BaseModel):
     slot: dict[str, Any]
 
 
+class StationSong(BaseModel):
+    """A song in one or more of a station's pools (the swap search)."""
+    id: int
+    name: str
+    artist: str | None = None
+    album: str | None = None
+    # The station's pools it's in, the preferred one first.
+    pools: list[str]
+
+
+class StationSongsResponse(BaseModel):
+    songs: list[StationSong]
+    # More songs match than are listed: the search can be narrowed.
+    more: bool
+
+
 class WeekChangeUndoResponse(BaseModel):
     playlist_id: int
     # The week's new version; the same one when the version didn't play

@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -27,6 +28,7 @@ from api.deps import get_db
 from api.job_runner import KIND_GENERATE, JobStore, get_job_store
 from api.routers.jobs import _load_engine_inputs
 from api.schemas import (
+    StationSongsResponse,
     WeekChangeAdd, WeekChangeAddResponse, WeekChangesResponse,
     WeekChangeUndoResponse,
 )
@@ -195,6 +197,80 @@ def _fields_label(fields: dict) -> str:
 
 
 # ---------- routes -----------------------------------------------------
+
+
+#: At most this many songs a search lists, and rows it reads.
+SONG_SEARCH_LIMIT = 50
+SONG_SEARCH_ROW_CAP = 5000
+
+
+def _like(word: str) -> str:
+    escaped = word.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
+
+
+@router.get("/api/stations/{slug}/songs", response_model=StationSongsResponse)
+def search_songs(
+    slug: str,
+    q: str = Query("", max_length=200),
+    prefer: str | None = Query(None, max_length=256),
+    limit: int = Query(SONG_SEARCH_LIMIT, ge=1, le=200),
+    db: Session = Depends(get_db),
+):
+    """Songs in the station's pools (any of them: content and
+    reference) whose name, artist or album has every word of `q`, for
+    swapping a song just this week. Songs in `prefer` (the rule's own
+    pool) come first, then by name. With no `q`, `prefer`'s songs in
+    their pool's order (or, without it, none)."""
+    station = db.query(Station).filter_by(slug=slug).first()
+    if station is None:
+        raise HTTPException(404, f"station '{slug}' not found")
+    pools = _station_pools(station.template)
+    if prefer is not None and prefer not in pools:
+        raise HTTPException(400, f"'{prefer}' isn't one of the station's pools")
+    words = [w for w in q.lower().split() if w]
+    query = (
+        db.query(Track, SourcePlaylist.name, SourcePlaylistEntry.position)
+        .join(SourcePlaylistEntry, SourcePlaylistEntry.track_id == Track.id)
+        .join(SourcePlaylist, SourcePlaylist.id == SourcePlaylistEntry.source_playlist_id)
+    )
+    if not words:
+        if prefer is None:
+            return {"songs": [], "more": False}
+        query = query.filter(SourcePlaylist.name == prefer).order_by(SourcePlaylistEntry.position)
+    else:
+        query = query.filter(SourcePlaylist.name.in_(pools))
+        text = (
+            func.lower(func.coalesce(Track.name, "")) + " "
+            + func.lower(func.coalesce(Track.artist, "")) + " "
+            + func.lower(func.coalesce(Track.album, ""))
+        )
+        for w in words:
+            query = query.filter(text.like(_like(w), escape="\\"))
+    # Every match is sorted (the preferred pool's first), so rows aren't
+    # limited before that, only capped: a search this broad says there's
+    # more, and narrowing it finds the rest.
+    rows = query.limit(SONG_SEARCH_ROW_CAP + 1).all()
+    capped = len(rows) > SONG_SEARCH_ROW_CAP
+    rows = rows[:SONG_SEARCH_ROW_CAP]
+    found: dict[int, dict[str, Any]] = {}
+    for track, pool, position in rows:
+        song = found.setdefault(track.id, {
+            "id": track.id, "name": track.name, "artist": track.artist,
+            "album": track.album, "pools": [], "_pos": position,
+        })
+        if pool not in song["pools"]:
+            song["pools"].append(pool)
+    for song in found.values():
+        song["pools"].sort(key=lambda p: (p != prefer, pools.index(p)))
+    order = sorted(
+        found.values(),
+        key=(lambda x: x["_pos"]) if not words else
+        (lambda x: (prefer not in x["pools"], (x["name"] or "").lower(), x["id"])),
+    )
+    for song in order:
+        del song["_pos"]
+    return {"songs": order[:limit], "more": capped or len(order) > limit}
 
 
 @router.get("/api/playlists/{playlist_id}/changes", response_model=WeekChangesResponse)

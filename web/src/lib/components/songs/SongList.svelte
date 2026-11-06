@@ -671,6 +671,7 @@
               class:related={related !== null && row.ref !== null && ruleKey(row.ref) === related}
               aria-pressed={selected === row.position}
               data-testid="song-row"
+              data-position={row.position}
               onclick={(e) => pick(e, row)}
             >
               <span class="position">{row.position}{#if rows && startsDay(row)}<span class="unit" data-testid="song-unit">{row.slot.unit || `${unitWord(template)} ${row.slot.row}`}</span>{/if}</span>
@@ -687,12 +688,27 @@
                 {rowRule(row, ruleDefaults)}{#if row.macroName}<span class="macro">{' '}· {row.macroName}</span>{/if}{#if row.ruleChanged}<span
                     class="macro" data-testid="song-rule-changed">{' '}· rule changed since</span>{/if}
               </span>
-              {#if row.change}
-                <span
-                  class="change change--{row.change}"
-                  data-testid="song-change"
-                  title={row.change === 'moved' ? 'Its rule plays here now, so the song it picks can differ' : undefined}
-                >{row.change === 'added' ? 'new' : row.change}</span>
+              {#if row.change || row.slot.change}
+                <span class="marks">
+                  {#if row.slot.change}
+                    <!-- Changed for this week only (a swap, or its rule changed
+                         for this one song); "Why" says how. -->
+                    <span
+                      class="change change--week"
+                      data-testid="song-week-only"
+                      title={row.slot.change.kind === 'swap'
+                        ? `Swapped just this week: its rule picked ${row.slot.change.was.track_name}`
+                        : `Picked by its rule changed just this week: its rule picked ${row.slot.change.was.track_name}`}
+                    >just this week</span>
+                  {/if}
+                  {#if row.change}
+                    <span
+                      class="change change--{row.change}"
+                      data-testid="song-change"
+                      title={row.change === 'moved' ? 'Its rule plays here now, so the song it picks can differ' : undefined}
+                    >{row.change === 'added' ? 'new' : row.change}</span>
+                  {/if}
+                </span>
               {/if}
               <span class="why" data-testid="song-why"><span class="visually-hidden">Why:</span> {row.slot.reason}</span>
             </button>
@@ -998,14 +1014,27 @@
   .macro {
     color: var(--muted);
   }
-  .change {
+  .marks {
     grid-area: change;
+    display: inline-flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 0.25rem;
+  }
+  .change {
     padding: 0.05em 0.5em;
     border-radius: 999px;
     background: var(--warn-soft);
     color: var(--warn);
     font-size: 0.75rem;
     font-weight: 600;
+  }
+  /* The text's own colour, so it reads on any row (a picked or related
+     song's tint too); the green is its border and wash. */
+  .change--week {
+    background: var(--ok-soft);
+    color: var(--text);
+    box-shadow: inset 0 0 0 1px var(--ok);
   }
   .change--moved {
     background: var(--accent-soft);

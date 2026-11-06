@@ -18,18 +18,31 @@
     isGenerateResult,
     JobStartConflict,
     ApiError,
+    getWeekChanges,
+    addWeekChange,
+    undoWeekChange,
+    WeekChangeConflict,
   } from '$lib/api';
   import type {
     Playlist, PlaylistSummary, Trace, TraceSlot, Station, VersionSummary,
-    StationServerTarget,
+    StationServerTarget, GenerateResponse, StationSong, WeekChange, WeekChangeItem,
+    WeekChangesResponse,
   } from '$lib/api';
+  import ChangeScope, { type ChangeScopeChoice } from '$lib/components/songs/ChangeScope.svelte';
+  import SwapSong from '$lib/components/songs/SwapSong.svelte';
+  import WeekOnlyChanges from '$lib/components/songs/WeekOnlyChanges.svelte';
+  import {
+    changedFields, changedRule, changesAfter, changeWords, itemFor, itemsOf, positionOf, songLabel,
+    whyNotJustThisWeek,
+  } from '$lib/weekChanges';
+  import type { PatchBlockOp, RetypeBlockOp } from '$lib/edit-ops';
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
   import ChipMultiInput from '$lib/components/editor/ChipMultiInput.svelte';
   import ErrorBanner from '$lib/components/ErrorBanner.svelte';
   import StatusBanner from '$lib/components/StatusBanner.svelte';
   import { sentText } from '$lib/stationServer';
-  import { onDestroy } from 'svelte';
+  import { onDestroy, tick } from 'svelte';
   import SongList from '$lib/components/songs/SongList.svelte';
   import QueuedChanges from '$lib/components/songs/QueuedChanges.svelte';
   import { confirmUndo, movesRules } from '$lib/undoQueued';
@@ -116,7 +129,11 @@
   /** The session's first load, for a move made before there was one. */
   let sessionLoaded: Promise<void> | null = null;
   function startSession(t: Trace): void {
-    session = createStagedEditSession(t.station, { week: t.week, previewOnlyWhenEdited: true });
+    session = createStagedEditSession(t.station, {
+      week: t.week,
+      previewOnlyWhenEdited: true,
+      weekChanges: weekChanges && weekChangesFor === t.trace_id ? itemsOf(weekChanges.changes) : [],
+    });
     unsubscribe = session.subscribe((v) => (editState = v));
     sessionStation = t.station;
     sessionLoaded = session.load();
@@ -150,14 +167,243 @@
     // The rule's own change, then the same to each identical rule the
     // operator ticked.
     const edits = editsFromPanel(event);
-    if (edits.length > 0 && session) {
-      for (const edit of edits) session.stage(edit);
-      justSaved = false;
+    if (edits.length === 0 || !session) return;
+    // A single rule's settings changed from one of its songs: for every
+    // week, or just this song this week? Asked each time.
+    // Not when the identical rules are to change too: that's every week.
+    if ((event.type === 'save' || event.type === 'retype') && event.detail.ref.kind === 'atomic-ref'
+      && (event.detail.also?.length ?? 0) === 0
+      && weekChanges !== null && trace && selectedSong !== null) {
+      asking = { edits, event, position: selectedSong };
+      return;
+    }
+    stageEdits(edits);
+  }
+
+  function stageEdits(edits: ReturnType<typeof editsFromPanel>): void {
+    if (!session) return;
+    for (const edit of edits) session.stage(edit);
+    justSaved = false;
+  }
+
+  // ---- just this week -------------------------------------------------------
+  // One song of the week changed for this week only: swapped, or picked
+  // by its rule changed. Saved at once as a new version of the week
+  // (api/routers/week_changes.py); the week's changes are kept when it's
+  // regenerated, and shown in the previews of queued rule changes.
+
+  /** The week's changes, as of the current version; null when the server
+   *  doesn't have them (older) or they couldn't be loaded. */
+  let weekChanges: WeekChangesResponse | null = null;
+  /** The trace `weekChanges` is for (the current version's). */
+  let weekChangesFor = '';
+  /** What's being saved now, in words (a rule change can take seconds). */
+  let changeBusy: string | null = null;
+  let changeError: string | null = null;
+  /** The last change made or undone, said once. */
+  let changeStatus: string | null = null;
+  /** The ask: an Apply from the rule panel waiting for every week / just this song. */
+  let asking: { edits: ReturnType<typeof editsFromPanel>; event: PanelEvent; position: number } | null = null;
+  let swapping = false;
+  let swapError: string | null = null;
+  /** The week (playlist) the messages above are about. */
+  let shownPlaylist = 0;
+
+  $: weekChangesOn = weekChanges !== null && viewingCurrent && !!trace && weekChangesFor === trace.trace_id;
+  $: pickedSlot = trace && selectedSong !== null ? trace.slots[selectedSong - 1] : undefined;
+  /** Why the picked song can't be changed just this week, or null. */
+  $: justThisWeekBlocked = trace && editorData
+    ? whyNotJustThisWeek({
+      trace,
+      template: editing?.template ?? editorData.template,
+      slot: pickedSlot,
+      viewingCurrent,
+      queued: editState?.opLog.length ?? 0,
+    })
+    : "The station couldn't be loaded.";
+  /** The stored change of the picked song, if it has one. */
+  $: pickedChange = weekChanges && selectedSong !== null && (editState?.opLog.length ?? 0) === 0
+    ? weekChanges.changes.find((c) => c.position === selectedSong) ?? null
+    : null;
+  /** Where each song of the week plays, for the swap list's repeats. */
+  $: inWeek = (() => {
+    const m = new Map<number, number[]>();
+    for (const sl of trace?.slots ?? []) {
+      if (sl.track_id !== null) m.set(sl.track_id, [...(m.get(sl.track_id) ?? []), sl.slot]);
+    }
+    return m;
+  })();
+  $: unitsByPosition = new Map((trace?.slots ?? []).map((sl) => [sl.slot, sl.unit]));
+
+  /** "Song 7 (Tue): Title by Artist", a line of its own. */
+  function songWords(position: number): string {
+    const sl = trace?.slots[position - 1];
+    if (!trace || !sl) return `Song ${position}`;
+    const who = sl.track_artist ? `${sl.track_name} by ${sl.track_artist}` : sl.track_name;
+    const label = songLabel(trace, position);
+    return `${label.charAt(0).toUpperCase()}${label.slice(1)}: ${who}`;
+  }
+
+  /** Why the ask's "just this song" isn't offered for this Apply, or null. */
+  function askBlocked(a: NonNullable<typeof asking>): string | null {
+    if (justThisWeekBlocked) return justThisWeekBlocked;
+    if (a.position !== selectedSong) return 'Pick the song again: the list changed.';
+    const base = editing?.template ?? editorData?.template;
+    const sidecar = editing?.sidecar ?? editorData?.sidecar;
+    if (!base || !sidecar || !trace) return "The station couldn't be loaded.";
+    const rule = changedRule(base, sidecar, a.edits[0] as PatchBlockOp | RetypeBlockOp);
+    const at = itemFor(trace, a.position);
+    if (!rule || !at) return "That change can't be made to one song.";
+    if (Object.keys(changedFields(base, at.block, rule)).length === 0) {
+      return "Only the rule's size changed, and a size is for every week.";
+    }
+    const max = weekChanges?.max_rule_changes ?? 20;
+    const ruleChanges = weekChanges?.changes.filter((c) => c.kind === 'rule' && c.position !== a.position).length ?? 0;
+    if (ruleChanges >= max) return `This week has the most rule changes it can (${max}): undo one first.`;
+    return null;
+  }
+
+  async function answerAsk(choice: ChangeScopeChoice): Promise<void> {
+    const a = asking;
+    asking = null;
+    if (!a) return;
+    if (choice === 'every') {
+      stageEdits(a.edits);
+      return;
+    }
+    const base = editing?.template ?? editorData?.template;
+    const sidecar = editing?.sidecar ?? editorData?.sidecar;
+    if (!base || !sidecar || !trace) return;
+    const rule = changedRule(base, sidecar, a.edits[0] as PatchBlockOp | RetypeBlockOp);
+    const at = itemFor(trace, a.position);
+    if (!rule || !at) return;
+    await makeChange(
+      { ...at, kind: 'rule', rule, track_id: null },
+      `Working out ${songLabel(trace, a.position)}'s song with its rule changed…`,
+    );
+  }
+
+  /** The version changes are made against: the one shown. */
+  function shownVersion(): number {
+    return trace?.version_no ?? currentV;
+  }
+
+  /** Show the week's current version again (after a change, or when the
+   *  change was refused because the week changed meanwhile), keeping the
+   *  picked song and the queued rule changes. */
+  async function showCurrentWeek(): Promise<void> {
+    const keepSong = selectedSong;
+    const keepRef = selectedRef;
+    if (requestedVersion != null) {
+      const url = new URL($page.url);
+      url.searchParams.delete('v');
+      await goto(url.pathname + url.search, { keepFocus: true, noScroll: true });
+    } else {
+      await loadAll(id, null);
+    }
+    selectedSong = keepSong;
+    selectedRef = keepRef;
+  }
+
+  /** Save one just-this-week change. True when it was made. */
+  async function makeChange(item: WeekChangeItem, busyText: string): Promise<boolean> {
+    if (!playlist || !trace) return false;
+    if (changeBusy) {
+      // One at a time: each is made against the version the last made.
+      changeError = 'Another change is being saved: try again when it\'s done.';
+      return false;
+    }
+    changeBusy = busyText;
+    changeError = null;
+    changeStatus = null;
+    try {
+      const r = await addWeekChange(playlist.id, shownVersion(), item);
+      await showCurrentWeek();
+      changeStatus = `${r.note.replace(/^Just this week: /, '')}, just this week (version ${r.version_no}).`;
+      return true;
+    } catch (e) {
+      changeError = errorText(e);
+      if (e instanceof WeekChangeConflict) {
+        changeError = `${e.message}. The week has been reloaded.`;
+        await showCurrentWeek();
+      }
+      return false;
+    } finally {
+      changeBusy = null;
     }
   }
 
+  async function undoWeekOnly(c: WeekChange): Promise<boolean> {
+    if (!playlist) return false;
+    if (changeBusy) {
+      changeError = 'Another change is being saved: try again when it\'s done.';
+      return false;
+    }
+    changeBusy = `Putting back ${c.position ? `song ${c.position}` : 'the song'}'s own song…`;
+    changeError = null;
+    changeStatus = null;
+    try {
+      const r = await undoWeekChange(playlist.id, c.id, shownVersion());
+      await showCurrentWeek();
+      changeStatus = r.note
+        ? `${r.note.replace(/^Just this week: /, '')} (version ${r.version_no}).`
+        : "Change forgotten: this version of the week didn't play it.";
+      return true;
+    } catch (e) {
+      changeError = errorText(e);
+      if (e instanceof WeekChangeConflict) {
+        changeError = `${e.message}. The week has been reloaded.`;
+        await showCurrentWeek();
+      }
+      return false;
+    } finally {
+      changeBusy = null;
+    }
+  }
+
+  async function pickSwap(song: StationSong): Promise<void> {
+    if (!trace || selectedSong === null) return;
+    const at = itemFor(trace, selectedSong);
+    if (!at) return;
+    const position = selectedSong;
+    swapError = null;
+    const ok = await makeChange(
+      { ...at, kind: 'swap', track_id: song.id, rule: null },
+      `Swapping ${songLabel(trace, position)}…`,
+    );
+    if (ok) {
+      swapping = false;
+      // The week was reloaded, so the panel's Swap song is a new button.
+      await tick();
+      document.querySelector<HTMLElement>('[data-testid="this-song-swap"]')?.focus();
+    } else {
+      swapError = changeError;
+    }
+  }
+
+  /** The changes a save of the queue would drop (their rule changes
+   *  kind or source), by their songs now. */
+  $: queueDrops = (() => {
+    if (!editState || !weekChanges || editState.stagedDropped.length === 0 || !trace) return [];
+    const after = changesAfter(weekChanges.changes, editState.opLog);
+    return editState.stagedDropped.map((d) => {
+      const c = after.find((x) => x.row === d.row && x.block === d.block && x.k === d.k);
+      return { label: songLabel(trace!, c?.position ?? null), reason: d.reason };
+    });
+  })();
+
   async function saveRules(): Promise<void> {
-    if (session && (await session.save())) justSaved = true;
+    if (session && (await session.save())) {
+      justSaved = true;
+      // The server moved the week's changes with their rules: list them
+      // as they are now (a moved one isn't played by this version until
+      // the week is regenerated).
+      if (playlist && weekChanges) {
+        const forTrace = trace?.trace_id;
+        const fresh = await getWeekChanges(playlist.id).catch(() => null);
+        if (fresh && trace?.trace_id === forTrace) weekChanges = fresh;
+      }
+    }
   }
 
   // The panel needs the picked block's section, looked up in the edited
@@ -306,13 +552,17 @@
     regenerateError = null;
     const slug = trace.station;
     const thisWeek = trace.week;
+    /** This week's generation: what it kept and dropped of its changes. */
+    let thisResult: GenerateResponse | null = null;
     try {
       for (const [i, week] of weeks.entries()) {
         regenerateProgress = { week, done: i, of: weeks.length };
         // No seed: the server reuses the week's own (rng='on').
         let outcome: string | null;
         try {
-          outcome = await generateOne(slug, week);
+          const r = await generateOne(slug, week);
+          outcome = typeof r === 'string' ? r : null;
+          if (typeof r !== 'string' && week === thisWeek) thisResult = r;
         } catch (e) {
           outcome = errorText(e);
         }
@@ -326,9 +576,9 @@
       }
       await reloadWeek();
       regenerated = {
-        text: weeks.length === 1
+        text: (weeks.length === 1
           ? `Regenerated week ${weeks[0]} with the saved rules.`
-          : `Regenerated ${weekList(weeks)} with the saved rules.`,
+          : `Regenerated ${weekList(weeks)} with the saved rules.`) + keptText(thisResult),
         at: `${slug}:${thisWeek}`,
       };
     } catch (e) {
@@ -344,7 +594,7 @@
    *  week started from the station page, say), wait for it to finish,
    *  then start this one. That job is a different generation, so its
    *  finishing isn't this week's. */
-  async function generateOne(slug: string, week: number): Promise<string | null> {
+  async function generateOne(slug: string, week: number): Promise<GenerateResponse | string> {
     let jobId: string | null = null;
     for (let attempt = 0; jobId === null; attempt++) {
       try {
@@ -361,11 +611,27 @@
       }
     }
     for await (const snap of watchJob(jobId)) {
-      if (snap.status === 'done' && isGenerateResult(snap.result)) return null;
+      if (snap.status === 'done' && isGenerateResult(snap.result)) return snap.result;
       if (snap.status === 'error') return snap.error ? snap.error.message : 'regeneration failed';
       if (snap.status === 'cancelled') return 'cancelled';
     }
     return 'regeneration ended without a result';
+  }
+
+  /** What a regeneration of this week kept and dropped of its
+   *  just-this-week changes, in words (shown once it's reloaded). */
+  function keptText(r: GenerateResponse | null): string {
+    if (!r || !trace) return '';
+    const kept = r.week_changes_applied ?? 0;
+    const dropped = r.week_changes_dropped ?? [];
+    let out = '';
+    if (kept > 0) out += ` Kept ${kept} just-this-week ${kept === 1 ? 'change' : 'changes'}.`;
+    if (dropped.length > 0) {
+      const t = trace;
+      const each = dropped.map((d) => `${songLabel(t, positionOf(t, d.row, d.block, d.k))}: ${d.reason}`);
+      out += ` Dropped ${dropped.length} just-this-week ${dropped.length === 1 ? 'change' : 'changes'} that no longer ${dropped.length === 1 ? 'fits' : 'fit'}: ${each.join('; ')}.`;
+    }
+    return out;
   }
 
   /** Show this week as now generated (the current version). */
@@ -544,7 +810,7 @@
       // non-fatal (matches stationPlaylists pattern): the dropdown
       // just won't render. .catch inside Promise.all so a flaky
       // /versions endpoint doesn't poison the others.
-      const [p, s, list, vlist, links, ed, rules] = await Promise.all([
+      const [p, s, list, vlist, links, ed, rules, changes] = await Promise.all([
         getPlaylist(playlistId),
         getStation(t.station),
         getStationPlaylists(t.station).catch(() => [] as PlaylistSummary[]),
@@ -557,6 +823,9 @@
         // The station's defaults for rule settings, for the rules in
         // words; without them the engine's own defaults are said.
         getStationRules(t.station).catch(() => null),
+        // Just-this-week changes (as of the current version); a server
+        // without them, or a failure, just means none are offered.
+        getWeekChanges(playlistId).catch(() => null),
       ]);
       if (myGen !== loadGeneration) return;
 
@@ -576,6 +845,24 @@
       rowGroups = groupByRow(t.slots);
       editorData = ed;
       ruleDefaults = ruleDefaultsFrom(rules?.rules ?? []);
+      // Another week: the last one's messages and dialogs aren't this one's.
+      if (playlistId !== shownPlaylist) {
+        changeStatus = null;
+        changeError = null;
+        asking = null;
+        swapping = false;
+        shownPlaylist = playlistId;
+      }
+      weekChanges = changes;
+      // Positions in it are the current version's.
+      weekChangesFor = changes && changes.version_no === vlist.current_v
+        && (version == null || version === vlist.current_v) ? t.trace_id : '';
+      // The queued changes' previews make the week's changes too. The
+      // week first: moving to another week forgets the last one's.
+      if (session && sessionStation === t.station) {
+        session.setWeek(t.week);
+        session.setWeekChanges(changes && weekChangesFor === t.trace_id ? itemsOf(changes.changes) : []);
+      }
       selectedSong = null;
     } catch (e) {
       if (myGen !== loadGeneration) return;
@@ -686,7 +973,8 @@
       `Roll back to v${targetVersion}?\n\n` +
         `A new current version will be created with v${targetVersion}'s ` +
         `content. The existing current (v${currentV}) stays in history ` +
-        `as a prior version — nothing is deleted.`,
+        `as a prior version — nothing is deleted.` +
+        (weekChanges ? `\n\nThe week's just-this-week changes become v${targetVersion}'s.` : ''),
     );
     if (!ok) return;
     rollingBack = true;
@@ -1060,6 +1348,7 @@
               · {fmtDate(v.generated_at)}
               {v.seed !== null ? ` · seed ${v.seed}` : ''}
               {(v.tags ?? []).length > 0 ? ` · [${(v.tags ?? []).join(', ')}]` : ''}
+              {v.note ? ` · ${v.note}` : ''}
             </option>
           {/each}
         </select>
@@ -1298,6 +1587,29 @@
     {/if}
 
     <div class="songs-area" class:with-panel={!!(editing && panelSelection)}>
+    {#if weekChangesOn && weekChanges && editorData}
+      <WeekOnlyChanges
+        changes={weekChanges.changes}
+        template={editing?.template ?? editorData.template}
+        units={unitsByPosition}
+        busy={!!changeBusy}
+        onundo={undoWeekOnly}
+        onshow={(editState?.opLog.length ?? 0) > 0 ? undefined : (position) => {
+          // Pick it as a click would (its rule panel opens), and go to it.
+          const button = document.querySelector<HTMLElement>(`[data-testid="song-row"][data-position="${position}"]`);
+          button?.click();
+          button?.scrollIntoView({ block: 'center' });
+          button?.focus();
+        }}
+        emptyFocus={afterLastUndo}
+      />
+    {/if}
+    {#if changeBusy}
+      <p class="hint" role="status" aria-live="polite" data-testid="week-change-busy">{changeBusy}</p>
+    {:else if changeStatus}
+      <p class="hint" role="status" aria-live="polite" data-testid="week-change-status">{changeStatus}</p>
+    {/if}
+    <ErrorBanner message={changeError} severity="polite" prefix="Just this week" testId="week-change-error" />
     {#if editState && showEditBar}
       <div class="edit-bar" role="region" aria-label="Rule changes" data-testid="song-edit-bar">
         {#if editState.recovered}
@@ -1322,6 +1634,13 @@
           <div class="queued">
             <QueuedChanges changes={queued} busy={editState.saving} onundo={undoChange} emptyFocus={afterLastUndo} testid="song-edit" />
           </div>
+          {#if queueDrops.length > 0}
+            <p class="warn-note" data-testid="song-edit-drops">
+              With these changes, regenerating the week drops {queueDrops.length}
+              just-this-week {queueDrops.length === 1 ? 'change' : 'changes'}:
+              {queueDrops.map((d) => `${d.label} (${d.reason})`).join('; ')}.
+            </p>
+          {/if}
           <div class="edit-actions">
             <button type="button" class="btn-primary" data-testid="song-edit-save" disabled={editState.saving} on:click={saveRules}>
               {editState.saving ? 'Saving…' : 'Save changes'}
@@ -1407,6 +1726,88 @@
         on:macroSave={(e) => onPanel({ type: 'macroSave', detail: e.detail })}
         on:blockMove={(e) => onPanel({ type: 'blockMove', detail: e.detail })}
         on:structuralEdit={(e) => onPanel({ type: 'structuralEdit', detail: e.detail })}
+      >
+        <svelte:fragment slot="top">
+          {#if weekChangesOn && (editState?.opLog.length ?? 0) > 0}
+            <!-- The list is the queue's preview: its songs' places aren't
+                 the week's, so no song is changed just this week from it. -->
+            <section class="this-song" aria-label="This song, this week" data-testid="this-song">
+              <p class="this-song-why" data-testid="this-song-why">
+                To change a song just this week, save or discard the rule changes queued for every week first.
+              </p>
+            </section>
+          {:else if weekChangesOn && pickedSlot && selectedSong !== null}
+            <section class="this-song" aria-label="This song, this week" data-testid="this-song">
+              <p class="this-song-title">{songWords(selectedSong)}</p>
+              {#if pickedSlot.change}
+                <p class="this-song-change" data-testid="this-song-change">
+                  Just this week: {changeWords({
+                    kind: pickedSlot.change.kind,
+                    track: pickedChange?.track ?? { name: pickedSlot.track_name, artist: pickedSlot.track_artist },
+                    fields: pickedSlot.change.kind === 'rule' ? pickedSlot.change.fields : null,
+                  }).replace(/^S/, 's').replace(/^P/, 'p')}. Its rule picked {pickedSlot.change.was.track_name}.
+                </p>
+              {/if}
+              <div class="this-song-actions">
+                <button
+                  type="button"
+                  data-testid="this-song-swap"
+                  aria-disabled={justThisWeekBlocked || changeBusy ? 'true' : undefined}
+                  aria-describedby={justThisWeekBlocked ? 'this-song-why' : undefined}
+                  on:click={() => {
+                    if (justThisWeekBlocked || changeBusy) return;
+                    swapError = null;
+                    swapping = true;
+                  }}
+                >Swap song, just this week…</button>
+                {#if pickedChange}
+                  <button
+                    type="button"
+                    data-testid="this-song-undo"
+                    disabled={!!changeBusy}
+                    on:click={async () => {
+                      if (pickedChange && (await undoWeekOnly(pickedChange))) {
+                        // The box was rebuilt with the week: on to Swap song.
+                        await tick();
+                        document.querySelector<HTMLElement>('[data-testid="this-song-swap"]')?.focus();
+                      }
+                    }}
+                  >Undo just this week</button>
+                {/if}
+              </div>
+              {#if justThisWeekBlocked}
+                <p id="this-song-why" class="this-song-why" data-testid="this-song-why">{justThisWeekBlocked}</p>
+              {:else if selectedRef?.kind === 'atomic-ref'}
+                <p class="this-song-why">Or change its rule below: you'll be asked if it's for every week or just this song.</p>
+              {:else}
+                <p class="this-song-why" data-testid="this-song-group">Its group's settings below are for every week.</p>
+              {/if}
+            </section>
+          {/if}
+        </svelte:fragment>
+      </DetailPanel>
+    {/if}
+    {#if asking && trace}
+      <ChangeScope
+        song={songWords(asking.position)}
+        week={trace.week}
+        weekOnlyBlocked={askBlocked(asking)}
+        onchoose={answerAsk}
+        oncancel={() => (asking = null)}
+      />
+    {/if}
+    {#if swapping && trace && pickedSlot && selectedSong !== null}
+      <SwapSong
+        slug={trace.station}
+        song={songWords(selectedSong)}
+        pool={pickedSlot.source}
+        currentTrackId={pickedSlot.track_id}
+        ruleTrackId={pickedSlot.change ? pickedSlot.change.was.track_id : pickedSlot.track_id}
+        {inWeek}
+        busy={!!changeBusy}
+        error={swapError}
+        onpick={pickSwap}
+        oncancel={() => (swapping = false)}
       />
     {/if}
     {:else}
@@ -1560,6 +1961,13 @@
                   <td class="num mono" title={s.reason}>{s.pool_index}</td>
                   <td>
                     {s.track_name}
+                    {#if s.change}
+                      <span
+                        class="week-only-tag"
+                        data-testid="table-week-only"
+                        title="Changed just this week: its rule picked {s.change.was.track_name}"
+                      >just this week</span>
+                    {/if}
                     <!--
                       §14.23 excluded-candidates disclosure. Only renders when
                       a strategy populated the list (currently empty for
@@ -1766,6 +2174,7 @@
      summary; sits between the week-nav strip and the meta dl. */
   .version-picker {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 0.5rem;
     margin: 0.4rem 0 1rem;
@@ -1774,7 +2183,12 @@
   .version-picker label {
     color: var(--muted);
   }
+  /* A version's note can be long ("Just this week: song 12 swapped for
+     …"): the picker shrinks to the page and clips it, the list shows it. */
   .version-picker select {
+    max-width: 100%;
+    min-width: 0;
+    text-overflow: ellipsis;
     padding: 0.25rem 0.5rem;
     border: 1px solid var(--border);
     border-radius: 3px;
@@ -2067,5 +2481,56 @@
   .excluded-table td,
   .excluded-table th {
     padding: 0.2rem 0.55rem;
+  }
+
+  /* Just this week: the picked song's box in the rule panel, the
+     table's mark, and the edit bar's note of changes a save would drop. */
+  .this-song {
+    margin: 0 0 0.75rem;
+    padding: 0.6rem 0.7rem;
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: 6px;
+    background: var(--bg);
+  }
+  .this-song-title {
+    margin: 0 0 0.35rem;
+    font-weight: 600;
+    overflow-wrap: anywhere;
+  }
+  .this-song-change {
+    margin: 0 0 0.4rem;
+    font-size: 0.85rem;
+    overflow-wrap: anywhere;
+  }
+  .this-song-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+  }
+  .this-song-actions [aria-disabled='true'] {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+  .this-song-why {
+    margin: 0.4rem 0 0;
+    font-size: 0.8rem;
+    color: var(--muted);
+  }
+  .week-only-tag {
+    margin-left: 0.4rem;
+    padding: 0.05em 0.45em;
+    border-radius: 999px;
+    background: var(--ok-soft);
+    color: var(--text);
+    box-shadow: inset 0 0 0 1px var(--ok);
+    font-size: 0.75rem;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .warn-note {
+    margin: 0.4rem 0;
+    font-size: 0.85rem;
+    color: var(--warn);
   }
 </style>
