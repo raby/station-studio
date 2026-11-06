@@ -1816,7 +1816,7 @@ describe('attributeOpsToSlot', () => {
       for (let f = 0; f < n; f++) {
         for (let c = 1; f + c <= n; c++) {
           for (let t = 0; t <= n; t++) {
-            if (t < f || t > f + c) ops.push({ kind: 'moveRules', from: f, count: c, to: t, sectionId: 'x' });
+            if (t < f || t >= f + c) ops.push({ kind: 'moveRules', from: f, count: c, to: t, sectionId: 'x' });
           }
         }
       }
@@ -2212,10 +2212,11 @@ describe('undoSet — undoing a change takes the later ones built on it', () => 
       const user = ids(st).filter((id) => !id.startsWith('_'));
       switch (rand(12)) {
         case 10: {
-          // A run of one or two rules, somewhere else, into a section.
+          // A run of one or two rules, somewhere else (or just after
+          // itself: only into another section), into a section.
           const from = rand(len);
           const count = 1 + rand(Math.min(2, len - from));
-          const places = Array.from({ length: len + 1 }, (_, p) => p).filter((p) => p < from || p > from + count);
+          const places = Array.from({ length: len + 1 }, (_, p) => p).filter((p) => p < from || p >= from + count);
           if (places.length === 0) return { kind: 'patchBlock', address: { slot_index: 0 }, fields: { size: 3 } };
           return { kind: 'moveRules', from, count, to: places[rand(places.length)], sectionId: user[rand(user.length)] };
         }

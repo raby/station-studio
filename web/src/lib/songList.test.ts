@@ -160,6 +160,21 @@ describe('songGroups', () => {
       expect(compareWeeks(edited, saved, template, opLog).changes).toEqual(['moved', 'changed', null, null, null]);
     });
 
+    it('a rule moved and moved back, or only into another section, plays in its old order: not marked', () => {
+      const there = { kind: 'moveRules', from: 3, count: 1, to: 0, sectionId: 'x' } as const;
+      const back = { kind: 'moveRules', from: 0, count: 1, to: 4, sectionId: 'x' } as const;
+      expect(compareWeeks(saved, saved, template, [there, back]).changes).toEqual([null, null, null, null, null]);
+      const regroup = { kind: 'moveRules', from: 2, count: 1, to: 3, sectionId: 'y' } as const;
+      expect(compareWeeks(saved, saved, template, [regroup]).changes).toEqual([null, null, null, null, null]);
+    });
+
+    it('a bigger run moved past a smaller one: the run moved says so, the rules passed don\'t', () => {
+      // Rules 1-3 to the end: 0 4 1 2 3.
+      const opLog: Edit[] = [{ kind: 'moveRules', from: 1, count: 3, to: 5, sectionId: 'x' }];
+      const edited = trace([at(s[0], 0), at(s[4], 1), at(s[1], 2), at(s[2], 3), at(s[3], 4)]);
+      expect(compareWeeks(edited, saved, template, opLog).changes).toEqual([null, null, 'moved', 'moved', 'moved']);
+    });
+
     it('an added rule is new, and the songs after it are unmarked', () => {
       const opLog: Edit[] = [{ kind: 'structuralBlockEdit', edit: { op: 'add', slot_index: 1, new_block: { source: 'A', strategy: 'pick', size: 1 } } }];
       const edited = trace([at(s[0], 0), at(s[1], 1, { track_id: 50 }), at(s[1], 2), at(s[2], 3), at(s[3], 4), at(s[4], 5)]);
@@ -300,6 +315,10 @@ describe('describeQueued', () => {
       expect(say(
         { kind: 'moveRules', from: 1, count: 1, to: 0, sectionId: 'morning' },
       )).toEqual(['Moved Morning, rule 2 to rule 1']);
+      // Only into another section, playing where it did.
+      expect(say(
+        { kind: 'moveRules', from: 1, count: 1, to: 2, sectionId: 'evening' },
+      )).toEqual(['Moved Morning, rule 2 to Evening, rule 1']);
       expect(say(
         { kind: 'moveRules', from: 2, count: 1, to: 0, sectionId: 'morning' },
         { kind: 'moveSection', sectionId: 'evening', beforeSectionId: 'morning', from: 2, count: 1, to: 0 },

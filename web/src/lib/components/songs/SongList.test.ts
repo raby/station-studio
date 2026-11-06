@@ -257,6 +257,64 @@ describe('<SongList> moving songs', () => {
     expect(screen.queryByTestId('song-drop-line')).toBeNull();
   });
 
+  it('over the line between two sections it plays where it did, and only changes section', async () => {
+    const { onmove } = setup();
+    // The macro (Music's first) up one stop: the end of Top of the hour,
+    // which is where it plays already.
+    const grip = grips()[1];
+    await key(grip, ' ');
+    await key(grip, 'ArrowUp');
+    expect(status()).toBe('at the end of Top of the hour');
+    await key(grip, ' ');
+    // `to` just after the run: the edit for "plays where it did".
+    expect(onmove).toHaveBeenCalledWith({ kind: 'moveRules', from: 1, count: 2, to: 3, sectionId: 'top' });
+  });
+
+  it('a selection in two sections: from where it is, it can join either, each offered once', async () => {
+    const { onmove } = setup();
+    const rows = screen.getAllByTestId('song-row');
+    await fireEvent.click(rows[0]);                     // the jingle, Top of the hour
+    await fireEvent.click(rows[1], { shiftKey: true }); // and the macro, Music
+    const grip = grips()[0];
+    await key(grip, ' ');
+    await key(grip, 'ArrowUp');
+    expect(status()).toBe('back where it was');
+    const seen: string[] = [];
+    for (let i = 0; i < 4; i++) {
+      await key(grip, 'ArrowDown');
+      seen.push(status());
+    }
+    expect(seen).toEqual([
+      'before Song 0 in Top of the hour', // all of it into Top of the hour
+      'before Song 1 in Music',           // all of it into Music
+      'at the end of Music',
+      'at the end of Music',
+    ]);
+    await key(grip, 'ArrowUp');
+    await key(grip, ' ');
+    expect(onmove).toHaveBeenCalledWith({ kind: 'moveRules', from: 0, count: 3, to: 3, sectionId: 'music' });
+  });
+
+  it("with a pointer, over a section's heading: the start of that section", async () => {
+    const { onmove } = setup();
+    const dataTransfer = { setData: vi.fn(), effectAllowed: '', dropEffect: '' };
+    // The jingle (Top of the hour's only song) onto Music's heading:
+    // first in Music, playing where it did.
+    await fireEvent.dragStart(grips()[0], { dataTransfer });
+    const heading = screen.getAllByTestId('song-section')[1];
+    await fireEvent.dragOver(heading, { dataTransfer });
+    expect(screen.getAllByTestId('song-drop-line')).toHaveLength(1);
+    expect(dataTransfer.dropEffect).toBe('move');
+    await fireEvent.drop(heading, { dataTransfer });
+    expect(onmove).toHaveBeenCalledWith({ kind: 'moveRules', from: 0, count: 1, to: 1, sectionId: 'music' });
+    // Its own section's heading: where it is already, so nothing.
+    onmove.mockClear();
+    await fireEvent.dragStart(grips()[0], { dataTransfer });
+    await fireEvent.dragOver(screen.getAllByTestId('song-section')[0], { dataTransfer });
+    expect(screen.queryByTestId('song-drop-line')).toBeNull();
+    expect(dataTransfer.dropEffect).toBe('none');
+  });
+
   it('over its own place, no line, and a drop there moves nothing', async () => {
     const { onmove } = setup();
     const dataTransfer = { setData: vi.fn(), effectAllowed: '', dropEffect: '' };

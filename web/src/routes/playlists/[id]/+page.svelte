@@ -230,10 +230,15 @@
   // with nothing queued, a week that lines up with the rules now (one
   // made before they last changed may not).
   let moveProblem: string | null = null;
+  let moveProblemTimer: ReturnType<typeof setTimeout> | undefined;
+  onDestroy(() => clearTimeout(moveProblemTimer));
   $: songMoveBlocked = editState?.saving ? 'Saving…'
+    : editState?.loading ? 'Loading the station…'
     : moveProblem
       ?? (editState && editState.opLog.length > 0
-        ? (showingEdits && editState.stagedFor === editState.opLog ? null : 'Moving songs waits for the preview to catch up…')
+        ? (showingEdits && editState.stagedFor === editState.opLog ? null
+          : editState.previewError ? "Songs can't be moved until the preview works again."
+            : 'Moving songs waits for the preview to catch up…')
         : trace && editorData && weekMatchesRules(trace, editing?.template ?? editorData.template)
           ? null
           : "This week was made before the station's rules last changed, so its songs can't be moved here: regenerate it, or move them in the station editor.");
@@ -251,7 +256,8 @@
     // changed meanwhile: then the places dropped on aren't theirs.
     if (state.opLog.length !== shownBefore || (shownBefore === 0 && !weekMatchesRules(trace, state.template))) {
       moveProblem = 'The rules changed while you moved that, so it was put back: try again with the list as it is now.';
-      setTimeout(() => (moveProblem = null), 6000);
+      clearTimeout(moveProblemTimer);
+      moveProblemTimer = setTimeout(() => (moveProblem = null), 6000);
       return;
     }
     session.stage(edit);

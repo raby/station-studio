@@ -13,8 +13,9 @@ this project uses semantic versioning.
   grip, a run of songs (Shift-click to select them), or a whole
   section, and it's queued to play there in every week. It works from
   the keyboard too: Space to pick up, the arrows to choose, Space to
-  drop. The songs moved say **moved**; ones only shifted along aren't
-  marked. For stations built from a list of rules; ones built from a
+  drop. Dropped over the line between two sections, a song just joins
+  the other one. The songs moved say **moved**; ones only shifted along
+  aren't marked. For stations built from a list of rules; ones built from a
   repeating row come next.
 - **Moving rules to play somewhere else**, under that: two new edits in
   the save batch, `moveRules` and `moveSection`, reorder a flat

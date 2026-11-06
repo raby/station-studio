@@ -114,3 +114,28 @@ test("on a week's page: drag a song, and the move is queued for the station", as
   await expect(page.getByTestId('song-edit-saved')).toBeVisible({ timeout: 15000 });
   expect(await sources(request, 'mv-week')).toEqual(['B', 'A', 'A', 'A']);
 });
+
+test('in the station editor: over the line between two sections, a song only changes section', async ({ page, request }) => {
+  await station(request, 'mv-regroup');
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await page.goto('/stations/mv-regroup/visualise');
+  await page.getByTestId('live-preview-checkbox').check();
+  await expect(page.getByTestId('song-rule')).toHaveCount(4, { timeout: 15000 });
+  // B's song (Evening's only one) up one stop: the end of All slots,
+  // where it plays already.
+  await page.getByTestId('song-grip').nth(3).focus();
+  await page.keyboard.press('Space');
+  await page.keyboard.press('ArrowUp');
+  await expect(page.getByTestId('song-move-status')).toHaveText('at the end of All slots');
+  await page.keyboard.press('Space');
+  await expect(page.getByTestId('trace-change-item')).toHaveText([/Moved Evening, rule 1 to All slots, rule 4/]);
+  await expect(page.getByTestId('song-section')).toHaveCount(1, { timeout: 15000 });
+  // Playing where it did: not marked moved.
+  await expect(page.getByTestId('song-change')).toHaveCount(0);
+  await page.getByTestId('staged-save').click();
+  await expect(page.getByTestId('staged-save')).toHaveCount(0, { timeout: 15000 });
+  const saved = (await (await request.get(`${API}/api/stations/mv-regroup/sidecar`)).json());
+  expect(saved.template.layout.flat_slots.map((s: { source: string }) => s.source)).toEqual(['A', 'A', 'A', 'B']);
+  const evening = saved.sidecar.sections.find((s: { id: string }) => s.id === 'evening');
+  expect(evening.blocks).toEqual([]);
+});

@@ -143,6 +143,44 @@
       "expect": {"error": "already there"}
     },
     {
+      "name": "just after the run, into the section before: they play where they did, now in Morning",
+      "station": "plain",
+      "edit": {"kind": "moveRules", "from": 3, "count": 1, "to": 4, "sectionId": "morning"},
+      "expect": {
+        "order": ["r0", "r1", "r2", "r3", "r4"],
+        "sections": {"morning": [0, 1, 2, 3], "evening": [4]},
+        "layout_order": ["morning", "evening"]
+      }
+    },
+    {
+      "name": "just after the run, into the section after: first in Evening",
+      "station": "plain",
+      "edit": {"kind": "moveRules", "from": 1, "count": 2, "to": 3, "sectionId": "evening"},
+      "expect": {
+        "order": ["r0", "r1", "r2", "r3", "r4"],
+        "sections": {"morning": [0], "evening": [1, 2, 3, 4]},
+        "layout_order": ["morning", "evening"]
+      }
+    },
+    {
+      "name": "refused: just after the run, in its own section",
+      "station": "plain",
+      "edit": {"kind": "moveRules", "from": 3, "count": 1, "to": 4, "sectionId": "evening"},
+      "expect": {"error": "already there"}
+    },
+    {
+      "name": "refused: to the run's own start (just after it is how to change section)",
+      "station": "plain",
+      "edit": {"kind": "moveRules", "from": 3, "count": 1, "to": 3, "sectionId": "morning"},
+      "expect": {"error": "already there"}
+    },
+    {
+      "name": "refused: a section to just after itself",
+      "station": "plain",
+      "edit": {"kind": "moveSection", "sectionId": "morning", "beforeSectionId": "evening", "from": 0, "count": 3, "to": 3},
+      "expect": {"error": "already there"}
+    },
+    {
       "name": "refused: rules past the end",
       "station": "plain",
       "edit": {"kind": "moveRules", "from": 4, "count": 2, "to": 0, "sectionId": "morning"},

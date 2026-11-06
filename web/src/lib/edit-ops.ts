@@ -196,7 +196,8 @@ export interface StructuralBlockEditOp {
  * order, after its blocks that play before `to`. Unlike `moveBlock`,
  * which only regroups, this changes when the songs play
  * (`engine/rule_moves.py`; the cases in `tests/fixtures/rule_moves.json`
- * check both).
+ * check both). With `to` just after the run (`from + count`, never
+ * `from`) they play where they did, and only change section.
  */
 export interface MoveRulesOp {
   kind: 'moveRules';
@@ -1644,7 +1645,9 @@ function _moveRules(
   const { from, count, to } = op;
   if (![from, count, to].every(Number.isInteger)) return null;
   if (count < 1 || from < 0 || from + count > n || to < 0 || to > n) return null;
-  if (to >= from && to <= from + count) return null;
+  // Just after the run, rules only change section (playing where they
+  // did); a section can't.
+  if (to >= from && to <= from + count && !(op.kind === 'moveRules' && to === from + count)) return null;
 
   const sc = JSON.parse(JSON.stringify(sidecar)) as {
     sections: _Section[]; macros?: { id?: unknown; repeat?: unknown }[]; layout_order?: unknown[];
@@ -1670,6 +1673,9 @@ function _moveRules(
       for (const p of of) covered.add(p);
     }
     if (covered.size !== count) return null;
+    if (to === from + count && elements.every((e) => !moving.some((m) => m.block === e.block) || e.section.id === op.sectionId)) {
+      return null;
+    }
     const moved = new Set(moving.map((m) => m.block));
     for (const s of sc.sections) s.blocks = (s.blocks ?? []).filter((b) => !moved.has(b));
     // After the section's blocks that play before `to` (at the end, when

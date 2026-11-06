@@ -195,7 +195,28 @@
   let target: string | null = $state(null);
   let carrying = $state(false);
 
-  const rulesTargets = (run: Run): Spot[] => spots.filter((s) => s.to < run.from || s.to > run.from + run.count);
+  /** The sections the run's songs are in now. */
+  function runSections(run: Run): Set<string | null> {
+    const out = new Set<string | null>();
+    for (const g of allGroups) {
+      for (const r of g.rows) {
+        const p = r.slot.block - 1;
+        if (p >= run.from && p < run.from + run.count) out.add(g.sectionId);
+      }
+    }
+    return out;
+  }
+  /** A place the run can go: somewhere else in play, or where it is in
+   *  another section (over the line between two: only the section
+   *  changes). */
+  function canGo(run: Run, s: Spot, own: Set<string | null>): boolean {
+    if (s.to < run.from || s.to > run.from + run.count) return true;
+    return !(own.size === 1 && own.has(s.sectionId));
+  }
+  const rulesTargets = (run: Run): Spot[] => {
+    const own = runSections(run);
+    return spots.filter((s) => canGo(run, s, own));
+  };
   const sectionTargets = (run: Run): SectionSpot[] =>
     sectionSpots.filter((s) => s.to < run.from || s.to > run.from + run.count);
 
@@ -225,9 +246,13 @@
     if (m.kind === 'rules') {
       const spot = rulesTargets(m.run).find((s) => s.key === key);
       if (!spot) return;
-      onmove({ kind: 'moveRules', from: m.run.from, count: m.run.count, to: spot.to, sectionId: spot.sectionId });
+      // Where it plays already (into another section): `to` just after
+      // the run, as the edit has it.
+      const stays = spot.to >= m.run.from && spot.to <= m.run.from + m.run.count;
+      const to = stays ? m.run.from + m.run.count : spot.to;
+      onmove({ kind: 'moveRules', from: m.run.from, count: m.run.count, to, sectionId: spot.sectionId });
       announce(`Moved ${m.label} ${spot.label}.`);
-      if (byKey) follow(`[data-testid="song-grip"][data-rule="${spot.to > m.run.from ? spot.to - m.run.count : spot.to}"]`);
+      if (byKey) follow(`[data-testid="song-grip"][data-rule="${stays ? m.run.from : to > m.run.from ? to - m.run.count : to}"]`);
     } else {
       const spot = sectionTargets(m.run).find((s) => s.key === key);
       if (!spot) return;
@@ -293,10 +318,22 @@
     target = spot && rulesTargets(moving.run).some((s) => s.key === spot.key) ? spot.key : null;
     if (e.dataTransfer) e.dataTransfer.dropEffect = target ? 'move' : 'none';
   }
-  /** A section, over a run: before it (when it starts a section) or
-   *  before the next run that does. */
+  /** Over a group, not a song. A section: before this run (when it
+   *  starts a section) or before the next run that does. */
   function dragOverGroup(e: DragEvent, gi: number): void {
-    if (!moving || moving.kind !== 'section') return;
+    if (!moving) return;
+    if (moving.kind === 'rules') {
+      // Over a song, the row said where. Over the heading (or the gap
+      // under the list): the start of this section, so a drop there
+      // does what the line shows.
+      if ((e.target as Element | null)?.closest?.('li')) return;
+      e.preventDefault();
+      const first = allGroups[gi]?.rows[0];
+      const key = first ? `b${first.position}` : null;
+      target = key && rulesTargets(moving.run).some((s) => s.key === key) ? key : null;
+      if (e.dataTransfer) e.dataTransfer.dropEffect = target ? 'move' : 'none';
+      return;
+    }
     e.preventDefault();
     const box = (e.currentTarget as HTMLElement).getBoundingClientRect();
     const upper = box.height > 0 && e.clientY - box.top < box.height / 2;
@@ -325,11 +362,23 @@
    *  their own place ("here") among them. */
   function carryStops(m: Moving): { key: string; label: string }[] {
     if (m.kind === 'rules') {
-      const all = spots.map((s) => ({ ...s, ok: s.to < m.run.from || s.to > m.run.from + m.run.count }));
-      const here = all.findIndex((s) => !s.ok);
-      const stops = all.filter((s) => s.ok).map((s) => ({ key: s.key, label: s.label }));
-      const at = here === -1 ? stops.length : all.slice(0, here).filter((s) => s.ok).length;
-      stops.splice(at, 0, { key: 'here', label: 'back where it was' });
+      const own = runSections(m.run);
+      const near = (s: Spot) => s.to >= m.run.from && s.to <= m.run.from + m.run.count;
+      // Its own place: where its own section's spot is, or (a run in
+      // more than one section) the first place it already plays at.
+      let here = spots.findIndex((s) => near(s) && !canGo(m.run, s, own));
+      if (here === -1) here = spots.findIndex(near);
+      const stops: { key: string; label: string }[] = [];
+      const into = new Set<string>(); // sections it can join where it plays: once each
+      spots.forEach((s, i) => {
+        if (i === here) stops.push({ key: 'here', label: 'back where it was' });
+        if (!canGo(m.run, s, own)) return;
+        if (near(s)) {
+          if (into.has(s.sectionId)) return;
+          into.add(s.sectionId);
+        }
+        stops.push({ key: s.key, label: s.label });
+      });
       return stops;
     }
     const stops = sectionSpots.filter((s) => s.to < m.run.from || s.to > m.run.from + m.run.count)

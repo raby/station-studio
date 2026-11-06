@@ -1482,8 +1482,9 @@
   // a list of the station as it is (the places are its), so not while
   // the preview catches up or a save runs.
   $: songMoveBlocked = saving ? 'Saving…'
-    : !previewCurrent ? 'Moving songs waits for the preview to catch up…'
-      : null;
+    : previewCurrent ? null
+      : previewError ? "Songs can't be moved until the preview works again."
+        : 'Moving songs waits for the preview to catch up…';
   async function handleSongMove(edit: MoveRulesOp | MoveSectionOp): Promise<void> {
     if (songMoveBlocked !== null) return;
     const open = selectedRef?.kind === 'atomic-ref' ? selectedRef.slot_index : undefined;

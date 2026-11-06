@@ -2060,10 +2060,12 @@ describe('trace viewer — moving songs', () => {
   const queue = () => JSON.parse(window.localStorage.getItem('stagedEdits:cls') ?? '{"opLog":[]}').opLog as unknown[];
   const note = () => screen.queryByTestId('song-move-note')?.textContent ?? '';
   const key = async (el: HTMLElement, k: string) => { await act(async () => { await fireEvent.keyDown(el, { key: k }); }); };
-  /** Evening's song up one place: before rule 2, in Morning. */
+  /** Evening's song up: past the end of Morning (where it plays
+   *  already), to before rule 2. */
   async function moveLastUp() {
     const grip = (await screen.findAllByTestId('song-grip'))[2];
     await key(grip, ' ');
+    await key(grip, 'ArrowUp');
     await key(grip, 'ArrowUp');
     await key(grip, ' ');
   }
@@ -2111,6 +2113,24 @@ describe('trace viewer — moving songs', () => {
     expect(queue()).toHaveLength(2);
     expect(note()).toContain('waits');
     await vi.waitFor(() => expect(note()).not.toContain('waits'));
+  });
+
+  it('while the station loads for the first move, a second waits; a failed preview says so', async () => {
+    let loaded!: () => void;
+    getStationSidecarMock
+      .mockImplementationOnce(async () => ({ template: template(), sidecar: sidecar(), sidecar_error: null, updated_at: 'ts-1' }))
+      .mockImplementationOnce(() => new Promise((r) => {
+        loaded = () => r({ template: template(), sidecar: sidecar(), sidecar_error: null, updated_at: 'ts-1' });
+      }));
+    watchJobMock.mockImplementation(() => (async function* () {
+      yield { status: 'error', error: { message: 'boom' } };
+    })());
+    render(Page);
+    await moveLastUp();
+    await vi.waitFor(() => expect(note()).toBe('Loading the station…'));
+    loaded();
+    await vi.waitFor(() => expect(queue()).toHaveLength(1));
+    await vi.waitFor(() => expect(note()).toBe("Songs can't be moved until the preview works again."));
   });
 
   it("a week made before the rules last changed can't be moved here, and says what to do", async () => {

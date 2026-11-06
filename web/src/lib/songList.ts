@@ -152,6 +152,36 @@ function blockFor(ref: ExpandedRef | null, template: StationTemplate, sidecar: S
 export type SongChange = 'changed' | 'added' | 'moved';
 
 /**
+ * The rules (by slot now) a queued move moved that play in a different
+ * order from the saved station: some rule now before one of them was
+ * after it, or the other way. So one moved back where it was, or only
+ * put in another section, isn't; the rules a move passed aren't either
+ * (no move moved them). Rules with no songs this week aren't looked at.
+ */
+function reallyMoved(trace: Trace, opLog: Edit[]): Set<number> {
+  const candidates = movedSlotsNow(opLog);
+  const out = new Set<number>();
+  if (candidates.size === 0) return out;
+  const rules = [...new Set(trace.slots.map((x) => x.block - 1))].sort((a, b) => a - b);
+  const was = rules.map((p) => slotAsSaved(opLog, p));
+  // The latest saved place before each rule, and the earliest after it.
+  const maxBefore: number[] = [];
+  let hi = -Infinity;
+  for (let i = 0; i < rules.length; i++) {
+    maxBefore.push(hi);
+    const q = was[i];
+    if (q !== undefined) hi = Math.max(hi, q);
+  }
+  let lo = Infinity;
+  for (let i = rules.length - 1; i >= 0; i--) {
+    const q = was[i];
+    if (q !== undefined && candidates.has(rules[i]) && (maxBefore[i] > q || lo < q)) out.add(rules[i]);
+    if (q !== undefined) lo = Math.min(lo, q);
+  }
+  return out;
+}
+
+/**
  * Each song of the edited week (`trace`) against the saved one: compared
  * with what its own rule played there, not with whatever was at its
  * place, so songs that only shift along (a rule added, removed or moved
@@ -188,7 +218,7 @@ export function compareWeeks(
     if (list) list.push(x);
     else savedByRule.set(k, [x]);
   }
-  const moved = flat ? movedSlotsNow(opLog) : new Set<number>();
+  const moved = flat ? reallyMoved(trace, opLog) : new Set<number>();
   const used = new Map<string, number>();
   const changes = trace.slots.map((x): SongChange | null => {
     let was = ruleOf(x);

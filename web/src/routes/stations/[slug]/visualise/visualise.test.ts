@@ -3707,10 +3707,12 @@ describe('visualise +page.svelte — moving songs in the Songs tab', () => {
     await screen.findByTestId('editor-canvas');
     await screen.findAllByTestId('song-grip');
   }
-  /** Evening's song up one place: before rule 2, in Morning. */
+  /** Evening's song up: past the end of Morning (where it plays
+   *  already), to before rule 2. */
   async function moveLastUp() {
     const grip = screen.getAllByTestId('song-grip')[2];
     await key(grip, ' ');
+    await key(grip, 'ArrowUp');
     await key(grip, 'ArrowUp');
     await key(grip, ' ');
   }
@@ -3737,6 +3739,16 @@ describe('visualise +page.svelte — moving songs in the Songs tab', () => {
     await settle();
     expect(note()).not.toContain('waits');
     expect(screen.getAllByTestId('song-grip')[0]).toHaveAttribute('aria-disabled', 'false');
+  });
+
+  it("if the preview fails, it says moving waits for it to work again", async () => {
+    await mount();
+    watchJobMock.mockImplementation(() => (async function* () {
+      yield { status: 'error', error: { message: 'boom' } };
+    })());
+    await moveLastUp();
+    await settle();
+    expect(note()).toBe("Songs can't be moved until the preview works again.");
   });
 
   it("an open rule's panel follows it to where it plays now", async () => {
