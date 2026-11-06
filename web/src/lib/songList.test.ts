@@ -231,6 +231,26 @@ describe('describeQueued', () => {
       ]);
     });
 
+    it("rules moved to play somewhere else, and sections", () => {
+      expect(say(
+        { kind: 'moveRules', from: 0, count: 2, to: 3, sectionId: 'evening' },
+      )).toEqual(['Moved Morning, rules 1–2 to Evening, rules 2–3']);
+      expect(say(
+        { kind: 'moveRules', from: 2, count: 1, to: 0, sectionId: 'morning' },
+        { kind: 'moveSection', sectionId: 'evening', beforeSectionId: 'morning', from: 2, count: 1, to: 0 },
+        { kind: 'moveSection', sectionId: 'evening', beforeSectionId: null, from: 0, count: 1, to: 3 },
+      )).toEqual([
+        'Moved Evening, rule 1 to Morning, rule 1',
+        // Evening has no rules now: a section that can't be placed isn't
+        // moved (refused), so it's said as the editor would.
+        "Moved section 'evening' before 'morning'",
+        "Moved section 'evening' to the end",
+      ]);
+      expect(say(
+        { kind: 'moveSection', sectionId: 'evening', beforeSectionId: 'morning', from: 2, count: 1, to: 0 },
+      )).toEqual(['Moved section “Evening” before “Morning”']);
+    });
+
     it('rules by where they are, before and after', () => {
       expect(say(
         { kind: 'moveBlock', address: { slot_index: 0 }, targetSectionId: 'evening', targetIndex: null },

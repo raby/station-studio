@@ -4,6 +4,24 @@ All notable changes are listed here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses semantic versioning.
 
+## [Unreleased]
+
+### Added
+
+- **Moving rules to play somewhere else** (no way to do it in the app
+  yet: dragging in the song list comes next). Two new edits in the save
+  batch, `moveRules` and `moveSection`, reorder a flat station's rules,
+  and the sections follow. The editor's preview does the same, checked
+  against the same cases as the server. Undo and a song's Revert follow
+  rules through a move.
+
+### Fixed
+
+- **Queued changes left by a newer version of the app** could replay on
+  the wrong rules: an edit this version didn't know was skipped, and the
+  ones after it, made on top of it, were kept. Now the queue stops
+  there.
+
 ## [1.17.0] - 2026-11-01
 
 ### Added

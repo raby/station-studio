@@ -15,7 +15,7 @@ from pydantic import ValidationError
 from api.schemas import SidecarBatchErrorResponse, SidecarBatchRequest
 
 
-def test_all_nine_kinds_parse_from_camelcase_wire_shape() -> None:
+def test_every_kind_parses_from_camelcase_wire_shape() -> None:
     """Pin every Edit kind's wire shape end-to-end."""
     payload = {
         "edits": [
@@ -64,11 +64,21 @@ def test_all_nine_kinds_parse_from_camelcase_wire_shape() -> None:
                 "kind": "structuralBlockEdit",
                 "edit": {"op": "size", "slot_index": 0, "new_size": 5},
             },
+            {
+                "kind": "moveRules",
+                "from": 0, "count": 2, "to": 4,
+                "sectionId": "evening",
+            },
+            {
+                "kind": "moveSection",
+                "sectionId": "evening", "beforeSectionId": None,
+                "from": 3, "count": 2, "to": 5,
+            },
         ],
         "expected_updated_at": "2026-06-16T20:00:00Z",
     }
     req = SidecarBatchRequest(**payload)
-    assert len(req.edits) == 9
+    assert len(req.edits) == 11
     assert [e.kind for e in req.edits] == [
         "patchBlock",
         "patchMacro",
@@ -79,7 +89,13 @@ def test_all_nine_kinds_parse_from_camelcase_wire_shape() -> None:
         "moveBlock",
         "retypeBlock",
         "structuralBlockEdit",
+        "moveRules",
+        "moveSection",
     ]
+    move_rules, move_section = req.edits[-2:]
+    assert (move_rules.from_, move_rules.count, move_rules.to) == (0, 2, 4)
+    assert move_rules.section_id == "evening"
+    assert (move_section.section_id, move_section.before_section_id) == ("evening", None)
 
 
 def test_patch_macro_camelcase_alias_works() -> None:

@@ -68,12 +68,31 @@ its slot, so after a rule added or removed ahead of it, it would change
 the next rule along; settings for a retyped rule belong to its new
 type; and section edits name sections that may not be there. `undoSet`
 works out which later edits build on the one undone (it follows rules
-through later adds and removes, and checks section edits against the
-queue as it would be), and the editor names them and asks before
+through later adds, removes and moves, and checks each later edit still
+does what it did, against the queue as it would be), and the editor
+names them and asks before
 undoing them too (`confirmUndo`). Dropping the edit a save failed on
 works the same way, before the rest is saved. A randomised test undoes
 every edit of many generated queues and checks that what stays still
 changes the same rules and does something.
+
+## Moving rules
+
+The engine plays a flat station's rules (`layout.flat_slots`) in list
+order and ignores the sidecar, so a move that should change when songs
+play reorders `flat_slots`: `moveRules` (a run of rules, to before
+another; they join a section, among its blocks by when they play) and
+`moveSection` (all of a section's rules, before another section's, and
+its place in `layout_order` with them). The sidecar follows: every
+atomic block is renumbered to where its rule now plays. A macro moves
+whole or not at all, and a move that would leave one out of place is
+refused. `moveBlock`, older, only regroups: the songs play where they
+did.
+
+Both are in `engine/rule_moves.py` on the server and mirrored in
+`edit-ops.ts` for the preview; `tests/fixtures/rule_moves.json` holds
+the cases both are checked against, so the preview shows what saving
+does. Stations built from a repeating row can't move rules yet.
 
 Staged edits share one per-station queue in `localStorage` with the
 week pages' song-list editor, so a station with edits queued opens its

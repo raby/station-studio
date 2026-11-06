@@ -94,5 +94,11 @@ describe('movesRules', () => {
     const log = [size(0, 2), remove(1)];
     expect(movesRules(log, [0])).toBe(false);
     expect(movesRules(log, [0, 1])).toBe(true);
+    const moves: Edit[] = [
+      { kind: 'moveRules', from: 0, count: 1, to: 2, sectionId: 'day' },
+      { kind: 'moveSection', sectionId: 'day', beforeSectionId: null, from: 0, count: 3, to: 3 },
+    ];
+    expect(movesRules(moves, [0])).toBe(true);
+    expect(movesRules(moves, [1])).toBe(true);
   });
 });

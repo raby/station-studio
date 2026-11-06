@@ -780,6 +780,36 @@ class _BatchStructuralBlockEditEnv(BaseModel):
     edit: StructuralBlockEdit
 
 
+class _BatchMoveRulesEnv(BaseModel):
+    """Move a run of a flat station's rules to play somewhere else
+    (`engine.rule_moves.move_rules`): slots `[from, from+count)` to
+    before slot `to`, all numbered as before the move. They join
+    `sectionId`, among its blocks by when they play. Unlike `moveBlock`
+    (which only regroups), this changes when the songs play.
+    """
+    kind: Literal["moveRules"]
+    from_: int = Field(..., alias="from")
+    count: int
+    to: int
+    section_id: str = Field(..., alias="sectionId")
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class _BatchMoveSectionEnv(BaseModel):
+    """Move a section's rules (slots `[from, from+count)`, all of them)
+    to before `beforeSectionId`'s (slot `to`, its first), or to the end
+    (`beforeSectionId` null): they play there, and the section moves in
+    `layout_order` too (`engine.rule_moves.move_section`).
+    """
+    kind: Literal["moveSection"]
+    section_id: str = Field(..., alias="sectionId")
+    before_section_id: str | None = Field(default=None, alias="beforeSectionId")
+    from_: int = Field(..., alias="from")
+    count: int
+    to: int
+    model_config = ConfigDict(populate_by_name=True)
+
+
 BatchEdit = Annotated[
     (
         _BatchPatchBlockEnv
@@ -791,6 +821,8 @@ BatchEdit = Annotated[
         | _BatchMoveBlockEnv
         | _BatchRetypeBlockEnv
         | _BatchStructuralBlockEditEnv
+        | _BatchMoveRulesEnv
+        | _BatchMoveSectionEnv
     ),
     Field(discriminator="kind"),
 ]

@@ -189,6 +189,38 @@ export interface StructuralBlockEditOp {
   };
 }
 
+/**
+ * Move a run of a flat station's rules to play somewhere else: slots
+ * `[from, from + count)` to before slot `to` (the number of rules: the
+ * end), all numbered as before the move. They join `sectionId`, in play
+ * order, after its blocks that play before `to`. Unlike `moveBlock`,
+ * which only regroups, this changes when the songs play
+ * (`engine/rule_moves.py`; the cases in `tests/fixtures/rule_moves.json`
+ * check both).
+ */
+export interface MoveRulesOp {
+  kind: 'moveRules';
+  from: number;
+  count: number;
+  to: number;
+  sectionId: string;
+}
+
+/**
+ * Move section `sectionId`, whose rules are all of slots `[from, from +
+ * count)`, to before `beforeSectionId`'s rules (slot `to`, its first), or
+ * to the end (`beforeSectionId` null, `to` the number of rules). Its songs
+ * play there, and it moves in `layout_order` too.
+ */
+export interface MoveSectionOp {
+  kind: 'moveSection';
+  sectionId: string;
+  beforeSectionId: string | null;
+  from: number;
+  count: number;
+  to: number;
+}
+
 export type Edit =
   | PatchBlockOp
   | PatchMacroOp
@@ -198,7 +230,9 @@ export type Edit =
   | ReorderSectionsOp
   | MoveBlockOp
   | RetypeBlockOp
-  | StructuralBlockEditOp;
+  | StructuralBlockEditOp
+  | MoveRulesOp
+  | MoveSectionOp;
 
 
 /**
@@ -281,6 +315,9 @@ export function applyEdit(
       };
     case 'structuralBlockEdit':
       return _structuralBlockEdit(template, sidecar, op.edit);
+    case 'moveRules':
+    case 'moveSection':
+      return _moveRules(template, sidecar, op) ?? { template, sidecar };
     default: {
       // §16.2.6 c3b: exhaustiveness pin. The Edit union now has
       // 3+ kinds so TS narrows correctly to `never` after the
@@ -1461,6 +1498,11 @@ export async function replayOpLog(
         case 'structuralBlockEdit':
           await deps.structuralBlockEdit(op.edit);
           break;
+        case 'moveRules':
+        case 'moveSection':
+          // Moving rules is only in the save batch; this one-route-per-
+          // edit replay is from before it.
+          throw new Error(`${op.kind} saves only in a batch`);
         default: {
           // Same exhaustiveness pin as applyEdit's switch — a
           // future Edit kind without a dispatch case fails compile.
@@ -1493,6 +1535,196 @@ export async function replayOpLog(
     remaining = remaining.slice(1);
   }
   return { success: true, totalEdits, remaining };
+}
+
+
+/** Where the rule at slot `p` is after a move of `[from, from + count)`
+ *  to before slot `to` (`engine.rule_moves.new_position`). */
+export function newPosition(p: number, from: number, count: number, to: number): number {
+  const end = from + count;
+  if (p >= from && p < end) return p - from + (to < from ? to : to - count);
+  if (to < from && p >= to && p < from) return p + count;
+  if (to > end && p >= end && p < to) return p - count;
+  return p;
+}
+
+type _SidecarBlock = { kind?: unknown; slot_index?: unknown; ref?: unknown };
+type _Section = { id?: unknown; blocks?: _SidecarBlock[] };
+
+/** Each section block, with the slots it covers (an atomic its own; a
+ *  macro `repeat` from where its section has got to); null for a block
+ *  in a section with no atomic, which can't be placed. */
+function _elementSlots(sidecar: { sections?: _Section[]; macros?: { id?: unknown; repeat?: unknown }[] }):
+  { section: _Section; block: _SidecarBlock; slots: number[] | null }[] {
+  const repeat = new Map<unknown, number>();
+  for (const m of sidecar.macros ?? []) repeat.set(m?.id, typeof m?.repeat === 'number' ? m.repeat : 1);
+  const width = (b: _SidecarBlock): number => (b.kind === 'atomic' ? 1 : (repeat.get(b.ref) ?? 1));
+  const out: { section: _Section; block: _SidecarBlock; slots: number[] | null }[] = [];
+  for (const section of sidecar.sections ?? []) {
+    const blocks = section.blocks ?? [];
+    const anchor = blocks.findIndex((b) => b.kind === 'atomic' && typeof b.slot_index === 'number');
+    if (anchor === -1) {
+      for (const block of blocks) out.push({ section, block, slots: null });
+      continue;
+    }
+    let pos = (blocks[anchor].slot_index as number) - blocks.slice(0, anchor).reduce((n, b) => n + width(b), 0);
+    for (const block of blocks) {
+      if (block.kind === 'atomic') {
+        out.push({ section, block, slots: [block.slot_index as number] });
+        pos = (block.slot_index as number) + 1;
+      } else {
+        const w = width(block);
+        out.push({ section, block, slots: Array.from({ length: w }, (_, k) => pos + k) });
+        pos += w;
+      }
+    }
+  }
+  return out;
+}
+
+/** Each macro in use and the slots it expands to, sorted. */
+function _macroSlots(sidecar: { sections?: _Section[] }): Map<unknown, number[]> {
+  const out = new Map<unknown, number[]>();
+  for (const s of sidecar.sections ?? []) {
+    for (const b of s.blocks ?? []) {
+      if (b.kind !== 'macro' || out.has(b.ref)) continue;
+      out.set(b.ref, resolveMacroAddresses(sidecar, String(b.ref))
+        .map((a) => a.slot_index)
+        .filter((p): p is number => typeof p === 'number')
+        .sort((x, y) => x - y));
+    }
+  }
+  return out;
+}
+
+/** The rules at these slots, as the operator counts them: each rule's
+ *  section and number there (single rules and macros, in order), once
+ *  each, in play order. Slots no section places are left out. */
+export function rulesAt(sidecar: unknown, slots: number[]): { sectionId: string; number: number }[] {
+  if (!_isSidecarLike(sidecar)) return [];
+  const want = new Set(slots);
+  const found: { first: number; sectionId: string; number: number }[] = [];
+  const numbers = new Map<_Section, number>();
+  for (const { section, slots: of } of _elementSlots(sidecar as { sections?: _Section[] })) {
+    const number = (numbers.get(section) ?? 0) + 1;
+    numbers.set(section, number);
+    if (of !== null && of.some((p) => want.has(p))) {
+      found.push({ first: Math.min(...of), sectionId: String(section.id), number });
+    }
+  }
+  return found.sort((a, b) => a.first - b.first).map(({ sectionId, number }) => ({ sectionId, number }));
+}
+
+/** The slots a section's blocks cover, sorted; null when one can't be
+ *  placed. */
+export function sectionSlots(sidecar: unknown, sectionId: string): number[] | null {
+  if (!_isSidecarLike(sidecar)) return null;
+  const out: number[] = [];
+  for (const { section, slots } of _elementSlots(sidecar as { sections?: _Section[] })) {
+    if (section.id !== sectionId) continue;
+    if (slots === null) return null;
+    out.push(...slots);
+  }
+  return out.sort((a, b) => a - b);
+}
+
+/**
+ * Mirror of `engine.rule_moves.move_rules` / `move_section`: the station
+ * with the move made, or null for a move it can't take (the server would
+ * refuse it, so the preview changes nothing). Pure.
+ */
+function _moveRules(
+  template: StationTemplate,
+  sidecar: unknown,
+  op: MoveRulesOp | MoveSectionOp,
+): { template: StationTemplate; sidecar: unknown } | null {
+  const slots = template.layout.flat_slots;
+  if (template.layout.row_template?.length || !Array.isArray(slots) || !_isSidecarLike(sidecar)) return null;
+  const n = slots.length;
+  const { from, count, to } = op;
+  if (![from, count, to].every(Number.isInteger)) return null;
+  if (count < 1 || from < 0 || from + count > n || to < 0 || to > n) return null;
+  if (to >= from && to <= from + count) return null;
+
+  const sc = JSON.parse(JSON.stringify(sidecar)) as {
+    sections: _Section[]; macros?: { id?: unknown; repeat?: unknown }[]; layout_order?: unknown[];
+  };
+  if (!Array.isArray(sc.sections)) return null;
+  const before = _macroSlots(sidecar as { sections?: _Section[] });
+  const ids = new Set(sc.sections.map((s) => s.id));
+
+  if (op.kind === 'moveRules') {
+    if (!ids.has(op.sectionId)) return null;
+    // The run is whole blocks (a macro all or nothing), every slot of it.
+    // (Landing inside a macro, the server's own reason, is refused by the
+    // macro check below.)
+    const elements = _elementSlots(sc);
+    const moving: { first: number; block: _SidecarBlock }[] = [];
+    const covered = new Set<number>();
+    for (const { block, slots: of } of elements) {
+      if (of === null) continue;
+      const inside = of.filter((p) => p >= from && p < from + count);
+      if (inside.length === 0) continue;
+      if (inside.length !== of.length) return null;
+      moving.push({ first: Math.min(...of), block });
+      for (const p of of) covered.add(p);
+    }
+    if (covered.size !== count) return null;
+    const moved = new Set(moving.map((m) => m.block));
+    for (const s of sc.sections) s.blocks = (s.blocks ?? []).filter((b) => !moved.has(b));
+    // After the section's blocks that play before `to` (at the end, when
+    // it has blocks that can't be placed).
+    const target = sc.sections.find((s) => s.id === op.sectionId)!;
+    const blocks = target.blocks ?? [];
+    const placed = new Map(elements.filter((e) => e.section.id === op.sectionId).map((e) => [e.block, e.slots]));
+    const at = blocks.some((b) => placed.get(b) === null)
+      ? blocks.length
+      : blocks.filter((b) => Math.max(...(placed.get(b) ?? [Infinity])) < to).length;
+    blocks.splice(at, 0, ...moving.sort((a, b) => a.first - b.first).map((m) => m.block));
+    target.blocks = blocks;
+  } else {
+    if (!ids.has(op.sectionId) || op.beforeSectionId === op.sectionId) return null;
+    if (op.beforeSectionId !== null && !ids.has(op.beforeSectionId)) return null;
+    const mine = sectionSlots(sc, op.sectionId);
+    if (mine === null || mine.length !== count || mine.some((p, k) => p !== from + k)) return null;
+    if (op.beforeSectionId === null) {
+      if (to !== n) return null;
+    } else {
+      const theirs = sectionSlots(sc, op.beforeSectionId);
+      if (!theirs?.length || theirs[0] !== to) return null;
+    }
+  }
+
+  // Renumber every atomic block to where its rule now plays.
+  for (const s of sc.sections) {
+    for (const b of s.blocks ?? []) {
+      if (b.kind === 'atomic' && typeof b.slot_index === 'number') {
+        b.slot_index = newPosition(b.slot_index, from, count, to);
+      }
+    }
+  }
+  // Each macro still covers the rules it did.
+  const after = _macroSlots(sc);
+  for (const [id, was] of before) {
+    const expected = was.map((p) => newPosition(p, from, count, to)).sort((a, b) => a - b);
+    const now = after.get(id) ?? [];
+    if (now.length !== expected.length || now.some((p, k) => p !== expected[k])) return null;
+  }
+  if (op.kind === 'moveSection') {
+    const order = (sc.layout_order ?? []).filter((id) => id !== op.sectionId);
+    const at = op.beforeSectionId === null ? -1 : order.indexOf(op.beforeSectionId);
+    if (at === -1) order.push(op.sectionId);
+    else order.splice(at, 0, op.sectionId);
+    sc.layout_order = order;
+  }
+
+  const rest = [...slots.slice(0, from), ...slots.slice(from + count)];
+  const at = to < from ? to : to - count;
+  const flat = [...rest.slice(0, at), ...slots.slice(from, from + count), ...rest.slice(at)];
+  return {
+    template: { ...template, layout: { ...template.layout, flat_slots: flat } },
+    sidecar: sc,
+  };
 }
 
 
@@ -1543,10 +1775,9 @@ function _isSidecarLike(value: unknown): boolean {
 export function attributeOpsToSlot(
   opLog: Edit[], slotIndex: number,
 ): number[] {
-  const now = slotsNow(opLog);
   const out: number[] = [];
-  now.forEach((slot, i) => {
-    if (slot === slotIndex) out.push(i);
+  slotsNow(opLog).forEach((slots, i) => {
+    if (slots.includes(slotIndex)) out.push(i);
   });
   return out;
 }
@@ -1563,16 +1794,9 @@ export function editsForRule(opLog: Edit[], rule: number, saved = false): number
   let p = rule;
   if (saved) {
     for (let j = 0; j < opLog.length; j++) {
-      const op = opLog[j];
-      if (op.kind !== 'structuralBlockEdit' || op.edit.op === 'size') continue;
-      const at = op.edit.slot_index;
-      if (op.edit.op === 'add') {
-        if (at <= p) p += 1;
-      } else if (at === p) {
-        return [j];
-      } else if (at < p) {
-        p -= 1;
-      }
+      const next = slotAfter(opLog[j], p);
+      if (next === undefined) return [j];
+      p = next;
     }
   }
   return attributeOpsToSlot(opLog, p);
@@ -1580,40 +1804,100 @@ export function editsForRule(opLog: Edit[], rule: number, saved = false): number
 
 
 /**
- * For each queued edit, the slot its rule is at now, with every edit
- * applied: its address, moved along by the rules added or removed
- * after it. Undefined for edits not to a slot's rule (sections,
- * macros, row-template blocks) and for a rule since removed, or
- * removed by the edit itself (its songs aren't in the week any more).
+ * Where the rule at slot `p` is after `op`: along one when a rule is
+ * added at or before it, back one when one before it is removed, where
+ * a move puts it; undefined when `op` removes it.
  */
-export function slotsNow(opLog: Edit[]): (number | undefined)[] {
-  return opLog.map((op, i) => {
-    if (op.kind === 'structuralBlockEdit' && op.edit.op === 'remove') return undefined;
-    let p = _slotOf(op);
-    for (let j = i + 1; j < opLog.length && p !== undefined; j++) {
-      const later = opLog[j];
-      if (later.kind !== 'structuralBlockEdit' || later.edit.op === 'size') continue;
-      const at = later.edit.slot_index;
-      if (later.edit.op === 'add') {
-        if (at <= p) p += 1;
-      } else if (at === p) {
-        p = undefined;
-      } else if (at < p) {
-        p -= 1;
-      }
-    }
+export function slotAfter(op: Edit, p: number): number | undefined {
+  if (op.kind === 'structuralBlockEdit') {
+    const at = op.edit.slot_index;
+    if (op.edit.op === 'add') return at <= p ? p + 1 : p;
+    if (op.edit.op === 'remove') return at === p ? undefined : at < p ? p - 1 : p;
     return p;
+  }
+  if (op.kind === 'moveRules' || op.kind === 'moveSection') return newPosition(p, op.from, op.count, op.to);
+  return p;
+}
+
+
+/**
+ * For each queued edit, the slots of the rules it's to, where they are
+ * now, with every edit applied: followed along by the rules added,
+ * removed or moved after it (taking each edit as made: a queue the
+ * server would save). Empty for edits not to a slot's rule
+ * (sections, macros, row-template blocks), and for a rule since
+ * removed, or removed by the edit itself (its songs aren't in the week
+ * any more). A move is to the rules it moved.
+ */
+export function slotsNow(opLog: Edit[]): number[][] {
+  return opLog.map((op, i) => {
+    let slots = _rulesOf(op);
+    for (let j = i + 1; j < opLog.length && slots.length > 0; j++) {
+      slots = slots.map((p) => slotAfter(opLog[j], p)).filter((p): p is number => p !== undefined);
+    }
+    return slots;
   });
 }
 
 
-/** The slot an edit is addressed to, if it's addressed by slot. */
-function _slotOf(op: Edit): number | undefined {
-  if (op.kind === 'patchBlock' || op.kind === 'retypeBlock' || op.kind === 'moveBlock') {
-    return op.address.slot_index;
+/** The slots of the rules an edit is to, just after it. */
+function _rulesOf(op: Edit): number[] {
+  switch (op.kind) {
+    case 'patchBlock':
+    case 'retypeBlock':
+    case 'moveBlock':
+      return op.address.slot_index === undefined ? [] : [op.address.slot_index];
+    case 'structuralBlockEdit':
+      return op.edit.op === 'remove' ? [] : [op.edit.slot_index];
+    case 'moveRules':
+    case 'moveSection': {
+      const at = op.to < op.from ? op.to : op.to - op.count;
+      return Array.from({ length: op.count }, (_, k) => at + k);
+    }
+    default:
+      return [];
   }
-  if (op.kind === 'structuralBlockEdit') return op.edit.slot_index;
-  return undefined;
+}
+
+
+/** The slots an edit reads or changes, [lo, hi), numbered as before it:
+ *  a rule's own, or everything between a move's two ends. */
+function _span(op: Edit): [number, number] | null {
+  switch (op.kind) {
+    case 'patchBlock':
+    case 'retypeBlock':
+    case 'moveBlock': {
+      const p = op.address.slot_index;
+      return p === undefined ? null : [p, p + 1];
+    }
+    case 'structuralBlockEdit':
+      return [op.edit.slot_index, op.edit.slot_index + 1];
+    case 'moveRules':
+    case 'moveSection':
+      return [Math.min(op.from, op.to), Math.max(op.from + op.count, op.to)];
+    default:
+      return null;
+  }
+}
+
+
+/** Slots [lo, hi) after `op`: an added rule widens what's after it, a
+ *  removed one narrows it, and a move it overlaps spreads it over the
+ *  move's whole span (a move it doesn't overlap leaves it be). Never
+ *  smaller than what it tracks. */
+function _spanAfter(op: Edit, [lo, hi]: [number, number]): [number, number] {
+  if (op.kind === 'structuralBlockEdit' && op.edit.op !== 'size') {
+    const at = op.edit.slot_index;
+    const step = op.edit.op === 'add' ? 1 : -1;
+    return [at < lo ? lo + step : lo, at < hi ? hi + step : hi];
+  }
+  if (op.kind === 'moveRules' || op.kind === 'moveSection') {
+    // Belt and braces: a move it overlaps is itself undone, and tracks
+    // its own span, which covers this.
+    const [a, b] = _span(op)!;
+    return a < hi && lo < b ? [Math.min(lo, a), Math.max(hi, b)] : [lo, hi];
+  }
+  return [lo, hi];
 }
 
 /**
@@ -1625,13 +1909,15 @@ function _slotOf(op: Edit): number | undefined {
  * a later one depends on an earlier one when, without it, the later one
  *   - would change a different rule: it's addressed to a slot at or
  *     after a rule the earlier one added or removed (its address counts
- *     that rule; without it, it'd be the next rule along), or it renames,
+ *     that rule; without it, it'd be the next rule along), or between
+ *     the two ends of a move the earlier one made, or it renames,
  *     deletes or moves a rule into a section the earlier one made, and a
  *     section of that name is there anyway (one it was made again after
  *     being deleted);
  *   - would set a rule's settings or size for a type it no longer has
  *     (the earlier one retyped it);
- *   - would do nothing, as the server would refuse it: names a section
+ *   - would do nothing, as the server would refuse it, or would do
+ *     something where with every edit it did nothing: names a section
  *     that isn't there, makes one that is, reorders sections that aren't
  *     the ones there are (a reorder lists every section: think of the
  *     Unsorted section an added rule, or a deleted section's rules, go
@@ -1655,9 +1941,11 @@ export function undoSet(
   let all = applyEdits(template, sidecar, opLog.slice(0, first));
   let kept = all;
 
-  // From each of these slots on, later addresses count a rule that an
-  // undone edit added or removed.
-  const shiftedFrom: number[] = [];
+  // Slots [lo, hi) whose rules an undone edit added, removed or moved:
+  // a later address there is to a different rule without it. (Every
+  // slot from an added or removed one on; everything between a move's
+  // two ends.)
+  const affected: [number, number][] = [];
   // Rules an undone edit retyped (followed as later edits add/remove).
   const retyped: BlockAddress[] = [];
   // Sections an undone edit made.
@@ -1669,8 +1957,8 @@ export function undoSet(
     to.template !== from.template || to.sidecar !== from.sidecar;
 
   function changesAnotherRule(op: Edit): boolean {
-    const slot = _slotOf(op);
-    if (slot !== undefined && shiftedFrom.some((from) => slot >= from)) return true;
+    const span = _span(op);
+    if (span && affected.some(([lo, hi]) => span[0] < hi && lo < span[1])) return true;
     if ((op.kind === 'patchBlock' || op.kind === 'retypeBlock') && retyped.some((a) => sameRule(a, op.address))) {
       return true;
     }
@@ -1689,29 +1977,31 @@ export function undoSet(
     all = applyEdit(was.template, was.sidecar, op);
     if (!out.has(j)) {
       const next = applyEdit(kept.template, kept.sidecar, op);
-      // Did something with every edit, nothing with only these.
-      if (changesAnotherRule(op) || (changes(was, all) && !changes(kept, next))) out.add(j);
+      // Did something with every edit and nothing with only these, or
+      // the other way round: it hangs on what's undone.
+      if (changesAnotherRule(op) || changes(was, all) !== changes(kept, next)) out.add(j);
       else kept = next;
     }
 
-    // Later addresses count this edit's added or removed rule: follow
-    // the slots being tracked to where they are now.
-    if (op.kind === 'structuralBlockEdit' && op.edit.op !== 'size') {
-      const at = op.edit.slot_index;
-      const step = op.edit.op === 'add' ? 1 : -1;
-      for (let k = 0; k < shiftedFrom.length; k++) {
-        if (at < shiftedFrom[k]) shiftedFrom[k] += step;
-      }
-      for (let k = retyped.length - 1; k >= 0; k--) {
-        const p = retyped[k].slot_index;
-        if (p === undefined) continue;
-        if (op.edit.op === 'remove' && at === p) retyped.splice(k, 1);
-        else if (op.edit.op === 'add' ? at <= p : at < p) retyped[k] = { slot_index: p + step };
-      }
+    // Later addresses count this edit's added, removed or moved rules:
+    // follow what's being tracked to where it is now. Only when it took,
+    // with every edit (later addresses were made after it): one refused
+    // moved nothing.
+    const took = changes(was, all);
+    for (let k = 0; took && k < affected.length; k++) affected[k] = _spanAfter(op, affected[k]);
+    for (let k = retyped.length - 1; took && k >= 0; k--) {
+      const p = retyped[k].slot_index;
+      if (p === undefined) continue;
+      const now = slotAfter(op, p);
+      if (now === undefined) retyped.splice(k, 1);
+      else retyped[k] = { slot_index: now };
     }
 
     if (out.has(j)) {
-      if (op.kind === 'structuralBlockEdit' && op.edit.op !== 'size') shiftedFrom.push(op.edit.slot_index);
+      if (op.kind === 'structuralBlockEdit' && op.edit.op !== 'size') {
+        affected.push([op.edit.slot_index, Infinity]);
+      }
+      if (op.kind === 'moveRules' || op.kind === 'moveSection') affected.push(_span(op)!);
       if (op.kind === 'retypeBlock') retyped.push(op.address);
       if (op.kind === 'sectionCreate') made.add(op.sectionId);
     }
@@ -1789,6 +2079,10 @@ export function describeOp(op: Edit): string {
       }
       return `Structural edit at slot ${slot}`;
     }
+    case 'moveRules':
+      return `Moved slots ${op.from}-${op.from + op.count - 1} to before slot ${op.to} (section '${op.sectionId}')`;
+    case 'moveSection':
+      return `Moved section '${op.sectionId}' ${op.beforeSectionId === null ? 'to the end' : `before '${op.beforeSectionId}'`}`;
     default: {
       // §16.2.7.t7 review R1 — exhaustiveness pin. If a future Edit
       // kind is added to the union without updating this switch, the
