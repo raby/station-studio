@@ -152,7 +152,9 @@ jobs:
           PYPROJECT_VERSION=$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml","rb"))["project"]["version"])')
           if [ "$TAG_VERSION" != "$PYPROJECT_VERSION" ]; then
             echo "ERROR: tag $GITHUB_REF (v$TAG_VERSION) does not match pyproject.toml [project].version ($PYPROJECT_VERSION)." >&2
-            echo "Bump pyproject.toml's [project].version before tagging." >&2
+            echo "Bump pyproject.toml's [project].version before tagging, or, if main has it," >&2
+            echo "the tag is on an older commit ($GITHUB_SHA): pull main, move the tag there" >&2
+            echo "(git tag -d v$TAG_VERSION && git push origin :refs/tags/v$TAG_VERSION), tag again, push." >&2
             exit 1
           fi
           echo "Versions match: v$TAG_VERSION"
@@ -372,14 +374,32 @@ jobs:
         #   `station-studio==${VERSION}`: pin to the exact tagged
         #                version so a stale test.pypi cached index
         #                can't sneak through an older release.
+        #
+        # Wait-loop, as the smoke install has: this job's runner can
+        # still see a stale test.pypi index after the smoke's did
+        # (1.17.0's release failed here: "No matching distribution
+        # found for station-studio==1.17.0", a minute after the smoke
+        # had installed it).
         run: |
+          set -e
           TAG_VERSION="${{ needs.build-and-publish-testpypi.outputs.version }}"
           mkdir -p dist
-          python -m pip download \
-            --no-deps \
-            --index-url https://test.pypi.org/simple/ \
-            --dest dist/ \
-            "station-studio==${TAG_VERSION}"
+          for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18; do
+            if python -m pip download \
+              --quiet \
+              --no-deps \
+              --index-url https://test.pypi.org/simple/ \
+              --dest dist/ \
+              "station-studio==${TAG_VERSION}"; then
+              echo "Download succeeded on attempt $i"
+              break
+            fi
+            if [ "$i" = "18" ]; then
+              echo "ERROR: pip download never succeeded after 3 minutes — test.pypi index lag or broken artifact." >&2
+              exit 1
+            fi
+            sleep 10
+          done
           ls -la dist/
 
       - name: publish to pypi.org
