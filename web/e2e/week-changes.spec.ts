@@ -63,9 +63,15 @@ test("swap a song just this week, keep it on regenerate, undo it", async ({ page
   expect(after).toEqual([before[0], picked, before[2]]);
   await expect(page.getByTestId('version-select')).toContainText('Just this week: song 2 swapped for');
   await assertNoA11yViolations(page);
+  // Dark too: switched before a reload, as the theme's colour transitions
+  // would otherwise still be running when axe reads the colours.
   await page.emulateMedia({ colorScheme: 'dark' });
+  await page.reload();
+  await expect(page.getByTestId('week-only-item')).toContainText(`Swapped for ${picked}`);
   await assertNoA11yViolations(page);
   await page.emulateMedia({ colorScheme: 'light' });
+  await page.reload();
+  await expect(page.getByTestId('week-only-item')).toBeVisible();
   // At phone width, the version's note doesn't push the page sideways.
   await page.setViewportSize({ width: 390, height: 844 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
