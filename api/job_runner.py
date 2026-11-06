@@ -375,6 +375,16 @@ class JobStore:
         )
         return job_id
 
+    def running_job_id(self, slug: str, kind: str) -> str | None:
+        """The id of the RUNNING job of `kind` for `slug`, if there is
+        one (what `start` with POLICY_REJECT would refuse over)."""
+        with self._lock:
+            self._gc_under_lock()
+            job = self._find_for_slug_kind_under_lock(
+                slug, kind, statuses=(JOB_STATUS_RUNNING,),
+            )
+            return job.job_id if job is not None else None
+
     def get(self, job_id: str) -> JobSnapshot | None:
         """Return an immutable snapshot of the job's current state,
         or None if no such job exists (never existed, GC'd, or wrong

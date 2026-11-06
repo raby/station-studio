@@ -12,7 +12,9 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from api.routers import editor, stations, sources, generate, jobs, meta, rules, stationserver
+from api.routers import (
+    editor, stations, sources, generate, jobs, meta, rules, stationserver, week_changes,
+)
 from engine.database import make_engine, make_sessionmaker
 from engine.models import Base, Station
 
@@ -190,6 +192,7 @@ app.include_router(editor.router)
 app.include_router(meta.router)
 app.include_router(rules.router)
 app.include_router(stationserver.router)
+app.include_router(week_changes.router)
 
 
 @app.get("/api/app", include_in_schema=False)

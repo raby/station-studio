@@ -47,6 +47,7 @@ from sqlalchemy.orm import Session
 
 from api.deps import get_db, get_stations_dir
 from api.schemas import (
+    StructuralBlockEdit,
     BlockAddress,
     BlockMoveRequest,
     BlockPatchRequest,
@@ -84,6 +85,7 @@ from engine.editor_metadata import (
 from engine.rule_moves import RuleMoveError, move_rules, move_section
 from engine.models import Station
 from engine.template import SUPPORTED_STRATEGIES, parse_template, TemplateError
+from engine.week_change_store import RuleOp, follow_rule_ops
 from api.timefmt import iso as _iso
 
 
@@ -921,6 +923,8 @@ def structural_block_edit(
             400, f"structural edit produces an invalid template: {e}",
         )
 
+    # Every week's just-this-week changes follow their rule.
+    follow_rule_ops(db, station.id, [_rule_op(payload.edit)])
     return _finish_sidecar_mutation(station, sidecar, db, template=template)
 
 
@@ -1442,6 +1446,13 @@ def _apply_structural_block_edit(
 # §16.2.6.t2 c1b: transactional batch endpoint
 # ============================================================
 
+def _rule_op(edit: StructuralBlockEdit) -> RuleOp:
+    """A structural edit as a change to the rules' places."""
+    if edit.op == "size":
+        return RuleOp("size", (edit.slot_index, edit.new_size or 0))
+    return RuleOp(edit.op, (edit.slot_index,))
+
+
 def _apply_batch_edit(template: dict, sidecar: dict, env) -> dict:
     """Apply one batch envelope. Dispatches to the per-kind helper above.
 
@@ -1568,9 +1579,14 @@ def sidecar_batch(
         slug, db, stations_dir, payload.expected_updated_at,
     )
 
+    rule_ops: list[RuleOp] = []
     for idx, env in enumerate(payload.edits, start=1):
         try:
             sidecar = _apply_batch_edit(template, sidecar, env)
+            if env.kind == "structuralBlockEdit":
+                rule_ops.append(_rule_op(env.edit))
+            elif env.kind in ("moveRules", "moveSection"):
+                rule_ops.append(RuleOp("move", (env.from_, env.count, env.to)))
         except HTTPException as e:
             db.rollback()
             return JSONResponse(
@@ -1649,4 +1665,7 @@ def sidecar_batch(
             },
         )
 
+    # Every week's just-this-week changes follow their rule, in the
+    # same transaction as the edits.
+    follow_rule_ops(db, station.id, rule_ops)
     return _finish_sidecar_mutation(station, sidecar, db, template=template)

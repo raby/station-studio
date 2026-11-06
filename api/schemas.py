@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 from typing import Annotated, Any, Literal
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator, model_validator
 from pydantic_core.core_schema import ValidationInfo
 
 
@@ -116,6 +116,41 @@ class GenerateRequest(BaseModel):
 _PREVIEW_FIELD_MAX_BYTES = 5 * 1024 * 1024
 
 
+class WeekChangeItem(BaseModel):
+    """A just-this-week change to one song of a week (engine.week_changes).
+
+    The song is addressed by its place: `row` and `block` (from 1, as
+    traces number them; a flat station's row is 1) and which of that
+    rule's songs (`k`, from 0). `rule_strategy` / `rule_source` are the
+    rule's when the change was made, so a change whose rule has become
+    something else isn't put on it.
+
+      * `swap`: `track_id` is the song chosen;
+      * `rule`: `rule` is the rule as changed (a whole block, as the
+        station's template has them; its size is always the original's).
+    """
+    model_config = ConfigDict(strict=True)
+
+    row: int = Field(ge=1)
+    block: int = Field(ge=1)
+    k: int = Field(ge=0)
+    kind: Literal["swap", "rule"]
+    track_id: int | None = None
+    rule: dict[str, Any] | None = None
+    rule_strategy: str = Field(min_length=1, max_length=64)
+    rule_source: str = Field(min_length=1, max_length=256)
+
+    @model_validator(mode="after")
+    def _one_kind(self) -> "WeekChangeItem":
+        if self.kind == "swap" and (self.track_id is None or self.rule is not None):
+            raise ValueError("a swap has a track_id and no rule")
+        if self.kind == "rule" and (self.rule is None or self.track_id is not None):
+            raise ValueError("a rule change has a rule and no track_id")
+        if self.rule is not None and len(json.dumps(self.rule)) > 8_000:
+            raise ValueError("rule is too large")
+        return self
+
+
 class PreviewRequest(BaseModel):
     """Body for §16.2.6 live-preview endpoint — `POST /api/stations/
     {slug}/jobs/preview`.
@@ -148,6 +183,10 @@ class PreviewRequest(BaseModel):
     sidecar: dict[str, Any]
     week: int = Field(ge=1)
     seed: int | None = None
+    # A week's just-this-week changes, made in the preview (the week
+    # page sends its own, following its queued edits). None: none (the
+    # station editor previews the rules).
+    week_changes: list[WeekChangeItem] | None = Field(default=None, max_length=1000)
 
     @field_validator("template", "sidecar")
     @classmethod
@@ -188,12 +227,27 @@ class PreviewRequest(BaseModel):
         return v
 
 
+class WeekChangeDropped(BaseModel):
+    """A just-this-week change that couldn't be made when the week was
+    generated, and why. It's been deleted."""
+    id: int | None = None
+    row: int
+    block: int
+    k: int
+    kind: str
+    reason: str
+
+
 class GenerateResponse(BaseModel):
     playlist_id: int
     trace_id: str
     station: str
     week: int
     slot_count: int
+    # Just-this-week changes made in this generation, and those that
+    # couldn't be (deleted, with the reason).
+    week_changes_applied: int = 0
+    week_changes_dropped: list[WeekChangeDropped] = []
 
 
 class TrackOut(BaseModel):

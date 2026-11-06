@@ -337,6 +337,50 @@ def test_generate_subcommand_creates_a_playlist(
         db.close()
 
 
+def test_generate_subcommand_keeps_just_this_week_changes(
+    runner: CliRunner, cli_home_with_station_and_pool: Path
+) -> None:
+    """Regenerating a week from the CLI makes its just-this-week changes
+    again, and says which it couldn't."""
+    assert runner.invoke(main, ["generate", "cli-minimal", "--week", "1"]).exit_code == 0
+
+    import sqlite3
+    db = sqlite3.connect(cli_home_with_station_and_pool / "station_studio.db")
+    try:
+        pid, = db.execute("SELECT id FROM playlist").fetchone()
+        first = [r[0] for r in db.execute(
+            "SELECT track_id FROM playlist_entry ORDER BY position")]
+        other = db.execute(
+            "SELECT id FROM track WHERE id NOT IN (?, ?, ?) LIMIT 1", first,
+        ).fetchone()[0]
+        for k_block, track in ((2, other), (5, other)):
+            db.execute(
+                "INSERT INTO week_change (playlist_id, row, block, k, kind, track_id, "
+                "rule_strategy, rule_source, created_at) VALUES (?, 1, ?, 0, 'swap', ?, "
+                "'weighted', 'TINY_POOL', '2026-11-06 00:00:00')",
+                (pid, k_block, track),
+            )
+        db.commit()
+    finally:
+        db.close()
+
+    result = runner.invoke(main, ["generate", "cli-minimal", "--week", "1"])
+    assert result.exit_code == 0, result.output
+    assert "Made 1 just-this-week change." in result.output
+    assert (
+        "Dropped a just-this-week change (row 1, rule 5, song 1): "
+        "that song is no longer in the week." in result.output
+    )
+    db = sqlite3.connect(cli_home_with_station_and_pool / "station_studio.db")
+    try:
+        now = [r[0] for r in db.execute(
+            "SELECT track_id FROM playlist_entry ORDER BY position")]
+        assert now == [first[0], other, first[2]]
+        assert db.execute("SELECT COUNT(*) FROM week_change").fetchone()[0] == 1
+    finally:
+        db.close()
+
+
 def test_generate_subcommand_rejects_unknown_station(
     runner: CliRunner, isolated_cli_home
 ) -> None:
