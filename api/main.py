@@ -164,7 +164,7 @@ app = FastAPI(
 # Radio's 2,196-atomic-block JSON is ~100KB raw / ~10KB gzipped.
 # Compresses any JSON response above the threshold; small responses
 # (most CRUD endpoints, GET /api/jobs/{id}, etc.) skip the overhead.
-# Browsers + httpx both send `Accept-Encoding: gzip` by default;
+# Browsers and httpx2 (the tests' client) send `Accept-Encoding: gzip`;
 # starlette's middleware no-ops when the client doesn't.
 #
 # Registered BEFORE CORS so gzip sits INSIDE the CORS wrapper at
