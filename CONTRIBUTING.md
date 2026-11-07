@@ -86,6 +86,12 @@ versions its pull request was tested with.
   usually pulled within days). Review `uv.lock`'s diff like code: it's
   what the next release ships. One package: `uv lock --upgrade-package
   fastapi`.
+- **Monthly:** a scheduled task runs `make lock-upgrade` on the 1st of
+  each month and opens one pull request (`deps/upgrade-YYYY-MM`) with
+  what moved, anything notable in the release notes, and the checks.
+  It never merges; review and merge it like any other. Before a
+  Station Studio release, run one by hand if the last was a few weeks
+  ago.
 - **uv's version** is in each workflow (`astral-sh/setup-uv`) and the
   Dockerfile; bump them together. `pyproject.toml` asks for at least
   that minor version locally.
