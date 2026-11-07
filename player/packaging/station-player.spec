@@ -1,7 +1,7 @@
 # PyInstaller recipe for the Mac and Windows downloads: Station Player
 # with its own Python, so it installs without a terminal.
 #
-#   pip install pyinstaller certifi
+#   uv sync --locked --no-editable --package station-player --no-default-groups --group installer
 #   pyinstaller player/packaging/station-player.spec
 #
 # Makes dist/Station Player.app (Mac) or dist/Station Player/ (Windows),

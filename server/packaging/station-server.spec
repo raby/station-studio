@@ -1,7 +1,7 @@
 # PyInstaller recipe for the Mac and Windows downloads: Station Server with
 # its own Python and its own ffmpeg, so it installs without a terminal.
 #
-#   pip install pyinstaller certifi ../player .
+#   uv sync --locked --no-editable --package station-server --group installer   (from the repo root)
 #   (put an ffmpeg build at packaging/ffmpeg/ffmpeg or ffmpeg.exe)
 #   pyinstaller packaging/station-server.spec
 #

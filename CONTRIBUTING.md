@@ -64,6 +64,32 @@ output (new strategy, bug fix), regenerate the fixtures via
 inspect the diff, and say why output changed in the pull request and
 `CHANGELOG.md`.
 
+## Dependencies
+
+Each app's `pyproject.toml` says what it needs, as ranges (that's what
+a `pip install` from PyPI gets). `uv.lock`, at the repository root, pins
+the exact version and hashes of every Python package all three apps are
+built, tested and shipped with: CI, the Mac and Windows apps and the
+Docker image all install from it, so a release is built from the
+versions its pull request was tested with.
+
+- **Adding or changing a dependency:** edit the `pyproject.toml`, run
+  `make lock`, and commit `uv.lock` with it. CI fails (`uv lock
+  --check`) if the two don't match.
+- **Tools** go in a dependency group, not `dependencies`: `dev`
+  (tests, `build`), `docs` (the docs site) or `installer` (PyInstaller
+  and what the apps' windows need). Groups aren't in the published
+  package.
+- **Upgrading:** `make lock-upgrade` moves every package to the newest
+  version its range allows, as long as it's been out a week
+  (`exclude-newer` in `pyproject.toml`: a bad or hijacked release is
+  usually pulled within days). Review `uv.lock`'s diff like code: it's
+  what the next release ships. One package: `uv lock --upgrade-package
+  fastapi`.
+- **uv's version** is in each workflow (`astral-sh/setup-uv`) and the
+  Dockerfile; bump them together. `pyproject.toml` asks for at least
+  that minor version locally.
+
 ## Code style
 
 - **Python**: stdlib first; SQLAlchemy 2.0 patterns; type hints on

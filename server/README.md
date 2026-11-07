@@ -66,13 +66,15 @@ Windows: `winget install ffmpeg`; or point Station Server at one with
 `--ffmpeg PATH` or `$STATION_SERVER_FFMPEG`).
 
 ```bash
-python -m venv .venv
-.venv/bin/pip install ./player ./server      # Windows: .venv\Scripts\pip
+uv sync --all-packages      # from the repository root (or `make install`)
+uv run station-server
 ```
 
-Station Server reads playlists with station-player's code, so both are
-installed. Then run `.venv/bin/station-server` (Windows:
-`.venv\Scripts\station-server`).
+That's [uv](https://docs.astral.sh/uv/), with the versions in the
+repository's `uv.lock`; Station Server reads playlists with
+station-player's code, so `player/` is installed too. The tests:
+`cd server && uv run python -m pytest`. (Without uv:
+`python -m venv .venv`, then `.venv/bin/pip install ./player ./server`.)
 
 You'll also need the music on the computer, and the playlists exported from
 station-studio (or any iTunes / Music XML).

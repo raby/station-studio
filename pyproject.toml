@@ -42,46 +42,53 @@ classifiers = [
     "Topic :: Multimedia :: Sound/Audio",
 ]
 
-# Pinned versions mirror `requirements.txt` (the dev workflow source of
-# truth). Any bump there must also land here.
+# What the wheel asks for when installed with pip: ranges, so it fits
+# beside other packages. The exact versions the apps are built, tested
+# and shipped with are pinned in `uv.lock` (see [tool.uv] below).
 dependencies = [
     "fastapi>=0.110",
     "uvicorn[standard]>=0.27",
     "sqlalchemy>=2.0",
     "pydantic>=2.5",
+    # Alembic: the schema migrations in migrations/versions/.
     "alembic>=1.13",
+    # FastAPI's Form/File (POST /api/sources/upload) needs it.
     "python-multipart>=0.0.9",
+    # The `station-studio` command line.
     "click>=8.1",
 ]
 
-[project.optional-dependencies]
-# Mirror `requirements-dev.txt` (dev-only entries — runtime deps are
-# inherited transitively via `-r requirements.txt`). Install with
-# `pip install -e .[dev]`. `scripts/check_deps_parity.py` + the
-# `check-deps-parity` make target enforce that both surfaces stay
-# in sync; if you bump a version here, bump it in requirements-*.txt
-# too, and vice-versa. §16.13.t4.
+# Tools for working on Station Studio, not installed with it (PEP 735
+# dependency groups: they aren't in the wheel's metadata). `uv sync`
+# installs `dev` and `docs`; the installers add `installer`.
+[dependency-groups]
 dev = [
     "pytest>=8.0",
     "httpx>=0.27",
+    # `make test-backend`'s --fail-under gate.
     "coverage>=7.10",
-    # §16.26 — `build` is what `make wheel` shells out to. Mirrored
-    # in requirements-dev.txt; the parity guard at
-    # scripts/check_deps_parity.py + the `make check-deps-parity`
-    # target enforce both surfaces stay in sync.
+    # `make wheel` (python -m build).
     "build>=1.0",
-    # §16.15 c1 — docs site build dep. Mirrored in
-    # requirements-dev.txt; check_deps_parity.py enforces both
-    # surfaces stay in sync. §16.15 c1-review R5 — pinned to
-    # the 9.5.x line; Material has historically renamed theme
-    # features within minor releases.
+    # In CI, each failing test becomes an annotation on the run and the
+    # pull request. Does nothing outside GitHub Actions.
+    "pytest-github-actions-annotate-failures>=0.4.2",
+]
+docs = [
+    # The docs site (`make docs-build`). Held to 9.5.x: Material has
+    # renamed theme features within minor releases.
     "mkdocs-material>=9.5,<9.6",
-    # §16.15 c4 — Swagger UI renderer for the API reference
-    # page. Reads docs/reference/openapi.json (build artifact
-    # from `make docs-openapi`). §16.15 c4-review R8 — pinned
-    # to the 0.1.x line; pre-1.0 packages can break at any
-    # minor bump.
+    # The API reference page's Swagger UI. Pre-1.0, so held to 0.1.x.
     "mkdocs-render-swagger-plugin>=0.1,<0.2",
+]
+# The Mac and Windows apps (PyInstaller; packaging/station-studio.spec).
+installer = [
+    "pyinstaller>=6.10,<7",
+    # Certificates for https (the new-version check and updates).
+    "certifi",
+    # The Mac app's own window (station_studio/macwindow.py); Quartz for
+    # scripts/check_macos_minimum.sh.
+    "pyobjc-framework-WebKit; sys_platform == 'darwin'",
+    "pyobjc-framework-Quartz; sys_platform == 'darwin'",
 ]
 
 # The headline shipped artifact: `station-studio <subcommand>` runs
@@ -184,3 +191,22 @@ testpaths = ["tests"]
 markers = [
     "slow: subprocess / uvicorn / network tests that add ~5s+ to a run",
 ]
+
+# uv: one lock file (uv.lock) for all three apps, so CI, the installers
+# and the Docker image get the same versions every time. `make lock`
+# after changing a dependency; `make lock-upgrade` to move everything to
+# the newest versions the ranges allow. CI fails if uv.lock is out of
+# date with these files.
+[tool.uv]
+required-version = ">=0.13"
+default-groups = ["dev", "docs"]
+# A new release must be a week old before `make lock-upgrade` takes it:
+# a bad or hijacked release is usually pulled within days.
+exclude-newer = "7 days"
+# The repo root isn't installed into .venv, only its dependencies: the
+# code runs from the checkout (as before), and building the package
+# needs the web pages built first (web/build, force-included above).
+package = false
+
+[tool.uv.workspace]
+members = ["player", "server"]

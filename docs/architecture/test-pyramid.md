@@ -44,28 +44,33 @@ How the test layers stack + when to add what.
 
 ## CI gates
 
-`.github/workflows/ci.yml` runs **5 jobs in parallel**:
-`backend`, `frontend-unit`, `e2e`, `install-smoke-wheel`,
-`install-smoke-image`. Each must pass for the merge to land.
+`.github/workflows/ci.yml` runs its jobs in parallel:
+`backend`, `frontend-unit`, `e2e`, `install-smoke-wheel`, and
+Station Player's and Station Server's own suites (Station
+Server's on Linux, Windows and Mac). Each must pass for the
+merge to land. Every job installs Python packages with
+`uv sync --locked`: exactly the versions in `uv.lock`.
 
 Two important **steps inside `backend`** (not separate jobs)
 guard cross-cutting drift:
 
+- `uv lock --check` — fails when a `pyproject.toml`'s
+  dependencies changed but `uv.lock` wasn't updated
+  (`make lock`).
 - `make migration-parity` — verifies `alembic upgrade head`
   produces the same schema as `Base.metadata.create_all()`
   (catches "added a model but forgot a migration").
-- `make check-deps-parity` — verifies `requirements.txt`,
-  `requirements-dev.txt`, and `pyproject.toml` list the same
-  packages with the same constraints.
 
 The `install-smoke-wheel` job runs `make wheel-smoke` —
 builds the wheel, installs into a temp venv, curls / and
-/api/stations for HTTP-200 + content-type. `install-smoke-image`
-(push-to-main only) does the same for the docker image.
+/api/stations for HTTP-200 + content-type.
+`.github/workflows/image-smoke.yml` does the same for the
+Docker image, on pushes to main and on pull requests that
+change what goes into it.
 
-The `.github/workflows/docs.yml` workflow is **separate** and
-builds + deploys the §16.15 docs site to GH Pages in strict
-mode on every push to main.
+The `.github/workflows/docs.yml` workflow is **separate**: it
+builds the docs site in strict mode on every pull request, and
+deploys it to GitHub Pages on every push to main.
 
 ## Read more
 

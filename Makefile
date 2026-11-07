@@ -7,7 +7,7 @@
 #
 # `make test` runs all three in order; CI does the same.
 
-.PHONY: install test test-backend test-frontend-unit test-e2e install-e2e-browsers clean-test \
+.PHONY: install check-uv lock lock-upgrade check-lock test test-backend test-frontend-unit test-e2e install-e2e-browsers clean-test \
         migrate alembic-stamp alembic-revision alembic-current migration-parity \
         backfill-slot-types \
         backup backups restore \
@@ -25,9 +25,13 @@ DB_FILE := station_studio.db
 # One-shot bootstrap for a fresh clone. README's "Quick start" calls
 # this. Idempotent: re-running on a populated checkout is safe.
 #
-#   * Creates .venv if missing (Python 3.10+ required).
-#   * Installs Python deps (runtime + dev). pip pinning is loose
-#     today; pinning lands when the hobbyist-starter slice ships.
+#   * Python: `uv sync --locked --all-packages` makes .venv with
+#     exactly the versions in uv.lock: Station Studio's dependencies and
+#     its dev and docs groups, plus Station Player and Station Server
+#     (editable) and their test tools, so one .venv serves all three.
+#     Adds or removes packages so .venv matches the lock. Needs uv
+#     (https://docs.astral.sh/uv/); it fetches a Python 3.11+ if there
+#     isn't one.
 #   * Installs frontend deps via `npm ci` (uses package-lock.json
 #     for reproducibility).
 #
@@ -35,17 +39,32 @@ DB_FILE := station_studio.db
 # first uvicorn boot (api/main.py lifespan handler) when the
 # database is empty. So `make install && make dev` is the full
 # "fresh clone to running app" path. See README's Quick start.
-install:
-	@if [ ! -d .venv ]; then \
-		echo "Creating .venv …"; \
-		python3 -m venv .venv; \
-	fi
+install: check-uv
 	@echo "Installing Python deps …"
-	@.venv/bin/pip install --quiet --upgrade pip
-	@.venv/bin/pip install --quiet -r requirements.txt -r requirements-dev.txt
+	@uv sync --locked --all-packages
 	@echo "Installing frontend deps …"
 	@cd web && npm ci --silent
 	@echo "Done. Run \`make dev\` to start the app."
+
+check-uv:
+	@command -v uv >/dev/null 2>&1 || { \
+		echo "make: uv isn't installed. Install it (https://docs.astral.sh/uv/getting-started/installation/), then run make again."; \
+		exit 1; }
+
+# uv.lock pins every Python package all three apps are built and tested
+# with. After changing a dependency in a pyproject.toml, `make lock`
+# (and commit uv.lock); `make lock-upgrade` moves everything to the
+# newest versions the ranges allow (a week old at least: exclude-newer
+# in pyproject.toml). `make check-lock` is CI's check that uv.lock is
+# up to date with the pyproject files.
+lock: check-uv
+	uv lock
+
+lock-upgrade: check-uv
+	uv lock --upgrade
+
+check-lock: check-uv
+	uv lock --check
 
 test: test-backend test-frontend-unit test-e2e
 
@@ -282,12 +301,6 @@ alembic-current:
 # CREATE-SQL — catches missing tables, columns, indexes, FK changes.
 migration-parity:
 	$(PY) scripts/check_migration_parity.py
-
-# §16.13.t4 — `requirements*.txt` ↔ `pyproject.toml` dep parity.
-# Catches a security bump that updates one surface but not the other.
-# Source: see scripts/check_deps_parity.py docstring for design.
-check-deps-parity:
-	$(PY) scripts/check_deps_parity.py
 
 # §16.14 c1 — regenerate the starter station's synthetic iTunes pools.
 # Deterministic: re-running against unchanged inputs writes

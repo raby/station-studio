@@ -65,7 +65,7 @@ you've got installed:
 | **Download the app** | a Mac or Windows PC | Using it without a terminal |
 | **Docker** | docker | Trying it out, leaving it running on a NAS |
 | **Pip wheel** | Python 3.11+ | Local-only / BYO-music, no Node setup |
-| **Dev clone** | Python 3.11+, Node 22+, `make` | Hacking on Station Studio itself |
+| **Dev clone** | [uv](https://docs.astral.sh/uv/), Node 22+, `make` | Hacking on Station Studio itself |
 
 All four serve the same UI + API and the same auto-seeded example
 stations. Pick one:
@@ -175,9 +175,15 @@ If you want to modify Station Studio or contribute upstream:
 ```bash
 git clone https://github.com/raby/station-studio.git
 cd station-studio
-make install                  # creates .venv, installs Python + Node deps
+make install                  # .venv from uv.lock (uv sync), then the Node deps
 make dev                      # FastAPI :8001 + SvelteKit :5173 with HMR
 ```
+
+The Python packages come from `uv.lock`, the exact versions CI tests
+and the apps ship with ([uv](https://docs.astral.sh/uv/) fetches a
+Python 3.11+ if you haven't one). Station Player and Station Server
+share it: the same `.venv` has them too, so their tests run with
+`cd player && uv run python -m pytest` (or `server`).
 
 Open <http://localhost:5173>. Hot-reload on both backend and
 frontend; see [CONTRIBUTING.md](CONTRIBUTING.md) for the slice

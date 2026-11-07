@@ -8,6 +8,16 @@ this project uses semantic versioning.
 
 ### Changed
 
+- Every Python package all three apps are built, tested and shipped
+  with is pinned in `uv.lock` (versions and hashes). CI, the Mac and
+  Windows apps and the Docker image all install from it, so a release
+  ships the versions its pull request was tested with, not whatever was
+  newest on the day it was built. `make install` now uses
+  [uv](https://docs.astral.sh/uv/); `requirements.txt` and
+  `requirements-dev.txt` are gone (the dev tools are dependency groups
+  in `pyproject.toml`). The PyPI packages still ask for ranges.
+- The Docker image is built and checked on pull requests that change
+  what goes into it, not only after merging.
 - A fresh `DESIGN.md` describes how Station Studio, Station Player and
   Station Server are put together and the rules they keep. The old one,
   the project's 16,000-line running log, is kept unchanged as

@@ -1,0 +1,37 @@
+# The Docker image: build it, run it, check it serves (`make image-smoke`).
+#
+# On every push to main, and on pull requests that change what goes
+# into the image (the Dockerfile, the locked dependencies, the
+# packaging). Other pull requests skip it: the build takes a few
+# minutes, and ci.yml's wheel smoke covers the rest.
+
+name: image smoke
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - 'Dockerfile'
+      - '.dockerignore'
+      - 'docker-compose.yml'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - 'player/pyproject.toml'
+      - 'server/pyproject.toml'
+      - '.github/workflows/image-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  install-smoke-image:
+    name: install smoke (docker image)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: make image-smoke
+        # GitHub-hosted runners ship docker pre-installed and ready;
+        # no daemon setup step needed.
+        run: make image-smoke

@@ -20,8 +20,22 @@ authors = [
 keywords = ["music", "player", "radio", "itunes", "playlist"]
 dependencies = []
 
-[project.optional-dependencies]
-dev = ["pytest>=8.0"]
+# For working on it, not installed with it. Versions pinned in the
+# repo's uv.lock: `uv sync --package station-player` from the repo root.
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-github-actions-annotate-failures>=0.4.2",
+    # tests/test_browser.py drives the page in Chromium.
+    "playwright>=1.56,<1.57",
+]
+# The Mac and Windows apps (PyInstaller; packaging/).
+installer = [
+    "pyinstaller>=6.10,<7",
+    "certifi",
+    "pyobjc-framework-WebKit; sys_platform == 'darwin'",
+    "pyobjc-framework-Quartz; sys_platform == 'darwin'",
+]
 
 [project.scripts]
 station-player = "station_player.__main__:main"

@@ -53,6 +53,12 @@ jobs:
         with:
           python-version: '3.12'
 
+      - uses: astral-sh/setup-uv@v10.3.2
+        with:
+          version: '0.13.5'  # keep in step with the other workflows
+          python-version: '3.12'
+          activate-environment: true  # `python` is .venv's
+
       - name: read version
         id: version
         run: |
@@ -96,14 +102,12 @@ jobs:
       - name: tests
         if: steps.version.outputs.exists != 'true'
         run: |
-          python -m pip install pytest
+          uv sync --locked --package station-server
           cd server && python -m pytest -q
 
       - name: build wheel + sdist
         if: steps.version.outputs.exists != 'true'
-        run: |
-          python -m pip install build
-          python -m build server --outdir dist
+        run: uv build --package station-server --out-dir dist
 
       - name: smoke-install the wheel in a clean venv
         if: steps.version.outputs.exists != 'true'

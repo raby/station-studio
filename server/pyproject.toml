@@ -20,8 +20,25 @@ authors = [
 keywords = ["radio", "shoutcast", "icecast", "playout", "itunes", "playlist"]
 dependencies = ["station-player>=0.20"]
 
-[project.optional-dependencies]
-dev = ["pytest>=8.0"]
+# For working on it, not installed with it. Versions pinned in the
+# repo's uv.lock: `uv sync --package station-server` from the repo root.
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-github-actions-annotate-failures>=0.4.2",
+]
+installer = [
+    "pyinstaller>=6.10,<7",
+    "certifi",
+    "pyobjc-framework-WebKit; sys_platform == 'darwin'",
+    "pyobjc-framework-Quartz; sys_platform == 'darwin'",
+]
+
+# In this repo, station-player is the one beside it (player/), as the
+# installers and CI have always used; the published wheel still asks
+# PyPI for station-player>=0.20.
+[tool.uv.sources]
+station-player = { workspace = true }
 
 [project.scripts]
 station-server = "station_server.__main__:main"
