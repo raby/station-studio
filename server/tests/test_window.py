@@ -19,7 +19,7 @@ def test_only_the_downloaded_mac_app_has_a_window_of_its_own():
 def test_open_ui_opens_the_mac_app(tmp_path):
     ran = []
     how = open_ui("http://127.0.0.1:8770/", tmp_path, True, exe="", run=lambda cmd: ran.append(cmd),
-                  app=tmp_path / "Station Server.app")
+                  bundle=tmp_path / "Station Server.app")
     assert how == "window"
     assert ran == [["/usr/bin/open", str(tmp_path / "Station Server.app")]]
 

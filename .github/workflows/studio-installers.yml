@@ -25,8 +25,9 @@ on:
       - 'station_studio/updates.py'
       - '.github/workflows/studio-installers.yml'
       - 'scripts/check_macos_minimum.sh'
-      # The versions the app bundles.
+      # The versions the app bundles, and the code it shares.
       - 'uv.lock'
+      - 'appkit/**'
       - 'pyproject.toml'
   workflow_dispatch:
   workflow_call:
@@ -99,8 +100,9 @@ jobs:
           # Station Studio's dependencies plus PyInstaller, certifi and (on
           # the Mac) pyobjc for the app's own window, at uv.lock's
           # versions: the installer group in pyproject.toml. The app's own
-          # code is bundled from the checkout (the spec's pathex).
-          uv sync --locked --no-default-groups --group installer
+          # code is bundled from the checkout (the spec's pathex);
+          # station-appkit is installed (not editable), so it's bundled too.
+          uv sync --locked --no-editable --no-default-groups --group installer
 
       - name: read version
         id: version

@@ -345,7 +345,7 @@ def make_handler(app: ServerApp, picker: Picker, quit, remote: bool = False,
                 if bundle is None:
                     return self._error(HTTPStatus.CONFLICT, "Only the Mac app has a window of its own")
                 url = f"http://127.0.0.1:{self.server.server_address[1]}/"
-                threading.Thread(target=open_ui, args=(url, app.store.home, True), kwargs={"app": bundle},
+                threading.Thread(target=open_ui, args=(url, app.store.home, True), kwargs={"bundle": bundle},
                                  daemon=True).start()
                 return self._json({"ok": True})
             if path == "/api/quit":

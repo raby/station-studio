@@ -173,10 +173,30 @@ Each app has its own version and release:
 | Station Studio (Mac and Windows apps) | `pyproject.toml`, `station_studio/__init__.py` | Actions → **Publish Station Studio app** → Run workflow on main: tests, a draft `studio-v<version>` release, the downloads, then the release published |
 | Station Player | `player/pyproject.toml` | Actions → **Publish Station Player** (`player-v<version>`, and PyPI) |
 | Station Server | `server/pyproject.toml` | Actions → **Publish Station Server** (`server-v<version>`) |
+| station-appkit | `appkit/pyproject.toml`, `appkit/station_appkit/__init__.py` | With whichever app's PyPI release comes first (below) |
 
 Each workflow's header comment says exactly what it checks and
 builds. If a download job fails, use **Re-run failed jobs** on the
 run: the draft is kept, and published once they pass.
+
+**station-appkit** (`appkit/`) is what the three apps share: the
+new-version check, the self-updater and the app window. The Mac and
+Windows apps and the Docker image bundle it from the repo, so they
+always have the code they were built with. A pip or pipx install gets it
+from PyPI, so each app's PyPI release builds appkit too
+(`scripts/appkit_release.py`) and uploads it with the app when PyPI
+hasn't that version yet. If PyPI has that version with other code, the
+release stops before anything is published: **bump appkit's version
+whenever its code changes**, and raise the apps' `station-appkit>=`
+floor when they need something new in it.
+
+*One-time setup:* on pypi.org, station-appkit needs a trusted publisher
+for each workflow that can upload it: `publish.yml` (environment
+`pypi`), `publish-player.yml` (`pypi-player`) and `publish-server.yml`
+(`pypi-server`). Add the first as a pending publisher (Account ›
+Publishing; project name `station-appkit`); once the first upload has
+made the project, add the other two under the project's own Publishing
+settings.
 
 ## Releasing to PyPI
 

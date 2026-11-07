@@ -17,6 +17,7 @@
 *.pyc
 *.pyo
 .pytest_cache/
+**/.pytest_cache/
 .coverage
 .coverage.*
 htmlcov/

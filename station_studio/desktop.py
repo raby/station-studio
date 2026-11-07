@@ -246,7 +246,7 @@ class DesktopState:
             "kind": self.kind,
             "can_update": self.kind in ("mac", "windows"),
             "latest": newer,
-            "release_page": selfupdate.RELEASE_PAGE.format(version=newer) if newer else None,
+            "release_page": selfupdate.release_page(newer) if newer else None,
             "update": self.updater.status(),
             "home": str(self.home),
             "settings": self.settings(),

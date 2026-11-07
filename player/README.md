@@ -483,7 +483,9 @@ that; the one-time setup is described at the top of
 `.github/workflows/publish-player.yml`).
 
 The server is `station_player/server.py` (standard library
-`http.server`), the library reader is `station_player/library.py`, file
+`http.server`; the update check, self-updater and app window are
+station-appkit's, in the repo's `appkit/`, shared with Station Studio
+and Station Server), the library reader is `station_player/library.py`, file
 tags and art are read by `station_player/tags.py`, the radio relay is
 `station_player/radio.py`, shortcuts are `station_player/desktop.py`,
 and the UI is plain HTML / CSS / JS in `station_player/static/`.

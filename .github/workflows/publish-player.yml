@@ -14,6 +14,10 @@
 # pending publisher): project station-player, owner raby, repo
 # station-studio, workflow publish-player.yml, environment pypi-player.
 #
+# station-appkit (appkit/) goes up with this release when PyPI hasn't its
+# version yet (scripts/appkit_release.py): it needs a trusted publisher
+# for this workflow too (CONTRIBUTING.md, Releases).
+#
 # The Mac .dmg files and the Windows setup .exe (player-installers.yml)
 # are built after the release is created and attached to it.
 #
@@ -89,6 +93,16 @@ jobs:
         if: steps.version.outputs.exists != 'true'
         run: uv build --package station-player --out-dir dist
 
+      - name: station-appkit, built beside it
+        # The update check, self-updater and app window the apps share
+        # (appkit/), which a pip install needs from PyPI. Its files go up
+        # with this release when PyPI hasn't this version yet; the release
+        # stops here if PyPI has it with other code (bump appkit's version).
+        if: steps.version.outputs.exists != 'true'
+        run: |
+          uv build --package station-appkit --out-dir dist
+          python scripts/appkit_release.py dist/station_appkit-*.whl
+
       - name: smoke-install the wheel in a clean venv
         if: steps.version.outputs.exists != 'true'
         run: |
@@ -113,7 +127,7 @@ jobs:
         if: steps.version.outputs.exists != 'true'
         run: |
           VERSION=${{ steps.version.outputs.version }}
-          WHEEL=$(basename dist/*.whl)
+          WHEEL=$(basename dist/station_player-*.whl)
           cat > notes.md <<NOTES
           Station Player $VERSION: plays station-studio's exported playlists, local music folders and internet radio.
 
@@ -170,6 +184,22 @@ jobs:
         run: |
           gh release download "player-v${{ needs.release.outputs.version }}" \
             --repo "$GITHUB_REPOSITORY" --dir dist --pattern '*.whl' --pattern '*.tar.gz'
+          ls -la dist
+
+      - uses: actions/checkout@v5
+        with:
+          sparse-checkout: scripts/appkit_release.py
+          sparse-checkout-cone-mode: false
+          path: repo
+
+      - name: station-appkit only if PyPI hasn't it
+        # Asked again now: another app's release may have put it up since.
+        run: |
+          if ls dist/station_appkit-*.whl >/dev/null 2>&1; then
+            out=$(python3 repo/scripts/appkit_release.py dist/station_appkit-*.whl)
+            echo "$out"
+            case "$out" in *publish=false*) rm -f dist/station_appkit-* ;; esac
+          fi
           ls -la dist
 
       - name: publish
