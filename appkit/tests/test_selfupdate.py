@@ -105,6 +105,7 @@ def test_download_checks_the_file(tmp_path):
     assert not (tmp_path / "g").exists()
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="Mac paths (/Volumes, /Applications)")
 def test_mac_app_must_be_replaceable(app, tmp_path):
     bundle = tmp_path / "Applications" / "Station Test.app"
     (bundle / "Contents" / "MacOS").mkdir(parents=True)
@@ -163,7 +164,7 @@ def test_mac_unpack_checks_the_version(app, tmp_path):
     new = selfupdate.mac_unpack(app, tmp_path / "x.dmg", bundle, NEXT, run=run)
     assert new == tmp_path / ".Station Test 99.0.0.app" and new.is_dir()
     assert [c[0] for c in calls] == ["hdiutil", "ditto", "hdiutil"]  # detached again
-    assert calls[1][1].endswith("/Station Test.app")  # the app in the disk image
+    assert Path(calls[1][1]).name == "Station Test.app"  # the app in the disk image
     run.version = "1.0"
     with pytest.raises(UpdateError, match="held version 1.0"):
         selfupdate.mac_unpack(app, tmp_path / "x.dmg", bundle, NEXT, run=run)
