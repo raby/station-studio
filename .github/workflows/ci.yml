@@ -15,11 +15,18 @@ jobs:
         with:
           python-version: '3.14'
           allow-prereleases: true
+      - uses: astral-sh/setup-uv@v10.3.2
+        with:
+          version: '0.13.5'  # keep in step with the other workflows
+          python-version: '3.14'
+          activate-environment: true  # `python` is .venv's
+      - name: uv.lock is up to date
+        # Fails when a pyproject.toml's dependencies changed without
+        # `make lock`, so what CI tests is what the lock says.
+        run: uv lock --check
       - name: install
-        run: |
-          python -m venv .venv
-          .venv/bin/pip install -U pip
-          .venv/bin/pip install -r requirements.txt -r requirements-dev.txt
+        # Exactly the versions in uv.lock (runtime + dev + docs).
+        run: uv sync --locked
       - name: pytest + coverage gate
         run: make test-backend
       - name: alembic ↔ create_all schema parity
@@ -27,13 +34,6 @@ jobs:
         # (DESIGN.md §17 review S2). Both produce the same schema from
         # engine/models.py at HEAD; drift = a migration is missing.
         run: make migration-parity
-      - name: requirements ↔ pyproject dep parity
-        # §16.13.t4: catches a `pip install -U fastapi`-style bump that
-        # touches requirements.txt but forgets pyproject (or vice-versa).
-        # Both surfaces must list the same packages with the same version
-        # specifiers or the wheel ships a different runtime contract
-        # than `make install` gives developers.
-        run: make check-deps-parity
 
   player:
     name: station-player (pytest)
@@ -43,13 +43,17 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
+      - uses: astral-sh/setup-uv@v10.3.2
+        with:
+          version: '0.13.5'  # keep in step with the other workflows
+          python-version: '3.12'
+          activate-environment: true  # `python` is .venv's
       - name: install
         # Playwright drives the player page in Chromium (tests/test_browser.py).
+        # The dev group (uv.lock) also has the annotate plugin, which turns
+        # each failing test into an annotation on the run and the PR.
         run: |
-          # The annotate plugin turns each failing test into an annotation
-          # on the run and the PR (name + message), so a failure can be
-          # read without opening the full log.
-          python -m pip install pytest pytest-github-actions-annotate-failures==0.4.2 playwright==1.56.0
+          uv sync --locked --package station-player
           python -m playwright install --with-deps chromium
       - name: pytest
         working-directory: player
@@ -65,6 +69,11 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
+      - uses: astral-sh/setup-uv@v10.3.2
+        with:
+          version: '0.13.5'  # keep in step with the other workflows
+          python-version: '3.12'
+          activate-environment: true  # `python` is .venv's
       - name: install
         # ffmpeg does the decoding and encoding; the end-to-end tests need it.
         # A static build from BtbN/FFmpeg-Builds (as in the Windows app), not
@@ -85,7 +94,7 @@ jobs:
           tar -xf "$RUNNER_TEMP/ffmpeg/ffmpeg-master-latest-linux64-lgpl.tar.xz" -C "$RUNNER_TEMP/ffmpeg"
           echo "$RUNNER_TEMP/ffmpeg/ffmpeg-master-latest-linux64-lgpl/bin" >> "$GITHUB_PATH"
           "$RUNNER_TEMP/ffmpeg/ffmpeg-master-latest-linux64-lgpl/bin/ffmpeg" -hide_banner -encoders | grep -q libmp3lame
-          python -m pip install pytest pytest-github-actions-annotate-failures==0.4.2
+          uv sync --locked --package station-server
       - name: pytest
         working-directory: server
         run: python -m pytest -q
@@ -111,6 +120,11 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
+      - uses: astral-sh/setup-uv@v10.3.2
+        with:
+          version: '0.13.5'  # keep in step with the other workflows
+          python-version: '3.12'
+          activate-environment: true  # `python` is .venv's
       - name: install
         timeout-minutes: 10
         env:
@@ -140,7 +154,7 @@ jobs:
           fi
           echo "$bin" >> "$GITHUB_PATH"
           "$bin/ffmpeg" -hide_banner -encoders | grep -q libmp3lame
-          python -m pip install pytest pytest-github-actions-annotate-failures==0.4.2
+          uv sync --locked --package station-server
       - name: pytest
         working-directory: server
         run: python -m pytest -q -p no:cacheprovider
@@ -182,16 +196,18 @@ jobs:
         with:
           python-version: '3.14'
           allow-prereleases: true
+      - uses: astral-sh/setup-uv@v10.3.2
+        with:
+          version: '0.13.5'  # keep in step with the other workflows
+          python-version: '3.14'
+          activate-environment: true  # `python` is .venv's
       - uses: actions/setup-node@v5
         with:
           node-version: '20'
           cache: 'npm'
           cache-dependency-path: web/package-lock.json
       - name: install python
-        run: |
-          python -m venv .venv
-          .venv/bin/pip install -U pip
-          .venv/bin/pip install -r requirements.txt -r requirements-dev.txt
+        run: uv sync --locked
       - name: install node
         working-directory: web
         run: npm ci
@@ -215,9 +231,9 @@ jobs:
   # build cleanly (force-include regression, lifespan import error,
   # SPA mount drift) and no PR check catches it until release time.
   #
-  # Docker smoke (`make image-smoke`) is split into its own job below;
-  # it runs on push-to-main only because docker daemon + multi-stage
-  # build adds ~2-3 min and mostly overlaps with wheel-smoke coverage.
+  # Docker smoke (`make image-smoke`) is its own workflow,
+  # image-smoke.yml: on push to main, and on pull requests that change
+  # what goes into the image.
   install-smoke-wheel:
     name: install smoke (wheel)
     runs-on: ubuntu-latest
@@ -226,11 +242,11 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
-          cache: 'pip'
-          cache-dependency-path: |
-            requirements.txt
-            requirements-dev.txt
-            pyproject.toml
+      - uses: astral-sh/setup-uv@v10.3.2
+        with:
+          version: '0.13.5'  # keep in step with the other workflows
+          python-version: '3.12'
+          activate-environment: true  # `python` is .venv's
       - uses: actions/setup-node@v5
         with:
           node-version: '22'
@@ -245,30 +261,11 @@ jobs:
         working-directory: web
         run: npm ci
       - name: install build deps (python)
-        # `make wheel` shells out to `$(PY) -m build`; .venv ships
-        # `build` because it's listed in requirements-dev.txt.
-        run: |
-          python -m venv .venv
-          .venv/bin/pip install -U pip
-          .venv/bin/pip install -r requirements.txt -r requirements-dev.txt
+        # `make wheel` shells out to `$(PY) -m build`, in the dev group.
+        run: uv sync --locked
       - name: make wheel-smoke
         # Same target the release process uses locally + that publish.yml
         # consumes. Builds the wheel, installs into a temp venv, starts
         # station-studio serve, curls /, /api/stations, /sources for
         # HTTP-200 + content-type. ~30-60s end-to-end with cached deps.
         run: make wheel-smoke
-
-  install-smoke-image:
-    name: install smoke (docker image)
-    # Push-to-main only (not PRs). Docker pulls + multi-stage builds
-    # are expensive; wheel-smoke above covers most regressions. This
-    # job is the belt-and-suspenders Dockerfile / compose / healthcheck
-    # regression catch before any tag gets cut.
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - name: make image-smoke
-        # GitHub-hosted runners ship docker pre-installed and ready;
-        # no daemon setup step needed.
-        run: make image-smoke

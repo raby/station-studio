@@ -208,6 +208,10 @@ More: [Station Server](https://raby.github.io/station-studio/server/).
   step where the pages work something out themselves (moving rules,
   following a rule through queued edits).
   More: [Test pyramid](https://raby.github.io/station-studio/architecture/test-pyramid/).
+- **Dependencies.** Each app's `pyproject.toml` asks for ranges; the
+  repository's `uv.lock` pins the exact versions (and hashes) all three
+  are tested and shipped with, and CI, the installers and the Docker
+  image install from it.
 - **Releases.** Each app has its own version and release:
   Station Studio's PyPI package from a `v<version>` tag, and its Mac and
   Windows apps (`studio-v<version>`), Station Player (`player-v<version>`)

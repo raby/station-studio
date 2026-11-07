@@ -3,7 +3,7 @@
 # terminal, Python or Docker.
 #
 #   cd web && npm ci && npm run build && cd ..
-#   pip install . pyinstaller certifi
+#   uv sync --locked --no-default-groups --group installer   (pyproject.toml's installer group)
 #   pyinstaller packaging/station-studio.spec
 #
 # Makes dist/Station Studio.app (Mac) or dist/Station Studio/ (Windows),

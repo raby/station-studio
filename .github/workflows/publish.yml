@@ -112,15 +112,14 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'  # matches Dockerfile runtime base
-          # t1-review 🟢-2: pip cache. setup-python's `cache: pip`
-          # hashes requirements files by default. Release runs are
-          # rare but ~30-60s shaved off each one adds up to less
-          # CI minutes spent on a release.
-          cache: 'pip'
-          cache-dependency-path: |
-            requirements.txt
-            requirements-dev.txt
-            pyproject.toml
+
+      # No cache on a tag push (setup-uv's default for releases), so a
+      # release never builds from a cache a pull request wrote.
+      - uses: astral-sh/setup-uv@v10.3.2
+        with:
+          version: '0.13.5'  # keep in step with the other workflows
+          python-version: '3.12'
+          activate-environment: true  # `python` is .venv's
 
       - uses: actions/setup-node@v5
         with:
@@ -168,10 +167,8 @@ jobs:
         # checks inline. The duplication is the right tradeoff: releases
         # are rare, ~minutes of CI is cheap, and the SAME-COMMIT
         # guarantee is what users actually want.
-        run: |
-          python -m venv .venv
-          .venv/bin/pip install -U pip
-          .venv/bin/pip install -r requirements.txt -r requirements-dev.txt
+        # The versions in uv.lock, as CI tested.
+        run: uv sync --locked
 
       - name: pre-flight pytest (release gate)
         # Same coverage gate as ci.yml's backend job. Catches the

@@ -460,14 +460,17 @@ generates carry each track's file location through to this player.
 
 ## Development
 
+From the repository root, with [uv](https://docs.astral.sh/uv/) (the
+test tools at the versions in `uv.lock`, the same as CI):
+
 ```bash
+uv sync --all-packages          # or `make install`: all three apps' tools
 cd player
-python -m pytest
+uv run python -m pytest
 ```
 
 `tests/test_browser.py` drives the page in Chromium and is skipped unless
-Playwright is installed (`pip install playwright && python -m playwright
-install chromium`).
+Chromium is there: `uv run python -m playwright install chromium` once.
 
 ### Releasing
 

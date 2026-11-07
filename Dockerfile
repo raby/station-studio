@@ -4,13 +4,15 @@
 #   1. web-build  — node:22 builds the SvelteKit adapter-static SPA
 #                   into web/build/. Isolated from the python toolchain;
 #                   only its build/ output crosses the stage boundary.
-#   2. wheel-build — python:3.12-slim runs `python -m build --wheel`
-#                   against the repo, with web/build/ COPY'd in from
-#                   stage 1. Produces dist/station_studio-*.whl.
+#   2. wheel-build — python:3.12-slim builds the wheel (uv build)
+#                   with web/build/ COPY'd in from stage 1, and writes
+#                   the runtime dependencies' exact versions and hashes
+#                   from uv.lock to requirements.txt.
 #                   `pyproject.toml`'s force-include block (c4) bakes
 #                   web/build/ into the wheel under
 #                   station_studio/_bundled/web/.
-#   3. runtime    — python:3.12-slim + the wheel installed, non-root
+#   3. runtime    — python:3.12-slim + the locked dependencies (hashes
+#                   checked) + the wheel installed, non-root
 #                   user, /data volume mounted at $STATION_STUDIO_HOME.
 #                   Final image is small (no node toolchain, no source
 #                   tree — just the wheel + its deps).
@@ -39,15 +41,19 @@ RUN npm run build
 # ---- stage 2: Python wheel build ----
 FROM python:3.12-slim AS wheel-build
 WORKDIR /src
-# Hatchling backend + the `build` frontend. --no-cache-dir keeps the
-# layer lean; this image is throwaway anyway.
-RUN pip install --no-cache-dir build hatchling
+# uv (the same version as CI) builds the wheel and reads uv.lock.
+# --no-cache-dir keeps the layer lean; this image is throwaway anyway.
+RUN pip install --no-cache-dir 'uv==0.13.5'
 
 # COPY only what hatchling reads. Excluding the unrelated dev
 # scaffolding (tests/, web/src/, node_modules/, .venv/) keeps the
 # build context honest — anything not listed here can't sneak into
 # the wheel by accident.
-COPY pyproject.toml README.md LICENSE alembic.ini ./
+COPY pyproject.toml uv.lock README.md LICENSE alembic.ini ./
+# uv.lock covers the whole workspace, so uv reads its other members'
+# pyproject files (only those: nothing of theirs goes in the image).
+COPY player/pyproject.toml ./player/
+COPY server/pyproject.toml ./server/
 COPY station_studio/ ./station_studio/
 COPY api/ ./api/
 COPY engine/ ./engine/
@@ -58,7 +64,11 @@ COPY migrations/ ./migrations/
 # force-include block expects (`web/build` → bundled/_web/).
 COPY --from=web-build /src/web/build ./web/build
 
-RUN python -m build --wheel --outdir /dist
+RUN uv build --wheel --out-dir /dist
+# Station Studio's runtime dependencies at uv.lock's versions, each with
+# its hashes (no dev, docs or installer tools; no workspace packages).
+RUN uv export --frozen --no-default-groups --no-emit-project --no-emit-workspace \
+      --output-file /dist/requirements.txt
 
 
 # ---- stage 3: runtime ----
@@ -78,11 +88,15 @@ RUN useradd --uid 1000 --create-home --home-dir /home/app --shell /bin/sh app
 # when we know what's in the new release.
 RUN pip install --no-cache-dir --upgrade 'pip>=25.0,<27'
 
-# Install the wheel system-wide. `--no-cache-dir` avoids the pip cache
-# layer; the wheel itself gets removed once installed so the final
-# image doesn't carry the redundant .whl file.
-COPY --from=wheel-build /dist/*.whl /tmp/
-RUN pip install --no-cache-dir /tmp/*.whl && rm /tmp/*.whl
+# The dependencies first, exactly as locked (--require-hashes: a
+# download that doesn't match uv.lock's hash fails the build), then the
+# wheel itself without resolving anything again. `--no-cache-dir` avoids
+# the pip cache layer; the files are removed once installed.
+COPY --from=wheel-build /dist/ /tmp/dist/
+RUN pip install --no-cache-dir --require-hashes -r /tmp/dist/requirements.txt \
+ && pip install --no-cache-dir --no-deps /tmp/dist/*.whl \
+ && pip check \
+ && rm -rf /tmp/dist
 
 # App-home lives at /data — a docker volume mount point. The first-run
 # bootstrap (c3) creates the DB + copies bundled stations here; on

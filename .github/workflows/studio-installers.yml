@@ -25,6 +25,9 @@ on:
       - 'station_studio/updates.py'
       - '.github/workflows/studio-installers.yml'
       - 'scripts/check_macos_minimum.sh'
+      # The versions the app bundles.
+      - 'uv.lock'
+      - 'pyproject.toml'
   workflow_dispatch:
   workflow_call:
     inputs:
@@ -73,6 +76,12 @@ jobs:
         with:
           python-version: '3.12'
 
+      - uses: astral-sh/setup-uv@v10.3.2
+        with:
+          version: '0.13.5'  # keep in step with the other workflows
+          python-version: '3.12'
+          activate-environment: true  # `python` is .venv's
+
       - uses: actions/setup-node@v5
         with:
           node-version: '22'
@@ -87,9 +96,11 @@ jobs:
 
       - name: tools
         run: |
-          python -m pip install . "pyinstaller>=6.10,<7" certifi
-          # The Mac app's own window (macwindow.py); Quartz only for the check below.
-          if [ "${{ matrix.kind }}" = mac ]; then python -m pip install pyobjc-framework-WebKit pyobjc-framework-Quartz; fi
+          # Station Studio's dependencies plus PyInstaller, certifi and (on
+          # the Mac) pyobjc for the app's own window, at uv.lock's
+          # versions: the installer group in pyproject.toml. The app's own
+          # code is bundled from the checkout (the spec's pathex).
+          uv sync --locked --no-default-groups --group installer
 
       - name: read version
         id: version

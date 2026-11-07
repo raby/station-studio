@@ -93,7 +93,9 @@ is the wrapper.
 === "Dev clone"
 
     For hacking on Station Studio itself. Two processes (FastAPI
-    :8001 + SvelteKit :5173) with hot-reload on both.
+    :8001 + SvelteKit :5173) with hot-reload on both. Needs
+    [uv](https://docs.astral.sh/uv/) (for the Python packages, at
+    the versions in `uv.lock`), Node 22+ and `make`.
 
     ```bash
     git clone https://github.com/raby/station-studio.git
