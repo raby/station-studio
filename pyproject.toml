@@ -56,6 +56,9 @@ dependencies = [
     "python-multipart>=0.0.9",
     # The `station-studio` command line.
     "click>=8.1",
+    # The update check, self-updater and app window, shared with Station
+    # Player and Station Server (appkit/ in this repo).
+    "station-appkit>=1.0",
 ]
 
 # Tools for working on Station Studio, not installed with it (PEP 735
@@ -178,6 +181,9 @@ exclude = [
     "/out",
     # Station Player ships as its own package (player/pyproject.toml).
     "/player",
+    # So do Station Server and station-appkit (server/, appkit/).
+    "/server",
+    "/appkit",
     # The Mac/Windows app recipe (PyInstaller + Inno Setup).
     "/packaging",
 ]
@@ -217,5 +223,8 @@ exclude-newer = "7 days"
 # needs the web pages built first (web/build, force-included above).
 package = false
 
+[tool.uv.sources]
+station-appkit = { workspace = true }
+
 [tool.uv.workspace]
-members = ["player", "server"]
+members = ["appkit", "player", "server"]

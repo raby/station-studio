@@ -109,11 +109,22 @@ jobs:
         if: steps.version.outputs.exists != 'true'
         run: uv build --package station-server --out-dir dist
 
+      - name: station-appkit, built beside it
+        # The update check, self-updater and app window the apps share
+        # (appkit/), which a pip install needs from PyPI. Its files go up
+        # with this release when PyPI hasn't this version yet; the release
+        # stops here if PyPI has it with other code (bump appkit's version).
+        if: steps.version.outputs.exists != 'true'
+        run: |
+          uv build --package station-appkit --out-dir dist
+          python scripts/appkit_release.py dist/station_appkit-*.whl
+
       - name: smoke-install the wheel in a clean venv
         if: steps.version.outputs.exists != 'true'
         run: |
           python -m venv /tmp/smoke
-          /tmp/smoke/bin/pip install ./player dist/*.whl  # the player from this commit, as PyPI will have it
+          # The player and appkit from this commit, as PyPI will have them.
+          /tmp/smoke/bin/pip install ./player dist/*.whl
           /tmp/smoke/bin/station-server --version | grep -qx "station-server ${{ steps.version.outputs.version }}"
           /tmp/smoke/bin/python -c "import station_server.web as w; assert (w.STATIC_DIR / 'sw.js').is_file()"
 
@@ -207,6 +218,22 @@ jobs:
             git clone --quiet --depth 1 --branch "$TAG" "https://github.com/$GITHUB_REPOSITORY.git" src
             python -m pip install build
             python -m build src/server --outdir dist
+          fi
+          ls -la dist
+
+      - uses: actions/checkout@v5
+        with:
+          sparse-checkout: scripts/appkit_release.py
+          sparse-checkout-cone-mode: false
+          path: repo
+
+      - name: station-appkit only if PyPI hasn't it
+        # Asked again now: another app's release may have put it up since.
+        run: |
+          if ls dist/station_appkit-*.whl >/dev/null 2>&1; then
+            out=$(python3 repo/scripts/appkit_release.py dist/station_appkit-*.whl)
+            echo "$out"
+            case "$out" in *publish=false*) rm -f dist/station_appkit-* ;; esac
           fi
           ls -la dist
 

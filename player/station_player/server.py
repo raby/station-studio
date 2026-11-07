@@ -1006,13 +1006,15 @@ class PlayerApp:
         self.updater.start(version)
 
     def keep_checking_for_updates(self) -> threading.Thread:
-        """Check now and then daily: it may run at login for weeks."""
+        """Check now and then hourly (the cache keeps it to once a day, and
+        a look that couldn't reach GitHub is tried again an hour on): it
+        may run at login for weeks."""
         def loop():
             while True:
                 worker = self.check_for_update()
                 if worker:
                     worker.join()
-                time.sleep(updates.CHECK_EVERY)
+                time.sleep(60 * 60)
 
         thread = threading.Thread(target=loop, name="update-checks", daemon=True)
         thread.start()

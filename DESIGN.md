@@ -56,7 +56,15 @@ Station Studio ─┬─ exports folder ──► Station Player
 - **Server → Player:** Station Server's stream is a radio station like
   any other; its now/next feed tells Station Player (and the station's
   website) what's on and what's next.
-- **Shared code:** Station Server depends on `station-player` for reading
+- **Shared code:** all three depend on **station-appkit**
+  ([`appkit/`](https://github.com/raby/station-studio/tree/main/appkit)):
+  the new-version check, the self-updater and the app window (a Chrome
+  or Edge app window, or on the Mac the app's own WebKit window). Each
+  app describes itself once (`appinfo.py`: name, releases, port, Mac
+  helper) and its `updates.py`, `selfupdate.py`, `window.py` and
+  `macwindow.py` are thin, adding only what's its own (Station Player's
+  pip updates and mini player, Station Server's "stations go off air"
+  question). Station Server also depends on `station-player` for reading
   tags, loudness, the play log and station logos, so both read music the
   same way.
 
@@ -155,7 +163,7 @@ themselves (the download is checked against its published SHA-256).
 
 ## Station Player (`player/`)
 
-A Python standard-library HTTP server (no dependencies) on
+A Python standard-library HTTP server (no dependencies but station-appkit, itself standard library) on
 `127.0.0.1:8765` and a page of plain HTML, CSS and JavaScript. It plays
 music folders, iTunes playlists and radio stations (relayed, so the page
 can play them), with alarms, schedules and ambient mode. Its **Studio
@@ -212,6 +220,10 @@ More: [Station Server](https://raby.github.io/station-studio/server/).
   repository's `uv.lock` pins the exact versions (and hashes) all three
   are tested and shipped with, and CI, the installers and the Docker
   image install from it.
+- **Updates are checked.** Update now uses a new version's installer
+  only when its size and SHA-256 match what GitHub publishes for it, and
+  only from the project's own releases (`station_appkit.selfupdate`, one
+  copy for all three apps).
 - **Releases.** Each app has its own version and release:
   Station Studio's PyPI package from a `v<version>` tag, and its Mac and
   Windows apps (`studio-v<version>`), Station Player (`player-v<version>`)

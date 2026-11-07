@@ -277,7 +277,7 @@ def test_window_route_opens_the_mac_apps_own_window(api, monkeypatch, tmp_path):
     import station_server.window as window
     opened = []
     monkeypatch.setattr(window, "mac_app_bundle", lambda: tmp_path / "Station Server.app")
-    monkeypatch.setattr(window, "open_ui", lambda url, home, own, app=None: opened.append(app))
+    monkeypatch.setattr(window, "open_ui", lambda url, home, own, bundle=None: opened.append(bundle))
     assert api("/api/window", {})[0] == 200
     assert wait_for(lambda: opened == [tmp_path / "Station Server.app"])
 

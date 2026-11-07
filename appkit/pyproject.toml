@@ -1,0 +1,44 @@
+# station-appkit: what Station Studio, Station Player and Station Server
+# share as desktop apps. The new-version check, the self-updater (download,
+# SHA-256 check, install) and the app window: a Chrome or Edge app window,
+# or on the Mac the app's own WebKit window. Standard library only (the
+# Mac window needs PyObjC, which only the downloaded Mac apps carry).
+#
+# In this repo the three apps use it from appkit/ (a uv workspace member);
+# the Mac and Windows downloads bundle it from here. Each app's Publish
+# workflow puts this version on PyPI first if it isn't there yet, so a
+# `pipx install station-player` (say) finds it.
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "station-appkit"
+version = "1.0.0"
+description = "Update check, self-updater and app window shared by Station Studio, Station Player and Station Server"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.11"
+authors = [
+    { name = "Raby Whyte", email = "rabywhyte@gmail.com" },
+]
+keywords = ["station-studio", "updater", "desktop"]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/raby/station-studio"
+Repository = "https://github.com/raby/station-studio"
+
+# For working on it, not installed with it.
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-github-actions-annotate-failures>=0.4.2",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["station_appkit"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
