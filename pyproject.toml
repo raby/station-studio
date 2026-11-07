@@ -64,7 +64,10 @@ dependencies = [
 [dependency-groups]
 dev = [
     "pytest>=8.0",
-    "httpx>=0.27",
+    # FastAPI's TestClient (Starlette's) sends its requests with httpx2,
+    # the maintained fork of httpx; with plain httpx it warns that's
+    # deprecated.
+    "httpx2>=2.9",
     # `make test-backend`'s --fail-under gate.
     "coverage>=7.10",
     # `make wheel` (python -m build).
@@ -190,6 +193,12 @@ exclude = [
 testpaths = ["tests"]
 markers = [
     "slow: subprocess / uvicorn / network tests that add ~5s+ to a run",
+]
+# A deprecation from Starlette (FastAPI's base) fails the run, so the
+# monthly dependency upgrade shows it while it's still a warning, not
+# after the release that removes it.
+filterwarnings = [
+    "error::starlette.exceptions.StarletteDeprecationWarning",
 ]
 
 # uv: one lock file (uv.lock) for all three apps, so CI, the installers

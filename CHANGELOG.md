@@ -8,6 +8,11 @@ this project uses semantic versioning.
 
 ### Changed
 
+- The tests use httpx2, the maintained fork of httpx that Starlette
+  (and so FastAPI's test client) now asks for, instead of plain httpx,
+  which it warned is deprecated. A Starlette deprecation warning now
+  fails the tests, so the monthly dependency upgrade shows the next one
+  while it's still a warning.
 - Every Python package all three apps are built, tested and shipped
   with is pinned in `uv.lock` (versions and hashes). CI, the Mac and
   Windows apps and the Docker image all install from it, so a release

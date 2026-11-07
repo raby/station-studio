@@ -344,12 +344,19 @@ def test_large_sidecar_response_is_gzip_compressed(editor_api):
 
     r = client.get("/api/stations/big/sidecar")
     assert r.status_code == 200
-    # TestClient sets Accept-Encoding: gzip,deflate by default; the
-    # middleware activates above the 1000-byte threshold.
+    # TestClient (httpx2) asks for gzip, deflate (and zstd from Python
+    # 3.14); the middleware activates above the 1000-byte threshold.
     assert r.headers.get("content-encoding") == "gzip", (
         f"expected gzip; got headers={dict(r.headers)}"
     )
-    # Body still decodes correctly (httpx transparently un-gzips).
+    # What a browser asks for (Chrome: br and zstd too) still gets gzip.
+    chrome = client.get(
+        "/api/stations/big/sidecar",
+        headers={"Accept-Encoding": "gzip, deflate, br, zstd"},
+    )
+    assert chrome.headers.get("content-encoding") == "gzip"
+    assert chrome.json() == r.json()
+    # Body still decodes correctly (httpx2 transparently un-gzips).
     body = r.json()
     assert len(body["sidecar"]["sections"][0]["blocks"]) == 600
 
