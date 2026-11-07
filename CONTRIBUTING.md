@@ -11,112 +11,38 @@ without breaking real stations" true.
 
 ## How a slice happens
 
-Station Studio's history is a long sequence of small, named slices
-(§14.x in `DESIGN.md`). Each slice is one coherent unit of work:
-designed → discussed → implemented → reviewed → shipped. The
-discipline is:
+Work happens in small slices. Each slice is one coherent piece of
+work, on its own branch, in its own pull request:
 
-1. **Design discussion** — for anything non-trivial, propose a
-   design before writing code. Open an issue or PR with the design
-   first. The §14.x entries in `DESIGN.md` are the model; lay out
-   what the slice ships, what decisions were taken, what was
-   punted.
+1. **Design first.** For anything non-trivial, say what the slice
+   does before writing code: what it ships, what it doesn't, and the
+   decisions taken (with the alternatives turned down). Open an issue,
+   or put it at the top of the pull request.
 
-2. **Mid-slice review** (for two-commit slices) — after the first
-   commit lands, review it before the second. Real bugs have been
-   caught this way in §14.25 / §14.28 / §14.32 / §14.34 / §14.37
-   / §14.38 / §14.40 by a fresh eye on settled structure.
+2. **Build it with its tests.** Every behaviour change comes with a
+   test at the right layer (see below). A slice that's too big for one
+   review becomes two pull requests, each one working on its own.
 
-3. **Slice-level review** — after the slice ships, review the
-   whole thing. Catches integration-level issues the per-commit
-   reviews miss.
+3. **Review it in full before merging**: correctness, what's missing,
+   what it could break. Anything found is fixed in the same pull
+   request, and the fix is reviewed again.
 
-4. **DESIGN entry + status snapshot** — every shipped slice gets a
-   §14.x entry. The entry documents *why* the slice exists, *what*
-   shipped, *what was punted*, and any *carry-forward notes* for
-   the next slice. Pattern: read existing §14.x entries to see the
-   shape.
+4. **Write it down where it'll be read:**
+    - the pull request says what changed, why, and what was checked;
+    - `CHANGELOG.md` says it for people using the apps, in plain words;
+    - [DESIGN.md](DESIGN.md) and the docs site's
+      [Architecture](https://raby.github.io/station-studio/architecture/)
+      pages hold the design. A slice that changes how a part works
+      updates them in the same pull request.
 
-The slice pattern is mature; if a change doesn't fit it, propose
-the change to the pattern itself first.
+Follow-ups found along the way ("we should also…") go in the pull
+request under what it doesn't do, so they can be picked up as slices
+of their own, never only in a review comment.
 
-## Plan audits
-
-The slice pattern is great for shipping but easy to drop "we
-should also..." items between commits. Punts in §14.x entries,
-"later" rows in §11, and `Trigger to pick up` columns in punt
-tables accumulate; without periodic surfacing they decay into
-"things only the original author remembers."
-
-**Plan audits prevent that.** A plan audit is a 30-60 minute
-sweep: read DESIGN.md looking for queued / deferred / punted items
-not in the §16 plan order, then decide for each one:
-
-- **Elevate** — give it a §16.x number + a brief in the plan. The
-  brief is short (effort estimate + trigger + scope), not a spec.
-- **Confirm tail** — explicitly note it stays deferred + WHY (no
-  demand, waits for a felt pain, etc.). The note prevents the
-  question coming up again next audit.
-- **Drop** — if the item has become irrelevant (e.g. shipped under
-  a different name, or the original problem evaporated), strike
-  it from §11 / the punt table with a one-line note.
-
-After an audit, the master queued-order table at the top of §16
-should reflect everything tracked. No item should live ONLY in a
-§14.x punt table — they should also surface in §16's index.
-
-### When to do one
-
-Triggers (any one is enough):
-
-- **Phase boundary** — Phase A → Phase B, Phase B → Phase C-or-
-  whatever-comes-next. We just finished one at the §14.41 →
-  §16.0 transition; it caught 9 items that hadn't propagated to
-  the §16 plan.
-- **Major focus narrowing** — before starting work that will
-  occupy attention for ≥1 week. Tail items risk falling off when
-  focus narrows; audit first so they're indexed before they
-  disappear from working memory.
-- **Every ~10 slices** — rough heuristic for "the queue has
-  accumulated enough that small punts have started to drift."
-- **When the queue feels chaotic** — trust the feeling. If the
-  next-slice question takes longer than a minute to answer, that's
-  a signal.
-
-### How to do one
-
-1. **Search DESIGN.md** for queued markers — `Deferred`, `Queued`,
-   `Punted`, `LATER`, `TODO`, "wait for", "trigger to pick up".
-   Plus the punt tables at the bottom of each §14.x entry.
-
-2. **Build a working list** of items found but not in the §16
-   master table. Group by category (operational / UI polish /
-   testing / cross-cutting / tail).
-
-3. **Triage each one** — elevate, confirm tail, or drop. For
-   elevations, assign a §16.x number from above the existing
-   range (don't reuse old numbers even if they're "shipped";
-   §14.x entries reference them).
-
-4. **Commit one slice**: DESIGN.md updates (new briefs + updated
-   master table + status snapshot rows). Same shape as any other
-   slice; commit message names "audit follow-up: N new slices."
-
-5. **Verify** — re-run the search after the commit; nothing
-   queued should be missing from the master table.
-
-The §14.40 review's "DESIGN §16 audit follow-up" commit
-(`3a18548`) is the worked example.
-
-### What an audit is NOT
-
-- Not a code review. Audits look at the PLAN, not the
-  implementation. Code review happens slice-by-slice.
-- Not a design overhaul. If the audit surfaces an item that
-  needs a design discussion, the audit FILES that discussion as
-  a §16.x entry to pick up later; it doesn't dive in.
-- Not a sprint plan. Plan audits index the queue; they don't
-  schedule it. Which slice comes next is a separate decision.
+Until November 2026 each slice was written up in a long running
+`DESIGN.md`; that's now the
+[design log](docs/history/design-log.md), kept as it was. Section
+numbers in code comments and older commits ("§14.25") point into it.
 
 ## Test discipline
 
@@ -135,8 +61,8 @@ Changes that affect the engine MUST not break byte-equality for
 either example station. If you're intentionally changing engine
 output (new strategy, bug fix), regenerate the fixtures via
 `BOOTSTRAP_BYTE_EQ_FIXTURES=1` AND `make refresh-port-fixture`,
-inspect the diff, and document the intentional change in the
-slice's DESIGN entry.
+inspect the diff, and say why output changed in the pull request and
+`CHANGELOG.md`.
 
 ## Code style
 
@@ -169,7 +95,7 @@ Three signals you're past the fast path:
 
 1. **You want to port from an existing weekly-format generator.**
    Use `scripts/dump_weekly_template.py` + `make import-station`
-   to bring its template in. See `DESIGN.md` §14.34 for the
+   to bring its template in. The design log's §14.34 has the
    translation table.
 
 2. **You want regression-locked output across engine changes.**
@@ -180,41 +106,49 @@ Three signals you're past the fast path:
    your output.
 
 3. **You hit a primitive the engine doesn't have.** Propose it
-   as a §14.x slice — engine strategy modules live under
+   as a slice — engine strategy modules live under
    `engine/strategies/`; pattern: pure function, no DB, no
-   randomness-source baked in. `DESIGN.md` §14.24-§14.28 walk
-   through five real examples.
+   randomness-source baked in. The existing eight are the examples;
+   the design log's §14.24–§14.28 walk through how five of them were
+   designed.
 
-The grammar reference is `DESIGN.md` §14.32 (flat_slots form) and
-§14.34 (weekly-format translator). You don't need to read both
-before starting — read the one that matches what you're doing.
+The [template grammar](https://raby.github.io/station-studio/reference/template-grammar/)
+is the reference for both forms (`flat_slots` and `row_template`).
 
 ## Commit message style
 
 ```
-§14.NN <slice title>: <one-line summary>
+<What changed, in a line> (slice N, PR M)
 
-<paragraph(s) explaining what shipped + why>
-
-What ships
-----------
-* <bullet per artifact>
-
-Verification
-------------
-* <pytest counts, coverage, byte-equality status>
+<paragraph(s): what it does and why>
 
 Co-Authored-By: ...
 ```
 
-See git log for examples. The `§14.NN` prefix anchors the commit
-to its DESIGN entry; pre-§14 work used `§13` etc. Sweep-up commits
-that fix review findings use `§14.NN sweep-up: ...`.
+The first line says what changed for someone reading the log
+("Week page: change a song just this week"), not which file. Fixes
+from a review are their own commit, starting `Review:` and naming
+what they fix. See `git log` for examples. (Older commits start with
+the design-log section they belonged to: `§14.NN …`.)
+
+## Releases
+
+Each app has its own version and release:
+
+| App | Version in | Released by |
+|---|---|---|
+| Station Studio (PyPI) | `pyproject.toml` | pushing a `v<version>` tag (below) |
+| Station Studio (Mac and Windows apps) | `pyproject.toml`, `station_studio/__init__.py` | Actions → **Publish Station Studio app** → Run workflow on main: tests, a draft `studio-v<version>` release, the downloads, then the release published |
+| Station Player | `player/pyproject.toml` | Actions → **Publish Station Player** (`player-v<version>`, and PyPI) |
+| Station Server | `server/pyproject.toml` | Actions → **Publish Station Server** (`server-v<version>`) |
+
+Each workflow's header comment says exactly what it checks and
+builds. If a download job fails, use **Re-run failed jobs** on the
+run: the draft is kept, and published once they pass.
 
 ## Releasing to PyPI
 
-§16.13.t1 — wheel + docker channels both publish-ready; PyPI
-publish happens via `.github/workflows/publish.yml`.
+Station Studio's PyPI release is `.github/workflows/publish.yml`.
 
 **One-time setup.** PyPI's **pending publisher** feature lets you
 authorize a workflow to claim a name BEFORE the project exists on
@@ -270,7 +204,8 @@ only path to a real release, by design.
 
 ## When in doubt
 
-Read `DESIGN.md`. The §14.x entries explain why every decision was
-taken; the §15 status snapshot tells you where the project is; the
-§17 roadmap tells you where it's going. If your question isn't
-answered there, open a discussion / issue before writing code.
+Read [DESIGN.md](DESIGN.md) for how the apps fit together, then the
+[docs site](https://raby.github.io/station-studio/). For why a
+particular decision was taken, search the
+[design log](docs/history/design-log.md). If your question isn't answered
+there, open a discussion or issue before writing code.

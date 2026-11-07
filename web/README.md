@@ -51,7 +51,8 @@ A few non-obvious things to know before adding tests:
   expect(page.locator('html[data-wizard-ready]')).toBeAttached()`
   before filling form fields. SSR HTML lies about hydration state.
 
-DESIGN.md §14.8 is the long-form rationale for all of the above.
+The design log's §14.8 ([`docs/history/design-log.md`](../docs/history/design-log.md))
+is the long-form rationale for all of the above.
 
 ## Surfaces
 
@@ -73,4 +74,4 @@ DESIGN.md §14.8 is the long-form rationale for all of the above.
 
 ## Design note
 
-The wizard is designed to produce the canonical template JSON directly. No UI-only state. If a user opens a JSON authored by someone else (or by a future block editor), the wizard can roundtrip it. See repo-root `DESIGN.md` §4.2 (canonical JSON) and §16 (next-up slices).
+The wizard is designed to produce the canonical template JSON directly. No UI-only state. If a user opens a JSON authored by someone else (or by a future block editor), the wizard can roundtrip it. See the design log's §4.2 ([`docs/history/design-log.md`](../docs/history/design-log.md)) for the canonical JSON.

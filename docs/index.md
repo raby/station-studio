@@ -9,8 +9,8 @@ tool behind [Rebirth Radio](https://github.com/raby/rebirth-radio)'s
 
 ## What's in the box
 
-- **Generative engine** — 8 sampling strategies (pick, weighted, mix,
-  window, sequential, jingle, archive_ref, hook), seeded RNG for
+- **Generative engine** — 8 sampling strategies (window, pick,
+  sequential, jingle, weighted, mix, prev_ref, archive_ref), seeded RNG for
   reproducibility, multi-week chains via persistent cursor state.
 - **Visual block editor** — `/stations/{slug}/visualise` renders the
   template as a drag-and-drop canvas. **Preview songs** shows any
@@ -28,6 +28,14 @@ tool behind [Rebirth Radio](https://github.com/raby/rebirth-radio)'s
   the typical loop is a OneDrive/Dropbox folder synced to a Windows
   iTunes box.
 
+Two more apps live alongside it, each released on its own:
+
+- **[Station Player](player/index.md)** — plays radio and music; for
+  station makers, Station Studio's weeks, recording and the play log.
+- **[Station Server](server/index.md)** — puts a station on air: plays
+  its week, live, to a SHOUTcast or Icecast server, and publishes what's
+  on now and next.
+
 ## Where to start
 
 <div class="grid cards" markdown>
@@ -37,12 +45,16 @@ tool behind [Rebirth Radio](https://github.com/raby/rebirth-radio)'s
 - :material-book-open-variant: **[Reference](reference/index.md)** —
   template grammar, strategy reference, API, CLI
 - :material-puzzle: **[Architecture](architecture/index.md)** —
-  curated design notes for contributors
+  how the three apps are designed, for contributors
+- :material-radio: **[Station Player](player/index.md)** —
+  install it, and what it does
+- :material-broadcast: **[Station Server](server/index.md)** —
+  put a station on air
 
 </div>
 
-!!! note "Docs site is new"
-    These pages land alongside Station Studio v1.4. If something
-    you need isn't here, the canonical project notes still live
-    in `DESIGN.md` at the repo root —
-    [browse it on GitHub](https://github.com/raby/station-studio/blob/main/DESIGN.md).
+!!! note "How it's built"
+    [Design](architecture/design.md) describes how the three apps are
+    put together. The project's full record of decisions, slice by
+    slice, is the
+    [design log](https://github.com/raby/station-studio/blob/main/docs/history/design-log.md).

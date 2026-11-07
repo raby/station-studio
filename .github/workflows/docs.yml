@@ -15,6 +15,10 @@ name: docs
 on:
   push:
     branches: [main]
+  # Pull requests build and check the site (not deploy it): the site
+  # includes DESIGN.md and the Player and Server READMEs, so a broken
+  # link in any of them should fail before it's merged, not after.
+  pull_request:
   # Manual re-run hook for cases where Pages broke without a
   # corresponding code change (e.g. a runner image bump).
   workflow_dispatch:
@@ -22,8 +26,10 @@ on:
 # Required by actions/deploy-pages — only one in-flight deploy at
 # a time per environment. Newer pushes cancel older ones to avoid
 # stale builds clobbering newer content.
+# A pull request's build has its own group, so it never cancels a
+# deploy from main.
 concurrency:
-  group: pages
+  group: ${{ github.event_name == 'pull_request' && format('docs-pr-{0}', github.ref) || 'pages' }}
   cancel-in-progress: true
 
 # §16.15 c1-review R2 — workflow-level perms stay at the minimum
@@ -109,6 +115,17 @@ jobs:
           test -f site/architecture/live-preview/index.html
           test -f site/architecture/test-pyramid/index.html
           test -f site/architecture/migration-policy/index.html
+          test -f site/architecture/week-changes/index.html
+          # DESIGN.md and the Player and Server READMEs, included
+          # into the site (pymdownx.snippets).
+          test -f site/architecture/design/index.html
+          grep -q 'The three apps' site/architecture/design/index.html
+          test -f site/player/index.html
+          grep -q 'Station Player' site/player/index.html
+          test -f site/server/index.html
+          grep -q 'Station Server' site/server/index.html
+          # The design log isn't published (exclude_docs).
+          test ! -e site/history
           # §16.15 c6-review R5 — guard against the duplicate-H1
           # bug class. Every published page should have exactly
           # ONE <h1> (axe-core's `page-has-heading-one` rule
@@ -142,12 +159,15 @@ jobs:
           cp player/station_player/static/picks.json site/feed/picks.json
           if [ -d player/station_player/static/picks ]; then cp -R player/station_player/static/picks site/feed/picks; fi
       - uses: actions/configure-pages@v6
+        if: github.event_name != 'pull_request'
       - uses: actions/upload-pages-artifact@v5
+        if: github.event_name != 'pull_request'
         with:
           path: site/
 
   deploy:
     name: deploy to github pages
+    if: github.event_name != 'pull_request'
     needs: build
     runs-on: ubuntu-latest
     permissions:

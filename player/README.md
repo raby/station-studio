@@ -278,7 +278,7 @@ Rebirth, the stations you played lately, your stations, ways into
 Discover, and your music. Click a tile to play it.
 
 The Rebirth picks come from
-[`station_player/static/picks.json`](station_player/static/picks.json),
+[`station_player/static/picks.json`](https://github.com/raby/station-studio/blob/main/player/station_player/static/picks.json),
 which is published with the docs on GitHub Pages. Edit it on GitHub and
 every player picks up the change within the hour, with no new version.
 Each pick has a title and a station (its stream link), and can have a

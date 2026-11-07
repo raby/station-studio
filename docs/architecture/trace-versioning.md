@@ -65,9 +65,9 @@ made them.
 
 ## Read more
 
-DESIGN.md §16.4 (the SHIPPED block at the top of the section)
+The design log, §16.4 (the SHIPPED block at the top of the section)
 documents the v1 decisions + the migration shape. §16.4.t5
 (version tags) and §16.4.t6 (versioned disk filenames) are
 the post-v1 follow-ons.
 
-[DESIGN.md →](https://github.com/raby/station-studio/blob/main/DESIGN.md)
+[Design log →](https://github.com/raby/station-studio/blob/main/docs/history/design-log.md)

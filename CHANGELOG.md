@@ -4,6 +4,21 @@ All notable changes are listed here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses semantic versioning.
 
+## [Unreleased]
+
+### Changed
+
+- A fresh `DESIGN.md` describes how Station Studio, Station Player and
+  Station Server are put together and the rules they keep. The old one,
+  the project's 16,000-line running log, is kept unchanged as
+  `docs/history/design-log.md`; section numbers in code comments point
+  into it.
+- The docs site has Station Player and Station Server tabs, and a Design
+  page under Architecture.
+- `README.md` and `CONTRIBUTING.md` are up to date: eight strategies,
+  what ships today, how a slice happens now, and how each app is
+  released.
+
 ## [1.19.0] - 2026-11-06
 
 ### Added
