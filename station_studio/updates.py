@@ -18,7 +18,12 @@ def newest_release(releases) -> str | None:
     return _updates.newest_release(releases, TAG_PREFIX)
 
 
+def _fetch_latest() -> str | None:
+    return _updates.fetch_latest(APP)
+
+
 def latest_version(cache: Path, fetch=None, now: float | None = None, force: bool = False) -> str | None:
     """The newest release, from a cache under a day old (unless `force`),
-    else from GitHub; quiet about network trouble."""
-    return _updates.latest_version(APP, cache, fetch=fetch, now=now, force=force)
+    else from GitHub; quiet about network trouble (and tried again on the
+    next look, an hour on)."""
+    return _updates.latest_version(APP, cache, fetch=fetch or (lambda: _fetch_latest()), now=now, force=force)

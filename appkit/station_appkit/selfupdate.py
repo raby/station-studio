@@ -73,7 +73,8 @@ def fetch_json(url: str, user_agent: str = "station-appkit"):
 
 
 def release_asset(app: App, version: str, name: str, get_json=None) -> tuple[str, str, int]:
-    """(download url, sha256, size) of one file of a release."""
+    """(download url, sha256, size) of one file of a release: only one the
+    app's own release for that version serves, with its hash."""
     get_json = get_json or (lambda url: fetch_json(url, app.slug))
     try:
         release = get_json(app.release_api(version))
@@ -83,7 +84,8 @@ def release_asset(app: App, version: str, name: str, get_json=None) -> tuple[str
         if asset.get("name") != name:
             continue
         url, digest, size = asset.get("browser_download_url", ""), asset.get("digest") or "", asset.get("size")
-        if not url.startswith(app.download_prefix) or not digest.startswith("sha256:") or not isinstance(size, int):
+        own = f"{app.download_prefix}{app.tag_prefix}{version}/"
+        if not url.startswith(own) or not digest.startswith("sha256:") or not isinstance(size, int):
             break
         return url, digest.split(":", 1)[1].lower(), size
     raise UpdateError(f"The {version} download for this computer isn't ready yet. Try again in an hour or so.")

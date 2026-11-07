@@ -14,6 +14,10 @@
 # pending publisher): project station-player, owner raby, repo
 # station-studio, workflow publish-player.yml, environment pypi-player.
 #
+# station-appkit (appkit/) goes up with this release when PyPI hasn't its
+# version yet (scripts/appkit_release.py): it needs a trusted publisher
+# for this workflow too (CONTRIBUTING.md, Releases).
+#
 # The Mac .dmg files and the Windows setup .exe (player-installers.yml)
 # are built after the release is created and attached to it.
 #

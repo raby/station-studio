@@ -60,6 +60,16 @@ def test_other_code_under_the_same_version_stops_the_release(built):
         appkit_release.decide(built, pypi(wheel({**OURS, "station_appkit/window.py": "x = 2"})))
 
 
+def test_other_requirements_under_the_same_version_stop_it_too(tmp_path):
+    ours = tmp_path / "station_appkit-1.0.0-py3-none-any.whl"
+    ours.write_bytes(wheel({**OURS, "station_appkit-1.0.0.dist-info/METADATA": "Requires-Python: >=3.12\n"}))
+    theirs = wheel({**OURS, "station_appkit-1.0.0.dist-info/METADATA": "Requires-Python: >=3.11\nSummary: x\n"})
+    with pytest.raises(SystemExit, match="its requirements"):
+        appkit_release.decide(ours, pypi(theirs))
+    same = wheel({**OURS, "station_appkit-1.0.0.dist-info/METADATA": "Requires-Python: >=3.12\nSummary: y\n"})
+    assert appkit_release.decide(ours, pypi(same)) is False
+
+
 def test_a_download_that_doesnt_match_pypis_hash_stops_it(built):
     good = pypi(wheel(OURS))
 

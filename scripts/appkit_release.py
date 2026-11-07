@@ -34,10 +34,17 @@ PYPI = "https://pypi.org/pypi/station-appkit/{version}/json"
 
 
 def code(wheel: bytes) -> dict[str, str]:
-    """The package's own files in a wheel (not its .dist-info), by hash."""
+    """The package's own files in a wheel, by hash, and what it requires
+    (from its METADATA; the rest of .dist-info changes with every build)."""
     with zipfile.ZipFile(io.BytesIO(wheel)) as zf:
-        return {name: hashlib.sha256(zf.read(name)).hexdigest()
-                for name in zf.namelist() if name.startswith("station_appkit/") and not name.endswith("/")}
+        files = {name: hashlib.sha256(zf.read(name)).hexdigest()
+                 for name in zf.namelist() if name.startswith("station_appkit/") and not name.endswith("/")}
+        for name in zf.namelist():
+            if name.endswith(".dist-info/METADATA"):
+                needs = [line for line in zf.read(name).decode("utf-8", "replace").splitlines()
+                         if line.startswith(("Requires-Dist:", "Requires-Python:"))]
+                files["its requirements"] = hashlib.sha256("\n".join(needs).encode()).hexdigest()
+    return files
 
 
 def published(version: str, opener=urllib.request.urlopen) -> bytes | None:

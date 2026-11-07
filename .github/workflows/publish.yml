@@ -28,6 +28,9 @@
 #         owner=raby, repo=station-studio,
 #         workflow=publish.yml, environment=pypi
 #   - https://test.pypi.org → same, environment=testpypi
+#   - https://pypi.org → station-appkit → Publishing: the same (pypi).
+#     station-appkit (appkit/) goes up with station-studio when PyPI
+#     hasn't its version yet; it never goes to test.pypi.
 # The `environment:` blocks below match those env names. Until the
 # trust is configured, the publish steps fail with "no trusted
 # publisher" — which is the correct failure mode for an

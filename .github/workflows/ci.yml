@@ -179,6 +179,10 @@ jobs:
       - name: pytest
         working-directory: server
         run: python -m pytest -q -p no:cacheprovider
+      - name: station-appkit's tests, on this computer too
+        # The update check, self-updater and app window it uses (appkit/).
+        working-directory: appkit
+        run: python -m pytest -q -p no:cacheprovider
 
   frontend-unit:
     name: frontend unit (vitest)

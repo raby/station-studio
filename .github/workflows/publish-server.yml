@@ -18,6 +18,10 @@
 # one-time trusted publisher: project station-server, repository
 # raby/station-studio, workflow publish-server.yml, environment pypi-server.
 #
+# station-appkit (appkit/) goes up with this release when PyPI hasn't its
+# version yet (scripts/appkit_release.py): it needs a trusted publisher
+# for this workflow too (CONTRIBUTING.md, Releases).
+#
 # Tags are `server-v*`: `v*` is Station Studio's PyPI release, `studio-v*`
 # its app, `player-v*` Station Player's.
 

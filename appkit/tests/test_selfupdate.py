@@ -70,6 +70,9 @@ def test_release_asset_only_from_the_projects_own_releases(app):
     selfupdate.release_asset(app, NEXT, name, lambda u: asked.append(u) or release(app, name, b"setup"))
     assert asked == [f"https://api.github.com/repos/raby/station-studio/releases/tags/test-v{NEXT}"]
     for bad in (release(app, name, b"x", url="https://evil.example/setup.exe"), release(app, "other-name", b"x"),
+                # The project's, but another release's file (another app's, or another version's).
+                release(app, name, b"x", url=f"{app.download_prefix}player-v{NEXT}/{name}"),
+                release(app, name, b"x", url=f"{app.download_prefix}test-v1.0.0/{name}"),
                 {}, [], {"assets": [{"name": name, "browser_download_url": app.download_prefix + "x",
                                      "digest": "md5:00", "size": 1}]}):
         with pytest.raises(UpdateError, match="isn't ready yet"):
