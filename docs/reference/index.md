@@ -26,6 +26,6 @@ sampling strategies, REST API, and CLI commands.
 </div>
 
 !!! tip "Looking for the engine internals?"
-    See [Architecture](../architecture/index.md) for curated
-    `DESIGN.md` extracts covering cursor advance semantics,
-    trace recording, and the editor sidecar grammar.
+    See [Architecture](../architecture/index.md): the design
+    of the three apps, then cursor advance, trace recording and
+    the editor sidecar grammar in depth.

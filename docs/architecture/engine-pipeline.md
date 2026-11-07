@@ -60,11 +60,11 @@ test modules: `test_byte_equality_harness.py`,
 ## Read more
 
 Full design notes for each strategy + the cursor model live in
-[DESIGN.md §14.22–§14.42][design] (the Phase B port section).
+[Design log §14.22–§14.42][design] (the Phase B port section).
 The pipeline behaviour is also exercised end-to-end by the
 byte-equality test modules listed above, which pin generated
 output against committed PID-sequence JSON snapshots under
 `tests/fixtures/expected/`.
 
 [trace-vers]: trace-versioning.md
-[design]: https://github.com/raby/station-studio/blob/main/DESIGN.md
+[design]: https://github.com/raby/station-studio/blob/main/docs/history/design-log.md

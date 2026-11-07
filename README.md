@@ -30,7 +30,7 @@ Given:
 
 - **Your music**, in iTunes XML format (export from Music / iTunes)
 - **A station template** — a small JSON file describing what plays
-  when (or built visually via the web UI, coming soon)
+  when, or built and changed visually in the web UI
 
 It produces:
 
@@ -41,11 +41,19 @@ It produces:
 - **Reproducibility** — same template + same source files + same week
   number = same playlist, byte-for-byte
 
-You can also **visualise a station's template** in the web UI — a
+You can also **edit a station's template** in the web UI — a
 chip-per-pick canvas grouped into sections, color-coded by source
 (or strategy), with click-through detail for every slot and macro.
-Click "🗺 Visualise template" on any station page. (Read-only today;
-in-canvas authoring is on the roadmap — see DESIGN.md §16.2.3+.)
+Click "Visualise template" on any station page: change rules, drag
+songs and sections to play elsewhere, and preview any week's songs as
+you go, with every change waiting until you save. On a week's page you
+can also change one song for that week only.
+
+Two more apps live in this repository, each released on its own:
+**[Station Player](player/README.md)** plays radio and music (and, for
+station makers, Station Studio's weeks, recording and the play log), and
+**[Station Server](server/README.md)** puts a station on air, playing its
+week live to a SHOUTcast or Icecast server.
 
 ## Install
 
@@ -274,13 +282,13 @@ above is the recommended hobbyist flow.
 
 ### Roll your own
 
-The visual block editor (§16.2) will let you build a template by
-dragging chips onto a timeline. Until that ships, the cleanest
-starting point is **`stations/starter.json`** — copy it under a new
-filename, adjust the slot count, swap in your own source names, and
-drop it in `~/.station-studio/stations/`. Restart `serve` and your
-station appears in the sidebar. Read `DESIGN.md` §14.32 / §14.34 for
-the full template grammar reference.
+The cleanest starting point is **`stations/starter.json`** — copy it
+under a new filename, adjust the slot count, swap in your own source
+names, and drop it in `~/.station-studio/stations/`. Restart `serve`
+and your station appears in the sidebar; from there, change it in the
+visual editor. The
+[template grammar](https://raby.github.io/station-studio/reference/template-grammar/)
+is the full reference.
 
 ## How it works
 
@@ -297,7 +305,7 @@ station template ──► describes what plays when
                        └──► export → iTunes XML
 ```
 
-Seven **strategies** for placing a track at a slot:
+Eight **strategies** for placing a track at a slot:
 
 - `window` — take N consecutive tracks from a source at a cursor position
 - `pick` — one track from a source at a cursor position
@@ -306,19 +314,22 @@ Seven **strategies** for placing a track at a slot:
 - `mix` — pick from a genre-tagged subset, excluding tracks used in last N weeks
 - `prev_ref` — read this position's track from last week's playlist
 - `sequential` — read N consecutive tracks at a named per-station cursor
+- `archive_ref` — read the track at a fixed position of a reference pool
 
-Each strategy is a small pure-function module under `engine/strategies/`.
+Each is a small pure function under `engine/strategies/`, except
+`sequential`, which the generator reads straight from its cursor.
 
 ## Project status
 
 | | |
 |---|---|
 | **Engine** | Stable. Byte-equality verified across 30-week chains for two structurally distinct stations. |
-| **Backend API** | Stable. FastAPI; full CRUD on stations + sources + rules. |
-| **Install** | Wheel + docker-compose both ship and smoke-pass (§16.13). PyPI publish queued (§16.13.t1). |
+| **Backend API** | Stable. FastAPI; stations, sources, rules, weeks and their versions, just-this-week changes, and the Station Server link. |
+| **Install** | Mac and Windows apps (updating themselves), PyPI, Docker, and the wheel. |
 | **CLI** | `station-studio serve / import / seed / generate / export / backup` ships with the wheel — full hobbyist subcommand set, no repo checkout required. Makefile targets remain for in-repo dev work (refresh, byte-equality fixtures, etc.). |
-| **Web UI** | Wizard + trace viewer + Sources page + read-only template visualiser ship; **in-canvas template editor in design** (§16.2 — flagship feature). |
-| **Docs** | Engineering docs in `DESIGN.md`; user-facing docs are growing. |
+| **Web UI** | Wizard, Sources page, visual template editor with live preview, song list, week versions and just-this-week changes. |
+| **Station Player / Server** | Released on their own (`player-v*`, `server-v*`). |
+| **Docs** | [raby.github.io/station-studio](https://raby.github.io/station-studio/): tutorial, reference, architecture, Station Player and Station Server. |
 | **License** | [MIT](LICENSE) — fork freely. |
 
 ## Contributing
@@ -328,10 +339,12 @@ test discipline, and how to propose new station shapes.
 
 ## Architecture deep-dive
 
-Engineering details — engine internals, persistence model, slice
-discipline, byte-equality test methodology — live in
-[DESIGN.md](DESIGN.md). It's a long document; the table of contents
-at the top lists every §14.x slice that shipped.
+[DESIGN.md](DESIGN.md) describes how the three apps are put together
+and the rules they keep, with links to the longer
+[Architecture](https://raby.github.io/station-studio/architecture/)
+pages. The project's full record of decisions, slice by slice, is the
+[design log](docs/history/design-log.md); section numbers in code
+comments ("DESIGN.md §14.25") point into it.
 
 If you're contributing engine work, also see
 [`engine/divergence.py`](engine/divergence.py) (slot-level diff

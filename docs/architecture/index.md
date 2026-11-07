@@ -1,15 +1,18 @@
 # Architecture
 
-Curated notes for contributors. Each page covers one
-load-bearing design decision in 100-300 words + a cross-link
-back to the canonical [DESIGN.md][design] archive (which has
-the full history + the punted alternatives + every review-fix
-rationale).
+Notes for contributors. [Design](design.md) is the whole picture:
+the three apps, how they connect, and the rules they keep. Each page
+after it covers one load-bearing part of Station Studio in more depth,
+with a link to the sections of the [design log][log] where it was
+worked out.
 
 If you're trying to **land your first PR**, read these in
 order — they unblock most "why is it like this?" questions.
 
 <div class="grid cards" markdown>
+
+- :material-sitemap: **[Design](design.md)** —
+  the three apps, how they connect, and the rules they keep.
 
 - :material-cog-transfer: **[Engine pipeline](engine-pipeline.md)** —
   how `generate()` turns a template + week into a trace.
@@ -40,12 +43,11 @@ order — they unblock most "why is it like this?" questions.
 </div>
 
 !!! tip "Not finding what you need?"
-    These pages are a curated entry point, not a wholesale
-    republish. `DESIGN.md` at the repo root has the full
-    archive across ~15,000 lines — every architectural
-    decision since the §13 design pass, every review-fix
-    rationale, every `.tX` punt with its promotion criteria.
-    The pages above link to the relevant section.
+    The [design log][log] is the project's running record up to
+    November 2026, about 16,000 lines: every slice's design, its
+    decisions and the alternatives turned down, and every review.
+    Section numbers in code comments ("DESIGN.md §16.2.6") point
+    into it.
 
-[design]: https://github.com/raby/station-studio/blob/main/DESIGN.md
+[log]: https://github.com/raby/station-studio/blob/main/docs/history/design-log.md
 

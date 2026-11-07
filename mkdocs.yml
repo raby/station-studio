@@ -6,7 +6,7 @@
 # Publish: GitHub Actions (.github/workflows/docs.yml) on push to main.
 
 site_name: Station Studio
-site_description: Generative iTunes XML playlists with a visual block editor.
+site_description: Station Studio, Station Player and Station Server. Make a radio station's weekly playlists, play them, and put the station on air.
 site_author: Raby Whyte
 site_url: https://raby.github.io/station-studio/
 
@@ -18,6 +18,11 @@ edit_uri: edit/main/docs/
 # nav entries, etc. Catches drift between mkdocs.yml and the
 # files in docs/ before GH Pages goes stale.
 strict: true
+
+# The design log (the old DESIGN.md, kept as written) is read on GitHub,
+# not published: it's 16,000 lines of history, linked from the Design page.
+exclude_docs: |
+  history/
 
 theme:
   name: material
@@ -84,7 +89,12 @@ markdown_extensions:
       pygments_lang_class: true
   - pymdownx.inlinehilite
   - pymdownx.superfences
-  - pymdownx.snippets
+  # Snippets put the repository's own files in pages whole (the
+  # Player and Server READMEs, DESIGN.md), so there's one copy of each.
+  # Paths are from the repository's root; a missing one fails the build.
+  - pymdownx.snippets:
+      base_path: ["."]
+      check_paths: true
   - pymdownx.tabbed:
       alternate_style: true
   - footnotes
@@ -121,8 +131,13 @@ nav:
       - Strategies: reference/strategies.md
       - API: reference/api.md
       - CLI: reference/cli.md
+  - Station Player:
+      - player/index.md
+  - Station Server:
+      - server/index.md
   - Architecture:
       - architecture/index.md
+      - Design: architecture/design.md
       - Engine pipeline: architecture/engine-pipeline.md
       - Trace versioning: architecture/trace-versioning.md
       - Just-this-week changes: architecture/week-changes.md

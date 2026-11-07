@@ -61,8 +61,8 @@ history beyond v1 is lost.
 
 ## Read more
 
-`migrations/env.py` for the live Engine wiring. DESIGN.md §17 +
+`migrations/env.py` for the live Engine wiring. The design log, §17, and
 the `migration-parity` review notes for the historical evolution
 of the gate.
 
-[DESIGN.md →](https://github.com/raby/station-studio/blob/main/DESIGN.md)
+[Design log →](https://github.com/raby/station-studio/blob/main/docs/history/design-log.md)

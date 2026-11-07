@@ -47,7 +47,7 @@ in depth, not user-facing.
 
 ## Read more
 
-DESIGN.md §16.2.5 (D1 + D2 + the SHIPPED block) for the migration
+The design log, §16.2.5 (D1 + D2 + the SHIPPED block) for the migration
 shape; §16.2.5.t4 for the `TypeDecorator` rationale.
 
-[DESIGN.md →](https://github.com/raby/station-studio/blob/main/DESIGN.md)
+[Design log →](https://github.com/raby/station-studio/blob/main/docs/history/design-log.md)

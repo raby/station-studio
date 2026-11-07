@@ -70,7 +70,7 @@ mode on every push to main.
 ## Read more
 
 `tests/test_byte_equality.py` for the reproducibility harness.
-DESIGN.md §14.8 + §17 for the historical evolution of the test
+The design log, §14.8 + §17 for the historical evolution of the test
 pyramid (Phase B byte-equality, Phase C UI surface).
 
-[DESIGN.md →](https://github.com/raby/station-studio/blob/main/DESIGN.md)
+[Design log →](https://github.com/raby/station-studio/blob/main/docs/history/design-log.md)

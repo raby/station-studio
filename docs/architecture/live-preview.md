@@ -194,9 +194,9 @@ fires, the preview is just a projection.
 
 ## Read more
 
-DESIGN.md §16.2.6 + its `.tX` follow-ups (§16.2.6.t1 staged-edit
+The design log, §16.2.6 + its `.tX` follow-ups (§16.2.6.t1 staged-edit
 recovery, .t2 transactional batch, .t3 click-trace-row jump-to-
 chip, .t4 silent-evict grace window, etc.) — 13 follow-up
 promotions land alongside the main slice.
 
-[DESIGN.md →](https://github.com/raby/station-studio/blob/main/DESIGN.md)
+[Design log →](https://github.com/raby/station-studio/blob/main/docs/history/design-log.md)
