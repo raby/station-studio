@@ -4,7 +4,12 @@ All notable changes are listed here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses semantic versioning.
 
-## [Unreleased]
+## [1.20.0] - 2026-11-08
+
+Mostly under the hood: the same Station Studio, built from locked
+dependencies and sharing its update check, Update now and window with
+Station Player 0.24.0 and Station Server 0.23.0 (released alongside).
+A `pip install station-studio` now also installs station-appkit.
 
 ### Changed
 
