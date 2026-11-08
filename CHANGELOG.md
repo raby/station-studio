@@ -4,9 +4,13 @@ All notable changes are listed here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses semantic versioning.
 
-## [Unreleased]
+## [1.20.1] - 2026-11-08
 
-### Changed
+Fixes to start at login and the log file, shared now with Station Player
+0.24.1 and Station Server 0.23.1 (released alongside, with station-appkit
+1.1.0).
+
+### Fixed
 
 - **Start at login and the log file are one copy too** (station-appkit
   1.1), so all three apps now do what the best of them did:
