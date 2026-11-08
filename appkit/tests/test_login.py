@@ -1,10 +1,12 @@
 """Start at login (station_appkit/login.py)."""
+import os
 import plistlib
+import sys
 
 import pytest
 
 from station_appkit import App
-from station_appkit.login import Login, current_platform, desktop_exec, not_installed
+from station_appkit.login import Login, RunKey, current_platform, desktop_exec, not_installed
 
 APP = App(name="Station Test", slug="StationTest", tag_prefix="test-v", version="1.2.0", port=8123)
 CMD = ["/Applications/Station Test.app/Contents/MacOS/station-test-server", "--no-browser"]
@@ -148,3 +150,25 @@ def test_desktop_exec_leaves_plain_words_alone():
     assert desktop_exec(["/usr/bin/python3", "-P", "-m", "station_test", "--app"]) == \
         "/usr/bin/python3 -P -m station_test --app"
     assert desktop_exec(["a", ""]) == 'a ""'
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows' own registry")
+def test_the_real_run_key(tmp_path):
+    """Against HKCU\\...\\Run itself (the Windows CI runner's), under a
+    name nothing else uses, removed again."""
+    name = f"Station Test {os.getpid()}"
+    app = App(name=name, slug="StationTest", tag_prefix="test-v", version="1.2.0", port=8123)
+    lg = Login(app, [r"C:\Apps\Station Test.exe", "--no-browser"], agent_id="x", autostart_name="x",
+               platform="win32", home=tmp_path)
+    try:
+        assert lg.enabled() is False
+        lg.set(True)
+        assert lg.enabled() is True
+        assert RunKey().get(name) == '"C:\\Apps\\Station Test.exe" --no-browser'
+        assert lg.refresh() is False
+        RunKey().set(name, r"C:\old\x.exe")
+        assert lg.refresh() is True
+    finally:
+        lg.set(False)
+    assert lg.enabled() is False and RunKey().get(name) is None
+    RunKey().delete(name)  # already gone: fine

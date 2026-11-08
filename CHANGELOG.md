@@ -15,8 +15,9 @@ this project uses semantic versioning.
     Station Server already didn't.
   - Station Server's Linux autostart entry quotes paths with quotes, `$`
     or `%` properly (Station Player's quoting, now everyone's).
-  - Station Studio, like the other two, brings a start at login made by
-    a copy since moved up to date when the downloaded app starts.
+  - All three downloaded apps bring a start at login made by a copy
+    since moved (or an older version) up to date when they start: Studio
+    didn't, and Server only did on the Mac.
   - Station Server no longer borrows Station Player's private code for the
     Windows Run key.
   - The log files are all kept the same way (2 MB, two old ones kept),

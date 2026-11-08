@@ -78,3 +78,24 @@ def test_the_three_apps_never_share_a_name_port_or_tag():
     for attr in ("name", "slug", "tag_prefix", "port", "mac_helper", "env_prefix"):
         values = [getattr(a, attr) for a in apps]
         assert len(set(values)) == len(values), attr
+
+
+def test_start_at_login_keeps_the_names_earlier_versions_wrote(tmp_path):
+    """Renaming any of these would leave an entry made by an earlier
+    version behind: it would go on starting the app (or a copy since
+    moved) at login, and the app would say start at login is off."""
+    from station_player.desktop import Desktop
+    from station_server.desktop import Login as ServerLogin
+    from station_studio.appsettings import Login as StudioLogin
+
+    studio = StudioLogin(tmp_path, "darwin", command=["x"])
+    server = ServerLogin(platform="mac", home=tmp_path, python="x")
+    player = Desktop(platform="mac", home=tmp_path, env={}, python="x")._login()
+    agents = {a.app.name: (a.agent().name, a.autostart().name) for a in (studio, server, player)}
+    assert agents == {
+        "Station Studio": ("io.github.raby.station-studio.plist", "station-studio.desktop"),
+        "Station Server": ("io.github.raby.station-server.plist", "io.github.raby.station-server.desktop"),
+        "Station Player": ("io.github.raby.station-player.plist", "station-player.desktop"),
+    }
+    # The Run key value on Windows is the app's name.
+    assert {a.app.name for a in (studio, server, player)} == {"Station Studio", "Station Server", "Station Player"}

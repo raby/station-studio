@@ -6,7 +6,7 @@ from station_appkit.applog import log_to_file
 
 def test_logs_to_a_file_beside_the_data(tmp_path):
     root = logging.getLogger()
-    before = root.handlers[:], root.level
+    handlers, level = root.handlers[:], root.level
     try:
         path = log_to_file(tmp_path / "home", "station-test", max_bytes=200, backups=1)
         assert path == tmp_path / "home" / "station-test.log"
@@ -19,7 +19,8 @@ def test_logs_to_a_file_beside_the_data(tmp_path):
     finally:
         for handler in root.handlers:
             handler.close()
-        root.handlers[:], _ = before[0], root.setLevel(before[1])
+        root.handlers[:] = handlers
+        root.setLevel(level)
 
 
 def test_a_folder_it_cant_write_leaves_logging_alone(tmp_path):

@@ -50,7 +50,7 @@ def desktop_exec(args: list[str]) -> str:
     return " ".join(out).replace("\\", "\\\\")
 
 
-class RunKey:  # pragma: no cover - Windows only
+class RunKey:  # pragma: no cover - Windows only (tested on the Windows CI runner)
     """HKCU\\...\\CurrentVersion\\Run, the per-user list of login programs."""
 
     PATH = r"Software\Microsoft\Windows\CurrentVersion\Run"

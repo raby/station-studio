@@ -273,9 +273,15 @@ def _app(args) -> int:
         _log_to_file(store.home)
     if bundled():
         _replace_older(args.port, url)
-    if bundled() and sys.platform == "darwin":
+    if bundled():
+        # Start at login made by an older version (0.16.4 to 0.16.6 started
+        # the Mac app, not its helper) or by a copy since moved: written
+        # again to start this one, as Station Player and Studio do.
         from station_server.desktop import Login
-        Login().refresh()  # one 0.16.4 to 0.16.6 made started the app, not its helper
+        try:
+            Login().refresh()
+        except Exception:  # never stop it going on air over this
+            logging.getLogger(__name__).exception("Couldn't bring start at login up to date")
     if bundled() and sys.platform == "darwin" and app_executable() != Path(sys.executable):
         code = _hand_over(args.port, url)
         if code == 0 and not args.no_window:

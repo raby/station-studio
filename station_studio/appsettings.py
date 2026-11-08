@@ -20,8 +20,10 @@ from station_studio import selfupdate
 from station_studio.appinfo import APP
 
 DEFAULTS = {"own_window": True, "check_updates": True}
+# The Mac LaunchAgent's id. Start at login's other names (the Run key value,
+# the Linux autostart entry) come from APP.name and Login below; all are
+# kept as earlier versions wrote them (tests/test_packaging_names.py).
 LOGIN_ID = "io.github.raby.station-studio"
-LOGIN_NAME = "Station Studio"
 
 
 def load(home: Path) -> dict:
