@@ -1727,7 +1727,7 @@ dev = [
 
 [[package]]
 name = "station-player"
-version = "0.24.1"
+version = "0.24.2"
 source = { editable = "player" }
 dependencies = [
     { name = "station-appkit" },
