@@ -25,8 +25,10 @@ jobs:
         # `make lock`, so what CI tests is what the lock says.
         run: uv lock --check
       - name: install
-        # Exactly the versions in uv.lock (runtime + dev + docs).
-        run: uv sync --locked
+        # Exactly the versions in uv.lock (runtime + dev + docs), and
+        # Station Player and Server too: tests/test_packaging_names.py
+        # checks all three apps' names against their packaging.
+        run: uv sync --locked --all-packages
       - name: pytest + coverage gate
         run: make test-backend
       - name: alembic ↔ create_all schema parity

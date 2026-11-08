@@ -16,7 +16,6 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import logging.handlers
 import os
 import socket
 import subprocess
@@ -29,6 +28,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
+from station_appkit.applog import log_to_file
 
 from station_studio import __version__, appsettings, selfupdate, updates
 from station_studio.home import get_home
@@ -148,15 +148,7 @@ def open_browser(url: str) -> None:
 
 def _log_to_file() -> None:
     """The downloaded app has no terminal, so keep a log beside the data."""
-    home = get_home()
-    try:
-        home.mkdir(parents=True, exist_ok=True)
-        handler = logging.handlers.RotatingFileHandler(
-            home / "station-studio.log", maxBytes=1_000_000, backupCount=1, encoding="utf-8")
-    except OSError:
-        return
-    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
-    logging.basicConfig(level=logging.INFO, handlers=[handler], force=True)
+    log_to_file(get_home(), "station-studio")
 
 
 def _mac_app_itself() -> bool:
@@ -354,6 +346,14 @@ def serve(port: int, show: bool) -> int:
     desk = DesktopState(port, stop)
     attach_routes(app, desk)
     desk.keep_checking()
+    if selfupdate.bundled():
+        # Start at login made by a copy since moved (or another install)
+        # would start that one: point it at this app.
+        try:
+            if desk.login.refresh():
+                logger.info("Start at login now starts this Station Studio")
+        except Exception:  # never stop the app over it
+            logger.exception("Couldn't bring start at login up to date")
 
     if show:
         def show_when_ready() -> None:

@@ -30,6 +30,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from station_appkit.login import Login, desktop_exec
+
 from station_player import __version__
 
 APP_NAME = "Station Player"
@@ -98,16 +100,7 @@ def launch_command(background: bool = False, platform: str | None = None,
     return cmd
 
 
-def _desktop_exec(args: list[str]) -> str:
-    """Quote a command for a freedesktop Exec= line."""
-    out = []
-    for arg in args:
-        arg = arg.replace("%", "%%")
-        if any(c in arg for c in ' \t\n"\'\\><~|&;$*?#()`'):
-            arg = '"' + "".join("\\" + c if c in '"`$\\' else c for c in arg) + '"'
-        out.append(arg)
-    # The whole value is a desktop-file string, where "\" is escaped again.
-    return " ".join(out).replace("\\", "\\\\")
+_desktop_exec = desktop_exec  # quoting for a freedesktop Exec= line (station_appkit.login)
 
 
 def _trust_on_gnome(entry: Path) -> None:
@@ -201,8 +194,22 @@ class Desktop:
         getattr(self, f"_{self.platform}_shortcut")(on)
 
     def set_login(self, on: bool) -> None:
+        """Start at login, on or off (station_appkit.login: a LaunchAgent,
+        the Run key, or an autostart entry). Raises ValueError for the
+        downloaded app still on its disk image."""
         self._require_support()
-        getattr(self, f"_{self.platform}_login")(on)
+        if self.platform == "linux" and on:
+            self._linux_install_icon()
+        self._login().set(on)
+        if self.platform == "linux" and not on:
+            self._linux_drop_icon_if_unused()
+
+    def _login(self) -> Login:
+        from station_player.appinfo import APP
+        return Login(APP, launch_command(True, self.platform, self.python), agent_id=APP_ID,
+                     autostart_name="station-player.desktop",
+                     linux_entry=lambda: self._linux_entry_text(background=True),
+                     platform=self.platform, home=self.home, environ=self.env, registry=self._registry)
 
     def refresh(self) -> bool:
         """Rewrite a shortcut made by an older version (so it gains what's
@@ -251,21 +258,9 @@ class Desktop:
         """Start at login made by a pipx install (or an app since moved)
         would start that copy at login: point it at this app instead.
         True when it changed it."""
-        if self.platform not in ("mac", "windows") or not self._login_exists():
+        if self.platform not in ("mac", "windows"):
             return False
-        want = launch_command(True, self.platform, self.python)
-        if self.platform == "mac":
-            try:
-                with self._mac_agent().open("rb") as fh:
-                    have = plistlib.load(fh).get("ProgramArguments")
-            except (OSError, plistlib.InvalidFileException, ValueError):
-                have = None
-        else:
-            want, have = subprocess.list2cmdline(want), self._reg().get(APP_NAME)
-        if have == want:
-            return False
-        self.set_login(True)
-        return True
+        return self._login().refresh()
 
     def remove_all(self) -> None:
         self.set_shortcut(False)
@@ -283,11 +278,7 @@ class Desktop:
         return self._linux_menu_entry().exists()
 
     def _login_exists(self) -> bool:
-        if self.platform == "windows":
-            return self._reg().get(APP_NAME) is not None
-        if self.platform == "mac":
-            return self._mac_agent().exists()
-        return self._linux_autostart().exists()
+        return bool(self._login().enabled())
 
     # ---- a desktop icon for one station ---------------------------------------
 
@@ -449,7 +440,7 @@ class Desktop:
         return self._xdg("XDG_DATA_HOME", ".local/share") / "applications" / "station-player.desktop"
 
     def _linux_autostart(self) -> Path:
-        return self._xdg("XDG_CONFIG_HOME", ".config") / "autostart" / "station-player.desktop"
+        return self._login().autostart()
 
     def _linux_desktop_dir(self) -> Path | None:
         dirs = self._xdg("XDG_CONFIG_HOME", ".config") / "user-dirs.dirs"
@@ -521,23 +512,10 @@ class Desktop:
                     path.unlink(missing_ok=True)
             self._linux_drop_icon_if_unused()
 
-    def _linux_login(self, on: bool) -> None:
-        entry = self._linux_autostart()
-        if on:
-            self._linux_install_icon()
-            entry.parent.mkdir(parents=True, exist_ok=True)
-            entry.write_text(self._linux_entry_text(background=True), encoding="utf-8")
-        else:
-            entry.unlink(missing_ok=True)
-            self._linux_drop_icon_if_unused()
-
     # ---- macOS -------------------------------------------------------------------
 
     def _mac_bundle(self) -> Path:
         return self.home / "Applications" / f"{APP_NAME}.app"
-
-    def _mac_agent(self) -> Path:
-        return self.home / "Library" / "LaunchAgents" / f"{APP_ID}.plist"
 
     def _mac_shortcut(self, on: bool) -> None:
         bundle = self._mac_bundle()
@@ -669,21 +647,6 @@ class Desktop:
                 pass
         return True
 
-    def _mac_login(self, on: bool) -> None:
-        agent = self._mac_agent()
-        if not on:
-            agent.unlink(missing_ok=True)
-            return
-        agent.parent.mkdir(parents=True, exist_ok=True)
-        with agent.open("wb") as fh:
-            plistlib.dump({
-                "Label": APP_ID,
-                "ProgramArguments": launch_command(True, "mac", self.python),
-                "RunAtLoad": True,
-                # Quitting from the app ends the job; don't restart it.
-                "KeepAlive": False,
-            }, fh)
-
     # ---- Windows ---------------------------------------------------------------
 
     def _win_folder(self, which: str) -> Path:
@@ -726,16 +689,6 @@ class Desktop:
             if result.returncode != 0:
                 raise OSError(f"Could not create {link.name}: {(result.stderr or '').strip()}")
 
-    def _windows_login(self, on: bool) -> None:
-        reg = self._reg()
-        if on:
-            reg.set(APP_NAME, subprocess.list2cmdline(launch_command(True, "windows", self.python)))
-        else:
-            reg.delete(APP_NAME)
-
-    def _reg(self):
-        return self._registry or _RunKey()
-
     def _cls(self):
         return self._classes or _UserKeys()
 
@@ -765,33 +718,6 @@ class Desktop:
         reg.set(scheme, "StationPlayer", "1")
         reg.set(scheme + r"\DefaultIcon", "", str(ICON_DIR / "icon.ico"))
         reg.set(scheme + r"\shell\open\command", "", subprocess.list2cmdline(launch_command(True, "windows", self.python)))
-
-
-class _RunKey:
-    """HKCU\\...\\CurrentVersion\\Run, the per-user list of login programs."""
-
-    PATH = r"Software\Microsoft\Windows\CurrentVersion\Run"
-
-    def get(self, name: str) -> str | None:
-        import winreg
-        try:
-            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, self.PATH) as key:
-                return winreg.QueryValueEx(key, name)[0]
-        except FileNotFoundError:
-            return None
-
-    def set(self, name: str, value: str) -> None:
-        import winreg
-        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, self.PATH) as key:
-            winreg.SetValueEx(key, name, 0, winreg.REG_SZ, value)
-
-    def delete(self, name: str) -> None:
-        import winreg
-        try:
-            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, self.PATH, 0, winreg.KEY_SET_VALUE) as key:
-                winreg.DeleteValue(key, name)
-        except FileNotFoundError:
-            pass
 
 
 class _UserKeys:

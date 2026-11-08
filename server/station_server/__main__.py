@@ -205,15 +205,8 @@ def _replace_older(port: int, url: str) -> None:
 
 def _log_to_file(home: Path) -> None:
     """The downloaded app and the login start have no terminal: keep a log."""
-    import logging.handlers
-    try:
-        home.mkdir(parents=True, exist_ok=True)
-        handler = logging.handlers.RotatingFileHandler(
-            home / "station-server.log", maxBytes=2_000_000, backupCount=2, encoding="utf-8")
-    except OSError:
-        return
-    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
-    logging.basicConfig(level=logging.INFO, handlers=[handler], force=True)
+    from station_appkit.applog import log_to_file
+    log_to_file(home, "station-server")
 
 
 def _hand_over(port: int, url: str) -> int:

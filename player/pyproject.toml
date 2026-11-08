@@ -20,7 +20,7 @@ authors = [
     { name = "Raby Whyte", email = "rabywhyte@gmail.com" },
 ]
 keywords = ["music", "player", "radio", "itunes", "playlist"]
-dependencies = ["station-appkit>=1.0"]
+dependencies = ["station-appkit>=1.1"]
 
 # For working on it, not installed with it. Versions pinned in the
 # repo's uv.lock: `uv sync --package station-player` from the repo root.

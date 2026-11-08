@@ -58,7 +58,7 @@ dependencies = [
     "click>=8.1",
     # The update check, self-updater and app window, shared with Station
     # Player and Station Server (appkit/ in this repo).
-    "station-appkit>=1.0",
+    "station-appkit>=1.1",
 ]
 
 # Tools for working on Station Studio, not installed with it (PEP 735

@@ -11,13 +11,10 @@ air go back on air, with no window until you open one.
 """
 from __future__ import annotations
 
-import os
-import plistlib
-import subprocess
 import sys
 from pathlib import Path
 
-from station_player.desktop import _RunKey
+from station_appkit.login import Login as _Login
 
 APP_NAME = "Station Server"
 APP_ID = "io.github.raby.station-server"
@@ -57,82 +54,16 @@ def launch_command(background: bool = True, platform: str | None = None,
     return [exe, "-P", "-m", "station_server", *tail]
 
 
-class Login:
-    """Start at login: on, off, or whether it's on."""
+class Login(_Login):
+    """Start at login: on, off, or whether it's on (station_appkit.login).
+    On the Mac it's started again if it stops without being asked to, so
+    the stations stay on air."""
 
     def __init__(self, platform: str | None = None, home: Path | None = None,
                  registry=None, python: str | None = None) -> None:
-        self.platform = platform or current_platform()
-        self.home = home or Path.home()
-        self._registry = registry
+        from station_server.appinfo import APP
         self.python = python
-
-    def _agent(self) -> Path:
-        return self.home / "Library" / "LaunchAgents" / f"{APP_ID}.plist"
-
-    def _autostart(self) -> Path:
-        base = os.environ.get("XDG_CONFIG_HOME") if self.home == Path.home() else None
-        return Path(base or self.home / ".config") / "autostart" / f"{APP_ID}.desktop"
-
-    def _reg(self):
-        return self._registry or _RunKey()
-
-    def enabled(self) -> bool:
-        try:
-            if self.platform == "windows":
-                return self._reg().get(APP_NAME) is not None
-            if self.platform == "mac":
-                return self._agent().is_file()
-            return self._autostart().is_file()
-        except OSError:
-            return False
-
-    def refresh(self) -> None:
-        """Start at login made by an older version (0.16.4 to 0.16.6 started
-        the Mac app's main program): written again as this version would."""
-        if self.platform != "mac" or not self.enabled():
-            return
-        try:
-            with self._agent().open("rb") as fh:
-                current = plistlib.load(fh).get("ProgramArguments")
-        except (OSError, ValueError, plistlib.InvalidFileException):
-            return
-        if current != launch_command(True, self.platform, self.python):
-            try:
-                self.set(True)
-            except (OSError, ValueError):
-                pass
-
-    def set(self, on: bool) -> None:
-        cmd = launch_command(True, self.platform, self.python)
-        if on and (cmd[0].startswith("/Volumes/") or "/AppTranslocation/" in cmd[0]):
-            # The disk image, or where macOS put a download not yet moved
-            # out of it: gone after the next restart.
-            raise ValueError("Move Station Server into your Applications folder first, then turn this on from there")
-        if self.platform == "windows":
-            if on:
-                self._reg().set(APP_NAME, subprocess.list2cmdline(cmd))
-            else:
-                self._reg().delete(APP_NAME)
-            return
-        path = self._agent() if self.platform == "mac" else self._autostart()
-        if not on:
-            path.unlink(missing_ok=True)
-            return
-        path.parent.mkdir(parents=True, exist_ok=True)
-        if self.platform == "mac":
-            with path.open("wb") as fh:
-                plistlib.dump({
-                    "Label": APP_ID,
-                    "ProgramArguments": cmd,
-                    "EnvironmentVariables": {CHILD_ENV: "1"},
-                    "RunAtLoad": True,
-                    # Started again if it crashes; Quit (a clean exit) ends it.
-                    "KeepAlive": {"SuccessfulExit": False},
-                    "ThrottleInterval": 30,
-                }, fh)
-        else:
-            exec_line = " ".join(f'"{c}"' if " " in c else c for c in cmd)
-            path.write_text(
-                f"[Desktop Entry]\nType=Application\nName={APP_NAME}\nExec={exec_line}\n"
-                "X-GNOME-Autostart-enabled=true\nNoDisplay=true\n", encoding="utf-8")
+        platform = platform or current_platform()
+        super().__init__(APP, launch_command(True, platform, python), agent_id=APP_ID,
+                         autostart_name=f"{APP_ID}.desktop", restart_after_crash=True, env={CHILD_ENV: "1"},
+                         platform=platform, home=home, registry=registry)
