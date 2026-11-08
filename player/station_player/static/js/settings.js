@@ -323,8 +323,6 @@ function playbackSection() {
       })));
 }
 
-const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-
 async function saveSetting(body, message) {
   try {
     await loadState(await api("/api/settings", body, { quiet: true }));
