@@ -42,6 +42,7 @@ a = Analysis(
         *collect_submodules("api"),
         *collect_submodules("engine"),
         *collect_submodules("station_studio"),
+        *collect_submodules("station_appkit", filter=lambda name: name != "station_appkit.testing"),
         *collect_submodules("uvicorn"),
         *collect_submodules("alembic", filter=lambda name: ".testing" not in name),
         "sqlalchemy.dialects.sqlite",

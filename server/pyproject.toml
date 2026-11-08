@@ -18,7 +18,7 @@ authors = [
     { name = "Raby Whyte", email = "rabywhyte@gmail.com" },
 ]
 keywords = ["radio", "shoutcast", "icecast", "playout", "itunes", "playlist"]
-dependencies = ["station-player>=0.20"]
+dependencies = ["station-player>=0.20", "station-appkit>=1.0"]
 
 # For working on it, not installed with it. Versions pinned in the
 # repo's uv.lock: `uv sync --package station-server` from the repo root.
@@ -39,6 +39,7 @@ installer = [
 # PyPI for station-player>=0.20.
 [tool.uv.sources]
 station-player = { workspace = true }
+station-appkit = { workspace = true }
 
 [project.scripts]
 station-server = "station_server.__main__:main"

@@ -998,7 +998,7 @@ class ServerApp:
             "update": latest,
             "updating": self.updater.status() if self.updater else None,
             "can_update": kind in ("mac", "windows"),
-            "release_page": selfupdate.RELEASE_PAGE.format(version=latest) if latest else None,
+            "release_page": selfupdate.release_page(latest) if latest else None,
             "check_updates": self.config.check_updates,
             "alerts": {**self.config.alerts.to_json(secrets=False), "last": self.alerts.last},
             "remote": self.remote.status() if self.remote else None,

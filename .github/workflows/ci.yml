@@ -61,6 +61,27 @@ jobs:
           STATION_PLAYER_REQUIRE_BROWSER: '1'
         run: python -m pytest -q
 
+  appkit:
+    # What the three apps share: the update check, the self-updater and
+    # the app window (appkit/).
+    name: station-appkit (pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - uses: astral-sh/setup-uv@v10.3.2
+        with:
+          version: '0.13.5'  # keep in step with the other workflows
+          python-version: '3.12'
+          activate-environment: true  # `python` is .venv's
+      - name: install
+        run: uv sync --locked --package station-appkit
+      - name: pytest
+        working-directory: appkit
+        run: python -m pytest -q
+
   server:
     name: station-server (pytest)
     runs-on: ubuntu-latest
@@ -157,6 +178,10 @@ jobs:
           uv sync --locked --package station-server
       - name: pytest
         working-directory: server
+        run: python -m pytest -q -p no:cacheprovider
+      - name: station-appkit's tests, on this computer too
+        # The update check, self-updater and app window it uses (appkit/).
+        working-directory: appkit
         run: python -m pytest -q -p no:cacheprovider
 
   frontend-unit:

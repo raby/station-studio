@@ -8,6 +8,20 @@ this project uses semantic versioning.
 
 ### Changed
 
+- The new-version check, Update now and the app window are one copy for
+  all three apps: **station-appkit** (`appkit/`), instead of three that
+  had drifted apart. What each copy had learned, all three now do:
+  - Station Player tried again a day after a check that couldn't reach
+    GitHub; now, as Station Studio did, an hour after.
+  - Station Player's browser window no longer inherits the downloaded
+    app's own library paths (Station Studio's fix).
+  - After an update, the Mac window reopens as a new app, so macOS opens
+    the new version (Station Server's fix).
+  - An installed app window (Install as an app) opens on any port it
+    was installed from, but never for a link deeper in.
+  - A download that stops part-way leaves no half file behind.
+- All three apps now depend on station-appkit (standard library only);
+  each app's PyPI release puts it on PyPI when it isn't there yet.
 - The tests use httpx2, the maintained fork of httpx that Starlette
   (and so FastAPI's test client) now asks for, instead of plain httpx,
   which it warned is deprecated. A Starlette deprecation warning now

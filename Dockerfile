@@ -51,9 +51,12 @@ RUN pip install --no-cache-dir 'uv==0.13.5'
 # the wheel by accident.
 COPY pyproject.toml uv.lock README.md LICENSE alembic.ini ./
 # uv.lock covers the whole workspace, so uv reads its other members'
-# pyproject files (only those: nothing of theirs goes in the image).
+# pyproject files (only those: nothing of theirs goes in the image)...
 COPY player/pyproject.toml ./player/
 COPY server/pyproject.toml ./server/
+# ...except station-appkit, which Station Studio depends on (the update
+# check and app window it shares with Station Player and Station Server).
+COPY appkit/ ./appkit/
 COPY station_studio/ ./station_studio/
 COPY api/ ./api/
 COPY engine/ ./engine/
@@ -64,9 +67,11 @@ COPY migrations/ ./migrations/
 # force-include block expects (`web/build` → bundled/_web/).
 COPY --from=web-build /src/web/build ./web/build
 
-RUN uv build --wheel --out-dir /dist
+RUN uv build --wheel --out-dir /dist \
+ && uv build --package station-appkit --wheel --out-dir /dist
 # Station Studio's runtime dependencies at uv.lock's versions, each with
-# its hashes (no dev, docs or installer tools; no workspace packages).
+# its hashes (no dev, docs or installer tools; no workspace packages:
+# station-appkit's wheel is built above, from this commit).
 RUN uv export --frozen --no-default-groups --no-emit-project --no-emit-workspace \
       --output-file /dist/requirements.txt
 
@@ -90,7 +95,8 @@ RUN pip install --no-cache-dir --upgrade 'pip>=25.0,<27'
 
 # The dependencies first, exactly as locked (--require-hashes: a
 # download that doesn't match uv.lock's hash fails the build), then the
-# wheel itself without resolving anything again. `--no-cache-dir` avoids
+# wheels themselves (Station Studio's and station-appkit's) without
+# resolving anything again. `--no-cache-dir` avoids
 # the pip cache layer; the files are removed once installed.
 COPY --from=wheel-build /dist/ /tmp/dist/
 RUN pip install --no-cache-dir --require-hashes -r /tmp/dist/requirements.txt \

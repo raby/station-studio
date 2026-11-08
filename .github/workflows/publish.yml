@@ -28,6 +28,9 @@
 #         owner=raby, repo=station-studio,
 #         workflow=publish.yml, environment=pypi
 #   - https://test.pypi.org → same, environment=testpypi
+#   - https://pypi.org → station-appkit → Publishing: the same (pypi).
+#     station-appkit (appkit/) goes up with station-studio when PyPI
+#     hasn't its version yet; it never goes to test.pypi.
 # The `environment:` blocks below match those env names. Until the
 # trust is configured, the publish steps fail with "no trusted
 # publisher" — which is the correct failure mode for an
@@ -197,6 +200,18 @@ jobs:
         # locally first. See CONTRIBUTING.md release section.
         run: make wheel
 
+      - name: station-appkit, which the wheel needs from PyPI
+        # The update check, self-updater and app window the three apps
+        # share (appkit/). Built here only to check, before anything is
+        # published: when PyPI has this version with other code, stop
+        # (bump appkit's version). It isn't sent to test.pypi; the smoke
+        # installs it from this commit, and the pypi.org job uploads it
+        # with station-studio when PyPI hasn't it yet.
+        run: |
+          rm -f dist/station_appkit-*  # make wheel's, for wheel-smoke: not for test.pypi
+          uv build --package station-appkit --out-dir appkit-dist
+          python scripts/appkit_release.py appkit-dist/station_appkit-*.whl
+
       - name: publish to test.pypi.org
         # t1-review 🟢-3: SHA-pinned per GitHub's security guidance
         # for third-party actions. The trailing comment carries the
@@ -218,10 +233,24 @@ jobs:
     name: smoke test.pypi install
     needs: build-and-publish-testpypi
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
+
+      - uses: actions/checkout@v5
+
+      - uses: astral-sh/setup-uv@v10.3.2
+        with:
+          version: '0.13.5'  # keep in step with the other workflows
+
+      - name: station-appkit from this commit
+        # station-studio needs it, and pypi.org may not have this version
+        # yet (it goes up with station-studio). Beside station-studio's
+        # wheel, so the install below takes both.
+        run: uv build --package station-appkit --wheel --out-dir /tmp/ss-dist
 
       - name: pip install from test.pypi (with PyPI primary for deps)
         # §v1.5.0-release-blocker: two-step install. The previous
@@ -341,11 +370,20 @@ jobs:
       name: pypi
       url: https://pypi.org/project/station-studio/
     permissions:
+      contents: read
       id-token: write
     steps:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
+
+      - uses: actions/checkout@v5
+        with:
+          path: repo
+
+      - uses: astral-sh/setup-uv@v10.3.2
+        with:
+          version: '0.13.5'  # keep in step with the other workflows
 
       - name: download wheel from test.pypi.org
         # §v1.5.0-release-blocker: was `actions/download-artifact@v4`
@@ -398,6 +436,18 @@ jobs:
             sleep 10
           done
           ls -la dist/
+
+      - name: station-appkit too, if pypi.org hasn't it
+        # The same build as the smoke installed (hatchling's are
+        # reproducible). Asked again now: another app's release may have
+        # put it up since.
+        working-directory: repo
+        run: |
+          uv build --package station-appkit --out-dir ../appkit-dist
+          out=$(python scripts/appkit_release.py ../appkit-dist/station_appkit-*.whl)
+          echo "$out"
+          case "$out" in *publish=true*) cp ../appkit-dist/* ../dist/ ;; esac
+          ls -la ../dist
 
       - name: publish to pypi.org
         # t1-review 🟢-3: SHA-pinned (see test.pypi publish step

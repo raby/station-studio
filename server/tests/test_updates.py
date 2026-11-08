@@ -27,10 +27,15 @@ def test_newest_release_reads_only_station_server_releases():
 
 
 def test_downloads_match_the_installer_names():
-    assert selfupdate.asset_name("0.4.0", "windows") == "StationServer-0.4.0-windows-setup.exe"
-    assert selfupdate.asset_name("0.4.0", "mac", machine="arm64") == "StationServer-0.4.0-mac-apple-silicon.dmg"
-    assert selfupdate.asset_name("0.4.0", "mac", machine="x86_64") == "StationServer-0.4.0-mac-intel.dmg"
-    assert selfupdate.RELEASE_PAGE.format(version="0.4.0").endswith("/releases/tag/server-v0.4.0")
+    from station_appkit.selfupdate import asset_name
+
+    from station_server.appinfo import APP
+
+    assert asset_name(APP, "0.4.0", "windows") == "StationServer-0.4.0-windows-setup.exe"
+    assert asset_name(APP, "0.4.0", "mac", machine="arm64") == "StationServer-0.4.0-mac-apple-silicon.dmg"
+    assert asset_name(APP, "0.4.0", "mac", machine="x86_64") == "StationServer-0.4.0-mac-intel.dmg"
+    assert selfupdate.release_page("0.4.0").endswith("/releases/tag/server-v0.4.0")
+    assert selfupdate.install_kind() is None  # tests aren't the downloaded app
 
 
 def test_the_new_mac_app_starts_in_the_background(tmp_path):
@@ -139,7 +144,7 @@ def test_update_now_reports_progress(call, monkeypatch):
     updater = call.app.updater
     updater.kind = "windows"
     gate = threading.Event()
-    monkeypatch.setattr(updater, "_windows", lambda version: gate.wait(5))
+    monkeypatch.setattr(updater, "update_windows", lambda version: gate.wait(5))
     status, state = call("/api/update", {"version": "99.0.0"})
     assert status == 200
     assert state["updating"]["stage"] == "downloading" and state["updating"]["version"] == "99.0.0"

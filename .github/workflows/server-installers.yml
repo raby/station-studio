@@ -25,8 +25,9 @@ on:
       - 'server/**'
       - '.github/workflows/server-installers.yml'
       - 'scripts/check_macos_minimum.sh'
-      # The versions the app bundles.
+      # The versions the app bundles, and the code it shares.
       - 'uv.lock'
+      - 'appkit/**'
   workflow_dispatch:
   workflow_call:
     inputs:

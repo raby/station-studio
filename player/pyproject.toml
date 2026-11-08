@@ -1,7 +1,9 @@
 # Station Player — a separate app from station-studio that plays its
 # exported iTunes XML playlists, local music folders and radio streams.
-# Standard library only at runtime, so `pipx install ./player` is the
-# whole install.
+# Standard library only at runtime, plus station-appkit (the update check,
+# self-updater and app window it shares with Station Studio and Station
+# Server, itself standard library only), so `pipx install station-player`
+# is the whole install.
 
 [build-system]
 requires = ["hatchling"]
@@ -18,7 +20,7 @@ authors = [
     { name = "Raby Whyte", email = "rabywhyte@gmail.com" },
 ]
 keywords = ["music", "player", "radio", "itunes", "playlist"]
-dependencies = []
+dependencies = ["station-appkit>=1.0"]
 
 # For working on it, not installed with it. Versions pinned in the
 # repo's uv.lock: `uv sync --package station-player` from the repo root.
@@ -36,6 +38,11 @@ installer = [
     "pyobjc-framework-WebKit; sys_platform == 'darwin'",
     "pyobjc-framework-Quartz; sys_platform == 'darwin'",
 ]
+
+# In this repo, station-appkit is the one in appkit/ (the downloads bundle
+# it from there); the published wheel asks PyPI for it.
+[tool.uv.sources]
+station-appkit = { workspace = true }
 
 [project.scripts]
 station-player = "station_player.__main__:main"

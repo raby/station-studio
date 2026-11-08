@@ -124,6 +124,9 @@ wheel:
 	@echo "==> Building Python wheel (dist/)..."
 	@rm -rf dist
 	@$(PY) -m build --wheel
+	@# station-appkit, which the wheel depends on (appkit/): beside it, so
+	@# wheel-smoke installs this commit's even before it's on PyPI.
+	@$(PY) -m build --wheel --outdir dist appkit
 	@echo "==> Built: $$(ls dist/*.whl)"
 
 # Smoke-test the just-built wheel in a throwaway venv. The release-
@@ -152,7 +155,7 @@ wheel-smoke: wheel
 	trap 'if [ -n "$$SMOKE_PID" ]; then kill $$SMOKE_PID 2>/dev/null || true; fi; rm -rf $$TMPVENV' EXIT INT TERM; \
 	set -e; \
 	$$PYTHON_BIN -m venv $$TMPVENV/venv; \
-	$$TMPVENV/venv/bin/pip install --quiet dist/station_studio-*.whl; \
+	$$TMPVENV/venv/bin/pip install --quiet dist/station_studio-*.whl dist/station_appkit-*.whl; \
 	echo "--- station-studio --version ---"; \
 	$$TMPVENV/venv/bin/station-studio --version; \
 	echo "--- launching serve on :8765 ---"; \
