@@ -86,6 +86,9 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
+      # The wheel this run built: the smoke and pypi.org jobs take test.pypi's
+      # copy only if it's these bytes.
+      sha256: ${{ steps.wheel.outputs.sha256 }}
     # §v1.5.0-release-blocker: merged the previous `build` +
     # `publish-testpypi` jobs to drop the upload-artifact step
     # (account-wide GH Actions storage quota was blocking releases).
@@ -200,6 +203,10 @@ jobs:
         # locally first. See CONTRIBUTING.md release section.
         run: make wheel
 
+      - name: the wheel's SHA-256
+        id: wheel
+        run: echo "sha256=$(sha256sum dist/station_studio-*.whl | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
       - name: station-appkit, which the wheel needs from PyPI
         # The update check, self-updater and app window the three apps
         # share (appkit/). Built here only to check, before anything is
@@ -286,22 +293,10 @@ jobs:
           TAG_VERSION="${{ needs.build-and-publish-testpypi.outputs.version }}"
           python -m venv /tmp/smoke
           mkdir -p /tmp/ss-dist
-          for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
-            if /tmp/smoke/bin/pip download \
-              --quiet \
-              --no-deps \
-              --index-url https://test.pypi.org/simple/ \
-              --dest /tmp/ss-dist \
-              "station-studio==${TAG_VERSION}"; then
-              echo "Download succeeded on attempt $i"
-              break
-            fi
-            if [ "$i" = "12" ]; then
-              echo "ERROR: pip download never succeeded after 2 minutes — test.pypi index lag or broken artifact." >&2
-              exit 1
-            fi
-            sleep 10
-          done
+          # From test.pypi's record of the upload (its JSON API), not its
+          # package index, which can lag by minutes (scripts/testpypi_wheel.py).
+          python scripts/testpypi_wheel.py "$TAG_VERSION" /tmp/ss-dist \
+            --sha256 "${{ needs.build-and-publish-testpypi.outputs.sha256 }}"
           # Local wheel install with deps from real PyPI only. The
           # local file path bypasses any index lookup for
           # station-studio itself; --index-url scopes dep resolution
@@ -419,22 +414,12 @@ jobs:
           set -e
           TAG_VERSION="${{ needs.build-and-publish-testpypi.outputs.version }}"
           mkdir -p dist
-          for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18; do
-            if python -m pip download \
-              --quiet \
-              --no-deps \
-              --index-url https://test.pypi.org/simple/ \
-              --dest dist/ \
-              "station-studio==${TAG_VERSION}"; then
-              echo "Download succeeded on attempt $i"
-              break
-            fi
-            if [ "$i" = "18" ]; then
-              echo "ERROR: pip download never succeeded after 3 minutes — test.pypi index lag or broken artifact." >&2
-              exit 1
-            fi
-            sleep 10
-          done
+          # From test.pypi's record of the upload (its JSON API), not its
+          # package index: 1.17.0 and 1.20.1 failed here with "No matching
+          # distribution", the index a few minutes behind the smoke's
+          # (scripts/testpypi_wheel.py). Only the bytes this run built.
+          python repo/scripts/testpypi_wheel.py "$TAG_VERSION" dist \
+            --sha256 "${{ needs.build-and-publish-testpypi.outputs.sha256 }}"
           ls -la dist/
 
       - name: station-appkit too, if pypi.org hasn't it
