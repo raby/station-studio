@@ -1422,6 +1422,46 @@ def test_night_mode(page):
     sync_api.expect(page.locator("#btn-night")).to_be_focused()
 
 
+def test_night_mode_left_before_full_screen_comes_on(page):
+    # Full screen takes a moment to come on (slowed down here, so it's
+    # always still on its way): a quick key or second click can beat it.
+    page.evaluate("""() => {
+      const real = Element.prototype.requestFullscreen;
+      Element.prototype.requestFullscreen = function () {
+        return new Promise((r) => setTimeout(r, 300)).then(() => real.call(this));
+      };
+    }""")
+    page.locator(".nav-item[data-view=clock]").click()
+    page.locator("#btn-night").click()
+    night = page.locator("#night")
+    sync_api.expect(night).to_be_visible()
+    page.keyboard.press("Space")
+    sync_api.expect(night).to_be_hidden()
+    sync_api.expect(page.locator("#btn-night")).to_be_focused()
+    page.wait_for_timeout(600)  # full screen has come, and gone again
+    assert page.evaluate("document.fullscreenElement") is None
+    sync_api.expect(page.locator("#btn-night")).to_be_focused()
+
+
+def test_night_mode_left_while_asking_to_keep_the_screen_on(page):
+    page.evaluate("""() => {
+      window.released = 0;
+      const lock = { release() { window.released += 1; return Promise.resolve(); } };
+      Object.defineProperty(navigator, "wakeLock", { configurable: true, value: {
+        request: () => new Promise((r) => setTimeout(() => r(lock), 300)) } });
+    }""")
+    page.locator(".nav-item[data-view=clock]").click()
+    page.locator("#btn-night").click()
+    night = page.locator("#night")
+    sync_api.expect(night).to_be_visible()
+    page.wait_for_function("() => document.fullscreenElement !== null")
+    page.keyboard.press("Space")
+    sync_api.expect(night).to_be_hidden()
+    page.wait_for_timeout(600)  # the lock has arrived after leaving
+    assert page.evaluate("released") == 1  # so the screen can sleep
+    assert page.evaluate("wakeLock") is None
+
+
 PNG = bytes.fromhex(
     "89504e470d0a1a0a0000000d4948445200000001000000010806000000"
     "1f15c4890000000d49444154789c6360f8cfc0f01f0005000201a0b2e1a10000000049454e44ae426082")
