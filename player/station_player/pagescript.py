@@ -25,12 +25,12 @@ PARTS = (
     "library",     # the music library and moving between views
     "playlists",   # a playlist, making your own, a song's menu
     "upnext",      # Up Next
-    "radio",       # Radio
+    "radio",       # Radio: your stations, the schedule, recently played
     "home",        # Home and Discover
     "tuner",       # the tuner, and finding stations
     "globe",       # the world globe
     "recordings",  # the Recordings page
-    "clock",       # the clock, alarms going off, night mode
+    "clock",       # the clock and alarms, an alarm going off, night mode
     "ambient",     # ambient mode
     "recorder",    # recording the radio
     "addmusic",    # adding music
@@ -38,8 +38,9 @@ PARTS = (
     "sound",       # volume levelling, the sound wave
     "playback",    # playing, crossfading, remembering where you were
     "wiring",      # the buttons, keys and controls that work on every view
-    "desktop",     # the mini player, the Mac window, installing, opened files, the Dock menu
-    "extras",      # the play log, sleep timer, alarm, phone remote
+    "desktop",     # the mini player, the Mac window, installing, the Dock menu
+    "commands",    # what the page is asked to do: the server's inbox, Dock and Mac menus
+    "extras",      # the play log, sleep timer, telling the phone what's playing
     "boot",        # starting up
 )
 
