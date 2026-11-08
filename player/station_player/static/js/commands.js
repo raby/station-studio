@@ -36,7 +36,8 @@ async function playSource(kind, id) {
   return true;
 }
 
-// What the inbox and the Dock menu ask for.
+// What the inbox asks for. The Dock / taskbar menu (runLaunch) and the
+// Mac app's Controls and Dock menus (window.stationApp.command) use it too.
 async function runCommand(c) {
   if (c.cmd === "toggle") togglePlay();
   else if (c.cmd === "next") step(1, { userInitiated: true });
