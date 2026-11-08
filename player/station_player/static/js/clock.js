@@ -2,6 +2,7 @@
 
 const MAX_ALARMS = 30;  // alarms and schedule switches together
 const SNOOZE_MINUTES = 9;
+const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const C = { editing: null, face: store("clock-face") || "digital", timer: null, draft: null };
 
 const alarmsList = () => (S.lib.config.alarms || []);
@@ -254,6 +255,44 @@ function clockView() {
 }
 
 // ---------- alarm going off ---------------------------------------------------
+
+// The server sets the alarm off at its time (opening a window if none is
+// open); the page plays it, fading in over a minute.
+const ALARM = { timer: null, seq: null };  // seq: the alarm ringing in this window
+const ALARM_FADE = 60;
+async function alarmGoesOff(req, fresh) {
+  if (!req || String(req.seq) === store("alarm-seq")) return;
+  store("alarm-seq", String(req.seq));  // unique across restarts of the player
+  if (req.age > (fresh ? 120 : 300)) return;  // long past: the computer was asleep
+  try { await loadState(); } catch { return; }
+  // Already stopped or snoozed (from the phone, or another window): stay quiet.
+  const ringing = S.lib.alarm_state && S.lib.alarm_state.ringing;
+  if (!ringing || String(ringing.seq) !== String(req.seq)) return;
+  setSleep(0);
+  clearInterval(ALARM.timer);
+  volMul.alarm = 0.02;
+  applyVolume();
+  const played = await playSource(req.source.kind, req.source.id).catch(() => false);
+  if (!played) {
+    volMul.alarm = 1;
+    applyVolume();
+    renderErrors(`The alarm couldn't play ${req.source.name || "its playlist"}: it isn't in the library any more.`);
+    api("/api/alarm/stop", {}, { quiet: true }).catch(() => {});  // so the phone doesn't offer Snooze for nothing
+    return;
+  }
+  announce(`Alarm: playing ${req.source.name || ""}`);
+  ALARM.seq = req.seq;
+  await leaveNight({ restoreFocus: false });  // the alarm screen can't show over a full-screen clock
+  putBackPlayer();  // nor in the mini player
+  showAlarmScreen(req);
+  tellApp("show");  // the Mac app's window may be closed (hidden) while the music plays
+  const start = Date.now();
+  ALARM.timer = setInterval(() => {
+    volMul.alarm = Math.min(1, 0.02 + (Date.now() - start) / 1000 / ALARM_FADE);
+    applyVolume();
+    if (volMul.alarm >= 1) { clearInterval(ALARM.timer); ALARM.timer = null; }
+  }, 250);
+}
 
 let alarmScreenReturn = null;
 

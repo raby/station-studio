@@ -171,43 +171,6 @@ addEventListener("appinstalled", () => {
   if (S.view.type === "settings") renderView();
 });
 
-// ---------- files opened with Station Player ----------------------------
-
-// Files chosen with "Open With" in Finder / Explorer reach the server; the
-// page checks for them and plays the first. Each request plays once, in
-// whichever window gets to it first. The alarm going off, and commands
-// from the phone remote, arrive the same way.
-async function checkInbox({ fresh = 0 } = {}) {
-  let box;
-  try { box = await api("/api/inbox"); } catch { return; }
-  for (const c of box.commands || []) {
-    try { await runCommand(c); } catch { /* a playlist that's gone, say */ }
-  }
-  await alarmGoesOff(box.alarm, fresh);
-  if (ALARM.seq !== null && String(box.ringing) !== String(ALARM.seq)) await alarmEndedElsewhere();
-  const req = box.open;
-  if (!req || String(req.seq) === store("opened-seq")) return;
-  if (fresh && req.age > fresh) { store("opened-seq", String(req.seq)); return; }
-  store("opened-seq", String(req.seq));
-  try { await loadState(); } catch { return; }
-  await show({ type: "playlist", id: req.playlist });
-  if (S.view.id !== req.playlist || !S.detail) return;
-  const i = S.detail.tracks.findIndex((t) => t.id === req.track);
-  if (i >= 0) playPlaylist(S.detail, i);
-}
-
-async function playSource(kind, id) {
-  if (kind === "station") {
-    const st = (S.lib.stations || []).find((x) => x.id === id);
-    if (st) playStation(st);
-    return Boolean(st);
-  }
-  await show({ type: "playlist", id });
-  if (S.view.id !== id || !S.detail || !S.detail.tracks.length) return false;
-  playPlaylist(S.detail, S.shuffle ? null : 0);
-  return true;
-}
-
 // ---------- the Dock / taskbar menu --------------------------------------
 // The installed app's icon offers Play / Pause and Next (the manifest's
 // shortcuts). They open /?do=…, which the window that's open receives
