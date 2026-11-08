@@ -4,6 +4,27 @@ All notable changes are listed here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses semantic versioning.
 
+## [Unreleased]
+
+### Changed
+
+- **Start at login and the log file are one copy too** (station-appkit
+  1.1), so all three apps now do what the best of them did:
+  - Station Player won't turn on start at login from the disk image
+    (where it would be gone after a restart), as Station Studio and
+    Station Server already didn't.
+  - Station Server's Linux autostart entry quotes paths with quotes, `$`
+    or `%` properly (Station Player's quoting, now everyone's).
+  - All three downloaded apps bring a start at login made by a copy
+    since moved (or an older version) up to date when they start: Studio
+    didn't, and Server only did on the Mac.
+  - Station Server no longer borrows Station Player's private code for the
+    Windows Run key.
+  - The log files are all kept the same way (2 MB, two old ones kept),
+    with the part of the app each line came from.
+- A test checks each app's names against its packaging: the downloads
+  Update now looks for, the Mac app's helper, and the release tags.
+
 ## [1.20.0] - 2026-11-08
 
 Mostly under the hood: the same Station Studio, built from locked

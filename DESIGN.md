@@ -58,8 +58,11 @@ Station Studio ─┬─ exports folder ──► Station Player
   website) what's on and what's next.
 - **Shared code:** all three depend on **station-appkit**
   ([`appkit/`](https://github.com/raby/station-studio/tree/main/appkit)):
-  the new-version check, the self-updater and the app window (a Chrome
-  or Edge app window, or on the Mac the app's own WebKit window). Each
+  the new-version check, the self-updater, the app window (a Chrome
+  or Edge app window, or on the Mac the app's own WebKit window), start
+  at login and the log file. `tests/test_packaging_names.py` checks each
+  app's names (downloads, Mac helper, release tags) against its
+  packaging, so Update now finds what the workflows build. Each
   app describes itself once (`appinfo.py`: name, releases, port, Mac
   helper) and its `updates.py`, `selfupdate.py`, `window.py` and
   `macwindow.py` are thin, adding only what's its own (Station Player's

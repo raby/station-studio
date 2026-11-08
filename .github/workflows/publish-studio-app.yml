@@ -65,7 +65,7 @@ jobs:
 
       - name: tests
         run: |
-          uv sync --locked
+          uv sync --locked --all-packages  # all three: tests/test_packaging_names.py
           python -m pytest -q
 
       - name: create the draft release

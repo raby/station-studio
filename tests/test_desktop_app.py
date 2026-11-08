@@ -344,7 +344,6 @@ def test_app_serves_and_quits_from_the_page(tmp_path):
 
 
 def test_settings_route_changes_the_app_settings(tmp_path, monkeypatch):
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
     client, desk, _ = make_app(home=tmp_path)
     state = client.get("/api/app").json()
     assert state["settings"] == {"own_window": True, "check_updates": True}
@@ -353,7 +352,7 @@ def test_settings_route_changes_the_app_settings(tmp_path, monkeypatch):
     h = {desktop.API_HEADER: "1"}
     state = client.post("/api/app/settings", json={"own_window": False, "login": True}, headers=h).json()
     assert state["settings"] == {"own_window": False, "check_updates": True} and state["login"] is True
-    assert (tmp_path / "config" / "autostart" / "station-studio.desktop").exists()
+    assert (tmp_path / ".config" / "autostart" / "station-studio.desktop").exists()
     state = client.post("/api/app/settings", json={"check_updates": False, "login": False}, headers=h).json()
     assert state["settings"] == {"own_window": False, "check_updates": False} and state["login"] is False
 

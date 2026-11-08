@@ -15,6 +15,12 @@ Player and Station Server share as desktop apps, so each is written once:
   (`station_appkit.macwindow`, needs PyObjC) the downloaded app's own
   WebKit window, with its menus, Dock icon and downloads.
 
+- **Start at login** (`station_appkit.login`): a LaunchAgent on the Mac,
+  the Run key on Windows, an autostart entry on Linux; never from the
+  disk image, and an entry left by another copy brought up to date.
+- **The log file** (`station_appkit.applog`): beside the app's data, kept
+  to a few megabytes.
+
 Each app describes itself once (`station_appkit.App`: its name, release
 tag, port and so on) and passes that in. Standard library only.
 

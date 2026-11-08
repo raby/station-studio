@@ -171,7 +171,7 @@ jobs:
         # are rare, ~minutes of CI is cheap, and the SAME-COMMIT
         # guarantee is what users actually want.
         # The versions in uv.lock, as CI tested.
-        run: uv sync --locked
+        run: uv sync --locked --all-packages  # all three: tests/test_packaging_names.py
 
       - name: pre-flight pytest (release gate)
         # Same coverage gate as ci.yml's backend job. Catches the

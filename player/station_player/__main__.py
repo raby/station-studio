@@ -4,7 +4,6 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import logging.handlers
 import os
 import subprocess
 import sys
@@ -220,15 +219,8 @@ def _refresh_shortcut(app) -> None:
 
 def _log_to_file() -> None:
     """Shortcuts start Station Player with no console, so keep a log."""
-    home = get_home()
-    try:
-        home.mkdir(parents=True, exist_ok=True)
-        handler = logging.handlers.RotatingFileHandler(
-            home / "station-player.log", maxBytes=1_000_000, backupCount=1, encoding="utf-8")
-    except OSError:
-        return
-    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
-    logging.basicConfig(level=logging.INFO, handlers=[handler], force=True)
+    from station_appkit.applog import log_to_file
+    log_to_file(get_home(), "station-player")
 
 
 def _open_with(url: str, paths: list[str]) -> None:
@@ -303,7 +295,7 @@ def main(argv: list[str] | None = None) -> int:
             if args.start_at_login:
                 desktop.set_login(True)
                 print("Station Player will start when you log in.")
-        except OSError as exc:
+        except (OSError, ValueError) as exc:  # ValueError: the app still on its disk image
             print(f"Could not change shortcuts: {exc}", file=sys.stderr)
             return 1
         return 0

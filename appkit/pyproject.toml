@@ -15,7 +15,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "station-appkit"
-version = "1.0.0"
+version = "1.1.0"
 description = "Update check, self-updater and app window shared by Station Studio, Station Player and Station Server"
 readme = "README.md"
 license = { file = "LICENSE" }

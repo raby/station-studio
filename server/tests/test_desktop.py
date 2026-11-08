@@ -89,7 +89,7 @@ def test_mac_start_at_login_made_by_0_16_4_runs_the_helper_again(monkeypatch, tm
     login = Login(platform="mac", home=tmp_path / "user")
     login.refresh()  # off: nothing written
     assert not login.enabled()
-    agent = login._agent()
+    agent = login.agent()
     agent.parent.mkdir(parents=True)
     with agent.open("wb") as fh:
         plistlib.dump({"Label": desktop.APP_ID, "ProgramArguments": [str(macos / "Station Server"), "app", "--no-window"]}, fh)

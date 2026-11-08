@@ -1,6 +1,7 @@
 """What Station Studio, Station Player and Station Server share as desktop
-apps: the new-version check (updates), the self-updater (selfupdate) and
-the app window (window, and on the Mac macwindow).
+apps: the new-version check (updates), the self-updater (selfupdate), the
+app window (window, and on the Mac macwindow), start at login (login) and
+the log file (applog).
 
 Each app describes itself once, as an `App`, and hands that in.
 """
@@ -8,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 REPO = "raby/station-studio"
 
