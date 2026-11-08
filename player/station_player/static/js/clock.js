@@ -402,7 +402,10 @@ $("#alarm-screen").addEventListener("keydown", (e) => {
 
 // ---------- night mode ----------------------------------------------------------
 
-let wakeLock = null;
+// Full screen takes a moment to come on, and night mode can be left
+// before it has (a quick second click, or a key): leaveNight waits for it,
+// so the window isn't left full screen on nothing.
+let nightOpening = null;
 
 async function nightMode() {
   const box = $("#night");
@@ -414,8 +417,10 @@ async function nightMode() {
   box.hidden = false;
   tickClocks();
   box.focus();
-  try { if (box.requestFullscreen) await box.requestFullscreen(); } catch { /* fine in a window */ }
-  try { if (navigator.wakeLock) wakeLock = await navigator.wakeLock.request("screen"); } catch { wakeLock = null; }
+  keepScreenOn("night");
+  nightOpening = (async () => {
+    try { if (box.requestFullscreen) await box.requestFullscreen(); } catch { /* fine in a window */ }
+  })();
 }
 
 // Resolves once full screen has closed (which moves focus), so focus can
@@ -425,7 +430,9 @@ async function leaveNight({ restoreFocus = true } = {}) {
   if (box.hidden) return;
   box.hidden = true;
   box.replaceChildren();
-  if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
+  letScreenSleep("night");
+  await nightOpening;  // full screen still coming on
+  if (!box.hidden) return;  // opened again meanwhile: that's the one showing
   if (document.fullscreenElement) await document.exitFullscreen().catch(() => {});
   if (restoreFocus) refocus("#btn-night");
 }
