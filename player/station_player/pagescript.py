@@ -8,7 +8,8 @@ can run between one part and the next. Joined, it's the same script the
 page has always had; nothing builds it.
 
 /app.js.map maps each line of it back to its file, for the browser's
-developer tools and the line numbers in its errors.
+developer tools: their Sources panel, breakpoints, and the file and line
+they show for an error.
 """
 from __future__ import annotations
 

@@ -9,6 +9,7 @@ import time
 import pytest
 
 from conftest import write_itunes_xml, write_wav
+from station_player import pagescript
 from station_player.config import DEFAULT_STATIONS, Config, ConfigStore
 from station_player.server import PlayerApp, make_server, parse_range, resolve_stream_url
 
@@ -393,6 +394,34 @@ def test_security_headers_and_fixed_static_types(running):
     assert resp.getheader("Content-Type") == "text/css; charset=utf-8"
     resp, _ = request(port, "GET", "/api/state")
     assert resp.getheader("X-Content-Type-Options") == "nosniff"
+
+
+def test_page_script_served_joined_with_its_map(running):
+    _, port, _, _ = running
+    resp, body = request(port, "GET", "/app.js")  # static/js/'s files, joined (test_pagescript.py)
+    assert resp.status == 200 and body == pagescript.script()
+    assert resp.getheader("Content-Type") == "text/javascript; charset=utf-8"
+    assert resp.getheader("Cache-Control") == "no-cache"
+    assert resp.getheader("X-Content-Type-Options") == "nosniff"
+    assert resp.getheader("Content-Security-Policy") is None  # only pages carry it
+    assert resp.getheader("Content-Length") == str(len(body))
+    resp, body = request(port, "GET", "/app.js.map")
+    assert resp.status == 200 and body == pagescript.source_map()
+    assert resp.getheader("Content-Type") == "application/json"
+    resp, body = request(port, "GET", "/js/boot.js")  # where the map sends the browser
+    assert resp.status == 200 and resp.getheader("Content-Type") == "text/javascript; charset=utf-8"
+    assert body == (pagescript.JS_DIR / "boot.js").read_bytes()
+    resp, body = request(port, "HEAD", "/app.js")
+    assert resp.status == 200 and body == b""
+    assert resp.getheader("Content-Length") == str(len(pagescript.script()))
+
+
+def test_page_script_with_a_part_missing_is_an_error_not_half_a_page(running, tmp_path, monkeypatch):
+    _, port, _, _ = running
+    monkeypatch.setattr(pagescript, "JS_DIR", tmp_path / "nothing")
+    resp, body = request(port, "GET", "/app.js")
+    assert resp.status == 500
+    assert b"Part of the page is missing" in body
 
 
 def test_audio_endpoint_refuses_non_audio_even_if_indexed(running, tmp_path):

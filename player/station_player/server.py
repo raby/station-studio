@@ -1719,7 +1719,7 @@ def make_handler(app: PlayerApp):
             if path in ("/app.js", pagescript.MAP_URL):  # joined from static/js/
                 try:
                     body = pagescript.script() if path == "/app.js" else pagescript.source_map()
-                except OSError as exc:
+                except (OSError, UnicodeDecodeError) as exc:  # a broken install
                     return self._error(HTTPStatus.INTERNAL_SERVER_ERROR, f"Part of the page is missing: {exc}")
                 return self._send_static(body, _STATIC_TYPES[".js" if path == "/app.js" else ".json"], head_only)
             name = "index.html" if path in ("/", "") else path.lstrip("/")

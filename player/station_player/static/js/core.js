@@ -1,5 +1,9 @@
 "use strict";
 
+// The page's script: this file and the others in static/js/, joined in
+// the order station_player/pagescript.py lists them and served as
+// /app.js, one script (so each file's names are the others' too).
+
 // ---------- small helpers ----------------------------------------------
 
 // The player bar may be out in its own little window (see "the mini

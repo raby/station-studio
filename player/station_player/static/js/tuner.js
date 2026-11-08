@@ -210,6 +210,8 @@ function paintWhatsOn(box, live) {
   box.hidden = !lines.length;
 }
 
+// Reflect play state on the station cards without rebuilding the view,
+// so text typed into "Add a station" survives play/pause/stall events.
 function syncRadioCards() {
   syncTuner();
   if ($("#globe")) globeDraw();  // rings the station playing

@@ -276,6 +276,3 @@ async function notePlayed(st) {
     syncRecent();
   } catch { /* not one the player knows: nothing to remember */ }
 }
-
-// Reflect play state on the station cards without rebuilding the view,
-// so text typed into "Add a station" survives play/pause/stall events.

@@ -1,10 +1,9 @@
-"""The page's script: static/js/'s parts, served joined as /app.js, with a
-source map back to them."""
+"""The page's script: static/js/'s parts, joined as /app.js, with a source
+map back to them. (How it's served: test_server.py.)"""
 import json
 import re
 
 from station_player import pagescript
-from test_server import request, running  # noqa: F401 (a fixture)
 
 _B64 = {c: i for i, c in enumerate(pagescript._B64)}
 
@@ -82,28 +81,3 @@ def test_a_part_without_a_last_newline_still_maps(tmp_path, monkeypatch):
 def test_vlq_round_trips():
     for value in (0, 1, -1, 15, -16, 16, 31, 32, -1000, 123456):
         assert decode_vlq(pagescript._vlq(value)) == [value]
-
-
-def test_served_joined_with_its_map(running):  # noqa: F811
-    _, port, _, _ = running
-    resp, body = request(port, "GET", "/app.js")
-    assert resp.status == 200
-    assert resp.getheader("Content-Type") == "text/javascript; charset=utf-8"
-    assert resp.getheader("Cache-Control") == "no-cache"
-    assert resp.getheader("Content-Security-Policy") is None
-    assert int(resp.getheader("Content-Length")) == len(pagescript.script())
-    resp, body = request(port, "GET", "/app.js.map")
-    assert resp.status == 200 and resp.getheader("Content-Type") == "application/json"
-    assert resp.getheader("Content-Length") == str(len(pagescript.source_map()))
-    resp, _ = request(port, "GET", "/js/boot.js")  # where the map sends the browser
-    assert resp.status == 200 and resp.getheader("Content-Type") == "text/javascript; charset=utf-8"
-    resp, _ = request(port, "HEAD", "/app.js")
-    assert resp.status == 200 and int(resp.getheader("Content-Length")) == len(pagescript.script())
-
-
-def test_a_missing_part_is_an_error_not_half_a_page(running, tmp_path, monkeypatch):  # noqa: F811
-    _, port, _, _ = running
-    monkeypatch.setattr(pagescript, "JS_DIR", tmp_path / "nothing")
-    resp, body = request(port, "GET", "/app.js")
-    assert resp.status == 500
-    assert b"Part of the page is missing" in body
