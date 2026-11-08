@@ -115,6 +115,8 @@ jobs:
           curl -sS http://127.0.0.1:8765/api/state | python -c "import json,sys; d=json.load(sys.stdin); assert d['bundled'] and d['version'] == '${{ steps.version.outputs.version }}', d; print('version', d['version'])"
           curl -sS -o /dev/null -w '%{http_code} %{content_type}\n' http://127.0.0.1:8765/ | grep -q '^200 text/html'
           curl -sS -o /dev/null -w '%{http_code} %{content_type}\n' http://127.0.0.1:8765/help.js | grep -q '^200 text/javascript'
+          # The page's script, joined from every file in static/js/ (one missing is a 500).
+          curl -sS -o /dev/null -w '%{http_code} %{content_type}\n' http://127.0.0.1:8765/app.js | grep -q '^200 text/javascript'
           # The certificates bundled for https (stations, Find stations, updates).
           if [ "${{ matrix.kind }}" = mac ]; then
             test -f "build/dist/Station Player.app/Contents/Resources/certifi/cacert.pem" \

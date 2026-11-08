@@ -1,6 +1,6 @@
 // The Help page: a short guide to everything Station Player does, for
 // someone using it for the first time. Uses el(), icon() and show()
-// from app.js, which is loaded after this file.
+// from the page's script (static/js/, served as /app.js), loaded after this file.
 
 const HELP = [
   ["start", "Getting started", [

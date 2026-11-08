@@ -488,4 +488,8 @@ station-appkit's, in the repo's `appkit/`, shared with Station Studio
 and Station Server), the library reader is `station_player/library.py`, file
 tags and art are read by `station_player/tags.py`, the radio relay is
 `station_player/radio.py`, shortcuts are `station_player/desktop.py`,
-and the UI is plain HTML / CSS / JS in `station_player/static/`.
+and the UI is plain HTML / CSS / JS in `station_player/static/`. The
+page's script is one file per part of the page in `static/js/`, which the
+server joins, in the order `station_player/pagescript.py` lists them, and
+serves as `/app.js` (with a source map back to the files). There's no
+build step: edit a file and reload the page. A new file goes in that list.
