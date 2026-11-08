@@ -19,6 +19,12 @@ release=ffmpeg-source
 ffmpeg_key=FCF986EA15E6E293A5644F10B4322F04D67658D8
 mkdir -p "$dir"
 
+# Every download gives up rather than waiting for ever: GitHub's file host
+# (and ffmpeg.org) sometimes answer 504, or start and then stall, and curl
+# on its own would wait on a stalled one for hours. A transfer that stops
+# or times out is tried again, a few times, then the next source is.
+get() { curl -fsSL --connect-timeout 20 --max-time 300 --retry 4 --retry-delay 5 --retry-all-errors "$@"; }
+
 note() { if [ -n "${GITHUB_ACTIONS:-}" ]; then echo "::$1 title=$2::$3"; else echo "$2: $3" >&2; fi; }
 
 # Our copy of $1, if the release has it. 1 when it doesn't (or there's no
@@ -26,13 +32,14 @@ note() { if [ -n "${GITHUB_ACTIONS:-}" ]; then echo "::$1 title=$2::$3"; else ec
 from_release() {
   local name=$1 code url
   for _ in 1 2 3; do
-    code=$(curl -sS -o "$dir/.release.json" -w '%{http_code}' ${GH_TOKEN:+-H "Authorization: Bearer $GH_TOKEN"} \
+    code=$(curl -sS --connect-timeout 20 --max-time 60 -o "$dir/.release.json" -w '%{http_code}' \
+      ${GH_TOKEN:+-H "Authorization: Bearer $GH_TOKEN"} \
       "https://api.github.com/repos/$repo/releases/tags/$release") || code=000
     [ "$code" = 404 ] && return 1
     if [ "$code" = 200 ]; then
       url=$(jq -r --arg n "$name" '.assets[] | select(.name == $n) | .browser_download_url' "$dir/.release.json")
       [ -z "$url" ] && return 1
-      curl -fsSL --retry 3 -o "$dir/$name" "$url" && return 0
+      get -o "$dir/$name" "$url" && return 0
     fi
     echo "couldn't get $name from the $release release (HTTP $code); trying again" >&2
     sleep 10
@@ -44,8 +51,8 @@ from_release() {
 check_signature() {
   local file=$1 url=$2 home
   home=$(mktemp -d)
-  curl -fsSL --retry 3 -o "$file.asc" "$url"
-  curl -fsSL --retry 3 https://ffmpeg.org/ffmpeg-devel.asc | GNUPGHOME=$home gpg --batch --quiet --import
+  get -o "$file.asc" "$url"
+  get https://ffmpeg.org/ffmpeg-devel.asc | GNUPGHOME=$home gpg --batch --quiet --import
   if ! GNUPGHOME=$home gpg --batch --status-fd 1 --verify "$file.asc" "$file" 2>/dev/null \
       | grep -Eq "^\[GNUPG:\] VALIDSIG .*$ffmpeg_key\$"; then
     note error "signature" "$(basename "$file") isn't signed with FFmpeg's release key"
@@ -59,7 +66,7 @@ grep -v '^#' "$here/sources.txt" | while read -r name want url sig; do
   from=release
   if ! from_release "$name"; then
     from=upstream
-    curl -fsSL --retry 3 -o "$dir/$name" "$url"
+    get -o "$dir/$name" "$url"
     [ "$sig" != - ] && check_signature "$dir/$name" "$sig"
   fi
   got=$(shasum -a 256 "$dir/$name" 2>/dev/null || sha256sum "$dir/$name")

@@ -43,6 +43,10 @@ jobs:
   ffmpeg-source:
     name: ffmpeg source
     runs-on: ubuntu-latest
+    # Two files of 13 MB: a few minutes at worst. A stalled download fails
+    # the job (then Re-run failed jobs) rather than holding the release for
+    # GitHub's default six hours.
+    timeout-minutes: 20
     permissions:
       contents: write  # keep a copy in the ffmpeg-source release (not from pull requests)
     env:
