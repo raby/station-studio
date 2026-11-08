@@ -1727,7 +1727,7 @@ dev = [
 
 [[package]]
 name = "station-player"
-version = "0.23.2"
+version = "0.24.0"
 source = { editable = "player" }
 dependencies = [
     { name = "station-appkit" },
@@ -1764,7 +1764,7 @@ installer = [
 
 [[package]]
 name = "station-server"
-version = "0.22.0"
+version = "0.23.0"
 source = { editable = "server" }
 dependencies = [
     { name = "station-appkit" },
@@ -1803,7 +1803,7 @@ installer = [
 
 [[package]]
 name = "station-studio"
-version = "1.19.0"
+version = "1.20.0"
 source = { virtual = "." }
 default-groups = ["dev", "docs"]
 dependencies = [
