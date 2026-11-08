@@ -1443,23 +1443,89 @@ def test_night_mode_left_before_full_screen_comes_on(page):
     sync_api.expect(page.locator("#btn-night")).to_be_focused()
 
 
-def test_night_mode_left_while_asking_to_keep_the_screen_on(page):
+def test_night_mode_opened_again_before_full_screen_comes_on(page):
+    # Left and opened again straight away: the one showing stays full screen.
     page.evaluate("""() => {
-      window.released = 0;
-      const lock = { release() { window.released += 1; return Promise.resolve(); } };
-      Object.defineProperty(navigator, "wakeLock", { configurable: true, value: {
-        request: () => new Promise((r) => setTimeout(() => r(lock), 300)) } });
+      const real = Element.prototype.requestFullscreen;
+      Element.prototype.requestFullscreen = function () {
+        return new Promise((r) => setTimeout(r, 300)).then(() => real.call(this));
+      };
     }""")
     page.locator(".nav-item[data-view=clock]").click()
     page.locator("#btn-night").click()
     night = page.locator("#night")
     sync_api.expect(night).to_be_visible()
-    page.wait_for_function("() => document.fullscreenElement !== null")
+    page.keyboard.press("Space")
+    sync_api.expect(night).to_be_hidden()
+    page.locator("#btn-night").click()
+    page.wait_for_timeout(800)  # both full-screen requests have settled
+    sync_api.expect(night).to_be_visible()
+    assert page.evaluate("document.fullscreenElement && document.fullscreenElement.id") == "night"
+    assert page.evaluate("SCREEN.wanted.has('night')")
+    page.keyboard.press("Space")
+    sync_api.expect(night).to_be_hidden()
+    page.wait_for_function("() => document.fullscreenElement === null")
+    sync_api.expect(page.locator("#btn-night")).to_be_focused()
+
+
+# A stand-in for the screen wake lock that takes a while to say yes (so
+# it can be left meanwhile), counting what's asked for and given back.
+SLOW_WAKE_LOCK = """() => {
+  window.wake = { asked: 0, released: 0 };
+  Object.defineProperty(navigator, "wakeLock", { configurable: true, value: {
+    request: () => {
+      wake.asked += 1;
+      const lock = { released: false, release() { this.released = true; wake.released += 1; return Promise.resolve(); } };
+      return new Promise((r) => setTimeout(() => r(lock), 300));
+    } } });
+}"""
+
+
+def test_night_mode_left_while_asking_to_keep_the_screen_on(page):
+    page.evaluate(SLOW_WAKE_LOCK)
+    page.locator(".nav-item[data-view=clock]").click()
+    page.locator("#btn-night").click()
+    night = page.locator("#night")
+    sync_api.expect(night).to_be_visible()
     page.keyboard.press("Space")
     sync_api.expect(night).to_be_hidden()
     page.wait_for_timeout(600)  # the lock has arrived after leaving
-    assert page.evaluate("released") == 1  # so the screen can sleep
-    assert page.evaluate("wakeLock") is None
+    assert page.evaluate("wake") == {"asked": 1, "released": 1}  # so the screen can sleep
+    assert page.evaluate("SCREEN.lock") is None
+
+
+def test_ambient_mode_closed_while_asking_to_keep_the_screen_on(page):
+    page.evaluate(SLOW_WAKE_LOCK)
+    page.locator("#btn-ambient").click()
+    sync_api.expect(page.locator("#ambient")).to_be_visible()
+    page.keyboard.press("Escape")
+    sync_api.expect(page.locator("#ambient")).to_be_hidden()
+    page.wait_for_timeout(600)
+    assert page.evaluate("wake") == {"asked": 1, "released": 1}
+    assert page.evaluate("SCREEN.lock") is None
+
+
+def test_screen_kept_on_again_when_the_page_is_back(page):
+    # The browser lets the lock go while the page is hidden (a locked
+    # screen, say); night mode asks again when it's back.
+    page.evaluate(SLOW_WAKE_LOCK)
+    page.locator(".nav-item[data-view=clock]").click()
+    page.locator("#btn-night").click()
+    page.wait_for_function("() => SCREEN.lock !== null")
+    page.evaluate("() => { SCREEN.lock.released = true; document.dispatchEvent(new Event('visibilitychange')); }")
+    page.wait_for_function("() => SCREEN.lock && !SCREEN.lock.released")
+    assert page.evaluate("wake.asked") == 2
+    page.keyboard.press("Space")
+    sync_api.expect(page.locator("#night")).to_be_hidden()
+    assert page.evaluate("wake.released") == 1  # the one still held (the browser had the first)
+    assert page.evaluate("SCREEN.lock") is None
+    # Ambient mode and night mode share it: closing one keeps it for the other.
+    page.evaluate("() => { keepScreenOn('night'); keepScreenOn('ambient'); }")
+    page.wait_for_function("() => SCREEN.lock !== null")
+    page.evaluate("letScreenSleep('ambient')")
+    assert page.evaluate("SCREEN.lock !== null && !SCREEN.lock.released")
+    page.evaluate("letScreenSleep('night')")
+    assert page.evaluate("SCREEN.lock") is None
 
 
 PNG = bytes.fromhex(

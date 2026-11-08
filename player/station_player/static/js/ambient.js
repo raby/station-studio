@@ -8,7 +8,7 @@
 const AMBIENT_SCENES = [["waves", "Waves"], ["rain", "Rain"], ["stream", "Stream"], ["birds", "Birds"],
   ["night", "Night"], ["fire", "Fire"], ["fish", "Fish tank"]];
 const AMB = { scene: store("ambient-scene") || "waves", volume: Number(store("ambient-volume") ?? 0.6),
-  ctx: null, out: null, sound: null, raf: 0, t0: 0, hideTimer: null, things: [], wake: null, buffers: {} };
+  ctx: null, out: null, sound: null, raf: 0, t0: 0, hideTimer: null, things: [], buffers: {} };
 
 function openAmbient() {
   const box = $("#ambient");
@@ -35,7 +35,7 @@ function openAmbient() {
   setAmbientScene(AMB.scene);
   ambientNudge();
   refocus(`#ambient .seg[aria-pressed="true"]`);
-  if (navigator.wakeLock) navigator.wakeLock.request("screen").then((w) => { AMB.wake = w; }).catch(() => {});
+  keepScreenOn("ambient");
 }
 
 function closeAmbient() {
@@ -49,7 +49,7 @@ function closeAmbient() {
   box.hidden = true;
   box.replaceChildren();
   document.body.classList.remove("ambient-on");
-  if (AMB.wake) { AMB.wake.release().catch(() => {}); AMB.wake = null; }
+  letScreenSleep("ambient");
   refocus("#btn-ambient");
 }
 

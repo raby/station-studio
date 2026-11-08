@@ -201,6 +201,30 @@ function readJSON(key) {
   try { return JSON.parse(store(key) || "null"); } catch { return null; }
 }
 
+// Keeping the screen on (night mode, ambient mode), for as long as any of
+// them wants it. Asking takes a moment, so a lock that arrives after the
+// last one has let go is given back; and the browser lets it go whenever
+// the page is hidden, so it's asked for again when the page is back.
+const SCREEN = { lock: null, wanted: new Set() };
+async function keepScreenOn(why) {
+  SCREEN.wanted.add(why);
+  if (!navigator.wakeLock || (SCREEN.lock && !SCREEN.lock.released)) return;
+  try {
+    const lock = await navigator.wakeLock.request("screen");
+    if (!SCREEN.wanted.size || (SCREEN.lock && !SCREEN.lock.released)) lock.release().catch(() => {});
+    else SCREEN.lock = lock;
+  } catch { /* not allowed now (the page is hidden, say): asked again when it's back */ }
+}
+function letScreenSleep(why) {
+  SCREEN.wanted.delete(why);
+  if (SCREEN.wanted.size || !SCREEN.lock) return;
+  SCREEN.lock.release().catch(() => {});
+  SCREEN.lock = null;
+}
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && SCREEN.wanted.size) keepScreenOn([...SCREEN.wanted][0]);
+});
+
 // ---------- state --------------------------------------------------------
 
 // Two players for library tracks: while one plays, the other loads the
