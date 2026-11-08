@@ -32,7 +32,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urljoin, urlparse
 
-from station_player import __version__, loudness, myplaylists, picks, qr, radio, remote, selfupdate, setup, updates
+from station_player import __version__, loudness, myplaylists, pagescript, picks, qr, radio, remote, selfupdate, setup, updates
 from station_player.config import MAX_RECENT, clean_alarm, clean_alarms, clean_tags
 from station_player.directory import Directory, DirectoryError
 from station_player.logos import FEED_NAME as FEED_LOGO_NAME
@@ -1716,6 +1716,12 @@ def make_handler(app: PlayerApp):
                 self.wfile.write(body)
 
         def _serve_static(self, path: str, head_only: bool):
+            if path in ("/app.js", pagescript.MAP_URL):  # joined from static/js/
+                try:
+                    body = pagescript.script() if path == "/app.js" else pagescript.source_map()
+                except (OSError, UnicodeDecodeError) as exc:  # a broken install
+                    return self._error(HTTPStatus.INTERNAL_SERVER_ERROR, f"Part of the page is missing: {exc}")
+                return self._send_static(body, _STATIC_TYPES[".js" if path == "/app.js" else ".json"], head_only)
             name = "index.html" if path in ("/", "") else path.lstrip("/")
             target = (STATIC_DIR / name).resolve()
             if not target.is_relative_to(STATIC_DIR.resolve()) or not target.is_file():
@@ -1723,10 +1729,12 @@ def make_handler(app: PlayerApp):
             ctype = _STATIC_TYPES.get(target.suffix.lower())
             if ctype is None:
                 return self._error(HTTPStatus.NOT_FOUND, "Not found")
-            body = target.read_bytes()
+            return self._send_static(target.read_bytes(), ctype, head_only)
+
+        def _send_static(self, body: bytes, ctype: str, head_only: bool):
             self.send_response(HTTPStatus.OK)
             self.send_header("Content-Type", ctype)
-            if target.suffix.lower() == ".html":
+            if ctype.startswith("text/html"):
                 self.send_header("Content-Security-Policy", _CSP)
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-cache")
