@@ -255,7 +255,9 @@ def reveal_command(path: Path, platform: str | None = None) -> list[str] | None:
     if platform == "darwin":
         return ["open", "-R", str(path)] if path.is_file() else ["open", str(path)]
     if platform.startswith("win"):
-        return ["explorer", f"/select,{path}"] if path.is_file() else None
+        # "/select," then the path as its own argument: quoted as it needs to
+        # be when it has spaces (C:\Users\Rob Smith\...).
+        return ["explorer", "/select,", str(path)] if path.is_file() else None
     # Linux and the rest: file managers differ in how to select a file, so
     # its folder is opened.
     return ["xdg-open", str(path if path.is_dir() else path.parent)]
@@ -263,13 +265,16 @@ def reveal_command(path: Path, platform: str | None = None) -> list[str] | None:
 
 def reveal(path: Path, platform: str | None = None, run=None, startfile=None) -> None:
     """Show a file (selected) or a folder in Finder, File Explorer or the
-    file manager. Raises OSError when it can't (no such file, no file
-    manager)."""
+    file manager. Raises FileNotFoundError when the file isn't there, and
+    another OSError when nothing can show it (no file manager here)."""
     path = Path(path)
     if not path.exists():
         raise FileNotFoundError(f"{path} isn't there any more")
     cmd = reveal_command(path, platform)
-    if cmd is None:
-        (startfile or os.startfile)(str(path))  # type: ignore[attr-defined]
-        return
-    (run or spawn)(cmd)
+    try:
+        if cmd is None:
+            (startfile or os.startfile)(str(path))  # type: ignore[attr-defined]
+        else:
+            (run or spawn)(cmd)
+    except FileNotFoundError as exc:  # the command, not the file
+        raise OSError(f"There's no {file_manager(platform)} here to show it in ({exc.filename or exc})") from exc

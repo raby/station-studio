@@ -435,6 +435,10 @@ def test_reveal_shows_what_is_in_the_exports_folder_and_nothing_else(monkeypatch
     monkeypatch.setenv("STATION_STUDIO_EXPORT_DIR", str(fresh))
     assert client.post("/api/app/reveal", json={"path": str(fresh)}, headers=h).status_code == 200
     assert fresh.is_dir() and shown[-1] == fresh
+    # Nothing on this computer to show it with.
+    monkeypatch.setattr(desktop, "reveal", lambda p: (_ for _ in ()).throw(OSError("There's no Files here")))
+    r = client.post("/api/app/reveal", json={"path": str(fresh)}, headers=h)
+    assert r.status_code == 500 and "Couldn't show it: There's no Files here" in r.json()["detail"]
 
 
 def test_app_state_names_the_file_manager(monkeypatch):

@@ -1198,7 +1198,11 @@
       // verification).
       diskExportStatus = `${r.path} (${formatBytes(r.bytes)})`;
       diskExportPath = r.path;
-      if (appState === undefined) appState = await getAppState();
+      // Not awaited: the export is done; the button appears when this answers.
+      if (appState === undefined) {
+        appState = null;
+        void getAppState().then((s) => (appState = s));
+      }
       // A station set to send each week also sent it to Station Server.
       if (r.station_server) {
         sendStatus = sentText(r.station_server);

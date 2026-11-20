@@ -176,7 +176,7 @@ def test_reveal_shows_a_file_selected_or_opens_a_folder(tmp_path):
     week.write_text("<plist/>")
     assert reveal_command(week, "darwin") == ["open", "-R", str(week)]
     assert reveal_command(week.parent, "darwin") == ["open", str(week.parent)]
-    assert reveal_command(week, "win32") == ["explorer", f"/select,{week}"]
+    assert reveal_command(week, "win32") == ["explorer", "/select,", str(week)]
     assert reveal_command(week.parent, "win32") is None  # os.startfile opens a folder
     # Linux file managers differ in selecting a file: its folder opens.
     assert reveal_command(week, "linux") == ["xdg-open", str(week.parent)]
@@ -189,3 +189,11 @@ def test_reveal_shows_a_file_selected_or_opens_a_folder(tmp_path):
     assert ran == [["open", "-R", str(week)]] and started == [str(week.parent)]
     with pytest.raises(FileNotFoundError):
         reveal(tmp_path / "gone.xml", "darwin", run=ran.append)
+
+    # No file manager (a bare Linux server): not "the file isn't there".
+    def no_xdg_open(cmd):
+        raise FileNotFoundError(2, "No such file or directory", cmd[0])
+
+    with pytest.raises(OSError) as err:
+        reveal(week, "linux", run=no_xdg_open)
+    assert not isinstance(err.value, FileNotFoundError) and "no Files here" in str(err.value)

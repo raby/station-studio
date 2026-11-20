@@ -191,7 +191,9 @@ looks roughly like:
 > **Wrote:** `/abs/path/out/starter/001.xml` (12 KB)
 
 The actual path is the **literal string** in that banner — read
-from there, don't infer. The default output dir is `out/`
+from there, don't infer. **Settings › Exports** shows the folder
+too, and in the downloaded app **Show in Finder** (or File
+Explorer) opens it. The default output dir is `out/`
 (relative to the process working directory: where you ran
 `station-studio serve` from). To set an absolute path that
 survives restarts, write a `Config` row with key
