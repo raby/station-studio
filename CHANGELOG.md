@@ -4,7 +4,11 @@ All notable changes are listed here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses semantic versioning.
 
-## [Unreleased]
+## [1.20.2] - 2026-11-20
+
+Two fixes from a tester's first weeks with the Mac app: downloading a
+week's playlist, and finding the ones exported to disk. Released with
+station-appkit 1.1.1, which carries the Mac window's part.
 
 ### Added
 
@@ -21,7 +25,8 @@ this project uses semantic versioning.
 - If the Mac app's window ever shows something other than the app, the
   Go menu (and the other menus) bring the app back instead of doing
   nothing. Both are in station-appkit 1.1.1, so Station Player's and
-  Station Server's Mac windows get them too.
+  Station Server's Mac windows get them in their next releases (Station
+  Server's play log Download CSV had the same trouble).
 
 ## [1.20.1] - 2026-11-08
 
