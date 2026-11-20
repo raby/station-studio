@@ -13,8 +13,9 @@ Player and Station Server share as desktop apps, so each is written once:
 - **The app window** (`station_appkit.window`): a Chrome, Edge or Brave
   app window with its own profile, or a browser tab; and on the Mac
   (`station_appkit.macwindow`, needs PyObjC) the downloaded app's own
-  WebKit window, with its menus, Dock icon and downloads.
-
+  WebKit window, with its menus and Dock icon. Files the app hands over
+  (an exported playlist, a play log) are saved to Downloads, and the
+  menus bring the app back if the window ever shows something else.
 - **Start at login** (`station_appkit.login`): a LaunchAgent on the Mac,
   the Run key on Windows, an autostart entry on Linux; never from the
   disk image, and an entry left by another copy brought up to date.

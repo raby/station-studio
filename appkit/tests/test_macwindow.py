@@ -233,7 +233,7 @@ def test_a_menu_on_a_page_that_isnt_the_apps_brings_the_app_back(mac):
     win = window(mac)
     answering(win, False)  # the window is showing a file, say
     win.openSettings_(None)
-    assert win.loaded == ["http://127.0.0.1:8123/"] and win.pending == 'go("settings")'
+    assert win.loaded == ["http://127.0.0.1:8123/"] and win.pending[0] == 'go("settings")'
     # Once the app's page has loaded, the call is made: once, with no
     # second trip home if the page still doesn't answer.
     win.webView_didFinishNavigation_(None, None)
@@ -251,3 +251,18 @@ def test_a_menu_while_the_page_loads_or_once_it_has_does_only_what_it_says(mac):
         answering(win, result)
         win.openHelp_(None)
         assert win.loaded == [] and win.pending is None
+
+
+def test_a_menu_whose_page_took_too_long_to_come_back_is_dropped(mac, monkeypatch):
+    # The app's page couldn't load (the app restarting, say): the next page
+    # to load much later doesn't get a Play/Pause chosen back then.
+    win = window(mac)
+    answering(win, False)
+    clock = [1000.0]
+    monkeypatch.setattr(mac.module.time, "monotonic", lambda: clock[0])
+    win.openHelp_(None)
+    assert win.pending == ('go("help")', 1000.0)
+    clock[0] += mac.module.PENDING_FOR + 1
+    calls = len(mac.AppHelper.callLater.mock_calls)
+    win.webView_didFinishNavigation_(None, None)
+    assert win.pending is None and len(mac.AppHelper.callLater.mock_calls) == calls

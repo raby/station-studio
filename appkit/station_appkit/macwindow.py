@@ -36,6 +36,9 @@ BRIDGE = "stationApp"  # the page's window.webkit.messageHandlers.stationApp
 # How long the app may be gone before the window gives up and quits (an
 # update restarts it, which takes a while on a slow Mac).
 GONE_FOR = 120
+# A menu chosen while the window was on a file is done once the app's page
+# is back, unless that took longer than this (Play long after the click).
+PENDING_FOR = 15
 
 logger = logging.getLogger(__name__)
 _local = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -136,7 +139,7 @@ class StationAppWindow(AppKit.NSObject):
         self.version = None
         self.gone_since = None
         self.tested = False
-        self.pending = None  # a call for the page, once the app's page is back
+        self.pending = None  # (call, when) for the page, once the app's page is back
         return self
 
     @objc.python_method
@@ -325,7 +328,7 @@ class StationAppWindow(AppKit.NSObject):
         set up) is left alone, as before."""
         def done(result):
             if bring_back and result is not None and not result:
-                self.pending = call
+                self.pending = (call, time.monotonic())
                 self.home()
 
         self.js(f"window.stationApp ? (window.stationApp.{call}, true)"
@@ -463,10 +466,12 @@ class StationAppWindow(AppKit.NSObject):
     def webView_didFinishNavigation_(self, view, navigation):
         self.pageLoaded()
         if self.pending:
-            # A menu chosen while the window was on something else (tell).
-            # Given a moment for the page to set up its bridge; once only.
-            call, self.pending = self.pending, None
-            AppHelper.callLater(1.0, self.tell, call, False)
+            # A menu chosen while the window was on something else (tell),
+            # given a moment for the page to set up its bridge; once only,
+            # and not if bringing the page back took too long.
+            (call, when), self.pending = self.pending, None
+            if time.monotonic() - when < PENDING_FOR:
+                AppHelper.callLater(1.0, self.tell, call, False)
         report = self.env("SELFTEST")
         if report and not self.tested:
             self.tested = True
