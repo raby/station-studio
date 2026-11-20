@@ -3,7 +3,7 @@ stood in for: its menus, the mini player's messages, Open With and what
 Quit asks. What it draws is checked on a Mac by player-installers.yml."""
 import importlib
 
-from station_appkit.testing import fake_pyobjc
+from station_appkit.testing import fake_pyobjc, page_call
 
 
 def make(mac, **opts):
@@ -22,7 +22,7 @@ def test_menus_and_controls():
         win.playPause_(None)
         win.playNext_(None)
         win.openSettings_(None)
-        assert [c.split("stationApp.")[-1] for c in win.ran] == ["command('toggle')", "command('next')",
+        assert [page_call(c) for c in win.ran] == ["command('toggle')", "command('next')",
                                                                   "show('settings')"]
         assert win.STATUS == "api/ping" and win.AUTOPLAY and win.autosaveName() == "Station Player window"
 

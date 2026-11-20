@@ -1475,6 +1475,7 @@
           : `/api/playlists/${playlist.id}/export`}
         class="btn-primary"
         data-testid="download-xml"
+        download
       >
         Download iTunes XML{exportVersion != null ? ` (v${exportVersion})` : ''}
       </a>

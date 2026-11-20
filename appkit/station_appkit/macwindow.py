@@ -56,6 +56,22 @@ SELF_TEST_RESULT = """JSON.stringify({
 })"""
 
 
+def is_attachment(disposition) -> bool:
+    """A response's Content-Disposition says it's a file to save (an
+    exported playlist, say), not a page to show."""
+    return str(disposition or "").strip().lower().startswith("attachment")
+
+
+def header(response, name: str) -> str:
+    """One header of an NSHTTPURLResponse ("" when there's none, or it
+    isn't an HTTP response)."""
+    try:
+        value = response.valueForHTTPHeaderField_(name)
+    except AttributeError:
+        return ""
+    return "" if value is None else str(value)
+
+
 def get_json(url: str):
     """The JSON at `url` (the app's own server), or None."""
     try:
@@ -120,6 +136,7 @@ class StationAppWindow(AppKit.NSObject):
         self.version = None
         self.gone_since = None
         self.tested = False
+        self.pending = None  # a call for the page, once the app's page is back
         return self
 
     @objc.python_method
@@ -171,7 +188,12 @@ class StationAppWindow(AppKit.NSObject):
         view.addObserver_forKeyPath_options_context_(self, "title", 0, None)
         win.setContentView_(view)
         self.window, self.webview = win, view
-        view.loadRequest_(Foundation.NSURLRequest.requestWithURL_(Foundation.NSURL.URLWithString_(self.url)))
+        self.home()
+
+    @objc.python_method
+    def home(self):
+        """Show the app's page (its start)."""
+        self.webview.loadRequest_(Foundation.NSURLRequest.requestWithURL_(Foundation.NSURL.URLWithString_(self.url)))
 
     @objc.python_method
     def autosaveName(self) -> str:
@@ -294,9 +316,20 @@ class StationAppWindow(AppKit.NSObject):
         self.webview.evaluateJavaScript_completionHandler_(code, handler)
 
     @objc.python_method
-    def tell(self, call: str):
-        """Call window.stationApp.<call> in the page."""
-        self.js(f"window.stationApp && window.stationApp.{call}")
+    def tell(self, call: str, bring_back: bool = True):
+        """Call window.stationApp.<call> in the page. If the window is on
+        something else (a file WebKit showed rather than saved, say), the
+        menus would do nothing and the window has no Back button: the app's
+        page comes back, and the call is made once it has loaded. While the
+        app's own page is still loading, nothing happens, as before."""
+        def done(result):
+            if bring_back and result is not None and not result:
+                self.pending = call
+                self.home()
+
+        self.js(f"window.stationApp ? (window.stationApp.{call}, true)"
+                ' : document.contentType === "text/html" && document.readyState !== "complete" ? null : false',
+                done)
 
     @objc.python_method
     def goTo(self, place: str, section: str | None = None):
@@ -414,14 +447,26 @@ class StationAppWindow(AppKit.NSObject):
             handler(_ACTION_ALLOW)
 
     def webView_decidePolicyForNavigationResponse_decisionHandler_(self, view, response, handler):
-        if response.canShowMIMEType() or not response.isForMainFrame():
-            handler(_RESPONSE_ALLOW)
-        else:
+        reply = response.response()
+        # A file the app's server hands over to save (Content-Disposition:
+        # attachment, like an exported playlist) is saved, even when WebKit
+        # could show it: shown, it would take the app's place in the window.
+        saved = response.isForMainFrame() and (
+            not response.canShowMIMEType()
+            or (is_attachment(header(reply, "Content-Disposition")) and self.ours(reply.URL())))
+        if saved:
             handler(_RESPONSE_CANCEL)
-            self.download(str(response.response().URL().absoluteString()))
+            self.download(str(reply.URL().absoluteString()))
+        else:
+            handler(_RESPONSE_ALLOW)
 
     def webView_didFinishNavigation_(self, view, navigation):
         self.pageLoaded()
+        if self.pending:
+            # A menu chosen while the window was on something else (tell).
+            # Given a moment for the page to set up its bridge; once only.
+            call, self.pending = self.pending, None
+            AppHelper.callLater(1.0, self.tell, call, False)
         report = self.env("SELFTEST")
         if report and not self.tested:
             self.tested = True

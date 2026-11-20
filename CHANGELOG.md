@@ -4,6 +4,18 @@ All notable changes are listed here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses semantic versioning.
 
+## [Unreleased]
+
+### Fixed
+
+- **Download iTunes XML in the Mac app** saves the playlist to your
+  Downloads folder (and shows it in the Finder) instead of filling the
+  window with the XML, which left no way back but quitting.
+- If the Mac app's window ever shows something other than the app, the
+  Go menu (and the other menus) bring the app back instead of doing
+  nothing. Both are in station-appkit 1.1.1, so Station Player's and
+  Station Server's Mac windows get them too.
+
 ## [1.20.1] - 2026-11-08
 
 Fixes to start at login and the log file, shared now with Station Player

@@ -1366,6 +1366,9 @@ describe('trace viewer — §16.4.t2 historical-version export', () => {
     expect(
       (screen.getByTestId('download-xml') as HTMLAnchorElement).getAttribute('href'),
     ).toBe('/api/playlists/7/export');
+    // A download, not a page: the Mac app's window saves it rather than
+    // showing the XML in place of the app.
+    expect(screen.getByTestId('download-xml').hasAttribute('download')).toBe(true);
     // Verify the disk-export click would pass null.
     exportPlaylistToDiskMock.mockResolvedValueOnce({ path: '/x', bytes: 100 });
     await act(async () => {

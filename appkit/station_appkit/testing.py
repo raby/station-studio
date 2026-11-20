@@ -11,6 +11,7 @@ on any computer. What it draws can only be checked on a Mac (each app's
 from __future__ import annotations
 
 import contextlib
+import re
 import sys
 import types
 from unittest import mock
@@ -46,3 +47,14 @@ def fake_pyobjc():
     with mock.patch.dict(sys.modules, fakes):
         yield types.SimpleNamespace(objc=objc, AppKit=appkit, Foundation=fakes["Foundation"],
                                     WebKit=fakes["WebKit"], AppHelper=helper)
+
+
+_CALL = re.compile(r"window\.stationApp \? \(window\.stationApp\.(.*), true\)")
+
+
+def page_call(script: str) -> str:
+    """What a StationAppWindow.tell() script asks of the page:
+    'go("settings")' from its whole JavaScript (or the script itself, when
+    it isn't one)."""
+    found = _CALL.match(script)
+    return found.group(1) if found else script
