@@ -221,8 +221,8 @@ def test_attachment_and_header(mac):
 
 
 def answering(win, result):
-    """The page answers each call with `result` (True: done; None: still
-    loading; False: not the app's page)."""
+    """The page answers each call with `result` (True: done; None: a page
+    without the bridge yet; False: not a page at all, a file)."""
     win.ran = []
     win.js = lambda code, done=None: (win.ran.append(code), done and done(result))
     win.loaded = []

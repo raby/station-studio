@@ -318,18 +318,18 @@ class StationAppWindow(AppKit.NSObject):
     @objc.python_method
     def tell(self, call: str, bring_back: bool = True):
         """Call window.stationApp.<call> in the page. If the window is on
-        something else (a file WebKit showed rather than saved, say), the
-        menus would do nothing and the window has no Back button: the app's
-        page comes back, and the call is made once it has loaded. While the
-        app's own page is still loading, nothing happens, as before."""
+        something that isn't a page at all (a file WebKit showed rather than
+        saved, say), the menus would do nothing and the window has no Back
+        button: the app's page comes back, and the call is made once it has
+        loaded. A page without the bridge yet (still loading, or not quite
+        set up) is left alone, as before."""
         def done(result):
             if bring_back and result is not None and not result:
                 self.pending = call
                 self.home()
 
         self.js(f"window.stationApp ? (window.stationApp.{call}, true)"
-                ' : document.contentType === "text/html" && document.readyState !== "complete" ? null : false',
-                done)
+                ' : document.contentType === "text/html" ? null : false', done)
 
     @objc.python_method
     def goTo(self, place: str, section: str | None = None):
