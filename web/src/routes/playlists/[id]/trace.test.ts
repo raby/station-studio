@@ -141,6 +141,17 @@ const { confirmDialogMock } = vi.hoisted(() => ({
 }));
 vi.mock('$lib/confirm', () => ({ confirmDialog: confirmDialogMock }));
 
+// The downloaded app's own routes: not the app unless a test says so.
+const { getAppStateMock, revealFileMock } = vi.hoisted(() => ({
+  getAppStateMock: vi.fn(async () => null),
+  revealFileMock: vi.fn(async (_path: string) => {}),
+}));
+vi.mock('$lib/desktopApp', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/desktopApp')>()),
+  getAppState: () => getAppStateMock(),
+  revealFile: (path: string) => revealFileMock(path),
+}));
+
 vi.mock('$app/stores', () => ({
   page: pageStore,
 }));
@@ -479,6 +490,31 @@ describe('trace viewer — §16.6 disk-export wiring', () => {
     getPlaylistMock.mockResolvedValueOnce(stubPlaylist());
     getStationMock.mockResolvedValueOnce(stubStation());
   };
+
+  it('in the app, Export to disk offers Show in Finder for the file it wrote', async () => {
+    seedAllResolved();
+    getAppStateMock.mockResolvedValueOnce({ app: true, file_manager: 'Finder' } as never);
+    exportPlaylistToDiskMock.mockResolvedValueOnce({ path: '/Users/rob/.station-studio/exports/cls/003.xml', bytes: 10 });
+    render(Page);
+    await fireEvent.click(await screen.findByTestId('export-to-disk'));
+    const reveal = await screen.findByTestId('disk-export-reveal');
+    expect(reveal).toHaveTextContent('Show in Finder');
+    await fireEvent.click(reveal);
+    expect(revealFileMock).toHaveBeenCalledWith('/Users/rob/.station-studio/exports/cls/003.xml');
+    // A failure (the file since moved, say) shows where export errors do.
+    revealFileMock.mockRejectedValueOnce(new Error("It isn't there any more"));
+    await fireEvent.click(reveal);
+    expect(await screen.findByText(/It isn't there any more/)).toBeInTheDocument();
+  });
+
+  it('outside the app (serve, Docker), Export to disk shows no Show in Finder', async () => {
+    seedAllResolved();
+    exportPlaylistToDiskMock.mockResolvedValueOnce({ path: '/data/exports/cls/003.xml', bytes: 10 });
+    render(Page);
+    await fireEvent.click(await screen.findByTestId('export-to-disk'));
+    await screen.findByTestId('disk-export-status');
+    expect(screen.queryByTestId('disk-export-reveal')).toBeNull();
+  });
 
   it('clicking "Export to disk" POSTs and renders "Wrote: <path> (<size>)" on success', async () => {
     seedAllResolved();

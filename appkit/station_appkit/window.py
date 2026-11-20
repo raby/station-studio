@@ -13,6 +13,9 @@ From then on it's opened that way (`--app-id`).
 
 The downloaded Mac apps need none of that: they have a window of their
 own (macwindow.py), so opening the app there means opening the .app.
+
+Also here: showing a file the app wrote in Finder, File Explorer or the
+file manager (`reveal`).
 """
 from __future__ import annotations
 
@@ -229,3 +232,44 @@ def free_path(folder: Path, name: str) -> Path:
         target = folder / f"{stem} {n}{suffix}"
         n += 1
     return target
+
+
+# ---- showing a file in Finder, File Explorer or the file manager ----
+
+
+def file_manager(platform: str | None = None) -> str:
+    """What the computer calls the app that shows files, for a button
+    ("Show in Finder")."""
+    platform = platform or sys.platform
+    if platform == "darwin":
+        return "Finder"
+    if platform.startswith("win"):
+        return "File Explorer"
+    return "Files"
+
+
+def reveal_command(path: Path, platform: str | None = None) -> list[str] | None:
+    """How to show `path` in the file manager: a file selected in its
+    folder, a folder opened. None on Windows for a folder (os.startfile)."""
+    platform = platform or sys.platform
+    if platform == "darwin":
+        return ["open", "-R", str(path)] if path.is_file() else ["open", str(path)]
+    if platform.startswith("win"):
+        return ["explorer", f"/select,{path}"] if path.is_file() else None
+    # Linux and the rest: file managers differ in how to select a file, so
+    # its folder is opened.
+    return ["xdg-open", str(path if path.is_dir() else path.parent)]
+
+
+def reveal(path: Path, platform: str | None = None, run=None, startfile=None) -> None:
+    """Show a file (selected) or a folder in Finder, File Explorer or the
+    file manager. Raises OSError when it can't (no such file, no file
+    manager)."""
+    path = Path(path)
+    if not path.exists():
+        raise FileNotFoundError(f"{path} isn't there any more")
+    cmd = reveal_command(path, platform)
+    if cmd is None:
+        (startfile or os.startfile)(str(path))  # type: ignore[attr-defined]
+        return
+    (run or spawn)(cmd)

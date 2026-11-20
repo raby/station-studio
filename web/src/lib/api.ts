@@ -688,6 +688,11 @@ export const exportPlaylistToDisk = (
   );
 };
 
+/** Where Export to disk writes, and where Station Player and Station
+ *  Server look for new weeks (Settings › Exports). */
+export const getExportsFolder = (fetch_ = fetch): Promise<{ folder: string }> =>
+  fetch_('/api/exports/folder').then((r) => json<{ folder: string }>(r));
+
 /**
  * Canonical option lists for template-shaped UI dropdowns. Sourced from
  * `engine/template.py` via GET /api/meta (DESIGN.md §14.19) so the

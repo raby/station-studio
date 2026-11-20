@@ -363,7 +363,7 @@ def export_playlist(
     return xml_bytes
 
 
-def _resolve_output_dir(db: Session) -> Path:
+def resolve_output_dir(db: Session) -> Path:
     """Resolve the configured disk-export directory to an absolute path.
 
     Reads Config key 'playlist_output_dir' if set, else
@@ -439,7 +439,7 @@ def export_playlist_to_disk(
             )
         effective_version_no = current.version_no
 
-    out_dir = _resolve_output_dir(db)
+    out_dir = resolve_output_dir(db)
     station_dir = out_dir / p.station.slug
     station_dir.mkdir(parents=True, exist_ok=True)
     filename = (
@@ -537,7 +537,7 @@ def prune_export_directory(
     * Symlinks are skipped at every level (top-level subdirs AND
       inside subdirs).
     * Every delete target is canonicalized + verified to be under
-      `_resolve_output_dir`, then `lstat`'d immediately before
+      `resolve_output_dir`, then `lstat`'d immediately before
       unlink to defeat TOCTOU symlink-swap attempts.
 
     Caveat: the canonicalization only protects against escapes from
@@ -549,7 +549,7 @@ def prune_export_directory(
     prune finds no orphans (deleted files are gone; remaining files
     have valid DB matches).
     """
-    out_dir = _resolve_output_dir(db)
+    out_dir = resolve_output_dir(db)
 
     # Build the DB-side lookup tables once. selectinload collapses
     # the Station → Playlist → PlaylistVersion walk into 3 queries

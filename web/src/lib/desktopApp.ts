@@ -31,6 +31,8 @@ export interface AppState {
   browser: string | null;
   /** The downloaded Mac app, which has a window of its own (macwindow.py). */
   mac_app?: boolean;
+  /** What shows files on this computer: "Finder", "File Explorer" or "Files". */
+  file_manager?: string;
 }
 
 export interface AppSettings {
@@ -87,6 +89,12 @@ export async function checkNow(fetchFn: typeof fetch = fetch): Promise<AppState>
 /** Ask the Mac app to show its own window. */
 export async function openAppWindow(fetchFn: typeof fetch = fetch): Promise<void> {
   await post('/api/app/window', {}, fetchFn);
+}
+
+/** Show an exported week (or the exports folder) in Finder, File
+ *  Explorer or the file manager. Only what's in the exports folder. */
+export async function revealFile(path: string, fetchFn: typeof fetch = fetch): Promise<void> {
+  await post('/api/app/reveal', { path }, fetchFn);
 }
 
 export async function quitApp(fetchFn: typeof fetch = fetch): Promise<void> {

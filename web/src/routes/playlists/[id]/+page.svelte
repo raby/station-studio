@@ -41,6 +41,7 @@
   import ChipMultiInput from '$lib/components/editor/ChipMultiInput.svelte';
   import ErrorBanner from '$lib/components/ErrorBanner.svelte';
   import StatusBanner from '$lib/components/StatusBanner.svelte';
+  import { getAppState, revealFile, type AppState } from '$lib/desktopApp';
   import { sentText } from '$lib/stationServer';
   import { onDestroy, tick } from 'svelte';
   import SongList from '$lib/components/songs/SongList.svelte';
@@ -656,6 +657,10 @@
   // single string-with-flag so the template can apply distinct styles cleanly.
   let diskExporting = false;
   let diskExportStatus: string | null = null;
+  // The file Export to disk just wrote, and the app's state (asked once,
+  // on the first export): in the downloaded app, Show in Finder.
+  let diskExportPath: string | null = null;
+  let appState: AppState | null | undefined = undefined;
   let diskExportError: string | null = null;
 
   // Send to Station Server (engine/stationserver.py): shown once this
@@ -1176,6 +1181,7 @@
     if (!playlist) return;
     diskExporting = true;
     diskExportStatus = null;
+    diskExportPath = null;
     diskExportError = null;
     try {
       // §16.4.t6 — pass `archiveDiskExports` as the `versioned` flag.
@@ -1191,6 +1197,8 @@
       // would render "Wrote: Wrote to ..." (caught in live
       // verification).
       diskExportStatus = `${r.path} (${formatBytes(r.bytes)})`;
+      diskExportPath = r.path;
+      if (appState === undefined) appState = await getAppState();
       // A station set to send each week also sent it to Station Server.
       if (r.station_server) {
         sendStatus = sentText(r.station_server);
@@ -1203,6 +1211,15 @@
       diskExportError = e instanceof ApiError ? e.message : String(e);
     } finally {
       diskExporting = false;
+    }
+  }
+
+  async function showExport(path: string | null) {
+    if (!path) return;
+    try {
+      await revealFile(path);
+    } catch (e) {
+      diskExportError = (e as Error).message;
     }
   }
 
@@ -1535,6 +1552,16 @@
         prefix="Wrote"
         testId="disk-export-status"
       />
+      {#if diskExportPath && appState?.file_manager}
+        <button
+          type="button"
+          class="reveal-export"
+          data-testid="disk-export-reveal"
+          on:click={() => showExport(diskExportPath)}
+        >
+          Show in {appState.file_manager}
+        </button>
+      {/if}
     {/if}
     <!-- §16.5 c2 — disk-export failures via ErrorBanner. Polite
          severity matches the §16.6 D3 "inline status, not toast"
@@ -2254,6 +2281,10 @@
   }
   /* §16.5.t2 — `.disk-status` retired; success styling now lives
      in StatusBanner, error styling in ErrorBanner. */
+  /* Show in Finder, under the "Wrote:" line after Export to disk. */
+  .reveal-export {
+    margin: -0.25rem 0 1rem;
+  }
   /* §16.4.t6 — archive-every-version checkbox. Inline with the
      hint text so the operator sees what filename they'll get
      before they click Export. */

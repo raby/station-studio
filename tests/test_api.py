@@ -3092,3 +3092,15 @@ def test_generate_stateless_cursor_does_not_write_cursor_state(api):
 
     with Session() as db:
         assert db.query(CursorState).count() == 0
+
+
+def test_exports_folder_says_where_export_to_disk_writes(api, tmp_path, monkeypatch):
+    """Settings › Exports shows it: the configured folder, else the one
+    the downloaded app sets, else the default."""
+    client, Session = api
+    monkeypatch.setenv("STATION_STUDIO_EXPORT_DIR", str(tmp_path / "exports"))
+    assert client.get("/api/exports/folder").json() == {"folder": str((tmp_path / "exports").resolve())}
+    with Session() as db:
+        db.add(Config(key="playlist_output_dir", value=str(tmp_path / "elsewhere")))
+        db.commit()
+    assert client.get("/api/exports/folder").json() == {"folder": str((tmp_path / "elsewhere").resolve())}

@@ -6,6 +6,13 @@ this project uses semantic versioning.
 
 ## [Unreleased]
 
+### Added
+
+- **Where exports go:** Settings › Exports shows the folder Export to disk
+  writes to (the one Station Player and Station Server read), and in the
+  app **Show in Finder** (or File Explorer) opens it. After Export to
+  disk, Show in Finder points at the file it wrote.
+
 ### Fixed
 
 - **Download iTunes XML in the Mac app** saves the playlist to your

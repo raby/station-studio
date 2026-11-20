@@ -22,7 +22,7 @@ from engine.week_change_store import (
     EngineInputs, apply_changes, dropped_report, forget_dropped, saved_items,
 )
 from engine.exporter import (
-    export_playlist, export_playlist_to_disk, prune_export_directory,
+    export_playlist, export_playlist_to_disk, prune_export_directory, resolve_output_dir,
 )
 from engine import stationserver
 from engine.trace_diff import compute_trace_diff
@@ -253,6 +253,13 @@ def export(
         media_type="application/xml",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@router.get("/api/exports/folder")
+def exports_folder(db: Session = Depends(get_db)) -> dict:
+    """Where Export to disk writes (each station in a folder of its own),
+    and where Station Player and Station Server look for new weeks."""
+    return {"folder": str(resolve_output_dir(db))}
 
 
 @router.post("/api/playlists/{playlist_id}/export-to-disk")

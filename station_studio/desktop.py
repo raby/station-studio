@@ -29,6 +29,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from station_appkit.applog import log_to_file
+from station_appkit.window import file_manager, reveal
 
 from station_studio import __version__, appsettings, selfupdate, updates
 from station_studio.home import get_home
@@ -245,11 +246,17 @@ class DesktopState:
             "login": self.login.enabled(),
             "browser": self.browser,
             "mac_app": self.mac_app,
+            # What shows files on this computer ("Show in Finder").
+            "file_manager": file_manager(),
         }
 
 
 class UpdateRequest(BaseModel):
     version: str
+
+
+class RevealRequest(BaseModel):
+    path: str
 
 
 class SettingsRequest(BaseModel):
@@ -260,8 +267,14 @@ class SettingsRequest(BaseModel):
 
 def attach_routes(app, desk: DesktopState) -> None:
     """Add /api/app (state), /api/app/update, /api/app/settings,
-    /api/app/check, /api/app/window and /api/app/quit to the FastAPI app,
-    ahead of the page's catch-all route."""
+    /api/app/check, /api/app/window, /api/app/reveal and /api/app/quit to
+    the FastAPI app, ahead of the page's catch-all route."""
+    from fastapi import Depends
+    from sqlalchemy.orm import Session
+
+    from api.deps import get_db
+    from engine.exporter import resolve_output_dir
+
     router = APIRouter(tags=["app"])
 
     def guard(request: Request) -> None:
@@ -293,6 +306,25 @@ def attach_routes(app, desk: DesktopState) -> None:
             raise HTTPException(400, f"Couldn't change that: {exc}") from exc
         return desk.state()
 
+    @router.post("/api/app/reveal")
+    def app_reveal(body: RevealRequest, request: Request, db: Session = Depends(get_db)) -> dict:
+        """Show an exported file (or the exports folder) in Finder, File
+        Explorer or the file manager. Only what's in the exports folder."""
+        guard(request)
+        folder = resolve_output_dir(db)
+        target = Path(body.path).expanduser().resolve()
+        if target != folder and not target.is_relative_to(folder):
+            raise HTTPException(403, "Only files in the exports folder")
+        if target == folder:
+            folder.mkdir(parents=True, exist_ok=True)  # nothing exported yet
+        try:
+            reveal(target)
+        except FileNotFoundError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except OSError as exc:
+            raise HTTPException(500, f"Couldn't show it: {exc}") from exc
+        return {"ok": True}
+
     @router.post("/api/app/check")
     def app_check(request: Request) -> dict:
         guard(request)
@@ -323,9 +355,10 @@ def serve(port: int, show: bool) -> int:
     from station_studio.bootstrap import bootstrap
 
     home = bootstrap(echo=logger.info).home
-    # Exports go in the data folder's exports/ (where Station Player looks
-    # for them) unless set otherwise on the page, not wherever the app
-    # happened to start: "/" on a Mac, the install folder on Windows.
+    # Exports go in the data folder's exports/ (where Station Player and
+    # Station Server look for them), not wherever the app happened to
+    # start: "/" on a Mac, the install folder on Windows. Settings › Exports
+    # shows where; no setting changes it yet.
     os.environ.setdefault("STATION_STUDIO_EXPORT_DIR", str(home / "exports"))
     os.chdir(home)
 
