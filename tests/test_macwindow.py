@@ -3,7 +3,7 @@ stood in for: its menus and where they take the page. What it draws is
 checked on a Mac by studio-installers.yml."""
 import importlib
 
-from station_appkit.testing import fake_pyobjc
+from station_appkit.testing import fake_pyobjc, page_call
 
 
 def test_menus_take_the_page_to_studios_own_addresses():
@@ -11,7 +11,7 @@ def test_menus_take_the_page_to_studios_own_addresses():
         mac = importlib.import_module("station_studio.macwindow")
         win = mac.StudioAppWindow.alloc().initWithURL_options_("http://127.0.0.1:8001/", {})
         ran = []
-        win.js = lambda code, done=None: ran.append(code.split("stationApp.")[-1])
+        win.js = lambda code, done=None: ran.append(page_call(code))
         win.buildMenus()
         assert [title for title, _ in win.appMenus()] == ["Go"] and len(win.dockItems()) == 2
         for action in (win.goStations_, win.goPools_, win.goNewStation_, win.openSettings_, win.openUpdates_,

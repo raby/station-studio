@@ -3,7 +3,7 @@ stood in for: its menus and what Quit asks while stations are on air.
 What it draws is checked on a Mac by server-installers.yml."""
 import importlib
 
-from station_appkit.testing import fake_pyobjc
+from station_appkit.testing import fake_pyobjc, page_call
 
 
 def test_menus_take_the_page_to_its_views():
@@ -11,7 +11,7 @@ def test_menus_take_the_page_to_its_views():
         mac = importlib.import_module("station_server.macwindow")
         win = mac.ServerAppWindow.alloc().initWithURL_options_("http://127.0.0.1:8770/", {})
         ran = []
-        win.js = lambda code, done=None: ran.append(code.split("stationApp.")[-1])
+        win.js = lambda code, done=None: ran.append(page_call(code))
         win.buildMenus()
         for action in (win.goStations_, win.goLog_, win.goNewStation_, win.openUpdates_):
             action(None)
