@@ -5,18 +5,23 @@
    * and Install as an app. The app's own routes (station_studio/desktop.py)
    * exist only when Station Studio was opened as an app; under `serve` or
    * Docker the page says so and offers what still applies.
+   *
+   * Settings › Exports: where Export to disk writes (and Station Player and
+   * Station Server look), with Show in Finder in the app.
    */
   import { onMount } from 'svelte';
   import {
     changeAppSettings,
     checkNow,
     getAppState,
+    revealFile,
     type AppState,
     type SettingsChange,
   } from '$lib/desktopApp';
   import { installApp, installOffer } from '$lib/install';
   import { announceAppState, requestUpdate } from '$lib/appEvents';
   import StationServerSettings from '$lib/components/StationServerSettings.svelte';
+  import { getExportsFolder } from '$lib/api';
 
   export let fetchFn: typeof fetch = (...args) => fetch(...args);
 
@@ -27,10 +32,27 @@
   let checking = false;
   let checked = false;
 
+  let exportsFolder: string | null = null;
+  let exportsError: string | null = null;
+
   onMount(async () => {
+    const folder = getExportsFolder(fetchFn)
+      .then((r) => (exportsFolder = typeof r?.folder === 'string' ? r.folder : null))
+      .catch(() => (exportsFolder = null));
     state = await getAppState(fetchFn);
     loading = false;
+    await folder;
   });
+
+  async function showExports(): Promise<void> {
+    if (!exportsFolder) return;
+    exportsError = null;
+    try {
+      await revealFile(exportsFolder, fetchFn);
+    } catch (e) {
+      exportsError = (e as Error).message;
+    }
+  }
 
   function changed(next: AppState, message: string): void {
     state = next;
@@ -197,6 +219,26 @@
     {/if}
   </section>
 
+  <section class="card" aria-labelledby="exports-heading" data-testid="settings-exports">
+    <h2 id="exports-heading">Exports</h2>
+    <p class="help">
+      Export to disk writes each week here, in a folder for each station. Station Player and Station Server look
+      here for new weeks, so it stays put. For a copy to keep or send, use Download iTunes XML on the week's page:
+      it goes to your Downloads folder.
+    </p>
+    {#if exportsFolder}
+      <p class="folder-row">
+        <code data-testid="exports-folder">{exportsFolder}</code>
+        {#if state?.file_manager}
+          <button type="button" on:click={showExports} data-testid="exports-reveal">Show in {state.file_manager}</button>
+        {/if}
+      </p>
+    {/if}
+    {#if exportsError}
+      <p class="error" role="alert" data-testid="exports-error">{exportsError}</p>
+    {/if}
+  </section>
+
   <StationServerSettings {fetchFn} />
 </main>
 
@@ -286,6 +328,19 @@
   }
   .install .help {
     margin: 0;
+  }
+  .folder-row {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 12px;
+    margin: 14px 0 0;
+  }
+  .folder-row code {
+    overflow-wrap: anywhere;
+  }
+  #exports-heading + .help {
+    margin-top: 0;
   }
   .note {
     color: var(--ok);

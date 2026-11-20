@@ -158,3 +158,46 @@ describe('Settings › App', () => {
     await waitFor(() => expect(queryByTestId('settings-install')).toBeNull());
   });
 });
+
+describe('Settings › Exports', () => {
+  afterEach(() => cleanup());
+  const folder = '/Users/rob/.station-studio/exports';
+
+  it('shows where exports go, and in the app shows the folder in Finder', async () => {
+    const calls: Call[] = [];
+    const fetchFn = vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push([url, init]);
+      if (url === '/api/exports/folder') return json({ folder });
+      if (url === '/api/app/reveal') return json({ ok: true });
+      return json(appState({ file_manager: 'Finder' }));
+    }) as unknown as typeof fetch;
+    const { findByTestId } = render(Page, { props: { fetchFn } });
+    expect(await findByTestId('exports-folder')).toHaveTextContent(folder);
+    expect(await findByTestId('settings-exports')).toHaveTextContent('Station Player and Station Server look');
+    await fireEvent.click(await findByTestId('exports-reveal'));
+    const reveal = calls.find(([url]) => url === '/api/app/reveal');
+    expect(reveal).toBeTruthy();
+    expect(JSON.parse(String(reveal![1]?.body))).toEqual({ path: folder });
+    expect(new Headers(reveal![1]?.headers).get('X-Station-Studio')).toBe('1');
+  });
+
+  it('says why it could not show it', async () => {
+    const fetchFn = vi.fn(async (url: string) => {
+      if (url === '/api/exports/folder') return json({ folder });
+      if (url === '/api/app/reveal') return json({ detail: "Couldn't show it: no Finder" }, 500);
+      return json(appState({ file_manager: 'Finder' }));
+    }) as unknown as typeof fetch;
+    const { findByTestId } = render(Page, { props: { fetchFn } });
+    await fireEvent.click(await findByTestId('exports-reveal'));
+    expect(await findByTestId('exports-error')).toHaveTextContent("Couldn't show it: no Finder");
+  });
+
+  it('under serve or Docker shows the folder, with nothing to open it in', async () => {
+    const fetchFn = vi.fn(async (url: string) =>
+      url === '/api/exports/folder' ? json({ folder: '/data/exports' }) : json({ service: 'station-studio', app: false }),
+    ) as unknown as typeof fetch;
+    const { findByTestId, queryByTestId } = render(Page, { props: { fetchFn } });
+    expect(await findByTestId('exports-folder')).toHaveTextContent('/data/exports');
+    expect(queryByTestId('exports-reveal')).toBeNull();
+  });
+});

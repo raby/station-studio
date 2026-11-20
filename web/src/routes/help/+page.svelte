@@ -46,8 +46,8 @@
       title: 'Making the weekly playlists',
       lines: [
         ['On a station, ', { b: 'Generate week 1' }, ' (then ', { b: 'Generate next week' }, ') makes that week’s playlist. Each one is listed under Playlists, with why every track was picked.'],
-        [{ b: 'Export to disk' }, ' on a playlist writes it into the exports folder as iTunes XML, and ', { b: 'Download iTunes XML' }, ' saves a copy wherever you like.'],
-        ['Station Player finds the exports folder by itself, so a week you export shows up there as a playlist.'],
+        [{ b: 'Export to disk' }, ' on a playlist writes it into the exports folder as iTunes XML, and ', { b: 'Download iTunes XML' }, ' saves a copy to your Downloads folder.'],
+        ['Station Player and Station Server find the exports folder by themselves, so a week you export shows up there. ', { b: 'Settings › Exports' }, ' shows where it is, and in the app ', { b: 'Show in Finder' }, ' (or File Explorer) opens it.'],
       ],
     },
     {

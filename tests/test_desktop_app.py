@@ -394,3 +394,53 @@ def test_open_browser_follows_the_own_window_setting(monkeypatch, tmp_path):
     appsettings.save(tmp_path, {"own_window": False})
     desktop.open_browser("http://127.0.0.1:8001/")
     assert seen == [True, False]
+
+
+def test_reveal_shows_what_is_in_the_exports_folder_and_nothing_else(monkeypatch, tmp_path):
+    exports = (tmp_path / "exports").resolve()
+    monkeypatch.setenv("STATION_STUDIO_EXPORT_DIR", str(exports))
+    week = exports / "rebirth-radio" / "020.xml"
+    week.parent.mkdir(parents=True)
+    week.write_text("<plist/>")
+    (tmp_path / "secret.txt").write_text("not yours")
+    shown = []
+
+    def fake_reveal(path):
+        if not Path(path).exists():
+            raise FileNotFoundError(f"{path} isn't there any more")
+        shown.append(Path(path))
+
+    monkeypatch.setattr(desktop, "reveal", fake_reveal)
+    client, desk, _ = make_app()
+    h = {desktop.API_HEADER: "1"}
+    # Only from this computer, as the other app routes.
+    assert client.post("/api/app/reveal", json={"path": str(week)}).status_code == 403
+    assert client.post("/api/app/reveal", json={"path": str(week)},
+                       headers={**h, "Host": "evil.example:8001"}).status_code == 403
+    # An exported week, shown selected.
+    assert client.post("/api/app/reveal", json={"path": str(week)}, headers=h).json() == {"ok": True}
+    # The folder itself.
+    assert client.post("/api/app/reveal", json={"path": str(exports)}, headers=h).status_code == 200
+    assert shown == [week, exports]
+    # Nothing outside it, however it's written.
+    for outside in (tmp_path / "secret.txt", exports / ".." / "secret.txt", "~/.ssh"):
+        r = client.post("/api/app/reveal", json={"path": str(outside)}, headers=h)
+        assert r.status_code == 403, outside
+    # A week since deleted.
+    r = client.post("/api/app/reveal", json={"path": str(exports / "gone" / "001.xml")}, headers=h)
+    assert r.status_code == 404 and "isn't there" in r.json()["detail"]
+    assert len(shown) == 2
+    # Before anything has been exported, the folder is made so it can be shown.
+    fresh = (tmp_path / "fresh").resolve()
+    monkeypatch.setenv("STATION_STUDIO_EXPORT_DIR", str(fresh))
+    assert client.post("/api/app/reveal", json={"path": str(fresh)}, headers=h).status_code == 200
+    assert fresh.is_dir() and shown[-1] == fresh
+    # Nothing on this computer to show it with.
+    monkeypatch.setattr(desktop, "reveal", lambda p: (_ for _ in ()).throw(OSError("There's no Files here")))
+    r = client.post("/api/app/reveal", json={"path": str(fresh)}, headers=h)
+    assert r.status_code == 500 and "Couldn't show it: There's no Files here" in r.json()["detail"]
+
+
+def test_app_state_names_the_file_manager(monkeypatch):
+    client, _, _ = make_app()
+    assert client.get("/api/app").json()["file_manager"] in ("Finder", "File Explorer", "Files")

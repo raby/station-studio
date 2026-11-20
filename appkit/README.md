@@ -16,6 +16,7 @@ Player and Station Server share as desktop apps, so each is written once:
   WebKit window, with its menus and Dock icon. Files the app hands over
   (an exported playlist, a play log) are saved to Downloads, and the
   menus bring the app back if the window ever shows something else.
+  `reveal` shows a file the app wrote in Finder or File Explorer.
 - **Start at login** (`station_appkit.login`): a LaunchAgent on the Mac,
   the Run key on Windows, an autostart entry on Linux; never from the
   disk image, and an entry left by another copy brought up to date.
