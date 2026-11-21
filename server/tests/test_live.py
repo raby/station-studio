@@ -152,6 +152,37 @@ def test_a_port_in_use_is_reported():
             LiveInput(port - 1, "x", "ffmpeg", on_source=lambda s: True, host="127.0.0.1").start()
 
 
+def test_a_stopped_live_input_lets_go_of_its_ports():
+    """Off air and back on: the next LiveInput gets the same ports. On
+    Linux a thread waiting in accept() kept a closed socket listening, so
+    presenters couldn't go live the second time ("in use by another
+    program")."""
+    port = free_ports()
+    first = LiveInput(port, "x", "ffmpeg", on_source=lambda s: True, host="127.0.0.1")
+    first.start()
+    time.sleep(0.3)  # its threads are waiting for presenters
+    first.stop()
+    for p in (port, port + 1):
+        with pytest.raises(OSError):
+            socket.create_connection(("127.0.0.1", p), timeout=1).close()
+    again = LiveInput(port, "x", "ffmpeg", on_source=lambda s: True, host="127.0.0.1")
+    again.start()
+    again.stop()
+
+
+def test_starting_and_stopping_at_once_raises_nothing(monkeypatch):
+    """The new settimeout() in _accept mustn't bring back the race the
+    stream had: stop() closing the socket before the thread gets going."""
+    errors = []
+    monkeypatch.setattr(threading, "excepthook", lambda args: errors.append(args.exc_value))
+    for _ in range(100):
+        li = LiveInput(free_ports(), "x", "ffmpeg", on_source=lambda s: True, host="127.0.0.1")
+        li.start()
+        li.stop()
+    time.sleep(0.5)
+    assert errors == []
+
+
 class FakeSource:
     """A presenter's decoded audio, made up."""
 

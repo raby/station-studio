@@ -287,6 +287,13 @@ class LiveInput:
     def stop(self) -> None:
         self._stopped.set()
         for s in self._sockets:
+            # shutdown() first: on Linux a thread blocked in accept() keeps
+            # a closed socket listening, so the next time on air couldn't
+            # have the port ("in use by another program").
+            try:
+                s.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
             try:
                 s.close()
             except OSError:
@@ -307,9 +314,17 @@ class LiveInput:
     # ---- connections ------------------------------------------------------
 
     def _accept(self, sock: socket.socket, handle) -> None:
+        # A short timeout too, as StreamServer's, so the port goes promptly
+        # even where shutdown() doesn't wake accept().
+        try:
+            sock.settimeout(0.25)
+        except OSError:
+            return  # stopped before this thread got going
         while not self._stopped.is_set():
             try:
                 conn, addr = sock.accept()
+            except TimeoutError:
+                continue
             except OSError:
                 return
             if not self._slots.acquire(blocking=False):
