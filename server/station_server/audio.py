@@ -191,7 +191,8 @@ class Encoder:
         )
         self._reader = threading.Thread(target=self._read, name="encoder-out", daemon=True)
         self._reader.start()
-        threading.Thread(target=self._read_errors, name="encoder-err", daemon=True).start()
+        self._errors = threading.Thread(target=self._read_errors, name="encoder-err", daemon=True)
+        self._errors.start()
 
     def _read(self) -> None:
         assert self._proc.stdout is not None
@@ -227,4 +228,16 @@ class Encoder:
             self._proc.wait(timeout=10)
         except subprocess.TimeoutExpired:
             self._proc.kill()
+            self._proc.wait()
         self._reader.join(timeout=5)
+        self._errors.join(timeout=5)
+        # Its output and error pipes too, once read to the end: left open,
+        # each time a station went on air kept two more of them for good.
+        # Not one a reader is still on (a sender stuck sending), which would
+        # fail its next read; that one goes with the encoder later.
+        for pipe, reader in ((self._proc.stdout, self._reader), (self._proc.stderr, self._errors)):
+            if pipe and not reader.is_alive():
+                try:
+                    pipe.close()
+                except OSError:
+                    pass
