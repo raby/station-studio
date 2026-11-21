@@ -1,4 +1,5 @@
-# The Docker image: build it, run it, check it serves (`make image-smoke`).
+# The Docker image: build it, run it, check it serves (`make image-smoke`),
+# and that docker compose publishes it on this computer only.
 #
 # On every push to main, and on pull requests that change what goes
 # into the image (the Dockerfile, the locked dependencies, the
@@ -35,3 +36,23 @@ jobs:
         # GitHub-hosted runners ship docker pre-installed and ready;
         # no daemon setup step needed.
         run: make image-smoke
+      - name: docker compose publishes on this computer only
+        # The image make image-smoke just built is the one compose names
+        # (station-studio:dev), so --no-build. Studio has no login: it
+        # must answer at 127.0.0.1 and not at the runner's own address.
+        run: |
+          trap 'docker compose down -v' EXIT
+          docker compose up -d --no-build --wait
+          curl -fsS -o /dev/null -w 'HTTP %{http_code} at 127.0.0.1\n' http://127.0.0.1:8001/api/stations
+          # What Docker actually published: one binding, on 127.0.0.1.
+          published=$(docker compose port station-studio 8001)
+          echo "Published at: $published"
+          [ "$published" = "127.0.0.1:8001" ] || { echo "::error::Published at $published, not 127.0.0.1:8001 only"; exit 1; }
+          # And from the runner's own address, nothing answers.
+          ip=$(hostname -I | awk '{print $1}')
+          [ -n "$ip" ] || { echo "::error::Couldn't find the runner's own address to try"; exit 1; }
+          if curl -sS -m 5 -o /dev/null "http://$ip:8001/api/stations"; then
+            echo "::error::Studio answers at $ip:8001: docker-compose.yml publishes it on every address"
+            exit 1
+          fi
+          echo "Not reachable at $ip:8001, as intended"

@@ -75,10 +75,11 @@ is the wrapper.
 
     First run takes ~2 min to build; later runs reuse the image.
 
-    Studio answers only at `localhost` and `127.0.0.1`: to open it
-    from other computers (on a NAS, say), uncomment
-    `STATION_STUDIO_ALLOWED_HOSTS` in `docker-compose.yml` and list
-    the names or addresses they'll use.
+    It's published on this computer only, since Studio has no login.
+    To open it from other computers on a network you trust (on a NAS,
+    say), `docker-compose.yml` says what to change: publish it on every
+    address and list the names or addresses they'll use in
+    `STATION_STUDIO_ALLOWED_HOSTS`.
 
 === "Pip wheel from source"
 

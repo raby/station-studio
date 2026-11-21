@@ -210,7 +210,7 @@ image:
 # (success, mid-flight failure, ctrl-C).
 image-smoke: image
 	@echo "==> Running container + curl smoke (host :18001 → container :8001)..."
-	@CID=$$(docker run -d -p 18001:8001 station-studio:dev); \
+	@CID=$$(docker run -d -p 127.0.0.1:18001:8001 station-studio:dev); \
 	trap "docker stop $$CID >/dev/null 2>&1 || true; docker rm $$CID >/dev/null 2>&1 || true" EXIT INT TERM; \
 	set -e; \
 	echo "--- waiting for /api/stations (up to 30s)..."; \
