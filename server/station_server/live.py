@@ -173,6 +173,14 @@ class LiveSource:
             pass
         finally:
             self._proc.wait()
+            # ffmpeg has gone: its pipes too, or each live show kept two
+            # open for good. feed() takes a closed stdin as "off air".
+            for pipe in (out, self._proc.stdin):
+                try:
+                    if pipe:
+                        pipe.close()
+                except (OSError, ValueError):
+                    pass
             with self._lock:
                 self._decoded = True
                 self._lock.notify_all()
@@ -271,13 +279,13 @@ class LiveInput:
         try:
             for port, handle in ((self.port, self._http), (self.port + 1, self._shoutcast)):
                 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                self._sockets.append(s)  # so stop() closes it, even if the port is taken
                 if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):  # Windows: really refuse a port in use
                     s.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
                 else:
                     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 s.bind((self._host, port))
                 s.listen(8)
-                self._sockets.append(s)
                 threading.Thread(target=self._accept, args=(s, handle), name=f"live-{port}", daemon=True).start()
         except OSError:
             self.stop()
