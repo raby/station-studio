@@ -123,7 +123,10 @@ class FakeShoutcast:
             threading.Thread(target=self._source, args=(conn,), daemon=True).start()
 
     def _source(self, conn: socket.socket) -> None:
-        f = conn.makefile("rb")
+        with conn, conn.makefile("rb") as f:
+            self._take_source(conn, f)
+
+    def _take_source(self, conn: socket.socket, f) -> None:
         secret = f.readline().decode().rstrip("\r\n")
         self.secrets.append(secret)
         if secret.split(":#")[0] != self.password:
@@ -201,8 +204,13 @@ class FakeIcecast:
             threading.Thread(target=self._handle, args=(conn,), daemon=True).start()
 
     def _handle(self, conn: socket.socket) -> None:
+        # The connection and the file read from it close together, however
+        # the exchange ends (closing only the connection keeps the socket).
+        with conn, conn.makefile("rb") as f:
+            self._exchange(conn, f)
+
+    def _exchange(self, conn: socket.socket, f) -> None:
         from urllib.parse import parse_qs, urlsplit
-        f = conn.makefile("rb")
         try:
             method, target, _ = f.readline().decode().split(" ", 2)
         except ValueError:  # connected and left (a port check)

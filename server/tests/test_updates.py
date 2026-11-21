@@ -97,6 +97,7 @@ def call(tmp_path, monkeypatch):
     yield call
     app.shutdown()
     server.shutdown()
+    server.server_close()
 
 
 def test_check_for_updates_asks_now(call, monkeypatch):

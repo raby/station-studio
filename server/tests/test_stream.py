@@ -63,6 +63,7 @@ def test_listeners_get_the_burst_then_the_stream(server):
     server.stop()  # off air: everyone's stream ends
     sock.settimeout(3)
     assert sock.recv(10) == b""
+    sock.close()
 
 
 def test_song_titles_for_players_that_ask(server, monkeypatch):
@@ -201,6 +202,7 @@ def test_connections_holding_back_their_request_are_limited(server, monkeypatch)
     wait_for(lambda: server._waiting == 2)
     extra = socket.create_connection(("127.0.0.1", server.port), timeout=5)
     assert extra.recv(10) == b""  # turned away
+    extra.close()
     for s in idle:
         s.close()
     wait_for(lambda: server._waiting == 0)
