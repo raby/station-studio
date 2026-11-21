@@ -49,7 +49,8 @@ services:
       # /backup/data.tar.gz /data`.
       - station-studio-data:/data
     # Restart on container crash — not on `docker compose down`.
-    # Matches the "leave it running on a NAS" hobbyist use case.
+    # Matches the "leave it running on a NAS" hobbyist use case (to open
+    # it to the other computers there, see ports above).
     restart: unless-stopped
 
 volumes:
