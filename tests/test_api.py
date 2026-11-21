@@ -72,6 +72,7 @@ def api(tmp_path, monkeypatch):
     with TestClient(app, base_url="http://localhost") as client:
         yield client, Session
     app.dependency_overrides.clear()
+    engine.dispose()
 
 
 def _wizard_payload(slug: str = "test", name: str = "Test Station") -> dict:
@@ -2462,6 +2463,7 @@ def test_lifespan_auto_seeds_when_station_table_is_empty(tmp_path, monkeypatch):
             # At least the two example stations from stations/*.json.
             assert "rebirth-classics" in slugs, slugs
             assert "rebirth-radio" in slugs, slugs
+    engine.dispose()
 
 
 def test_lifespan_does_not_re_seed_when_station_table_is_populated(
@@ -2497,6 +2499,7 @@ def test_lifespan_does_not_re_seed_when_station_table_is_populated(
         assert s.name == "MY CUSTOM EDIT", (
             "lifespan re-seeded over the user's edit"
         )
+    engine.dispose()
 
 
 def test_lifespan_swallows_seed_errors_so_app_still_boots(
@@ -2962,6 +2965,7 @@ def test_get_db_yields_closable_session(tmp_path, monkeypatch):
     # Close it via the generator's finally-block.
     with pytest.raises(StopIteration):
         next(gen)
+    tmp_engine.dispose()
 
 
 # ---------- GET /api/meta (§14.19) -----------------------------------------

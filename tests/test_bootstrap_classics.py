@@ -37,6 +37,7 @@ def db(tmp_path) -> Session:
         yield s
     finally:
         s.close()
+    engine.dispose()
 
 
 def _write_plist(path: Path, playlist_name: str, pool_prefix: str, size: int) -> None:

@@ -331,7 +331,8 @@ def cli_home_with_station_and_pool(
         seed_station(db, station_src)
         db.commit()
 
-    return isolated_cli_home
+    yield isolated_cli_home
+    engine.dispose()
 
 
 def test_generate_subcommand_creates_a_playlist(

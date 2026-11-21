@@ -30,6 +30,7 @@ def db_session(tmp_path) -> Session:
         yield s
     finally:
         s.close()
+    engine.dispose()
 
 
 def make_itunes_plist(

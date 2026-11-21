@@ -41,7 +41,8 @@ def test_stored_compressed_old_rows_read_and_downgrade_unpacks(tmp_path):
     db_path = tmp_path / "m.db"
     url = f"sqlite:///{db_path}"
     _alembic(url, "upgrade", "head")
-    Session = make_sessionmaker(make_engine(url))
+    engine = make_engine(url)
+    Session = make_sessionmaker(engine)
     with Session() as db:
         st = Station(slug="m", name="m", template={})
         db.add(st)
@@ -67,7 +68,7 @@ def test_stored_compressed_old_rows_read_and_downgrade_unpacks(tmp_path):
         # Listing a week's versions doesn't load their songs.
         v = db.query(PlaylistVersion).first()
         assert "slots" not in v.__dict__
-    make_engine(url).dispose()
+    engine.dispose()  # the one used: a new engine's dispose() closed nothing
 
     _alembic(url, "downgrade", "-1")
     con = sqlite3.connect(db_path)

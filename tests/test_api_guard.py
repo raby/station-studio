@@ -169,6 +169,7 @@ def studio_client(tmp_path, monkeypatch):
     with TestClient(studio, base_url="http://127.0.0.1:8001") as client:
         yield client, out
     studio.dependency_overrides.clear()
+    engine.dispose()
 
 
 def test_another_website_cant_delete_studios_exports(studio_client):

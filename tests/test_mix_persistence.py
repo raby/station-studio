@@ -33,7 +33,8 @@ def session_factory(tmp_path) -> sessionmaker:
     """A sessionmaker pointed at a throwaway SQLite file."""
     engine = make_engine(f"sqlite:///{tmp_path}/persist.db")
     Base.metadata.create_all(engine)
-    return make_sessionmaker(engine)
+    yield make_sessionmaker(engine)
+    engine.dispose()
 
 
 def _seed_mix_station(Session: sessionmaker) -> tuple[int, dict]:

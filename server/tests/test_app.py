@@ -62,6 +62,7 @@ def api(tmp_path):
     yield call
     app.shutdown()
     server.shutdown()
+    server.server_close()
 
 
 def test_page_and_guards(api):

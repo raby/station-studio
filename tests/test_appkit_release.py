@@ -85,8 +85,9 @@ def test_pypi_trouble_isnt_taken_for_a_new_version(built):
     def down(url, timeout=None):
         raise urllib.error.HTTPError(url, 503, "Unavailable", {}, None)
 
-    with pytest.raises(urllib.error.HTTPError):
+    with pytest.raises(urllib.error.HTTPError) as caught:
         appkit_release.decide(built, down)
+    caught.value.close()
 
 
 def test_main_writes_the_answer_for_the_workflow(built, tmp_path, monkeypatch, capsys):

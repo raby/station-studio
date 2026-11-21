@@ -45,6 +45,7 @@ def db(tmp_path) -> Session:
         yield s
     finally:
         s.close()
+    engine.dispose()
 
 
 # ---------- helpers ------------------------------------------------------
@@ -261,6 +262,7 @@ def test_main_imports_sample_fixture_end_to_end(tmp_path, monkeypatch, capsys):
         assert jingles.role == "content"
         # 6 pools total.
         assert db.query(SourcePlaylist).count() == 6
+    engine.dispose()
 
 
 def test_main_returns_nonzero_for_missing_manifest_file(tmp_path, monkeypatch, capsys):

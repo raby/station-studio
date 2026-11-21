@@ -128,6 +128,7 @@ def classics_db(tmp_path) -> Session:
         yield db
     finally:
         db.close()
+    engine.dispose()
 
 
 def _write_fixture(pids_by_week: dict[int, list[str]]) -> None:

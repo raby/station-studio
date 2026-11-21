@@ -325,6 +325,7 @@ def test_bootstrap_then_generate_stateful_starter_end_to_end(
         "_FIRST_BOOT_POOLS entry for STATEFUL_CONTENT (role / "
         "filename / name) drifted from stations/stateful-starter.json"
     )
+    eng.dispose()
 
 
 def test_bootstrap_result_carries_starter_signals(

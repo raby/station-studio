@@ -19,7 +19,8 @@ from engine.persistence import load_alias_map
 def session_factory(tmp_path) -> sessionmaker:
     engine = make_engine(f"sqlite:///{tmp_path}/alias.db")
     Base.metadata.create_all(engine)
-    return make_sessionmaker(engine)
+    yield make_sessionmaker(engine)
+    engine.dispose()
 
 
 def test_load_alias_map_empty_table_returns_empty_dict(session_factory):

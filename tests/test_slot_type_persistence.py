@@ -34,7 +34,8 @@ from scripts.backfill_slot_types import backfill
 def session_factory(tmp_path) -> sessionmaker:
     engine = make_engine(f"sqlite:///{tmp_path}/slot_type.db")
     Base.metadata.create_all(engine)
-    return make_sessionmaker(engine)
+    yield make_sessionmaker(engine)
+    engine.dispose()
 
 
 @pytest.fixture
@@ -55,6 +56,7 @@ def api(tmp_path):
     with TestClient(app, base_url="http://localhost") as client:
         yield client, Session
     app.dependency_overrides.clear()
+    engine.dispose()
 
 
 def _seed_station_with_multi_strategy_template(
