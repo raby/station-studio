@@ -5,7 +5,7 @@ import time
 import pytest
 
 from conftest import FFMPEG, Unpaced, needs_ffmpeg, station_export, write_wav
-from station_server.audio import BYTES_PER_SECOND, CHUNK, decode
+from station_server.audio import BYTES_PER_SECOND, CHUNK, Encoder, decode
 from station_server.channel import Channel, Pacer, level_gain
 from station_server.playlist import load_queue
 from station_server.senders import FileSender, ShoutcastSender, StreamInfo
@@ -342,3 +342,15 @@ def test_a_measured_track_leaves_out_its_silence(tmp_path):
     # Measured at -12 LUFS, so 6 dB down to -18 (no tags on the test file).
     assert calls == [(-6.0, 11.25, 170.0)]
     assert channel.now.levelled_by == "measured"
+
+
+@needs_ffmpeg
+def test_the_encoder_closes_its_pipes():
+    """Every time a station went on air the encoder's output and error
+    pipes stayed open for good."""
+    got = []
+    encoder = Encoder(FFMPEG, got.append)
+    encoder.write(b"\0" * CHUNK * 4)
+    encoder.close()
+    assert got  # it did encode
+    assert encoder._proc.stdout.closed and encoder._proc.stderr.closed

@@ -38,6 +38,7 @@ def db(tmp_path) -> Session:
         yield s
     finally:
         s.close()
+    engine.dispose()
 
 
 def _make_station_and_playlist(db: Session, *, slug: str, name: str, week: int,
@@ -232,6 +233,7 @@ def test_export_round_trip_preserves_positions(db, tmp_path):
         assert [e.track.persistent_id for e in entries] == ["P0001", "P0002", "P0003"]
         assert [e.track.name for e in entries] == ["One", "Two", "Three"]
         assert [e.track.artist for e in entries] == ["A", "B", "C"]
+    fresh_engine.dispose()
 
 
 # ---------- disk export --------------------------------------------------

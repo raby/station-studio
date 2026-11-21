@@ -155,24 +155,27 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     engine = make_engine()
-    Base.metadata.create_all(engine)
-    SessionLocal = make_sessionmaker(engine)
-
     try:
-        with SessionLocal() as db:
-            result = bootstrap(
-                db,
-                from_dir=args.from_dir,
-                week=args.week,
-                skip_missing=args.skip_missing,
-                generate_playlist=not args.no_generate,
-            )
-    except SystemExit as e:
-        print(f"bootstrap_classics: {e}", file=sys.stderr)
-        return 1
+        Base.metadata.create_all(engine)
+        SessionLocal = make_sessionmaker(engine)
 
-    _print_report(result, from_dir=args.from_dir, week=args.week)
-    return 0
+        try:
+            with SessionLocal() as db:
+                result = bootstrap(
+                    db,
+                    from_dir=args.from_dir,
+                    week=args.week,
+                    skip_missing=args.skip_missing,
+                    generate_playlist=not args.no_generate,
+                )
+        except SystemExit as e:
+            print(f"bootstrap_classics: {e}", file=sys.stderr)
+            return 1
+
+        _print_report(result, from_dir=args.from_dir, week=args.week)
+        return 0
+    finally:
+        engine.dispose()  # its connections too, not left to the garbage collector
 
 
 if __name__ == "__main__":

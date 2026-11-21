@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -406,7 +407,8 @@ def _previous_revision() -> str:
 
 
 def _revision(db: Path) -> str:
-    with sqlite3.connect(db) as conn:
+    # closing(): sqlite3's own `with` ends a transaction, not the connection.
+    with closing(sqlite3.connect(db)) as conn:
         return conn.execute("SELECT version_num FROM alembic_version").fetchone()[0]
 
 
@@ -472,7 +474,7 @@ def test_the_copy_includes_what_is_still_in_the_write_ahead_log(tmp_path: Path) 
     assert (tmp_path / "studio.db-wal").stat().st_size > 0
     try:
         copy = bootstrap_module.copy_before_update(db)
-        with sqlite3.connect(copy) as conn:
+        with closing(sqlite3.connect(copy)) as conn:
             assert conn.execute("SELECT x FROM t").fetchall() == [("recent",)]
     finally:
         live.close()

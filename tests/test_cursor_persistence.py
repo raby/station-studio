@@ -42,7 +42,8 @@ def _seq_pool(prefix: str, size: int) -> list[FakeTrack]:
 def session_factory(tmp_path) -> sessionmaker:
     engine = make_engine(f"sqlite:///{tmp_path}/cursor.db")
     Base.metadata.create_all(engine)
-    return make_sessionmaker(engine)
+    yield make_sessionmaker(engine)
+    engine.dispose()
 
 
 # ---------- load_cursor_positions ---------------------------------------

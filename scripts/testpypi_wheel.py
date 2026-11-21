@@ -35,11 +35,19 @@ class NotYet(Exception):
     """test.pypi hasn't the wheel yet (or couldn't be asked): try again."""
 
 
+def _close(exc: BaseException) -> None:
+    """An HTTP error is a response too: let its connection go before
+    waiting to ask again."""
+    if isinstance(exc, urllib.error.HTTPError):
+        exc.close()
+
+
 def fetch_once(version: str, dest: Path, sha256: str | None, opener=urllib.request.urlopen) -> Path:
     try:
         with opener(API.format(version=version), timeout=30) as resp:
             info = json.load(resp)
     except (urllib.error.URLError, OSError, ValueError) as exc:
+        _close(exc)
         raise NotYet(f"couldn't read test.pypi's record of {version}: {exc}") from exc
     wheels = [f for f in info.get("urls", []) if f.get("packagetype") == "bdist_wheel"]
     if not wheels:
@@ -54,6 +62,7 @@ def fetch_once(version: str, dest: Path, sha256: str | None, opener=urllib.reque
         with opener(wheel["url"], timeout=120) as resp:
             data = resp.read()
     except (urllib.error.URLError, OSError) as exc:
+        _close(exc)
         raise NotYet(f"couldn't download {wheel['filename']}: {exc}") from exc
     if hashlib.sha256(data).hexdigest() != want:
         raise NotYet(f"{wheel['filename']} didn't match test.pypi's SHA-256 (a broken download?)")

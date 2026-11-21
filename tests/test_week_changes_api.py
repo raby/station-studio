@@ -73,6 +73,10 @@ def env(tmp_path, monkeypatch):
     with TestClient(app, base_url="http://localhost") as client:
         yield client, Session, store
     app.dependency_overrides.clear()
+    for job in list(store._jobs.values()):  # still saving: let it finish first
+        if job.thread is not None:
+            job.thread.join(10)
+    engine.dispose()
 
 
 def _seed(Session) -> None:
@@ -567,6 +571,7 @@ def test_mix_usage_follows_the_rules_picks(tmp_path):
         db.commit()
         assert [u.track_id for u in db.query(MixUsage)] == [own.id]
         assert [e.track_id for e in db.query(PlaylistEntry)] == [other.id]
+    engine.dispose()
 
 
 # ---------- a row station; a pool only a changed rule plays ----------------

@@ -77,6 +77,7 @@ def editor_api(tmp_path, monkeypatch):
     with TestClient(app, base_url="http://localhost") as client:
         yield client, Session, stations_dir
     app.dependency_overrides.clear()
+    engine.dispose()
 
 
 # §16.2.6.t12 P8 follow-up (post-cycle U1 fix): the real extraction.

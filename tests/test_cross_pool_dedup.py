@@ -44,7 +44,8 @@ from engine.template import TemplateError
 def session_factory(tmp_path) -> sessionmaker:
     engine = make_engine(f"sqlite:///{tmp_path}/dedup.db")
     Base.metadata.create_all(engine)
-    return make_sessionmaker(engine)
+    yield make_sessionmaker(engine)
+    engine.dispose()
 
 
 @pytest.fixture
@@ -57,6 +58,7 @@ def db_session(tmp_path) -> Session:
         yield s
     finally:
         s.close()
+    engine.dispose()
 
 
 def _seed_station(Session: sessionmaker, slug: str = "rb") -> int:

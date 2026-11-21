@@ -40,6 +40,7 @@ def db(tmp_path) -> Session:
         yield s
     finally:
         s.close()
+    engine.dispose()
 
 
 # ---------- fixtures for writable copy of classics JSON ------------------

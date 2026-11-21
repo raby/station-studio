@@ -341,6 +341,7 @@ def test_app_serves_and_quits_from_the_page(tmp_path):
         if proc.poll() is None:
             proc.kill()
             proc.wait()
+        proc.stdout.close()
 
 
 def test_settings_route_changes_the_app_settings(tmp_path, monkeypatch):

@@ -143,13 +143,26 @@ def test_end_live_keeps_them_off_for_a_while(live):
     s.close()
 
 
-def test_a_port_in_use_is_reported():
+def test_a_port_in_use_is_reported(monkeypatch):
+    made = []
+    here = threading.current_thread()
+
+    class Kept(socket.socket):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            if threading.current_thread() is here:  # not another test's thread
+                made.append(self)
+
     with socket.socket() as taken:
         taken.bind(("127.0.0.1", 0))
         taken.listen(1)
         port = taken.getsockname()[1]
+        monkeypatch.setattr(socket, "socket", Kept)
         with pytest.raises(OSError):
             LiveInput(port - 1, "x", "ffmpeg", on_source=lambda s: True, host="127.0.0.1").start()
+    # Every socket it made is closed, the one that couldn't have its port
+    # too (one, if the port below was taken as well; two otherwise).
+    assert made and all(s.fileno() == -1 for s in made)
 
 
 def test_a_stopped_live_input_lets_go_of_its_ports():
@@ -442,3 +455,22 @@ def test_a_show_without_titles_is_logged_as_a_whole():
                after=lambda: (ch.queue, 0, 0.0), on_title=lambda *a: logged.append(a), title="R: DJ")
     ch._take_live(Recorder())
     assert len(logged) == 1 and logged[0][0] is None and logged[0][2] >= 0
+
+
+@needs_ffmpeg
+@pytest.mark.parametrize("how", ["finish", "close"])
+def test_a_live_show_closes_its_decoders_pipes(how):
+    """Each live show kept its decoder's pipes open for good, whether the
+    presenter hung up (finish) or was taken off air (close)."""
+    from station_server.live import LiveSource
+    mp3 = subprocess.run([FFMPEG, "-v", "error", "-f", "lavfi", "-i", "sine=duration=1", "-ac", "2",
+                          "-f", "mp3", "-"], capture_output=True, check=True).stdout
+    source = LiveSource(FFMPEG, "audio/mpeg")
+    source.feed(mp3)
+    getattr(source, how)()
+    end = time.time() + 15
+    while not source.ended.is_set() and time.time() < end:
+        source.read(0.2)
+    proc = source._proc
+    assert wait_for(lambda: proc.stdout.closed and proc.stdin.closed)
+    assert source.feed(b"more") is False  # off air: nothing more goes in

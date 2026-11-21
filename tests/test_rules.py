@@ -21,7 +21,8 @@ from engine.rules import (
 def session_factory(tmp_path) -> sessionmaker:
     engine = make_engine(f"sqlite:///{tmp_path}/rules.db")
     Base.metadata.create_all(engine)
-    return make_sessionmaker(engine)
+    yield make_sessionmaker(engine)
+    engine.dispose()
 
 
 def _seed_station(Session: sessionmaker, slug: str = "rb") -> int:

@@ -243,6 +243,7 @@ def test_starter_station_generates_168_picks_end_to_end() -> None:
 
         assert len(picks_by_week) == 1
         assert len(picks_by_week[1]) == 168
+    eng.dispose()
 
 
 def test_starter_station_jingle_positions_match_template() -> None:
@@ -295,6 +296,7 @@ def test_starter_station_jingle_positions_match_template() -> None:
         jingle_positions = {e.position for e in jingle_entries}
         expected = {i + 1 for i in range(0, 168, 8)}
         assert jingle_positions == expected
+    eng.dispose()
 
 
 # ---------- §16.14.t3 — REFERENCE_ARCHIVE pool + cross-check pin ----------
@@ -446,6 +448,7 @@ def test_engine_load_pools_rejects_db_role_mismatch(tmp_path) -> None:
             load_pools(db, tmpl)
     finally:
         db.close()
+    eng.dispose()
 
 
 def test_starter_sidecar_stays_stable_after_t3_amendment() -> None:
@@ -511,6 +514,7 @@ def test_starter_seed_sets_cross_pool_dedup_sources_rule() -> None:
                 db, station_id=station.id,
                 key="cross_pool_dedup_sources",
             ) == ["REFERENCE_ARCHIVE"]
+    eng.dispose()
 
 
 def test_starter_generation_excludes_content_echo_pids_end_to_end() -> None:
@@ -613,3 +617,4 @@ def test_starter_generation_excludes_content_echo_pids_end_to_end() -> None:
         # And the playlist isn't empty — the rule isn't accidentally
         # excluding the entire weighted pool.
         assert len(entries) == 168
+    eng.dispose()

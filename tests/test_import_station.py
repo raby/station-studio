@@ -40,6 +40,7 @@ def db(tmp_path) -> Session:
         yield s
     finally:
         s.close()
+    engine.dispose()
 
 
 def _write_weekly(path: Path, *, slots=None, cursors=None) -> Path:
@@ -156,6 +157,7 @@ def test_main_imports_sample_fixture_end_to_end(tmp_path, monkeypatch, capsys):
     with SessionLocal() as db:
         row = db.query(Station).filter_by(slug="sample-rb").one()
         assert len(row.template["layout"]["flat_slots"]) == 13
+    engine.dispose()
 
 
 def test_main_returns_nonzero_for_missing_file(tmp_path, monkeypatch, capsys):

@@ -109,6 +109,7 @@ def chain_db(tmp_path) -> Session:
         yield db
     finally:
         db.close()
+    engine.dispose()
 
 
 def _generate_chain(db: Session) -> dict[int, list[str]]:
