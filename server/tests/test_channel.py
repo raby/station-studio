@@ -168,13 +168,16 @@ def test_on_air_to_shoutcast(tmp_path, shoutcast):
     sender = ShoutcastSender("127.0.0.1", shoutcast.port, "hackme", StreamInfo(name=queue.name))
     sender.connect()
     Channel(queue, sender, FFMPEG, loop=False, pacer=Unpaced()).run()
-    sender.close()
-    assert shoutcast.got_audio.wait(5)  # the server reads it on its own thread
-    assert shoutcast.audio[:2] in (b"\xff\xfb", b"\xff\xfa", b"ID")  # an MP3 stream
-    for _ in range(50):  # titles are sent in the background
+    # Titles go from their own thread, each when its track is heard, so the
+    # last can still be on its way when run() returns: wait for them before
+    # closing the sender, which would drop it (once on a slow Windows runner).
+    for _ in range(50):
         if len(shoutcast.titles) == 2:
             break
         shoutcast.got_title.wait(0.1)
+    sender.close()
+    assert shoutcast.got_audio.wait(5)  # the server reads it on its own thread
+    assert shoutcast.audio[:2] in (b"\xff\xfb", b"\xff\xfa", b"ID")  # an MP3 stream
     assert sorted(shoutcast.titles) == ["Ce Ce Peniston - Finally", "Inner City - Good Life"]
 
 
