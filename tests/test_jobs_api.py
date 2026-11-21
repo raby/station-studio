@@ -86,6 +86,7 @@ def jobs_api(tmp_path, monkeypatch):
     with TestClient(app, base_url="http://localhost") as client:
         yield client, Session, store
     app.dependency_overrides.clear()
+    engine.dispose()
 
 
 def _seed_station_with_pool(

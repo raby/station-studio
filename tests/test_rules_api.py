@@ -35,6 +35,7 @@ def api(tmp_path):
     with TestClient(app, base_url="http://localhost") as client:
         yield client, Session
     app.dependency_overrides.clear()
+    engine.dispose()
 
 
 def _seed_station(Session: sessionmaker, slug: str = "rb") -> int:

@@ -255,6 +255,7 @@ def port_db(tmp_path) -> Session:
         yield db
     finally:
         db.close()
+    engine.dispose()
 
 
 def test_rebirth_radio_chain_matches_weekly_byte_for_byte(port_db):

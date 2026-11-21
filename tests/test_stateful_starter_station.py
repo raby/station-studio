@@ -217,6 +217,7 @@ def test_end_to_end_generate_two_weeks_advances_cursor(tmp_path) -> None:
         )
     finally:
         db.close()
+    eng.dispose()
 
 
 def test_prev_ref_slot_in_week_N_reads_from_week_N_minus_1(
@@ -276,6 +277,7 @@ def test_prev_ref_slot_in_week_N_reads_from_week_N_minus_1(
         )
     finally:
         db.close()
+    eng.dispose()
 
 
 def test_end_to_end_generate_14_weeks_wraps_cursor(tmp_path) -> None:
@@ -325,3 +327,4 @@ def test_end_to_end_generate_14_weeks_wraps_cursor(tmp_path) -> None:
         )
     finally:
         db.close()
+    eng.dispose()

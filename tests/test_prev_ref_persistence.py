@@ -30,7 +30,8 @@ from engine.template import parse_template
 def session_factory(tmp_path) -> sessionmaker:
     engine = make_engine(f"sqlite:///{tmp_path}/prev_ref.db")
     Base.metadata.create_all(engine)
-    return make_sessionmaker(engine)
+    yield make_sessionmaker(engine)
+    engine.dispose()
 
 
 def _seed_station_with_mix_pool(Session: sessionmaker) -> tuple[int, dict]:
