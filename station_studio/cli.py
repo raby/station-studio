@@ -29,6 +29,18 @@ import click
 from station_studio import __version__
 
 
+def _bootstrap() -> None:
+    """Every command's first step (station_studio/bootstrap.py), its
+    progress printed. If an update can't copy the database first, the
+    database is left as it was: say why in plain words, not a traceback."""
+    from station_studio.bootstrap import CopyBeforeUpdateError, bootstrap
+
+    try:
+        bootstrap(echo=click.echo)
+    except CopyBeforeUpdateError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+
 # Defaults match `run.py` (the existing dev entry point) so muscle
 # memory carries over: 127.0.0.1:8001. Override via --host / --port.
 _DEFAULT_HOST = "127.0.0.1"
@@ -81,8 +93,7 @@ def serve(host: str, port: int) -> None:
     # imports its `app` arg lazily, so the env vars bootstrap sets
     # apply to engine.database / scripts.seed_stations once they
     # eventually do load).
-    from station_studio.bootstrap import bootstrap
-    bootstrap(echo=click.echo)
+    _bootstrap()
 
     # Imported lazily so `station-studio --version` (or --help on other
     # subcommands) doesn't pay the uvicorn import cost.
@@ -190,8 +201,7 @@ def import_cmd(
         click.echo(f"Error: {e}.", err=True)
         ctx.exit(1)
 
-    from station_studio.bootstrap import bootstrap
-    bootstrap(echo=click.echo)
+    _bootstrap()
 
     # Imports stay lazy — keeps `station-studio --help` snappy.
     from engine.database import make_engine, make_sessionmaker
@@ -242,8 +252,7 @@ def seed() -> None:
     A future `seed --force` would overwrite existing files (factory
     reset). Out of scope for c3; queue if a real user asks.
     """
-    from station_studio.bootstrap import bootstrap
-    bootstrap(echo=click.echo)
+    _bootstrap()
 
 
 # ---------- §16.13.t2 — generate / export / backup ----------
@@ -301,8 +310,7 @@ def generate_cmd(
         click.echo("Error: --week must be ≥ 1.", err=True)
         ctx.exit(1)
 
-    from station_studio.bootstrap import bootstrap
-    bootstrap(echo=click.echo)
+    _bootstrap()
 
     # Lazy: full engine import chain (sqlalchemy, generator, etc).
     from sqlalchemy.exc import IntegrityError
@@ -512,8 +520,7 @@ def export_cmd(
         )
         ctx.exit(1)
 
-    from station_studio.bootstrap import bootstrap
-    bootstrap(echo=click.echo)
+    _bootstrap()
 
     import sys
 
@@ -589,8 +596,7 @@ def backup_cmd(ctx: click.Context, output: Path | None) -> None:
     backups/, which is excluded) so even when --output points inside
     the home, we don't tar our own output mid-write.
     """
-    from station_studio.bootstrap import bootstrap
-    bootstrap(echo=click.echo)
+    _bootstrap()
 
     import datetime as _dt
     import tarfile as _tarfile

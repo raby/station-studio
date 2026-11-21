@@ -378,3 +378,187 @@ def test_bootstrap_echo_reflects_skip_vs_apply(
     # Belt-and-suspenders: the "Ran migrations" string must NOT
     # appear on the second run.
     assert not any("Ran migrations" in line for line in seen_second)
+
+
+# ---------- a copy of the database before an update migrates it ----------
+
+
+def _migrated_to(url: str, revision: str) -> None:
+    from alembic import command
+    from alembic.config import Config
+
+    config = Config()
+    config.set_main_option("script_location", str(bootstrap_module.bundled_path("migrations")))
+    config.set_main_option("sqlalchemy.url", url)
+    command.upgrade(config, revision)
+
+
+def _previous_revision() -> str:
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
+    config = Config()
+    config.set_main_option("script_location", str(bootstrap_module.bundled_path("migrations")))
+    head = ScriptDirectory.from_config(config).get_current_head()
+    down = ScriptDirectory.from_config(config).get_revision(head).down_revision
+    assert isinstance(down, str), "a single previous revision"
+    return down
+
+
+def _revision(db: Path) -> str:
+    with sqlite3.connect(db) as conn:
+        return conn.execute("SELECT version_num FROM alembic_version").fetchone()[0]
+
+
+@pytest.fixture
+def older_database(isolated_home: Path) -> Path:
+    """The app-home's database as the version before this one left it."""
+    from station_studio.home import db_path, db_url, ensure_home
+
+    ensure_home()
+    _migrated_to(db_url(), _previous_revision())
+    return db_path()
+
+
+def test_an_update_copies_the_database_before_migrating_it(older_database: Path) -> None:
+    said: list[str] = []
+    result = bootstrap(echo=said.append)
+
+    copy = result.copy_before_update
+    assert copy is not None and copy.parent == older_database.parent / "backups"
+    assert copy.name.startswith("before-update-") and copy.suffix == ".db"
+    # The copy is the database as it was; the database itself moved on.
+    assert _revision(copy) == _previous_revision()
+    assert _revision(older_database) == result.head_revision != _previous_revision()
+    assert f"Saved a copy of the database before updating it: {copy}" in said
+    assert not list(copy.parent.glob("*.part"))
+
+
+def test_no_copy_when_nothing_existing_is_migrated(isolated_home: Path) -> None:
+    first = bootstrap()  # a new database
+    again = bootstrap()  # already up to date
+    assert first.migrations_applied and first.copy_before_update is None
+    assert not again.migrations_applied and again.copy_before_update is None
+    assert not (isolated_home / "backups").exists() or not list((isolated_home / "backups").glob("before-update-*"))
+
+
+def test_an_empty_database_file_isnt_copied(isolated_home: Path) -> None:
+    from station_studio.home import db_path, ensure_home
+
+    ensure_home()
+    db_path().touch()
+    result = bootstrap()
+    assert result.migrations_applied and result.copy_before_update is None
+
+
+def test_if_the_copy_fails_the_database_isnt_migrated(older_database: Path) -> None:
+    (older_database.parent / "backups").write_text("a file where the folder would go")
+    with pytest.raises(bootstrap_module.CopyBeforeUpdateError) as caught:
+        bootstrap()
+    assert "so it hasn't been updated" in str(caught.value)
+    assert _revision(older_database) == _previous_revision()
+
+
+def test_the_copy_includes_what_is_still_in_the_write_ahead_log(tmp_path: Path) -> None:
+    """Studio's database runs in WAL mode: recent changes can sit in the
+    -wal file. SQLite's backup copies them; copying the file wouldn't."""
+    db = tmp_path / "studio.db"
+    live = sqlite3.connect(db)
+    live.execute("PRAGMA journal_mode=WAL")
+    live.execute("PRAGMA wal_autocheckpoint=0")
+    live.execute("CREATE TABLE t (x)")
+    live.execute("INSERT INTO t VALUES ('recent')")
+    live.commit()
+    assert (tmp_path / "studio.db-wal").stat().st_size > 0
+    try:
+        copy = bootstrap_module.copy_before_update(db)
+        with sqlite3.connect(copy) as conn:
+            assert conn.execute("SELECT x FROM t").fetchall() == [("recent",)]
+    finally:
+        live.close()
+
+
+def test_the_last_three_copies_are_kept(tmp_path: Path) -> None:
+    import datetime as dt
+
+    db = tmp_path / "studio.db"
+    sqlite3.connect(db).close()
+    backups = tmp_path / "backups"
+    backups.mkdir()
+    for stamp in ("20261101-090000", "20261102-090000", "20261103-090000", "20261104-090000"):
+        (backups / f"before-update-{stamp}.db").write_text("old")
+    mine = backups / "station-studio-20261101-080000.tar.gz"  # `station-studio backup`'s
+    mine.write_text("kept")
+
+    now = dt.datetime(2026, 11, 21, 14, 30, 0)
+    first = bootstrap_module.copy_before_update(db, now=now)
+    second = bootstrap_module.copy_before_update(db, now=now)  # the same second
+    assert second.name == "before-update-20261121-143000-2.db"
+    assert sorted(f.name for f in backups.iterdir()) == sorted([
+        "before-update-20261104-090000.db", first.name, second.name, mine.name,
+    ])
+
+
+def test_a_copy_cut_short_leaves_nothing_behind(tmp_path: Path) -> None:
+    db = tmp_path / "studio.db"
+    db.write_bytes(b"not a database at all" * 100)
+    with pytest.raises(bootstrap_module.CopyBeforeUpdateError):
+        bootstrap_module.copy_before_update(db)
+    assert list((tmp_path / "backups").iterdir()) == []
+
+
+def test_an_old_copy_that_wont_go_doesnt_stop_the_update(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    db = tmp_path / "studio.db"
+    sqlite3.connect(db).close()
+    backups = tmp_path / "backups"
+    backups.mkdir()
+    for stamp in ("20261101-090000", "20261102-090000", "20261103-090000"):
+        (backups / f"before-update-{stamp}.db").write_text("old")
+    real_unlink = Path.unlink
+
+    def stuck(self: Path, missing_ok: bool = False) -> None:
+        if self.name == "before-update-20261101-090000.db":
+            raise PermissionError("in use")
+        real_unlink(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", stuck)
+    with caplog.at_level("WARNING"):
+        copy = bootstrap_module.copy_before_update(db)
+    assert copy.is_file()
+    assert "Couldn't remove an old copy of the database" in caplog.text
+
+
+def test_only_studios_own_copies_count(tmp_path: Path) -> None:
+    """A file someone put there with a similar name isn't one of the
+    copies: never removed, and never counted, so three real copies stay.
+    A copy a crash cut short (.part) is cleared away."""
+    import datetime as dt
+
+    db = tmp_path / "studio.db"
+    sqlite3.connect(db).close()
+    backups = tmp_path / "backups"
+    backups.mkdir()
+    (backups / "before-update-my-copy.db").write_text("someone's own")
+    (backups / "before-update-20261101-090000.db.part").write_text("cut short")
+    made = [bootstrap_module.copy_before_update(db, now=dt.datetime(2026, 11, 20 + i, 9, 0, 0)) for i in range(4)]
+    assert sorted(f.name for f in backups.iterdir()) == sorted(
+        [f.name for f in made[1:]] + ["before-update-my-copy.db"])
+
+
+def test_the_command_line_says_why_without_a_traceback(older_database: Path) -> None:
+    from unittest.mock import patch
+
+    from click.testing import CliRunner
+
+    from station_studio.cli import main
+
+    (older_database.parent / "backups").write_text("a file where the folder would go")
+    with patch("uvicorn.run") as run:
+        result = CliRunner().invoke(main, ["serve"])
+    assert result.exit_code == 1
+    assert "Error: Couldn't save a copy of the database before updating it" in result.output
+    assert "Traceback" not in result.output
+    assert not run.called
+    assert _revision(older_database) == _previous_revision()

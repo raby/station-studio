@@ -102,7 +102,12 @@ Data lives in `~/.station-studio` (Windows:
 `%USERPROFILE%\.station-studio`), the same folder the pip install
 uses, and updating or uninstalling never touches it. Exports go in
 its `exports/` folder, where Station Player finds them. The app keeps
-a log there too (`station-studio.log`). Coming from Docker? Quit the
+a log there too (`station-studio.log`). Before an update changes the
+database, Studio saves a copy of it in `backups/`
+(`before-update-<date>-<time>.db`, the last 3 kept). To go back after
+an update gone wrong: quit, copy the newest one over
+`station_studio.db`, and run the version you had before (the copy is
+in its format). Coming from Docker? Quit the
 app, `docker compose down`, then copy the volume across:
 
 ```bash
