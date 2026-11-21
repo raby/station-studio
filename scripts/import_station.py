@@ -190,38 +190,41 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     engine = make_engine()
-    Base.metadata.create_all(engine)
-    SessionLocal = make_sessionmaker(engine)
-
     try:
-        with SessionLocal() as db:
-            summary = import_one(
-                db, slug=args.slug, json_path=args.json_path, name=args.name,
-            )
-            db.commit()
-    except WeeklyImportError as e:
-        # User-input problem: malformed weekly JSON, unknown slot type,
-        # missing required field, undeclared cursor. Phrased so the user
-        # knows to fix the JSON, not file a bug.
-        print(f"import failed (input data problem): {e}", file=sys.stderr)
-        return 2
-    except TemplateError as e:
-        # Translator-output problem: the importer's round-trip check
-        # didn't catch this. Shouldn't happen; this is a station-studio
-        # bug, not user error.
-        print(
-            f"import failed (station-studio bug): translator produced an "
-            f"invalid template that parse_template later rejected: {e}",
-            file=sys.stderr,
-        )
-        return 3
+        Base.metadata.create_all(engine)
+        SessionLocal = make_sessionmaker(engine)
 
-    print(
-        f"  {summary['action']:<9}  {summary['slug']:<30}  "
-        f"{summary['slot_count']:>6} slots, "
-        f"{summary['cursor_count']:>2} cursors"
-    )
-    return 0
+        try:
+            with SessionLocal() as db:
+                summary = import_one(
+                    db, slug=args.slug, json_path=args.json_path, name=args.name,
+                )
+                db.commit()
+        except WeeklyImportError as e:
+            # User-input problem: malformed weekly JSON, unknown slot type,
+            # missing required field, undeclared cursor. Phrased so the user
+            # knows to fix the JSON, not file a bug.
+            print(f"import failed (input data problem): {e}", file=sys.stderr)
+            return 2
+        except TemplateError as e:
+            # Translator-output problem: the importer's round-trip check
+            # didn't catch this. Shouldn't happen; this is a station-studio
+            # bug, not user error.
+            print(
+                f"import failed (station-studio bug): translator produced an "
+                f"invalid template that parse_template later rejected: {e}",
+                file=sys.stderr,
+            )
+            return 3
+
+        print(
+            f"  {summary['action']:<9}  {summary['slug']:<30}  "
+            f"{summary['slot_count']:>6} slots, "
+            f"{summary['cursor_count']:>2} cursors"
+        )
+        return 0
+    finally:
+        engine.dispose()  # its connections too, not left to the garbage collector
 
 
 if __name__ == "__main__":
