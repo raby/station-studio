@@ -16,7 +16,7 @@ from sqlalchemy.orm import sessionmaker
 from engine.database import make_engine, make_sessionmaker
 from engine.generator import generate
 from engine.models import (
-    Base, MixUsage, Playlist, PlaylistEntry, SourcePlaylist,
+    Base, MixUsage, SourcePlaylist,
     SourcePlaylistEntry, Station, Track,
 )
 from engine.persistence import (

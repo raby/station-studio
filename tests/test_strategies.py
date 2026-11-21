@@ -16,8 +16,11 @@ from engine.strategies.pick import apply_pick
 from engine.strategies.jingle import apply_jingle, JingleGenreNotFoundError
 from engine.strategies.mix import apply_mix, MixGenreNotFoundError
 from engine.strategies.weighted import apply_weighted, build_lookups
+from engine.strategies.archive_ref import (
+    apply_archive_ref, ArchiveRefPositionOutOfRangeError,
+)
 from engine.strategies.prev_ref import (
-    try_prev_ref_mirror, PrevRefMirrorFailure, PrevRefPositionOutOfRangeError,
+    try_prev_ref_mirror, PrevRefPositionOutOfRangeError,
 )
 
 
@@ -777,11 +780,6 @@ def test_prev_ref_mirror_empty_source_pool_falls_back():
 # ---------- §16.14.t6 — archive_ref strategy ----------------------------
 
 
-from engine.strategies.archive_ref import (
-    apply_archive_ref, ArchiveRefPositionOutOfRangeError,
-)
-
-
 @dataclass
 class ArchiveTrack:
     """Minimal track stand-in for archive_ref tests. The strategy
@@ -1205,7 +1203,6 @@ def test_weighted_allowlist_filters_pool_before_pick():
     """allowlist filter runs at the pool level (like exclusion);
     surviving tracks compete in the weighted pick."""
     pool = _weighted_pool()
-    lookups = build_lookups(pool)
     rng = random.Random(11)
     # Allow only id=1 + id=4 (Artist A + Artist B; sub-pool).
     # CommercialTrack lacks persistent_id by default; we use the

@@ -226,7 +226,7 @@ def test_rule_override_threads_through_to_generate(api):
     visibly-wired rule. Default window=10; this test sets the rule
     to 25 and verifies the trace's window reflects the override.
     """
-    from engine.models import Base, SourcePlaylist, SourcePlaylistEntry, Station, Track
+    from engine.models import SourcePlaylist, SourcePlaylistEntry, Station, Track
     client, Session = api
 
     # Seed a station whose template has ONE weighted block (no per-block

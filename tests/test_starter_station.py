@@ -251,7 +251,7 @@ def test_starter_station_jingle_positions_match_template() -> None:
     the template's jingle-strategy slot positions (0, 8, 16, ...).
     Catches a future engine bug that misaligns flat_slots ordering."""
     from engine.importer import import_source
-    from engine.models import Base, PlaylistEntry, Playlist, Track
+    from engine.models import Base, PlaylistEntry, Playlist
     from engine.persistence import generate_chain
     from engine.seeding import seed_station
 

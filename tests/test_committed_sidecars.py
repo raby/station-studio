@@ -21,7 +21,6 @@ from pathlib import Path
 import pytest
 
 from engine.editor_metadata import (
-    EditorMetadataError,
     expand_section,
     parse_sidecar,
     validate_sidecar,

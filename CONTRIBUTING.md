@@ -113,7 +113,10 @@ versions its pull request was tested with.
 
 - **Python**: stdlib first; SQLAlchemy 2.0 patterns; type hints on
   module-level signatures (relaxed on test helpers); no `mypy`
-  strict yet.
+  strict yet. `make lint` (ruff, in CI) checks for undefined names,
+  unused imports and variables, and the like: a small rule set, in
+  `pyproject.toml`. A pytest fixture imported from another test file
+  looks unused to it; mark that import `# noqa: F401` and say why.
 - **Frontend**: SvelteKit; TypeScript; Vitest for unit + Playwright
   for e2e. `svelte-check --threshold error` in CI.
 - **Docstrings**: long-form, narrative. Not just "what" — *why*.

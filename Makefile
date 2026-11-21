@@ -7,7 +7,7 @@
 #
 # `make test` runs all three in order; CI does the same.
 
-.PHONY: install check-uv lock lock-upgrade check-lock test test-backend test-frontend-unit test-e2e install-e2e-browsers clean-test \
+.PHONY: install check-uv lock lock-upgrade check-lock lint test test-backend test-frontend-unit test-e2e install-e2e-browsers clean-test \
         migrate alembic-stamp alembic-revision alembic-current migration-parity \
         backfill-slot-types \
         backup backups restore \
@@ -74,6 +74,10 @@ test: test-backend test-frontend-unit test-e2e
 # print branches don't test cleanly. With those bringing the aggregate
 # down, 90% leaves real headroom; the gate fires on a *regression*, not
 # on the resting state. Per-file enforcement happens at the Vitest layer.
+# Python lint, the small rule set in pyproject.toml's [tool.ruff].
+lint:
+	.venv/bin/ruff check .
+
 test-backend:
 	rm -f .coverage .coverage.*
 	$(PY) -m coverage run -m pytest

@@ -21,7 +21,7 @@ from engine.exporter import export_playlist, export_playlist_to_disk
 from engine.importer import import_source
 from engine.models import (
     Base, Config, Playlist, PlaylistEntry, Station, Track,
-    SourcePlaylist, SourcePlaylistEntry,
+    SourcePlaylist,
 )
 
 

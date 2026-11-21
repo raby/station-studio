@@ -111,7 +111,7 @@ def test_render_divergence_context_clamps_to_sequence_bounds():
     assert "<-- DIFF" in msg
     # First slot is the diff.
     lines = msg.split("\n")
-    diff_line = next(l for l in lines if "<-- DIFF" in l)
+    diff_line = next(line for line in lines if "<-- DIFF" in line)
     assert "    0" in diff_line
 
 
