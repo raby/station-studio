@@ -108,6 +108,8 @@ def call(settings: dict, method: str, path: str, body: bytes | None = None,
             message = json.loads(exc.read()).get("error")
         except (ValueError, AttributeError, OSError):
             message = None
+        finally:
+            exc.close()  # the error is a response too: its connection goes now
         # Station Server's own words are best; a 404 with none is
         # something else answering on that port.
         if not message:

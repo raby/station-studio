@@ -81,6 +81,7 @@ async def lifespan(app: FastAPI):
     )
     from api.deps import get_stations_dir
 
+    engine = None
     try:
         engine = make_engine()
         Base.metadata.create_all(engine)
@@ -149,6 +150,11 @@ async def lifespan(app: FastAPI):
             "auto-seed failed (%s); continuing. Run `make seed-stations` "
             "manually to recover.", e,
         )
+    finally:
+        # Its own engine, for start-up only: let go of its connection
+        # rather than hold it open until the garbage collector does.
+        if engine is not None:
+            engine.dispose()
 
     yield
 
