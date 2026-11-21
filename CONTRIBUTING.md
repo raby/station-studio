@@ -64,6 +64,19 @@ output (new strategy, bug fix), regenerate the fixtures via
 inspect the diff, and say why output changed in the pull request and
 `CHANGELOG.md`.
 
+### Leaks fail the tests
+
+Every suite treats a `ResourceWarning` as an error: a socket, file,
+process, database connection or HTTP response left for the garbage
+collector fails the run (Python 3.13+, which CI's backend job runs, also
+flags SQLite connections). The failure names the object but often lands
+on a later test, the one running when it was collected. To find where it
+was opened, rerun with `PYTHONTRACEMALLOC=20`. Usual causes: an engine
+never `dispose()`d (fixtures dispose theirs after the `yield`), a
+`sqlite3.connect()` used as `with` (that ends a transaction, not the
+connection: use `contextlib.closing`), a socket's `makefile()` left open,
+or a caught `HTTPError` not closed.
+
 ## Dependencies
 
 Each app's `pyproject.toml` says what it needs, as ranges (that's what

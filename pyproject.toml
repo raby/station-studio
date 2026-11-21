@@ -207,10 +207,11 @@ markers = [
 # after the release that removes it.
 filterwarnings = [
     "error::starlette.exceptions.StarletteDeprecationWarning",
-    # A socket, file or process the code (or a test) leaves open fails the
-    # run, wherever it's noticed: the message names it and, with
-    # PYTHONTRACEMALLOC=20, where it was opened. Round 2 item 5 got the suites
-    # to none, so a new leak can't hide in the noise again.
+    # A socket, file, process, database connection or HTTP response the
+    # code (or a test) leaves open fails the run, wherever it's noticed: the
+    # message names it and, with PYTHONTRACEMALLOC=20, where it was opened
+    # (CONTRIBUTING.md, "Leaks fail the tests"). Round 2 item 5 got the
+    # suites to none, so a new leak can't hide in the noise again.
     "error::ResourceWarning",
     # Most are noticed when the object is collected, which pytest reports
     # as this instead.
