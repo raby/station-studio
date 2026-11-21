@@ -9,7 +9,8 @@ this project uses semantic versioning.
 ### Security
 
 - Other websites can't drive Station Studio through your browser. It
-  had no guard of its own (only the app's Quit and Update buttons did):
+  had no guard of its own (only the app's own controls, such as Quit
+  and Update now, did):
   a page open in the same browser could make it delete exports, roll
   back a playlist or send a week to Station Server, and one using DNS
   rebinding could read and change everything. Now, as in Station Player

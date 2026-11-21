@@ -27,6 +27,7 @@ Same protection; this way none of the page's requests, the Makefile's
 """
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
 from urllib.parse import urlsplit
@@ -45,14 +46,34 @@ CROSS_SITE = "Only Station Studio's own pages can make changes here."
 
 def hostname(value: str | None) -> str | None:
     """The name in a Host or Origin value, without port, brackets or
-    case: "[::1]:8001" → "::1". None when it can't be read."""
+    case: "[::1]:8001" → "::1". None when it can't be read, or has a
+    user part ("evil@127.0.0.1"), which no browser sends."""
     if not value:
         return None
     try:
-        name = urlsplit(value if "//" in value else "//" + value).hostname
+        parts = urlsplit(value if "//" in value else "//" + value)
+        name = parts.hostname
     except ValueError:
         return None
-    return name or None
+    if "@" in parts.netloc or not name:
+        return None
+    return _ipv6(name) or name
+
+
+def _ipv6(name: str) -> str | None:
+    """An IPv6 address in its one short form (fe80:0:0::1 → fe80::1)."""
+    try:
+        return str(ipaddress.IPv6Address(name))
+    except ValueError:
+        return None
+
+
+def _setting_name(entry: str) -> str:
+    """One name from STATION_STUDIO_ALLOWED_HOSTS, as hostname() reads a
+    Host: "nas.local:8001" → "nas.local". An IPv6 address may come with
+    or without brackets ("fe80::1", as the refusal suggests, or
+    "[fe80::1]")."""
+    return _ipv6(entry.strip("[]")) or hostname(entry) or entry
 
 
 def allowed_hosts(environ=os.environ) -> frozenset[str] | None:
@@ -60,7 +81,7 @@ def allowed_hosts(environ=os.environ) -> frozenset[str] | None:
     extra = {h.strip().lower() for h in environ.get(ALLOWED_HOSTS_ENV, "").split(",") if h.strip()}
     if "*" in extra:
         return None
-    return LOCAL_HOSTS | {hostname(h) or h for h in extra}
+    return LOCAL_HOSTS | {_setting_name(h) for h in extra}
 
 
 def host_ok(host: str | None, allowed: frozenset[str] | None) -> bool:
@@ -117,5 +138,7 @@ async def _refuse(scope, send, message: str) -> None:
         body, ctype = (message + "\n").encode(), b"text/plain; charset=utf-8"
     await send({"type": "http.response.start", "status": 403, "headers": [
         (b"content-type", ctype), (b"content-length", str(len(body)).encode()),
-        (b"cache-control", b"no-store")]})
+        (b"cache-control", b"no-store"),
+        # It repeats the name asked for: never let a browser read it as HTML.
+        (b"x-content-type-options", b"nosniff")]})
     await send({"type": "http.response.body", "body": body})

@@ -38,7 +38,9 @@ def guarded(environ=None, trusted=()):
 @pytest.mark.parametrize("value, name", [
     ("localhost:8001", "localhost"), ("127.0.0.1", "127.0.0.1"), ("[::1]:8001", "::1"),
     ("Studio.LAN:8001", "studio.lan"), ("http://localhost:5173", "localhost"),
-    ("", None), (None, None), ("[bad", None),
+    ("[FE80:0:0:0:0:0:0:1]:8001", "fe80::1"), ("[0:0:0:0:0:0:0:1]", "::1"),
+    ("evil@127.0.0.1", None),  # a user part: no browser sends one
+    ("", None), (None, None), ("[bad", None), (":8001", None),
 ])
 def test_hostname(value, name):
     assert hostname(value) == name
@@ -49,6 +51,9 @@ def test_allowed_hosts():
     assert allowed_hosts({ALLOWED_HOSTS_ENV: " NAS.local , 192.168.1.5:8001,"}) == {
         "localhost", "127.0.0.1", "::1", "nas.local", "192.168.1.5"}
     assert allowed_hosts({ALLOWED_HOSTS_ENV: "nas.local,*"}) is None
+    # IPv6, bare (as the refusal suggests), bracketed, with a port, or long.
+    assert allowed_hosts({ALLOWED_HOSTS_ENV: "FE80::1, [fd00::2], [fd00::3]:8001, fd00:0:0:0:0:0:0:4"}) == {
+        "localhost", "127.0.0.1", "::1", "fe80::1", "fd00::2", "fd00::3", "fd00::4"}
 
 
 @pytest.mark.parametrize("base", ["http://localhost:8001", "http://127.0.0.1:8001", "http://[::1]:8001"])
@@ -72,6 +77,17 @@ def test_another_name_is_refused_and_told_how_to_allow_it():
     assert page.status_code == 403 and page.headers["content-type"].startswith("text/plain")
     assert "STATION_STUDIO_ALLOWED_HOSTS=evil.example" in page.text
     assert client.post("/api/thing").status_code == 403
+
+
+def test_the_refusal_suggests_a_setting_that_works():
+    """What the 403 says to set lets that address in, IPv6 included."""
+    for base in ("http://192.168.1.5:8001", "http://[fe80::1]:8001", "http://NAS.local:8001"):
+        r = TestClient(guarded(), base_url=base).get("/api/thing")
+        assert r.status_code == 403
+        assert r.headers["x-content-type-options"] == "nosniff"
+        setting = r.json()["detail"].rsplit(f"{ALLOWED_HOSTS_ENV}=", 1)[1].rstrip(".")
+        allowed = TestClient(guarded({ALLOWED_HOSTS_ENV: setting}), base_url=base)
+        assert allowed.get("/api/thing").status_code == 200, setting
 
 
 def test_a_missing_host_is_refused():
