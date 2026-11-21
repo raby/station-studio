@@ -245,11 +245,13 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     engine = make_engine()
-    Base.metadata.create_all(engine)
-    SessionLocal = make_sessionmaker(engine)
-
-    with SessionLocal() as db:
-        summaries = seed_all(db, paths)
+    try:
+        Base.metadata.create_all(engine)
+        SessionLocal = make_sessionmaker(engine)
+        with SessionLocal() as db:
+            summaries = seed_all(db, paths)
+    finally:
+        engine.dispose()
 
     for s in summaries:
         # §16.14.t5 slice-review S2 + §16.14.t9: surface

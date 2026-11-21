@@ -223,33 +223,36 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     engine = make_engine()
-    Base.metadata.create_all(engine)
-    SessionLocal = make_sessionmaker(engine)
-
     try:
-        with SessionLocal() as db:
-            summaries = import_manifest(db, args.manifest)
-            db.commit()
-    except ManifestError as e:
-        # User-input problem with the manifest itself — phrased so the
-        # user knows to fix the JSON, not the XMLs. Phrasing mirrors
-        # scripts/import_station.py's "import failed (XYZ): ..." pattern.
-        print(f"import failed (manifest problem): {e}", file=sys.stderr)
-        return 2
-    except ValueError as e:
-        # Importer error: malformed XML, invalid role at runtime
-        # (Pydantic Literal would have caught this on the API path,
-        # but the CLI calls import_source directly).
-        print(f"import failed (XML problem): {e}", file=sys.stderr)
-        return 3
+        Base.metadata.create_all(engine)
+        SessionLocal = make_sessionmaker(engine)
 
-    for s in summaries:
-        print(
-            f"  {s['action']:<7}  {s['name']:<15}  {s['role']:<9}  "
-            f"{s['tracks_imported']:>5} tracks, "
-            f"{s['entries_imported']:>5} entries"
-        )
-    return 0
+        try:
+            with SessionLocal() as db:
+                summaries = import_manifest(db, args.manifest)
+                db.commit()
+        except ManifestError as e:
+            # User-input problem with the manifest itself — phrased so the
+            # user knows to fix the JSON, not the XMLs. Phrasing mirrors
+            # scripts/import_station.py's "import failed (XYZ): ..." pattern.
+            print(f"import failed (manifest problem): {e}", file=sys.stderr)
+            return 2
+        except ValueError as e:
+            # Importer error: malformed XML, invalid role at runtime
+            # (Pydantic Literal would have caught this on the API path,
+            # but the CLI calls import_source directly).
+            print(f"import failed (XML problem): {e}", file=sys.stderr)
+            return 3
+
+        for s in summaries:
+            print(
+                f"  {s['action']:<7}  {s['name']:<15}  {s['role']:<9}  "
+                f"{s['tracks_imported']:>5} tracks, "
+                f"{s['entries_imported']:>5} entries"
+            )
+        return 0
+    finally:
+        engine.dispose()  # its connections too, not left to the garbage collector
 
 
 if __name__ == "__main__":

@@ -158,15 +158,18 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     engine = make_engine()
-    SessionLocal = make_sessionmaker(engine)
-    playlists, rows = backfill(
-        SessionLocal,
-        station_slug=args.station,
-        dry_run=args.dry_run,
-    )
-    verb = "would update" if args.dry_run else "updated"
-    print(f"{verb} {rows} entries across {playlists} playlists")
-    return 0
+    try:
+        SessionLocal = make_sessionmaker(engine)
+        playlists, rows = backfill(
+            SessionLocal,
+            station_slug=args.station,
+            dry_run=args.dry_run,
+        )
+        verb = "would update" if args.dry_run else "updated"
+        print(f"{verb} {rows} entries across {playlists} playlists")
+        return 0
+    finally:
+        engine.dispose()  # its connections too, not left to the garbage collector
 
 
 if __name__ == "__main__":

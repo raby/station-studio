@@ -214,6 +214,7 @@ def import_cmd(
         ctx.exit(1)
 
     engine = make_engine()
+    ctx.call_on_close(engine.dispose)  # however the command ends
     Base.metadata.create_all(engine)
     SessionLocal = make_sessionmaker(engine)
 
@@ -330,6 +331,7 @@ def generate_cmd(
     )
 
     db_engine = make_engine()
+    ctx.call_on_close(db_engine.dispose)  # however the command ends
     Base.metadata.create_all(db_engine)
     SessionLocal = make_sessionmaker(db_engine)
 
@@ -529,6 +531,7 @@ def export_cmd(
     from engine.models import Base
 
     db_engine = make_engine()
+    ctx.call_on_close(db_engine.dispose)  # however the command ends
     Base.metadata.create_all(db_engine)
     SessionLocal = make_sessionmaker(db_engine)
 
