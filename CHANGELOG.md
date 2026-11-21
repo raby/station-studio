@@ -4,6 +4,17 @@ All notable changes are listed here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses semantic versioning.
 
+## [1.20.3] - 2026-11-21
+
+### Fixed
+
+- Upgrading Station Studio with pip brings station-appkit 1.1.1 along.
+  1.20.2 needs it for Show in Finder but asked only for 1.1, so a pip
+  upgrade could keep 1.1.0 and `station-studio app` stopped at start with
+  an ImportError. The downloaded apps weren't affected. Station Player
+  and Station Server ask for 1.1.1 too, and a test now keeps all three
+  apps' requirement at the appkit in this repo.
+
 ## [1.20.2] - 2026-11-20
 
 Two fixes from a tester's first weeks with the Mac app: downloading a

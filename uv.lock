@@ -1803,7 +1803,7 @@ installer = [
 
 [[package]]
 name = "station-studio"
-version = "1.20.2"
+version = "1.20.3"
 source = { virtual = "." }
 default-groups = ["dev", "docs"]
 dependencies = [
