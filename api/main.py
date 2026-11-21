@@ -12,6 +12,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from api.guard import Guard
 from api.routers import (
     editor, stations, sources, generate, jobs, meta, rules, stationserver, week_changes,
 )
@@ -176,13 +177,19 @@ app = FastAPI(
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 # SvelteKit dev server
+DEV_ORIGINS = ["http://localhost:5173"]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=DEV_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Outermost, so nothing answers before it: only this computer's own
+# address (DNS rebinding), and changes only from Studio's own pages
+# (other websites). api/guard.py explains both.
+app.add_middleware(Guard, trusted_origins=DEV_ORIGINS)
 
 app.include_router(stations.router)
 app.include_router(sources.router)

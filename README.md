@@ -132,6 +132,11 @@ docker run --rm -v station-studio-data:/data -v $PWD:/backup \
   alpine tar czf /backup/data.tar.gz /data
 ```
 
+To open it from other computers (on a NAS, say), uncomment
+`STATION_STUDIO_ALLOWED_HOSTS` in `docker-compose.yml` and list the
+names or addresses they'll use: Studio answers only at `localhost` and
+`127.0.0.1` otherwise (see below).
+
 The image is multi-stage (node-build → wheel-build → slim runtime,
 non-root, healthchecked), ~312MB. Same SvelteKit static SPA as the
 pip wheel — no divergent build path.
@@ -148,6 +153,14 @@ make wheel                                # builds web/build + dist/*.whl
 pip install dist/station_studio-*.whl
 station-studio serve --host 127.0.0.1 --port 8001
 ```
+
+Station Studio has no login, so it answers only at `localhost` and
+`127.0.0.1`, and only its own pages can change anything (other websites
+open in the same browser can't). To open it from other computers, serve
+it on an address they can reach and list the names they'll use:
+`STATION_STUDIO_ALLOWED_HOSTS=nas.local station-studio serve --host 0.0.0.0`
+(comma-separated, or `*` for any). Anyone who can reach it then can
+change it, so keep it to a network you trust.
 
 `make wheel` runs the SvelteKit static build internally — you don't
 need Node installed separately at *runtime*, only at build time. On

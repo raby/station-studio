@@ -159,7 +159,13 @@ internal names; usable from the keyboard; readable in light and dark
 ### The app and the command line (`station_studio/`)
 
 `station-studio` serves the pages and API on `127.0.0.1:8001`, and has
-commands to import, generate, export and back up. The downloaded Mac and
+commands to import, generate, export and back up. With no login, it
+guards itself against other websites, as Player and Server do, though
+not with a header of its own (`api/guard.py`): it answers only
+at this computer's own names (against DNS rebinding) unless
+`STATION_STUDIO_ALLOWED_HOSTS` adds others, and takes changes only from
+its own pages, going by the browser's `Sec-Fetch-Site` and `Origin`
+(against other websites), so curl and scripts need nothing extra. The downloaded Mac and
 Windows apps run the same server in a window of their own; once a day
 they ask GitHub for a newer `studio-v*` release and offer to update
 themselves (the download is checked against its published SHA-256).

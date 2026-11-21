@@ -53,7 +53,11 @@ def main() -> None:
     "--host",
     default=_DEFAULT_HOST,
     show_default=True,
-    help="Bind address. Default 127.0.0.1 (loopback only).",
+    help=(
+        "Bind address. Default 127.0.0.1 (loopback only). For other "
+        "computers, also list the names they'll use in "
+        "STATION_STUDIO_ALLOWED_HOSTS."
+    ),
 )
 @click.option(
     "--port",
@@ -86,6 +90,9 @@ def serve(host: str, port: int) -> None:
 
     click.echo(f"Starting station-studio on http://{host}:{port}")
     click.echo("(single worker — see DESIGN.md §16.11 / §16.13)")
+    hint = _other_computers_hint(host)
+    if hint:
+        click.echo(hint)
     uvicorn.run(
         "api.main:app",
         host=host,
@@ -93,6 +100,22 @@ def serve(host: str, port: int) -> None:
         workers=1,
         reload=False,
     )
+
+
+def _other_computers_hint(host: str, environ=None) -> str | None:
+    """Bound where other computers can reach it, Studio still answers only
+    to this computer's own names (api/guard.py) until told which others
+    to answer to: say so, rather than leave a 403 to puzzle over."""
+    import os
+
+    from api.guard import ALLOWED_HOSTS_ENV, LOCAL_HOSTS, hostname
+
+    environ = os.environ if environ is None else environ
+    if (hostname(host) or host) in LOCAL_HOSTS or environ.get(ALLOWED_HOSTS_ENV, "").strip():
+        return None
+    return (f"Listening on {host}, where other computers can reach it, but Station Studio only answers at localhost "
+            f"and 127.0.0.1 until {ALLOWED_HOSTS_ENV} lists the names or addresses they'll use "
+            f"(comma-separated, or * for any).")
 
 
 @main.command(

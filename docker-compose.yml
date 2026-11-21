@@ -27,6 +27,12 @@ services:
     ports:
       # host:container — change the left side to remap (`8080:8001`).
       - "8001:8001"
+    # Station Studio answers only at localhost / 127.0.0.1 (it has no
+    # login, and this keeps other websites from reaching it through the
+    # browser). To open it from other computers — on a NAS, say — list
+    # the names or addresses they'll use, comma-separated (or * for any):
+    # environment:
+    #   STATION_STUDIO_ALLOWED_HOSTS: "nas.local,192.168.1.20"
     volumes:
       # Named volume (not a host-bind) so the data lives in docker's
       # managed storage and isn't accidentally clobbered by a stray
