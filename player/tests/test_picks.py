@@ -1,4 +1,5 @@
 import json
+import threading
 import time
 
 from station_player import picks
@@ -75,6 +76,11 @@ def test_fetched_hourly_and_kept_when_broken(tmp_path, monkeypatch):
 
     p = Picks(tmp_path, fetch=fetch)
     assert p.current()["picks"][0]["title"] == "Rebirth Radio"  # the shipped copy until the first fetch
+    # current() has started a fetch of its own: let it finish, or it races
+    # the fetches below (and, landing late, could overwrite what they test).
+    for t in threading.enumerate():
+        if t.name == "picks":
+            t.join(5)
     p.refresh()
     assert [x["title"] for x in p.current()["picks"]] == ["Live"]
     assert p.lists("http://radio/live") and not p.lists("http://radio/other")
