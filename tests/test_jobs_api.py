@@ -86,6 +86,12 @@ def jobs_api(tmp_path, monkeypatch):
     with TestClient(app, base_url="http://localhost") as client:
         yield client, Session, store
     app.dependency_overrides.clear()
+    # A job a test didn't wait for can still be saving in its thread:
+    # disposing under it would leave that connection for the garbage
+    # collector (a ResourceWarning in some later test).
+    for job in list(store._jobs.values()):
+        if job.thread is not None:
+            job.thread.join(10)
     engine.dispose()
 
 

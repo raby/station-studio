@@ -73,6 +73,9 @@ def env(tmp_path, monkeypatch):
     with TestClient(app, base_url="http://localhost") as client:
         yield client, Session, store
     app.dependency_overrides.clear()
+    for job in list(store._jobs.values()):  # still saving: let it finish first
+        if job.thread is not None:
+            job.thread.join(10)
     engine.dispose()
 
 
