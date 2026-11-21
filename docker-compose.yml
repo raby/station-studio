@@ -5,7 +5,7 @@
 #   2. starts the station-studio container with /data mounted to a
 #      named volume (so first-run bootstrap output — DB, copied
 #      example stations, exports — survives `docker compose down`)
-#   3. publishes :8001 to the host
+#   3. publishes :8001 on this computer only (127.0.0.1)
 #
 # Open http://localhost:8001 once the container reports ready.
 #
@@ -25,12 +25,19 @@ services:
       target: runtime
     image: station-studio:dev
     ports:
-      # host:container — change the left side to remap (`8080:8001`).
-      - "8001:8001"
-    # Station Studio answers only at localhost / 127.0.0.1 (it has no
-    # login, and this keeps other websites from reaching it through the
-    # browser). To open it from other computers — on a NAS, say — list
-    # the names or addresses they'll use, comma-separated (or * for any):
+      # This computer only: Station Studio has no login, so anyone who
+      # can reach it can change or delete your stations.
+      # host_ip:host_port:container_port — change the middle one to remap
+      # (`127.0.0.1:8080:8001`).
+      - "127.0.0.1:8001:8001"
+    # To open it from other computers on a network you trust (on a NAS,
+    # say), do both:
+    #   1. publish it on every address: change the line above to
+    #      - "8001:8001"
+    #   2. list the names or addresses they'll use, comma-separated (or *
+    #      for any): Studio answers only at localhost / 127.0.0.1
+    #      otherwise, which keeps other websites from reaching it through
+    #      the browser.
     # environment:
     #   STATION_STUDIO_ALLOWED_HOSTS: "nas.local,192.168.1.20"
     volumes:
@@ -42,7 +49,8 @@ services:
       # /backup/data.tar.gz /data`.
       - station-studio-data:/data
     # Restart on container crash — not on `docker compose down`.
-    # Matches the "leave it running on a NAS" hobbyist use case.
+    # Matches the "leave it running on a NAS" hobbyist use case (to open
+    # it to the other computers there, see ports above).
     restart: unless-stopped
 
 volumes:
