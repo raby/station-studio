@@ -155,7 +155,10 @@ class StreamServer:
     def _accept(self, sock: socket.socket) -> None:
         # A short timeout, so stop() frees the port promptly everywhere: a
         # thread blocked in accept() keeps a closed socket listening on Linux.
-        sock.settimeout(0.25)
+        try:
+            sock.settimeout(0.25)
+        except OSError:
+            return  # stopped before this thread got going (the Ready check)
         while self._sock is sock:
             try:
                 conn, addr = sock.accept()

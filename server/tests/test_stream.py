@@ -171,6 +171,30 @@ def test_stopping_frees_the_port_at_once():
     again.stop()
 
 
+def test_stopping_at_once_leaves_the_listening_thread_quietly():
+    """The Ready check starts and stops a stream straight away: stop()
+    can close the socket before its thread has set it up, which used to
+    end that thread with "Bad file descriptor" in the log."""
+    srv = StreamServer(0)
+    gone = socket.socket()
+    gone.close()
+    srv._sock = gone
+    srv._accept(gone)  # returns, rather than raising OSError
+
+
+def test_starting_and_stopping_at_once_many_times(monkeypatch):
+    import threading
+
+    errors = []
+    monkeypatch.setattr(threading, "excepthook", lambda args: errors.append(args.exc_value))
+    for _ in range(200):
+        srv = StreamServer(0)
+        srv.start()
+        srv.stop()
+    time.sleep(0.5)  # the last threads see the socket gone
+    assert errors == []
+
+
 def test_connections_holding_back_their_request_are_limited(server, monkeypatch):
     monkeypatch.setattr(stream, "MOST_WAITING", 2)
     idle = [socket.create_connection(("127.0.0.1", server.port), timeout=5) for _ in range(2)]
