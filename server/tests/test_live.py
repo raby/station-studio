@@ -143,13 +143,23 @@ def test_end_live_keeps_them_off_for_a_while(live):
     s.close()
 
 
-def test_a_port_in_use_is_reported():
+def test_a_port_in_use_is_reported(monkeypatch):
+    made = []
+
+    class Kept(socket.socket):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            made.append(self)
+
     with socket.socket() as taken:
         taken.bind(("127.0.0.1", 0))
         taken.listen(1)
         port = taken.getsockname()[1]
+        monkeypatch.setattr(socket, "socket", Kept)
         with pytest.raises(OSError):
             LiveInput(port - 1, "x", "ffmpeg", on_source=lambda s: True, host="127.0.0.1").start()
+    # Both of its sockets are closed, the one that couldn't have its port too.
+    assert len(made) == 2 and all(s.fileno() == -1 for s in made)
 
 
 def test_a_stopped_live_input_lets_go_of_its_ports():
