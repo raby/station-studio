@@ -187,8 +187,10 @@ from PyPI, so each app's PyPI release builds appkit too
 (`scripts/appkit_release.py`) and uploads it with the app when PyPI
 hasn't that version yet. If PyPI has that version with other code, the
 release stops before anything is published: **bump appkit's version
-whenever its code changes**, and raise the apps' `station-appkit>=`
-floor when they need something new in it.
+whenever its code changes**, and raise all three apps' `station-appkit>=`
+to that version at the same time. pip only upgrades appkit when an app asks
+for a newer one, so a lower floor lets a pip upgrade keep an appkit that's
+missing what the app now uses (`tests/test_packaging_names.py` checks).
 
 *One-time setup:* on pypi.org, station-appkit needs a trusted publisher
 for each workflow that can upload it: `publish.yml` (environment

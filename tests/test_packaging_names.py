@@ -73,6 +73,20 @@ def test_releases_are_tagged_as_the_update_check_reads_them(key):
     assert f'gh release create "{app.tag_prefix}$VERSION"' in (WORKFLOWS / publish).read_text()
 
 
+@pytest.mark.parametrize("key", APPS)
+def test_each_app_requires_the_appkit_in_this_repo(key):
+    """Each app is built and tested against appkit/ as it is here, but pip
+    only upgrades station-appkit when the app asks for a newer one: Studio
+    1.20.2 needed appkit 1.1.1's reveal() and asked for >=1.1, so upgrading
+    it with pip kept 1.1.0 and `station-studio app` couldn't start. A new
+    appkit version means raising this in all three apps."""
+    _, folder, *_ = APPS[key]
+    appkit = tomllib.loads((ROOT / "appkit" / "pyproject.toml").read_text())["project"]["version"]
+    deps = tomllib.loads((folder / "pyproject.toml").read_text())["project"]["dependencies"]
+    wanted = [d for d in deps if re.match(r"station-appkit\b", d)]
+    assert wanted == [f"station-appkit>={appkit}"]
+
+
 def test_the_three_apps_never_share_a_name_port_or_tag():
     apps = [app_of(m) for m, *_ in APPS.values()]
     for attr in ("name", "slug", "tag_prefix", "port", "mac_helper", "env_prefix"):
