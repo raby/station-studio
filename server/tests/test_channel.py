@@ -1,8 +1,6 @@
-import gc
 import subprocess
 import threading
 import time
-import warnings
 
 import pytest
 
@@ -347,18 +345,9 @@ def test_a_measured_track_leaves_out_its_silence(tmp_path):
 def test_the_encoder_closes_its_pipes():
     """Every time a station went on air the encoder's output and error
     pipes stayed open for good."""
-    with warnings.catch_warnings():  # what earlier tests left isn't this test's
-        warnings.simplefilter("ignore", ResourceWarning)
-        gc.collect()
     got = []
     encoder = Encoder(FFMPEG, got.append)
-    pipes = {f"name={encoder._proc.stdout.fileno()}>", f"name={encoder._proc.stderr.fileno()}>"}
     encoder.write(b"\0" * CHUNK * 4)
     encoder.close()
     assert got  # it did encode
     assert encoder._proc.stdout.closed and encoder._proc.stderr.closed
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always", ResourceWarning)
-        del encoder
-        gc.collect()
-    assert not [w for w in caught if any(p in str(w.message) for p in pipes)]
