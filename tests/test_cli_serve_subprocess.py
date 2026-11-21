@@ -106,6 +106,7 @@ def test_serve_real_uvicorn_binds_and_serves_api_stations(
     port = _free_tcp_port()
 
     log_path = tmp_path / "serve.log"
+    log = open(log_path, "wb")
     proc = subprocess.Popen(
         [
             sys.executable,
@@ -116,9 +117,10 @@ def test_serve_real_uvicorn_binds_and_serves_api_stations(
             "--port", str(port),
         ],
         env=env,
-        stdout=open(log_path, "wb"),
+        stdout=log,
         stderr=subprocess.STDOUT,
     )
+    log.close()  # the server has its own copy
 
     try:
         # Step 1: TCP socket accepts (uvicorn bound).
@@ -195,6 +197,7 @@ def test_serve_real_uvicorn_rejects_bad_port(
     env, _home = isolated_subprocess_home
 
     log_path = tmp_path / "serve_badport.log"
+    log = open(log_path, "wb")
     proc = subprocess.Popen(
         [
             sys.executable,
@@ -205,9 +208,10 @@ def test_serve_real_uvicorn_rejects_bad_port(
             "--port", "-1",
         ],
         env=env,
-        stdout=open(log_path, "wb"),
+        stdout=log,
         stderr=subprocess.STDOUT,
     )
+    log.close()  # the server has its own copy
 
     try:
         rc = proc.wait(timeout=10.0)

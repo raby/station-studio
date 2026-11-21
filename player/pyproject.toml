@@ -52,3 +52,13 @@ packages = ["station_player"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# A socket, file or process the code (or a test) leaves open fails the
+# run, wherever it's noticed: the message names it and, with
+# PYTHONTRACEMALLOC=20, where it was opened. Round 2 item 5 got the suites
+# to none, so a new leak can't hide in the noise again.
+filterwarnings = [
+    "error::ResourceWarning",
+    # Most are noticed when the object is collected, which pytest reports
+    # as this instead.
+    "error::pytest.PytestUnraisableExceptionWarning",
+]

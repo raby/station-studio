@@ -1,6 +1,7 @@
 import pytest
 import json
 import socket
+import subprocess
 import time
 import urllib.request
 from pathlib import Path
@@ -154,6 +155,9 @@ def test_mac_style_launch_detaches_and_reuses_the_running_copy(tmp_path, monkeyp
         port = s.getsockname()[1]
     url = f"http://127.0.0.1:{port}/"
     opened = []
+    started = []  # the detached player: the app lets go of it, the test waits for it
+    real_popen = cli.subprocess.Popen
+    monkeypatch.setattr(cli.subprocess, "Popen", lambda *a, **k: started.append(real_popen(*a, **k)) or started[-1])
     monkeypatch.setattr(cli, "_detach_needed", lambda: True)
     monkeypatch.setattr(cli, "open_ui", lambda url, home, own_window=True: opened.append(url))
     monkeypatch.setenv("PYTHONPATH", str(Path(cli.__file__).resolve().parents[1]))
@@ -170,6 +174,12 @@ def test_mac_style_launch_detaches_and_reuses_the_running_copy(tmp_path, monkeyp
             urllib.request.urlopen(quit_req, timeout=5).close()
         except OSError:
             pass
+        for proc in started:  # quit, so it ends (and none is left running)
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
     deadline = time.monotonic() + 5
     while cli._running_instance(url) and time.monotonic() < deadline:
         time.sleep(0.1)

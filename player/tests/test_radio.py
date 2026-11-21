@@ -104,8 +104,12 @@ def station():
 
 
 def drain(stream):
+    """All of a stream's audio and titles; closed after, as the app does."""
     seen = []
-    audio = b"".join(radio.relay(stream, seen.append))
+    try:
+        audio = b"".join(radio.relay(stream, seen.append))
+    finally:
+        stream.close()
     return audio, seen
 
 
@@ -161,7 +165,9 @@ def test_bad_streams_are_refused(station, path):
 
 
 def test_non_audio_content_type_is_flagged(station):
-    assert radio.open_stream(station.url + "/html").content_type is None
+    stream = radio.open_stream(station.url + "/html")
+    assert stream.content_type is None
+    stream.close()
 
 
 def test_connect_deadline_holds_against_a_slow_drip_server():

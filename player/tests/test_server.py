@@ -82,14 +82,15 @@ def test_stream_fetch_has_an_overall_deadline():
     def drip():  # accept, then send a byte too slowly to ever finish
         c, _ = listener.accept()
         conns.append(c)
-        c.recv(1024)
-        c.sendall(b"HTTP/1.0 200 OK\r\nContent-Length: 1000\r\n\r\n")
-        for _ in range(20):
-            time.sleep(0.2)
-            try:
-                c.sendall(b"x")
-            except OSError:
-                return
+        with c:
+            c.recv(1024)
+            c.sendall(b"HTTP/1.0 200 OK\r\nContent-Length: 1000\r\n\r\n")
+            for _ in range(20):
+                time.sleep(0.2)
+                try:
+                    c.sendall(b"x")
+                except OSError:
+                    return
 
     threading.Thread(target=drip, daemon=True).start()
     t0 = time.monotonic()
