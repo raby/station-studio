@@ -24,7 +24,12 @@ this project uses semantic versioning.
   `serve --host 0.0.0.0`), list the names or addresses they'll use in
   `STATION_STUDIO_ALLOWED_HOSTS` (comma-separated, or `*` for any).
   Without it they get a page saying so, and `serve` says so when it
-  starts. `docker-compose.yml` has the line to uncomment.
+  starts.
+- `docker compose up` publishes Station Studio on this computer only
+  (`127.0.0.1:8001`), not on every network address: with no login,
+  anyone on the same network could change or delete stations.
+  `docker-compose.yml` says what to change to open it to other
+  computers on a network you trust.
 
 ## [1.20.3] - 2026-11-21
 

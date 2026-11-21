@@ -132,10 +132,11 @@ docker run --rm -v station-studio-data:/data -v $PWD:/backup \
   alpine tar czf /backup/data.tar.gz /data
 ```
 
-To open it from other computers (on a NAS, say), uncomment
-`STATION_STUDIO_ALLOWED_HOSTS` in `docker-compose.yml` and list the
-names or addresses they'll use: Studio answers only at `localhost` and
-`127.0.0.1` otherwise (see below).
+It's published on this computer only (`127.0.0.1:8001`), since Studio
+has no login. To open it from other computers on a network you trust
+(on a NAS, say), `docker-compose.yml` says what to change: publish it
+on every address (`"8001:8001"`) and list the names or addresses
+they'll use in `STATION_STUDIO_ALLOWED_HOSTS` (see below).
 
 The image is multi-stage (node-build → wheel-build → slim runtime,
 non-root, healthchecked), ~312MB. Same SvelteKit static SPA as the
