@@ -74,7 +74,7 @@ def editor_api(tmp_path, monkeypatch):
 
     app.dependency_overrides[get_db] = _override_get_db
     app.dependency_overrides[get_stations_dir] = _override_stations_dir
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://localhost") as client:
         yield client, Session, stations_dir
     app.dependency_overrides.clear()
 

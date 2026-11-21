@@ -336,7 +336,8 @@ backfill-slot-types:
 #
 # Defaults assume the dev server is running locally on port 8001;
 # override with `HOST=...` if needed (e.g. inside a docker compose
-# network).
+# network, where Studio must also list that name in
+# STATION_STUDIO_ALLOWED_HOSTS: api/guard.py).
 HOST ?= http://localhost:8001
 
 # `-fsS` so curl exits non-zero on HTTP errors AND connection refusals

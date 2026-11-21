@@ -80,6 +80,31 @@ def test_serve_respects_host_and_port_flags(runner: CliRunner) -> None:
     assert kwargs["workers"] == 1
 
 
+@pytest.mark.parametrize("host, env, hint", [
+    ("0.0.0.0", None, True),          # Docker's CMD, or opened up by hand
+    ("192.168.1.5", None, True),
+    ("0.0.0.0", "nas.local", False),  # already told which names to answer
+    ("127.0.0.1", None, False),
+    ("localhost", None, False),
+    ("::1", None, False),
+])
+def test_serve_says_when_other_computers_wont_get_an_answer(
+    runner: CliRunner, monkeypatch: pytest.MonkeyPatch, tmp_path, host, env, hint
+) -> None:
+    """Bound where other computers can reach it, Studio still refuses
+    their requests until STATION_STUDIO_ALLOWED_HOSTS names them
+    (api/guard.py): serve says so at start, not just a 403 later."""
+    monkeypatch.setenv("STATION_STUDIO_HOME", str(tmp_path / "ss-home"))
+    if env is None:
+        monkeypatch.delenv("STATION_STUDIO_ALLOWED_HOSTS", raising=False)
+    else:
+        monkeypatch.setenv("STATION_STUDIO_ALLOWED_HOSTS", env)
+    with patch("uvicorn.run"):
+        result = runner.invoke(main, ["serve", "--host", host])
+    assert result.exit_code == 0, result.output
+    assert ("STATION_STUDIO_ALLOWED_HOSTS lists" in result.output) is hint
+
+
 def test_serve_has_no_workers_flag(runner: CliRunner) -> None:
     """Belt-and-suspenders against accidentally exposing --workers.
     The constraint is a single-worker invariant; surfacing it as a

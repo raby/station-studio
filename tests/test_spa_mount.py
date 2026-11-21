@@ -44,7 +44,7 @@ def spa_client(fake_static_dir: Path) -> TestClient:
     SPA-mount behaviour from the rest of the app."""
     app = FastAPI()
     attach_spa_routes(app, fake_static_dir)
-    return TestClient(app)
+    return TestClient(app, base_url="http://localhost")
 
 
 # ---- _resolve_static_dir ----------------------------------------------
@@ -186,7 +186,7 @@ def test_spa_does_not_swallow_fastapi_auto_docs(
     OpenAPI-consuming tool. This test pins the precedence."""
     app = FastAPI()
     attach_spa_routes(app, fake_static_dir)
-    client = TestClient(app)
+    client = TestClient(app, base_url="http://localhost")
 
     # /openapi.json wins over the SPA fallback → JSON, not HTML.
     r = client.get("/openapi.json")

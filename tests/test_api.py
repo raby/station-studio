@@ -69,7 +69,7 @@ def api(tmp_path, monkeypatch):
             db.close()
 
     app.dependency_overrides[get_db] = _override_get_db
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://localhost") as client:
         yield client, Session
     app.dependency_overrides.clear()
 
@@ -2379,7 +2379,7 @@ def test_root_endpoint_identifies_the_service(monkeypatch):
     from api.main import STATIC_DIR
 
     monkeypatch.setenv("STATION_STUDIO_SKIP_AUTO_SEED", "1")
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://localhost") as client:
         r = client.get("/")
     assert r.status_code == 200
     if STATIC_DIR is None:
@@ -2421,7 +2421,7 @@ def test_lifespan_auto_derives_missing_sidecars(tmp_path, monkeypatch):
     sidecar = stations_dir / "starter.editor.json"
     assert not sidecar.exists()
 
-    with TestClient(app) as _client:
+    with TestClient(app, base_url="http://localhost") as _client:
         pass  # lifespan fires on context entry/exit
 
     # The lifespan derived the missing sidecar.
@@ -2455,7 +2455,7 @@ def test_lifespan_auto_seeds_when_station_table_is_empty(tmp_path, monkeypatch):
         assert db.query(Station).count() == 0
 
     # Boot the app → lifespan handler fires.
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://localhost") as client:
         # Bootstrap done. Confirm seeded rows.
         with Session() as db:
             slugs = {s.slug for s in db.query(Station).all()}
@@ -2478,7 +2478,7 @@ def test_lifespan_does_not_re_seed_when_station_table_is_populated(
     Session = make_sessionmaker(engine)
 
     # First boot — seeds happens.
-    with TestClient(app):
+    with TestClient(app, base_url="http://localhost"):
         pass
 
     # Hand-edit a station's name to verify the second boot doesn't
@@ -2489,7 +2489,7 @@ def test_lifespan_does_not_re_seed_when_station_table_is_populated(
         db.commit()
 
     # Second boot — should be a no-op.
-    with TestClient(app):
+    with TestClient(app, base_url="http://localhost"):
         pass
 
     with Session() as db:
@@ -2522,7 +2522,7 @@ def test_lifespan_swallows_seed_errors_so_app_still_boots(
     monkeypatch.setenv("STATION_STUDIO_STATIONS_DIR", str(empty_dir))
 
     with caplog.at_level("INFO"):
-        with TestClient(app) as client:
+        with TestClient(app, base_url="http://localhost") as client:
             r = client.get("/")
         assert r.status_code == 200
     # Either "no stations found" (default path) or "auto-seed failed"

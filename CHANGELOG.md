@@ -4,6 +4,27 @@ All notable changes are listed here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses semantic versioning.
 
+## [Unreleased]
+
+### Security
+
+- Other websites can't drive Station Studio through your browser. It
+  had no guard of its own (only the app's Quit and Update buttons did):
+  a page open in the same browser could make it delete exports, roll
+  back a playlist or send a week to Station Server, and one using DNS
+  rebinding could read and change everything. Now, as in Station Player
+  and Station Server, it answers only at this computer's own address,
+  and only its own pages can make changes. curl and scripts work as
+  before.
+
+### Changed
+
+- To open Station Studio from other computers (in Docker on a NAS, or
+  `serve --host 0.0.0.0`), list the names or addresses they'll use in
+  `STATION_STUDIO_ALLOWED_HOSTS` (comma-separated, or `*` for any).
+  Without it they get a page saying so, and `serve` says so when it
+  starts. `docker-compose.yml` has the line to uncomment.
+
 ## [1.20.3] - 2026-11-21
 
 ### Fixed

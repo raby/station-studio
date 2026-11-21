@@ -75,6 +75,11 @@ is the wrapper.
 
     First run takes ~2 min to build; later runs reuse the image.
 
+    Open <http://localhost:8001>. Studio answers only at `localhost`
+    and `127.0.0.1`: to open it from other computers (on a NAS, say),
+    uncomment `STATION_STUDIO_ALLOWED_HOSTS` in `docker-compose.yml`
+    and list the names or addresses they'll use.
+
 === "Pip wheel from source"
 
     Single-process app on `localhost`, built from a local clone.

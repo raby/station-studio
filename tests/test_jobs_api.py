@@ -83,7 +83,7 @@ def jobs_api(tmp_path, monkeypatch):
     app.dependency_overrides[get_db] = _override_get_db
     app.dependency_overrides[get_session_factory] = _override_session_factory
     app.dependency_overrides[get_job_store] = _override_job_store
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://localhost") as client:
         yield client, Session, store
     app.dependency_overrides.clear()
 

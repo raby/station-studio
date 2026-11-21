@@ -52,7 +52,7 @@ def api(tmp_path):
             db.close()
 
     app.dependency_overrides[get_db] = _override_get_db
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://localhost") as client:
         yield client, Session
     app.dependency_overrides.clear()
 

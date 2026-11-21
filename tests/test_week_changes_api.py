@@ -70,7 +70,7 @@ def env(tmp_path, monkeypatch):
     app.dependency_overrides[get_session_factory] = lambda: Session
     app.dependency_overrides[get_job_store] = lambda: store
     _seed(Session)
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://localhost") as client:
         yield client, Session, store
     app.dependency_overrides.clear()
 

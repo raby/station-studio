@@ -168,7 +168,7 @@ def test_plain_server_says_it_isnt_the_app():
     """`serve` / Docker answer /api/app too, so the page shows no app bar."""
     from api.main import app
 
-    assert TestClient(app).get("/api/app").json() == {"service": "station-studio", "app": False}
+    assert TestClient(app, base_url="http://localhost").get("/api/app").json() == {"service": "station-studio", "app": False}
 
 
 def test_check_for_updates_only_in_the_downloaded_apps(tmp_path):
