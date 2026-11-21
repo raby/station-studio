@@ -54,6 +54,7 @@ def published(version: str, opener=urllib.request.urlopen) -> bytes | None:
             info = json.load(resp)
     except urllib.error.HTTPError as exc:
         if exc.code == 404:
+            exc.close()  # a response too: let its connection go
             return None
         raise
     for file in info.get("urls", []):

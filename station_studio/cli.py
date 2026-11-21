@@ -214,22 +214,26 @@ def import_cmd(
         ctx.exit(1)
 
     engine = make_engine()
-    ctx.call_on_close(engine.dispose)  # however the command ends
-    Base.metadata.create_all(engine)
-    SessionLocal = make_sessionmaker(engine)
-
     try:
-        with SessionLocal() as db:
-            summary = import_source(db, xml_path, name, role=role)
-            db.commit()
-    except ValueError as e:
-        click.echo(f"Error: {e}", err=True)
-        ctx.exit(1)
+        Base.metadata.create_all(engine)
+        SessionLocal = make_sessionmaker(engine)
 
-    tracks = summary.get("tracks_imported", "?")
-    click.echo(
-        f"Imported {tracks} tracks into pool '{name}' (role: {role})."
-    )
+        try:
+            with SessionLocal() as db:
+                summary = import_source(db, xml_path, name, role=role)
+                db.commit()
+        except ValueError as e:
+            click.echo(f"Error: {e}", err=True)
+            ctx.exit(1)
+
+        tracks = summary.get("tracks_imported", "?")
+        click.echo(
+            f"Imported {tracks} tracks into pool '{name}' (role: {role})."
+        )
+    finally:
+        # After the session has closed, however the command ends (ctx.exit
+        # included): disposing first would leave its connection open.
+        engine.dispose()
 
 
 @main.command(
@@ -331,145 +335,149 @@ def generate_cmd(
     )
 
     db_engine = make_engine()
-    ctx.call_on_close(db_engine.dispose)  # however the command ends
-    Base.metadata.create_all(db_engine)
-    SessionLocal = make_sessionmaker(db_engine)
+    try:
+        Base.metadata.create_all(db_engine)
+        SessionLocal = make_sessionmaker(db_engine)
 
-    with SessionLocal() as db:
-        station = db.query(Station).filter(Station.slug == slug).first()
-        if station is None:
-            click.echo(f"Error: station '{slug}' not found.", err=True)
-            ctx.exit(1)
+        with SessionLocal() as db:
+            station = db.query(Station).filter(Station.slug == slug).first()
+            if station is None:
+                click.echo(f"Error: station '{slug}' not found.", err=True)
+                ctx.exit(1)
 
-        try:
-            template = parse_template(station.template)
-        except TemplateError as e:
-            click.echo(f"Error: stored template is invalid: {e}", err=True)
-            ctx.exit(1)
+            try:
+                template = parse_template(station.template)
+            except TemplateError as e:
+                click.echo(f"Error: stored template is invalid: {e}", err=True)
+                ctx.exit(1)
 
-        try:
-            pools = load_pools(db, template)
-        except ValueError as e:
-            click.echo(f"Error: {e}", err=True)
-            ctx.exit(1)
+            try:
+                pools = load_pools(db, template)
+            except ValueError as e:
+                click.echo(f"Error: {e}", err=True)
+                ctx.exit(1)
 
-        # t2-review 🟡-1: resolve `artist_dedup_window` and pass it as
-        # `weighted_window_default` to the engine — same as the API
-        # endpoint does (§14.29). Without this, a station with a
-        # `weighted` block + an `artist_dedup_window` rule would
-        # generate different playlists from CLI vs API for the same
-        # week. The CLI claims thin-wrapper status — drift here
-        # invalidates that claim.
-        artist_dedup_window = get_rule_value(
-            db, station_id=station.id, key="artist_dedup_window",
-        )
-        mix_exclusion_weeks = get_rule_value(
-            db, station_id=station.id, key="mix_exclusion_weeks",
-        )
-        cursor_advance_step = get_rule_value(
-            db, station_id=station.id, key="cursor_advance_step",
-        )
-        cursor_reset_cycle = get_rule_value(
-            db, station_id=station.id, key="cursor_reset_cycle",
-        )
-
-        excluded_mix_ids = load_excluded_mix_ids(
-            db, station_id=station.id,
-            window=max_mix_exclusion_window(
-                template, default=mix_exclusion_weeks,
-            ),
-            week=week,
-        )
-        alias_map = load_alias_map(db)
-        previous_playlist = load_previous_playlist(
-            db, station_id=station.id, current_week=week,
-        )
-        # A past week starts from the positions it was generated with;
-        # only the latest week moves the live cursors (plan_cursors).
-        cursor_plan = plan_cursors(
-            db, station_id=station.id, template=template, week=week,
-        )
-        named_cursor_positions = cursor_plan.positions
-
-        inputs = EngineInputs(
-            week=week, seed=seed,
-            excluded_mix_ids=excluded_mix_ids,
-            alias_map=alias_map,
-            previous_playlist=previous_playlist,
-            # t2-review 🟡-1: was missing — now matches the API.
-            weighted_window_default=artist_dedup_window,
-            named_cursor_positions=named_cursor_positions,
-        )
-        try:
-            result = engine_generate(template, pools, **inputs.kwargs())
-            # The week's just-this-week changes, made again.
-            applied = apply_changes(
-                db, result, saved_items(db, station_id=station.id, week=week),
-                template=template, template_raw=station.template,
-                pools=pools, inputs=inputs,
+            # t2-review 🟡-1: resolve `artist_dedup_window` and pass it as
+            # `weighted_window_default` to the engine — same as the API
+            # endpoint does (§14.29). Without this, a station with a
+            # `weighted` block + an `artist_dedup_window` rule would
+            # generate different playlists from CLI vs API for the same
+            # week. The CLI claims thin-wrapper status — drift here
+            # invalidates that claim.
+            artist_dedup_window = get_rule_value(
+                db, station_id=station.id, key="artist_dedup_window",
             )
-            result = applied.result
-        # t2-review 🟢-1: broaden the catch from `ValueError` to
-        # `Exception` — same as the API's `except Exception` →
-        # HTTPException(400). Mid-generate failures from malformed
-        # templates / corrupt DB rows surface as a clean exit-1 +
-        # readable error instead of a Python stack trace.
-        except Exception as e:  # noqa: BLE001 — match API surface
-            click.echo(f"Error: generation failed: {e}", err=True)
-            ctx.exit(1)
-
-        # t2-review 🟡-4: handle the concurrent-regen race the same way
-        # the API does (HTTP 409 → CLI exit 1 + retry message). Without
-        # this, two `station-studio generate` processes racing the same
-        # station+week — exactly the cron-misconfiguration case t2's
-        # design rationale calls out — get a SQLAlchemy stack trace.
-        try:
-            playlist = save_playlist(
-                db, station=station, result=result,
-                week=week, template=template,
-                cursor_positions=cursor_plan.positions,
+            mix_exclusion_weeks = get_rule_value(
+                db, station_id=station.id, key="mix_exclusion_weeks",
             )
-            forget_dropped(db, applied.dropped)
-            db.commit()
-        except IntegrityError:
-            db.rollback()
-            click.echo(
-                "Error: a playlist for this station and week was "
-                "concurrently generated; retry.",
-                err=True,
+            cursor_advance_step = get_rule_value(
+                db, station_id=station.id, key="cursor_advance_step",
             )
-            ctx.exit(1)
+            cursor_reset_cycle = get_rule_value(
+                db, station_id=station.id, key="cursor_reset_cycle",
+            )
 
-        # t2-review 🟡-2: advance_cursors ONLY when the template opts
-        # into persistent cursors. The API endpoint has this guard;
-        # the CLI was calling unconditionally, doing work that didn't
-        # belong for stateless templates (Rebirth Classics et al).
-        # t2-review 🟡-3: pass raw rule values (None or int) so
-        # `advance_cursors` applies its own internal default. The
-        # previous `or 120 / or 0` form silently turned a user-set
-        # rule of 0 into 120 — exactly the legitimate-zero footgun.
-        if cursor_plan.moves_live:
-            finish_cursors(
-                db, plan=cursor_plan, station_id=station.id,
-                template=template, pools=pools,
-                advance_step=cursor_advance_step,
-                reset_cycle=cursor_reset_cycle,
+            excluded_mix_ids = load_excluded_mix_ids(
+                db, station_id=station.id,
+                window=max_mix_exclusion_window(
+                    template, default=mix_exclusion_weeks,
+                ),
                 week=week,
             )
-            db.commit()
-
-        click.echo(
-            f"Generated playlist {playlist.id} for '{slug}' week {week} "
-            f"({len(result.picks)} slots)."
-        )
-        if applied.applied:
-            n = len(applied.applied)
-            click.echo(f"Made {n} just-this-week change{'s' if n != 1 else ''}.")
-        for d in applied.dropped:
-            click.echo(
-                f"Dropped a just-this-week change (row {d.change.row}, rule "
-                f"{d.change.block}, song {d.change.k + 1}): {d.reason}."
+            alias_map = load_alias_map(db)
+            previous_playlist = load_previous_playlist(
+                db, station_id=station.id, current_week=week,
             )
+            # A past week starts from the positions it was generated with;
+            # only the latest week moves the live cursors (plan_cursors).
+            cursor_plan = plan_cursors(
+                db, station_id=station.id, template=template, week=week,
+            )
+            named_cursor_positions = cursor_plan.positions
+
+            inputs = EngineInputs(
+                week=week, seed=seed,
+                excluded_mix_ids=excluded_mix_ids,
+                alias_map=alias_map,
+                previous_playlist=previous_playlist,
+                # t2-review 🟡-1: was missing — now matches the API.
+                weighted_window_default=artist_dedup_window,
+                named_cursor_positions=named_cursor_positions,
+            )
+            try:
+                result = engine_generate(template, pools, **inputs.kwargs())
+                # The week's just-this-week changes, made again.
+                applied = apply_changes(
+                    db, result, saved_items(db, station_id=station.id, week=week),
+                    template=template, template_raw=station.template,
+                    pools=pools, inputs=inputs,
+                )
+                result = applied.result
+            # t2-review 🟢-1: broaden the catch from `ValueError` to
+            # `Exception` — same as the API's `except Exception` →
+            # HTTPException(400). Mid-generate failures from malformed
+            # templates / corrupt DB rows surface as a clean exit-1 +
+            # readable error instead of a Python stack trace.
+            except Exception as e:  # noqa: BLE001 — match API surface
+                click.echo(f"Error: generation failed: {e}", err=True)
+                ctx.exit(1)
+
+            # t2-review 🟡-4: handle the concurrent-regen race the same way
+            # the API does (HTTP 409 → CLI exit 1 + retry message). Without
+            # this, two `station-studio generate` processes racing the same
+            # station+week — exactly the cron-misconfiguration case t2's
+            # design rationale calls out — get a SQLAlchemy stack trace.
+            try:
+                playlist = save_playlist(
+                    db, station=station, result=result,
+                    week=week, template=template,
+                    cursor_positions=cursor_plan.positions,
+                )
+                forget_dropped(db, applied.dropped)
+                db.commit()
+            except IntegrityError:
+                db.rollback()
+                click.echo(
+                    "Error: a playlist for this station and week was "
+                    "concurrently generated; retry.",
+                    err=True,
+                )
+                ctx.exit(1)
+
+            # t2-review 🟡-2: advance_cursors ONLY when the template opts
+            # into persistent cursors. The API endpoint has this guard;
+            # the CLI was calling unconditionally, doing work that didn't
+            # belong for stateless templates (Rebirth Classics et al).
+            # t2-review 🟡-3: pass raw rule values (None or int) so
+            # `advance_cursors` applies its own internal default. The
+            # previous `or 120 / or 0` form silently turned a user-set
+            # rule of 0 into 120 — exactly the legitimate-zero footgun.
+            if cursor_plan.moves_live:
+                finish_cursors(
+                    db, plan=cursor_plan, station_id=station.id,
+                    template=template, pools=pools,
+                    advance_step=cursor_advance_step,
+                    reset_cycle=cursor_reset_cycle,
+                    week=week,
+                )
+                db.commit()
+
+            click.echo(
+                f"Generated playlist {playlist.id} for '{slug}' week {week} "
+                f"({len(result.picks)} slots)."
+            )
+            if applied.applied:
+                n = len(applied.applied)
+                click.echo(f"Made {n} just-this-week change{'s' if n != 1 else ''}.")
+            for d in applied.dropped:
+                click.echo(
+                    f"Dropped a just-this-week change (row {d.change.row}, rule "
+                    f"{d.change.block}, song {d.change.k + 1}): {d.reason}."
+                )
+    finally:
+        # After the session has closed, however the command ends (ctx.exit
+        # included): disposing first would leave its connection open.
+        db_engine.dispose()
 
 
 @main.command(
@@ -531,40 +539,44 @@ def export_cmd(
     from engine.models import Base
 
     db_engine = make_engine()
-    ctx.call_on_close(db_engine.dispose)  # however the command ends
-    Base.metadata.create_all(db_engine)
-    SessionLocal = make_sessionmaker(db_engine)
-
     try:
-        with SessionLocal() as db:
-            if to_disk:
-                target = export_playlist_to_disk(db, playlist_id)
-                # §16.13 slice-review 🟢-1: uniform "Wrote ... (N bytes)"
-                # output across export + backup. The --to-disk path used
-                # to omit the byte count; the --output path used a bare
-                # int; backup used a thousands-separator int. One form
-                # now, everywhere: `:,` for readability.
-                size = target.stat().st_size
-                click.echo(f"Wrote {target} ({size:,} bytes)")
-                return
-            xml_bytes = export_playlist(db, playlist_id)
-    except ValueError as e:
-        # `Playlist {id} not found` lands here.
-        click.echo(f"Error: {e}", err=True)
-        ctx.exit(1)
+        Base.metadata.create_all(db_engine)
+        SessionLocal = make_sessionmaker(db_engine)
 
-    if output is not None:
-        output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_bytes(xml_bytes)
-        click.echo(f"Wrote {output} ({len(xml_bytes):,} bytes)")
-        return
+        try:
+            with SessionLocal() as db:
+                if to_disk:
+                    target = export_playlist_to_disk(db, playlist_id)
+                    # §16.13 slice-review 🟢-1: uniform "Wrote ... (N bytes)"
+                    # output across export + backup. The --to-disk path used
+                    # to omit the byte count; the --output path used a bare
+                    # int; backup used a thousands-separator int. One form
+                    # now, everywhere: `:,` for readability.
+                    size = target.stat().st_size
+                    click.echo(f"Wrote {target} ({size:,} bytes)")
+                    return
+                xml_bytes = export_playlist(db, playlist_id)
+        except ValueError as e:
+            # `Playlist {id} not found` lands here.
+            click.echo(f"Error: {e}", err=True)
+            ctx.exit(1)
 
-    # Default: stdout. Use the buffer to write bytes (Click's
-    # `click.echo` is text-mode; iTunes XML is utf-8 bytes, but writing
-    # to sys.stdout.buffer keeps the exact byte sequence the on-disk
-    # path would produce — bit-for-bit identical between `--output
-    # foo.xml` and `> foo.xml`).
-    sys.stdout.buffer.write(xml_bytes)
+        if output is not None:
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_bytes(xml_bytes)
+            click.echo(f"Wrote {output} ({len(xml_bytes):,} bytes)")
+            return
+
+        # Default: stdout. Use the buffer to write bytes (Click's
+        # `click.echo` is text-mode; iTunes XML is utf-8 bytes, but writing
+        # to sys.stdout.buffer keeps the exact byte sequence the on-disk
+        # path would produce — bit-for-bit identical between `--output
+        # foo.xml` and `> foo.xml`).
+        sys.stdout.buffer.write(xml_bytes)
+    finally:
+        # After the session has closed, however the command ends (ctx.exit
+        # included): disposing first would leave its connection open.
+        db_engine.dispose()
 
 
 @main.command(
