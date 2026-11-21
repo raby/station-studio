@@ -528,3 +528,37 @@ def test_an_old_copy_that_wont_go_doesnt_stop_the_update(
         copy = bootstrap_module.copy_before_update(db)
     assert copy.is_file()
     assert "Couldn't remove an old copy of the database" in caplog.text
+
+
+def test_only_studios_own_copies_count(tmp_path: Path) -> None:
+    """A file someone put there with a similar name isn't one of the
+    copies: never removed, and never counted, so three real copies stay.
+    A copy a crash cut short (.part) is cleared away."""
+    import datetime as dt
+
+    db = tmp_path / "studio.db"
+    sqlite3.connect(db).close()
+    backups = tmp_path / "backups"
+    backups.mkdir()
+    (backups / "before-update-my-copy.db").write_text("someone's own")
+    (backups / "before-update-20261101-090000.db.part").write_text("cut short")
+    made = [bootstrap_module.copy_before_update(db, now=dt.datetime(2026, 11, 20 + i, 9, 0, 0)) for i in range(4)]
+    assert sorted(f.name for f in backups.iterdir()) == sorted(
+        [f.name for f in made[1:]] + ["before-update-my-copy.db"])
+
+
+def test_the_command_line_says_why_without_a_traceback(older_database: Path) -> None:
+    from unittest.mock import patch
+
+    from click.testing import CliRunner
+
+    from station_studio.cli import main
+
+    (older_database.parent / "backups").write_text("a file where the folder would go")
+    with patch("uvicorn.run") as run:
+        result = CliRunner().invoke(main, ["serve"])
+    assert result.exit_code == 1
+    assert "Error: Couldn't save a copy of the database before updating it" in result.output
+    assert "Traceback" not in result.output
+    assert not run.called
+    assert _revision(older_database) == _previous_revision()

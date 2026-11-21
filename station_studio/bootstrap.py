@@ -23,6 +23,7 @@ import datetime as _dt
 import importlib.resources
 import logging
 import os
+import re
 import shutil
 import sqlite3
 from dataclasses import dataclass
@@ -201,6 +202,10 @@ def _resolve_repo_root() -> Path | None:
 # way back from the first one before anyone noticed.
 COPIES_KEPT = 3
 COPY_PREFIX = "before-update-"
+# Only names this code writes count as copies (and are ever removed):
+# before-update-20261121-143000.db, -2, -3 for more in the same second.
+_COPY_NAME = re.compile(r"before-update-(\d{8}-\d{6})(?:-(\d+))?\.db")
+_PART_NAME = re.compile(r"before-update-\d{8}-\d{6}(?:-\d+)?\.db\.part")
 
 
 class CopyBeforeUpdateError(RuntimeError):
@@ -245,22 +250,17 @@ def copy_before_update(db_file: Path, now: _dt.datetime | None = None,
             "can be written to, then start Station Studio again."
         ) from exc
     # Newest last: by the time in the name, then the -2, -3 of the same
-    # second. Removing old ones can only cost tidiness, never the update.
-    copies = sorted(folder.glob(f"{COPY_PREFIX}*.db"), key=_copy_order)
-    for old in copies[:-keep]:
+    # second. Copies cut short by a crash (.part) go too. Removing old
+    # ones can only cost tidiness, never the update.
+    copies = sorted((m.group(1), int(m.group(2) or 1), f)
+                    for f in folder.iterdir() if (m := _COPY_NAME.fullmatch(f.name)))
+    stale = [f for f in folder.iterdir() if _PART_NAME.fullmatch(f.name)]
+    for old in [f for *_, f in copies[:-keep]] + stale:
         try:
             old.unlink()
         except OSError as exc:
             logger.warning("Couldn't remove an old copy of the database, %s: %s", old, exc)
     return dest
-
-
-def _copy_order(f: Path) -> tuple[str, int]:
-    """before-update-20261121-143000-2.db → ("20261121-143000", 2)."""
-    rest = f.stem[len(COPY_PREFIX):]
-    date, _, tail = rest.partition("-")
-    time, _, n = tail.partition("-")
-    return f"{date}-{time}", int(n) if n.isdigit() else 1
 
 
 def _run_alembic_upgrade(
