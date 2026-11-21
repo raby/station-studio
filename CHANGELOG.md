@@ -18,6 +18,13 @@ this project uses semantic versioning.
   and only its own pages can make changes. curl and scripts work as
   before.
 
+### Added
+
+- Before an update changes Station Studio's database, a copy of it is
+  saved in the data folder's `backups/` (`before-update-<date>-<time>.db`,
+  the last 3 kept), so an update gone wrong has a way back. If the copy
+  can't be made, the database isn't updated either, and Studio says why.
+
 ### Changed
 
 - To open Station Studio from other computers (in Docker on a NAS, or

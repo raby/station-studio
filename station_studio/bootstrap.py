@@ -19,10 +19,12 @@ invocation (~10ms when the DB is up-to-date, < 1s on cold start).
 """
 from __future__ import annotations
 
+import datetime as _dt
 import importlib.resources
 import logging
 import os
 import shutil
+import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -90,6 +92,9 @@ class BootstrapResult:
     # station JSONs in the home's stations dir that were missing
     # one. Existing sidecars are never overwritten.
     sidecars_derived: int = 0
+    # The copy of the database saved before this run's migrations changed
+    # it (copy_before_update), or None when nothing existing was migrated.
+    copy_before_update: Path | None = None
 
     # __fspath__ removed intentionally — the dataclass should be
     # explicit, not pretend to be a Path. Callers that want the home
@@ -190,7 +195,77 @@ def _resolve_repo_root() -> Path | None:
     return None
 
 
-def _run_alembic_upgrade(db_url: str) -> tuple[bool, str | None]:
+# Copies of the database from just before an update migrated it, beside
+# it in backups/ (where `station-studio backup` writes too, under other
+# names). The last few are kept: a second update shouldn't take away the
+# way back from the first one before anyone noticed.
+COPIES_KEPT = 3
+COPY_PREFIX = "before-update-"
+
+
+class CopyBeforeUpdateError(RuntimeError):
+    """The database couldn't be copied, so it wasn't migrated either."""
+
+
+def copy_before_update(db_file: Path, now: _dt.datetime | None = None,
+                       keep: int = COPIES_KEPT) -> Path:
+    """Copy the SQLite database at `db_file` to
+    backups/before-update-YYYYMMDD-HHMMSS.db beside it, keeping the
+    `keep` newest such copies. SQLite's own backup, so what's still in
+    the write-ahead log is copied too (a plain file copy would miss it);
+    written under a temporary name and moved into place, so a copy cut
+    short never looks like one. Returns the copy's path."""
+    folder = db_file.parent / "backups"
+    stamp = (now or _dt.datetime.now()).strftime("%Y%m%d-%H%M%S")
+    part: Path | None = None
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+        dest = folder / f"{COPY_PREFIX}{stamp}.db"
+        n = 1
+        while dest.exists():  # two updates in one second
+            n += 1
+            dest = folder / f"{COPY_PREFIX}{stamp}-{n}.db"
+        part = dest.with_name(dest.name + ".part")
+        src = sqlite3.connect(db_file)
+        try:
+            out = sqlite3.connect(part)
+            try:
+                src.backup(out)
+            finally:
+                out.close()
+        finally:
+            src.close()
+        os.replace(part, dest)
+    except (OSError, sqlite3.Error) as exc:
+        if part is not None:
+            part.unlink(missing_ok=True)
+        raise CopyBeforeUpdateError(
+            f"Couldn't save a copy of the database before updating it ({exc}), "
+            f"so it hasn't been updated. Check there's space and that {folder} "
+            "can be written to, then start Station Studio again."
+        ) from exc
+    # Newest last: by the time in the name, then the -2, -3 of the same
+    # second. Removing old ones can only cost tidiness, never the update.
+    copies = sorted(folder.glob(f"{COPY_PREFIX}*.db"), key=_copy_order)
+    for old in copies[:-keep]:
+        try:
+            old.unlink()
+        except OSError as exc:
+            logger.warning("Couldn't remove an old copy of the database, %s: %s", old, exc)
+    return dest
+
+
+def _copy_order(f: Path) -> tuple[str, int]:
+    """before-update-20261121-143000-2.db → ("20261121-143000", 2)."""
+    rest = f.stem[len(COPY_PREFIX):]
+    date, _, tail = rest.partition("-")
+    time, _, n = tail.partition("-")
+    return f"{date}-{time}", int(n) if n.isdigit() else 1
+
+
+def _run_alembic_upgrade(
+    db_url: str, before_upgrade: Callable[[], None] | None = None,
+) -> tuple[bool, str | None]:
     """Run `alembic upgrade head` against the bundled migrations.
 
     Returns `(applied, head_revision)`:
@@ -225,6 +300,10 @@ def _run_alembic_upgrade(db_url: str) -> tuple[bool, str | None]:
     get_current_head()` raises `CommandError` — the fast-path
     surfaces the failure loudly before the `==` comparison, doesn't
     silently misbehave. (t7-review 🟢-2.)
+
+    `before_upgrade` runs just before an existing database is migrated
+    (not a new one, nor one already at head): bootstrap copies it there.
+    If it raises, nothing is migrated.
     """
     from urllib.parse import urlparse
     from alembic import command
@@ -277,6 +356,8 @@ def _run_alembic_upgrade(db_url: str) -> tuple[bool, str | None]:
     if current_rev is not None and current_rev == head_rev:
         return False, head_rev
 
+    if before_upgrade is not None:
+        before_upgrade()
     command.upgrade(config, "head")
     return True, head_rev
 
@@ -354,7 +435,18 @@ def bootstrap(*, echo: Callable[[str], None] = _silent) -> BootstrapResult:
     # gets honest feedback (rather than "Running migrations..." that
     # silently did nothing).
     echo(f"DB: {db_path if db_path is not None else resolved_db_url}")
-    migrations_applied, head_revision = _run_alembic_upgrade(resolved_db_url)
+    saved: list[Path] = []
+
+    def _copy_first() -> None:
+        # An existing database is about to be migrated: keep a way back.
+        # Only an SQLite file can be copied like this; an empty one (just
+        # created) has nothing to lose.
+        if db_path is None or not db_path.is_file() or db_path.stat().st_size == 0:
+            return
+        saved.append(copy_before_update(db_path))
+        echo(f"Saved a copy of the database before updating it: {saved[0]}")
+
+    migrations_applied, head_revision = _run_alembic_upgrade(resolved_db_url, _copy_first)
     if migrations_applied:
         echo("Ran migrations (alembic upgrade head).")
     else:
@@ -418,6 +510,7 @@ def bootstrap(*, echo: Callable[[str], None] = _silent) -> BootstrapResult:
         stations_copied=copied,
         pools_auto_imported=pools_imported,
         sidecars_derived=sidecars_derived,
+        copy_before_update=saved[0] if saved else None,
     )
 
 
