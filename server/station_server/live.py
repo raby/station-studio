@@ -173,6 +173,14 @@ class LiveSource:
             pass
         finally:
             self._proc.wait()
+            # ffmpeg has gone: its pipes too, or each live show kept two
+            # open for good. feed() takes a closed stdin as "off air".
+            for pipe in (out, self._proc.stdin):
+                try:
+                    if pipe:
+                        pipe.close()
+                except (OSError, ValueError):
+                    pass
             with self._lock:
                 self._decoded = True
                 self._lock.notify_all()

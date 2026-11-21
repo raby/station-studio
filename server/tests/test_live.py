@@ -442,3 +442,22 @@ def test_a_show_without_titles_is_logged_as_a_whole():
                after=lambda: (ch.queue, 0, 0.0), on_title=lambda *a: logged.append(a), title="R: DJ")
     ch._take_live(Recorder())
     assert len(logged) == 1 and logged[0][0] is None and logged[0][2] >= 0
+
+
+@needs_ffmpeg
+@pytest.mark.parametrize("how", ["finish", "close"])
+def test_a_live_show_closes_its_decoders_pipes(how):
+    """Each live show kept its decoder's pipes open for good, whether the
+    presenter hung up (finish) or was taken off air (close)."""
+    from station_server.live import LiveSource
+    mp3 = subprocess.run([FFMPEG, "-v", "error", "-f", "lavfi", "-i", "sine=duration=1", "-ac", "2",
+                          "-f", "mp3", "-"], capture_output=True, check=True).stdout
+    source = LiveSource(FFMPEG, "audio/mpeg")
+    source.feed(mp3)
+    getattr(source, how)()
+    end = time.time() + 15
+    while not source.ended.is_set() and time.time() < end:
+        source.read(0.2)
+    proc = source._proc
+    assert wait_for(lambda: proc.stdout.closed and proc.stdin.closed)
+    assert source.feed(b"more") is False  # off air: nothing more goes in
