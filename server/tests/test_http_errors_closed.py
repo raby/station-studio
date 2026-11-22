@@ -131,3 +131,10 @@ def test_listener_counts_and_titles_a_server_refuses_close_the_error(missing, se
 def test_something_else_on_the_port_isnt_left_open(missing):
     assert cli._running_state(missing[1]) is None
     gc.collect()
+
+
+def test_a_router_without_its_description_is_passed_over_and_its_404_closed(missing):
+    host, port = missing
+    with pytest.raises(upnp.UpnpError):
+        upnp.find_gateway(discover=lambda: [f"http://{host}:{port}/desc.xml"])
+    gc.collect()  # would warn here if it weren't closed
