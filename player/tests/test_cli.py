@@ -437,3 +437,22 @@ def test_outdated_instance_compares_versions_and_kind(monkeypatch):
     assert cli._outdated_instance(url)  # the downloaded app replaces a pipx copy
     state.update(bundled=True)
     assert not cli._outdated_instance(url)
+
+
+def test_send_station_closes_the_players_error(monkeypatch, capsys):
+    """An HTTP error is a response too: the reason is read from it, then
+    it's closed rather than left to the garbage collector."""
+    import io
+    import urllib.error
+
+    bodies, kept = [], []  # kept: so only an explicit close() can close it
+
+    def refuse(req, timeout=None):
+        bodies.append(io.BytesIO(b'{"error": "No such station"}'))
+        kept.append(urllib.error.HTTPError(req.full_url, 400, "Bad Request", {}, bodies[-1]))
+        raise kept[-1]
+
+    monkeypatch.setattr(cli._local, "open", refuse)
+    assert not cli._send_station("http://127.0.0.1:1/", "http://radio.example/stream")
+    assert "No such station" in capsys.readouterr().err
+    assert len(bodies) == 1 and bodies[0].closed

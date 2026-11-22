@@ -19,6 +19,7 @@ import urllib.parse
 import urllib.request
 
 from station_server import __version__
+from station_server.httperrors import urlopen
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +43,7 @@ class CheckError(Exception):
 
 
 def _open(req, timeout):
-    return urllib.request.urlopen(req, timeout=timeout)
+    return urlopen(req, timeout=timeout)
 
 
 def upload_mbps(opener=_open, clock=time.monotonic, sizes=SIZES) -> float:

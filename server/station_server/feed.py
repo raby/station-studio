@@ -175,12 +175,15 @@ class GitHubPages:
             with self._open(req, timeout=20) as resp:
                 return json.loads(resp.read() or b"null")
         except urllib.error.HTTPError as exc:
-            if exc.code == 404 and method == "GET":
-                return None
             try:
                 said = json.loads(exc.read()).get("message") or ""
             except (ValueError, AttributeError, OSError):
                 said = ""
+            finally:
+                if exc.fp is not None:  # an HTTP error is a response too: let it go
+                    exc.close()
+            if exc.code == 404 and method == "GET":
+                return None
             if exc.code in (401, 403):
                 raise FeedError(f"GitHub turned the token down ({exc.code} {said}). Check it can change the "
                                 f"contents of {self.repo}, and hasn't expired.") from None

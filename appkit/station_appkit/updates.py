@@ -9,10 +9,23 @@ import json
 import logging
 import re
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
 from station_appkit import App
+
+
+def urlopen(*args, **kwargs):
+    """urllib's urlopen, but an HTTP error it raises is closed already: it's
+    a response too, and the callers here log one and carry on, which would
+    leave its connection to the garbage collector (a leak 3.13+ warns of)."""
+    try:
+        return urllib.request.urlopen(*args, **kwargs)
+    except urllib.error.HTTPError as exc:
+        if exc.fp is not None:
+            exc.close()
+        raise
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +63,7 @@ def newest_release(releases, tag_prefix: str) -> str | None:
     return best
 
 
-def fetch_latest(app: App, opener=urllib.request.urlopen) -> str | None:
+def fetch_latest(app: App, opener=urlopen) -> str | None:
     """The app's newest release, from GitHub."""
     req = urllib.request.Request(app.releases_api, headers={"Accept": "application/vnd.github+json",
                                                             "User-Agent": app.slug})
