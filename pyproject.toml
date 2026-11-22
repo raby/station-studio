@@ -255,3 +255,8 @@ extend-exclude = ["web"]
 # (E4 imports, E7 statements, E9 syntax). Named here because ruff's own
 # default set grew in 0.17.
 select = ["E4", "E7", "E9", "F"]
+
+[tool.ruff.lint.per-file-ignores]
+# Alembic's template (migrations/script.py.mako) imports `op` and `sa`
+# into every new migration, used or not: a data-only one would fail.
+"migrations/versions/*.py" = ["F401"]
