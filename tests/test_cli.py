@@ -484,7 +484,6 @@ def test_generate_subcommand_handles_concurrent_integrity_error(
 
     # Patch the binding the CLI imports (NOT engine.persistence
     # globally — other tests + the same test's setup use it).
-    import station_studio.cli as cli_mod
     monkeypatch.setattr(
         "engine.persistence.save_playlist", _raise_integrity_error,
     )

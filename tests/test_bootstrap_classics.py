@@ -24,7 +24,7 @@ from engine.database import make_engine, make_sessionmaker
 from engine.generator import generate
 from engine.models import Base, Playlist, PlaylistEntry, PlaylistVersion, Station, SourcePlaylist
 from engine.template import parse_template
-from scripts.bootstrap_classics import bootstrap, CLASSICS_JSON
+from scripts.bootstrap_classics import bootstrap
 
 
 @pytest.fixture

@@ -1,10 +1,9 @@
-import json
 import os
 import time
 
 import pytest
 
-from station_server.config import ConfigStore, Station, clean_station, newest_week
+from station_server.config import ConfigStore, clean_station, newest_week
 
 
 def test_clean_station_checks_fields():

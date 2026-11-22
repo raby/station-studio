@@ -36,6 +36,8 @@ single router scopes cleanly.
 """
 from __future__ import annotations
 
+from typing import Any
+
 import copy
 import json
 import logging
@@ -71,7 +73,6 @@ from engine.editor_metadata import (
     EditorMetadataError,
     MacroResolutionError,
     UNSORTED_SECTION_ID,
-    UNSORTED_SECTION_NAME,
     ensure_unsorted_section,
     is_reserved_id_prefix,
     is_system_section,

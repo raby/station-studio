@@ -938,7 +938,7 @@ def test_diff_handles_slot_count_mismatch_across_versions(api):
     missing side."""
     client, Session = api
     _seed_station_and_pool(Session, slug="shape", pool_tracks=3)
-    r1 = client.post("/api/stations/shape/generate", json={"week": 1})
+    assert client.post("/api/stations/shape/generate", json={"week": 1}).status_code == 201
     r2 = client.post("/api/stations/shape/generate", json={"week": 1})
     pl_id = r2.json()["playlist_id"]
 
@@ -1394,7 +1394,7 @@ def test_rollback_to_current_400(api):
     operator intent (probably meant a different version). 400."""
     client, Session = api
     _seed_station_and_pool(Session, slug="rbcur", pool_tracks=3)
-    r1 = client.post("/api/stations/rbcur/generate", json={"week": 1})
+    assert client.post("/api/stations/rbcur/generate", json={"week": 1}).status_code == 201
     r2 = client.post("/api/stations/rbcur/generate", json={"week": 1})
     pl_id = r2.json()["playlist_id"]
 
@@ -2456,7 +2456,7 @@ def test_lifespan_auto_seeds_when_station_table_is_empty(tmp_path, monkeypatch):
         assert db.query(Station).count() == 0
 
     # Boot the app → lifespan handler fires.
-    with TestClient(app, base_url="http://localhost") as client:
+    with TestClient(app, base_url="http://localhost"):
         # Bootstrap done. Confirm seeded rows.
         with Session() as db:
             slugs = {s.slug for s in db.query(Station).all()}

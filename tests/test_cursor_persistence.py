@@ -18,10 +18,10 @@ from sqlalchemy.orm import sessionmaker
 from engine.database import make_engine, make_sessionmaker
 from engine.generator import generate
 from engine.models import (
-    Base, CursorState, SourcePlaylist, SourcePlaylistEntry, Station, Track,
+    Base, CursorState, Station,
 )
 from engine.persistence import (
-    advance_cursors, load_cursor_positions, load_pools,
+    advance_cursors, load_cursor_positions,
 )
 from engine.template import parse_template
 
@@ -290,7 +290,7 @@ def test_persistent_cursor_round_trip_matches_weekly_semantics(session_factory):
             positions = load_cursor_positions(
                 db, station_id=station_id, template=tmpl,
             )
-            r = generate(
+            generate(
                 tmpl, {"S": pool}, week=week,
                 named_cursor_positions=positions,
             )

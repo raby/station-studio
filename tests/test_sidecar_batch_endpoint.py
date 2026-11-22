@@ -13,16 +13,15 @@ Coverage:
 from __future__ import annotations
 
 import pytest
-from fastapi.testclient import TestClient
-from sqlalchemy.orm import sessionmaker
 
 from engine.models import Station
 
 # Reuse the editor_api fixture from the existing test module +
 # the public `seed_station` helper from the shared module
 # (§16.2.6.t12 P8 — moved out of test_editor_api's private surface).
-from tests.test_editor_api import editor_api
-from tests._helpers import seed_station as _seed_station, minimal_template as _minimal_template
+# The fixture is used by name, as a test's argument, which ruff can't see.
+from tests.test_editor_api import editor_api  # noqa: F401
+from tests._helpers import seed_station as _seed_station
 
 
 def _sidecar_for(template: dict) -> dict:
@@ -44,7 +43,7 @@ def _sidecar_for(template: dict) -> dict:
 
 
 @pytest.fixture
-def seeded(editor_api):
+def seeded(editor_api):  # noqa: F811 (the fixture, by name)
     client, Session, _dir = editor_api
     template = _seed_station(Session, slug="ts")
     # Inline the sidecar via the DB column.
@@ -201,7 +200,7 @@ def test_failed_at_idx_for_first_edit(seeded):
     assert r.json()["failed_at_idx"] == 1
 
 
-def test_unknown_station_returns_404(editor_api):
+def test_unknown_station_returns_404(editor_api):  # noqa: F811 (the fixture)
     client, _Session, _dir = editor_api
     r = client.post(
         "/api/stations/nope/sidecar/batch",

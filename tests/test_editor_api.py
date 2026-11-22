@@ -30,6 +30,15 @@ from engine.database import make_engine, make_sessionmaker
 from engine.models import Base, Station
 from engine.seeding import populate_db_sidecars
 
+# §16.2.6.t12 P8 follow-up (post-cycle U1 fix): the real extraction.
+# Pre-fix this module held local `_minimal_template` + `_seed_station`
+# bodies and the new tests/_helpers.py was a parallel COPY — two
+# sources of truth. Alias-import the public names so every existing
+# call site (`_seed_station(Session, slug="...")`, `_minimal_template(...)`)
+# keeps working unchanged.
+from tests._helpers import minimal_template as _minimal_template
+from tests._helpers import seed_station as _seed_station
+
 
 def _populate(Session: sessionmaker, stations_dir: Path) -> None:
     """§16.2.5.t7+t9 test bridge — mirror what the lifespan
@@ -78,16 +87,6 @@ def editor_api(tmp_path, monkeypatch):
         yield client, Session, stations_dir
     app.dependency_overrides.clear()
     engine.dispose()
-
-
-# §16.2.6.t12 P8 follow-up (post-cycle U1 fix): the real extraction.
-# Pre-fix this module held local `_minimal_template` + `_seed_station`
-# bodies and the new tests/_helpers.py was a parallel COPY — two
-# sources of truth. Alias-import the public names so every existing
-# call site (`_seed_station(Session, slug="...")`, `_minimal_template(...)`)
-# keeps working unchanged.
-from tests._helpers import minimal_template as _minimal_template
-from tests._helpers import seed_station as _seed_station
 
 
 # ---------- 404 ----------------------------------------------------------

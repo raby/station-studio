@@ -309,7 +309,8 @@ def test_bootstrap_no_echo_returns_silent_but_complete_result(
     need to register an echo callback. The default `_silent` runs
     bootstrap silently but the structured result still tells the
     caller everything that happened."""
-    import io, contextlib
+    import io
+    import contextlib
 
     captured = io.StringIO()
     with contextlib.redirect_stdout(captured):

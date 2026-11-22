@@ -4,13 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import io
-import json
 import os
-import plistlib
 import subprocess
 import sys
 import tempfile
-import threading
 import time
 from pathlib import Path
 

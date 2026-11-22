@@ -29,6 +29,10 @@ jobs:
         # Station Player and Server too: tests/test_packaging_names.py
         # checks all three apps' names against their packaging.
         run: uv sync --locked --all-packages
+      - name: ruff
+        # Undefined names, unused imports and the like, in all the Python
+        # (pyproject.toml's [tool.ruff]).
+        run: make lint
       - name: pytest + coverage gate
         run: make test-backend
       - name: alembic ↔ create_all schema parity

@@ -146,7 +146,9 @@ def test_fragmented_mp4_passes_on_with_its_init_section():
 
 def test_follows_a_master_playlist_and_refuses_what_it_cant_play():
     st = FakeStation(live=False, count=1)
-    fetch = lambda url, limit: st.playlist().encode() if url.endswith("high/index.m3u8") else st.fetch(url, limit)
+    def fetch(url, limit):
+        return st.playlist().encode() if url.endswith("high/index.m3u8") else st.fetch(url, limit)
+
     stream = HlsStream("https://x/master.m3u8", MASTER, fetch)
     assert stream.url == "https://x/high/index.m3u8" and stream.body.read(100) == ADTS
     with pytest.raises(HlsError, match="encrypted"):

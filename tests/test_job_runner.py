@@ -18,16 +18,13 @@ from __future__ import annotations
 import threading
 import time
 from typing import Any, Iterator
-from unittest.mock import MagicMock
 
 import pytest
 
 from api.job_runner import (
     JobSnapshot,
-    JOB_STATUS_CANCELLED,
     JOB_STATUS_DONE,
     JOB_STATUS_ERROR,
-    JOB_STATUS_RUNNING,
     JobStartConflict,
     JobStore,
     POLICY_CANCEL_EXISTING,

@@ -1,7 +1,6 @@
 import hashlib
 import io
 import os
-import plistlib
 import subprocess
 import sys
 import threading

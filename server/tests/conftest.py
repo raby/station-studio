@@ -164,7 +164,7 @@ class FakeShoutcast:
                 if len(lines[0].split(" ")) < 2:  # connected and left (a port check)
                     continue
                 target = lines[0].split(" ")[1]
-                agent = next((l.split(":", 1)[1].strip() for l in lines if l.lower().startswith("user-agent:")), "")
+                agent = next((line.split(":", 1)[1].strip() for line in lines if line.lower().startswith("user-agent:")), "")
                 qs = parse_qs(urlsplit(target).query)
                 if qs.get("pass") == [self.password] and qs.get("mode") == ["updinfo"]:
                     self.titles.append(qs["song"][0])

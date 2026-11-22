@@ -617,7 +617,6 @@ def test_weighted_generator_state_persists_across_size_iterations():
     within the window (state mutates between iterations of the same block)."""
     t = parse_template(_weighted_template(size=4))
     r = generate(t, {"A": _weighted_pool_with_artists()}, week=1, seed=42)
-    artists = [p.artist for p in r.picks]
     # Pool has 4 tracks across 3 artists (A×2, B, C). The shuffle-bag
     # window is pool_size-1 = 3, so the only legal repeat is when the
     # 4th pick falls outside the 3-pick history — which it doesn't.

@@ -23,7 +23,6 @@ End-to-end through the real engine + a fresh SQLite tmp DB. Asserts:
 from __future__ import annotations
 
 import time
-from typing import Iterator
 from unittest.mock import patch
 
 import pytest
@@ -36,7 +35,7 @@ from api.main import app
 from api.schemas import _PREVIEW_FIELD_MAX_BYTES
 from engine.database import make_engine, make_sessionmaker
 from engine.editor_metadata import synthesize_trivial_sidecar
-from engine.generator import GenerationResult, ProgressEvent, generate_stream
+from engine.generator import generate_stream
 from engine.models import Base, Playlist, SourcePlaylist, SourcePlaylistEntry, Station, Track
 
 

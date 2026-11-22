@@ -35,10 +35,10 @@ from sqlalchemy.orm import Session
 from engine.database import make_engine, make_sessionmaker
 from engine.models import Base, Rule, Station
 from engine.rules import set_rule_list_value, set_rule_value
+from engine.template import parse_template, TemplateError
 
 
 logger = logging.getLogger(__name__)
-from engine.template import parse_template, TemplateError
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent

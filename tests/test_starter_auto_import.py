@@ -118,7 +118,6 @@ def test_user_imported_pool_blocks_starter_auto_import(
         db.close()
 
     # Now import a user pool manually.
-    import os
     eng = make_engine()
     Base.metadata.create_all(eng)
     SL = make_sessionmaker(eng)
@@ -394,7 +393,6 @@ def test_auto_import_starter_pools_tolerates_missing_xmls(
     URL so SQLAlchemy can connect."""
     from engine.database import make_engine, make_sessionmaker
     from engine.seeding import auto_import_starter_pools
-    from engine.models import Base
 
     # Run bootstrap once just to get the migrated DB.
     bootstrap()
