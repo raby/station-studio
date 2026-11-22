@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from station_server import __version__
+from station_server.httperrors import urlopen
 from station_server.stream import PortInUse, StreamServer
 
 logger = logging.getLogger(__name__)
@@ -322,7 +323,7 @@ class ShoutcastSender(_Sender):
             f"http://{dial(self.host)}:{self.port}/admin.cgi?{query}",
             headers={"User-Agent": ADMIN_USER_AGENT},
         )
-        with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+        with urlopen(req, timeout=self.timeout) as resp:
             resp.read()
 
     def count_listeners(self) -> dict:
@@ -330,7 +331,7 @@ class ShoutcastSender(_Sender):
         current, status, peak, max, unique, bitrate, title."""
         req = urllib.request.Request(f"http://{dial(self.host)}:{self.port}/7.html?sid={self.sid}",
                                      headers={"User-Agent": ADMIN_USER_AGENT})
-        with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+        with urlopen(req, timeout=self.timeout) as resp:
             text = resp.read(65536).decode("latin-1")
         return parse_7html(text)
 
@@ -396,14 +397,14 @@ class IcecastSender(_Sender):
             f"http://{dial(self.host)}:{self.port}/admin/metadata?{query}",
             headers={"User-Agent": USER_AGENT, "Authorization": self._auth()},
         )
-        with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+        with urlopen(req, timeout=self.timeout) as resp:
             resp.read()
 
     def count_listeners(self) -> dict:
         """How many are listening to this mount, from status-json.xsl."""
         req = urllib.request.Request(f"http://{dial(self.host)}:{self.port}/status-json.xsl",
                                      headers={"User-Agent": USER_AGENT})
-        with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+        with urlopen(req, timeout=self.timeout) as resp:
             data = json.loads(resp.read(2_000_000))
         return parse_icestats(data, self.mount)
 

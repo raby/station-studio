@@ -81,3 +81,35 @@ def test_the_version_is_the_same_in_both_places():
 
     pyproject = tomllib.loads((Path(__file__).parents[1] / "pyproject.toml").read_text())
     assert pyproject["project"]["version"] == station_appkit.__version__
+
+
+def test_a_release_check_github_refuses_lets_the_error_go_closed():
+    """An HTTP error is a response too: the check logs it and carries on,
+    so it's closed as it's raised (3.13+ warns of one left to the gc)."""
+    import gc
+    import threading
+    import urllib.error
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    from station_appkit import selfupdate
+
+    class NotFound(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_error(404)
+
+        def log_message(self, *args):
+            pass
+
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), NotFound)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    url = f"http://127.0.0.1:{httpd.server_address[1]}/releases"
+    try:
+        for fetch in (lambda: updates.urlopen(url, timeout=5), lambda: selfupdate.fetch_json(url)):
+            with pytest.raises(urllib.error.HTTPError) as info:
+                fetch()
+            assert info.value.code == 404 and info.value.fp.closed
+        del info
+        gc.collect()  # would warn here if one weren't closed
+    finally:
+        httpd.shutdown()
+        httpd.server_close()

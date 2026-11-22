@@ -5,13 +5,18 @@ Each fake keeps a reference to the error it raises, so only an explicit
 close() could close its body."""
 from __future__ import annotations
 
+import gc
 import io
+import threading
 import urllib.error
 import urllib.request
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
-from station_server import servercheck, upnp
+from station_server import __main__ as cli
+from station_server import alerts, servercheck, upnp
+from station_server.senders import IcecastSender, ShoutcastSender, StreamInfo
 from station_server.feed import FeedError, GitHubPages
 
 
@@ -74,3 +79,55 @@ def test_the_router_closes_a_soap_fault():
     with pytest.raises(upnp.UpnpError, match="ConflictInMappingEntry"):
         gateway._call("GetExternalIPAddress", {})
     assert bodies and all(b.closed for b in bodies)
+
+
+# Where the error is only logged, or dropped, it's closed as it's raised.
+
+class _NotFound(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_error(404)
+
+    do_POST = do_GET
+
+    def log_message(self, *args):
+        pass
+
+
+@pytest.fixture
+def missing():
+    """A server that answers everything with a 404: (host, port)."""
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), _NotFound)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    try:
+        yield httpd.server_address
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def _closed_404(call):
+    with pytest.raises(urllib.error.HTTPError) as info:
+        call()
+    assert info.value.code == 404 and info.value.fp.closed
+    del info
+    gc.collect()  # would warn here if it weren't closed
+
+
+def test_an_alert_the_server_refuses_closes_the_error(missing):
+    host, port = missing
+    _closed_404(lambda: alerts.send_ntfy(f"http://{host}:{port}/station", "Off air", "Gone quiet"))
+
+
+@pytest.mark.parametrize("sender", [
+    pytest.param(lambda host, port: ShoutcastSender(host, port, "pw", StreamInfo()), id="shoutcast"),
+    pytest.param(lambda host, port: IcecastSender(host, port, "/live", "pw", StreamInfo()), id="icecast"),
+])
+def test_listener_counts_and_titles_a_server_refuses_close_the_error(missing, sender):
+    s = sender(*missing)
+    _closed_404(s.count_listeners)
+    _closed_404(lambda: s._send_title("Abba - SOS"))
+
+
+def test_something_else_on_the_port_isnt_left_open(missing):
+    assert cli._running_state(missing[1]) is None
+    gc.collect()

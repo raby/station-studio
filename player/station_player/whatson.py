@@ -18,6 +18,7 @@ import urllib.request
 from datetime import datetime, timedelta
 
 from station_player import __version__
+from station_player.httperrors import closing_errors
 from station_player.radio import tls_context
 
 logger = logging.getLogger(__name__)
@@ -82,7 +83,7 @@ def _song(item: dict) -> dict:
 
 def _urlopen(req, timeout):
     # The Mac app's Python has no certificates of its own (radio.tls_context)
-    return urllib.request.urlopen(req, timeout=timeout, context=tls_context())
+    return closing_errors(urllib.request.urlopen)(req, timeout=timeout, context=tls_context())
 
 
 class Feeds:

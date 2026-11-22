@@ -24,6 +24,7 @@ import urllib.request
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
 
+from station_player.httperrors import closing_errors
 from station_player.logos import sniff
 
 logger = logging.getLogger(__name__)
@@ -126,7 +127,7 @@ def clean(data, base: str = FEED_URL) -> dict:
 
 def _fetch(url: str, limit: int) -> tuple[bytes, str]:
     req = urllib.request.Request(url, headers={"User-Agent": "StationPlayer"})
-    with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
+    with closing_errors(urllib.request.urlopen)(req, timeout=_TIMEOUT) as resp:
         body = resp.read(limit + 1)
         return body, resp.headers.get("Content-Type", "")
 

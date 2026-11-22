@@ -23,6 +23,7 @@ from collections import OrderedDict
 from typing import Callable
 from urllib.parse import urlencode, urlparse
 
+from station_player.httperrors import closing_errors
 from station_player.logos import sniff
 from station_player.radio import tls_context
 
@@ -74,7 +75,7 @@ class _NoRedirects(urllib.request.HTTPRedirectHandler):
 def _fetch(url: str, user_agent: str, limit: int) -> tuple[bytes, str]:
     req = urllib.request.Request(url, headers={"User-Agent": user_agent, "Accept": "*/*"})
     opener = urllib.request.build_opener(_NoRedirects, urllib.request.HTTPSHandler(context=tls_context()))
-    with opener.open(req, timeout=TIMEOUT) as resp:
+    with closing_errors(opener.open)(req, timeout=TIMEOUT) as resp:
         body = resp.read(limit + 1)
         return body, resp.headers.get("Content-Type", "")
 
