@@ -30,6 +30,7 @@ from email.message import EmailMessage
 
 from station_server import __version__
 from station_server.config import Alerts
+from station_server.httperrors import urlopen
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +81,7 @@ def send(cfg: Alerts, title: str, message: str) -> list[str]:
     return errors
 
 
-def send_ntfy(topic_url: str, title: str, message: str, opener=urllib.request.urlopen) -> None:
+def send_ntfy(topic_url: str, title: str, message: str, opener=urlopen) -> None:
     parts = urllib.parse.urlsplit(topic_url)
     body = json.dumps({"topic": parts.path.strip("/"), "title": title, "message": message,
                        "priority": 4, "tags": ["radio"]}).encode("utf-8")

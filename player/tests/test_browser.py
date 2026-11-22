@@ -954,9 +954,15 @@ def test_install_as_an_app(page):
     assert {i["sizes"] for i in manifest["icons"]} == {"192x192", "512x512"}
 
 
+def _offline_app(store):
+    app = PlayerApp(store)
+    app.directory = Directory(fetch=offline)
+    return app
+
+
 def test_window_opened_while_the_player_is_off_starts_it_and_waits(browser, tmp_path):
     store = ConfigStore(tmp_path / "home")
-    server = make_server(PlayerApp(store), port=0)
+    server = make_server(_offline_app(store), port=0)
     port = server.server_address[1]
     threading.Thread(target=server.serve_forever, daemon=True).start()
     ctx = browser.new_context()
@@ -970,7 +976,7 @@ def test_window_opened_while_the_player_is_off_starts_it_and_waits(browser, tmp_
         pg.goto(f"http://127.0.0.1:{port}/", wait_until="commit")
         sync_api.expect(pg.locator("#offline-status")).to_contain_text("Starting Station Player")
         # The player comes back on the same address: the window opens it.
-        server = make_server(PlayerApp(store), port=port)
+        server = make_server(_offline_app(store), port=port)
         threading.Thread(target=server.serve_forever, daemon=True).start()
         pg.wait_for_selector(".sidebar", timeout=10000)
         assert pg.url == f"http://127.0.0.1:{port}/"
@@ -1084,7 +1090,7 @@ def test_welcome_screen_adds_music(browser, tmp_path):
     tone(home / "Music" / "Found.wav", 1.0, 0.3)
     other = tone(tmp_path / "Elsewhere" / "Chosen.wav", 1.0, 0.3).parent
     store = ConfigStore(tmp_path / "conf")
-    app = PlayerApp(store)
+    app = _offline_app(store)
     app.suggest_home = home
     app.picker = FakePicker({"path": str(other)})
     server = make_server(app, port=0)

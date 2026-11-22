@@ -169,9 +169,9 @@ def _play(args) -> int:
 def _running_state(port: int) -> dict | None:
     """What the Station Server answering on `port` says of itself, or None."""
     import json
-    import urllib.request
+    from station_server.httperrors import urlopen
     try:
-        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/state", timeout=2) as resp:
+        with urlopen(f"http://127.0.0.1:{port}/api/state", timeout=2) as resp:
             state = json.loads(resp.read())
     except (OSError, ValueError):
         return None
@@ -235,8 +235,9 @@ def _quit_server(url: str) -> None:
     from station_server.web import API_HEADER
     req = urllib.request.Request(url + "api/quit", data=b"{}", method="POST",
                                  headers={API_HEADER: "1", "Content-Type": "application/json"})
+    from station_server.httperrors import closing_errors
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-    with opener.open(req, timeout=5):
+    with closing_errors(opener.open)(req, timeout=5):
         pass
 
 

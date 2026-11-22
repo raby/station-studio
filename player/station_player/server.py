@@ -35,6 +35,7 @@ from urllib.parse import parse_qs, quote, urljoin, urlparse
 from station_player import __version__, loudness, myplaylists, pagescript, picks, qr, radio, remote, selfupdate, setup, updates
 from station_player.config import MAX_RECENT, clean_alarm, clean_alarms, clean_tags
 from station_player.directory import Directory, DirectoryError
+from station_player.httperrors import closing_errors
 from station_player.logos import FEED_NAME as FEED_LOGO_NAME
 from station_player.logos import LogoStore
 from station_player.playlog import PlayLog
@@ -145,6 +146,7 @@ class _HttpOnlyRedirects(urllib.request.HTTPRedirectHandler):
 
 
 _opener = urllib.request.build_opener(_HttpOnlyRedirects)
+_open = closing_errors(_opener.open)
 
 
 def _fetch_text(url: str, deadline: float = _STREAM_FETCH_SECONDS) -> str:
@@ -155,7 +157,7 @@ def _fetch_text(url: str, deadline: float = _STREAM_FETCH_SECONDS) -> str:
 
     def work():
         try:
-            with _opener.open(url, timeout=deadline) as resp:
+            with _open(url, timeout=deadline) as resp:
                 result["body"] = resp.read(64 * 1024).decode("utf-8", "replace")
         except Exception as exc:
             result["error"] = exc

@@ -68,7 +68,7 @@ def asset_name(app: App, version: str, kind: str, machine: str | None = None) ->
 
 def fetch_json(url: str, user_agent: str = "station-appkit"):
     req = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json", "User-Agent": user_agent})
-    with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
+    with updates.urlopen(req, timeout=_TIMEOUT) as resp:
         return json.loads(resp.read(5_000_000))
 
 
@@ -92,7 +92,7 @@ def release_asset(app: App, version: str, name: str, get_json=None) -> tuple[str
 
 
 def download(url: str, dest: Path, sha256: str, size: int, progress=lambda done, total: None,
-             opener=urllib.request.urlopen, user_agent: str = "station-appkit") -> None:
+             opener=updates.urlopen, user_agent: str = "station-appkit") -> None:
     """Fetch url to dest, refusing anything but the expected file."""
     if size > MAX_DOWNLOAD:
         raise UpdateError("The download is larger than expected, so it wasn't used.")
@@ -212,7 +212,7 @@ class Updater:
     KINDS = ("mac", "windows")
 
     def __init__(self, app: App, quit, mac_relaunch=None, port: int | None = None, kind: str | None = None,
-                 child_env: dict | None = None, get_json=None, opener=urllib.request.urlopen,
+                 child_env: dict | None = None, get_json=None, opener=updates.urlopen,
                  run=subprocess.run, launch=None) -> None:
         self.app = app
         self.quit = quit

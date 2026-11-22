@@ -17,6 +17,7 @@ from station_player import __version__, updates
 from station_player.config import ConfigStore, get_home
 from station_player.window import mac_app_bundle, open_ui
 from station_player.desktop import URL_SCHEME, Desktop, app_executable, bundled
+from station_player.httperrors import closing_errors
 from station_player.library import AUDIO_EXTENSIONS
 from station_player.server import API_HEADER, PlayerApp, make_server
 
@@ -66,10 +67,16 @@ def _classify(raw: str) -> list[tuple[str, str]] | str:
 _local = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
+@closing_errors
+def _local_open(*args, **kwargs):
+    """_local.open, for the calls that drop an HTTP error unread."""
+    return _local.open(*args, **kwargs)
+
+
 def _running_instance(url: str) -> bool:
     """True when a Station Player already answers at `url`."""
     try:
-        with _local.open(url + "api/state", timeout=2) as resp:
+        with _local_open(url + "api/state", timeout=2) as resp:
             return "version" in json.load(resp)
     except Exception:
         return False
@@ -80,7 +87,7 @@ def _outdated_instance(url: str) -> bool:
     it's an older version (left running in the background after an
     update), or it's a pipx install and this is the downloaded app."""
     try:
-        with _local.open(url + "api/state", timeout=2) as resp:
+        with _local_open(url + "api/state", timeout=2) as resp:
             state = json.load(resp)
     except Exception:
         return False
@@ -94,7 +101,7 @@ def _quit_instance(url: str) -> bool:
     req = urllib.request.Request(url + "api/quit", data=b"{}",
                                  headers={"Content-Type": "application/json", API_HEADER: "1"}, method="POST")
     try:
-        _local.open(req, timeout=10).close()
+        _local_open(req, timeout=10).close()
     except Exception as exc:
         logging.warning("Could not ask the older Station Player to quit: %s", exc)
         return False
@@ -113,7 +120,7 @@ def _send_open(url: str, files: list[str]) -> bool:
         url + "api/open", data=json.dumps({"paths": files}).encode(),
         headers={"Content-Type": "application/json", API_HEADER: "1"}, method="POST")
     try:
-        with _local.open(req, timeout=30) as resp:
+        with _local_open(req, timeout=30) as resp:
             return bool(json.load(resp).get("page_open"))
     except Exception as exc:
         print(f"Could not open {', '.join(files)}: {exc}", file=sys.stderr)
@@ -154,7 +161,7 @@ def _send_sources(url: str, sources: list[tuple[str, str]]) -> None:
             url + "api/sources", data=json.dumps({"kind": kind, "path": path}).encode(),
             headers={"Content-Type": "application/json", API_HEADER: "1"}, method="POST")
         try:
-            _local.open(req, timeout=120).close()
+            _local_open(req, timeout=120).close()
         except Exception as exc:
             print(f"Could not add {path}: {exc}", file=sys.stderr)
 
