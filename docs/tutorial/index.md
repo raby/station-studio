@@ -22,7 +22,7 @@ is the wrapper.
 
 === "PyPI (easiest)"
 
-    Two commands, no clone. Needs Python 3.12+
+    Two commands, no clone. Needs Python 3.11+
     (`python --version` to check).
 
     ```bash

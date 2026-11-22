@@ -298,7 +298,8 @@ def call(port, path, data=None, password=None, host=None):
         with urllib.request.urlopen(req, timeout=10) as resp:
             return resp.status, json.loads(resp.read())
     except urllib.error.HTTPError as exc:
-        return exc.code, exc.read()
+        with exc:  # a response too: closed once read
+            return exc.code, exc.read()
 
 
 def test_phone_access_needs_its_password_and_only_watches_and_switches(api, monkeypatch):  # noqa: F811
