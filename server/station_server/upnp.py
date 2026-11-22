@@ -174,7 +174,11 @@ class Gateway:
             with self._open(req, timeout=5) as resp:
                 root = ET.fromstring(resp.read(200_000))
         except urllib.error.HTTPError as exc:  # a SOAP fault
-            detail = exc.read(20_000).decode("utf-8", "replace")
+            try:
+                detail = exc.read(20_000).decode("utf-8", "replace")
+            finally:
+                if exc.fp is not None:  # an HTTP error is a response too: let it go
+                    exc.close()
             m = re.search(r"<errorDescription>(.*?)</errorDescription>", detail)
             raise UpnpError(f"The router refused: {m.group(1) if m else exc.reason}") from None
         except OSError as exc:

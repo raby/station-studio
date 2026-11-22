@@ -134,6 +134,9 @@ def _send_station(url: str, station: str) -> bool:
             reason = json.load(exc).get("error") or exc.reason
         except Exception:
             reason = exc.reason
+        finally:
+            if exc.fp is not None:  # an HTTP error is a response too: let it go
+                exc.close()
         print(f"Could not play {station}: {reason}", file=sys.stderr)
         logging.warning("Could not play %s: %s", station, reason)
     except Exception as exc:

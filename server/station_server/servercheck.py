@@ -36,7 +36,11 @@ def _fetch(url: str, timeout: float = TIMEOUT) -> tuple[int, dict, str]:
         with opener.open(req, timeout=timeout) as resp:
             return resp.status, dict(resp.headers), resp.read(65536).decode("latin-1")
     except urllib.error.HTTPError as exc:
-        body = exc.read(65536).decode("latin-1") if exc.fp else ""
+        try:
+            body = exc.read(65536).decode("latin-1") if exc.fp else ""
+        finally:
+            if exc.fp is not None:  # an HTTP error is a response too: let it go
+                exc.close()
         return exc.code, dict(exc.headers or {}), body
     except http.client.HTTPException as exc:  # not a web server at all (or cut off)
         raise OSError(f"not a web page ({exc.__class__.__name__})") from exc
