@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-__version__ = "1.1.1"
+__version__ = "1.1.2"
 
 REPO = "raby/station-studio"
 

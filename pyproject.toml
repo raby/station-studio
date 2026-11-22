@@ -23,7 +23,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "station-studio"
-version = "1.20.3"
+version = "1.21.0"
 description = "Open-source playlist generator for hobbyist radio stations"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -62,7 +62,7 @@ dependencies = [
     # Player and Station Server (appkit/ in this repo). Kept at appkit's own
     # version (tests/test_packaging_names.py), so a pip upgrade brings the
     # appkit this code was written against.
-    "station-appkit>=1.1.1",
+    "station-appkit>=1.1.2",
 ]
 
 # Tools for working on Station Studio, not installed with it (PEP 735

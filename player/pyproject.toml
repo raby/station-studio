@@ -11,7 +11,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "station-player"
-version = "0.24.3"
+version = "0.24.4"
 description = "Local music and radio player for station-studio playlists"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -20,7 +20,7 @@ authors = [
     { name = "Raby Whyte", email = "rabywhyte@gmail.com" },
 ]
 keywords = ["music", "player", "radio", "itunes", "playlist"]
-dependencies = ["station-appkit>=1.1.1"]
+dependencies = ["station-appkit>=1.1.2"]
 
 # For working on it, not installed with it. Versions pinned in the
 # repo's uv.lock: `uv sync --package station-player` from the repo root.
