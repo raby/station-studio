@@ -19,6 +19,7 @@ import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 from station_server.hostaddr import host_addresses
+from station_server.httperrors import closing_errors
 
 logger = logging.getLogger(__name__)
 
@@ -146,7 +147,8 @@ class Gateway:
     def __init__(self, location: str, opener=urllib.request.urlopen) -> None:
         self.location = location
         self._open = opener
-        with opener(location, timeout=5) as resp:
+        # A description that isn't there is just another router passed over
+        with closing_errors(opener)(location, timeout=5) as resp:
             root = ET.fromstring(resp.read(1_000_000))
         base = next((e.text for e in root.iter() if _local(e.tag) == "URLBase" and e.text), location)
         self.service = self.control = None
